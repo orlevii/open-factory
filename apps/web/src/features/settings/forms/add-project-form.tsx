@@ -3,6 +3,7 @@ import { useState } from "react";
 import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { createProject } from "@/features/settings/api";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
 import { checkPath, fieldsOf, PATH_HELP } from "./shared";
 
@@ -24,10 +25,9 @@ export function AddProjectForm({
   const [pending, setPending] = useState(false);
 
   const checkName = (n: string) => {
-    if (!nameSchema.safeParse(n).success) {
-      return "Use 2–40 lowercase letters, numbers and inner hyphens, starting with a letter.";
-    }
-    return existing.includes(n) ? `A project named ${n} already exists.` : undefined;
+    const r = nameSchema.safeParse(n);
+    if (!r.success) return r.error.issues[0]?.message;
+    return existing.includes(n) ? FORM_MSG.nameTaken : undefined;
   };
   const focus = (f: "name" | "hostPath") =>
     document.getElementById(f === "name" ? "field-project-name" : "field-project-path")?.focus();

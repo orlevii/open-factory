@@ -54,9 +54,7 @@ test("credential: validates, submits once on Enter, maps a rejection under the t
   const close = within(dialog).getAllByRole("button", { name: "Close" }).at(-1) as HTMLElement;
   expect(close).toHaveAttribute("type", "button");
   await userEvent.type(within(dialog).getByLabelText("Name"), "taken{Enter}");
-  expect(describedText(within(dialog).getByLabelText("Name"))).toBe(
-    "A credential named taken already exists.",
-  );
+  expect(describedText(within(dialog).getByLabelText("Name"))).toBe("That name is taken.");
   expect(api.calls).toHaveLength(0);
   const name = within(dialog).getByLabelText("Name");
   await userEvent.clear(name);

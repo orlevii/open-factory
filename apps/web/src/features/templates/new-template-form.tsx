@@ -36,6 +36,7 @@ import {
   getSheetState,
   openSheet,
 } from "@/features/sheets/sheet-store";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { createTemplate, templatesQueryOptions } from "./api";
 
 type Field = "name" | "displayName" | "description";
@@ -45,9 +46,9 @@ const blank = (): Values => ({ displayName: "", name: "", revealed: false, descr
 
 const NAME_HELP = "Lowercase letters, numbers and hyphens. Also the folder name.";
 const MESSAGES: Record<Field, string> = {
-  name: "Use lowercase letters, numbers and hyphens, starting with a letter (2 to 40 characters).",
-  displayName: "Enter a display name (up to 80 characters).",
-  description: "Keep the description under 500 characters.",
+  name: FORM_MSG.templateNameChars,
+  displayName: FORM_MSG.displayNameRequired,
+  description: FORM_MSG.descriptionLength,
 };
 const ORDER: readonly Field[] = ["displayName", "name", "description"];
 

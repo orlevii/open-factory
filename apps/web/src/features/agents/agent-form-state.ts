@@ -28,6 +28,7 @@ import {
 import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
 import { mergeServer } from "@/features/sheets/merge-server";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 
 export const FIELDS = [
   "template",
@@ -216,7 +217,7 @@ export function useAgentFormState({
         a.slug !== agent?.slug,
     )
   )
-    staleNotes.reportsTo = `@${values.reportsTo} has ended; pick another.`;
+    staleNotes.reportsTo = FORM_MSG.agentEnded;
   if (
     values.credential &&
     changed("credential") &&
@@ -294,7 +295,7 @@ export function useAgentFormState({
         const t = templates.data?.templates.find((x) => x.name === v.template);
         // A name that isn't listed (a stale ?template=) shows as unchosen, so it is.
         if (templates.data && !t) return "Choose a template.";
-        if (t && t.errors > 0) return `Template ${v.template} has errors. Fix them first.`;
+        if (t && t.errors > 0) return FORM_MSG.templateErrors;
         return undefined;
       }
       case "slug": {
@@ -305,14 +306,12 @@ export function useAgentFormState({
       }
       case "displayName": {
         if (createAgentBodySchema.shape.displayName.safeParse(v.displayName).success) return;
-        return v.displayName.trim() === ""
-          ? "Enter a display name."
-          : "Keep the display name to 80 characters or fewer.";
+        return v.displayName.trim() === "" ? "Enter a display name." : FORM_MSG.displayNameLength;
       }
       case "description":
         return createAgentBodySchema.shape.description.safeParse(v.description).success
           ? undefined
-          : "Keep the description to 500 characters or fewer.";
+          : FORM_MSG.descriptionLength;
       case "credential":
         return v.credential === "" ? "Choose a credential." : undefined;
       default:
@@ -455,9 +454,7 @@ export function useAgentFormState({
       } else {
         setOutcome({
           tone: "error",
-          content: create
-            ? "Couldn't create the agent. Check that the server is running, then try again."
-            : "Couldn't save. Check that the server is running, then try again.",
+          content: FORM_MSG.unreachable,
         });
       }
       return "failed";

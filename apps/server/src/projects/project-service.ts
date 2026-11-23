@@ -7,6 +7,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { inUseViolation, pgCode, tags } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
+import { FIELD_MSG } from "../field-messages.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 
 type ProjectRow = typeof schema.projects.$inferSelect;
@@ -108,8 +109,8 @@ export class ProjectService {
 
   /** The realpath of an existing absolute folder, or a hostPath field error. */
   private async resolveFolder(hostPath: string): Promise<string> {
-    if (!path.isAbsolute(hostPath)) throw new FieldError("hostPath", "Enter an absolute path.");
-    const missing = () => new FieldError("hostPath", `No folder at ${hostPath}.`);
+    if (!path.isAbsolute(hostPath)) throw new FieldError("hostPath", FIELD_MSG.absolutePath);
+    const missing = () => new FieldError("hostPath", FIELD_MSG.noFolder);
     try {
       const real = await realpath(hostPath);
       if (!(await stat(real)).isDirectory()) throw missing();
@@ -124,8 +125,7 @@ export class ProjectService {
       .select({ id: schema.projects.id, name: schema.projects.name })
       .from(schema.projects)
       .where(eq(schema.projects.hostPath, real));
-    if (other && other.id !== exceptId)
-      throw new FieldError("hostPath", `Project ${other.name} already uses this folder.`);
+    if (other && other.id !== exceptId) throw new FieldError("hostPath", FIELD_MSG.folderInUse);
   }
 
   async list(): Promise<ProjectSummary[]> {

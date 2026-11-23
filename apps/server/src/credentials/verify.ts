@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { HarnessDriver } from "@open-factory/harness";
 import type { CredentialKind } from "@open-factory/shared";
+import { FIELD_MSG } from "../field-messages.ts";
 
 export type VerifyResult =
   | { ok: true }
@@ -85,15 +86,12 @@ export class CredentialVerifier {
       return {
         ok: false,
         kind: "rejected",
-        message:
-          kind === "api_key"
-            ? "Claude rejected this API key."
-            : "Claude rejected this token. Create a new one with `claude setup-token`.",
+        message: kind === "api_key" ? FIELD_MSG.apiKeyRejected : FIELD_MSG.tokenRejected,
       };
     return {
       ok: false,
       kind: "unreachable",
-      message: "Couldn't reach Claude to verify. Try again.",
+      message: FIELD_MSG.claudeUnreachable,
     };
   }
 }

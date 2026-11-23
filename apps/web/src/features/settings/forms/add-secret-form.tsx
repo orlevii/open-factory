@@ -3,6 +3,7 @@ import { type ChangeEvent, useState } from "react";
 import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { putSecret } from "@/features/settings/api";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
 import { ValueField } from "./shared";
 
@@ -28,9 +29,7 @@ export function AddSecretForm({
   const checkName = (n: string) => {
     const r = secretNameSchema.safeParse(n);
     if (!r.success) return r.error.issues[0]?.message;
-    return existing.includes(n)
-      ? `A secret named ${n} already exists. Use Update to change its value.`
-      : undefined;
+    return existing.includes(n) ? FORM_MSG.nameTaken : undefined;
   };
   const checkValue = (v: string) => (v === "" ? "Enter a value." : undefined);
   const focus = (f: "name" | "value") => document.getElementById(`field-secret-${f}`)?.focus();

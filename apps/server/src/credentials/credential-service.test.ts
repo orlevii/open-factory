@@ -2,6 +2,7 @@ import { schema } from "@open-factory/db";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
+import { FIELD_MSG } from "../field-messages.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { CredentialService } from "./credential-service.ts";
 import { CredentialVerifier, type VerifyResult } from "./verify.ts";
@@ -63,7 +64,7 @@ test("rejected → 422 credential_rejected and no row; unreachable → credentia
   result = {
     ok: false,
     kind: "unreachable",
-    message: "Couldn't reach Claude to verify. Try again.",
+    message: FIELD_MSG.claudeUnreachable,
   };
   await expect(svc.create({ name: "bad", kind: "oauth_token", value: "x" })).rejects.toMatchObject({
     status: 422,

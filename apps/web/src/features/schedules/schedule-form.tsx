@@ -20,6 +20,7 @@ import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { mergeServer } from "@/features/sheets/merge-server";
 import { useAssignableAgents } from "@/features/tasks/agent-picker";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import type { CreateScheduleBody, PatchScheduleBody } from "./api";
 import { browserZone } from "./format";
 import { type Preview, previewOf, RunPreview } from "./run-preview";
@@ -178,7 +179,7 @@ export function ScheduleForm({
     setV((x) => ({ ...x, target: "" }));
     setErrors((e) => ({
       ...e,
-      target: hasEnded ? `@${gone} has ended; pick another.` : `There is no agent @${gone}.`,
+      target: hasEnded ? FORM_MSG.agentEnded : FORM_MSG.agentMissing,
     }));
   }
 

@@ -417,7 +417,7 @@ test("the secret name is uppercased while typing, keeping the caret; reserved na
   expect(name).not.toHaveAttribute("aria-invalid");
   await userEvent.tab();
   expect(name).toHaveAttribute("aria-invalid", "true");
-  expect(describedText(name)).toBe("That name is reserved for the agent's environment.");
+  expect(describedText(name)).toBe("That name is reserved.");
 });
 
 test("projects: a middle-truncated path, grant wording, and Remove disabled with its reason", async () => {
@@ -809,7 +809,7 @@ test("add secret: 409 secret_name_reserved lands under Name and focuses it", asy
           {
             error: {
               code: "secret_name_reserved",
-              message: "That name is reserved for the agent's environment.",
+              message: "That name is reserved.",
             },
           },
           409,
@@ -824,7 +824,7 @@ test("add secret: 409 secret_name_reserved lands under Name and focuses it", asy
   await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
   const name = within(region).getByLabelText("Name");
   await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
-  expect(describedText(name)).toBe("That name is reserved for the agent's environment.");
+  expect(describedText(name)).toBe("That name is reserved.");
   expect(name).toHaveFocus();
   expect(within(region).queryByRole("alert", { name: /reserved/ })).not.toBeInTheDocument();
 });

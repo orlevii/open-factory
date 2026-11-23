@@ -569,7 +569,8 @@ test("a refusal that became true fails the start closed with the refusal sentenc
 });
 
 test("bypass child of an auto spawner is refused at start", async () => {
-  const child = await seedChild({ permission_mode: "bypass" });
+  // A bypass template must be a Docker one to validate (permission_mode: bypass needs runtime: docker).
+  const child = await seedChild({ permission_mode: "bypass", runtime: "docker" });
   await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
     message:
       "Template dev runs without permission checks, which you don't have, so you can't spawn it.",
@@ -808,12 +809,13 @@ test("a spawner that dropped a secret and a deny rule since it started: the chil
 });
 
 test("the stricter permission mode of started and current counts: a spawner that was auto at start still refuses a bypass child", async () => {
-  const child = await seedChild({ permission_mode: "bypass" });
+  const child = await seedChild({ permission_mode: "bypass", runtime: "docker" });
   loaded.set(agent.id, await resolver.effective(agent)); // started in auto
+  // The template turns Docker to validate with bypass; the spawner keeps its row's local runtime (spec §6.6).
   writeYaml("lead", {
     name: "lead",
     display_name: "Lead",
-    runtime: "local",
+    runtime: "docker",
     permission_mode: "bypass",
     secrets: ["GH_TOKEN"],
   });
@@ -822,7 +824,10 @@ test("the stricter permission mode of started and current counts: a spawner that
       "Template dev runs without permission checks, which you don't have, so you can't spawn it.",
   });
   loaded.clear(); // not loaded: its current bypass mode alone counts
-  await expect(prepareStart(child, { agentToken: "tok" })).resolves.toBeDefined();
+  // The refusal is checked before the runtime: this harness has no Docker, so getting that far means it passed.
+  await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
+    message: "The Docker runtime isn't configured on this factory.",
+  });
 });
 
 test("a spawner whose template is invalid fails the child's start generically, with no fix and no cause", async () => {

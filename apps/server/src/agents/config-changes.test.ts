@@ -348,9 +348,9 @@ test("an overlay save on an archived agent writes the event only; values never r
     doc(),
     doc({}, { settings: { env: { GH: SECRET } } }),
   );
-  expect(out).toEqual({ changes: ["env GH changed"], restartChecked: false });
+  expect(out).toEqual({ changes: ["env GH added"], restartChecked: false });
   expect((await events(id)).map((e) => e.payload)).toEqual([
-    { by: "@or", changes: ["env GH changed"] },
+    { by: "@or", changes: ["env GH added"] },
   ]);
   expect(await noticeLines(id)).toEqual([]);
   const all = await h.t.sql`select payload::text as p from session_events where agent_id = ${id}`;

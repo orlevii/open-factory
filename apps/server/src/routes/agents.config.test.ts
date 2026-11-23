@@ -140,10 +140,11 @@ describe("PUT", () => {
   test("an effective error is 400 with its path and no value", async () => {
     await reset();
     const base = (await get()).json().version;
-    const r = await put({ template: { secrets: ["NOT_A_SECRET_HERE"] } }, base);
+    // A missing host skill is an error of the merged doc (an undefined secret is only a warning, spec §6.3).
+    const r = await put({ template: { skills: ["NOT_A_SKILL_HERE"] } }, base);
     expect(r.statusCode).toBe(400);
     expect(r.json().error.issues).toEqual([
-      expect.objectContaining({ severity: "error", path: "template.secrets.0" }),
+      expect.objectContaining({ severity: "error", path: "template.skills.0" }),
     ]);
     expect((await get()).json().overlay).toEqual({});
   });
@@ -169,9 +170,11 @@ describe("PUT", () => {
 
   test("a spawned agent can't be configured", async () => {
     await t.seedAgent({ slug: "kid" });
+    const [lead] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "dev"));
+    // A spawned agent always reports to its spawner (agents_ephemeral_manager).
     await t.db
       .update(schema.agents)
-      .set({ kind: "ephemeral" })
+      .set({ kind: "ephemeral", reportsTo: lead?.id })
       .where(eq(schema.agents.slug, "kid"));
     const r = await put({}, overlayVersion({}), "kid");
     expect(r.statusCode).toBe(409);

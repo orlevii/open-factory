@@ -391,6 +391,8 @@ test("reset persona: an archived agent is allowed (no notice), a broken or AGENT
   expect((await svc.resetPersona("persona-c", "@or")).applied).toBe("now");
   expect(readFileSync(path.join(home, "agents/persona-c/AGENTS.md"), "utf8")).toBe("# persona-c\n");
   expect(await pendingConfigLines("persona-c")).toEqual([]);
+  // Unarchived again so the archived list stays the later archive tests' own.
+  await svc.unarchive("persona-c");
 
   rmSync(path.join(home, "templates/persona-c/AGENTS.md"));
   await expect(svc.resetPersona("persona-c", "@or")).rejects.toMatchObject({
@@ -585,15 +587,25 @@ async function createSpawner(slug: string) {
   });
   return idOf(slug);
 }
-/** A spawned child of `spawnerId`, inserted with `q` (a test transaction or the pool). */
-const insertChild = (q: typeof t.sql, spawnerId: string, slug: string, terminated = false) =>
-  claimTestHandleSql(q, slug, "agent").then(
-    () =>
-      q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
-       select ${randomUUID()}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
+/**
+ * A spawned child of `spawnerId`, inserted with `q` (a test transaction or the pool). Like a real spawn it holds the
+ * spawner's grants (the shared template lists them all), so it starts in sync with its spawner.
+ */
+const insertChild = async (
+  q: typeof t.sql,
+  spawnerId: string,
+  slug: string,
+  terminated = false,
+) => {
+  await claimTestHandleSql(q, slug, "agent");
+  const id = randomUUID();
+  await q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+       select ${id}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
               ${terminated ? new Date().toISOString() : null}::timestamptz, ${terminated ? "@factory" : null}
-       from agents where id = ${spawnerId}`,
-  );
+       from agents where id = ${spawnerId}`;
+  await q`insert into agent_project_grants (agent_id, project_id)
+       select ${id}, project_id from agent_project_grants where agent_id = ${spawnerId}`;
+};
 
 /**
  * Resolves once `n` archives are waiting on the row lock `holder` holds: their own `for no key update` query, in a

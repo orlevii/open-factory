@@ -116,6 +116,11 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
   const tdir = path.join(home, "templates/dock");
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Dock\n");
+  // A user image the template names has its Dockerfile (or the template doesn't validate); built or not is per test.
+  if (image) {
+    mkdirSync(path.join(home, "images", image), { recursive: true });
+    writeFileSync(path.join(home, "images", image, "Dockerfile"), "FROM scratch\n");
+  }
   writeFileSync(
     path.join(tdir, "template.yaml"),
     JSON.stringify({

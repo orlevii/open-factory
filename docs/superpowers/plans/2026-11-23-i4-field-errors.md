@@ -63,7 +63,7 @@
 | `apps/server/src/field-messages.ts` | `FIELD_MSG` constants used by `FieldError` throws and `verify.ts` | 6 |
 | `apps/web/src/lib/form-messages.ts` | `FORM_MSG` constants for web checks and form-level copy | 6 |
 | the forms | migrations | 7–16 |
-| `apps/web/src/test/ui-contract.test.ts` | AC6 scan and the class contract | 17 |
+| `apps/web/src/test/ui-contract.test.ts` | the class contract | 17 |
 | `DESIGN.md` | §10 amendments | 18 |
 
 ---
@@ -516,11 +516,16 @@ import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { focusField } from "./focus-field";
 
 // WebKit doesn't focus a clicked button, so a blur toward one has no relatedTarget: fall back to the last pointerdown.
-// Installed once, at module load.
+// Installed once, on the first hook mount (a module flag checked in the hook's layout effect), not as an import side effect.
 let lastPointer: { target: EventTarget | null; at: number } = { target: null, at: 0 };
-if (typeof document !== "undefined")
+let tracking = false;
+function trackPointerOnce() {
+  if (tracking) return;
+  tracking = true;
   document.addEventListener("pointerdown", (e) => { lastPointer = { target: e.target, at: performance.now() }; },
     { capture: true, passive: true });
+}
+// In the hook: useLayoutEffect(trackPointerOnce, []);
 const skips = (t: EventTarget | null) => t instanceof Element && t.closest("[data-skip-validate]") !== null;
 
 type Ext<F extends string> = Partial<Record<F, string>>;
@@ -1076,7 +1081,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
     - The title input moves into a `FormField`-like `FieldShell` (label `sr-only` "Title", since the section already labels it) so it gets a note.
     - The title's validation goes through `f.submit()`; Save failures go through the outcome's `outcomeKey`.
     - Delete the per-editor `error` state where the hook replaces it.
-  - **The sidebar Assignee/Status line at :583** stays and gets `// ui-contract:allow non-form status line, follow-up #132`.
+  - **The sidebar Assignee/Status line at :583** stays (follow-up #132).
 - [ ] **Step 4: Run them and confirm they pass.**
 - [ ] **Step 5: Commit** with `feat(web): task detail editors on the shared form pieces`.
 
@@ -1103,7 +1108,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   - Delete `toFocus`, the focus effect and `focus`, plus the `failed` `<p>`. The outcome goes to the footer: `FORM_MSG.saveScheduleFailed` ("Couldn't save the schedule. Try again.", 38 characters).
   - `WhenField` and `RepeatsField` pass `(e) => f.blur("cron"|"at", e)`. The Repeats `Select` calls blur on close, following `TemplateField`'s pattern (an `onOpenChange` that tracks open and validates on close).
   - Body becomes `field-stack`.
-  - The Pause/Delete `StateLine` in `edit-schedule-sheet.tsx` stays and gets `ui-contract:allow` (#132).
+  - The Pause/Delete `StateLine` in `edit-schedule-sheet.tsx` stays (#132).
 - [ ] **Step 4: Run them and confirm they pass.**
 - [ ] **Step 5: Commit** with `feat(web): schedule form on useFieldErrors`.
 
@@ -1176,33 +1181,19 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - [ ] **Step 4: Run it and confirm it passes.** Also run `pnpm typecheck`.
 - [ ] **Step 5: Commit** with `feat(web): compact popover on the shared form pieces`.
 
-### Task 17: UI contract (AC6, class contract)
+### Task 17: UI contract (class contract)
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
+AC6 ("no field or form error renders outside `FieldNote` and `FormOutcome`") is verified in the whole-branch review (Task 19), not by a source scan: the deleted props (`formError`, `above`, `note`) make a regression fail to compile, and a regex scan of JSX would be brittle and force `ui-contract:allow` markers into unrelated files (owner-i4, R1). Add no such markers.
+
 **Files:**
-- Modify: `apps/web/src/test/ui-contract.test.ts`, plus `ui-contract:allow` markers on the non-form lines it finds
+- Modify: `apps/web/src/test/ui-contract.test.ts`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
-describe("I4 field errors (AC6)", () => {
-  // Per JSX element: join each opening tag with its children up to the matching close, then test the joined text.
-  const elements = (src: string) => [...src.matchAll(/<(p|div|span)\b[^>]*>[\s\S]*?<\/\1>/g)].map((m) => m[0]);
-  const allowed = (el: string) => /ui-contract:allow/.test(el);
-  const OWNERS = ["components/field-note.tsx", "components/forms/form-outcome.tsx"];
-  for (const file of sourceFiles().filter((f) => /\.(tsx)$/.test(f) && !OWNERS.some((o) => f.endsWith(o)))) {
-    test(`${file.replace(SRC, "")}: no hand-rolled field or form error`, () => {
-      const src = readFileSync(file, "utf8");
-      const bad = elements(src).filter(
-        (el) => !allowed(el) &&
-          ((/CircleAlert/.test(el) && /text-destructive/.test(el)) ||
-           (/role="alert"/.test(el) && /empty:hidden/.test(el))),
-      );
-      const conditionalAlert = [...src.matchAll(/\{[^{}]*&&\s*\(?\s*<p[^>]*role="alert"/g)].filter((m) => !/ui-contract:allow/.test(m[0]));
-      expect([...bad, ...conditionalAlert.map((m) => m[0])]).toEqual([]);
-    });
-  }
+describe("I4 field errors (class contract)", () => {
   test("field-note transitions opacity and visibility, 150ms shown, 100ms hidden, on --ease-out", () => {
     expect(css).toMatch(/\.field-note > \*\s*{[^}]*transition:\s*opacity 100ms var\(--ease-out\),\s*visibility 100ms var\(--ease-out\)/);
     expect(css).toMatch(/\.field-note > \[data-shown\]\s*{[^}]*transition-duration:\s*150ms/);
@@ -1219,10 +1210,9 @@ describe("I4 field errors (AC6)", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test.** Expect it to fail on the non-form lines (session, templates, schedule state, credentials row status, `InlineOutcome`, `ErrorLine`, task detail sidebar, edit schedule `StateLine`, …).
-- [ ] **Step 3: Add markers.** Put `{/* ui-contract:allow <reason> */}` or a `// ui-contract:allow <reason>` comment inside each flagged element (on its opening line), with a short reason ("load failure with Retry", "row status", "non-form status line, #132"). Do not mark a real form or field error: fix it instead.
-- [ ] **Step 4: Run it and confirm it passes.**
-- [ ] **Step 5: Commit** with `test(web): UI contract for field and form errors`.
+- [ ] **Step 2: Run the test** and confirm it fails only where Tasks 1–2 have not yet landed (it should pass if they have).
+- [ ] **Step 3: Run it and confirm it passes.**
+- [ ] **Step 4: Commit** with `test(web): class contract for field notes and outcome lines`.
 
 ### Task 18: DESIGN.md amendments
 
@@ -1240,6 +1230,7 @@ describe("I4 field errors (AC6)", () => {
   - No form keeps its own error state.
   - No `flushSync` or `queueMicrotask` is used for focus.
   - No template literal is passed to `FieldError` or `f.set`.
+  - AC6: no field or form error renders outside `FieldNote` and `FormOutcome`. Run `grep -rn "text-destructive\|role=\"alert\"\|empty:hidden" apps/web/src --include=*.tsx | grep -v test` and check each hit by hand: a form or field error there is a defect; a non-form status line is fine (#132 lists the known ones).
 - [ ] **Step 2: Review the React diff.** Invoke `vercel-react-best-practices` and check every changed `.tsx`/`.ts` in `apps/web` against it, covering re-render scope, derived state during render (the hook's unflag and the forms' attempt adjustments), no ref writes during render, no `f`/`f.errors`/`f.blur` in dependency lists, `setPending(false)` in the same block as `f.server`, no hand-written `outcomeKey`, effects (only the hook's layout effects and existing ones), stable callbacks where they are props of memoized children, no new barrel imports, and conditional rendering. Skip Next.js-only and server-component rules and say so in the review notes.
 - [ ] **Step 3: Fix and commit** any findings (`fix(web): …`). Record what was checked in the PR body draft.
 
@@ -1247,7 +1238,7 @@ describe("I4 field errors (AC6)", () => {
 
 - [ ] **Step 1: Run the checks in the worktree:** `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm build`. Then run `pnpm test -- --maxWorkers=50%`; do not run it while an evidence pass holds `/tmp/of-u4-evidence.lock` (check with `ls /tmp/of-u4-evidence.lock`).
 - [ ] **Step 2: Run the dev loop from a clean clone.**
-  - `git clone --branch i4/field-errors <origin url> "$TMPDIR/i4-clean"`, then `pnpm install`.
+  - `git clone --branch i4/field-errors <origin url> "$TMPDIR/i4-clean"`, then `pnpm install --frozen-lockfile` (the clean clone proves the committed lockfile; a plain install can re-resolve).
   - Follow the README's dev setup (database env as the README says), run `pnpm dev`, and open the web URL.
   - Sign in, open New task, blur an empty changed Title, fix it, then submit empty.
   - Stop the processes and delete the clone.

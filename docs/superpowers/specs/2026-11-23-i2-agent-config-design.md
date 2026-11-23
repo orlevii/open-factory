@@ -95,7 +95,8 @@ Every part is optional, and `{}` means "exactly the template". The Zod schemas l
 - **`settings`.** A JSON object (Claude Code settings; unknown keys allowed), except:
   - `extraKnownMarketplaces` is an error in an overlay (S2): no overlay-driven mounts or marketplace redirects;
   - `permissions.defaultMode` is an error in templates and overlays (Q3b);
-  - `enabledPlugins` stays a warning, ignored and derived from `plugins` (S1; I5 revisits it).
+  - `enabledPlugins` stays a warning, ignored and derived from `plugins` (S1). I5 owns this rule once it starts writing that key.
+  - **Factory-owned env names** are errors in `settings.env` and in `secrets` names, in templates and overlays alike, for any caller (S2). The names are `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`, and any name starting `OPEN_FACTORY_`. They live in one exported constant, `FACTORY_ENV_NAMES`, next to `buildAgentEnv` (`runtime-spec.ts`), which also reads it, so the list can't drift. Message: "GH_X is set by the factory." An overlay can never override a credential, the factory token or the agent's identity.
 - **`mcp`.** `strictObject({ mcpServers: record })`, the only key. A server named `factory` is an error.
 - **Limits.** Overlay JSON at most 256 KB. A list item (rule, note, skill, plugin) at most 1,000 characters. An env name matches `^[A-Za-z_][A-Za-z0-9_]*$`. A value at most 32 KB. At most 200 items per list and 50 MCP servers. Templates get the same limits on these keys.
 - **Model.** For templates and overlays: 1–100 characters of `[A-Za-z0-9._\[\]:-]`, not starting with `-` (it goes on a command line).
@@ -149,10 +150,12 @@ Tests (`config-merge.test.ts`), one per rule:
 
 New rules:
 - `${X}` in an MCP env value or header, where `X` is neither in the effective `secrets` nor a key of the effective `settings.env`, is a warning: "X isn't a secret or env var here."
-- A template-local skill entry that is a symlink, or isn't a directory, is a template error: "skills/x must be a folder, not a link." (§6.4)
+- A template-local skill entry that is a symlink, or isn't a directory, is a template error: "skills/x must be a folder, not a link." A `skills/` folder that is itself a symlink is an error too: "skills/ must be a folder, not a link." (§6.4)
 - A template whose `runtime` differs from that of any of its live or archived agents gets the warning "Existing agents keep their runtime." (§6.6)
 
-`policy` is `"human"` in I2. I7 adds `"agent"`, with its own refusals (for example hooks and `apiKeyHelper`); that decision belongs to I7.
+`policy` is `"human"` in I2. I7 adds `"agent"` and decides its rules. The I7 input (§19): deny rules can be added but never removed, and a **default-deny** list of keys to forbid, including `hooks`, `apiKeyHelper`, `additionalDirectories` and command-running keys such as `statusLine`. Unknown keys are refused until I7 allows them.
+
+Overlay plugins must come from a marketplace the template declares. The error names the missing marketplace: "Marketplace acme isn't declared by template dev."
 
 How callers use it:
 - A template calls it on its own files.
@@ -205,12 +208,13 @@ The runtime keeps the `Effective` its current process started with (`PreparedSpe
 
 Whatever describes the **next start** reads the resolver:
 
-- `createPrepareStart`;
-- `syncChildren` (the child's template `projects`, from the template index);
+- `createPrepareStart`, including its `spawning: maySpawn(...)` (`start.ts:281`), which reads the `Effective` being prepared, not `started`;
 - the Configuration API;
-- the Supervisor's image check. `images.refOf` is synchronous and runs before a start, so the runtime keeps `nextImage`, set from the resolver when it loads and refreshed by `ConfigChanges` on every change (§7.2). The image is template-only, so it changes only through a template change.
+- the Supervisor's image check. `images.refOf` is synchronous and runs before a start, so each **loaded** runtime keeps `nextImage`, set from the resolver when it loads and refreshed by `ConfigChanges` on every change (§7.2). It is undefined when the template is invalid at load, and that start then fails closed (§6.1). If `prepareStart` finds the resolved image differs from `nextImage` (a disk edit no scan has seen yet), it updates `nextImage` and fails this attempt through the existing image-missing path, which pulls and retries.
 
-`deriveInheritance` takes the **stricter** of the spawner's `started` and its current effective config: secrets intersected, deny rules unioned. A child then never holds more than either. `templateConfigSchema.safeParse(agent.config)` (`start.ts:152`) is deleted.
+`syncChildren` runs inside a transaction that holds row locks (`agent-service.ts:330`). It reads the child template's `projects` from the templates **DB row** (`last_valid`), never through `loadValid`, which would read the disk and start detection inside the transaction.
+
+`deriveInheritance` takes the **stricter** of the spawner's `started` and its current effective config: secrets intersected, deny rules unioned. When the spawner isn't loaded (no `started`), it uses the current config only. A child never holds more than either. A child restarted after its spawner **gained** a secret still gets it, because the intersection is recomputed at that start; until it restarts, it runs with less, which is safe. `templateConfigSchema.safeParse(agent.config)` (`start.ts:152`) is deleted.
 
 ### 6.3 Start (`Workspace.prepare`)
 
@@ -234,7 +238,9 @@ For each entry of the template's `skills/` that is a real directory, when `local
   - `lstat(<templates>/<template>/skills/<name>)` is a directory, not a link;
   - `realpath` of the source equals `join(realpath(<templates>/<template>/skills), <name>)`.
   
-  Everything else under `FACTORY_HOME`, and every other refused path, stays refused. Symlinked skill entries are a validation error (§5.3) and are refused again at start, so the exemption can't reach another workdir, `state/` or `~/.ssh`.
+  - `lstat(<templates>/<template>/skills)` is a directory, not a link, and `realpath` of it equals `join(realpath(<templates>/<template>), "skills")`.
+  
+  Even when the exemption applies, a source under `FACTORY_HOME/state`, under any agent workdir, or under the host home is still refused. Everything else under `FACTORY_HOME`, and every other refused path, stays refused. Symlinked skill entries and a symlinked `skills/` folder are validation errors (§5.3) and are refused again at start, so the exemption can't reach another workdir, `state/` or `~/.ssh`. Tests cover a symlinked entry and a symlinked `skills/` folder pointing into `state/agents/bob`.
 - A non-link entry with a template skill's name in the workdir fails the start with "…isn't a link to the template skill; move it away." An agent created before I2 hits this; see the reset step in §13.
 - Skills an agent writes itself (real folders with other names) are left alone.
 
@@ -251,7 +257,7 @@ This changes workspace.md's "only at create and re-sync, never at start" (Q8). T
   
   Marketplace sources come only from the effective `extraKnownMarketplaces`, which is template-declared, never from the workdir.
 - **Cost.** This runs inside the start, under the workspace lock and holding a slot, for at most the existing install timeout. It is a one-time cost after a plugin is added. I5's shared store removes it.
-- **Failure.** A failed install fails the start closed with `AgentStartError("Plugin x@y didn't install.", "config")`; the redacted output goes into the error event. A process never starts without its plugins.
+- **Failure.** A failed install fails the start closed with `AgentStartError("Plugin x@y didn't install.", fix)`; the redacted output goes into the error event. The fix is `template` when the template lists the plugin, else `config`. A process never starts without its plugins. The fix codes `template` and `config` join the unions in `safe-fs.ts:22`, `agents/errors.ts` and `events.ts:144`. `forSpawnedAgent` (`errors.ts:30`) drops `config` for spawned agents, as it drops `edit_agent` today.
 
 ### 6.6 Runtime fixed at creation
 
@@ -259,19 +265,19 @@ This changes workspace.md's "only at create and re-sync, never at start" (Q8). T
 
 ### 6.7 Secret users
 
-`secretService.usedBy(name)` returns the agents whose **effective** secrets include `name`: agents that are not archived and not terminated, where either
-- the template's `templates.yaml->'secrets'` contains `name`, joined on `agents.template`, or
-- `agents.config->'template'->'secrets'` contains `name`.
+`secretService.usedBy(name)` returns the agents whose **effective** secrets include `name`: agents that are not archived and not terminated (today's `isNull(archivedAt)` filter), where either
+- the template's last valid parse lists it, `templates.last_valid->'template'->'secrets' ? name`, joined on `agents.template`, or
+- the overlay lists it, `agents.config->'template'->'secrets' ? name`.
 
-It also returns their live spawned children. Rotate and delete restart those agents (as today). The Secrets page lists those agents (archived ones included, as today). Test: a secret listed only in a template still restarts its agents on rotate and on delete.
+It also returns their live spawned children. Rotate and delete restart exactly those agents, and the Secrets page lists the same set (non-archived, as today). Test: a secret listed only in a template still restarts its agents on rotate and on delete.
 
 ## 7. Live templates and the change flow
 
 ### 7.1 Detecting a template change
 
 The `templates` index row gains three columns:
-- `last_valid jsonb`, the `ConfigDoc` of the last **valid** parse. It is used only as the "before" of a diff and is never run on or offered as config (Q7).
-- `last_valid_hash`.
+- `last_valid jsonb`, the `ConfigDoc` of the last **valid** parse. It is used only as the "before" of a diff, by `usedBy` (§6.7) and by `syncChildren` (§6.2). It is never run on or offered as config (Q7).
+- `last_valid_hash`: `sha256` of the canonical `ConfigDoc`, not `content_hash`, so `AGENTS.md` and `files/` edits never move it.
 - `valid boolean`.
 
 `index(name)` upserts as today, then:
@@ -279,7 +285,8 @@ The `templates` index row gains three columns:
 1. **Compare-and-set.** When the new parse is valid and its hash differs from `last_valid_hash`: `UPDATE templates SET last_valid = $new, last_valid_hash = $newHash WHERE name = $n AND last_valid_hash IS NOT DISTINCT FROM $old RETURNING`. Only the caller whose update returns a row continues, so concurrent scans (a list and several starts at boot) fire once.
 2. **Dispatch.** That caller enqueues `ConfigChanges.templateChanged({ name, before: old last_valid, after: new, by })` on a per-template serial queue. It is **never awaited** by the scan. Scans run inside starts (`loadValid` in `prepareStart`, inside the runtime's own job), and awaiting a restart there would deadlock. Errors are logged.
    - `by` is the human's `@handle` for a write through the API, otherwise `"file change"`.
-   - A first valid parse (no `before`) changes no agents.
+   - With no `before` (a first parse, or a folder that was removed and came back, which deletes the row), there is no event or notice. Running agents of that template still get the restart check: restart when `describeChanges(runtime.started.doc, merge(after, overlay))` is non-empty.
+   - The queue is in memory, so a factory crash right after the compare-and-set loses that dispatch. That is accepted: every process restarts with the factory and starts on the current template.
 
 valid → invalid → valid works: `last_valid` keeps the old docs, so the diff when the template is valid again is correct. While a template is invalid, running agents keep running; their next start fails closed (§6.1).
 
@@ -301,6 +308,7 @@ apply(agent, by, beforeDoc, afterDoc)
 - **Overlay save.** `apply(agent, "@handle", merge(tpl, old), merge(tpl, new))`.
 - **Archived agents.** An overlay save on an archived agent writes the event (who changed what), with no notice and no restart: its next start after unarchive reads everything fresh. A template change skips archived agents.
 - **The restart compares against what the process started with,** not against the previous version. A start already running on the new config doesn't restart again, and two quick edits that cancel out restart nothing.
+- **Never blocking the caller.** The overlay PUT doesn't await the restart request (`runtime.run` may queue behind a start that is installing a plugin): it records the event and notice, schedules the restart and returns. `recordConfigNotice` for a runtime that is still loading awaits the load first, so it can't race the store write.
 
 `describeChanges(a, b): string[]` lives in shared, next to the merge, and follows the secret-safe rule (Q10):
 
@@ -312,6 +320,8 @@ apply(agent, by, beforeDoc, afterDoc)
   - "added secret GH_TOKEN"
   - "can spawn: added reviewer"
 - **Only a name and a kind are shown for** env vars, MCP servers (never their command, args, URL or headers) and unknown keys: "env LOG_LEVEL changed", "MCP server github added", "MCP server github changed", "settings key hooks changed".
+- **Template-only keys that follow the live template** produce lines: "image: a → b", "permission mode: auto → bypass", "template skills on" / "template skills off", and "added template skill x" / "removed template skill x" (the folders under `skills/`, part of the merged doc as `template.local_skill_names`).
+- **Keys that never reach a running agent produce nothing,** so editing them restarts nobody: `name`, `display_name`, `description` (the agent has its own), `projects` (grants are identity, Q4) and `runtime` (fixed, Q6). Tests cover both groups.
 - The output is sorted and deterministic, one line per change.
 - `summarizeChanges(lines)` gives the short form "model, 1 skill, 2 rules and 3 more" (at most three kinds, then "and N more").
 
@@ -320,10 +330,12 @@ apply(agent, by, beforeDoc, afterDoc)
 - **Event.** `config_changed { by: string; changes: string[] }` is added to `sessionEventSchema`.
   - It is appended **through the runtime** when the agent is loaded (`runtime.append` publishes to the bus, so an open Session shows it live), and through the store otherwise.
   - The timeline row reads "Configuration changed by @orlevi · 3 changes" (or "by template dev", "by a file change in template dev"). The list below it is clamped to two muted lines, with "Show all" (the factory-notice pattern) and `overflow-wrap: anywhere`.
-- **Notice.** `config_changed` is added to `NoticeType`, and `isPassive` (`agent-runtime.ts:238`) becomes `crons_stopped | config_changed`, so it never wakes the agent. The text is "Your configuration changed: model sonnet → opus; added skill release."
-  - Changes accumulate in the pending notice: `EventStore.createNotice` gains a `merge` mode for this type, which unions the lines of the pending body instead of replacing it (§`event-store.ts:1063`).
-  - The notice is written at change time for every non-archived agent, whatever its state, through `Runtimes.recordConfigNotice(id, lines)`. That works for an unloaded runtime (store) and a loaded one (runtime). So it survives every kind of exit (hibernate, crons takeover, shutdown, archive, crash, stop failure), because it is already a pending row. It reaches the agent with its next batch after the restart, ahead of the other items (`addNotice` ordering).
-  - When an `apply_changes` exit also lost crons, `restart_crons` is not added separately. The crons sentence is appended to the pending `config_changed` notice, so the agent gets one notice.
+- **Notice.** `config_changed` is added to `NoticeType`, and `isPassive` (`agent-runtime.ts:238`) becomes `crons_stopped | config_changed`, so it never wakes the agent.
+  - **Format.** A fixed header line, "Your configuration changed:", then one change per line as "- …". The body can be parsed back. Reset persona's line ("- AGENTS.md reset from template dev; the previous file is saved.") is a line of this same notice, not its own type.
+  - **Accumulating.** `EventStore.createNotice` gains a `merge` mode for this type: it parses the pending body's lines and writes back their union, sorted, instead of replacing the body (`event-store.ts:1063`).
+  - **Written at change time** for every non-archived agent, whatever its state, through `Runtimes.recordConfigNotice(id, lines)`. That works for an unloaded runtime (store) and a loaded one (runtime). It survives every kind of exit (hibernate, crons takeover, shutdown, archive, crash, stop failure), because it is already a pending row.
+  - **Only the next process reads it.** A `config_changed` row created after the current process started is held out of that process's batches (the flush filter compares the row's `createdAt` with the process's start time). So a message arriving between the change and the restart never carries "Your configuration changed…" to the old process. The next process gets it with its first batch, ahead of the other items (`addNotice` ordering). Test: a message between a change and its restart doesn't carry the notice, and the first batch after the restart does.
+  - **Lost crons stay their own notice.** `restart_crons` remains a separate, **non-passive** notice, as today, because its wake (`wakeAfterExit("apply_changes")` needs a deliverable item, `hasDeliverable`, `agent-runtime.ts:1444`) is what lets the agent recreate its crons.
 - **Restart.** `Runtimes.requestRestart(id, changes?)` → `runtime.requestRestart(changes?)` keeps `pendingChanges` (the short summary source) beside `restartPending`, and it is cleared on any exit. Live state gains `restartChanges: string[]`. The UI line reads "Restarts when idle to apply: model, 1 skill" (`summarizeChanges`). The full list goes in its tooltip and in Agent details. Other callers (credential, grants, manager) pass nothing, as today.
 - **I7 room.** `requestRestart` takes `{ changes?, wake? }`. `wake` is unused in I2 and lets I7 deliver its waking "Restarted to apply your config changes…" notice.
 
@@ -357,8 +369,8 @@ apply(agent, by, beforeDoc, afterDoc)
 `POST /api/agents/:slug/reset-persona` is for persistent agents only; archived agents are allowed.
 
 1. Under the workspace lock it reads the template's `AGENTS.md`. A missing or broken template gives 409 `template_missing` or `template_invalid`, as in §6.1.
-2. **Write now** when no process is running, and for Docker no container is running either (`containerRunning` moves here). It backs up the current `AGENTS.md` to `state/agents/<slug>/persona/<UTC stamp>/AGENTS.md`, then writes the new one through `SafeFs`, symlink-safe; this is the old `applyTargets` narrowed to one file. Response: `{ applied: "now", backupDir }`. A passive notice, "Your AGENTS.md was reset from template dev; the previous one is saved.", is added the same way as a `config_changed` one.
-3. **Otherwise** it stages the file at `state/agents/<slug>/persona-pending/AGENTS.md` (factory state). `prepare` applies it first (backup and SafeFs write), then removes it. It calls `requestRestart(id, { changes: ["persona reset from template"] })` and adds the same notice. Response: `{ applied: "on_restart" }`.
+2. **Write now** when no process is running, and for Docker no container is running either (`containerRunning` moves here). It backs up the current `AGENTS.md` to `state/agents/<slug>/persona/<UTC stamp>/AGENTS.md`, then writes the new one through `SafeFs`, symlink-safe; this is the old `applyTargets` narrowed to one file. Response: `{ applied: "now", backupDir }`. It adds the line "- AGENTS.md reset from template dev; the previous file is saved." to the pending `config_changed` notice (§7.3).
+3. **Otherwise** it stages the file at `state/agents/<slug>/persona-pending/AGENTS.md` (factory state). `prepare` applies it first (backup and SafeFs write), then removes it. It calls `requestRestart(id, { changes: ["persona reset from template"] })` and adds the same notice line. Response: `{ applied: "on_restart" }`.
 
 **UI.** AgentMenu gets "Reset persona…" for agents that aren't spawned, live or archived. It opens a `ConfirmDialog`:
 - title: "Reset persona?"
@@ -404,7 +416,7 @@ The outcome toasts, because the menu has closed: "Persona reset. Previous file s
 - **`GET /api/agents/:slug/config`** → `{ overlay, version, template: { name, doc: ConfigDoc | null, valid: boolean }, merged: ConfigDoc | null, issues: TemplateIssue[] }`. `doc` and `merged` are null while the template is invalid or missing. `merged` holds references only (§5.4).
 - **`PUT /api/agents/:slug/config { overlay, baseVersion }`.** For persistent agents only (409 `ephemeral_agent`); archived agents are allowed.
   - Parses `agentOverlaySchema`. Zod issues become `issues` with paths, and a 400.
-  - Writes with a conditional update: `UPDATE agents SET config = $new WHERE id = $id AND <version of config> = $baseVersion`. The version is computed in SQL over the canonical JSON, or by `SELECT … FOR NO KEY UPDATE` and a comparison in the same transaction. A miss is 409 `config_changed`, "Changed since you opened it."
+  - Writes in one transaction: `SELECT config … FOR NO KEY UPDATE`, compare its JS-computed version with `baseVersion`, then `UPDATE`. A Postgres `jsonb::text` doesn't sort keys the way the JS canonical form does, so the version is never computed in SQL. A miss is 409 `config_changed`, "Changed since you opened it."
   - If the template is valid, runs `validateEffective`; any error gives a 400 with `issues` and nothing is written. If the template is invalid or missing, it does schema-only validation and returns `checked: "schema"` (R5).
   - On success it runs §7.2 and returns the GET shape plus `changes: string[]`, `restart: boolean` and `checked: "full" | "schema"`.
 - **`GET /api/templates/:name/config`** → `{ doc: ConfigDoc | null, hashes: Record<"template.yaml" | "settings.json" | "mcp.json", string | null>, issues, agents: { live: number; archived: number; cantStart: number } }`.
@@ -499,8 +511,11 @@ The sections come in this order, each an `h2`, following I4's form rules (`field
 - **Leaving dirty.** Leaving the page with unsaved changes uses the template editor's `useBlocker` confirm.
 - **After a save.** "Saved." Or, when a restart is pending, "Saved. Restarts @ana when idle." With `checked: "schema"`: "Saved. Checked fully once dev is fixed."
 - **409, changed since opened.** The line reads "Changed since you opened it." with **Reload**. There is no Overwrite.
-  - Reload re-bases: it fetches the new version and re-applies the user's edits as leaf-path changes from the loaded base to the draft, over it.
-  - A path that was also changed remotely is a conflict: the user's value is kept, and the field's note reads "Also changed elsewhere." (or a marker in Raw).
+  - Reload re-bases: it fetches the new version and re-applies the user's edits, from the loaded base to the draft, over it.
+    - Objects and scalars re-apply as leaf-path changes.
+    - Union lists (skills, plugins, can_spawn, secrets, rules, notes) re-apply as **sets**: the items the user added are added, and the items the user removed are removed. Index paths are never used.
+    - MCP servers and env entries re-apply by name.
+  - A conflict is the same scalar path, the same named entry, or the same list item changed on both sides. The user's value is kept, and the field's note reads "Also changed elsewhere." (or a marker in Raw).
   - The re-based draft is still unsaved.
 - **Server issues** land on their fields (Configuration) or as markers (Raw).
 - **States.**
@@ -655,7 +670,7 @@ Rationale and alternatives are in the decision issue. Certainty is on a 1–5 sc
 | Q1 | The overlay is file-shaped: `{template, settings, mcp}` | 4 |
 | Q2 | Overridable keys: replace model, effort, warm window, max spawns; add skills, plugins, can_spawn, secrets. The rest are template-only, and unknown keys are errors | 4 |
 | Q3 | Recursive merge with array union everywhere; MCP servers replaced whole; env replace falls out of the object merge | 4 |
-| Q3b/S1 | `permissions.defaultMode` is an error in templates and overlays; `enabledPlugins` stays a warning (I5 writes it) | **3** |
+| Q3b/S1 | `permissions.defaultMode` is an error in templates and overlays; `enabledPlugins` stays a warning, owned by I5 | 4 |
 | Q4 | Grants are agent identity; `grants_overridden` dropped | 4 |
 | Q5 | Secrets in the overlay are names (unioned); values never reach files, UI or logs | 4 |
 | Q6 | Runtime fixed at creation; image and permission mode follow the template live | 4 |
@@ -678,7 +693,7 @@ Rationale and alternatives are in the decision issue. Certainty is on a 1–5 sc
 | R5 | Broken template: read-only form, editable Raw, schema-only save, no last-valid copy offered | 4 |
 | R6 | DESIGN.md exception for Configuration pages; a one-row footer, sticky only while dirty | 4 |
 | R7 | A 409 offers Reload, which re-bases the draft and marks conflicts; no Overwrite | **3** |
-| S2 | `extraKnownMarketplaces` is template-only; `validateEffective` takes a caller policy for I7 | 4 (pending proxy) |
+| S2 | `extraKnownMarketplaces` is template-only; overlay plugins only from template marketplaces; factory-owned env names rejected everywhere; `validateEffective` takes a caller policy, and I7 defines `agent` default-deny | 4 |
 | T1 | The running process's config is its started copy; restarts compare against it; the next start's image comes from the resolver | 4 |
 | T2 | MCP secret references stay `${NAME}` in `.mcp.json` | 4 |
 | T3 | MCP servers are edited inline on the page, not in a nested sheet | 4 |
@@ -687,6 +702,6 @@ Rationale and alternatives are in the decision issue. Certainty is on a 1–5 sc
 ## 19. Follow-ups (separate issues)
 
 - I5: Library pickers replace the skills and plugins inputs; the shared store replaces per-agent plugin installs; revisit `enabledPlugins` (S1).
-- I7: the `agent` caller policy for `validateEffective` (hooks, `apiKeyHelper`, env) and a waking self-restart notice (`requestRestart({ wake })`).
+- I7: the `agent` caller policy for `validateEffective`: deny rules add-only, and a default-deny key list (hooks, `apiKeyHelper`, `additionalDirectories`, `statusLine`-style commands; unknown keys refused until allowed). Also a waking self-restart notice (`requestRestart({ wake })`).
 - A form for template-only fields (runtime, image, permission mode, projects).
 - Reset `files/` per agent, if wanted.

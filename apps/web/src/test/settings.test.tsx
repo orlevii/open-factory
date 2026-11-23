@@ -181,6 +181,38 @@ test("add credential: an unverifiable check is a warning, not a bad token", asyn
   expect(key).toHaveValue("sk-ant");
 });
 
+test("Replace token: an unverifiable check warns under the token and announces a failure line", async () => {
+  world({
+    credentials: [cred({ name: "work" })],
+    extra: {
+      "PUT /api/credentials/work/value": () =>
+        json(
+          {
+            error: {
+              code: "credential_unverifiable",
+              message: "Couldn't reach Claude to verify. Try again.",
+            },
+          },
+          422,
+        ),
+    },
+  });
+  renderApp("/settings/credentials", alice);
+  const u = userEvent.setup();
+  const creds = await section("Credentials");
+  await waitFor(() => expect(row(creds, "work")).toBeDefined());
+  await u.click(within(row(creds, "work")).getByRole("button", { name: "Actions for work" }));
+  await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
+  const token = within(creds).getByLabelText("New token");
+  await u.type(token, "sk-new");
+  await u.click(within(creds).getByRole("button", { name: "Verify and save" }));
+  const line = await within(creds).findByText("Couldn't replace the token.");
+  expect(line.closest("[role=alert]")).not.toBeNull();
+  expect(describedText(token)).toContain("Couldn't reach Claude to verify. Try again.");
+  expect(token).not.toHaveAttribute("aria-invalid");
+  expect(token).toHaveValue("sk-new");
+});
+
 test("Replace token and Update value validate on blur of a changed field", async () => {
   world({
     credentials: [cred({ name: "work" })],

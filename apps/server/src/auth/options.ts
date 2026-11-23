@@ -1,10 +1,4 @@
-import {
-  EMAIL_MAX,
-  EMAIL_TOO_LONG_MESSAGE,
-  handleSchema,
-  NAME_TOO_LONG_MESSAGE,
-  USER_NAME_MAX,
-} from "@open-factory/shared";
+import { EMAIL_MAX, handleSchema, MSG, USER_NAME_MAX } from "@open-factory/shared";
 import { APIError, type BetterAuthOptions } from "better-auth";
 import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { bearer } from "better-auth/plugins";
@@ -34,10 +28,10 @@ export function inputLengthError(
   if (!body || typeof body !== "object") return null;
   const { name, email } = body as { name?: unknown; email?: unknown };
   if (typeof name === "string" && name.length > USER_NAME_MAX) {
-    return { code: "NAME_TOO_LONG", message: NAME_TOO_LONG_MESSAGE };
+    return { code: "NAME_TOO_LONG", message: MSG.userNameLength };
   }
   if (path === "/sign-up/email" && typeof email === "string" && email.length > EMAIL_MAX) {
-    return { code: "EMAIL_TOO_LONG", message: EMAIL_TOO_LONG_MESSAGE };
+    return { code: "EMAIL_TOO_LONG", message: MSG.emailLength };
   }
   return null;
 }
@@ -109,7 +103,7 @@ export function authOptions(p: AuthOptionParams) {
         if (await p.nameTaken(handle)) {
           throw new APIError("UNPROCESSABLE_ENTITY", {
             code: "HANDLE_TAKEN",
-            message: "That handle is already taken",
+            message: MSG.handleTaken,
           });
         }
       }),

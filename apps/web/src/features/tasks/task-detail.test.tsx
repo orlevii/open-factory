@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { TOASTER_LABEL } from "@/components/ui/toaster";
 import { readDraft, taskDraftKey } from "@/lib/drafts";
+import { FORM_MSG } from "@/lib/form-messages";
 import taskRouteSource from "@/routes/_app/tasks.$key.tsx?raw";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -491,6 +492,106 @@ test("dependencies editor: the resolved badges render below the editor", async (
   expect(list.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
+const t41 = {
+  key: "T-41",
+  title: "Add usage export",
+  status: "open",
+  assignee: null,
+  blockedBy: [],
+  createdBy: { kind: "user", handle: "or" },
+  updatedAt: at(9, 0),
+};
+const invalid = (fields: Record<string, string>) =>
+  json({ error: { code: "invalid", message: "Invalid.", fields } }, 400);
+
+test("dependencies editor: Cancel while the Save lookup is pending sends nothing", async () => {
+  const releases: (() => void)[] = [];
+  const api = world();
+  api.on("GET /api/tasks?", async (_b, url) => {
+    if (!url.includes("keys=")) return json({ tasks: [], nextCursor: null });
+    await new Promise<void>((r) => releases.push(r));
+    return json({ tasks: [t41], nextCursor: null });
+  });
+  api.on("PATCH /api/tasks/T-42", () => json({ task: detail() }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit dependencies" }));
+  await userEvent.type(screen.getByLabelText("Depends on"), "T-41");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(await screen.findByRole("button", { name: "Edit dependencies" })).toBeInTheDocument();
+  // The blur's lookup and Save's both answer after the editor is gone.
+  await act(async () => {
+    for (const r of releases) r();
+  });
+  await act(async () => {});
+  expect(patches(api)).toHaveLength(0);
+});
+
+test("dependencies editor: the server's cycle sentence lands in the Depends-on note and focuses it", async () => {
+  const cycle = "T-41 already depends on T-42; that would make a cycle.";
+  const api = world();
+  api.on("GET /api/tasks?", (_b, url) =>
+    json({ tasks: url.includes("keys=") ? [t41] : [], nextCursor: null }),
+  );
+  api.on("PATCH /api/tasks/T-42", () => invalid({ dependsOn: cycle }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit dependencies" }));
+  const deps = screen.getByLabelText("Depends on");
+  await userEvent.type(deps, "T-41");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(deps).toHaveAccessibleDescription(cycle));
+  expect(deps).toHaveAttribute("aria-invalid", "true");
+  expect(deps).toHaveFocus();
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+});
+
+test("dependencies editor: a failed lookup on Save says so in the outcome line and sends nothing", async () => {
+  const api = world();
+  api.on("GET /api/tasks?", (_b, url) =>
+    url.includes("keys=")
+      ? json({ error: { code: "internal", message: "Boom." } }, 500)
+      : json({ tasks: [], nextCursor: null }),
+  );
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit dependencies" }));
+  await userEvent.type(screen.getByLabelText("Depends on"), "T-41");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(FORM_MSG.saveFailed));
+  expect(patches(api)).toHaveLength(0);
+});
+
+test("links editor: a server links error with no rows takes the outcome line", async () => {
+  const api = world();
+  api.on("PATCH /api/tasks/T-42", () => invalid({ links: "Too many links." }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
+  const save = screen.getByRole("button", { name: "Save" });
+  await waitFor(() => expect(save).toBeEnabled());
+  await userEvent.click(save);
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Too many links."));
+});
+
+test("links editor: a server links error with rows lands in the first row's note", async () => {
+  const api = world(() =>
+    detail({
+      links: [
+        { kind: "file", target: "docs/plan.md" },
+        { kind: "file", target: "docs/spec.md" },
+      ],
+    }),
+  );
+  api.on("PATCH /api/tasks/T-42", () => invalid({ links: "Too many links." }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
+  const save = screen.getByRole("button", { name: "Save" });
+  await waitFor(() => expect(save).toBeEnabled());
+  await userEvent.click(save);
+  const first = screen.getByLabelText("Link 1 target");
+  await waitFor(() => expect(first).toHaveAccessibleDescription("Too many links."));
+  expect(screen.getByLabelText("Link 2 target")).not.toHaveAttribute("aria-invalid");
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+});
+
 test("links editor: a bad row's message sits in that row's note, under its target", async () => {
   const api = world(() => detail({ links: [{ kind: "file", target: "docs/plan.md" }] }));
   renderApp("/tasks/T-42", alice);
@@ -528,6 +629,21 @@ test("description editor: an over-long body on Save from Preview goes back to Wr
   expect(back).toHaveAccessibleDescription("Shorten this to 64 KB or less.");
   expect(frame).toHaveAttribute("data-invalid");
   expect(patches(api)).toHaveLength(0);
+});
+
+test("description editor: leaving an edited, invalid body for Cancel doesn't validate it; leaving it for Save does", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit description" }));
+  const area = screen.getByRole("textbox", { name: "Description" });
+  fireEvent.change(area, { target: { value: "x".repeat(70_000) } });
+  // A keyboard move: the blur's relatedTarget is Cancel, with no pointerdown to fall back on.
+  act(() => screen.getByRole("button", { name: "Cancel" }).focus());
+  expect(area).not.toHaveAttribute("aria-invalid");
+  act(() => area.focus());
+  act(() => screen.getByRole("button", { name: "Save" }).focus());
+  expect(area).toHaveAttribute("aria-invalid", "true");
+  expect(area).toHaveAccessibleDescription("Shorten this to 64 KB or less.");
 });
 
 test("an empty body says so and offers Add a description", async () => {

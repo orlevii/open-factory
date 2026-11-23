@@ -8,9 +8,6 @@ import {
   type AuthField,
   authErrorCode,
   FIRST_USER_MESSAGE,
-  INVITE_INVALID_MESSAGE,
-  INVITE_LOST_RACE_MESSAGE,
-  INVITE_MISSING_MESSAGE,
   mapAuthError,
   mapAuthFailure,
 } from "@/components/auth-error";
@@ -20,6 +17,7 @@ import { NO_OUTCOME, useOutcome } from "@/components/forms/form-outcome";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { signUpStateQueryOptions } from "@/features/auth/api";
 import { authClient } from "@/lib/auth-client";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
 
 export const Route = createFileRoute("/sign-up")({
@@ -56,7 +54,7 @@ function SignUpPage() {
           footer={<SignInLink />}
         >
           <p role="status" className="text-[0.8125rem] leading-[1.125rem]">
-            {state.data.invite === "invalid" ? INVITE_INVALID_MESSAGE : INVITE_MISSING_MESSAGE}
+            {state.data.invite === "invalid" ? FORM_MSG.inviteInvalid : FORM_MSG.inviteMissing}
           </p>
         </AuthCard>
       );
@@ -135,7 +133,7 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
       if (failure) {
         const m = mapAuthFailure(failure);
         if (bootstrap && "error" in failure && authErrorCode(failure.error) === "invite_required")
-          m.message = INVITE_LOST_RACE_MESSAGE;
+          m.message = FORM_MSG.inviteLostRace;
         if (!f.server(m.field ? { [m.field]: m.message } : undefined)) o.fail(m.message);
         return;
       }

@@ -30,9 +30,14 @@ export type ConfigFormProps = {
   onShowRaw?: (at: RawTarget) => void;
   /** The template's own `skills/` folders (from the template config API), listed read-only as "Template skill". */
   localSkills?: readonly string[];
+  /**
+   * An MCP server editor opened (true) or closed (false). Its edits reach the draft only on Done, so the page refuses
+   * Save while one is open, with `CONFIG_FORM_MSG.finishServer`. A form unmounted with an editor open reports false.
+   */
+  onEditorOpenChange?: (open: boolean) => void;
 };
 
-/** A field's own issue, and the notes on its items (a list index or an entry name), with their severity. */
+/** A field's own issue, and the notes on its items (the path under the field: a list index, or an entry name and below), with their severity. */
 type FieldIssues = { error?: string; warning?: string; items: Map<string, RowNote> };
 
 export type ConfigScope = {
@@ -47,6 +52,7 @@ export type ConfigScope = {
   conflicts: ReadonlySet<ConfigField>;
   fieldErrors: FieldErrors<ConfigField>;
   onShowRaw?: (at: RawTarget) => void;
+  onEditorOpenChange?: (open: boolean) => void;
 };
 
 const Scope = createContext<ConfigScope | null>(null);
@@ -95,6 +101,7 @@ export function ConfigFormScope({
   issues,
   conflicts,
   onShowRaw,
+  onEditorOpenChange,
   children,
 }: ConfigFormProps & { children: ReactNode }) {
   const root = useRef<HTMLDivElement>(null);
@@ -159,6 +166,7 @@ export function ConfigFormScope({
     conflicts: conflictFields,
     fieldErrors,
     onShowRaw,
+    onEditorOpenChange,
   };
   return (
     <Scope value={scope}>

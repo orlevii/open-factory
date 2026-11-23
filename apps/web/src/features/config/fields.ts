@@ -38,8 +38,10 @@ export const FIELD_PATHS: Readonly<Record<ConfigField, readonly string[]>> = {
 const BY_PATH = new Map(CONFIG_FIELDS.map((f) => [FIELD_PATHS[f].join("."), f] as const));
 
 /**
- * The field an issue path belongs to, and the item under it (a list index or an entry name). `settings.permissions.allow.3`
- * → allow, item "3"; `mcp.mcpServers.github.env.TOKEN` → mcp, item "github". Null for a path no field owns.
+ * The field an issue path belongs to, and the rest of the path under it (the item). `settings.permissions.allow.3` →
+ * allow, item "3"; `mcp.mcpServers.github.env.TOKEN` → mcp, item "github.env.TOKEN". The item is the whole rest
+ * because an entry name may contain dots (`ctx.io`): the field matches it against its own names. Null for a path no
+ * field owns.
  */
 export function fieldForPath(path: string): { field: ConfigField; item?: string } | null {
   const parts = path.split(".");
@@ -48,8 +50,7 @@ export function fieldForPath(path: string): { field: ConfigField; item?: string 
     if (parts.length < len) continue;
     const field = BY_PATH.get(parts.slice(0, len).join("."));
     if (!field) continue;
-    const item = parts[len];
-    return item === undefined ? { field } : { field, item };
+    return parts.length === len ? { field } : { field, item: parts.slice(len).join(".") };
   }
   return null;
 }

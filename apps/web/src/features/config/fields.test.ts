@@ -17,7 +17,11 @@ test("issue paths map to their field, with the item for a list row", () => {
   expect(fieldForPath("settings.env.GH_X")).toEqual({ field: "env", item: "GH_X" });
   expect(fieldForPath("template.secrets.1")).toEqual({ field: "envSecrets", item: "1" });
   expect(fieldForPath("template.can_spawn.0")).toEqual({ field: "canSpawn", item: "0" });
-  expect(fieldForPath("mcp.mcpServers.github.env.TOKEN")).toEqual({ field: "mcp", item: "github" });
+  expect(fieldForPath("mcp.mcpServers.github.env.TOKEN")).toEqual({
+    field: "mcp",
+    item: "github.env.TOKEN",
+  });
+  expect(fieldForPath("mcp.mcpServers.ctx.io.url")).toEqual({ field: "mcp", item: "ctx.io.url" });
 });
 
 test("a path no field owns maps to nothing", () => {

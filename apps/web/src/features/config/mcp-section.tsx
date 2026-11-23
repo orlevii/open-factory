@@ -1,6 +1,15 @@
 import { OVERLAY_LIMITS } from "@open-factory/shared";
 import { Pencil, Plus, X } from "lucide-react";
-import { memo, useCallback, useId, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import { FieldShell } from "@/components/field-shell";
 import { Button } from "@/components/ui/button";
@@ -18,6 +27,7 @@ import {
   toDraft,
 } from "./mcp-entry";
 import { CONFIG_COPY, CONFIG_FIELD_MSG } from "./messages";
+import { entryFor, placeNotes, withRest } from "./row-notes";
 import { useConfigScope, useFieldNote } from "./scope";
 import { Section, WrongType } from "./section";
 import { isRec, readAt, readList } from "./tolerant";
@@ -55,8 +65,28 @@ export function McpSection() {
 function McpField() {
   const s = useConfigScope();
   const note = useFieldNote("mcp");
-  const { update, fieldErrors, mode, readOnly } = s;
-  const [editing, setEditing] = useState<Editing>(null);
+  const { update, fieldErrors, mode, readOnly, onEditorOpenChange } = s;
+  const [editing, setEditingState] = useState<Editing>(null);
+  // The page refuses Save while an editor holds unapplied edits (review I2). It hears each open and close from the
+  // handlers that cause them, and a close when the form unmounts with an editor open (a tab switch drops the editor).
+  // The ref mirrors the state for handlers; the callback ref is the latest-callback pattern (updated after commit).
+  const editingNow = useRef<Editing>(null);
+  const notify = useRef(onEditorOpenChange);
+  useLayoutEffect(() => {
+    notify.current = onEditorOpenChange;
+  });
+  useEffect(
+    () => () => {
+      if (editingNow.current) notify.current?.(false);
+    },
+    [],
+  );
+  const setEditing = useCallback((next: Editing) => {
+    const was = editingNow.current !== null;
+    editingNow.current = next;
+    setEditingState(next);
+    if (was !== (next !== null)) notify.current?.(next !== null);
+  }, []);
   const seq = useRef(0);
   const groupId = useId();
   const ownListEl = useRef<HTMLUListElement>(null);
@@ -87,12 +117,24 @@ function McpField() {
   );
 
   const items = s.byField.get("mcp")?.items;
+  // Issue paths run below the server name (`gh.env.T`), and a name may hold dots (`ctx.io`): each goes to the longest
+  // server name it starts with, in either group. One with no row goes to the field's note (review I1).
+  const { rows: rowNotes, rest } = useMemo(() => {
+    const names = [...ownNames, ...(inheritedEntries ?? []).map(([n]) => n)].sort(
+      (a, b) => b.length - a.length,
+    );
+    return placeNotes(items, (k) => entryFor(k, names));
+  }, [items, ownNames, inheritedEntries]);
+  const shown = withRest(note, rest);
 
-  const open = useCallback((name: string | null) => {
-    seq.current += 1;
-    flushSync(() => setEditing({ name, seq: seq.current }));
-    document.getElementById("field-mcp-name")?.focus();
-  }, []);
+  const open = useCallback(
+    (name: string | null) => {
+      seq.current += 1;
+      flushSync(() => setEditing({ name, seq: seq.current }));
+      document.getElementById("field-mcp-name")?.focus();
+    },
+    [setEditing],
+  );
 
   const remove = useCallback(
     (name: string, index: number) => {
@@ -101,13 +143,13 @@ function McpField() {
           if (!isRec(prev)) return prev;
           return Object.fromEntries(Object.entries(prev).filter(([k]) => k !== name));
         });
-        setEditing((e) => (e?.name === name ? null : e));
+        if (editingNow.current?.name === name) setEditing(null);
       });
       const rows = ownListEl.current?.children;
       const row = rows?.[index] ?? rows?.[index - 1];
       (row?.querySelector<HTMLElement>("button[data-remove]") ?? addEl.current)?.focus();
     },
-    [update],
+    [update, setEditing],
   );
 
   // Override: the template's entry, copied whole into this agent's servers, then edited there.
@@ -116,7 +158,8 @@ function McpField() {
       const entry = inheritedEntries?.find(([n]) => n === name)?.[1];
       if (entry === undefined) return;
       update([...PATH, name], () => structuredClone(entry));
-      open(name);
+      // An entry the form can't edit is copied as it is; its row then reads "Edit this in Raw JSON." (review M2).
+      if (isFormShaped(entry)) open(name);
     },
     [inheritedEntries, update, open],
   );
@@ -193,7 +236,7 @@ function McpField() {
           <ServerRow
             view={v}
             index={i}
-            note={items?.get(v.name)}
+            note={rowNotes.get(v.name)}
             onEdit={readOnly || !v.editable ? undefined : open}
             onRemove={readOnly ? undefined : remove}
           />
@@ -204,7 +247,7 @@ function McpField() {
   );
 
   return (
-    <FieldShell name="mcp" label="MCP servers" legend error={note.error} warning={note.warning}>
+    <FieldShell name="mcp" label="MCP servers" legend error={shown.error} warning={shown.warning}>
       {() => (
         <div className="grid gap-2">
           {tplViews ? (
@@ -218,6 +261,7 @@ function McpField() {
                     <ServerRow
                       view={v}
                       overridden={ownNames.has(v.name)}
+                      note={ownNames.has(v.name) ? undefined : rowNotes.get(v.name)}
                       onOverride={readOnly ? undefined : override}
                     />
                   </li>

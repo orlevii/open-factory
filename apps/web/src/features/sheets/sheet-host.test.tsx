@@ -11,7 +11,15 @@ import { alice, renderApp } from "@/test/render-app";
 import { useSheetDraft } from "./drafts";
 import { SheetFormFooter } from "./form-footer";
 import { type BodyProps, sheetBodies } from "./sheet-bodies";
-import { closeSheet, openChildSheet, openSheet } from "./sheet-store";
+import {
+  closeSheet,
+  completeChild,
+  getSheetState,
+  openChildSheet,
+  openSheet,
+  openSheetForResult,
+  returnFocusAfterChild,
+} from "./sheet-store";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
@@ -82,6 +90,11 @@ beforeEach(() => {
     },
     prefetch: () => {},
     title: "New task",
+  };
+  sheetBodies["add-secret"] = {
+    load: async () => ({ default: StubChild as never }),
+    prefetch: () => {},
+    title: "Add secret",
   };
   sheetBodies["add-project"] = {
     load: async () => ({ default: StubChild as never }),
@@ -297,5 +310,31 @@ test("each open has its own opener: one started from the page body doesn't retur
     expect(document.activeElement).not.toBe(button);
   } finally {
     button.remove();
+  }
+});
+
+test("Add secret opened from a page returns focus to the field it filled, not to its opener", async () => {
+  await shell();
+  const opener = document.createElement("button");
+  opener.textContent = "Insert secret";
+  const value = document.createElement("input");
+  value.setAttribute("aria-label", "Value");
+  document.body.append(opener, value);
+  try {
+    opener.focus();
+    act(() =>
+      openSheetForResult({ kind: "add-secret", name: "" }, (name) => {
+        value.value = `\${${name}}`;
+        returnFocusAfterChild(() => value);
+      }),
+    );
+    await screen.findByRole("dialog", { name: "Add secret" });
+    act(() => completeChild(getSheetState().parent?.id ?? -1, "GH_TOKEN"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add secret" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(value));
+    expect(value.value).toBe(`\${GH_TOKEN}`);
+  } finally {
+    opener.remove();
+    value.remove();
   }
 });

@@ -42,6 +42,7 @@ function Form({
   onValue,
   issues = [],
   localSkills,
+  onEditorOpenChange,
 }: {
   start: unknown;
   base?: ConfigDoc | null;
@@ -49,6 +50,7 @@ function Form({
   onValue?: (v: unknown) => void;
   issues?: TemplateIssue[];
   localSkills?: string[];
+  onEditorOpenChange?: (open: boolean) => void;
 }) {
   const [value, setValue] = useState<unknown>(start);
   return (
@@ -60,6 +62,7 @@ function Form({
         templateName="dev"
         issues={issues}
         localSkills={localSkills}
+        onEditorOpenChange={onEditorOpenChange}
         onChange={(u) =>
           setValue((p: unknown) => {
             const n = u(p);
@@ -418,4 +421,103 @@ test("template mode: one group per list and no Override", () => {
   expect(screen.queryByText(/From template/)).toBeNull();
   expect(screen.getByRole("button", { name: "Edit gh" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /^Override/ })).toBeNull();
+});
+
+const mcpIssue = (path: string, message: string, severity: "error" | "warning" = "error") => ({
+  severity,
+  file: "mcp.json" as const,
+  message,
+  path,
+});
+
+test("an issue on a dotted server name lands under that server's row", () => {
+  render(
+    <Form
+      start={{ mcp: { mcpServers: { ctx: { command: "a" }, "ctx.io": { url: "https://x.dev" } } } }}
+      issues={[mcpIssue("mcp.mcpServers.ctx.io.headers.A", "Bad header.")]}
+    />,
+  );
+  const rows = within(screen.getByRole("group", { name: "MCP servers" })).getAllByRole("listitem");
+  expect(rows[1]).toHaveTextContent("Bad header.");
+  expect(rows[0]).not.toHaveTextContent("Bad header.");
+  expect(document.getElementById("field-mcp-error")).not.toHaveTextContent("Bad header.");
+});
+
+test("an issue on a template server lands on its row; one on an unknown server falls to the field's note", () => {
+  render(
+    <Form
+      start={{}}
+      base={withServers({ remote: { type: "http", url: "https://x.dev" } })}
+      issues={[
+        mcpIssue("mcp.mcpServers.remote.headers.A", "Template row issue.", "warning"),
+        mcpIssue("mcp.mcpServers.ghost.env.T", "Unknown server issue."),
+      ]}
+    />,
+  );
+  const tpl = screen.getByRole("list", { name: "From template dev · 1" });
+  expect(within(tpl).getByText("Template row issue.").closest("p")).toHaveClass("text-foreground");
+  const fieldNote = document.getElementById("field-mcp-error");
+  expect(fieldNote).toHaveTextContent("Unknown server issue.");
+  expect(fieldNote).toHaveAttribute("data-tone", "error");
+  expect(screen.queryByRole("region", { name: "Issues the form can't show" })).toBeNull();
+});
+
+test("an env issue on a name with no row, and a list issue past the list, fall to the field's note with their severity", () => {
+  render(
+    <Form
+      start={{ settings: { permissions: { allow: ["a"] } } }}
+      issues={[
+        {
+          severity: "warning",
+          file: "settings.json",
+          message: "Gone env.",
+          path: "settings.env.OLD",
+        },
+        {
+          severity: "error",
+          file: "settings.json",
+          message: "Gone rule.",
+          path: "settings.permissions.allow.4",
+        },
+      ]}
+    />,
+  );
+  expect(document.getElementById("field-env-error")).toHaveTextContent("Gone env.");
+  expect(document.getElementById("field-env-error")).toHaveAttribute("data-tone", "warning");
+  expect(document.getElementById("field-allow-error")).toHaveTextContent("Gone rule.");
+});
+
+test("the form reports an open MCP editor: on open, Done, Cancel, removing it, and unmount", async () => {
+  const changes = vi.fn();
+  const { unmount } = render(
+    <Form
+      start={{ mcp: { mcpServers: { gh: { command: "npx" } } } }}
+      onEditorOpenChange={changes}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.addServer }));
+  expect(changes.mock.calls).toEqual([[true]]);
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(changes.mock.calls).toEqual([[true], [false]]);
+  await userEvent.click(screen.getByRole("button", { name: "Edit gh" }));
+  await userEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(changes.mock.calls).toEqual([[true], [false], [true], [false]]);
+  await userEvent.click(screen.getByRole("button", { name: "Edit gh" }));
+  await userEvent.click(screen.getByRole("button", { name: "Remove gh" }));
+  expect(changes.mock.calls.at(-1)).toEqual([false]);
+  await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.addServer }));
+  changes.mockClear();
+  unmount();
+  expect(changes.mock.calls).toEqual([[false]]);
+});
+
+test("Override of an entry the form can't edit copies it and leaves the Raw JSON row", async () => {
+  const onValue = vi.fn();
+  const odd = { command: "npx", env: { T: 1 } };
+  render(<Form start={{}} base={withServers({ odd })} onValue={onValue} />);
+  await userEvent.click(screen.getByRole("button", { name: "Override odd" }));
+  expect(last(onValue)).toEqual({ mcp: { mcpServers: { odd } } });
+  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Edit odd" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Remove odd" })).toBeInTheDocument();
 });

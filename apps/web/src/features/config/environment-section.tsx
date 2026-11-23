@@ -16,6 +16,7 @@ import { FIELD_PATHS } from "./fields";
 import { ListField } from "./list-field";
 import { CONFIG_COPY, CONFIG_FIELD_MSG } from "./messages";
 import { PickAdd, pickEmpty } from "./pick-add";
+import { entryFor, placeNotes, withRest } from "./row-notes";
 import { useConfigScope, useFieldNote } from "./scope";
 import { Section, WrongType } from "./section";
 import { isRec, readAt, readList } from "./tolerant";
@@ -79,14 +80,18 @@ function EnvField() {
   );
   const ownNames = useMemo(() => new Set(ownEntries.map(([n]) => n)), [ownEntries]);
   const items = s.byField.get("env")?.items;
-  const notes = useMemo(() => {
-    const m = new Map<string, RowNote>();
+  // A server issue goes to the row of its name in either group (the longest name it starts with); one with no row goes
+  // to the field's note (review I1). A client rule on an own row's name wins over a server note there.
+  const { notes, rest } = useMemo(() => {
+    const names = [...ownNames, ...(tplNames ?? [])].sort((a, b) => b.length - a.length);
+    const placed = placeNotes(items, (k) => entryFor(k, names));
     for (const [n] of ownEntries) {
-      const note = rowNote(n, items?.get(n));
-      if (note) m.set(n, note);
+      const own = envNameError(n);
+      if (own) placed.rows.set(n, { message: own, severity: "error" });
     }
-    return m;
-  }, [ownEntries, items]);
+    return { notes: placed.rows, rest: placed.rest };
+  }, [ownEntries, ownNames, tplNames, items]);
+  const shown = withRest(note, rest);
 
   const setOne = useCallback((n: string, v: string) => update([...ENV, n], () => v), [update]);
   const remove = useCallback(
@@ -145,8 +150,8 @@ function EnvField() {
       label="Plain variables"
       legend
       help={CONFIG_COPY.envHelp}
-      error={note.error}
-      warning={note.warning}
+      error={shown.error}
+      warning={shown.warning}
     >
       {({ id, describedBy, invalid }) => (
         <div className="grid gap-2">
@@ -157,19 +162,12 @@ function EnvField() {
               </p>
               <ul aria-labelledby={`${groupId}-tpl`} className="grid">
                 {tplNames.map((n) => (
-                  <li
+                  <TemplateEnvRow
                     key={n}
-                    className="flex min-h-8 items-start gap-2 px-2 pointer-coarse:min-h-10"
-                  >
-                    <span className="min-w-0 flex-1 py-1.5 font-mono text-[0.8125rem] [overflow-wrap:anywhere]">
-                      {n}
-                    </span>
-                    {ownNames.has(n) ? (
-                      <span className="shrink-0 py-1.5 text-[0.8125rem] text-muted-foreground">
-                        {CONFIG_COPY.overridden}
-                      </span>
-                    ) : null}
-                  </li>
+                    name={n}
+                    overridden={ownNames.has(n)}
+                    note={ownNames.has(n) ? undefined : notes.get(n)}
+                  />
                 ))}
               </ul>
             </div>
@@ -224,10 +222,47 @@ function EnvField() {
   );
 }
 
-/** A row's note: the client rule first (it is about the name as it is now), then a server issue on that name. */
-function rowNote(name: string, server: RowNote | undefined): RowNote | undefined {
-  const own = envNameError(name);
-  return own ? { message: own, severity: "error" } : server;
+/** A template variable: its name only, never its value. */
+const TemplateEnvRow = memo(function TemplateEnvRow({
+  name,
+  overridden,
+  note,
+}: {
+  name: string;
+  overridden: boolean;
+  note?: RowNote;
+}) {
+  return (
+    <li className="grid px-2">
+      <div className="flex min-h-8 items-start gap-2 pointer-coarse:min-h-10">
+        <span className="min-w-0 flex-1 py-1.5 font-mono text-[0.8125rem] [overflow-wrap:anywhere]">
+          {name}
+        </span>
+        {overridden ? (
+          <span className="shrink-0 py-1.5 text-[0.8125rem] text-muted-foreground">
+            {CONFIG_COPY.overridden}
+          </span>
+        ) : null}
+      </div>
+      {note ? <ItemNote note={note} /> : null}
+    </li>
+  );
+});
+
+function ItemNote({ note, id, className }: { note: RowNote; id?: string; className?: string }) {
+  return (
+    <p
+      id={id}
+      className={cn(
+        "flex items-start gap-1.5 pb-1 text-[0.8125rem]",
+        note.severity === "error" ? "text-destructive" : "text-foreground",
+        className,
+      )}
+    >
+      <IssueIcon severity={note.severity} />
+      <span className="min-w-0 [overflow-wrap:anywhere]">{note.message}</span>
+    </p>
+  );
 }
 
 const EnvRow = memo(function EnvRow({
@@ -283,18 +318,7 @@ const EnvRow = memo(function EnvRow({
           <X aria-hidden="true" />
         </Button>
       )}
-      {note ? (
-        <p
-          id={noteId}
-          className={cn(
-            "flex items-start gap-1.5 text-[0.8125rem] md:col-span-3",
-            note.severity === "error" ? "text-destructive" : "text-foreground",
-          )}
-        >
-          <IssueIcon severity={note.severity} />
-          <span className="min-w-0 [overflow-wrap:anywhere]">{note.message}</span>
-        </p>
-      ) : null}
+      {note ? <ItemNote id={noteId} note={note} className="pb-0 md:col-span-3" /> : null}
     </li>
   );
 });

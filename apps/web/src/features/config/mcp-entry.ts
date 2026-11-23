@@ -21,13 +21,15 @@ export type ServerDraft = {
   headers: Pair[];
   /** The entry's other keys (`timeout`, `type: "stdio"`, …), kept on save. */
   rest: Record<string, unknown>;
-  /** The URL transport the entry had (`sse` stays `sse`). */
-  urlType: "http" | "sse";
+  /** The URL transport the entry had: any string `type` but `stdio` is kept as it is (`sse`, a newer one, a typo). */
+  urlType: string;
 };
 
 const OWNED = new Set(["command", "args", "env", "url", "headers", "type"]);
 /** A command shown in a row: a bare program name (`npx`, `uvx`, `docker`). Anything else reads "Command". */
-const PROGRAM = /^[A-Za-z0-9._+-]{1,40}$/;
+const PROGRAM = /^[A-Za-z0-9._+-]{1,32}$/;
+/** Token prefixes a bare "program" must not start with: a token pasted as the command is never shown (review M1). */
+const TOKEN_PREFIX = /^(?:sk-|ghp_|gho_|github_pat_|xox)/i;
 const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
 const HTTP_URL = /^https?:\/\/\S+$/i;
 /** A host a row may show: DNS labels or an IP. A `${VAR}` host (percent-encoded by URL) is not shown. */
@@ -69,7 +71,7 @@ export function serverSummary(entry: Record<string, unknown>): string {
   }
   const command = typeof entry.command === "string" ? entry.command : "";
   const base = command.split(/[\\/]/).pop() ?? "";
-  const program = PROGRAM.test(base) ? base : CONFIG_COPY.kindCommand;
+  const program = PROGRAM.test(base) && !TOKEN_PREFIX.test(base) ? base : CONFIG_COPY.kindCommand;
   const n = Array.isArray(entry.args) ? entry.args.length : 0;
   return n === 0 ? program : `${program} · ${n} ${n === 1 ? "arg" : "args"}`;
 }
@@ -95,7 +97,7 @@ export function toDraft(name: string, entry: Record<string, unknown> | undefined
     url: typeof e.url === "string" ? e.url : "",
     headers: pairs(e.headers),
     rest,
-    urlType: e.type === "sse" ? "sse" : "http",
+    urlType: typeof e.type === "string" && e.type !== "stdio" ? e.type : "http",
   };
 }
 

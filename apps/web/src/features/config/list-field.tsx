@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useMemo } from "react";
 import { type AddSlot, ConfigList, type RowNote } from "./config-list";
 import { type ConfigField, FIELD_PATHS } from "./fields";
+import { placeNotes, withRest } from "./row-notes";
 import { useConfigScope, useFieldNote } from "./scope";
 import { WrongType } from "./section";
 import { readAt, readList } from "./tolerant";
@@ -64,17 +65,21 @@ export function ListField({
   const own = readList(readAt(s.value, path));
   const ownItems = own.ok ? own.items : null;
   const items = s.byField.get(field)?.items;
-  const rowNotes = useMemo(() => {
-    const m = new Map<number, RowNote>();
-    if (items) for (const [k, note] of items) if (INDEX.test(k)) m.set(Number(k), note);
+  const { rowNotes, rest } = useMemo(() => {
+    // A note on an index with no row (past the list, or a deeper path) falls back to the field's note.
+    const count = ownItems?.length ?? 0;
+    const { rows: m, rest } = placeNotes(items, (k) =>
+      INDEX.test(k) && Number(k) < count ? Number(k) : undefined,
+    );
     // A client rule's error wins over a server note on the same row: it is about the value as it is now.
     if (rowCheck && ownItems)
       ownItems.forEach((v, i) => {
         const message = rowCheck(v);
         if (message) m.set(i, { message, severity: "error" });
       });
-    return m.size === 0 ? NO_ROWS : m;
+    return { rowNotes: m.size === 0 ? NO_ROWS : m, rest };
   }, [items, rowCheck, ownItems]);
+  const shown = withRest(note, rest);
 
   if (!own.ok) return <WrongType field={field} label={label} />;
   // A broken template has no base: its rows can't be shown, so there is no template group.
@@ -94,8 +99,8 @@ export function ListField({
       inherited={inherited}
       inheritedLabel={s.inheritedLabel}
       readOnly={s.readOnly}
-      error={note.error}
-      warning={note.warning}
+      error={shown.error}
+      warning={shown.warning}
       rowNotes={rowNotes}
       onAdd={onAdd}
       onRemove={onRemove}

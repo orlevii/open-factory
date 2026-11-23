@@ -22,6 +22,12 @@ export const CONFIG_FIELD_MSG = {
   headerName: "Use a valid header name.",
 } as const;
 
+/** Form-level messages the page shows (I4 rules: at most 40 characters). */
+export const CONFIG_FORM_MSG = {
+  /** Save while an MCP server editor is open (`onEditorOpenChange(true)`): its edits aren't in the draft yet. */
+  finishServer: "Finish editing the server first.",
+} as const;
+
 /** Labels and lines the spec fixes verbatim. Not field messages, so not bound by the 40-character rule. */
 export const CONFIG_COPY = {
   inheritAgent: "Inherit from template",

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { CONFIG_COPY, CONFIG_FIELD_MSG, secretAddedNote } from "./messages";
+import { CONFIG_COPY, CONFIG_FIELD_MSG, CONFIG_FORM_MSG, secretAddedNote } from "./messages";
 
 test("every configuration field message is at most 40 characters", () => {
   for (const [k, m] of Object.entries(CONFIG_FIELD_MSG))
@@ -24,4 +24,9 @@ test("the sections' copy, verbatim", () => {
     "Facts that help auto mode decide, like 'deploys go through CI'.",
   );
   expect(secretAddedNote("GH_TOKEN", "agent")).toBe("Adds GH_TOKEN to this agent's secrets.");
+});
+
+test("every configuration form message is at most 40 characters", () => {
+  for (const [k, m] of Object.entries(CONFIG_FORM_MSG)) expect(m.length, k).toBeLessThanOrEqual(40);
+  expect(CONFIG_FORM_MSG.finishServer).toBe("Finish editing the server first.");
 });

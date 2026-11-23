@@ -78,3 +78,25 @@ test("an entry with wrongly typed parts isn't form-shaped", () => {
   expect(isFormShaped("npx")).toBe(false);
   expect(isFormShaped({ command: "npx", args: ["a"] })).toBe(true);
 });
+
+test("a token pasted as a bare command never shows, by prefix or by length", () => {
+  for (const command of [
+    "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+    "gho_short",
+    "sk-ant-x",
+    "github_pat_11ABC",
+    "xoxb-123",
+    "a".repeat(33),
+  ])
+    expect(serverSummary({ command }), command).toBe("Command");
+  expect(serverSummary({ command: "a".repeat(32) })).toBe("a".repeat(32));
+});
+
+test("a URL entry keeps its own transport type on save, except stdio", () => {
+  const d = toDraft("x", { type: "streamable-http", url: "https://x.dev" });
+  expect(fromDraft(d)).toEqual({ type: "streamable-http", url: "https://x.dev" });
+  const sse = toDraft("x", { type: "sse", url: "https://x.dev" });
+  expect(fromDraft(sse).type).toBe("sse");
+  const was = toDraft("x", { type: "stdio", command: "npx" });
+  expect(fromDraft({ ...was, kind: "url", url: "https://x.dev" }).type).toBe("http");
+});

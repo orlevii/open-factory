@@ -67,6 +67,7 @@ import {
 } from "@/features/sheets/sheet-store";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 import { isMobileNow } from "@/hooks/use-mobile";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 
 type Spec = { kind: "new-agent"; template?: string };
 
@@ -212,7 +213,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     reason = "No Claude credential yet.";
     reasonKey = "no-credential";
   } else if (several && shown.credential === "") {
-    reason = "Choose a credential.";
+    reason = FORM_MSG.chooseCredential;
     reasonKey = "choose-credential";
   } else if (missingSecrets.length === 1) {
     reason = (

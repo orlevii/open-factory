@@ -1,4 +1,4 @@
-import type { LinkInput } from "@open-factory/shared";
+import { type LinkInput, MSG } from "@open-factory/shared";
 import { Plus, X } from "lucide-react";
 import { type FocusEvent, useRef } from "react";
 import { FieldNote, noteDescribedBy } from "@/components/field-note";
@@ -49,9 +49,9 @@ export function checkLink(
   const target = row.target.trim();
   if (!target) return undefined;
   if (row.kind === "url" || row.kind === "pr")
-    return isHttp(target) && target.length <= 2000 ? undefined : "Links must be http(s) URLs.";
+    return isHttp(target) && target.length <= 2000 ? undefined : MSG.linkUrl;
   if (row.kind === "file")
-    return /[\r\n]/.test(target) || target.length > 500 ? "Keep the path on one line." : undefined;
+    return /[\r\n]/.test(target) || target.length > 500 ? MSG.pathOneLine : undefined;
   const slug = target.replace(/^@/, "");
   return knownSlugs && !knownSlugs.has(slug) ? FORM_MSG.noSuchAgent : undefined;
 }

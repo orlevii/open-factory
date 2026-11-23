@@ -84,7 +84,9 @@ test("a proxy's 502 with no error code also counts as unreachable", async () => 
   });
   renderApp("/sign-in", null);
   await signIn("alice@example.com", "password123");
-  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't reach the server. Try again.");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn't reach the server. Try again.",
+  );
 });
 
 test("the button shows the pending label while the request runs", async () => {

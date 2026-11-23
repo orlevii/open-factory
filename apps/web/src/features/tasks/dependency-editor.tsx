@@ -1,4 +1,4 @@
-import { parseTaskKey, type TaskSummary } from "@open-factory/shared";
+import { MSG, parseTaskKey, type TaskSummary } from "@open-factory/shared";
 import type { FocusEvent } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
@@ -26,11 +26,9 @@ export async function checkDependencies(
   selfKey?: string,
 ): Promise<{ keys: string[]; resolved: TaskSummary[]; error?: string }> {
   const { keys, bad } = parseKeys(text);
-  if (bad !== undefined) return { keys, resolved: [], error: "Use task keys, like T-41." };
-  if (keys.length > 50)
-    return { keys, resolved: [], error: "A task can depend on at most 50 tasks." };
-  if (selfKey && keys.includes(selfKey))
-    return { keys, resolved: [], error: "A task can't depend on itself." };
+  if (bad !== undefined) return { keys, resolved: [], error: FORM_MSG.taskKeys };
+  if (keys.length > 50) return { keys, resolved: [], error: MSG.dependsMax };
+  if (selfKey && keys.includes(selfKey)) return { keys, resolved: [], error: FORM_MSG.dependsSelf };
   if (!keys.length) return { keys, resolved: [] };
   const found = await lookupTasks(keys);
   const missing = keys.find((k) => !found.some((t) => t.key === k));

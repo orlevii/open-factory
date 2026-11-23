@@ -285,29 +285,29 @@ export function useAgentFormState({
     switch (f) {
       case "template": {
         if (!create) return undefined;
-        if (v.template === "") return "Choose a template.";
+        if (v.template === "") return FORM_MSG.chooseTemplate;
         const t = templates.data?.templates.find((x) => x.name === v.template);
         // A name that isn't listed (a stale ?template=) shows as unchosen, so it is.
-        if (templates.data && !t) return "Choose a template.";
+        if (templates.data && !t) return FORM_MSG.chooseTemplate;
         if (t && t.errors > 0) return FORM_MSG.templateErrors;
         return undefined;
       }
       case "slug": {
         if (!create) return undefined;
-        if (v.slug === "") return "Enter a slug.";
+        if (v.slug === "") return FORM_MSG.enterSlug;
         const r = slugSchema.safeParse(v.slug);
         return r.success ? undefined : r.error.issues[0]?.message;
       }
       case "displayName": {
         if (createAgentBodySchema.shape.displayName.safeParse(v.displayName).success) return;
-        return v.displayName.trim() === "" ? "Enter a display name." : FORM_MSG.displayNameLength;
+        return v.displayName.trim() === "" ? FORM_MSG.enterDisplayName : FORM_MSG.displayNameLength;
       }
       case "description":
         return createAgentBodySchema.shape.description.safeParse(v.description).success
           ? undefined
           : FORM_MSG.descriptionLength;
       case "credential":
-        return v.credential === "" ? "Choose a credential." : undefined;
+        return v.credential === "" ? FORM_MSG.chooseCredential : undefined;
       default:
         return undefined;
     }

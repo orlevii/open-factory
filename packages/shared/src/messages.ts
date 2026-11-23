@@ -25,4 +25,13 @@ export const MSG = {
   emailLength: "Use 254 characters or fewer.",
   handleTaken: "That handle is already taken.",
   emailTaken: "That email already has an account.",
+  titleRequired: "Enter a title.",
+  titleOneLine: "Keep the title on one line.",
+  commentRequired: "Write a comment first.",
+  linkUrl: "Links must be http(s) URLs.",
+  oneLine: "Keep it on one line.",
+  pathOneLine: "Keep the path on one line.",
+  dependsMax: "A task can depend on at most 50 tasks.",
+  linksMax: "A task can have at most 50 links.",
+  messageEmpty: "The message can't be empty.",
 } as const;

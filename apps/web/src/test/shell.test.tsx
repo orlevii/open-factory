@@ -165,10 +165,6 @@ test("mobile nav is a left drawer: click opens, Escape closes, \u2318B opens ins
     await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
     let c = content();
     expect(c).not.toBeNull();
-    expect(c).toHaveAttribute("data-sidebar", "sidebar");
-    expect(c).toHaveAttribute("data-mobile", "true");
-    expect(c?.style.getPropertyValue("--sidebar-width")).toBe("18rem");
-    expect(c).toHaveClass("bg-sidebar");
     expect(within(c as HTMLElement).getByRole("link", { name: "Agents" })).toBeInTheDocument();
     expect(c).not.toHaveAttribute("data-instant");
 

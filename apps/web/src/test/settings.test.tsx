@@ -216,36 +216,42 @@ test("Replace token: an unverifiable check warns under the token and announces a
   expect(token).toHaveValue("sk-new");
 });
 
-test("Replace token and Update value validate on blur of a changed field", async () => {
+test.each([
+  [
+    "Replace token",
+    "/settings/credentials",
+    "Credentials",
+    async (u: ReturnType<typeof userEvent.setup>, region: HTMLElement) => {
+      await waitFor(() => expect(row(region, "work")).toBeDefined());
+      await u.click(within(row(region, "work")).getByRole("button", { name: "Actions for work" }));
+      await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
+      return within(region).getByLabelText("New token");
+    },
+    "Enter the token.",
+  ],
+  [
+    "Update value",
+    "/settings/secrets",
+    "Secrets",
+    async (u: ReturnType<typeof userEvent.setup>, region: HTMLElement) => {
+      await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
+      await u.click(within(row(region, "GH_TOKEN")).getByRole("button", { name: "Update" }));
+      return within(region).getByLabelText("New value");
+    },
+    "Enter a value.",
+  ],
+])("%s validates on blur of a changed field", async (_name, path, title, open, message) => {
   world({
     credentials: [cred({ name: "work" })],
     secrets: [secret({ name: "GH_TOKEN" })],
   });
-  renderApp("/settings/credentials", alice);
+  renderApp(path, alice);
   const u = userEvent.setup();
-  const creds = await section("Credentials");
-  await waitFor(() => expect(row(creds, "work")).toBeDefined());
-  await u.click(within(row(creds, "work")).getByRole("button", { name: "Actions for work" }));
-  await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
-  const token = within(creds).getByLabelText("New token");
-  await u.type(token, "a");
-  await u.clear(token);
+  const field = await open(u, await section(title));
+  await u.type(field, "a");
+  await u.clear(field);
   await u.tab();
-  expect(describedText(token)).toBe("Enter the token.");
-});
-
-test("Update value validates on blur of a changed field", async () => {
-  world({ secrets: [secret({ name: "GH_TOKEN" })] });
-  renderApp("/settings/secrets", alice);
-  const u = userEvent.setup();
-  const region = await section("Secrets");
-  await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
-  await u.click(within(row(region, "GH_TOKEN")).getByRole("button", { name: "Update" }));
-  const value = within(region).getByLabelText("New value");
-  await u.type(value, "a");
-  await u.clear(value);
-  await u.tab();
-  expect(describedText(value)).toBe("Enter a value.");
+  expect(describedText(field)).toBe(message);
 });
 
 test("credential row: Verify visible, Replace token and Delete… in the menu; used ones can't be deleted", async () => {
@@ -1076,26 +1082,16 @@ test("sub-nav lists the five pages; the current one is aria-current with the sel
   );
 });
 
-test("below a 40rem content width the sub-nav is a Section select", async () => {
+test("the Section select shows the current page, and picking another navigates", async () => {
   world();
-  renderApp("/settings/secrets", alice);
-  const nav = await screen.findByRole("navigation", { name: "Settings" });
-  // jsdom has no layout: the container query is checked through its classes (browser pass for the real width).
-  expect(nav.className).toMatch(/hidden/);
-  expect(nav.className).toMatch(/@min-\[53\.75rem\]:block/);
-  const select = screen.getByRole("combobox", { name: "Section" });
-  expect(select.closest("div")?.className).toMatch(/@min-\[53\.75rem\]:hidden/);
+  const { router } = renderApp("/settings/secrets", alice);
+  // jsdom has no layout: which of the nav and the select shows at a width is the browser pass's.
+  const select = await screen.findByRole("combobox", { name: "Section" });
   expect(select).toHaveTextContent("Secrets");
   await userEvent.click(select);
   await userEvent.click(await screen.findByRole("option", { name: "Projects" }));
   expect(await section("Projects")).toBeInTheDocument();
-});
-
-test("/settings/secrets?addSecret=GH_TOKEN opens the add form with the name", async () => {
-  world();
-  renderApp("/settings/secrets?addSecret=GH_TOKEN", alice);
-  const region = await section("Secrets");
-  expect(within(region).getByLabelText("Name")).toHaveValue("GH_TOKEN");
+  expect(router.state.location.pathname).toBe("/settings/projects");
 });
 
 test.each([

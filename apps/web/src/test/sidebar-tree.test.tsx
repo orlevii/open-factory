@@ -238,7 +238,7 @@ test("APG keys: one tab stop, ↓/↑, →/← open/close and move, Home/End, En
   await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a/chat"));
 });
 
-test("an agent_status frame re-renders C's row only (B expanded) / B's row only (B collapsed)", async () => {
+test("with B expanded, an agent_status frame re-renders C's row only", async () => {
   localStorage.setItem("of-tree-expanded", JSON.stringify({ b: true }));
   const { qc } = setup();
   await screen.findByRole("tree");

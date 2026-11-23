@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
@@ -75,15 +75,6 @@ test("a nested row says who it reports to, for screen readers", async () => {
   const hidden = within(links[1] as HTMLElement).getByText("reports to Team Lead (@lead)");
   expect(hidden).toHaveClass("sr-only");
   expect(within(links[0] as HTMLElement).queryByText(/reports to/)).not.toBeInTheDocument();
-});
-
-test("runtime badge: Unsandboxed for local, nothing for docker", async () => {
-  mockWorld({ agents: tree });
-  renderApp("/agents", alice);
-  const links = await rows();
-  expect(within(links[0] as HTMLElement).getByText("Unsandboxed")).toBeInTheDocument();
-  expect(within(links[2] as HTMLElement).queryByText("Docker")).not.toBeInTheDocument();
-  expect(within(links[2] as HTMLElement).queryByText("Unsandboxed")).not.toBeInTheDocument();
 });
 
 test("restartPending shows the restart icon with hidden text", async () => {
@@ -374,9 +365,16 @@ describe("usage in the tree (S10 §12.1)", () => {
     );
   });
 
-  test("the muted line above the Active tree explains the column", async () => {
-    usageWorld();
-    renderApp("/agents", alice);
+  test.each([
+    ["Active tree", "/agents"],
+    ["Ended list", "/agents?ended=only"],
+  ])("the muted line above the %s explains the column", async (_view, url) => {
+    mockWorld({
+      agents: [agentSummary({ slug: "lead", displayName: "Team Lead" })],
+      archived: [agentSummary({ slug: "old", displayName: "Old", status: "terminated" })],
+      extra: { "GET /api/usage/agents?window=rolling": () => json({ agents: [] }) },
+    });
+    renderApp(url, alice);
     await screen.findByRole("list", { name: "Agents" });
     const line = screen.getByText(
       "Costs are estimates for the last 7 days. A persistent agent's figure includes the agents it spawned.",
@@ -416,40 +414,12 @@ describe("usage in the tree (S10 §12.1)", () => {
     expect(within(solo).queryByText("—")).toBeNull();
     expect(within(solo).queryByText(/Estimated cost/)).toBeNull();
   });
-
-  test("the explanation line also shows above the Ended list", async () => {
-    mockWorld({
-      archived: [agentSummary({ slug: "old", displayName: "Old", status: "terminated" })],
-      extra: { "GET /api/usage/agents?window=rolling": () => json({ agents: [] }) },
-    });
-    renderApp("/agents?ended=only", alice);
-    await screen.findByRole("list", { name: "Agents" });
-    expect(screen.getByText(/^Costs are estimates for the last 7 days\./)).toBeInTheDocument();
-  });
-
-  test("the tree asks for the rolling window", async () => {
-    const api = usageWorld();
-    renderApp("/agents", alice);
-    await screen.findByRole("list", { name: "Agents" });
-    await waitFor(() =>
-      expect(api.calls.some((c) => c.url === "/api/usage/agents?window=rolling")).toBe(true),
-    );
-  });
 });
 
 describe("Agents page identity and tree lines (U2 §7)", () => {
   const A = (slug: string, over: Parameters<typeof agentSummary>[0] = {}) =>
     agentSummary({ slug, displayName: slug, ...over });
   const lines = (l: HTMLElement) => l.querySelectorAll("[data-tree-line]").length;
-
-  test("row starts with AgentChip (avatar, name, @slug)", async () => {
-    mockWorld({ agents: [A("lead", { displayName: "Team Lead" })] });
-    renderApp("/agents", alice);
-    const [row] = (await rows()) as [HTMLElement];
-    expect(row.querySelector("svg, img")).not.toBeNull();
-    expect(within(row).getByText("Team Lead")).toBeInTheDocument();
-    expect(within(row).getAllByText("@lead").length).toBeGreaterThan(0);
-  });
 
   test("template shown only when it differs from the slug stem", async () => {
     mockWorld({

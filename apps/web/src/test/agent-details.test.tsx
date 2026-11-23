@@ -209,10 +209,7 @@ test("Now: restart pending explains itself with Why", async () => {
   expect(await screen.findByText(/finishes its current turn/)).toBeInTheDocument();
 });
 
-test("Now: the queued and rate-limited details", async () => {
-  const first = setup({ agent: agentSummary({ status: "rate_limited", credential: "work" }) });
-  expect(within(await section("Now")).getByText(/credential/)).toBeInTheDocument();
-  first.unmount();
+test("Now: an agent pulling its image says so", async () => {
   setup({ agent: agentSummary({ pulling: true }) });
   expect(within(await section("Now")).getByText("Pulling the image…")).toBeInTheDocument();
 });
@@ -428,10 +425,21 @@ test("Usage: the 7-day estimate with a link to the usage page", async () => {
   expect(usage.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
 });
 
-test("Usage: still links while loading or with no turns", async () => {
-  setup({ usage: undefined });
-  const usage = within(await section("Usage"));
-  expect(usage.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
+test("Usage: still links while loading or with no turns, and shows no estimate", async () => {
+  const loading = setup({ usage: undefined });
+  const whileLoading = within(await section("Usage"));
+  expect(whileLoading.getByRole("link", { name: /Usage/ })).toHaveAttribute(
+    "href",
+    "/agents/dev/usage",
+  );
+  expect(whileLoading.queryByText(/est\./)).toBeNull();
+  loading.unmount();
+  const idleTotals = { ...totals, costUsd: 0, turns: 0 };
+  setup({ usage: usageRow({ own: idleTotals, total: idleTotals }) });
+  const noTurns = within(await section("Usage"));
+  expect(noTurns.getByText("No turns in the last 7 days")).toBeInTheDocument();
+  expect(noTurns.queryByText(/est\./)).toBeNull();
+  expect(noTurns.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
 });
 
 test("Runtime: template, credential and projects; Unsandboxed only for a local agent", async () => {

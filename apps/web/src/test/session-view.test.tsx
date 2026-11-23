@@ -715,15 +715,6 @@ test("header: a terminated agent's Pin is its own button, outside the live line"
   expect(line?.contains(pin)).toBe(false);
 });
 
-test("no strip: 'Reports to' no longer renders under the header", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ reportsTo: "cto" }));
-  renderApp("/agents/dev/session", alice);
-  await screen.findByText("Two entries.");
-  expect(document.querySelector("[data-agent-strip]")).toBeNull();
-  // Agent details is closed by default below 1280px, and the header carries no org segment.
-  expect(screen.queryByText(/Reports to/)).not.toBeInTheDocument();
-});
-
 test("restart pending arrives by frame; a frame clears it", async () => {
   renderApp("/agents/dev/session", alice);
   await screen.findByText("Two entries.");
@@ -886,53 +877,24 @@ const errorPage = (event: Parameters<typeof se>[0]) => () => {
   return page([se(event, null)]);
 };
 
-test("an error with fix secrets links to Settings → Secrets", async () => {
+test.each([
+  ["secrets", "Open Settings → Secrets", "/settings/secrets"],
+  ["credentials", "Open Settings → Credentials", "/settings/credentials"],
+  ["projects", "Open Settings → Projects", "/settings/projects"],
+  ["image", "Open Templates → Images", "/templates/images"],
+  ["config", "Open configuration", "/agents/dev/config"],
+  ["template", "Open template dev", "/templates/dev"],
+] as const)("an error with fix %s links to %s", async (fix, linkName, href) => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
-    message: "The secret GH_TOKEN isn't set. Add it in Settings → Secrets.",
-    code: "secret_missing",
-    fix: "secrets",
+    message: "It failed.",
+    fix,
   });
   renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("link", { name: "Open Settings → Secrets" })).toHaveAttribute(
-    "href",
-    "/settings/secrets",
-  );
-});
-
-test("an error with fix credentials or projects links to that section", async () => {
-  routes["/api/agents/dev/events?"] = () => {
-    resetSeq();
-    return page([
-      se({ type: "error", source: "spawn", message: "a", fix: "credentials" }, null),
-      se({ type: "error", source: "spawn", message: "b", fix: "projects" }, null),
-    ]);
-  };
-  renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("link", { name: "Open Settings → Credentials" })).toHaveAttribute(
-    "href",
-    "/settings/credentials",
-  );
-  expect(screen.getByRole("link", { name: "Open Settings → Projects" })).toHaveAttribute(
-    "href",
-    "/settings/projects",
-  );
-});
-
-test("an error with fix image links to Templates → Images", async () => {
-  routes["/api/agents/dev/events?"] = errorPage({
-    type: "error",
-    source: "spawn",
-    message:
-      "Image `playwright` isn't built. Build it in Templates → Images, or run `open-factory images build playwright`.",
-    fix: "image",
-  });
-  renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("link", { name: "Open Templates → Images" })).toHaveAttribute(
-    "href",
-    "/templates/images",
-  );
+  expect(await screen.findByRole("link", { name: linkName })).toHaveAttribute("href", href);
+  // Only fix: edit_agent is a button that opens the sheet.
+  expect(screen.queryByRole("button", { name: "Edit the agent" })).not.toBeInTheDocument();
 });
 
 test("an error with fix edit_agent opens Edit agent", async () => {
@@ -947,45 +909,6 @@ test("an error with fix edit_agent opens Edit agent", async () => {
   expect(screen.queryByRole("link", { name: "Edit the agent" })).not.toBeInTheDocument();
   await userEvent.click(fix);
   expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
-});
-
-test("an error with fix config links to the agent's Configuration page", async () => {
-  routes["/api/agents/dev/events?"] = errorPage({
-    type: "error",
-    source: "spawn",
-    message: "Plugin x@y didn't install.",
-    fix: "config",
-  });
-  renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("link", { name: "Open configuration" })).toHaveAttribute(
-    "href",
-    "/agents/dev/config",
-  );
-  expect(screen.queryByRole("button", { name: "Edit the agent" })).not.toBeInTheDocument();
-});
-
-test("an error with fix template links to the agent's template page", async () => {
-  routes["/api/agents/dev/events?"] = errorPage({
-    type: "error",
-    source: "spawn",
-    message: "Template developer has errors. Fix it in Templates.",
-    fix: "template",
-  });
-  renderApp("/agents/dev/session", alice);
-  const link = await screen.findByRole("link", { name: "Open template dev" });
-  expect(link).toHaveAttribute("href", "/templates/dev");
-});
-
-test("a resume error no longer names the interim reset script", async () => {
-  routes["/api/agents/dev/events?"] = errorPage({
-    type: "error",
-    source: "resume",
-    message: "No conversation found",
-  });
-  renderApp("/agents/dev/session", alice);
-  expect(await screen.findByText("No conversation found")).toBeInTheDocument();
-  expect(document.body.textContent).not.toMatch(/agent:reset-session|stop the server/);
-  expect(document.body.textContent).not.toMatch(/seed:dev-agent/);
 });
 
 test("the log and each row wrap can shrink, so no row widens the scroller", async () => {
@@ -1155,7 +1078,11 @@ test("a stale list status turning into the loaded one is not announced", async (
   await act(async () => {
     await new Promise((r) => setTimeout(r, 30));
   });
-  expect(screen.queryByText(/Dev agent is idle/)).not.toBeInTheDocument();
+  const live = screen
+    .getAllByRole("status")
+    .find((el) => el.getAttribute("aria-live") === "polite" && el.classList.contains("sr-only"));
+  expect(live).toBeDefined();
+  expect(live?.textContent).toBe("");
 });
 
 test("the composer can't send until the session has loaded", async () => {

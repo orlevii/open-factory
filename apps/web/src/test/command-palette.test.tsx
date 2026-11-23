@@ -192,7 +192,7 @@ test("the recent agents are read once per opening, not on each keystroke", async
   }
 });
 
-test("Actions: no 'Mark all read'; 'Agent details' only on session pages", async () => {
+test("Actions: no 'Mark all read'; 'Agent details' and the view actions only on agent pages", async () => {
   const { dialog } = await openFromInput();
   const actions = within(dialog).getByRole("group", { name: "Actions" });
   const names = within(actions)
@@ -201,6 +201,9 @@ test("Actions: no 'Mark all read'; 'Agent details' only on session pages", async
   expect(names).toEqual(expect.arrayContaining(["New agent", "New task", "New schedule"]));
   expect(names).not.toContain("Mark all read");
   expect(names).not.toContain("Agent details");
+  // Off an agent page neither view action is offered.
+  expect(names).not.toContain("Open session");
+  expect(names).not.toContain("Open chat");
 });
 
 test("'Agent details' is offered on a session page", async () => {
@@ -237,13 +240,6 @@ test("in the Session the palette offers 'Open chat' and not 'Open session'; it g
   expect(within(actions).queryByRole("option", { name: "Open session" })).toBeNull();
   await userEvent.click(within(actions).getByRole("option", { name: "Open chat" }));
   await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
-});
-
-test("off an agent page neither view action is offered", async () => {
-  const { dialog } = await openFromInput();
-  const actions = within(dialog).getByRole("group", { name: "Actions" });
-  expect(within(actions).queryByRole("option", { name: "Open session" })).toBeNull();
-  expect(within(actions).queryByRole("option", { name: "Open chat" })).toBeNull();
 });
 
 test("Go to includes Usage and each Settings page; Images links /templates/images", async () => {

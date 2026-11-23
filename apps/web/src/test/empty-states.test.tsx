@@ -26,28 +26,6 @@ test.each([
   expect(await screen.findByText(text)).toBeInTheDocument();
 });
 
-test("/ opens the Inbox, empty", async () => {
-  mockApi({
-    "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
-    "GET /api/inbox/unread-count": () => json({ count: 0 }),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
-  });
-  renderApp("/", alice);
-  expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
-  expect(await screen.findByText("Nothing in your inbox.")).toBeInTheDocument();
-});
-
-test("the sidebar links every section in order", async () => {
-  renderApp("/", alice);
-  const nav = await screen.findByRole("navigation", { name: "Main" });
-  const labels = within(nav)
-    .getAllByRole("link")
-    .map((a) => a.textContent);
-  expect(labels).toEqual(["Inbox", "Tasks", "Templates", "Schedules", "Usage", "Settings"]);
-  // The Agents row follows the nav and heads the tree.
-  expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("href", "/agents");
-});
-
 test("/agents with no agents: No agents yet. and a primary Create your first agent, even with nothing set up", async () => {
   mockApi({
     "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),

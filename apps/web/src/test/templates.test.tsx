@@ -284,21 +284,6 @@ test("CodeTextarea: Tab inserts two spaces; Escape then Tab leaves; Cmd+S saves"
   expect(screen.getByRole("button", { name: "after" })).toHaveFocus();
 });
 
-test("Delete confirms and lands on the list", async () => {
-  const api = mockApi({
-    "GET /api/templates/lead": () => json(detail()),
-    "DELETE /api/templates/lead": () => json(null, 204),
-    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
-  });
-  await openTemplate();
-  await userEvent.click(await screen.findByRole("button", { name: "Delete…" }));
-  const dialog = screen.getByRole("alertdialog", { name: "Delete template lead?" });
-  expect(dialog).toHaveTextContent("This deletes the folder");
-  await userEvent.click(within(dialog).getByRole("button", { name: "Delete lead" }));
-  expect(await screen.findByText("Deleted lead.")).toBeInTheDocument();
-  expect(api.calls.some((c) => c.method === "DELETE")).toBe(true);
-});
-
 test("Create agent: disabled with errors, else it opens New agent with the template", async () => {
   mockApi({ "GET /api/templates/lead": () => json(detail([yamlError])) });
   const { unmount } = await openTemplate();
@@ -521,17 +506,6 @@ async function conflictPage() {
   return { api, editor };
 }
 
-test("Reload says it discards edits and returns focus to the editor", async () => {
-  const { api, editor } = await conflictPage();
-  expect(screen.getByRole("button", { name: "Reload" })).toHaveAccessibleDescription(
-    /discards your edits/i,
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
-  await vi.waitFor(() => expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n"));
-  expect(editor).toHaveFocus();
-  expect(api.calls.filter((c) => c.method === "GET").length).toBeGreaterThan(1);
-});
-
 test("Overwrite and Discard return focus to the editor", async () => {
   const { api, editor } = await conflictPage();
   api.on("PUT /api/templates/lead/files/template.yaml", () => json({ hash: "h3", issues: [] }));
@@ -570,24 +544,32 @@ test("Discard on a just-created optional file returns to 'Not created'", async (
   expect(screen.getByText("Not created")).toBeInTheDocument();
 });
 
-test("the keyboard hint shows on focus, also on touch", async () => {
+test("the keyboard hint shows on focus, also on touch, and hides again on blur", async () => {
   render(<Harness onSave={() => {}} />);
   const hint = screen.getByText("Esc then Tab to leave the editor");
+  expect(hint).toHaveClass("sr-only");
+  await userEvent.click(screen.getByRole("textbox", { name: "code" }));
+  expect(hint).not.toHaveClass("sr-only");
+  await userEvent.click(screen.getByRole("button", { name: "after" }));
+  expect(hint).toHaveClass("sr-only");
+  // Not gated on a fine pointer (#37): it shows on touch too.
   expect(hint.className).not.toMatch(/pointer:coarse/);
 });
 
-test("'Deleted x.' shows once: it is cleared from history state after it is read", async () => {
-  mockApi({
+test("Delete confirms and lands on the list; 'Deleted x.' shows once: it is cleared from history state after it is read", async () => {
+  const api = mockApi({
     "GET /api/templates/lead": () => json(detail()),
     "DELETE /api/templates/lead": () => json(null, 204),
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
   });
   const { router } = await openTemplate();
   await userEvent.click(await screen.findByRole("button", { name: "Delete…" }));
-  await userEvent.click(
-    within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete lead" }),
-  );
+  const dialog = screen.getByRole("alertdialog", { name: "Delete template lead?" });
+  expect(dialog).toHaveTextContent("This deletes the folder");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Delete lead" }));
   expect(await screen.findByText("Deleted lead.")).toBeInTheDocument();
+  expect(api.calls.some((c) => c.method === "DELETE")).toBe(true);
+  expect(router.state.location.pathname).toBe("/templates");
   await vi.waitFor(() =>
     expect(
       (router.state.location.state as { deletedTemplate?: string }).deletedTemplate,
@@ -616,11 +598,6 @@ test("saving template.yaml refreshes the header without touching what is being t
   expect(screen.getByRole("heading", { level: 1, name: "Renamed Lead" })).toBeInTheDocument();
   // The editor keeps its own state: the refetch does not reseed it.
   expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\nruntime: docker\n");
-});
-
-test("the changed-on-disk block takes focus on its Reload button", async () => {
-  await conflictPage();
-  expect(screen.getByRole("button", { name: "Reload" })).toHaveFocus();
 });
 
 // S10 §12.8: the Image column, the template page status and the Images section.
@@ -991,17 +968,18 @@ test("list header (class contract, jsdom has no layout): the h1 gives way to the
   expect(link.parentElement).toHaveClass("shrink-0");
   await userEvent.hover(link);
   expect(await screen.findByRole("tooltip")).toHaveTextContent("New template");
+  // At 200% text on a phone (evidence D4): below a 17rem header the switch takes its own line
+  // instead of covering New template. The header may take a second line (a fixed h-12 would overlap).
+  const header = h1.closest("header");
+  expect(header).toHaveClass("flex-wrap", "min-h-12");
+  expect(header).not.toHaveClass("h-12");
+  expect(nav).toHaveClass("@max-[17rem]:order-last", "@max-[17rem]:basis-full");
+  // New template stays on the first line, at its end.
+  expect(link.parentElement).toHaveClass("ml-auto");
+  expect(nav.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 // U4 §12: template files edit in CodeMirror.
-
-test("CodeMirror: template.yaml renders in the editor once the lazy chunk resolves", async () => {
-  mockApi({ "GET /api/templates/lead": () => json(detail()) });
-  await openTemplate();
-  const editor = await editorFor("template.yaml");
-  expect(editor).toHaveAttribute("aria-multiline", "true");
-  expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n");
-});
 
 test("CodeMirror: switching to mcp.json and back keeps template.yaml's undo history", async () => {
   mockApi({
@@ -1043,11 +1021,17 @@ test("CodeMirror: an issue's jump focuses its line in the editor", async () => {
   expect(editor).toHaveFocus();
 });
 
-test("CodeMirror: a reload replaces the doc without marking the file dirty or leaving undo", async () => {
-  const { editor } = await conflictPage();
+test("CodeMirror: Reload takes focus, says it discards edits, replaces the doc without marking the file dirty or leaving undo, and returns focus to the editor", async () => {
+  const { api, editor } = await conflictPage();
+  // The changed-on-disk block takes focus on its Reload button.
+  const reload = screen.getByRole("button", { name: "Reload" });
+  expect(reload).toHaveFocus();
+  expect(reload).toHaveAccessibleDescription(/discards your edits/i);
   expect(screen.getByRole("tab", { name: /template\.yaml.*\(unsaved\)/ })).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+  await userEvent.click(reload);
   await vi.waitFor(() => expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n"));
+  expect(editor).toHaveFocus();
+  expect(api.calls.filter((c) => c.method === "GET").length).toBeGreaterThan(1);
   expect(screen.queryByText("(unsaved)")).not.toBeInTheDocument();
   expect(undoDepth(viewOf(editor).state)).toBe(0);
 });
@@ -1067,20 +1051,4 @@ test("CodeMirror: AGENTS.md's Write uses the editor; Preview still renders markd
 test("MarkdownEditor without a writeSurface (the task and schedule forms) is still a textarea", () => {
   render(<MarkdownEditor value="" onChange={() => {}} aria-label="Description" />);
   expect(screen.getByRole("textbox", { name: "Description" }).tagName).toBe("TEXTAREA");
-});
-
-test("list header at 200% text on a phone (class contract): below a 17rem header the switch takes its own line instead of covering New template (evidence D4)", async () => {
-  mockApi({ "GET /api/templates": () => json({ dir: "/d", templates: [] }) });
-  renderApp("/templates", alice);
-  const h1 = await screen.findByRole("heading", { level: 1, name: "Templates" });
-  const header = h1.closest("header");
-  // The header may take a second line (a fixed h-12 row would make the two overlap).
-  expect(header).toHaveClass("flex-wrap", "min-h-12");
-  expect(header).not.toHaveClass("h-12");
-  const nav = screen.getByRole("navigation", { name: "Templates views" });
-  expect(nav).toHaveClass("@max-[17rem]:order-last", "@max-[17rem]:basis-full");
-  // New template stays on the first line, at its end.
-  const action = screen.getByRole("button", { name: "New template" });
-  expect(action.parentElement).toHaveClass("ml-auto");
-  expect(nav.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

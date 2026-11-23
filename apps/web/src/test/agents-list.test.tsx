@@ -64,16 +64,6 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
   expect(within(row).getByText("Unsandboxed")).toBeInTheDocument();
 });
 
-test("an empty list says so and offers to create the first agent", async () => {
-  mockWorld({ agents: [] });
-  renderApp("/agents", alice);
-  // The sidebar tree says it too: the page is the main region.
-  const main = await screen.findByRole("main");
-  expect(await within(main).findByText("No agents yet.")).toBeInTheDocument();
-  expect(within(main).getByRole("button", { name: "Create your first agent" })).toBeInTheDocument();
-  expect(screen.queryByText(/seed:dev-agent/)).not.toBeInTheDocument();
-});
-
 test("a pushed agent_status frame turns the row's Working into Idle", async () => {
   vi.stubGlobal(
     "fetch",
@@ -280,18 +270,12 @@ test("each Agents row has a ⋯ beside its link that opens the agent's menu", as
   expect(more.closest("li")?.querySelector('a[href="/agents/dev/chat"]')).not.toBeNull();
   await userEvent.click(more);
   const menu = await screen.findByRole("menu");
-  expect(menuLayout(menu)).toEqual([
-    "New task",
-    "New schedule",
-    "—",
-    "Edit",
-    "Configure",
-    "Usage",
-    "Open tasks",
-    "—",
-    "Reset persona…",
-    "Archive…",
-  ]);
+  // The full layout is pinned in agent-menu.test.tsx; here: it is this agent's menu.
+  expect(within(menu).getByRole("menuitem", { name: "Archive…" })).toBeInTheDocument();
+  expect(within(menu).getByRole("menuitem", { name: "Usage" })).toHaveAttribute(
+    "href",
+    "/agents/dev/usage",
+  );
 });
 
 test("Ended view: an archived row's menu restores it and toasts; a terminated row offers only Usage and Open tasks", async () => {

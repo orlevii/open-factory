@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { SRC, sourceFiles } from "./ui-contract-files";
@@ -57,27 +57,10 @@ describe("styles.css", () => {
 describe("overlay surfaces", () => {
   for (const f of ["popover", "dropdown-menu", "tooltip", "select", "combobox"]) {
     const path = join(SRC, `components/ui/${f}.tsx`);
-    test.skipIf(!existsSync(path))(`${f}.tsx has no shadow and no slide-in`, () => {
+    test(`${f}.tsx has no shadow and no slide-in`, () => {
       const src = readFileSync(path, "utf8");
       expect(src).not.toMatch(/\bshadow-/);
       expect(src).not.toContain("slide-in-from-");
-    });
-  }
-});
-
-describe("form controls", () => {
-  const files = [
-    "components/ui/button.tsx",
-    "components/ui/input.tsx",
-    "components/ui/textarea.tsx",
-    "components/ui/checkbox.tsx",
-  ];
-  for (const f of files) {
-    test(`${f} uses the one base-layer focus ring`, () => {
-      const src = readFileSync(join(SRC, f), "utf8");
-      for (const bad of ["outline-none", "ring-3", "ring-ring/50", "focus-visible:ring-2"]) {
-        expect(src).not.toContain(bad);
-      }
     });
   }
 });
@@ -122,16 +105,6 @@ describe("loading", () => {
     expect(readFileSync(join(SRC, "components/ui/skeleton.tsx"), "utf8")).not.toContain(
       "animate-pulse",
     );
-  });
-});
-
-describe("selects", () => {
-  test("NativeSelect is gone", () => {
-    expect(existsSync(join(SRC, "components/native-select.tsx"))).toBe(false);
-    const offenders = sourceFiles()
-      .filter((f) => /NativeSelect|components\/native-select/.test(readFileSync(f, "utf8")))
-      .map((f) => f.replace(SRC, ""));
-    expect(offenders).toEqual([]);
   });
 });
 

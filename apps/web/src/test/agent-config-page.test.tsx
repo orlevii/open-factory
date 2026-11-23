@@ -363,7 +363,7 @@ test("Combined is the template with this agent's draft, read-only", async () => 
 test("server issues land on their fields, and a 400 replaces them", async () => {
   await open();
   await addAllowRule("Read");
-  put = () =>
+  const rejected = (message: string) =>
     json(
       {
         error: {
@@ -373,7 +373,7 @@ test("server issues land on their fields, and a 400 replaces them", async () => 
             {
               severity: "error",
               file: "settings.json",
-              message: "Unknown tool.",
+              message,
               path: "settings.permissions.allow.0",
             },
           ],
@@ -381,12 +381,23 @@ test("server issues land on their fields, and a 400 replaces them", async () => 
       },
       400,
     );
+  put = () => rejected("Unknown tool.");
   await userEvent.click(save());
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.hasErrors)).toBeInTheDocument();
-  expect(screen.getByText("Unknown tool.")).toBeInTheDocument();
+  // The message sits on the row the path names (the row's remove button is described by it).
+  expect(screen.getByRole("button", { name: "Remove allow rule 1" })).toHaveAccessibleDescription(
+    "Unknown tool.",
+  );
+  put = () => rejected("Not a tool either.");
+  await userEvent.click(save());
+  expect(await screen.findByText("Not a tool either.")).toBeInTheDocument();
+  expect(screen.queryByText("Unknown tool.")).toBeNull();
+  expect(screen.getByRole("button", { name: "Remove allow rule 1" })).toHaveAccessibleDescription(
+    "Not a tool either.",
+  );
 });
 
-test("save outcomes: a running agent restarts; a broken template is checked by schema only", async () => {
+test("save outcome: a running agent restarts when idle", async () => {
   agent = { ...agent, status: "idle" };
   await open();
   await addAllowRule("Read");

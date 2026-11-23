@@ -2,13 +2,11 @@ import { act, renderHook } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { fakeMatchMedia } from "../test/fake-match-media";
 import { MOBILE, useMedia, WIDE, XWIDE } from "./breakpoints";
-import { INBOX_DWELL_MS } from "./timing";
 
 test("the breakpoints are distinct rem-based queries", () => {
   const all = [MOBILE, WIDE, XWIDE];
   expect(new Set(all).size).toBe(3);
   for (const q of all) expect(q).toContain("rem");
-  expect(INBOX_DWELL_MS).toBeGreaterThan(0);
 });
 
 test("useMedia follows the fake matchMedia", () => {

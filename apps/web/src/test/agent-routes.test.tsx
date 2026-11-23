@@ -3,7 +3,7 @@ import type { ComponentProps } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { readViewPosition, writeViewPosition } from "@/features/agents/view-memory";
 import { alice, renderApp } from "@/test/render-app";
-import { agentSummary, conversation, detail } from "@/test/session-fixtures";
+import { agentSummary, conversation, detail, se } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 const ws = vi.hoisted(() => ({
@@ -219,15 +219,35 @@ test("a Chat → Session → Chat switch restores the chat's scroll and pin", as
   }
 });
 
-test("the session keeps its place across a switch too, and comes back unpinned", async () => {
+test("the session keeps its place across a switch, and comes back unpinned: a live event raises the pill", async () => {
   const restore = stubScrolling();
   try {
-    renderApp("/agents/dev/session", alice);
-    // After the render call (it starts from a clean slate), before the rows load.
-    writeViewPosition("dev", "session", { top: 300, pinned: false });
+    const { router } = renderApp("/agents/dev/session", alice);
     await screen.findByText("Two entries.");
-    const log = screen.getByRole("log", { name: "Session" });
-    await waitFor(() => expect((log.parentElement as HTMLElement).scrollTop).toBe(300));
+    const scroller = () =>
+      screen.getByRole("log", { name: "Session" }).parentElement as HTMLElement;
+    scroller().scrollTop = 300;
+    act(() => {
+      scroller().dispatchEvent(new Event("scroll"));
+    });
+    expect(readViewPosition("dev", "session")).toEqual({ top: 300, pinned: false });
+    await toChat(router);
+    await waitFor(() => expect(document.querySelector("[data-chat-view]")).not.toBeNull());
+    await toSession(router);
+    await screen.findByText("Two entries.");
+    await waitFor(() => expect(scroller().scrollTop).toBe(300));
+    // Unpinned: a new live row is counted into the pill, not scrolled to.
+    act(() =>
+      ws.frame({
+        type: "session_event",
+        agent: "dev",
+        event: { ...se({ type: "assistant_text", text: "later" }), seq: 11 },
+      }),
+    );
+    expect(await screen.findByRole("button", { name: "1 new message" })).toHaveAttribute(
+      "data-shown",
+    );
+    expect(scroller().scrollTop).toBe(300);
   } finally {
     restore();
   }

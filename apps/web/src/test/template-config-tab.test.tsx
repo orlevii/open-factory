@@ -272,6 +272,9 @@ test("Discard works with only an MCP editor open, and closes it", async () => {
   await userEvent.click(discard);
   expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
   expect(screen.getByRole("button", { name: "Discard" })).toHaveAttribute("aria-disabled", "true");
+  // Nothing was edited: no "Discarded." notice and nothing to undo.
+  expect(within(footer()).queryByText(CONFIG_PAGE_MSG.discarded)).toBeNull();
+  expect(within(footer()).queryByRole("button", { name: "Undo" })).toBeNull();
 });
 
 test("below 40rem of its own width the tab strip is a Select listing every tab with its marks", async () => {

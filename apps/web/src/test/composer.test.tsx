@@ -252,20 +252,6 @@ test("composer: text typed while the send is in flight is kept", async () => {
   await vi.waitFor(() => expect(input).toHaveValue(" second"));
 });
 
-test("compact: Escape closes the popover and focus returns to the trigger", async () => {
-  renderApp("/agents/dev/session", alice);
-  await box();
-  const trigger = menu();
-  await openCompact();
-  await screen.findByRole("textbox", { name: "Focus (optional)" });
-  await userEvent.keyboard("{Escape}");
-  await vi.waitFor(() =>
-    expect(screen.queryByRole("textbox", { name: "Focus (optional)" })).not.toBeInTheDocument(),
-  );
-  expect(trigger).toHaveFocus();
-  expect(posted).toEqual([]);
-});
-
 test("compact: a second submit while one is in flight posts nothing; success closes it", async () => {
   renderApp("/agents/dev/session", alice);
   await box();

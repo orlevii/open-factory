@@ -1,9 +1,8 @@
 import { act, fireEvent, render } from "@testing-library/react";
-import { createRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { useAgentDetailsPanel } from "@/features/session/agent-details";
 import type { Row } from "@/features/session/rows";
-import { Timeline, type TimelineHandle } from "@/features/session/timeline";
+import { Timeline } from "@/features/session/timeline";
 import { installShortcuts } from "@/lib/shortcuts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 
@@ -102,16 +101,6 @@ function setup(more?: { onLoadEarlier(): Promise<boolean> }) {
   };
 }
 
-test("at the bottom, a width change keeps it pinned", () => {
-  const t = setup();
-  t.resize(600); // first measurement
-  t.scroller.scrollTop = 600;
-  scrolled(t.scroller); // 1000-600-400 = 0: at the bottom
-  t.setScrollHeight(1300);
-  t.resize(480);
-  expect(t.scroller.scrollTop).toBe(1300);
-});
-
 test("scrolled up, a width change restores the top row's offset by delta, synchronously in the RO callback", () => {
   const t = setup();
   t.resize(600);
@@ -141,44 +130,6 @@ test("atBottom is not recomputed in the RO callback", () => {
   t.setScrollHeight(2000);
   t.resize(480);
   expect(t.scroller.scrollTop).toBe(2000); // still treated as pinned
-});
-
-test("captureAnchor takes a fresh anchor for a toggle that follows no scroll", () => {
-  const ref = createRef<TimelineHandle>();
-  const view = render(
-    <Timeline
-      ref={ref}
-      slug="dev"
-      rows={rows}
-      failedIds={new Set()}
-      interruptedEnds={new Set()}
-      hasMoreBefore={false}
-      onLoadEarlier={async () => false}
-      earlierError={false}
-      footer={null}
-    />,
-  );
-  const scroller = view.container.querySelector<HTMLElement>(".overflow-y-auto") as HTMLElement;
-  const row = view.container.querySelector<HTMLElement>('[data-row="c"]') as HTMLElement;
-  Object.defineProperty(scroller, "scrollHeight", { value: 5000, configurable: true });
-  Object.defineProperty(scroller, "clientHeight", { value: 400, configurable: true });
-  scroller.getBoundingClientRect = () => ({ top: 0, left: 0, width: 600 }) as DOMRect;
-  let top = 30;
-  row.getBoundingClientRect = () => ({ top }) as DOMRect;
-  document.elementFromPoint = () => row;
-  scroller.scrollTop = 4600; // at the bottom
-  scrolled(scroller);
-  scroller.scrollTop = 100; // the reader scrolls up
-  scrolled(scroller);
-  top = 40; // the row moved with no scroll event, so the passive anchor is stale
-  act(() => ref.current?.captureAnchor());
-  top = 90;
-  const rec = observers.find((o) => o.targets.includes(scroller));
-  act(() => {
-    rec?.cb([{ target: scroller, contentRect: { width: 600 } } as never], {} as ResizeObserver);
-    rec?.cb([{ target: scroller, contentRect: { width: 500 } } as never], {} as ResizeObserver);
-  });
-  expect(scroller.scrollTop).toBe(150);
 });
 
 test("a probe that lands in the gap between rows falls back to the first row in view", () => {

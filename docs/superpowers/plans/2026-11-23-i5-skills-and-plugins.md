@@ -45,6 +45,37 @@
 - **I4 form rules.** `FieldShell`/`FieldNote`, `useFieldErrors`, `FormOutcome` and `field-stack`. Field and outcome messages are exported constants of at most 40 characters, never interpolated (spec §10.4 lists them). User-facing copy says "Skills", never "Library".
 - **Database tests run only in CI.** Tests that use `createTestDb`/`makeTestApp` (`apps/server/src/test/helpers.ts`) need Postgres, and the local Postgres role is unavailable. Locally, run the pure unit tests and the web tests, plus `pnpm typecheck`; read CI for the DB suites.
 - **React.** Every task that touches `apps/web` states: "Implementer and reviewer invoke `vercel-react-best-practices` and follow it." Next-only rules don't apply (this is React + Vite + TanStack).
+- **React rules from the plan review** (binding for every web task; the branch reviews check each one):
+  - **R-Q1. POSTs are mutations.**
+    - These are `useMutation`, started from click handlers and kept in component state, never under the `["library"]` key: `update-preview` (B10), Check for updates per source (A12), Find skills and Find more skills (A12, A13), Install and Install in factory (B10).
+    - Test: a `library_changed` frame while an update view is open doesn't call `update-preview` again.
+  - **R-Q2. Query keys.** Pinned keys, arrays of primitives:
+    - `["library","skills"]`, `["library","skill",group,name]`, `["library","source",id]`;
+    - `["library","plugins"]`, `["library","plugin",key,from]`, `["library","marketplaces"]`;
+    - file text as `["library-file", group|key, name, path, pin]`, outside the `["library"]` prefix, with `staleTime: Infinity` when pinned. It is fetched only while View file is open (`enabled: open`), prefetched on pointer-enter or focus of the toggle, and rendered with `UntrustedCode`, never CodeMirror.
+    - `libraryQueryOptions` uses `staleTime: 0`, so a window focus refreshes the host and template-local lists (spec §9.5).
+  - **R-Q3. Coalesced invalidation.** `lib/ws.ts` coalesces `library_changed` invalidation to at most one per 250 ms, as `features/agents/status-frames.ts` batches frames. Test: 10 frames in one tick give one list refetch.
+  - **R-E1. One elapsed timer.** A single leaf `<Elapsed since />` ticks itself. It shows nothing for the first 10 s, then a 1 s tick, paused through `hooks/use-document-visible.ts`. Extract it from `features/session/activity-line.tsx` if that ticker fits. Rows and headers pass only `since`. Test: a tick doesn't re-render sibling rows.
+  - **R-L1. Rows and `j`/`k`.** Rows are `memo` components with primitive props (`shown`, `name`, `state`, `since`) and stable handlers, as in `features/tasks/task-list.tsx`. `lib/row-nav.ts` `onRowKeyDown` is extended to `<button>` rows and source headers, never a per-list `j`/`k` handler.
+  - **R-L2. Peek from the cached row.** The peek reads the row with `useQuery({...libraryQueryOptions, select})`, where `select` is defined at module level or in a `useCallback` keyed on group and name. The detail comes from its own query, and the view is derived during render (`detail ?? rowFields`, plus skeletons from `contentsSummary`). Never `initialData`, and never an effect.
+  - **R-L3. Aborting Find.** The Find sheet keeps one `AbortController` in a ref:
+    - a new Find aborts the previous one inside its click handler;
+    - Close aborts in its handler;
+    - an unmount cleanup aborts as well, and that cleanup is the only effect.
+    
+    The signal goes through the `mutationFn`. Tests: unmount aborts; a second Find drops the first response.
+  - **R-L4. Arrival.** `useLibraryArrival()` sets the initial peek during render from router state, with a lazy `useState` keyed on `location.key`. An effect is used only to scroll and focus, with deps `[location.key, rowFound]`, guarded by a ref so it runs once per arrival. Test: a `library_changed` after arrival doesn't scroll again.
+  - **R-L5. Holding a row in place.** A row moving groups (B10) keeps a `held` snapshot:
+    - set in `onPointerEnter` and `onFocus`;
+    - cleared in `onPointerLeave` and `onBlur`, checking `relatedTarget`;
+    - then `view = held ?? data` during render.
+    
+    Reuse or extract `useHeldWhileSelected` from `features/session/agent-text.tsx`.
+  - **R-C1. Multi Combobox.** The snapshot of what to leave out next time is taken in the `onOpenChange(true)` handler, never in an effect. Callers keep `added` stable (`useMemo` over the selected names). Picked options keep cmdk's `disabled` prop, so the highlight skips them.
+  - **R-F1. Find results.** Ticks are a `Set<name>` updated with functional `setState`. The filtered rows, the toggle label and "None of these can be added" are derived during render. Old ticks merge with new names in the Find success handler. No `useDeferredValue`.
+  - **R-H1. Hoisting.** No section component (Runs code, Files, Used by, Provenance, `renderOption`) is ever defined inside another component. Static skeleton rows are hoisted to module scope and sized from counts.
+  - **R-B1. Routes and loaders.** Routes are code-split by `autoCodeSplitting: true` in `vite.config.ts`; never add `lazy()` by hand. The loader follows `routes/_app/settings.projects.tsx`: `void qc.prefetchQuery(hostQueryOptions)`, then `await Promise.allSettled([preload ? qc.ensureQueryData(lib) : qc.fetchQuery(lib)])`. The sidebar link relies on the router's `defaultPreload: "intent"`.
+  - **R-P1. `content-visibility`.** Not used, because it can break `scrollIntoView({block:"center"})` on arrival. Add it only if the A16 evidence shows slow renders, and say so.
 - **Heavy jobs.** At most one evidence pass or full suite at a time, under `/tmp/of-v002-heavy.lock`: `mkdir /tmp/of-v002-heavy.lock` (retry while it exists; write your pid inside), and remove it when done. Never write sleep or wait loops on other agents' processes.
 - **Git.** Merge, never rebase. Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never merge a PR.
 
@@ -405,6 +436,7 @@ Implements spec §9.1, §9.2, §9.4, §9.5 and §11.1.
 **Files:**
 - Create: `apps/server/src/routes/library.ts`
 - Delete: `apps/server/src/routes/host-skills.ts` and its test (from I2)
+- Modify (web; implementer and reviewer invoke `vercel-react-best-practices` and follow it): I2's host-skills reader in `apps/web/src/features/config/` is switched to `libraryQueryOptions` here, so `/api/host-skills` has no web caller left (A14 then replaces the picker itself)
 - Modify: `apps/server/src/app.ts` (registration, `LibrarySweep`, the `library_changed` publish)
 - Test: `apps/server/src/routes/library.test.ts` (CI)
 
@@ -674,7 +706,7 @@ Implements spec §10.5 (skills). Implementer and reviewer invoke `vercel-react-b
   - ADR 0028: no compatibility code, and no warning for the old env var;
   - hardened runners: argv, env and redaction tests present;
   - the I4 message rules;
-  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill first. Next-only rules are skipped, and the review says so. It covers effects only for external sync, no fetch in effects, stable query keys, no components defined inside components, abort on unmount for Find, and loaders that never await the host query.
+  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill first. Next-only rules are skipped, and the review says so. It covers effects only for external sync, no fetch in effects, stable query keys, no components defined inside components, abort on unmount for Find, and loaders that never await the host query, plus every R-Q, R-E, R-L, R-C, R-F, R-H, R-B and R-P rule in Global Constraints. This checklist is reused by B12 and C3.
 
   Apply fixes as their own commits (apps/web fixes follow `vercel-react-best-practices`).
 - [ ] **Full verification** under `/tmp/of-v002-heavy.lock`:
@@ -914,7 +946,8 @@ Implements spec §7.3 steps 1–2 and 4–8, §6.5 (store class), and AC 9, 10, 
   - `apps/server/src/workspace/paths.ts`;
   - `apps/server/src/runtime/runtime-spec.ts`;
   - `apps/server/src/agents/agent-service.ts`, `apps/server/src/spawning/spawn-service.ts`;
-  - `apps/server/src/workspace/agent-folders.ts` (scrub the plugins root to `data/`).
+  - `apps/server/src/workspace/agent-folders.ts` (scrub the plugins root to `data/`);
+  - web (implementer and reviewer invoke `vercel-react-best-practices` and follow it): `apps/web/src/features/agents/agent-form-state.ts:281-282` (the "Installing plugins…" pending label goes, since create never installs) and its test.
 - Delete:
   - `apps/server/src/workspace/plugins.ts` and its test;
   - `pluginsConfigDir`, `readPluginKeys`, `linkPlugins`, `install` in `workspace.ts`;
@@ -961,6 +994,7 @@ Implements spec §7.4, §7.7 and R14.
 
 **Files:**
 - Modify: `packages/shared/src/templates.ts`, I2's `packages/shared/src/config.ts` (overlay schema), `apps/server/src/templates/validate.ts`, `packages/shared/src/config-changes.ts` (plugin lines)
+- Modify (web; implementer and reviewer invoke `vercel-react-best-practices` and follow it): `apps/web/src/features/agents/template-field.tsx:187` (`config.plugins.length` becomes the count of `effectivePlugins`) and any other web reader of `TemplateConfig.plugins` found by `pnpm typecheck`
 - Test: `packages/shared/src/templates.test.ts`, `apps/server/src/templates/validate.test.ts`, `packages/shared/src/config-changes.test.ts`
 
 - [ ] **Step 1: Write failing tests.**
@@ -1072,7 +1106,7 @@ Implements spec §10.5 (plugins) and AC 9 and 13. Implementer and reviewer invok
   - the lock order, and that `libraryChanged` runs after the locks;
   - the deletions are complete: grep `plugins-config|pluginsConfigDir|readPluginKeys|linkPlugins|PluginInstallError|plugin_install_failed` finds no matches except the new event name;
   - ADR 0028;
-  - **the React diff against `vercel-react-best-practices`** (the reviewer invokes the skill first and skips Next-only rules, saying so).
+  - **the React diff against `vercel-react-best-practices`** (the reviewer invokes the skill first and skips Next-only rules, saying so), using A16's checklist, with R-Q1 (update-preview as a mutation), R-Q3, R-L5 and R-E1 checked on the plugin views.
 
   Fix the findings.
 - [ ] **Full verification**, as in A16, with a fixture marketplace through `file://` for fake Claude.
@@ -1111,7 +1145,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it, for
 
 ### Task C3: Final whole-branch review, verification, PR
 
-- [ ] **Whole-branch review** of `git diff spec/i5-skills-and-plugins...i5/3-polish-docs` (all of I5) against the whole spec and all 14 acceptance criteria. **The React diff is checked against `vercel-react-best-practices`**: the reviewer invokes the skill, skips Next-only rules and says so.
+- [ ] **Whole-branch review** of `git diff spec/i5-skills-and-plugins...i5/3-polish-docs` (all of I5) against the whole spec and all 14 acceptance criteria. **The React diff is checked against `vercel-react-best-practices`** with A16's checklist and every R-* rule in Global Constraints: the reviewer invokes the skill, skips Next-only rules and says so.
 - [ ] **Full verification** under `/tmp/of-v002-heavy.lock`: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, and the dev loop from a clean clone.
 - [ ] **Real-browser re-check** of every UI acceptance criterion in Chromium and WebKit headless, through the harness `run.sh` lock. Use fake Claude and the `file://` fixture only.
 - [ ] **Push and draft PR.** Base `i5/2-plugins`, titled `chore: Skills evidence fixes and docs list`. Watch CI until it is green. Never merge.

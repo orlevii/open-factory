@@ -163,6 +163,7 @@ skill_sources {
   updateCommit: text null, updateAt: timestamptz null, updateSubject: text null,
   checkedAt: timestamptz null, checkError: text null,  // the last Check for updates; checkError is the mapped one-line message
   skills: jsonb string[],   // the picked skill folder names (Q17, Q19), sorted, at least 1
+  state: "adding" | "ready", startedAt: timestamptz,  // "adding" while a GitHub add re-fetches (§10.4); boot finishes or removes it
   addedBy: text, addedAt: timestamptz,
   deletedAt: timestamptz null,  // soft delete for Undo (§9.4)
 }
@@ -1305,7 +1306,7 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
 ## 15. Web conventions for the plan
 
 - **The skill line.** Every `apps/web` task says: "Implementer and reviewer invoke `vercel-react-best-practices` and follow it." The final review checks the React diff against it; Next-only rules are skipped, and the review notes that.
-- **Data:** TanStack Query, with `libraryQueryOptions`, `skillQueryOptions(name)`, `sourceQueryOptions(id)`, `pluginQueryOptions(key)` and `marketplacesQueryOptions`.
+- **Data:** TanStack Query, with `libraryQueryOptions` (`["library","skills"]`, `staleTime: 0`), `skillQueryOptions(group, name)`, `sourceQueryOptions(id)`, `pluginQueryOptions(key, from)` and `marketplacesQueryOptions`. File text lives under its own `["library-file", …]` key. The plan's Global Constraints pin the exact keys and the React rules from its review.
   - Loaders prefetch.
   - No effect fetches data, and no derived state lives in an effect.
   - A peek renders from the list's cached row first and refines from the detail query (skeletons from the counts).

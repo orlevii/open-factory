@@ -113,6 +113,8 @@ export function LinkEditor({
         return (
           <div
             key={r.id}
+            // The row is the field: focusField scrolls all of it, note included, into view (AC3).
+            data-field=""
             className="grid grid-cols-[6rem_minmax(0,1fr)_auto] gap-x-2 [grid-template-areas:'kind_target_remove''note_note_note''title_title_title'] md:grid-cols-[6rem_minmax(0,1fr)_12rem_auto] md:[grid-template-areas:'kind_target_title_remove''note_note_note_note']"
           >
             <Select

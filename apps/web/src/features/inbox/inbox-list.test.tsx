@@ -544,6 +544,9 @@ test("credential row: 'Factory about work' then the live state; the accessible n
   });
   expect(link).toHaveTextContent(/^Factory\s*about work/);
   expect(link).toHaveTextContent("Expires in 9 days");
+  // The stored body ("preview 1") is not rendered or described: the live line is the only state.
+  expect(link).not.toHaveTextContent("preview 1");
+  expect(link).not.toHaveAttribute("aria-describedby");
 });
 
 test("credential row below 1024px links to /settings/credentials?credential=work", async () => {

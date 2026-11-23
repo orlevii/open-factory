@@ -15,4 +15,5 @@ export const FORM_MSG = {
   displayNameRequired: "Use 1 to 80 characters.",
   enterPath: "Enter a path.",
   saveFailed: "Couldn't save. Try again.",
+  saveScheduleFailed: "Couldn't save the schedule. Try again.",
 } as const;

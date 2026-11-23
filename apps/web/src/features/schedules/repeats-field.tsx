@@ -1,5 +1,5 @@
 import { ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,6 +13,9 @@ import { instantOnKeyboard } from "@/features/session/quiet-line";
 import { describeCron, presetOf, REPEATS_PRESETS } from "./describe-cron";
 
 const CUSTOM = "__custom";
+
+/** A leave; the event's `relatedTarget` lets the form skip a leave toward a `data-skip-validate` control. */
+export type Leave = (e?: { relatedTarget: EventTarget | null }) => void;
 const CRON_HELP =
   "A 5-field cron expression: minute hour day-of-month month day-of-week. Examples: 0 9 * * 1-5 (weekdays at 09:00), */30 * * * * (every 30 minutes), 0 8 1 * * (the 1st of each month at 08:00).";
 
@@ -32,7 +35,8 @@ export function RepeatsField({
   onCron(v: string): void;
   zone: string;
   error: string | undefined;
-  onBlurCron(): void;
+  /** The field was left: the cron input blurred, or the preset list closed or its closed trigger blurred. */
+  onBlurCron: Leave;
   /** A preset was chosen (a deliberate pick, so the preview can refresh at once); defaults to onCron. */
   onPreset?(cron: string): void;
 }) {
@@ -41,6 +45,16 @@ export function RepeatsField({
   const isCustom = custom || (cron.trim() !== "" && !presetOf(cron));
   const preset = presetOf(cron);
   const summary = isCustom ? describeCron(cron) : undefined;
+  const [listOpen, setListOpen] = useState(false);
+  const opened = useRef(false);
+  // Opening a Radix Select moves focus into its list, so the trigger blurs on open: the leave is the list closing,
+  // once the pick has rendered (TemplateField's pattern). Picking Custom isn't a leave: focus goes on to the input.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the list closes
+  useEffect(() => {
+    if (listOpen || !opened.current) return;
+    opened.current = false;
+    if (!isCustom) onBlurCron();
+  }, [listOpen]);
   return (
     <FieldShell name="cron" label="Repeats" error={error}>
       {(a) => (
@@ -54,12 +68,18 @@ export function RepeatsField({
               setCustom(false);
               (onPreset ?? onCron)(REPEATS_PRESETS.find((p) => p.label === v)?.cron ?? "");
             }}
+            onOpenChange={(open) => {
+              setListOpen(open);
+              if (open) opened.current = true;
+            }}
           >
             <SelectTrigger
               id={isCustom ? "field-cron-preset" : a.id}
               aria-label="Repeats"
               aria-invalid={(!isCustom && a.invalid) || undefined}
               aria-describedby={isCustom ? undefined : a.describedBy}
+              // With Custom chosen the input is the field, so leaving the trigger isn't leaving it.
+              onBlur={(e) => !listOpen && !isCustom && onBlurCron(e)}
             >
               <SelectValue placeholder="Choose…" />
             </SelectTrigger>
@@ -85,7 +105,7 @@ export function RepeatsField({
                 aria-describedby={a.describedBy}
                 className="h-9 font-mono"
                 onChange={(e) => onCron(e.target.value)}
-                onBlur={onBlurCron}
+                onBlur={(e) => onBlurCron(e)}
               />
               <p
                 data-testid="cron-summary"

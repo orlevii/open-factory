@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
 import { pickOption } from "@/test/select-helpers";
 import { RepeatsField } from "./repeats-field";
@@ -11,7 +12,7 @@ beforeEach(() => {
 });
 afterEach(() => off());
 
-function Harness({ start }: { start: string }) {
+function Harness({ start, onLeave = () => {} }: { start: string; onLeave?: () => void }) {
   const [cron, setCron] = useState(start);
   return (
     <>
@@ -20,7 +21,7 @@ function Harness({ start }: { start: string }) {
         onCron={setCron}
         zone="Europe/Berlin"
         error={undefined}
-        onBlurCron={() => {}}
+        onBlurCron={onLeave}
       />
       <output data-testid="cron">{cron}</output>
     </>
@@ -53,4 +54,30 @@ test("a cron matching no preset opens on Custom with no summary but the reserved
   const line = screen.getByTestId("cron-summary");
   expect(line).toHaveTextContent("");
   expect(line.className).toContain("min-h-[1.125rem]");
+});
+
+test("the preset list validates when it closes, after the pick has rendered, not when it opens", async () => {
+  const seen: string[] = [];
+  const leave = vi.fn(() => seen.push(screen.getByTestId("cron").textContent ?? ""));
+  render(<Harness start="" onLeave={leave} />);
+  await userEvent.click(trigger());
+  expect(leave).not.toHaveBeenCalled();
+  await userEvent.click(await screen.findByRole("option", { name: "Weekdays at 09:00" }));
+  expect(leave).toHaveBeenCalledTimes(1);
+  expect(seen).toEqual(["0 9 * * 1-5"]);
+});
+
+test("tabbing off the closed preset trigger is a leave; picking Custom is not", async () => {
+  const leave = vi.fn();
+  render(
+    <>
+      <Harness start="" onLeave={leave} />
+      <button type="button">after</button>
+    </>,
+  );
+  trigger().focus();
+  await userEvent.tab();
+  expect(leave).toHaveBeenCalledTimes(1);
+  await pickOption(trigger(), "Custom cron…");
+  expect(leave).toHaveBeenCalledTimes(1);
 });

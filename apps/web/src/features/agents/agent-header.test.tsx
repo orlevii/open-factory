@@ -98,7 +98,7 @@ test("the slot keeps the width of the wider label in both views, and only the ic
   expect(link).toHaveAccessibleName("Chat");
 });
 
-test("crowded by Restart, the switch leaves the header below 22rem and tops the ⋯ menu; Restart stays", async () => {
+test("crowded by Restart, the switch leaves the header below 22rem too; Restart stays", async () => {
   agent = { status: "errored", lastError: "boom" };
   renderApp("/agents/dev/chat", alice);
   const link = await waitFor(async () => {
@@ -115,15 +115,15 @@ test("crowded by Restart, the switch leaves the header below 22rem and tops the 
   expect(items[0]).toHaveAttribute("href", "/agents/dev/session");
 });
 
-test("uncrowded, the switch never leaves the header and the menu has no copy of it", async () => {
+test("uncrowded, the switch also leaves the header below 22rem (which is a phone, or 200% text) and tops the ⋯ menu", async () => {
   renderApp("/agents/dev/chat", alice);
   const link = await switchLink();
-  expect(link).not.toHaveClass("@max-[22rem]:hidden");
+  expect(link).toHaveClass("@max-[22rem]:hidden");
   await userEvent.click(
     within(await banner()).getByRole("button", { name: "Actions for Dev agent" }),
   );
-  await screen.findAllByRole("menuitem");
-  expect(screen.queryByRole("menuitem", { name: "Open session" })).toBeNull();
+  const items = await screen.findAllByRole("menuitem");
+  expect(items[0]).toHaveTextContent("Open session");
 });
 
 test("the live fact's Open session link is in the Chat and hidden in the Session", async () => {

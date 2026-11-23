@@ -51,7 +51,7 @@ export const TurnLine = memo(function TurnLine({
     <p
       data-status-line={outcome ?? "working"}
       {...(fades ? { "data-live": "" } : {})}
-      className={`flex h-6 min-w-0 items-center ${ROW_GUTTER} ${gap} text-[0.8125rem] leading-[1.125rem] text-muted-foreground`}
+      className={`flex min-h-6 min-w-0 flex-wrap items-center gap-y-0 ${ROW_GUTTER} ${gap} text-[0.8125rem] leading-[1.125rem] text-muted-foreground`}
     >
       <span
         aria-hidden="true"
@@ -65,22 +65,25 @@ export const TurnLine = memo(function TurnLine({
           <span className="shrink-0 whitespace-pre"> · </span>
         </>
       )}
-      <span className="flex min-w-0 items-baseline">
+      <span className="flex max-w-full min-w-0 items-baseline">
         <span className="flex min-w-0">
           <MiddleTruncate text={name} />
         </span>
-        <span className="shrink-0 whitespace-pre">{text?.suffix ?? " is working"}</span>
+        <span className="whitespace-pre-wrap">{text?.suffix ?? " is working"}</span>
       </span>
-      <span className="shrink-0 whitespace-pre"> · </span>
-      <Link
-        to="/agents/$slug/session"
-        params={{ slug }}
-        search={eventSeq != null ? { event: eventSeq } : {}}
-        aria-label={`Open session at ${formatTime(at)}`}
-        className="shrink-0 underline underline-offset-4 decoration-muted-foreground hover:text-foreground hover:decoration-ring"
-      >
-        Open session
-      </Link>
+      {/* Separator and link are one unit: at large text it wraps under the sentence, whole. */}
+      <span className="shrink-0 whitespace-nowrap">
+        <span className="whitespace-pre"> · </span>
+        <Link
+          to="/agents/$slug/session"
+          params={{ slug }}
+          search={eventSeq != null ? { event: eventSeq } : {}}
+          aria-label={`Open session at ${formatTime(at)}`}
+          className="shrink-0 underline underline-offset-4 decoration-muted-foreground hover:text-foreground hover:decoration-ring"
+        >
+          Open session
+        </Link>
+      </span>
     </p>
   );
 });

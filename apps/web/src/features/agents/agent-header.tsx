@@ -103,7 +103,6 @@ export const AgentHeader = memo(function AgentHeader({
           archived={archived}
           panel={panel}
           view={view}
-          crowded={crowded}
           onRestartError={onRestartError}
           onPinOutcome={onPinOutcome}
           onAgent={onAgent}
@@ -117,7 +116,7 @@ export const AgentHeader = memo(function AgentHeader({
               onTerminateStart={onTerminateStart}
               onTerminated={onTerminated}
               onLifecycle={onLifecycle}
-              viewSwitch={crowded ? view : undefined}
+              viewSwitch={view}
             />
           }
         />
@@ -131,7 +130,6 @@ function AgentActions({
   archived,
   panel,
   view,
-  crowded,
   actionsMenu,
   onRestartError,
   onPinOutcome,
@@ -141,8 +139,6 @@ function AgentActions({
   archived: boolean;
   panel: AgentDetailsPanel;
   view: AgentView;
-  /** A third action (Restart, Pin) is showing: the view switch gives way below 22rem. */
-  crowded: boolean;
   actionsMenu: ReactNode;
   onRestartError(message: string | undefined): void;
   onPinOutcome(o: PinOutcome | undefined): void;
@@ -158,7 +154,7 @@ function AgentActions({
         <PinButton agent={agent} onAgent={onAgent} onOutcome={onPinOutcome} header />
       )}
       {live && <RecoveryActions agent={agent} onError={onRestartError} />}
-      <ViewSwitch slug={agent.slug} view={view} inMenu={crowded} />
+      <ViewSwitch slug={agent.slug} view={view} inMenu />
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

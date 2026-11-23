@@ -46,7 +46,10 @@ test("the working line is the thread's last row: duration first and tabular, the
   expect(line).toHaveTextContent(/^4\ds · Dev agent.*is working · Open session$/);
   expect(line.firstElementChild?.nextElementSibling).toHaveClass("tabular-nums", "shrink-0");
   expect(line.nextElementSibling).toBeNull();
-  expect(line).toHaveClass("h-6");
+  // At large text the line wraps (the link unit under the sentence) rather than overflowing; never a fixed height.
+  expect(line).toHaveClass("min-h-6", "flex-wrap");
+  expect(line).not.toHaveClass("h-6");
+  expect(within(line).getByRole("link").parentElement).toHaveClass("shrink-0", "whitespace-nowrap");
   const link = within(line).getByRole("link", { name: /^Open session at \d\d:\d\d$/ });
   expect(link).toHaveClass("shrink-0");
 });

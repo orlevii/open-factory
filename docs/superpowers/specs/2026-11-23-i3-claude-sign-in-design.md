@@ -72,7 +72,7 @@ A fixed Python file in the repo, inlined into the server bundle with esbuild's t
 python3 -I -S -c <PTY_BRIDGE> <claudeBin> setup-token
 ```
 
-`-I` (isolated: no user site, no `PYTHON*` env, no script dir on the path) and `-S` (no `site`) so nothing from the host's Python setup is imported. argv carries only the fixed script, the configured `claude` path and the literal `setup-token`; no user input ever reaches argv (Q1, D2).
+`-I` (isolated: no user site, no `PYTHON*` env, no script dir on the path) and `-S` (no `site`) so nothing from the host's Python setup is imported. argv carries only the fixed script, the configured `claude` path and the literal `setup-token`; no user input ever reaches argv (Q1, D2). `claudeBin` comes only from server config (`FACTORY_CLAUDE_BIN` or its default), never from a request, and the spawn takes an argument array with no shell.
 
 The script:
 1. `pid, fd = pty.fork()`; the child `os.execvp(argv[1], argv[1:])` (env inherited from the bridge, which already holds only the allow-list, §5.2); `os._exit(127)` if exec fails.

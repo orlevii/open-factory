@@ -63,3 +63,56 @@ export const CONFIG_COPY = {
 /** "Adds GH_TOKEN to this agent's secrets." (spec §12.2), shown under the value an Insert secret filled. */
 export const secretAddedNote = (name: string, mode: "agent" | "template") =>
   `Adds ${name} to this ${mode}'s secrets.`;
+
+/** The Configuration page's own lines (spec §12.4; I4 rules: at most 40 characters, no interpolated value). */
+export const CONFIG_PAGE_MSG = {
+  fixJsonToSwitch: "Fix the JSON to switch tabs.",
+  fixJsonToSave: "Fix the JSON to save.",
+  /** The parse error's marker. Constant: the parser's own message may quote the text, which may hold a secret. */
+  invalidJson: "This isn't valid JSON.",
+  notObject: "Use a JSON object.",
+  discarded: "Discarded.",
+  saved: "Saved.",
+  changedSince: "Changed since you opened it.",
+  hasErrors: "Fix the errors to save.",
+  couldntSave: "Couldn't save. Try again.",
+  couldntReload: "Couldn't reload. Try again.",
+  couldntLoad: "Couldn't load the configuration.",
+} as const;
+
+/** Fixed labels of the Configuration page. */
+export const CONFIG_PAGE_COPY = {
+  title: "Configuration",
+  tabForm: "Configuration",
+  tabRaw: "Raw JSON",
+  viewAgent: "This agent",
+  viewCombined: "Combined",
+  viewLegend: "Raw JSON view",
+  revertRaw: "Revert raw edits",
+  save: "Save changes",
+  saving: "Saving…",
+  discard: "Discard",
+  undo: "Undo",
+  reload: "Reload",
+  openTemplate: "Open template",
+  openConfiguration: "Open configuration",
+  nextStart: "Next start",
+  noCombined: "No combined view while the template has errors.",
+} as const;
+
+/** "Saved. Restarts @ana when idle.": only when the restart notice would have shown (running, with changes). */
+export const savedRestarts = (slug: string) => `Saved. Restarts @${slug} when idle.`;
+/** A save checked against the overlay schema only, because the template is broken (R5). */
+export const savedSchemaOnly = (template: string) =>
+  `Saved. Checked fully once ${template} is fixed.`;
+/** The restart notice above the footer, while the agent is running (client-side `summarizeChanges`). */
+export const restartNotice = (slug: string, summary: string) =>
+  `Saving restarts @${slug} when idle to apply: ${summary}.`;
+/** The restart-pending top line. */
+export const restartPendingLine = (summary: string) =>
+  summary ? `Restarts when idle to apply: ${summary}.` : "Restarts when idle to apply changes.";
+export const archivedLine = (slug: string) =>
+  `@${slug} is archived. Changes apply when it's restored.`;
+export const brokenTemplateLine = (template: string, slug: string) =>
+  `Template ${template} has errors. @${slug} can't start.`;
+export const noAgentLine = (slug: string) => `There is no agent @${slug}.`;

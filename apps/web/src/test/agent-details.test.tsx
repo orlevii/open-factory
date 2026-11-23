@@ -455,6 +455,16 @@ test("Runtime: template, credential and projects; Unsandboxed only for a local a
   expect(docker.queryByText("Unsandboxed")).toBeNull();
 });
 
+test("Runtime: a Configuration row opens the agent's Configuration page", async () => {
+  setup({ agent: agentSummary({ slug: "ana" }) });
+  const rt = within(await section("Runtime"));
+  expect(rt.getByText("Configuration")).toBeInTheDocument();
+  expect(rt.getByRole("link", { name: "Open configuration" })).toHaveAttribute(
+    "href",
+    "/agents/ana/config",
+  );
+});
+
 test("Runtime: a deleted credential leaves no empty row; a disabled local runtime says so", async () => {
   setup({
     agent: agentSummary({ runtime: "local", credential: null, runtimeDisabled: "disabled" }),

@@ -948,7 +948,7 @@ test("an error with fix edit_agent opens Edit agent", async () => {
   expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
 });
 
-test("an error with fix config links to the template page until the config page exists", async () => {
+test("an error with fix config links to the agent's Configuration page", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
@@ -956,9 +956,9 @@ test("an error with fix config links to the template page until the config page 
     fix: "config",
   });
   renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("link", { name: "Open template dev" })).toHaveAttribute(
+  expect(await screen.findByRole("link", { name: "Open configuration" })).toHaveAttribute(
     "href",
-    "/templates/dev",
+    "/agents/dev/config",
   );
   expect(screen.queryByRole("button", { name: "Edit the agent" })).not.toBeInTheDocument();
 });

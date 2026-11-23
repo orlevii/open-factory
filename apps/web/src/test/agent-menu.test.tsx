@@ -113,6 +113,7 @@ test.each([
       "New schedule",
       "—",
       "Edit",
+      "Configure",
       "Usage",
       "Open tasks",
       "Agent details",
@@ -130,6 +131,7 @@ test.each([
       "—",
       "Open session",
       "Edit",
+      "Configure",
       "Usage",
       "Open tasks",
       "—",
@@ -144,6 +146,7 @@ test.each([
       "New schedule",
       "—",
       "Edit",
+      "Configure",
       "Usage",
       "Open tasks",
       "—",
@@ -305,7 +308,7 @@ test.each([
   [
     "an archived persistent agent",
     archived(),
-    ["Usage", "Open tasks", "—", "Reset persona…", "Restore"],
+    ["Configure", "Usage", "Open tasks", "—", "Reset persona…", "Restore"],
   ],
   [
     "a terminated persistent agent",
@@ -320,6 +323,15 @@ test.each([
 ] as const)("list: %s", async (_n, agent, items) => {
   setup({ agent, context: "list" });
   expect(layout(await openMenu(userEvent.setup()))).toEqual(items);
+});
+
+test("Configure opens the agent's Configuration page", async () => {
+  setup({ agent: agentSummary(), context: "list" });
+  const menu = await openMenu(userEvent.setup());
+  expect(within(menu).getByRole("menuitem", { name: "Configure" })).toHaveAttribute(
+    "href",
+    "/agents/dev/config",
+  );
 });
 
 test("session: an archived agent's menu offers Restore", async () => {

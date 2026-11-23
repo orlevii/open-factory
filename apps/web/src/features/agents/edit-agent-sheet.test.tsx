@@ -119,6 +119,47 @@ test("header Edit agent, a wrapping @slug · Template description, every field a
   expect(footerClose(dialog)).toBeInTheDocument();
 });
 
+test("the model summary row ends the form and opens the Configuration page, keeping the draft", async () => {
+  const detailWith = (model: { value: string | null; source: string }) => () =>
+    json({ agent: lead(), model, queue: [], lastSeq: 0 });
+  const { router, dialog } = await open({
+    extra: { "GET /api/agents/lead": detailWith({ value: "opus", source: "agent" }) },
+  });
+  const row = within(dialog)
+    .getByText(/^Model/)
+    .closest("p") as HTMLElement;
+  expect(row).toHaveTextContent("Model opus (this agent) · Open configuration");
+  // The last row of the form, after Projects.
+  const body = dialog.querySelector("[data-slot=sheet-body]") as HTMLElement;
+  expect(body.lastElementChild?.contains(row)).toBe(true);
+  const link = within(row).getByRole("link", { name: "Open configuration" });
+  expect(link).toHaveAttribute("href", "/agents/lead/config");
+  await userEvent.type(field("Display name"), "!");
+  await userEvent.click(link);
+  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/lead/config"));
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+  expect(hasDraft("edit-agent:lead")).toBe(true);
+});
+
+test("the model summary says where the model comes from", async () => {
+  const { dialog } = await open({
+    extra: {
+      "GET /api/agents/lead": () =>
+        json({
+          agent: lead(),
+          model: { value: "sonnet", source: "template" },
+          queue: [],
+          lastSeq: 0,
+        }),
+    },
+  });
+  expect(
+    within(dialog)
+      .getByText(/^Model/)
+      .closest("p"),
+  ).toHaveTextContent("Model sonnet (from template) · Open configuration");
+});
+
 test("the manager picker leaves out the agent and its descendants", async () => {
   const agents = [
     agentSummary({ slug: "cto", displayName: "CTO" }),

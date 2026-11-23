@@ -285,6 +285,7 @@ test("each Agents row has a ⋯ beside its link that opens the agent's menu", as
     "New schedule",
     "—",
     "Edit",
+    "Configure",
     "Usage",
     "Open tasks",
     "—",
@@ -321,7 +322,14 @@ test("Ended view: an archived row's menu restores it and toasts; a terminated ro
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await u.click(within(main).getByRole("button", { name: "Actions for Old one" }));
   const menu = await screen.findByRole("menu");
-  expect(menuLayout(menu)).toEqual(["Usage", "Open tasks", "—", "Reset persona…", "Restore"]);
+  expect(menuLayout(menu)).toEqual([
+    "Configure",
+    "Usage",
+    "Open tasks",
+    "—",
+    "Reset persona…",
+    "Restore",
+  ]);
   await u.click(within(menu).getByRole("menuitem", { name: "Restore" }));
   expect(await screen.findByText("Restored @old.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/old/unarchive")).toBe(

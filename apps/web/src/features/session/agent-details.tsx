@@ -454,6 +454,12 @@ function Runtime({ agent }: { agent: AgentSummary }) {
             {agent.template}
           </Link>
         </dd>
+        <dt className="text-muted-foreground">Configuration</dt>
+        <dd className="min-w-0">
+          <Link to="/agents/$slug/config" params={{ slug: agent.slug }} className={LINK_CLASS}>
+            Open configuration
+          </Link>
+        </dd>
         {agent.credential !== null && (
           <>
             <dt className="text-muted-foreground">Credential</dt>

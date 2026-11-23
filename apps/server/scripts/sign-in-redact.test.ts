@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parsePrompt, parseToken } from "../src/credentials/sign-in/setup-token.ts";
-import { RedactionFailed, redactTranscript, writeRecording } from "./sign-in-redact.ts";
+import {
+  assertRedacted,
+  RedactionFailed,
+  redactTranscript,
+  writeRecording,
+} from "./sign-in-redact.ts";
 
 const STATE = "stateSTATEstate1234567890abcdef";
 const CHALLENGE = "chalCHALchalCHAL1234567890abcdefghijklmnopq";
@@ -81,6 +86,71 @@ describe("redactTranscript", () => {
   });
 });
 
+/** wrap-ansi's shape: every wrapped line is its own OSC 8 hyperlink, re-opened with the full URI. */
+function perLineLinks(term: string): string {
+  const open = `\x1b]8;;${URL_}${term}`;
+  const close = `\x1b]8;;${term}`;
+  return wrap(URL_, 60)
+    .split("\r\n")
+    .map((line) => `${open}${line}${close}`)
+    .join("\r\n  ");
+}
+
+describe.each([
+  ["BEL", "\x07"],
+  ["ST", "\x1b\\"],
+])("redactTranscript with a hyperlink re-opened per wrapped line (%s)", (_, term) => {
+  const raw = `Use the url below to sign in\r\n\r\n  ${perLineLinks(term)}\r\n\r\nPaste code here if prompted >\r\n${CODE}\r\n${wrap(TOKEN, 50)}\r\n`;
+  const out = redactTranscript(raw, found);
+
+  it("redacts every copy of the URI and keeps the length", () => {
+    expect(parsePrompt(raw)?.url).toBe(URL_);
+    expect(out.length).toBe(raw.length);
+    for (const v of SECRET_VALUES) expect(out).not.toContain(v);
+    expect(out.match(/state=x{31}/g)?.length).toBe(raw.split(`state=${STATE}`).length - 1);
+    expect(raw.split(`state=${STATE}`).length - 1).toBeGreaterThanOrEqual(4); // one per line
+    expect(parsePrompt(out)).not.toBeNull();
+    expect(out).not.toMatch(/sk-ant-oat01-(?!SYNTHETIC)/);
+    expect(out).toContain("sk-ant-oat01-SYNTHETIC");
+  });
+});
+
+describe("post-redaction checks", () => {
+  it("fails on a partial echo of the code it could not match whole", () => {
+    const raw = `${transcript()}input> \u2026${CODE.slice(-12)}\r\n`;
+    expect(() => redactTranscript(raw, found)).toThrow(RedactionFailed);
+  });
+
+  it("fails on a code fragment split by a wrap or a cursor move", () => {
+    const frag = CODE.slice(3, 15);
+    expect(() =>
+      assertRedacted(`a ${frag.slice(0, 5)}\r\n  \x1b[2C${frag.slice(5)} b`, found),
+    ).toThrow(RedactionFailed);
+  });
+
+  it("fails on a URL value left as is, or split by a wrap", () => {
+    expect(() => assertRedacted(`state=${STATE}`, found)).toThrow(RedactionFailed);
+    expect(() =>
+      assertRedacted(`${CHALLENGE.slice(0, 9)}\r\n${CHALLENGE.slice(9)}`, found),
+    ).toThrow(RedactionFailed);
+    expect(() => assertRedacted(`\x1b]8;;x?client_id=${CLIENT}\x07`, found)).toThrow(
+      RedactionFailed,
+    );
+  });
+
+  it("passes clean text, and the error carries no transcript text", () => {
+    expect(() => assertRedacted("state=xxxx code_challenge=xxxx true S256", found)).not.toThrow();
+    const err = (() => {
+      try {
+        assertRedacted(STATE, found);
+      } catch (e) {
+        return e as Error;
+      }
+    })();
+    expect(err?.message).toBe("redaction_failed");
+  });
+});
+
 describe("writeRecording", () => {
   let base: string;
   afterEach(async () => {
@@ -112,6 +182,15 @@ describe("writeRecording", () => {
     const err = await writeRecording(dir, "t.txt", `x ${TOKEN}`).catch((e) => e);
     expect(err).toBeInstanceOf(RedactionFailed);
     expect(err.message).not.toContain("REALLOOKING");
+    await expect(readdir(dir)).rejects.toThrow();
+  });
+
+  it("writes nothing when a token's prefix is split by a wrap or a terminal code", async () => {
+    base = await mkdtemp(path.join(tmpdir(), "of-redact-test-"));
+    const dir = path.join(base, "none");
+    for (const text of [`x sk-ant-o\r\nat01-REAL`, `x sk-ant-\x1b[1Coat01-REAL`]) {
+      await expect(writeRecording(dir, "t.txt", text)).rejects.toBeInstanceOf(RedactionFailed);
+    }
     await expect(readdir(dir)).rejects.toThrow();
   });
 

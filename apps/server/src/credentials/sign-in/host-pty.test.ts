@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import {
   chmod,
   lstat,
@@ -183,6 +183,26 @@ describe("startHostPty with a spawn spy", () => {
     run.kill();
     expect(await run.exit).toEqual({ code: 1 });
     await expect(stat(run.dir)).resolves.toBeTruthy(); // left for the boot sweep
+  });
+
+  it("beforeRemove sees the temp dir on close, before it is removed; a throw still settles exit", async () => {
+    const tmp = await mkdtemp(path.join(tmpdir(), "of-hostpty-hook-"));
+    onTestFinished(() => rm(tmp, { recursive: true, force: true }));
+    const seen: { dir: string; present: boolean }[] = [];
+    const run = await startHostPty({
+      claudeBin: "/opt/claude",
+      spawnFn: (() => fakeChild()) as never,
+      tmp,
+      beforeRemove: (dir) => {
+        seen.push({ dir, present: readdirSync(tmp).includes(path.basename(dir)) });
+        throw new Error("hook failed");
+      },
+    });
+    writeFileSync(path.join(run.dir, "f"), "x");
+    run.kill();
+    expect(await run.exit).toEqual({ code: 1 });
+    expect(seen).toEqual([{ dir: run.dir, present: true }]);
+    await expect(stat(run.dir)).rejects.toThrow();
   });
 
   it("ENOENT stays PtyUnavailable when the temp dir can't be removed", async () => {

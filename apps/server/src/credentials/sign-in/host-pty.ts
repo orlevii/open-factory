@@ -56,6 +56,8 @@ export async function startHostPty(d: {
   serverEnv?: NodeJS.ProcessEnv;
   spawnFn?: typeof spawn;
   tmp?: string;
+  /** Called synchronously once the bridge has closed, just before the temp dir is removed. Errors are dropped. */
+  beforeRemove?: (dir: string) => void;
 }): Promise<PtyRun> {
   const dir = await mkdtemp(path.join(d.tmp ?? tmpdir(), DIR_PREFIX));
   await chmod(dir, 0o700);
@@ -119,6 +121,9 @@ export async function startHostPty(d: {
       // (SIGKILL of the bridge). Done now, never later: if the CLI is still alive its group can't
       // have been reused; after a normal exit the pgid is free for only the few ms before `close`.
       killGroup(cliPid);
+      try {
+        d.beforeRemove?.(dir);
+      } catch {}
       void removeDir().then(() => resolve({ code }));
     });
   });

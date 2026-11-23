@@ -98,7 +98,7 @@ test("the slot keeps the width of the wider label in both views, and only the ic
   expect(link).toHaveAccessibleName("Chat");
 });
 
-test("crowded by Restart, the switch leaves the header below 22rem and tops the ⋯ menu; Restart stays", async () => {
+test("crowded by Restart, the switch leaves the header below 22rem too; Restart stays", async () => {
   agent = { status: "errored", lastError: "boom" };
   renderApp("/agents/dev/chat", alice);
   const link = await waitFor(async () => {
@@ -115,15 +115,20 @@ test("crowded by Restart, the switch leaves the header below 22rem and tops the 
   expect(items[0]).toHaveAttribute("href", "/agents/dev/session");
 });
 
-test("uncrowded, the switch never leaves the header and the menu has no copy of it", async () => {
+test("uncrowded, the switch also leaves the header below 22rem (which is a phone, or 200% text) and tops the ⋯ menu", async () => {
   renderApp("/agents/dev/chat", alice);
   const link = await switchLink();
-  expect(link).not.toHaveClass("@max-[22rem]:hidden");
+  expect(link).toHaveClass("@max-[22rem]:hidden");
+  // The name clips itself inside the h1 (block + truncate) and the h1's floor drops to 1.5rem below 22rem, so the
+  // ⋯ stays inside a 390px phone at 200% text.
+  const h1 = (await banner()).querySelector("h1");
+  expect(h1).toHaveClass("truncate", "@max-[22rem]:min-w-6");
+  expect(h1?.firstElementChild).toHaveClass("block", "min-w-0", "truncate");
   await userEvent.click(
     within(await banner()).getByRole("button", { name: "Actions for Dev agent" }),
   );
-  await screen.findAllByRole("menuitem");
-  expect(screen.queryByRole("menuitem", { name: "Open session" })).toBeNull();
+  const items = await screen.findAllByRole("menuitem");
+  expect(items[0]).toHaveTextContent("Open session");
 });
 
 test("the live fact's Open session link is in the Chat and hidden in the Session", async () => {

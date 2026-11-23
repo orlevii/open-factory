@@ -23,7 +23,7 @@ export const viewSwitchTarget = (view: AgentView) => OTHER[view];
  * The header's Chat ↔ Session switch (spec §6.2): navigation, so a ghost button with icon and label. Its
  * slot keeps the width of the wider label (the other one is laid over it, hidden), so it never moves
  * between views. Below a 24rem header only the icon shows, the label is its accessible name and its
- * tooltip. When the header is crowded (`inMenu`) it hides below 22rem: the ⋯ menu then carries it.
+ * tooltip. The session header sets `inMenu`: the switch hides below a 22rem header (which at 200% text is 704px, so a phone): the ⋯ menu then carries it.
  */
 export function ViewSwitch({
   slug,

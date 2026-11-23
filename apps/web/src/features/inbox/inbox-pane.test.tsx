@@ -114,7 +114,7 @@ test("the pane shows the Chat under a compact strip, with no ⋯, Agent details 
   expect(await within(p).findByText("dev says 2")).toBeInTheDocument();
   expect(await within(p).findByRole("combobox", { name: "Message to Dev agent" })).toBeVisible();
   const strip = p.querySelector("[data-chat-strip]") as HTMLElement;
-  expect(strip).toHaveClass("h-10");
+  expect(strip).toHaveClass("min-h-10", "flex-wrap");
   expect(within(strip).getByText("Dev agent")).toBeInTheDocument();
   expect(within(strip).getByRole("link", { name: "Open chat" })).toHaveAttribute(
     "href",
@@ -178,17 +178,16 @@ test("retargeting never puts a fading row (data-live) on screen, not even for a 
   expect(seen).toEqual([]);
 });
 
-test("the strip keeps its controls whole and lets only the name shrink (the 404px fit)", async () => {
+test("the strip keeps its controls whole, lets the name shrink and wraps (a second line) rather than scrolling at 200% text", async () => {
   // jsdom has no layout, so the fit itself is asserted by the classes that decide it: the name is the
-  // one shrinkable child (`min-w-0`), the link and the icon-only switch never shrink or wrap.
+  // one shrinkable child (`min-w-0`), the link and the icon-only switch never shrink, and the row wraps before the page scrolls sideways.
   await visit("/inbox?item=chat:dev");
   const strip = (await waitFor(() => {
     const el = pane().querySelector<HTMLElement>("[data-chat-strip]");
     expect(el).not.toBeNull();
     return el;
   })) as HTMLElement;
-  expect(strip).toHaveClass("h-10", "items-center");
-  expect(strip).not.toHaveClass("flex-wrap");
+  expect(strip).toHaveClass("min-h-10", "flex-wrap", "items-center");
   expect(within(strip).getByRole("link", { name: "Open chat" })).toHaveClass("shrink-0");
   const name = await within(strip).findByText("Dev agent");
   expect(name.closest(".min-w-0")).not.toBeNull();

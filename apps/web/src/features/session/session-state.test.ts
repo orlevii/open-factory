@@ -1167,3 +1167,13 @@ test("an operator_input row of someone else's send hands nothing off", () => {
   const s = sessionReducer(loaded(), frames([sessionEvent(10, rawInput("zz"))]));
   expect(s.handedOff.size).toBe(0);
 });
+
+test("an agent_commands_changed frame leaves the state as it was", () => {
+  const s = loaded();
+  expect(
+    sessionReducer(s, {
+      type: "frame",
+      message: { type: "agent_commands_changed", agent: "dev" },
+    }),
+  ).toBe(s);
+});

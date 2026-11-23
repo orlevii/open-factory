@@ -7,6 +7,7 @@ import {
   commandsQueryOptions,
   EMPTY_COMMANDS,
   FROM_TEMPLATE,
+  invalidateCommands,
   rankCommands,
   slashOpensAt,
 } from "./commands";
@@ -228,6 +229,43 @@ test("watch hears a failed load too", async () => {
   );
   const stop = src.watch?.(heard);
   await vi.waitFor(() => expect(heard).toHaveBeenCalled());
+  stop?.();
+  vi.unstubAllGlobals();
+});
+
+test("agent_commands_changed invalidates that agent's list only", () => {
+  const spy = vi.spyOn(qc, "invalidateQueries");
+  invalidateCommands(qc, { type: "agent_commands_changed", agent: "dev" });
+  expect(spy).toHaveBeenCalledWith({ queryKey: ["agent-commands", "dev"] });
+  invalidateCommands(qc, { type: "agent_status", agent: "dev" } as never);
+  expect(spy).toHaveBeenCalledTimes(1);
+});
+
+test("an open menu fetches the list again when the agent starts", async () => {
+  let n = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      n++;
+      return new Response(
+        JSON.stringify({
+          commands: n === 1 ? [] : LIST,
+          source: "session",
+          at: null,
+          stale: false,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }),
+  );
+  const src = commandSource(qc, "dev");
+  const onChange = vi.fn();
+  const stop = src.watch?.(onChange);
+  await vi.waitFor(() => expect(src.items("").length).toBe(0));
+  await vi.waitFor(() => expect(onChange).toHaveBeenCalled());
+  invalidateCommands(qc, { type: "agent_commands_changed", agent: "dev" });
+  await vi.waitFor(() => expect(src.items("").length).toBeGreaterThan(0));
+  expect(n).toBe(2);
   stop?.();
   vi.unstubAllGlobals();
 });

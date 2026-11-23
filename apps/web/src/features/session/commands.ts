@@ -4,6 +4,7 @@ import {
   apiFetch,
   type Command,
   deniedReason,
+  type ServerMessage,
 } from "@open-factory/shared";
 import { hashKey, type QueryClient, queryOptions, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
@@ -24,6 +25,14 @@ export const commandsQueryOptions = (slug: string) =>
       }),
     staleTime: COMMANDS_STALE_MS,
   });
+
+/** The agent started, so its command list changed (I1 §6): the cached list is stale, and a menu that
+ *  is open (`watch`) fetches it again. Called from the socket's global handler, so a closed menu costs
+ *  nothing and the session's own reducer never sees the frame. */
+export function invalidateCommands(qc: QueryClient, m: ServerMessage): void {
+  if (m.type === "agent_commands_changed")
+    void qc.invalidateQueries({ queryKey: ["agent-commands", m.agent] });
+}
 
 export const EMPTY_COMMANDS = "No commands loaded yet. They appear after the agent starts.";
 export const FROM_TEMPLATE = "From template";
@@ -172,12 +181,14 @@ export function commandSource(qc: QueryClient, slug: string): CompletionSource {
       const reason = deniedReason(m[1]);
       return reason ? { kind: "refusal", text: reason } : undefined;
     },
-    // While the menu is open: the list loads if the prefetch hasn't (or is stale), and its arrival
-    // re-reads the rows without a keystroke.
+    // While the menu is open: the list loads if the prefetch hasn't (or is stale), an invalidation
+    // (the agent started) fetches it again, and its arrival re-reads the rows without a keystroke.
     watch(onChange) {
       void qc.prefetchQuery(commandsQueryOptions(slug));
       const hash = hashKey(key);
       return qc.getQueryCache().subscribe((e) => {
+        if (e.type === "updated" && e.action.type === "invalidate" && e.query.queryHash === hash)
+          void qc.prefetchQuery(commandsQueryOptions(slug));
         // A failed GET decides too (a stored command then stays text).
         if (
           e.type === "updated" &&

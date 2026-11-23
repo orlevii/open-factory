@@ -51,10 +51,10 @@ export function PageHeader({
             "font-heading text-base leading-5 font-semibold tracking-[-0.01em]",
             // Give-way order: the meta slug (it never takes room from the title), then a data title (to a
             // floor), then nothing else shrinks.
-            // Below a 22rem header the floor drops to 2rem: at 320px a long name, the Hibernated badge and
+            // Below a 22rem header the floor drops to 1.5rem: at 320px a long name, the Hibernated badge and
             // three icon actions don't fit beside a 4rem floor, and the actions would leave the screen.
             titleFromData
-              ? "min-w-16 truncate @max-[22rem]:min-w-8"
+              ? "min-w-16 truncate @max-[22rem]:min-w-6"
               : heading !== undefined
                 ? "min-w-0 truncate"
                 : "shrink-0",

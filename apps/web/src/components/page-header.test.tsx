@@ -35,7 +35,7 @@ function setup(titleFromData: boolean) {
 test("a data title truncates to a floor; meta, badge, slug and actions follow the give-way order", () => {
   const { h1, header } = setup(true);
   expect(header).toHaveClass("@container");
-  expect(h1).toHaveClass("min-w-16", "truncate", "@max-[22rem]:min-w-8");
+  expect(h1).toHaveClass("min-w-16", "truncate", "@max-[22rem]:min-w-6");
   expect(h1).toHaveAttribute("title", NAME);
   // The meta wrapper adds no box: a box would collapse to 0px around the badge when the title
   // truncates, and the actions would paint over the badge. Its children are the header's own items.

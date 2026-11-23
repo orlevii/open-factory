@@ -75,9 +75,21 @@ test("lockAgents is one statement ordered persistent before spawned, then id, wi
       x === ids.kid ? 1 : y === ids.kid ? -1 : x < y ? -1 : 1,
     ),
   );
-  const plan =
-    await t.sql`explain (format json) select id from agents where id in (${ids.kid}, ${ids.dev}) order by (kind = 'ephemeral'), id for share`;
-  const json = JSON.stringify(plan[0]);
+  // EXPLAIN the statement lockAgents itself sends, not a hand-written copy.
+  const plans: unknown[] = [];
+  await t.db.transaction((tx) =>
+    store.lockAgents(
+      {
+        execute: async (q: Parameters<typeof tx.execute>[0]) => {
+          plans.push(await tx.execute(sql`explain (format json) ${q}`));
+          return tx.execute(q);
+        },
+      } as never,
+      [ids.kid, ids.dev],
+    ),
+  );
+  expect(plans).toHaveLength(1);
+  const json = JSON.stringify(plans[0]);
   expect(json.indexOf('"LockRows"')).toBeGreaterThan(-1);
   expect(json.indexOf('"LockRows"')).toBeLessThan(json.indexOf('"Sort"'));
 });
@@ -162,11 +174,14 @@ test("comments and events insert with strictly increasing times", async () => {
     { taskId: a.id, actor: { agentId: ids.dev }, type: "status", from: "open", to: "done" },
   ]);
   const ev = await t.db.select().from(schema.taskEvents).orderBy(sql`at`);
-  expect(ev.filter((e) => e.taskId === a.id).map((e) => e.type)).toEqual(["created", "status"]);
+  const mine = ev.filter((e) => e.taskId === a.id);
+  expect(mine.map((e) => e.type)).toEqual(["created", "status"]);
+  expect(mine[1]?.at.getTime()).toBeGreaterThan(mine[0]?.at.getTime() as number);
   const c = await store.insertComment(t.db, {
     taskId: a.id,
     author: { agentId: ids.dev },
     body: "hi",
   });
   expect(c.authorAgentId).toBe(ids.dev);
+  expect(c.createdAt.getTime()).toBeGreaterThan(mine[1]?.at.getTime() as number);
 });

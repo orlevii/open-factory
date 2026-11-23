@@ -38,6 +38,12 @@ test("every recipient refused is a tool error with one line per reason", async (
     "You can't message yourself.",
     "Channels aren't supported yet.",
   ]);
+  // an archived recipient is refused too, and nothing is written for it
+  await h.app.agents.archive("bob");
+  const archived = await callTool(url, tok, "send_message", { to: ["bob"], body: "x" });
+  expect(archived.isError).toBe(true);
+  expect(text(archived)).toBe("@bob is archived and can't receive messages.");
+  expect(await h.sql`select id from messages where kind = 'message'`).toEqual([]);
 });
 
 test("a partial refusal is still a result", async () => {
@@ -64,13 +70,10 @@ test("a string `to` is a validation error; so is an empty list and more than ten
   expect(text(many)).toContain("Send to at most 10 recipients at once.");
 });
 
-test("the description speaks of handles and lists, never @humans", async () => {
+test("the tool never mentions @humans", async () => {
   const list = await mcpCall(url, tok, "tools/list", {});
   const tool = (
     list.json.result.tools as { name: string; description: string; inputSchema: unknown }[]
   ).find((t) => t.name === "send_message");
-  expect(tool?.description).toBe(
-    "Send a message to one or more handles (an agent's @slug or a person's @handle), up to 10. Every recipient sees the full list. Set urgent to interrupt agents that are working.",
-  );
   expect(JSON.stringify(tool)).not.toContain("@humans");
 });

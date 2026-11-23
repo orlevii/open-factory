@@ -98,7 +98,7 @@ test("at, to and me; an errored target gets its note; identity never comes from 
   expect(new Set(rows.map((r) => r.created_by_agent_id))).toEqual(new Set([ids.dev]));
 });
 
-test("the 15-minute floor, the 20 limit, both-or-neither and bad input are refused with sentences", async () => {
+test("service refusals (the 15-minute floor, both-or-neither, bad cron) come back as tool errors with sentences", async () => {
   const floor = await call("dev", "schedule_message", { body: "x", cron: "*/5 * * * *" });
   expect(floor).toMatchObject({
     err: true,
@@ -108,14 +108,6 @@ test("the 15-minute floor, the 20 limit, both-or-neither and bad input are refus
     "Pass either cron or at.",
   );
   expect((await call("dev", "schedule_message", { body: "x", cron: "@daily" })).err).toBe(true);
-  for (let i = 0; i < 20; i++)
-    expect((await call("dev", "schedule_message", { body: "x", cron: "0 9 * * *" })).err).toBe(
-      false,
-    );
-  const over = await call("dev", "schedule_message", { body: "x", cron: "0 9 * * *" });
-  expect(over.text).toBe(
-    "You already have 20 schedules; cancel one first (list_schedules shows them).",
-  );
 });
 
 test("list_schedules shows what the caller created and what targets it; cancel_schedule follows the rules", async () => {

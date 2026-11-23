@@ -79,23 +79,6 @@ test("AC 1: send_message to a hibernated agent wakes it with agent_message; the 
   ).toBe("toolu_01ABC");
 });
 
-test("rejections are tool errors with one sentence", async () => {
-  const tokA = await startIdle("ada");
-  const err = async (to: string) => {
-    const r = await callTool(url, tokA, "send_message", { to: [to], body: "x" });
-    expect(r.isError).toBe(true);
-    return text(r);
-  };
-  expect(await err("nobody")).toBe(
-    "No agent or user named 'nobody'. Call list_peers to see who you can message.",
-  );
-  expect(await err("ada")).toBe("You can't message yourself.");
-  expect(await err("@me")).toBe("'me' is reserved and can't receive messages.");
-  await h.app.agents.archive("bob");
-  expect(await err("bob")).toBe("@bob is archived and can't receive messages.");
-  expect(await pendingOf("bob")).toEqual([]);
-});
-
 test("an agent id smuggled in the tool arguments is ignored: the caller is the token's agent", async () => {
   const tokA = await startIdle("ada");
   const lead = await h.app.store.agentBySlug("lead");
@@ -143,31 +126,6 @@ test("AC 3: an urgent message from an agent interrupts a working recipient", asy
   const lead = await h.app.store.agentBySlug("lead");
   const events = (await h.app.store.after(lead?.id ?? "", 0, 200)).map((e) => e.event);
   expect(events).toContainEqual({ type: "control", cmd: "interrupt", by: "@ada" });
-});
-
-test("AC 5: a message to a person is one inbox item for them, delivered at once, with inbox_changed to them only", async () => {
-  await signUp(h.app, { handle: "or" });
-  await signUp(h.app, { handle: "sam" });
-  const tokA = await startIdle("ada"); // signs up a third user, "hada"
-  const one = JSON.parse(
-    text(await callTool(url, tokA, "send_message", { to: ["or"], body: "just you" })),
-  ).results[0];
-  expect(one).toMatchObject({ to: "@or", kind: "human", status: "inbox" });
-  expect(await h.sql`select user_id from inbox_items where message_id = ${one.id}`).toHaveLength(1);
-  expect((await h.sql`select state from messages where id = ${one.id}`)[0]?.state).toBe(
-    "delivered",
-  );
-});
-
-test("`@humans` isn't a handle: refused with guidance, nothing is written", async () => {
-  await signUp(h.app, { handle: "or" });
-  const tokA = await startIdle("ada");
-  const r = await callTool(url, tokA, "send_message", { to: ["@humans"], body: "need a decision" });
-  expect(r.isError).toBe(true);
-  expect(text(r)).toBe(
-    "`@humans` isn't a handle. Message people by handle; list_peers lists them.",
-  );
-  expect(await h.sql`select id from inbox_items`).toEqual([]);
 });
 
 test("a row loaded by init() and handed over again is written once and still wakes the agent", async () => {
@@ -495,12 +453,28 @@ test("a recipient whose init fails after the commit doesn't fail the sender's ca
   expect((await pendingOf("bob")).map((x) => x.state)).toEqual(["pending"]);
 });
 
-test("deliverHeld never throws, even for a row with no agent recipient", () => {
-  expect(() =>
-    h.app.runtimes.deliverHeld({ id: "m1", toAgentId: null } as unknown as Parameters<
+test("deliverHeld: a recipient that fails to load is logged, never thrown or unhandled", async () => {
+  const error = vi.spyOn(h.app.log, "error").mockImplementation(() => undefined);
+  vi.spyOn(h.app.runtimes, "load").mockRejectedValue(new Error("load failed"));
+  const unhandled = vi.fn();
+  process.on("unhandledRejection", unhandled);
+  try {
+    const row = { id: "m1", toAgentId: "ag1" } as unknown as Parameters<
       typeof h.app.runtimes.deliverHeld
-    >[0]),
-  ).not.toThrow();
+    >[0];
+    expect(() => h.app.runtimes.deliverHeld(row)).not.toThrow();
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: "ag1", message: "m1" }),
+        "delivering a held row failed",
+      ),
+    );
+    await new Promise((r) => setImmediate(r));
+    expect(unhandled).not.toHaveBeenCalled();
+  } finally {
+    process.off("unhandledRejection", unhandled);
+    vi.restoreAllMocks();
+  }
 });
 
 test("reconcile forwards factory_restarted lost work to the manager", async () => {
@@ -812,6 +786,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
         reason: "'me' is reserved and can't receive messages.",
       },
     ]);
+    expect(await h.sql`select id from inbox_items`).toEqual([]);
   });
 
   test("a disabled user is refused", async () => {
@@ -880,6 +855,10 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     expect(got.sam).toContainEqual({ type: "inbox_changed" });
     expect(got.bystander).toEqual([]);
     expect(frames).not.toContainEqual({ type: "inbox_changed" });
+    for (const id of ids)
+      expect((await h.sql`select state from messages where id = ${id}`)[0]?.state).toBe(
+        "delivered",
+      );
   });
 
   test("an errored agent recipient is pending with the note, beside a queued one", async () => {

@@ -74,28 +74,18 @@ test("an agent's comment to another agent wakes it with task_message", async () 
   );
 });
 
-test("@humans isn't a handle: the comment posts, nobody is notified, and it is reported as reserved", async () => {
-  const r = await h.app.tasks.comment(agent("dev"), "T-1", "@humans heads up");
-  expect(r).toMatchObject({
-    deliveredTo: [],
-    mentionedHumans: [],
-    notReached: [{ name: "humans", reason: "reserved" }],
-  });
-  expect(await inbox(ids.or as string)).toHaveLength(0);
-  expect(await inbox(ids.sam as string)).toHaveLength(0);
-  expect(
-    await h.sql`select id from messages where kind = 'task_comment' and to_all_humans`,
-  ).toEqual([]);
-});
-
 test("a user mentioned alongside @humans gets one item; @humans is still not reached", async () => {
   const r = await h.app.tasks.comment(agent("dev"), "T-1", "@sam @humans");
   expect(r).toMatchObject({
+    deliveredTo: [],
     mentionedHumans: ["@sam"],
     notReached: [{ name: "humans", reason: "reserved" }],
   });
   expect(await inbox(ids.sam as string)).toHaveLength(1);
   expect(await inbox(ids.or as string)).toHaveLength(0);
+  expect(
+    await h.sql`select id from messages where kind = 'task_comment' and to_all_humans`,
+  ).toEqual([]);
 });
 
 test("mentions in code create nothing", async () => {

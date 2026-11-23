@@ -1,6 +1,5 @@
 import type { AgentRow } from "@open-factory/db";
 import type { AnyEvent, ConfigDoc, ServerMessage } from "@open-factory/shared";
-import { mergeConfig } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { FILE_CHANGE } from "../templates/template-index.ts";
 import { ConfigChanges } from "./config-changes.ts";
@@ -66,7 +65,10 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
   const runtimes = new Map<string, Rt>();
   const appendedToStore: { agentId: string; event: AnyEvent }[] = [];
   const notices: { id: string; lines: string[] }[] = [];
-  const restarts: { id: string; opts: { after?: ConfigDoc } | undefined }[] = [];
+  /** `current` is what the request's re-read returned (absent for a restart with no config check). */
+  const restarts: { id: string; current?: ConfigDoc | undefined }[] = [];
+  /** What `currentDoc` reads for an agent now (its fresh row through the resolver). */
+  const fresh = new Map<string, ConfigDoc>();
   const nextImage = new Map<string, string | undefined>();
   const frames: ServerMessage[] = [];
   const logged: unknown[] = [];
@@ -76,6 +78,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
     agents: {
       liveOfTemplate: async () => o.agents ?? [],
       liveChildren: async (id) => o.children?.[id] ?? [],
+      currentDoc: async (id) => fresh.get(id),
     },
     store: {
       append: async (agentId: string, _turn: string | null, event: AnyEvent) => {
@@ -99,9 +102,12 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
         if (stuckOf(id)) return never;
         notices.push({ id, lines });
       },
-      requestRestart: async (id: string, opts?: { after?: ConfigDoc }) => {
+      requestRestart: async (
+        id: string,
+        opts?: { current?: () => Promise<ConfigDoc | undefined> },
+      ) => {
         if (stuckOf(id)) return never;
-        restarts.push({ id, opts });
+        restarts.push(opts?.current ? { id, current: await opts.current() } : { id });
       },
       setNextImage: (id: string, ref: string | undefined) => void nextImage.set(id, ref),
       imageRef: (c: { runtime: string; image?: string }) =>
@@ -116,7 +122,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
     runtimes.set(a.id, rt);
     return rt;
   };
-  return { changes, load, appendedToStore, notices, restarts, nextImage, frames, logged };
+  return { changes, load, appendedToStore, notices, restarts, fresh, nextImage, frames, logged };
 }
 
 test("a new skill: every live agent of the template, persistent and spawned, gets the event and the notice; only running ones get the restart check", async () => {
@@ -128,6 +134,9 @@ test("a new skill: every live agent of the template, persistent and spawned, get
   const rtIdle = w.load(idle, false);
   const before = doc({ skills: ["tdd"] });
   const after = doc({ skills: ["tdd", "release"] });
+  // What the runtime's job will read: newer than this change's `after` (an overlay save landed since).
+  const latest = doc({ skills: ["tdd", "release"], model: "opus" });
+  w.fresh.set(running.id, latest);
   await w.changes.templateChanged({ name: "dev", before, after, by: FILE_CHANGE });
 
   const by = "a file change in template dev";
@@ -141,13 +150,13 @@ test("a new skill: every live agent of the template, persistent and spawned, get
     },
   ]);
   expect(w.notices.map((x) => x.id).sort()).toEqual([running.id, idle.id, spawned.id].sort());
-  // Decided in the runtime's job against `started`, so the request carries the merged `after`.
-  expect(w.restarts).toEqual([{ id: running.id, opts: { after: mergeConfig(after, {}) } }]);
+  // Decided in the runtime's job, which re-reads that agent's config there rather than trusting this change's `after`.
+  expect(w.restarts).toEqual([{ id: running.id, current: latest }]);
   expect(w.frames).toEqual([
+    { type: "config_changed", template: "dev" },
     { type: "config_changed", agent: running.slug },
     { type: "config_changed", agent: idle.slug },
     { type: "config_changed", agent: spawned.slug },
-    { type: "config_changed", template: "dev" },
   ]);
 });
 
@@ -170,7 +179,7 @@ test("an API write names the template; the overlay is merged on both sides, so a
   expect(w.notices.map((x) => x.id)).toEqual([plain.id]);
 });
 
-test("an AGENTS.md-only change (the same docs) does nothing", async () => {
+test("an AGENTS.md-only change (the same docs) reaches no agent, but the template's views still hear of it", async () => {
   const a = row();
   const w = world({ agents: [a] });
   w.load(a, true);
@@ -181,7 +190,8 @@ test("an AGENTS.md-only change (the same docs) does nothing", async () => {
     after: doc({ description: "new" }),
     by: FILE_CHANGE,
   });
-  expect([w.appendedToStore, w.notices, w.restarts, w.frames]).toEqual([[], [], [], []]);
+  expect([w.appendedToStore, w.notices, w.restarts]).toEqual([[], [], []]);
+  expect(w.frames).toEqual([{ type: "config_changed", template: "dev" }]);
 });
 
 test("before: null writes no event or notice but still runs the restart check", async () => {
@@ -191,11 +201,12 @@ test("before: null writes no event or notice but still runs the restart check", 
   const rt = w.load(running, true);
   w.load(idle, false);
   const after = doc({ skills: ["release"] });
+  w.fresh.set(running.id, after);
   await w.changes.templateChanged({ name: "dev", before: null, after, by: FILE_CHANGE });
   expect(rt.appended).toEqual([]);
   expect(w.appendedToStore).toEqual([]);
   expect(w.notices).toEqual([]);
-  expect(w.restarts).toEqual([{ id: running.id, opts: { after } }]);
+  expect(w.restarts).toEqual([{ id: running.id, current: after }]);
   expect(w.frames).toEqual([{ type: "config_changed", template: "dev" }]);
 });
 
@@ -227,8 +238,8 @@ test("a spawner whose secrets or deny rules changed restarts its live children; 
     by: FILE_CHANGE,
   });
   expect(w.restarts.map((r) => r.id).sort()).toEqual(["kid-1", "kid-2"]);
-  // Children re-derive at their start: no `after` of theirs to compare.
-  expect(w.restarts.every((r) => r.opts === undefined)).toBe(true);
+  // Children re-derive at their start: no config of theirs to compare.
+  expect(w.restarts.every((r) => !("current" in r))).toBe(true);
 
   w.restarts.length = 0;
   await w.changes.overlaySaved(

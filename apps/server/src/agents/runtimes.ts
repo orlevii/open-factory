@@ -422,12 +422,17 @@ export class AgentRuntimes {
 
   /**
    * Applies config changes at the next safe moment (spec §13); a no-op when no runtime is loaded. `changes` (I2 §7.3)
-   * are shown as `restartChanges` while it is pending; `wake` is I7's and ignored in I2. `after` restarts only when the
-   * running process started with another config (see `AgentRuntime.requestRestart`).
+   * are shown as `restartChanges` while it is pending; `wake` is I7's and ignored in I2. `current` re-reads the
+   * effective config inside the runtime's job, which restarts only when the running process started with another one
+   * (see `AgentRuntime.requestRestart`).
    */
   async requestRestart(
     agentId: string,
-    opts: { changes?: string[]; wake?: boolean; after?: ConfigDoc } = {},
+    opts: {
+      changes?: string[];
+      wake?: boolean;
+      current?: () => Promise<ConfigDoc | undefined>;
+    } = {},
   ): Promise<void> {
     await (await this.get(agentId))?.requestRestart(opts);
   }

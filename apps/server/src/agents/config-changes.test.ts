@@ -1,8 +1,9 @@
-import type { ConfigDoc } from "@open-factory/shared";
+import { type ConfigDoc, describeChanges, mergeConfig } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { FILE_CHANGE } from "../templates/template-index.ts";
 import { ConfigChanges, dbConfigChangeAgents } from "./config-changes.ts";
-import type { Effective } from "./config-resolver.ts";
+import type { ConfigResolver, Effective } from "./config-resolver.ts";
+import { AgentStartError } from "./errors.ts";
 import { EventBus } from "./event-bus.ts";
 import { parseConfigNotice } from "./notices.ts";
 import { AgentRuntimes } from "./runtimes.ts";
@@ -49,7 +50,18 @@ async function rowOf(id: string) {
   return row;
 }
 
-/** Runtimes whose every start runs on `startedDoc` (what `started` holds), plus the change path over them. */
+/** A resolver for the SQL reads alone: it hands back the row's overlay as the doc's settings. */
+const echoResolver: Pick<ConfigResolver, "effective"> = {
+  effective: async (row) => ({ ...testEffective(), doc: { ...doc(), settings: row.config } }),
+};
+
+/** A config check that reads `d` (what the runtime's job sees when it re-reads the agent). */
+const at = (d: ConfigDoc | undefined) => ({ current: async () => d });
+
+/**
+ * Runtimes whose every start runs on `startedDoc` (what `started` holds), plus the change path over them. `current`
+ * is each agent's effective doc as the runtime's re-read sees it (the committed state), `reads` counts those reads.
+ */
 function world(startedDoc: ConfigDoc) {
   const driver = new FakeDriver();
   const prepareStart: PrepareStart = async (a) => {
@@ -69,8 +81,16 @@ function world(startedDoc: ConfigDoc) {
     forward: noForward,
   });
   closers.push(() => runtimes.stopAll());
+  const current = new Map<string, ConfigDoc>();
+  let reads = 0;
   const changes = new ConfigChanges({
-    agents: dbConfigChangeAgents(h.t.db),
+    agents: {
+      ...dbConfigChangeAgents(h.t.db, echoResolver),
+      currentDoc: async (id) => {
+        reads += 1;
+        return current.get(id);
+      },
+    },
     store: h.store,
     runtimes,
     bus,
@@ -91,7 +111,7 @@ function world(startedDoc: ConfigDoc) {
     await rt?.settled();
     return rt;
   };
-  return { driver, runtimes, changes, frames, runBusy };
+  return { driver, runtimes, changes, frames, runBusy, current, reads: () => reads };
 }
 
 const events = (agentId: string) =>
@@ -110,13 +130,28 @@ test("the SQL reads: live agents of a template, persistent and spawned, never ar
   const gone = await agent({ kind: "ephemeral", reportsTo: lead, terminatedAt: new Date() });
   const archived = await agent({ archived: true });
   await h.t.sql`update agents set template = 'other' where id = ${archived}`;
-  const q = dbConfigChangeAgents(h.t.db);
+  const q = dbConfigChangeAgents(h.t.db, echoResolver);
   const ids = (await q.liveOfTemplate("test")).map((r) => r.id);
   expect(ids).toEqual(expect.arrayContaining([lead, kid]));
   expect(ids).not.toContain(gone);
   await h.t.sql`update agents set template = 'test' where id = ${archived}`;
   expect((await q.liveOfTemplate("test")).map((r) => r.id)).not.toContain(archived);
   expect(await q.liveChildren(lead)).toEqual([kid]);
+});
+
+test("currentDoc resolves the row as it is now; undefined for a gone agent or a config that can't be resolved", async () => {
+  const id = await agent();
+  const q = dbConfigChangeAgents(h.t.db, echoResolver);
+  await h.t
+    .sql`update agents set config = ${JSON.stringify({ template: { model: "opus" } })}::jsonb where id = ${id}`;
+  expect((await q.currentDoc(id))?.settings).toEqual({ template: { model: "opus" } });
+  expect(await q.currentDoc("no-such-agent")).toBeUndefined();
+  const failing = dbConfigChangeAgents(h.t.db, {
+    effective: async () => {
+      throw new AgentStartError("Template test has errors. Fix it in Templates.", "template");
+    },
+  });
+  expect(await failing.currentDoc(id)).toBeUndefined();
 });
 
 test("a template change with a new skill: event and notice for each live agent; restart only where started differs", async () => {
@@ -131,6 +166,7 @@ test("a template change with a new skill: event and notice for each live agent; 
   for (const id of [running, idle, spawned, archived])
     await h.t.sql`update agents set template = 't-skill' where id = ${id}`;
   const rt = await w.runBusy(running);
+  w.current.set(running, after);
   await w.changes.templateChanged({ name: "t-skill", before, after, by: FILE_CHANGE });
   await rt?.settled();
 
@@ -158,9 +194,9 @@ test("a start already running on the new config doesn't restart (compared in the
   const w = world(after);
   const id = await agent();
   const rt = await w.runBusy(id);
-  await w.runtimes.requestRestart(id, { after });
+  await w.runtimes.requestRestart(id, at(after));
   expect(rt?.live()).toMatchObject({ restartPending: false, restartChanges: [] });
-  await w.runtimes.requestRestart(id, { after: doc({ model: "haiku" }) });
+  await w.runtimes.requestRestart(id, at(doc({ model: "haiku" })));
   expect(rt?.live()).toMatchObject({
     restartPending: true,
     restartChanges: ["model: opus → haiku"],
@@ -171,16 +207,16 @@ test("two edits that cancel out while busy drop the pending restart; a second ed
   const w = world(doc({ model: "opus" }));
   const id = await agent();
   const rt = await w.runBusy(id);
-  await w.runtimes.requestRestart(id, { after: doc({ model: "haiku" }) });
+  await w.runtimes.requestRestart(id, at(doc({ model: "haiku" })));
   expect(rt?.live()).toMatchObject({
     restartPending: true,
     restartChanges: ["model: opus → haiku"],
   });
   // Edit then edit: exactly the started → latest line.
-  await w.runtimes.requestRestart(id, { after: doc({ model: "sonnet" }) });
+  await w.runtimes.requestRestart(id, at(doc({ model: "sonnet" })));
   expect(rt?.live().restartChanges).toEqual(["model: opus → sonnet"]);
   // Revert: nothing to apply, so nothing restarts.
-  await w.runtimes.requestRestart(id, { after: doc({ model: "opus" }) });
+  await w.runtimes.requestRestart(id, at(doc({ model: "opus" })));
   expect(rt?.live()).toMatchObject({ restartPending: false, restartChanges: [] });
   // The cleared state is published (the restart line goes away in every open view).
   const statuses = w.frames.filter(
@@ -194,10 +230,81 @@ test("a revert keeps a restart another cause asked for, without the config lines
   const w = world(doc({ model: "opus" }));
   const id = await agent();
   const rt = await w.runBusy(id);
-  await w.runtimes.requestRestart(id, { after: doc({ model: "haiku" }) });
+  await w.runtimes.requestRestart(id, at(doc({ model: "haiku" })));
   await w.runtimes.requestRestart(id); // e.g. a credential change
-  await w.runtimes.requestRestart(id, { after: doc({ model: "opus" }) });
+  await w.runtimes.requestRestart(id, at(doc({ model: "opus" })));
   expect(rt?.live()).toMatchObject({ restartPending: true, restartChanges: [] });
+});
+
+test("a config that can't be read now leaves the pending restart as it is", async () => {
+  const w = world(doc({ model: "opus" }));
+  const id = await agent();
+  const rt = await w.runBusy(id);
+  await w.runtimes.requestRestart(id, at(undefined));
+  expect(rt?.live()).toMatchObject({ restartPending: false, restartChanges: [] });
+  await w.runtimes.requestRestart(id, at(doc({ model: "haiku" })));
+  await w.runtimes.requestRestart(id, at(undefined));
+  expect(rt?.live()).toMatchObject({
+    restartPending: true,
+    restartChanges: ["model: opus → haiku"],
+  });
+});
+
+/*
+ * I2 §7.2, the races: each change path computes its `after` from rows it read earlier, and the two paths aren't
+ * serialized per agent. Whichever request reaches the runtime last, the decision is made against the config committed
+ * now (`current`), so a request built on stale reads can't cancel a restart the newer change needs.
+ */
+test("a stale template dispatch arriving after an overlay save doesn't cancel the save's restart", async () => {
+  const A = doc();
+  const B = doc({ skills: ["x"] });
+  const oNew = { template: { model: "opus" } };
+  // The process started on the new template with the old (empty) overlay; the save then committed `oNew`.
+  const started = mergeConfig(B, {});
+  const committed = mergeConfig(B, oNew);
+  const w = world(started);
+  const id = await agent();
+  await h.t.sql`update agents set template = 't-race1' where id = ${id}`;
+  const rt = await w.runBusy(id);
+  w.current.set(id, committed);
+  // The overlay PUT's request, then the template dispatch that read the row before the PUT committed (its row still
+  // holds the empty overlay, so its `after` equals what the process started with).
+  await w.changes.overlaySaved(await rowOf(id), "@or", started, committed);
+  await w.changes.templateChanged({ name: "t-race1", before: A, after: B, by: FILE_CHANGE });
+  await rt?.settled();
+  expect(w.reads()).toBe(2);
+  expect(rt?.live()).toMatchObject({
+    restartPending: true,
+    restartChanges: describeChanges(started, committed),
+  });
+});
+
+test("an overlay save built on a stale base arriving after a template change doesn't cancel the template's restart", async () => {
+  const A = doc();
+  const B = doc({ skills: ["x"] });
+  // The process started on the old template; the template then moved to B.
+  const started = mergeConfig(A, {});
+  const committed = mergeConfig(B, {});
+  const w = world(started);
+  const id = await agent();
+  await h.t.sql`update agents set template = 't-race2' where id = ${id}`;
+  const rt = await w.runBusy(id);
+  w.current.set(id, committed);
+  await w.changes.templateChanged({ name: "t-race2", before: A, after: B, by: FILE_CHANGE });
+  expect(rt?.live()).toMatchObject({ restartPending: true });
+  // An overlay revert whose base was read before the template change: its `after` equals what the process started on.
+  await w.changes.overlaySaved(
+    await rowOf(id),
+    "@or",
+    mergeConfig(A, { template: { model: "haiku" } }),
+    started,
+  );
+  await vi.waitFor(() => expect(w.reads()).toBe(2));
+  await rt?.settled();
+  expect(rt?.live()).toMatchObject({
+    restartPending: true,
+    restartChanges: describeChanges(started, committed),
+  });
 });
 
 test("before: null writes no event or notice but still restarts a process that started on something else", async () => {
@@ -205,6 +312,7 @@ test("before: null writes no event or notice but still restarts a process that s
   const id = await agent();
   await h.t.sql`update agents set template = 't-null' where id = ${id}`;
   const rt = await w.runBusy(id);
+  w.current.set(id, doc({ skills: ["x"] }));
   await w.changes.templateChanged({
     name: "t-null",
     before: null,

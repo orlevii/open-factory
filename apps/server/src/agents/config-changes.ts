@@ -10,7 +10,8 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 import { readDenyRules } from "../spawning/inherit.ts";
 import { FILE_CHANGE, type TemplateChange } from "../templates/template-index.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
-import { configOf } from "./config-resolver.ts";
+import { type ConfigResolver, configOf } from "./config-resolver.ts";
+import { AgentStartError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
@@ -41,15 +42,23 @@ const templateBy = (e: TemplateChange) =>
 
 type Applied = { changes: string[]; restartChecked: boolean; done: Promise<void> };
 
-/** The two agent reads the change path needs (a port, so the flow is testable without a database). */
+/** The agent reads the change path needs (a port, so the flow is testable without a database). */
 export interface ConfigChangeAgents {
   /** The agents of a template that are neither archived nor terminated, persistent and spawned, by slug. */
   liveOfTemplate(template: string): Promise<AgentRow[]>;
   /** A spawner's live spawned children's ids. */
   liveChildren(spawnerId: string): Promise<string[]>;
+  /**
+   * The agent's effective doc now: its row read fresh, then the resolver. Undefined when it can't be resolved (gone, a
+   * missing or broken template, an invalid overlay). The runtime calls it inside its job to decide a restart.
+   */
+  currentDoc(agentId: string): Promise<ConfigDoc | undefined>;
 }
 
-export function dbConfigChangeAgents(db: Db): ConfigChangeAgents {
+export function dbConfigChangeAgents(
+  db: Db,
+  resolver: Pick<ConfigResolver, "effective">,
+): ConfigChangeAgents {
   return {
     liveOfTemplate: (template) =>
       db
@@ -77,6 +86,16 @@ export function dbConfigChangeAgents(db: Db): ConfigChangeAgents {
           )
           .orderBy(asc(schema.agents.id))
       ).map((r) => r.id),
+    currentDoc: async (agentId) => {
+      const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+      if (!row) return undefined;
+      try {
+        return (await resolver.effective(row)).doc;
+      } catch (err) {
+        if (err instanceof AgentStartError) return undefined;
+        throw err;
+      }
+    },
   };
 }
 
@@ -107,6 +126,8 @@ export class ConfigChanges {
    * there is no event or notice, but running agents still get the restart check.
    */
   async templateChanged(e: TemplateChange): Promise<void> {
+    // The template's own views (its issues, "Used by") refresh on every change, even one no agent sees.
+    this.d.bus.publishAll({ type: "config_changed", template: e.name });
     // Nothing that reaches an agent moved (only keys like `description` or `projects`): no agent can differ.
     if (e.before && !describeChanges(e.before, e.after).length) return;
     const rows = await this.d.agents.liveOfTemplate(e.name);
@@ -131,7 +152,6 @@ export class ConfigChanges {
         this.d.log.error({ err, agent: agent.slug }, "applying a template change failed");
       }
     }
-    this.d.bus.publishAll({ type: "config_changed", template: e.name });
     await Promise.all(done);
   }
 
@@ -180,9 +200,13 @@ export class ConfigChanges {
       const config = configOf(after, agent.runtime);
       runtimes.setNextImage(agent.id, config ? runtimes.imageRef(config) : undefined);
     }
-    // Compared inside the runtime's job against a fresh `started`, so a start under way can't make it skip.
+    // Decided inside the runtime's job, against a fresh `started` and the config re-read there: `after` was computed
+    // from rows read earlier, so a request built on it could cancel a restart a newer change needs (I2 §7.2).
     const restartChecked = Boolean(rt?.hasProcess());
-    if (restartChecked) work.push(runtimes.requestRestart(agent.id, { after }));
+    if (restartChecked)
+      work.push(
+        runtimes.requestRestart(agent.id, { current: () => this.d.agents.currentDoc(agent.id) }),
+      );
     if (agent.kind === "persistent") {
       // With no previous doc, compare against what the running process started with.
       const was = before ?? runtimes.startedOf(agent.id)?.doc;

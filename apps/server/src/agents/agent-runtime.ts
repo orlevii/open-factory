@@ -536,7 +536,7 @@ export class AgentRuntime {
   private restartPending = false;
   /** I2 §7.3: the change lines the pending restart applies (`restartChanges`); cleared on every exit and launch. */
   private pendingChanges = new Set<string>();
-  /** I2 §7.2: the config lines of the pending restart, `describeChanges(started.doc, latest after)`; replaced, never unioned. */
+  /** I2 §7.2: the config lines of the pending restart, `describeChanges(started.doc, current)`; replaced, never unioned. */
   private configChanges: string[] = [];
   /** A pending restart was also asked for by something other than a config change (credential, grants, manager). */
   private otherRestartCause = false;
@@ -1155,17 +1155,25 @@ export class AgentRuntime {
    * `changes` (I2 §7.3) are the lines the restart applies, shown as `restartChanges` until the process exits; callers
    * that restart for other reasons (credential, grants, manager) pass none. `wake` is I7's (a waking self-restart
    * notice) and is ignored in I2.
-   * `after` (I2 §7.2): the effective doc the change produced. The restart then happens only when the running process
-   * started with something else (`describeChanges(started.doc, after)` non-empty), and those lines are what it
-   * applies. Decided here, in a job, so `started` is never read mid-start: a start that already runs on `after`
-   * restarts nothing, and two edits that cancel out restart nothing.
-   * The config lines are kept apart from other causes and replaced on every `after` request (the latest doc is what
-   * the next start runs). When they become empty and no other cause is pending, the pending restart is dropped.
+   * `current` (I2 §7.2) reads the agent's effective doc now (a fresh row through the resolver); undefined when it can't
+   * be read. It is called here, in the job, so the decision always compares what the process started with against the
+   * latest committed config, never against a doc a caller computed from rows read earlier: a request issued from stale
+   * reads can't cancel a restart a newer change needs. The restart happens only when `describeChanges(started.doc,
+   * current)` is non-empty, and those lines are what it applies: a start already on the latest config restarts nothing,
+   * and two edits that cancel out restart nothing. An unreadable config (a broken template or overlay) leaves what is
+   * pending as it is: the next start fails closed anyway.
+   * The config lines are kept apart from other causes and replaced on every `current` request. When they become empty
+   * and no other cause is pending, the pending restart is dropped.
    */
   async requestRestart(
-    opts: { changes?: string[]; wake?: boolean; after?: ConfigDoc } = {},
+    opts: {
+      changes?: string[];
+      wake?: boolean;
+      current?: () => Promise<ConfigDoc | undefined>;
+    } = {},
   ): Promise<void> {
     await this.run(async () => {
+      const now = opts.current ? await opts.current() : undefined;
       // Not running (or already going away): the next start reads the new values anyway.
       if (
         this.proc &&
@@ -1180,8 +1188,12 @@ export class AgentRuntime {
           this.configChanges = [];
           this.pendingChanges.clear();
         }
-        if (opts.after && this.started) {
-          this.configChanges = describeChanges(this.started.doc, opts.after);
+        if (opts.current && this.started) {
+          if (!now) {
+            this.publishStatus();
+            return;
+          }
+          this.configChanges = describeChanges(this.started.doc, now);
           if (!this.configChanges.length && !this.otherRestartCause) {
             this.restartPending = false;
             this.publishStatus();

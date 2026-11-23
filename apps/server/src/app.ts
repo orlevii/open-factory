@@ -267,7 +267,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
   // I2 §7.1: a template change is dispatched off the scan's path, on a per-template serial queue (never awaited there).
   const configChanges = new ConfigChanges({
-    agents: dbConfigChangeAgents(deps.db),
+    agents: dbConfigChangeAgents(deps.db, resolver),
     store,
     runtimes,
     bus,

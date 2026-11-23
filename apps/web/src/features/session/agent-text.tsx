@@ -70,7 +70,7 @@ export const AgentText = memo(function AgentText({
   return (
     <>
       {/* The turn's first text, and the first after an incoming message (U3 §7.2). */}
-      {head && <SpeakerLine from={slug} self at={at} />}
+      {head && <SpeakerLine from={slug} fromKind="agent" self at={at} />}
       <div ref={body} dir="auto">
         <BlockMarkdown text={shown} live={live} />
       </div>

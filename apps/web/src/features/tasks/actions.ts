@@ -1,15 +1,8 @@
 import type { AnyRouter } from "@tanstack/react-router";
 import { openSheet } from "@/features/sheets/sheet-store";
+import { safeDecode } from "@/lib/safe-decode";
 
 const SESSION = /^\/agents\/([^/]+)(?:\/|$)/;
-
-function safeDecode(s: string) {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return s;
-  }
-}
 
 /**
  * "New task": the palette's action, the `c` shortcut and the Tasks header all call this. Where you are decides the

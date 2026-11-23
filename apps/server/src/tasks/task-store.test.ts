@@ -1,6 +1,7 @@
 import { schema } from "@open-factory/db";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { TaskStore } from "./task-store.ts";
 
@@ -12,8 +13,10 @@ let tick = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new TaskStore({ db: t.db, clock: () => new Date(Date.UTC(2026, 0, 1) + ++tick * 1000) });
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id,name,email,handle) values (${ids.or},'Or','or@x.io','or')`;
   await t.sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
+  for (const slug of ["lead", "dev", "kid"]) await claimTestHandleSql(t.sql, slug, "agent");
   await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,credential_id) values
     (${ids.lead},'lead','Lead','t','{}','local','persistent',null,'c1')`;
   await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,credential_id) values

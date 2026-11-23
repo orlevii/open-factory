@@ -9,6 +9,8 @@ export const credential = (name = "work", kind: "oauth_token" | "api_key" = "oau
   kind,
   lastVerifiedAt: "2026-11-19T08:00:00.000Z",
   lastError: null,
+  expiresAt: null,
+  rejected: false,
   usedBy: [],
   archivedUsedBy: [],
   rateLimit: null,
@@ -90,7 +92,8 @@ export function mockWorld(w: World = {}): MockApi {
   for (const [name, d] of Object.entries(details))
     routes[`GET /api/templates/${name}`] = () => json(d);
   for (const a of [...agents, ...(w.archived ?? [])]) {
-    routes[`GET /api/agents/${a.slug}`] = () => json({ agent: a, queue: [], lastSeq: 0 });
+    routes[`GET /api/agents/${a.slug}`] = () =>
+      json({ agent: a, model: { value: null, source: "default" }, queue: [], lastSeq: 0 });
   }
   return mockApi({ ...routes, ...w.extra });
 }

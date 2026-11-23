@@ -127,12 +127,21 @@ test("dependency keys resolve in one request on leave and show as a summary; err
   expect(api.calls.filter((c) => c.url.includes("keys="))).toHaveLength(1);
   await userEvent.clear(deps);
   await userEvent.type(deps, "banana");
+  // Tab lands on Add link, a data-skip-validate control: not a leave that says an error (§5.4).
   await userEvent.tab();
+  expect(screen.getByRole("button", { name: "Add link" })).toHaveFocus();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  expect(deps).not.toHaveAttribute("aria-invalid");
+  // Leaving for another field is.
+  await userEvent.click(deps);
+  await userEvent.click(screen.getByLabelText("Title"));
   expect(await screen.findByText("Use task keys, like T-41.")).toBeInTheDocument();
   await userEvent.clear(deps);
   await userEvent.type(deps, "T-99");
-  await userEvent.tab();
-  expect(await screen.findByText("No task T-99.")).toBeInTheDocument();
+  await userEvent.click(screen.getByLabelText("Title"));
+  expect(await screen.findByText("No such task.")).toBeInTheDocument();
 });
 
 test("links: add and remove rows; a javascript: target is refused on leave", async () => {
@@ -451,7 +460,7 @@ test("a dependency lookup that returns after the keys changed is dropped", async
   });
   expect(deps).not.toHaveAttribute("aria-invalid");
   expect(document.getElementById("field-dependsOn-error")).not.toHaveAttribute("data-shown");
-  expect(screen.queryByText("No task T-99.")).toBeNull();
+  expect(screen.queryByText("No such task.")).toBeNull();
 });
 
 test("a server dependency error survives tabbing out of the unchanged field", async () => {
@@ -583,4 +592,18 @@ test("a stale assignee blocks the submit until another is picked; Unassigned goe
     dependsOn: [],
     links: [],
   });
+});
+
+test("moving from an edited, invalid Description to More options by keyboard doesn't validate it", async () => {
+  mockApi(base);
+  renderApp("/tasks/new", alice);
+  const body = await screen.findByLabelText("Description");
+  act(() => body.focus());
+  fireEvent.change(body, { target: { value: "x".repeat(70_000) } });
+  // A keyboard move: the blur's relatedTarget is More options, with no pointerdown to fall back on.
+  act(() => moreToggle().focus());
+  expect(body).not.toHaveAttribute("aria-invalid");
+  act(() => body.focus());
+  act(() => screen.getByRole("button", { name: "Create task" }).focus());
+  expect(body).toHaveAttribute("aria-invalid", "true");
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { notices } from "./notices.ts";
+import { notices, parseConfigNotice, renderConfigNotice } from "./notices.ts";
 
 test("notice texts are literal and omit empty lists", () => {
   expect(
@@ -32,7 +32,7 @@ test("the other notices", () => {
     "The factory restarted while you were working. Check the state of that work and continue where you left off.",
   );
   expect(notices.factoryRestarted({ tasks: ["a", "b"] })).toContain("`a`, `b`.");
-  expect(notices.restart({ by: "or", tasks: [], crons: [] })).toBe(
+  expect(notices.restart({ by: "@or", tasks: [], crons: [] })).toBe(
     "Restarted by @or after an error.",
   );
   expect(notices.restart({ by: "@or", tasks: ["x"], crons: ["daily"] })).toBe(
@@ -44,4 +44,34 @@ test("the other notices", () => {
   expect(notices.rateLimitReset({ credential: "work", at: new Date(2026, 0, 1, 14, 30) })).toBe(
     "The rate limit on credential `work` reset at 14:30. Continue where you left off.",
   );
+});
+
+test("the self-compact continue notice has fixed texts", () => {
+  expect(notices.compactContinue({ failed: false })).toBe(
+    "Your /compact finished. Continue where you left off.",
+  );
+  expect(notices.compactContinue({ failed: true })).toBe(
+    "Your /compact didn't run (see the Session). Continue where you left off.",
+  );
+});
+
+test("the config_changed notice: a fixed header, one sorted line per change, parsed back", () => {
+  const body = notices.configChanged([
+    "model: sonnet → opus",
+    "added skill release",
+    "model: sonnet → opus",
+  ]);
+  expect(body).toBe("Your configuration changed:\n- added skill release\n- model: sonnet → opus");
+  expect(parseConfigNotice(body)).toEqual(["added skill release", "model: sonnet → opus"]);
+  // Merging is parse, union, render: the same lines twice give the same body.
+  const merged = renderConfigNotice([
+    ...parseConfigNotice(body),
+    ...parseConfigNotice(renderConfigNotice(["env LOG_LEVEL changed", "added skill release"])),
+  ]);
+  expect(merged).toBe(
+    "Your configuration changed:\n- added skill release\n- env LOG_LEVEL changed\n- model: sonnet → opus",
+  );
+  // A line break inside a line can't forge a second line, and empty lines are dropped.
+  expect(parseConfigNotice(renderConfigNotice(["a\n- b", "  "]))).toEqual(["a - b"]);
+  expect(renderConfigNotice([])).toBe("Your configuration changed:");
 });

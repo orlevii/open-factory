@@ -3,7 +3,7 @@ import {
   anyEventSchema,
   handleSchema,
   MAX_BODY_BYTES,
-  sendMessageBodySchema,
+  sendMessagesBodySchema,
   sessionEventSchema,
 } from "./index.ts";
 
@@ -20,7 +20,9 @@ describe("event schemas", () => {
       { type: "turn_started" },
       {
         type: "message_in",
-        messages: [{ id: "m1", from: "@or", kind: "message", urgent: false, body: "hi" }],
+        messages: [
+          { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
+        ],
       },
       { type: "assistant_text", text: "hello" },
       { type: "tool_call", toolUseId: "t1", name: "Bash", input: { command: "ls" } },
@@ -91,10 +93,13 @@ describe("event schemas", () => {
   });
 });
 
-describe("sendMessageBodySchema", () => {
+describe("sendMessagesBodySchema", () => {
   test("trims and rejects empty", () => {
-    expect(sendMessageBodySchema.safeParse({ body: "   ", urgent: false }).success).toBe(false);
-    expect(sendMessageBodySchema.parse({ body: " hi ", urgent: true })).toEqual({
+    expect(
+      sendMessagesBodySchema.safeParse({ to: ["dev"], body: "   ", urgent: false }).success,
+    ).toBe(false);
+    expect(sendMessagesBodySchema.parse({ to: ["dev"], body: " hi ", urgent: true })).toEqual({
+      to: ["dev"],
       body: "hi",
       urgent: true,
     });
@@ -102,8 +107,12 @@ describe("sendMessageBodySchema", () => {
   test("limits UTF-8 bytes, not chars", () => {
     const ok = "é".repeat(MAX_BODY_BYTES / 2);
     const tooBig = `${ok}x`;
-    expect(sendMessageBodySchema.safeParse({ body: ok, urgent: false }).success).toBe(true);
-    expect(sendMessageBodySchema.safeParse({ body: tooBig, urgent: false }).success).toBe(false);
+    expect(sendMessagesBodySchema.safeParse({ to: ["dev"], body: ok, urgent: false }).success).toBe(
+      true,
+    );
+    expect(
+      sendMessagesBodySchema.safeParse({ to: ["dev"], body: tooBig, urgent: false }).success,
+    ).toBe(false);
   });
 });
 
@@ -133,7 +142,16 @@ test("message_in accepts system notices and the new factory events parse", () =>
   expect(() =>
     anyEventSchema.parse({
       type: "message_in",
-      messages: [{ id: "n1", from: "@factory", kind: "system", urgent: false, body: "x" }],
+      messages: [
+        {
+          id: "n1",
+          from: "@factory",
+          fromKind: "factory",
+          kind: "system",
+          urgent: false,
+          body: "x",
+        },
+      ],
     }),
   ).not.toThrow();
   for (const e of [
@@ -187,7 +205,8 @@ test("S7 events parse; old rows still parse", () => {
       messages: [
         {
           id: "m",
-          from: "factory",
+          from: "@factory",
+          fromKind: "factory",
           kind: "peer_left",
           urgent: false,
           body: "",

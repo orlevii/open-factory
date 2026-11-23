@@ -178,8 +178,9 @@ describe("secondary buttons", () => {
     "components/confirm-dialog.tsx": 1, // Cancel in a dialog
     "components/route-states.tsx": 1, // Go to Inbox on the error page
     "features/inbox/inbox-list.tsx": 1, // Load earlier
-    "features/inbox/inbox-pane.tsx": 1, // Open in session / Open task in the pane header (spec §11.2)
+    "features/inbox/inbox-pane.tsx": 3, // Open in session / Open task in the pane header (spec §11.2); Open chat in a chat's strip; Sign in again: the pane's one standalone action
     "features/session/timeline.tsx": 1, // Load earlier
+    "features/chat/chat-view.tsx": 1, // Load earlier
     "features/session/agent-details.tsx": 1, // Edit agent: the details footer's standalone action
     "components/composer/stop-button.tsx": 1, // Stop: the composer's one control on the running turn (U3 §6.1)
     "features/settings/credentials-section.tsx": 1, // Verify
@@ -310,7 +311,7 @@ describe("hit areas (U4 §11.3)", () => {
       /size="icon-sm"[\s\S]*className=\{cn\("pointer-coarse:size-8", className\)\}/,
     );
     expect(classOf(shared, "export function RowLine", "{actions}")).toMatch(
-      /ml-auto flex shrink-0 items-center gap-1"/,
+      /ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1"/,
     );
     const more = classOf(read("features/agents/agent-tree.tsx"), "data-row-more", "onClick");
     expect(more).toMatch(/className="mx-1 [^"]*pointer-coarse:size-8[^"]*"/);
@@ -326,4 +327,26 @@ describe("hit areas (U4 §11.3)", () => {
       classOf(read("components/composer/composer.tsx"), "data-composer-toolbar", ">\n"),
     ).not.toMatch(CLIP);
   });
+});
+
+describe("I4 field errors (class contract)", () => {
+  test("field-note transitions opacity and visibility, 150ms shown, 100ms hidden, on --ease-out", () => {
+    expect(css).toMatch(
+      /\.field-note > \*\s*{[^}]*transition:\s*opacity 100ms var\(--ease-out\),\s*visibility 100ms var\(--ease-out\)/,
+    );
+    expect(css).toMatch(/\.field-note > \[data-shown\]\s*{[^}]*transition-duration:\s*150ms/);
+    expect(css).toMatch(
+      /\.field-note\s*{[^}]*font-size:\s*0\.8125rem;[^}]*line-height:\s*1\.125rem/,
+    );
+  });
+  test("form-outcome live regions never transition visibility", () => {
+    expect(css).not.toMatch(/\.form-outcome-line[^{]*{[^}]*visibility/);
+  });
+  for (const f of ["input", "textarea", "select"]) {
+    test(`${f}.tsx uses field-edge-transition`, () => {
+      expect(readFileSync(join(SRC, `components/ui/${f}.tsx`), "utf8")).toContain(
+        "field-edge-transition",
+      );
+    });
+  }
 });

@@ -43,6 +43,8 @@ beforeEach(() => {
     workdir,
     grantedPaths: [],
     hostSkillPaths: [],
+    templateSkillPaths: [],
+    templateDir: path.join(factoryHome, "templates/t"),
     declaredMarketplaceDirs: [],
     pluginsDir,
     cliBundle,

@@ -16,6 +16,7 @@ const ROWS: Partial<Record<SheetKind, number>> = {
   "add-credential": 3,
   "add-project": 2,
   "add-secret": 2,
+  "sign-in-again": 2,
 };
 
 /** Static stand-in while a body's chunk loads: field rows and a footer at the form's real heights. */

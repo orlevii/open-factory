@@ -14,7 +14,9 @@ import { serverMessageSchema } from "./ws.ts";
 test("a pre-S6 message_in row (no parts) still parses", () => {
   const e = {
     type: "message_in",
-    messages: [{ id: "m1", from: "@or", kind: "message", urgent: false, body: "hi" }],
+    messages: [
+      { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
+    ],
   };
   expect(anyEventSchema.parse(e)).toEqual(e);
 });
@@ -26,7 +28,8 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
       {
         id: "m1",
         ids: ["m1", "m2"],
-        from: "dev",
+        from: "@dev",
+        fromKind: "agent",
         kind: "member_update",
         urgent: false,
         body: "a\n\nb",
@@ -38,6 +41,7 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
       {
         id: "m3",
         from: "@factory",
+        fromKind: "factory",
         kind: "member_update",
         about: "dev",
         fact: "denied",
@@ -47,6 +51,7 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
       {
         id: "m4",
         from: "@factory",
+        fromKind: "factory",
         kind: "peer_left",
         about: "dev",
         urgent: false,
@@ -68,7 +73,8 @@ test("held queue items and the inbox frame parse", () => {
     queueItemSchema.parse({
       id: "m1",
       kind: "held",
-      from: "dev",
+      from: "@dev",
+      fromKind: "agent",
       count: 3,
       waitReason: "window",
       dueAt: "2026-11-19T10:00:30.000Z",

@@ -2,6 +2,7 @@ import type { Envelope } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { peerBody } from "../messaging/peer-body.ts";
 import type { CredentialPause } from "../supervisor/slots.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
@@ -15,6 +16,7 @@ beforeAll(async () => {
   await h.setup();
   await insertAgent(h.t.sql, { id: REPORT, slug: "devrep" });
   await insertAgent(h.t.sql, { id: LEAD, slug: "leadx" });
+  await claimTestHandleSql(h.t.sql, "sam", "user");
   await h.t
     .sql`insert into users (id, name, email, handle) values ('u2', 'Sam', 'sam@x.io', 'sam')`;
 });
@@ -99,7 +101,7 @@ test("AC 2: never written mid-turn; written right after the manager's turn ends,
   expect(last).toHaveLength(1);
   expect(last[0]).toMatchObject({
     kind: "member_update",
-    from: "devrep",
+    from: "@devrep",
     body: "narration 1\n\nnarration 2\n\nfinal answer 42",
   });
   expect(last[0]?.ids).toHaveLength(3);
@@ -211,8 +213,8 @@ test("a factory fact renders with about and its fact code, in its report's group
   h.driver.last.emit(ev.usage(), ev.end());
   await h.rt.settled();
   expect(h.driver.last.sent.at(-1)?.map((m) => [m.from, m.about, m.fact])).toEqual([
-    ["devrep", undefined, undefined],
-    ["@factory", "devrep", "denied"],
+    ["@devrep", undefined, undefined],
+    ["@factory", "@devrep", "denied"],
   ]);
 });
 
@@ -436,7 +438,7 @@ test("queue items: one held line per group with its wait reason", async () => {
   expect(h.rt.queueItems()).toEqual([
     expect.objectContaining({
       kind: "held",
-      from: "devrep",
+      from: "@devrep",
       count: 1,
       waitReason: "window",
       dueAt: expect.any(String),
@@ -553,7 +555,13 @@ test("the sender cancels a held message; another user can't", async () => {
   expect(bodies()).toEqual(["A", "B"]);
   expect(await stateOf(b.id)).toBe("pending");
   const item = await h.rt.cancelQueued(b.id, "u1");
-  expect(item).toMatchObject({ id: b.id, kind: "message", body: "B", from: "@or" });
+  expect(item).toMatchObject({
+    id: b.id,
+    kind: "message",
+    body: "B",
+    from: "@or",
+    fromKind: "human",
+  });
   expect(bodies()).toEqual(["A"]);
   expect(await stateOf(b.id)).toBe("cancelled");
   const frame = h.frames.filter((f) => f.type === "queue").at(-1);

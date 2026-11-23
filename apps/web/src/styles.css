@@ -55,6 +55,10 @@
   --color-avatar-6: var(--avatar-6);
   --color-avatar-7: var(--avatar-7);
   --color-avatar-8: var(--avatar-8);
+  --color-avatar-9: var(--avatar-9);
+  --color-avatar-10: var(--avatar-10);
+  --color-avatar-11: var(--avatar-11);
+  --color-avatar-12: var(--avatar-12);
   --color-avatar-ink: var(--avatar-ink);
   --color-signal: var(--signal);
   --color-signal-text: var(--signal-text);
@@ -115,15 +119,19 @@
   --ring: oklch(0.6 0.2 37);
   --float-edge: oklch(0.8 0.006 255); /* hairline on floating surfaces */
 
-  /* avatar hues (identity colours, eight steps round the wheel) */
-  --avatar-1: oklch(0.62 0.07 120);
-  --avatar-2: oklch(0.62 0.07 180);
-  --avatar-3: oklch(0.62 0.07 205);
-  --avatar-4: oklch(0.62 0.07 230);
-  --avatar-5: oklch(0.62 0.07 270);
-  --avatar-6: oklch(0.62 0.07 295);
-  --avatar-7: oklch(0.62 0.07 320);
-  --avatar-8: oklch(0.62 0.07 345);
+  /* avatar hues (identity colours, twelve hues in two lightness tiers) */
+  --avatar-1: oklch(0.56 0.07 115);
+  --avatar-2: oklch(0.68 0.07 130);
+  --avatar-3: oklch(0.56 0.07 175);
+  --avatar-4: oklch(0.68 0.07 190);
+  --avatar-5: oklch(0.56 0.07 205);
+  --avatar-6: oklch(0.68 0.07 220);
+  --avatar-7: oklch(0.56 0.07 270);
+  --avatar-8: oklch(0.68 0.07 285);
+  --avatar-9: oklch(0.56 0.07 300);
+  --avatar-10: oklch(0.68 0.07 315);
+  --avatar-11: oklch(0.56 0.07 330);
+  --avatar-12: oklch(0.68 0.07 345);
   --avatar-ink: oklch(0.2 0.008 255); /* ink drawn on every avatar fill, both themes */
 
   /* Signal Orange, the safety light. Light mode deepens it: #FF5A1F is 2.8:1 on the steel ground. */
@@ -212,14 +220,18 @@
   --ring: oklch(0.682 0.211 37.7);
   --float-edge: oklch(0.38 0.008 255);
 
-  --avatar-1: oklch(0.7 0.07 120);
-  --avatar-2: oklch(0.7 0.07 180);
-  --avatar-3: oklch(0.7 0.07 205);
-  --avatar-4: oklch(0.7 0.07 230);
-  --avatar-5: oklch(0.7 0.07 270);
-  --avatar-6: oklch(0.7 0.07 295);
-  --avatar-7: oklch(0.7 0.07 320);
-  --avatar-8: oklch(0.7 0.07 345);
+  --avatar-1: oklch(0.64 0.07 115);
+  --avatar-2: oklch(0.76 0.07 130);
+  --avatar-3: oklch(0.64 0.07 175);
+  --avatar-4: oklch(0.76 0.07 190);
+  --avatar-5: oklch(0.64 0.07 205);
+  --avatar-6: oklch(0.76 0.07 220);
+  --avatar-7: oklch(0.64 0.07 270);
+  --avatar-8: oklch(0.76 0.07 285);
+  --avatar-9: oklch(0.64 0.07 300);
+  --avatar-10: oklch(0.76 0.07 315);
+  --avatar-11: oklch(0.64 0.07 330);
+  --avatar-12: oklch(0.76 0.07 345);
   --avatar-ink: oklch(0.2 0.008 255);
 
   --signal: oklch(0.682 0.211 37.7); /* exactly #FF5A1F: ≥5.1:1 on every dark surface */
@@ -325,10 +337,11 @@
 }
 
 /* Live arrival (U3 §5.2, §8.3): a row that arrived by a live frame and replaces nothing on screen,
-   and the activity line, fade in once when inserted. `@starting-style` applies on insertion only,
+   the Chat's working line and the activity line fade in once when inserted live (`data-live`, never on load). `@starting-style` applies on insertion only,
    so a re-render never replays it; reduced motion keeps the fade (opacity only). */
 [data-row-wrap][data-live],
-[data-activity-line] {
+[data-status-line][data-live],
+[data-activity-line][data-live] {
   transition: opacity 150ms var(--ease-out);
   @starting-style {
     opacity: 0;
@@ -340,6 +353,17 @@
    `data-focus-ring` until blur, drawn the same ("ring = focus", U3 §7.4). */
 [data-row]:focus-visible,
 [data-row][data-focus-ring] {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+/* The credentials page's arrival (I3 §8.6) focuses the credential row (`[data-credential-row]`, tabindex -1) or
+   its Sign in again button (`[data-sign-in-again]`). Both take the same inset ring: the row on :focus-visible
+   or `data-focus-ring` (mouse arrival), the button on `data-focus-ring` only (its own :focus-visible ring
+   stays the global one). Scoped to these attributes so nothing else picks it up. */
+[data-credential-row]:focus-visible,
+[data-credential-row][data-focus-ring],
+[data-sign-in-again][data-focus-ring] {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }

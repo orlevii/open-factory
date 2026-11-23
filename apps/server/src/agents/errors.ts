@@ -5,9 +5,10 @@ export type StartFix =
   | "secrets"
   | "projects"
   | "edit_agent"
-  | "resync"
   | "runtime"
-  | "image";
+  | "image"
+  | "template"
+  | "config";
 
 export class AgentStartError extends Error {
   /** The message without its advice (what is wrong, not what to do): a spawned agent's variant ends differently. */
@@ -16,6 +17,8 @@ export class AgentStartError extends Error {
     message: string,
     readonly fix?: StartFix,
     diagnosis?: string,
+    /** Redacted, capped output that explains the failure (a plugin install's); goes into the error event's `detail`. */
+    readonly detail?: string,
   ) {
     super(message);
     this.name = "AgentStartError";
@@ -23,11 +26,12 @@ export class AgentStartError extends Error {
   }
 }
 /**
- * S7 §8: a spawned agent can't be edited or re-synced, so a start error whose fix is one of those drops the fix and
- * its advice: the diagnosis ends with "Terminate it and spawn a new one." instead. Other errors are returned unchanged.
+ * S7 §8: a spawned agent can't be edited or configured, so a start error whose fix is one of those drops
+ * the fix and its advice: the diagnosis ends with "Terminate it and spawn a new one." instead. Other errors are
+ * returned unchanged.
  */
 export function forSpawnedAgent(err: AgentStartError): AgentStartError {
-  if (err.fix !== "edit_agent" && err.fix !== "resync") return err;
+  if (err.fix !== "edit_agent" && err.fix !== "config") return err;
   return new AgentStartError(`${err.diagnosis} Terminate it and spawn a new one.`);
 }
 
@@ -84,6 +88,15 @@ export class CommandsUnsupportedError extends Error {
   constructor() {
     super("This agent's harness can't run slash commands.");
     this.name = "CommandsUnsupportedError";
+  }
+}
+
+/** I1 §7: an agent may have one command queued for itself at a time. */
+export class SelfCommandPendingError extends Error {
+  readonly code = "self_command_pending";
+  constructor() {
+    super("You already have a command queued for yourself.");
+    this.name = "SelfCommandPendingError";
   }
 }
 

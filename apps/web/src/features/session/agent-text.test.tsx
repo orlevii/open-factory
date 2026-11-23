@@ -11,7 +11,14 @@ const base: Row[] = [
     kind: "message",
     seq: 1,
     at,
-    message: { id: "e1", from: "@or", kind: "message", urgent: false, body: "Hi" },
+    message: {
+      id: "e1",
+      from: "@or",
+      fromKind: "human",
+      kind: "message",
+      urgent: false,
+      body: "Hi",
+    },
     key: "1:0",
   },
 ];

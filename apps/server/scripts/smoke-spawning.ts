@@ -268,8 +268,11 @@ let orUser = { userId: "", handle: "or" };
 /** Sends a human message (as @or) and returns its row id and the recipient's seq before it. */
 async function send(slug: string, body: string) {
   const from = await lastSeq(slug);
-  const sent = await app.router.send(orUser, slug, body, false);
-  if (!sent.ok) throw new Error(`send to ${slug} failed: ${sent.message}`);
+  const [sent] = (await app.router.send(orUser, [slug], body, false)).results;
+  if (!sent || sent.status === "refused" || sent.status === "start_failed")
+    throw new Error(
+      `send to ${slug} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+    );
   return { id: sent.id, from };
 }
 /** The events of the turn that read message `id`: from its message_in to the first origin-less turn_end after it. */
@@ -467,7 +470,7 @@ try {
     patchFactorySettings(or.cookie, { memberUpdateDebounceSeconds: 10 }),
   );
   await step("0. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step("0. temp git repo registered as project app", () =>
     app.projects.create({ name: "app", hostPath: repo }),

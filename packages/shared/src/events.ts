@@ -97,6 +97,16 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     error: z.string(),
   }),
   z.object({ type: z.literal("model_fallback"), message: z.string() }),
+  /** I1 §5.1: raw input written to Claude as typed (text or a slash command); the audit record of who sent it. */
+  z.object({
+    type: z.literal("operator_input"),
+    text: z.string(),
+    by: z.string(),
+    /** Who typed it: a human, or an agent (`send_command`, which has no `clientMessageId`). */
+    byKind: z.enum(["human", "agent"]),
+    clientMessageId: z.string().optional(),
+    entryId: z.string(),
+  }),
   /** U3 §13.3: the text a local command (`/context`, `/usage` and its aliases) printed. */
   z.object({ type: z.literal("command_output"), command: z.string(), text: z.string() }),
   z.object({
@@ -141,7 +151,16 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     detail: z.string().optional(),
     code: z.string().optional(),
     fix: z
-      .enum(["credentials", "secrets", "projects", "edit_agent", "runtime", "resync", "image"])
+      .enum([
+        "credentials",
+        "secrets",
+        "projects",
+        "edit_agent",
+        "runtime",
+        "image",
+        "template",
+        "config",
+      ])
       .optional(),
   }),
   z.object({
@@ -176,13 +195,13 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
         "spawned",
         "task_message",
         "scheduled",
-        "command",
+        "raw",
       ])
       .optional(),
   }),
   z.object({
     type: z.literal("control"),
-    cmd: z.enum(["compact", "interrupt", "clear", "restart", "command"]),
+    cmd: z.enum(["compact", "interrupt", "clear", "restart"]),
     arg: z.string().optional(),
     by: z.string(),
   }),
@@ -192,6 +211,11 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
     reason: z.string(),
   }),
   z.object({ type: z.literal("session_reset"), by: z.string() }),
+  /**
+   * I2 §7.3: the agent's configuration changed (a template edit or an overlay save). `changes` are `describeChanges`
+   * lines, which never carry a secret value.
+   */
+  z.object({ type: z.literal("config_changed"), by: z.string(), changes: z.array(z.string()) }),
   z.object({ type: z.literal("spawned"), by: z.string(), template: z.string() }),
   z.object({ type: z.literal("terminated"), by: z.string() }),
   z.object({

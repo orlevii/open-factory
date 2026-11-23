@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { renderEnvelopes } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { CompactingError, NoOpenTurnError } from "./errors.ts";
@@ -10,7 +11,7 @@ import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
-import { noForward, noopTokens, sendAs } from "./testing/runtime-harness.ts";
+import { noForward, noopTokens, sendAs, testEffective } from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -19,6 +20,7 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -67,6 +69,7 @@ async function makeRuntime(
         runtime: "local",
         permissionMode: "auto",
         mounts: [],
+        effective: testEffective(),
       };
     },
     log: silentLog,
@@ -341,6 +344,7 @@ test("a hand-off of a row this runtime already wrote (boot wakes got it first) n
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body: "STOP",
     urgent: true,
   });
@@ -425,6 +429,7 @@ test("the first batch after a notice begins with it, even ahead of an older pend
   await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body: "old",
     urgent: false,
   });
@@ -510,6 +515,7 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body: "with an id",
     urgent: false,
     clientMessageId: cid,

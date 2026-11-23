@@ -4,7 +4,7 @@ import {
   agentSummarySchema,
   patchAgentBodySchema,
   queueItemSchema,
-  sendMessageBodySchema,
+  sendMessagesBodySchema,
   spawnAgentToolSchema,
   terminateAgentToolSchema,
 } from "./agents.ts";
@@ -55,13 +55,27 @@ test("queue items accept the stopping wait reason and a client id", () => {
     id: "m1",
     kind: "message",
     from: "@or",
+    fromKind: "human",
     createdAt: "2026-11-21T10:00:00.000Z",
     waitReason: "stopping",
     clientMessageId: crypto.randomUUID(),
   });
   expect(q.waitReason).toBe("stopping");
+  expect(q.fromKind).toBe("human");
+  expect(
+    queueItemSchema.safeParse({ id: "m1", kind: "message", from: "@or", createdAt: "x" }).success,
+  ).toBe(false);
 });
 test("send body takes an optional clientMessageId", () => {
   const id = crypto.randomUUID();
-  expect(sendMessageBodySchema.parse({ body: "hi", clientMessageId: id }).clientMessageId).toBe(id);
+  expect(
+    sendMessagesBodySchema.parse({ to: ["dev"], body: "hi", clientMessageId: id }).clientMessageId,
+  ).toBe(id);
+});
+
+test("PATCH colour is an int 1..12 or null", () => {
+  for (const color of [1, 12, null])
+    expect(patchAgentBodySchema.safeParse({ color }).success).toBe(true);
+  for (const color of [0, 13, 1.5, "3"])
+    expect(patchAgentBodySchema.safeParse({ color }).success).toBe(false);
 });

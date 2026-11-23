@@ -1,12 +1,14 @@
+import { plainPreview } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
-import { type MouseEvent, memo, useMemo } from "react";
+import { CircleAlert } from "lucide-react";
+import { type ComponentProps, type MouseEvent, memo, type ReactNode, useMemo } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { skipFocusPreload } from "@/lib/row-nav";
 import type { InboxItem } from "./api";
-import { plainPreview } from "./preview";
+import { aboutOf, credentialLine } from "./credential-notice";
 
 const PREVIEW_MAX = 280;
 const previewOf = (markdown: string) => {
@@ -16,13 +18,14 @@ const previewOf = (markdown: string) => {
 
 /** The agent as a 16px chip, "Factory" (about whom) or the human's name: the first thing on line one. */
 function Sender({ item }: { item: InboxItem }) {
+  const about = aboutOf(item);
   if (item.from.kind === "factory")
     return (
       <>
         <span className="shrink-0">Factory</span>
-        {item.about && (
+        {about && (
           <span className="min-w-0 truncate text-muted-foreground">
-            about <span className="font-mono">@{item.about}</span>
+            about <span className="font-mono">{about}</span>
           </span>
         )}
       </>
@@ -38,15 +41,7 @@ function SenderLine({ item }: { item: InboxItem }) {
     return (
       <>
         <Sender item={item} />
-        <span className="shrink-0 text-muted-foreground">
-          {item.to === "@humans" ? (
-            <>
-              mentioned <span className="font-mono">@humans</span>
-            </>
-          ) : (
-            "mentioned you"
-          )}
-        </span>
+        <span className="shrink-0 text-muted-foreground">mentioned you</span>
       </>
     );
   if (item.kind === "task_event")
@@ -69,26 +64,56 @@ function SenderLine({ item }: { item: InboxItem }) {
   );
 }
 
+const LINE_TONE = {
+  muted: "text-muted-foreground",
+  warning: "text-warning",
+  crimson: "text-destructive",
+} as const;
+
 /** Line two: the task (`T-6 · title`) or, for a message, the recipient unless it is the viewer. Truncates. */
-function ContextLine({ item, viewer }: { item: InboxItem; viewer: string | undefined }) {
+function ContextLine({
+  item,
+  now,
+  viewer,
+}: {
+  item: InboxItem;
+  now: number;
+  viewer: string | undefined;
+}) {
   const tone = item.read ? "text-muted-foreground" : "text-foreground";
+  if (item.kind === "credential") {
+    // Live from `expiresAt` and the `now` prop, like the Credentials row; never truncated.
+    const line = credentialLine(item, new Date(now));
+    return (
+      <span className={`flex items-start gap-1.5 ${LINE_TONE[line.tone]}`}>
+        {line.tone !== "muted" && (
+          <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+        )}
+        <span>{line.text}</span>
+      </span>
+    );
+  }
   if (item.task)
     return (
       <span className={`flex min-w-0 ${tone}`}>
         <TaskBadge taskKey={item.task.key} title={item.task.title} />
       </span>
     );
-  if (item.kind === "message" && !(viewer && item.to === `@${viewer}`))
+  if (item.kind === "notice" && !(viewer && item.to === `@${viewer}`))
     return <span className={`min-w-0 truncate font-mono ${tone}`}>→ {item.to}</span>;
   return null;
 }
 
-function labelOf(item: InboxItem, time: string): string {
+function labelOf(item: InboxItem, time: string, now: number): string {
   const unread = item.read ? "" : "Unread, ";
+  if (item.kind === "credential") {
+    const { text } = credentialLine(item, new Date(now));
+    const name = aboutOf(item) ?? "";
+    return `${unread}Factory, ${name} ${text.charAt(0).toLowerCase()}${text.slice(1)}, ${time}`;
+  }
   const task = item.task ? `${item.task.key} ${item.task.title}` : "";
   if (item.kind === "mention") {
-    const what = item.to === "@humans" ? "mentioned @humans" : "mentioned you";
-    return `${unread}@${item.from.name} ${what} on ${task}, ${time}`;
+    return `${unread}@${item.from.name} mentioned you on ${task}, ${time}`;
   }
   if (item.kind === "task_event")
     return `${unread}Factory, ${item.fact === "cancelled" ? "cancelled" : "done"}, ${task}, ${time}`;
@@ -102,7 +127,7 @@ function labelOf(item: InboxItem, time: string): string {
 // A grid row's single track would stretch to the 4.5rem minimum, and the lines' auto tracks with it
 // (a two-line row's line one grew to 27px): `content-center` keeps the track at its content and
 // centres it, so line one is always one 18px line with the time on the name's baseline.
-const LINK_CLASS = "of-row grid min-h-[4.5rem] content-center py-2 pr-2 pl-0 text-sm";
+export const LINK_CLASS = "of-row grid min-h-[4.5rem] content-center py-2 pr-2 pl-0 text-sm";
 
 /**
  * One inbox row: a single link, three lines, an ink dot in a fixed slot when unread.
@@ -118,7 +143,8 @@ export const InboxRow = memo(function InboxRow({
   viewer,
 }: {
   item: InboxItem;
-  now: Date;
+  /** Epoch ms rounded to the minute: a primitive, so a row that didn't change doesn't render. */
+  now: number;
   onOpen(item: InboxItem, e: MouseEvent): void;
   /** The reading pane shows this row. */
   selected?: boolean;
@@ -129,13 +155,15 @@ export const InboxRow = memo(function InboxRow({
   viewer?: string;
 }) {
   const at = new Date(item.createdAt);
-  const time = formatInboxTime(at, now);
+  const time = formatInboxTime(at, new Date(now));
+  // A credential row renders from the live `expiresAt`; its stored body is for notifications only.
+  const hasPreview = item.kind !== "credential";
   const previewId = `inbox-preview-${item.id}`;
   const preview = useMemo(() => previewOf(item.preview), [item.preview]);
-  const common = {
+  const common: RowCommon = {
     "data-inbox-id": item.id,
-    "aria-label": labelOf(item, time),
-    "aria-describedby": previewId,
+    "aria-label": labelOf(item, time, now),
+    "aria-describedby": hasPreview ? previewId : undefined,
     "aria-current": selected ? ("true" as const) : undefined,
     preload: selectable ? (false as const) : undefined,
     // Below 1024 rows keep hover preload, but a keyboard sweep through them preloads nothing.
@@ -147,7 +175,7 @@ export const InboxRow = memo(function InboxRow({
       if (e.button === 1) onOpen(item, e);
     },
     className: `${LINK_CLASS} grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`,
-  } as const;
+  };
   const body = (
     <>
       <span
@@ -173,38 +201,76 @@ export const InboxRow = memo(function InboxRow({
             {time}
           </time>
         </span>
-        <ContextLine item={item} viewer={viewer} />
-        <span
-          id={previewId}
-          className={`truncate text-[0.8125rem] leading-[1.125rem] ${item.read ? "text-muted-foreground" : "text-foreground"}`}
-        >
-          {preview}
-        </span>
+        <ContextLine item={item} now={now} viewer={viewer} />
+        {hasPreview && (
+          <span
+            id={previewId}
+            className={`truncate text-[0.8125rem] leading-[1.125rem] ${item.read ? "text-muted-foreground" : "text-foreground"}`}
+          >
+            {preview}
+          </span>
+        )}
       </span>
     </>
   );
-  const link = item.link;
   return (
     <li className="border-b border-border last:border-b-0">
-      {link.kind === "task" ? (
+      <RowLink link={item.link} common={common}>
+        {body}
+      </RowLink>
+    </li>
+  );
+});
+
+type RowCommon = Omit<ComponentProps<typeof Link>, "to" | "params" | "search" | "children"> &
+  Record<`data-${string}`, string>;
+
+/** The row's link, by kind; a new kind fails to compile here. */
+function RowLink({
+  link,
+  common,
+  children,
+}: {
+  link: InboxItem["link"];
+  common: RowCommon;
+  children: ReactNode;
+}) {
+  switch (link.kind) {
+    case "task":
+      return (
         <Link
           to="/tasks/$key"
           params={{ key: link.key }}
           search={link.commentId ? { comment: link.commentId } : {}}
           {...common}
         >
-          {body}
+          {children}
+        </Link>
+      );
+    case "session":
+      return link.seq === undefined ? (
+        <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }} {...common}>
+          {children}
         </Link>
       ) : (
         <Link
-          to="/agents/$slug"
+          to="/agents/$slug/session"
           params={{ slug: link.agentSlug }}
-          search={link.seq === undefined ? undefined : { event: link.seq }}
+          search={{ event: link.seq }}
           {...common}
         >
-          {body}
+          {children}
         </Link>
-      )}
-    </li>
-  );
-});
+      );
+    case "credential":
+      return (
+        <Link to="/settings/credentials" search={{ credential: link.name }} {...common}>
+          {children}
+        </Link>
+      );
+    default: {
+      const unhandled: never = link;
+      return unhandled;
+    }
+  }
+}

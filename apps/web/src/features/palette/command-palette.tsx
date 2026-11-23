@@ -19,6 +19,7 @@ import { openShortcutsSheet } from "@/features/shortcuts/sheet-store";
 import { newTask } from "@/features/tasks/actions";
 import { lookupTasks, tasksSearchOptions } from "@/features/tasks/api";
 import { StatusLabel } from "@/features/tasks/status-label";
+import { safeDecode } from "@/lib/safe-decode";
 import { setPreference } from "@/lib/theme";
 import { ACTIONS, type ActionItem, GO_TO, isTaskKey, type RankedAgent, rankAgents } from "./rank";
 import { readRecentAgents } from "./recent";
@@ -69,7 +70,19 @@ function isPaletteKey(e: KeyboardEvent) {
 const NOTHING = () => {};
 const SEARCH_DEBOUNCE_MS = 150;
 const MIN_SEARCH = 2;
-const SESSION_PATH = /^\/agents\/(?!new\/?$)[^/]+\/?$/;
+const AGENT_PAGE = /^\/agents\/(?!new\/)([^/]+)\/(chat|session)\/?$/;
+
+/** The agent and the view of an agent page's path (the Chat or the Session), else undefined. */
+export function agentPageOf(
+  pathname: string,
+): { slug: string; view: "chat" | "session" } | undefined {
+  const m = AGENT_PAGE.exec(pathname);
+  return m ? { slug: safeDecode(m[1] as string), view: m[2] as "chat" | "session" } : undefined;
+}
+
+/** An action with no `on` is offered everywhere; `agent` on either view; `chat` or `session` on that one. */
+const offeredOn = (a: ActionItem, view: "chat" | "session" | undefined) =>
+  a.on === undefined || (a.on === "agent" ? view !== undefined : a.on === view);
 
 const isLive = (a: AgentSummary) => !a.archivedAt && !a.terminatedAt;
 
@@ -172,7 +185,8 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
   const qc = useQueryClient();
   const navigate = useNavigate();
   const router = useRouter();
-  const onSession = useRouterState({ select: (s) => SESSION_PATH.test(s.location.pathname) });
+  // The view of the agent page this opened on, as a string so the selector stays equal until it changes.
+  const view = useRouterState({ select: (s) => agentPageOf(s.location.pathname)?.view });
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   // localStorage is parsed once per opening, not on each keystroke.
@@ -232,7 +246,7 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
 
   const endedMore = agents.some((a) => a.ended) && qc.getQueryData<boolean>(endedMoreQueryKey);
   const goTo = GO_TO.filter((g) => matches(g.label, lower));
-  const actions = ACTIONS.filter((a) => (!a.sessionOnly || onSession) && matches(a.label, lower));
+  const actions = ACTIONS.filter((a) => offeredOn(a, view) && matches(a.label, lower));
 
   /** Closes the palette, then runs `go`. `after` runs once the dialog has let go of focus (in its
    *  close hand-off, so nothing it focuses is taken back); null returns focus to where ⌘K was
@@ -245,8 +259,13 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
   /** A new page: focus is not sent back to the page being left. */
   const leave = (go: () => void) => commit(go, NOTHING);
   const openAgent = (slug: string) => {
+    // ⇧Enter opens the session and focuses its composer.
     commit(
-      () => void navigate({ to: "/agents/$slug", params: { slug } }),
+      () =>
+        void navigate({
+          to: shift.current ? "/agents/$slug/session" : "/agents/$slug/chat",
+          params: { slug },
+        }),
       shift.current ? () => requestComposerFocus(slug) : NOTHING,
     );
   };
@@ -264,6 +283,17 @@ function PaletteBody({ afterClose }: { afterClose: RefObject<(() => void) | null
         // Opened after the close hand-off: a peek sheet doesn't trap focus, so the dialog's focus
         // return would otherwise pull focus back out of it.
         return commit(NOTHING, openAgentDetails);
+      case "switch-view": {
+        const page = agentPageOf(router.state.location.pathname);
+        if (!page) return;
+        return leave(
+          () =>
+            void navigate({
+              to: page.view === "chat" ? "/agents/$slug/session" : "/agents/$slug/chat",
+              params: { slug: page.slug },
+            }),
+        );
+      }
       case "theme-system":
         return commit(() => setPreference("system"), null);
       case "theme-light":

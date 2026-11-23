@@ -9,8 +9,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-/** A failed command's output, opened from its toast's "Show output" (a failed re-sync's plugin
- *  install, U4 §6.5): the toast can't hold it, and the menu that ran it is gone. */
+/** A failed command's output, opened from "Show output" on its toast (a failed create's
+ *  plugin install, on New agent's outcome line): the line can't hold it. */
 type Output = { title: string; description: string; output: string };
 
 let current: Output | null = null;
@@ -54,21 +54,5 @@ export function OutputDialogHost() {
         </AlertDialogContent>
       )}
     </AlertDialog>
-  );
-}
-
-/** A failed command's output inline, collapsed by default (native details: keyboard and
- *  screen-reader support for free). Renders nothing when there is no output. */
-export function ShowOutput({ output }: { output?: unknown }) {
-  if (!hasOutput(output)) return null;
-  return (
-    <details className="w-full text-[0.8125rem]">
-      <summary className="w-fit cursor-pointer rounded-sm text-muted-foreground hover:text-foreground">
-        Show output
-      </summary>
-      <pre className="mt-2 max-h-64 overflow-auto rounded-md border border-code-border bg-code p-3 font-mono text-xs whitespace-pre-wrap">
-        {output}
-      </pre>
-    </details>
   );
 }

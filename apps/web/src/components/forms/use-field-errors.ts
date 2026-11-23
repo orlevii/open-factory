@@ -34,6 +34,17 @@ function trackPointerOnce() {
 const skips = (t: EventTarget | null) =>
   t instanceof Element && t.closest("[data-skip-validate]") !== null;
 
+/**
+ * True when a blur is not a leave (§5.4): focus left the document, or went to a `data-skip-validate` control. `blur`
+ * applies it; a field whose leave does other work (a dependency lookup) calls it before that work.
+ */
+export function skippedLeave(e?: { relatedTarget: EventTarget | null }): boolean {
+  if (!document.hasFocus()) return true;
+  const to =
+    e?.relatedTarget ?? (performance.now() - lastPointer.at < 500 ? lastPointer.target : null);
+  return skips(to);
+}
+
 type Ext<F extends string> = Partial<Record<F, string>>;
 
 export function useFieldErrors<F extends string>({
@@ -100,10 +111,7 @@ export function useFieldErrors<F extends string>({
       writeExternal(f, undefined);
     },
     blur(f, e) {
-      if (!document.hasFocus()) return;
-      const to =
-        e?.relatedTarget ?? (performance.now() - lastPointer.at < 500 ? lastPointer.target : null);
-      if (skips(to)) return;
+      if (skippedLeave(e)) return;
       if (!changed.current.has(f) && !flaggedRef.current.has(f) && !externalRef.current[f]) return;
       if (checksRef.current[f]?.()) setFlagged((s) => (s.has(f) ? s : new Set(s).add(f)));
     },

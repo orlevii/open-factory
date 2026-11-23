@@ -20,7 +20,7 @@ test("spec §5.3: a boot wake starts the agent with .mcp.json pointing at an age
   const a = await h.seedAgent({ slug: "ada" });
   const u = await signUp(h.app, { handle: "or" });
   // Written behind the first app's back: only the next boot's reconciliation can wake `ada` for it.
-  await h.sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('boot-1', 'message', ${u.user.id}, ${a.id}, 'wake at boot')`;
+  await h.sql`insert into messages (id, kind, from_user_id, to_agent_id, body,recipients) values ('boot-1', 'message', ${u.user.id}, ${a.id}, 'wake at boot','{@test}')`;
   await h.app.close();
 
   const probe = new FakeDriver();

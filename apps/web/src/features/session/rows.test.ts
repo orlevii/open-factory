@@ -30,8 +30,8 @@ test("hidden types are dropped (a finished turn leaves its footer); text and mes
       {
         type: "message_in",
         messages: [
-          { id: "m1", from: "@or", kind: "message", urgent: false, body: "a" },
-          { id: "m2", from: "@or", kind: "message", urgent: true, body: "b" },
+          { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "a" },
+          { id: "m2", from: "@or", fromKind: "human", kind: "message", urgent: true, body: "b" },
         ],
       },
       null,
@@ -567,7 +567,9 @@ test("head: a turn's first text, and the first text after a message row in the s
     e(
       {
         type: "message_in",
-        messages: [{ id, from: "@or", kind: "message", urgent: false, body: id }],
+        messages: [
+          { id, from: "@or", fromKind: "human", kind: "message", urgent: false, body: id },
+        ],
       },
       null,
     );
@@ -754,7 +756,9 @@ test("a keyed assistant_text renders under t:<messageId>:<blockIndex>, capped wh
       e(
         {
           type: "message_in",
-          messages: [{ id: "q", from: "@or", kind: "message", urgent: false, body: "b" }],
+          messages: [
+            { id: "q", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "b" },
+          ],
         },
         null,
       ),

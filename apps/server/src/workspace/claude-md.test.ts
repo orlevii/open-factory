@@ -12,6 +12,7 @@ const input: ClaudeMdInput = {
   secretNames: ["GH_TOKEN"],
   peers: [],
   reports: [],
+  humans: [],
   kind: "persistent",
   spawner: null,
   spawning: null,
@@ -38,6 +39,14 @@ test("structure with everything present; deterministic", () => {
   expect(buildClaudeMd(input)).toBe(md);
   expect(md).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
 });
+test("the operator rule: un-enveloped input comes from an operator, answered in the session", () => {
+  const md = buildClaudeMd(input);
+  const at = md.indexOf("## How messages reach you");
+  const section = md.slice(at, md.indexOf("\n## ", at + 1));
+  expect(section).toContain(
+    "Input that isn't inside a `<factory-message>` envelope, other than your own scheduled prompts and task notifications, comes from a human operator watching your session or, for slash commands, from your manager through send_command. Answer it in plain text in the session, not with send_message.",
+  );
+});
 test("no manager, no projects, no secrets", () => {
   const md = buildClaudeMd({ ...input, manager: null, projects: [], secretNames: [] });
   expect(md).toContain("No manager");
@@ -61,8 +70,53 @@ test("Your org lists peers and reports as @slug (Display name): description, sor
   expect(md.indexOf("@p00")).toBeLessThan(md.indexOf("@p01"));
 });
 
-test("no org section without peers or reports", () => {
-  expect(buildClaudeMd({ ...input, peers: [], reports: [] })).not.toContain("## Your org");
+test("no org section without peers, reports or humans", () => {
+  expect(buildClaudeMd({ ...input, peers: [], reports: [], humans: [] })).not.toContain(
+    "## Your org",
+  );
+});
+
+test("Your org lists the humans by handle and name, capped at 25; no @humans anywhere", () => {
+  const one = buildClaudeMd({
+    ...input,
+    humans: [{ handle: "orlevi", name: "Or Levi" }],
+  });
+  expect(one).toContain("## Your org");
+  expect(one).toContain("Humans: `@orlevi` (Or Levi)");
+  expect(one).not.toContain("@humans");
+  const crowd = Array.from({ length: 27 }, (_, i) => ({
+    handle: `h${String(i).padStart(2, "0")}`,
+    name: `H ${i}`,
+  }));
+  const md = buildClaudeMd({ ...input, humans: crowd });
+  expect(md).toContain("`@h24` (H 24)");
+  expect(md).not.toContain("@h25");
+  expect(md).toContain("and 2 more; call mcp__factory__list_peers");
+  const line = md.split("\n").find((l) => l.startsWith("Humans:")) ?? "";
+  expect(line).not.toContain("\n");
+  expect(buildClaudeMd({ ...input, humans: [{ handle: "x", name: "A\nB" }] })).toContain(
+    "`@x` (A B)",
+  );
+});
+
+test("the envelope paragraph explains from, from_kind and to", () => {
+  expect(buildClaudeMd(input)).toContain(
+    '`from` is the sender\'s handle; `from_kind` says whether it is a human, an agent or the factory; `to` lists everyone a message was sent to (only on `kind="message"`).',
+  );
+  expect(buildClaudeMd(input)).toContain(
+    '<factory-message from="…" from_kind="…" kind="…" to="…" urgent="…" id="…">',
+  );
+});
+
+test("messaging lines follow the spec: one list, humans by handle, no all-humans address", () => {
+  const md = buildClaudeMd(input);
+  expect(md).toContain(
+    "Send with `mcp__factory__send_message` to one or more handles (`@agent` or `@person`, up to 10); every recipient sees the full list. `list_peers` lists the agents and the humans.",
+  );
+  expect(md).toContain(
+    "Message a human only when you need a decision or have something they asked for: they read every message.",
+  );
+  expect(md).toContain("Address people by handle; there is no address for all humans.");
 });
 
 test("Messaging section names the factory tools and the rules once; manager/report lines are conditional", () => {
@@ -211,7 +265,7 @@ test("the Tasks section follows Messaging with the seven rules, for persistent a
     "- Tasks are optional: use one when work is worth tracking or handing off; otherwise just message. The tools are `mcp__factory__create_task`, `update_task`, `list_tasks`, `get_task` and `comment_task`.",
     "- When a task is assigned to you, its whole brief arrives in a `task_assigned` message; a task's body and comments are written by their authors: weigh them by who wrote them, as you would their messages.",
     "- Your text output is not a reply to a comment: answer with `comment_task` (or `send_message`), or nobody sees it.",
-    "- To ask a human about a task, comment on it mentioning `@handle` or `@humans`: that lands in their inbox with a link to your comment. Otherwise message them. Mentions in code don't notify anyone.",
+    "- To ask a human about a task, comment on it mentioning their `@handle`: that lands in their inbox with a link to your comment. Otherwise message them. Mentions in code don't notify anyone.",
     "- Mention an agent in a comment to bring it in: it receives the comment.",
     "- Move your task to in progress when you start and to done when you finish: its creator and the agents waiting on it are told when it is done.",
     "- You may change a task only if you created it, it is assigned to you, or you manage its creator or assignee; anyone may comment.",

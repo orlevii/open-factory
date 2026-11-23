@@ -49,6 +49,13 @@ const textarea = (name: string) => {
   return el as HTMLTextAreaElement;
 };
 
+/** A valid template opens on Configuration (I2 §12.5): these tests are about the file tabs, so open template.yaml. */
+async function openTemplate(path = "/templates/lead") {
+  const utils = renderApp(path, alice);
+  await userEvent.click(await screen.findByRole("tab", { name: /template\.yaml/ }));
+  return utils;
+}
+
 test("while the editor's chunk loads, the textarea fallback serves an issue's jump", async () => {
   mockApi({
     "GET /api/templates/lead": () =>
@@ -58,7 +65,7 @@ test("while the editor's chunk loads, the textarea fallback serves an issue's ju
         ]),
       ),
   });
-  renderApp("/templates/lead", alice);
+  await openTemplate();
   await userEvent.click(
     await screen.findByRole("button", { name: /settings\.json.*2:3.*JSON: bad/ }),
   );
@@ -75,7 +82,7 @@ test("on the swap the selection and focus carry over; an earlier tab's textarea 
     "GET /api/templates/lead": () => json(detail()),
     "POST /api/templates/lead/validate": () => json({ issues: [] }),
   });
-  renderApp("/templates/lead", alice);
+  await openTemplate();
   await screen.findByRole("textbox", { name: "template.yaml" });
   // A selection in settings.json, then away from it before the chunk arrives: not a swap.
   await userEvent.click(screen.getByRole("tab", { name: /settings\.json/ }));

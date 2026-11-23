@@ -11,6 +11,8 @@ export const credentialSummarySchema = z.object({
   kind: credentialKindSchema,
   lastVerifiedAt: z.string().nullable(),
   lastError: z.string().nullable(),
+  expiresAt: z.string().nullable(),
+  rejected: z.boolean(),
   usedBy: z.array(z.string()),
   archivedUsedBy: z.array(z.string()),
   rateLimit: rateLimitStateSchema.nullable(),

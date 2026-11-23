@@ -52,12 +52,14 @@ import { useUnreadCount } from "@/features/inbox/api";
 import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifications";
 import { openPalette, prefetchPaletteData } from "@/features/palette/command-palette";
 import { resetUploads } from "@/features/session/uploads";
+import { resetSignIn } from "@/features/settings/sign-in/use-sign-in";
 import { resetDrafts } from "@/features/sheets/drafts";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet, resetSheets } from "@/features/sheets/sheet-store";
 
 import { authClient } from "@/lib/auth-client";
 import { usePref } from "@/lib/prefs";
+import { safeDecode } from "@/lib/safe-decode";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
 import { setPreference, type ThemePreference, useThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -82,11 +84,11 @@ const nav = [
 /** A section stays highlighted on its detail routes (/agents/foo). "/" redirects to the Inbox. */
 const isActive = (pathname: string, to: string) => pathname === to || pathname.startsWith(`${to}/`);
 
-/** The slug of `/agents/$slug` itself, not of its /edit or /usage children. */
-function matchSession(pathname: string): string | undefined {
-  const m = /^\/agents\/([^/]+)\/?$/.exec(pathname);
+/** The slug of an agent's Chat or Session, not of its /edit or /usage children. */
+export function matchSession(pathname: string): string | undefined {
+  const m = /^\/agents\/([^/]+)(?:\/(?:chat|session))?\/?$/.exec(pathname);
   const slug = m?.[1];
-  return slug && slug !== "new" ? decodeURIComponent(slug) : undefined;
+  return slug && slug !== "new" ? safeDecode(slug) : undefined;
 }
 
 const parseCollapsed = (raw: string) =>
@@ -121,6 +123,8 @@ export function AppSidebar() {
     resetUploads();
     resetSheets();
     resetDrafts();
+    // Every sign-in wait loop stops and this tab forgets which attempts it submitted (I3 §8.3, R3).
+    resetSignIn();
     resetToasts();
     await authClient.signOut();
     await refreshSession(qc);

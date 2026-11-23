@@ -9,6 +9,7 @@ import { AgentTerminatedError } from "../agents/errors.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { asRunning } from "../test/running.ts";
 
 type T = Awaited<ReturnType<typeof makeTestApp>>;
 let t: T | undefined;
@@ -43,8 +44,10 @@ async function setup() {
   );
   const lead = await app.seedAgent({
     slug: "lead",
-    config: { canSpawn: ["dev"], maxLiveSpawns: 5 },
+    config: { template: { can_spawn: ["dev"], max_live_spawns: 5 } },
   });
+  // I2 §6.2: spawning follows the spawner's running process.
+  await asRunning(app.app, lead);
   await app.db.insert(schema.agentProjectGrants).values({ agentId: lead.id, projectId });
   const pm = await app.seedAgent({ slug: "pm" });
   await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
@@ -93,10 +96,11 @@ function holdTermination(app: T, during: () => Promise<void> = async () => {}) {
   });
   const original = app.app.store.terminateRows.bind(app.app.store);
   vi.spyOn(app.app.store, "terminateRows").mockImplementation(async (...a) => {
-    await original(...a);
+    const rejected = await original(...a);
     await during();
     enter();
     await released;
+    return rejected;
   });
   return { entered, release };
 }
@@ -146,7 +150,7 @@ test("terminate: one transaction (row, grants, peer rows), the stop job, and not
 
 test("terminate_agent: only your own spawned agents; idempotent; persistent agents refuse", async () => {
   const { t, driver, lead, pm } = await setup();
-  const other = await t.seedAgent({ slug: "other", config: { canSpawn: ["dev"] } });
+  const other = await t.seedAgent({ slug: "other", config: { template: { can_spawn: ["dev"] } } });
   const child = await spawnIdle(t, driver, lead, "x2");
   const notYours = (slug: string) => ({
     ok: false,
@@ -201,6 +205,7 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   const direct = await t.app.store.createMessage({
     from: { userId: user.id },
     toAgentId: a.id,
+    recipients: ["@test"],
     body: "are you there?",
     urgent: false,
   });
@@ -220,8 +225,9 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   );
   // A new send is refused by the Router.
   expect(
-    await t.app.router.send({ userId: user.id, handle: user.handle }, a.slug, "hello?", false),
-  ).toMatchObject({ ok: false, code: "terminated" });
+    (await t.app.router.send({ userId: user.id, handle: user.handle }, [a.slug], "hello?", false))
+      .results,
+  ).toMatchObject([{ status: "refused", code: "terminated" }]);
 });
 
 test("a forward that started before the commit and finishes after it writes nothing", async () => {
@@ -248,13 +254,15 @@ test("a send racing the termination is accepted, then its row is rejected and ne
   await hold.entered;
   // The Router reads the child live (the commit hasn't happened); its row commits after terminateRows ran and is
   // handed to the provisional latch, which queues it without writing.
-  const r = await t.app.router.send(
+  const {
+    results: [r],
+  } = await t.app.router.send(
     { userId: user.id, handle: user.handle },
-    child.slug,
+    [child.slug],
     "still there?",
     false,
   );
-  if (!r.ok) throw new Error(r.message);
+  if (!r || r.status === "refused") throw new Error("the send was refused");
   hold.release();
   await terminating;
   expect(await stateOf(t, r.id)).toBe("rejected");
@@ -272,6 +280,7 @@ test("rows handed over during the provisional window are rejected once it commit
     const direct = await t.app.store.createMessage({
       from: { userId: user.id },
       toAgentId: child.id,
+      recipients: ["@test"],
       body: "late",
       urgent: false,
     });
@@ -297,6 +306,7 @@ test("a failed transaction undoes the provisional latch: what arrived meanwhile 
   const row = await t.app.store.createMessage({
     from: { userId: user.id },
     toAgentId: child.id,
+    recipients: ["@test"],
     body: "meanwhile",
     urgent: false,
   });

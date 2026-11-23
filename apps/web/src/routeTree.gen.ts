@@ -35,6 +35,10 @@ import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates.i
 import { Route as AppTemplatesNameRouteImport } from './routes/_app/templates.$name'
 import { Route as AppTemplatesImagesRouteImport } from './routes/_app/templates.images'
 import { Route as AppTemplatesNewRouteImport } from './routes/_app/templates.new'
+import { Route as AppAgentsSlugIndexRouteImport } from './routes/_app/agents.$slug.index'
+import { Route as AppAgentsSlugChatRouteImport } from './routes/_app/agents.$slug.chat'
+import { Route as AppAgentsSlugSessionRouteImport } from './routes/_app/agents.$slug.session'
+import { Route as AppAgentsSlugConfigRouteImport } from './routes/_app/agents.$slug_.config'
 import { Route as AppAgentsSlugEditRouteImport } from './routes/_app/agents.$slug_.edit'
 import { Route as AppAgentsSlugUsageRouteImport } from './routes/_app/agents.$slug_.usage'
 
@@ -167,6 +171,26 @@ const AppTemplatesNewRoute = AppTemplatesNewRouteImport.update({
   path: '/templates/new',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAgentsSlugIndexRoute = AppAgentsSlugIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppAgentsSlugRoute,
+} as any)
+const AppAgentsSlugChatRoute = AppAgentsSlugChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => AppAgentsSlugRoute,
+} as any)
+const AppAgentsSlugSessionRoute = AppAgentsSlugSessionRouteImport.update({
+  id: '/session',
+  path: '/session',
+  getParentRoute: () => AppAgentsSlugRoute,
+} as any)
+const AppAgentsSlugConfigRoute = AppAgentsSlugConfigRouteImport.update({
+  id: '/agents/$slug_/config',
+  path: '/agents/$slug/config',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAgentsSlugEditRoute = AppAgentsSlugEditRouteImport.update({
   id: '/agents/$slug_/edit',
   path: '/agents/$slug/edit',
@@ -185,7 +209,7 @@ export interface FileRoutesByFullPath {
   '/inbox': typeof AppInboxRoute
   '/settings': typeof AppSettingsRouteWithChildren
   '/usage': typeof AppUsageRoute
-  '/agents/$slug': typeof AppAgentsSlugRoute
+  '/agents/$slug': typeof AppAgentsSlugRouteWithChildren
   '/agents/new': typeof AppAgentsNewRoute
   '/schedules/$key': typeof AppSchedulesKeyRoute
   '/schedules/new': typeof AppSchedulesNewRoute
@@ -204,8 +228,12 @@ export interface FileRoutesByFullPath {
   '/settings/': typeof AppSettingsIndexRoute
   '/tasks/': typeof AppTasksIndexRoute
   '/templates/': typeof AppTemplatesIndexRoute
+  '/agents/$slug/chat': typeof AppAgentsSlugChatRoute
+  '/agents/$slug/session': typeof AppAgentsSlugSessionRoute
+  '/agents/$slug/config': typeof AppAgentsSlugConfigRoute
   '/agents/$slug/edit': typeof AppAgentsSlugEditRoute
   '/agents/$slug/usage': typeof AppAgentsSlugUsageRoute
+  '/agents/$slug/': typeof AppAgentsSlugIndexRoute
 }
 export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
@@ -213,7 +241,6 @@ export interface FileRoutesByTo {
   '/inbox': typeof AppInboxRoute
   '/usage': typeof AppUsageRoute
   '/': typeof AppIndexRoute
-  '/agents/$slug': typeof AppAgentsSlugRoute
   '/agents/new': typeof AppAgentsNewRoute
   '/schedules/$key': typeof AppSchedulesKeyRoute
   '/schedules/new': typeof AppSchedulesNewRoute
@@ -232,8 +259,12 @@ export interface FileRoutesByTo {
   '/settings': typeof AppSettingsIndexRoute
   '/tasks': typeof AppTasksIndexRoute
   '/templates': typeof AppTemplatesIndexRoute
+  '/agents/$slug/chat': typeof AppAgentsSlugChatRoute
+  '/agents/$slug/session': typeof AppAgentsSlugSessionRoute
+  '/agents/$slug/config': typeof AppAgentsSlugConfigRoute
   '/agents/$slug/edit': typeof AppAgentsSlugEditRoute
   '/agents/$slug/usage': typeof AppAgentsSlugUsageRoute
+  '/agents/$slug': typeof AppAgentsSlugIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -244,7 +275,7 @@ export interface FileRoutesById {
   '/_app/settings': typeof AppSettingsRouteWithChildren
   '/_app/usage': typeof AppUsageRoute
   '/_app/': typeof AppIndexRoute
-  '/_app/agents/$slug': typeof AppAgentsSlugRoute
+  '/_app/agents/$slug': typeof AppAgentsSlugRouteWithChildren
   '/_app/agents/new': typeof AppAgentsNewRoute
   '/_app/schedules/$key': typeof AppSchedulesKeyRoute
   '/_app/schedules/new': typeof AppSchedulesNewRoute
@@ -263,8 +294,12 @@ export interface FileRoutesById {
   '/_app/settings/': typeof AppSettingsIndexRoute
   '/_app/tasks/': typeof AppTasksIndexRoute
   '/_app/templates/': typeof AppTemplatesIndexRoute
+  '/_app/agents/$slug/chat': typeof AppAgentsSlugChatRoute
+  '/_app/agents/$slug/session': typeof AppAgentsSlugSessionRoute
+  '/_app/agents/$slug_/config': typeof AppAgentsSlugConfigRoute
   '/_app/agents/$slug_/edit': typeof AppAgentsSlugEditRoute
   '/_app/agents/$slug_/usage': typeof AppAgentsSlugUsageRoute
+  '/_app/agents/$slug/': typeof AppAgentsSlugIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -294,8 +329,12 @@ export interface FileRouteTypes {
     | '/settings/'
     | '/tasks/'
     | '/templates/'
+    | '/agents/$slug/chat'
+    | '/agents/$slug/session'
+    | '/agents/$slug/config'
     | '/agents/$slug/edit'
     | '/agents/$slug/usage'
+    | '/agents/$slug/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/sign-in'
@@ -303,7 +342,6 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/usage'
     | '/'
-    | '/agents/$slug'
     | '/agents/new'
     | '/schedules/$key'
     | '/schedules/new'
@@ -322,8 +360,12 @@ export interface FileRouteTypes {
     | '/settings'
     | '/tasks'
     | '/templates'
+    | '/agents/$slug/chat'
+    | '/agents/$slug/session'
+    | '/agents/$slug/config'
     | '/agents/$slug/edit'
     | '/agents/$slug/usage'
+    | '/agents/$slug'
   id:
     | '__root__'
     | '/_app'
@@ -352,8 +394,12 @@ export interface FileRouteTypes {
     | '/_app/settings/'
     | '/_app/tasks/'
     | '/_app/templates/'
+    | '/_app/agents/$slug/chat'
+    | '/_app/agents/$slug/session'
+    | '/_app/agents/$slug_/config'
     | '/_app/agents/$slug_/edit'
     | '/_app/agents/$slug_/usage'
+    | '/_app/agents/$slug/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -546,6 +592,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTemplatesNewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/agents/$slug/': {
+      id: '/_app/agents/$slug/'
+      path: '/'
+      fullPath: '/agents/$slug/'
+      preLoaderRoute: typeof AppAgentsSlugIndexRouteImport
+      parentRoute: typeof AppAgentsSlugRoute
+    }
+    '/_app/agents/$slug/chat': {
+      id: '/_app/agents/$slug/chat'
+      path: '/chat'
+      fullPath: '/agents/$slug/chat'
+      preLoaderRoute: typeof AppAgentsSlugChatRouteImport
+      parentRoute: typeof AppAgentsSlugRoute
+    }
+    '/_app/agents/$slug/session': {
+      id: '/_app/agents/$slug/session'
+      path: '/session'
+      fullPath: '/agents/$slug/session'
+      preLoaderRoute: typeof AppAgentsSlugSessionRouteImport
+      parentRoute: typeof AppAgentsSlugRoute
+    }
+    '/_app/agents/$slug_/config': {
+      id: '/_app/agents/$slug_/config'
+      path: '/agents/$slug/config'
+      fullPath: '/agents/$slug/config'
+      preLoaderRoute: typeof AppAgentsSlugConfigRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/agents/$slug_/edit': {
       id: '/_app/agents/$slug_/edit'
       path: '/agents/$slug/edit'
@@ -585,12 +659,28 @@ const AppSettingsRouteWithChildren = AppSettingsRoute._addFileChildren(
   AppSettingsRouteChildren,
 )
 
+interface AppAgentsSlugRouteChildren {
+  AppAgentsSlugChatRoute: typeof AppAgentsSlugChatRoute
+  AppAgentsSlugSessionRoute: typeof AppAgentsSlugSessionRoute
+  AppAgentsSlugIndexRoute: typeof AppAgentsSlugIndexRoute
+}
+
+const AppAgentsSlugRouteChildren: AppAgentsSlugRouteChildren = {
+  AppAgentsSlugChatRoute: AppAgentsSlugChatRoute,
+  AppAgentsSlugSessionRoute: AppAgentsSlugSessionRoute,
+  AppAgentsSlugIndexRoute: AppAgentsSlugIndexRoute,
+}
+
+const AppAgentsSlugRouteWithChildren = AppAgentsSlugRoute._addFileChildren(
+  AppAgentsSlugRouteChildren,
+)
+
 interface AppRouteChildren {
   AppInboxRoute: typeof AppInboxRoute
   AppSettingsRoute: typeof AppSettingsRouteWithChildren
   AppUsageRoute: typeof AppUsageRoute
   AppIndexRoute: typeof AppIndexRoute
-  AppAgentsSlugRoute: typeof AppAgentsSlugRoute
+  AppAgentsSlugRoute: typeof AppAgentsSlugRouteWithChildren
   AppAgentsNewRoute: typeof AppAgentsNewRoute
   AppSchedulesKeyRoute: typeof AppSchedulesKeyRoute
   AppSchedulesNewRoute: typeof AppSchedulesNewRoute
@@ -603,6 +693,7 @@ interface AppRouteChildren {
   AppSchedulesIndexRoute: typeof AppSchedulesIndexRoute
   AppTasksIndexRoute: typeof AppTasksIndexRoute
   AppTemplatesIndexRoute: typeof AppTemplatesIndexRoute
+  AppAgentsSlugConfigRoute: typeof AppAgentsSlugConfigRoute
   AppAgentsSlugEditRoute: typeof AppAgentsSlugEditRoute
   AppAgentsSlugUsageRoute: typeof AppAgentsSlugUsageRoute
 }
@@ -612,7 +703,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSettingsRoute: AppSettingsRouteWithChildren,
   AppUsageRoute: AppUsageRoute,
   AppIndexRoute: AppIndexRoute,
-  AppAgentsSlugRoute: AppAgentsSlugRoute,
+  AppAgentsSlugRoute: AppAgentsSlugRouteWithChildren,
   AppAgentsNewRoute: AppAgentsNewRoute,
   AppSchedulesKeyRoute: AppSchedulesKeyRoute,
   AppSchedulesNewRoute: AppSchedulesNewRoute,
@@ -625,6 +716,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSchedulesIndexRoute: AppSchedulesIndexRoute,
   AppTasksIndexRoute: AppTasksIndexRoute,
   AppTemplatesIndexRoute: AppTemplatesIndexRoute,
+  AppAgentsSlugConfigRoute: AppAgentsSlugConfigRoute,
   AppAgentsSlugEditRoute: AppAgentsSlugEditRoute,
   AppAgentsSlugUsageRoute: AppAgentsSlugUsageRoute,
 }

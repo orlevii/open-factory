@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,9 @@ import {
 } from "fastify-type-provider-zod";
 import type postgres from "postgres";
 import { AgentService } from "./agents/agent-service.ts";
+import { ChatStore } from "./agents/chat-store.ts";
+import { ConfigChanges, dbConfigChangeAgents } from "./agents/config-changes.ts";
+import { ConfigResolver } from "./agents/config-resolver.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
@@ -18,6 +22,10 @@ import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
+import { ExpiryCheck } from "./credentials/expiry-check.ts";
+import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
+import { probePython, startHostPty, sweepStaleDirs } from "./credentials/sign-in/host-pty.ts";
+import { runSetupToken } from "./credentials/sign-in/setup-token.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
@@ -28,6 +36,7 @@ import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { scheduleTools } from "./mcp/tools/schedule-tools.ts";
+import { sendCommandTool } from "./mcp/tools/send-command.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
 import { taskTools } from "./mcp/tools/task-tools.ts";
@@ -37,8 +46,10 @@ import { Router } from "./messaging/router.ts";
 import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { claudeSignInRoutes } from "./routes/claude-sign-in.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
 import { hostRoutes } from "./routes/host.ts";
+import { hostSkillsRoutes } from "./routes/host-skills.ts";
 import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { meRoutes } from "./routes/me.ts";
@@ -78,7 +89,6 @@ import { InviteService } from "./users/invites.ts";
 import { UserAdminService } from "./users/user-admin.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
-import { migrateWorkdirState } from "./workspace/state-migration.ts";
 import { Workspace } from "./workspace/workspace.ts";
 import { wsRoutes } from "./ws/route.ts";
 
@@ -89,13 +99,22 @@ declare module "fastify" {
     runtimes: AgentRuntimes;
     bus: EventBus;
     store: EventStore;
+    chat: ChatStore;
     vault: Vault;
     workspace: Workspace;
     /** Named workspaceLock because `lock` is a Fastify (websocket plugin) route method. */
     workspaceLock: KeyedMutex;
     templates: TemplateIndex;
+    /** I2 §6.1: an agent's effective config (the current template plus its overlay). */
+    resolver: ConfigResolver;
+    /** I2 §7.2: the one change path for template changes and overlay saves. */
+    configChanges: ConfigChanges;
     agents: AgentService;
     credentials: CredentialService;
+    /** I3 §5.4: the in-memory "Sign in with Claude" attempts, one per user. */
+    signIn: SignInAttempts;
+    /** I3 §5.5: whether a working python3 (with `pty`) is on the host; probed once, then cached. */
+    signInAvailable(): Promise<boolean>;
     secrets: SecretService;
     projects: ProjectService;
     router: Router;
@@ -136,6 +155,8 @@ export interface AppDeps {
     setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
     clearTimer: (t: ReturnType<typeof setTimeout>) => void;
   };
+  /** Spawns the sign-in PTY bridge and the python3 probe (I3); the real `spawn` unless a test injects one. */
+  signInSpawn?: typeof spawn;
   /** Checked for the removed env vars (S10 Q6) to warn at boot; `process.env` when absent. */
   env?: NodeJS.ProcessEnv;
 }
@@ -183,11 +204,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
   await mkdir(path.join(config.factoryHome, "images"), { recursive: true });
 
-  await migrateWorkdirState(
-    config.factoryHome,
-    (await deps.db.select({ slug: schema.agents.slug }).from(schema.agents)).map((r) => r.slug),
-    app.log,
-  );
   // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
   const settings = await FactorySettings.load(deps.db, app.log);
   app.decorate("factorySettings", settings);
@@ -211,11 +227,14 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
+  const templates = new TemplateIndex({ db: deps.db, config, log: app.log });
+  const resolver = new ConfigResolver({ templates });
   const prepareStart = createPrepareStart({
     db: deps.db,
     config,
     vault,
     workspace,
+    resolver,
     lock,
     containers,
     neighborhood,
@@ -235,7 +254,12 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     maxRunningAgents: settings.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
-    docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
+    docker: {
+      containers,
+      claudeBin: config.dockerClaudeBin,
+      defaultImage: config.defaultImage,
+      resolver,
+    },
     // Only the real driver's processes are ours to journal and reap (spec §12).
     ...(deps.harnessDriver ? {} : { journal }),
     driver:
@@ -253,8 +277,16 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     )
       void runtimes.settingsChanged();
   });
-  const templates = new TemplateIndex({ db: deps.db, config });
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
+  // I2 §7.1: a template change is dispatched off the scan's path, on a per-template serial queue (never awaited there).
+  const configChanges = new ConfigChanges({
+    agents: dbConfigChangeAgents(deps.db, resolver),
+    store,
+    runtimes,
+    bus,
+    log: app.log,
+  });
+  templates.onChange((e) => configChanges.templateChanged(e));
   // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
   const clock = deps.clock ?? (() => new Date());
   const scheduleStore = new ScheduleStore();
@@ -291,6 +323,9 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
     containers,
     router,
+    store,
+    bus,
+    configChanges,
     scheduling: schedules,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.
@@ -303,10 +338,29 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     vault,
     verifier,
     runtimes,
+    bus,
     now: clock,
     log: app.log,
   });
   app.decorate("credentials", credentials);
+  // I3 §5.4: before UserAdminService, which ends a disabled user's attempt.
+  const signInSpawn = deps.signInSpawn ?? spawn;
+  app.decorate(
+    "signIn",
+    new SignInAttempts({
+      startPty: () => startHostPty({ claudeBin: config.claudeBin, spawnFn: signInSpawn }),
+      run: (pty) => runSetupToken(pty),
+      verify: (value) => verifier.verify("oauth_token", value),
+      credentials,
+      now: () => clock().getTime(),
+      log: app.log,
+    }),
+  );
+  let pythonProbe: Promise<boolean> | undefined;
+  app.decorate("signInAvailable", () => {
+    pythonProbe ??= probePython(signInSpawn);
+    return pythonProbe;
+  });
   app.decorate(
     "usage",
     new UsageService({ db: deps.db, now: clock, timezone: () => config.factoryTimezone }),
@@ -325,15 +379,21 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     "invites",
     new InviteService({ db: deps.db, now: clock, publicUrl: config.publicUrl, bus }),
   );
-  app.decorate("userAdmin", new UserAdminService({ db: deps.db, now: clock, bus }));
+  app.decorate(
+    "userAdmin",
+    new UserAdminService({ db: deps.db, now: clock, bus, signIn: app.signIn }),
+  );
   app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
   app.decorate("vault", vault);
   app.decorate("templates", templates);
+  app.decorate("resolver", resolver);
+  app.decorate("configChanges", configChanges);
   app.decorate("agents", agents);
   app.decorate("workspaceLock", lock);
   app.decorate("workspace", workspace);
   app.decorate("store", store);
+  app.decorate("chat", new ChatStore(deps.db));
   app.decorate("bus", bus);
   app.decorate("runtimes", runtimes);
   app.decorate("neighborhood", neighborhood);
@@ -346,6 +406,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     workspace,
     router,
     runtimes,
+    resolver,
     config,
     log: app.log,
     closing: () => runtimes.supervisor.closing(),
@@ -385,22 +446,34 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("uploads", uploads);
   const uploadSweep = new UploadSweep({ uploads, log: app.log, now: clock });
+  const expiryCheck = new ExpiryCheck({
+    db: deps.db,
+    store,
+    bus,
+    zone: config.factoryTimezone,
+    now: clock,
+    log: app.log,
+  });
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
     // A send still waiting for a boot that failed must not hold the agent listener open.
     router.close();
+    expiryCheck.stop();
     reaper.stop();
     uploadSweep.stop();
     scheduler.stop();
     // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
     await runtimes.close();
+    // Sign-in attempts hold a host process (I3 §5.4): ended before the DB closes.
+    await app.signIn.closeAll();
     // Every process has exited: no token may outlive it (spec §5.2). Then the agent listener (§5.3).
     tokens.revokeAll();
     await agentListener?.close();
     // A sweep that was under way finishes against a closing factory (nothing starts); the DB closes after this hook.
     await reaper.idle();
     await uploadSweep.idle();
+    await expiryCheck.idle();
     await scheduler.idle();
   });
 
@@ -412,9 +485,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(authRoutes, { db: deps.db });
   await app.register(meRoutes);
   await app.register(hostRoutes);
+  await app.register(hostSkillsRoutes);
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);
+  await app.register(claudeSignInRoutes);
   await app.register(usageRoutes);
   await app.register(signUpStateRoutes, { db: deps.db });
   await app.register(usersRoutes);
@@ -439,6 +514,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       router,
       neighborhood,
       runtimes,
+      resolver,
       spawner,
       terminator,
       tasks,
@@ -470,7 +546,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     reaper.start();
     void uploadSweep.run();
     uploadSweep.start();
+    void expiryCheck.run();
+    expiryCheck.start();
     scheduler.start();
+    // I3 §5.2: a crashed server's sign-in temp dirs.
+    void sweepStaleDirs(os.tmpdir(), clock().getTime());
   } catch (err) {
     // A wake may already have started a process. The onClose hook closes the agent listener after the runtimes. A
     // failing close is logged and never masks the boot's error.
@@ -495,6 +575,7 @@ async function listenForAgents(
     router: Router;
     neighborhood: Neighborhood;
     runtimes: AgentRuntimes;
+    resolver: ConfigResolver;
     spawner: SpawnPort;
     terminator: TerminatePort;
     tasks: TaskService;
@@ -516,28 +597,39 @@ async function listenForAgents(
     version: FACTORY_VERSION,
     onerror: (err) => d.log.error({ err }, "factory MCP request failed"),
     loadCaller: (id) => d.store.agentById(id),
-    tools: (caller) => [
-      sendMessageTool(d.router),
-      ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
-      // Q12: persistent agents only; a spawned agent never sees the schedule tools.
-      ...(caller.kind === "persistent"
-        ? scheduleTools({
-            schedules: d.schedules,
-            factoryZone: config.factoryTimezone,
-            loadAgent: (id) => d.store.agentById(id),
-          })
-        : []),
-      listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
-      ...(maySpawn(caller)
-        ? [
-            spawnAgentTool({
-              spawn: d.spawner,
-              templates: caller.config.canSpawn as [string, ...string[]],
-            }),
-            terminateAgentTool({ terminate: d.terminator }),
-          ]
-        : []),
-    ],
+    tools: (caller) => {
+      // I2 §6.2: the spawn tools describe the running process, so they follow the config it started with.
+      const started = d.runtimes.startedOf(caller.id)?.config;
+      return [
+        sendMessageTool(d.router),
+        sendCommandTool({
+          caller,
+          runtimes: d.runtimes,
+          store: d.store,
+          resolver: d.resolver,
+          spawned: caller.kind === "ephemeral",
+        }),
+        ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
+        // Q12: persistent agents only; a spawned agent never sees the schedule tools.
+        ...(caller.kind === "persistent"
+          ? scheduleTools({
+              schedules: d.schedules,
+              factoryZone: config.factoryTimezone,
+              loadAgent: (id) => d.store.agentById(id),
+            })
+          : []),
+        listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
+        ...(started && maySpawn(caller, started)
+          ? [
+              spawnAgentTool({
+                spawn: d.spawner,
+                templates: started.canSpawn as [string, ...string[]],
+              }),
+              terminateAgentTool({ terminate: d.terminator }),
+            ]
+          : []),
+      ];
+    },
   });
   const listener = await startAgentListener({
     hosts: bind.hosts,

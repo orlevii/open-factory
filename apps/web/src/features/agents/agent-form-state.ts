@@ -4,22 +4,17 @@ import {
   type CreateAgentBody,
   type CredentialSummary,
   createAgentBodySchema,
+  MSG,
   type PatchAgentBody,
   slugSchema,
   type TemplateConfig,
 } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import {
-  createElement,
-  Fragment,
-  type ReactNode,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { agentsListQueryOptions } from "@/features/agents/api";
-import { ShowOutput } from "@/features/agents/show-output";
+import { hasOutput } from "@/features/agents/show-output";
 import {
   credentialsQueryOptions,
   projectsQueryOptions,
@@ -34,32 +29,35 @@ export const FIELDS = [
   "template",
   "slug",
   "displayName",
+  "color",
   "description",
   "reportsTo",
   "credential",
   "projects",
 ] as const;
 export type Field = (typeof FIELDS)[number];
-export type Errors = Partial<Record<Field, string>>;
 export type Touched = Partial<Record<Field, boolean>>;
 export type Values = {
   template: string;
   slug: string;
   displayName: string;
+  /** Identity colour 1..12, null is Auto. */
+  color: number | null;
   description: string;
   /** "" is "No manager". */
   reportsTo: string;
   credential: string;
   projects: string[];
 };
-/** What a draft holds: the values, whether the grants are the user's own, and (New agent) the fields the user made theirs. */
-type Stored = Values & { custom: boolean; touched: Touched };
+/** What a draft holds: the values and (New agent) the fields the user made theirs. */
+type Stored = Values & { touched: Touched };
 /** An edit draft also keeps the server copy it was edited against, so untouched fields follow the server later. */
 type EditDraft = { values: Stored; base: Stored };
 export type SubmitResult = "ok" | "invalid" | "failed" | "nothing";
 /** The fields an edit can send, in the order a sentence names them. */
 export const PATCH_FIELDS = [
   "displayName",
+  "color",
   "description",
   "reportsTo",
   "credential",
@@ -73,11 +71,11 @@ const storedOf = (a: AgentSummary): Stored => ({
   template: a.template,
   slug: a.slug,
   displayName: a.displayName,
+  color: a.color,
   description: a.description,
   reportsTo: a.reportsTo ?? "",
   credential: a.credential ?? "",
   projects: a.projects,
-  custom: a.grantsOverridden,
   touched: {},
 });
 
@@ -85,17 +83,17 @@ const blank = (prefill?: { template?: string }): Stored => ({
   template: prefill?.template ?? "",
   slug: "",
   displayName: "",
+  color: null,
   description: "",
   reportsTo: "",
   credential: "",
   projects: [],
-  custom: false,
   touched: {},
 });
 
 /**
- * The agent form's state (§6.1): values live in the sheet draft, validate on blur and all together on submit, and
- * server field errors land under their fields. New agent: the chosen template fills the fields the user hasn't
+ * The agent form's state (§6.1): values live in the sheet draft; validation timing, server field errors and focus
+ * belong to `useFieldErrors` over `form`, and the form-level line to `useOutcome`. New agent: the chosen template fills the fields the user hasn't
  * edited, and a credential has to be picked unless there is exactly one. Edit agent: an untouched field follows the
  * server (`mergeServer`, in render) and a touched one keeps the user's value; `submit` sends only the diff.
  */
@@ -105,6 +103,7 @@ export function useAgentFormState({
   draftKey,
   prefill,
   slugFor,
+  form,
 }: {
   mode: "create" | "edit";
   agent?: AgentSummary;
@@ -112,6 +111,8 @@ export function useAgentFormState({
   prefill?: { template?: string };
   /** New agent: the address derived from the display name, used until the user edits the slug (§6.3). */
   slugFor?: (displayName: string) => string;
+  /** The form root: `useFieldErrors` focuses the first invalid field in it. */
+  form: RefObject<HTMLElement | null>;
 }) {
   const create = mode === "create";
 
@@ -161,8 +162,9 @@ export function useAgentFormState({
   const [restored, setRestored] = useState(
     draft.restored && !(start.base && same(start.values, start.base)),
   );
-  const [errors, setErrors] = useState<Errors>({});
-  const [outcome, setOutcome] = useState<{ tone: "success" | "error"; content: ReactNode }>();
+  const o = useOutcome();
+  /** A failed plugin install's output, as data: the sheet builds "Show output" from it during render. */
+  const [pluginOutput, setPluginOutput] = useState<string>();
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const mounted = useRef(true);
@@ -172,8 +174,8 @@ export function useAgentFormState({
       mounted.current = false;
     };
   }, []);
-  /** Submit attempts, so a slow flag belongs to one attempt and a resubmit starts without it. */
-  const [attempt, setAttempt] = useState(0);
+  /** Sends, so a slow flag belongs to one send and a resubmit starts without it. */
+  const [sends, setSends] = useState(0);
   const [firedFor, setFiredFor] = useState<number | null>(null);
 
   const templates = useQuery({ ...templatesQueryOptions, enabled: create });
@@ -224,15 +226,12 @@ export function useAgentFormState({
     credentials &&
     !credentials.some((c) => c.name === values.credential)
   )
-    staleNotes.credential = `Credential ${values.credential} was deleted.`;
+    staleNotes.credential = MSG.credentialDeleted;
   const goneProjects =
-    create && values.custom && projectList.data
+    create && values.touched.projects && projectList.data
       ? values.projects.filter((p) => !projectList.data?.some((x) => x.name === p))
       : [];
-  if (goneProjects.length > 0)
-    staleNotes.projects = `${goneProjects.map((p) => `Project ${p}`).join(", ")} ${
-      goneProjects.length > 1 ? "were" : "was"
-    } removed.`;
+  if (goneProjects.length > 0) staleNotes.projects = FORM_MSG.projectsRemoved;
 
   // What the form shows and submits. New agent: the chosen template fills the fields the user
   // hasn't edited. A credential has to be picked; with exactly one there is nothing to choose.
@@ -267,7 +266,8 @@ export function useAgentFormState({
             ? base0.description
             : templatePrefill.description,
         credential: base0.credential || defaultCredential(),
-        projects: values.custom || !templatePrefill ? base0.projects : templatePrefill.projects,
+        projects:
+          values.touched.projects || !templatePrefill ? base0.projects : templatePrefill.projects,
         slug: values.touched.slug || !slugFor ? base0.slug : slugFor(displayName),
       };
   // The detail lands asynchronously, so a field the user enters while it is still on the way is theirs as it stands:
@@ -282,77 +282,75 @@ export function useAgentFormState({
   const pluginCount = create ? (config?.plugins.length ?? 0) : 0;
   useEffect(() => {
     if (!pending || pluginCount === 0) return;
-    const t = setTimeout(() => setFiredFor(attempt), 3000);
+    const t = setTimeout(() => setFiredFor(sends), 3000);
     return () => clearTimeout(t);
-  }, [pending, pluginCount, attempt]);
-  const slow = pending && pluginCount > 0 && firedFor === attempt;
+  }, [pending, pluginCount, sends]);
+  const slow = pending && pluginCount > 0 && firedFor === sends;
 
   function check(f: Field, v: Values): string | undefined {
     switch (f) {
       case "template": {
         if (!create) return undefined;
-        if (v.template === "") return "Choose a template.";
+        if (v.template === "") return FORM_MSG.chooseTemplate;
         const t = templates.data?.templates.find((x) => x.name === v.template);
         // A name that isn't listed (a stale ?template=) shows as unchosen, so it is.
-        if (templates.data && !t) return "Choose a template.";
+        if (templates.data && !t) return FORM_MSG.chooseTemplate;
         if (t && t.errors > 0) return FORM_MSG.templateErrors;
         return undefined;
       }
       case "slug": {
         if (!create) return undefined;
-        if (v.slug === "") return "Enter a slug.";
+        if (v.slug === "") return FORM_MSG.enterSlug;
         const r = slugSchema.safeParse(v.slug);
         return r.success ? undefined : r.error.issues[0]?.message;
       }
       case "displayName": {
         if (createAgentBodySchema.shape.displayName.safeParse(v.displayName).success) return;
-        return v.displayName.trim() === "" ? "Enter a display name." : FORM_MSG.displayNameLength;
+        return v.displayName.trim() === "" ? FORM_MSG.enterDisplayName : FORM_MSG.displayNameLength;
       }
       case "description":
         return createAgentBodySchema.shape.description.safeParse(v.description).success
           ? undefined
           : FORM_MSG.descriptionLength;
       case "credential":
-        return v.credential === "" ? "Choose a credential." : undefined;
+        return v.credential === "" ? FORM_MSG.chooseCredential : undefined;
       default:
         return undefined;
     }
   }
+  const f = useFieldErrors<Field>({
+    form,
+    fields: FIELDS,
+    checks: Object.fromEntries(FIELDS.map((x) => [x, () => check(x, shown)])),
+  });
 
-  const set = <K extends keyof Values>(f: K, v: Values[K]) => {
+  /** The submit's line and the plugin output its Show output opens: they go together. */
+  const clearOutcome = () => {
+    o.clear();
+    setPluginOutput(undefined);
+  };
+
+  const set = <K extends Field>(field: K, v: Values[K]) => {
     update({
-      [f]: v,
-      ...(create && !latest.current.touched[f]
-        ? { touched: { ...latest.current.touched, [f]: true } }
+      [field]: v,
+      ...(create && !latest.current.touched[field]
+        ? { touched: { ...latest.current.touched, [field]: true } }
         : {}),
     });
-    setErrors((e) => ({ ...e, [f]: undefined }));
-    // A success line describes the saved state; editing makes it stale.
-    setOutcome((o) => (o?.tone === "success" ? undefined : o));
+    f.change(field);
+    // The line describes the last submit; an edit makes it stale, and a notice it hid comes back.
+    clearOutcome();
   };
-  const blur = (f: Field) => setErrors((e) => ({ ...e, [f]: check(f, shown) }));
 
   const setProjects = (next: string[]) => {
-    // Back to exactly the template's set is the template default again, not an override.
-    const sameAsTemplate =
-      config !== undefined &&
-      next.length === config.projects.length &&
-      config.projects.every((p) => next.includes(p));
     update({
       projects: next,
-      custom: !sameAsTemplate,
       ...(create && !latest.current.touched.projects
         ? { touched: { ...latest.current.touched, projects: true } }
         : {}),
     });
-    setErrors((e) => ({ ...e, projects: undefined }));
-    setOutcome((o) => (o?.tone === "success" ? undefined : o));
-  };
-  const applyTemplateDefault = () => {
-    setErrors((e) => ({ ...e, projects: undefined }));
-    // The template's set when it's known; the server resolves it either way (projects: null).
-    update({ custom: false, ...(config ? { projects: config.projects } : {}) });
-    setOutcome((o) => (o?.tone === "success" ? undefined : o));
+    f.change("projects");
+    clearOutcome();
   };
 
   function body(): CreateAgentBody | PatchAgentBody | null {
@@ -367,24 +365,24 @@ export function useAgentFormState({
         description,
         reportsTo,
         credential: shown.credential,
-        ...(values.custom ? { projects: shown.projects } : {}),
+        ...(values.touched.projects ? { projects: shown.projects } : {}),
       };
     }
     const b = base as Stored;
     const patch: PatchAgentBody = {};
     if (displayName !== b.displayName) patch.displayName = displayName;
+    if (shown.color !== b.color) patch.color = shown.color;
     if (description !== b.description) patch.description = description;
     if (reportsTo !== (b.reportsTo || null)) patch.reportsTo = reportsTo;
     if (shown.credential !== b.credential) patch.credential = shown.credential;
-    if (values.custom !== b.custom || !same(shown.projects, b.projects))
-      patch.projects = values.custom ? shown.projects : null;
+    if (!same(shown.projects, b.projects)) patch.projects = shown.projects;
     return Object.keys(patch).length > 0 ? patch : null;
   }
 
   // Edit: the fields a save would send now (the restart notice names them).
   const editPatch = create ? null : body();
   const changes: PatchField[] = editPatch
-    ? PATCH_FIELDS.filter((f) => editPatch[f] !== undefined)
+    ? PATCH_FIELDS.filter((f) => (editPatch as PatchAgentBody)[f] !== undefined)
     : [];
 
   const noCredentials = credentials !== undefined && credentials.length === 0;
@@ -401,67 +399,41 @@ export function useAgentFormState({
   ): Promise<SubmitResult> {
     // A ref, not `pending`: a second Enter can arrive before the first one's state has rendered.
     if (inFlight.current || noCredentials) return "nothing";
-    const found: Errors = {};
-    for (const f of FIELDS) {
-      const m = check(f, shown);
-      if (m) found[f] = m;
-    }
-    setErrors(found);
-    setOutcome(undefined);
-    if (Object.keys(found).length > 0) return "invalid";
+    clearOutcome();
+    if (!f.submit()) return "invalid";
     const b = body();
     if (!b) {
-      setOutcome({ tone: "success", content: "Nothing to save: no field changed." });
+      o.succeed("Nothing to save: no field changed.");
       return "nothing";
     }
     inFlight.current = true;
-    setAttempt((n) => n + 1);
+    setSends((n) => n + 1);
     setPending(true);
+    let saved: AgentSummary | undefined;
     try {
-      const saved = await onSubmit(b);
-      if (create) {
-        // Unmounted (the sheet was dismissed while creating): the draft stays; the sheet host clears it when no sheet
-        // of this kind is open, or toasts "Open form" on a late failure.
-        if (mounted.current) clearDraft();
-      } else {
-        // The saved copy is the new base; the fields stay as the user left them (they equal it). The sheet closes and
-        // toasts the outcome, so there is no inline success line.
-        if (saved) setBase(storedOf(saved));
-        // Only this instance's draft: after a dismiss the key may hold a draft the user reopened and edited since.
-        if (mounted.current) clearDraft();
-      }
-      return "ok";
+      saved = (await onSubmit(b)) ?? undefined;
     } catch (err) {
-      if (err instanceof ApiError) {
-        const fields = (err.body.fields ?? {}) as Record<string, string>;
-        const e: Errors = {};
-        for (const f of FIELDS) if (fields[f]) e[f] = fields[f];
-        if (Object.keys(e).length > 0) {
-          setErrors(e);
-        } else {
-          setOutcome({
-            tone: "error",
-            content: createElement(
-              Fragment,
-              null,
-              err.message,
-              err.code === "plugin_install_failed"
-                ? createElement(ShowOutput, { output: err.body.output })
-                : null,
-            ),
-          });
-        }
-      } else {
-        setOutcome({
-          tone: "error",
-          content: FORM_MSG.unreachable,
-        });
+      inFlight.current = false;
+      // Re-enabled in the commit that focuses the field.
+      setPending(false);
+      if (!(err instanceof ApiError)) o.fail(FORM_MSG.unreachable);
+      else if (!f.server(err.body.fields as Record<string, string> | undefined)) {
+        o.fail(err.message);
+        const output = err.body.output;
+        if (err.code === "plugin_install_failed" && hasOutput(output)) setPluginOutput(output);
       }
       return "failed";
-    } finally {
-      inFlight.current = false;
-      setPending(false);
     }
+    inFlight.current = false;
+    setPending(false);
+    // New agent: unmounted (the sheet was dismissed while creating), the draft stays; the sheet host clears it when no
+    // sheet of this kind is open, or toasts "Open form" on a late failure.
+    // Edit: the saved copy is the new base; the fields stay as the user left them (they equal it). The sheet closes
+    // and toasts the outcome, so there is no inline success line.
+    if (saved && !create) setBase(storedOf(saved));
+    // Only this instance's draft: after a dismiss the key may hold a draft the user reopened and edited since.
+    if (mounted.current) clearDraft();
+    return "ok";
   }
 
   /** Clears the draft and puts the fields back to where a fresh open starts (the saved agent, or the context prefill). */
@@ -470,26 +442,26 @@ export function useAgentFormState({
     const fresh = base ?? blank(prefill);
     latest.current = fresh;
     setValues(fresh);
-    setErrors({});
-    setOutcome(undefined);
+    f.reset();
+    clearOutcome();
     setRestored(false);
   }
 
   return {
     values,
     shown,
-    errors,
+    errors: f.errors,
+    attempt: f.attempt,
     touched: values.touched,
-    custom: values.custom,
     set,
-    blur,
+    blur: f.blur,
     claim,
     setProjects,
-    applyTemplateDefault,
     submit,
     pending,
     slow,
-    outcome,
+    outcome: o.outcome,
+    pluginOutput,
     config,
     missingSecrets,
     noCredentials,

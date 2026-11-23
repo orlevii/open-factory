@@ -4,7 +4,8 @@ import { Label } from "@/components/ui/label";
 
 type Props = {
   name: string;
-  label: string;
+  /** A string for a single input; a legend may carry a marker beside the name. */
+  label: ReactNode;
   error?: string;
   /** Muted hint under the field. An error or warning replaces it in the same reserved line. */
   help?: string;
@@ -20,6 +21,8 @@ type Props = {
   describedBy?: string;
   /** The label is for assistive tech only (a heading nearby already names the field). Single-input fields only. */
   hideLabel?: boolean;
+  /** The control isn't labelable (an empty state's text in its place): the label is plain text, not a `<label for>`. */
+  plainLabel?: boolean;
   children: (a: { id: string; describedBy?: string; invalid: boolean }) => ReactNode;
 };
 
@@ -34,6 +37,7 @@ export function FieldShell({
   below,
   describedBy: extra,
   hideLabel,
+  plainLabel,
   children,
 }: Props) {
   const id = `field-${name}`;
@@ -48,14 +52,23 @@ export function FieldShell({
   );
   if (legend) {
     return (
-      <fieldset data-field="" className="grid min-w-0 gap-1.5" aria-describedby={describedBy}>
-        <legend className="text-[0.8125rem] font-medium">{label}</legend>
+      <fieldset
+        data-field=""
+        className="grid min-w-0 gap-1.5"
+        aria-describedby={describedBy}
+        aria-invalid={error ? true : undefined}
+      >
+        <legend id={`${id}-legend`} className="text-[0.8125rem] font-medium">
+          {label}
+        </legend>
         {body}
         {tail}
       </fieldset>
     );
   }
-  const labelEl = (
+  const labelEl = plainLabel ? (
+    <span className="text-[0.8125rem] leading-none font-medium">{label}</span>
+  ) : (
     <Label htmlFor={id} className={hideLabel ? "sr-only" : "text-[0.8125rem]"}>
       {label}
     </Label>

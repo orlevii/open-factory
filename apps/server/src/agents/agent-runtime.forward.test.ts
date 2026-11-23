@@ -215,6 +215,7 @@ test("Start a new session still makes its attempt when forwarding recovered fail
       await h.store.createMessage({
         from: { userId: "u1" },
         toAgentId: id,
+        recipients: ["@test"],
         body: "pending",
         urgent: false,
       });

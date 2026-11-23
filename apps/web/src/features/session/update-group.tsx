@@ -55,11 +55,13 @@ export function UpdateGroup({
   const late =
     written !== undefined &&
     new Date(row.at).getTime() - new Date(written).getTime() > WRITTEN_GAP_MS;
+  // `about` is the report's handle as the envelope writes it, `@slug`.
+  const about = row.about.replace(/^@/, "");
   return (
     <article
       {...rowProps}
       ref={article}
-      aria-label={`Update from @${row.about}`}
+      aria-label={`Update from @${about}`}
       className="border-l border-input pl-3"
     >
       <div className="mb-1 flex flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]">
@@ -68,7 +70,7 @@ export function UpdateGroup({
           <span>Update from</span>
         </span>
         <span>
-          <AgentLink slug={row.about} />
+          <AgentLink slug={about} />
         </span>
         <time
           dateTime={row.at}

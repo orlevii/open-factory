@@ -1,4 +1,4 @@
-import { templateYamlSchema } from "@open-factory/shared";
+import { isFactoryEnvName, templateYamlSchema } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { buildAgentEnv, buildRuntimeSpec } from "./runtime-spec.ts";
 
@@ -267,4 +267,26 @@ test("the agent token is the one variable S6 adds, and a secret can't override i
     );
     expect(env.OPEN_FACTORY_AGENT_TOKEN).toBe("tok");
   }
+});
+
+test.each([
+  ["oauth_token", "local"],
+  ["api_key", "docker"],
+] as const)("every name the factory sets is a factory-owned name (%s, %s)", (kind, runtime) => {
+  const env = buildAgentEnv(
+    serverEnv,
+    {
+      configDir: "/w/.claude-config",
+      slug: "lead",
+      credential: { kind, value: "v" },
+      secrets: { GH_TOKEN: "gh" },
+      agentUrl: "http://host:1",
+      agentToken: "t",
+    },
+    runtime,
+  );
+  for (const k of ["CLAUDE_CONFIG_DIR", "GIT_AUTHOR_NAME", "OPEN_FACTORY_AGENT_TOKEN"])
+    expect(isFactoryEnvName(k), k).toBe(true);
+  for (const k of Object.keys(env).filter((k) => k !== "GH_TOKEN" && !(k in serverEnv)))
+    expect(isFactoryEnvName(k), k).toBe(true);
 });

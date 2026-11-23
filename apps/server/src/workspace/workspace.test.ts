@@ -3,9 +3,12 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -53,10 +56,16 @@ function setup(fakeEnv: Record<string, string> = {}) {
     description: "d",
     template: "lead",
     config,
+    effective: {
+      doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
+      config,
+      templatePlugins: [],
+    },
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
     reports: [],
+    humans: [],
     mcpUrl: "http://127.0.0.1:3001/mcp",
     kind: "persistent" as const,
     spawner: null,
@@ -71,9 +80,12 @@ test("materialize then prepare: the full layout", async () => {
   await ws.materialize("lead", "lead", tpl, prep);
   const wd = ws.workdir("lead");
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
-  expect(existsSync(path.join(wd, ".claude/skills/local/SKILL.md"))).toBe(true);
+  expect(existsSync(path.join(wd, ".claude/skills"))).toBe(false); // linked at start, never copied
   expect(existsSync(path.join(wd, "projects"))).toBe(false); // check-only at creation
   const out = await ws.prepare(prep);
+  expect(readlinkSync(path.join(wd, ".claude/skills/local"))).toBe(
+    realpathSync(path.join(home, "templates/lead/skills/local")),
+  );
   expect(lstatSync(path.join(wd, "projects/app")).isSymbolicLink()).toBe(true);
   expect(lstatSync(path.join(wd, ".claude/skills/grilling")).isSymbolicLink()).toBe(true);
   const s = JSON.parse(readFileSync(path.join(wd, ".claude-config/settings.json"), "utf8"));
@@ -95,6 +107,7 @@ test("materialize then prepare: the full layout", async () => {
     wd,
     repo,
     realpathSync(path.join(hs, "grilling")),
+    realpathSync(path.join(home, "templates/lead/skills/local")),
     "/mk",
     path.join(home, "state/agents/lead/plugins-config/plugins"),
     "/opt/factory/bin/open-factory",
@@ -129,18 +142,100 @@ test("materialize: existing folder → folder_exists; plugin failure → caller 
   expect(existsSync(path.join(home, "agents/lead"))).toBe(false);
 });
 
-test("resync backs up differing files and never deletes", async () => {
+const STAMP = /^state\/agents\/lead\/persona\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/;
+const tplMd = (tpl: { dir: string }) => path.join(tpl.dir, "AGENTS.md");
+
+test("resetPersona backs up a differing AGENTS.md, writes the template's and never deletes", async () => {
   const { home, ws, tpl, prep } = setup();
   await ws.materialize("lead", "lead", tpl, prep);
   const wd = ws.workdir("lead");
   writeFileSync(path.join(wd, "AGENTS.md"), "# Lead\nlearned things\n");
   writeFileSync(path.join(wd, "mine.md"), "keep");
-  const dir = (await ws.resync("lead", tpl, { canWriteNow: true })).backupDir;
-  expect(dir).toMatch(/^state\/agents\/lead\/resync\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/);
-  expect(readFileSync(path.join(home, dir as string, "AGENTS.md"), "utf8")).toContain("learned");
+  const r = await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true });
+  expect(r.applied).toBe("now");
+  expect(r.backupDir).toMatch(STAMP);
+  expect(readFileSync(path.join(home, r.backupDir as string, "AGENTS.md"), "utf8")).toContain(
+    "learned",
+  );
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
   expect(existsSync(path.join(wd, "mine.md"))).toBe(true);
-  expect((await ws.resync("lead", tpl, { canWriteNow: true })).backupDir).toBeUndefined();
+  // Nothing differs now: no backup.
+  expect(r.changed).toBe(true);
+  expect(await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true })).toEqual({
+    applied: "now",
+    changed: false,
+  });
+  // A deleted AGENTS.md is recreated: a change, with nothing to save.
+  rmSync(path.join(wd, "AGENTS.md"));
+  expect(await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true })).toEqual({
+    applied: "now",
+    changed: true,
+  });
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
+});
+
+test("resetPersona backs a symlinked AGENTS.md up as a link and replaces it, never writing through", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  const secret = path.join(mkdtempSync(path.join(tmpdir(), "secret-")), "id_ed25519");
+  writeFileSync(secret, "PRIVATE KEY");
+  rmSync(path.join(wd, "AGENTS.md"));
+  symlinkSync(secret, path.join(wd, "AGENTS.md"));
+  const r = await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true });
+  const backup = path.join(home, r.backupDir as string, "AGENTS.md");
+  expect(lstatSync(backup).isSymbolicLink()).toBe(true);
+  expect(readlinkSync(backup)).toBe(secret);
+  expect(lstatSync(path.join(wd, "AGENTS.md")).isFile()).toBe(true);
+  expect(readFileSync(secret, "utf8")).toBe("PRIVATE KEY");
+});
+
+test("resetPersona refuses a workdir that is a symlink", async () => {
+  const { ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  const host = mkdtempSync(path.join(tmpdir(), "host-"));
+  rmSync(wd, { recursive: true });
+  symlinkSync(host, wd);
+  await expect(ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true })).rejects.toThrow(
+    /symlink/,
+  );
+  expect(existsSync(path.join(host, "AGENTS.md"))).toBe(false);
+});
+
+test("a staged persona reset leaves the workdir alone until prepare applies it, then removes the file", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  writeFileSync(path.join(wd, "AGENTS.md"), "edited");
+  const r = await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: false });
+  expect(r).toEqual({ applied: "on_restart", changed: true });
+  const pending = path.join(home, "state/agents/lead/persona-pending/AGENTS.md");
+  expect(readFileSync(pending, "utf8")).toBe("# Lead\n");
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("edited");
+  await ws.prepare(prep);
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
+  expect(existsSync(path.dirname(pending))).toBe(false);
+  const root = path.join(home, "state/agents/lead/persona");
+  const [stamp] = readdirSync(root);
+  expect(readFileSync(path.join(root, stamp as string, "AGENTS.md"), "utf8")).toBe("edited");
+});
+
+test("a failing apply at prepare keeps the pending file; a later write-now reset supersedes it", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: false });
+  rmSync(path.join(wd, "AGENTS.md"));
+  mkdirSync(path.join(wd, "AGENTS.md")); // not a file: the backup refuses
+  await expect(ws.prepare(prep)).rejects.toThrow(/isn't a file/);
+  const pending = path.join(home, "state/agents/lead/persona-pending/AGENTS.md");
+  expect(existsSync(pending)).toBe(true);
+  rmSync(path.join(wd, "AGENTS.md"), { recursive: true });
+  writeFileSync(tplMd(tpl), "# Newer\n");
+  await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true });
+  expect(existsSync(pending)).toBe(false);
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Newer\n");
 });
 
 test("prepare treats a non-object previous settings.json like a parse failure", async () => {
@@ -155,21 +250,26 @@ test("prepare treats a non-object previous settings.json like a parse failure", 
   }
 });
 
-test("prepare reports a missing or malformed template copy as a WorkspaceError", async () => {
-  const { home, ws, tpl, prep } = setup();
+test("prepare writes the effective settings and mcp", async () => {
+  const { ws, tpl, prep } = setup();
   await ws.materialize("lead", "lead", tpl, prep);
-  const copy = path.join(home, "state/agents/lead/template");
-  writeFileSync(path.join(copy, "settings.json"), "{nope");
-  await expect(ws.prepare(prep)).rejects.toMatchObject({
-    name: "WorkspaceError",
-    message: expect.stringContaining("settings.json"),
-  });
-  writeFileSync(path.join(copy, "settings.json"), "{}");
-  rmSync(path.join(copy, "mcp.json"));
-  await expect(ws.prepare(prep)).rejects.toMatchObject({
-    name: "WorkspaceError",
-    message: expect.stringContaining("mcp.json"),
-  });
+  const effective = {
+    ...prep.effective,
+    doc: {
+      ...prep.effective.doc,
+      settings: {
+        ...prep.effective.doc.settings,
+        permissions: { deny: ["Bash(curl:*)", "Bash(rm:*)"] },
+      },
+      mcp: { mcpServers: { x: { command: "x" }, extra: { command: "y" } } },
+    },
+  };
+  await ws.prepare({ ...prep, effective });
+  const wd = ws.workdir("lead");
+  const s = JSON.parse(readFileSync(path.join(wd, ".claude-config/settings.json"), "utf8"));
+  expect(s.permissions.deny).toEqual(["Bash(curl:*)", "Bash(rm:*)", "SendMessage", "ListAgents"]);
+  const mcp = JSON.parse(readFileSync(path.join(wd, ".mcp.json"), "utf8"));
+  expect(Object.keys(mcp.mcpServers)).toEqual(["x", "extra", "factory"]);
 });
 
 test(".mcp.json gets the factory server with an env-expanded header and no secret", async () => {
@@ -182,4 +282,34 @@ test(".mcp.json gets the factory server with an env-expanded header and no secre
     url: "http://host.docker.internal:3001/mcp",
     headers: { Authorization: "Bearer ${OPEN_FACTORY_AGENT_TOKEN}" },
   });
+});
+
+test("a template skill is live: edits show at once, a removed one's link goes, local_skills off drops them", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  await ws.prepare(prep);
+  writeFileSync(path.join(home, "templates/lead/skills/local/SKILL.md"), "edited");
+  expect(readFileSync(path.join(wd, ".claude/skills/local/SKILL.md"), "utf8")).toBe("edited");
+  await ws.prepare({
+    ...prep,
+    effective: { ...prep.effective, config: { ...prep.effective.config, localSkills: false } },
+  });
+  expect(existsSync(path.join(wd, ".claude/skills/local"))).toBe(false);
+  await ws.prepare(prep);
+  rmSync(path.join(home, "templates/lead/skills/local"), { recursive: true });
+  await ws.prepare(prep);
+  expect(existsSync(path.join(wd, ".claude/skills/local"))).toBe(false);
+});
+
+test("prepare refuses a symlinked template skill and a symlinked skills/ folder", async () => {
+  const { home, ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const outside = mkdtempSync(path.join(tmpdir(), "outside-"));
+  const skills = path.join(home, "templates/lead/skills");
+  symlinkSync(outside, path.join(skills, "evil"));
+  await expect(ws.prepare(prep)).rejects.toThrow("skills/evil must be a folder, not a link.");
+  rmSync(skills, { recursive: true });
+  symlinkSync(outside, skills);
+  await expect(ws.prepare(prep)).rejects.toThrow("skills/ must be a folder, not a link.");
 });

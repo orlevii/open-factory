@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { longPress } from "@/test/long-press";
 import { json, mockApi } from "@/test/mock-api";
 import { agentSummary, resetSeq, se } from "@/test/session-fixtures";
+import { ConfigChangedLine } from "./config-changed-line";
 import { groupWork, mergeFailures } from "./display-passes";
 import { rowMenuItems } from "./row-menu";
 import { buildRows, type Row } from "./rows";
@@ -908,6 +909,8 @@ test("timeline: config_changed reads 'Configuration changed by x · N changes' a
   expect(texts[1]).toMatch(/^Configuration changed by template dev · 1 change(?!s)/);
   expect(texts[2]).toMatch(/^Configuration changed by a file change in template dev · 1 change/);
   const first = els[0] as HTMLElement;
+  // The shared Show all: the timeline's click capture anchors the row before it expands.
+  expect(within(first).getByRole("button", { name: "Show all" })).toHaveAttribute("data-expands");
   // CSS clamps, nothing is measured: the clamp class is on the list, which holds every line.
   const list = first.querySelector("[data-changes]") as HTMLElement;
   expect(list).toHaveClass("line-clamp-2", "[overflow-wrap:anywhere]");
@@ -917,7 +920,15 @@ test("timeline: config_changed reads 'Configuration changed by x · N changes' a
   const open = first.querySelector("[data-changes]") as HTMLElement;
   expect(open).not.toHaveClass("line-clamp-2");
   expect(open.querySelectorAll("li")).toHaveLength(43);
+  expect(open).toBe(list);
   expect(within(first).queryByRole("button", { name: "Show all" })).toBeNull();
   // One or two changes need no Show all.
   expect(within(els[1] as HTMLElement).queryByRole("button", { name: "Show all" })).toBeNull();
+});
+
+test("timeline: the config_changed row keeps the roving tab stop it is given", () => {
+  const { container } = render(
+    <ConfigChangedLine by="@or" changes={["image: a → b"]} rowProps={{ tabIndex: 0 }} />,
+  );
+  expect(container.firstElementChild).toHaveAttribute("tabindex", "0");
 });

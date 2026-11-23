@@ -46,6 +46,11 @@ export function useConfigDraft<T>(loaded: Loaded<T>) {
     if (d) setS(d);
   }, []);
 
+  /** An edit that didn't reach the draft (Raw JSON that doesn't parse) still ends Undo, as every edit does. */
+  const touch = useCallback(() => {
+    discarded.current = null;
+  }, []);
+
   /** After a save: the edits are now the loaded value, and there is nothing to undo. */
   const reset = useCallback(() => {
     discarded.current = null;
@@ -81,6 +86,7 @@ export function useConfigDraft<T>(loaded: Loaded<T>) {
     conflicts: s ? s.conflicts : NONE,
     discard,
     undoDiscard,
+    touch,
     reset,
     rebase: rebaseDraft,
   };

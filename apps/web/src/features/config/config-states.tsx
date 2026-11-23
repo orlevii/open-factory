@@ -71,14 +71,14 @@ export function SpawnedConfig({ agent, merged }: { agent: AgentSummary; merged: 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
       <p className="text-sm leading-5">
-        Spawned agents use their template's configuration
+        {CONFIG_PAGE_COPY.spawnedLead}
         {spawner ? (
           <>
-            , plus{" "}
+            {CONFIG_PAGE_COPY.spawnedPlus}{" "}
             <Link to="/agents/$slug/chat" params={{ slug: spawner }} className={LINK}>
               @{spawner}
             </Link>
-            's deny rules and secret limits.
+            {CONFIG_PAGE_COPY.spawnedLimits}
           </>
         ) : (
           "."

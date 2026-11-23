@@ -33,9 +33,10 @@ const detail = (issues: unknown[] = [], settings = SETTINGS, hash = "h-s1") => (
     ],
   },
 });
+// `futureKey`: a settings.json key the form doesn't know, which a form save must keep (AC 12).
 const DOC: ConfigDoc = {
   template: {},
-  settings: { permissions: { allow: ["Bash(git:*)"] } },
+  settings: { futureKey: { x: [1, 2] }, permissions: { allow: ["Bash(git:*)"] } },
   mcp: { mcpServers: {} },
 };
 const tcfg = (over: Partial<TemplateConfigResponse> = {}): TemplateConfigResponse => ({
@@ -75,7 +76,9 @@ beforeEach(() => {
 const tab = (name: RegExp) => screen.getByRole("tab", { name });
 const calls = (method: string, url: string) =>
   api.calls.filter((c) => c.method === method && c.url === url);
-const footer = () => document.querySelector("[data-slot=page-footer]") as HTMLElement;
+/** The footer of the tab on screen (Configuration stays mounted, hidden, behind a file tab). */
+const footer = () =>
+  document.querySelector("[role=tabpanel]:not([hidden]) [data-slot=page-footer]") as HTMLElement;
 
 async function open() {
   const r = renderApp("/templates/dev", alice);
@@ -164,7 +167,10 @@ test("after a file-tab save with the form clean, the form reloads silently", asy
   const next = '{\n  "permissions": {\n    "allow": ["Bash(git:*)", "Read"]\n  }\n}\n';
   fireEvent.change(settings, { target: { value: next } });
   config = tcfg({
-    doc: { ...DOC, settings: { permissions: { allow: ["Bash(git:*)", "Read"] } } },
+    doc: {
+      ...DOC,
+      settings: { futureKey: { x: [1, 2] }, permissions: { allow: ["Bash(git:*)", "Read"] } },
+    },
     hashes: { "template.yaml": "h-y1", "settings.json": "h-s2", "mcp.json": null },
   });
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -186,7 +192,10 @@ test("a Configuration save sends the doc with the base hashes, then the file tab
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.saved)).toBeInTheDocument();
   expect(calls("PUT", "/api/templates/dev/config")[0]?.body).toEqual({
-    doc: { ...DOC, settings: { permissions: { allow: ["Bash(git:*)", "Read"] } } },
+    doc: {
+      ...DOC,
+      settings: { futureKey: { x: [1, 2] }, permissions: { allow: ["Bash(git:*)", "Read"] } },
+    },
     baseHashes: { "template.yaml": "h-y1", "settings.json": "h-s1", "mcp.json": null },
   });
   const settings = await toFile("settings.json");
@@ -218,7 +227,7 @@ test("changed on disk: the conflict line with Reload, which rebases onto the fil
   expect(calls("PUT", "/api/templates/dev/config")[1]?.body).toEqual({
     doc: {
       template: { model: "opus" },
-      settings: { permissions: { allow: ["Bash(git:*)", "Read"] } },
+      settings: { futureKey: { x: [1, 2] }, permissions: { allow: ["Bash(git:*)", "Read"] } },
       mcp: { mcpServers: {} },
     },
     baseHashes: { "template.yaml": "h-y2", "settings.json": "h-s1", "mcp.json": null },
@@ -237,6 +246,22 @@ test("Discard with Undo, and Save refused while an MCP server editor is open", a
   expect(within(footer()).getByText(CONFIG_FORM_MSG.finishServer)).toBeInTheDocument();
   expect(calls("PUT", "/api/templates/dev/config")).toHaveLength(0);
   expect(document.getElementById("field-mcp-name")).toHaveFocus();
+});
+
+test("Discard closes an open MCP editor; an open editor survives a visit to mcp.json", async () => {
+  await open();
+  await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "gh");
+  await userEvent.click(tab(/mcp\.json/));
+  await userEvent.click(tab(/^Configuration/));
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("gh");
+  await addAllowRule("Read");
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+  await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(within(footer()).queryByText(CONFIG_FORM_MSG.finishServer)).toBeNull();
+  await waitFor(() => expect(calls("PUT", "/api/templates/dev/config")).toHaveLength(1));
 });
 
 test("below 40rem the tabs are a Select listing every tab with its marks", async () => {

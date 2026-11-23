@@ -40,6 +40,7 @@ import { agentsListQueryOptions, updateAgent } from "@/features/agents/api";
 import { ColourField } from "@/features/agents/colour-field";
 import { restoreAgent } from "@/features/agents/lifecycle";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
+import { CONFIG_PAGE_COPY, MODEL_SOURCE_COPY } from "@/features/config/messages";
 import { inboxQueryKey } from "@/features/inbox/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { projectsQueryOptions } from "@/features/settings/api";
@@ -160,22 +161,22 @@ export default function EditAgentSheet(props: BodyProps<Spec>) {
   return <EditAgentForm key={props.sheetId} {...props} agent={agent} model={data.model} />;
 }
 
-const MODEL_SOURCE = { agent: " (this agent)", template: " (from template)", default: "" } as const;
-
 /** "Model opus (this agent) · Open configuration" (spec §12.6): read-only, from the agent's detail. The link leaves the
  *  page, which closes the sheet and keeps its draft. */
 function ModelSummary({ slug, model }: { slug: string; model: AgentModel }) {
   return (
     <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground [overflow-wrap:anywhere]">
-      Model{" "}
-      <span className="font-mono text-foreground">{model.value ?? "Claude Code default"}</span>
-      {MODEL_SOURCE[model.source]} ·{" "}
+      {CONFIG_PAGE_COPY.model}{" "}
+      <span className="font-mono text-foreground">
+        {model.value ?? CONFIG_PAGE_COPY.modelDefault}
+      </span>
+      {MODEL_SOURCE_COPY[model.source]} ·{" "}
       <Link
         to="/agents/$slug/config"
         params={{ slug }}
         className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
       >
-        Open configuration
+        {CONFIG_PAGE_COPY.openConfiguration}
       </Link>
     </p>
   );

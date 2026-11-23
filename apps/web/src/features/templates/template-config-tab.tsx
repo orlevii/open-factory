@@ -94,6 +94,8 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
   const { outcome, outcomeKey, setOutcome } = usePageOutcome();
   const [issuesOverride, setIssuesOverride] = useState<TemplateIssue[] | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  // Discard, Undo and Reload remount the form, so an open MCP editor doesn't bring discarded edits back on Done.
+  const [formEpoch, setFormEpoch] = useState(0);
   const saveId = useId();
 
   const onChange = useCallback(
@@ -125,10 +127,12 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
   function onDiscard() {
     draft.current.discard();
     setIssuesOverride(null);
+    setFormEpoch((n) => n + 1);
     setOutcome({ kind: "discarded", text: CONFIG_PAGE_MSG.discarded });
   }
   function onUndo() {
     draft.current.undoDiscard();
+    setFormEpoch((n) => n + 1);
     setOutcome(NO_PAGE_OUTCOME);
   }
 
@@ -180,6 +184,7 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
     try {
       const fresh = await qc.fetchQuery(templateConfigQueryOptions(name));
       draft.current.rebase({ value: fresh.doc ?? EMPTY_DOC, version: hashesVersion(fresh.hashes) });
+      setFormEpoch((n) => n + 1);
       setIssuesOverride(null);
       setOutcome(NO_PAGE_OUTCOME);
       document.getElementById(saveId)?.focus();
@@ -214,6 +219,7 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
         </div>
       ) : null}
       <ConfigForm
+        key={formEpoch}
         mode="template"
         value={value}
         onChange={onChange}

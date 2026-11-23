@@ -87,11 +87,12 @@ export function InsertSecret({
 /** Mounted only while the popover is open: the secrets list is fetched on the first look, through the shared query. */
 function SecretChoices({ onPick }: { onPick: (name: string) => void }) {
   const q = useQuery(secretsQueryOptions);
-  if (q.isPending) return <p className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</p>;
-  if (q.isError)
-    return <p className="px-2 py-1.5 text-sm text-muted-foreground">Couldn't load secrets.</p>;
-  if (q.data.length === 0)
-    return <p className="px-2 py-1.5 text-sm text-muted-foreground">No secrets yet.</p>;
+  const line = (text: string) => (
+    <p className="px-2 py-1.5 text-sm text-muted-foreground">{text}</p>
+  );
+  if (q.isPending) return line(CONFIG_COPY.secretsLoading);
+  if (q.isError) return line(CONFIG_COPY.secretsLoadError);
+  if (q.data.length === 0) return line(CONFIG_COPY.noSecrets);
   return (
     <ul aria-label="Secrets" className="grid max-h-60 overflow-y-auto overscroll-contain">
       {q.data.map((s) => (

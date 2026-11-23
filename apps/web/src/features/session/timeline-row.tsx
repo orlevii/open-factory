@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
+import { CONFIG_PAGE_COPY } from "@/features/config/messages";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { TaskBadge } from "@/features/tasks/task-badge";
@@ -276,7 +277,7 @@ function FixLink({
   if (fix === "config")
     return (
       <Link to="/agents/$slug/config" params={{ slug }} className={cls}>
-        Open configuration
+        {CONFIG_PAGE_COPY.openConfiguration}
       </Link>
     );
   // A template with errors, or a deleted one, is fixed on its page.

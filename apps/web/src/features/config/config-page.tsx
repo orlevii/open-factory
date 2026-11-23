@@ -188,6 +188,9 @@ function AgentConfigEditor({
   const [rawView, setRawView] = useState<RawView>("agent");
   const [refusals, setRefusals] = useState(0);
   const [editorOpen, setEditorOpen] = useState(false);
+  // Bumped by Discard, Undo and Reload: the form remounts, so an open MCP editor (its own draft) goes with the
+  // discarded edits instead of bringing them back on Done. Its unmount reports the editor closed.
+  const [formEpoch, setFormEpoch] = useState(0);
   const { outcome, outcomeKey, setOutcome } = usePageOutcome();
   const [issuesOverride, setIssuesOverride] = useState<TemplateIssue[] | null>(null);
   const [footerHeight, setFooterHeight] = useState(0);
@@ -216,8 +219,7 @@ function AgentConfigEditor({
   const rawError = raw?.error ?? null;
 
   useBlocker({
-    shouldBlockFn: () =>
-      dirty && !window.confirm("You have unsaved changes. Leave this page and discard them?"),
+    shouldBlockFn: () => dirty && !window.confirm(CONFIG_PAGE_COPY.leaveConfirm),
     enableBeforeUnload: () => dirty,
   });
 
@@ -319,6 +321,8 @@ function AgentConfigEditor({
     try {
       parsed = JSON.parse(text);
     } catch (e) {
+      // Still an edit: it ends an earlier Discard's Undo, as one that parses does.
+      d.touch();
       setRaw({ text, forDraft: raw?.forDraft ?? d.draft, error: parseErrorAt(text, e) });
       return;
     }
@@ -351,6 +355,7 @@ function AgentConfigEditor({
     setRaw(null);
     setRefusals(0);
     setIssuesOverride(null);
+    setFormEpoch((n) => n + 1);
     setOutcome({ kind: "discarded", text: CONFIG_PAGE_MSG.discarded });
   }
 
@@ -358,6 +363,7 @@ function AgentConfigEditor({
     latest.current.undoDiscard();
     setRaw(discardedRaw.current);
     discardedRaw.current = null;
+    setFormEpoch((n) => n + 1);
     setOutcome(NO_PAGE_OUTCOME);
   }
 
@@ -414,6 +420,7 @@ function AgentConfigEditor({
     try {
       const fresh = await qc.fetchQuery(agentConfigQueryOptions(slug));
       latest.current.rebase({ value: fresh.overlay, version: fresh.version });
+      setFormEpoch((n) => n + 1);
       setIssuesOverride(null);
       setOutcome(NO_PAGE_OUTCOME);
       // The Reload button went with the conflict line: focus moves to Save, the next step.
@@ -465,9 +472,10 @@ function AgentConfigEditor({
         </TabsList>
         {/* M1: always mounted, hidden while Raw shows, so the form's own state (an open MCP editor, Show all)
             survives a visit to Raw. Not <Activity>: a hidden Activity runs effect cleanups, and the form reports an
-            open MCP editor closed from one. */}
-        <TabsContent value="config" forceMount className="min-w-0 data-[state=inactive]:hidden">
+            open MCP editor closed from one. Radix lets `hidden` override its own under forceMount. */}
+        <TabsContent value="config" forceMount hidden={tab !== "config"} className="min-w-0">
           <Form
+            key={formEpoch}
             mode="agent"
             value={tab === "config" ? d.draft : deferred}
             base={base}

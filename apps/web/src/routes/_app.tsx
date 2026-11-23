@@ -1,4 +1,4 @@
-import type { AgentDetail, ServerMessage } from "@open-factory/shared";
+import type { AgentConfigResponse, AgentDetail, ServerMessage } from "@open-factory/shared";
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect, useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
@@ -131,11 +131,20 @@ function AppLayout() {
               queryKey: agentConfigQueryOptions(m.agent).queryKey,
               exact: true,
             });
-          if (m.template)
+          if (m.template) {
+            const template = m.template;
             void qc.invalidateQueries({
-              queryKey: templateConfigQueryOptions(m.template).queryKey,
+              queryKey: templateConfigQueryOptions(template).queryKey,
               exact: true,
             });
+            // An open agent page on this template: it may have just turned broken (or fixed), which no per-agent
+            // frame reports. Only mounted queries refetch.
+            void qc.invalidateQueries({
+              queryKey: ["agent-config"],
+              predicate: (q) =>
+                (q.state.data as AgentConfigResponse | undefined)?.template.name === template,
+            });
+          }
         }
         if (m.type === "agent_status") {
           // Before the first frame for an agent, the cached list or detail (fetched over REST) tells

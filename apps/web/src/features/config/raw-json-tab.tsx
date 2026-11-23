@@ -50,7 +50,6 @@ export function RawJsonTab(p: {
   onRevert(): void;
   onSave(): void;
   scrollMarginBottom: number;
-  readOnly?: boolean;
 }) {
   const { text, issues, conflicts, parseError, view } = p;
   const diagnostics = useMemo((): Diag[] => {
@@ -116,7 +115,7 @@ export function RawJsonTab(p: {
           fileKey={rawFileKey(p.slug, view)}
           states={p.states}
           diagnostics={diagnostics}
-          readOnly={combined || p.readOnly}
+          readOnly={combined}
           scrollMarginBottom={p.scrollMarginBottom}
           editorRef={p.editorRef}
           textareaRef={p.textareaRef}

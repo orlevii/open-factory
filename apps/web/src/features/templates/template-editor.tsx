@@ -36,7 +36,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { templateConfigQueryOptions } from "@/features/config/api";
-import { agentsPhrase, TEMPLATE_TAB_COPY } from "@/features/config/messages";
+import { agentsPhrase, CONFIG_PAGE_COPY, TEMPLATE_TAB_COPY } from "@/features/config/messages";
 import { PageFooter } from "@/features/config/page-footer";
 import { useConfigDraft } from "@/features/config/use-config-draft";
 import { factorySettingsQueryOptions } from "@/features/settings/api";
@@ -179,7 +179,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   useBlocker({
     shouldBlockFn: () => {
       if (leaving.current || !dirty) return false;
-      return !window.confirm("You have unsaved changes. Leave this page and discard them?");
+      return !window.confirm(CONFIG_PAGE_COPY.leaveConfirm);
     },
     enableBeforeUnload: () => dirty && !leaving.current,
   });
@@ -540,7 +540,9 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                 </TabsTrigger>
               ))}
             </TabsList>
-            <TabsContent value="config" className="min-w-0">
+            {/* Always mounted, hidden while a file tab shows (as on the agent page): an open MCP editor, a 400's issues
+                and the outcome line survive a visit to mcp.json. */}
+            <TabsContent value="config" forceMount hidden={tab !== "config"} className="min-w-0">
               <TemplateConfigTab
                 name={name}
                 data={cfg}

@@ -271,6 +271,46 @@ test("Save while an MCP server editor is open: refused, nothing sent, focus on i
   expect(document.getElementById("field-mcp-name")).toHaveFocus();
 });
 
+test("Discard and Undo close an open MCP editor, so its Done can't bring discarded edits back", async () => {
+  await open();
+  await addAllowRule("Read");
+  await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "gh");
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+  await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
+  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+  await userEvent.click(save());
+  expect(within(footer()).queryByText(CONFIG_FORM_MSG.finishServer)).toBeNull();
+  await waitFor(() => expect(puts()).toHaveLength(1));
+  expect(puts()[0]?.body).toMatchObject({
+    overlay: { settings: { permissions: { allow: ["Read"] } } },
+  });
+});
+
+test("an edit in Raw that doesn't parse still ends an earlier Discard's Undo", async () => {
+  await open();
+  await addAllowRule("Read");
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  const raw = await toRaw();
+  fireEvent.change(raw, { target: { value: "{ nope" } });
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
+  expect(screen.getByRole("textbox", { name: "Raw JSON" })).toHaveValue("{}\n");
+  await userEvent.click(tab("Configuration"));
+  expect(screen.queryByText("Read")).toBeNull();
+});
+
+test("AC11: a server added in the form is the same entry in Raw JSON", async () => {
+  await open();
+  await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "gh");
+  await userEvent.type(screen.getByRole("textbox", { name: "Command" }), "npx");
+  await userEvent.click(screen.getByRole("button", { name: "Done" }));
+  const raw = await toRaw();
+  expect(JSON.parse(raw.value)).toEqual({ mcp: { mcpServers: { gh: { command: "npx" } } } });
+});
+
 test("M1: the form's own state (an open MCP editor) survives a visit to Raw", async () => {
   await open();
   await userEvent.click(screen.getByRole("button", { name: "Add server" }));

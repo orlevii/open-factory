@@ -47,6 +47,9 @@ export const CONFIG_COPY = {
   notesHelp: "Facts that help auto mode decide, like 'deploys go through CI'.",
   templateSkill: "Template skill",
   insertSecret: "Insert secret",
+  secretsLoading: "Loading…",
+  secretsLoadError: "Couldn't load secrets.",
+  noSecrets: "No secrets yet.",
   addSecret: "Add secret",
   addServer: "Add server",
   override: "Override",
@@ -98,6 +101,21 @@ export const CONFIG_PAGE_COPY = {
   openConfiguration: "Open configuration",
   nextStart: "Next start",
   noCombined: "No combined view while the template has errors.",
+  leaveConfirm: "You have unsaved changes. Leave this page and discard them?",
+  /** The spawned view's sentence, around the spawner's link: "…configuration, plus @lead's deny rules…". */
+  spawnedLead: "Spawned agents use their template's configuration",
+  spawnedPlus: ", plus",
+  spawnedLimits: "'s deny rules and secret limits.",
+  /** Edit agent's model summary (spec §12.6): "Model opus (this agent) · Open configuration". */
+  model: "Model",
+  modelDefault: "Claude Code default",
+} as const;
+
+/** Where the model comes from, after its value in Edit agent's summary. */
+export const MODEL_SOURCE_COPY = {
+  agent: " (this agent)",
+  template: " (from template)",
+  default: "",
 } as const;
 
 /** "Saved. Restarts @ana when idle.": only when the restart notice would have shown (running, with changes). */

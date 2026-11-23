@@ -107,6 +107,15 @@ test("a second discard while clean keeps Undo", () => {
   expect(result.current.draft).toEqual({ template: { model: "haiku" } });
 });
 
+test("touch (an edit that didn't reach the draft) ends Undo", () => {
+  const { result } = setup();
+  act(() => result.current.setDraft(() => ({ template: { model: "haiku" } })));
+  act(() => result.current.discard());
+  act(() => result.current.touch());
+  act(() => result.current.undoDiscard());
+  expect(result.current.dirty).toBe(false);
+});
+
 test("reset (after a save) clears the edits without offering undo", () => {
   const { result } = setup();
   act(() => result.current.setDraft(() => ({})));

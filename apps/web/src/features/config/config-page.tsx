@@ -257,20 +257,23 @@ function AgentConfigEditor({
 
   // M2: everything derived from the whole draft runs on the deferred one, so typing never waits on it.
   const deferred = useDeferredValue(d.draft);
-  const loadedOverlay = config.overlay;
+  // Against the base my edits started from, not the loaded overlay: while drifted, a remote change must not read as
+  // one of mine.
+  const mineFrom = d.baseValue;
   const restartSummary = useMemo(() => {
-    if (!running || !base || deferred === loadedOverlay || !isRec(deferred)) return "";
+    if (!running || !base || deferred === mineFrom || !isRec(deferred) || !isRec(mineFrom))
+      return "";
     try {
       return summarizeChanges(
         describeChanges(
-          mergeConfig(base, loadedOverlay as AgentOverlay),
+          mergeConfig(base, mineFrom as AgentOverlay),
           mergeConfig(base, deferred as AgentOverlay),
         ),
       );
     } catch {
       return "";
     }
-  }, [running, base, deferred, loadedOverlay]);
+  }, [running, base, deferred, mineFrom]);
   const combinedText = useMemo(() => {
     if (tab !== "raw" || rawView !== "combined" || !base || !isRec(deferred)) return null;
     try {
@@ -443,7 +446,8 @@ function AgentConfigEditor({
     }
   }
 
-  const o = outcome.o;
+  // A refetch moved the overlay under my edits (focus, WS): say so now, with Reload, rather than at Save's 409.
+  const o: PageOutcome = d.drift && outcome.o.kind !== "error" ? { kind: "conflict" } : outcome.o;
   const footerOutcome: Outcome = {
     outcomeKey: outcome.key,
     notice: rawError ? CONFIG_PAGE_MSG.fixJsonToSave : undefined,

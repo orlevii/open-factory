@@ -76,6 +76,8 @@ export function useConfigDraft<T>(loaded: Loaded<T>) {
     drift: s !== null && s.base.version !== version,
     /** The version a save sends as `baseVersion`: what the edits started from, else the loaded one. */
     baseVersion: s ? s.base.version : version,
+    /** The value the edits started from (the loaded one while clean): what "my changes" are measured against. */
+    baseValue: s ? s.base.value : value,
     conflicts: s ? s.conflicts : NONE,
     discard,
     undoDiscard,

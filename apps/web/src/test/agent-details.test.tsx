@@ -465,6 +465,15 @@ test("Runtime: a Configuration row opens the agent's Configuration page", async 
   );
 });
 
+test("Runtime: a terminated agent has no Configuration row", async () => {
+  setup({
+    agent: agentSummary({ status: "terminated", terminatedAt: "2026-11-19T10:00:00.000Z" }),
+  });
+  const rt = within(await section("Runtime"));
+  expect(rt.queryByText("Configuration")).toBeNull();
+  expect(rt.queryByRole("link", { name: "Open configuration" })).toBeNull();
+});
+
 test("Runtime: a deleted credential leaves no empty row; a disabled local runtime says so", async () => {
   setup({
     agent: agentSummary({ runtime: "local", credential: null, runtimeDisabled: "disabled" }),

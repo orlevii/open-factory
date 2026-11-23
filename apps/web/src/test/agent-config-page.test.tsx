@@ -123,8 +123,7 @@ test("the footer is sticky only while dirty, or while an outcome shows", async (
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
   await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
   expect(within(footer()).queryByText(CONFIG_PAGE_MSG.discarded)).toBeNull();
-  // Clean, with no outcome: back in the flow (the saved rule is now the loaded value).
-  await userEvent.click(screen.getByRole("button", { name: "Remove allow rule 2" }));
+  // Undo brings the edit back: no outcome shows, but the page is dirty, so the footer stays sticky.
   expect(footer()).toHaveAttribute("data-sticky");
 });
 
@@ -238,6 +237,28 @@ test("409: Changed since you opened it, and Reload rebases, keeping my skill bes
   };
   expect(body.baseVersion).toBe("v2");
   expect([...body.overlay.template.skills].sort()).toEqual(["base", "mine", "theirs"]);
+});
+
+test("drift: a refetch under my edits shows the conflict line with Reload, and the notice lists only my changes", async () => {
+  agent = { ...agent, status: "idle" };
+  const { queryClient } = await open();
+  await addAllowRule("Read");
+  expect(screen.getByText("Saving restarts @ana when idle to apply: 1 rule.")).toBeInTheDocument();
+  config = cfg({ overlay: { template: { model: "opus" } }, version: "v2" });
+  await queryClient.invalidateQueries({ queryKey: ["agent-config", "ana"] });
+  expect(await within(footer()).findByText(CONFIG_PAGE_MSG.changedSince)).toBeInTheDocument();
+  expect(screen.getByText("Saving restarts @ana when idle to apply: 1 rule.")).toBeInTheDocument();
+  put = (body) => saved((body as { overlay: unknown }).overlay, { version: "v3" });
+  await userEvent.click(within(footer()).getByRole("button", { name: "Reload" }));
+  await waitFor(() =>
+    expect(within(footer()).queryByText(CONFIG_PAGE_MSG.changedSince)).toBeNull(),
+  );
+  await userEvent.click(save());
+  await waitFor(() => expect(puts()).toHaveLength(1));
+  expect(puts()[0]?.body).toEqual({
+    overlay: { template: { model: "opus" }, settings: { permissions: { allow: ["Read"] } } },
+    baseVersion: "v2",
+  });
 });
 
 test("Save while an MCP server editor is open: refused, nothing sent, focus on its Name", async () => {

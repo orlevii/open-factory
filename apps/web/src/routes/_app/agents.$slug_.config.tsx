@@ -1,7 +1,11 @@
 import { ApiError } from "@open-factory/shared";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ResourceNotFound } from "@/components/route-states";
-import { agentConfigQueryOptions, hostSkillsQueryOptions } from "@/features/config/api";
+import {
+  agentConfigQueryOptions,
+  hostSkillsQueryOptions,
+  templateConfigQueryOptions,
+} from "@/features/config/api";
 import { AgentConfigPage } from "@/features/config/config-page";
 import { noAgentLine } from "@/features/config/messages";
 import { agentDetailQueryOptions } from "@/features/session/api";
@@ -16,10 +20,12 @@ export const Route = createFileRoute("/_app/agents/$slug_/config")({
     // load is the editor's to handle (it falls back to the textarea).
     if (!preload) import("@/features/templates/code-editor").catch(() => {});
     try {
-      await Promise.all([
+      const [detail] = await Promise.all([
         qc.ensureQueryData(agentDetailQueryOptions(params.slug)),
         qc.ensureQueryData(agentConfigQueryOptions(params.slug)),
       ]);
+      // The read-only "Template skill" rows: started with the lists below, not first on mount.
+      void qc.prefetchQuery(templateConfigQueryOptions(detail.agent.template));
     } catch (e) {
       if (e instanceof ApiError && e.code === "agent_not_found") throw notFound();
       // Anything else: the page shows the error line.

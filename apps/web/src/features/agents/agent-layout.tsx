@@ -174,7 +174,7 @@ export function AgentLayout({
   const closePanel = panel.setOpen;
   const closeSheet = useCallback(() => closePanel(false), [closePanel]);
   const terminated = status === "terminated";
-  const archived = agent?.archivedAt !== null;
+  const archived = agent?.archivedAt != null;
   return (
     <ActionsContext.Provider value={actions}>
       <ShellContext.Provider value={shell}>

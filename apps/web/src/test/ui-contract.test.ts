@@ -327,3 +327,25 @@ describe("hit areas (U4 §11.3)", () => {
     ).not.toMatch(CLIP);
   });
 });
+
+describe("I4 field errors (class contract)", () => {
+  test("field-note transitions opacity and visibility, 150ms shown, 100ms hidden, on --ease-out", () => {
+    expect(css).toMatch(
+      /\.field-note > \*\s*{[^}]*transition:\s*opacity 100ms var\(--ease-out\),\s*visibility 100ms var\(--ease-out\)/,
+    );
+    expect(css).toMatch(/\.field-note > \[data-shown\]\s*{[^}]*transition-duration:\s*150ms/);
+    expect(css).toMatch(
+      /\.field-note\s*{[^}]*font-size:\s*0\.8125rem;[^}]*line-height:\s*1\.125rem/,
+    );
+  });
+  test("form-outcome live regions never transition visibility", () => {
+    expect(css).not.toMatch(/\.form-outcome-line[^{]*{[^}]*visibility/);
+  });
+  for (const f of ["input", "textarea", "select"]) {
+    test(`${f}.tsx uses field-edge-transition`, () => {
+      expect(readFileSync(join(SRC, `components/ui/${f}.tsx`), "utf8")).toContain(
+        "field-edge-transition",
+      );
+    });
+  }
+});

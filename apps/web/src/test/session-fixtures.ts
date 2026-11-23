@@ -45,6 +45,7 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   stopCronsPending: false,
   scheduleCount: 0,
   avatarVersion: null,
+  color: null,
   ...over,
 });
 

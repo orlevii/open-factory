@@ -55,6 +55,7 @@ const row = (slug: string, name: string, unread: number) => ({
     displayName: name,
     template: slug,
     avatarVersion: null,
+    color: null,
     kind: "persistent",
     status: "idle",
     archivedAt: null,

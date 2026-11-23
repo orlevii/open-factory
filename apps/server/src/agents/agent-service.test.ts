@@ -242,6 +242,27 @@ test("update: a rename restarts the agent and exactly its direct reports", async
   }
 });
 
+test("update: a colour-only change never restarts, shows in the summary, and null returns to Auto", async () => {
+  const spy = vi.spyOn(runtimes, "requestRestart");
+  try {
+    expect((await svc.update("lead", { color: 7 })).color).toBe(7);
+    expect((await svc.summary("lead")).color).toBe(7);
+    expect((await svc.update("lead", { color: null })).color).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("the agents_color CHECK rejects 13 and 0", async () => {
+  await expect(t.sql`update agents set color = 13 where slug = 'lead'`).rejects.toThrow(
+    /agents_color|check/i,
+  );
+  await expect(t.sql`update agents set color = 0 where slug = 'lead'`).rejects.toThrow(
+    /agents_color|check/i,
+  );
+});
+
 test("projects: duplicate names are deduped (order kept) on create and PATCH", async () => {
   const made = await svc.create({
     template: "lead",
@@ -702,6 +723,7 @@ test("a spawned agent can't be edited, reset, archived or unarchived: 409 epheme
     message: "Spawned agents can't be edited; terminate it instead.",
   };
   await expect(svc.update("spawner-4-ee11", { displayName: "X" })).rejects.toMatchObject(refused);
+  await expect(svc.update("spawner-4-ee11", { color: 3 })).rejects.toMatchObject(refused);
   await expect(svc.resetPersona("spawner-4-ee11", "@or")).rejects.toMatchObject(refused);
   await expect(svc.archive("spawner-4-ee11")).rejects.toMatchObject(refused);
   await expect(svc.unarchive("spawner-4-ee11")).rejects.toMatchObject(refused);

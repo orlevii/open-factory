@@ -68,6 +68,8 @@ export const agentSummarySchema = z.object({
   openTasks: z.number().int().nonnegative().default(0),
   /** U2: the avatar's cache-busting version, null when the agent has no avatar. */
   avatarVersion: z.string().nullable().default(null),
+  /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto. */
+  color: z.number().int().min(1).max(12).nullable().default(null),
   credential: z.string().nullable(),
   projects: z.array(z.string()),
   depth: z.number().int().nonnegative(),
@@ -243,6 +245,7 @@ export const patchAgentBodySchema = z
     reportsTo: slugSchema.nullable(),
     credential: nameSchema,
     projects: z.array(nameSchema),
+    color: z.number().int().min(1).max(12).nullable(),
   })
   .partial();
 export type PatchAgentBody = z.infer<typeof patchAgentBodySchema>;

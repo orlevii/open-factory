@@ -249,6 +249,7 @@ const chat = (slug: string, name: string, o: Record<string, unknown> = {}) => ({
     displayName: name,
     template: slug,
     avatarVersion: null,
+    color: null,
     kind: "persistent",
     status: "idle",
     archivedAt: null,

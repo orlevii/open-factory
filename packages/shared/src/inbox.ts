@@ -12,6 +12,7 @@ export const chatRowSchema = z.object({
     displayName: z.string(),
     template: z.string(),
     avatarVersion: z.string().nullable(),
+    color: z.number().int().min(1).max(12).nullable(),
     kind: z.enum(["persistent", "ephemeral"]),
     status: agentStatusSchema,
     archivedAt: z.string().nullable(),

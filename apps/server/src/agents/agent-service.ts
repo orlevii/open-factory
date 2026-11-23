@@ -290,6 +290,7 @@ export class AgentService {
         openTasks: openTasks.get(r.id) ?? 0,
         scheduleCount: scheduleCount.get(r.id) ?? 0,
         avatarVersion: avatarOf.get(r.template) ?? null,
+        color: r.color,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
         depth,
@@ -562,6 +563,8 @@ export class AgentService {
       set.description = b.description;
       changed.text = true;
     }
+    // Identity only: it never feeds the process, so it sets no `changed` flag and never restarts.
+    if (b.color !== undefined && b.color !== row.color) set.color = b.color;
     if (b.credential !== undefined) {
       const id = await this.credentialId(b.credential);
       if (id !== row.credentialId) {

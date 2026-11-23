@@ -58,6 +58,7 @@ function useSelectedChat(slug: string | undefined): ChatRow | undefined {
         displayName: agent.displayName,
         template: agent.template,
         avatarVersion: agent.avatarVersion,
+        color: agent.color,
         kind: agent.kind,
         status: agent.status,
         archivedAt: agent.archivedAt,

@@ -353,6 +353,7 @@ function MentionRow({ item }: { item: CompletionItem }) {
           slug={item.avatar.slug}
           template={item.avatar.template}
           avatarVersion={item.avatar.avatarVersion}
+          color={item.avatar.color ?? null}
           size={16}
         />
       ) : null}

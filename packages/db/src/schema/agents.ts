@@ -10,6 +10,7 @@ import {
   jsonb,
   numeric,
   pgTable,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -51,6 +52,8 @@ export const agents = pgTable(
       onDelete: "restrict",
     }),
     credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
+    /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto (seeded from the slug). Identity, not overlay. */
+    color: smallint("color"),
     lastError: text("last_error"),
     errorKind: text("error_kind"),
     attempting: boolean("attempting").notNull().default(false),
@@ -80,6 +83,7 @@ export const agents = pgTable(
       "agents_live_credential",
       sql`${t.credentialId} IS NOT NULL OR ${t.terminatedAt} IS NOT NULL`,
     ),
+    check("agents_color", sql`${t.color} IS NULL OR ${t.color} BETWEEN 1 AND 12`),
     check("agents_kind", sql`${t.kind} IN ('persistent','ephemeral')`),
     check(
       "agents_terminated_ephemeral",

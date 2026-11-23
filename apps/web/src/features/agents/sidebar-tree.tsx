@@ -215,6 +215,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           slug={slug}
           template={agent.template}
           avatarVersion={agent.avatarVersion}
+          color={agent.color}
           size={20}
           status={agent.status}
         />
@@ -307,6 +308,7 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
             slug={slug}
             template={agent.template}
             avatarVersion={agent.avatarVersion}
+            color={agent.color}
             size={20}
             status={agent.status}
           />

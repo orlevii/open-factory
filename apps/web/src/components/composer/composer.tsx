@@ -94,7 +94,12 @@ export type CompletionItem = {
   /** A row that can't be picked, with the reason shown in its place (a denied command). */
   disabled?: string;
   /** An agent row's face (16px). */
-  avatar?: { slug: string; template?: string; avatarVersion?: string | null };
+  avatar?: {
+    slug: string;
+    template?: string;
+    avatarVersion?: string | null;
+    color?: number | null;
+  };
   /** A `/` row: `label` is `/name` in mono, `hint` the argument hint, `detail` the description. */
   kind?: "command";
   /** "alias: cost": the alias the query matched, on the canonical row. */

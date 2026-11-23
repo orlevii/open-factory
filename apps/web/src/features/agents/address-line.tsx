@@ -59,7 +59,7 @@ export function AddressLine({
     return (
       <div className="flex items-start gap-2">
         <span className="mt-2.5">
-          <AgentAvatar slug={avatarSlug} size={20} />
+          <AgentAvatar slug={avatarSlug} color={null} size={20} />
         </span>
         <div className="min-w-0 flex-1">
           <FormField
@@ -86,7 +86,7 @@ export function AddressLine({
   }
   return (
     <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-      <AgentAvatar slug={avatarSlug} size={20} />
+      <AgentAvatar slug={avatarSlug} color={null} size={20} />
       <span className="min-w-0">
         {shown ? (
           <>

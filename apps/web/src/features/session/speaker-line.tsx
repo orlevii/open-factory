@@ -111,6 +111,7 @@ const toChips = (l: AgentSummary[]): ChipAgent[] =>
     template: a.template,
     kind: a.kind,
     avatarVersion: a.avatarVersion,
+    color: a.color,
   }));
 const toEnded = (l: AgentSummary[]) =>
   l.map((a) => ({
@@ -119,6 +120,7 @@ const toEnded = (l: AgentSummary[]) =>
     template: a.template,
     kind: a.kind,
     avatarVersion: a.avatarVersion,
+    color: a.color,
     terminated: !!a.terminatedAt || a.status === "terminated",
   }));
 const toUsers = (l: { handle: string; name: string }[]) =>
@@ -137,6 +139,7 @@ export function SpeakerProvider({
   template,
   kind,
   avatarVersion,
+  color,
   children,
 }: {
   slug: string;
@@ -144,6 +147,7 @@ export function SpeakerProvider({
   template?: string;
   kind?: AgentSummary["kind"];
   avatarVersion?: string | null;
+  color?: number | null;
   children: ReactNode;
 }) {
   const selfHandle = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
@@ -168,7 +172,7 @@ export function SpeakerProvider({
       buildSpeakerIndex({
         sessionAgent:
           displayName !== undefined
-            ? { slug, displayName, template, kind, avatarVersion }
+            ? { slug, displayName, template, kind, avatarVersion, color }
             : (live?.find((a) => a.slug === slug) ?? stub(slug)),
         selfHandle,
         live,
@@ -184,6 +188,7 @@ export function SpeakerProvider({
       template,
       kind,
       avatarVersion,
+      color,
       selfHandle,
       live,
       ended.data,

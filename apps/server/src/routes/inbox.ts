@@ -52,6 +52,7 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
                 displayName: a.displayName,
                 template: a.template,
                 avatarVersion: a.avatarVersion,
+                color: a.color,
                 kind: a.kind,
                 status: a.status,
                 archivedAt: a.archivedAt,

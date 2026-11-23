@@ -71,6 +71,7 @@ export const AgentHeader = memo(function AgentHeader({
             slug={agent.slug}
             template={agent.template}
             avatarVersion={agent.avatarVersion}
+            color={agent.color}
             size={24}
           />
         </span>

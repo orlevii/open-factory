@@ -92,6 +92,7 @@ export function ChatBody({
               template: agent.template,
               kind: agent.kind,
               avatarVersion: agent.avatarVersion,
+              color: agent.color,
             }
           : {})}
       >

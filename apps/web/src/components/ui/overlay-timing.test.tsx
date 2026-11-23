@@ -10,7 +10,7 @@ import {
   AlertDialogTrigger,
 } from "./alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "./popover";
+import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "./popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./tooltip";
 
 let off = () => {};
@@ -59,6 +59,39 @@ test("Popover is stamped per opening, not per mount", async () => {
     </Popover>,
   );
   await sequence("popover-content");
+});
+
+test("Esc closes a pointer-opened Popover instantly", async () => {
+  render(
+    <Popover>
+      <PopoverTrigger>Open</PopoverTrigger>
+      <PopoverContent>Body</PopoverContent>
+    </Popover>,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Open" }));
+  const content = document.querySelector('[data-slot="popover-content"]') as HTMLElement;
+  expect(content).not.toHaveAttribute("data-instant");
+  const seen: (string | null)[] = [];
+  const obs = new MutationObserver((records) => seen.push(...records.map((m) => m.attributeName)));
+  obs.observe(content, { attributes: true, attributeFilter: ["data-instant", "data-state"] });
+  await userEvent.keyboard("{Escape}");
+  obs.disconnect();
+  // Stamped before the closed state, so the exit animation is skipped.
+  expect(seen[0]).toBe("data-instant");
+});
+
+test("PopoverTitle and PopoverDescription name and describe the content", async () => {
+  render(
+    <Popover>
+      <PopoverTrigger>Open</PopoverTrigger>
+      <PopoverContent>
+        <PopoverTitle>Name</PopoverTitle>
+        <PopoverDescription>Desc</PopoverDescription>
+      </PopoverContent>
+    </Popover>,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Open" }));
+  expect(screen.getByRole("dialog", { name: "Name" })).toHaveAccessibleDescription("Desc");
 });
 
 test("AlertDialog content and overlay are stamped per opening, not per mount", async () => {

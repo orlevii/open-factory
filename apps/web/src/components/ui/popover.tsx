@@ -26,13 +26,30 @@ function PopoverContent({
   align = "center",
   sideOffset = 4,
   ref,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+  const node = React.useRef<HTMLDivElement | null>(null)
+  // Keep the caller's ref and our own node in one stable callback (no ref writes during render).
+  const setNode = React.useCallback(
+    (n: HTMLDivElement | null) => {
+      node.current = n
+      if (typeof ref === "function") return ref(n)
+      if (ref) (ref as React.RefObject<HTMLDivElement | null>).current = n
+    },
+    [ref]
+  )
+  const stamped = useStampedRef(setNode)
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
         data-slot="popover-content"
-        ref={useStampedRef(ref)}
+        ref={stamped}
+        // DESIGN.md Motion: a key that closes an overlay closes it at once, however it was opened.
+        onEscapeKeyDown={(e) => {
+          node.current?.setAttribute("data-instant", "")
+          onEscapeKeyDown?.(e)
+        }}
         align={align}
         sideOffset={sideOffset}
         className={cn(
@@ -45,4 +62,25 @@ function PopoverContent({
   )
 }
 
-export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger }
+function PopoverTitle(
+  props: React.ComponentProps<typeof PopoverPrimitive.Title>
+) {
+  return <PopoverPrimitive.Title data-slot="popover-title" {...props} />
+}
+
+function PopoverDescription(
+  props: React.ComponentProps<typeof PopoverPrimitive.Description>
+) {
+  return (
+    <PopoverPrimitive.Description data-slot="popover-description" {...props} />
+  )
+}
+
+export {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+}

@@ -114,6 +114,10 @@ test("comment_task: @humans is not reached, with the reason said in a sentence",
       detail: "`@humans` isn't a handle. Mention people by handle; list_peers lists them.",
     },
   ]);
+  const g = await call("dev", "comment_task", { id: "T-1", body: "@ghost look" });
+  expect(g.json.not_reached).toEqual([
+    { name: "ghost", reason: "unknown", detail: "No agent or user named '@ghost'." },
+  ]);
   const d = await mcpCall(url, tok.dev as string, "tools/list", {});
   const tool = (d.json.result.tools as { name: string; description: string }[]).find(
     (x) => x.name === "comment_task",

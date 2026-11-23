@@ -34,6 +34,7 @@ test("held while a turn is open, written raw on its own, and nothing is written 
     kind: "command",
     body: "/code-review src/",
     from: "@or",
+    fromKind: "human",
     waitReason: "turn",
   });
   await send("after the command");

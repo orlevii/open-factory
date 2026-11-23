@@ -893,6 +893,43 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     expect(await rowsOf("files")).toEqual([]);
   });
 
+  test("attachments with a refused target: the refused one keeps its own reason", async () => {
+    const { user } = await signUp(h.app, { handle: "orla" });
+    const r = await h.app.router.send(
+      { userId: user.id, handle: user.handle },
+      ["ghost", "bob", "lead"],
+      "files2",
+      false,
+      { attachments: ["00000000-0000-4000-8000-000000000000"] },
+    );
+    expect(r.results.map((x) => (x.status === "refused" ? x.code : x.status))).toEqual([
+      "not_found",
+      "invalid_attachment",
+      "invalid_attachment",
+    ]);
+  });
+
+  test("a hand-off that throws for one recipient is that recipient's start_failed, not the call's", async () => {
+    const { user } = await signUp(h.app, { handle: "orla" });
+    const real = h.app.runtimes.deliver.bind(h.app.runtimes);
+    const spy = vi.spyOn(h.app.runtimes, "deliver").mockImplementation(async (row, ...rest) => {
+      if (row.toAgentId === (await h.app.store.agentBySlug("bob"))?.id) throw new Error("boom");
+      return real(row, ...rest);
+    });
+    try {
+      const r = await h.app.router.send(
+        { userId: user.id, handle: user.handle },
+        ["bob", "lead"],
+        "partial-fail",
+        false,
+      );
+      expect(r.results.map((x) => x.status)).toEqual(["start_failed", "queued"]);
+      expect(await rowsOf("partial-fail")).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test("the human REST route keeps its response shape: 202 with the queue item", async () => {
     const { cookie } = await signUp(h.app, { handle: "orla" });
     const res = await h.app.inject({

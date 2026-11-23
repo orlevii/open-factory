@@ -68,7 +68,12 @@ test("list and detail", async () => {
 test("send, then read events back; interrupt 409 while idle, 202 with an open turn", async () => {
   const sent = await req("POST", "/api/agents/dev/messages", { body: "hello", urgent: false });
   expect(sent.statusCode).toBe(202);
-  expect(sent.json().item).toMatchObject({ kind: "message", body: "hello", from: "@or" });
+  expect(sent.json().item).toMatchObject({
+    kind: "message",
+    body: "hello",
+    from: "@or",
+    fromKind: "human",
+  });
   driver.last.emit(ev.session(), ev.turn(), ev.text("hi"), ev.usage(), ev.end());
   const rt = await t.app.runtimes.bySlug("dev");
   await rt?.settled();

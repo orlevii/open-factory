@@ -54,6 +54,9 @@ test("a string `to` is a validation error; so is an empty list and more than ten
     const r = await callTool(url, tok, "send_message", { to, body: "x" });
     expect(r.isError, JSON.stringify(to)).toBe(true);
   }
+  const blank = await callTool(url, tok, "send_message", { to: ["  "], body: "x" });
+  expect(blank.isError).toBe(true);
+  expect(text(blank)).toContain("Name a recipient");
   const many = await callTool(url, tok, "send_message", {
     to: Array.from({ length: 11 }, (_, i) => `a${i}`),
     body: "x",

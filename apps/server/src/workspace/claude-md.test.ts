@@ -93,7 +93,10 @@ test("Your org lists the humans by handle and name, capped at 25; no @humans any
 
 test("the envelope paragraph explains from, from_kind and to", () => {
   expect(buildClaudeMd(input)).toContain(
-    "`from` is the sender's handle; `from_kind` says whether it is a human, an agent or the factory; `to` lists everyone a message was sent to.",
+    '`from` is the sender\'s handle; `from_kind` says whether it is a human, an agent or the factory; `to` lists everyone a message was sent to (only on `kind="message"`).',
+  );
+  expect(buildClaudeMd(input)).toContain(
+    '<factory-message from="…" from_kind="…" kind="…" to="…" urgent="…" id="…">',
   );
 });
 

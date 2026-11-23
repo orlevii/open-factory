@@ -10,6 +10,7 @@ import {
   treeOrder,
 } from "@open-factory/shared";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { isSlugUnique } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
@@ -28,14 +29,6 @@ import type { Exec, Tx } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 
 const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
-
-function isSlugUnique(e: unknown): boolean {
-  for (let x = e as { code?: string; constraint_name?: string; cause?: unknown } | undefined; x; ) {
-    if (x.code === "23505" && (x.constraint_name ?? "").includes("slug")) return true;
-    x = x.cause as typeof x;
-  }
-  return false;
-}
 
 function pluginFailure(err: unknown): unknown {
   if (err instanceof PluginInstallError)

@@ -8,7 +8,7 @@ import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type Config, localRuntimeAllowed } from "../config.ts";
-import { pgCode } from "../db-errors.ts";
+import { isSlugUnique } from "../db-errors.ts";
 import { FieldError } from "../errors.ts";
 import type { SpawnArgs, SpawnResult } from "../mcp/tools/spawn-agent.ts";
 import { claimHandle, handleKind } from "../messaging/principals.ts";
@@ -271,10 +271,11 @@ export class SpawnService {
         if (!spawner || !maySpawn(spawner)) return fail(CANT_SPAWN);
         if (!spawner.config.canSpawn.includes(template))
           return fail(`You can't spawn template ${template}.`);
-        if (!(await claimHandle(tx, slug, "agent"))) return "taken";
         // Re-read the credential and grants under the lock (an update during materialize must not be missed).
         const c = await this.check(spawner, tpl, tx);
         if (!c.ok) return c;
+        // Claim only once nothing can refuse any more: a refusal returns and commits, which would orphan the claim.
+        if (!(await claimHandle(tx, slug, "agent"))) return "taken";
         const [child] = await tx
           .insert(schema.agents)
           .values({
@@ -321,11 +322,12 @@ export class SpawnService {
     } catch (err) {
       await this.discard(slug);
       // Lost the agents.slug unique index to a concurrent claimer that committed first.
-      if (pgCode(err, "23505")) return "taken";
+      if (isSlugUnique(err)) return "taken";
       this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
       return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
     }
     if (out === "taken") {
+      // The folder is this spawn's own (folder_exists refused a foreign one upstream), so discarding is safe.
       await this.discard(slug);
       return out;
     }

@@ -70,15 +70,21 @@ describe("sign-up and /api/me", () => {
   test.each(["Bob", "-x", "humans", "me", "scheduler", "a"])(
     "invalid or reserved handle %s is rejected",
     async (handle) => {
-      const res = await post("/api/auth/sign-up/email", {
-        invite: await testInvite(t.app),
-        name: "X",
-        handle,
-        email: `${handle}-${Date.now()}@example.com`,
-        password: "password123",
-      });
-      expect(res.statusCode).toBe(400);
-      expect(res.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+      const spy = vi.spyOn(principals, "claimHandle");
+      try {
+        const res = await post("/api/auth/sign-up/email", {
+          invite: await testInvite(t.app),
+          name: "X",
+          handle,
+          email: `${handle}-${Date.now()}@example.com`,
+          password: "password123",
+        });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
     },
   );
 
@@ -262,10 +268,16 @@ describe("handle claims (spec §4.1)", () => {
 
   test("update-user to an invalid handle is 400 and claims nothing", async () => {
     const { cookie } = await signUp(t.app);
-    for (const handle of ["Bad_Handle", "humans"]) {
-      const res = await post("/api/auth/update-user", { handle }, { cookie });
-      expect(res.statusCode).toBe(400);
-      expect(await countHandles(handle)).toBe(0);
+    const spy = vi.spyOn(principals, "claimHandle");
+    try {
+      for (const handle of ["Bad_Handle", "humans"]) {
+        const res = await post("/api/auth/update-user", { handle }, { cookie });
+        expect(res.statusCode).toBe(400);
+        expect(await countHandles(handle)).toBe(0);
+      }
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
     }
   });
 

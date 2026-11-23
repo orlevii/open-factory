@@ -158,7 +158,9 @@ export class Router {
     const ids = opts.attachments ?? [];
     if (ids.length && (accepted.length !== 1 || !accepted[0]?.agent))
       return {
-        results: targets.map((t) => refusal(t.to, "invalid_attachment", INVALID_ATTACHMENT)),
+        results: targets.map(
+          (t) => t.refused ?? refusal(t.to, "invalid_attachment", INVALID_ATTACHMENT),
+        ),
       };
     if (!accepted.length) return { results: targets.map((t) => t.refused as RecipientResult) };
 
@@ -171,14 +173,18 @@ export class Router {
       const files = await loadAttachments(this.d.db, ids, only.id, from.userId);
       if (!files || files === "duplicate") {
         const reason = files === "duplicate" ? DUPLICATE_ATTACHMENT : INVALID_ATTACHMENT;
-        return { results: targets.map((t) => refusal(t.to, "invalid_attachment", reason)) };
+        return {
+          results: targets.map((t) => t.refused ?? refusal(t.to, "invalid_attachment", reason)),
+        };
       }
       fullBody = bodyWithAttachments(body, files);
       attachments = files.map(attachmentOf);
     }
     if (Buffer.byteLength(fullBody, "utf8") > MAX_BODY_BYTES)
       return {
-        results: targets.map((t) => refusal(t.to, "too_large", "Message is larger than 64 KB")),
+        results: targets.map(
+          (t) => t.refused ?? refusal(t.to, "too_large", "Message is larger than 64 KB"),
+        ),
       };
 
     const recipients = accepted.map((t) => t.to);
@@ -260,7 +266,9 @@ export class Router {
     } catch (e) {
       if (e instanceof AttachmentGoneError)
         return {
-          results: targets.map((t) => refusal(t.to, "invalid_attachment", INVALID_ATTACHMENT)),
+          results: targets.map(
+            (t) => t.refused ?? refusal(t.to, "invalid_attachment", INVALID_ATTACHMENT),
+          ),
         };
       throw e;
     }
@@ -283,10 +291,24 @@ export class Router {
       // Only the request whose insert wrote the row hands it to the runtime; a concurrent repeat answers from the row.
       await Promise.all(
         agentRows.map(async (w) => {
-          const result = w.created
-            ? await this.handOver(from, w.target.agent as AgentRow, w.row as PendingRow)
-            : await this.repeated(w.row as PendingRow);
-          outcome.set(w.target, result);
+          const agent = w.target.agent as AgentRow;
+          const row = w.row as PendingRow;
+          try {
+            outcome.set(
+              w.target,
+              w.created ? await this.handOver(from, agent, row) : await this.repeated(row),
+            );
+          } catch (e) {
+            // Every row is committed: one recipient's failure (or the shutdown) is that recipient's result, not the call's.
+            this.d.log.error({ err: e, agent: agent.slug, message: row.id }, "handing over failed");
+            outcome.set(w.target, {
+              to: `@${agent.slug}`,
+              kind: "agent",
+              status: "start_failed",
+              id: row.id,
+              note: e instanceof Error ? e.message : String(e),
+            });
+          }
         }),
       );
     }

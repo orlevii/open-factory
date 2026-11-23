@@ -188,7 +188,13 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
     urgent: false,
   });
   const lookup = messageLookupSchema.parse(await store.messageLookup(m.id));
-  expect(lookup).toMatchObject({ kind: "message", from: "dev", to: "b", state: "pending" });
+  expect(lookup).toMatchObject({
+    kind: "message",
+    from: "@dev",
+    fromKind: "agent",
+    to: "@b",
+    state: "pending",
+  });
   const human = await store.createHumanMessage({
     kind: "system",
     notice: "agent_errored",
@@ -217,6 +223,7 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
   ).toMatchObject({
     kind: "system",
     from: "@factory",
+    fromKind: "factory",
     to: "@or",
   });
   const fromUser = await store.createMessage({
@@ -226,7 +233,7 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
     body: "u",
     urgent: false,
   });
-  expect((await store.messageLookup(fromUser.id))?.from).toBe("@or");
+  expect(await store.messageLookup(fromUser.id)).toMatchObject({ from: "@or", fromKind: "human" });
 });
 
 test("factory inbox items link the subject's session; unlinkable human rows are refused", async () => {

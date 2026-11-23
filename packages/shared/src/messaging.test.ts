@@ -74,6 +74,7 @@ test("held queue items and the inbox frame parse", () => {
       id: "m1",
       kind: "held",
       from: "@dev",
+      fromKind: "agent",
       count: 3,
       waitReason: "window",
       dueAt: "2026-11-19T10:00:30.000Z",

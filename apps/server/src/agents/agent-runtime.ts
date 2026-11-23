@@ -195,8 +195,7 @@ export type AfterExit =
   | { kind: "internal" }; // S3's onJobFailure stop
 
 /**
- * A pending message row (S6 §8): `from` is the envelope sender (`@handle` for a human, the bare slug for an agent,
- * `@factory`); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
+ * A pending message row (S6 §8): `from` is the envelope sender (`@handle` for a human or an agent, `@factory`); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
  * the UI needs for a peer event.
  */
 type MessageEntry = {
@@ -309,12 +308,14 @@ const scheduleFieldsOf = (
     scheduleKey?: string | null;
     scheduleZone?: string | null;
     authorLabel?: string | null;
+    authorKind?: "human" | "agent" | null;
   },
 ) =>
   row.kind === "scheduled" && row.scheduleKey
     ? {
         scheduleKey: row.scheduleKey,
         ...(row.authorLabel ? { by: row.authorLabel } : {}),
+        ...(row.authorKind ? { byKind: row.authorKind } : {}),
         ...(row.dueAt ? { due: formatOffsetIso(row.dueAt, row.scheduleZone ?? "UTC") } : {}),
         ...(row.firings ? { firings: row.firings } : {}),
         ...(row.late ? { late: true } : {}),
@@ -1720,6 +1721,7 @@ export class AgentRuntime {
         id: first.row.id,
         kind: "held",
         from: first.from,
+        fromKind: first.fromKind,
         count: g.length,
         createdAt: first.row.createdAt.toISOString(),
         ...(first.about ? { about: first.about } : {}),
@@ -1854,6 +1856,7 @@ export class AgentRuntime {
           body: e.row.body,
           urgent: e.row.urgent,
           from: e.from,
+          fromKind: e.fromKind,
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
           ...queueScheduleOf(e.row),
@@ -1867,6 +1870,7 @@ export class AgentRuntime {
             kind: "command",
             body: e.text,
             from: `@${e.by}`,
+            fromKind: "human",
             createdAt: e.createdAt.toISOString(),
             ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
             ...(this.proc && this.turnOpen() ? { waitReason: "turn" as const } : {}),
@@ -1875,6 +1879,7 @@ export class AgentRuntime {
             id: e.id,
             kind: "compact",
             from: `@${e.by}`,
+            fromKind: "human",
             createdAt: e.createdAt.toISOString(),
             ...(e.focus ? { focus: e.focus } : {}),
           };

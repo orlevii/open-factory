@@ -555,7 +555,13 @@ test("the sender cancels a held message; another user can't", async () => {
   expect(bodies()).toEqual(["A", "B"]);
   expect(await stateOf(b.id)).toBe("pending");
   const item = await h.rt.cancelQueued(b.id, "u1");
-  expect(item).toMatchObject({ id: b.id, kind: "message", body: "B", from: "@or" });
+  expect(item).toMatchObject({
+    id: b.id,
+    kind: "message",
+    body: "B",
+    from: "@or",
+    fromKind: "human",
+  });
   expect(bodies()).toEqual(["A"]);
   expect(await stateOf(b.id)).toBe("cancelled");
   const frame = h.frames.filter((f) => f.type === "queue").at(-1);

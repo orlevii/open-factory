@@ -90,7 +90,13 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
     fromLabel: "@scheduler",
     reason: "scheduled",
   });
-  expect(item).toMatchObject({ kind: "message", from: "@scheduler", firings: 3, late: true });
+  expect(item).toMatchObject({
+    kind: "message",
+    from: "@scheduler",
+    fromKind: "factory",
+    firings: 3,
+    late: true,
+  });
   expect(item?.scheduleKey).toBe(row.scheduleKey);
   driver.last.emit(ev.session(), ev.turn());
   await rt.settled();
@@ -102,6 +108,7 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
     kind: "scheduled",
     scheduleKey: row.scheduleKey,
     by: "@or",
+    byKind: "human",
     due: "2026-11-23T09:00:00+01:00",
     firings: 3,
     late: true,
@@ -114,6 +121,7 @@ test("an agent author is the @slug in by", async () => {
               select 'auth1', 'author1', 'A', template, config, runtime, credential_id from agents where id = ${agentId}`;
   const row = await scheduled({ authorAgentId: "auth1" });
   expect(row.authorLabel).toBe("@author1");
+  expect(row.authorKind).toBe("agent");
 });
 
 test("to an errored agent the row stays pending and nothing starts", async () => {
@@ -138,12 +146,18 @@ test("the queue after init() carries the schedule fields, and messageLookup too"
   const row = await scheduled({ firings: 2 });
   await rt.init();
   const q = rt.queueItems().find((i) => i.id === row.id);
-  expect(q).toMatchObject({ scheduleKey: row.scheduleKey, firings: 2, from: "@scheduler" });
+  expect(q).toMatchObject({
+    scheduleKey: row.scheduleKey,
+    firings: 2,
+    from: "@scheduler",
+    fromKind: "factory",
+  });
   expect(q?.dueAt).toBe("2026-11-23T08:00:00.000Z");
   const look = await store.messageLookup(row.id);
   expect(look).toMatchObject({
     kind: "scheduled",
     from: "@scheduler",
+    fromKind: "factory",
     scheduleKey: row.scheduleKey,
     firings: 2,
     dueAt: "2026-11-23T08:00:00.000Z",

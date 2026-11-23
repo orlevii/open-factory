@@ -18,6 +18,7 @@ import { createFakeClaude } from "@open-factory/harness/testing";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
+import * as principals from "../messaging/principals.ts";
 import { ContainerManager } from "../runtime/docker/containers.ts";
 import { claimTestHandleSql } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
@@ -155,6 +156,26 @@ test.each([
       ...patch,
     }),
   ).rejects.toMatchObject(err);
+});
+
+test("create with a reserved slug is refused before any claim", async () => {
+  const spy = vi.spyOn(principals, "claimHandle");
+  try {
+    for (const slug of ["humans", "me", "scheduler"])
+      await expect(
+        svc.create({
+          template: "lead",
+          slug,
+          displayName: "X",
+          description: "",
+          reportsTo: null,
+          credential: "work",
+        }),
+      ).rejects.toMatchObject({ code: "validation_error" });
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 test("create race on one slug: one wins, the loser leaves the winner's folder intact", async () => {

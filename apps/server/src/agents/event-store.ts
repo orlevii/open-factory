@@ -74,11 +74,13 @@ export type PendingRow = MessageRow & {
   scheduleKey: string | null;
   scheduleZone: string | null;
   authorLabel: string | null;
+  authorKind: "human" | "agent" | null;
 };
 export interface MessageLookup {
   id: string;
   kind: MessageKind;
   from: string;
+  fromKind: "human" | "agent" | "factory";
   to: string;
   state: "pending" | "delivered" | "rejected" | "cancelled";
   recipientEvent?: { agentSlug: string; seq: number };
@@ -1058,6 +1060,7 @@ export class EventStore {
           ...rest,
           scheduleKey: scheduleNumber === null ? null : formatKey("S", scheduleNumber),
           authorLabel: authorHandle ? `@${authorHandle}` : authorSlug ? `@${authorSlug}` : null,
+          authorKind: authorHandle ? "human" : authorSlug ? "agent" : null,
         }));
       },
     };
@@ -1219,8 +1222,20 @@ export class EventStore {
       from:
         m.kind === "scheduled"
           ? "@scheduler"
-          : (r.fromSlug ?? (r.fromHandle ? `@${r.fromHandle}` : "@factory")),
-      to: m.toAllHumans ? "everyone" : (r.toSlug ?? `@${r.toHandle ?? ""}`),
+          : r.fromSlug
+            ? `@${r.fromSlug}`
+            : r.fromHandle
+              ? `@${r.fromHandle}`
+              : "@factory",
+      fromKind:
+        m.kind === "scheduled"
+          ? "factory"
+          : r.fromSlug
+            ? "agent"
+            : r.fromHandle
+              ? "human"
+              : "factory",
+      to: m.toAllHumans ? "everyone" : r.toSlug ? `@${r.toSlug}` : `@${r.toHandle ?? ""}`,
       state: m.state as MessageLookup["state"],
     };
     if (r.scheduleNumber !== null) {

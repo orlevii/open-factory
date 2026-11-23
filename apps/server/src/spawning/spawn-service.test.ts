@@ -471,6 +471,25 @@ test("an explicit suffix taken by a user claim after the pre-read is reported ta
   expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(false);
 });
 
+test("a refusal under the lock leaves no handle claim behind", async () => {
+  const { t, lead } = await setup();
+  // The pre-check passes; the re-check in the transaction refuses (the credential changed during materialize).
+  const svc = new SpawnService(serviceDeps(t));
+  const real = (svc as unknown as { check: (...a: unknown[]) => Promise<unknown> }).check.bind(svc);
+  let calls = 0;
+  vi.spyOn(svc as unknown as { check: () => Promise<unknown> }, "check").mockImplementation(
+    async (...a: unknown[]) =>
+      ++calls === 1 ? real(...a) : { ok: false, message: "refused under the lock" },
+  );
+  expect(await svc.spawn(lead.id, args({ suffix: "orph" }), null)).toEqual({
+    ok: false,
+    message: "refused under the lock",
+  });
+  expect(calls).toBe(2);
+  const [n] = await t.sql`select count(*)::int as n from handles where handle = 'tech-lead-orph'`;
+  expect(n?.n).toBe(0);
+});
+
 test("a template that is missing or invalid on disk is refused before anything is made", async () => {
   const { t, lead } = await setup();
   writeTemplate(t.factoryHome, "dev", "name: dev\nruntime: nonsense\n");

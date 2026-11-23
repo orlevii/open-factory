@@ -70,6 +70,8 @@ export type BatchRow = {
   /** S9: a `scheduled` row. `by` is its author's `@handle` or slug, `due` is ISO 8601 with the schedule zone's offset. */
   scheduleKey?: string;
   by?: string;
+  /** UI-only: what `by` is; `one()` never renders it. */
+  byKind?: "human" | "agent";
   due?: string;
   firings?: number;
   late?: boolean;
@@ -97,6 +99,7 @@ const part = (r: BatchRow) => ({ id: r.id, body: r.body, createdAt: r.createdAt.
 const scheduleFields = (r: BatchRow) => ({
   ...(r.scheduleKey ? { scheduleKey: r.scheduleKey } : {}),
   ...(r.by ? { by: r.by } : {}),
+  ...(r.byKind ? { byKind: r.byKind } : {}),
   ...(r.due ? { due: r.due } : {}),
   ...(r.firings ? { firings: r.firings } : {}),
   ...(r.late ? { late: true } : {}),

@@ -55,11 +55,16 @@ test("queue items accept the stopping wait reason and a client id", () => {
     id: "m1",
     kind: "message",
     from: "@or",
+    fromKind: "human",
     createdAt: "2026-11-21T10:00:00.000Z",
     waitReason: "stopping",
     clientMessageId: crypto.randomUUID(),
   });
   expect(q.waitReason).toBe("stopping");
+  expect(q.fromKind).toBe("human");
+  expect(
+    queueItemSchema.safeParse({ id: "m1", kind: "message", from: "@or", createdAt: "x" }).success,
+  ).toBe(false);
 });
 test("send body takes an optional clientMessageId", () => {
   const id = crypto.randomUUID();

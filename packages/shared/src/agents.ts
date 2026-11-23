@@ -191,7 +191,7 @@ export const sendMessageToolSchema = z.object({
   urgent: z.boolean().default(false),
 });
 export const sendCommandToolSchema = z.object({
-  target: z.string().max(65),
+  target: z.string().max(65), // a handle (64) with its @
   command: z.string(),
 });
 export const listPeersToolSchema = z.object({

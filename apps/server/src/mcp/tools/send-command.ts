@@ -8,7 +8,13 @@ import {
   sendCommandToolSchema,
 } from "@open-factory/shared";
 import { commandList } from "../../agents/commands.ts";
-import { SelfCommandPendingError } from "../../agents/errors.ts";
+import {
+  AgentArchivedError,
+  AgentStartError,
+  AgentTerminatedError,
+  CommandsUnsupportedError,
+  SelfCommandPendingError,
+} from "../../agents/errors.ts";
 import type { EventStore } from "../../agents/event-store.ts";
 import type { AgentRuntimes } from "../../agents/runtimes.ts";
 import type { Neighborhood } from "../../messaging/neighborhood.ts";
@@ -110,7 +116,13 @@ export function sendCommandTool(d: {
                 ...(self ? { self: true } : {}),
               });
           } catch (e) {
-            if (e instanceof SelfCommandPendingError) return toolError(e.message);
+            if (e instanceof SelfCommandPendingError || e instanceof CommandsUnsupportedError)
+              return toolError(e.message);
+            if (e instanceof AgentTerminatedError)
+              return toolError(`${label} was terminated and can't receive messages.`);
+            if (e instanceof AgentArchivedError)
+              return toolError(`${label} is archived and can't receive messages.`);
+            if (e instanceof AgentStartError) return toolError(`${label} couldn't be started.`);
             throw e;
           }
           return textResult({ target: `@${target.slug}`, status: "queued", note });

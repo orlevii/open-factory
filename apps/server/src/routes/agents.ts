@@ -325,6 +325,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         const item = await rt.compact({
           ...(req.body.focus ? { focus: req.body.focus } : {}),
           byHandle: user(req).handle,
+          userId: user(req).id,
         });
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
       } catch (e) {

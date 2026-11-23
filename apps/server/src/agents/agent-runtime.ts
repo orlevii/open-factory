@@ -9,6 +9,7 @@ import {
   type HarnessDriver,
   type HarnessProcess,
   type LiveEvent,
+  neutraliseEnvelopeTags,
   ProcessNotRunningError,
 } from "@open-factory/harness";
 import {
@@ -240,7 +241,8 @@ type CompactEntry = {
   id: string;
   focus?: string;
   by: string;
-  /** The agent compacts itself (`send_command`): no `userId`, so nobody can cancel it. */
+  /** The human sender; an agent's entry (`send_command`) has none, so nobody can cancel it. */
+  userId?: string;
   self?: boolean;
   createdAt: Date;
   clientMessageId?: string;
@@ -840,6 +842,7 @@ export class AgentRuntime {
     );
   }
 
+  /** `focus` is neutralised here (§5.1.3), so every caller is covered. */
   async compact(c: {
     focus?: string;
     byHandle: string;
@@ -852,8 +855,9 @@ export class AgentRuntime {
       id: randomUUID(),
       by: c.byHandle,
       createdAt: new Date(),
+      ...(c.userId ? { userId: c.userId } : {}),
       ...(c.self ? { self: true } : {}),
-      ...(c.focus ? { focus: c.focus } : {}),
+      ...(c.focus ? { focus: neutraliseEnvelopeTags(c.focus) } : {}),
       ...(c.clientMessageId ? { clientMessageId: c.clientMessageId } : {}),
     };
     return this.apiJob(async () => {
@@ -1961,7 +1965,7 @@ export class AgentRuntime {
             kind: "raw",
             body: e.text,
             from: e.by,
-            fromKind: e.self ? "agent" : "human",
+            fromKind: e.userId ? "human" : "agent",
             createdAt: e.createdAt.toISOString(),
             ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
             ...(this.proc && this.turnOpen() ? { waitReason: "turn" as const } : {}),
@@ -1970,7 +1974,7 @@ export class AgentRuntime {
             id: e.id,
             kind: "compact",
             from: `@${e.by}`,
-            fromKind: e.self ? "agent" : "human",
+            fromKind: e.userId ? "human" : "agent",
             createdAt: e.createdAt.toISOString(),
             ...(e.focus ? { focus: e.focus } : {}),
             ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
@@ -2834,7 +2838,7 @@ export class AgentRuntime {
         }
         break;
       case "compact_failed":
-        if (this.selfCompact) this.selfCompact.failed = true;
+        if (this.selfCompact && e.trigger === "manual") this.selfCompact.failed = true;
         await this.append(this.openTurnId, e);
         break;
       case "rate_limited":

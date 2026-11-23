@@ -1,6 +1,7 @@
 import { neutraliseEnvelopeTags } from "@open-factory/harness";
 import {
   agentCommandsResponseSchema,
+  agentConfigResponseSchema,
   agentDetailSchema,
   agentListQuerySchema,
   agentListSchema,
@@ -17,6 +18,8 @@ import {
   MAX_BODY_BYTES,
   MAX_FOCUS_CHARS,
   patchAgentBodySchema,
+  putAgentConfigBodySchema,
+  putAgentConfigResponseSchema,
   queueItemResponseSchema,
   resetPersonaResponseSchema,
   slugSchema,
@@ -145,6 +148,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
     return agentDetailSchema.parse({
       agent: await app.agents.summary(req.params.slug),
+      model: await app.agents.modelOf(req.params.slug),
       queue: rt.queueItems(),
       lastSeq: await app.store.lastSeq(rt.agent.id),
     });
@@ -174,6 +178,25 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       },
     },
     async (req) => ({ agent: await app.agents.update(req.params.slug, req.body) }),
+  );
+
+  // I2 §12.1: the agent's overlay over its template. The version is derived from the overlay, never stored.
+  app.get(
+    "/api/agents/:slug/config",
+    { schema: { params: slugParams, response: { 200: agentConfigResponseSchema } } },
+    async (req) => app.agents.getConfig(req.params.slug),
+  );
+
+  app.put(
+    "/api/agents/:slug/config",
+    {
+      schema: {
+        params: slugParams,
+        body: putAgentConfigBodySchema,
+        response: { 200: putAgentConfigResponseSchema },
+      },
+    },
+    async (req) => app.agents.putConfig(req.params.slug, req.body, `@${user(req).handle}`),
   );
 
   app.post(

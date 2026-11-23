@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { configDocSchema } from "./config.ts";
 import { sessionEventSchema } from "./events.ts";
 import { nameSchema, slugSchema } from "./names.ts";
 import { liveCronSchema } from "./schedules.ts";
+import { templateIssueSchema } from "./templates.ts";
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_FOCUS_CHARS = 2000;
@@ -121,8 +123,16 @@ export const agentListSchema = z.object({
   more: z.boolean().default(false),
   running: z.object({ count: z.number().int().nonnegative(), max: z.number().int().positive() }),
 });
+/** The model an agent runs with and where it comes from (I2 §12.3): its own overlay, its template, or Claude's default. */
+export const agentModelSchema = z.object({
+  value: z.string().nullable(),
+  source: z.enum(["agent", "template", "default"]),
+});
+export type AgentModel = z.infer<typeof agentModelSchema>;
+
 export const agentDetailSchema = z.object({
   agent: agentSummarySchema,
+  model: agentModelSchema,
   queue: z.array(queueItemSchema),
   lastSeq: z.number().int().nonnegative(),
 });
@@ -243,3 +253,38 @@ export const resetPersonaResponseSchema = z.object({
   backupDir: z.string().optional(),
 });
 export type ResetPersonaResponse = z.infer<typeof resetPersonaResponseSchema>;
+
+/** `GET /api/agents/:slug/config` (I2 §12.1). `doc` and `merged` are null while the template is invalid or missing. */
+export const agentConfigResponseSchema = z.object({
+  overlay: z.record(z.string(), z.unknown()),
+  version: z.string(),
+  template: z.object({
+    name: z.string(),
+    doc: configDocSchema.nullable(),
+    valid: z.boolean(),
+  }),
+  merged: configDocSchema.nullable(),
+  issues: z.array(templateIssueSchema),
+});
+export type AgentConfigResponse = z.infer<typeof agentConfigResponseSchema>;
+
+/**
+ * `PUT /api/agents/:slug/config`. `overlay` is checked by `agentOverlaySchema` in the service, so a bad one answers
+ * with `issues` (paths and constant messages) instead of a generic body error.
+ */
+export const putAgentConfigBodySchema = z.object({
+  overlay: z.record(z.string(), z.unknown()),
+  baseVersion: z.string().min(1).max(100),
+});
+export type PutAgentConfigBody = z.infer<typeof putAgentConfigBodySchema>;
+
+/**
+ * The saved config, plus the change lines and whether a restart check was scheduled. `restartChecked` is not "will
+ * restart": a running process restarts when idle only if what it started with differs.
+ */
+export const putAgentConfigResponseSchema = agentConfigResponseSchema.extend({
+  changes: z.array(z.string()),
+  restartChecked: z.boolean(),
+  checked: z.enum(["full", "schema"]),
+});
+export type PutAgentConfigResponse = z.infer<typeof putAgentConfigResponseSchema>;

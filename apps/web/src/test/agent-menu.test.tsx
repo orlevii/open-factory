@@ -426,7 +426,13 @@ test("a network failure on archive says the server can't be reached", async () =
 test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
   const api = mockApi({
     "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }),
-    "GET /api/agents/dev": () => json({ agent: agentSummary(), queue: [], lastSeq: 0 }),
+    "GET /api/agents/dev": () =>
+      json({
+        agent: agentSummary(),
+        model: { value: null, source: "default" },
+        queue: [],
+        lastSeq: 0,
+      }),
   });
   setup({ agent: archived(), context: "list" });
   const u = userEvent.setup();
@@ -577,6 +583,7 @@ test("Restore mentions pending messages when the agent has some", async () => {
     "GET /api/agents/dev": () =>
       json({
         agent: agentSummary(),
+        model: { value: null, source: "default" },
         queue: [
           {
             id: "q1",

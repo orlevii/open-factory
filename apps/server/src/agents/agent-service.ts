@@ -3,12 +3,22 @@ import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
+  type AgentConfigResponse,
+  type AgentModel,
+  type AgentOverlay,
   type AgentSummary,
+  agentOverlaySchema,
+  type ConfigDoc,
   type CreateAgentBody,
+  mergeConfig,
   nameSchema,
+  overlayVersion,
   type PatchAgentBody,
+  type PutAgentConfigBody,
+  type PutAgentConfigResponse,
   slugSchema,
   treeOrder,
+  yamlPart,
 } from "@open-factory/shared";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { isSlugUnique } from "../db-errors.ts";
@@ -21,11 +31,13 @@ import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { avatarStat } from "../templates/avatar.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
+import { overlayIssues, overlaySchemaIssues } from "../templates/validate.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import { PluginInstallError } from "../workspace/plugins.ts";
 import type { MaterializeCheck, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
+import type { ConfigChanges } from "./config-changes.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Exec, Tx } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
@@ -101,6 +113,8 @@ export class AgentService {
       /** Reset persona writes its `config_changed` event here when the agent has no loaded runtime. */
       store: Pick<EventStore, "append">;
       bus: Pick<EventBus, "publishAll">;
+      /** I2 §7.2: an overlay save writes its event and notice and schedules the restart check here. */
+      configChanges: Pick<ConfigChanges, "overlaySaved">;
       /** S9 §10.1: unarchive recomputes every schedule targeting the agent in its transaction (no catch-up). */
       scheduling?: {
         recomputeForTarget(tx: Tx, agentId: string): Promise<void>;
@@ -722,6 +736,139 @@ export class AgentService {
           log.error({ err: j.reason, agent: row.slug }, "applying a persona reset failed");
     })();
     work.catch((err) => log.error({ err, agent: row.slug }, "applying a persona reset failed"));
+  }
+
+  /** The overlay as stored; one that fails its schema (an agent made before I2) is kept as is for the editor to fix. */
+  private overlayOf(row: AgentRow): Record<string, unknown> {
+    return row.config as Record<string, unknown>;
+  }
+
+  /**
+   * The template's current valid doc and folder, or null while it is invalid or missing (an agent's config is then
+   * checked against the schema alone, spec §12.1). Never a template's issues: those are fixed in Templates.
+   */
+  private async templateBase(name: string): Promise<{ doc: ConfigDoc; dir: string } | null> {
+    try {
+      const { doc, dir } = await this.d.templates.loadValid(name);
+      return { doc, dir };
+    } catch (err) {
+      if (err instanceof ApiError && ["template_missing", "template_invalid"].includes(err.code))
+        return null;
+      throw err;
+    }
+  }
+
+  /** What an editor may see of a doc: `local_skill_names` is derived and internal, never offered for editing. */
+  private forEditing(doc: ConfigDoc): ConfigDoc {
+    return { ...doc, template: yamlPart(doc.template) };
+  }
+
+  /** The issues of an overlay against the template (warnings and errors); the schema alone when there is no base. */
+  private async configIssues(
+    row: AgentRow,
+    overlay: unknown,
+    base: { doc: ConfigDoc; dir: string } | null,
+  ) {
+    const parsed = agentOverlaySchema.safeParse(overlay);
+    if (!parsed.success || !base) return overlaySchemaIssues(overlay);
+    const ctx = {
+      ...(await this.d.templates.context()),
+      templateDir: base.dir,
+      agentRuntimes: [row.runtime],
+    };
+    return overlayIssues(base.doc, parsed.data, ctx);
+  }
+
+  /** I2 §12.1 `GET /api/agents/:slug/config`. */
+  async getConfig(slug: string): Promise<AgentConfigResponse> {
+    const row = await this.rowBySlug(slug);
+    const overlay = this.overlayOf(row);
+    const base = await this.templateBase(row.template);
+    return this.configView(row, overlay, base, await this.configIssues(row, overlay, base));
+  }
+
+  private configView(
+    row: AgentRow,
+    overlay: Record<string, unknown>,
+    base: { doc: ConfigDoc } | null,
+    issues: AgentConfigResponse["issues"],
+  ): AgentConfigResponse {
+    const parsed = agentOverlaySchema.safeParse(overlay);
+    return {
+      overlay,
+      version: overlayVersion(overlay as AgentOverlay),
+      template: {
+        name: row.template,
+        doc: base ? this.forEditing(base.doc) : null,
+        valid: base !== null,
+      },
+      merged: base && parsed.success ? this.forEditing(mergeConfig(base.doc, parsed.data)) : null,
+      issues,
+    };
+  }
+
+  /**
+   * I2 §12.1 `PUT /api/agents/:slug/config`. Validation (disk reads included) runs before the transaction, which only
+   * locks the row, compares the JS-computed versions and writes: Postgres' `jsonb::text` doesn't sort keys the way the
+   * canonical form does, so the version is never computed in SQL. The restart check is scheduled, never awaited
+   * (spec §7.2). Issues carry paths and constant messages, never a value.
+   */
+  async putConfig(
+    slug: string,
+    b: PutAgentConfigBody,
+    by: string,
+  ): Promise<PutAgentConfigResponse> {
+    const { db } = this.d;
+    const row = await this.rowBySlug(slug);
+    this.assertPersistent(row);
+    const parsed = agentOverlaySchema.safeParse(b.overlay);
+    const base = await this.templateBase(row.template);
+    const issues = await this.configIssues(row, b.overlay, base);
+    if (!parsed.success || issues.some((i) => i.severity === "error"))
+      throw new ApiError(400, "invalid_config", "The configuration has errors.", { issues });
+    const overlay = parsed.data;
+
+    const before = await db.transaction(async (tx) => {
+      const locked = await this.lockAgent(tx, row.id);
+      if (!locked) throw this.notFound(slug);
+      const current = this.overlayOf(locked);
+      if (overlayVersion(current as AgentOverlay) !== b.baseVersion)
+        throw new ApiError(409, "config_changed", "Changed since you opened it.");
+      await tx.update(schema.agents).set({ config: overlay }).where(eq(schema.agents.id, row.id));
+      return current;
+    });
+
+    let applied: { changes: string[]; restartChecked: boolean } = {
+      changes: [],
+      restartChecked: false,
+    };
+    // A broken template has no effective config to diff or restart into; the next start reads everything fresh.
+    if (base) {
+      const was = agentOverlaySchema.safeParse(before);
+      applied = await this.d.configChanges.overlaySaved(
+        { ...row, config: overlay },
+        by,
+        mergeConfig(base.doc, was.success ? was.data : {}),
+        mergeConfig(base.doc, overlay),
+      );
+    }
+    return {
+      ...this.configView({ ...row, config: overlay }, overlay, base, issues),
+      ...applied,
+      checked: base ? "full" : "schema",
+    };
+  }
+
+  /** I2 §12.3: the model the agent runs with and where it comes from, read from the rows (no disk, no scan). */
+  async modelOf(slug: string): Promise<AgentModel> {
+    const row = await this.rowBySlug(slug);
+    const own = agentOverlaySchema.safeParse(this.overlayOf(row));
+    const mine = own.success ? own.data.template?.model : undefined;
+    if (mine) return { value: mine, source: "agent" };
+    const doc = await this.d.templates.lastValid(row.template);
+    const theirs = doc?.template.model;
+    if (typeof theirs === "string" && theirs) return { value: theirs, source: "template" };
+    return { value: null, source: "default" };
   }
 
   async archive(slug: string): Promise<AgentSummary> {

@@ -249,19 +249,14 @@ function valueAt(doc: unknown, at: string[]): unknown {
 }
 
 /**
- * What saving `overlay` on `base` would report: the overlay schema's own issues, plus the issues the
- * merge adds over the base alone. List paths are rebased from the merged list to the overlay's.
+ * The overlay schema's own issues: paths and constant messages, never a value (an unknown key's issue carries no key,
+ * and an env name that fails the name rule may be a pasted value, so the env object is reported instead).
  */
-export async function overlayIssues(
-  base: ConfigDoc,
-  overlay: AgentOverlay,
-  ctx: EffectiveContext,
-): Promise<TemplateIssue[]> {
+export function overlaySchemaIssues(overlay: unknown): TemplateIssue[] {
   const out: TemplateIssue[] = [];
   const parsed = agentOverlaySchema.safeParse(overlay);
   if (!parsed.success)
     for (const z of parsed.error.issues) {
-      // An env name that fails the name rule may be a pasted value: report the env object instead.
       const at = (z.message === CONFIG_MSG.envName ? z.path.slice(0, -1) : z.path).map(String);
       // One issue per path: a reserved secret name trips both the name schema and the factory rule.
       if (out.some((o) => o.path === at.join("."))) continue;
@@ -273,6 +268,19 @@ export async function overlayIssues(
         ...(at.length ? { path: at.join(".") } : {}),
       });
     }
+  return out;
+}
+
+/**
+ * What saving `overlay` on `base` would report: the overlay schema's own issues, plus the issues the
+ * merge adds over the base alone. List paths are rebased from the merged list to the overlay's.
+ */
+export async function overlayIssues(
+  base: ConfigDoc,
+  overlay: AgentOverlay,
+  ctx: EffectiveContext,
+): Promise<TemplateIssue[]> {
+  const out = overlaySchemaIssues(overlay);
   const merged = mergeConfig(base, overlay);
   const before = new Set((await validateEffective(base, ctx, "human")).map(issueKey));
   const reported = new Set(out.map((i) => i.path));

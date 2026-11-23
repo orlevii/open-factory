@@ -15,7 +15,12 @@ const ev = (seq: number): SessionEvent => ({
   at: "2026-11-18T00:00:00.000Z",
   event: { type: "turn_started" },
 });
-const detail: AgentDetail = { agent: agentSummary(), queue: [], lastSeq: 4 };
+const detail: AgentDetail = {
+  agent: agentSummary(),
+  model: { value: null, source: "default" },
+  queue: [],
+  lastSeq: 4,
+};
 
 vi.mock("./api", () => ({
   agentDetailQueryOptions: (slug: string) => ({

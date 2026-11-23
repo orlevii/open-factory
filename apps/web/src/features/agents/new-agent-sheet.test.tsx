@@ -69,7 +69,13 @@ const posts = (api: { calls: { method: string; url: string; body: unknown }[] })
   api.calls.filter((c) => c.method === "POST" && c.url === "/api/agents");
 const created = (slug = "team-lead") => ({
   "POST /api/agents": () => json({ agent: agentSummary({ slug }) }, 201),
-  [`GET /api/agents/${slug}`]: () => json({ agent: agentSummary({ slug }), queue: [], lastSeq: 0 }),
+  [`GET /api/agents/${slug}`]: () =>
+    json({
+      agent: agentSummary({ slug }),
+      model: { value: null, source: "default" },
+      queue: [],
+      lastSeq: 0,
+    }),
   [`GET /api/agents/${slug}/events?`]: () =>
     json({ events: [], hasMore: { before: false, after: false } }),
 });

@@ -6,6 +6,7 @@ import { emptyDoc } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import {
   overlayIssues,
+  overlaySchemaIssues,
   type ValidationContext,
   validateEffective,
   validateTemplate,
@@ -446,6 +447,37 @@ test("overlayIssues never echoes secret-shaped values", async () => {
   const issues = await overlayIssues(baseDoc(), overlay, ctx);
   expect(issues.length).toBeGreaterThan(0);
   expect(JSON.stringify(issues)).not.toContain(secret);
+});
+
+test("overlaySchemaIssues carries paths and constant messages, never a value or an unknown key", () => {
+  const secret = "sk-ant-SECRET0123456789";
+  const overlays: Record<string, unknown> = {
+    "unknown top key": { [secret]: 1 },
+    "unknown template key": { template: { [secret]: 1 } },
+    "bad model": { template: { model: `${secret}!` } },
+    "bad effort": { template: { effort: secret } },
+    "bad secrets": { template: { secrets: [secret, "OPEN_FACTORY_X"] } },
+    "long item": { template: { skills: [`${secret}${"a".repeat(1001)}`] } },
+    "bad env name": { settings: { env: { [secret]: secret, ANTHROPIC_API_KEY: secret } } },
+    "default mode": { settings: { permissions: { defaultMode: secret } } },
+    marketplaces: { settings: { extraKnownMarketplaces: { [secret]: secret } } },
+    "reserved server": { mcp: { mcpServers: { factory: { command: secret, args: [secret] } } } },
+    "unknown mcp key": { mcp: { [secret]: 1 } },
+  };
+  for (const [name, overlay] of Object.entries(overlays)) {
+    const issues = overlaySchemaIssues(overlay);
+    expect(issues.length, name).toBeGreaterThan(0);
+    expect(JSON.stringify(issues), name).not.toContain(secret);
+    expect(
+      issues.every((i) => i.severity === "error"),
+      name,
+    ).toBe(true);
+  }
+});
+
+test("overlaySchemaIssues is empty for a good overlay", () => {
+  expect(overlaySchemaIssues({ template: { model: "opus" } })).toEqual([]);
+  expect(overlaySchemaIssues({})).toEqual([]);
 });
 
 test("validateEffective never echoes an env name that fails the name rule", async () => {

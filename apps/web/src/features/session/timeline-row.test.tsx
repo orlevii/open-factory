@@ -895,3 +895,29 @@ test("chrome outside a timeline row (no menu there) is not a long-press region",
   expect(document.querySelector("[data-speaker-line]")).not.toBeNull();
   expect(document.querySelector("[data-longpress-region]")).toBeNull();
 });
+
+const MANY = Array.from({ length: 43 }, (_, i) => `added skill skill-${i}`);
+
+test("timeline: config_changed reads 'Configuration changed by x · N changes' and clamps its list to two lines", async () => {
+  const { texts, els } = lines([
+    { type: "config_changed", by: "@or", changes: MANY },
+    { type: "config_changed", by: "template dev", changes: ["model: sonnet → opus"] },
+    { type: "config_changed", by: "a file change in template dev", changes: ["image: a → b"] },
+  ]);
+  expect(texts[0]).toMatch(/^Configuration changed by @or · 43 changes/);
+  expect(texts[1]).toMatch(/^Configuration changed by template dev · 1 change(?!s)/);
+  expect(texts[2]).toMatch(/^Configuration changed by a file change in template dev · 1 change/);
+  const first = els[0] as HTMLElement;
+  // CSS clamps, nothing is measured: the clamp class is on the list, which holds every line.
+  const list = first.querySelector("[data-changes]") as HTMLElement;
+  expect(list).toHaveClass("line-clamp-2", "[overflow-wrap:anywhere]");
+  expect(list.textContent).toContain("added skill skill-42");
+  vi.useRealTimers();
+  await userEvent.click(within(first).getByRole("button", { name: "Show all" }));
+  const open = first.querySelector("[data-changes]") as HTMLElement;
+  expect(open).not.toHaveClass("line-clamp-2");
+  expect(open.querySelectorAll("li")).toHaveLength(43);
+  expect(within(first).queryByRole("button", { name: "Show all" })).toBeNull();
+  // One or two changes need no Show all.
+  expect(within(els[1] as HTMLElement).queryByRole("button", { name: "Show all" })).toBeNull();
+});

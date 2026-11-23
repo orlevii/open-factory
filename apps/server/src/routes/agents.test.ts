@@ -57,6 +57,7 @@ test("list and detail", async () => {
   });
   expect((await req("GET", "/api/agents/dev")).json()).toEqual({
     agent: expect.objectContaining({ slug: "dev" }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 0,
   });
@@ -574,6 +575,7 @@ describe("S7: the ended list is bounded", () => {
       router: s.app.router,
       store: s.app.store,
       bus: s.app.bus,
+      configChanges: s.app.configChanges,
     });
     for (const ended of ["exclude", "only"] as const) {
       queries.length = 0;

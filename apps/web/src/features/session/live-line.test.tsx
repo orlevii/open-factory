@@ -190,3 +190,32 @@ describe("LiveLine", () => {
     expect(el).toHaveClass("hidden");
   });
 });
+
+describe("restart line (I2 §7.3)", () => {
+  test("names what the restart applies, at most three kinds, the full list in the title", () => {
+    const restartChanges = [
+      "model: sonnet → opus",
+      "added skill release",
+      "added allow rule `Bash(git push:*)`",
+      "added allow rule `Bash(git pull:*)`",
+      "env LOG_LEVEL changed",
+      "MCP server github added",
+      "effort: low → high",
+    ];
+    const f = liveFact(agent({ restartPending: true, restartChanges }), ctx);
+    expect(f).toMatchObject({
+      kind: "restart",
+      text: "Restarts when idle to apply: model, 1 skill, 2 rules and 3 more",
+      title: restartChanges.join("\n"),
+    });
+  });
+
+  test("no known changes keeps the plain line", () => {
+    expect(liveFact(agent({ restartPending: true }), ctx)).toMatchObject({
+      text: "Restarts when idle",
+    });
+    expect(
+      liveFact(agent({ restartPending: true, restartChanges: [] }), ctx)?.title,
+    ).toBeUndefined();
+  });
+});

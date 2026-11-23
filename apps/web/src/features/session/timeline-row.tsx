@@ -1,4 +1,5 @@
 import type { AnyEvent, SubagentProgress } from "@open-factory/shared";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
@@ -7,8 +8,10 @@ import { openSheet } from "@/features/sheets/sheet-store";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { AgentText } from "./agent-text";
+import { agentDetailQueryOptions } from "./api";
 import { CommandBlock, CommandOutput } from "./command-rows";
 import { CompactionMarker } from "./compaction-marker";
+import { ConfigChangedLine } from "./config-changed-line";
 import { groupOpen } from "./display-passes";
 import { formatDuration, formatLastAt } from "./format";
 import { MessageBlock } from "./message-block";
@@ -209,6 +212,30 @@ function quietIcon(e: AnyEvent): ReactNode {
   return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;
 }
 
+const FIX_LINK =
+  "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+
+/**
+ * The agent's template page. The name comes from the session's own cached agent (no extra request once it is
+ * loaded); before that, or if it can't be read, the Templates list.
+ */
+function TemplateLink({ slug, label }: { slug: string; label: (template: string) => string }) {
+  const { data: template } = useQuery({
+    ...agentDetailQueryOptions(slug),
+    staleTime: Number.POSITIVE_INFINITY,
+    select: (d) => d.agent.template,
+  });
+  return template ? (
+    <Link to="/templates/$name" params={{ name: template }} className={FIX_LINK}>
+      {label(template)}
+    </Link>
+  ) : (
+    <Link to="/templates" className={FIX_LINK}>
+      Open Templates
+    </Link>
+  );
+}
+
 /** Where an error's `fix` points (spec §15, UI design §4.4). */
 function FixLink({
   fix,
@@ -222,10 +249,9 @@ function FixLink({
   // A spawned agent can't be edited or configured (the server drops these fixes for it, spec §8):
   // never link to an edit page that can only refuse.
   if (spawned && (fix === "edit_agent" || fix === "config")) return null;
-  const cls =
-    "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+  const cls = FIX_LINK;
   // Opens Edit agent over the session (U4 §5.6).
-  if (fix === "edit_agent" || fix === "config")
+  if (fix === "edit_agent")
     return (
       <button
         type="button"
@@ -246,13 +272,11 @@ function FixLink({
         Open Templates → Images
       </Link>
     );
-  // A template with errors, or a deleted one, is fixed in Templates.
-  if (fix === "template")
-    return (
-      <Link to="/templates" className={cls}>
-        Open Templates
-      </Link>
-    );
+  // A template with errors, or a deleted one, is fixed on its page.
+  if (fix === "template") return <TemplateLink slug={slug} label={(t) => `Open template ${t}`} />;
+  // The agent's own configuration page arrives with the form (I2 part C); until then its template's page is the
+  // closest place, where the template's settings and skills are listed.
+  if (fix === "config") return <TemplateLink slug={slug} label={() => "Open configuration"} />;
   const target = {
     credentials: { to: "/settings/credentials", label: "Credentials" },
     secrets: { to: "/settings/secrets", label: "Secrets" },
@@ -536,6 +560,8 @@ export function TimelineRow(props: TimelineRowProps) {
     case "command_output":
       return <CommandOutput command={row.command} text={row.text} rowProps={rp} />;
     case "quiet":
+      if (row.event.type === "config_changed")
+        return <ConfigChangedLine by={row.event.by} changes={row.event.changes} rowProps={rp} />;
       return (
         <QuietLine rowProps={rp} icon={quietIcon(row.event)} detail={quietDetail(row.event)}>
           {quietText(row.event, interruptedEnds.has(row.seq))}

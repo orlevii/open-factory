@@ -944,7 +944,7 @@ test("an error with fix edit_agent opens Edit agent", async () => {
   expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
 });
 
-test("an error with fix config opens Edit agent", async () => {
+test("an error with fix config links to the template page until the config page exists", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
@@ -952,11 +952,14 @@ test("an error with fix config opens Edit agent", async () => {
     fix: "config",
   });
   renderApp("/agents/dev/session", alice);
-  await userEvent.click(await screen.findByRole("button", { name: "Edit the agent" }));
-  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
+  expect(await screen.findByRole("link", { name: "Open configuration" })).toHaveAttribute(
+    "href",
+    "/templates/dev",
+  );
+  expect(screen.queryByRole("button", { name: "Edit the agent" })).not.toBeInTheDocument();
 });
 
-test("an error with fix template links to Templates", async () => {
+test("an error with fix template links to the agent's template page", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
@@ -964,8 +967,8 @@ test("an error with fix template links to Templates", async () => {
     fix: "template",
   });
   renderApp("/agents/dev/session", alice);
-  const link = await screen.findByRole("link", { name: "Open Templates" });
-  expect(link).toHaveAttribute("href", "/templates");
+  const link = await screen.findByRole("link", { name: "Open template dev" });
+  expect(link).toHaveAttribute("href", "/templates/dev");
 });
 
 test("a resume error no longer names the interim reset script", async () => {

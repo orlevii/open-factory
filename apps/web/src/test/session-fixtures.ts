@@ -51,7 +51,12 @@ export const detail = (
   over: Partial<AgentSummary> = {},
   queue: AgentDetail["queue"] = [],
   lastSeq = 10,
-): AgentDetail => ({ agent: agentSummary(over), queue, lastSeq });
+): AgentDetail => ({
+  agent: agentSummary(over),
+  model: { value: null, source: "default" },
+  queue,
+  lastSeq,
+});
 
 export function conversation(): EventsPage {
   resetSeq();

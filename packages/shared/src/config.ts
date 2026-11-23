@@ -142,6 +142,12 @@ export const agentOverlaySchema = strict({
 });
 export type AgentOverlay = z.infer<typeof agentOverlaySchema>;
 
+export const configDocSchema = z.object({
+  template: z.record(z.string(), z.unknown()),
+  settings: z.record(z.string(), z.unknown()),
+  mcp: z.object({ mcpServers: z.record(z.string(), z.unknown()) }),
+});
+
 /** A template or an effective config as three file-shaped parts (template.yaml, settings.json, mcp.json). */
 export type ConfigDoc = {
   template: Record<string, unknown>;

@@ -793,6 +793,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
           ...s.agent,
           ...rest,
           lastError: m.lastError,
+          restartChanges: m.restartChanges,
           turnStartedAt: m.turnStartedAt,
           compacting: m.compacting,
         });

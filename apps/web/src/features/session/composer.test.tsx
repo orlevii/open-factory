@@ -386,7 +386,7 @@ function Session({
     sessionReducer(initialSessionState, {
       type: "loaded",
       page: { events: [], hasMore: { before: false, after: false } },
-      detail: { agent, queue: [], lastSeq: 0 },
+      detail: { agent, model: { value: null, source: "default" }, queue: [], lastSeq: 0 },
       mode: "latest",
     }),
   );

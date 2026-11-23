@@ -178,6 +178,22 @@ test("Now lists every waiting task with its start, and the crons with Stop crons
   expect(await screen.findByRole("button", { name: "Stop 2 crons" })).toBeInTheDocument();
 });
 
+test("Now: a pending restart names what it applies, with the full list below", async () => {
+  const restartChanges = [
+    "model: sonnet → opus",
+    "added skill release",
+    "added plugin x@y",
+    "env LOG_LEVEL changed",
+    "MCP server github added",
+  ];
+  setup({ agent: agentSummary({ restartPending: true, restartChanges }) });
+  const now = within(await section("Now"));
+  expect(now.getByText(/Restarts when idle to apply:/, { exact: false }).textContent).toContain(
+    "model, 1 skill, 1 plugin and 2 more",
+  );
+  for (const c of restartChanges) expect(now.getByText(c)).toBeInTheDocument();
+});
+
 test("Now: restart pending explains itself with Why", async () => {
   const plural = setup({ agent: agentSummary({ restartPending: true, restartWaitingOn: 2 }) });
   expect(within(await section("Now")).getByText(/Restarts when idle/).textContent).toContain(

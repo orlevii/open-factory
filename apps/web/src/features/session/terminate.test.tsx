@@ -61,7 +61,13 @@ const terminated = (over: Partial<AgentSummary> = {}): AgentSummary =>
 async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
   const state = { agent: first };
   const api = mockApi({
-    [`GET /api/agents/${SLUG}`]: () => json({ agent: state.agent, queue: [], lastSeq: 1 }),
+    [`GET /api/agents/${SLUG}`]: () =>
+      json({
+        agent: state.agent,
+        model: { value: null, source: "default" },
+        queue: [],
+        lastSeq: 1,
+      }),
     [`GET /api/agents/${SLUG}/events?`]: () =>
       json({
         hasMore: { before: false, after: false },
@@ -433,7 +439,8 @@ test("an errored spawned agent: the recovery actions in the header, Terminate…
 
 test("a spawned agent's old edit URL lands on its session, with Edit agent saying it can't be edited", async () => {
   mockApi({
-    [`GET /api/agents/${SLUG}`]: () => json({ agent: spawned(), queue: [], lastSeq: 1 }),
+    [`GET /api/agents/${SLUG}`]: () =>
+      json({ agent: spawned(), model: { value: null, source: "default" }, queue: [], lastSeq: 1 }),
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [spawned()], running: { count: 1, max: 8 } }),
     "GET /api/templates": () => json({ templates: [] }),

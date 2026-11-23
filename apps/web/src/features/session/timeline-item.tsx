@@ -1,5 +1,6 @@
 import type { SubagentProgress } from "@open-factory/shared";
 import { memo, type RefObject, type TransitionEvent, useCallback } from "react";
+import type { Arrival } from "@/lib/use-arrival";
 import { childrenOf } from "./display-passes";
 import { InLongPressRow } from "./long-press-region";
 import { RowChrome, RowGutter, useRowLongPress } from "./row-chrome";
@@ -12,7 +13,6 @@ import { TimelineRow } from "./timeline-row";
 export type RowProgress = SubagentProgress | readonly (SubagentProgress | undefined)[] | undefined;
 
 /** The deep-link tint: shown, then fading over 300ms until its `transitionend`. */
-export type Arrival = "on" | "fading";
 
 export type TimelineItemProps = {
   row: Row;

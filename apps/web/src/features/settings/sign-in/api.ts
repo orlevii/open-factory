@@ -1,0 +1,66 @@
+import {
+  ApiError,
+  type AttemptView,
+  apiFetch,
+  attemptResponseSchema,
+  type CredentialSummary,
+  credentialSummarySchema,
+  signInStatusSchema,
+} from "@open-factory/shared";
+import { queryOptions } from "@tanstack/react-query";
+import { z } from "zod";
+
+export const signInQueryOptions = queryOptions({
+  queryKey: ["claude-sign-in"],
+  // A prefetch in the route loader and the mount right after it don't double-GET.
+  staleTime: 2_000,
+  refetchOnWindowFocus: true,
+  queryFn: ({ signal }) => apiFetch("/api/claude-sign-in", { schema: signInStatusSchema, signal }),
+});
+
+export type SignInOutcome =
+  | { kind: "done"; credential: CredentialSummary }
+  | { kind: "pending"; attempt: AttemptView };
+
+// 201 and 200 carry the credential, 202 the attempt still working.
+const outcomeSchema = z.union([
+  z
+    .object({ credential: credentialSummarySchema })
+    .transform((r): SignInOutcome => ({ kind: "done", credential: r.credential })),
+  attemptResponseSchema.transform((r): SignInOutcome => ({ kind: "pending", attempt: r.attempt })),
+]);
+
+export const startSignIn = (body: { replace?: string }, signal?: AbortSignal) =>
+  apiFetch("/api/claude-sign-in", {
+    method: "POST",
+    body,
+    schema: attemptResponseSchema,
+    ...(signal ? { signal } : {}),
+  }).then((r) => r.attempt);
+
+export const submitSignInCode = (b: { attemptId: string; code: string; name?: string }) =>
+  apiFetch("/api/claude-sign-in/code", { method: "POST", body: b, schema: outcomeSchema });
+
+export const waitSignIn = (attemptId: string, signal?: AbortSignal) =>
+  apiFetch("/api/claude-sign-in/code/wait", {
+    method: "POST",
+    body: { attemptId },
+    schema: outcomeSchema,
+    ...(signal ? { signal } : {}),
+  });
+
+/** An attempt that already ended may 404: the goal (no attempt) is met. */
+export const cancelSignIn = (attemptId: string) =>
+  apiFetch(`/api/claude-sign-in/${encodeURIComponent(attemptId)}`, {
+    method: "DELETE",
+    schema: z.undefined(),
+  }).catch((e: unknown) => {
+    if (e instanceof ApiError && e.status === 404) return;
+    throw e;
+  });
+
+/** A wait that may simply be asked again: the network dropped, or a gateway answered with a bare HTTP status. */
+export function isRetryableWaitError(err: unknown): boolean {
+  if (err instanceof ApiError) return /^http_\d+$/.test(err.code);
+  return err instanceof TypeError;
+}

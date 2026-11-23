@@ -82,7 +82,7 @@ Each criterion names the PR that makes it true (§17).
     - an agent's own `claude plugin install` doesn't survive a restart;
     - a plugin update shows its diff in place before "Update to 1.3.0".
 13. (PR 2) An agent's own plugin, added from its template's marketplaces, is listed under "This agent". The agent picker offers no plugin from any other marketplace.
-14. (PR 2) Agents started below the Claude Code version floor (§7.9) fail closed when they have plugins enabled, and so does the store runner.
+14. (PR 2) Every local-runtime agent started below the Claude Code version floor (§7.9) fails closed, and so do the store runner and Docker images below it.
 
 ## 3. Scope
 
@@ -125,7 +125,7 @@ Today means the I3 branch as specified. The I2 rows describe I2's design, becaus
 - versions can be semver (`6.3.0`) or a 12-hex commit (`0120fb83da5d`);
 - one key can have several installs.
 
-**From Claude Code's docs** (code.claude.com/docs/en/plugins/org, /plugins/loading and /plugins/marketplace-reference, read 2026-11-23). Gate G1 (§13) confirms these on the shipped version; a fact marked "(G1 only)" isn't stated in the docs.
+**From Claude Code's docs** (code.claude.com/docs/en/plugins/org, /plugins/loading and /plugins/marketplace-reference, read 2026-11-23). Gate G1 (§13) confirms these on the shipped version; G1 still checks each one on the shipped version.
 - **The seed** (`CLAUDE_CODE_PLUGIN_SEED_DIR`): "Claude Code never writes to the seed and forces `autoUpdate` off for seed marketplaces", "The plugins in a seed aren't enabled on their own", and it can be mounted at another path. `CLAUDE_CODE_PLUGIN_CACHE_DIR` builds one.
 - **The plugins root** holds `data/<plugin-id>/` (`${CLAUDE_PLUGIN_DATA}`) and `mcpb/` (extracted MCP bundles).
 - **Install refreshes.** `claude plugin install name@mkt` refreshes the marketplace first, unless `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set or a seed supplies the marketplace.
@@ -170,6 +170,7 @@ marketplaces {
   name: text pk,            // the marketplace's own name, MARKETPLACE_PATTERN
   source: jsonb null,       // exactly the source Claude recorded in the store's known_marketplaces.json, set at step 5 of §7.1:
                             // {source:"github", repo} | {source:"git", url} | {source:"directory", path}; never a ref (R2)
+  branch: text null,        // git/github: the branch resolved at preview; Check and fetches use it
   previewSource: jsonb, previewCommit: text null,  // what the human reviewed; used by boot repair
   commit: text null,        // the pin; null only for directory (live)
   committedAt, subject, updateCommit, updateAt, updateSubject, checkedAt, checkError,
@@ -180,7 +181,7 @@ marketplaces {
 ```
 
 - **Patterns** (`packages/shared/src/library.ts`):
-  - `MARKETPLACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/`, excluding Claude Code's reserved names: `inline`, `skills-dir`, `synced`, `builtin`, `claude-plugin-test`, and the official names Claude reserves for Anthropic sources (`claude-plugins-official` and the others in marketplace-reference, kept in one list);
+  - `MARKETPLACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/`, excluding the names Claude Code never allows (`inline`, `skills-dir`, `synced`, `builtin`, `claude-plugin-test`). The official names Claude reserves for Anthropic sources (`claude-plugins-official` and the others in marketplace-reference, kept in one list, `OFFICIAL_MARKETPLACES`, with their sources) are allowed **only** with their matching Anthropic source, such as `{source: "github", repo: "anthropics/claude-plugins-official"}`; with any other source they are refused (final review H1);
   - `PLUGIN_REF_PATTERN`: a name of at most 64 characters, `@`, then a marketplace name. Today's `pluginRef` in `templates.ts` has no length limit; this replaces it.
 - A pin is a set of columns, not a revisions table (Q1).
 - Every Library skill name, from any source, must match `HOST_SKILL_PATTERN`; a folder that doesn't is unpickable with "Name has characters skills can't use." (zero-width and bidi characters can't hide in names).
@@ -319,7 +320,7 @@ The only bound on the download itself is the operation's time budget, and the sp
 
 ### 6.4 Linking and the skills-folder checks (`links.ts`)
 
-- `resolveHostSkills` becomes `resolveSkills(names)`, built on `LibraryIndex.resolveSkill`. An unresolvable name fails the start with `WorkspaceError("Skill x hasn't been added in Skills.", fix)`. The fix is `template` or `config`, chosen as in I2 §6.5.
+- `resolveHostSkills` becomes `resolveSkills(names)`, built on `LibraryIndex.resolveSkill`. `resolveSkill` returns the reason when a name doesn't resolve, and the start fails with §6.6's message for that reason (missing, hidden, unusable, not added) as a `WorkspaceError`. The fix is `template` or `config`, chosen as in I2 §6.5.
 - `syncLinks`' "drop unlisted links" pass removes only links that point under one of these: the host skills dir, a folder source path, the GitHub cache root, or the template `skills/` realpath. It never touches a non-link.
 - Links point at the realpath.
 - **The plugin check** (R3, R12) runs in `prepare` after linking. For **every** entry of `<workdir>/.claude/skills/`, whether a factory link, a link the agent made, or a folder the agent wrote, it `stat`s `<entry>/.claude-plugin`. `stat` follows the entry, as Claude Code does. If that exists, the start fails: "skills/x is a plugin, so it can't load as a skill; move it away."
@@ -334,7 +335,7 @@ The only bound on the download itself is the operation's time budget, and the sp
 1. **GitHub skill.** `real` equals `join(realpath(<FH>/state/library/github), <id>, <sha>[, <name>])`.
 2. **The store.** `real` equals `realpath(<FH>/state/plugins)`.
 
-Nothing else under `state/` is newly allowed. The refusal message becomes "… isn't this agent's workdir, a Library skill or the plugin store".
+Nothing else under `state/` is newly allowed. The refusal message becomes "… isn't this agent's workdir, a registered skill or the plugin store".
 
 **Tests** (default layout, with `FACTORY_HOME` under `HOME`):
 - a GitHub skill mounts;
@@ -355,7 +356,7 @@ Nothing else under `state/` is newly allowed. The refusal message becomes "… i
 
 The collision with template-local skills stays (§5.2).
 
-## 7. Marketplaces and plugins (PR 2)
+## 7. Marketplaces and plugins (PR 2, except §7.3 step 3 and §7.10, which land in PR 1)
 
 ### 7.1 The registry
 
@@ -364,13 +365,13 @@ The collision with template-local skills stays (§5.2).
 - a git URL: `https://` only, with no userinfo, no `?` and no `#` (Claude reads `#` as a ref);
 - a local folder: `PathField`, then `resolveHostFolder` and the §6.1 forbidden set.
 
-**Add, in two steps** (T2, R3). The name must be known before the store is touched.
+**Add: a preview, then the add** (T2, R3). The name must be known before the store is touched.
 
 1. **Preview** (`POST /api/library/marketplaces/preview`):
    - git and GitHub: `runGit` resolves the default branch's name and commit, fetches it into a preview (§6.2) and reads `.claude-plugin/marketplace.json` (`lstat`, at most 1 MB). The preview returns the name, the commit, its date and subject, and the plugin list, each with its pinned state (§7.5) or refused reason (§7.7);
    - a folder: the same, read in place.
 
-   The name is refused here if it fails `MARKETPLACE_PATTERN`, is reserved, or is **taken**. Taken means a live or soft-deleted registry row (inside its Undo window), or an entry already in the store's `known_marketplaces.json`.
+   The name is refused here if it fails `MARKETPLACE_PATTERN`, is reserved for another source, or is **taken**. Taken means a `ready` or `adding` row, a soft-deleted row inside its Undo window, or an entry already in the store's `known_marketplaces.json`. A `failed` row isn't taken: a new add replaces it (final review M4).
 2. **Add** (`POST /api/library/marketplaces { previewId }`):
    1. Under the Library lock, insert the row with `state: "adding"`, `previewSource`, `previewCommit` and `startedAt`. This reserves the name.
    2. Under `storeLock` (exclusive), check "taken" again against `known_marketplaces.json`. Then run `claude plugin marketplace add <arg>`.
@@ -379,7 +380,7 @@ The collision with template-local skills stays (§5.2).
       - it fetches from the **canonical https URL** (never the clone's `origin`, which Claude may have recorded as SSH);
       - for GitHub: `fetch --depth 1 <url> <sha>`. For a plain git server, which may refuse a by-sha want: `fetch --depth 1 <url> refs/heads/<branch>`, then `FETCH_HEAD` must equal the sha;
       - then `checkout --detach`, and verify HEAD and a clean tree.
-   5. Set `source` to what Claude recorded, and the state to `ready`.
+   5. Set `source` to what Claude recorded, `commit`, `committedAt` and `subject` from the preview, `branch` from the preview, and the state to `ready`.
 
    **On any failure:** remove what this operation created. That is safe because step 2 proved the name was absent from the store. Then set the row to `failed` with its redacted `error`. A failed row shows in the list as "Couldn't add" (§10.2) until the human removes it or tries again; it isn't a registry entry and resolves nothing.
 3. **Boot repair** (R8). Under `storeLock`, each row still `adding` is checked. If `known_marketplaces.json` has the name with a source that passes the §7.1 input rules, and the clone is at `previewCommit` and clean, the row completes. Otherwise the store entry is removed (step 2 guarantees this operation created it) and the row becomes `failed` ("The factory restarted while adding acme."). A half-added marketplace is never kept.
@@ -402,7 +403,7 @@ A violation fails closed: "Marketplace acme isn't at its pinned commit." The fac
   Claude's own `marketplace update` is never used, because it pulls the branch head rather than the reviewed commit (T2). The commit must equal `updateCommit`.
 
 **Remove.**
-- Refused (409, naming up to three users) while any template or overlay declares the marketplace or enables one of its plugins, or any installed plugin comes from it: "Plugins from acme are installed. Removing it comes with uninstall." Uninstall isn't in I5, so a marketplace with installed plugins stays until the GC follow-up.
+- Refused (409, naming up to three users) while any template or overlay declares the marketplace or enables one of its plugins, or any installed plugin comes from it: "Plugins from acme are installed. Uninstalling plugins isn't available yet." Uninstall isn't in I5, so a marketplace with installed plugins stays until the GC follow-up.
 - Otherwise it is a soft delete with Undo, as in §9.4. The purge runs under `storeLock` and checks "no installed plugin from it" again before `marketplace remove`.
 
 **Who writes.** Only humans, through REST and the UI, write sources, the registry and the store (Q5). No MCP tool writes them, I7 included (§11.1).
@@ -430,7 +431,7 @@ The store is that seed, so the property that agents never write to the store res
 - Output is redacted.
 
 **Locks** (self-review r2 M5). `storeLock` is its own **read/write lock**, a separate instance from the workspace mutex (which is keyed by slug and would collide with an agent named `store`).
-- Store operations (add, install, update, purge, preview copy) take it **exclusively**.
+- Store operations (add, install, update, purge) take it **exclusively**. Building an update preview's copy takes it **shared** (§7.5).
 - A start's store check (§7.3 step 4) takes it **shared** for the duration of the check, so it never sees the store mid-operation: writable, a moving checkout, or a half-written `installed_plugins.json`.
 
 A shared hold can't cover Claude's own read of the seed after spawn. Operations are rare human acts, and each leaves the store consistent at the end; that residual window is stated.
@@ -456,7 +457,7 @@ A shared hold can't cover Claude's own read of the seed after spawn. Operations 
    - `closure` = `enabled` plus their transitive dependencies, read from the installed plugins' manifests (R13).
 3. **The agent's own folders** (R1, R12):
    - `.claude-config/plugins/` is a real folder. Through `SafeFs`, every entry is removed except `data/`, and `data/` is kept only when it is a real directory, not a link. `installed_plugins.json`, `known_marketplaces.json`, `cache/`, `marketplaces/` and `mcpb/` all go.
-     - A `claude plugin install` the agent runs itself never survives a restart. Within a session, a headless agent has no `/reload-plugins` (G1).
+     - A `claude plugin install` the agent runs itself never survives a restart. Within a session, a headless agent has no `/reload-plugins` (G1 item 16).
      - `mcpb/` (extracted MCP bundle code) is scrubbed, so edited bundle code can't run as if it had been reviewed. G1 checks that Claude re-extracts it from the seed; if it doesn't, that goes back to owner-i5.
      - A link at `.claude-config/plugins` is removed as a link and replaced with a folder.
    - `.claude-config/skills/` is emptied (§6.4).
@@ -473,13 +474,13 @@ A shared hold can't cover Claude's own read of the seed after spawn. Operations 
    - every marketplace of a plugin in `closure` is registered, `ready`, and passes `assertMarketplacePinned`;
    - every plugin in `closure` is in `installed()`.
 5. **A plugin is missing.** Release the shared hold, take `storeLock` exclusively, **check again** (another start may have installed it), then:
-   - **Pinned** (§7.5): install it. This holds a start slot for at most the 240 s budget, and other starts that need the store wait behind it (stated). A failure gives `AgentStartError("Plugin x@y didn't install.", fix)` with redacted output.
+   - **Pinned** (§7.5): install it, then recompute `closure` from the new manifests and repeat step 4. This holds a start slot for at most the 240 s budget, and other starts that need the store wait behind it (stated). A failure gives `AgentStartError("Plugin x@y didn't install.", fix)` with redacted output.
    - **Unpinned:** fail closed with "Plugin x@y isn't installed. Install it in Skills." and fix `library` (§8.4). Nothing is fetched without a human (Q9.1).
 6. **Env.** The factory adds `CLAUDE_CODE_PLUGIN_SEED_DIR=<store>` and `DISABLE_AUTOUPDATER=1`. These names join I2's `FACTORY_ENV_NAMES`, so no template, overlay or secret can set them:
    - `CLAUDE_CODE_PLUGIN_SEED_DIR`, `CLAUDE_CODE_PLUGIN_CACHE_DIR`, `CLAUDE_CODE_PLUGIN_DIRS`;
    - `FORCE_AUTOUPDATE_PLUGINS`, `DISABLE_AUTOUPDATER`, `DISABLE_UPDATES`;
    - `CLAUDE_CODE_SYNC_PLUGIN_INSTALL`.
-7. **The factory-owned plugin keys** are written to `state/agents/<slug>/plugin-settings.json` (factory state, outside the workdir) and passed with `--settings <file>`. Command-line settings outrank local, project and user settings (R11). `buildSettings` drops its `pluginKeys` input and no longer writes these keys into `.claude-config/settings.json`. The keys:
+7. **The factory-owned plugin keys** are passed as an **inline JSON string**, `--settings '<json>'`, built at each start. The file never lands in the workdir or in a mount, so Docker needs no new mount class (final review H2). The JSON holds no secrets. A copy is kept at `state/agents/<slug>/plugin-settings.json` for diagnosis only. Command-line settings outrank local, project and user settings (R11). `buildSettings` drops its `pluginKeys` input and no longer writes these keys into `.claude-config/settings.json`. The keys:
    - `enabledPlugins`:
      - `true` for `closure`;
      - an explicit `false` for every other plugin of **every marketplace in the store**, from both its catalog and what is installed, because the seed registers every one of them at startup and relative-path plugins load by `defaultEnabled` (R14);
@@ -549,7 +550,7 @@ Install state (`installing` | `failed`, with `since`) is kept in memory per key.
   - It reads the new version's contents and diffs them against the store copy: hooks, MCP servers, commands, dependencies and code parts added or removed. It returns the diff, the new version and the gitCommitSha.
   - This rests on G1 ("install runs no plugin code"); if that fails, the preview design goes back to owner-i5.
 - **Apply.** `update { version, gitCommitSha }` runs under `storeLock`, exclusive, with the same journal:
-  1. `claude plugin update <key>`, or uninstall plus install, as G1 decides.
+  1. `claude plugin update <key>`. If G1 item 10 shows `update` can't be pinned, use a fresh install of the new version next to the old one. Never uninstall first, since old versions stay on disk.
   2. `assertMarketplacePinned` and the post-install check.
   3. The installed version and gitCommitSha must equal the preview's. If not, roll back and fail: "x@y changed since you reviewed it. Review the update again."
   4. Old versions stay on disk.
@@ -564,6 +565,7 @@ Install state (`installing` | `failed`, with `since`) is kept in memory per key.
 - **Install in factory** (a human click):
   - The peek shows "Installs x@y 1.3.0 from acme at e4f5a6b" before the click.
   - When that differs from the host copy, the in-place diff (host copy against the new version, the §7.5 preview) shows first.
+  - Opening the host plugin's peek runs the marketplace preview (§7.1 step 1) from the host's record, which yields the `previewId` the click uses. If the marketplace is already registered with the same source, registration is skipped; with a different source the action is refused.
   - On click:
     1. Validate the host's `known_marketplaces[mkt].source` with the §7.1 input rules. `https://` only, no userinfo, query or fragment, and no `ref` or `path`; anything else is refused: "The host's record for acme can't be used: …".
     2. Register the marketplace (§7.1).
@@ -686,7 +688,7 @@ The event, the passive notice and the restart when idle follow I2 §7.3.
 
 ### 8.4 Fix codes
 
-`library` joins the fix unions (`safe-fs.ts`, `agents/errors.ts`, `events.ts`) and carries the item: `{ fix: "library", item: { kind: "skill" | "source" | "plugin" | "marketplace", id } }`. The fix link lands on that item (§10.7). `forSpawnedAgent` keeps it.
+`library` joins the fix unions (`safe-fs.ts`, `agents/errors.ts`, `events.ts`) and carries the item: `{ fix: "library", item: { kind: "skill" | "source" | "plugin" | "marketplace", id } }`, where a skill's id is `<group>/<name>`. The fix link lands on that item (§10.7). `forSpawnedAgent` keeps it.
 
 ## 9. APIs (all `requireUser`; humans only; never MCP)
 
@@ -701,8 +703,8 @@ Shared schemas live in `packages/shared/src/library.ts`.
   - Unknown.
 
   Each skill is `{ name, description, state: "ok" | "missing" | "hidden" | "unusable", stateDetail?, usedBy: { templates, agents } }`.
-- **`GET /api/library/skills/:name`** returns one skill with its **files** (a list up to 2,000 entries; executables marked) and the `SKILL.md` text, at most 256 KB.
-- **`GET /api/library/skills/:name/file?path=`** returns one file's text. It refuses links and binaries, and serves only paths inside the skill.
+- **`GET /api/library/skills/:group/:name`** (the group is `host`, `source:<id>`, `template:<name>` or `unknown`) returns one skill with its **files** (a list up to 2,000 entries; executables marked) and the `SKILL.md` text, at most 256 KB.
+- **`GET /api/library/skills/:group/:name/file?path=`** returns one file's text. It refuses links and binaries, and serves only paths inside the skill.
 - **`GET /api/library/sources/:id`** returns the source, its picked skills, update info, `checkError` and users.
 - **`GET /api/library/plugins`** (PR 2) returns `{ store: PluginEntry[], host: HostPluginEntry[], available: AvailableEntry[] }`.
   - `available` holds the marketplace entries that aren't installed, each with `pinned` and `refusedReason?`.
@@ -745,7 +747,7 @@ The new WS frame `{ type: "library_changed" }` is published after every Library 
 
 ### 9.6 Locks (self-review M5)
 
-- **Total order:** workspace (per slug) → Library → store. Each is its own `KeyedMutex` instance.
+- **Total order:** workspace (per slug) → Library → store. Each is its own instance: the workspace and Library locks are `KeyedMutex`es, and `storeLock` is a read/write lock (§7.2).
 - Code holding the Library or store lock never takes a workspace lock and never awaits a runtime job.
 - `ConfigChanges.libraryChanged` runs only after both locks are released.
 - A start takes `storeLock` inside `prepare`, under its workspace lock, and checks again after it gets the lock.
@@ -759,7 +761,7 @@ Every task that touches the web names `vercel-react-best-practices` for both imp
 ### 10.1 Navigation and header
 
 - **Sidebar.** The `nav` gains **Skills** (icon `Blocks`) between Templates and Schedules. Its shortcut is `g k`, listed in the shortcuts sheet and in the palette's Go to group. `g s` stays Schedules.
-- **Routes** (all lazy): `/skills`, `/skills/plugins`, `/skills/marketplaces`.
+- **Routes** (all lazy): `/skills` in PR 1, then `/skills/plugins` and `/skills/marketplaces` in PR 2.
 - **`SkillsHeader`** holds:
   - the h1 "Skills";
   - the view switch "Skills | Plugins | Marketplaces" (`SegmentedLinks`). PR 1 has a single view, so it renders no switch until PR 2;
@@ -834,7 +836,7 @@ Every skill peek has a "From" line:
 - "No plugins installed" / "1 plugin installed" / "4 plugins installed";
 - the state.
 
-A pending add is its own row, "Adding acme/x… 0:42", with a spinner. A failed add stays as a row, "Couldn't add" (UI r2 H3). Its peek shows the redacted reason, with **Find again** (which reopens Add marketplace, prefilled) and **Remove** (immediate; nothing was registered).
+A pending add is its own row, "Adding acme/x… 0:42", with a spinner. A failed add stays as a row, "Couldn't add" (UI r2 H3). Its peek shows the redacted reason, with **Find again** (which reopens Add marketplace, prefilled) and **Remove**, a hard delete with no Undo, since nothing was registered.
 
 **States.** One state per row, by precedence; any further state shows in the peek. Each state is a word plus an icon, never colour alone, and never signal orange:
 
@@ -918,7 +920,7 @@ A peek is a right peek sheet (480px, no scrim), and a bottom drawer below `md`:
 - the update view in place: "Plugins in use that change: x@y 1.2.0 → 1.3.0; z@y source changes";
 - its plugins, each opening in place with **Back**. Back is instant and returns focus to the row it came from; Esc closes the whole peek;
 - **Check for updates**, a ghost action in its Source section's label row;
-- Remove, with the same in-use rule as a source. When plugins from it are installed, the reason reads "Plugins from acme are installed. Removing it comes with uninstall."
+- Remove, with the same in-use rule as a source. When plugins from it are installed, the reason reads "Plugins from acme are installed. Uninstalling plugins isn't available yet."
 
 ### 10.4 Add sheets
 
@@ -958,7 +960,7 @@ Both sheets use `FormFrame`, I4's `useFieldErrors`, `FormOutcome` and `field-sta
   - the primary returns to "Find skills";
   - a new Find keeps the ticks for names that are still found.
 - **Step 2:** "Add 3 skills". It is disabled at 0, with the note "Pick at least one skill."
-- **After Add:** "Adding… 0:03". For a GitHub source whose preview was swept, this re-fetches and can take up to 180 s, and it continues on the server if the sheet closes. The sheet closes on success, and the toast reads "Added 3 skills." with Undo (§9.4).
+- **After Add:** "Adding… 0:03". For a GitHub source whose preview was swept, this re-fetches and can take up to 180 s, and it continues on the server if the sheet closes: the source then appears as a pending header "Adding acme/x… 0:42" and the outcome is a toast (amendment 6). `POST /api/library/sources` returns 202 for a GitHub add that must re-fetch, and 201 otherwise. The sheet closes on success, and the toast reads "Added 3 skills." with Undo (§9.4).
 - **Close during Find** cancels the request and keeps the draft (R8).
 
 **Add marketplace:**
@@ -1059,13 +1061,13 @@ A `library` fix navigates to the item's view and passes `{ peek: item }` in rout
   - fails on project or local settings that set plugin keys or `hooks` (R11);
   - passes the factory's plugin keys through `--settings`, which outranks project and local settings.
 
-  So a plugin reaches an agent only as a reviewed store plugin, from its template's approved marketplaces, enabled by a human-saved template or overlay. **Hooks** reach it only through a store plugin or the human-reviewed template and overlay `settings` (I2).
+  So a plugin reaches an agent only as a reviewed store plugin, from its template's approved marketplaces, enabled by a human-saved template or overlay. **Hooks** reach it only through a store plugin, the frontmatter of a factory-linked Library or template skill (shown under Runs code), or the human-reviewed template and overlay `settings` (I2).
 - **The store** is a read-only mount in Docker, and non-writable between operations on disk.
 
 ### 11.4 Residual risk, stated
 
 - **Within a running session**, Claude Code reloads settings files live, and skill hooks register when the skill is invoked. An agent with Bash can already run code as itself, so the start checks are about **persistence and review**, not about containing a running agent: whatever it adds is refused at its next start. This is stated, not solved; the follow-up is the Docker managed-settings mount (§21).
-- **Local-runtime agents** run as the host user. Between starts they can chmod and write the store and cache, edit `state/` (including `plugin-settings.json`), and write anything under their workdir. Every start re-checks what it can. This is the accepted local trust decision (S5 Q10), not a new hole.
+- **Local-runtime agents** run as the host user. Between starts they can chmod and write the store and cache, edit `state/`, and write anything under their workdir. Every start re-checks what it can. This is the accepted local trust decision (S5 Q10), not a new hole.
 - **`data/` persists by design**, and plugins can keep dependencies there (the docs suggest it). Code an agent edits under `data/` runs as that plugin's code at the next start. That is the same class as `mcpb/`, but scrubbing `data/` would break every stateful plugin, so it is accepted and stated.
 - **The 14-day orphan cleanup** (§7.2).
 - **The seed read after spawn.** Claude's read of the seed after spawn isn't covered by the store lock (§7.2).
@@ -1118,7 +1120,7 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
   - `CLAUDE_CONFIG_DIR=$AG`, a scrubbed plugins root and an empty `skills/`;
   - `CLAUDE_CODE_PLUGIN_SEED_DIR=$SEED`;
   - `DISABLE_AUTOUPDATER=1`;
-  - `--settings $S/plugin-settings.json`, as §7.3 step 7 writes it;
+  - `--settings "$(cat $S/plugin-settings.json)"`, the inline JSON §7.3 step 7 passes;
   - a workdir with no `.claude/settings*.json`.
 
 **Items:**
@@ -1158,21 +1160,20 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
     This decides `update` against uninstall plus install.
 11. **Auto-update stays off for the official marketplace.** A session longer than ten minutes, run interactively in the agent env with one message: the seed and `$AG/plugins` gain no new versions.
 12. **Project and local settings** (R11). Write `$W/.claude/settings.local.json` with:
-    - `{"enabledPlugins": {"skill-creator@claude-plugins-official": true}}`, and record that it **does** enable the plugin over the `--settings` false. This proves the §7.3 start check is needed. Then confirm `--settings` `false` beats a project-level `true` for the same key, or record that it doesn't;
+    - `{"enabledPlugins": {"skill-creator@claude-plugins-official": true}}` against the `--settings` `false` for the same key: record which wins. Either way the §7.3 start check is what enforces the rule; the result says whether `--settings` is a second layer or only a carrier;
     - `extraKnownMarketplaces` plus `"x@evil": true` for an external plugin: record whether it is fetched.
 13. **A directory marketplace's catalog.** A relative plugin with `defaultEnabled: true` in a declared directory marketplace, not installed and not listed in `enabledPlugins`: record whether it loads (R14).
 14. **The preview copy** (T7). Install into a copied plugins root with rewritten `installLocation`s. The original store gets no writes.
 15. **The runner auto-add.** A runner whose `settings.json` declares a marketplace that is absent from `known_marketplaces.json`: record whether `claude plugin …` auto-adds it.
-16a. **Settings precedence** (R11), extending item 12:
-   - a project-level `hooks` entry and a `statusLine` both run (proving the check is needed);
-   - `--settings` `enabledPlugins: false` against a local-level `true` for the same key: record which wins;
-   - record whether an `enabledPlugins` change in `settings.local.json` mid-session takes effect without a restart.
-16b. **Frontmatter hooks** (R12):
+16. **Project hooks and live reload** (R11), extending item 12:
+   - a project-level `hooks` entry and a `statusLine` both run, which proves the check is needed;
+   - record whether an `enabledPlugins` change in `settings.local.json` mid-session takes effect without a restart, and whether `/reload-plugins` exists in `-p` mode.
+17. **Frontmatter hooks** (R12):
    - a skill in `$W/.claude/skills/h/` whose `SKILL.md` frontmatter declares a SessionStart or PreToolUse hook writing a marker. Invoke the skill and record whether the hook runs;
    - the same with a subagent in `$W/.claude/agents/a.md` declaring `hooks` and `mcpServers`, and in `$AG/agents/`;
    - record whether skills in `$AG/commands/` or `$AG/agents/` load.
-16. **Required synced plugins.** If Or's claude.ai organisation can mark a plugin required, record whether it loads with `syncClaudeAiPlugins: false` for a token-signed-in agent. If not, mark it untested.
-17. **The version floor.** The lowest version where items 1–4 and 12 hold, if Or can test an older one. Otherwise the shipped version is the floor.
+18. **Required synced plugins.** If Or's claude.ai organisation can mark a plugin required, record whether it loads with `syncClaudeAiPlugins: false` for a token-signed-in agent. If not, mark it untested.
+19. **The version floor.** The lowest version where items 1–4, 7, 12 and 18 hold (the seed, `mcpb/`, settings precedence and sync), if Or can test an older one. Otherwise the shipped version is the floor.
 
 ## 14. Testing and evidence
 
@@ -1237,13 +1238,15 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
   - a link at either path fails;
   - `.claude-config/skills/` is emptied;
   - a link the agent made in `.claude/skills/` to a plugin folder fails;
-  - `plugin-settings.json` is passed with `--settings` (fake Claude records argv).
+  - the start check iterates every key in `RESERVED_SETTINGS_KEYS`, in both files (PR 1);
+  - an agent-written skill with frontmatter `hooks`, or a subagent with `hooks` or `mcpServers`, fails the start, and `.claude-config/{skills,agents,commands}` are emptied (PR 1);
+  - the plugin JSON is passed with `--settings` (fake Claude records argv) (PR 2).
 - **Store lock:** a start during an install waits on the shared hold and never sees a writable store.
 - **Journal:** a crash mid-install rolls back at boot, and orphan markers written during a failed install are removed.
 - **Dependencies:** the closure is enabled, and a ranged dependency counts as unpinned.
 - **Marketplace updates:** detected by tree for relative plugins.
 - **Preview:** runs against an isolated copy (the store is untouched).
-- **Settings.** `buildSettings` writes `enabledPlugins` (true plus explicit false), the registry sources with `autoUpdate: false` (no `ref`), and `syncClaudeAiPlugins: false`. The reserved env names can't be set by a template, an overlay or a secret.
+- **Settings.** The `--settings` JSON writer emits `enabledPlugins` (true for the closure, explicit false for every other store marketplace plugin), the registry sources with `autoUpdate: false` (no `ref`), and `syncClaudeAiPlugins: false`. `buildSettings` writes none of these keys. The reserved env names can't be set by a template, an overlay or a secret.
 - **Version floor:**
   - the runner and a local start below the floor fail closed;
   - a Docker image check is cached per digest.
@@ -1322,15 +1325,15 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
 Three stacked PRs on I3's last branch, in a line: `i5/1-library-skills` → `i5/2-plugins` → `i5/3-polish-docs`. Each links this spec, the plan and the decision issue, states its reset step, and deletes what it replaces (Q12).
 
 1. **`i5/1-library-skills`:**
-   - §5, §6, §8 for skills, §9.1–§9.2 and §9.4–§9.6, §10 for skills (no view switch until PR 2), §11.1 (route tests), the §6.4 checks (`.claude/skills` plugin check and the `.claude-config/skills` scrub), and the §7.3 step 3 project and local settings check (R11);
-   - PR 1 keeps I2's per-agent plugin install and its `pluginsDir` mount class. It adds only the GitHub-skill mount class, and `Effective.library.plugins` is `{}`;
+   - §5, §6, §8 for skills, §9.1–§9.2 and §9.4–§9.6, §10 for skills (no view switch until PR 2), §11.1 (route tests), the §6.4 checks (`.claude/skills` plugin check and the `.claude-config/skills` scrub), the §7.3 step 3 checks (project and local settings against §7.10's `RESERVED_SETTINGS_KEYS`, frontmatter hooks on agent-written skills and subagents, and emptying `.claude-config/{agents,commands}`), and §7.10 itself;
+   - PR 1 keeps I2's per-agent plugin install and its `pluginsDir` mount class. It adds only §6.5's GitHub-skill mount class (the store class and `storeDir` come in PR 2), and `Effective.library.plugins` is `{}`;
    - `FACTORY_HOST_CLAUDE_DIR` across `config.ts`, `config.test.ts`, the README, `.env.example`, the 8 smoke scripts and the test helpers;
    - `/api/host-skills` deleted;
    - DESIGN.md amendments 1, 2, 3 (SKILL.md and files), 4, 5 and 6.
 2. **`i5/2-plugins`.** Starts only after G1 (§13).
    - §7, the plugin parts of §8–§10, §11;
    - the Plugins and Marketplaces views appear;
-   - deleted: `plugins:`, per-agent installs, `plugins-config/`, `linkPlugins`, `readPluginKeys`, the per-agent plugin mounts and the symlinked-dir design.
+   - deleted: `plugins:`, per-agent installs, `plugins-config/`, `linkPlugins`, `readPluginKeys`, the per-agent plugin mounts and the `.claude-config/plugins` symlink.
 3. **`i5/3-polish-docs`:** fixes from the evidence pass, plus the product-doc list in §18. Folded into PR 2 if small.
 
 ## 18. Product docs and repo follow-ups (a list for the lead; `docs/product` is never edited here)

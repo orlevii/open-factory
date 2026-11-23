@@ -364,7 +364,7 @@ function PaneItem({
   useDwellRead(item);
   return (
     <>
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4 text-sm md:px-6">
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-1 text-sm md:px-6">
         {item && (
           <>
             <span className="flex min-w-0 items-center gap-1.5">
@@ -439,7 +439,7 @@ function ChatStrip({ slug }: { slug: string }) {
   return (
     <div
       data-chat-strip
-      className="@container flex h-10 shrink-0 items-center gap-2 border-b px-4 text-sm md:px-6"
+      className="@container flex min-h-10 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-1 text-sm md:px-6"
     >
       {agent ? (
         <>

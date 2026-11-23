@@ -227,7 +227,7 @@ export function AgentLayout({
             <aside
               id={AGENT_DETAILS_ID}
               aria-label="Agent details"
-              className="flex min-h-0 w-80 shrink-0 flex-col border-l border-border bg-card"
+              className="flex min-h-0 w-80 max-w-[40%] shrink-0 flex-col border-l border-border bg-card"
             >
               {details()}
             </aside>

@@ -145,7 +145,8 @@ export type AgentOverlay = z.infer<typeof agentOverlaySchema>;
 export const configDocSchema = z.object({
   template: z.record(z.string(), z.unknown()),
   settings: z.record(z.string(), z.unknown()),
-  mcp: z.object({ mcpServers: z.record(z.string(), z.unknown()) }),
+  // Loose: a template's mcp.json may carry other top-level keys, which a save must keep.
+  mcp: z.looseObject({ mcpServers: z.record(z.string(), z.unknown()) }),
 });
 
 /** A template or an effective config as three file-shaped parts (template.yaml, settings.json, mcp.json). */
@@ -167,7 +168,7 @@ export type ConfigHashes = z.infer<typeof configHashesSchema>;
 /**
  * `GET /api/templates/:name/config` (I2 §12.1). `doc` is null while the template has errors. `localSkills` is the
  * template's own `skills/` folder names (the agent page lists them read-only). `cantStart` counts the live agents that
- * can't start: all of them while the template has errors, else the ones whose overlay fails its schema.
+ * can't start, which is all of them while the template has errors and none otherwise (spec §12.5).
  */
 export const templateConfigResponseSchema = z.object({
   doc: configDocSchema.nullable(),

@@ -14,7 +14,6 @@ import {
 import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import {
-  agentOverlaySchema,
   CONFIG_FILES,
   type ConfigDoc,
   type ConfigHashes,
@@ -60,6 +59,9 @@ export type TemplateChange = {
   by: string;
 };
 export type TemplateChangeListener = (e: TemplateChange) => void | Promise<void>;
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
 
 const notFound = (name: string) =>
   new ApiError(404, "template_not_found", `Template ${name} not found.`);
@@ -404,15 +406,24 @@ export class TemplateIndex {
 
   /**
    * I2 §12.1 `GET /api/templates/:name/config`. `doc` is the parsed configuration while the template has no errors (the
-   * derived `local_skill_names` never leaves: it is the separate `localSkills`). `cantStart` counts the live agents
-   * whose start fails: all of them while the template has errors, else the ones whose overlay fails its schema.
+   * derived `local_skill_names` never leaves: it is the separate `localSkills`). `cantStart` is every live agent while
+   * the template has errors (they can't start until it is fixed, spec §12.5) and none otherwise.
    */
   async readConfig(name: string): Promise<TemplateConfigResponse> {
-    const full = await this.scanOneFull(name, FILE_CHANGE);
-    if (!full) throw notFound(name);
+    const dir = this.folder(name);
+    if (!(await isDir(dir)) || !(await readOrNull(path.join(dir, "template.yaml")))) {
+      await this.deleteRow(name);
+      throw notFound(name);
+    }
+    const ctx = await this.context();
+    // Hashes and parse under one lock hold, so a save can't land between them.
+    const { hashes, full } = await this.locks.run(name, async () => ({
+      hashes: await this.configHashes(dir),
+      full: await this.indexLocked(name, ctx, FILE_CHANGE),
+    }));
     const { row, doc } = full;
     const rows = await this.db
-      .select({ config: schema.agents.config, archived: isNotNull(schema.agents.archivedAt) })
+      .select({ archived: isNotNull(schema.agents.archivedAt) })
       .from(schema.agents)
       .where(
         and(
@@ -421,20 +432,14 @@ export class TemplateIndex {
           isNull(schema.agents.terminatedAt),
         ),
       );
-    const live = rows.filter((r) => !r.archived);
+    const live = rows.filter((r) => !r.archived).length;
     const local = doc.template[LOCAL_SKILL_NAMES];
     return {
       doc: row.valid ? { ...doc, template: yamlPart(doc.template) } : null,
-      hashes: await this.configHashes(row.path),
+      hashes,
       issues: row.issues,
       localSkills: Array.isArray(local) ? (local as string[]) : [],
-      agents: {
-        live: live.length,
-        archived: rows.length - live.length,
-        cantStart: row.valid
-          ? live.filter((r) => !agentOverlaySchema.safeParse(r.config).success).length
-          : live.length,
-      },
+      agents: { live, archived: rows.length - live, cantStart: row.valid ? 0 : live },
     };
   }
 
@@ -459,10 +464,10 @@ export class TemplateIndex {
     doc: ConfigDoc,
     baseHashes: ConfigHashes,
     by: string,
-  ): Promise<{ hashes: ConfigHashes; issues: TemplateIssue[] }> {
+  ): Promise<{ hashes: ConfigHashes; issues: TemplateIssue[]; changed: boolean }> {
     const dir = this.folder(name);
     if (!(await isDir(dir))) throw notFound(name);
-    await this.locks.run(name, async () => {
+    return this.locks.run(name, async () => {
       const current = {
         "template.yaml": await readOrNull(path.join(dir, "template.yaml")),
         "settings.json": await readOrNull(path.join(dir, "settings.json")),
@@ -502,27 +507,55 @@ export class TemplateIndex {
       const json = (file: "settings.json" | "mcp.json", want: unknown, empty: unknown) => {
         const buf = current[file];
         const have = buf ? parseJson(buf.toString("utf8")) : { value: empty };
-        if (!have.error && canonicalJson(have.value) === canonicalJson(want)) return;
-        next[file] = `${JSON.stringify(want, null, 2)}\n`;
+        // Top-level keys the form doesn't know (mcp.json's) are the file's own: they stay.
+        const merged =
+          file === "mcp.json" && isRecord(have.value) && isRecord(want)
+            ? { ...have.value, ...want }
+            : want;
+        if (!have.error && canonicalJson(have.value) === canonicalJson(merged)) return;
+        next[file] = `${JSON.stringify(merged, null, 2)}\n`;
       };
       json("settings.json", doc.settings, {});
       json("mcp.json", doc.mcp, { mcpServers: {} });
 
       const v = await validateTemplate(dir, name, await this.context(), next);
-      const errors = v.issues.filter((i) => i.severity === "error");
-      if (errors.length)
+      if (v.issues.some((i) => i.severity === "error"))
         throw new ApiError(400, "invalid_config", "The configuration has errors.", {
           issues: v.issues,
         });
-      for (const [file, content] of Object.entries(next)) {
-        const target = path.join(dir, file);
-        const tmp = `${target}.${randomBytes(4).toString("hex")}.tmp`;
-        await writeFile(tmp, content);
-        await rename(tmp, target);
+
+      // All temps first, then the renames in sequence: a failed write leaves the template as it was.
+      const temps: [string, string][] = [];
+      let failure: unknown;
+      try {
+        for (const [file, content] of Object.entries(next)) {
+          const target = path.join(dir, file);
+          const tmp = `${target}.${randomBytes(4).toString("hex")}.tmp`;
+          temps.push([tmp, target]);
+          await writeFile(tmp, content);
+        }
+        // Renamed entries leave `temps`, so the cleanup below only removes what never got its turn.
+        for (let first = temps[0]; first; first = temps[0]) {
+          await rename(first[0], first[1]);
+          temps.shift();
+        }
+      } catch (err) {
+        failure = err;
+      } finally {
+        await Promise.all(temps.map(([tmp]) => rm(tmp, { force: true })));
       }
+      // Even after a failed write the index must match the disk, and `by` is this caller's.
+      const row = await this.indexLocked(name, await this.context(), by).catch(() => undefined);
+      if (failure) throw failure;
+      const after = { ...hashes };
+      for (const [file, content] of Object.entries(next))
+        after[file as keyof ConfigHashes] = fileHash(Buffer.from(content));
+      return {
+        hashes: after,
+        issues: row?.row.issues ?? v.issues,
+        changed: Object.keys(next).length > 0,
+      };
     });
-    const row = await this.scanOne(name, by);
-    return { hashes: await this.configHashes(this.folder(name)), issues: row?.issues ?? [] };
   }
 
   async validate(name: string, file: TemplateFile, content: string): Promise<TemplateIssue[]> {

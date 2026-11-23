@@ -152,14 +152,14 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
       },
     },
     async (req) => {
-      const saved = await app.templates.writeConfig(
+      const { changed, ...saved } = await app.templates.writeConfig(
         req.params.name,
         req.body.doc,
         req.body.baseHashes,
         `@${handleOf(req)}`,
       );
       // At once, so an open template or agent page refreshes without waiting for the change flow (spec §7.1).
-      app.bus.publishAll({ type: "config_changed", template: req.params.name });
+      if (changed) app.bus.publishAll({ type: "config_changed", template: req.params.name });
       return saved;
     },
   );

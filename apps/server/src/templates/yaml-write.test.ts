@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { parse } from "yaml";
 import { applyConfigToYaml } from "./yaml-write.ts";
 
 const SRC = `# The dev template.
@@ -67,4 +68,15 @@ test("a new key is appended after the existing ones", () => {
 
 test("an empty file gets a map", () => {
   expect(applyConfigToYaml("", { model: "opus" })).toBe("model: opus\n");
+});
+
+test("a list of scalars is updated in place: kept items keep their comments, new ones are appended", () => {
+  const src = "name: dev\nskills: # mine\n  - a # first\n  - b # second\n  - c\n";
+  const out = applyConfigToYaml(src, { skills: ["a", "c", "d"] });
+  expect(out).toBe("name: dev\nskills:\n  # mine\n  - a # first\n  - c\n  - d\n");
+});
+
+test("an anchored scalar is replaced, so an alias elsewhere keeps its value", () => {
+  const out = applyConfigToYaml("model: &m opus\ndescription: *m\n", { model: "sonnet" });
+  expect(parse(out)).toEqual({ model: "sonnet", description: "opus" });
 });

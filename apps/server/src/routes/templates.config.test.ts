@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
@@ -45,7 +45,7 @@ const reset = async () => {
 };
 const rmIf = async (p: string) => {
   const { rm } = await import("node:fs/promises");
-  await rm(p, { force: true });
+  await rm(p, { force: true, recursive: true });
 };
 /** The dispatch chain runs in microtasks after the scan; let it drain. */
 const settle = () => new Promise((r) => setTimeout(r, 50));
@@ -92,7 +92,7 @@ test("GET returns the doc without the derived key, hashes, local skills and coun
   expect(c.agents).toEqual({ live: 0, archived: 0, cantStart: 0 });
 });
 
-test("GET counts live, archived and can't-start agents; an invalid template can't start any", async () => {
+test("GET counts live and archived agents; only an invalid template has agents that can't start", async () => {
   await reset();
   await h.seedAgent({ slug: "ana" });
   await h.seedAgent({ slug: "bob" });
@@ -107,7 +107,7 @@ test("GET counts live, archived and can't-start agents; an invalid template can'
     .set({ config: { bogus: SECRET } as never })
     .where(eq(schema.agents.slug, "bob"));
   const ok = await get();
-  expect(ok.agents).toEqual({ live: 2, archived: 1, cantStart: 1 });
+  expect(ok.agents).toEqual({ live: 2, archived: 1, cantStart: 0 });
   writeFileSync(file("settings.json"), "{");
   const broken = await get();
   expect(broken.doc).toBeNull();
@@ -115,6 +115,24 @@ test("GET counts live, archived and can't-start agents; an invalid template can'
   expect(broken.issues.some((i) => i.message.startsWith("JSON"))).toBe(true);
   await reset();
   await h.db.delete(schema.agents);
+});
+
+test("malformed files never echo their text in the issues", async () => {
+  for (const [f, text] of [
+    ["settings.json", `{"k": ${SECRET}}`],
+    ["mcp.json", `{"mcpServers": {"gh": {"env": {"T": ${SECRET}}}}}`],
+    ["template.yaml", `name: dev\ndisplay_name: ${SECRET}: x\n`],
+    ["template.yaml", `name: dev\ndisplay_name: Dev\nmodel: *${SECRET}\n`],
+    ["template.yaml", `%YAML ${SECRET}\n---\nname: dev\n`],
+  ] as const) {
+    await reset();
+    writeFileSync(file(f), text);
+    const r = await call("GET");
+    expect(r.statusCode).toBe(200);
+    expect(r.body).not.toContain("SECRETSHAPED");
+    expect((r.json() as Cfg).issues.length).toBeGreaterThan(0);
+  }
+  await reset();
 });
 
 test("404 for a template that doesn't exist", async () => {
@@ -135,6 +153,7 @@ test("PUT sets and deletes only the owned keys: comments, order and other keys s
     d.template.skills = [];
     d.template.display_name = "Changed"; // not form-owned: ignored
     d.template.sneaky = 1; // unknown: never written
+    d.template.local_skill_names = ["x"]; // derived: never written
   });
   expect(r.statusCode).toBe(200);
   const yaml = read("template.yaml");
@@ -211,6 +230,42 @@ test("validation never echoes a secret value, key or url", async () => {
   expect(read("template.yaml")).toBe(YAML);
 });
 
+test("mcp.json keys other than mcpServers survive a save", async () => {
+  await reset();
+  writeFileSync(file("mcp.json"), '{"mcpServers":{"gh":{"command":"npx"}},"inputs":[{"id":"x"}]}');
+  const c = await get();
+  expect(c.doc?.mcp).toHaveProperty("inputs");
+  const r = await put((d) => {
+    d.template.effort = "low";
+    d.mcp.mcpServers = {};
+  });
+  expect(r.statusCode).toBe(200);
+  expect(JSON.parse(read("mcp.json"))).toEqual({ mcpServers: {}, inputs: [{ id: "x" }] });
+  // Even a client that sends only mcpServers can't drop them.
+  const d2 = await get();
+  await call("PUT", {
+    doc: { ...d2.doc, mcp: { mcpServers: { a: { command: "x" } } } },
+    baseHashes: d2.hashes,
+  });
+  expect(JSON.parse(read("mcp.json"))).toEqual({
+    mcpServers: { a: { command: "x" } },
+    inputs: [{ id: "x" }],
+  });
+});
+
+test("a failed write leaves no temp files and still re-indexes", async () => {
+  await reset();
+  mkdirSync(file("settings.json")); // a directory: its rename can't succeed
+  const c = await get();
+  const r = await call("PUT", {
+    doc: { ...c.doc, settings: { a: 1 }, template: { ...c.doc?.template, effort: "low" } },
+    baseHashes: c.hashes,
+  });
+  expect(r.statusCode).toBeGreaterThanOrEqual(500);
+  expect(readdirSync(dir()).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  await rmIf(file("settings.json"));
+});
+
 test("only changed files are written; an absent mcp.json is not created for empty servers", async () => {
   await reset();
   writeFileSync(file("settings.json"), '{"a":1}');
@@ -266,6 +321,8 @@ test("a save that changes nothing writes nothing", async () => {
   expect(read("template.yaml")).toBe(YAML);
   await settle();
   expect(changes).toEqual([]);
+  // Nothing changed, so open pages aren't told to refetch.
+  expect(frames).not.toContainEqual({ type: "config_changed", template: "dev" });
 });
 
 test("PUT on a missing template is 404; a body with a bad shape is 400", async () => {

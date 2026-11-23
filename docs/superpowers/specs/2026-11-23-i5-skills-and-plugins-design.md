@@ -307,7 +307,7 @@ The only bound on the download itself is the operation's time budget, and the sp
 - the line "a1b2c3d → e4f5a6b · 2 days ago · <subject>";
 - a compare link, `https://github.com/<repo>/compare/<old>...<new>`, shown only when `FACTORY_GITHUB_URL` is the default;
 - the changes to the picked skills, found by comparing `trees`:
-  - "changed", with frontmatter `hooks` added or removed shown as `+`/`−` lines;
+  - "changed", with frontmatter `hooks` added or removed shown as `+`/`−` lines. A changed skill whose frontmatter hooks or executable files were added or changed is marked "Runs code changed" and listed first;
   - "removed";
   - "New in this commit, not added", for new folders, which are never picked automatically;
   - "Unusable at this commit", for a frontmatter mismatch or `.claude-plugin/`.
@@ -621,7 +621,7 @@ The result is cached in memory by `installPath`, which is immutable per version.
   - dependency auto-install (2.1.319).
   
   Until G1 records an older passing version, the floor is the shipped version.
-- **The base image** pins Claude Code at or above the floor (base-image follow-up, §18).
+- **The base image** pins Claude Code to an exact version in PR 2, before G1: `images/base/claude-code-version`, at or above the floor and at least 14 days old. The workflow stops resolving "latest", and the image already carries the version label. G1 runs on exactly that version.
 - **Who is checked:**
   - the store runner, before each operation;
   - **every** local-runtime agent at start, not only those with plugins, because synced-plugin suppression and the skills-folder rules matter for any agent signed in through I3;
@@ -1334,6 +1334,8 @@ Three stacked PRs on I3's last branch, in a line: `i5/1-library-skills` → `i5/
 2. **`i5/2-plugins`.** Starts only after G1 (§13).
    - §7, the plugin parts of §8–§10, §11;
    - the Plugins and Marketplaces views appear;
+   - the base image's Claude Code pinned to an exact version (§7.9), before G1;
+   - saves enqueue background installs of pinned, missing plugins (§7.5);
    - deleted: `plugins:`, per-agent installs, `plugins-config/`, `linkPlugins`, `readPluginKeys`, the per-agent plugin mounts and the `.claude-config/plugins` symlink.
 3. **`i5/3-polish-docs`:** fixes from the evidence pass, plus the product-doc list in §18. Folded into PR 2 if small.
 
@@ -1457,6 +1459,6 @@ Certainty is on a 1–5 scale. **Bold** marks the decisions for Or's review.
 - Aliases, if a real collision shows up (Q3).
 - npm-sourced plugins.
 - Revisit whether agents may add plugins from any registered marketplace (Q5), with Or.
-- Base image: pin Claude Code at or above the plugin floor and label the version (§7.9, §18).
+- Base image docs: describe the pinned Claude Code version (#160; the pin itself lands in PR 2).
 - `permissions.allow` and `autoMode` in agent-written project or local settings let an agent widen its own permissions. That belongs to I2/I7; for Or (§7.10).
 - Docker defence in depth: a read-only managed-settings mount with `strictKnownMarketplaces`, `syncClaudeAiPlugins` and the plugin keys (§11.4).

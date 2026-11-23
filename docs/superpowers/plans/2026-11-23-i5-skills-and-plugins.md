@@ -419,6 +419,7 @@ After `update` and `restore` release `libraryLock`, they call `configChanges.lib
   - a folder preview of `~` gives the field error `MSG.shareHome`;
   - check stores `update*`; a failing check stores `checkError`;
   - update reports "changed" from `trees`;
+  - a changed skill whose `SKILL.md` frontmatter `hooks` were added or changed, or whose executable files (exec bit) were added or changed, is flagged `runsCodeChanged: true` with the hook and file lists (owner plan review change 3). The update preview reads both trees' `SKILL.md` and exec bits from the fetched commits;
   - update refuses `update_drops_used` (naming at most 3 users, then "and N more") and refuses `empties_source`;
   - remove is refused while in use;
   - restore works within 30 s, is refused after 30 s, and is refused once a name has been taken;
@@ -488,7 +489,7 @@ Implements spec §6.4, §6.6, §7.3 step 3, §7.10, §8 and AC 5–7.
 // agent-folders.ts
 export async function scrubAgentFolders(workdir: string): Promise<void>;            // empty .claude-config/{skills,agents,commands} via SafeFs
 export async function checkProjectSettings(workdir: string, envNames: readonly string[]): Promise<void>;  // .claude/settings.json + settings.local.json; lstat; link fails; reservedKeysIn → WorkspaceError naming file and key
-export async function checkAgentFrontmatter(workdir: string, factoryLinks: Set<string>): Promise<void>;   // non-factory .claude/skills/*/SKILL.md hooks; .claude/agents/*.md hooks|mcpServers
+export async function checkAgentFrontmatter(workdir: string, factoryLinks: Set<string>): Promise<void>;   // non-factory .claude/skills/*/SKILL.md hooks; .claude/agents/*.md hooks|mcpServers; .claude/commands/*.md hooks
 export async function checkSkillPlugins(workdir: string): Promise<void>;           // every .claude/skills entry: stat(<entry>/.claude-plugin) → fail
 // links.ts
 export async function resolveSkills(lib: LibraryIndex, names: string[]): Promise<{ name: string; dir: string }[]>;  // fails with the §6.6 message for the reason
@@ -508,6 +509,7 @@ libraryChanged(e: { skills?: string[]; plugins?: string[]; by: string }): Promis
     - a link at `.claude/settings.json` fails;
     - an agent-written skill folder whose `SKILL.md` declares `hooks` fails, while a factory link to a Library skill with hooks passes;
     - `.claude/agents/a.md` with `hooks` fails, and so does one with `mcpServers`;
+    - `.claude/commands/c.md` with frontmatter `hooks` fails (owner plan review change 5; kept even if G1 shows commands can't declare hooks, since the check is cheap and stays closed);
     - `.claude-config/{skills,agents,commands}` are emptied, and a link there is removed as a link;
     - a `.claude/skills/x` link the agent made to a folder holding `.claude-plugin/` fails.
   - `links.test.ts`: the drop-unlisted pass removes links under every known prefix and leaves a real folder.
@@ -623,6 +625,7 @@ Implements spec §10.3 (skill and source peeks) and §10.6. Implementer and revi
 - [ ] **Step 1: Write failing tests.**
   - The Source peek:
     - the update view is open when `updateCommit` is set;
+    - a skill with `runsCodeChanged` shows "Runs code changed" first, with its hooks and executables as `+`/`−` lines;
     - the changes show as `+`/`−` lines, and the compare link has `rel="noreferrer"` and `target="_blank"`;
     - "Update to e4f5a6b" posts the update;
     - a 409 shows in the outcome line with linked users;
@@ -738,6 +741,29 @@ Implements spec §2 AC 8–14, §7, the plugin parts of §8–§10, §11 and §1
 - drop the database and recreate agents;
 - templates listing `plugins:` fail validation: move them to `settings.json` `enabledPlugins`, and add their marketplaces in Skills.
 
+### Task B0: Pin the base image's Claude Code (before G1)
+
+Implements owner plan review change 2. G1 must run on the exact version the image ships, and an image that takes "latest" at build time is itself a supply-chain gap.
+
+Today `images/base/Dockerfile` already installs an exact `CLAUDE_CODE_VERSION`, verified against the release manifest's sha256, and labels it as `io.open-factory.claude-code.version`. But `.github/workflows/base-image.yml` resolves that version from `downloads.claude.ai/.../latest` on every build, including the weekly rebuild.
+
+**Files:**
+- Create: `images/base/claude-code-version` (one line, e.g. `2.1.3xx`)
+- Modify: `.github/workflows/base-image.yml` (the "Resolve latest Claude Code version" step reads the file; the weekly no-cache rebuild keeps the pinned version)
+- Modify: `apps/server/src/library/claude-flags.ts` gets `CLAUDE_PLUGIN_FLOOR` in B3; until then the planned floor is this pinned version.
+
+- [ ] **Step 1: Choose the version.** It must meet all three:
+  - at or above the documented floor features (seed, `syncClaudeAiPlugins`, `mcpb/`, dependency auto-install, so at least 2.1.324);
+  - at least 14 days old (the repo's minimum-release-age policy, applied to the CLI too);
+  - the newest version that meets both.
+  
+  If the newest release is younger than 14 days, take the newest one that isn't and say so in the PR body. Record the release date from the release manifest.
+- [ ] **Step 2:** Make the workflow read `images/base/claude-code-version`, validate it against `^[0-9]+\.[0-9]+\.[0-9]+$`, and fail on anything else. Delete the "latest" resolution (ADR 0028: no fallback). Update the workflow comment "Weekly no-cache rebuild: new Claude Code, …" to say Claude Code is pinned and changes only through this file.
+- [ ] **Step 3:** `actionlint` if installed; otherwise review the YAML diff. CI builds the image on the PR.
+- [ ] **Step 4: Commit** `chore(image): pin the base image's Claude Code version`.
+
+The image label already exists, so #160 keeps only the docs.
+
 ### Task B1: Gate G1 script and fixture recipe (for Or; blocks B2 onward)
 
 Implements spec §13. **The executor writes the script but never runs it.** Running it needs real Claude Code and Or.
@@ -754,7 +780,9 @@ Implements spec §13. **The executor writes the script but never runs it.** Runn
   - **the sneaky skills-directory plugin**;
   - **a skill and a subagent with frontmatter hooks**.
 
-  The README gives the push steps.
+  The README gives the push steps. It also states:
+  - the npm dependency is exact-pinned, tiny and well known (named in the README);
+  - `run.sh` uses a throwaway `HOME` and npm cache under its temp dir, so Or's machine isn't touched beyond that dir.
 - [ ] **Step 2:** Write `run.sh`, covering items 1–19 of spec §13 exactly as written:
   - `set -eu`, with `mkdir -p $MARK` up front and `test -z "$(ls -A $MARK)"` checks;
   - full stream capture to `out.jsonl`, with `init` selected by `jq 'select(.type=="system" and .subtype=="init")'`;
@@ -764,7 +792,7 @@ Implements spec §13. **The executor writes the script but never runs it.** Runn
   - it refuses to run with `HOME` pointing at a dir that contains `.open-factory-spike`;
   - each item writes PASS, FAIL or RECORDED plus the evidence into `report.md`, from `report-template.md`.
 - [ ] **Step 3:** `bash -n scripts/g1/run.sh` and `shellcheck scripts/g1/*.sh` (if installed). Commit `chore: Gate G1 script and fixture for Or`.
-- [ ] **Step 4:** **Stop.** Hand off to tech-lead-i5 / main: "G1 is ready: Or runs `scripts/g1/run.sh` on the base image's Claude Code version and posts `report.md` on #153." Tasks B2 onward start only after Or's report. **Any FAIL goes back to owner-i5 before the design adapts.** The RECORDED items fill the constants in Tasks B3, B6 and B7: the floor, update against fresh install, and whether `mcpb/` is scrubbed.
+- [ ] **Step 4:** **Stop.** Hand off to tech-lead-i5 / main: "G1 is ready: Or runs `scripts/g1/run.sh` with Claude Code **<exact version from `images/base/claude-code-version`>** (B0) and posts `report.md` on #153." `run.sh` checks `claude --version` against that file, and refuses to run when the versions differ. Tasks B2 onward start only after Or's report. **Any FAIL goes back to owner-i5 before the design adapts.** The RECORDED items fill the constants in Tasks B3, B6 and B7: the floor, update against fresh install, and whether `mcpb/` is scrubbed.
 
 ### Task B2: Fake Claude: plugin seed mode
 
@@ -850,6 +878,7 @@ export class MarketplacesService {
   - a fetch for a plain git server uses `refs/heads/<branch>` and checks `FETCH_HEAD`;
   - pin drift and an untracked or ignored file both fail "Marketplace acme isn't at its pinned commit.";
   - update checks out the exact commit through `runGit`, never `marketplace update`;
+  - the check result lists every installed or enabled plugin whose version, source or contents change at the new commit (a version or `sha` change, a source change, or a changed tree for a relative path, using `rev-parse <old>:<path>` against `<new>:<path>`). Plugins whose code-running parts change (hooks, MCP, LSP, status line, monitors, `bin/`, `package.json`, dependencies) are flagged `runsCodeChanged` and sorted first (owner plan review change 4);
   - remove is refused with "Uninstalling plugins isn't available yet." while plugins are installed;
   - the purge re-checks under `storeLock`.
 - [ ] **Step 2: Run** `pnpm typecheck` → FAIL. Pure parts: `pnpm vitest run apps/server/src/library/marketplaces-service.test.ts -t pure`.
@@ -1036,6 +1065,16 @@ Implements spec §7.6, §9.1 (plugins), §9.3, §8.3 (plugins) and AC 9.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** → PASS (routes in CI).
 - [ ] **Step 5: Commit** `feat(server): host plugins, plugin and marketplace routes`.
+- [ ] **Step 6: Background install on save** (spec §7.5 triggers, T6; owner plan review change 1).
+  - `ConfigChanges` (I2's template-change and overlay-save paths) calls `PluginStore.enqueueInstall(key, by)` for every key that a save **newly** adds to the effective `enabledPlugins` closure, when the key is pinned and missing from the store. The PUT records the change, enqueues, and returns; it never awaits the install.
+  - `enqueueInstall` dedupes by key: a key already queued or installing isn't queued again.
+  - An unpinned missing plugin enqueues nothing; the save response carries the "not installed and not pinned" warning (spec §7.4).
+  - Tests (CI, fake Claude):
+    - a template save and an overlay save that newly enable a pinned, missing plugin each enqueue exactly one install, and the PUT resolves before fake Claude's `install` finishes (the scenario blocks until released);
+    - an unpinned missing plugin enqueues nothing, and the save shows the warning;
+    - two saves racing for the same key produce one `install` in the plugin log;
+    - a failed background install writes `plugin_install_failed` and the row state (already in B6, re-used here).
+  - Commit `feat(server): saves enqueue background installs of pinned plugins`.
 
 ### Task B10: Plugins and Marketplaces views, peeks, Add marketplace
 
@@ -1050,6 +1089,7 @@ Implements spec §10.1–§10.4 (plugins). Implementer and reviewer invoke `verc
 - Modify: `skills-header.tsx` (the switch; a `Select` below about 16rem), `apps/web/src/features/sheets/sheet-bodies.ts`
 - Test: `apps/web/src/features/skills/plugin-list.test.tsx`, `peeks/plugin-peek.test.tsx`, `peeks/marketplace-peek.test.tsx`, `add-marketplace-sheet.test.tsx`
 
+- [ ] **Step 0 (owner plan review change 4):** the Marketplace peek's update view renders "Plugins in use that change" from the check result, with the `runsCodeChanged` plugins first, each marked "Runs code changed". Add a test for it next to the Step 1 tests.
 - [ ] **Step 1: Write failing tests.**
   - The plugin list:
     - the groups "In the factory", "On this host" and "In marketplaces, not installed";
@@ -1139,6 +1179,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it, for
   - ADR 0017 note, ADR 0024 consequences;
   - Data model;
   - Agent runtime;
+  - in both Workspace and Agent runtime, say plainly: on the local runtime, the read-only seed and the scrubbed folders guard against accidents and are **not** a security boundary (Q6, Q21);
   - Base image (#160);
   - I6 path help and README;
   - Factory MCP (I7 note: `RESERVED_SETTINGS_KEYS` is the agent default-deny).
@@ -1152,5 +1193,5 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it, for
 
 ## Manual steps for Or (the executor never does these)
 
-1. **Gate G1** (Task B1): push the fixture repo, run `scripts/g1/run.sh` on the base image's Claude Code version, and post `report.md` on #153. Part B starts only after that.
+1. **Gate G1** (Task B1): push the fixture repo, run `scripts/g1/run.sh` with the exact Claude Code version pinned in B0, and post `report.md` on #153. Part B starts only after that.
 2. **Review the certainty-3-or-lower decisions** listed on #153: Q3, Q5, Q6, Q7, Q9, Q12, Q15, Q18, T1, T7, T8, R5 and R12.

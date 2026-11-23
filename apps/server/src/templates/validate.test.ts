@@ -182,8 +182,7 @@ test("schema issue carries the yaml line; json issue carries line and column", a
 test("override substitutes unsaved content for one file", async () => {
   const dir = tpl(base);
   const r = await validateTemplate(dir, "tech-lead", ctx, {
-    file: "template.yaml",
-    content: "name: tech-lead\ndisplay_name: X\nprojects: [web]\n",
+    "template.yaml": "name: tech-lead\ndisplay_name: X\nprojects: [web]\n",
   });
   expect(r.issues.map((i) => i.message)).toContainEqual(expect.stringMatching(/web/));
 });

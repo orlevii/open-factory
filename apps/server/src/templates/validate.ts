@@ -49,12 +49,11 @@ const RESERVED_FILES = [
   "projects",
 ].map((n) => n.toLowerCase());
 
-async function read(
-  dir: string,
-  file: TemplateFile,
-  override?: { file: TemplateFile; content: string },
-) {
-  if (override?.file === file) return override.content;
+/** Unsaved content to validate in place of files on disk. */
+export type Overrides = Partial<Record<TemplateFile, string>>;
+
+async function read(dir: string, file: TemplateFile, overrides?: Overrides) {
+  if (overrides?.[file] !== undefined) return overrides[file];
   try {
     return await readFile(path.join(dir, file), "utf8");
   } catch {
@@ -307,7 +306,7 @@ export async function validateTemplate(
   dir: string,
   folderName: string,
   ctx: EffectiveContext,
-  override?: { file: TemplateFile; content: string },
+  overrides?: Overrides,
 ): Promise<{
   config?: TemplateConfig;
   issues: TemplateIssue[];
@@ -327,10 +326,10 @@ export async function validateTemplate(
   let config: TemplateConfig | undefined;
   let tplYaml: Record<string, unknown> = {};
 
-  const yamlText = await read(dir, "template.yaml", override);
-  const agentsText = await read(dir, "AGENTS.md", override);
-  const settingsText = await read(dir, "settings.json", override);
-  const mcpText = await read(dir, "mcp.json", override);
+  const yamlText = await read(dir, "template.yaml", overrides);
+  const agentsText = await read(dir, "AGENTS.md", overrides);
+  const settingsText = await read(dir, "settings.json", overrides);
+  const mcpText = await read(dir, "mcp.json", overrides);
 
   // template.yaml
   let lineOf: (p: (string | number)[]) => number | undefined = () => undefined;

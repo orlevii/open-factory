@@ -14,16 +14,21 @@ import {
 import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import {
+  agentOverlaySchema,
+  CONFIG_FILES,
   type ConfigDoc,
+  type ConfigHashes,
   canonicalJson,
   isUserImageRef,
   LOCAL_SKILL_NAMES,
   NAME_PATTERN,
   TEMPLATE_FILES,
   type TemplateConfig,
+  type TemplateConfigResponse,
   type TemplateDetail,
   type TemplateFile,
   type TemplateIssue,
+  yamlPart,
 } from "@open-factory/shared";
 import { and, asc, count, eq, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
@@ -33,7 +38,9 @@ import { ApiError } from "../errors.ts";
 import { imageDir } from "../images/context.ts";
 import { avatarStat } from "./avatar.ts";
 import { KeyLock } from "./key-lock.ts";
+import { parseJson, parseYaml } from "./parse.ts";
 import { type ValidationContext, validateTemplate } from "./validate.ts";
+import { applyConfigToYaml } from "./yaml-write.ts";
 
 export type TemplateRow = typeof schema.templates.$inferSelect;
 
@@ -395,10 +402,133 @@ export class TemplateIndex {
     return { hash: fileHash(Buffer.from(content)), issues: row?.issues ?? [] };
   }
 
+  /**
+   * I2 §12.1 `GET /api/templates/:name/config`. `doc` is the parsed configuration while the template has no errors (the
+   * derived `local_skill_names` never leaves: it is the separate `localSkills`). `cantStart` counts the live agents
+   * whose start fails: all of them while the template has errors, else the ones whose overlay fails its schema.
+   */
+  async readConfig(name: string): Promise<TemplateConfigResponse> {
+    const full = await this.scanOneFull(name, FILE_CHANGE);
+    if (!full) throw notFound(name);
+    const { row, doc } = full;
+    const rows = await this.db
+      .select({ config: schema.agents.config, archived: isNotNull(schema.agents.archivedAt) })
+      .from(schema.agents)
+      .where(
+        and(
+          eq(schema.agents.template, name),
+          eq(schema.agents.kind, "persistent"),
+          isNull(schema.agents.terminatedAt),
+        ),
+      );
+    const live = rows.filter((r) => !r.archived);
+    const local = doc.template[LOCAL_SKILL_NAMES];
+    return {
+      doc: row.valid ? { ...doc, template: yamlPart(doc.template) } : null,
+      hashes: await this.configHashes(row.path),
+      issues: row.issues,
+      localSkills: Array.isArray(local) ? (local as string[]) : [],
+      agents: {
+        live: live.length,
+        archived: rows.length - live.length,
+        cantStart: row.valid
+          ? live.filter((r) => !agentOverlaySchema.safeParse(r.config).success).length
+          : live.length,
+      },
+    };
+  }
+
+  private async configHashes(dir: string): Promise<ConfigHashes> {
+    const [y, s, m] = await Promise.all(
+      CONFIG_FILES.map(async (f) => {
+        const buf = await readOrNull(path.join(dir, f));
+        return buf ? fileHash(buf) : null;
+      }),
+    );
+    return { "template.yaml": y ?? null, "settings.json": s ?? null, "mcp.json": m ?? null };
+  }
+
+  /**
+   * I2 §12.1 `PUT /api/templates/:name/config`. Under the template's lock: every base hash is checked (409
+   * `changed_on_disk` with today's hashes), the three new texts are built and the whole template is validated as it
+   * would be written (an error gives a 400 and nothing is written), then only the files whose content changed are
+   * written (temp + rename). The rescan after the lock fires the template change once. `by` is the caller's handle.
+   */
+  async writeConfig(
+    name: string,
+    doc: ConfigDoc,
+    baseHashes: ConfigHashes,
+    by: string,
+  ): Promise<{ hashes: ConfigHashes; issues: TemplateIssue[] }> {
+    const dir = this.folder(name);
+    if (!(await isDir(dir))) throw notFound(name);
+    await this.locks.run(name, async () => {
+      const current = {
+        "template.yaml": await readOrNull(path.join(dir, "template.yaml")),
+        "settings.json": await readOrNull(path.join(dir, "settings.json")),
+        "mcp.json": await readOrNull(path.join(dir, "mcp.json")),
+      };
+      if (!current["template.yaml"]) throw notFound(name);
+      const hashes: ConfigHashes = {
+        "template.yaml": fileHash(current["template.yaml"]),
+        "settings.json": current["settings.json"] ? fileHash(current["settings.json"]) : null,
+        "mcp.json": current["mcp.json"] ? fileHash(current["mcp.json"]) : null,
+      };
+      if (CONFIG_FILES.some((f) => hashes[f] !== baseHashes[f]))
+        throw new ApiError(
+          409,
+          "changed_on_disk",
+          "Changed on disk since you opened it. Reload to see the changes.",
+          { currentHashes: hashes },
+        );
+
+      const yamlText = current["template.yaml"].toString("utf8");
+      const parsed = parseYaml(yamlText);
+      if (parsed.error)
+        throw new ApiError(400, "invalid_config", "The configuration has errors.", {
+          issues: [
+            {
+              severity: "error",
+              file: "template.yaml",
+              message: parsed.error.message,
+              ...(parsed.error.line ? { line: parsed.error.line } : {}),
+            } satisfies TemplateIssue,
+          ],
+        });
+      // `local_skill_names` is derived: it is never written to template.yaml, whatever the caller sent.
+      const next: Partial<Record<TemplateFile, string>> = {};
+      const yamlOut = applyConfigToYaml(yamlText, yamlPart(doc.template));
+      if (yamlOut !== yamlText) next["template.yaml"] = yamlOut;
+      const json = (file: "settings.json" | "mcp.json", want: unknown, empty: unknown) => {
+        const buf = current[file];
+        const have = buf ? parseJson(buf.toString("utf8")) : { value: empty };
+        if (!have.error && canonicalJson(have.value) === canonicalJson(want)) return;
+        next[file] = `${JSON.stringify(want, null, 2)}\n`;
+      };
+      json("settings.json", doc.settings, {});
+      json("mcp.json", doc.mcp, { mcpServers: {} });
+
+      const v = await validateTemplate(dir, name, await this.context(), next);
+      const errors = v.issues.filter((i) => i.severity === "error");
+      if (errors.length)
+        throw new ApiError(400, "invalid_config", "The configuration has errors.", {
+          issues: v.issues,
+        });
+      for (const [file, content] of Object.entries(next)) {
+        const target = path.join(dir, file);
+        const tmp = `${target}.${randomBytes(4).toString("hex")}.tmp`;
+        await writeFile(tmp, content);
+        await rename(tmp, target);
+      }
+    });
+    const row = await this.scanOne(name, by);
+    return { hashes: await this.configHashes(this.folder(name)), issues: row?.issues ?? [] };
+  }
+
   async validate(name: string, file: TemplateFile, content: string): Promise<TemplateIssue[]> {
     const dir = this.folder(name);
     if (!(await isDir(dir))) throw notFound(name);
-    return (await validateTemplate(dir, name, await this.context(), { file, content })).issues;
+    return (await validateTemplate(dir, name, await this.context(), { [file]: content })).issues;
   }
 
   async create(b: { name: string; displayName: string; description?: string }): Promise<void> {

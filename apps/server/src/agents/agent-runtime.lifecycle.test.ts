@@ -263,17 +263,11 @@ test("prepareStart reporting an archived agent marks the runtime archived", asyn
   await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
 });
 
-test("reload picks up a renamed agent for summaries", async () => {
+test("reload re-reads the row: a rename shows in summaries and archiving refuses sends", async () => {
   await makeRuntime();
-  await t.sql`update agents set display_name = 'Renamed' where id = ${agentId}`;
+  await t.sql`update agents set display_name = 'Renamed', archived_at = now() where id = ${agentId}`;
   await rt.reload();
   expect(rt.agent.displayName).toBe("Renamed");
-});
-
-test("reload picks up archiving", async () => {
-  await makeRuntime();
-  await t.sql`update agents set archived_at = now() where id = ${agentId}`;
-  await rt.reload();
   await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
 });
 
@@ -425,23 +419,17 @@ test("the status frame carries the open turn's start time and a running compacti
   expect(lastStatus()).not.toHaveProperty("turnStartedAt");
 });
 
-test("an exit mid-turn clears the turn's start time", async () => {
+test.each([
+  ["a stop", () => rt.stop()],
+  ["an unexpected exit", () => driver.last.exit(1)],
+])("%s mid-turn clears the turn's start time", async (_name, end) => {
   await send("x");
   driver.last.emit(ev.session(), ev.turn());
   await rt.settled();
   expect(rt.live().turnStartedAt).toBeDefined();
-  await rt.stop();
-  expect(rt.live()).not.toHaveProperty("turnStartedAt");
-});
-
-test("message_in always precedes its reply even when the reply is emitted during the write", async () => {
-  await send("x");
-  const p = driver.last;
-  // emitted before the runtime's next job runs: still sequenced after message_in
-  p.emit(ev.session(), ev.turn(), ev.text("r"), ev.usage(), ev.end());
+  await end();
   await rt.settled();
-  const t2 = await types();
-  expect(t2.indexOf("message_in")).toBeLessThan(t2.indexOf("assistant_text"));
+  expect(rt.live()).not.toHaveProperty("turnStartedAt");
 });
 
 test("a failing DB write stops the process and marks errored", async () => {

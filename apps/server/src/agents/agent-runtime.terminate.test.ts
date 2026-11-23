@@ -915,11 +915,11 @@ test("a stuck terminated agent records stop_escalated once, however many sweeps 
   await w.settled();
   const escalations = async () => (await w.events()).filter((e) => e.type === "stop_escalated");
   const before = (await escalations()).length;
+  expect(before).toBeGreaterThanOrEqual(1);
   expect(await w.rt.sweepStuck()).toBe("still");
   expect(await w.rt.sweepStuck()).toBe("still");
   await w.settled();
-  expect((await escalations()).length).toBeLessThanOrEqual(Math.max(before, 1));
-  expect((await escalations()).length).toBe(Math.max(before, 1));
+  expect((await escalations()).length).toBe(before); // the sweeps added none
 });
 
 test("a sweep while a shutdown stop is in progress does nothing", async () => {

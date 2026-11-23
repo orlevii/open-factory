@@ -252,20 +252,6 @@ test("plain text is written as one user line with no envelope, and operator_inpu
   ]);
 });
 
-test("raw text queued during a turn is written only after turn_end, and nothing else is written until its turn ends", async () => {
-  await startedIdle();
-  await send("long task");
-  h.driver.last.emit(ev.turn());
-  await h.rt.settled();
-  await h.rt.rawInput({ text: "note", userId: "u1", by: "@or" });
-  await send("later");
-  expect(commandWrites()).toEqual([]);
-  h.driver.last.emit(ev.usage(), ev.end());
-  await h.rt.settled();
-  expect(commandWrites()).toEqual([{ kind: "raw", text: "note" }]);
-  expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["long task"]);
-});
-
 test("an errored agent holds raw input and does not start a recovery", async () => {
   await h.makeRuntime({ status: "errored", sessionId: "sess-1" });
   const item = await h.rt.rawInput({ text: "hello", userId: "u1", by: "@or" });

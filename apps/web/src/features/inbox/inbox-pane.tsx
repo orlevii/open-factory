@@ -1,5 +1,5 @@
 import { ApiError, type TaskActivity, type TaskDetail } from "@open-factory/shared";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   type ReactNode,
@@ -10,15 +10,27 @@ import {
   useRef,
   useState,
 } from "react";
+import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
+import { AgentName } from "@/features/agents/agent-tree";
+import { useAgentSummary } from "@/features/agents/use-agent-summary";
+import { ViewSwitch } from "@/features/agents/view-switch";
+import { ChatBody, type PaneOptions } from "@/features/chat/chat-view";
 import { formatInboxTime } from "@/features/session/format";
+import { StatusBadge } from "@/features/session/status-badge";
 import { taskDetailOptions } from "@/features/tasks/api";
 import { CommentBlock } from "@/features/tasks/comment-block";
 import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/comment-composer";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { INBOX_DWELL_MS, PREFETCH_REST_MS } from "@/lib/timing";
-import { type InboxItem, inboxItemOptions, useOpenItem } from "./api";
+import {
+  chatSlugOf,
+  type InboxItem,
+  inboxItemOptions,
+  inboxQueryOptions,
+  useOpenItem,
+} from "./api";
 
 /** Static plates where a pane body will be. */
 function ExcerptSkeleton() {
@@ -408,6 +420,77 @@ function useRested(selectedId: string | undefined) {
   return sel.now || settled;
 }
 
+/** The unread count of a chat's row when it was opened, once the Inbox has loaded: where the Chat opens. */
+function useOpenedUnread(slug: string): PaneOptions | undefined {
+  const now = useInfiniteQuery({
+    ...inboxQueryOptions,
+    select: (d) => d.pages[0]?.chats?.find((c) => c.agent.slug === slug)?.unread ?? 0,
+  }).data;
+  const [opened, setOpened] = useState<PaneOptions>();
+  if (now !== undefined && opened === undefined) setOpened({ unread: now });
+  return opened;
+}
+
+/** The 40px strip over a chat in the pane: avatar, name, status, a link to the page and the view switch. */
+function ChatStrip({ slug }: { slug: string }) {
+  const agent = useAgentSummary(slug);
+  return (
+    <div
+      data-chat-strip
+      className="@container flex h-10 shrink-0 items-center gap-2 border-b px-4 text-sm md:px-6"
+    >
+      {agent ? (
+        <>
+          <AgentAvatar
+            slug={agent.slug}
+            template={agent.template}
+            avatarVersion={agent.avatarVersion}
+            size={20}
+          />
+          <span className="flex min-w-0 font-medium">
+            <AgentName agent={agent} />
+          </span>
+          <span className="shrink-0">
+            <StatusBadge status={agent.status} size="short" />
+          </span>
+        </>
+      ) : (
+        <span className="min-w-0 truncate font-mono">@{slug}</span>
+      )}
+      <span className="ml-auto" />
+      <Button asChild variant="outline" size="sm" className="shrink-0">
+        <Link to="/agents/$slug/chat" params={{ slug }}>
+          Open chat
+        </Link>
+      </Button>
+      <ViewSwitch slug={slug} view="chat" />
+    </div>
+  );
+}
+
+/** A chat in the pane: the Chat (thread and composer) under the strip. Keyed by slug, so a retarget
+ *  swaps it instantly and nothing of the previous thread stays. It is read after the dwell. */
+function ChatPane({ slug, rested }: { slug: string; rested: boolean }) {
+  const pane = useOpenedUnread(slug);
+  const qc = useQueryClient();
+  return (
+    <>
+      <ChatStrip slug={slug} />
+      {pane && rested ? (
+        <ChatBody
+          slug={slug}
+          pane={pane}
+          onRestored={() => void qc.invalidateQueries({ queryKey: ["agent", slug] })}
+        />
+      ) : (
+        <Body>
+          <ExcerptSkeleton />
+        </Body>
+      )}
+    </>
+  );
+}
+
 /**
  * The reading pane beside the list (≥1024, spec §11.2): a 48px header from the list row (so it swaps
  * at once), a scrolling body, and the reply composer pinned below it. Switching items swaps the
@@ -423,10 +506,13 @@ export function InboxPane({
   item: InboxItem | undefined;
 }) {
   const rested = useRested(selectedId);
+  const chat = chatSlugOf(selectedId);
   return (
     <section aria-label="Reading pane" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {selectedId === undefined ? (
         <p className="px-4 py-6 text-sm text-muted-foreground md:px-6">No item selected.</p>
+      ) : chat ? (
+        <ChatPane key={selectedId} slug={chat} rested={rested} />
       ) : (
         <PaneItem key={selectedId} id={selectedId} loaded={item} rested={rested} />
       )}

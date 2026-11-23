@@ -26,8 +26,10 @@ import { registerTimelineRepin } from "@/features/session/session-commands";
 import { SpeakerProvider } from "@/features/session/speaker-line";
 import { useStickToBottom } from "@/features/session/stick-to-bottom";
 import { ARRIVAL_MS, arrive } from "@/features/session/timeline";
+import { useReadFrom } from "@/features/session/use-read-from";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { sessionQueryOptions } from "@/lib/session";
+import { INBOX_DWELL_MS } from "@/lib/timing";
 import { ChatComposer } from "./chat-composer";
 import { type Arrival, type CancelNote, ChatRow, rowGap } from "./chat-row";
 import { entryKey, keysOf } from "./chat-state";
@@ -39,12 +41,36 @@ const toUserId = (s: { user: { id: string } } | null) => s?.user.id;
 const failureText = (e: unknown) => (e instanceof ApiError ? e.message : NETWORK_ERROR);
 const NO_NOTES: ReadonlyMap<string, CancelNote> = new Map();
 
-/** The chat with one agent (I1 §6.4): one column, newest at the bottom, the reader's place kept. */
+/** The chat page: the Chat inside the agent layout, which refetches the agent after a restore. */
 export function ChatView({ slug, messageId }: { slug: string; messageId?: string | undefined }) {
+  const { refreshAgent } = useAgentActions();
+  const onRestored = useCallback(() => void refreshAgent(), [refreshAgent]);
+  return <ChatBody slug={slug} messageId={messageId} onRestored={onRestored} />;
+}
+
+/** What the Inbox's reading pane changes about the Chat: it reads after the dwell, opens at the first
+ *  of the `unread` messages, takes no page docking, and fetches the agent itself (no layout did). */
+export type PaneOptions = { unread: number };
+
+/**
+ * The chat with one agent (I1 §6.4): one column, newest at the bottom, the reader's place kept.
+ * Read as it is shown: at once on the page, after INBOX_DWELL_MS in the pane. The pane's Chat is this
+ * same component on the same cache, so your optimistic message is the cache's, never a second list.
+ */
+export function ChatBody({
+  slug,
+  messageId,
+  pane,
+  onRestored,
+}: {
+  slug: string;
+  messageId?: string | undefined;
+  pane?: PaneOptions;
+  onRestored(): void;
+}) {
   // The highlighter's import lands in idle time while the thread loads, before any reply renders.
   useEffect(() => warmHighlighter(), []);
-  const agent = useAgentSummary(slug, { refetchOnMount: false });
-  const { refreshAgent } = useAgentActions();
+  const agent = useAgentSummary(slug, pane ? {} : { refetchOnMount: false });
   const archived = agent?.archivedAt != null;
   const terminated = agent?.status === "terminated";
   const session = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
@@ -72,12 +98,13 @@ export function ChatView({ slug, messageId }: { slug: string; messageId?: string
         <Thread
           slug={slug}
           messageId={messageId}
+          pane={pane}
           agentName={agent?.displayName ?? slug}
           leaveWindow={leaveWindow}
         />
       </SpeakerProvider>
       {archived ? (
-        <ArchivedNotice slug={slug} onRestored={() => void refreshAgent()} />
+        <ArchivedNotice slug={slug} onRestored={onRestored} />
       ) : terminated ? (
         <div className="shrink-0 border-t border-border px-4 py-3 md:px-6">
           <p data-readonly-line className="max-w-[52rem] text-sm text-muted-foreground">
@@ -95,7 +122,7 @@ export function ChatView({ slug, messageId }: { slug: string; messageId?: string
           turnOpen={agent?.turnOpen === true}
           compacting={agent?.compacting === true}
           waiting={!turn.loaded || session === undefined}
-          docked
+          docked={!pane}
           {...(messageId !== undefined ? { onSend: leaveWindow } : {})}
         />
       )}
@@ -106,11 +133,13 @@ export function ChatView({ slug, messageId }: { slug: string; messageId?: string
 function Thread({
   slug,
   messageId,
+  pane,
   agentName,
   leaveWindow,
 }: {
   slug: string;
   messageId: string | undefined;
+  pane: PaneOptions | undefined;
   agentName: string;
   leaveWindow(): void;
 }) {
@@ -120,6 +149,26 @@ function Thread({
   const scroller = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const loaded = status === "success";
+
+  // The newest message from the agent: what viewing the chat reads, once its dwell (the pane's) is up.
+  const newestAgentAt = useMemo(() => {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i] as ChatEntry;
+      if (e.kind === "message" && e.fromKind === "agent") return e.createdAt;
+    }
+    return undefined;
+  }, [entries]);
+  useReadFrom(slug, newestAgentAt, { delayMs: pane ? INBOX_DWELL_MS : 0 });
+
+  // The pane opens at the first unread message: the one `unread` agent messages from the end, fixed
+  // once the thread has loaded (reading them doesn't move it).
+  const [unreadKey, setUnreadKey] = useState<string | null>();
+  if (loaded && pane && unreadKey === undefined) {
+    const theirs = entries.filter((e) => e.kind === "message" && e.fromKind === "agent");
+    const first = pane.unread > 0 ? theirs[theirs.length - pane.unread] : undefined;
+    setUnreadKey(first ? entryKey(first) : null);
+  }
+  const unreadDone = useRef(false);
 
   // The highest entry on screen when the reader left the bottom; the pill counts what came after.
   const [seen, setSeen] = useState<ReadonlySet<string>>();
@@ -133,7 +182,7 @@ function Thread({
   const isPinned = useCallback(() => stick.pinned.current, [stick]);
   // Sending follows the conversation again.
   useEffect(() => registerTimelineRepin(slug, stick.repin), [slug, stick]);
-  useRememberPosition(slug, "chat", scroller, isPinned, !windowed);
+  useRememberPosition(slug, "chat", scroller, isPinned, !windowed && !pane);
 
   // The deep link: the thread opens around the message and tints it, as the session does.
   const targetKey = useMemo(() => {
@@ -158,6 +207,17 @@ function Thread({
       setArrival("on");
       return;
     }
+    // The pane: the first unread message at the top when what is unread is taller than the pane, else the bottom.
+    if (unreadKey && !unreadDone.current && loaded) {
+      unreadDone.current = true;
+      restored.current = true;
+      const divider = el.querySelector<HTMLElement>("[data-new-divider]");
+      if (divider && el.scrollHeight - divider.offsetTop > el.clientHeight) {
+        stick.unpin();
+        divider.scrollIntoView?.({ block: "start" });
+        return;
+      }
+    }
     if (!restored.current && loaded) {
       restored.current = true;
       const left = windowed ? undefined : readViewPosition(slug, "chat");
@@ -169,7 +229,7 @@ function Thread({
     }
     // Pinned: the bottom, at once. Unpinned: the anchor row keeps its place (Load earlier included).
     stick.settle();
-  }, [entries, working, loaded, targetKey, stick, slug, windowed]);
+  }, [entries, working, loaded, targetKey, unreadKey, stick, slug, windowed]);
   // The tint fades after 2s of visible time; hidden, the clock stops.
   const visible = useDocumentVisible();
   const arrivalLeft = useRef(ARRIVAL_MS);
@@ -245,10 +305,11 @@ function Thread({
 
   const rowEls = useMemo(
     () =>
-      entries.map((e, i) => {
+      entries.flatMap((e, i) => {
         const key = entryKey(e);
-        if (e.kind === "turn_outcome")
-          return (
+        const divider = key === unreadKey ? <NewDivider key="new-divider" /> : null;
+        const el =
+          e.kind === "turn_outcome" ? (
             <TurnLine
               key={key}
               slug={slug}
@@ -259,28 +320,29 @@ function Thread({
               live={live.has(key)}
               gap={rowGap(i === 0, true)}
             />
+          ) : (
+            <ChatRow
+              key={key}
+              entry={e}
+              slug={slug}
+              agentName={agentName}
+              self={self}
+              live={live.has(key)}
+              gap={rowGap(i === 0)}
+              tabbable={key === tabKey}
+              arrival={key === targetKey ? arrival : undefined}
+              note={notes.get(e.id)}
+              onCancel={onCancel}
+              onUndo={onUndo}
+              onRowFocus={onRowFocus}
+              onArrivedEnd={onArrivedEnd}
+            />
           );
-        return (
-          <ChatRow
-            key={key}
-            entry={e}
-            slug={slug}
-            agentName={agentName}
-            self={self}
-            live={live.has(key)}
-            gap={rowGap(i === 0)}
-            tabbable={key === tabKey}
-            arrival={key === targetKey ? arrival : undefined}
-            note={notes.get(e.id)}
-            onCancel={onCancel}
-            onUndo={onUndo}
-            onRowFocus={onRowFocus}
-            onArrivedEnd={onArrivedEnd}
-          />
-        );
+        return divider ? [divider, el] : [el];
       }),
     [
       entries,
+      unreadKey,
       live,
       slug,
       agentName,
@@ -406,6 +468,19 @@ function Thread({
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Where the unread messages begin, when the pane opened on them. */
+function NewDivider() {
+  return (
+    <div
+      data-new-divider
+      className="my-3 flex items-center gap-2 text-xs font-medium text-muted-foreground"
+    >
+      <span>New</span>
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
     </div>
   );
 }

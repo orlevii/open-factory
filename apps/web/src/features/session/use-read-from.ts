@@ -13,14 +13,20 @@ const isVisible = () => document.visibilityState !== "hidden";
 type Pending = { slug: string; upTo: string };
 
 /**
- * Viewing a session marks that agent's messages to the viewer read (spec §2.3). Runs only from this
- * effect, never a loader, so a hover preload of the route cannot mark anything. A visible tab with
- * unread messages posts `upTo` = the newest event time; the unread count turns to zero at once, and
- * while it is still > 0 (a new message after the last call) a newer event posts again. One request
- * in flight, a trailing 1s throttle, and a failure refetches the count and the inbox, which are the
- * truth, and is not retried until a newer event, another session or the tab coming back.
+ * Viewing a session or a chat marks that agent's messages to the viewer read (spec §2.3, I1 §6.7). Runs
+ * only from this effect, never a loader, so a hover preload of the route cannot mark anything. A visible
+ * tab with unread messages posts `upTo` = the newest time shown; the unread count turns to zero at once.
+ * It posts on mount and again only when something newer than the last `upTo` it posted arrives, never
+ * because the count went up again by itself (an Undo of Mark all read must stick while this is open).
+ * `delayMs` waits that long first (the Inbox pane's dwell), and moving to another agent cancels it. One
+ * request in flight, a trailing 1s throttle, and a failure refetches the count and the inbox, which
+ * are the truth, and is not retried until a newer time, another agent or the tab coming back.
  */
-export function useReadFrom(slug: string, newestEventAt: string | undefined): void {
+export function useReadFrom(
+  slug: string,
+  newestAt: string | undefined,
+  { delayMs = 0 }: { delayMs?: number } = {},
+): void {
   const hasUnread = useUnreadByAgent(slug) > 0;
   const visible = useSyncExternalStore(subscribeVisibility, isVisible, () => true);
   const cache = useInboxCache();
@@ -31,6 +37,8 @@ export function useReadFrom(slug: string, newestEventAt: string | undefined): vo
     pending: undefined as Pending | undefined,
     /** The call that last failed: not repeated until the newest event or the slug changes, or the tab returns. */
     failed: undefined as Pending | undefined,
+    /** The newest time a call has been made for, for this agent. */
+    upTo: undefined as string | undefined,
   });
 
   const request = useCallback(
@@ -48,10 +56,12 @@ export function useReadFrom(slug: string, newestEventAt: string | undefined): vo
         if (!isVisible()) return;
         st.inFlight = true;
         st.lastAt = Date.now();
+        st.upTo = next.upTo;
         cache.readFrom(next.slug);
         postReadFrom(next.slug, next.upTo)
           .catch(() => {
             st.failed = next;
+            st.upTo = undefined;
             cache.refetch();
           })
           .finally(() => {
@@ -67,9 +77,16 @@ export function useReadFrom(slug: string, newestEventAt: string | undefined): vo
   );
 
   useEffect(() => {
-    if (!visible) state.current.failed = undefined;
-    if (visible && hasUnread && newestEventAt) request({ slug, upTo: newestEventAt });
-  }, [slug, hasUnread, newestEventAt, visible, request]);
+    const st = state.current;
+    if (!visible) st.failed = undefined;
+    if (!visible || !hasUnread || !newestAt) return;
+    // Nothing newer than what was already posted: the count rising again is not a reason.
+    if (st.upTo !== undefined && newestAt <= st.upTo) return;
+    const post = () => request({ slug, upTo: newestAt });
+    if (delayMs <= 0) return post();
+    const timer = setTimeout(post, delayMs);
+    return () => clearTimeout(timer);
+  }, [slug, hasUnread, newestAt, visible, delayMs, request]);
 
   // Another agent's session, or leaving: the trailing call for this one is dropped.
   // biome-ignore lint/correctness/useExhaustiveDependencies: slug is the trigger, not a read
@@ -79,6 +96,7 @@ export function useReadFrom(slug: string, newestEventAt: string | undefined): vo
       clearTimeout(st.timer);
       st.timer = undefined;
       st.pending = undefined;
+      st.upTo = undefined;
     },
     [slug],
   );

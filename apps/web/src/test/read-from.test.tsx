@@ -208,8 +208,10 @@ async function withTrailingCall() {
   );
   await act(async () => {});
   vi.useFakeTimers(FAKE);
+  // A message newer than the last call arrives: the count is > 0 again and there is something to read.
+  liveEvent("2026-11-18T10:00:30.000Z");
   act(() => r.queryClient.setQueryData(["inbox-unread"], UNREAD));
-  await advance(50);
+  await advance(150);
   expect(posts).toHaveLength(1); // waiting on the throttle
   return r;
 }
@@ -245,4 +247,15 @@ test("a hover preload of /agents/ada never calls read-from", async () => {
   await router.preloadRoute({ to: "/agents/$slug/session", params: { slug: "ada" } });
   await new Promise((r) => setTimeout(r, 50));
   expect(posts).toHaveLength(0);
+});
+
+test("the count rising again with nothing newer is no reason to post (an Undo of Mark all read sticks)", async () => {
+  const r = renderApp("/agents/dev/session", alice);
+  await waitFor(() => expect(posts).toHaveLength(1));
+  await waitFor(() =>
+    expect(r.queryClient.getQueryData(["inbox-unread"])).toMatchObject({ count: 0 }),
+  );
+  act(() => r.queryClient.setQueryData(["inbox-unread"], UNREAD));
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  expect(posts).toHaveLength(1);
 });

@@ -59,17 +59,22 @@ export async function startHostPty(d: {
 }): Promise<PtyRun> {
   const dir = await mkdtemp(path.join(d.tmp ?? tmpdir(), DIR_PREFIX));
   await chmod(dir, 0o700);
-  const removeDir = () => rm(dir, { recursive: true, force: true });
+  // Never rejects: a dir that can't be removed is left to the boot sweep, and must not keep
+  // `exit` unsettled or replace the caller's error.
+  const removeDir = () => rm(dir, { recursive: true, force: true }).catch(() => {});
 
-  const child = (d.spawnFn ?? spawn)("python3", bridgeSpawnArgs(d.claudeBin), {
-    env: bridgeEnv(d.serverEnv ?? process.env, dir),
-    detached: true,
-    stdio: ["pipe", "pipe", "pipe", "pipe"],
-  });
+  let child: ReturnType<typeof spawn>;
   try {
+    // inside the try: spawn throws synchronously on bad arguments (e.g. a NUL in claudeBin)
+    child = (d.spawnFn ?? spawn)("python3", bridgeSpawnArgs(d.claudeBin), {
+      env: bridgeEnv(d.serverEnv ?? process.env, dir),
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
+    });
+    const started = child;
     await new Promise<void>((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", reject);
+      started.once("spawn", resolve);
+      started.once("error", reject);
     });
   } catch (e) {
     await removeDir();
@@ -111,7 +116,8 @@ export async function startHostPty(d: {
       for (const t of timers) clearTimeout(t);
       emit(decoder.decode());
       // The bridge kills the CLI's group on every exit it controls; this covers the one it can't
-      // (SIGKILL of the bridge). Done now, while the group can't have been reused, never later.
+      // (SIGKILL of the bridge). Done now, never later: if the CLI is still alive its group can't
+      // have been reused; after a normal exit the pgid is free for only the few ms before `close`.
       killGroup(cliPid);
       void removeDir().then(() => resolve({ code }));
     });

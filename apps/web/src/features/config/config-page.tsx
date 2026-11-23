@@ -28,9 +28,7 @@ import { flushSync } from "react-dom";
 import { z } from "zod";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { ErrorLine } from "@/components/error-line";
-import type { Outcome } from "@/components/forms/form-outcome";
 import { PageBody, PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BackToAgent } from "@/features/agents/back-to-agent";
@@ -61,6 +59,7 @@ import {
   savedSchemaOnly,
 } from "./messages";
 import { PageFooter } from "./page-footer";
+import { clearTransient, NO_PAGE_OUTCOME, toFormOutcome, usePageOutcome } from "./page-outcome";
 import { type ParseError, parseErrorAt, RawJsonTab, type RawView } from "./raw-json-tab";
 import { useConfigDraft } from "./use-config-draft";
 
@@ -71,16 +70,6 @@ type Tab = "config" | "raw";
  * only if the canonical JSON differs. `error` is set while the text doesn't parse; the draft then keeps the last valid.
  */
 type RawState = { text: string; forDraft: unknown; error: ParseError | null };
-type PageOutcome =
-  | { kind: "none" }
-  | { kind: "saved" | "discarded"; text: string }
-  | { kind: "conflict" }
-  | { kind: "error"; text: string };
-
-const NONE: PageOutcome = { kind: "none" };
-/** The next edit ends a "Saved." or a "Discarded." (and its Undo); an error or a conflict stays until acted on. */
-const clearTransient = (o: PageOutcome): PageOutcome =>
-  o.kind === "saved" || o.kind === "discarded" ? NONE : o;
 const isRec = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 const serialize = (v: unknown) => `${JSON.stringify(v, null, 2) ?? "null"}\n`;
@@ -199,10 +188,7 @@ function AgentConfigEditor({
   const [rawView, setRawView] = useState<RawView>("agent");
   const [refusals, setRefusals] = useState(0);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [outcome, setOutcomeState] = useState<{ o: PageOutcome; key: number }>({
-    o: NONE,
-    key: 0,
-  });
+  const { outcome, outcomeKey, setOutcome } = usePageOutcome();
   const [issuesOverride, setIssuesOverride] = useState<TemplateIssue[] | null>(null);
   const [footerHeight, setFooterHeight] = useState(0);
   // The editor states (doc, selection, undo) of this agent's raw text and its Combined view, kept across tab switches.
@@ -221,15 +207,6 @@ function AgentConfigEditor({
   });
   const rawLabelId = useId();
   const saveId = useId();
-
-  const setOutcome = useCallback(
-    (next: PageOutcome | ((o: PageOutcome) => PageOutcome)) =>
-      setOutcomeState((s) => {
-        const o = typeof next === "function" ? next(s.o) : next;
-        return o === s.o ? s : { o, key: s.key + 1 };
-      }),
-    [],
-  );
 
   const base = config.template.doc;
   const valid = config.template.valid;
@@ -381,7 +358,7 @@ function AgentConfigEditor({
     latest.current.undoDiscard();
     setRaw(discardedRaw.current);
     discardedRaw.current = null;
-    setOutcome(NONE);
+    setOutcome(NO_PAGE_OUTCOME);
   }
 
   async function onSave() {
@@ -400,7 +377,7 @@ function AgentConfigEditor({
     if (!isRec(sent)) return setOutcome({ kind: "error", text: CONFIG_PAGE_MSG.notObject });
     // The restart notice's rule, as the user saw it when they pressed Save.
     const restarts = restartSummary !== "";
-    setOutcome(NONE);
+    setOutcome(NO_PAGE_OUTCOME);
     let r: Awaited<ReturnType<typeof save.mutateAsync>>;
     try {
       r = await save.mutateAsync({ overlay: sent, baseVersion: d.baseVersion });
@@ -438,7 +415,7 @@ function AgentConfigEditor({
       const fresh = await qc.fetchQuery(agentConfigQueryOptions(slug));
       latest.current.rebase({ value: fresh.overlay, version: fresh.version });
       setIssuesOverride(null);
-      setOutcome(NONE);
+      setOutcome(NO_PAGE_OUTCOME);
       // The Reload button went with the conflict line: focus moves to Save, the next step.
       document.getElementById(saveId)?.focus();
     } catch {
@@ -446,36 +423,13 @@ function AgentConfigEditor({
     }
   }
 
-  // A refetch moved the overlay under my edits (focus, WS): say so now, with Reload, rather than at Save's 409.
-  const o: PageOutcome = d.drift && outcome.o.kind !== "error" ? { kind: "conflict" } : outcome.o;
-  const footerOutcome: Outcome = {
-    outcomeKey: outcome.key,
+  // A refetch moved the overlay under my edits (focus, WS): the conflict line shows now, with Reload, not at Save.
+  const { outcome: footerOutcome, shown: outcomeShown } = toFormOutcome(outcome, outcomeKey, {
+    drift: d.drift,
     notice: rawError ? CONFIG_PAGE_MSG.fixJsonToSave : undefined,
-    ...(o.kind === "saved" ? { success: o.text } : {}),
-    ...(o.kind === "discarded"
-      ? {
-          success: (
-            <span className="inline-flex flex-wrap items-center gap-x-1.5">
-              {o.text}
-              <Button type="button" variant="ghost" size="xs" onClick={onUndo}>
-                {CONFIG_PAGE_COPY.undo}
-              </Button>
-            </span>
-          ),
-        }
-      : {}),
-    ...(o.kind === "error" ? { error: o.text } : {}),
-    ...(o.kind === "conflict"
-      ? {
-          error: CONFIG_PAGE_MSG.changedSince,
-          action: (
-            <Button type="button" variant="ghost" size="xs" onClick={() => void onReload()}>
-              {CONFIG_PAGE_COPY.reload}
-            </Button>
-          ),
-        }
-      : {}),
-  };
+    onUndo,
+    onReload: () => void onReload(),
+  });
 
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-8">
@@ -558,7 +512,7 @@ function AgentConfigEditor({
       ) : null}
       <PageFooter
         outcome={footerOutcome}
-        sticky={dirty || o.kind !== "none"}
+        sticky={dirty || outcomeShown}
         pending={save.isPending}
         canSave={dirty && !rawError}
         canDiscard={dirty}

@@ -1,6 +1,7 @@
 import type { EditorState } from "@codemirror/state";
 import {
   ApiError,
+  CONFIG_FILES,
   TEMPLATE_FILES,
   type TemplateDetail,
   type TemplateFile,
@@ -9,16 +10,35 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Trash2, TriangleAlert, UserPlus } from "lucide-react";
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { HeaderSlug, PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { templateConfigQueryOptions } from "@/features/config/api";
+import { agentsPhrase, TEMPLATE_TAB_COPY } from "@/features/config/messages";
+import { useConfigDraft } from "@/features/config/use-config-draft";
 import { factorySettingsQueryOptions } from "@/features/settings/api";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
@@ -40,6 +60,11 @@ import {
 } from "./code-surface";
 import { ImageStatusLabel } from "./image-status";
 import { IssueIcon, IssueList, sortIssues } from "./issue-list";
+import { EMPTY_DOC, hashesVersion, TemplateConfigTab } from "./template-config-tab";
+
+/** The Configuration tab, then one tab per file. */
+type Tab = "config" | TemplateFile;
+const isConfigFile = (f: TemplateFile) => (CONFIG_FILES as readonly string[]).includes(f);
 
 type FileState = {
   content: string;
@@ -104,7 +129,27 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   const navigate = useNavigate();
   const [files, setFiles] = useState(() => initial(template));
   const [issues, setIssues] = useState<TemplateIssue[]>(template.issues);
-  const [tab, setTab] = useState<TemplateFile>("template.yaml");
+  // Configuration first when the template is valid; a broken one opens on template.yaml, the way to fix it.
+  const [tab, setTab] = useState<Tab>(() =>
+    template.issues.some((i) => i.severity === "error") ? "template.yaml" : "config",
+  );
+  // The Configuration tab's data and draft live here (H4), so the locks below are derived in render.
+  const configQ = useQuery(templateConfigQueryOptions(name));
+  const cfg = configQ.data;
+  const cfgDoc = cfg?.doc;
+  const cfgHashes = cfg?.hashes;
+  const loaded = useMemo(
+    () => ({
+      value: (cfgDoc ?? EMPTY_DOC) as unknown,
+      version: cfgHashes ? hashesVersion(cfgHashes) : "",
+    }),
+    [cfgDoc, cfgHashes],
+  );
+  const d = useConfigDraft<unknown>(loaded);
+  const latestDraft = useRef(d);
+  useLayoutEffect(() => {
+    latestDraft.current = d;
+  });
   const [mdView, setMdView] = useState<"write" | "preview">("write");
   const [outcomes, setOutcomes] = useState<Partial<Record<TemplateFile, Outcome>>>({});
   const [gone, setGone] = useState(false);
@@ -127,7 +172,10 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   // Stable, so it runs only when a conflict block mounts: keyboard users land on its Reload.
   const focusOnMount = useCallback((el: HTMLButtonElement | null) => el?.focus(), []);
 
-  const dirty = TEMPLATE_FILES.some((f) => isDirty(files[f]));
+  // R2, one draft per file: a dirty config file locks the form, and a dirty form locks the config files.
+  const lockedBy = CONFIG_FILES.find((f) => isDirty(files[f]));
+  const formDirty = d.dirty;
+  const dirty = TEMPLATE_FILES.some((f) => isDirty(files[f])) || formDirty;
   useBlocker({
     shouldBlockFn: () => {
       if (leaving.current || !dirty) return false;
@@ -216,6 +264,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   useEffect(serveJump, [jumpN]);
 
   // Stable (setters and a ref only), so the memoized issues block skips keystroke renders.
+  const refetchConfig = useCallback(() => void configQ.refetch(), [configQ.refetch]);
   const jumpTo = useCallback((file: TemplateIssue["file"], line: number) => {
     if (!(TEMPLATE_FILES as readonly string[]).includes(file)) return;
     const f = file as TemplateFile;
@@ -224,6 +273,20 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     wanted.current = { file: f, line };
     setJumpN((n) => n + 1);
   }, []);
+
+  // A Configuration save or reload rewrote the config files: their (clean) tabs read them again, history and all.
+  const onFilesChanged = useCallback(async () => {
+    const fresh = await qc.fetchQuery({ ...templateQueryOptions(name), staleTime: 0 });
+    const next = initial(fresh);
+    for (const f of CONFIG_FILES) states.delete(`${name}:${f}`);
+    setFiles((all) => {
+      const out = { ...all };
+      for (const f of CONFIG_FILES) if (!isDirty(all[f])) out[f] = next[f];
+      return out;
+    });
+    seq.current++;
+    setIssues(fresh.issues);
+  }, [qc, name, states]);
 
   function failed(f: TemplateFile, e: unknown, fallback: string) {
     if (e instanceof ApiError && e.status === 404) return setGone(true);
@@ -283,6 +346,12 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
       // The header (display name, runtime, description) and the list read the saved config;
       // the editor itself was seeded once and keeps its own state.
       void qc.invalidateQueries({ queryKey: ["templates"] });
+      // The form reads these files: it reloads silently (it is clean, since this tab was editable).
+      if (isConfigFile(f))
+        void qc.invalidateQueries({
+          queryKey: templateConfigQueryOptions(name).queryKey,
+          exact: true,
+        });
     } catch (e) {
       if (e instanceof ApiError && e.code === "changed_on_disk") {
         const h = e.body.currentHash;
@@ -376,15 +445,33 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               onJump={jumpTo}
             />
           )}
-          <Tabs
-            value={tab}
-            onValueChange={(v) => setTab(v as TemplateFile)}
-            className="min-w-0 gap-3"
-          >
+          <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="min-w-0 gap-3">
+            {/* Below 40rem the strip clips at 390px (U4 evidence): the same tabs as a Select. Both render; CSS hides one. */}
+            <TabSelect
+              tab={tab}
+              onTab={setTab}
+              formDirty={formDirty}
+              isDirty={(f) => isDirty(files[f])}
+              hasErrors={(f) => filesWithErrors.has(f)}
+            />
             <TabsList
               variant="line"
-              className="h-9! w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0"
+              className="h-9! w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0 max-[40rem]:hidden"
             >
+              <TabsTrigger
+                value="config"
+                className="h-full flex-none rounded-none px-2 text-[0.8125rem] font-normal text-muted-foreground data-[state=active]:text-foreground group-data-horizontal/tabs:after:bottom-0"
+              >
+                {TEMPLATE_TAB_COPY.tab}
+                {formDirty && (
+                  <>
+                    <span aria-hidden="true" className="size-1.5 rounded-full bg-foreground" />
+                    <span className="sr-only">(unsaved)</span>
+                  </>
+                )}
+              </TabsTrigger>
+              {/* The form's label is Geist; the file tabs are filenames, mono. A 1px rule sets them apart. */}
+              <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 self-center bg-border" />
               {TEMPLATE_FILES.map((f) => (
                 <TabsTrigger
                   key={f}
@@ -407,6 +494,23 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                 </TabsTrigger>
               ))}
             </TabsList>
+            <TabsContent value="config" className="min-w-0">
+              <TemplateConfigTab
+                name={name}
+                data={cfg}
+                loadError={configQ.isError}
+                onRetry={refetchConfig}
+                value={d.draft}
+                dirty={formDirty}
+                drift={d.drift}
+                conflicts={d.conflicts}
+                baseVersion={d.baseVersion}
+                draft={latestDraft}
+                lockedBy={lockedBy}
+                onJump={jumpTo}
+                onFilesChanged={onFilesChanged}
+              />
+            </TabsContent>
             {TEMPLATE_FILES.map((f) => {
               const s = files[f];
               const mine = issuesByFile.get(f) ?? [];
@@ -415,8 +519,11 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               const canSave = isDirty(s) && !busy;
               const save$ = () => void save(f);
               const warmHint = f === "template.yaml" && s.started && warmDefault !== undefined;
+              // The form holds a draft of this file: read-only until it is saved or discarded (R2).
+              const locked = formDirty && isConfigFile(f);
               const surface = {
                 file: f,
+                readOnly: locked,
                 onBlur: () => void validate(f),
                 onSave: save$,
                 labelledBy: labelId(f),
@@ -432,13 +539,20 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                   value={f}
                   className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3"
                 >
+                  {locked && (
+                    <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+                      {TEMPLATE_TAB_COPY.formHasEdits}
+                    </p>
+                  )}
                   {!s.started ? (
                     <div className="grid justify-items-start gap-2 rounded-lg border border-dashed border-border p-4">
                       <p className="text-sm text-muted-foreground">Not created</p>
                       <Button
                         id={`create-${f}`}
                         variant="ghost"
+                        aria-disabled={locked || undefined}
                         onClick={() => {
+                          if (locked) return;
                           patch(f, { started: true, content: OPTIONAL_SEED[f] ?? "" });
                           wanted.current = { file: f, line: 1 };
                         }}
@@ -701,7 +815,7 @@ const TemplateHeader = memo(function TemplateHeader({
           <span>No agents</span>
         ) : (
           <span className="flex flex-wrap gap-x-1.5">
-            {template.agents.length === 1 ? "1 agent:" : `${template.agents.length} agents:`}
+            {`${agentsPhrase(template.agents.length)}:`}
             {template.agents.map((slug, i) => (
               <Link
                 key={slug}
@@ -817,5 +931,45 @@ function ImageLine({ image }: { image: NonNullable<TemplateDetail["imageStatus"]
         </span>
       )}
     </span>
+  );
+}
+
+/** Below 40rem the tab strip is this Select: every tab, with its unsaved and error marks in the item's text. */
+function TabSelect({
+  tab,
+  onTab,
+  formDirty,
+  isDirty,
+  hasErrors,
+}: {
+  tab: Tab;
+  onTab(t: Tab): void;
+  formDirty: boolean;
+  isDirty(f: TemplateFile): boolean;
+  hasErrors(f: TemplateFile): boolean;
+}) {
+  const marks = (dirty: boolean, errors: boolean) =>
+    [errors && TEMPLATE_TAB_COPY.hasErrors, dirty && TEMPLATE_TAB_COPY.unsaved]
+      .filter(Boolean)
+      .join(", ");
+  const label = (name: string, m: string) => (m ? `${name} (${m})` : name);
+  return (
+    <div className="min-[40rem]:hidden">
+      <Select value={tab} onValueChange={(v) => onTab(v as Tab)}>
+        <SelectTrigger aria-label={TEMPLATE_TAB_COPY.tabPicker} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="config">
+            {label(TEMPLATE_TAB_COPY.tab, marks(formDirty, false))}
+          </SelectItem>
+          {TEMPLATE_FILES.map((f) => (
+            <SelectItem key={f} value={f} className="font-mono">
+              {label(f, marks(isDirty(f), hasErrors(f)))}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }

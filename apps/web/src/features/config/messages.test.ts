@@ -1,17 +1,21 @@
 import { expect, test } from "vitest";
 import {
+  agentsPhrase,
   archivedLine,
   brokenTemplateLine,
   CONFIG_COPY,
   CONFIG_FIELD_MSG,
   CONFIG_FORM_MSG,
   CONFIG_PAGE_MSG,
+  fileHasEdits,
   noAgentLine,
   restartNotice,
   restartPendingLine,
   savedRestarts,
   savedSchemaOnly,
   secretAddedNote,
+  TEMPLATE_TAB_COPY,
+  templateUsageLine,
 } from "./messages";
 
 test("every configuration field message is at most 40 characters", () => {
@@ -63,4 +67,23 @@ test("the page's copy, verbatim (spec §12.4)", () => {
   expect(archivedLine("ana")).toBe("@ana is archived. Changes apply when it's restored.");
   expect(brokenTemplateLine("dev", "ana")).toBe("Template dev has errors. @ana can't start.");
   expect(noAgentLine("x")).toBe("There is no agent @x.");
+});
+
+test("the template tab's copy and plurals (spec §12.5)", () => {
+  expect(agentsPhrase(0)).toBe("No agents");
+  expect(agentsPhrase(1)).toBe("1 agent");
+  expect(agentsPhrase(3)).toBe("3 agents");
+  expect(templateUsageLine(3, 0, true)).toBe(
+    "Used by 3 agents. Saving restarts the ones whose configuration changes, when idle.",
+  );
+  expect(templateUsageLine(1, 0, true)).toBe(
+    "Used by 1 agent. Saving restarts the ones whose configuration changes, when idle.",
+  );
+  expect(templateUsageLine(0, 0, true)).toBe("No agents use this template.");
+  expect(templateUsageLine(3, 3, false)).toBe("3 agents can't start until this is fixed.");
+  expect(templateUsageLine(1, 1, false)).toBe("1 agent can't start until this is fixed.");
+  expect(fileHasEdits("settings.json")).toBe(
+    "settings.json has unsaved edits. Save or discard them first.",
+  );
+  expect(TEMPLATE_TAB_COPY.formHasEdits).toBe("Unsaved changes in Configuration.");
 });

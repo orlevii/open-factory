@@ -116,3 +116,29 @@ export const archivedLine = (slug: string) =>
 export const brokenTemplateLine = (template: string, slug: string) =>
   `Template ${template} has errors. @${slug} can't start.`;
 export const noAgentLine = (slug: string) => `There is no agent @${slug}.`;
+
+/** The template editor's Configuration tab (spec §12.5). */
+export const TEMPLATE_TAB_COPY = {
+  tab: "Configuration",
+  /** On a config file tab while the form holds a draft of it (R2: one draft per file). */
+  formHasEdits: "Unsaved changes in Configuration.",
+  /** The form while the template has errors: there is no valid doc to edit. */
+  broken: "This template has errors. Fix them in the file tabs to edit its configuration here.",
+  tabPicker: "Tab",
+  unsaved: "unsaved",
+  hasErrors: "has errors",
+} as const;
+
+/** "1 agent", "3 agents", "No agents": the template editor's plurals. */
+export const agentsPhrase = (n: number) =>
+  n === 0 ? "No agents" : n === 1 ? "1 agent" : `${n} agents`;
+/** The tab's header line, from the template config GET's counts. */
+export const templateUsageLine = (live: number, cantStart: number, valid: boolean) => {
+  if (!valid)
+    return cantStart > 0 ? `${agentsPhrase(cantStart)} can't start until this is fixed.` : "";
+  if (live === 0) return "No agents use this template.";
+  return `Used by ${agentsPhrase(live)}. Saving restarts the ones whose configuration changes, when idle.`;
+};
+/** On the form while a config file tab has unsaved edits (R2). */
+export const fileHasEdits = (file: string) =>
+  `${file} has unsaved edits. Save or discard them first.`;

@@ -915,11 +915,10 @@ export class EventStore {
       subjectAgentId?: string;
       taskId?: string;
       commentId?: string;
+      /** `"all"` (every user) is for factory facts (`kind: "system"`) only; people are addressed by handle. */
       to: { userId: string } | "all";
       /** A `kind: "message"` row's recipient list, as `@handle`s. */
       recipients?: string[];
-      /** Never an addressee, however the row is addressed (the author of a comment that mentions `@humans`). */
-      exceptUserId?: string;
       /** The inbox item's kind; `message` when not given. */
       inboxKind?: "message" | "mention" | "task_event";
       body: string;
@@ -927,7 +926,7 @@ export class EventStore {
       fromToolUseId?: string | null;
     },
     outer: Exec = this.db,
-  ): Promise<{ row: MessageRow | undefined; userIds: string[] }> {
+  ): Promise<{ row: MessageRow; userIds: string[] }> {
     return outer.transaction(async (tx) => {
       // Per kind, the sender columns the schema's CHECK allows, said as a sentence before the database says it.
       const authors = (m.fromAgentId ? 1 : 0) + (m.fromUserId ? 1 : 0);
@@ -937,6 +936,8 @@ export class EventStore {
         );
       if (m.kind === "message" && !m.recipients?.length)
         throw new Error("a human message needs its recipients");
+      if (m.to === "all" && m.kind !== "system")
+        throw new Error("only a factory fact goes to every human; address people by handle");
       if (m.kind === "task_update" && (authors > 0 || m.subjectAgentId))
         throw new Error("a task update has no sender and no subject");
       if (m.kind === "task_comment" && authors !== 1)
@@ -947,9 +948,7 @@ export class EventStore {
         m.to === "all"
           ? await tx.select({ id: users.id }).from(users).orderBy(asc(users.id))
           : [{ id: m.to.userId }];
-      const userIds = targets.map((u) => u.id).filter((id) => id !== m.exceptUserId);
-      // The author is the only human addressed: nothing is written.
-      if (targets.length && !userIds.length) return { row: undefined, userIds: [] };
+      const userIds = targets.map((u) => u.id);
       const now = this.clock();
       const [row] = await tx
         .insert(messages)
@@ -1221,7 +1220,7 @@ export class EventStore {
         m.kind === "scheduled"
           ? "@scheduler"
           : (r.fromSlug ?? (r.fromHandle ? `@${r.fromHandle}` : "@factory")),
-      to: m.toAllHumans ? "@humans" : (r.toSlug ?? `@${r.toHandle ?? ""}`),
+      to: m.toAllHumans ? "everyone" : (r.toSlug ?? `@${r.toHandle ?? ""}`),
       state: m.state as MessageLookup["state"],
     };
     if (r.scheduleNumber !== null) {
@@ -1350,7 +1349,7 @@ export class EventStore {
             ? { kind: "factory", name: "factory" }
             : { kind: "agent", name: r.fromSlug ?? "" },
         ...(r.subjectSlug ? { about: r.subjectSlug } : {}),
-        to: r.m.toAllHumans ? "@humans" : `@${r.toHandle ?? ""}`,
+        to: r.m.toAllHumans ? "everyone" : `@${r.toHandle ?? ""}`,
         preview: r.preview,
         urgent: r.m.urgent,
         createdAt: r.item.createdAt.toISOString(),

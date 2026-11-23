@@ -6,6 +6,12 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 const RESERVED: readonly string[] = RESERVED_HANDLES;
 
+/** `@humans` was an address for every person; people are addressed by handle now (spec §4.5). */
+export const HUMANS_SEND_REFUSAL =
+  "`@humans` isn't a handle. Message people by handle; list_peers lists them.";
+export const HUMANS_MENTION_REFUSAL =
+  "`@humans` isn't a handle. Mention people by handle; list_peers lists them.";
+
 /**
  * Agent slugs and human handles share one namespace (spec §4.1). Claims a handle for `kind`; false means taken.
  * A reclaim is allowed only within the same kind and only while nothing references the claim. Callers validate

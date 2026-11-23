@@ -207,7 +207,7 @@ test("a task event: done from an agent reaches the human creator with fact and a
 test("POST /api/inbox/:id/read marks only the caller's item, idempotently; another user's id is 404", async () => {
   const { or, agent, sam } = await actors();
   await h.app.tasks.create(or, { title: "t" });
-  await h.app.tasks.comment(agent, "T-1", "@humans hi");
+  await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
   const mine = ((await get("/api/inbox")).json().items as { id: string }[])[0]?.id as string;
   const theirs = (
     (await get("/api/inbox", { cookie: sam.cookie })).json().items as { id: string }[]
@@ -237,7 +237,7 @@ test("unread-count byAgent counts unread messages by sending agent only", async 
   await aCalls("toolu_m2", { to: ["@or"], body: "two" });
   // A mention is a different inbox kind: it must not count toward byAgent.
   await h.app.tasks.create(or, { title: "t" });
-  await h.app.tasks.comment(agent, "T-1", "@humans hi");
+  await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
   const r = (await get("/api/inbox/unread-count")).json();
   expect(r.byAgent).toEqual({ ada: 2 });
   expect(r.count).toBeGreaterThanOrEqual(3);
@@ -320,7 +320,7 @@ test("read changes reach the reading user's sockets only; new items reach everyo
   h.app.bus.subscribeUser(sam.user.id, () => got.sam++);
   h.app.bus.subscribeAll((m) => m.type === "inbox_changed" && got.all++);
   await h.app.tasks.create(or, { title: "t" });
-  await h.app.tasks.comment(agent, "T-1", "@humans hi");
+  await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
   expect(got.all).toBe(1);
   expect(got.or + got.sam).toBe(0); // new rows publish to every socket, not through the per-user channel
   const mine = ((await get("/api/inbox")).json().items as { id: string }[])[0]?.id as string;
@@ -350,7 +350,7 @@ test.each([
 test("GET /api/inbox/:id: the owner's item equals the list entry; another user's or unknown id is 404; static routes still win", async () => {
   const { or, agent, sam } = await actors();
   await h.app.tasks.create(or, { title: "t" });
-  await h.app.tasks.comment(agent, "T-1", "@humans hi");
+  await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
   const entries = (await get("/api/inbox")).json().items as { id: string }[];
   const mine = entries[0] as { id: string };
   const theirs = (

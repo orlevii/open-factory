@@ -206,10 +206,9 @@ export class ScheduleService {
     }
     if (name === "") throw new ScheduleError("invalid_schedule", "Choose an agent.", 400, "target");
     const r = await resolveName(this.d.db, name);
-    // `@humans` stays "not an agent" until Task 1.7 rewrites the refusals.
     if (r.kind === "agent") return { id: r.agent.id, slug: r.agent.slug };
     if (r.kind === "none" || r.kind === "channel") throw notFound(r.name);
-    if (r.kind === "reserved" && r.name !== "humans")
+    if (r.kind === "reserved")
       throw new ScheduleError(
         "reserved",
         `'${r.name}' is reserved and can't receive messages.`,

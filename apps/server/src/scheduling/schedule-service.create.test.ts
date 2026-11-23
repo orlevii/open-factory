@@ -167,9 +167,7 @@ test("targets: unknown, humans, a handle, reserved, archived and terminated", as
   });
   const to = (target: string) => svc.create(or, { target, ...weekday });
   await expect(to("nobody")).rejects.toMatchObject({ code: "target_not_found" });
-  await expect(to("@humans")).rejects.toMatchObject({
-    message: "Schedules can only be addressed to agents.",
-  });
+  await expect(to("@humans")).rejects.toMatchObject({ code: "reserved" });
   await expect(to("@or")).rejects.toMatchObject({
     message: "Schedules can only be addressed to agents.",
   });

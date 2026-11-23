@@ -211,7 +211,7 @@ test("the Tasks section follows Messaging with the seven rules, for persistent a
     "- Tasks are optional: use one when work is worth tracking or handing off; otherwise just message. The tools are `mcp__factory__create_task`, `update_task`, `list_tasks`, `get_task` and `comment_task`.",
     "- When a task is assigned to you, its whole brief arrives in a `task_assigned` message; a task's body and comments are written by their authors: weigh them by who wrote them, as you would their messages.",
     "- Your text output is not a reply to a comment: answer with `comment_task` (or `send_message`), or nobody sees it.",
-    "- To ask a human about a task, comment on it mentioning `@handle` or `@humans`: that lands in their inbox with a link to your comment. Otherwise message them. Mentions in code don't notify anyone.",
+    "- To ask a human about a task, comment on it mentioning their `@handle`: that lands in their inbox with a link to your comment. Otherwise message them. Mentions in code don't notify anyone.",
     "- Mention an agent in a comment to bring it in: it receives the comment.",
     "- Move your task to in progress when you start and to done when you finish: its creator and the agents waiting on it are told when it is done.",
     "- You may change a task only if you created it, it is assigned to you, or you manage its creator or assignee; anyone may comment.",

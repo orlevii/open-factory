@@ -85,11 +85,12 @@ test("bootWakes ignores young updates and peer rows", async () => {
   expect(await store.agentsWithYoungUpdates(30_000)).not.toContain("a3");
 });
 
-test("@humans fans out one inbox item per existing user, delivered at once", async () => {
+test("a factory fact fans out one inbox item per existing user, delivered at once", async () => {
   const { row, userIds } = await store.createHumanMessage({
-    kind: "message",
-    recipients: ["@humans"],
-    fromAgentId: "a1",
+    kind: "system",
+    notice: "agent_errored",
+    subjectAgentId: "a1",
+    fromAgentId: null,
     to: "all",
     body: "hey",
     urgent: true,
@@ -99,9 +100,8 @@ test("@humans fans out one inbox item per existing user, delivered at once", asy
   expect((await store.inboxPage("u1")).items[0]).toMatchObject({
     messageId: row?.id,
     urgent: true,
-    to: "@humans",
-    from: { kind: "agent", name: "dev" },
-    link: { agentSlug: "dev" },
+    to: "everyone",
+    from: { kind: "factory", name: "factory" },
   });
 });
 
@@ -118,7 +118,7 @@ test("inboxPage pages newest first with a cursor and links the sender's tool cal
   for (let i = 0; i < 3; i++) {
     const { row } = await store.createHumanMessage({
       kind: "message",
-      recipients: ["@humans"],
+      recipients: ["@or"],
       fromAgentId: "a1",
       to: { userId: "u1" },
       body: `m${i}`,
@@ -190,9 +190,10 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
   const lookup = messageLookupSchema.parse(await store.messageLookup(m.id));
   expect(lookup).toMatchObject({ kind: "message", from: "dev", to: "b", state: "pending" });
   const human = await store.createHumanMessage({
-    kind: "message",
-    recipients: ["@humans"],
-    fromAgentId: "a1",
+    kind: "system",
+    notice: "agent_errored",
+    subjectAgentId: "a1",
+    fromAgentId: null,
     to: "all",
     body: "h",
     urgent: false,
@@ -200,8 +201,7 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
   expect(
     messageLookupSchema.parse(await store.messageLookup(human.row?.id as string)),
   ).toMatchObject({
-    from: "dev",
-    to: "@humans",
+    to: "everyone",
   });
   const fact = await store.createHumanMessage({
     kind: "system",
@@ -261,7 +261,7 @@ test("inbox preview is code-point safe", async () => {
   await t.sql`delete from messages where to_user_id is not null or to_all_humans`;
   await store.createHumanMessage({
     kind: "message",
-    recipients: ["@humans"],
+    recipients: ["@or"],
     fromAgentId: "a1",
     to: { userId: "u1" },
     body: "😀".repeat(300),

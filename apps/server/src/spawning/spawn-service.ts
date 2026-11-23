@@ -37,6 +37,10 @@ const taken = (slug: string) => fail(`@${slug} is taken; pick another suffix or 
  * re-checks everything and writes the child, its grants, its brief, its `spawned` event and the peer rows. A spawned
  * agent never holds anything its spawner lacks (§6, `inheritFrom`).
  */
+/** Who an agent that can't fix a problem itself goes to: its manager, or else a person (spec §4.5). */
+const askFor = (agent: Pick<AgentRow, "reportsTo">) =>
+  agent.reportsTo ? "ask your manager" : "ask a human (list_peers lists them)";
+
 export class SpawnService {
   private readonly now: () => number;
 
@@ -74,7 +78,7 @@ export class SpawnService {
     try {
       tpl = await this.d.templates.loadValid(args.template);
     } catch {
-      return fail(`Template ${args.template} is missing or invalid; ask @humans to fix it.`);
+      return fail(`Template ${args.template} is missing or invalid; ${askFor(caller)} to fix it.`);
     }
     // Pre-checks without a lock (spec §5.2 step 2): nothing is materialized for a refused spawn.
     const pre = await this.check(caller, tpl, this.d.db);
@@ -100,7 +104,7 @@ export class SpawnService {
       }
       if (made !== "ok") return made;
       const done = await this.insert(
-        caller.id,
+        caller,
         named.slug,
         args.template,
         desc,
@@ -155,7 +159,9 @@ export class SpawnService {
       );
     const cap = this.d.config.maxSpawnsPerHour;
     if ((recent?.n ?? 0) >= cap)
-      return fail(`You've spawned ${cap} agents in the last hour; ask @humans if you need more.`);
+      return fail(
+        `You've spawned ${cap} agents in the last hour; ${askFor(spawner)} if you need more.`,
+      );
     const grants = await db
       .select({
         id: schema.projects.id,
@@ -174,7 +180,7 @@ export class SpawnService {
       deny = readDenyRules(JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>);
     } catch (err) {
       this.d.log.warn({ err, agent: spawner.slug }, "reading the spawner's template copy failed");
-      return fail("Your template copy can't be read; ask @humans to re-sync you.");
+      return fail(`Your template copy can't be read; ${askFor(spawner)} to re-sync you.`);
     }
     if (!spawner.credentialId) return fail(CANT_SPAWN);
     const inherited = inheritFrom(
@@ -228,13 +234,13 @@ export class SpawnService {
       )
         return fail(err.message);
       this.d.log.error({ err, agent: slug }, "materializing a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ask @humans to check the factory log.`);
+      return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
     }
   }
 
   /** §5.2 step 4: one transaction under the spawner's row lock; a failed re-check removes the folder. */
   private async insert(
-    callerId: string,
+    caller: AgentRow,
     slug: string,
     template: string,
     description: string,
@@ -259,7 +265,7 @@ export class SpawnService {
         const [spawner] = await tx
           .select()
           .from(schema.agents)
-          .where(eq(schema.agents.id, callerId))
+          .where(eq(schema.agents.id, caller.id))
           .for("no key update");
         if (this.d.closing()) return fail(SHUTTING_DOWN);
         if (!spawner || !maySpawn(spawner)) return fail(CANT_SPAWN);
@@ -317,7 +323,7 @@ export class SpawnService {
       // Lost the agents.slug unique index to a concurrent claimer that committed first.
       if (pgCode(err, "23505")) return "taken";
       this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ask @humans to check the factory log.`);
+      return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
     }
     if (out === "taken") {
       await this.discard(slug);

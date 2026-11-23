@@ -12,12 +12,13 @@ beforeAll(async () => {
 });
 afterAll(() => t.close());
 
-test("a message to @humans with no users still writes its row and no inbox items", async () => {
+test("a factory fact for every human with no users still writes its row and no inbox items", async () => {
   const store = new EventStore(t.db);
   const { row, userIds } = await store.createHumanMessage({
-    kind: "message",
-    recipients: ["@humans"],
-    fromAgentId: "a1",
+    kind: "system",
+    notice: "agent_errored",
+    subjectAgentId: "a1",
+    fromAgentId: null,
     to: "all",
     body: "anyone?",
     urgent: false,

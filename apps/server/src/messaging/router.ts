@@ -17,7 +17,7 @@ import {
 import type { Forward } from "./forwarder.ts";
 import type { Neighborhood } from "./neighborhood.ts";
 import { type PeerLeft, peerBody } from "./peer-body.ts";
-import { resolveName } from "./principals.ts";
+import { HUMANS_SEND_REFUSAL, resolveName } from "./principals.ts";
 
 export type Sender =
   | { agentId: string; toolUseId?: string | null }
@@ -72,8 +72,6 @@ const refusal = (to: string, code: RefusalCode, reason: string): RecipientResult
 });
 /** An upload was claimed or deleted between the check and the insert: the transaction rolls back. */
 class AttachmentGoneError extends Error {}
-
-const HUMANS_REFUSAL = "`@humans` isn't a handle. Message people by handle; list_peers lists them.";
 
 /** The principal a target names, once resolved: the key de-duplicates, `accepted` is set when it can receive. */
 type Target = {
@@ -203,7 +201,6 @@ export class Router {
               },
               tx,
             );
-            if (!row) throw new Error("a message to a human wrote no row");
             out.push({ target, humanRowId: row.id, created: true });
             continue;
           }
@@ -320,7 +317,7 @@ export class Router {
               label,
               "reserved",
               r.name === "humans"
-                ? HUMANS_REFUSAL
+                ? HUMANS_SEND_REFUSAL
                 : `'${r.name}' is reserved and can't receive messages.`,
             ),
           };

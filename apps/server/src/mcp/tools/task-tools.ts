@@ -7,6 +7,7 @@ import {
   type TaskStatus,
   updateTaskToolSchema,
 } from "@open-factory/shared";
+import { HUMANS_MENTION_REFUSAL } from "../../messaging/principals.ts";
 import { TaskError } from "../../tasks/errors.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import type { TaskService } from "../../tasks/task-service.ts";
@@ -237,7 +238,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           "comment_task",
           {
             description:
-              "Comment on a task. Mention @slug to bring an agent in, or @handle / @humans to reach people; it also goes to the assignee.",
+              "Comment on a task. Mention @slug to bring an agent in, or @handle to reach a person; it also goes to the assignee.",
             inputSchema: commentTaskToolSchema,
           },
           (args: { id: string; body: string }, tctx: ToolContext) =>
@@ -247,7 +248,11 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 id: r.id,
                 delivered_to: r.deliveredTo,
                 mentioned_humans: r.mentionedHumans,
-                not_reached: r.notReached,
+                not_reached: r.notReached.map((n) =>
+                  n.name === "humans" && n.reason === "reserved"
+                    ? { ...n, detail: HUMANS_MENTION_REFUSAL }
+                    : n,
+                ),
                 ...(r.note ? { note: r.note } : {}),
               };
             }),

@@ -39,11 +39,7 @@ function input(o: Partial<PlanInput> & { actor: Actor }): PlanInput {
   };
 }
 const shape = (rows: PlannedRow[]) =>
-  rows.map((r) => [
-    r.kind,
-    r.to === "all" ? "all" : "agentId" in r.to ? r.to.agentId : `u:${r.to.userId}`,
-    r.notice,
-  ]);
+  rows.map((r) => [r.kind, "agentId" in r.to ? r.to.agentId : `u:${r.to.userId}`, r.notice]);
 
 test("1 create with an assignee", () => {
   const rows = plan(input({ actor: or, before: null }));
@@ -140,29 +136,6 @@ test("10 an agent's comment: to the mentioned agent and human, not to itself", (
   ]);
   expect(rows[1]?.inboxKind).toBe("mention");
   expect(rows[0]?.wake).toBe("task_message");
-});
-test("11 a human's comment with @humans", () => {
-  const rows = plan(
-    input({
-      actor: or,
-      comment: { id: "k1", body: "@humans", mentionedAgentIds: [], mentionedUserIds: "all" },
-    }),
-  );
-  expect(shape(rows)).toEqual([
-    ["task_comment", "dev", undefined],
-    ["task_comment", "all", undefined],
-  ]);
-  expect(rows[0]?.wake).toBe("human");
-  expect(rows[1]).toMatchObject({ inboxKind: "mention", exceptUserId: "or" });
-});
-test("12 @humans wins over a named user", () => {
-  const rows = plan(
-    input({
-      actor: agent("qa"),
-      comment: { id: "k1", body: "x", mentionedAgentIds: [], mentionedUserIds: "all" },
-    }),
-  );
-  expect(shape(rows).filter((r) => r[1] === "all")).toHaveLength(1);
 });
 test("13 the assignee mentioned too gets one row", () => {
   const rows = plan(

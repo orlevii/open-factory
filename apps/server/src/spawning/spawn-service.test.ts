@@ -241,7 +241,8 @@ test("refusals spend nothing: template not allowed, taken explicit suffix, over 
   const afterRate = { folders: folders(t), agents: await agentCount(t) };
   expect(await spawn({})).toEqual({
     ok: false,
-    message: "You've spawned 3 agents in the last hour; ask @humans if you need more.",
+    message:
+      "You've spawned 3 agents in the last hour; ask a human (list_peers lists them) if you need more.",
   });
   expect(folders(t)).toEqual(afterRate.folders);
   expect(await agentCount(t)).toBe(afterRate.agents);
@@ -476,7 +477,7 @@ test("a template that is missing or invalid on disk is refused before anything i
   const before = folders(t);
   expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({
     ok: false,
-    message: "Template dev is missing or invalid; ask @humans to fix it.",
+    message: "Template dev is missing or invalid; ask a human (list_peers lists them) to fix it.",
   });
   expect(folders(t)).toEqual(before);
 });
@@ -487,9 +488,26 @@ test("the spawner's template copy deny rules are read; an unreadable copy refuse
   const before = folders(t);
   expect(await t.app.spawner.spawn(lead.id, args(), null)).toEqual({
     ok: false,
-    message: "Your template copy can't be read; ask @humans to re-sync you.",
+    message:
+      "Your template copy can't be read; ask a human (list_peers lists them) to re-sync you.",
   });
   expect(folders(t)).toEqual(before);
+});
+
+test("a caller with a manager is told to ask its manager", async () => {
+  const { t, lead } = await setup();
+  const boss = await t.seedAgent({ slug: "boss" });
+  await t.sql`update agents set reports_to = ${boss.id} where id = ${lead.id}`;
+  writeTemplate(t.factoryHome, "dev", "name: dev\nruntime: nonsense\n");
+  expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({
+    ok: false,
+    message: "Template dev is missing or invalid; ask your manager to fix it.",
+  });
+  writeFileSync(path.join(templateCopyDir(t.factoryHome, "lead"), "settings.json"), "{not json");
+  expect(await t.app.spawner.spawn(lead.id, args(), null)).toEqual({
+    ok: false,
+    message: "Your template copy can't be read; ask your manager to re-sync you.",
+  });
 });
 
 function serviceDeps(app: T): ConstructorParameters<typeof SpawnService>[0] {

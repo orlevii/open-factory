@@ -325,11 +325,11 @@
 }
 
 /* Live arrival (U3 §5.2, §8.3): a row that arrived by a live frame and replaces nothing on screen,
-   the Chat's working line and the activity line fade in once when inserted. `@starting-style` applies on insertion only,
+   the Chat's working line and the activity line fade in once when inserted live (`data-live`, never on load). `@starting-style` applies on insertion only,
    so a re-render never replays it; reduced motion keeps the fade (opacity only). */
 [data-row-wrap][data-live],
 [data-status-line][data-live],
-[data-activity-line] {
+[data-activity-line][data-live] {
   transition: opacity 150ms var(--ease-out);
   @starting-style {
     opacity: 0;

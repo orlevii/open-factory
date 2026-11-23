@@ -74,6 +74,10 @@ export function SessionView({
     void qc.prefetchQuery(commandsQueryOptions(slug));
   }, [qc, slug]);
   const loaded = s.state.agent;
+  // The turn open when the session loaded: its activity line never fades (only a later turn's does).
+  const [loadedTurn, setLoadedTurn] = useState<string | null>();
+  if (loaded && loadedTurn === undefined)
+    setLoadedTurn(loaded.turnOpen ? String(s.state.turnEpoch) : null);
   // The layout's agent (the cached list's summary until the detail loads) shows until the session has
   // loaded; its state takes over then. A summary the layout brought (a terminate, a pin, a refetch)
   // is adopted once, never an old one on a remount.
@@ -279,6 +283,7 @@ export function SessionView({
                     startedAt={agent.turnStartedAt}
                     turnKey={String(s.state.turnEpoch)}
                     compacting={agent.compacting === true}
+                    fade={loadedTurn !== undefined && String(s.state.turnEpoch) !== loadedTurn}
                   />
                 )}
                 {queueItems}

@@ -121,6 +121,8 @@ test("an open turn shows the activity line under the last row, above the queue; 
   await screen.findByText("Two entries.");
   const line = document.querySelector("[data-activity-line]");
   expect(line).toBeInTheDocument();
+  // Loaded with the turn already open: no fade on mount.
+  expect(line).not.toHaveAttribute("data-live");
   expect(document.querySelector("[data-working-line]")).not.toBeInTheDocument();
   const rows = document.querySelectorAll("[data-row-wrap]");
   const lastRow = rows[rows.length - 1] as Element;
@@ -144,6 +146,25 @@ test("an open turn shows the activity line under the last row, above the queue; 
   );
   await vi.waitFor(() =>
     expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument(),
+  );
+});
+
+test("an activity line that appears from a live frame fades in", async () => {
+  routes["/api/agents/dev"] = () => json(detail({ status: "idle", turnOpen: false }));
+  renderApp("/agents/dev/session", alice);
+  await screen.findByText("Two entries.");
+  act(() =>
+    ws.onMessage?.({
+      type: "agent_status",
+      agent: "dev",
+      status: "working",
+      turnOpen: true,
+      restartPending: false,
+      restartWaitingOn: 0,
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(document.querySelector("[data-activity-line]")).toHaveAttribute("data-live"),
   );
 });
 

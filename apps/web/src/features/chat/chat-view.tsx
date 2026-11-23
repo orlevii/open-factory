@@ -27,15 +27,9 @@ import { useStickToBottom } from "@/features/session/stick-to-bottom";
 import { ARRIVAL_MS, arrive } from "@/features/session/timeline";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { sessionQueryOptions } from "@/lib/session";
-import {
-  type Arrival,
-  type CancelNote,
-  ChatRow,
-  outcomeSentence,
-  rowGap,
-  StatusLine,
-} from "./chat-row";
+import { type Arrival, type CancelNote, ChatRow, rowGap } from "./chat-row";
 import { entryKey, keysOf } from "./chat-state";
+import { outcomeSentence, TurnLine } from "./turn-line";
 import { useChat } from "./use-chat";
 
 const toHandle = (s: { user: { handle: string } } | null) => s?.user.handle;
@@ -221,7 +215,7 @@ function Thread({
         const key = entryKey(e);
         if (e.kind === "turn_outcome")
           return (
-            <StatusLine
+            <TurnLine
               key={key}
               slug={slug}
               name={agentName}
@@ -273,7 +267,7 @@ function Thread({
   if (loaded && baseline === undefined) setBaseline(working?.key ?? null);
   const workingEl =
     working && !entries.some((e) => e.kind === "turn_outcome" && e.key === working.key) ? (
-      <StatusLine
+      <TurnLine
         key={`turn:${working.key}`}
         slug={slug}
         name={agentName}

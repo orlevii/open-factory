@@ -31,7 +31,8 @@ Onboard one agent, tell it about your org, and let it build the structure: templ
 - **Secrets and credentials are stated honestly** (Q3.6, R3d; flagged). No tool ever returns a secret or credential value.
   - An agent that can grant any existing secret or credential to any agent, itself included, can still read the value indirectly: it asks an agent it controls to print its env.
   - `get_template` and `get_agent` return the literal values humans typed into env or MCP headers. Those aren't factory secrets.
-  - The guards in §6.2 close the **silent** channels: proxies, CA overrides, `${CREDENTIAL}` references in MCP config, and loaders. The visible channel is documented, not guarded.
+  - The env and reference guards in §6.2 stop **declarative redirects of Claude's own traffic**: base URL, proxies, CA overrides, loaders, and `${CREDENTIAL}` references in MCP config.
+  - They don't stop **code an agent adds**: a stdio MCP server or a Bash allow rule on another agent runs with that agent's env, credential included. That is the same trust as the visible channel. It is recorded in the change log, documented, and not guarded (R10): agents it manages run what it configures, with their own credentials.
   - The Edit agent help text and the Administration doc say so: "grant it like admin access and keep sensitive values in secrets".
 - **No local runtime for agent actors** (R1). An agent can't create, edit or copy anything that runs on the host. That rule isn't in the task spec. Without it, `manage_org` would be host access.
 - **Toasts merge per actor** (R8). Several creates from one agent within 2 s show one toast ("@hr created 3 agents"), not one each.
@@ -199,7 +200,7 @@ agentPolicyIssues(i: {
   store: { installed: ReadonlySet<string>; registry: ReadonlyMap<string, unknown> }; // pre-loaded by the caller (the store reads are async)
 }): TemplateIssue[]
 
-touchesLocalRuntime(i: { templateRuntime?: Runtime; agentRuntime?: Runtime; canSpawnRuntimes?: Runtime[] }): boolean
+touchesLocalRuntime(i: { templateRuntime?: Runtime; templateHasLocalAgents?: boolean; agentRuntime?: Runtime; canSpawnRuntimes?: Runtime[] }): boolean
 ```
 
 - **Pure.** Both functions are pure and live in shared. The server callers load the inputs: the template's parse, the store's installed keys, the registry entries, and the runtimes of the templates named in `can_spawn`.
@@ -233,9 +234,9 @@ touchesLocalRuntime(i: { templateRuntime?: Runtime; agentRuntime?: Runtime; canS
    
    Refusal: "HTTPS_PROXY can only be set by a human."
    
-   **References.** A `${X}` in an MCP server's `env` values, `headers` values, `args` or `url`, where `X` is a refused name, is refused too. Without this, `Authorization: ${CLAUDE_CODE_OAUTH_TOKEN}` would send another agent's credential to any URL. Refusal: "MCP server x can't reference CLAUDE_CODE_OAUTH_TOKEN."
+   **References.** A `${X}` or `${X:-…}` in **any string** of an MCP server entry (`command`, `args`, `url`, `env` values, `headers` values, and any other field), where `X` is a refused name, is refused too. Without this, `Authorization: ${CLAUDE_CODE_OAUTH_TOKEN}` would send another agent's credential to any URL. Refusal: "MCP server x can't reference CLAUDE_CODE_OAUTH_TOKEN."
    
-   These guards close the **silent** channels. The visible one, asking a controlled agent to print its env, is documented (§1.1), not guarded.
+   These guards stop declarative redirects of Claude's own traffic. Code an agent adds (stdio servers, allow rules) runs with the target's env, and that is stated (§1.1, R10), not guarded.
 5. **Plugins only from the store** (Q3.1). Each `enabledPlugins` key that is added must be in `store.installed`: installed in the factory store by a human (I5 §7.2). For a template, each `extraKnownMarketplaces` entry that is added or changed must equal `store.registry.get(name)` exactly, which is what the I5 form writes. The overlay can't carry `extraKnownMarketplaces` at all (I2 S2). Refusals: "Plugin x@y isn't installed in the factory. Ask a human to install it in Skills." and "Marketplace acme must match the factory's registry."
 6. **MCP servers:**
    - a server named `factory` is refused (as I2 already does);
@@ -246,6 +247,7 @@ touchesLocalRuntime(i: { templateRuntime?: Runtime; agentRuntime?: Runtime; canS
    - write the overlay or identity of an agent whose `runtime` is `local`, including archive and unarchive;
    - write a local template's files;
    - copy from a local template;
+   - write or copy from a template that any non-terminated agent row (persistent or spawned, archived included) runs on with `runtime = 'local'` (R9). `agents.runtime` is fixed at creation (I2 §6.6), so a template a human switched from local to docker can still drive host agents. This is derived from existing rows (`templateHasLocalAgents`), and nothing new is stored;
    - add a template whose runtime is `local` to any `can_spawn`, in a template or an overlay.
    
    An agent's template can't be changed after creation (`patchAgentBodySchema` has no `template`), so there is no indirect route through re-templating. `restart_agent` and the read tools stay allowed for local agents.
@@ -310,8 +312,7 @@ Registered together by `orgTools(d)` (`mcp/tools/org-tools.ts`, one file per gro
   - `manageOrg` from an agent actor is refused;
   - self-archive is refused;
   - no tool or service path reaches users, invites, secret or credential values, `resetSession`, or the Library writes;
-  - removing restrictions is refused (§6.2.2).
-
+  - removing restrictions is refused (§6.2.2);
   - unarchiving a `manage_org` target is refused;
   - every local-runtime write is refused (§6.2 rule 8).
 
@@ -339,7 +340,22 @@ Registered together by `orgTools(d)` (`mcp/tools/org-tools.ts`, one file per gro
 1. checks `baseHash` against the file on disk (409 on a miss);
 2. computes the issues of the whole template as it would be written: `validate(name, file, content)`, the existing method (`:272`). For an agent actor it also runs `touchesLocalRuntime` and `agentPolicyIssues` (§6.1);
 3. refuses on **errors the write caused**, meaning errors absent from the current template's issues, compared by `message` and `path` (I2's overlay rule). An agent can therefore still edit, and fix, a template that is already broken in another file. Humans keep today's behaviour of saving with errors, because their editor shows them;
-4. records the write's author before the rename, then writes with temp + rename and scans once. The author goes in an in-memory map, `writtenBy.set(name, { actor, lastValidHash })`, where `lastValidHash` is the `ConfigDoc` hash the write will produce. When I2's compare-and-set winner dispatches `templateChanged` and the new hash equals the recorded one, it takes `by` and the actor from this entry, whoever ran the scan; otherwise `by` is `"file change"`. The entry is removed once it is used, or by the next write. So the attribution, the self-wake (§9.5) and the manager notice (§8.2) never depend on which scan wins.
+4. records the write's author before the rename, then writes with temp + rename and scans once, still inside the lock.
+   - The author is recorded only when the write leaves the template valid **and** changes its `ConfigDoc` hash. An `AGENTS.md`-only write, or a write into a template that is still broken, changes nothing that dispatches.
+   - It goes in an in-memory map, `templateAuthors.set(name, { actor, expectedHash })`, where `expectedHash` is the hash the write produces.
+   - When I2's compare-and-set winner dispatches `templateChanged` and the new hash equals `expectedHash`, the winner takes `by` and the actor from the entry, whoever it is (this writer's scan, a watcher, or a start's `loadValid`). Otherwise `by` is `"file change"`.
+   - The entry is removed once it is used. The scan runs inside the lock, so a second writer can't replace the entry before then.
+   
+   So the attribution, the self-wake (§9.5) and the manager notice (§8.2) never depend on which scan wins.
+
+**Every template write path takes the lock:**
+- `writeFile`;
+- I2's `PUT /api/templates/:name/config` (its three-file write);
+- `create`, `copyFrom` and `remove`.
+
+The policy's `can_spawn` runtime lookups read other templates' last valid parse from the DB index, never through their locks, so two templates that name each other can't deadlock.
+
+**Links.** For agent writes, a template folder that is a symlink, or a target file that is a link, is refused ("x is a link; ask a human."), matching `get_template`'s `lstat` rule. Human writes keep today's behaviour.
 
 `create` and `copyFrom` take the same lock.
 
@@ -403,7 +419,9 @@ Registered together by `orgTools(d)` (`mcp/tools/org-tools.ts`, one file per gro
   
   The text uses I2's `summarizeChanges`, never values.
   - It is **passive**: `isPassive` grows to `crons_stopped | config_changed | report_config_changed`, so it never wakes the manager.
-  - It accumulates per report: one pending notice per (manager, report), with the lines unioned. `EventStore.createNotice`'s merge mode keys today on (agent, notice type) only (`event-store.ts:1063`); it gains `subjectAgentId` (the existing `messages.subject_agent_id` column) in both the match and the insert.
+  - It accumulates per report: one pending notice per (manager, report), with the lines unioned. Today `EventStore.createNotice` keys on (agent, notice type) only and replaces the body (`event-store.ts:1063`). I7 changes it in two ways:
+    - it adds `subjectAgentId` (the existing `messages.subject_agent_id` column) to both the match and the insert;
+    - its merge mode (I2's, shared with `config_changed`) reads the pending row `FOR UPDATE`, unions the parsed lines with the new ones, sorts them, and writes the body back in the same transaction, so two concurrent changes never drop a line.
   - A top-level target has no manager, so no notice is sent. The event and the change log are its record.
 
 ### 8.3 Humans
@@ -428,61 +446,64 @@ Registered together by `orgTools(d)` (`mcp/tools/org-tools.ts`, one file per gro
   - archived or terminated targets, with the messaging refusal sentences;
   - "@x isn't one of your direct reports." (no `manage_org`).
 - **`note`:** at most 64 KB, the `send_message` body limit.
-- **The call returns at once.** The result is `{target: "@dev", status: "restarting" | "not_running" | "restarted_idle", note}`. It never waits for the start.
+- **The call returns at once.** The result is `{target: "@dev", status: "restarting" | "restart_pending" | "not_running" | "restarted_idle", note}`. It never waits for the start.
 
 ### 9.2 Runtime: `restartNow`
 
 `AgentRuntime.restartNow({by, force, changes}): Promise<RestartOutcome>` is one method for agents and humans, run in the runtime's `apiJob`. It replaces the errored-only `restart()`, which is deleted (ADR 0028; T2).
 
-- `changes` (`string[] | null`) is computed **by the caller, outside the job**: the tool or route runs `describeChanges(runtime.started.doc, resolver.effective(agent).doc)` and passes the result in. The resolver reads the disk and may scan, so it never runs inside the runtime's job. The value is `null` when the resolver fails, for example on a broken template; the restart still goes ahead, and the start then fails closed with I2's error.
-- Every refusal is a `RecoveryRefusedError` with a code. `apiJob` already passes that error through (`agent-runtime.ts:1801`), so a refused restart never stops or errors its target. A test asserts this for `lost_work`.
+- **`changes`** (`string[] | null`) is computed **by the caller, outside the job**: the tool or route runs `describeChanges(runtime.started.doc, resolver.effective(agent).doc)`. The resolver reads the disk and may scan, so it never runs inside the runtime's job. The value is `null` when the resolver fails (a broken template). The restart still goes ahead, and the start then fails closed with I2's error.
+- **Refusals** are `RecoveryRefusedError(code, message, data?)`. The error gains an optional `data` (`{tasks, crons}` for `lost_work`). `RecoveryRefusal` gains `starting`, `stopping`, `compacting` and `lost_work`, and loses `not_errored`. `apiJob` already passes this error through (`agent-runtime.ts:1801`), so a refused restart never stops or errors its target; a test asserts it for `lost_work`. The route forwards `data` (§9.4).
+- **Idempotent while pending.** A second `restartNow` while `restartNowPending` is set returns `restarting` and replaces `by` and `changes`.
 
-**Checks, in order.** The first that matches decides.
+**Checks, in order.** The first that matches decides. "Lost work" is `lostSnapshot()`: live non-ambient background tasks and in-session crons, the lists `background_work_lost` reports.
 
 | # | State | Outcome |
 |---|---|---|
 | 1 | Terminated / archived | `AgentTerminatedError` / `AgentArchivedError` |
 | 2 | A start or recovery attempt under way (`starting`, `attempting`, or a process not yet `started`) | Refused, `starting`: "@dev is starting; try again shortly." |
-| 3 | Compacting (`compactInFlight`) | Refused, `compacting`: "@dev is compacting; try again when it finishes." |
-| 4 | Errored, `resume_unrecoverable` | Refused, `resume_unrecoverable`: "@dev's session can't be resumed; a human must start a new session." |
-| 5 | Errored (other kinds) | Today's Restart, unchanged: the `restart` notice "Restarted by @lead after an error." (waking; `by` may now be an agent), `control{restart}`, then force-stop any leftover process and make one attempt that resumes the session |
-| 6 | No process (hibernated or not loaded) | Nothing stopped. `{status: "not_running"}` |
-| 7 | Lost work and `force` not set | Refused, `lost_work`: "@dev has 2 background tasks (`pnpm test`, `vite dev`) and 1 cron; pass force: true to restart anyway." The data carries `{tasks, crons}` from `lostSnapshot()`, the same lists that `background_work_lost` reports |
-| 8 | Running, **turn work** (§9.2.1) | A cut restart (§9.2.1). `{status: "restarting"}` |
-| 9 | Running, no turn work | An idle restart (§9.2.2). `{status: "restarted_idle"}` |
+| 3 | A stop under way (`stopping`, or the process is `deadProc`/`failingProc`): a hibernate, Stop crons, archive, or an earlier forced stop | Refused, `stopping`: "@dev is stopping; try again shortly." |
+| 4 | Compacting (`compactInFlight`) | Refused, `compacting`: "@dev is compacting; try again when it finishes." |
+| 5 | Errored, `resume_unrecoverable` | Refused, `resume_unrecoverable`: "@dev's session can't be resumed; a human must start a new session." |
+| 6 | Errored (other kinds) | Today's Restart, unchanged: the waking `restart` notice "Restarted by @lead after an error." (`by` may now be an agent), `control{restart}`, then force-stop any leftover process and make one attempt that resumes the session |
+| 7 | No process (hibernated or not loaded) | Nothing stopped. `{status: "not_running"}` |
+| 8 | Lost work and `force` not set | Refused, `lost_work`: "@dev has 2 background tasks (`pnpm test`, `vite dev`) and 1 cron; pass force: true to restart anyway." |
+| 9 | Running with **turn work** (§9.2.1) | A cut restart with an interrupt (§9.2.1). `{status: "restarting"}` |
+| 10 | Running, no turn work, lost work (`force` set) | A cut restart now, without an interrupt (§9.2.1, step 3 at once; R11). `{status: "restarting"}` |
+| 11 | Running, no turn work, nothing lost, task notifications still owed (`owedNotifications > 0`) | Not stopped now, because that would drop a finished task's result: `requestRestart(id, {changes})`, the existing restart-when-idle path, which the owed bound releases within about 30 s (`:3400`). `{status: "restart_pending", note: "@dev restarts in a moment, once a finished task's result is delivered."}` |
+| 12 | Running, idle, nothing lost or owed | An idle restart (§9.2.2). `{status: "restarted_idle"}` |
 
-**The local runtime.** Rows 5 and 8 start a process. For a target whose runtime is `local`, while the local runtime is disabled, they are refused with `runtime_disabled`, as today's Restart is. Row 9 doesn't start anything, so it is allowed.
+**The local runtime.** Rows 6, 9 and 10 start a process. For a target whose runtime is `local`, while the local runtime is disabled, they are refused with `runtime_disabled`, as today's Restart is. Rows 11 and 12 start nothing.
 
 **A paused credential** (rate limited) needs no special case. The started process holds its deliveries until the reset wake, as it does today.
 
-#### 9.2.1 Cut restart (a turn is open or owed)
+#### 9.2.1 Cut restart
 
 "Turn work" means any of these:
 - `openTurnId` is set;
-- `inFlight` is non-empty (a batch was written, and its turn hasn't started);
-- `awaiting` is non-empty;
+- `awaiting` is non-empty (a batch was written with no open turn);
 - `commandInFlight` is set;
 - an interrupt `hold` is active.
 
-The steps:
-1. Set `restartNowPending = { by, changes }` (cleared on any exit).
-2. If a turn is open and there is no hold, `beginInterruptHold(by)` (the urgent mechanism). An existing hold (a Stop, or an urgent send) is reused, not replaced. If a batch was written but its turn hasn't started, the `turn_started` handler sees `restartNowPending` and interrupts then. A raw command's turn is treated the same way.
-3. Both release points, `turn_end` (`agent-runtime.ts:2668`) and the hold timeout (`:3517`), check `restartNowPending` **before** `flush()`. When it is set, nothing is flushed to the old process. Instead `beginRestartNowStop()` runs:
+`inFlight` (written before `session_started`) is already refused by row 2.
+
+1. **Hold all writes.** Set `restartNowPending = { by, changes }`. `flush()` gains `!this.restartNowPending` in its while-guard, next to `!this.stopping`, and in the held-due write after the loop. So **nothing** is written to the old process from then on: not the note, not a delivery, not a timer-driven held item. Any exit clears `restartNowPending`, and so does `stop()`, as it clears `restartPending`.
+2. **Interrupt.** If a turn is open and there is no hold, `beginInterruptHold(by)` (the urgent mechanism). An existing hold (a Stop, or an urgent send) is reused, not replaced. If an `awaiting` batch's turn hasn't started, the `turn_started` handler sees `restartNowPending` and interrupts then. If `commandInFlight` is set with no open turn, nothing is interrupted, because that turn may never come (`interrupt()`, `:845`). It goes straight to step 3, as `interrupt()` clears the barrier.
+   - **A bound.** Setting `restartNowPending` also arms the same `holdTimeoutMs` fallback the interrupt hold uses. If no release point has fired when it expires, it runs step 3.
+3. **Stop** (`beginRestartNowStop()`), from the first of `turn_end` (`:2668`), the hold timeout (`:3517`) or the fallback. It is checked **before** `flush()`, and it does nothing when `this.stopping` is set (an archive or shutdown that began meanwhile wins):
    - `markAttempting("restart")`, so the exit job makes the attempt and its wake (`:2917`);
-   - a fresh `lostSnapshot()`. Tasks or crons started during the interrupt window are killed too, and reported. The caller was told the target would restart, and the interrupted turn started them seconds ago (T4);
+   - a fresh `lostSnapshot()`. Tasks started during the interrupt window are killed too, and reported (T4);
    - `control{cmd: "restart", by}`;
-   - the **waking** notice `restart_applied`: "Restarted by @lead to apply: model, 1 skill. Continue where you left off." With `changes` empty or null: "Restarted by @lead. Continue where you left off." The lost tasks and crons sentences are appended, as in `notices.restart`;
+   - the **waking** notice `restart_applied`: "Restarted by @lead to apply: model, 1 skill." ("Restarted by @lead." when `changes` is empty or null), then the stopped tasks and crons sentences as in `notices.restart`, then "Continue where you left off.";
    - `beginForceStop({kind: "restart", by}, {graceMs: 3000, termWaitMs: 10_000})`.
-4. The exit runs today's restart attempt, which resumes the same session. `inFlight` batches are requeued by the exit (`:2808`). An `awaiting` batch is reported as `batchUnanswered`, as on any cut exit, and its messages stay pending.
+4. **The exit** runs today's restart attempt, which resumes the same session. An `awaiting` batch whose turn never started (the fallback fired) was marked delivered when it was written (`writeBatch`, `:3770`) and is dropped by `onExited` (`:2823`). `beginRestartNowStop` therefore sets those rows back to pending and requeues them first: a possible duplicate is better than a lost message.
 5. **Attempt rules apply.** A failed start ends errored, with no automatic retry, as with Restart today.
 
-#### 9.2.2 Idle restart (no turn work)
+#### 9.2.2 Idle restart (row 12)
 
-- `beginHibernate("apply_changes", { force: true })`. The new `force` option skips the `busy()` refusal (`:3179`), which is otherwise true while live non-ambient tasks or owed task notifications remain. The stop's intent is the usual hibernate intent with its lost snapshot. A hibernate is a restart: the next start reads the latest config.
-- **Notices:**
-  - I2's **passive** `config_changed` gets the `changes` lines (no notice when there are none);
-  - with `force` and lost work, today's `background_work_lost` and, for crons, the non-passive `restart_crons` notice report it.
-- **No turn is spent** unless crons were stopped (`restart_crons` wakes the agent so it can recreate them) or a note is sent (§9.3).
+- `beginHibernate("apply_changes")`. Nothing is busy, so it isn't refused. A hibernate is a restart: the next start reads the latest config.
+- I2's **passive** `config_changed` gets the `changes` lines (no notice when there are none).
+- **No turn is spent** unless a note is sent (§9.3).
 
 Other rules:
 - `restartPending` (restart when idle) is cleared by any restart, as today.
@@ -491,7 +512,7 @@ Other rules:
 ### 9.3 The note
 
 When the call isn't refused, `note` is sent as an ordinary message from the caller to the target, through the Router's list `send(from: caller, to: [target], body: note)` (Q6, Q7). It is sent after `restartNow` returns.
-- In a cut restart, `restartNowPending` keeps it from being flushed to the old process (§9.2.1 step 3).
+- In a cut restart, `restartNowPending` keeps every write, the note included, away from the old process (§9.2.1 step 1).
 - Notices sort first in a batch (`addNotice` ordering), so the first turn after the restart reads the notice, then the note in a normal envelope (`from="@lead" from_kind="agent"`).
 - For a hibernated or idle target the message wakes it, which is the caller's intent.
 - Agent text never goes inside factory-voice text.
@@ -500,8 +521,8 @@ When the call isn't refused, `note` is sent as an ordinary message from the call
 
 - **Route.** `POST /api/agents/:slug/restart { force?: boolean }` computes `changes` (§9.2), then calls `restartNow({by: "@handle", force, changes})`. It returns:
   - 202 `{status}`;
-  - 409 `lost_work {tasks: string[], crons: string[]}`;
-  - 409 with the refusal codes above (`compacting`, `starting`, `resume_unrecoverable`, `runtime_disabled`, `agent_archived`, `agent_terminated`).
+  - 409 `lost_work` with `data: {tasks: string[], crons: string[]}` (the `recoveryError` mapper, `routes/agents.ts:381`, forwards `data`);
+  - 409 with the refusal codes above (`starting`, `stopping`, `compacting`, `resume_unrecoverable`, `runtime_disabled`, `agent_archived`, `agent_terminated`).
   
   The errored-only refusal `not_errored` is deleted.
 - **AgentMenu** (`features/agents/agent-menu.tsx`): "Restart now" on running, non-errored persistent and spawned agents. Errored agents keep "Restart", which calls the same route. Hibernated agents have neither.
@@ -514,14 +535,14 @@ When the call isn't refused, `note` is sent as an ordinary message from the call
      - action "Restart anyway" (crimson), which POSTs with `force: true`.
   3. Otherwise there is no confirm, even mid-turn (Q8; the session resumes, as with Stop).
   
-  Outcome toast: "Restarting @dev." or "@dev isn't running; its next start uses the latest config."
+  Outcome toast: "Restarting @dev.", "Restarts @dev when its task results are in." or "@dev isn't running; its next start uses the latest config."
 - **"Start a new session"** stays human-only and unchanged.
 
 ### 9.5 Self-edit wake
 
 When an agent's own config changes because of its own act, the restart must still happen without a human message. "Its own act" means its overlay through `update_agent`, a template it is built from through `write_template_file`, or an identity field that restarts it.
 - `ConfigChanges.apply` and `AgentService.update` call `requestRestart(id, {changes, wake: true})` when `actor.id === agent.id`. I2's `wake` slot does this.
-- The runtime keeps `pendingWake` beside `restartPending`, cleared on any exit that isn't this restart.
+- The runtime keeps `pendingWake` beside `restartPending`, cleared on any exit that isn't this restart. When Stop crons takes over the apply hibernate (`stopCrons`, `:907`), `pendingWake` is kept and honoured by that exit, so the agent still continues; its notice then also says the crons were stopped by the human.
 - **Timing (Q9, R2):** the existing `maybeRestart` path. The restart happens once the agent isn't `busy()`: its turn has ended and its background tasks have finished. Crons don't hold it back: an apply-restart stops them, as today (`beginHibernate`, `:3179`). Until the restart, the status line shows "Restarts when idle", and a human or its manager can Restart now.
 - **After the hibernate's exit,** when `pendingWake` is set, the exit job:
   1. adds a **waking** `config_continue` notice: "Restarted to apply your config changes. Continue where you left off." When crons were stopped it continues: "These crons were stopped: …; recreate them if you still need them." This replaces `restart_crons` for this exit, so there is one notice, not two;
@@ -575,7 +596,7 @@ No reset step is needed beyond I2's and I5's. Existing rows get the defaults.
 
 - **Trust.** `manage_org` is admin-equivalent over sandboxed agents and templates, short of the sandbox boundary, users and secret values. A human grants it knowingly (the help text says so).
 - **The boundary held:**
-  - nothing on the local runtime is written by an agent (rule 8);
+  - nothing on the local runtime is written by an agent, including templates that local agents still run on (rule 8, R9);
   - runtime, image and permission mode are frozen;
   - `defaultMode` and every command-running key outside the allowlist are refused;
   - plugins are only from the human-installed store;
@@ -584,7 +605,7 @@ No reset step is needed beyond I2's and I5's. Existing rows get the defaults.
 - **Values:**
   - no tool returns secret or credential values or host paths (AC 6's scan test);
   - `describeChanges` stays secret-safe (I2 Q10);
-  - the indirect read through granting a secret or credential, and literal values typed into config, are stated, not guarded (§1.1).
+  - stated, not guarded (§1.1): the indirect read through granting a secret or credential, literal values typed into config, and code an agent adds to another agent (stdio MCP servers, allow rules), which runs with that agent's credential.
 - **Fail closed:**
   - the tool list is per caller;
   - the flag is re-checked at call time;
@@ -603,7 +624,8 @@ No reset step is needed beyond I2's and I5's. Existing rows get the defaults.
 - a registry-mismatched marketplace is refused;
 - an MCP `factory` server is refused, and others pass;
 - each refused env group (case-insensitive), in `settings.env`, secret names and MCP `env`; a `${CLAUDE_CODE_OAUTH_TOKEN}` header refused; `permissions.ask` removal refused;
-- `touchesLocalRuntime` for each route: a local template, a local agent, a local template in `can_spawn`;
+- `touchesLocalRuntime` for each route: a local template, a local agent, a local template in `can_spawn`, a docker template with an archived local agent on it;
+- the `${X}` scan over `command`, `url` and the `${X:-…}` form;
 - the frozen comparison after schema defaults, and a copy's `before` being the source;
 - every `RESERVED_SETTINGS_KEYS` entry is outside `AGENT_EDITABLE` except the two plugin keys.
 
@@ -622,7 +644,12 @@ No reset step is needed beyond I2's and I5's. Existing rows get the defaults.
   - a cut restart never flushes a batch (the note included) to the old process;
   - an existing Stop hold is reused;
   - a written-but-not-started batch is interrupted at `turn_started`;
-  - an idle `force` restart with a live task hibernates (the `force` option of `beginHibernate`);
+  - an idle report with a live background task and `force` gets a cut restart with the waking notice naming the task (row 10);
+  - owed task notifications defer to restart-when-idle (row 11);
+  - a stop under way refuses with `stopping`, and an archive that begins during the interrupt wins;
+  - a raw command with no open turn, and the fallback timer, both reach the stop; an `awaiting` batch is requeued;
+  - no `flush()` path (delivery, held timer, notice) writes to the old process while `restartNowPending` is set;
+  - a second call while pending is idempotent;
   - `lost_work` without `force`;
   - `force` with a mid-turn interrupt, then resume and the waking notice;
   - idle: hibernate with the passive notice and no turn;
@@ -692,6 +719,9 @@ Rationale and alternatives are in the decision issue. **Bold** marks the ones fl
 | R6 | `permissions.ask` add-only; §1 reworded honestly (agents can loosen by adding, never remove a human restriction) | 4 |
 | R7 | Self-edits notify the editor's own manager; §6.4 lists the self-powers | 4 |
 | R8 | Toasts merge per actor within 2 s (a stated deviation) | 4 |
+| R9 | A template any non-terminated local agent runs on (archived included) is refused for agent writes and copies; folded into `touchesLocalRuntime` | 4 |
+| R10 | Honest scope: the env guards stop declarative redirects; agent-added code runs with the target's credential and is stated, not guarded; `${X}` scan over every string and `${X:-…}` | 4 |
+| R11 | `force` with lost tasks and no open turn: cut restart with the waking notice; owed notifications defer to restart-when-idle (`restart_pending`); idle with nothing lost: passive | 4 |
 | T1 | `Actor` passed to services (required, no default) for attribution, the policy and self rules | 5 |
 | T2 | `restartNow` replaces the errored-only `restart()`; an idle restart is a hibernate; the note is still delivered | 4 |
 | T3 | `agents.description_by` and `writtenBy` quoting for agent-written descriptions; a human edit clears it | **3** |

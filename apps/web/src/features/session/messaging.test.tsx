@@ -505,8 +505,9 @@ test("?message= for a delivered message loads the window around its recipient ev
     json({
       id: "mid",
       kind: "message",
-      from: "b",
-      to: "dev",
+      from: "@b",
+      fromKind: "agent",
+      to: "@dev",
       state: "delivered",
       recipientEvent: { agentSlug: "dev", seq: 7 },
     }),
@@ -518,7 +519,14 @@ test("?message= for a delivered message loads the window around its recipient ev
 
 test("?message= for a rejected message names who it wasn't delivered to", async () => {
   const api = lookupWorld(() =>
-    json({ id: "mid", kind: "message", from: "dev", to: "b", state: "rejected" }),
+    json({
+      id: "mid",
+      kind: "message",
+      from: "@dev",
+      fromKind: "agent",
+      to: "@b",
+      state: "rejected",
+    }),
   );
   api.on("GET /api/agents?ended=only", () =>
     json({
@@ -537,7 +545,14 @@ test("?message= for a rejected message names who it wasn't delivered to", async 
 
 test("?message= for a message you cancelled says so (U3 §6.4)", async () => {
   lookupWorld(() =>
-    json({ id: "mid", kind: "message", from: "@alice", to: "dev", state: "cancelled" }),
+    json({
+      id: "mid",
+      kind: "message",
+      from: "@alice",
+      fromKind: "human",
+      to: "@dev",
+      state: "cancelled",
+    }),
   );
   renderApp("/agents/dev?message=mid", alice);
   expect(await screen.findByText("You cancelled this message.")).toBeInTheDocument();
@@ -546,7 +561,14 @@ test("?message= for a message you cancelled says so (U3 §6.4)", async () => {
 
 test("?message= for a message rejected by a terminated recipient says it was terminated", async () => {
   const api = lookupWorld(() =>
-    json({ id: "mid", kind: "message", from: "dev", to: "b", state: "rejected" }),
+    json({
+      id: "mid",
+      kind: "message",
+      from: "@dev",
+      fromKind: "agent",
+      to: "@b",
+      state: "rejected",
+    }),
   );
   api.on("GET /api/agents?ended=only", () =>
     json({
@@ -582,7 +604,14 @@ test.each([
   "?message= for a rejected message is neutral when the recipient's state is unknown (%s)",
   async (_, ended) => {
     const api = lookupWorld(() =>
-      json({ id: "mid", kind: "message", from: "dev", to: "b", state: "rejected" }),
+      json({
+        id: "mid",
+        kind: "message",
+        from: "@dev",
+        fromKind: "agent",
+        to: "@b",
+        state: "rejected",
+      }),
     );
     api.on("GET /api/agents?ended=only", ended);
     renderApp("/agents/dev?message=mid", alice);
@@ -761,8 +790,9 @@ test("?message= highlights the row holding that envelope, not the event's first 
       json({
         id: "second",
         kind: "message",
-        from: "b",
-        to: "dev",
+        from: "@b",
+        fromKind: "agent",
+        to: "@dev",
         state: "delivered",
         recipientEvent: { agentSlug: "dev", seq: 1 },
       }),
@@ -816,7 +846,15 @@ test("held updates show as quiet lines from the queue", async () => {
     "GET /api/agents/dev": () =>
       json(
         detail({}, [
-          { id: "h1", kind: "held", from: "b", count: 2, waitReason: "turn", createdAt: AT },
+          {
+            id: "h1",
+            kind: "held",
+            from: "b",
+            fromKind: "agent",
+            count: 2,
+            waitReason: "turn",
+            createdAt: AT,
+          },
         ]),
       ),
     "GET /api/agents/dev/events?": () =>
@@ -992,6 +1030,7 @@ test("a pending task message shows its badge in the dashed block", async () => {
             id: "q1",
             kind: "message",
             from: "@factory",
+            fromKind: "factory",
             body: "Pending brief",
             taskKey: "T-9",
             taskTitle: "Queued task",

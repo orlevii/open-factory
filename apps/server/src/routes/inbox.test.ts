@@ -116,8 +116,9 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
   expect(before).toEqual({
     id: out.id,
     kind: "message",
-    from: "ada",
-    to: "bob",
+    from: "@ada",
+    fromKind: "agent",
+    to: "@bob",
     state: "pending",
     senderEvent: { agentSlug: "ada", seq: expect.any(Number) },
   });

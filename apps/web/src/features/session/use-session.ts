@@ -154,7 +154,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
               around = m.recipientEvent.seq;
               setMessageSeq(around);
             } else if (m.state === "rejected") {
-              setMessageNotice({ kind: "rejected", to: m.to });
+              // The lookup names the recipient as `@slug`; the notice holds the bare slug.
+              setMessageNotice({ kind: "rejected", to: m.to.replace(/^@/, "") });
             } else if (m.state === "cancelled") {
               setMessageNotice({ kind: "cancelled" }); // U3 §6.4
             }

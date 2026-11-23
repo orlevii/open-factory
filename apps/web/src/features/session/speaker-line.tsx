@@ -200,25 +200,35 @@ export function SpeakerProvider({
 const SLUG_CLASS = "@max-[20rem]:hidden";
 const NAME_CLASS = "font-medium text-foreground";
 
-/** Who a handle belongs to: from the envelope or a send result when it says, otherwise looked up
- *  (a handle is unique across kinds), never guessed from a sigil. */
+/** Who a handle belongs to: the server says (envelope, queue item, send result), never guessed from a
+ *  sigil. Only a call's own arguments carry no kind: those recipients are looked up (a handle is unique
+ *  across kinds). */
 export type PartyKind = "agent" | "human";
+/** A sender can also be the factory itself. */
+export type SenderKind = PartyKind | "factory";
 export type Party = { handle: string; kind?: PartyKind | undefined };
 
 const bareHandle = (h: string) => (h.startsWith("@") ? h.slice(1) : h);
 
 /** One side of a speaker line: an agent chip, a human's name and handle, or "You". */
-function Speaker({ id, kind, self }: { id: string; kind?: PartyKind | undefined; self: boolean }) {
+function Speaker({ id, kind, self }: { id: string; kind?: SenderKind | undefined; self: boolean }) {
   const s = useSpeakers();
   const handle = bareHandle(id);
-  const human = (kind ?? (s.isAgent(handle) ? "agent" : "human")) === "human";
-  const resolved = human ? undefined : s.agent(handle);
+  const known = kind ?? (s.isAgent(handle) ? "agent" : "human");
+  const human = known === "human";
+  const resolved = known === "agent" ? s.agent(handle) : undefined;
   // Only once the live list is in: before it, every slug is a stand-in.
   const needEnded = s.ready && !human && resolved?.agent.stub === true && !self;
   const { requestEnded } = s;
   useEffect(() => {
     if (needEnded) requestEnded();
   }, [needEnded, requestEnded]);
+  if (known === "factory")
+    return (
+      <span dir="auto" className="min-w-0 truncate font-mono text-foreground">
+        @{handle}
+      </span>
+    );
   if (resolved)
     return (
       <AgentChip
@@ -274,8 +284,8 @@ export function recipientSummary(handles: readonly string[]): string {
 /**
  * `[avatar 20] Name  @handle  14:02` (U3 §7.2): agents as a chip linking to their session (never
  * the session's own agent: `self`), humans by name or handle, your own messages "You". With `to`,
- * an outgoing card's "Name → Recipient", or "Name → @a, @b +8" for several (I1 §4.7). `children` (badges) follow the names; `status` takes the
- * time's place (queued, sending); `action` sits at the end.
+ * an outgoing card's "Name → Recipient", or "Name → @a, @b +8" for several (I1 §4.7). `children` (badges)
+ * follow the names; `status` takes the time's place (queued, sending); `action` sits at the end.
  */
 export const SpeakerLine = memo(function SpeakerLine({
   from,
@@ -289,8 +299,8 @@ export const SpeakerLine = memo(function SpeakerLine({
 }: {
   /** A handle, with or without its `@`. */
   from: string;
-  /** What `from` is, when the envelope says; otherwise looked up in the session's agents. */
-  fromKind?: PartyKind | undefined;
+  /** What `from` is; the server carries it on every sender, so it is never looked up or guessed. */
+  fromKind: SenderKind;
   /** An outgoing card's recipients, in send order. Keep the array identity stable across renders. */
   to?: readonly Party[];
   at?: string;

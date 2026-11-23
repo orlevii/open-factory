@@ -92,11 +92,11 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
       if (only.kind === "human")
         items.push({ kind: "inbox", label: "Open in inbox", messageId: only.id });
       else {
-        const to = only.to.replace(/^@/, "");
+        const bare = only.to.replace(/^@/, "");
         items.push({
           kind: "session",
-          label: `View in @${to}'s session`,
-          to,
+          label: `View in @${bare}'s session`,
+          to: bare,
           messageId: only.id,
         });
       }
@@ -115,14 +115,13 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
 
 const at = (name: string, iso: string | undefined) => (iso ? `${name} · ${formatTime(iso)}` : name);
 const handleOf = (who: string) => (/^[@#]/.test(who) ? who : `@${who}`);
-const handle = handleOf;
 
 /** The row's name on the phone drawer's title line (U4 §11.1): "Message from @or · 17:55",
  *  "Bash · 17:55", the agent for its own text. */
 export function rowMenuTitle(row: Row, slug: string): string {
   switch (row.kind) {
     case "message":
-      return at(`Message from ${handle(row.message.from)}`, row.at);
+      return at(`Message from ${handleOf(row.message.from)}`, row.at);
     case "peer": {
       // A neighborhood notice (peer_joined / peer_left), not a message.
       const who = row.envelope.subject?.slug;
@@ -142,7 +141,7 @@ export function rowMenuTitle(row: Row, slug: string): string {
     case "tool":
       return at(row.call.name, row.at);
     case "text":
-      return at(handle(slug), row.at);
+      return at(handleOf(slug), row.at);
     case "command":
       return at("Command", row.at);
     case "command_output":

@@ -13,7 +13,7 @@ import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } fro
 import { formatTime } from "./format";
 import { useLongPressRegion } from "./long-press-region";
 import { rowOf } from "./row-of";
-import { type PartyKind, SpeakerLine, useSpeakers } from "./speaker-line";
+import { type PartyKind, type SenderKind, SpeakerLine, useSpeakers } from "./speaker-line";
 import { stripAttachedLines } from "./uploads";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
@@ -109,11 +109,10 @@ export function formatDue(due: string): string {
   return `${p.weekday} ${p.day} ${p.month} ${p.hour}:${p.minute} ${off}`;
 }
 
-/** Who scheduled a message: `@slug` or `@handle` carry no kind, so an agent is whatever the session's
- *  agents list knows by that handle (handles are unique across kinds). */
-function ScheduledBy({ by }: { by: string }) {
+/** Who scheduled a message, by the kind the envelope carries (`byKind`). */
+function ScheduledBy({ by, kind }: { by: string; kind: PartyKind }) {
   const bare = by.startsWith("@") ? by.slice(1) : by;
-  return useSpeakers().isAgent(bare) ? (
+  return kind === "agent" ? (
     <AgentLink slug={bare} />
   ) : (
     <span className="font-mono text-foreground">@{bare}</span>
@@ -126,8 +125,8 @@ function ScheduledBy({ by }: { by: string }) {
 export function MessageBlock(props: {
   /** The sender's handle, with or without its `@`. */
   from: string;
-  /** The envelope's `fromKind` (human or agent); a queued item carries none, so it is looked up. */
-  fromKind?: PartyKind | undefined;
+  /** What the sender is: the envelope's or the queue item's `fromKind`. */
+  fromKind: SenderKind;
   system?: boolean;
   body: string;
   urgent?: boolean;
@@ -140,6 +139,8 @@ export function MessageBlock(props: {
   scheduled?: {
     key: string;
     by?: string | undefined;
+    /** What `by` is (the envelope's `byKind`). */
+    byKind?: PartyKind | undefined;
     /** ISO 8601 with the schedule zone's offset (the envelope's `due`). */
     due?: string | undefined;
     late?: boolean | undefined;
@@ -227,9 +228,9 @@ export function MessageBlock(props: {
   const extras = (
     <>
       {scheduled && <ScheduleBadge scheduleKey={scheduled.key} />}
-      {scheduled?.by && (
+      {scheduled?.by && scheduled.byKind && (
         <span className="text-muted-foreground">
-          by <ScheduledBy by={scheduled.by} />
+          by <ScheduledBy by={scheduled.by} kind={scheduled.byKind} />
         </span>
       )}
       {badge}

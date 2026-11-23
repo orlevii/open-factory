@@ -40,6 +40,7 @@ beforeEach(() => {
           id: "q",
           kind: url.endsWith("compact") ? "compact" : "message",
           from: "@alice",
+          fromKind: "human",
           createdAt: "x",
         },
       },
@@ -169,7 +170,10 @@ function deferred() {
   return { promise, resolve };
 }
 const accepted = () =>
-  json({ item: { id: "q", kind: "message", from: "@alice", createdAt: "x" } }, 202);
+  json(
+    { item: { id: "q", kind: "message", from: "@alice", fromKind: "human", createdAt: "x" } },
+    202,
+  );
 const status = (turnOpen: boolean) =>
   act(() =>
     ws.onMessage?.({
@@ -273,7 +277,12 @@ test("compact: a second submit while one is in flight posts nothing; success clo
   await userEvent.type(focus, "{Enter}");
   expect(posted).toHaveLength(1);
   expect(posted[0]).toEqual({ url: "/api/agents/dev/compact", body: {} });
-  d.resolve(json({ item: { id: "q", kind: "compact", from: "@alice", createdAt: "x" } }, 202));
+  d.resolve(
+    json(
+      { item: { id: "q", kind: "compact", from: "@alice", fromKind: "human", createdAt: "x" } },
+      202,
+    ),
+  );
   await vi.waitFor(() =>
     expect(screen.queryByRole("textbox", { name: "Focus (optional)" })).not.toBeInTheDocument(),
   );

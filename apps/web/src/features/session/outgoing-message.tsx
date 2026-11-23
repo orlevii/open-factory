@@ -23,10 +23,11 @@ const reachedSchema = z.object({
   recipient_status: z.string().optional(),
   note: z.string().optional(),
 });
-const sendResultsSchema = z.object({ results: z.array(z.union([refusedSchema, reachedSchema])) });
-
-type SendResults = z.infer<typeof sendResultsSchema>;
-export type RecipientResult = SendResults["results"][number];
+const recipientResultSchema = z.union([refusedSchema, reachedSchema]);
+export type RecipientResult = z.infer<typeof recipientResultSchema>;
+type SendResults = { results: RecipientResult[] };
+// Elements parse one by one: an entry the schema doesn't know is dropped, never the whole list.
+const sendResultsSchema = z.object({ results: z.array(z.unknown()) });
 
 /** Parsed results by event: a result event keeps its identity in the session's events map, so each
  *  is parsed once rather than on every frame. */
@@ -39,7 +40,14 @@ export function parseSendResults(result: OutgoingRow["result"]): SendResults | u
   let sent: SendResults | undefined;
   try {
     const r = sendResultsSchema.safeParse(JSON.parse(result.content));
-    sent = r.success ? r.data : undefined;
+    sent = r.success
+      ? {
+          results: r.data.results.flatMap((x) => {
+            const one = recipientResultSchema.safeParse(x);
+            return one.success ? [one.data] : [];
+          }),
+        }
+      : undefined;
   } catch {
     sent = undefined;
   }
@@ -221,7 +229,14 @@ function sendNote(row: OutgoingRow, sent: SendResults | undefined): ReactNode {
           Not sent to {who}: {r.reason}
         </span>,
       ];
+    // The server's note replaces the status text for that recipient (it already says what the status means).
     if (r.note) return [<span key={who}>{r.note}</span>];
+    if (r.status === "pending")
+      return [
+        <span key={who}>
+          Not delivered yet to <span className="font-mono">{who}</span>
+        </span>,
+      ];
     const state = r.kind === "agent" ? STATUS_TEXT[r.recipient_status ?? ""] : undefined;
     return state
       ? [

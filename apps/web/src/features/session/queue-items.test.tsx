@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { renderInRouter } from "@/test/render-in-router";
@@ -422,4 +422,20 @@ test("Cancel on your own held command only; no Undo once cancelled", async () =>
   );
   expect(screen.getByText("Command cancelled.")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+});
+
+test("a queued item's sender is read by the kind it carries: an agent is a chip, a human a handle", async () => {
+  vi.useRealTimers();
+  const item = (id: string, from: string, fromKind: "agent" | "human") =>
+    ({ id, kind: "message", from, fromKind, body: id, createdAt: local(13, 59) }) as never;
+  renderInRouter(
+    <QueueItems
+      items={[item("a", "@gone-ab12", "agent"), item("h", "@orla", "human")]}
+      agent={agentSummary()}
+    />,
+  );
+  await waitFor(() => expect(document.querySelectorAll("[data-speaker-line]")).toHaveLength(2));
+  const lines = document.querySelectorAll<HTMLElement>("[data-speaker-line]");
+  expect(lines[0]?.querySelector("[style*='width: 20px']")).not.toBeNull();
+  expect(lines[1]?.querySelector("[style*='width: 20px']")).toBeNull();
 });

@@ -95,7 +95,7 @@ test("earlier pages prepend; status, queue and resync frames", () => {
     message: {
       type: "queue",
       agent: "dev",
-      items: [{ id: "q", kind: "compact", from: "@or", createdAt: "x" }],
+      items: [{ id: "q", kind: "compact", from: "@or", fromKind: "human", createdAt: "x" }],
     },
   });
   expect(s.queue).toHaveLength(1);
@@ -224,6 +224,7 @@ const qItem = (id: string) => ({
   body: id,
   urgent: false,
   from: "@or",
+  fromKind: "human" as const,
   createdAt: "2026-11-18T00:00:00.000Z",
 });
 

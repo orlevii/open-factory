@@ -17,7 +17,7 @@ export function CommandBlock({ by, text, at }: { by: string; text: string; at: s
   const cut = !all && text.length > CLAMP_CHARS;
   return (
     <div data-message-block className="rounded-lg border border-border bg-card py-2 pr-9 pl-3">
-      <SpeakerLine from={by} at={at}>
+      <SpeakerLine from={by} fromKind="human" at={at}>
         <span className="text-muted-foreground">ran a command</span>
       </SpeakerLine>
       <p dir="auto" className="font-mono text-sm [overflow-wrap:anywhere]">

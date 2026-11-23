@@ -57,6 +57,7 @@ const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
       body: "Morning review",
       scheduleKey: "S-3",
       by: "@or",
+      byKind: "human",
       due: "2026-11-23T09:00:00+01:00",
       ...o,
     },
@@ -106,7 +107,9 @@ test("a delivered scheduled block: Scheduler, the S-3 badge opening the schedule
 });
 
 test("late and firings add the notes; an agent author links to its session", async () => {
-  const { container } = renderEvents([scheduled({ late: true, firings: 3, by: "@lead" })]);
+  const { container } = renderEvents([
+    scheduled({ late: true, firings: 3, by: "@lead", byKind: "agent" }),
+  ]);
   await screen.findByText("Scheduler");
   expect(container.textContent).toContain(
     "due Mon 23 Nov 09:00 UTC+01:00 · delivered late · covers 3 runs",
@@ -114,11 +117,28 @@ test("late and firings add the notes; an agent author links to its session", asy
   expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/agents/lead");
 });
 
+test("an ended agent author, named by byKind, still reads as an agent (a chip, not a plain handle)", async () => {
+  renderEvents([scheduled({ by: "@gone-ab12", byKind: "agent" })]);
+  await screen.findByText("Scheduler");
+  expect(screen.getByRole("link", { name: /gone-ab12/ })).toHaveAttribute(
+    "href",
+    "/agents/gone-ab12",
+  );
+});
+
+test("a human author stays a plain handle even when the list is not loaded", async () => {
+  const { container } = renderEvents([scheduled({ by: "@or", byKind: "human" })]);
+  await screen.findByText("Scheduler");
+  expect(container.textContent).toContain("by @or");
+  expect(screen.queryByRole("link", { name: /@or/ })).toBeNull();
+});
+
 test("a pending scheduled item shows in the dashed block with the badge and 'covers 3 runs'", async () => {
   const item: QueueItem = {
     id: "q1",
     kind: "message",
     from: "@scheduler",
+    fromKind: "factory",
     body: "Check the build",
     scheduleKey: "S-5",
     firings: 3,

@@ -117,3 +117,78 @@ test("one recipient keeps the 'Name → Recipient' line, with its kind from the 
   expect(line).toHaveTextContent("@zed");
   expect(within(line).queryByRole("link")).toBeNull();
 });
+
+test("a pending recipient without a note still gets its line", async () => {
+  await show(row(["@y"], [{ to: "@y", kind: "agent", status: "pending", id: "m2" }]));
+  expect(screen.getByRole("article")).toHaveTextContent("Not delivered yet to @y");
+});
+
+test("a result element the schema doesn't know drops only itself", async () => {
+  await show(
+    row(
+      ["@x", "@y"],
+      [
+        { to: "@x", status: "refused", reason: "terminated", code: "terminated" },
+        { to: "@y", surprise: true },
+      ],
+    ),
+  );
+  expect(screen.getByRole("article")).toHaveTextContent("Not sent to @x: terminated");
+});
+
+test("a note replaces the status text for that recipient", async () => {
+  await show(
+    row(
+      ["@y"],
+      [
+        {
+          to: "@y",
+          kind: "agent",
+          status: "queued",
+          recipient_status: "hibernated",
+          id: "m1",
+          note: "Wakes @y.",
+        },
+      ],
+    ),
+  );
+  const card = screen.getByRole("article");
+  expect(card).toHaveTextContent("Wakes @y.");
+  expect(card.textContent).not.toContain("was hibernated");
+});
+
+test("a status without a note says so for an agent", async () => {
+  await show(
+    row(
+      ["@y"],
+      [{ to: "@y", kind: "agent", status: "queued", recipient_status: "hibernated", id: "m1" }],
+    ),
+  );
+  expect(screen.getByRole("article")).toHaveTextContent("Sent · @y was hibernated");
+});
+
+test("no result and no open turn says Not sent", async () => {
+  await show(row(["@x"], undefined, { turnOpen: false }));
+  expect(screen.getByRole("article")).toHaveTextContent("Not sent");
+});
+
+test("a failed call shows the tool's sentence, not per-recipient lines", async () => {
+  await show(
+    row(["@x"], undefined, {
+      result: {
+        type: "tool_result",
+        toolUseId: "t1",
+        content: "No one to send to.",
+        isError: true,
+      },
+    }),
+  );
+  expect(screen.getByRole("article")).toHaveTextContent("No one to send to.");
+});
+
+test("the result's kind is matched to the argument whatever its case", async () => {
+  await show(row(["@Ada2"], [{ to: "@ada2", kind: "agent", status: "inbox", id: "m1" }]));
+  const line = document.querySelector("[data-speaker-line]") as HTMLElement;
+  // An agent by the result's word, so a chip (beside Ada's own), though the index doesn't know it.
+  expect(line.querySelectorAll("[style*='width: 20px']")).toHaveLength(2);
+});

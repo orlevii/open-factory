@@ -54,6 +54,10 @@ export const credentials = pgTable(
     kind: text("kind").notNull().$type<"oauth_token" | "api_key">(),
     valueEnc: bytea("value_enc").notNull(),
     lastVerifiedAt: ts("last_verified_at"),
+    // I3: when a Sign in with Claude token stops working, when the expiry notice went out, when Claude last rejected it.
+    expiresAt: ts("expires_at"),
+    expiryNotifiedAt: ts("expiry_notified_at"),
+    rejectedAt: ts("rejected_at"),
     lastError: text("last_error"),
     rateLimitedUntil: ts("rate_limited_until"),
     rateLimitExact: boolean("rate_limit_exact").notNull().default(true),

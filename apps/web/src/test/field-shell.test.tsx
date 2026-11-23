@@ -115,3 +115,19 @@ test("TokenField shows a warning in its note, not in a second alert", () => {
     "Couldn't reach Claude. Try again.",
   );
 });
+
+test("TokenField shows the OAuth help for oauth_token only", () => {
+  const props = {
+    name: "credential-value",
+    label: "Token",
+    value: "",
+    onChange: () => {},
+    verdict: {},
+  };
+  const { rerender } = render(<TokenField {...props} kind="oauth_token" />);
+  expect(screen.getByLabelText("Token")).toHaveAccessibleDescription(
+    "Create one with claude setup-token.",
+  );
+  rerender(<TokenField {...props} kind="api_key" />);
+  expect(screen.getByLabelText("Token")).not.toHaveAccessibleDescription();
+});

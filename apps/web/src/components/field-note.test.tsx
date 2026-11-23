@@ -29,6 +29,25 @@ test("warning uses the error layer without crimson", () => {
   expect(layer).toHaveAttribute("data-tone", "warning");
 });
 
+test("tone survives clearing: a cleared warning stays a hidden warning", () => {
+  const { container, rerender } = render(<FieldNote id="f" warning="Couldn't reach Claude." />);
+  rerender(<FieldNote id="f" />);
+  const layer = container.querySelector("#f-error")!;
+  expect(layer).toHaveAttribute("data-tone", "warning");
+  expect(layer).not.toHaveAttribute("data-shown");
+  expect(layer).toHaveTextContent("Couldn't reach Claude.");
+});
+
+test("a different error replaces the text in place", () => {
+  const { container, rerender } = render(<FieldNote id="f" error="Enter a title." />);
+  rerender(<FieldNote id="f" error="Title is too long." />);
+  const layer = container.querySelector("#f-error")!;
+  expect(layer).toHaveAttribute("data-shown");
+  expect(layer).toHaveAttribute("data-tone", "error");
+  expect(layer).toHaveTextContent("Title is too long.");
+  expect(layer).not.toHaveTextContent("Enter a title.");
+});
+
 test("backticks render as code", () => {
   render(<FieldNote id="f" help="Create one with `claude setup-token`." />);
   expect(screen.getByText("claude setup-token").tagName).toBe("CODE");

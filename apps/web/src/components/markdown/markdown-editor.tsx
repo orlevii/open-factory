@@ -43,7 +43,7 @@ export function MarkdownEditor(props: {
         ? { value: view, onValueChange: (v: string) => onViewChange?.(v as "write" | "preview") }
         : { defaultValue: "write" })}
       data-invalid={props.invalid || undefined}
-      className="field-edge-transition gap-0 overflow-hidden rounded-lg border border-input bg-card transition-[box-shadow] duration-150 data-[invalid]:border-destructive focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
+      className="field-edge-transition gap-0 overflow-hidden rounded-lg border border-input bg-card data-[invalid]:border-destructive focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
     >
       <TabsList
         variant="line"

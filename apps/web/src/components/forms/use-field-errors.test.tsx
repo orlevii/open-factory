@@ -198,3 +198,78 @@ test("focusField skips invalid fields in a disabled fieldset and scrolls the who
   expect(scroll.mock.contexts[0]).toBe(screen.getByTestId("b"));
   expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
 });
+
+test("a blur with no relatedTarget after a pointerdown on a skip control doesn't validate; later than 500ms it does", async () => {
+  renderH();
+  const title = screen.getByLabelText("title");
+  await userEvent.type(title, " ");
+  let now = 10_000;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  fireEvent.pointerDown(screen.getByText("Close"));
+  now += 100;
+  fireEvent.blur(title);
+  expect(screen.queryByText("Enter a title.")).toBeNull();
+  now += 600;
+  fireEvent.blur(title);
+  expect(screen.getByText("Enter a title.")).toBeInTheDocument();
+});
+
+test("submit returns true and neither bumps attempt nor moves focus when all checks pass", async () => {
+  renderH();
+  await userEvent.type(screen.getByLabelText("title"), "x");
+  await userEvent.type(screen.getByLabelText("path"), "/x");
+  screen.getByText("Other").focus();
+  let ok = false;
+  act(() => {
+    ok = api.submit();
+  });
+  expect(ok).toBe(true);
+  expect(api.attempt).toBe(0);
+  expect(screen.getByText("Other")).toHaveFocus();
+});
+
+test("extra with an undefined value clears a prior external error", () => {
+  renderH();
+  act(() => api.set("path", "No folder at this path."));
+  expect(screen.getByText("No folder at this path.")).toBeInTheDocument();
+  let ok = false;
+  act(() => {
+    ok = api.submit(["path"], { path: undefined });
+  });
+  expect(screen.queryByText("No folder at this path.")).toBeNull();
+  expect(ok).toBe(false); // the empty path still fails its own check
+  expect(screen.getByText("Enter a path.")).toBeInTheDocument();
+});
+
+test("reset clears flags, external errors and the changed marks", async () => {
+  renderH();
+  await userEvent.type(screen.getByLabelText("title"), " ");
+  await userEvent.click(screen.getByText("Other"));
+  act(() => api.set("path", "No folder at this path."));
+  expect(screen.getByText("Enter a title.")).toBeInTheDocument();
+  act(() => api.reset());
+  expect(screen.queryByText("Enter a title.")).toBeNull();
+  expect(screen.queryByText("No folder at this path.")).toBeNull();
+  fireEvent.blur(screen.getByLabelText("title")); // no longer counted as changed
+  expect(screen.queryByText("Enter a title.")).toBeNull();
+});
+
+test("change clears a server message for that field", async () => {
+  renderH();
+  act(() => {
+    api.server({ path: "Another project uses this folder." });
+  });
+  expect(screen.getByText("Another project uses this folder.")).toBeInTheDocument();
+  await userEvent.type(screen.getByLabelText("path"), "/");
+  expect(screen.queryByText("Another project uses this folder.")).toBeNull();
+});
+
+test("server replaces all external messages, not merges", () => {
+  renderH();
+  act(() => api.set("title", "Title is taken."));
+  act(() => {
+    api.server({ path: "Another project uses this folder." });
+  });
+  expect(screen.queryByText("Title is taken.")).toBeNull();
+  expect(screen.getByText("Another project uses this folder.")).toBeInTheDocument();
+});

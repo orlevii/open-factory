@@ -8,9 +8,10 @@ export type FieldErrors<F extends string> = {
   attempt: number;
   change(f: F): void;
   blur(f: F, e?: { relatedTarget: EventTarget | null }): void;
+  /** Callers guard async staleness (compare the looked-up value to the current value before calling). */
   set(f: F, message: string | undefined, opts?: { focus?: boolean }): void;
   server(fields: Record<string, string> | undefined): boolean;
-  /** `extra`: async results from this same tick (a dependency lookup); they count as external errors for this submit. */
+  /** Checks run against the last committed values. `extra`: async results from this same tick (a dependency lookup); they count as external errors for this submit. */
   submit(fields?: readonly F[], extra?: Partial<Record<F, string | undefined>>): boolean;
   reset(): void;
 };

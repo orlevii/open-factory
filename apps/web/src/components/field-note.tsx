@@ -26,7 +26,7 @@ export function FieldNote({ id, help, error, warning }: { id: string } & Note) {
         data-shown={!message && help ? "" : undefined}
         className="text-muted-foreground"
       >
-        {help && <CodeText text={help} />}
+        {help ? <CodeText text={help} /> : null}
       </p>
       <p
         id={`${id}-error`}
@@ -37,12 +37,12 @@ export function FieldNote({ id, help, error, warning }: { id: string } & Note) {
           last.tone === "error" ? "text-destructive" : "text-foreground",
         )}
       >
-        {last.text && (
+        {last.text ? (
           <Icon
             aria-hidden="true"
             className={cn("mt-0.5 size-3.5 shrink-0", last.tone === "warning" && "text-warning")}
           />
-        )}
+        ) : null}
         <span className="min-w-0 [overflow-wrap:anywhere]">
           <CodeText text={last.text} />
         </span>

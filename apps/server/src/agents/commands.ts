@@ -6,16 +6,8 @@ import {
   deniedReason,
 } from "@open-factory/shared";
 
-/** The reason a command's name, or for a skill one of its aliases, is on the denylist. */
-const denial = (c: Command): string | undefined => {
-  const byName = deniedReason(c.name);
-  if (byName || c.builtin) return byName;
-  for (const a of c.aliases ?? []) {
-    const r = deniedReason(a);
-    if (r) return r;
-  }
-  return undefined;
-};
+/** The reason a command's name is on the denylist. A skill is flagged by its name only, never by an alias. */
+const denial = (c: Command): string | undefined => deniedReason(c.name);
 
 /**
  * Every command the menu may show: the stored session list, or before the first start Claude Code's built-in

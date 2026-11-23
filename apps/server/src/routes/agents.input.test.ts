@@ -1,5 +1,5 @@
 import { MAX_BODY_BYTES } from "@open-factory/shared";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
 
@@ -12,6 +12,7 @@ describe("I1 §5.1: raw session input", () => {
     { name: "context", description: "Context", argumentHint: "", builtin: true },
     { name: "review", description: "Review", argumentHint: "", builtin: true },
     { name: "compact", description: "Compact", argumentHint: "", builtin: true },
+    { name: "reset", description: "(project)", argumentHint: "" },
   ];
   beforeAll(async () => {
     s = await makeTestApp({ harnessDriver: drv });
@@ -21,10 +22,11 @@ describe("I1 §5.1: raw session input", () => {
     await call(or, "POST", "/api/agents/dev/messages", { body: "work", urgent: false });
     drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
     await settled();
-    for (let i = 0; i < 100; i++) {
-      if ((await call(or, "GET", "/api/agents/dev/commands")).json().source === "session") break;
-      await new Promise((r) => setTimeout(r, 50));
-    }
+    await vi.waitFor(
+      async () =>
+        expect((await call(or, "GET", "/api/agents/dev/commands")).json().source).toBe("session"),
+      { timeout: 5000 },
+    );
   });
   afterAll(() => s.close());
 
@@ -86,8 +88,63 @@ describe("I1 §5.1: raw session input", () => {
     expect(rawWrites()).toHaveLength(before);
   });
 
+  test("denial ignores case, and a template skill named like a denied command is denied", async () => {
+    const before = rawWrites().length;
+    for (const t of ["/CLEAR", "/Reset now", "/QUIT"]) {
+      const res = await input(t);
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe("command_denied");
+    }
+    expect((await input("/CLEAR")).json().error.message).toBe(
+      "/CLEAR isn't available: each agent keeps one session.",
+    );
+    expect(rawWrites()).toHaveLength(before);
+  });
+
+  test("the same clientMessageId posted twice writes once and returns the same item", async () => {
+    const before = rawWrites().length;
+    const body = { text: "once", clientMessageId: crypto.randomUUID() };
+    const a = await call(or, "POST", "/api/agents/dev/input", body);
+    const b = await call(or, "POST", "/api/agents/dev/input", body);
+    expect([a.statusCode, b.statusCode]).toEqual([202, 202]);
+    expect(b.json().item.id).toBe(a.json().item.id);
+    expect(rawWrites()).toHaveLength(before + 1);
+    await finishTurn();
+  });
+
+  test("/compact carries its clientMessageId and a retry queues one compaction", async () => {
+    const body = { text: "/compact", clientMessageId: crypto.randomUUID() };
+    await input("busy"); // a turn is open, so the compact waits
+    const a = await call(or, "POST", "/api/agents/dev/input", body);
+    const b = await call(or, "POST", "/api/agents/dev/input", body);
+    expect(a.json().item).toMatchObject({
+      kind: "compact",
+      clientMessageId: body.clientMessageId,
+    });
+    expect(b.json().item.id).toBe(a.json().item.id);
+    const rt = await s.app.runtimes.bySlug("dev");
+    expect(rt?.queueItems().filter((q) => q.kind === "compact")).toHaveLength(1);
+    drv.last.emit(ev.turn(), ev.usage(), ev.end());
+    await settled();
+    drv.last.emit(ev.turn(), ev.usage(), ev.end({ command: "compact", numTurns: 0 }));
+    await settled();
+  });
+
+  test("input mid-turn is 202 and is written only after the turn ends", async () => {
+    await input("first");
+    const before = rawWrites().length;
+    const res = await input("second");
+    expect(res.statusCode).toBe(202);
+    expect(rawWrites()).toHaveLength(before);
+    await finishTurn();
+    expect(lastWrite()).toEqual({ kind: "raw", text: "second" });
+    await finishTurn();
+  });
+
   test("a known command over several lines is 400; an unknown /token is text, newlines kept", async () => {
     const before = rawWrites().length;
+    for (const sep of ["\r", "\u0085", "\u2028", "\u2029"])
+      expect((await input(`/context${sep}more`)).statusCode).toBe(400);
     const multi = await input("/context\nmore");
     expect(multi.statusCode).toBe(400);
     expect(multi.json().error.message).toBe("A command must be one line.");
@@ -153,5 +210,33 @@ describe("I1 §5.1: raw session input", () => {
   test("the old commands POST is gone", async () => {
     const res = await call(or, "POST", "/api/agents/dev/commands", { name: "context" });
     expect(res.statusCode).toBe(404);
+  });
+
+  test("an errored agent answers 202 and holds the input", async () => {
+    await s.seedAgent({ slug: "err" });
+    const rt = await s.app.runtimes.bySlug("err");
+    if (!rt) throw new Error("no runtime");
+    await call(or, "POST", "/api/agents/err/messages", { body: "hi", urgent: false });
+    const procOf = () => drv.starts.filter((p) => p.spec.agentId === rt.agent.id).at(-1);
+    procOf()?.emit(...ev.fullTurn(), ev.turn());
+    procOf()?.exit(137);
+    await rt.settled();
+    procOf()?.exit(1);
+    await rt.settled();
+    expect(rt.live().status).toBe("errored");
+    const starts = drv.starts.length;
+    const res = await call(or, "POST", "/api/agents/err/input", {
+      text: "held",
+      clientMessageId: crypto.randomUUID(),
+    });
+    expect(res.statusCode).toBe(202);
+    await rt.settled();
+    expect(drv.starts).toHaveLength(starts);
+    expect(
+      rt
+        .queueItems()
+        .filter((q) => q.kind === "raw")
+        .map((q) => q.body),
+    ).toEqual(["held"]);
   });
 });

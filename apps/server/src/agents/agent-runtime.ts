@@ -206,7 +206,14 @@ type MessageEntry = {
   about?: string;
   subject?: Subject;
 };
-type CompactEntry = { kind: "compact"; id: string; focus?: string; by: string; createdAt: Date };
+type CompactEntry = {
+  kind: "compact";
+  id: string;
+  focus?: string;
+  by: string;
+  createdAt: Date;
+  clientMessageId?: string;
+};
 /**
  * I1 §5.1: raw session input (text or a slash command), in memory like a compact. `text` is written as typed, one user
  * line with no envelope; `by` is the sender's handle (`@orlevi`); `userId` is the human sender, the only one who may
@@ -433,7 +440,7 @@ export class AgentRuntime {
   /** U3 §13.3: written commands' ids and senders (the newest few), for the Cancel that arrives too late. */
   private readonly writtenRaw = new Map<string, string>();
   /** U3 §13.3: `userId \0 clientMessageId` → the dispatch's entry, queued or written (the newest few). */
-  private readonly rawRetries = new Map<string, RawEntry>();
+  private readonly rawRetries = new Map<string, RawEntry | CompactEntry>();
   private hold: ReturnType<typeof setTimeout> | undefined;
   private errored: boolean;
   private archived: boolean;
@@ -771,24 +778,44 @@ export class AgentRuntime {
     });
   }
 
-  async compact(c: { focus?: string; byHandle: string }): Promise<QueueItem> {
+  async compact(c: {
+    focus?: string;
+    byHandle: string;
+    userId?: string;
+    clientMessageId?: string;
+  }): Promise<QueueItem> {
     const entry: CompactEntry = {
       kind: "compact",
       id: randomUUID(),
       by: c.byHandle,
       createdAt: new Date(),
       ...(c.focus ? { focus: c.focus } : {}),
+      ...(c.clientMessageId ? { clientMessageId: c.clientMessageId } : {}),
     };
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      // A retry (a lost 202) returns the earlier dispatch and queues nothing, as for raw input.
+      const retryKey =
+        c.userId && c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
+      const dup = retryKey ? this.rawRetries.get(retryKey) : undefined;
+      if (dup) return this.itemOf(dup);
       this.queue.push(entry);
+      if (retryKey) this.rememberRetry(retryKey, entry);
       this.publishQueue();
       await this.wakeInline("compact");
       await this.flush();
       this.publishStatus(); // a compaction written now shows at once (U3 §6.1)
       return this.itemOf(entry);
     });
+  }
+
+  private rememberRetry(key: string, entry: RawEntry | CompactEntry): void {
+    this.rawRetries.set(key, entry);
+    if (this.rawRetries.size > RAW_RETRIES_KEPT) {
+      const [oldest] = this.rawRetries.keys();
+      if (oldest !== undefined) this.rawRetries.delete(oldest);
+    }
   }
 
   /**
@@ -823,13 +850,7 @@ export class AgentRuntime {
       if (dup) return this.itemOf(dup);
       if (this.proc && !this.proc.raw) throw new CommandsUnsupportedError();
       this.queue.push(entry);
-      if (retryKey) {
-        this.rawRetries.set(retryKey, entry);
-        if (this.rawRetries.size > RAW_RETRIES_KEPT) {
-          const [oldest] = this.rawRetries.keys();
-          if (oldest !== undefined) this.rawRetries.delete(oldest);
-        }
-      }
+      if (retryKey) this.rememberRetry(retryKey, entry);
       this.publishQueue();
       await this.wakeInline("raw");
       // A process started just now that can't write raw input: take it back rather than drop it later.
@@ -1885,6 +1906,7 @@ export class AgentRuntime {
             fromKind: "human",
             createdAt: e.createdAt.toISOString(),
             ...(e.focus ? { focus: e.focus } : {}),
+            ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
           };
   }
 

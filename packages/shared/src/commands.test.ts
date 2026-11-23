@@ -63,16 +63,42 @@ test("the reason names the command as typed", () =>
   expect(deniedReason("QUIT")).toBe(
     "/QUIT isn't available: the factory runs this agent's process.",
   ));
-test("each group has its reason", () => {
-  expect(deniedReason("reset")).toBe("/reset isn't available: each agent keeps one session.");
-  expect(deniedReason("effort")).toBe(
-    "/effort isn't available: the model and effort come from the agent's template.",
-  );
-  expect(deniedReason("login")).toBe(
-    "/login isn't available: credentials are managed in Settings \u2192 Credentials.",
-  );
-  expect(deniedReason("toString")).toBeUndefined();
+const WHY = {
+  session: "each agent keeps one session.",
+  model: "the model and effort come from the agent's template.",
+  credentials: "credentials are managed in Settings \u2192 Credentials.",
+  process: "the factory runs this agent's process.",
+};
+test.each([
+  ["clear", WHY.session],
+  ["new", WHY.session],
+  ["reset", WHY.session],
+  ["model", WHY.model],
+  ["effort", WHY.model],
+  ["login", WHY.credentials],
+  ["logout", WHY.credentials],
+  ["exit", WHY.process],
+  ["quit", WHY.process],
+  ["resume", WHY.process],
+  ["continue", WHY.process],
+])("/%s has its exact reason", (name, why) => {
+  expect(deniedReason(name)).toBe(`/${name} isn't available: ${why}`);
+  expect(deniedReason(name.toUpperCase())).toBe(`/${name.toUpperCase()} isn't available: ${why}`);
 });
+test("a name off the denylist has no reason", () =>
+  expect(deniedReason("toString")).toBeUndefined());
+test.each(["\n", "\r", "\u0085", "\u2028", "\u2029"])(
+  "a line break %j makes a command multiline",
+  (sep) =>
+    expect(classifyInput(`/context${sep}more`, new Set(["context"]))).toMatchObject({
+      kind: "command",
+      multiline: true,
+    }),
+);
+test("one line is not multiline", () =>
+  expect(classifyInput("/context  more", new Set(["context"]))).toMatchObject({
+    multiline: false,
+  }));
 test("/news-digest is not /new", () =>
   expect(classifyInput("/news-digest", new Set(["news-digest"]))).toMatchObject({
     kind: "command",

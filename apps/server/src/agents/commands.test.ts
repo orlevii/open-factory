@@ -39,7 +39,7 @@ test("stored: the stored list, the denylist flagged, nothing dropped", () => {
   expect(byName(list, "not-yet-started")).toBeUndefined();
 });
 
-test("a skill named like a denied command is flagged, so is one with a denied alias", () => {
+test("a skill is flagged by its name only, never by an alias", () => {
   const list = commandList(
     [
       { name: "reset", description: "(project)", argumentHint: "" },
@@ -48,9 +48,7 @@ test("a skill named like a denied command is flagged, so is one with a denied al
     [],
   );
   expect(byName(list, "reset")?.denied).toMatch(/^\/reset isn't available/);
-  expect(byName(list, "tidy")?.denied).toBe(
-    "/quit isn't available: the factory runs this agent's process.",
-  );
+  expect(byName(list, "tidy")?.denied).toBeUndefined();
   expect(commandList(undefined, ["reset"]).filter((c) => c.name === "reset")).toHaveLength(1);
 });
 

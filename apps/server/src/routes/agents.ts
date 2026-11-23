@@ -376,6 +376,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
             ? await rt.compact({
                 ...(cls.args.trim() ? { focus: cls.args.trim() } : {}),
                 byHandle: u.handle,
+                userId: u.id,
+                clientMessageId,
               })
             : await rt.rawInput({
                 text: neutraliseEnvelopeTags(cls.kind === "command" ? text.trimStart() : text),

@@ -6,7 +6,7 @@
   - I1: `send_command`'s target rule, list recipients, envelopes, `@` handles;
   - I2: the overlay, `mergeConfig`, `validateEffective(doc, ctx, policy)` with its `policy` slot, `ConfigChanges`, `describeChanges`, `requestRestart({ changes, wake })`, the overlay PUT and its version;
   - I5: the Library read services, the plugin store, the marketplace registry, `RESERVED_SETTINGS_KEYS` (§7.10).
-- **Decision log:** the GitHub issue "I7: Agents managing agents — design". Q1–Q18 are the owner-proxy's (owner-i7) answers to the tech lead's questions. Certainties and the items flagged for Or are in §16.
+- **Decision log:** the GitHub issue #163, "I7: Agents managing agents — design". Q1–Q18 are the owner-proxy's (owner-i7) answers to the tech lead's questions. Certainties and the items flagged for Or are in §16.
 
 Web paths are relative to `apps/web/src/` unless they start with `apps/` or `packages/`. Server paths are relative to `apps/server/src/`.
 
@@ -730,9 +730,9 @@ Rationale and alternatives are in the decision issue. **Bold** marks the ones fl
 ## 17. Follow-ups and open items (separate issues)
 
 - **#162** (open, Or): permissions and autoMode in agent-written project settings. I7 is independent of it (§6.3).
-- **Self-edit subset** for agents without `manage_org` (deferred in scope).
-- **Create caps**, if a runaway loop is ever seen (Q18).
-- **Agents editing another agent's persona `AGENTS.md`**, or Reset persona.
+- **Self-edit subset** for agents without `manage_org` (deferred in scope): #164.
+- **Create caps**, if a runaway loop is ever seen (Q18): #167.
+- **Agents editing another agent's persona `AGENTS.md`**, or Reset persona: #165.
 - **Agents writing a template's `files/` and `skills/`** (with #36).
-- **A live run of AC 10** with real Claude (Or).
-- **Guarding the visible secret channel** (an agent asking a controlled agent to print its env), if Or ever wants more than the stated semantics.
+- **A live run of AC 10** with real Claude (Or): #166.
+- **Guarding the visible secret channel** (an agent asking a controlled agent to print its env), if Or ever wants more than the stated semantics: #168.

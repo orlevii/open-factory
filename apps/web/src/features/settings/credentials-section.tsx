@@ -1,7 +1,7 @@
 import { ApiError, type CredentialSummary } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { CircleAlert, Clock, Plus } from "lucide-react";
+import { CircleAlert, Plus } from "lucide-react";
 import {
   memo,
   type ReactNode,
@@ -172,13 +172,13 @@ function ReplaceForm({
   );
 }
 
-/** `muted`: the credential expired, so its crimson expiry line already says it (no second crimson line). */
+/** `muted`: the credential expired, so its crimson expiry line already says it: a failed check then shows
+ *  nothing, a verified or unverified state its muted form (no second crimson line, spec §8.4). */
 function VerificationState({ c, muted }: { c: CredentialSummary; muted: boolean }) {
   if (c.lastError) {
+    if (muted) return null;
     return (
-      <span
-        className={`flex items-start gap-1.5 ${smallClass} ${muted ? "text-muted-foreground" : "text-destructive"}`}
-      >
+      <span className={`flex items-start gap-1.5 ${smallClass} text-destructive`}>
         <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
         <span>
           Last check failed: <CodeText text={c.lastError} />
@@ -208,7 +208,9 @@ const EXPIRY_TONE = {
 function ExpiryLine({ ex }: { ex: Exclude<ExpiryState, { tone: "none" }> }) {
   return (
     <span className={`flex items-start gap-1.5 ${smallClass} ${EXPIRY_TONE[ex.tone]}`}>
-      {ex.tone !== "muted" && <Clock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />}
+      {ex.tone !== "muted" && (
+        <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+      )}
       <span>{ex.text}</span>
     </span>
   );
@@ -247,6 +249,20 @@ const CredentialRow = memo(function CredentialRow(p: CredentialRowProps) {
     [c.name],
   );
   const signInAgain = () => openSheet({ kind: "sign-in-again", name: c.name });
+  const signInButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      data-sign-in-again=""
+      {...intent}
+      onClick={signInAgain}
+    >
+      Sign in again
+    </Button>
+  );
+  // A rejected credential whose expiry says nothing loud: the button follows its failure line directly.
+  const buttonAfterFailure = c.rejected && (ex.tone === "none" || ex.tone === "muted");
   const rowProps = p.arrival
     ? {
         "data-arrived": p.arrival === "fading" ? "fading" : "",
@@ -260,6 +276,7 @@ const CredentialRow = memo(function CredentialRow(p: CredentialRowProps) {
   return (
     <SettingsRow
       data-name={c.name}
+      data-credential-row=""
       tabIndex={-1}
       {...rowProps}
       className="grid grid-cols-[minmax(0,1fr)] gap-1 px-2 py-1.5"
@@ -331,19 +348,9 @@ const CredentialRow = memo(function CredentialRow(p: CredentialRowProps) {
         <RowName>{c.name}</RowName>
         <span className="text-[0.8125rem] md:w-24 md:shrink-0">{KIND_LABEL[c.kind]}</span>
         <VerificationState c={c} muted={expired} />
+        {needsSignIn && buttonAfterFailure && signInButton}
         {ex.tone !== "none" && <ExpiryLine ex={ex} />}
-        {needsSignIn && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            data-sign-in-again=""
-            {...intent}
-            onClick={signInAgain}
-          >
-            Sign in again
-          </Button>
-        )}
+        {needsSignIn && !buttonAfterFailure && signInButton}
         <RateLimitLine
           rateLimit={c.rateLimit}
           pausedUntil={c.pausedUntil}
@@ -401,7 +408,7 @@ export function CredentialsSection(p: { arriveAt?: string }) {
 
   // Arrive once per `?credential=` value, after the list loaded; the param is cleared either way.
   const target = p.arriveAt;
-  const loaded = query.isSuccess;
+  const loaded = query.isSuccess || query.isError;
   useEffect(() => {
     if (!target || !loaded) return;
     const row = document.querySelector<HTMLElement>(`[data-name="${CSS.escape(target)}"]`);

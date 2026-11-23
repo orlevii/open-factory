@@ -1,4 +1,9 @@
-import type { CredentialSummary, ProjectSummary, SecretSummary } from "@open-factory/shared";
+import {
+  type CredentialSummary,
+  MSG,
+  type ProjectSummary,
+  type SecretSummary,
+} from "@open-factory/shared";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
@@ -62,6 +67,7 @@ function world(w: World = {}) {
     projects: w.projects ?? [],
   };
   const api = mockApi({
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
     "GET /api/credentials": () => json({ credentials: state.credentials }),
     "GET /api/secrets": () => json({ secrets: state.secrets }),
     "GET /api/projects": () => json({ projects: state.projects }),
@@ -173,6 +179,38 @@ test("add credential: an unverifiable check is a warning, not a bad token", asyn
   expect(key).not.toHaveAttribute("aria-invalid");
   expect(describedText(key)).toContain("Couldn't reach Claude to verify. Try again.");
   expect(key).toHaveValue("sk-ant");
+});
+
+test("Replace token and Update value validate on blur of a changed field", async () => {
+  world({
+    credentials: [cred({ name: "work" })],
+    secrets: [secret({ name: "GH_TOKEN" })],
+  });
+  renderApp("/settings/credentials", alice);
+  const u = userEvent.setup();
+  const creds = await section("Credentials");
+  await waitFor(() => expect(row(creds, "work")).toBeDefined());
+  await u.click(within(row(creds, "work")).getByRole("button", { name: "Actions for work" }));
+  await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
+  const token = within(creds).getByLabelText("New token");
+  await u.type(token, "a");
+  await u.clear(token);
+  await u.tab();
+  expect(describedText(token)).toBe("Enter the token.");
+});
+
+test("Update value validates on blur of a changed field", async () => {
+  world({ secrets: [secret({ name: "GH_TOKEN" })] });
+  renderApp("/settings/secrets", alice);
+  const u = userEvent.setup();
+  const region = await section("Secrets");
+  await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
+  await u.click(within(row(region, "GH_TOKEN")).getByRole("button", { name: "Update" }));
+  const value = within(region).getByLabelText("New value");
+  await u.type(value, "a");
+  await u.clear(value);
+  await u.tab();
+  expect(describedText(value)).toBe("Enter a value.");
 });
 
 test("credential row: Verify visible, Replace token and Delete… in the menu; used ones can't be deleted", async () => {
@@ -417,7 +455,7 @@ test("the secret name is uppercased while typing, keeping the caret; reserved na
   expect(name).not.toHaveAttribute("aria-invalid");
   await userEvent.tab();
   expect(name).toHaveAttribute("aria-invalid", "true");
-  expect(describedText(name)).toBe("That name is reserved for the agent's environment.");
+  expect(describedText(name)).toBe("That name is reserved.");
 });
 
 test("projects: a middle-truncated path, grant wording, and Remove disabled with its reason", async () => {
@@ -506,6 +544,19 @@ test.each([false, true])(
     }
   },
 );
+
+test("projects: the loader asks for host info, and the page renders when it 404s", async () => {
+  const { api } = world({
+    projects: [project({ name: "app" })],
+    extra: {
+      "GET /api/host": () => json({ error: { code: "not_found", message: "Not found." } }, 404),
+    },
+  });
+  renderApp("/settings/projects", alice);
+  const region = await section("Projects");
+  await waitFor(() => expect(row(region, "app")).toBeDefined());
+  expect(api.calls.some((c) => c.url === "/api/host")).toBe(true);
+});
 
 test("projects: a Remove blocked by many grantees names three and counts the rest", async () => {
   world({
@@ -630,6 +681,71 @@ test("Change path saves with the restart warning; a missing folder is a field er
   ).toBeInTheDocument();
 });
 
+test("Change path has the help button, accepts ~/x, and Esc in the popover keeps the form open", async () => {
+  const { api } = world({
+    projects: [project({ name: "app" })],
+    extra: {
+      "PATCH /api/projects/app": (body) =>
+        json({
+          project: project({ name: "app", hostPath: (body as { hostPath: string }).hostPath }),
+        }),
+    },
+  });
+  renderApp("/settings/projects", alice);
+  const region = await section("Projects");
+  await waitFor(() => expect(row(region, "app")).toBeDefined());
+  await userEvent.click(
+    within(row(region, "app")).getByRole("button", { name: "Actions for app" }),
+  );
+  await userEvent.click(screen.getByRole("menuitem", { name: "Change path" }));
+  const help = await within(region).findByRole("button", { name: "How do I find this path?" });
+  await userEvent.click(help);
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  const path = within(region).getByLabelText("Path");
+  expect(path).toBeInTheDocument();
+  await userEvent.clear(path);
+  await userEvent.type(path, "~/x");
+  await userEvent.click(within(region).getByRole("button", { name: "Save path" }));
+  await waitFor(() =>
+    expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({ hostPath: "~/x" }),
+  );
+});
+
+test.each([
+  ["Shift+Tab", () => userEvent.keyboard("{Shift>}{Tab}{/Shift}")],
+  [
+    "a click",
+    () => userEvent.click(screen.getByRole("button", { name: "How do I find this path?" })),
+  ],
+])(
+  "Change path (AC6): moving from a half-typed Path to the help by %s flags nothing",
+  async (_, toHelp) => {
+    world({ projects: [project({ name: "app" })] });
+    renderApp("/settings/projects", alice);
+    const region = await section("Projects");
+    await waitFor(() => expect(row(region, "app")).toBeDefined());
+    await userEvent.click(
+      within(row(region, "app")).getByRole("button", { name: "Actions for app" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: "Change path" }));
+    const path = within(region).getByLabelText("Path");
+    await waitFor(() => expect(path).toHaveFocus());
+    await userEvent.clear(path);
+    await userEvent.type(path, "code");
+    await toHelp();
+    expect(path).not.toHaveAttribute("aria-invalid");
+    expect(describedText(path)).not.toContain(MSG.hostPathStart);
+    // Control: tabbing from Path to Save path (not a skip target) does flag it.
+    await userEvent.click(path);
+    await userEvent.tab();
+    expect(within(region).getByRole("button", { name: "Save path" })).toHaveFocus();
+    await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));
+    expect(describedText(path)).toBe(MSG.hostPathStart);
+  },
+);
+
 test("add project: a missing folder lands under Path, then the row appears", async () => {
   const { api, state } = world({
     extra: {
@@ -651,9 +767,10 @@ test("add project: a missing folder lands under Path, then the row appears", asy
   await userEvent.click(within(region).getByRole("button", { name: "Add project" }));
   await userEvent.type(within(region).getByLabelText("Name"), "app");
   const path = within(region).getByLabelText("Path");
-  expect(describedText(path)).toBe(
-    "Absolute path to a folder on this machine, usually a git repository.",
-  );
+  expect(describedText(path)).toBe("A folder on the factory's machine, like ~/code/web.");
+  expect(
+    within(region).getByRole("button", { name: "How do I find this path?" }),
+  ).toBeInTheDocument();
   await userEvent.type(path, "/x");
   await userEvent.click(within(region).getByRole("button", { name: "Add project" }));
   await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));
@@ -809,7 +926,7 @@ test("add secret: 409 secret_name_reserved lands under Name and focuses it", asy
           {
             error: {
               code: "secret_name_reserved",
-              message: "That name is reserved for the agent's environment.",
+              message: "That name is reserved.",
             },
           },
           409,
@@ -824,7 +941,7 @@ test("add secret: 409 secret_name_reserved lands under Name and focuses it", asy
   await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
   const name = within(region).getByLabelText("Name");
   await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
-  expect(describedText(name)).toBe("That name is reserved for the agent's environment.");
+  expect(describedText(name)).toBe("That name is reserved.");
   expect(name).toHaveFocus();
   expect(within(region).queryByRole("alert", { name: /reserved/ })).not.toBeInTheDocument();
 });

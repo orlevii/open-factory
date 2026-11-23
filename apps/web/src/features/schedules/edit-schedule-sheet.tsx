@@ -287,6 +287,8 @@ function Live({ s, spec, sheetId, close }: { s: ScheduleItem } & BodyProps<Spec>
             type="button"
             variant="ghost"
             className="text-destructive hover:text-destructive"
+            // Leaving a field for Delete isn't a leave to validate.
+            data-skip-validate
             disabled={saving || deleting}
             onClick={() => void remove()}
           >

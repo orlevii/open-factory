@@ -8,6 +8,7 @@ import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { clearDraft } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { CodeTextarea } from "@/features/templates/code-textarea";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -389,9 +390,9 @@ test("new template: blur validates the name; submit validates everything", async
   await userEvent.click(within(d).getByRole("button", { name: "Change" }));
   const name = within(d).getByLabelText("Name");
   await userEvent.type(name, "Bad Name");
-  expect(within(d).queryByText(/Use lowercase letters/)).not.toBeInTheDocument(); // not while typing
+  expect(within(d).queryByText(FORM_MSG.templateNameChars)).not.toBeInTheDocument(); // not while typing
   await userEvent.tab();
-  expect(await within(d).findByText(/Use lowercase letters/)).toBeInTheDocument();
+  expect(await within(d).findByText(FORM_MSG.templateNameChars)).toBeInTheDocument();
   await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
   expect(await within(d).findByText("Enter a display name.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "POST")).toBe(false);

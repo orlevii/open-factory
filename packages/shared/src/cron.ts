@@ -1,10 +1,11 @@
 import { Cron } from "croner";
+import { MSG } from "./messages.ts";
 
 // The only module that imports croner. The server and the web both go through here, so the
 // factory has one validator and one version of the occurrence math.
 
-const FIVE_FIELDS = "Use 5 fields: minute hour day-of-month month day-of-week.";
-const TOKENS = "Only numbers, *, ranges, lists, steps and names are allowed.";
+const FIVE_FIELDS = MSG.cronFields;
+const TOKENS = MSG.cronTokens;
 const FIELD_NAMES = ["minute", "hour", "day-of-month", "month", "day-of-week"] as const;
 const ATOM = "(?:\\*|[0-9]+|[a-z]{3})(?:-(?:[0-9]+|[a-z]{3}))?(?:\\/[0-9]+)?";
 const FIELD = new RegExp(`^${ATOM}(?:,${ATOM})*$`, "i");

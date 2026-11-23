@@ -105,3 +105,49 @@ test("a successful sign-in lands on the Inbox", async () => {
   await waitFor(() => expect(router.state.location.pathname).toBe("/inbox"));
   expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
 });
+
+test("tabbing through an empty form shows no error", async () => {
+  renderApp("/sign-in", null);
+  const user = userEvent.setup();
+  await screen.findByLabelText("Email");
+  await user.tab();
+  await user.tab();
+  await user.tab();
+  expect(screen.getByLabelText("Email")).not.toHaveAttribute("aria-invalid");
+  expect(screen.getByLabelText("Password")).not.toHaveAttribute("aria-invalid");
+});
+
+test("an invalid email shows its error on blur and clears on the keystroke that fixes it", async () => {
+  renderApp("/sign-in", null);
+  const user = userEvent.setup();
+  const email = await screen.findByLabelText("Email");
+  await user.type(email, "nope");
+  await user.tab();
+  expect(email).toHaveAccessibleDescription("Enter a valid email");
+  await user.click(email);
+  await user.type(email, "@x.io");
+  expect(email).not.toHaveAttribute("aria-invalid");
+});
+
+test("submitting empty focuses Email and does not call the server", async () => {
+  renderApp("/sign-in", null);
+  const user = userEvent.setup();
+  await screen.findByLabelText("Email");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(screen.getByLabelText("Email")).toHaveFocus();
+  expect(auth.signIn.email).not.toHaveBeenCalled();
+});
+
+test("a repeated identical failure announces again with a new text node", async () => {
+  auth.signIn.email.mockResolvedValue({
+    data: null,
+    error: { code: "INVALID_EMAIL_OR_PASSWORD", message: "Invalid", status: 401 },
+  });
+  renderApp("/sign-in", null);
+  await signIn("alice@example.com", "password123");
+  const first = await screen.findByText("Wrong email or password.");
+  await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+  await waitFor(() => expect(auth.signIn.email).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByText("Wrong email or password.")).not.toBe(first));
+  expect(screen.getByRole("alert")).toHaveTextContent("Wrong email or password.");
+});

@@ -353,7 +353,9 @@ test("a draft whose manager has ended clears it with the reason", async () => {
   act(() => closeSheet());
   first.unmount();
   const { dialog } = await open({ agents: [] });
-  expect(await within(dialog).findByText("@boss has ended; pick another.")).toBeInTheDocument();
+  expect(
+    await within(dialog).findByText("That agent has ended; pick another."),
+  ).toBeInTheDocument();
   expect(field("Manager")).toHaveTextContent("No manager");
 });
 

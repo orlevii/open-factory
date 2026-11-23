@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { formatKey, parseKey } from "./keys.ts";
+import { MSG } from "./messages.ts";
 import { taskUsageSchema } from "./usage.ts";
 
 export const TASK_STATUSES = ["open", "in_progress", "done", "cancelled"] as const;
@@ -26,16 +27,14 @@ export const taskTitleSchema = z
   .string()
   .trim()
   .min(1, "Enter a title.")
-  .max(200, "Keep the title to 200 characters or fewer.")
+  .max(200, MSG.titleLength)
   .refine(oneLine, "Keep the title on one line.");
-export const taskBodySchema = z
-  .string()
-  .refine((s) => bytes(s) <= BODY_MAX, "Shorten the description to 64 KB or less.");
+export const taskBodySchema = z.string().refine((s) => bytes(s) <= BODY_MAX, MSG.bodyTooLong);
 export const commentBodySchema = z
   .string()
   .trim()
   .min(1, "Write a comment first.")
-  .refine((s) => bytes(s) <= BODY_MAX, "Shorten the comment to 64 KB or less.");
+  .refine((s) => bytes(s) <= BODY_MAX, MSG.bodyTooLong);
 
 const httpUrl = z
   .string()

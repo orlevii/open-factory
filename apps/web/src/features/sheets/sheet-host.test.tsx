@@ -237,6 +237,17 @@ test("edit-schedule prefetches the detail and the live agents only (edit mode ne
   ]);
 });
 
+test("add-project prefetch requests host info with the never-stale options", () => {
+  const prefetchQuery = vi.fn(() => Promise.resolve());
+  restoreBodies["add-project"]?.prefetch({ prefetchQuery } as never, { kind: "add-project" });
+  const opts = (
+    prefetchQuery.mock.calls as unknown as [{ queryKey: unknown; staleTime?: number }][]
+  ).map((c) => c[0]);
+  expect(opts.find((o) => (o.queryKey as string[])[0] === "host")?.staleTime).toBe(
+    Number.POSITIVE_INFINITY,
+  );
+});
+
 test("intent prefetch has its own freshness window: hover, press and open fetch each list once", async () => {
   const api = mockApi({
     "GET /api/credentials": () => json({ credentials: [] }),

@@ -1,6 +1,7 @@
 import type { LinkInput } from "@open-factory/shared";
-import { CircleAlert, Plus, X } from "lucide-react";
-import { useRef } from "react";
+import { Plus, X } from "lucide-react";
+import { type FocusEvent, useRef } from "react";
+import { FieldNote, noteDescribedBy } from "@/components/field-note";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -63,6 +64,28 @@ export const rowsToInput = (rows: LinkRow[]): LinkInput[] =>
       ...(r.title.trim() ? { title: r.title.trim() } : {}),
     })) as LinkInput[];
 
+/**
+ * Row notes (spec §8.3): while `links` is flagged, a checked row (blurred, or present at the last submit) shows its own
+ * message. A links error no row explains (the server's) goes to the first row's note.
+ */
+export function linkRowErrors(
+  rows: LinkRow[],
+  knownSlugs: ReadonlySet<string> | undefined,
+  checkedRows: ReadonlySet<string>,
+  linksError: string | undefined,
+): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  if (!linksError) return out;
+  let own = false;
+  for (const r of rows) {
+    const m = checkLink(r, knownSlugs);
+    if (m) own = true;
+    if (checkedRows.has(r.id)) out[r.id] = m;
+  }
+  if (!own && rows[0]) out[rows[0].id] = linksError;
+  return out;
+}
+
 /** Rows of [kind] [target] [title] [Remove link], and "Add link". Nothing is saved until the caller saves. */
 export function LinkEditor({
   rows,
@@ -74,7 +97,8 @@ export function LinkEditor({
   onChange(rows: LinkRow[]): void;
   /** Error sentence by row id. */
   errors: Record<string, string | undefined>;
-  onBlurRow(id: string): void;
+  /** The event's `relatedTarget` tells the form whether focus left for a `data-skip-validate` control. */
+  onBlurRow(id: string, e: FocusEvent): void;
 }) {
   // Opening the kind list moves focus into it; that is not leaving the field, so no check until it closes.
   const kindOpen = useRef(false);
@@ -85,79 +109,79 @@ export function LinkEditor({
       <legend className="mb-1 text-[0.8125rem] font-medium">Links</legend>
       {rows.map((r, i) => {
         const err = errors[r.id];
-        const errId = `${r.id}-error`;
         return (
-          <div key={r.id} className="grid gap-1">
-            <div className="flex flex-wrap items-center gap-2 md:flex-nowrap">
-              <Select
-                value={r.kind}
-                onValueChange={(v) => patch(r.id, { kind: v as LinkRow["kind"] })}
-                onOpenChange={(open) => {
-                  kindOpen.current = open;
-                }}
+          <div
+            key={r.id}
+            className="grid grid-cols-[6rem_minmax(0,1fr)_auto] gap-x-2 [grid-template-areas:'kind_target_remove''note_note_note''title_title_title'] md:grid-cols-[6rem_minmax(0,1fr)_12rem_auto] md:[grid-template-areas:'kind_target_title_remove''note_note_note_note']"
+          >
+            <Select
+              value={r.kind}
+              onValueChange={(v) => patch(r.id, { kind: v as LinkRow["kind"] })}
+              onOpenChange={(open) => {
+                kindOpen.current = open;
+              }}
+            >
+              <SelectTrigger
+                aria-label={`Link ${i + 1} kind`}
+                onBlur={(e) => kindOpen.current || onBlurRow(r.id, e)}
+                className="w-24 shrink-0 [grid-area:kind]"
               >
-                <SelectTrigger
-                  aria-label={`Link ${i + 1} kind`}
-                  onBlur={() => kindOpen.current || onBlurRow(r.id)}
-                  className="w-24 shrink-0"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {KINDS.map(([v, l]) => (
-                    <SelectItem key={v} value={v}>
-                      {l}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input
-                aria-label={`Link ${i + 1} target`}
-                aria-invalid={err ? true : undefined}
-                aria-describedby={err ? errId : undefined}
-                value={r.target}
-                autoComplete="off"
-                onChange={(e) => patch(r.id, { target: e.target.value })}
-                onBlur={() => onBlurRow(r.id)}
-                className="h-9 min-w-0 flex-1"
-              />
-              <Input
-                aria-label={`Link ${i + 1} title`}
-                placeholder="Title (optional)"
-                value={r.title}
-                autoComplete="off"
-                onChange={(e) => patch(r.id, { title: e.target.value })}
-                className="h-9 w-full md:w-48 max-md:order-last"
-              />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Remove link ${i + 1}`}
-                    onClick={() => onChange(rows.filter((x) => x.id !== r.id))}
-                  >
-                    <X aria-hidden="true" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Remove link</TooltipContent>
-              </Tooltip>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {KINDS.map(([v, l]) => (
+                  <SelectItem key={v} value={v}>
+                    {l}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              aria-label={`Link ${i + 1} target`}
+              aria-invalid={err ? true : undefined}
+              aria-describedby={noteDescribedBy(r.id, { error: err })}
+              value={r.target}
+              autoComplete="off"
+              onChange={(e) => patch(r.id, { target: e.target.value })}
+              onBlur={(e) => onBlurRow(r.id, e)}
+              className="h-9 min-w-0 [grid-area:target]"
+            />
+            <div className="[grid-area:note]">
+              <FieldNote id={r.id} error={err} />
             </div>
-            {err && (
-              <p
-                id={errId}
-                className="flex items-start gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
-              >
-                <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-                {err}
-              </p>
-            )}
+            <Input
+              aria-label={`Link ${i + 1} title`}
+              placeholder="Title (optional)"
+              value={r.title}
+              autoComplete="off"
+              onChange={(e) => patch(r.id, { title: e.target.value })}
+              className="h-9 [grid-area:title]"
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove link ${i + 1}`}
+                  onClick={() => onChange(rows.filter((x) => x.id !== r.id))}
+                  className="[grid-area:remove]"
+                >
+                  <X aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Remove link</TooltipContent>
+            </Tooltip>
           </div>
         );
       })}
       <div>
-        <Button type="button" variant="ghost" onClick={() => onChange([...rows, newLinkRow()])}>
+        <Button
+          type="button"
+          variant="ghost"
+          data-skip-validate
+          onClick={() => onChange([...rows, newLinkRow()])}
+        >
           <Plus aria-hidden="true" data-icon="inline-start" />
           Add link
         </Button>

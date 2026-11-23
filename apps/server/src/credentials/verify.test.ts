@@ -10,6 +10,7 @@ import {
 import { createFakeClaude } from "@open-factory/harness/testing";
 import type { HarnessEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { FIELD_MSG } from "../field-messages.ts";
 import { CredentialVerifier } from "./verify.ts";
 
 test("success: env is minimal, haiku, temp dir removed", async () => {
@@ -68,11 +69,11 @@ test("401 → rejected; api_key wording", async () => {
   expect(await v.verify("oauth_token", "bad")).toEqual({
     ok: false,
     kind: "rejected",
-    message: "Claude rejected this token. Create a new one with `claude setup-token`.",
+    message: FIELD_MSG.tokenRejected,
   });
   expect(await v.verify("api_key", "bad")).toMatchObject({
     ok: false,
-    message: "Claude rejected this API key.",
+    message: FIELD_MSG.apiKeyRejected,
   });
 });
 
@@ -84,7 +85,7 @@ test("no session / timeout → unreachable", async () => {
   expect(await v.verify("oauth_token", "x")).toEqual({
     ok: false,
     kind: "unreachable",
-    message: "Couldn't reach Claude to verify. Try again.",
+    message: FIELD_MSG.claudeUnreachable,
   });
 });
 

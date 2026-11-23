@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
-import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import type { ProjectSummary } from "@open-factory/shared";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { inUseViolation, pgCode, tags } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
+import { FIELD_MSG } from "../field-messages.ts";
+import { resolveHostFolder } from "../host-path.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 
 type ProjectRow = typeof schema.projects.$inferSelect;
@@ -106,26 +106,12 @@ export class ProjectService {
     return row;
   }
 
-  /** The realpath of an existing absolute folder, or a hostPath field error. */
-  private async resolveFolder(hostPath: string): Promise<string> {
-    if (!path.isAbsolute(hostPath)) throw new FieldError("hostPath", "Enter an absolute path.");
-    const missing = () => new FieldError("hostPath", `No folder at ${hostPath}.`);
-    try {
-      const real = await realpath(hostPath);
-      if (!(await stat(real)).isDirectory()) throw missing();
-      return real;
-    } catch (err) {
-      throw err instanceof FieldError ? err : missing();
-    }
-  }
-
   private async assertPathFree(real: string, exceptId?: string) {
     const [other] = await this.d.db
       .select({ id: schema.projects.id, name: schema.projects.name })
       .from(schema.projects)
       .where(eq(schema.projects.hostPath, real));
-    if (other && other.id !== exceptId)
-      throw new FieldError("hostPath", `Project ${other.name} already uses this folder.`);
+    if (other && other.id !== exceptId) throw new FieldError("hostPath", FIELD_MSG.folderInUse);
   }
 
   async list(): Promise<ProjectSummary[]> {
@@ -144,7 +130,7 @@ export class ProjectService {
       .from(schema.projects)
       .where(eq(schema.projects.name, b.name));
     if (taken) throw exists();
-    const real = await this.resolveFolder(b.hostPath);
+    const real = await resolveHostFolder("hostPath", b.hostPath);
     await this.assertPathFree(real);
     try {
       const [row] = await this.d.db
@@ -168,7 +154,7 @@ export class ProjectService {
 
   async update(name: string, hostPath: string): Promise<ProjectSummary> {
     const row = await this.rowByName(name);
-    const real = await this.resolveFolder(hostPath);
+    const real = await resolveHostFolder("hostPath", hostPath);
     if (real === row.hostPath) return this.summarize(row);
     await this.assertPathFree(real, row.id);
     let updated: ProjectRow | undefined;

@@ -17,6 +17,7 @@ import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { FIELD_MSG } from "../field-messages.ts";
 import { ContainerManager } from "../runtime/docker/containers.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { resyncPendingDir } from "../workspace/paths.ts";
@@ -200,7 +201,7 @@ test("create: plugin failure removes the folder and inserts no row; existing fol
 
 test("update: cycle rejected; projects null resets", async () => {
   await expect(svc.update("lead", { reportsTo: "dev-1" })).rejects.toMatchObject({
-    message: "That would make @lead report to itself through @dev-1.",
+    message: FIELD_MSG.reportsCycle,
   });
   await svc.update("dev-1", { projects: null });
   expect((await svc.summary("dev-1")).grantsOverridden).toBe(false);

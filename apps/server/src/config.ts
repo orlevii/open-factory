@@ -1,9 +1,9 @@
 import { isIP } from "node:net";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { factoryZoneDefault, zoneSchema } from "@open-factory/shared";
 import { z } from "zod";
+import { expandHome } from "./host-path.ts";
 
 /** The seeded `factory_settings.max_running_agents` (S10 §8.1); tests and runtime harnesses use it. */
 export const DEFAULT_MAX_RUNNING_AGENTS = 8;
@@ -111,10 +111,6 @@ export function removedEnvWarnings(env: NodeJS.ProcessEnv): string[] {
   );
 }
 
-function expandHome(p: string): string {
-  return path.resolve(p === "~" || p.startsWith("~/") ? path.join(os.homedir(), p.slice(1)) : p);
-}
-
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   // `PORT=` in .env or the shell means "not set", not "port 0".
   const set = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ""));
@@ -150,7 +146,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   return {
     databaseUrl: e.DATABASE_URL,
     secretKey: e.FACTORY_SECRET_KEY,
-    factoryHome: expandHome(e.FACTORY_HOME),
+    factoryHome: path.resolve(expandHome(e.FACTORY_HOME)),
     publicUrl,
     publicOrigin: new URL(publicUrl).origin,
     devWebOrigin: new URL(e.DEV_WEB_ORIGIN).origin,
@@ -159,7 +155,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     logLevel: e.LOG_LEVEL,
     isProduction: e.NODE_ENV === "production",
     claudeBin: e.FACTORY_CLAUDE_BIN,
-    hostSkillsDir: expandHome(e.FACTORY_HOST_SKILLS_DIR),
+    hostSkillsDir: path.resolve(expandHome(e.FACTORY_HOST_SKILLS_DIR)),
     allowLocalRuntime: e.FACTORY_ALLOW_LOCAL_RUNTIME === "true",
     defaultImage: e.FACTORY_DEFAULT_IMAGE,
     dockerClaudeBin: e.FACTORY_DOCKER_CLAUDE_BIN,

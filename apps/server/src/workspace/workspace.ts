@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Mount } from "@open-factory/harness";
 import type { TemplateConfig } from "@open-factory/shared";
 import { FieldError } from "../errors.ts";
+import { FIELD_MSG } from "../field-messages.ts";
 import type { DenyRules } from "../spawning/inherit.ts";
 import { buildClaudeMd, type OrgEntry } from "./claude-md.ts";
 import {
@@ -139,11 +140,7 @@ export class Workspace {
       await mkdir(workdir);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new FieldError(
-          "slug",
-          `A folder already exists at ${workdir}. Move it away or pick another slug.`,
-          "folder_exists",
-        );
+        throw new FieldError("slug", FIELD_MSG.slugFolderExists, "folder_exists");
       }
       throw err;
     }

@@ -1,4 +1,5 @@
 import { ApiError, type CredentialKind } from "@open-factory/shared";
+import type { FocusEvent } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { PasswordInput } from "@/components/password-input";
 
@@ -27,7 +28,7 @@ export function TokenField({
   label: string;
   value: string;
   onChange(v: string): void;
-  onBlur?(): void;
+  onBlur?(e: FocusEvent<HTMLInputElement>): void;
   verdict: Verdict;
   kind?: CredentialKind;
 }) {
@@ -68,7 +69,7 @@ export function ValueField({
   value: string;
   error?: string;
   onChange(v: string): void;
-  onBlur?(): void;
+  onBlur?(e: FocusEvent<HTMLInputElement>): void;
 }) {
   return (
     <FieldShell name={name} label={label} error={error}>
@@ -87,14 +88,6 @@ export function ValueField({
     </FieldShell>
   );
 }
-
-export const PATH_HELP = "Absolute path to a folder on this machine, usually a git repository.";
-export const checkPath = (p: string) =>
-  p.trim() === ""
-    ? "Enter a path."
-    : p.trim().startsWith("/")
-      ? undefined
-      : "Enter an absolute path.";
 
 /** Server field errors (`400 validation_error` with `fields`) for this form's fields. */
 export const fieldsOf = (err: unknown): Record<string, string> | undefined =>

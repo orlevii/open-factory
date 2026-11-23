@@ -1,6 +1,7 @@
 import {
   ApiError,
   type TaskDetail as Detail,
+  type TaskSummary,
   taskBodySchema,
   taskTitleSchema,
 } from "@open-factory/shared";
@@ -11,11 +12,15 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { PrincipalChip } from "@/components/agent-chip";
+import { FieldShell } from "@/components/field-shell";
+import { FormOutcome, type Outcome, useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { PageHeader } from "@/components/page-header";
@@ -26,6 +31,7 @@ import { agentsListQueryOptions } from "@/features/session/api";
 import { formatInboxTime } from "@/features/session/format";
 import { LINK_CLASS } from "@/features/session/message-block";
 import { formatCostEst } from "@/features/usage/format";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { sessionQueryOptions } from "@/lib/session";
 import {
   type PatchTaskBody,
@@ -39,7 +45,14 @@ import { AssigneeMenu } from "./assignee-menu";
 import { authorMention } from "./comment-block";
 import { CommentComposer, type CommentComposerHandle } from "./comment-composer";
 import { checkDependencies, DependencyEditor } from "./dependency-editor";
-import { checkLink, LinkEditor, type LinkRow, newLinkRow, rowsToInput } from "./link-editor";
+import {
+  checkLink,
+  LinkEditor,
+  type LinkRow,
+  linkRowErrors,
+  newLinkRow,
+  rowsToInput,
+} from "./link-editor";
 import { LinkList } from "./link-list";
 import { BlockedMarker, STATUS, StatusLabel } from "./status-label";
 import { StatusMenu } from "./status-menu";
@@ -47,9 +60,13 @@ import { TaskActivity } from "./task-activity";
 import { TaskBadge } from "./task-badge";
 
 const sentenceOf = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
-/** An editor's failure: a field error (400) is the server's sentence, anything else the fixed line (the text stays). */
+/** An editor's failure that no field of its own explains: a 400's own sentence, anything else the fixed line (the text stays). */
 const saveFailure = (e: unknown) =>
-  e instanceof ApiError && e.status === 400 ? e.message : "Couldn't save. Try again.";
+  e instanceof ApiError && e.status === 400 ? e.message : FORM_MSG.saveFailed;
+const fieldsOf = (e: unknown) =>
+  e instanceof ApiError ? (e.body.fields as Record<string, string> | undefined) : undefined;
+const firstIssue = (r: { success: boolean; error?: { issues: { message: string }[] } }) =>
+  r.success ? undefined : r.error?.issues[0]?.message;
 
 /**
  * Moves focus back to an editor's Edit button once the closed editor has rendered. A frame callback
@@ -88,36 +105,49 @@ function SideSection({
   );
 }
 
-/** Save / Cancel row of an inline editor. */
+/**
+ * The outcome line and Save / Cancel row of an inline editor. `outcome` is the editor's `useOutcome()` with its hint
+ * merged in as the notice: a save failure replaces the hint, and the hint returns when the editor clears the failure.
+ */
 function EditorButtons({
   pending,
   saveDisabled = false,
   onSave,
   onCancel,
-  failed,
-  hint,
+  outcome,
 }: {
   pending: boolean;
   /** Save waits for something besides the request in flight. */
   saveDisabled?: boolean;
   onSave(): void;
   onCancel(): void;
-  failed: string | undefined;
-  hint?: string | undefined;
+  outcome: Outcome;
 }) {
+  const noticeId = useId();
+  const showsNotice = Boolean(outcome.notice) && !outcome.error && !outcome.success;
   return (
-    <div className="grid gap-1.5">
-      {hint && <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">{hint}</p>}
-      {failed && (
-        <p role="alert" className="text-[0.8125rem] leading-[1.125rem] text-destructive">
-          {failed}
-        </p>
-      )}
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
+      <FormOutcome
+        outcome={outcome}
+        pending={pending ? "Saving…" : undefined}
+        noticeId={noticeId}
+      />
       <div className="flex items-center gap-2">
-        <Button type="button" onClick={onSave} disabled={pending || saveDisabled}>
+        <Button
+          type="button"
+          onClick={onSave}
+          disabled={pending || saveDisabled}
+          aria-describedby={showsNotice ? noticeId : undefined}
+        >
           {pending ? "Saving…" : "Save"}
         </Button>
-        <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
+        <Button
+          type="button"
+          variant="ghost"
+          data-skip-validate
+          onClick={onCancel}
+          disabled={pending}
+        >
           Cancel
         </Button>
       </div>
@@ -336,6 +366,11 @@ export function TaskDetailView({
 
 type Save = (b: PatchTaskBody) => Promise<void>;
 
+/* An editor's body (title, description, dependencies, links) is mounted only while editing: Cancel and a successful
+ * Save unmount it, and its field errors and outcome with it. */
+
+const TITLE_FIELDS = ["title"] as const;
+
 function TitleBlock({
   task,
   liveAssignee,
@@ -348,63 +383,16 @@ function TitleBlock({
   disabled: boolean;
 }) {
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(task.title);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
   const edit = useRef<HTMLButtonElement>(null);
   const returnFocus = useReturnFocus(editing, edit);
-  const input = useRef<HTMLInputElement>(null);
   const close = () => {
     setEditing(false);
-    setError(undefined);
     returnFocus();
   };
-  useEffect(() => {
-    if (editing) input.current?.focus();
-  }, [editing]);
-  async function commit() {
-    const parsed = taskTitleSchema.safeParse(text);
-    if (!parsed.success) return setError(parsed.error.issues[0]?.message);
-    if (parsed.data === task.title) return close();
-    setPending(true);
-    try {
-      await save({ title: parsed.data });
-      setPending(false);
-      close();
-    } catch (e) {
-      setPending(false);
-      setError(saveFailure(e));
-    }
-  }
   return (
     <div className="order-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 @[45rem]/task:col-start-1">
       {editing ? (
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
-          <Input
-            ref={input}
-            aria-label="Title"
-            value={text}
-            aria-invalid={error ? true : undefined}
-            onChange={(e) => {
-              setText(e.target.value);
-              setError(undefined);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void commit();
-              } else if (e.key === "Escape") close();
-            }}
-            className="h-9"
-          />
-          <EditorButtons
-            pending={pending}
-            onSave={() => void commit()}
-            onCancel={close}
-            failed={error}
-            hint={liveAssignee ? `Saving sends the new title to @${liveAssignee}.` : undefined}
-          />
-        </div>
+        <TitleEditor title={task.title} liveAssignee={liveAssignee} save={save} onClose={close} />
       ) : (
         <div className="flex min-w-0 items-start gap-2">
           <h2 className="min-w-0 font-heading text-xl leading-7 font-[650] tracking-[-0.015em] [overflow-wrap:anywhere]">
@@ -417,10 +405,7 @@ function TitleBlock({
             aria-label="Edit title"
             className="shrink-0"
             disabled={disabled}
-            onClick={() => {
-              setText(task.title);
-              setEditing(true);
-            }}
+            onClick={() => setEditing(true)}
           >
             Edit
           </Button>
@@ -429,6 +414,86 @@ function TitleBlock({
     </div>
   );
 }
+
+function TitleEditor({
+  title,
+  liveAssignee,
+  save,
+  onClose,
+}: {
+  title: string;
+  liveAssignee: string | undefined;
+  save: Save;
+  onClose(): void;
+}) {
+  const [text, setText] = useState(title);
+  const [pending, setPending] = useState(false);
+  const o = useOutcome();
+  const form = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => input.current?.focus(), []);
+  const f = useFieldErrors({
+    form,
+    fields: TITLE_FIELDS,
+    checks: { title: () => firstIssue(taskTitleSchema.safeParse(text)) },
+  });
+  async function commit() {
+    if (pending) return;
+    o.clear();
+    if (!f.submit()) return;
+    const next = text.trim();
+    if (next === title) return onClose();
+    setPending(true);
+    try {
+      await save({ title: next });
+      onClose();
+    } catch (e) {
+      setPending(false);
+      if (!f.server(fieldsOf(e))) o.fail(saveFailure(e));
+    }
+  }
+  return (
+    <div ref={form} className="grid grid-cols-[minmax(0,1fr)] gap-1">
+      {/* The heading's place already names it: the label is for assistive tech. */}
+      <FieldShell name="task-title" label="Title" hideLabel error={f.errors.title}>
+        {(a) => (
+          <Input
+            ref={input}
+            id={a.id}
+            value={text}
+            autoComplete="off"
+            aria-invalid={a.invalid || undefined}
+            aria-describedby={a.describedBy}
+            onChange={(e) => {
+              setText(e.target.value);
+              f.change("title");
+              o.clear();
+            }}
+            onBlur={(e) => f.blur("title", e)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void commit();
+              } else if (e.key === "Escape" && !pending) onClose();
+            }}
+            className="h-9"
+          />
+        )}
+      </FieldShell>
+      <EditorButtons
+        pending={pending}
+        onSave={() => void commit()}
+        onCancel={onClose}
+        outcome={{
+          ...o.outcome,
+          notice: liveAssignee ? `Saving sends the new title to @${liveAssignee}.` : undefined,
+        }}
+      />
+    </div>
+  );
+}
+
+const BODY_FIELDS = ["body"] as const;
 
 function BodyBlock({
   task,
@@ -440,57 +505,16 @@ function BodyBlock({
   save: Save;
 }) {
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(task.body);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
   const edit = useRef<HTMLButtonElement>(null);
   const returnFocus = useReturnFocus(editing, edit);
-  const area = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (editing) area.current?.focus();
-  }, [editing]);
   const close = () => {
     setEditing(false);
-    setError(undefined);
     returnFocus();
   };
-  async function commit() {
-    const parsed = taskBodySchema.safeParse(text);
-    if (!parsed.success) return setError(parsed.error.issues[0]?.message);
-    if (text === task.body) return close();
-    setPending(true);
-    try {
-      await save({ body: text });
-      setPending(false);
-      close();
-    } catch (e) {
-      setPending(false);
-      setError(saveFailure(e));
-    }
-  }
   return (
     <div className="order-3 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 @[45rem]/task:col-start-1">
       {editing ? (
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
-          {/* Escape does not cancel here: it would discard a long draft. */}
-          <MarkdownEditor
-            id="task-body"
-            aria-label="Description"
-            value={text}
-            onChange={setText}
-            textareaRef={area}
-            variant="detail"
-          />
-          <EditorButtons
-            pending={pending}
-            onSave={() => void commit()}
-            onCancel={close}
-            failed={error}
-            hint={
-              liveAssignee ? `Saving sends the new description to @${liveAssignee}.` : undefined
-            }
-          />
-        </div>
+        <BodyEditor body={task.body} liveAssignee={liveAssignee} save={save} onClose={close} />
       ) : (
         <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
           {task.body.trim() ? (
@@ -504,16 +528,95 @@ function BodyBlock({
               variant="ghost"
               size="xs"
               aria-label={task.body.trim() ? "Edit description" : "Add a description"}
-              onClick={() => {
-                setText(task.body);
-                setEditing(true);
-              }}
+              onClick={() => setEditing(true)}
             >
               {task.body.trim() ? "Edit" : "Add a description"}
             </Button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function BodyEditor({
+  body,
+  liveAssignee,
+  save,
+  onClose,
+}: {
+  body: string;
+  liveAssignee: string | undefined;
+  save: Save;
+  onClose(): void;
+}) {
+  const [text, setText] = useState(body);
+  const [pending, setPending] = useState(false);
+  const [view, setView] = useState<"write" | "preview">("write");
+  const o = useOutcome();
+  const form = useRef<HTMLDivElement>(null);
+  // The textarea takes focus when it mounts: on open, and after a failing Save switched Preview back to Write (its tab
+  // panel mounts a commit after the switch, too late for the hook's focus).
+  const focusNext = useRef(true);
+  const focusOnMount = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el || !focusNext.current) return;
+    focusNext.current = false;
+    el.focus();
+  }, []);
+  const bodyIssue = () => firstIssue(taskBodySchema.safeParse(text));
+  const f = useFieldErrors({ form, fields: BODY_FIELDS, checks: { body: bodyIssue } });
+  async function commit() {
+    if (pending) return;
+    o.clear();
+    if (view === "preview" && bodyIssue()) {
+      focusNext.current = true;
+      setView("write");
+    }
+    if (!f.submit()) return;
+    if (text === body) return onClose();
+    setPending(true);
+    try {
+      await save({ body: text });
+      onClose();
+    } catch (e) {
+      setPending(false);
+      if (!f.server(fieldsOf(e))) o.fail(saveFailure(e));
+    }
+  }
+  return (
+    <div ref={form} className="grid grid-cols-[minmax(0,1fr)] gap-1">
+      <FieldShell name="task-body" label="Description" hideLabel error={f.errors.body}>
+        {(a) => (
+          // Escape does not cancel here: it would discard a long draft.
+          <MarkdownEditor
+            id={a.id}
+            value={text}
+            invalid={a.invalid}
+            view={view}
+            onViewChange={setView}
+            onChange={(next) => {
+              setText(next);
+              f.change("body");
+              o.clear();
+            }}
+            onBlur={() => f.blur("body")}
+            textareaRef={focusOnMount}
+            variant="detail"
+            {...(a.describedBy ? { "aria-describedby": a.describedBy } : {})}
+          />
+        )}
+      </FieldShell>
+      <EditorButtons
+        pending={pending}
+        onSave={() => void commit()}
+        onCancel={onClose}
+        outcome={{
+          ...o.outcome,
+          notice: liveAssignee
+            ? `Saving sends the new description to @${liveAssignee}.`
+            : undefined,
+        }}
+      />
     </div>
   );
 }
@@ -543,7 +646,7 @@ function StatusAndAssignee({
       await save(body);
       announce(say);
     } catch (e) {
-      setError(sentenceOf(e, "Couldn't save. Try again."));
+      setError(sentenceOf(e, FORM_MSG.saveFailed));
     } finally {
       setOptimistic({});
       setPending(false);
@@ -656,70 +759,22 @@ function SideRest({ task, save }: { task: Detail; save: Save }) {
   );
 }
 
+const DEPENDS_FIELDS = ["dependsOn"] as const;
+/** The dependency check is async: its result reaches the hook through `set` (leave) and `submit`'s extra (Save). */
+const NO_CHECKS = {};
+
 function DependsOnSection({ task, save }: { task: Detail; save: Save }) {
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState("");
-  const [resolved, setResolved] = useState<
-    Awaited<ReturnType<typeof checkDependencies>>["resolved"]
-  >([]);
-  const [error, setError] = useState<string>();
-  const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState<string>();
   const edit = useRef<HTMLButtonElement>(null);
   const returnFocus = useReturnFocus(editing, edit);
   const close = () => {
     setEditing(false);
-    setError(undefined);
-    setFailed(undefined);
     returnFocus();
   };
-  async function check() {
-    const r = await checkDependencies(text, task.key).catch(() => undefined);
-    if (r) setResolved(r.resolved);
-    setError(r?.error);
-    return r;
-  }
-  async function commit() {
-    const r = await check();
-    if (!r || r.error) return;
-    setPending(true);
-    setFailed(undefined);
-    try {
-      await save({ dependsOn: r.keys });
-      setPending(false);
-      close();
-    } catch (e) {
-      setPending(false);
-      if (
-        e instanceof ApiError &&
-        typeof (e.body.fields as Record<string, string> | undefined)?.dependsOn === "string"
-      )
-        setError((e.body.fields as Record<string, string>).dependsOn);
-      else setFailed("Couldn't save. Try again.");
-    }
-  }
   return (
     <SideSection label="Depends on">
       {editing ? (
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
-          <DependencyEditor
-            name="task-depends-on"
-            value={text}
-            resolved={resolved}
-            error={error}
-            onChange={(v) => {
-              setText(v);
-              setError(undefined);
-            }}
-            onBlur={() => void check()}
-          />
-          <EditorButtons
-            pending={pending}
-            onSave={() => void commit()}
-            onCancel={close}
-            failed={failed}
-          />
-        </div>
+        <DependsOnEditor task={task} save={save} onClose={close} />
       ) : (
         <>
           {task.dependsOn.length ? (
@@ -735,16 +790,7 @@ function DependsOnSection({ task, save }: { task: Detail; save: Save }) {
             <p className="text-[0.8125rem] text-muted-foreground">None</p>
           )}
           <div>
-            <Button
-              ref={edit}
-              variant="ghost"
-              size="xs"
-              onClick={() => {
-                setText(task.dependsOn.map((d) => d.key).join(", "));
-                setResolved([]);
-                setEditing(true);
-              }}
-            >
+            <Button ref={edit} variant="ghost" size="xs" onClick={() => setEditing(true)}>
               Edit dependencies
             </Button>
           </div>
@@ -754,67 +800,107 @@ function DependsOnSection({ task, save }: { task: Detail; save: Save }) {
   );
 }
 
-function LinksSection({ task, save }: { task: Detail; save: Save }) {
-  const qc = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [rows, setRows] = useState<LinkRow[]>([]);
-  const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+function DependsOnEditor({ task, save, onClose }: { task: Detail; save: Save; onClose(): void }) {
+  const [text, setText] = useState(() => task.dependsOn.map((d) => d.key).join(", "));
+  // The keys as last typed, for a lookup that returns after they changed.
+  const latest = useRef(text);
+  const [resolved, setResolved] = useState<TaskSummary[]>([]);
   const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState<string>();
-  const edit = useRef<HTMLButtonElement>(null);
-  const returnFocus = useReturnFocus(editing, edit);
-  // The agent lists only check an @agent link while editing; the read view doesn't fetch them.
-  const active = useQuery({ ...agentsListQueryOptions("exclude"), enabled: editing });
-  const ended = useQuery({ ...agentsListQueryOptions("only"), enabled: editing });
-  const known = useMemo(
-    () =>
-      active.data && ended.data
-        ? new Set([...active.data, ...ended.data].map((a) => a.slug))
-        : undefined,
-    [active.data, ended.data],
-  );
-  const close = () => {
-    setEditing(false);
-    setFailed(undefined);
-    returnFocus();
-  };
-  const check = (all = rows) => {
-    const next: Record<string, string | undefined> = {};
-    for (const r of all) next[r.id] = checkLink(r, known);
-    setErrors(next);
-    return Object.values(next).some(Boolean);
-  };
+  // A ref, not `pending`: a second Save can arrive during the lookup, before `pending` is set.
+  const inFlight = useRef(false);
+  const o = useOutcome();
+  const form = useRef<HTMLDivElement>(null);
+  const f = useFieldErrors<(typeof DEPENDS_FIELDS)[number]>({
+    form,
+    fields: DEPENDS_FIELDS,
+    checks: NO_CHECKS,
+  });
   async function commit() {
-    if (check()) return;
-    setPending(true);
-    setFailed(undefined);
+    if (inFlight.current) return;
+    inFlight.current = true;
     try {
-      await save({ links: rowsToInput(rows) });
-      setPending(false);
-      close();
-    } catch {
-      setPending(false);
-      setFailed("Couldn't save. Try again.");
+      o.clear();
+      const r = await checkDependencies(text, task.key).catch(() => undefined);
+      if (r) setResolved(r.resolved);
+      if (!f.submit(undefined, { dependsOn: r?.error })) return;
+      // The lookup failed: nothing to save the keys from.
+      if (!r) return o.fail(FORM_MSG.saveFailed);
+      setPending(true);
+      try {
+        await save({ dependsOn: r.keys });
+        onClose();
+      } catch (e) {
+        setPending(false);
+        if (!f.server(fieldsOf(e))) o.fail(saveFailure(e));
+      }
+    } finally {
+      inFlight.current = false;
     }
   }
   return (
+    <div ref={form} className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
+      <DependencyEditor
+        name="task-depends-on"
+        value={text}
+        resolvedKeys={resolved.map((t) => t.key)}
+        error={f.errors.dependsOn}
+        onChange={(v) => {
+          latest.current = v;
+          setText(v);
+          f.change("dependsOn");
+          o.clear();
+        }}
+        onBlur={() => {
+          // Focus leaving the window is not a leave (D11).
+          if (!document.hasFocus()) return;
+          const typed = text;
+          checkDependencies(typed, task.key).then(
+            (r) => {
+              if (latest.current !== typed) return;
+              setResolved(r.resolved);
+              // Blur only adds: an edit clears through `f.change`, so a server error survives tabbing out.
+              if (r.error) f.set("dependsOn", r.error);
+            },
+            // A failed lookup on leave says nothing; Save says it.
+            () => {},
+          );
+        }}
+      />
+      {resolved.length > 0 && (
+        <ul aria-label="Resolved dependencies" className="grid gap-1">
+          {resolved.map((t) => (
+            <li key={t.key} className="flex min-w-0 items-center gap-2 text-[0.8125rem]">
+              <TaskBadge taskKey={t.key} title={t.title} />
+              <StatusLabel status={t.status} className="ml-auto text-muted-foreground" />
+            </li>
+          ))}
+        </ul>
+      )}
+      <EditorButtons
+        pending={pending}
+        onSave={() => void commit()}
+        onCancel={onClose}
+        outcome={o.outcome}
+      />
+    </div>
+  );
+}
+
+const LINK_FIELDS = ["links"] as const;
+
+function LinksSection({ task, save }: { task: Detail; save: Save }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const edit = useRef<HTMLButtonElement>(null);
+  const returnFocus = useReturnFocus(editing, edit);
+  const close = () => {
+    setEditing(false);
+    returnFocus();
+  };
+  return (
     <SideSection label="Links">
       {editing ? (
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
-          <LinkEditor rows={rows} onChange={setRows} errors={errors} onBlurRow={() => check()} />
-          {(active.isError || ended.isError) && (
-            <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-              Couldn't load agents, so @agent links aren't checked here.
-            </p>
-          )}
-          <EditorButtons
-            pending={pending}
-            saveDisabled={active.isPending || ended.isPending}
-            onSave={() => void commit()}
-            onCancel={close}
-            failed={failed}
-          />
-        </div>
+        <LinksEditor task={task} save={save} onClose={close} />
       ) : (
         <>
           <LinkList links={task.links} />
@@ -827,16 +913,6 @@ function LinksSection({ task, save }: { task: Detail; save: Save }) {
                 // The lists start loading on the click, not on the next render.
                 void qc.prefetchQuery(agentsListQueryOptions("exclude"));
                 void qc.prefetchQuery(agentsListQueryOptions("only"));
-                setRows(
-                  task.links.map((l) =>
-                    newLinkRow({
-                      kind: l.kind,
-                      target: l.kind === "agent" ? `@${l.agent?.slug ?? ""}` : (l.target ?? ""),
-                      title: l.title ?? "",
-                    }),
-                  ),
-                );
-                setErrors({});
                 setEditing(true);
               }}
             >
@@ -846,6 +922,86 @@ function LinksSection({ task, save }: { task: Detail; save: Save }) {
         </>
       )}
     </SideSection>
+  );
+}
+
+function LinksEditor({ task, save, onClose }: { task: Detail; save: Save; onClose(): void }) {
+  const [rows, setRows] = useState<LinkRow[]>(() =>
+    task.links.map((l) =>
+      newLinkRow({
+        kind: l.kind,
+        target: l.kind === "agent" ? `@${l.agent?.slug ?? ""}` : (l.target ?? ""),
+        title: l.title ?? "",
+      }),
+    ),
+  );
+  // Which rows' notes may show their message: a row joins on its blur, every row on Save.
+  const [checkedRows, setCheckedRows] = useState<ReadonlySet<string>>(() => new Set());
+  const [pending, setPending] = useState(false);
+  const o = useOutcome();
+  const form = useRef<HTMLDivElement>(null);
+  // The agent lists only check an @agent link while editing; the read view doesn't fetch them.
+  const active = useQuery(agentsListQueryOptions("exclude"));
+  const ended = useQuery(agentsListQueryOptions("only"));
+  const known = useMemo(
+    () =>
+      active.data && ended.data
+        ? new Set([...active.data, ...ended.data].map((a) => a.slug))
+        : undefined,
+    [active.data, ended.data],
+  );
+  const f = useFieldErrors({
+    form,
+    fields: LINK_FIELDS,
+    // Every row, blurred or not, so a bad row blocks the save.
+    checks: { links: () => rows.map((r) => checkLink(r, known)).find(Boolean) },
+  });
+  const rowErrors = linkRowErrors(rows, known, checkedRows, f.errors.links);
+  async function commit() {
+    if (pending) return;
+    o.clear();
+    setCheckedRows(new Set(rows.map((r) => r.id)));
+    if (!f.submit()) return;
+    setPending(true);
+    try {
+      await save({ links: rowsToInput(rows) });
+      onClose();
+    } catch (e) {
+      setPending(false);
+      const fields = fieldsOf(e);
+      // With no rows, a links error has no note to sit in.
+      if (rows.length === 0) o.fail(fields?.links ?? saveFailure(e));
+      else if (!f.server(fields)) o.fail(saveFailure(e));
+    }
+  }
+  return (
+    <div ref={form} className="grid grid-cols-[minmax(0,1fr)] gap-1">
+      <LinkEditor
+        rows={rows}
+        onChange={(next) => {
+          setRows(next);
+          f.change("links");
+          o.clear();
+        }}
+        errors={rowErrors}
+        onBlurRow={(id, e) => {
+          setCheckedRows((s) => (s.has(id) ? s : new Set(s).add(id)));
+          f.blur("links", e);
+        }}
+      />
+      {(active.isError || ended.isError) && (
+        <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+          Couldn't load agents, so @agent links aren't checked here.
+        </p>
+      )}
+      <EditorButtons
+        pending={pending}
+        saveDisabled={active.isPending || ended.isPending}
+        onSave={() => void commit()}
+        onCancel={onClose}
+        outcome={o.outcome}
+      />
+    </div>
   );
 }
 

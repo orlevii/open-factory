@@ -132,20 +132,21 @@ test("validates on leave with each sentence; submit focuses the first invalid fi
   await openNew();
   await chooseCustom();
   const cron = screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" });
+  // Leaving an untouched field says nothing.
   await userEvent.click(cron);
+  await userEvent.tab();
+  expect(document.getElementById("field-cron-error")).not.toHaveAttribute("data-shown");
+  await userEvent.type(cron, "x");
+  await userEvent.clear(cron);
   await userEvent.tab();
   expect(await screen.findByText("Enter a pattern.")).toBeInTheDocument();
   await userEvent.type(cron, "@daily");
   await userEvent.tab();
-  expect(
-    await screen.findByText("Use 5 fields: minute hour day-of-month month day-of-week."),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("Use 5 fields, like 0 9 * * 1-5.")).toBeInTheDocument();
   await userEvent.clear(cron);
   await userEvent.type(cron, "0 9 L * *");
   await userEvent.tab();
-  expect(
-    await screen.findByText("Only numbers, *, ranges, lists, steps and names are allowed."),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("Use numbers, *, -, / and commas.")).toBeInTheDocument();
   await userEvent.clear(cron);
   await userEvent.type(cron, "61 * * * *");
   await userEvent.tab();
@@ -160,7 +161,37 @@ test("validates on leave with each sentence; submit focuses the first invalid fi
   await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
   expect(await screen.findByText("Choose an agent.")).toBeInTheDocument();
   expect(await screen.findByText("Enter a message.")).toBeInTheDocument();
-  expect(within(screen.getByRole("dialog")).getByLabelText("Target")).toHaveFocus();
+  await waitFor(() =>
+    expect(within(screen.getByRole("dialog")).getByLabelText("Target")).toHaveFocus(),
+  );
+  // The Message editor's frame takes the invalid edge with its note.
+  expect(screen.getByLabelText("Message")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Message").closest("[data-invalid]")).not.toBeNull();
+});
+
+test("a server failure with no field says so above the buttons, and Create stays usable", async () => {
+  mockApi({
+    ...base(),
+    "POST /api/schedules": () =>
+      json({ error: { code: "internal_error", message: "Database is down" } }, 500),
+  });
+  renderApp("/schedules/new", alice);
+  await screen.findByRole("dialog", { name: "New schedule" });
+  await pick("ceo");
+  await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Weekdays at 09:00");
+  await userEvent.type(screen.getByLabelText("Message"), "x");
+  await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+  const dialog = screen.getByRole("dialog");
+  await waitFor(() =>
+    expect(
+      within(dialog)
+        .getAllByRole("alert")
+        .map((a) => a.textContent),
+    ).toContain("Couldn't save the schedule. Try again."),
+  );
+  expect(screen.getByRole("button", { name: "Create schedule" })).not.toHaveAttribute(
+    "aria-disabled",
+  );
 });
 
 test("the target picker starts at 'Choose an agent…' and a spawned agent adds the helper", async () => {

@@ -169,7 +169,10 @@ test("Save sends only the changed fields and shows Saved.", async () => {
   await user.type(warm, "120");
   const region = await factory();
   await user.click(within(region).getByRole("button", { name: "Save" }));
-  expect(await within(region).findByText("Saved.")).toBeInTheDocument();
+  const saved = await within(region).findByText("Saved.");
+  // The line sits above Save, nothing beside it.
+  const save = within(region).getByRole("button", { name: "Save" });
+  expect(saved.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(api.calls.filter((c) => c.method === "PATCH").map((c) => c.body)).toEqual([
     { defaultWarmWindowMinutes: 120 },
   ]);
@@ -183,6 +186,32 @@ test("Save sends only the changed fields and shows Saved.", async () => {
   // Editing again clears the outcome.
   await user.type(warm, "1");
   expect(within(region).queryByText("Saved.")).not.toBeInTheDocument();
+});
+
+test("blur on an unchanged number field shows nothing", async () => {
+  world();
+  const user = userEvent.setup();
+  renderApp("/settings/factory", alice);
+  const cap = await field("Concurrency cap");
+  await waitFor(() => expect(cap).toHaveValue(8));
+  await user.click(cap);
+  await user.tab();
+  expect(cap).toHaveAccessibleDescription(CAP_HINT);
+});
+
+test("a failed save says so in an alert", async () => {
+  world({
+    "PATCH /api/settings/factory": () => json({ error: { code: "boom", message: "x" } }, 500),
+  });
+  const user = userEvent.setup();
+  renderApp("/settings/factory", alice);
+  const warm = await field("Default warm window");
+  await waitFor(() => expect(warm).toHaveValue(70));
+  await user.clear(warm);
+  await user.type(warm, "120");
+  const region = await factory();
+  await user.click(within(region).getByRole("button", { name: "Save" }));
+  expect(await within(region).findByRole("alert")).toHaveTextContent("Couldn't save. Try again.");
 });
 
 test("a server 400 maps to its field", async () => {

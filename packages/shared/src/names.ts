@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { RESERVED_HANDLES } from "./handle.ts";
+import { MSG } from "./messages.ts";
 
 export const SLUG_PATTERN = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 export const NAME_PATTERN = /^[a-z][a-z0-9-]{0,38}[a-z0-9]$/;
@@ -30,23 +31,24 @@ const RESERVED_SECRET_PREFIXES = [
 export const isReservedSecretName = (n: string) =>
   RESERVED_SECRET_EXACT.has(n) || RESERVED_SECRET_PREFIXES.some((p) => n.startsWith(p));
 
-export const slugSchema = z
-  .string()
-  .regex(
-    SLUG_PATTERN,
-    "Use 3–40 lowercase letters, numbers and inner hyphens, starting with a letter.",
-  )
-  .refine((s) => !(RESERVED_SLUGS as readonly string[]).includes(s), "That slug is reserved.");
-export const nameSchema = z
-  .string()
-  .regex(
-    NAME_PATTERN,
-    "Use 2–40 lowercase letters, numbers and inner hyphens, starting with a letter.",
-  );
+const lengthRules = (min: number, max: number, msg: string) =>
+  z.string().min(min, msg).max(max, msg);
+const charRules = (schema: z.ZodString, pattern: RegExp) =>
+  schema
+    .regex(/^[a-z]/, MSG.startLetter)
+    .regex(/^[a-z0-9-]+$/, MSG.nameChars)
+    .regex(/[^-]$/, MSG.noTrailingHyphen)
+    .regex(pattern, MSG.nameChars);
+
+export const slugSchema = charRules(lengthRules(3, 40, MSG.slugLength), SLUG_PATTERN).refine(
+  (s) => !(RESERVED_SLUGS as readonly string[]).includes(s),
+  MSG.slugReserved,
+);
+export const nameSchema = charRules(lengthRules(2, 40, MSG.nameLength), NAME_PATTERN);
 export const secretNameSchema = z
   .string()
-  .regex(SECRET_NAME_PATTERN, "Use uppercase letters, numbers and underscores, like GH_TOKEN.")
-  .refine((n) => !isReservedSecretName(n), "That name is reserved for the agent's environment.");
+  .regex(SECRET_NAME_PATTERN, MSG.secretChars)
+  .refine((n) => !isReservedSecretName(n), MSG.nameReserved);
 export const hostSkillSchema = z
   .string()
   .regex(HOST_SKILL_PATTERN, "Not a valid skill folder name.");

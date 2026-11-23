@@ -44,14 +44,10 @@ test("each field validates on blur, with the form's messages", async () => {
   expect(result.current.errors.displayName).toBe("Enter a display name.");
   act(() => result.current.set("displayName", "x".repeat(81)));
   act(() => result.current.blur("displayName"));
-  expect(result.current.errors.displayName).toBe(
-    "Keep the display name to 80 characters or fewer.",
-  );
+  expect(result.current.errors.displayName).toBe("Use 80 characters or fewer.");
   act(() => result.current.set("description", "x".repeat(501)));
   act(() => result.current.blur("description"));
-  expect(result.current.errors.description).toBe(
-    "Keep the description to 500 characters or fewer.",
-  );
+  expect(result.current.errors.description).toBe("Use 500 characters or fewer.");
   act(() => result.current.blur("template"));
   expect(result.current.errors.template).toBe("Choose a template.");
   // Typing clears a field's error.

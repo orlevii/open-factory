@@ -11,6 +11,7 @@ import {
 } from "@open-factory/shared";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
+import { FIELD_MSG } from "../field-messages.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
 import { isNameTaken } from "../messaging/principals.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
@@ -26,7 +27,7 @@ import type { RuntimeLog } from "./agent-runtime.ts";
 import type { Exec, Tx } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 
-const slugTaken = () => new FieldError("slug", "That slug is taken.", "slug_taken");
+const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
 
 function isSlugUnique(e: unknown): boolean {
   for (let x = e as { code?: string; constraint_name?: string; cause?: unknown } | undefined; x; ) {
@@ -413,7 +414,7 @@ export class AgentService {
       .select({ id: schema.credentials.id })
       .from(schema.credentials)
       .where(eq(schema.credentials.name, name));
-    if (!c) throw new FieldError("credential", "Choose a credential.");
+    if (!c) throw new FieldError("credential", FIELD_MSG.chooseCredential);
     return c.id;
   }
 
@@ -430,7 +431,7 @@ export class AgentService {
         ),
       );
     // S7 §9.3: no spawned managers, so reports never hang under an agent that gets terminated.
-    if (!m) throw new FieldError("reportsTo", "Choose an active agent.");
+    if (!m) throw new FieldError("reportsTo", FIELD_MSG.chooseManager);
     return m;
   }
 
@@ -453,7 +454,7 @@ export class AgentService {
     const byName = new Map(found.map((p) => [p.name, p]));
     return names.map((n) => {
       const p = byName.get(n);
-      if (!p) throw new FieldError("projects", `Project ${n} isn't registered.`);
+      if (!p) throw new FieldError("projects", FIELD_MSG.projectRemoved);
       return p;
     });
   }
@@ -461,7 +462,7 @@ export class AgentService {
   async create(b: CreateAgentBody): Promise<AgentSummary> {
     const slugOk = slugSchema.safeParse(b.slug);
     if (!slugOk.success)
-      throw new FieldError("slug", slugOk.error.issues[0]?.message ?? "Invalid slug.");
+      throw new FieldError("slug", slugOk.error.issues[0]?.message ?? FIELD_MSG.slugInvalid);
     return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b));
   }
 
@@ -548,7 +549,7 @@ export class AgentService {
     }
     if (b.reportsTo !== undefined) {
       const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
-      if (manager) await this.assertNoCycle(slug, row.id, manager);
+      if (manager) await this.assertNoCycle(row.id, manager);
       if ((manager?.id ?? null) !== row.reportsTo) {
         set.reportsTo = manager?.id ?? null;
         moved = { to: manager?.slug ?? null };
@@ -609,15 +610,11 @@ export class AgentService {
   }
 
   /** Walks reportsTo upward from the new manager; reaching the agent itself is a cycle. */
-  private async assertNoCycle(slug: string, id: string, manager: AgentRow) {
+  private async assertNoCycle(id: string, manager: AgentRow) {
     const seen = new Set<string>();
     let cur: AgentRow | undefined = manager;
     while (cur && !seen.has(cur.id)) {
-      if (cur.id === id)
-        throw new FieldError(
-          "reportsTo",
-          `That would make @${slug} report to itself through @${manager.slug}.`,
-        );
+      if (cur.id === id) throw new FieldError("reportsTo", FIELD_MSG.reportsCycle);
       seen.add(cur.id);
       if (!cur.reportsTo) return;
       const [next] = await this.d.db

@@ -38,6 +38,7 @@ import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
+import { hostRoutes } from "./routes/host.ts";
 import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { meRoutes } from "./routes/me.ts";
@@ -410,6 +411,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(statusRoutes, { sql: deps.sql });
   await app.register(authRoutes, { db: deps.db });
   await app.register(meRoutes);
+  await app.register(hostRoutes);
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);

@@ -90,7 +90,11 @@ function InboxPage() {
   );
 
   const header = (
-    <PageHeader wrap title="Inbox" actions={<MarkAllReadButton state={state} buttonRef={button} />} />
+    <PageHeader
+      wrap
+      title="Inbox"
+      actions={<MarkAllReadButton state={state} buttonRef={button} />}
+    />
   );
   // The live regions stay mounted (so the outcome is announced), but take room only with a line
   // in them: no empty strip above the list.

@@ -47,7 +47,8 @@ const PAST_CODE: ReadonlySet<SignInState> = new Set([
   "settled",
 ]);
 const PHASE_OF: Record<SignInState, Phase> = {
-  starting: "starting",
+  // Found on a GET (a reload during Start, or a Start in another tab): nothing here would ever move it on, so Idle.
+  starting: "idle",
   awaiting_code: "ready",
   submitting: "exchanging",
   exchanging: "exchanging",
@@ -66,6 +67,8 @@ const NOT_ENDING: ReadonlySet<string> = new Set([
 const submittedHere = new Set<string>();
 /** One wait loop per attempt id (H2). */
 const inFlight = new Map<string, { promise: Promise<Result>; controller: AbortController }>();
+/** Bumped by resetSignIn(): a submit in flight across a sign-out must not start a wait loop afterwards. */
+let generation = 0;
 
 /**
  * Writes an attempt into the sign-in query. Only GET and POST start carry `url` (and the 409 extra may omit the
@@ -179,6 +182,7 @@ export function waitUntilDone(qc: QueryClient, attemptId: string): Promise<Resul
 
 /** Sign-out (R3): aborts every wait loop and forgets what this tab submitted, so the next user inherits nothing. */
 export function resetSignIn() {
+  generation++;
   for (const { controller } of inFlight.values()) controller.abort();
   inFlight.clear();
   submittedHere.clear();
@@ -222,7 +226,7 @@ export function useSignIn(o: {
   onDone(c: CredentialSummary): void;
 }) {
   const qc = useQueryClient();
-  const { data, refetch } = useQuery(signInQueryOptions);
+  const { data, refetch, isPending: loadingFirst } = useQuery(signInQueryOptions);
   const [code, setCodeState] = useState("");
   const [pending, setPending] = useState<Pending>();
   const [shown, setShown] = useState<Shown>({});
@@ -265,7 +269,8 @@ export function useSignIn(o: {
 
   // Derived in render (rerender-derived-state-no-effect).
   let phase: Phase;
-  if (data === undefined && pending === undefined) phase = "loading";
+  // Loading only while the first GET is pending: an errored one renders Idle, and Start's own answer decides.
+  if (loadingFirst && pending === undefined) phase = "loading";
   else if (pending === "start") phase = "starting";
   else if (pending === "submit" || pending === "wait")
     phase = mine?.state === "verifying" ? "verifying" : "exchanging";
@@ -325,7 +330,9 @@ export function useSignIn(o: {
     }
     const e = result.error;
     if (attemptOf(e)) return; // The code never arrived: Ready again, the unspent code kept (spec §5.5).
-    if (attemptId !== undefined) submittedHere.delete(attemptId);
+    // A `sign_in_state` without an attempt leaves the id to whichever panel's submit owns it.
+    if (attemptId !== undefined && !(e instanceof ApiError && e.code === "sign_in_state"))
+      submittedHere.delete(attemptId);
     setCodeState("");
     if (!(e instanceof ApiError)) {
       o.outcome.fail(FORM_MSG.unreachable);
@@ -398,6 +405,7 @@ export function useSignIn(o: {
                 ?.expiresAt ?? null,
           };
     submittedHere.add(attemptId);
+    const gen = generation;
     setPending("submit");
     let r: Result;
     try {
@@ -409,12 +417,14 @@ export function useSignIn(o: {
       if (out.kind === "done") r = finish(qc, attemptId, { ok: true, credential: out.credential });
       else {
         writeAttempt(qc, out.attempt);
-        r = await waitUntilDone(qc, attemptId);
+        r = gen === generation ? await waitUntilDone(qc, attemptId) : ABORTED;
       }
     } catch (e) {
       // A network error or a bare/unhandled 5xx joins the wait (spec §8.3); a coded answer is the outcome.
       r = isRetryableWaitError(e)
-        ? await waitUntilDone(qc, attemptId)
+        ? gen === generation
+          ? await waitUntilDone(qc, attemptId)
+          : ABORTED
         : finish(qc, attemptId, { ok: false, error: e });
     }
     await resolve(r, ctx);

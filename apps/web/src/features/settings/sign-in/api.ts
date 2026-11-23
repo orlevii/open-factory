@@ -15,6 +15,8 @@ export const signInQueryOptions = queryOptions({
   // A prefetch in the route loader and the mount right after it don't double-GET.
   staleTime: 2_000,
   refetchOnWindowFocus: true,
+  // A failed GET shows Idle at once (spec §8.2) instead of a blank panel through the app's retries.
+  retry: false,
   queryFn: ({ signal }) => apiFetch("/api/claude-sign-in", { schema: signInStatusSchema, signal }),
 });
 

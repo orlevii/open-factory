@@ -656,3 +656,57 @@ it("states swap with no transition classes (R7)", async () => {
   // No reserved height for a later state.
   expect(panel().getAttribute("style")).toBeNull();
 });
+
+it("a failed first GET renders Idle with the help line, and Start works (spec §8.2)", async () => {
+  route(GET, apiErr(500, "internal_error", "boom"));
+  route(START, ok({ attempt: ready() }));
+  renderHost();
+  expect(await screen.findByText(SIGN_IN_HELP)).toBeInTheDocument();
+  expect(primary()).toHaveTextContent("Start sign-in");
+  fireEvent.click(primary());
+  expect(await screen.findByRole("link", { name: "Open sign-in page" })).toHaveAttribute(
+    "href",
+    SYN_URL,
+  );
+});
+
+it("an attempt found in starting renders Idle, not a stuck Starting…", async () => {
+  route(GET, ok({ available: true, attempt: working("starting") }));
+  renderHost();
+  expect(await screen.findByText(SIGN_IN_HELP)).toBeInTheDocument();
+  expect(primary()).toHaveTextContent("Start sign-in");
+});
+
+it("sign-out during a POST /code in flight: no wait loop starts after resetSignIn()", async () => {
+  await toReady();
+  const code = deferred();
+  route(CODE, () => code.promise);
+  route(WAIT, ok({ attempt: working("exchanging") }, 202));
+  await typeCodeAndSubmit();
+  await waitFor(() => expect(count(CODE)).toBe(1));
+  act(() => resetSignIn());
+  await act(async () => code.resolve(ok({ attempt: working("exchanging") }, 202)));
+  await new Promise((res) => setTimeout(res, 50));
+  expect(count(WAIT)).toBe(0);
+});
+
+it("a sign_in_state answer without an attempt does not take the id from another panel's submit", async () => {
+  route(GET, ok({ available: true, attempt: ready() }));
+  const first = deferred();
+  route(CODE, () => first.promise, apiErr(409, "sign_in_state", MSG.signInState));
+  route(WAIT, ok({ credential: cred() }, 201));
+  const { onDone } = renderHost({}, newClient(), { twice: true });
+  // Two panels share ids, so a by-name query would find one Code box only.
+  const boxSel = "[data-sign-in-panel] input";
+  await waitFor(() => expect(document.querySelectorAll(boxSel)).toHaveLength(2));
+  const boxes = Array.from(document.querySelectorAll(boxSel));
+  const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button[type="submit"]'));
+  fireEvent.change(boxes[0] as HTMLElement, { target: { value: SYN_CODE } });
+  fireEvent.change(boxes[1] as HTMLElement, { target: { value: SYN_CODE } });
+  fireEvent.click(buttons[0] as HTMLElement);
+  await waitFor(() => expect(count(CODE)).toBe(1));
+  fireEvent.click(buttons[1] as HTMLElement);
+  await waitFor(() => expect(count(CODE)).toBe(2));
+  await act(async () => first.resolve(ok({ attempt: working("exchanging") }, 202)));
+  await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+});

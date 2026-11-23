@@ -393,7 +393,7 @@ test("read-from publishes inbox_changed only when it marked something", async ()
   expect(n).toBe(1);
 });
 
-test("read changes reach the reading user's sockets only; new items reach everyone", async () => {
+test("read changes reach the reading user's sockets only; new items reach the users they are for", async () => {
   const { or, agent, sam } = await actors();
   const orId = or.userId;
   const got = { or: 0, sam: 0, all: 0 };
@@ -402,13 +402,13 @@ test("read changes reach the reading user's sockets only; new items reach everyo
   h.app.bus.subscribeAll((m) => m.type === "inbox_changed" && got.all++);
   await h.app.tasks.create(or, { title: "t" });
   await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
-  expect(got.all).toBe(1);
-  expect(got.or + got.sam).toBe(0); // new rows publish to every socket, not through the per-user channel
+  expect(got.all).toBe(0); // a new item goes to the users it was written for, never to every socket
+  expect(got).toMatchObject({ or: 1, sam: 1 });
   const mine = ((await get("/api/inbox")).json().items as { id: string }[])[0]?.id as string;
   await post(`/api/inbox/${mine}/read`);
-  expect(got).toEqual({ or: 1, sam: 0, all: 1 });
+  expect(got).toEqual({ or: 2, sam: 1, all: 0 });
   await post("/api/inbox/read-all", { upTo: "2999-01-01T00:00:00.000Z" });
-  expect(got.sam).toBe(0);
+  expect(got.sam).toBe(1);
 });
 
 test.each([

@@ -26,7 +26,7 @@ import {
 } from "@/features/session/agent-details";
 import { agentDetailQueryOptions, runningQueryOptions } from "@/features/session/api";
 import type { PinOutcome } from "@/features/session/live-line";
-import { CronsStopLayer, type StopCrons, useStopCrons } from "@/features/session/stop-crons";
+import { CronsStopLayer, useStopCrons } from "@/features/session/stop-crons";
 import { AgentHeader } from "./agent-header";
 import { useAgentSummary } from "./use-agent-summary";
 import type { AgentView } from "./view-memory";

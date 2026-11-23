@@ -14,6 +14,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { archiveAgent, restoreAgent, resyncAgent } from "@/features/agents/lifecycle";
+import type { AgentView } from "@/features/agents/view-memory";
+import { viewSwitchTarget } from "@/features/agents/view-switch";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { cn } from "@/lib/utils";
@@ -43,6 +45,7 @@ export function AgentMenu({
   triggerClassName,
   anchored,
   onLifecycle,
+  viewSwitch,
 }: {
   agent: AgentSummary;
   context: "session" | "sidebar" | "list";
@@ -55,6 +58,8 @@ export function AgentMenu({
   triggerClassName?: string;
   /** After Archive, its Undo, or Restore: the session holds its own copy of the agent to refresh. */
   onLifecycle?: () => void;
+  /** The header is crowded: its view switch moves here, to the top of the menu. The current view. */
+  viewSwitch?: AgentView;
   /** One shared instance for a list (the sidebar tree): controlled, with no ⋯ of its own. It opens
    *  below the right edge of `anchor` (the row the caller names) and hands focus back with `onClose`. */
   anchored?: {
@@ -236,7 +241,18 @@ export function AgentMenu({
         Terminate…
       </AdaptiveMenuItem>,
     );
-  const groups = [create, views, lifecycle].filter((g) => g.length > 0);
+  const nav: ReactElement[] = [];
+  if (viewSwitch) {
+    const target = viewSwitchTarget(viewSwitch);
+    nav.push(
+      <AdaptiveMenuItem key="view" asChild>
+        <Link to={target.to} params={{ slug }}>
+          {target.opens}
+        </Link>
+      </AdaptiveMenuItem>,
+    );
+  }
+  const groups = [nav, create, views, lifecycle].filter((g) => g.length > 0);
 
   // The row's box, measured when the menu opens and kept through the close, so the menu stays
   // over its row while it fades out (the page is scroll-locked while it is open).

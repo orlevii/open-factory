@@ -24,6 +24,7 @@ import { StatusBadge, statusLabel } from "@/features/session/status-badge";
 import type { StopCrons } from "@/features/session/stop-crons";
 import { cn } from "@/lib/utils";
 import type { AgentView } from "./view-memory";
+import { ViewSwitch } from "./view-switch";
 
 const VIEW_TITLE: Record<AgentView, string> = { chat: "Chat", session: "Session" };
 
@@ -90,7 +91,10 @@ export const AgentHeader = memo(function AgentHeader({
           <span className="shrink-0 md:hidden">
             <StatusBadge status={agent.status} size="short" />
           </span>
-          <LiveLine fact={liveFact(agent, { slotsMax: slotsMax, now: new Date() })} />
+          <LiveLine
+            fact={liveFact(agent, { slotsMax: slotsMax, now: new Date() })}
+            sessionOf={view === "chat" ? agent.slug : undefined}
+          />
         </>
       }
       actions={
@@ -98,6 +102,8 @@ export const AgentHeader = memo(function AgentHeader({
           agent={agent}
           archived={archived}
           panel={panel}
+          view={view}
+          crowded={crowded}
           onRestartError={onRestartError}
           onPinOutcome={onPinOutcome}
           onAgent={onAgent}
@@ -111,6 +117,7 @@ export const AgentHeader = memo(function AgentHeader({
               onTerminateStart={onTerminateStart}
               onTerminated={onTerminated}
               onLifecycle={onLifecycle}
+              viewSwitch={crowded ? view : undefined}
             />
           }
         />
@@ -123,6 +130,8 @@ function AgentActions({
   agent,
   archived,
   panel,
+  view,
+  crowded,
   actionsMenu,
   onRestartError,
   onPinOutcome,
@@ -131,6 +140,9 @@ function AgentActions({
   agent: AgentSummary;
   archived: boolean;
   panel: AgentDetailsPanel;
+  view: AgentView;
+  /** A third action (Restart, Pin) is showing: the view switch gives way below 22rem. */
+  crowded: boolean;
   actionsMenu: ReactNode;
   onRestartError(message: string | undefined): void;
   onPinOutcome(o: PinOutcome | undefined): void;
@@ -146,6 +158,7 @@ function AgentActions({
         <PinButton agent={agent} onAgent={onAgent} onOutcome={onPinOutcome} header />
       )}
       {live && <RecoveryActions agent={agent} onError={onRestartError} />}
+      <ViewSwitch slug={agent.slug} view={view} inMenu={crowded} />
       <Tooltip>
         <TooltipTrigger asChild>
           <Button

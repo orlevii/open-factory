@@ -215,19 +215,6 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
   expect((await get(`/api/messages/${out.id}`, {})).statusCode).toBe(401);
 });
 
-test("spec §5.1: a live agent token is refused by the inbox and message lookup routes", async () => {
-  const out = JSON.parse(
-    (await callTool(url, tokA, "send_message", { to: ["@or"], body: "for or" })).content[0]?.text ??
-      "{}",
-  ).results[0];
-  const bearer = { authorization: `Bearer ${tokA}` };
-  for (const path of ["/api/inbox", `/api/messages/${out.id}`]) {
-    const r = await get(path, bearer);
-    expect(r.statusCode, path).toBe(401);
-    expect(r.json()).toEqual({ error: { code: "unauthorized", message: "Not signed in" } });
-  }
-});
-
 // ---- S8: task items, read state, mark all read with undo, per-user frames ----
 const post = (path: string, payload: object = {}, c = cookie) =>
   h.app.inject({ method: "POST", url: path, headers: { cookie: c }, payload });
@@ -322,7 +309,7 @@ test("unread-count byAgent counts unread messages by sending agent only", async 
   await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
   const r = (await get("/api/inbox/unread-count")).json();
   expect(r.byAgent).toEqual({ ada: 2 });
-  expect(r.count).toBeGreaterThanOrEqual(3);
+  expect(r.count).toBe(3);
 });
 
 test("read-all marks up to upTo (a newer item stays unread) and Undo restores exactly those", async () => {
@@ -412,7 +399,10 @@ test("read changes reach the reading user's sockets only; new items reach the us
   expect(got.sam).toBe(1);
 });
 
+// Spec §5.1: a live agent token is refused by the inbox and message lookup routes.
 test.each([
+  ["GET", "/api/inbox"],
+  ["GET", "/api/messages/x"],
   ["GET", "/api/inbox?unread=true"],
   ["GET", "/api/inbox/unread-count"],
   ["POST", "/api/inbox/x/read"],
@@ -427,6 +417,7 @@ test.each([
     payload: {},
   });
   expect(r.statusCode).toBe(401);
+  expect(r.json()).toEqual({ error: { code: "unauthorized", message: "Not signed in" } });
 });
 
 test("GET /api/inbox/:id: the owner's item equals the list entry; another user's or unknown id is 404; static routes still win", async () => {

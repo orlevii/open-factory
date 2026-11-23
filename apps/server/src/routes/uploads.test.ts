@@ -16,7 +16,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
@@ -239,12 +239,15 @@ test("a symlinked .factory refuses the upload and nothing is written outside the
   ).toEqual([]);
 });
 
-test("GET sends nosniff and the sniffed type; text is an attachment; a swapped or resized file is refused", async () => {
+test("GET sends nosniff, a sandboxing CSP, no-store and the sniffed type; text is an attachment; a swapped or resized file is refused", async () => {
   const img = (await upload("dev", png(8, 8), "pic.txt")).json();
   const r1 = await get("dev", img.uploadId);
   expect(r1.statusCode).toBe(200);
   expect(r1.headers["content-type"]).toBe("image/png");
   expect(r1.headers["x-content-type-options"]).toBe("nosniff");
+  // Uploaded bytes are untrusted: no script, no framing, no caching of what a human sent.
+  expect(r1.headers["content-security-policy"]).toBe("default-src 'none'; sandbox");
+  expect(r1.headers["cache-control"]).toBe("private, no-store");
   expect(String(r1.headers["content-disposition"])).toMatch(/^inline/);
   expect(r1.rawPayload).toEqual(png(8, 8));
 
@@ -252,6 +255,8 @@ test("GET sends nosniff and the sniffed type; text is an attachment; a swapped o
   const r2 = await get("dev", txt.uploadId);
   expect(r2.headers["content-type"]).toBe("text/plain; charset=utf-8");
   expect(r2.headers["x-content-type-options"]).toBe("nosniff");
+  expect(r2.headers["content-security-policy"]).toBe("default-src 'none'; sandbox");
+  expect(r2.headers["cache-control"]).toBe("private, no-store");
   expect(String(r2.headers["content-disposition"])).toMatch(/^attachment; filename="page.md"/);
   expect(r2.body).toBe("plain\n");
 
@@ -293,13 +298,14 @@ test("DELETE by the uploader while unsent removes row and file; a sent upload ca
     method: "POST",
     url: "/api/messages",
     headers: { cookie: or },
-    payload: { to: ["dev"], body: "see attached" },
+    payload: { to: ["dev"], body: "see attached", attachments: [b.uploadId] },
   });
   expect(sent.statusCode).toBe(202);
-  await t.db
-    .update(schema.uploads)
-    .set({ messageId: sent.json().results[0].item.id })
+  const [claimed] = await t.db
+    .select()
+    .from(schema.uploads)
     .where(eq(schema.uploads.id, b.uploadId));
+  expect(claimed?.messageId).toBe(sent.json().results[0].item.id);
   const refused = await del("dev", b.uploadId);
   expect(refused.statusCode).toBe(409);
   expect(refused.json().error.code).toBe("already_sent");
@@ -355,7 +361,7 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
   await t.app.listen({ port: 0, host: "127.0.0.1" });
   const port = (t.app.server.address() as { port: number }).port;
   const before = listUploads("ops");
-  const status = await new Promise<number>((resolve, reject) => {
+  const res413 = await new Promise<{ status: number; connection: unknown }>((resolve, reject) => {
     const r = request(
       {
         host: "127.0.0.1",
@@ -371,7 +377,7 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
       },
       (res) => {
         res.resume();
-        resolve(res.statusCode ?? 0);
+        resolve({ status: res.statusCode ?? 0, connection: res.headers.connection });
       },
     );
     r.on("error", (e: NodeJS.ErrnoException) => {
@@ -389,10 +395,11 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
     };
     pump();
   });
-  expect(status).toBe(413);
+  expect(res413.status).toBe(413);
+  // The rest of the body is unread, so the server must not keep the connection for another request.
+  expect(res413.connection).toBe("close");
   // The temp file is deleted once the handler has unwound.
-  await new Promise((r) => setTimeout(r, 50));
-  expect(listUploads("ops")).toEqual(before);
+  await vi.waitFor(() => expect(listUploads("ops")).toEqual(before));
 });
 
 describe("security review fixes", () => {

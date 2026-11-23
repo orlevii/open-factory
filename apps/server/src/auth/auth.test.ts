@@ -67,7 +67,7 @@ describe("sign-up and /api/me", () => {
     expect(dupEmail.json()).toMatchObject({ code: "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" });
   });
 
-  test.each(["Bob", "-x", "humans", "me", "scheduler", "a"])(
+  test.each(["Bob", "-x", "humans", "me", "scheduler", "system", "all", "a"])(
     "invalid or reserved handle %s is rejected",
     async (handle) => {
       const spy = vi.spyOn(principals, "claimHandle");

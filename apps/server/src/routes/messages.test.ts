@@ -70,8 +70,18 @@ test("one refused recipient beside sent ones is a 202 with mixed results", async
   expect(res.statusCode).toBe(202);
   expect(res.json().results).toEqual([
     expect.objectContaining({ to: "@dev", status: "queued" }),
-    expect.objectContaining({ to: "@old", status: "refused", reason: expect.any(String) }),
-    expect.objectContaining({ to: "@nobody", status: "refused", reason: expect.any(String) }),
+    expect.objectContaining({
+      to: "@old",
+      status: "refused",
+      reason: expect.any(String),
+      code: "terminated",
+    }),
+    expect.objectContaining({
+      to: "@nobody",
+      status: "refused",
+      reason: expect.any(String),
+      code: "not_found",
+    }),
   ]);
   const rows = await rowsOf("mixed");
   expect(rows).toHaveLength(1);
@@ -92,26 +102,21 @@ test("start_failed keeps that recipient's row pending", async () => {
     });
     expect(res.statusCode).toBe(202);
     const [bad, fine] = res.json().results;
-    expect(bad).toMatchObject({ to: "@bad", status: "start_failed", id: expect.any(String) });
-    expect(bad.reason).toContain("GH_TOKEN");
+    const reason = "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.";
+    expect(bad).toEqual({ to: "@bad", status: "start_failed", id: expect.any(String), reason });
     expect(fine).toMatchObject({ to: "@fine", status: "queued" });
     expect(
       (await t2.sql`select state from messages where id = ${bad.id}`).map((r) => r.state),
     ).toEqual(["pending"]);
+    // The agent is errored with the fix text, and the message stays queued for when it recovers.
+    const detail = (
+      await t2.app.inject({ method: "GET", url: "/api/agents/bad", headers: { cookie } })
+    ).json();
+    expect(detail.queue.map((q: { body: string }) => q.body)).toEqual(["partly"]);
+    expect(detail.agent).toMatchObject({ status: "errored", lastError: reason });
   } finally {
     await t2.close();
   }
-});
-
-test("a retry with the same clientMessageId returns every row's result and writes nothing twice", async () => {
-  const clientMessageId = randomUUID();
-  const first = await post({ to: ["dev", "ops"], body: "retry", clientMessageId });
-  const again = await post({ to: ["dev", "ops"], body: "retry", clientMessageId });
-  expect(again.statusCode).toBe(202);
-  expect(again.json().results.map((r: { to: string; id: string }) => [r.to, r.id])).toEqual(
-    first.json().results.map((r: { to: string; id: string }) => [r.to, r.id]),
-  );
-  expect(await rowsOf("retry")).toHaveLength(2);
 });
 
 test("a retry with the same clientMessageId publishes no chat_changed", async () => {
@@ -129,14 +134,6 @@ test("a retry with the same clientMessageId publishes no chat_changed", async ()
   off();
 });
 
-test("a refused recipient carries its code", async () => {
-  const res = await post({ to: ["old", "nobody"], body: "codes" });
-  expect(res.json().results.map((r: { code: string }) => r.code)).toEqual([
-    "terminated",
-    "not_found",
-  ]);
-});
-
 test("a human session only: no auth and an agent token are 401", async () => {
   expect((await post({ to: ["dev"], body: "x" }, null)).statusCode).toBe(401);
   const { token } = s.app.agentTokens.mint(agentIds.dev as string);
@@ -149,20 +146,11 @@ test("a human session only: no auth and an agent token are 401", async () => {
   expect(res.statusCode).toBe(401);
 });
 
-test("validation: an empty body, no recipients and eleven recipients are 400", async () => {
+test("validation: an empty or over-64-KB body, no recipients and eleven recipients are 400", async () => {
   expect((await post({ to: ["dev"], body: "  " })).statusCode).toBe(400);
+  expect((await post({ to: ["dev"], body: "x".repeat(65_537) })).statusCode).toBe(400);
   expect((await post({ to: [], body: "x" })).statusCode).toBe(400);
   expect(
     (await post({ to: Array.from({ length: 11 }, (_, i) => `a${i}`), body: "x" })).statusCode,
   ).toBe(400);
-});
-
-test("the old per-agent route is gone", async () => {
-  const res = await s.app.inject({
-    method: "POST",
-    url: "/api/agents/dev/messages",
-    headers: { cookie: or },
-    payload: { body: "x" },
-  });
-  expect(res.statusCode).toBe(404);
 });

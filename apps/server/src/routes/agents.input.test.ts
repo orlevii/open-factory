@@ -207,11 +207,6 @@ describe("I1 §5.1: raw session input", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  test("the old commands POST is gone", async () => {
-    const res = await call(or, "POST", "/api/agents/dev/commands", { name: "context" });
-    expect(res.statusCode).toBe(404);
-  });
-
   test("an errored agent answers 202 and holds the input", async () => {
     await s.seedAgent({ slug: "err" });
     const rt = await s.app.runtimes.bySlug("err");

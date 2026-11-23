@@ -108,11 +108,21 @@ describe("disable", () => {
   });
 
   test("disable and enable publish users_changed after commit", async () => {
-    const seen: ServerMessage[] = [];
-    h.app.bus.subscribeAll((m) => seen.push(m));
-    await as(or, "POST", `/api/users/${al.user.id}/disable`);
-    await as(or, "POST", `/api/users/${al.user.id}/enable`);
-    expect(seen.filter((m) => m.type === "users_changed")).toHaveLength(2);
+    // Read the row when each frame arrives: a publish before the commit would see the old state.
+    const seen: Promise<Date | null>[] = [];
+    const off = h.app.bus.subscribeAll((m) => {
+      if (m.type === "users_changed") seen.push(disabledAtOf(al.user.id));
+    });
+    try {
+      await as(or, "POST", `/api/users/${al.user.id}/disable`);
+      await as(or, "POST", `/api/users/${al.user.id}/enable`);
+    } finally {
+      off();
+    }
+    const states = await Promise.all(seen);
+    expect(states).toHaveLength(2);
+    expect(states[0]).toBeInstanceOf(Date);
+    expect(states[1]).toBeNull();
   });
 
   test("self is 409 cannot_disable_self", async () => {

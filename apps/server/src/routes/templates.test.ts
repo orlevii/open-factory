@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
@@ -81,12 +89,30 @@ test("save conflict returns currentHash; create conflict 409", async () => {
   ).toBe("template_exists");
 });
 
-test("validate returns issues; delete removes the folder", async () => {
-  const v = await post("/api/templates/lead/validate", { file: "AGENTS.md", content: "" });
+test("validate reports a YAML syntax error with its file and line and writes nothing; delete removes the folder", async () => {
+  expect((await post("/api/templates", { name: "vdel", displayName: "Vdel" })).statusCode).toBe(
+    201,
+  );
+  const dir = path.join(h.factoryHome, "templates/vdel");
+  const before = readFileSync(path.join(dir, "template.yaml"), "utf8");
+  const v = await post("/api/templates/vdel/validate", {
+    file: "template.yaml",
+    content: "name: [",
+  });
   expect(v.statusCode).toBe(200);
-  expect(Array.isArray(v.json().issues)).toBe(true);
-  expect((await del("/api/templates/lead")).statusCode).toBe(204);
-  expect((await get("/api/templates/lead")).statusCode).toBe(404);
+  expect(v.json().issues).toContainEqual(
+    expect.objectContaining({
+      severity: "error",
+      file: "template.yaml",
+      message: expect.stringMatching(/YAML/),
+      line: expect.any(Number),
+    }),
+  );
+  // Validation is a dry run on the given content: the file on disk is as it was.
+  expect(readFileSync(path.join(dir, "template.yaml"), "utf8")).toBe(before);
+  expect((await del("/api/templates/vdel")).statusCode).toBe(204);
+  expect(existsSync(dir)).toBe(false);
+  expect((await get("/api/templates/vdel")).statusCode).toBe(404);
 });
 
 test("the names the web routes use are reserved: POST rejects them; a folder on disk with one still lists", async () => {
@@ -116,8 +142,13 @@ test("the names the web routes use are reserved: POST rejects them; a folder on 
     rmSync(path.join(h.factoryHome, `templates/${name}`), { recursive: true, force: true });
 });
 
-test("unauthenticated → 401", async () => {
-  expect((await h.app.inject({ method: "GET", url: "/api/templates" })).statusCode).toBe(401);
+test.each([
+  ["GET", "/api/templates"],
+  ["GET", "/api/templates/dev"],
+  ["GET", "/api/templates/dev/config"],
+  ["PUT", "/api/templates/dev/config"],
+] as const)("%s %s needs a signed-in user", async (method, url) => {
+  expect((await h.app.inject({ method, url, payload: {} })).statusCode).toBe(401);
 });
 
 test("avatar route: headers, 404 when absent, 400 invalid name, 404 unknown", async () => {

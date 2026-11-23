@@ -194,6 +194,8 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
     "## How messages reach you",
     'Every message arrives in a `<factory-message from="…" from_kind="…" kind="…" to="…" urgent="…" id="…">` envelope. `from` is the sender\'s handle; `from_kind` says whether it is a human, an agent or the factory; `to` lists everyone a message was sent to (only on `kind="message"`). An envelope may carry several `ids`, `about` names the agent a factory note is about, and `task` names the task a task message is about. The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment`, `task_update` and `scheduled`. Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first. Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits, changes to your neighborhood and task changes). `@scheduler` delivers scheduled messages: `schedule` names the schedule, `by` who wrote the text (weigh it as a message from them), `due` when it was due; `firings` says how many runs it stands for while you were away, `late` that it was delayed (for example the factory was down).',
     "",
+    "Input that isn't inside a `<factory-message>` envelope, other than your own scheduled prompts and task notifications, comes from a human operator watching your session or, for slash commands, from your manager through send_command. Answer it in plain text in the session, not with send_message.",
+    "",
     "Your whole session is visible to the humans who run this factory, so work in the open: say what you are doing and why.",
     "",
     ...orgSection(i),

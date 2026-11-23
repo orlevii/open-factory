@@ -156,12 +156,14 @@ export const InboxRow = memo(function InboxRow({
 }) {
   const at = new Date(item.createdAt);
   const time = formatInboxTime(at, new Date(now));
+  // A credential row renders from the live `expiresAt`; its stored body is for notifications only.
+  const hasPreview = item.kind !== "credential";
   const previewId = `inbox-preview-${item.id}`;
   const preview = useMemo(() => previewOf(item.preview), [item.preview]);
   const common: RowCommon = {
     "data-inbox-id": item.id,
     "aria-label": labelOf(item, time, now),
-    "aria-describedby": previewId,
+    "aria-describedby": hasPreview ? previewId : undefined,
     "aria-current": selected ? ("true" as const) : undefined,
     preload: selectable ? (false as const) : undefined,
     // Below 1024 rows keep hover preload, but a keyboard sweep through them preloads nothing.
@@ -200,12 +202,14 @@ export const InboxRow = memo(function InboxRow({
           </time>
         </span>
         <ContextLine item={item} now={now} viewer={viewer} />
-        <span
-          id={previewId}
-          className={`truncate text-[0.8125rem] leading-[1.125rem] ${item.read ? "text-muted-foreground" : "text-foreground"}`}
-        >
-          {preview}
-        </span>
+        {hasPreview && (
+          <span
+            id={previewId}
+            className={`truncate text-[0.8125rem] leading-[1.125rem] ${item.read ? "text-muted-foreground" : "text-foreground"}`}
+          >
+            {preview}
+          </span>
+        )}
       </span>
     </>
   );

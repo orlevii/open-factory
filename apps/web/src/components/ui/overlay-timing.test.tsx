@@ -80,6 +80,20 @@ test("Esc closes a pointer-opened Popover instantly", async () => {
   expect(seen[0]).toBe("data-instant");
 });
 
+test("an Esc the caller prevents leaves a pointer-opened Popover open and unstamped", async () => {
+  render(
+    <Popover>
+      <PopoverTrigger>Open</PopoverTrigger>
+      <PopoverContent onEscapeKeyDown={(e) => e.preventDefault()}>Body</PopoverContent>
+    </Popover>,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Open" }));
+  await userEvent.keyboard("{Escape}");
+  const content = document.querySelector('[data-slot="popover-content"]');
+  expect(content).toHaveAttribute("data-state", "open");
+  expect(content).not.toHaveAttribute("data-instant");
+});
+
 test("PopoverTitle and PopoverDescription name and describe the content", async () => {
   render(
     <Popover>

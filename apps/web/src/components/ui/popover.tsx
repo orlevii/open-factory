@@ -47,8 +47,8 @@ function PopoverContent({
         ref={stamped}
         // DESIGN.md Motion: a key that closes an overlay closes it at once, however it was opened.
         onEscapeKeyDown={(e) => {
-          node.current?.setAttribute("data-instant", "")
           onEscapeKeyDown?.(e)
+          if (!e.defaultPrevented) node.current?.setAttribute("data-instant", "")
         }}
         align={align}
         sideOffset={sideOffset}

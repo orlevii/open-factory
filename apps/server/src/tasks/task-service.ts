@@ -235,7 +235,12 @@ export class TaskService {
     const isAuthorUser = (id: string) => actor.kind === "user" && actor.userId === id;
     const names = mentions.names.slice(0, MAX_MENTIONS);
     for (const name of names) {
-      const r = await resolveName(tx, name);
+      const resolved = await resolveName(tx, name);
+      // `@humans` is a reserved name now; Task 1.7 replaces this with its refusal.
+      const r =
+        resolved.kind === "reserved" && resolved.name === "humans"
+          ? ({ kind: "humans" } as const)
+          : resolved;
       switch (r.kind) {
         case "humans":
           all = true;
@@ -253,9 +258,7 @@ export class TaskService {
         case "reserved":
           notReached.push({ name, reason: "reserved" });
           break;
-        case "ambiguous":
-          notReached.push({ name, reason: "ambiguous" });
-          break;
+        case "channel":
         case "none":
           notReached.push({ name, reason: "unknown" });
           break;
@@ -905,7 +908,11 @@ export class TaskService {
     if (raw === undefined || raw === null) return raw;
     const name = raw.trim().replace(/^@/, "");
     if (name === "me" && actor.kind === "agent") return actor.agentId;
-    const r = await resolveName(tx, raw);
+    const resolved = await resolveName(tx, raw);
+    const r =
+      resolved.kind === "reserved" && resolved.name === "humans"
+        ? ({ kind: "humans" } as const)
+        : resolved;
     switch (r.kind) {
       case "agent":
         return r.agent.id;
@@ -930,13 +937,7 @@ export class TaskService {
           400,
           "assignee",
         );
-      case "ambiguous":
-        throw new TaskError(
-          "ambiguous",
-          `'${r.name}' matches both an agent and a user; ask a human to rename one.`,
-          400,
-          "assignee",
-        );
+      case "channel":
       case "none":
         throw new TaskError(
           "not_found",

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
 import { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
@@ -100,18 +99,13 @@ test("mentions in code create nothing", async () => {
   expect(await inbox(ids.sam as string)).toHaveLength(0);
 });
 
-test("not_reached: unknown, ambiguous, reserved, terminated and archived, in order", async () => {
-  await claimTestHandleSql(h.sql, "twin", "user");
-  await h.sql`insert into users (id,name,email,handle) values ('twin-u','Twin','twin@x.io','twin')`;
-  await h.sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id)
-    select 'twin-a','twin','Twin','t','{}','local',credential_id from agents where slug = 'qa'`;
+test("not_reached: unknown, reserved, terminated and archived, in order", async () => {
   const spawned = await h.seedAgent({ slug: "kid" });
   await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, terminated_at = now(), terminated_by = '@or' where id = ${spawned.id}`;
   await h.sql`update agents set archived_at = now() where slug = 'qa'`;
-  const r = await h.app.tasks.comment(or, "T-1", "@nobody @twin @me @kid @qa done?");
+  const r = await h.app.tasks.comment(or, "T-1", "@nobody @me @kid @qa done?");
   expect(r.notReached).toEqual([
     { name: "nobody", reason: "unknown" },
-    { name: "twin", reason: "ambiguous" },
     { name: "me", reason: "reserved" },
     { name: "kid", reason: "terminated" },
     { name: "qa", reason: "archived" },

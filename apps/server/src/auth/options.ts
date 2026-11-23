@@ -14,8 +14,8 @@ export interface AuthOptionParams {
   baseURL: string;
   trustedOrigins: string[];
   database: BetterAuthOptions["database"];
-  /** Returns true if the name already belongs to an agent or a human (one namespace, spec §7.1). */
-  nameTaken?: (name: string) => Promise<boolean>;
+  /** Claims the handle for a user (one namespace, spec §4.1); false means taken. */
+  claim?: (handle: string) => Promise<boolean>;
   /** True only inside the sign-up gate (S10 §9.3); without it no user can be created, not even the first. */
   mayCreateUser?: () => boolean;
   /** True when the user is disabled (S10 §9.4); no session can be created for them. */
@@ -97,16 +97,19 @@ export function authOptions(p: AuthOptionParams) {
         // Before the handle check's early returns, so it runs with or without a handle (spec §13.2).
         const tooLong = inputLengthError(ctx.path, ctx.body);
         if (tooLong) throw new APIError("BAD_REQUEST", tooLong);
-        if ((ctx.path !== "/sign-up/email" && ctx.path !== "/update-user") || !p.nameTaken) return;
+        if ((ctx.path !== "/sign-up/email" && ctx.path !== "/update-user") || !p.claim) return;
         const handle = (ctx.body as { handle?: unknown } | undefined)?.handle;
         if (typeof handle !== "string") return;
+        // An invalid handle claims nothing: better-auth's own validator answers 400 later (reserved names land here too).
+        if (!handleSchema.safeParse(handle).success) return;
         if (ctx.path === "/update-user") {
-          // Keeping one's own current handle is not a change.
+          // Without a session the endpoint answers 401; nobody squats names without signing in.
           const session = await getSessionFromCtx(ctx);
-          if ((session?.user as { handle?: string } | undefined)?.handle === handle) return;
+          if (!session) return;
+          // Keeping one's own current handle is not a change.
+          if ((session.user as { handle?: string }).handle === handle) return;
         }
-        // One rule (spec §7.1). A simultaneous sign-up and agent create with the same name is an accepted race; sends then fail with 'matches both'.
-        if (await p.nameTaken(handle)) {
+        if (!(await p.claim(handle))) {
           throw new APIError("UNPROCESSABLE_ENTITY", {
             code: "HANDLE_TAKEN",
             message: "That handle is already taken",

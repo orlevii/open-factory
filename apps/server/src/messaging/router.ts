@@ -144,16 +144,16 @@ export class Router {
         code: "ended",
         message: "You can't send messages: you were terminated.",
       };
-    const r = await resolveName(this.d.db, to);
+    const resolved = await resolveName(this.d.db, to);
+    // `@humans` is a reserved name now; Task 1.7 replaces this broadcast with the refusal.
+    const r =
+      resolved.kind === "reserved" && resolved.name === "humans"
+        ? ({ kind: "humans" } as const)
+        : resolved;
     switch (r.kind) {
       case "none":
-        return notFound(r.name);
-      case "ambiguous":
-        return {
-          ok: false,
-          code: "ambiguous",
-          message: `'${r.name}' matches both an agent and a user; ask a human to rename one.`,
-        };
+      case "channel":
+        return notFound(r.kind === "none" ? r.name : r.name.replace(/^#/, ""));
       case "reserved":
         return {
           ok: false,

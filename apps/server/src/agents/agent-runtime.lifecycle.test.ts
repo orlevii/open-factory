@@ -223,6 +223,7 @@ test("a spawned agent keeps other fixes (secrets) unchanged", async () => {
     startError: new AgentStartError(message, "secrets"),
     seed: async (id) => {
       await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
+      await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
       await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
                   select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`} from agents where id = ${id}`;
       await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;

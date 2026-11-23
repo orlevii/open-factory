@@ -1155,6 +1155,7 @@ const rawInput = (cid: string): SessionEvent["event"] => ({
   type: "operator_input",
   text: "/context",
   by: "@or",
+  byKind: "human",
   clientMessageId: cid,
   entryId: "e1",
 });

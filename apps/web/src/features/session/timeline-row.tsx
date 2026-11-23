@@ -553,7 +553,13 @@ export function TimelineRow(props: TimelineRowProps) {
     case "command":
       return (
         <div {...rp}>
-          <CommandBlock by={row.by} text={row.text} at={row.at} pending={row.pending} />
+          <CommandBlock
+            by={row.by}
+            fromKind={row.fromKind}
+            text={row.text}
+            at={row.at}
+            pending={row.pending}
+          />
         </div>
       );
     case "command_output":

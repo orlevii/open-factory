@@ -24,6 +24,7 @@ beforeEach(async () => {
   sam = { kind: "user", userId: u2.user.id, handle: "sam" };
   ids.or = u1.user.id;
   ids.sam = u2.user.id;
+  h.app.bus.subscribeUser(u2.user.id, (m) => frames.push(m));
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
   await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
 });

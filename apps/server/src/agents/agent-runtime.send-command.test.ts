@@ -77,6 +77,27 @@ test("a compact that failed gets the fixed failure text, never Claude's own", as
   expect(bodies().join("\n")).not.toContain("secret");
 });
 
+// Unverified on real Claude: a failed manual compact may end without `turn_end{command: "compact"}`.
+// The next origin-less turn_end then ends the compact, so the self-command guard can't refuse forever.
+test("a manual compact_failed with no compact turn_end is settled by the next ordinary turn end", async () => {
+  await midTurn();
+  await selfCompact();
+  await endTurn();
+  h.driver.last.emit(ev.turn(), {
+    type: "compact_failed",
+    trigger: "manual",
+    error: "Error: conversation too long",
+  });
+  await h.rt.settled();
+  await expect(selfRaw()).rejects.toMatchObject({
+    message: "You already have a command queued for yourself.",
+  });
+  h.driver.last.emit(ev.turn(), ev.usage(), ev.end());
+  await h.rt.settled();
+  expect(notices()).toEqual([FAILED]);
+  await expect(selfRaw()).resolves.toBeDefined();
+});
+
 test("a failure seen before the compact was written doesn't count", async () => {
   await midTurn();
   h.driver.last.emit({ type: "compact_failed", trigger: "auto", error: "old" });

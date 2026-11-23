@@ -551,7 +551,6 @@ async function listenForAgents(
         sendMessageTool(d.router),
         sendCommandTool({
           caller,
-          neighborhood: d.neighborhood,
           runtimes: d.runtimes,
           store: d.store,
           resolver: d.resolver,

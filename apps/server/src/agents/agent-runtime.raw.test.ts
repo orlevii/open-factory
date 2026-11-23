@@ -50,7 +50,12 @@ test("held while a turn is open, written raw on its own, and nothing is written 
   expect(h.rt.live().status).toBe("working");
   expect((await events()).filter((e) => e.type === "control")).toEqual([]);
   expect((await events()).filter((e) => e.type === "operator_input")).toEqual([
-    expect.objectContaining({ type: "operator_input", text: "/code-review src/", by: "@or" }),
+    expect.objectContaining({
+      type: "operator_input",
+      text: "/code-review src/",
+      by: "@or",
+      byKind: "human",
+    }),
   ]);
 
   // A self-started turn ending meanwhile does not release it.
@@ -236,7 +241,14 @@ test("plain text is written as one user line with no envelope, and operator_inpu
   expect(item).toMatchObject({ kind: "raw", body: "just a note", clientMessageId });
   expect(commandWrites()).toEqual([{ kind: "raw", text: "just a note" }]);
   expect((await events()).filter((e) => e.type === "operator_input")).toEqual([
-    { type: "operator_input", text: "just a note", by: "@or", clientMessageId, entryId: item.id },
+    {
+      type: "operator_input",
+      text: "just a note",
+      by: "@or",
+      byKind: "human",
+      clientMessageId,
+      entryId: item.id,
+    },
   ]);
 });
 

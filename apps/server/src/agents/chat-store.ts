@@ -104,6 +104,8 @@ export class ChatStore {
     const newest = picked.at(-1);
     const state = (m: typeof messages.$inferSelect) =>
       m.state as "pending" | "delivered" | "rejected";
+    // `messages` stores no rejection reason, so this reads the agent's state now: a row rejected while the
+    // agent was archived says "isn't available" after an unarchive. Accepted (I1 review M6).
     const rejectReason = t.agent.terminatedAt
       ? "the agent was terminated"
       : t.agent.archivedAt

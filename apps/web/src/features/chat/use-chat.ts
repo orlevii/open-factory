@@ -202,6 +202,9 @@ export function useChat(slug: string, o: { messageId?: string | undefined } = {}
 
   // A mounting view starts its live window at what it shows: nothing fades on load, on a reading
   // pane retarget or on a Chat/Session switch (idempotent, so safe to repeat).
+  // This runs during render on purpose: `live` below is computed in the same render and must already see
+  // the mount-time cursor, which an effect would set a render too late (the first paint would fade everything).
+  // The module map is per client and keyed by slug; a discarded concurrent render writes the same value.
   // A `?message=` window never touches the thread's cursor.
   useState(() => !around && perClient(cursors, qc).delete(slug));
   const cursor = perClient(cursors, qc);

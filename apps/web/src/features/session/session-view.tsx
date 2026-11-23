@@ -187,7 +187,6 @@ export function SessionView({
           onSent={clearCancelled}
           onTerminated={onSendRaced}
           recall={recall}
-          context="session"
         />
       ) : null,
     [

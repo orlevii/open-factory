@@ -90,11 +90,11 @@ const working = (over: Partial<AgentSummary> = {}) =>
   agentSummary({ status: "working", turnOpen: true, ...over });
 
 /** The composer as the session renders it, with its agent and turn epoch changeable from the test. */
-function setup(initial: AgentSummary, extra?: ReactNode, context: "session" | "inbox" = "inbox") {
+function setup(initial: AgentSummary, extra?: ReactNode) {
   const ui = (agent: AgentSummary, epoch: number) => (
     <>
       {extra}
-      <Composer slug="dev" agent={agent} stopEpoch={epoch} context={context} />
+      <Composer slug="dev" agent={agent} stopEpoch={epoch} />
     </>
   );
   const r = render(ui(initial, 1));
@@ -176,14 +176,6 @@ test("while compacting Stop is disabled and reads Compacting…", async () => {
   expect(interrupts()).toEqual([]);
 });
 
-test("while compacting the hint says the message arrives after it (no ⌥↵ promise)", () => {
-  setup(working({ compacting: true }));
-  expect(document.querySelector("[data-composer-hint]")).toHaveTextContent(
-    /^Arrives after the compaction\.$/,
-  );
-  expect(document.querySelector("[data-composer-hint] kbd")).toBeNull();
-});
-
 test("a 409 compacting on Stop resets the button, which then reads Compacting…", async () => {
   reply = (url) =>
     url.endsWith("/interrupt")
@@ -210,35 +202,6 @@ test("Stop resets from Stopping… when stopEpoch changes within the same turn (
   expect(interrupts()).toHaveLength(2);
 });
 
-test("⌥Enter posts urgent:true; Enter and ⌘Enter post urgent:false", async () => {
-  const { box } = setup(working());
-  const sends = () =>
-    posted
-      .filter((p) => p.url.endsWith("/messages"))
-      .map((p) => {
-        const { clientMessageId: _id, ...rest } = p.body as { clientMessageId?: string };
-        return rest;
-      });
-  await userEvent.type(box, "a");
-  fireEvent.keyDown(box, { key: "Enter", altKey: true });
-  await vi.waitFor(() => expect(sends()).toEqual([{ to: ["dev"], body: "a", urgent: true }]));
-  await vi.waitFor(() => expect(box).toHaveValue(""));
-  await userEvent.type(box, "b{Enter}");
-  await vi.waitFor(() => expect(sends()).toHaveLength(2));
-  await vi.waitFor(() => expect(box).toHaveValue(""));
-  await userEvent.type(box, "c");
-  fireEvent.keyDown(box, { key: "Enter", metaKey: true });
-  await vi.waitFor(() =>
-    expect(sends()).toEqual([
-      { to: ["dev"], body: "a", urgent: true },
-      { to: ["dev"], body: "b", urgent: false },
-      { to: ["dev"], body: "c", urgent: false },
-    ]),
-  );
-  expect(screen.queryByRole("checkbox", { name: "Urgent" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Send urgent" })).toBeNull();
-});
-
 test("⌥Enter during IME composition does not send", async () => {
   const { box } = setup(working());
   await userEvent.type(box, "日本");
@@ -247,42 +210,6 @@ test("⌥Enter during IME composition does not send", async () => {
   await tick();
   // Only the commands list's prefetch (a GET); nothing sent.
   expect(posted.filter((p) => !p.url.endsWith("/commands"))).toEqual([]);
-});
-
-test("the hint shows only while a turn is open; the composer height is unchanged", () => {
-  const { update } = setup(working());
-  const hint = document.querySelector("[data-composer-hint]");
-  expect(hint).toHaveTextContent(
-    /^Arrives at the agent's next step\. (⌥|Alt)↵ to interrupt instead\.$/,
-  );
-  // The line's height is fixed whether or not it has text, so the composer never resizes: a fixed
-  // height that clips (not a minimum the key caps could grow), and caps aligned inside the line box.
-  expect(hint).toHaveClass("h-5", "truncate");
-  expect(hint).not.toHaveClass("min-h-5");
-  const caps = hint?.querySelector("kbd")?.parentElement;
-  expect(caps).toHaveClass("align-top");
-  expect(caps).not.toHaveClass("align-middle");
-  update(agentSummary(), 2);
-  const after = document.querySelector("[data-composer-hint]");
-  expect(after).toBe(hint);
-  expect(after).toBeEmptyDOMElement();
-  expect(after).toHaveClass("h-5", "truncate");
-});
-
-test("on a coarse pointer the hint says to Stop first", () => {
-  const real = window.matchMedia;
-  window.matchMedia = ((q: string) => ({
-    ...real(q),
-    matches: q === "(pointer: coarse)",
-  })) as typeof window.matchMedia;
-  try {
-    setup(working());
-    expect(document.querySelector("[data-composer-hint]")).toHaveTextContent(
-      "Arrives at the agent's next step. Stop first to interrupt.",
-    );
-  } finally {
-    window.matchMedia = real;
-  }
 });
 
 test("Stop is outline, left of Send; shows a spinner and Stopping… until turnEpoch changes", async () => {
@@ -375,13 +302,7 @@ test("a turn closing doesn't move focus that wasn't on Stop", async () => {
 
 // U3 §13.2 (Q22, Q29): durable drafts and optimistic sends, with the session's reducer and queue.
 let act$: ((a: SessionAction) => void) | undefined;
-function Session({
-  agent,
-  context = "inbox",
-}: {
-  agent: AgentSummary;
-  context?: "session" | "inbox";
-}) {
+function Session({ agent }: { agent: AgentSummary }) {
   const [s, dispatch] = useReducer(sessionReducer, undefined, () =>
     sessionReducer(initialSessionState, {
       type: "loaded",
@@ -410,7 +331,6 @@ function Session({
         slug="dev"
         agent={agent}
         stopEpoch={1}
-        context={context}
         onSending={onSending}
         onSendFailed={onSendFailed}
         onQueued={onQueued}
@@ -424,7 +344,7 @@ function Session({
 function heldReply() {
   let resolve: (r: Response) => void = () => {};
   reply = (url, init) =>
-    url.endsWith("/messages")
+    url.endsWith("/input")
       ? new Promise<Response>((res, rej) => {
           resolve = res;
           init?.signal?.addEventListener("abort", () =>
@@ -436,10 +356,13 @@ function heldReply() {
 }
 const messageSends = () =>
   posted
-    .filter((p) => p.url.endsWith("/messages"))
-    .map((p) => p.body as { body: string; urgent: boolean; clientMessageId: string });
+    .filter((p) => p.url.endsWith("/input"))
+    .map((p) => ({
+      body: (p.body as { text: string }).text,
+      ...(p.body as { clientMessageId: string }),
+    }));
 const queueEl = () => screen.getByTestId("queue");
-const accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
+const _accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
   json(
     {
       results: [
@@ -487,7 +410,7 @@ function renderSession(agent = agentSummary()) {
   render(<Session agent={agent} />);
   return screen.getByRole("combobox", { name: "Message to Dev agent" });
 }
-const sleep = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
+const _sleep = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
 
 test("the draft is in localStorage under a versioned key and survives a remount", async () => {
   const box = renderSession();
@@ -495,69 +418,6 @@ test("the draft is in localStorage under a versioned key and survives a remount"
   box.blur();
   expect(readDraft(sessionDraftKey("dev"))).toBe("half a thought");
   expect(localStorage.getItem("of-draft:v1:session:dev")).not.toBeNull();
-});
-
-test("Enter clears the box and shows a muted Sending block: no time, no Cancel, no dashed edge", async () => {
-  heldReply();
-  const box = renderSession();
-  await userEvent.type(box, "hello{Enter}");
-  expect(box).toHaveValue("");
-  const block = within(queueEl()).getByRole("group", { name: "Sending" });
-  expect(block).toHaveTextContent("hello");
-  expect(block).not.toHaveTextContent("Sending");
-  expect(block).not.toHaveClass("border-dashed");
-  expect(block.querySelector("time")).toBeNull();
-  expect(within(block).queryByRole("button")).toBeNull();
-  expect(block.querySelector("[data-message-body]")).toHaveClass("text-muted-foreground");
-  const sent = messageSends()[0];
-  expect(sent).toEqual({
-    to: ["dev"],
-    body: "hello",
-    urgent: false,
-    clientMessageId: expect.any(String),
-  });
-  expect(sent?.clientMessageId).toMatch(/^[0-9a-f-]{36}$/);
-  // The stored draft keeps the text until the server accepts it (after the 150ms write throttle).
-  await sleep(200);
-  expect(readDraft(sessionDraftKey("dev"))).toBe("hello");
-});
-
-test("Sending… with a spinner appears only after 400ms", async () => {
-  heldReply();
-  const box = renderSession();
-  await userEvent.type(box, "hello{Enter}");
-  await sleep(250);
-  expect(within(queueEl()).queryByText("Sending…")).toBeNull();
-  await sleep(250);
-  const label = within(queueEl()).getByText("Sending…");
-  expect(label.closest("span")?.querySelector("svg.motion-safe\\:animate-spin")).not.toBeNull();
-});
-
-test("an ⌥Enter send says Sending · will interrupt the turn", async () => {
-  heldReply();
-  const box = renderSession(agentSummary({ status: "working", turnOpen: true }));
-  await userEvent.type(box, "now");
-  fireEvent.keyDown(box, { key: "Enter", altKey: true });
-  await sleep(450);
-  expect(within(queueEl()).getByText("Sending · will interrupt the turn")).toBeInTheDocument();
-  expect(messageSends()[0]?.urgent).toBe(true);
-});
-
-test("the 202 replaces the block in place: same element, no Not delivered yet for 300ms", async () => {
-  const held = heldReply();
-  const box = renderSession();
-  await userEvent.type(box, "hello{Enter}");
-  const block = within(queueEl()).getByRole("group", { name: "Sending" });
-  const id = messageSends()[0]?.clientMessageId ?? "";
-  await held.resolve(accepted202(id));
-  expect(within(queueEl()).queryByRole("group", { name: "Sending" })).toBeNull();
-  const item = queueEl().querySelector("[data-message-block]");
-  expect(item).toBe(block); // one commit, the same node: nothing re-enters
-  expect(item).not.toHaveAttribute("data-live");
-  expect(queueEl()).not.toHaveTextContent("Not delivered yet");
-  await sleep(350);
-  expect(queueEl()).toHaveTextContent("Not delivered yet");
-  expect(readDraft(sessionDraftKey("dev"))).toBe("");
 });
 
 test("a message_in echoing the id removes the block in one step", async () => {
@@ -673,7 +533,7 @@ test("an aborted send whose item the queue already showed counts as sent", async
 
 test("a Cancel put-back is saved as the draft at once, even with the box unfocused (reload keeps it)", () => {
   const ref = createRef<ComposerHandle>();
-  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} context="session" />);
+  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} />);
   expect(screen.getByRole("combobox")).not.toHaveFocus();
   act(() => {
     expect(ref.current?.putBackIfEmpty("cancelled text")).toBe(true);
@@ -724,32 +584,6 @@ test("a remount after an abort resends the unchanged text under the same id", as
 
 // ---- `@` (U3 §13.4, Q23) ----
 
-test("`@` inserts an agent's handle as plain text; nothing in the session says mention", async () => {
-  qc.setQueryData(
-    ["agents", "exclude"],
-    [agentSummary({ slug: "dev" }), agentSummary({ slug: "qa", displayName: "QA agent" })],
-  );
-  const { box } = setup(agentSummary());
-  const button = screen.getByRole("button", { name: "Insert an agent's handle" });
-  await userEvent.type(box, "ask @q");
-  expect(screen.getByRole("option", { name: /QA agent/ })).toBeInTheDocument();
-  await userEvent.keyboard("{Enter}");
-  expect(box).toHaveValue("ask @qa ");
-  // Nothing was sent; the opening menu loaded the users list, which nobody had cached (review I-2).
-  // (The commands list is prefetched on mount, U3 §13.3 m11.)
-  expect(posted.map((p) => p.url).filter((u) => !u.endsWith("/commands"))).toEqual(["/api/users"]);
-  await userEvent.click(button);
-  expect(screen.getByRole("listbox")).toBeInTheDocument();
-  const composer = document.querySelector("#composer") as HTMLElement;
-  const copy = [
-    composer.textContent,
-    ...[...document.querySelectorAll("[aria-label], [title]")].map(
-      (e) => `${e.getAttribute("aria-label")} ${e.getAttribute("title")}`,
-    ),
-  ].join(" ");
-  expect(copy.toLowerCase()).not.toContain("mention");
-});
-
 // ---- the session composer is raw (I1 §5.4) ----
 
 const COMMANDS_RESPONSE = {
@@ -778,7 +612,7 @@ const inputs = () =>
     .filter((p) => p.url === "/api/agents/dev/input")
     .map((p) => p.body as { text: string; clientMessageId: string });
 const hintLine = () => document.querySelector("[data-composer-hint]") as HTMLElement;
-const raw = (agent = agentSummary()) => setup(agent, undefined, "session");
+const raw = (agent = agentSummary()) => setup(agent);
 
 test("placeholder, toolbar and hint of the raw session", () => {
   const { box } = raw();
@@ -931,28 +765,6 @@ test("a refused input shows inline and the text comes back", async () => {
   expect(box).toHaveValue("hello");
 });
 
-test("the inbox reply is still a message: placeholder, no `/`, POST /messages", async () => {
-  const { box } = setup(agentSummary());
-  expect(box).toHaveAttribute("placeholder", "Message Dev agent");
-  expect(screen.queryByRole("button", { name: "Run a command" })).toBeNull();
-  await userEvent.type(box, "hi{Enter}");
-  await vi.waitFor(() => expect(messageSends()).toHaveLength(1));
-  expect(inputs()).toEqual([]);
-});
-
-test("on a phone the inbox reply's placeholder carries the queued hint while a turn is open", () => {
-  const real = window.matchMedia;
-  fakeMatchMedia.install(true);
-  try {
-    const { box, update } = setup(working());
-    expect(box).toHaveAttribute("placeholder", "Sends after @dev's current step");
-    update(agentSummary(), 2);
-    expect(box).toHaveAttribute("placeholder", "Message Dev agent");
-  } finally {
-    window.matchMedia = real;
-  }
-});
-
 test("the note slot carries a refusal's full text in its title, since the line can be cut", async () => {
   qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
   const { box } = raw();
@@ -983,17 +795,6 @@ test("on a phone the session composer reserves the note line", () => {
   try {
     raw();
     expect(document.querySelector("[data-composer-note-line]")).not.toBeNull();
-  } finally {
-    window.matchMedia = real;
-  }
-});
-
-test("on a phone the inbox reply reserves no note line", () => {
-  const real = window.matchMedia;
-  fakeMatchMedia.install(true);
-  try {
-    setup(agentSummary());
-    expect(document.querySelector("[data-composer-note-line]")).toBeNull();
   } finally {
     window.matchMedia = real;
   }

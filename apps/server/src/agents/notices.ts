@@ -65,9 +65,8 @@ export const notices = {
     ].join(" ");
   },
   restart(i: { by: string; tasks: string[]; crons: string[] }): string {
-    const by = i.by.startsWith("@") ? i.by : `@${i.by}`;
     return [
-      `Restarted by ${by} after an error.`,
+      `Restarted by ${i.by} after an error.`,
       ...tasksSentence(i.tasks),
       ...cronsSentence(i.crons),
     ].join(" ");

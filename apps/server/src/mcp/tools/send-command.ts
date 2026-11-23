@@ -6,8 +6,9 @@ import {
   MAX_BODY_BYTES,
   MAX_FOCUS_CHARS,
   sendCommandToolSchema,
+  typedCommandName,
 } from "@open-factory/shared";
-import { commandList } from "../../agents/commands.ts";
+import { knownCommandNames } from "../../agents/commands.ts";
 import type { ConfigResolver } from "../../agents/config-resolver.ts";
 import {
   AgentArchivedError,
@@ -18,7 +19,6 @@ import {
 } from "../../agents/errors.ts";
 import type { EventStore } from "../../agents/event-store.ts";
 import type { AgentRuntimes } from "../../agents/runtimes.ts";
-import type { Neighborhood } from "../../messaging/neighborhood.ts";
 import {
   callerOf,
   type McpServer,
@@ -37,7 +37,6 @@ const utf8 = new TextEncoder();
  */
 export function sendCommandTool(d: {
   caller: AgentRow;
-  neighborhood: Neighborhood;
   runtimes: AgentRuntimes;
   store: Pick<EventStore, "agentBySlug" | "agentCommands">;
   /** The skill list: the running process's (`started`), else the resolver's (I2 §6.2). */
@@ -82,11 +81,9 @@ export function sendCommandTool(d: {
           }
           if (!target) return toolError(`${label} isn't you or one of your direct reports.`);
 
-          const known = new Set(
-            commandList(
-              (await d.store.agentCommands(target.id))?.commands,
-              await d.resolver.skillsOf(target, d.runtimes.startedOf(target.id)),
-            ).flatMap((c) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase())),
+          const known = knownCommandNames(
+            (await d.store.agentCommands(target.id))?.commands,
+            await d.resolver.skillsOf(target, d.runtimes.startedOf(target.id)),
           );
           const cls = classifyInput(command, known);
           if (cls.kind === "command" && cls.denied) return toolError(cls.denied);
@@ -98,8 +95,7 @@ export function sendCommandTool(d: {
           const live = rt.live();
           const note = noteFor({
             self,
-            name:
-              cls.kind === "command" ? cls.name : (command.split(/\s/, 1)[0] ?? command).slice(1),
+            name: cls.kind === "command" ? cls.name : typedCommandName(command),
             slug: target.slug,
             errored: live.status === "errored",
             turnOpen: live.turnOpen,

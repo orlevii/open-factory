@@ -181,8 +181,8 @@ test("a prepareStart failure is an error event with its fix, errored, 503-style 
 test.each([
   [
     "edit_agent",
-    "The template copy /x/settings.json is missing.",
-    "The template copy /x/settings.json is missing.",
+    "The credential no longer exists. Edit the agent and choose a credential.",
+    "The credential no longer exists.",
   ],
 ] as const)(
   "a spawned agent's %s start error drops the fix and its advice for the terminate advice",

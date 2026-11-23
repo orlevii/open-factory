@@ -181,7 +181,7 @@ test("timeline: a spawned agent's error never links to the edit page (it can't b
   });
   const { els } = lines([err("edit_agent"), err("config")], true);
   expect(els).toHaveLength(2);
-  for (const el of els) expect(el.querySelector("a")).toBeNull();
+  for (const el of els) expect(el.querySelector("a, button")).toBeNull();
 });
 
 test("timeline: mcp_unavailable is a warning quiet line with the status in its detail", () => {

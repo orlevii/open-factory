@@ -1,5 +1,4 @@
 import type { AnyEvent, SubagentProgress } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";

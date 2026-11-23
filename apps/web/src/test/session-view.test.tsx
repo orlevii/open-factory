@@ -944,6 +944,18 @@ test("an error with fix edit_agent opens Edit agent", async () => {
   expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
 });
 
+test("an error with fix config opens Edit agent", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "spawn",
+    message: "Plugin x@y didn't install.",
+    fix: "config",
+  });
+  renderApp("/agents/dev/session", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit the agent" }));
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
+});
+
 test("an error with fix template links to Templates", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",

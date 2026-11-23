@@ -4,6 +4,7 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { FIELD_MSG } from "../field-messages.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { ProjectService } from "./project-service.ts";
 
@@ -60,16 +61,16 @@ test("a missing path or a file path is a hostPath field error", async () => {
   await expect(svc.create({ name: "x", hostPath: "/x" })).rejects.toMatchObject({
     status: 400,
     code: "validation_error",
-    message: "No folder at /x.",
-    extra: { fields: { hostPath: "No folder at /x." } },
+    message: FIELD_MSG.noFolder,
+    extra: { fields: { hostPath: FIELD_MSG.noFolder } },
   });
   const file = path.join(root, "a-file");
   writeFileSync(file, "hi");
   await expect(svc.create({ name: "x", hostPath: file })).rejects.toMatchObject({
-    message: `No folder at ${file}.`,
+    message: FIELD_MSG.noFolder,
   });
   await expect(svc.create({ name: "x", hostPath: "relative/dir" })).rejects.toMatchObject({
-    extra: { fields: { hostPath: "Enter an absolute path." } },
+    extra: { fields: { hostPath: FIELD_MSG.absolutePath } },
   });
 });
 
@@ -82,8 +83,8 @@ test("duplicate name is 409 project_exists; duplicate path is a hostPath field e
     svc.create({ name: "second", hostPath: path.join(root, "link-app") }),
   ).rejects.toMatchObject({
     code: "validation_error",
-    message: "Project app already uses this folder.",
-    extra: { fields: { hostPath: "Project app already uses this folder." } },
+    message: FIELD_MSG.folderInUse,
+    extra: { fields: { hostPath: FIELD_MSG.folderInUse } },
   });
 });
 
@@ -104,7 +105,7 @@ test("update re-points the folder and restarts exactly the granted active agents
   });
   await svc.create({ name: "web", hostPath: dir("web") });
   await expect(svc.update("web", moved)).rejects.toMatchObject({
-    message: "Project app already uses this folder.",
+    message: FIELD_MSG.folderInUse,
   });
 });
 

@@ -100,7 +100,7 @@ describe("agentOverlaySchema", () => {
       const r = agentOverlaySchema.safeParse(v);
       expect(r.success).toBe(false);
       expect(r.error?.issues.map((i) => i.message)).toEqual([CONFIG_MSG.unknownField]);
-      for (const i of r.error?.issues ?? []) expect(i.message).not.toContain(secret);
+      expect(JSON.stringify(r.error?.issues)).not.toContain(secret);
     }
   });
   it("does not echo a secret-shaped item in secrets", () => {

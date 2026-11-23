@@ -42,34 +42,38 @@ export const CONFIG_MSG = {
   overlayTooLarge: "At most 256 KB in total.",
 } as const;
 
-/** An unknown key never echoes the key: it could be a pasted secret. */
-const strictParams = {
-  error: (iss: { code: string }) =>
-    iss.code === "unrecognized_keys" ? CONFIG_MSG.unknownField : undefined,
-};
-
-/** The overlay's `template` part: only these keys, each optional and default-free. */
-export const overlayTemplateSchema = z.strictObject(
-  {
-    model: templateYamlShape.model,
-    effort: templateYamlShape.effort,
-    warm_window_minutes: templateYamlShape.warm_window_minutes,
-    max_live_spawns: templateYamlShape.max_live_spawns,
-    skills: templateYamlShape.skills,
-    plugins: templateYamlShape.plugins,
-    can_spawn: templateYamlShape.can_spawn,
-    secrets: z
-      .array(secretNameSchema.refine((n) => !isFactoryEnvName(n), CONFIG_MSG.factoryEnv))
-      .max(OVERLAY_LIMITS.listItems)
-      .optional(),
-  },
-  strictParams,
-);
-
-const byteLength = (s: string): number => new TextEncoder().encode(s).length;
-
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * A strict object whose unknown-key issue is a custom issue with a constant message. Zod's own
+ * `unrecognized_keys` issue carries the raw keys, and a key can be a pasted secret.
+ */
+const strict = <T extends z.ZodRawShape>(shape: T) =>
+  z
+    .unknown()
+    .superRefine((v, ctx) => {
+      if (isRecord(v) && Object.keys(v).some((k) => !(k in shape)))
+        ctx.addIssue({ code: "custom", message: CONFIG_MSG.unknownField });
+    })
+    .pipe(z.object(shape));
+
+/** The overlay's `template` part: only these keys, each optional and default-free. */
+export const overlayTemplateSchema = strict({
+  model: templateYamlShape.model,
+  effort: templateYamlShape.effort,
+  warm_window_minutes: templateYamlShape.warm_window_minutes,
+  max_live_spawns: templateYamlShape.max_live_spawns,
+  skills: templateYamlShape.skills,
+  plugins: templateYamlShape.plugins,
+  can_spawn: templateYamlShape.can_spawn,
+  secrets: z
+    .array(secretNameSchema.refine((n) => !isFactoryEnvName(n), CONFIG_MSG.factoryEnv))
+    .max(OVERLAY_LIMITS.listItems)
+    .optional(),
+});
+
+const byteLength = (s: string): number => new TextEncoder().encode(s).length;
 
 /** Applies the list and value limits to every array and string inside a JSON value. */
 const checkLimits = (
@@ -119,31 +123,23 @@ const settingsSchema = z.record(z.string(), z.unknown()).superRefine((s, ctx) =>
   checkLimits(s, [], ctx);
 });
 
-const mcpSchema = z.strictObject(
-  {
-    mcpServers: z
-      .record(z.string(), z.unknown())
-      .refine((m) => !("factory" in m), CONFIG_MSG.factoryServer)
-      .refine((m) => Object.keys(m).length <= OVERLAY_LIMITS.mcpServers, CONFIG_MSG.tooManyServers)
-      .superRefine((m, ctx) => checkLimits(m, [], ctx)),
-  },
-  strictParams,
-);
+const mcpSchema = strict({
+  mcpServers: z
+    .record(z.string(), z.unknown())
+    .refine((m) => !("factory" in m), CONFIG_MSG.factoryServer)
+    .refine((m) => Object.keys(m).length <= OVERLAY_LIMITS.mcpServers, CONFIG_MSG.tooManyServers)
+    .superRefine((m, ctx) => checkLimits(m, [], ctx)),
+});
 
 /** `agents.config`: what one agent changes on top of its template. `{}` means exactly the template. */
-export const agentOverlaySchema = z
-  .strictObject(
-    {
-      template: overlayTemplateSchema.optional(),
-      settings: settingsSchema.optional(),
-      mcp: mcpSchema.optional(),
-    },
-    strictParams,
-  )
-  .superRefine((v, ctx) => {
-    if (byteLength(JSON.stringify(v)) > OVERLAY_LIMITS.bytes)
-      ctx.addIssue({ code: "custom", message: CONFIG_MSG.overlayTooLarge });
-  });
+export const agentOverlaySchema = strict({
+  template: overlayTemplateSchema.optional(),
+  settings: settingsSchema.optional(),
+  mcp: mcpSchema.optional(),
+}).superRefine((v, ctx) => {
+  if (byteLength(JSON.stringify(v)) > OVERLAY_LIMITS.bytes)
+    ctx.addIssue({ code: "custom", message: CONFIG_MSG.overlayTooLarge });
+});
 export type AgentOverlay = z.infer<typeof agentOverlaySchema>;
 
 /** A template or an effective config as three file-shaped parts (template.yaml, settings.json, mcp.json). */

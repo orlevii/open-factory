@@ -30,6 +30,7 @@ import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { dockerodeClient } from "../src/runtime/docker/client.ts";
 import { containerName, LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { claimTestHandle } from "../src/test/handles.ts";
 import { agentWorkdir } from "../src/workspace/paths.ts";
 
 const IMAGE = "open-factory-base:dev";
@@ -351,6 +352,7 @@ try {
   appBuilt = true;
   await app.listen({ host: config.host, port: config.port });
   say(`  server: http://${config.host}:${config.port}; agents reach it at ${config.agentUrl}`);
+  await claimTestHandle(conn.db, "smoke", "user");
   await conn.sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
 
   await step("0. credential created (live verification turn passed)", () =>

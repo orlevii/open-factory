@@ -1,6 +1,7 @@
 import type { ServerMessage } from "@open-factory/shared";
 import type { Forward } from "../../messaging/forwarder.ts";
 import type { SlotPort } from "../../supervisor/slots.ts";
+import { claimTestHandle } from "../../test/handles.ts";
 import { createTestDb } from "../../test/helpers.ts";
 import { AgentRuntime, type RuntimeDeps } from "../agent-runtime.ts";
 import { EventBus } from "../event-bus.ts";
@@ -109,6 +110,7 @@ export class RuntimeHarness {
   async setup() {
     this.t = await createTestDb();
     this.store = new EventStore(this.t.db);
+    await claimTestHandle(this.t.db, "or", "user");
     await this.t
       .sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
   }

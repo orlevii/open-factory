@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./auth.ts";
 import { credentials } from "./factory.ts";
+import { handles } from "./handles.ts";
 import { schedules } from "./schedules.ts";
 import { tasks } from "./tasks.ts";
 
@@ -33,7 +34,10 @@ export const agents = pgTable(
   "agents",
   {
     id: text("id").primaryKey(),
-    slug: text("slug").notNull().unique(),
+    slug: text("slug")
+      .notNull()
+      .unique()
+      .references(() => handles.handle),
     displayName: text("display_name").notNull(),
     description: text("description").notNull().default(""),
     sessionId: text("session_id"),

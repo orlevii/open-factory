@@ -18,6 +18,7 @@ import { loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
 import { AgentTokens } from "../src/mcp/tokens.ts";
 import { Neighborhood } from "../src/messaging/neighborhood.ts";
+import { claimTestHandle } from "../src/test/handles.ts";
 import { seedTestAgent } from "../src/test/helpers.ts";
 import { KeyedMutex } from "../src/workspace/lock.ts";
 import { Workspace } from "../src/workspace/workspace.ts";
@@ -35,6 +36,7 @@ const config = loadConfig({
   FACTORY_SECRET_KEY: "s".repeat(40),
   FACTORY_HOME: mkdtempSync(path.join(tmpdir(), "of-smoke-")),
 });
+await claimTestHandle(db, "smoke", "user");
 await sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
 const vault = new Vault(config.secretKey);
 const lock = new KeyedMutex();

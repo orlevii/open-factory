@@ -1,13 +1,11 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { MIGRATIONS_DIR, migrate } from "../migrate.ts";
-import { createTestDatabase } from "../testing.ts";
+import { createMigratedTestDatabase } from "../testing.ts";
 
-let tdb: Awaited<ReturnType<typeof createTestDatabase>>;
+let tdb: Awaited<ReturnType<typeof createMigratedTestDatabase>>;
 let sql: postgres.Sql;
 beforeAll(async () => {
-  tdb = await createTestDatabase();
-  await migrate(tdb.url, MIGRATIONS_DIR);
+  tdb = await createMigratedTestDatabase();
   sql = postgres(tdb.url, { max: 1, onnotice: () => {} });
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1','c1','oauth_token',${Buffer.from("x")}), ('c2','c2','oauth_token',${Buffer.from("x")})`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id) values ('lead','lead','Lead','t','{}','local','c1')`;

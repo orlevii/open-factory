@@ -1,14 +1,12 @@
 import type postgres from "postgres";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createDb } from "./client.ts";
-import { MIGRATIONS_DIR, migrate } from "./migrate.ts";
-import { createTestDatabase } from "./testing.ts";
+import { createMigratedTestDatabase } from "./testing.ts";
 
 let sql: postgres.Sql;
 let close: () => Promise<void>;
 beforeAll(async () => {
-  const t = await createTestDatabase();
-  await migrate(t.url, MIGRATIONS_DIR);
+  const t = await createMigratedTestDatabase();
   const h = createDb(t.url);
   sql = h.sql;
   close = async () => {

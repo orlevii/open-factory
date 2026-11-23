@@ -20,6 +20,13 @@ export interface AuthOptionParams {
   mayCreateUser?: () => boolean;
   /** True when the user is disabled (S10 §9.4); no session can be created for them. */
   isDisabled?: (userId: string) => Promise<boolean>;
+  /** better-auth's scrypt when absent; tests pass a cheap one (password hashing dominated their CPU time). */
+  passwordHasher?: PasswordHasher;
+}
+
+export interface PasswordHasher {
+  hash(password: string): Promise<string>;
+  verify(data: { hash: string; password: string }): Promise<boolean>;
 }
 
 /**
@@ -54,6 +61,7 @@ export function authOptions(p: AuthOptionParams) {
       minPasswordLength: 8,
       requireEmailVerification: false,
       autoSignIn: true,
+      ...(p.passwordHasher ? { password: p.passwordHasher } : {}),
     },
     user: {
       additionalFields: {

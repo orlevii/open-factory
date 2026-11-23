@@ -93,7 +93,7 @@ function labelOf(item: InboxItem, time: string): string {
 // A grid row's single track would stretch to the 4.5rem minimum, and the lines' auto tracks with it
 // (a two-line row's line one grew to 27px): `content-center` keeps the track at its content and
 // centres it, so line one is always one 18px line with the time on the name's baseline.
-const LINK_CLASS = "of-row grid min-h-[4.5rem] content-center py-2 pr-2 pl-0 text-sm";
+export const LINK_CLASS = "of-row grid min-h-[4.5rem] content-center py-2 pr-2 pl-0 text-sm";
 
 /**
  * One inbox row: a single link, three lines, an ink dot in a fixed slot when unread.
@@ -109,7 +109,8 @@ export const InboxRow = memo(function InboxRow({
   viewer,
 }: {
   item: InboxItem;
-  now: Date;
+  /** Epoch ms rounded to the minute: a primitive, so a row that didn't change doesn't render. */
+  now: number;
   onOpen(item: InboxItem, e: MouseEvent): void;
   /** The reading pane shows this row. */
   selected?: boolean;
@@ -120,7 +121,7 @@ export const InboxRow = memo(function InboxRow({
   viewer?: string;
 }) {
   const at = new Date(item.createdAt);
-  const time = formatInboxTime(at, now);
+  const time = formatInboxTime(at, new Date(now));
   const previewId = `inbox-preview-${item.id}`;
   const preview = useMemo(() => previewOf(item.preview), [item.preview]);
   const common = {

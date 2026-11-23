@@ -1,5 +1,5 @@
 import { ApiError, type TaskActivity, type TaskDetail } from "@open-factory/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   type ReactNode,
@@ -12,18 +12,28 @@ import {
 } from "react";
 import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
-import { ArchivedNotice } from "@/features/agents/archived-notice";
-import { agentDetailQueryOptions, summaryFromAgentsList } from "@/features/session/api";
-import { Composer, TerminatedComposer } from "@/features/session/composer";
 import { formatInboxTime } from "@/features/session/format";
-import { SpeakerProvider } from "@/features/session/speaker-line";
 import { taskDetailOptions } from "@/features/tasks/api";
 import { CommentBlock } from "@/features/tasks/comment-block";
 import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/comment-composer";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { INBOX_DWELL_MS, PREFETCH_REST_MS } from "@/lib/timing";
 import { type InboxItem, inboxItemOptions, useOpenItem } from "./api";
-import { ExcerptSkeleton, SessionExcerpt } from "./session-excerpt";
+
+/** Static plates where a pane body will be. */
+function ExcerptSkeleton() {
+  return (
+    <div data-pane-skeleton aria-hidden="true" className="grid gap-4">
+      {[0, 1, 2, 3].map((n) => (
+        <div key={n} className="grid gap-1.5">
+          <div className="h-3 w-24 rounded-sm bg-muted" />
+          <div className="h-3 w-full rounded-sm bg-muted" />
+          <div className="h-3 w-2/3 rounded-sm bg-muted" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** The sender as the pane's header shows it: a 20px chip for an agent, otherwise the name. */
 function Sender({ item }: { item: InboxItem }) {
@@ -136,72 +146,14 @@ function useDwellRead(item: InboxItem | undefined) {
   }, [shown, unread, open]);
 }
 
-/** A message: the session excerpt at its target, and the composer to that session. */
-function MessageContent({
-  item,
-  link,
-}: {
-  item: InboxItem;
-  link: Extract<InboxItem["link"], { kind: "session" }>;
-}) {
-  // An errored top-level agent's notice comes from the factory: reply to the agent it is about.
-  const slug = item.from.kind === "factory" && item.about ? item.about : link.agentSlug;
-  const seq = slug === link.agentSlug ? link.seq : undefined;
-  const qc = useQueryClient();
-  // agentDetailQueryOptions is always stale (the session page reloads it); here the app default is
-  // enough, as status frames patch this cache live: stepping through one agent's items fetches once.
-  const detail = useQuery({
-    ...agentDetailQueryOptions(slug),
-    staleTime: 30_000,
-    select: (d) => d.agent,
-  });
-  const agent = detail.data ?? summaryFromAgentsList(qc, slug);
-  const replied = useMarkReplied(item);
-  const [raceNotice, setRaceNotice] = useState<string>();
-  const { refetch } = detail;
-  // Stable, as the memoised composer's other props are (U3 M3).
-  const onTerminated = useCallback(
-    (notice: string) => {
-      setRaceNotice(notice);
-      void refetch();
-    },
-    [refetch],
-  );
+/** A factory notice: its text. It has no reply: the header's link opens the session at it. */
+function NoticeContent({ item }: { item: InboxItem }) {
   return (
-    <>
-      <Body>
-        {/* The excerpt's speaker lines read the same index as the session (U3 §7.2): the agent's
-            name on its text, "You" on your messages. */}
-        <SpeakerProvider
-          slug={slug}
-          displayName={agent?.displayName}
-          template={agent?.template}
-          kind={agent?.kind}
-          avatarVersion={agent?.avatarVersion}
-        >
-          <SessionExcerpt
-            key={`${slug}:${seq ?? "latest"}`}
-            slug={slug}
-            seq={seq}
-            spawned={agent?.kind === "ephemeral"}
-          />
-        </SpeakerProvider>
-      </Body>
-      {!agent ? null : agent.archivedAt !== null ? (
-        <ArchivedNotice slug={slug} />
-      ) : agent.status === "terminated" ? (
-        <TerminatedComposer key={slug} slug={slug} notice={raceNotice} />
-      ) : (
-        <Composer
-          docked
-          key={slug}
-          slug={slug}
-          agent={agent}
-          onSent={replied}
-          onTerminated={onTerminated}
-        />
-      )}
-    </>
+    <Body>
+      <p className="max-w-[52rem] text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
+        {item.preview}
+      </p>
+    </Body>
   );
 }
 
@@ -427,7 +379,7 @@ function PaneItem({
           <ExcerptSkeleton />
         </Body>
       ) : item.link.kind === "session" ? (
-        <MessageContent key={item.id} item={item} link={item.link} />
+        <NoticeContent key={item.id} item={item} />
       ) : (
         <TaskContent key={item.id} item={item} link={item.link} />
       )}

@@ -1,5 +1,6 @@
 import {
   apiFetch,
+  type ChatRow,
   inboxItemResponseSchema,
   type inboxItemSchema,
   inboxPageSchema,
@@ -19,7 +20,7 @@ import {
 } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { z } from "zod";
-import { fetchEvents } from "@/features/session/api";
+import { chatQueryOptions } from "@/features/chat/api";
 import { taskDetailOptions } from "@/features/tasks/api";
 
 export type InboxItem = z.infer<typeof inboxItemSchema>;
@@ -50,6 +51,23 @@ export const inboxQueryOptions = infiniteQueryOptions({
 /** The Inbox as one infinite query keyed `["inbox"]`; `inbox_changed` invalidates it. */
 export const useInbox = () => useInfiniteQuery(inboxQueryOptions);
 
+/** A chat row's id in the list, the selection and `?item=`: the item ids are uuids, so they never collide. */
+export const CHAT_ID_PREFIX = "chat:";
+export const chatRowId = (slug: string) => `${CHAT_ID_PREFIX}${slug}`;
+/** The agent slug of a `chat:<slug>` id, else undefined. */
+export const chatSlugOf = (id: string | undefined): string | undefined =>
+  id?.startsWith(CHAT_ID_PREFIX) && id.length > CHAT_ID_PREFIX.length
+    ? id.slice(CHAT_ID_PREFIX.length)
+    : undefined;
+
+const NO_CHATS: ChatRow[] = [];
+/** The unread chats (only the first page carries them); structurally shared, so a refetch that changes
+ *  nothing renders nothing. */
+const chatsOf = (d: { pages: { chats?: ChatRow[] | undefined }[] }): ChatRow[] =>
+  d.pages[0]?.chats ?? NO_CHATS;
+export const useInboxChats = () =>
+  useInfiniteQuery({ ...inboxQueryOptions, select: chatsOf }).data ?? NO_CHATS;
+
 /** One item, for a `?item=` outside the loaded pages (the list's pages don't change). */
 export const inboxItemOptions = (id: string) =>
   queryOptions({
@@ -60,26 +78,15 @@ export const inboxItemOptions = (id: string) =>
       ),
   });
 
-/** The reading pane's excerpt of a session: 7 events around `seq`, or the latest 7 without one. */
-export const EXCERPT_LIMIT = 7;
-export const excerptOptions = (slug: string, seq: number | undefined) =>
-  queryOptions({
-    queryKey: ["agent", slug, "excerpt", seq ?? "latest"] as const,
-    // The signal: a j/k sweep's passed-over rows are cancelled once the pane moves on.
-    queryFn: ({ signal }) =>
-      fetchEvents(
-        slug,
-        seq === undefined ? { limit: EXCERPT_LIMIT } : { around: seq, limit: EXCERPT_LIMIT },
-        signal,
-      ),
-  });
-
-/** Warms what the reading pane shows for `item`: the session excerpt at its target, or its task. */
+/** Warms what the reading pane shows for `item`: its task (a notice has nothing to fetch). */
 export function prefetchPane(qc: QueryClient, item: InboxItem) {
-  const link = item.link;
-  void (link.kind === "session"
-    ? qc.prefetchQuery(excerptOptions(link.agentSlug, link.seq))
-    : qc.prefetchQuery(taskDetailOptions(link.key)));
+  if (item.link.kind === "task") void qc.prefetchQuery(taskDetailOptions(item.link.key));
+}
+
+/** Warms a chat row's pane: the chat's newest page. */
+export function prefetchChat(qc: QueryClient, slug: string) {
+  if (qc.getQueryData(chatQueryOptions(slug).queryKey) === undefined)
+    void qc.prefetchInfiniteQuery(chatQueryOptions(slug));
 }
 
 /** The 5 newest unread items: what the notifier reads. */
@@ -171,6 +178,22 @@ export function useInboxCache() {
       /** "Mark read" for one agent: its cached rows turn read and its count goes to zero. */
       readFrom(slug: string) {
         flipRows((i) => fromAgent(i) === slug, true);
+        // The chat's row stays in the cache with no count; the list drops it when it can (a held list waits).
+        qc.setQueryData<InfiniteData<Page>>(
+          inboxQueryKey,
+          (d) =>
+            d && {
+              ...d,
+              pages: d.pages.map((p) =>
+                p.chats?.some((c) => c.agent.slug === slug)
+                  ? {
+                      ...p,
+                      chats: p.chats.map((c) => (c.agent.slug === slug ? { ...c, unread: 0 } : c)),
+                    }
+                  : p,
+              ),
+            },
+        );
         qc.setQueryData<Unread>(
           unreadQueryKey,
           (c) =>

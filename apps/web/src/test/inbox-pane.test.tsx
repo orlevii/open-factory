@@ -213,65 +213,50 @@ test("<1024 rows navigate; ?item= is dropped", async () => {
 test("neighbours' pane data are prefetched on selection", async () => {
   await visit(1280);
   fireEvent.click(row("i2") as HTMLElement);
-  await waitFor(() => expect(gets("/api/agents/dev/events?around=41&limit=7")).toBe(1));
+  // i3 is a mention: its task is warmed; the notices beside it have nothing to fetch.
   await waitFor(() => expect(gets("/api/tasks/T-7")).toBe(1));
-  expect(gets("around=44")).toBe(0);
+  expect(gets("/events")).toBe(0);
 });
 
 test("a j/k sweep prefetches only once the selection rests", async () => {
   await visit(1280, "/inbox?item=i1");
   (row("i1") as HTMLElement).focus();
   vi.useFakeTimers();
-  // The initial selection's neighbour may prefetch; count from here.
   await act(async () => vi.advanceTimersByTime(500));
   const start = api.calls.length;
   for (let n = 0; n < 3; n++) {
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: "j" });
     await act(async () => vi.advanceTimersByTime(50));
   }
-  // At most the pane's own loads (the first move's body; the rest wait for the rest); nothing for
-  // a neighbour yet.
-  const shown = ["around=42", "/api/tasks/T-7", "around=44", "/api/agents/dev"];
-  const during = api.calls.slice(start).filter((c) => c.method === "GET");
-  expect(
-    during.filter((c) => !shown.some((s) => c.url.endsWith(s) || c.url.includes(`${s}&`))),
-  ).toEqual([]);
+  // Nothing for a neighbour while the selection moves.
+  expect(api.calls.slice(start).filter((c) => c.method === "GET")).toEqual([]);
   await act(async () => vi.advanceTimersByTime(200));
-  const after = api.calls.slice(start).map((c) => c.url);
-  // Resting on i4: its neighbours are i3 (task T-7) and i5 (seq 45).
-  expect(after).toEqual(
-    expect.arrayContaining(["/api/tasks/T-7", "/api/agents/dev/events?around=45&limit=7"]),
-  );
-  // What a passed-over item loaded while shown is never fetched again by a prefetch.
-  const gets = after.filter((_, n) => api.calls[start + n]?.method === "GET");
-  expect(gets.filter((u, n) => gets.indexOf(u) !== n)).toEqual([]);
+  // Resting on i4: its neighbour i3 is the mention (task T-7).
+  expect(api.calls.slice(start).map((c) => c.url)).toContain("/api/tasks/T-7");
 });
 
 test("a j/k sweep loads the pane's body only for the item it rests on", async () => {
   const app = await visit(1280, "/inbox?item=i1");
   (row("i1") as HTMLElement).focus();
   vi.useFakeTimers();
-  // i1 has rested: its neighbour i2 is prefetched. Count from here.
   await act(async () => vi.advanceTimersByTime(500));
   const start = api.calls.length;
   const bodyGets = (part: string) =>
     api.calls.slice(start).filter((c) => c.method === "GET" && c.url.includes(part)).length;
-  for (let n = 0; n < 3; n++) {
+  for (let n = 0; n < 2; n++) {
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: "j", repeat: n > 0 });
     await act(async () => vi.advanceTimersByTime(50));
   }
-  expect(search(app).item).toBe("i4");
-  // The header follows the row at once; the passed-over task (i3) and the target's excerpt (i4)
-  // aren't requested while the selection moves.
+  expect(search(app).item).toBe("i3");
+  // The header follows the row at once; the task (i3) isn't requested while the selection moves.
   const pane = screen.getByRole("region", { name: "Reading pane" });
-  expect(within(pane).getByRole("link", { name: "Open in session" })).toHaveAttribute(
+  expect(within(pane).getByRole("link", { name: "Open task" })).toHaveAttribute(
     "href",
-    "/agents/dev/session?event=44",
+    "/tasks/T-7?comment=c1",
   );
   expect(bodyGets("/api/tasks/T-7")).toBe(0);
-  expect(bodyGets("around=44")).toBe(0);
   await act(async () => vi.advanceTimersByTime(200));
-  expect(bodyGets("around=44")).toBe(1);
+  expect(bodyGets("/api/tasks/T-7")).toBeGreaterThan(0);
 });
 
 test("a message row's context line hides the recipient when it is the viewer", async () => {

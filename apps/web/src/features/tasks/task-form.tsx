@@ -242,7 +242,7 @@ export function TaskForm({
           <MoreOptions open={moreOpen} onOpenChange={setUserOpen}>
             <DependencyEditor
               value={deps}
-              resolved={resolved}
+              resolvedKeys={resolved.map((t) => t.key)}
               error={errors.dependsOn}
               onChange={(next) => {
                 setUserOpen((o) => o ?? true);

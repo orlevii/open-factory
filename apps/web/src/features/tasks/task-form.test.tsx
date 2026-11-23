@@ -96,7 +96,7 @@ test("submit checks everything again and focuses the first invalid field", async
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
 });
 
-test("dependency keys resolve in one request on leave and show as badges; errors use the exact sentences", async () => {
+test("dependency keys resolve in one request on leave and show as a summary; errors use the exact sentences", async () => {
   const api = mockApi({
     ...base,
     "GET /api/tasks?": (_b, url) =>
@@ -112,9 +112,7 @@ test("dependency keys resolve in one request on leave and show as badges; errors
   const deps = await screen.findByLabelText("Depends on");
   await userEvent.type(deps, "T-41, T-44");
   await userEvent.tab();
-  const list = await screen.findByRole("list", { name: "Resolved dependencies" });
-  expect(within(list).getByText("Task 41")).toBeInTheDocument();
-  expect(within(list).getByText("Done")).toBeInTheDocument();
+  expect(await screen.findByText("Depends on T-41 and T-44.")).toBeInTheDocument();
   expect(api.calls.filter((c) => c.url.includes("keys="))).toHaveLength(1);
   await userEvent.clear(deps);
   await userEvent.type(deps, "banana");

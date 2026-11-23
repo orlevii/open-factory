@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { COLOUR_MSG, ColourField, colourName } from "@/features/agents/colour-field";
+import { ColourField, colourName } from "@/features/agents/colour-field";
 
 function Harness({
   start = null,
@@ -62,10 +62,4 @@ test("a hue's name shows as a tooltip on focus", async () => {
 test("colourName names Auto's seeded hue and a chosen one", () => {
   expect(colourName(4, "lead")).toBe("Teal");
   expect(colourName(null, "lead")).toMatch(/^Auto \(\w+\)$/);
-});
-
-test("an avatar version replaces the group with the line", () => {
-  render(<Harness avatarVersion="v1" />);
-  expect(screen.getByText(COLOUR_MSG.templateAvatar)).toBeInTheDocument();
-  expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
 });

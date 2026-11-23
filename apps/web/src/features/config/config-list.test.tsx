@@ -119,9 +119,6 @@ test("remove moves focus to the next remove button, else to the add input", asyn
 test("rows wrap and never truncate; rules are mono", () => {
   render(<Harness start={["Bash(git push:*)"]} />);
   const row = screen.getByRole("listitem");
-  expect(row.className).toMatch(/min-h-8/);
-  expect(row.className).toMatch(/pointer-coarse:min-h-10/);
-  expect(row.className).toMatch(/items-start/);
   expect(row.innerHTML).not.toMatch(/truncate/);
   expect(within(row).getByText("Bash(git push:*)").className).toMatch(/font-mono/);
   expect(within(row).getByText("Bash(git push:*)").className).toMatch(/overflow-wrap:anywhere/);

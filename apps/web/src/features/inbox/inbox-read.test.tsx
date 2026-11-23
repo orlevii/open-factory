@@ -112,17 +112,6 @@ test("kinds: a mention, a human mention and a task event render their sender lin
   expect(within(h).getByText("@sam")).toHaveClass("font-mono");
 });
 
-test("unread rows have an ink dot (aria-hidden), medium weight and an 'Unread, ' name; read rows don't", async () => {
-  world([item(1), item(2, { read: true })]);
-  renderApp("/inbox", alice);
-  const unread = await screen.findByRole("link", { name: /^Unread, From @dev/ });
-  expect(unread.querySelector(".bg-foreground")).not.toBeNull();
-  expect(unread.querySelector(".font-medium")).not.toBeNull();
-  const read = screen.getByRole("link", { name: /^From @dev/ });
-  expect(read.querySelector(".bg-foreground")).toBeNull();
-  expect(read.querySelector(".font-medium")).toBeNull();
-});
-
 test("opening a row (click) marks it read and drops the sidebar count at once, then fires the request", async () => {
   const { api } = world([item(1), item(2)]);
   renderApp("/inbox", alice);
@@ -134,18 +123,33 @@ test("opening a row (click) marks it read and drops the sidebar count at once, t
   );
 });
 
-test("middle-click and Enter open too; a failing request rolls the row and the count back", async () => {
+test("middle-click and Enter open too; a failing request flips the row read first, then rolls the row and the count back", async () => {
   const { api } = world([item(1)]);
-  api.on("POST /api/inbox/i1/read", () => json({ error: { code: "x", message: "x" } }, 500));
+  let release = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  let posts = 0;
+  api.on("POST /api/inbox/i1/read", async () => {
+    posts += 1;
+    if (posts === 1) await held;
+    return json({ error: { code: "x", message: "x" } }, 500);
+  });
   renderApp("/inbox", alice);
   const row = await screen.findByRole("link", { name: /^Unread, From @dev/ });
   await userEvent.pointer({ keys: "[MouseMiddle]", target: row });
-  await waitFor(() =>
-    expect(api.calls.filter((c) => c.url === "/api/inbox/i1/read").length).toBeGreaterThan(0),
-  );
+  // Optimistic: read and uncounted while the request is still in flight.
+  expect(await screen.findByRole("link", { name: /^From @dev/ })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Inbox, 1 unread" })).toBeNull();
+  expect(posts).toBe(1);
+  release();
   // Rolled back after the failure.
   expect(await screen.findByRole("link", { name: /^Unread, From @dev/ })).toBeInTheDocument();
   expect(await screen.findByRole("link", { name: "Inbox, 1 unread" })).toBeInTheDocument();
+  // Enter opens too: a second request goes out.
+  screen.getByRole("link", { name: /^Unread, From @dev/ }).focus();
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(posts).toBe(2));
 });
 
 test("right-click (auxclick with the right button) leaves the row unread; middle-click opens it", async () => {

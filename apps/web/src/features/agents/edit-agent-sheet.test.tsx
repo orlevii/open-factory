@@ -812,11 +812,14 @@ test("a saved colour invalidates the inbox list so chat rows recolour", async ()
     agents: [lead({ status: "idle" })],
     extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 4 })) },
   });
-  const spy = vi.spyOn(queryClient, "invalidateQueries");
+  // A cached inbox list (inactive here, as when the sheet is over /agents): the save must mark it stale.
+  const inboxKey = ["inbox", "list"];
+  queryClient.setQueryData(inboxKey, { chats: [], items: [], nextCursor: null });
+  expect(queryClient.getQueryState(inboxKey)?.isInvalidated).toBe(false);
   await userEvent.click(radio("Teal"));
   await userEvent.click(saveButton());
   await waitFor(() => expect(notify).toHaveBeenCalledOnce());
-  expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] });
+  expect(queryClient.getQueryState(inboxKey)?.isInvalidated).toBe(true);
 });
 
 test("arrow keys move and select, Home and End jump, roving tabindex follows", async () => {

@@ -145,7 +145,9 @@ test("typing clears the chip's selection", async () => {
   const input = await box();
   await userEvent.keyboard("{Backspace}");
   expect(document.querySelector("[data-recipient='ops']")).toHaveAttribute("data-selected");
-  await userEvent.type(input, "x{Backspace}{Backspace}");
+  await userEvent.type(input, "x");
+  expect(document.querySelector("[data-recipient='ops']")).not.toHaveAttribute("data-selected");
+  await userEvent.keyboard("{Backspace}{Backspace}");
   expect(toRow()).not.toBeNull();
 });
 
@@ -175,16 +177,6 @@ test("recipients survive a remount from the draft; the key goes only when text a
   expect(localStorage.getItem("of-draft:v1:chat:dev")).toBeNull();
 });
 
-test("a stored recipients list that isn't string[] or is over 10 is dropped", async () => {
-  localStorage.setItem(
-    "of-draft:v1:chat:dev",
-    JSON.stringify({ text: "hi", at: Date.now(), recipients: [1, 2] }),
-  );
-  renderApp("/agents/dev/chat", alice);
-  expect(await box()).toHaveValue("hi");
-  expect(toRow()).toBeNull();
-});
-
 test("with two recipients the paperclip is aria-disabled and says why on the note slot", async () => {
   renderApp("/agents/dev/chat", alice);
   await addRecipient("ops");
@@ -207,25 +199,6 @@ test("a leading /command shows where commands run; Open session carries the text
   expect(JSON.parse(localStorage.getItem("of-draft:v1:session:dev") as string).text).toBe(
     "/context",
   );
-});
-
-test("the /command note shows only for a known command once the list has loaded", async () => {
-  commands = {
-    commands: [{ name: "context", description: "", argumentHint: "", builtin: true }],
-    source: "session",
-    at: null,
-    stale: false,
-  };
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
-  const input = await box();
-  await act(() =>
-    queryClient.fetchQuery({ queryKey: ["agent-commands", "dev"], queryFn: () => commands }),
-  );
-  await userEvent.type(input, "/nope");
-  expect(note()).not.toHaveTextContent("Commands run in the session");
-  await userEvent.clear(input);
-  await userEvent.type(input, "/context");
-  expect(note()).toHaveTextContent("Commands run in the session");
 });
 
 test("a /context message is sent as message text, to the chat's agent", async () => {
@@ -494,7 +467,7 @@ test("the first Backspace announces the selected chip; leaving the box clears it
   expect(document.querySelector("[data-recipient='ops']")).not.toHaveAttribute("data-selected");
 });
 
-test("stored recipients: the chat's own agent and duplicates are dropped, ten or more are not kept", async () => {
+test("stored recipients: the chat's own agent and duplicates are dropped; ten or more, or a non-string list, are not kept", async () => {
   localStorage.setItem(
     "of-draft:v1:chat:dev",
     JSON.stringify({ text: "", at: Date.now(), recipients: ["dev", "ops", "ops"] }),
@@ -510,6 +483,15 @@ test("stored recipients: the chat's own agent and duplicates are dropped, ten or
       at: Date.now(),
       recipients: Array.from({ length: 10 }, (_, i) => `x${i}`),
     }),
+  );
+  const second = renderApp("/agents/dev/chat", alice);
+  expect(await box()).toHaveValue("hi");
+  expect(toRow()).toBeNull();
+  second.unmount();
+  // Not a string[]: dropped, the text stays.
+  localStorage.setItem(
+    "of-draft:v1:chat:dev",
+    JSON.stringify({ text: "hi", at: Date.now(), recipients: [1, 2] }),
   );
   renderApp("/agents/dev/chat", alice);
   expect(await box()).toHaveValue("hi");

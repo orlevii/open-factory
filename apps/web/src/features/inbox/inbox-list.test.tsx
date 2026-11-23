@@ -221,10 +221,10 @@ test("a message row's context line names the recipient; the sender is an agent c
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", { name: /From @dev/ });
   expect(within(link).getByText("→ @bob")).toBeInTheDocument();
-  expect(link.querySelector("[data-agent-avatar], img, svg")).not.toBeNull();
+  expect(link.querySelector("[data-agent-avatar]")).not.toBeNull();
 });
 
-test("read rows are muted, unread rows are not", async () => {
+test("unread rows have an ink dot, medium weight and an 'Unread, ' name; read rows are muted and have none", async () => {
   mockApi({
     "GET /api/inbox?": () =>
       json({
@@ -238,8 +238,12 @@ test("read rows are muted, unread rows are not", async () => {
   const unread = screen.getByRole("link", { name: /^Unread, From @dev/ });
   expect(within(read).getByText("preview 1").className).toContain("text-muted-foreground");
   expect(within(read).getByText("→ @bob").className).toContain("text-muted-foreground");
-  expect(unread.className).toContain("");
+  expect(within(unread).getByText("preview 2").className).not.toContain("text-muted-foreground");
   expect(within(unread).getByText("→ @bob").className).not.toContain("text-muted-foreground");
+  expect(unread.querySelector(".bg-foreground")).not.toBeNull();
+  expect(unread.querySelector(".font-medium")).not.toBeNull();
+  expect(read.querySelector(".bg-foreground")).toBeNull();
+  expect(read.querySelector(".font-medium")).toBeNull();
 });
 
 const at = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();

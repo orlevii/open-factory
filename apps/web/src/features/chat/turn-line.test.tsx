@@ -47,7 +47,7 @@ test("the working line is the thread's last row: duration first and tabular, the
   expect(line.firstElementChild?.nextElementSibling).toHaveClass("tabular-nums", "shrink-0");
   expect(line.nextElementSibling).toBeNull();
   // At large text the line wraps (the link unit under the sentence) rather than overflowing; never a fixed height.
-  expect(line).toHaveClass("min-h-6", "flex-wrap");
+  expect(line).toHaveClass("min-h-6", "flex-wrap", "min-w-0");
   expect(line).not.toHaveClass("h-6");
   expect(within(line).getByRole("link").parentElement).toHaveClass("shrink-0", "whitespace-nowrap");
   const link = within(line).getByRole("link", { name: /^Open session at \d\d:\d\d$/ });
@@ -124,20 +124,4 @@ test("when the agent replied, the working line goes in the commit that brings th
   expect(lineEl()).toBeNull();
   expect(seen.length).toBeGreaterThan(0);
   expect(seen).not.toContain(true);
-});
-
-test("a long name leaves the duration and the link whole", async () => {
-  stubChatApi({
-    chat: () => page([mine(1)], { working: { key: "m1", since: since() } }),
-    agent: { displayName: "A very long agent display name that cannot fit on a phone screen" },
-  });
-  renderApp("/agents/dev/chat", alice);
-  const line = await waitFor(() => {
-    const el = lineEl();
-    expect(el).toHaveTextContent("is working");
-    return el as HTMLElement;
-  });
-  expect(line).toHaveClass("min-w-0");
-  expect(line.querySelector(".tabular-nums")).toHaveClass("shrink-0");
-  expect(within(line).getByRole("link")).toHaveClass("shrink-0");
 });

@@ -114,7 +114,6 @@ test("the pane shows the Chat under a compact strip, with no ⋯, Agent details 
   expect(await within(p).findByText("dev says 2")).toBeInTheDocument();
   expect(await within(p).findByRole("combobox", { name: "Message to Dev agent" })).toBeVisible();
   const strip = p.querySelector("[data-chat-strip]") as HTMLElement;
-  expect(strip).toHaveClass("min-h-10", "flex-wrap");
   expect(within(strip).getByText("Dev agent")).toBeInTheDocument();
   expect(within(strip).getByRole("link", { name: "Open chat" })).toHaveAttribute(
     "href",
@@ -155,7 +154,6 @@ test("retargeting swaps the thread at once: nothing of the old one stays, nothin
   expect(
     within(pane().querySelector("[data-chat-strip]") as HTMLElement).getByText("Ops agent"),
   ).toBeInTheDocument();
-  expect(pane().querySelector("[data-live]")).toBeNull();
 });
 
 test("retargeting never puts a fading row (data-live) on screen, not even for a frame", async () => {

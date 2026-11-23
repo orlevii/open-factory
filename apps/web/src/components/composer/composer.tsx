@@ -21,7 +21,6 @@ import { Markdown } from "@/components/markdown/markdown";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { isMac, Kbd } from "@/components/ui/kbd";
 import { Textarea } from "@/components/ui/textarea";
-import { Recipients } from "@/features/chat/recipients";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { registerDockedComposer } from "@/lib/composer-height";
 import { readUnconfirmed, useDraft, writeUnconfirmed } from "@/lib/drafts";
@@ -38,6 +37,7 @@ import {
   type UploadSummary,
 } from "./attachments";
 import { type CaretAnchor, CaretMenu, type CaretMenuHandle, caretAnchor } from "./caret-menu";
+import { Recipients } from "./recipients";
 import { StopButton, type StopHandle } from "./stop-button";
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
@@ -194,6 +194,8 @@ export type ComposerProps = {
   recipientsTo?: string;
   /** A stable setter. */
   onRecipientsChange?(next: readonly string[]): void;
+  /** The user edited the text: a note the caller holds goes (a stable callback). */
+  onEdit?(): void;
   /** A note for the text as it stands (a leading `/` in the chat); cheap, it runs on every render. */
   noteFor?(text: string): ComposerNote | undefined;
   /** ↑ in an empty box with the caret at 0: the text to fill it with (U3 §13.2), if any. */
@@ -261,6 +263,7 @@ export const Composer = memo(function Composer({
   recipients,
   recipientsTo = "",
   onRecipientsChange,
+  onEdit,
   noteFor,
   recall,
   noFilesNote = FILES_NOTE,
@@ -851,6 +854,7 @@ export const Composer = memo(function Composer({
                   setFilesNote(false);
                   setAttachNote(undefined);
                   setChipSelected(false);
+                  onEdit?.();
                   setHeldShownFor(undefined);
                   setSentRefusal(undefined);
                   if (pasted.current) {
@@ -870,7 +874,10 @@ export const Composer = memo(function Composer({
                 aria-expanded={sources.length ? menuOpen : undefined}
                 aria-autocomplete={sources.length ? "list" : undefined}
                 onFocus={draft.bind.onFocus}
-                onBlur={draft.bind.onBlur}
+                onBlur={() => {
+                  draft.bind.onBlur();
+                  setChipSelected(false);
+                }}
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
                 placeholder={phone && turnOpen && turnPlaceholder ? turnPlaceholder : placeholder}

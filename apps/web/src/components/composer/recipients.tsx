@@ -33,11 +33,17 @@ export const Recipients = memo(function Recipients({
   onRemove(slug: string): void;
 }) {
   const [prev, setPrev] = useState(recipients);
+  const [prevSelected, setPrevSelected] = useState(selected);
   const [said, setSaid] = useState("");
-  // Adjusted during render on the list's edge (no effect, one commit).
+  // Adjusted during render on the list's or the selection's edge (no effect, one commit).
   if (prev !== recipients) {
     setPrev(recipients);
+    setPrevSelected(selected);
     setSaid(announcement(prev, recipients) ?? "");
+  } else if (prevSelected !== selected) {
+    setPrevSelected(selected);
+    const last = recipients.at(-1);
+    setSaid(selected && last ? `@${last} selected. Backspace again to remove` : "");
   }
   const [expanded, setExpanded] = useState(false);
   const [hidden, setHidden] = useState(0);

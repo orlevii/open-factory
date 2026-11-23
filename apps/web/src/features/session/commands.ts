@@ -55,8 +55,7 @@ function knownNames(data: AgentCommandsResponse): ReadonlySet<string> {
 
 /** Whether `name` is a command of this agent's list (or an alias); true while the list hasn't loaded,
  *  since nothing says it isn't (the chat's note for a leading `/`). */
-export function knownCommand(qc: QueryClient, slug: string, name: string): boolean {
-  const data = qc.getQueryData<AgentCommandsResponse>(commandsQueryOptions(slug).queryKey);
+export function knownCommand(data: AgentCommandsResponse | undefined, name: string): boolean {
   return !data || knownNames(data).has(name.toLowerCase());
 }
 

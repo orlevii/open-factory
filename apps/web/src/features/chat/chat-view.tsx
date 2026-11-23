@@ -50,6 +50,12 @@ export function ChatView({ slug, messageId }: { slug: string; messageId?: string
   const session = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
   const userId = useQuery({ ...sessionQueryOptions, select: toUserId }).data;
   const turn = useWorkingKey(slug, messageId === undefined);
+  // From a `?message=` window the newest page is what a send lands in: the chat goes back to it.
+  const navigate = useNavigate();
+  const leaveWindow = useCallback(
+    () => void navigate({ to: "/agents/$slug/chat", params: { slug }, search: {} }),
+    [navigate, slug],
+  );
   return (
     <>
       <SpeakerProvider
@@ -63,7 +69,12 @@ export function ChatView({ slug, messageId }: { slug: string; messageId?: string
             }
           : {})}
       >
-        <Thread slug={slug} messageId={messageId} agentName={agent?.displayName ?? slug} />
+        <Thread
+          slug={slug}
+          messageId={messageId}
+          agentName={agent?.displayName ?? slug}
+          leaveWindow={leaveWindow}
+        />
       </SpeakerProvider>
       {archived ? (
         <ArchivedNotice slug={slug} onRestored={() => void refreshAgent()} />
@@ -85,6 +96,7 @@ export function ChatView({ slug, messageId }: { slug: string; messageId?: string
           compacting={agent?.compacting === true}
           waiting={!turn.loaded || session === undefined}
           docked
+          {...(messageId !== undefined ? { onSend: leaveWindow } : {})}
         />
       )}
     </>
@@ -95,15 +107,16 @@ function Thread({
   slug,
   messageId,
   agentName,
+  leaveWindow,
 }: {
   slug: string;
   messageId: string | undefined;
   agentName: string;
+  leaveWindow(): void;
 }) {
   const chat = useChat(slug, { messageId });
   const { entries, working, live, windowed, status } = chat;
   const self = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
-  const navigate = useNavigate();
   const scroller = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const loaded = status === "success";
@@ -319,10 +332,6 @@ function Thread({
     }
     return n;
   }, [entries, seen]);
-  const leaveWindow = useCallback(
-    () => void navigate({ to: "/agents/$slug/chat", params: { slug }, search: {} }),
-    [navigate, slug],
-  );
   const onJump = useCallback(() => {
     if (windowed) return leaveWindow();
     stick.repin();

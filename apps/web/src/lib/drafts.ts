@@ -21,7 +21,7 @@ type Stored = { text: string; recipients: string[]; expired: boolean };
 const EMPTY: Stored = { text: "", recipients: [], expired: false };
 
 /** What a stored value holds, or nothing when it is absent, unreadable or expired. Recipients are
- *  validated here: a `string[]` of at most the limit, else dropped. */
+ *  validated here: a `string[]` of fewer than the limit (the chat's own agent takes one), without duplicates, else dropped. */
 function parse(raw: string | null | undefined): Stored {
   if (!raw) return EMPTY;
   try {
@@ -30,8 +30,8 @@ function parse(raw: string | null | undefined): Stored {
     if (Date.now() - v.at > TTL_MS) return { ...EMPTY, expired: true };
     const r = v.recipients;
     const recipients =
-      Array.isArray(r) && r.length <= MAX_RECIPIENTS && r.every((x) => typeof x === "string")
-        ? (r as string[])
+      Array.isArray(r) && r.length < MAX_RECIPIENTS && r.every((x) => typeof x === "string")
+        ? [...new Set(r as string[])]
         : [];
     return { text: v.text, recipients, expired: false };
   } catch {

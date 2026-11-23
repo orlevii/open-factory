@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { chatMsg, json, mine, page, stubChatApi } from "@/test/chat-fixtures";
+import { installFakeXhr } from "@/test/fake-xhr";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 import { onChatChanged } from "./use-chat";
@@ -24,6 +25,7 @@ let thread: ReturnType<typeof chatMsg>[];
 let working: { key: string; since: string } | null;
 let agent: Partial<Parameters<typeof agentSummary>[0]>;
 let commands: unknown;
+let extraAgents: ReturnType<typeof agentSummary>[];
 
 const queued = (to: string) => ({ to: `@${to}`, status: "queued", id: `row-${to}` });
 const OPS = agentSummary({ slug: "ops", displayName: "Ops agent", template: "ops" });
@@ -36,6 +38,7 @@ beforeEach(() => {
   working = null;
   agent = {};
   commands = undefined;
+  extraAgents = [];
   results = (b) => ({ results: (b.to as string[]).map(queued) });
   stubChatApi({
     chat: () => page(thread, { working }),
@@ -54,7 +57,7 @@ beforeEach(() => {
       }
       if (url.startsWith("/api/agents?"))
         return json({
-          agents: [agentSummary(agent), OPS, QA],
+          agents: [agentSummary(agent), OPS, QA, ...extraAgents],
           more: false,
           running: { count: 0, max: 8 },
         });
@@ -198,8 +201,10 @@ test("a leading /command shows where commands run; Open session carries the text
 
 test("the /command note shows only for a known command once the list has loaded", async () => {
   commands = {
-    commands: [{ name: "context", description: "", builtin: true }],
-    source: "agent",
+    commands: [{ name: "context", description: "", argumentHint: "", builtin: true }],
+    source: "session",
+    at: null,
+    stale: false,
   };
   const { queryClient } = renderApp("/agents/dev/chat", alice);
   const input = await box();
@@ -390,4 +395,151 @@ test("a failed send takes its block out of the thread and puts the text back", a
   expect(input).toHaveValue("lost");
   const log = document.querySelector("[role=log]") as HTMLElement;
   expect(within(log).queryByText("lost")).toBeNull();
+});
+
+const paste = (input: HTMLElement, files: File[]) =>
+  fireEvent.paste(input, {
+    clipboardData: { files, getData: () => "", types: ["Files"] },
+  });
+
+test("a refused add (a file is attached) leaves its note until you type or the file goes", async () => {
+  installFakeXhr();
+  renderApp("/agents/dev/chat", alice);
+  const input = await box();
+  paste(input, [new File(["x"], "notes.txt", { type: "text/plain" })]);
+  await userEvent.type(input, "@op");
+  await userEvent.click(await screen.findByRole("option", { name: /Add @ops as/ }));
+  expect(note()).toHaveTextContent("Files go to one agent at a time");
+  expect(toRow()).toBeNull();
+  await userEvent.type(input, "x");
+  expect(note()).not.toHaveTextContent("Files go to one agent at a time");
+  // The same note goes when the file does.
+  await userEvent.clear(input);
+  await userEvent.type(input, "@op");
+  await userEvent.click(await screen.findByRole("option", { name: /Add @ops as/ }));
+  expect(note()).toHaveTextContent("Files go to one agent at a time");
+  await userEvent.click(screen.getByRole("button", { name: /^(Cancel|Remove) notes.txt$/ }));
+  expect(note()).not.toHaveTextContent("Files go to one agent at a time");
+});
+
+test("'Not sent to @x' goes when you type the next message", async () => {
+  results = (b) => ({
+    results: (b.to as string[]).map((t) =>
+      t === "ops" ? { to: "@ops", status: "refused", code: "terminated", reason: "x" } : queued(t),
+    ),
+  });
+  renderApp("/agents/dev/chat", alice);
+  const input = await addRecipient("ops");
+  await userEvent.type(input, "hello{Enter}");
+  await waitFor(() => expect(note()).toHaveTextContent("Not sent to @ops: terminated."));
+  await userEvent.type(input, "next");
+  expect(note()).not.toHaveTextContent("Not sent to @ops");
+});
+
+test("the touch hint points at Stop only where Stop shows", async () => {
+  vi.stubGlobal("matchMedia", (q: string) => ({
+    matches: q === "(pointer: coarse)",
+    media: q,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  agent = { status: "working", turnOpen: true };
+  const first = renderApp("/agents/dev/chat", alice);
+  await box();
+  expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+  expect(document.body).not.toHaveTextContent("Stop first to interrupt");
+  first.unmount();
+  working = { key: "m1", since: new Date().toISOString() };
+  renderApp("/agents/dev/chat", alice);
+  await screen.findByRole("button", { name: "Stop" });
+  await waitFor(() => expect(document.body).toHaveTextContent("Stop first to interrupt"));
+});
+
+test("a message can go to ten agents, the chat's own included; the eleventh is refused in the menu", async () => {
+  extraAgents = Array.from({ length: 7 }, (_, i) =>
+    agentSummary({ slug: `a${i}`, displayName: `Agent ${i}`, template: "ops" }),
+  );
+  renderApp("/agents/dev/chat", alice);
+  let input = await addRecipient("ops");
+  await addRecipient("qa");
+  for (let i = 0; i < 7; i++) input = await addRecipient(`a${i}`);
+  expect(document.querySelectorAll("[data-recipient]")).toHaveLength(9);
+  await userEvent.type(input, "@a");
+  expect(await screen.findByText("A message goes to at most 10 agents.")).toBeInTheDocument();
+  expect(screen.queryByRole("option")).toBeNull();
+  await userEvent.keyboard("{Escape}");
+  await userEvent.clear(input);
+  await userEvent.type(input, "all{Enter}");
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]?.body.to).toHaveLength(10);
+});
+
+test("the first Backspace announces the selected chip; leaving the box clears it", async () => {
+  renderApp("/agents/dev/chat", alice);
+  const input = await addRecipient("ops");
+  await userEvent.clear(input);
+  await userEvent.keyboard("{Backspace}");
+  expect(screen.getByText("@ops selected. Backspace again to remove")).toBeInTheDocument();
+  fireEvent.blur(input);
+  expect(document.querySelector("[data-recipient='ops']")).not.toHaveAttribute("data-selected");
+});
+
+test("stored recipients: the chat's own agent and duplicates are dropped, ten or more are not kept", async () => {
+  localStorage.setItem(
+    "of-draft:v1:chat:dev",
+    JSON.stringify({ text: "", at: Date.now(), recipients: ["dev", "ops", "ops"] }),
+  );
+  const first = renderApp("/agents/dev/chat", alice);
+  await box();
+  expect(document.querySelectorAll("[data-recipient]")).toHaveLength(1);
+  first.unmount();
+  localStorage.setItem(
+    "of-draft:v1:chat:dev",
+    JSON.stringify({
+      text: "hi",
+      at: Date.now(),
+      recipients: Array.from({ length: 10 }, (_, i) => `x${i}`),
+    }),
+  );
+  renderApp("/agents/dev/chat", alice);
+  expect(await box()).toHaveValue("hi");
+  expect(toRow()).toBeNull();
+});
+
+test("a leading /word is a note only for a command the loaded list knows", async () => {
+  commands = {
+    commands: [{ name: "context", description: "", argumentHint: "", builtin: true }],
+    source: "session",
+    at: null,
+    stale: false,
+  };
+  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const input = await box();
+  // The chat itself loads the list: nothing else has to have.
+  await waitFor(() => expect(queryClient.getQueryData(["agent-commands", "dev"])).toBeDefined());
+  await userEvent.type(input, "/nope");
+  expect(note()).not.toHaveTextContent("Commands run in the session");
+  await userEvent.clear(input);
+  await userEvent.type(input, "/context");
+  expect(note()).toHaveTextContent("Commands run in the session");
+});
+
+test("a send the server could not start keeps its block, pending", async () => {
+  results = (b) => ({
+    results: (b.to as string[]).map((t) => ({ to: `@${t}`, status: "start_failed", id: "r1" })),
+  });
+  renderApp("/agents/dev/chat", alice);
+  await screen.findByText("Reply 2");
+  await userEvent.type(await box(), "queued{Enter}");
+  await waitFor(() => expect(sent).toHaveLength(1));
+  const block = (await screen.findByText("queued")).closest("[data-message-block]");
+  expect(block).toHaveAttribute("aria-label", "Sending");
+});
+
+test("sending from a ?message= window goes back to the newest messages", async () => {
+  const { router } = renderApp("/agents/dev/chat?message=m1", alice);
+  await screen.findByText("Ask 1");
+  await userEvent.type(await box(), "hello{Enter}");
+  await waitFor(() => expect(router.state.location.search).toEqual({}));
+  await waitFor(() => expect(sent).toHaveLength(1));
 });

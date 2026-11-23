@@ -1,7 +1,15 @@
 import { ApiError, type ChatEntry, type SendMessagesResponse } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   type ComposerHandle,
   type ComposerNote,
@@ -13,7 +21,7 @@ import {
   UNCONFIRMED,
 } from "@/components/composer/composer";
 import { postInterrupt } from "@/features/session/api";
-import { knownCommand } from "@/features/session/commands";
+import { commandsQueryOptions, knownCommand } from "@/features/session/commands";
 import { SEND_TIMEOUT_MS } from "@/features/session/composer";
 import { LINK_CLASS } from "@/features/session/message-block";
 import { registerComposerFocus, repinTimeline } from "@/features/session/session-commands";
@@ -56,7 +64,12 @@ type Props = {
   /** The thread is still loading: typing works, sending waits. */
   waiting: boolean;
   docked?: boolean;
+  /** A send began (a stable callback): from a `?message=` window the chat goes back to the newest. */
+  onSend?: () => void;
 };
+
+/** A note held until the text changes, and, for the files one, until the files do. */
+type Refusal = { text: string; files?: number };
 
 /**
  * The Chat's composer (I1 §6.6): the shared `Composer` with `@` and attach, a send to one to ten agents
@@ -75,6 +88,7 @@ export const ChatComposer = memo(function ChatComposer({
   compacting,
   waiting,
   docked = false,
+  onSend,
 }: Props) {
   const qc = useQueryClient();
   const draftKey = chatDraftKey(slug);
@@ -83,10 +97,16 @@ export const ChatComposer = memo(function ChatComposer({
   const store = uploadsFor(userId, slug);
 
   // The agents you added (slugs). Persisted beside the text; the ref is what handlers read.
-  const [recipients, setRecipientsState] = useState(() => readRecipients(draftKey));
+  const [recipients, setRecipientsState] = useState(() =>
+    readRecipients(draftKey).filter((s) => s !== slug),
+  );
   const recipientsRef = useRef(recipients);
   // One note from the last send or a refused add, shown in the note slot until the next change.
-  const [refusal, setRefusal] = useState<string | undefined>();
+  const [refusal, setRefusal] = useState<Refusal | undefined>();
+  const fileCount = useSyncExternalStore(store.subscribe, () => store.summary().count);
+  const fileCountRef = useRef(fileCount);
+  fileCountRef.current = fileCount;
+  const onEdit = useCallback(() => setRefusal(undefined), []);
   const onRecipientsChange = useCallback(
     (next: readonly string[]) => {
       recipientsRef.current = [...next];
@@ -103,7 +123,7 @@ export const ChatComposer = memo(function ChatComposer({
         added: () => recipientsRef.current,
         add(added) {
           if (store.summary().count > 0) {
-            setRefusal(FILES_ONE_AGENT);
+            setRefusal({ text: FILES_ONE_AGENT, files: fileCountRef.current });
             return false;
           }
           onRecipientsChange([...recipientsRef.current, added]);
@@ -133,6 +153,7 @@ export const ChatComposer = memo(function ChatComposer({
         ...(attachments.length ? { attachments: store.describe(attachments) } : {}),
       } satisfies ChatEntry);
       repinTimeline(slug); // sending follows the conversation again
+      onSend?.();
       setRefusal(undefined);
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
@@ -162,7 +183,7 @@ export const ChatComposer = memo(function ChatComposer({
         }
         // The server's row takes the optimistic block's place (same key); nothing waits for the frame.
         void refreshChat(qc, slug, "frame");
-        if (refusedOthers.length) setRefusal(refusalLines(refusedOthers).join(" "));
+        if (refusedOthers.length) setRefusal({ text: refusalLines(refusedOthers).join(" ") });
       } catch (e) {
         if (e instanceof SubmitError) throw e;
         dropSending(qc, slug, clientMessageId);
@@ -172,7 +193,7 @@ export const ChatComposer = memo(function ChatComposer({
         clearTimeout(timer);
       }
     },
-    [qc, slug, self, agentName, store],
+    [qc, slug, self, agentName, store, onSend],
   );
   const recall = useCallback(() => lastSentText(qc, slug), [qc, slug]);
   const onStop = useCallback(() => postInterrupt(slug), [slug]);
@@ -181,11 +202,13 @@ export const ChatComposer = memo(function ChatComposer({
   const [epoch, setEpoch] = useState({ key: workingKey, n: 0 });
   if (epoch.key !== workingKey) setEpoch({ key: workingKey, n: epoch.n + 1 });
 
+  // The command list loads beside the chat: the note for a leading `/` reads it, and shows once it is in.
+  const commands = useQuery(commandsQueryOptions(slug)).data;
   // A leading `/` is text here: the note says where commands run, and carries the text there.
   const noteFor = useCallback(
     (text: string): ComposerNote | undefined => {
       const m = LEADING_COMMAND.exec(text);
-      if (!m?.[1] || !knownCommand(qc, slug, m[1])) return undefined;
+      if (!m?.[1] || !knownCommand(commands, m[1])) return undefined;
       const carry = () => {
         const there = readDraft(sessionDraftKey(slug));
         writeDraft(sessionDraftKey(slug), there.trim() ? `${there}\n${text}` : text);
@@ -207,14 +230,24 @@ export const ChatComposer = memo(function ChatComposer({
         ),
       };
     },
-    [qc, slug],
+    [slug, commands],
   );
   const note = useMemo<ComposerNote | undefined>(
-    () => (refusal ? { kind: "refusal", text: refusal } : undefined),
-    [refusal],
+    () =>
+      refusal && (refusal.files === undefined || refusal.files === fileCount)
+        ? { kind: "refusal", text: refusal.text }
+        : undefined,
+    [refusal, fileCount],
   );
   const others = recipients.length;
-  const hintMode: HintMode = !turnOpen ? "none" : isCoarsePointer() ? "coarse" : "working";
+  // The touch hint points at Stop, so it shows only where Stop does (the turn read your message).
+  const hintMode: HintMode = !turnOpen
+    ? "none"
+    : !isCoarsePointer()
+      ? "working"
+      : working
+        ? "coarse"
+        : "none";
   return (
     <ComposerPrimitive
       ref={inner}
@@ -243,6 +276,7 @@ export const ChatComposer = memo(function ChatComposer({
       recipients={recipients}
       recipientsTo={agentName}
       onRecipientsChange={onRecipientsChange}
+      onEdit={onEdit}
       noteFor={noteFor}
       note={note}
       reserveNote

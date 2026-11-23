@@ -202,7 +202,7 @@ test("the chat's draft holds text and recipients; each write keeps the other", (
   expect(raw()).toBeNull();
 });
 
-test("stored recipients are validated on read: a string[] of at most ten, else dropped", () => {
+test("stored recipients are validated on read: a string[] under ten (the chat's agent takes one), deduplicated, else dropped", () => {
   const key = chatDraftKey("dev");
   const put = (recipients: unknown) =>
     localStorage.setItem(
@@ -214,6 +214,10 @@ test("stored recipients are validated on read: a string[] of at most ten, else d
   put(Array.from({ length: 11 }, (_, i) => `a${i}`));
   expect(readRecipients(key)).toEqual([]);
   put(Array.from({ length: 10 }, (_, i) => `a${i}`));
-  expect(readRecipients(key)).toHaveLength(10);
+  expect(readRecipients(key)).toEqual([]);
+  put(Array.from({ length: 9 }, (_, i) => `a${i}`));
+  expect(readRecipients(key)).toHaveLength(9);
+  put(["a", "b", "a"]);
+  expect(readRecipients(key)).toEqual(["a", "b"]);
   expect(readDraft(key)).toBe("hi");
 });

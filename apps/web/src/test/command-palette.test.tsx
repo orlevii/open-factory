@@ -146,7 +146,7 @@ test("title search fires once after 150ms debounce with status=all&limit=20; Tas
   expect(router.state.location.pathname).toBe("/inbox");
 });
 
-test("agents: live first, ended after with 'Ended'; Enter opens the session; ⇧Enter focuses the composer", async () => {
+test("agents: live first, ended after with 'Ended'; Enter opens the chat; ⇧Enter focuses the composer", async () => {
   const { dialog, input, router } = await openFromInput();
   await userEvent.type(input, "dev");
   await waitFor(() =>

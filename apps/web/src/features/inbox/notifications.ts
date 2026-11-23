@@ -83,6 +83,7 @@ export function notificationTitle(i: InboxItem): string {
   if (i.kind === "task_event")
     return `${i.task?.key ?? "A task"} ${i.fact === "cancelled" ? "was cancelled" : "is done"}`;
   if (i.from.kind === "factory") return `Factory${i.about ? ` about @${i.about}` : ""}`;
+  // Only `notice` items from an agent reach here (`message` items are chats now).
   return `@${i.from.name} messaged you`;
 }
 

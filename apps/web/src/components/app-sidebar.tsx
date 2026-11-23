@@ -58,6 +58,7 @@ import { openSheet, resetSheets } from "@/features/sheets/sheet-store";
 
 import { authClient } from "@/lib/auth-client";
 import { usePref } from "@/lib/prefs";
+import { safeDecode } from "@/lib/safe-decode";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
 import { setPreference, type ThemePreference, useThemePreference } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -83,10 +84,10 @@ const nav = [
 const isActive = (pathname: string, to: string) => pathname === to || pathname.startsWith(`${to}/`);
 
 /** The slug of an agent's Chat or Session, not of its /edit or /usage children. */
-function matchSession(pathname: string): string | undefined {
+export function matchSession(pathname: string): string | undefined {
   const m = /^\/agents\/([^/]+)(?:\/(?:chat|session))?\/?$/.exec(pathname);
   const slug = m?.[1];
-  return slug && slug !== "new" ? decodeURIComponent(slug) : undefined;
+  return slug && slug !== "new" ? safeDecode(slug) : undefined;
 }
 
 const parseCollapsed = (raw: string) =>

@@ -19,6 +19,7 @@ import { openShortcutsSheet } from "@/features/shortcuts/sheet-store";
 import { newTask } from "@/features/tasks/actions";
 import { lookupTasks, tasksSearchOptions } from "@/features/tasks/api";
 import { StatusLabel } from "@/features/tasks/status-label";
+import { safeDecode } from "@/lib/safe-decode";
 import { setPreference } from "@/lib/theme";
 import { ACTIONS, type ActionItem, GO_TO, isTaskKey, type RankedAgent, rankAgents } from "./rank";
 import { readRecentAgents } from "./recent";
@@ -72,11 +73,11 @@ const MIN_SEARCH = 2;
 const AGENT_PAGE = /^\/agents\/(?!new\/)([^/]+)\/(chat|session)\/?$/;
 
 /** The agent and the view of an agent page's path (the Chat or the Session), else undefined. */
-function agentPageOf(pathname: string): { slug: string; view: "chat" | "session" } | undefined {
+export function agentPageOf(
+  pathname: string,
+): { slug: string; view: "chat" | "session" } | undefined {
   const m = AGENT_PAGE.exec(pathname);
-  return m
-    ? { slug: decodeURIComponent(m[1] as string), view: m[2] as "chat" | "session" }
-    : undefined;
+  return m ? { slug: safeDecode(m[1] as string), view: m[2] as "chat" | "session" } : undefined;
 }
 
 /** An action with no `on` is offered everywhere; `agent` on either view; `chat` or `session` on that one. */

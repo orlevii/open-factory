@@ -189,7 +189,10 @@ export function useInboxCache() {
                 ...(p.chats && {
                   chats: p.chats.map((c) =>
                     counts.has(c.agent.slug)
-                      ? { ...c, unread: read ? 0 : (counts.get(c.agent.slug) ?? 0) }
+                      ? {
+                          ...c,
+                          unread: read ? 0 : Math.max(c.unread, counts.get(c.agent.slug) ?? 0),
+                        }
                       : c,
                   ),
                 }),

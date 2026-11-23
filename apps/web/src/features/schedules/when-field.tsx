@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { RepeatsField } from "./repeats-field";
+import { type Leave, RepeatsField } from "./repeats-field";
 
 export type WhenMode = "repeats" | "once";
 
@@ -36,9 +36,9 @@ export function WhenField({
   local: string;
   onLocal(v: string): void;
   errors: { cron?: string | undefined; at?: string | undefined };
-  onBlurCron(): void;
+  onBlurCron: Leave;
   onPreset?(cron: string): void;
-  onBlurLocal(): void;
+  onBlurLocal: Leave;
   zone: string;
   /** The next-runs preview, shown right under the Repeats field. */
   preview?: ReactNode;
@@ -79,7 +79,7 @@ export function WhenField({
               aria-describedby={a.describedBy}
               className="h-9"
               onChange={(e) => onLocal(e.target.value)}
-              onBlur={onBlurLocal}
+              onBlur={(e) => onBlurLocal(e)}
             />
           )}
         </FieldShell>

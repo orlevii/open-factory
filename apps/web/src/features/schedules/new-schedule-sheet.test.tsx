@@ -107,13 +107,36 @@ test("the spec's target fills an empty draft only; a draft keeps its own", async
   expect(await target()).toHaveTextContent("Dev");
 });
 
-test("an ended target stays empty and says so", async () => {
-  mockApi(base());
+test("an ended target stays empty and says so, without looping the render", async () => {
+  const api = mockApi(base());
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  const before = api.calls.filter((c) => c.url.includes("ended=only")).length;
+  act(() => openSheet({ kind: "new-schedule", target: "old" }));
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
+  expect(await target()).toHaveTextContent("Choose an agent…");
+  expect(await target()).toHaveAttribute("aria-invalid", "true");
+  expect(api.calls.filter((c) => c.url.includes("ended=only")).length - before).toBe(1);
+});
+
+test("a stale target blocks the submit and focuses Target until another is picked", async () => {
+  const api = mockApi({
+    ...base(),
+    "POST /api/schedules": () => json({ schedule: item }, 201),
+  });
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   act(() => openSheet({ kind: "new-schedule", target: "old" }));
   expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
-  expect(await target()).toHaveTextContent("Choose an agent…");
+  await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Daily at 09:00");
+  await userEvent.type(screen.getByLabelText("Message"), "Review");
+  await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+  await waitFor(async () => expect(await target()).toHaveFocus());
+  expect(screen.getByText("That agent has ended; pick another.")).toBeInTheDocument();
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+  await pickComboOption(await target(), /@ceo/);
+  expect(document.getElementById("field-target-error")).not.toHaveAttribute("data-shown");
+  expect(await target()).not.toHaveAttribute("aria-invalid");
 });
 
 test("an unknown target stays empty and says so", async () => {

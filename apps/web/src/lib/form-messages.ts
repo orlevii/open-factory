@@ -14,4 +14,5 @@ export const FORM_MSG = {
   createTaskFailed: "Couldn't create the task. Try again.",
   displayNameRequired: "Use 1 to 80 characters.",
   saveFailed: "Couldn't save. Try again.",
+  saveScheduleFailed: "Couldn't save the schedule. Try again.",
 } as const;

@@ -217,7 +217,13 @@ export function SheetHost() {
   const parentTitle = parent ? sheetTitle(parent.kind, parent) : undefined;
   return (
     <>
-      <SheetLayer spec={parent} open={!!parent} onClose={closeSheet} />
+      {/* A parent opened for a page's result (Add secret) hands focus to the field it filled, as a child does. */}
+      <SheetLayer
+        spec={parent}
+        open={!!parent}
+        onClose={closeSheet}
+        returnFocus={takeChildReturnFocus}
+      />
       <SheetLayer
         spec={child}
         open={!!child}

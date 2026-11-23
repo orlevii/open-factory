@@ -247,7 +247,7 @@ test("nav order: Inbox, Tasks, Templates, Schedules, Usage, Settings, then the A
 
 test("on a live agent's session the Agents row is not active and the agent row is", async () => {
   liveAgents();
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const row = await screen.findByRole("treeitem", { name: /^Dev agent/ });
   expect(row).toHaveAttribute("aria-current", "page");
   // The list lands for the tree and the sidebar's liveness select in separate notifications.
@@ -256,9 +256,17 @@ test("on a live agent's session the Agents row is not active and the agent row i
   );
 });
 
+test("a live agent's row is active on its Chat too, and links to the Chat", async () => {
+  liveAgents();
+  renderApp("/agents/dev/chat", alice);
+  const row = await screen.findByRole("treeitem", { name: /^Dev agent/ });
+  expect(row).toHaveAttribute("aria-current", "page");
+  expect(row).toHaveAttribute("href", "/agents/dev/chat");
+});
+
 test("on an ended agent's session the Agents row is active", async () => {
   liveAgents();
-  renderApp("/agents/gone", alice);
+  renderApp("/agents/gone/session", alice);
   await screen.findByRole("tree", { name: "Agents" });
   expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
 });
@@ -277,7 +285,7 @@ test("the Agents row is not active while the agents list is still loading, then 
       });
     },
   });
-  renderApp("/agents/gone", alice);
+  renderApp("/agents/gone/session", alice);
   const agents = await screen.findByRole("link", { name: "Agents" });
   expect(agents).not.toHaveAttribute("aria-current");
   await act(async () => release?.());
@@ -287,7 +295,7 @@ test("the Agents row is not active while the agents list is still loading, then 
 test("on a live session the Agents row is active while the tree is collapsed", async () => {
   liveAgents();
   localStorage.setItem("of-tree-collapsed", "true");
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const agents = await screen.findByRole("link", { name: "Agents" });
   await vi.waitFor(() => expect(agents).toHaveAttribute("aria-current", "page"));
   expect(screen.queryByRole("tree")).toBeNull();
@@ -337,7 +345,7 @@ test("collapsed rail: nav icons, a rule, Agents icon, then only active/unread/ba
     within(rail)
       .getAllByRole("link")
       .map((l) => l.getAttribute("href")),
-  ).toEqual(["/agents/dev"]);
+  ).toEqual(["/agents/dev/chat"]);
   const nav = screen.getByRole("navigation", { name: "Main" });
   const agentsIcon = screen.getByRole("link", { name: "Agents" });
   expect(agentsIcon).toHaveAttribute("href", "/agents");

@@ -3,8 +3,11 @@ import {
   createTemplateBodySchema,
   issuesResponseSchema,
   nameSchema,
+  putTemplateConfigBodySchema,
+  putTemplateConfigResponseSchema,
   putTemplateFileBodySchema,
   putTemplateFileResponseSchema,
+  templateConfigResponseSchema,
   templateDetailResponseSchema,
   templateFileSchema,
   templatesListSchema,
@@ -36,6 +39,10 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
   });
   // onRequest, not preHandler: auth must come before validation (401 before 400).
   app.addHook("onRequest", requireUser);
+  const handleOf = (req: FastifyRequest) => {
+    if (!req.user) throw new Error("requireUser did not set request.user");
+    return req.user.handle;
+  };
 
   app.get("/api/templates", { schema: { response: { 200: templatesListSchema } } }, async (req) => {
     const rows = await app.templates.scan();
@@ -125,7 +132,36 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
         req.params.file,
         req.body.content,
         req.body.baseHash,
+        `@${handleOf(req)}`,
       ),
+  );
+
+  app.get(
+    "/api/templates/:name/config",
+    { schema: { params, response: { 200: templateConfigResponseSchema } } },
+    async (req) => app.templates.readConfig(req.params.name),
+  );
+
+  app.put(
+    "/api/templates/:name/config",
+    {
+      schema: {
+        params,
+        body: putTemplateConfigBodySchema,
+        response: { 200: putTemplateConfigResponseSchema },
+      },
+    },
+    async (req) => {
+      const { changed, ...saved } = await app.templates.writeConfig(
+        req.params.name,
+        req.body.doc,
+        req.body.baseHashes,
+        `@${handleOf(req)}`,
+      );
+      // At once, so an open template or agent page refreshes without waiting for the change flow (spec §7.1).
+      if (changed) app.bus.publishAll({ type: "config_changed", template: req.params.name });
+      return saved;
+    },
   );
 
   app.post(

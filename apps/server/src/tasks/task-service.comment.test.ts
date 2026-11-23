@@ -74,22 +74,28 @@ test("an agent's comment to another agent wakes it with task_message", async () 
   );
 });
 
-test("@humans: every existing user but the author; a later user gets none", async () => {
-  await h.app.tasks.comment(agent("dev"), "T-1", "@humans heads up");
-  expect(await inbox(ids.or as string)).toHaveLength(1);
-  expect(await inbox(ids.sam as string)).toHaveLength(1);
-  const late = await signUp(h.app, { handle: "late" });
-  expect(await inbox(late.user.id)).toHaveLength(0);
-  const r = await h.app.tasks.comment(or, "T-1", "@humans and me");
-  expect(r.mentionedHumans).toEqual(["@humans"]);
-  expect(await inbox(ids.or as string)).toHaveLength(1);
-  expect(await inbox(ids.sam as string)).toHaveLength(2);
-  expect(await inbox(late.user.id)).toHaveLength(1);
+test("@humans isn't a handle: the comment posts, nobody is notified, and it is reported as reserved", async () => {
+  const r = await h.app.tasks.comment(agent("dev"), "T-1", "@humans heads up");
+  expect(r).toMatchObject({
+    deliveredTo: [],
+    mentionedHumans: [],
+    notReached: [{ name: "humans", reason: "reserved" }],
+  });
+  expect(await inbox(ids.or as string)).toHaveLength(0);
+  expect(await inbox(ids.sam as string)).toHaveLength(0);
+  expect(
+    await h.sql`select id from messages where kind = 'task_comment' and to_all_humans`,
+  ).toEqual([]);
 });
 
-test("a user mentioned alongside @humans gets one item", async () => {
-  await h.app.tasks.comment(agent("dev"), "T-1", "@sam @humans");
+test("a user mentioned alongside @humans gets one item; @humans is still not reached", async () => {
+  const r = await h.app.tasks.comment(agent("dev"), "T-1", "@sam @humans");
+  expect(r).toMatchObject({
+    mentionedHumans: ["@sam"],
+    notReached: [{ name: "humans", reason: "reserved" }],
+  });
   expect(await inbox(ids.sam as string)).toHaveLength(1);
+  expect(await inbox(ids.or as string)).toHaveLength(0);
 });
 
 test("mentions in code create nothing", async () => {
@@ -99,17 +105,13 @@ test("mentions in code create nothing", async () => {
   expect(await inbox(ids.sam as string)).toHaveLength(0);
 });
 
-test("not_reached: unknown, ambiguous, reserved, terminated and archived, in order", async () => {
-  await h.sql`insert into users (id,name,email,handle) values ('twin-u','Twin','twin@x.io','twin')`;
-  await h.sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id)
-    select 'twin-a','twin','Twin','t','{}','local',credential_id from agents where slug = 'qa'`;
+test("not_reached: unknown, reserved, terminated and archived, in order", async () => {
   const spawned = await h.seedAgent({ slug: "kid" });
   await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, terminated_at = now(), terminated_by = '@or' where id = ${spawned.id}`;
   await h.sql`update agents set archived_at = now() where slug = 'qa'`;
-  const r = await h.app.tasks.comment(or, "T-1", "@nobody @twin @me @kid @qa done?");
+  const r = await h.app.tasks.comment(or, "T-1", "@nobody @me @kid @qa done?");
   expect(r.notReached).toEqual([
     { name: "nobody", reason: "unknown" },
-    { name: "twin", reason: "ambiguous" },
     { name: "me", reason: "reserved" },
     { name: "kid", reason: "terminated" },
     { name: "qa", reason: "archived" },

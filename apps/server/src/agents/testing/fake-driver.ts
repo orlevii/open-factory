@@ -13,7 +13,7 @@ import type { Command, HarnessEvent } from "@open-factory/shared";
 export type Write =
   | { kind: "send"; messages: FactoryMessage[] }
   | { kind: "control"; cmd: string; arg?: string }
-  | { kind: "command"; text: string };
+  | { kind: "raw"; text: string };
 
 export class FakeProcess implements HarnessProcess {
   readonly events = new AsyncQueue<HarnessEvent>();
@@ -94,9 +94,9 @@ export class FakeProcess implements HarnessProcess {
   async commands() {
     return this.commandList;
   }
-  async command(text: string) {
+  async raw(text: string) {
     if (this.done || this.failWrites) throw new ProcessNotRunningError();
-    this.writes.push({ kind: "command", text });
+    this.writes.push({ kind: "raw", text });
   }
   /** Set by the first `stop()` call. */
   stopped = false;

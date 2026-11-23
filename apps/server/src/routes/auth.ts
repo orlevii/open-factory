@@ -1,7 +1,7 @@
 import type { Db } from "@open-factory/db";
 import { fromNodeHeaders } from "better-auth/node";
 import type { FastifyInstance } from "fastify";
-import { handleSignUp } from "../users/sign-up-gate.ts";
+import { handleSignUp, signUpMutex } from "../users/sign-up-gate.ts";
 
 export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
   app.route({
@@ -23,6 +23,9 @@ export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
       });
       // The normalized path, exactly what better-auth matches (S10 §9.3, F2): dot-segment and %2e variants
       // land here too. The user.create.before backstop covers whatever this match misses.
+      // update-user runs under the sign-up mutex too, so a user claim is never reclaimed while another user's insert is in
+      // flight. The mutex is in-process and assumes one server process (ADR 0013); a multi-instance deployment needs a
+      // Postgres advisory lock here as well.
       const res =
         request.method === "POST" && url.pathname === "/api/auth/sign-up/email"
           ? await handleSignUp(
@@ -30,7 +33,9 @@ export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
               req,
               request.body,
             )
-          : await app.auth.handler(req);
+          : request.method === "POST" && url.pathname === "/api/auth/update-user"
+            ? await signUpMutex.run("sign-up", () => app.auth.handler(req))
+            : await app.auth.handler(req);
       reply.status(res.status);
       const cookies = res.headers.getSetCookie();
       res.headers.forEach((value, key) => {

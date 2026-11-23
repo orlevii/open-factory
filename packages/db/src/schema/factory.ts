@@ -1,4 +1,4 @@
-import type { TemplateConfig, TemplateIssue } from "@open-factory/shared";
+import type { ConfigDoc, TemplateConfig, TemplateIssue } from "@open-factory/shared";
 import { sql } from "drizzle-orm";
 import {
   boolean,
@@ -25,6 +25,13 @@ export const templates = pgTable("templates", {
   config: jsonb("config").$type<TemplateConfig>(),
   issues: jsonb("issues").$type<TemplateIssue[]>().notNull().default([]),
   contentHash: text("content_hash").notNull(),
+  /**
+   * The last parse that had no errors (I2 §7.1). Never run on: a start merges against the template read from disk. It is
+   * the "before" of the next change's diff, and what `usedBy` and a spawned child's grants read without touching disk.
+   */
+  lastValid: jsonb("last_valid").$type<ConfigDoc>(),
+  lastValidHash: text("last_valid_hash"),
+  valid: boolean("valid").notNull().default(false),
   scannedAt: ts("scanned_at").notNull(),
 });
 

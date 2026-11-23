@@ -144,8 +144,8 @@ const ItemContent = memo(function ItemContent(
 ) {
   const { row, slug, toggle } = p;
   const onToggleCall = useCallback(() => toggle(row.key), [toggle, row.key]);
-  // A live block has no seq to link to yet: its time and ⋯ come with the persisted row.
-  const chrome = !(row.kind === "text" && row.live);
+  // A live block or a raw send without a row has no seq to link to yet: its time and ⋯ come with the row.
+  const chrome = !(row.kind === "text" && row.live) && !(row.kind === "command" && row.pending);
   return (
     <>
       {chrome && !isCard(row) && <RowGutter />}

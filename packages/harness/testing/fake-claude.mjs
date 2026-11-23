@@ -37,6 +37,8 @@ if (argv0[0] === "plugin") {
     `${JSON.stringify({ argv: argv0, env: Object.keys(process.env).sort(), cwd: process.cwd(), configDir: cfg })}\n`,
   );
   mkdirSync(`${cfg}/plugins`, { recursive: true });
+  // A failure that prints nothing (`marketplace` or `install`): the caller only has the exit to go on.
+  if (process.env.FAKE_CLAUDE_PLUGIN_SILENT_FAIL === argv0[1]) process.exit(1);
   const f = `${cfg}/settings.json`;
   const s = existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {};
   if (argv0[1] === "marketplace" && argv0[2] === "add") {
@@ -52,6 +54,9 @@ if (argv0[0] === "plugin") {
       process.stderr.write(
         `\u2718 Failed to install plugin "${ref}": Plugin not found in marketplace\n`,
       );
+      // Extra failure output a test wants echoed (secret-shaped fixtures for the redaction tests).
+      if (process.env.FAKE_CLAUDE_PLUGIN_ECHO)
+        process.stderr.write(`${process.env.FAKE_CLAUDE_PLUGIN_ECHO}\n`);
       process.exit(1);
     }
     if (process.env.FAKE_CLAUDE_PLUGIN_SLEEP_MS)

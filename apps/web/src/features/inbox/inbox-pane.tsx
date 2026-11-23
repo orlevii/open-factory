@@ -1,5 +1,5 @@
 import { ApiError, type TaskActivity, type TaskDetail } from "@open-factory/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   type ReactNode,
@@ -10,20 +10,42 @@ import {
   useRef,
   useState,
 } from "react";
+import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
-import { ArchivedNotice } from "@/features/agents/archived-notice";
-import { agentDetailQueryOptions, summaryFromAgentsList } from "@/features/session/api";
-import { Composer, TerminatedComposer } from "@/features/session/composer";
+import { AgentName } from "@/features/agents/agent-tree";
+import { useAgentSummary } from "@/features/agents/use-agent-summary";
+import { ViewSwitch } from "@/features/agents/view-switch";
+import { ChatBody, type PaneOptions } from "@/features/chat/chat-view";
 import { formatInboxTime } from "@/features/session/format";
-import { SpeakerProvider } from "@/features/session/speaker-line";
+import { StatusBadge } from "@/features/session/status-badge";
 import { taskDetailOptions } from "@/features/tasks/api";
 import { CommentBlock } from "@/features/tasks/comment-block";
 import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/comment-composer";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { INBOX_DWELL_MS, PREFETCH_REST_MS } from "@/lib/timing";
-import { type InboxItem, inboxItemOptions, useOpenItem } from "./api";
-import { ExcerptSkeleton, SessionExcerpt } from "./session-excerpt";
+import {
+  chatSlugOf,
+  type InboxItem,
+  inboxItemOptions,
+  inboxQueryOptions,
+  useOpenItem,
+} from "./api";
+
+/** Static plates where a pane body will be. */
+function ExcerptSkeleton() {
+  return (
+    <div data-pane-skeleton aria-hidden="true" className="grid gap-4">
+      {[0, 1, 2, 3].map((n) => (
+        <div key={n} className="grid gap-1.5">
+          <div className="h-3 w-24 rounded-sm bg-muted" />
+          <div className="h-3 w-full rounded-sm bg-muted" />
+          <div className="h-3 w-2/3 rounded-sm bg-muted" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** The sender as the pane's header shows it: a 20px chip for an agent, otherwise the name. */
 function Sender({ item }: { item: InboxItem }) {
@@ -56,11 +78,15 @@ function OpenLink({ item }: { item: InboxItem }) {
         >
           Open task
         </Link>
+      ) : link.seq === undefined ? (
+        <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }}>
+          Open chat
+        </Link>
       ) : (
         <Link
-          to="/agents/$slug"
+          to="/agents/$slug/session"
           params={{ slug: link.agentSlug }}
-          search={link.seq === undefined ? undefined : { event: link.seq }}
+          search={{ event: link.seq }}
         >
           Open in session
         </Link>
@@ -132,72 +158,14 @@ function useDwellRead(item: InboxItem | undefined) {
   }, [shown, unread, open]);
 }
 
-/** A message: the session excerpt at its target, and the composer to that session. */
-function MessageContent({
-  item,
-  link,
-}: {
-  item: InboxItem;
-  link: Extract<InboxItem["link"], { kind: "session" }>;
-}) {
-  // An errored top-level agent's notice comes from the factory: reply to the agent it is about.
-  const slug = item.from.kind === "factory" && item.about ? item.about : link.agentSlug;
-  const seq = slug === link.agentSlug ? link.seq : undefined;
-  const qc = useQueryClient();
-  // agentDetailQueryOptions is always stale (the session page reloads it); here the app default is
-  // enough, as status frames patch this cache live: stepping through one agent's items fetches once.
-  const detail = useQuery({
-    ...agentDetailQueryOptions(slug),
-    staleTime: 30_000,
-    select: (d) => d.agent,
-  });
-  const agent = detail.data ?? summaryFromAgentsList(qc, slug);
-  const replied = useMarkReplied(item);
-  const [raceNotice, setRaceNotice] = useState<string>();
-  const { refetch } = detail;
-  // Stable, as the memoised composer's other props are (U3 M3).
-  const onTerminated = useCallback(
-    (notice: string) => {
-      setRaceNotice(notice);
-      void refetch();
-    },
-    [refetch],
-  );
+/** A factory notice: its text. It has no reply: the header's link opens the session at it. */
+function NoticeContent({ item }: { item: InboxItem }) {
   return (
-    <>
-      <Body>
-        {/* The excerpt's speaker lines read the same index as the session (U3 §7.2): the agent's
-            name on its text, "You" on your messages. */}
-        <SpeakerProvider
-          slug={slug}
-          displayName={agent?.displayName}
-          template={agent?.template}
-          kind={agent?.kind}
-          avatarVersion={agent?.avatarVersion}
-        >
-          <SessionExcerpt
-            key={`${slug}:${seq ?? "latest"}`}
-            slug={slug}
-            seq={seq}
-            spawned={agent?.kind === "ephemeral"}
-          />
-        </SpeakerProvider>
-      </Body>
-      {!agent ? null : agent.archivedAt !== null ? (
-        <ArchivedNotice slug={slug} />
-      ) : agent.status === "terminated" ? (
-        <TerminatedComposer key={slug} slug={slug} notice={raceNotice} />
-      ) : (
-        <Composer
-          docked
-          key={slug}
-          slug={slug}
-          agent={agent}
-          onSent={replied}
-          onTerminated={onTerminated}
-        />
-      )}
-    </>
+    <Body>
+      <p className="max-w-[52rem] text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
+        {item.preview}
+      </p>
+    </Body>
   );
 }
 
@@ -396,7 +364,7 @@ function PaneItem({
   useDwellRead(item);
   return (
     <>
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4 text-sm md:px-6">
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-1 text-sm md:px-6">
         {item && (
           <>
             <span className="flex min-w-0 items-center gap-1.5">
@@ -423,7 +391,7 @@ function PaneItem({
           <ExcerptSkeleton />
         </Body>
       ) : item.link.kind === "session" ? (
-        <MessageContent key={item.id} item={item} link={item.link} />
+        <NoticeContent key={item.id} item={item} />
       ) : (
         <TaskContent key={item.id} item={item} link={item.link} />
       )}
@@ -452,6 +420,80 @@ function useRested(selectedId: string | undefined) {
   return sel.now || settled;
 }
 
+/** A chat's row when it was opened, once the Inbox has loaded: its unread count and newest message,
+ *  which is where the Chat opens. */
+function useOpenedUnread(slug: string): PaneOptions | undefined {
+  const now = useInfiniteQuery({
+    ...inboxQueryOptions,
+    select: (d) => d.pages[0]?.chats?.find((c) => c.agent.slug === slug),
+  });
+  const [opened, setOpened] = useState<PaneOptions>();
+  if (now.isSuccess && opened === undefined)
+    setOpened({ unread: now.data?.unread ?? 0, latestId: now.data?.latest.messageId ?? "" });
+  return opened;
+}
+
+/** The 40px strip over a chat in the pane: avatar, name, status, a link to the page and the view switch. */
+function ChatStrip({ slug }: { slug: string }) {
+  const agent = useAgentSummary(slug);
+  return (
+    <div
+      data-chat-strip
+      className="@container flex min-h-10 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-4 py-1 text-sm md:px-6"
+    >
+      {agent ? (
+        <>
+          <AgentAvatar
+            slug={agent.slug}
+            template={agent.template}
+            avatarVersion={agent.avatarVersion}
+            color={agent.color}
+            size={20}
+          />
+          <span className="flex min-w-0 font-medium">
+            <AgentName agent={agent} />
+          </span>
+          <span className="shrink-0">
+            <StatusBadge status={agent.status} size="short" />
+          </span>
+        </>
+      ) : (
+        <span className="min-w-0 truncate font-mono">@{slug}</span>
+      )}
+      <span className="ml-auto" />
+      <Button asChild variant="outline" size="sm" className="shrink-0">
+        <Link to="/agents/$slug/chat" params={{ slug }}>
+          Open chat
+        </Link>
+      </Button>
+      <ViewSwitch slug={slug} view="chat" />
+    </div>
+  );
+}
+
+/** A chat in the pane: the Chat (thread and composer) under the strip. Keyed by slug, so a retarget
+ *  swaps it instantly and nothing of the previous thread stays. It is read after the dwell. */
+function ChatPane({ slug, rested }: { slug: string; rested: boolean }) {
+  const pane = useOpenedUnread(slug);
+  const qc = useQueryClient();
+  return (
+    <>
+      <ChatStrip slug={slug} />
+      {pane && rested ? (
+        <ChatBody
+          slug={slug}
+          pane={pane}
+          onRestored={() => void qc.invalidateQueries({ queryKey: ["agent", slug] })}
+        />
+      ) : (
+        <Body>
+          <ExcerptSkeleton />
+        </Body>
+      )}
+    </>
+  );
+}
+
 /**
  * The reading pane beside the list (≥1024, spec §11.2): a 48px header from the list row (so it swaps
  * at once), a scrolling body, and the reply composer pinned below it. Switching items swaps the
@@ -467,10 +509,13 @@ export function InboxPane({
   item: InboxItem | undefined;
 }) {
   const rested = useRested(selectedId);
+  const chat = chatSlugOf(selectedId);
   return (
     <section aria-label="Reading pane" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {selectedId === undefined ? (
         <p className="px-4 py-6 text-sm text-muted-foreground md:px-6">No item selected.</p>
+      ) : chat ? (
+        <ChatPane key={selectedId} slug={chat} rested={rested} />
       ) : (
         <PaneItem key={selectedId} id={selectedId} loaded={item} rested={rested} />
       )}

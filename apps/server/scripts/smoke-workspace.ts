@@ -22,6 +22,7 @@ import type { AnyEvent } from "@open-factory/shared";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { ApiError } from "../src/errors.ts";
+import { claimTestHandle } from "../src/test/handles.ts";
 import { agentConfigDir, agentWorkdir } from "../src/workspace/paths.ts";
 
 const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
@@ -158,8 +159,12 @@ async function turn(slug: string, body: string, ms = 240_000): Promise<AnyEvent[
   const from = list.length;
   const rt = await app.runtimes.bySlug(slug);
   if (!rt) throw new Error(`no runtime for ${slug}`);
-  const sent = await app.router.send({ userId: "smoke", handle: "smoke" }, slug, body, false);
-  if (!sent.ok) throw new Error(`send to ${slug} failed: ${sent.message}`);
+  const [sent] = (await app.router.send({ userId: "smoke", handle: "smoke" }, [slug], body, false))
+    .results;
+  if (!sent || sent.status === "refused" || sent.status === "start_failed")
+    throw new Error(
+      `send to ${slug} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+    );
   const end = Date.now() + ms;
   while (Date.now() < end) {
     const got = list.slice(from);
@@ -229,6 +234,7 @@ try {
     harnessDriver: createClaudeDriver({ log: captureLog, transports: { local: localTransport } }),
   });
   appBuilt = true;
+  await claimTestHandle(conn.db, "smoke", "user");
   await conn.sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
   for (const slug of ["smoke-alpha", "smoke-beta"]) {
     const list: AnyEvent[] = [];

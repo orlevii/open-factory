@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 export type AgentChipAgent = Pick<
   AgentSummary,
-  "slug" | "displayName" | "template" | "status" | "kind" | "avatarVersion"
+  "slug" | "displayName" | "template" | "status" | "kind" | "avatarVersion" | "color"
 >;
 
 type Size = 16 | 20 | 24;
@@ -77,6 +77,7 @@ export type ChipAgent = {
   kind?: AgentSummary["kind"];
   template?: string;
   avatarVersion?: string | null;
+  color?: number | null;
   status?: AgentSummary["status"];
   /** The name is the `@slug` stand-in: never repeat it as the slug. */
   stub?: boolean;
@@ -97,6 +98,7 @@ function ChipView({
   badge,
   link,
   inline,
+  handleInTooltip,
   className,
   slugClassName,
 }: {
@@ -106,6 +108,7 @@ function ChipView({
   badge: boolean;
   link: boolean;
   inline: boolean;
+  handleInTooltip: boolean;
   className?: string;
   slugClassName?: string;
 }) {
@@ -116,6 +119,8 @@ function ChipView({
     className,
   );
   const slugShown = showSlug && !a.stub;
+  // The handle without its own line: only in the name's tooltip.
+  const tipHandle = handleInTooltip && !slugShown && !a.stub;
   // Each line is capped at the chip's width: stacked (items-start), a line would otherwise size to
   // its content and the name would never truncate.
   const body = (
@@ -125,14 +130,15 @@ function ChipView({
           slug={a.slug}
           template={a.template}
           avatarVersion={a.avatarVersion}
+          color={a.color ?? null}
           size={size}
           status={badge ? a.status : undefined}
         />
         <TruncTooltip
-          text={slugShown ? `${a.displayName} @${a.slug}` : a.displayName}
+          text={slugShown || tipHandle ? `${a.displayName} @${a.slug}` : a.displayName}
           dir="auto"
           className="min-w-[min(8rem,45%)]"
-          {...(slugShown ? { alsoWhen: slugHidden } : {})}
+          {...(slugShown ? { alsoWhen: slugHidden } : tipHandle ? { alsoWhen: () => true } : {})}
         >
           <AgentName agent={{ displayName: a.displayName, kind: a.kind ?? "persistent" }} />
         </TruncTooltip>
@@ -153,7 +159,7 @@ function ChipView({
   );
   if (link)
     return (
-      <Link data-chip to="/agents/$slug" params={{ slug: a.slug }} className={classes}>
+      <Link data-chip to="/agents/$slug/chat" params={{ slug: a.slug }} className={classes}>
         {body}
       </Link>
     );
@@ -176,6 +182,8 @@ type ChipProps = {
   /** Name and handle stay on one line at any width, truncating (a speaker line); otherwise the
    *  chip stacks them below a 24rem container. */
   inline?: boolean;
+  /** The handle shows in the name's tooltip, with no line of its own (a list row's chip). */
+  handleInTooltip?: boolean;
 };
 
 function SlugChip({
@@ -186,6 +194,7 @@ function SlugChip({
   badge = false,
   link = false,
   inline = false,
+  handleInTooltip = false,
   className,
   slugClassName,
 }: ChipProps & { slug: string; name?: string }) {
@@ -201,6 +210,7 @@ function SlugChip({
       badge={badge}
       link={link}
       inline={inline}
+      handleInTooltip={handleInTooltip}
       className={className}
       slugClassName={slugClassName}
     />
@@ -220,6 +230,7 @@ export function AgentChip(
       badge = false,
       link = false,
       inline = false,
+      handleInTooltip = false,
       className,
       slugClassName,
     } = props;
@@ -231,6 +242,7 @@ export function AgentChip(
         badge={badge}
         link={link}
         inline={inline}
+        handleInTooltip={handleInTooltip}
         className={className}
         slugClassName={slugClassName}
       />

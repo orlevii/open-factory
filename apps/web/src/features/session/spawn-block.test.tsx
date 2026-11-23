@@ -46,7 +46,7 @@ async function open(events: AnyEvent[], firstText: string | RegExp) {
     "GET /api/agents?ended=only": () =>
       json({ agents: [], more: false, running: { count: 1, max: 8 } }),
   });
-  renderApp("/agents/lead", alice);
+  renderApp("/agents/lead/session", alice);
   await screen.findByText(firstText);
   return api;
 }
@@ -90,9 +90,10 @@ test("a spawn renders as a block: GitFork sender line with the child's link and 
   );
   expect(sender.querySelector("svg.lucide-git-fork")).toHaveAttribute("aria-hidden", "true");
   expect(within(sender).getByText("@lead")).toHaveClass("font-mono");
-  expect(
-    within(block).getByRole("link", { name: "Open @tech-lead-ab12's session" }),
-  ).toHaveAttribute("href", "/agents/tech-lead-ab12");
+  expect(within(block).getByRole("link", { name: "Open @tech-lead-ab12's chat" })).toHaveAttribute(
+    "href",
+    "/agents/tech-lead-ab12/chat",
+  );
   // The description is plain text, the brief goes through Markdown.
   const description = within(block).getByText("Writes the S8 spec");
   expect(description.tagName).toBe("P");
@@ -258,7 +259,7 @@ test("terminate_agent is one quiet line with a CircleX: done, running, failed, n
     (_, el) => el?.tagName === "P" && textOf(el) === "Terminated @tech-lead-ab12",
   );
   expect(
-    within(done).getByRole("link", { name: "Open @tech-lead-ab12's session" }),
+    within(done).getByRole("link", { name: "Open @tech-lead-ab12's chat" }),
   ).toBeInTheDocument();
   expect(done.querySelector("svg.lucide-circle-x")).not.toBeNull();
   const failed = screen.getByText(
@@ -293,6 +294,7 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
           {
             id: "p1",
             from: "@factory",
+            fromKind: "factory",
             kind: "peer_left",
             urgent: false,
             about: "dev-cd34",
@@ -315,19 +317,22 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
   );
   expect(spawned.querySelector("svg.lucide-git-fork")).not.toBeNull();
   expect(
-    within(spawned).getByRole("link", { name: "Open @tech-lead-ab12's session" }),
+    within(spawned).getByRole("link", { name: "Open @tech-lead-ab12's chat" }),
   ).toBeInTheDocument();
   expect(within(spawned).getByText("tech-lead")).toHaveClass("font-mono");
   const terminated = screen.getByText(
     (_, el) => el?.tagName === "P" && textOf(el) === "Terminated by @tech-lead-ab12",
   );
-  expect(within(terminated).getByRole("link")).toHaveAttribute("href", "/agents/tech-lead-ab12");
+  expect(within(terminated).getByRole("link")).toHaveAttribute(
+    "href",
+    "/agents/tech-lead-ab12/chat",
+  );
   const left = screen.getByText(
     (_, el) =>
       el?.tagName === "P" &&
       textOf(el) === "@dev-cd34 · Dev · cd34 left: terminated by @tech-lead-ab12",
   );
   expect(
-    within(left).getByRole("link", { name: "Open @tech-lead-ab12's session" }),
+    within(left).getByRole("link", { name: "Open @tech-lead-ab12's chat" }),
   ).toBeInTheDocument();
 });

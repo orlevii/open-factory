@@ -494,7 +494,7 @@ export function uploadsUsedSince(
   return out;
 }
 
-/** ↑ in an empty composer (U3 §13.2): your newest message in the loaded timeline, its text only (D6). */
+/** ↑ in an empty composer (U3 §13.2, I1 §5): your newest raw input in the loaded timeline, as typed. */
 export function recallText(
   ordered: readonly SessionEvent[],
   self: string | undefined,
@@ -503,12 +503,7 @@ export function recallText(
   const from = `@${self}`;
   for (let i = ordered.length - 1; i >= 0; i--) {
     const ev = (ordered[i] as SessionEvent).event;
-    if (ev.type !== "message_in") continue;
-    for (let j = ev.messages.length - 1; j >= 0; j--) {
-      const m = ev.messages[j];
-      if (m && m.from === from && m.kind === "message")
-        return stripAttachedLines(m.body, m.attachments);
-    }
+    if (ev.type === "operator_input" && ev.by === from) return ev.text;
   }
   return undefined;
 }

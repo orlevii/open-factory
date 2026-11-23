@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { type FocusEvent, useEffect, useRef, useState } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { FormField } from "@/components/form-field";
 import { IN_FORM } from "@/components/ui/button";
@@ -22,6 +22,7 @@ export function AddressLine({
   slug,
   slugTouched,
   onSlug,
+  onBlur,
   error,
   forceOpen,
   onOpened,
@@ -30,6 +31,9 @@ export function AddressLine({
   slug: string;
   slugTouched: boolean;
   onSlug: (slug: string) => void;
+  /** Leaving the slug input, with its event (the form's validate-on-blur). */
+  onBlur?: (e: FocusEvent<HTMLInputElement>) => void;
+  /** The slug's error; it opens the line, so the note under the input can show it. */
   error?: string;
   forceOpen?: boolean;
   onOpened?: () => void;
@@ -55,7 +59,7 @@ export function AddressLine({
     return (
       <div className="flex items-start gap-2">
         <span className="mt-2.5">
-          <AgentAvatar slug={avatarSlug} size={20} />
+          <AgentAvatar slug={avatarSlug} color={null} size={20} />
         </span>
         <div className="min-w-0 flex-1">
           <FormField
@@ -71,7 +75,10 @@ export function AddressLine({
             error={error}
             value={shown}
             onChange={(e) => onSlug(e.target.value)}
-            onBlur={settleAvatar}
+            onBlur={(e) => {
+              settleAvatar();
+              onBlur?.(e);
+            }}
           />
         </div>
       </div>
@@ -79,7 +86,7 @@ export function AddressLine({
   }
   return (
     <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-      <AgentAvatar slug={avatarSlug} size={20} />
+      <AgentAvatar slug={avatarSlug} color={null} size={20} />
       <span className="min-w-0">
         {shown ? (
           <>
@@ -96,6 +103,8 @@ export function AddressLine({
       <button
         type="button"
         className={`shrink-0 whitespace-nowrap underline underline-offset-2 hover:text-foreground ${IN_FORM}`}
+        // Opening the address doesn't count as leaving the Display name (DESIGN.md Validation).
+        data-skip-validate
         onClick={() => setOpen(true)}
       >
         Change

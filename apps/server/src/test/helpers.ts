@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -13,10 +13,10 @@ import {
 import { createTestDatabase } from "@open-factory/db/testing";
 import type { HarnessDriver } from "@open-factory/harness";
 import {
+  type AgentOverlay,
+  agentOverlaySchema,
   type Me,
   type SignUpInput,
-  type TemplateConfig,
-  templateConfigSchema,
 } from "@open-factory/shared";
 import type { FastifyInstance } from "fastify";
 import { type AppDeps, buildApp, loggerOptions } from "../app.ts";
@@ -24,8 +24,9 @@ import { type Config, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
 import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { hashToken } from "../users/invites.ts";
-import { agentConfigDir, agentWorkdir, templateCopyDir } from "../workspace/paths.ts";
+import { agentConfigDir, agentWorkdir } from "../workspace/paths.ts";
 import type { Workspace } from "../workspace/workspace.ts";
+import { claimTestHandle } from "./handles.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
 
@@ -125,11 +126,15 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
 
 export interface SeedAgentOptions {
   slug?: string;
-  config?: Partial<TemplateConfig>;
+  /** The agent's overlay (`agents.config`, I2 §5.1); `{}` runs exactly the `test` template. */
+  config?: AgentOverlay;
   credentialValue?: string;
 }
 
-/** A persistent agent with a credential and a minimal workdir, as if created from a template. */
+/** The `test` template every seeded agent is created from: local, nothing listed (I2: config comes from it live). */
+export const TEST_TEMPLATE_YAML = "name: test\ndisplay_name: Test agent\nruntime: local\n";
+
+/** A persistent agent with a credential and a minimal workdir, as if created from the `test` template. */
 export async function seedTestAgent(
   app: { db: Db; config: Config; vault: Vault; workspace: Workspace },
   opts: SeedAgentOptions = {},
@@ -142,21 +147,13 @@ export async function seedTestAgent(
     kind: "oauth_token",
     valueEnc: app.vault.seal(opts.credentialValue ?? "test-token", `credentials:${credentialId}`),
   });
-  const config = templateConfigSchema.parse({
-    name: "test",
-    displayName: "Test agent",
-    description: "",
-    runtime: "local",
-    permissionMode: "auto",
-    projects: [],
-    skills: [],
-    localSkills: true,
-    plugins: [],
-    secrets: [],
-    canSpawn: [],
-    maxLiveSpawns: 5,
-    ...opts.config,
-  });
+  const tplDir = path.join(app.config.factoryHome, "templates", "test");
+  if (!existsSync(path.join(tplDir, "template.yaml"))) {
+    mkdirSync(tplDir, { recursive: true });
+    writeFileSync(path.join(tplDir, "template.yaml"), TEST_TEMPLATE_YAML);
+    writeFileSync(path.join(tplDir, "AGENTS.md"), "# Test agent\n");
+  }
+  await claimTestHandle(app.db, slug, "agent");
   const [row] = await app.db
     .insert(schema.agents)
     .values({
@@ -165,7 +162,7 @@ export async function seedTestAgent(
       displayName: "Test agent",
       description: "",
       template: "test",
-      config,
+      config: agentOverlaySchema.parse(opts.config ?? {}),
       runtime: "local",
       credentialId,
     })
@@ -173,13 +170,7 @@ export async function seedTestAgent(
   if (!row) throw new Error("seed failed");
   const workdir = agentWorkdir(app.config.factoryHome, slug);
   mkdirSync(agentConfigDir(workdir), { recursive: true });
-  mkdirSync(templateCopyDir(app.config.factoryHome, slug), { recursive: true });
   writeFileSync(path.join(workdir, "AGENTS.md"), "# Test agent\n");
-  writeFileSync(path.join(templateCopyDir(app.config.factoryHome, slug), "settings.json"), "{}");
-  writeFileSync(
-    path.join(templateCopyDir(app.config.factoryHome, slug), "mcp.json"),
-    '{"mcpServers":{}}',
-  );
   return row;
 }
 

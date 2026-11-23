@@ -11,6 +11,9 @@ import {
 } from "fastify-type-provider-zod";
 import type postgres from "postgres";
 import { AgentService } from "./agents/agent-service.ts";
+import { ChatStore } from "./agents/chat-store.ts";
+import { ConfigChanges, dbConfigChangeAgents } from "./agents/config-changes.ts";
+import { ConfigResolver } from "./agents/config-resolver.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
@@ -28,6 +31,7 @@ import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { scheduleTools } from "./mcp/tools/schedule-tools.ts";
+import { sendCommandTool } from "./mcp/tools/send-command.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
 import { taskTools } from "./mcp/tools/task-tools.ts";
@@ -39,6 +43,7 @@ import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
 import { hostRoutes } from "./routes/host.ts";
+import { hostSkillsRoutes } from "./routes/host-skills.ts";
 import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { meRoutes } from "./routes/me.ts";
@@ -78,7 +83,6 @@ import { InviteService } from "./users/invites.ts";
 import { UserAdminService } from "./users/user-admin.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
-import { migrateWorkdirState } from "./workspace/state-migration.ts";
 import { Workspace } from "./workspace/workspace.ts";
 import { wsRoutes } from "./ws/route.ts";
 
@@ -89,11 +93,16 @@ declare module "fastify" {
     runtimes: AgentRuntimes;
     bus: EventBus;
     store: EventStore;
+    chat: ChatStore;
     vault: Vault;
     workspace: Workspace;
     /** Named workspaceLock because `lock` is a Fastify (websocket plugin) route method. */
     workspaceLock: KeyedMutex;
     templates: TemplateIndex;
+    /** I2 §6.1: an agent's effective config (the current template plus its overlay). */
+    resolver: ConfigResolver;
+    /** I2 §7.2: the one change path for template changes and overlay saves. */
+    configChanges: ConfigChanges;
     agents: AgentService;
     credentials: CredentialService;
     secrets: SecretService;
@@ -183,11 +192,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
   await mkdir(path.join(config.factoryHome, "images"), { recursive: true });
 
-  await migrateWorkdirState(
-    config.factoryHome,
-    (await deps.db.select({ slug: schema.agents.slug }).from(schema.agents)).map((r) => r.slug),
-    app.log,
-  );
   // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
   const settings = await FactorySettings.load(deps.db, app.log);
   app.decorate("factorySettings", settings);
@@ -211,11 +215,14 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
+  const templates = new TemplateIndex({ db: deps.db, config, log: app.log });
+  const resolver = new ConfigResolver({ templates });
   const prepareStart = createPrepareStart({
     db: deps.db,
     config,
     vault,
     workspace,
+    resolver,
     lock,
     containers,
     neighborhood,
@@ -235,7 +242,12 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     maxRunningAgents: settings.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
-    docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
+    docker: {
+      containers,
+      claudeBin: config.dockerClaudeBin,
+      defaultImage: config.defaultImage,
+      resolver,
+    },
     // Only the real driver's processes are ours to journal and reap (spec §12).
     ...(deps.harnessDriver ? {} : { journal }),
     driver:
@@ -253,8 +265,16 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     )
       void runtimes.settingsChanged();
   });
-  const templates = new TemplateIndex({ db: deps.db, config });
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
+  // I2 §7.1: a template change is dispatched off the scan's path, on a per-template serial queue (never awaited there).
+  const configChanges = new ConfigChanges({
+    agents: dbConfigChangeAgents(deps.db, resolver),
+    store,
+    runtimes,
+    bus,
+    log: app.log,
+  });
+  templates.onChange((e) => configChanges.templateChanged(e));
   // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
   const clock = deps.clock ?? (() => new Date());
   const scheduleStore = new ScheduleStore();
@@ -291,6 +311,9 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
     containers,
     router,
+    store,
+    bus,
+    configChanges,
     scheduling: schedules,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.
@@ -330,10 +353,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
   app.decorate("vault", vault);
   app.decorate("templates", templates);
+  app.decorate("resolver", resolver);
+  app.decorate("configChanges", configChanges);
   app.decorate("agents", agents);
   app.decorate("workspaceLock", lock);
   app.decorate("workspace", workspace);
   app.decorate("store", store);
+  app.decorate("chat", new ChatStore(deps.db));
   app.decorate("bus", bus);
   app.decorate("runtimes", runtimes);
   app.decorate("neighborhood", neighborhood);
@@ -346,6 +372,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     workspace,
     router,
     runtimes,
+    resolver,
     config,
     log: app.log,
     closing: () => runtimes.supervisor.closing(),
@@ -412,6 +439,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(authRoutes, { db: deps.db });
   await app.register(meRoutes);
   await app.register(hostRoutes);
+  await app.register(hostSkillsRoutes);
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);
@@ -439,6 +467,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       router,
       neighborhood,
       runtimes,
+      resolver,
       spawner,
       terminator,
       tasks,
@@ -495,6 +524,7 @@ async function listenForAgents(
     router: Router;
     neighborhood: Neighborhood;
     runtimes: AgentRuntimes;
+    resolver: ConfigResolver;
     spawner: SpawnPort;
     terminator: TerminatePort;
     tasks: TaskService;
@@ -516,28 +546,39 @@ async function listenForAgents(
     version: FACTORY_VERSION,
     onerror: (err) => d.log.error({ err }, "factory MCP request failed"),
     loadCaller: (id) => d.store.agentById(id),
-    tools: (caller) => [
-      sendMessageTool(d.router),
-      ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
-      // Q12: persistent agents only; a spawned agent never sees the schedule tools.
-      ...(caller.kind === "persistent"
-        ? scheduleTools({
-            schedules: d.schedules,
-            factoryZone: config.factoryTimezone,
-            loadAgent: (id) => d.store.agentById(id),
-          })
-        : []),
-      listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
-      ...(maySpawn(caller)
-        ? [
-            spawnAgentTool({
-              spawn: d.spawner,
-              templates: caller.config.canSpawn as [string, ...string[]],
-            }),
-            terminateAgentTool({ terminate: d.terminator }),
-          ]
-        : []),
-    ],
+    tools: (caller) => {
+      // I2 §6.2: the spawn tools describe the running process, so they follow the config it started with.
+      const started = d.runtimes.startedOf(caller.id)?.config;
+      return [
+        sendMessageTool(d.router),
+        sendCommandTool({
+          caller,
+          runtimes: d.runtimes,
+          store: d.store,
+          resolver: d.resolver,
+          spawned: caller.kind === "ephemeral",
+        }),
+        ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
+        // Q12: persistent agents only; a spawned agent never sees the schedule tools.
+        ...(caller.kind === "persistent"
+          ? scheduleTools({
+              schedules: d.schedules,
+              factoryZone: config.factoryTimezone,
+              loadAgent: (id) => d.store.agentById(id),
+            })
+          : []),
+        listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
+        ...(started && maySpawn(caller, started)
+          ? [
+              spawnAgentTool({
+                spawn: d.spawner,
+                templates: started.canSpawn as [string, ...string[]],
+              }),
+              terminateAgentTool({ terminate: d.terminator }),
+            ]
+          : []),
+      ];
+    },
   });
   const listener = await startAgentListener({
     hosts: bind.hosts,

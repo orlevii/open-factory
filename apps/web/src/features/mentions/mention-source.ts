@@ -27,16 +27,23 @@ import { sessionQueryOptions } from "@/lib/session";
 const USERS_STALE_MS = 60_000;
 const NO_AGENTS: MentionAgent[] = [];
 const NO_HUMANS: MentionHuman[] = [];
-type InboxPage = { items: Pick<InboxItem, "from">[] };
+type InboxPage = {
+  items: Pick<InboxItem, "from" | "createdAt">[];
+  chats?: { agent: { slug: string }; latest: { createdAt: string } }[] | undefined;
+};
 
-/** Agents in your newest inbox items, newest first (a read of whatever the inbox already loaded). */
+/** Agents that wrote to you, newest first: your unread chats and the newest inbox items (a read of whatever
+ *  the inbox already loaded). */
 function recentSenders(qc: QueryClient): string[] {
   const pages = qc.getQueryData<InfiniteData<InboxPage>>(inboxQueryKey)?.pages ?? [];
   const home = qc.getQueryData<InboxPage>(homeInboxQueryKey);
-  const out: string[] = [];
-  for (const p of home ? [home, ...pages] : pages)
-    for (const i of p.items) if (i.from.kind === "agent") out.push(i.from.name);
-  return out;
+  const found: { slug: string; at: string }[] = [];
+  for (const p of home ? [home, ...pages] : pages) {
+    for (const i of p.items)
+      if (i.from.kind === "agent") found.push({ slug: i.from.name, at: i.createdAt });
+    for (const c of p.chats ?? []) found.push({ slug: c.agent.slug, at: c.latest.createdAt });
+  }
+  return found.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).map((f) => f.slug);
 }
 
 const toItem = (m: Mention): CompletionItem => ({
@@ -45,7 +52,14 @@ const toItem = (m: Mention): CompletionItem => ({
   detail: `@${m.handle}`,
   group: m.kind === "agent" ? "agents" : "humans",
   ...(m.kind === "agent"
-    ? { avatar: { slug: m.handle, template: m.template, avatarVersion: m.avatarVersion } }
+    ? {
+        avatar: {
+          slug: m.handle,
+          template: m.template,
+          avatarVersion: m.avatarVersion,
+          color: m.color,
+        },
+      }
     : {}),
 });
 

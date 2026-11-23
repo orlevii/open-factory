@@ -4,14 +4,14 @@ import { expect, test, vi } from "vitest";
 import { AgentAvatar } from "./agent-avatar";
 
 test("draws the generated face, aria-hidden", () => {
-  const { container } = render(<AgentAvatar slug="lead" size={20} />);
+  const { container } = render(<AgentAvatar color={null} slug="lead" size={20} />);
   expect(container.firstElementChild).toHaveAttribute("aria-hidden", "true");
   expect(container.querySelector("svg")).not.toBeNull();
 });
 
 test("template override lies over the face and hides on error; a new version retries", () => {
   const { container, rerender } = render(
-    <AgentAvatar slug="a" template="dev" avatarVersion="1-6" size={20} />,
+    <AgentAvatar color={null} slug="a" template="dev" avatarVersion="1-6" size={20} />,
   );
   const img = container.querySelector("img");
   if (!img) throw new Error("no override img");
@@ -20,7 +20,7 @@ test("template override lies over the face and hides on error; a new version ret
   fireEvent.error(img);
   expect(container.querySelector("img")).toBeNull();
   expect(container.querySelector("svg")).not.toBeNull();
-  rerender(<AgentAvatar slug="a" template="dev" avatarVersion="2-6" size={20} />);
+  rerender(<AgentAvatar color={null} slug="a" template="dev" avatarVersion="2-6" size={20} />);
   expect(container.querySelector("img")).not.toBeNull();
 });
 
@@ -30,27 +30,35 @@ test.each([
   ["rate_limited", "rate_limited"],
   ["queued", "queued"],
 ])("badge shape for %s", (s) => {
-  const { container } = render(<AgentAvatar slug="a" size={20} status={s as AgentStatus} />);
+  const { container } = render(
+    <AgentAvatar color={null} slug="a" size={20} status={s as AgentStatus} />,
+  );
   expect(container.querySelector(`[data-status-mark="${s}"]`)).not.toBeNull();
 });
 
 test.each(["idle", "hibernated", "terminated"])("no badge at rest: %s", (s) => {
-  const { container } = render(<AgentAvatar slug="a" size={20} status={s as AgentStatus} />);
+  const { container } = render(
+    <AgentAvatar color={null} slug="a" size={20} status={s as AgentStatus} />,
+  );
   expect(container.querySelector("[data-status-mark]")).toBeNull();
 });
 
 test.each(["idle", "hibernated", "terminated"])("no badge hole at rest: %s", (s) => {
-  const { container } = render(<AgentAvatar slug="a" size={20} status={s as AgentStatus} />);
+  const { container } = render(
+    <AgentAvatar color={null} slug="a" size={20} status={s as AgentStatus} />,
+  );
   expect(container.querySelector(".of-avatar-cut")).toBeNull();
 });
 
 test.each(["working", "errored", "rate_limited", "queued"])("badge hole for %s", (s) => {
-  const { container } = render(<AgentAvatar slug="a" size={20} status={s as AgentStatus} />);
+  const { container } = render(
+    <AgentAvatar color={null} slug="a" size={20} status={s as AgentStatus} />,
+  );
   expect(container.querySelector(".of-avatar-cut")).not.toBeNull();
 });
 
 test("no badge hole without a status", () => {
-  const { container } = render(<AgentAvatar slug="a" size={20} />);
+  const { container } = render(<AgentAvatar color={null} slug="a" size={20} />);
   expect(container.querySelector(".of-avatar-cut")).toBeNull();
 });
 
@@ -85,7 +93,7 @@ test.each([
   [20, "working", 4, 8],
   [24, "working", 6, 12],
 ] as const)("size %i %s badge is %ix%i, its hole 2px larger", (size, status, w, h) => {
-  const { container } = render(<AgentAvatar slug="a" size={size} status={status} />);
+  const { container } = render(<AgentAvatar color={null} slug="a" size={size} status={status} />);
   const g = badgeGeometry(container);
   expect([g.w, g.h]).toEqual([w, h]);
   expect(g.box).toBe(Math.max(w, h));
@@ -94,7 +102,7 @@ test.each([
 
 test.each(agentStatusSchema.options)("%s: a hole exactly when there is a badge", (s) => {
   // The hole and the mark are decided in two places; every status must agree.
-  const { container } = render(<AgentAvatar slug="a" size={20} status={s} />);
+  const { container } = render(<AgentAvatar color={null} slug="a" size={20} status={s} />);
   const mark = container.querySelector("[data-status-mark]") !== null;
   expect(container.querySelector(".of-avatar-cut") !== null).toBe(mark);
 });
@@ -103,10 +111,28 @@ test("no face's parts share a React key (eyes, mouth and accessory are siblings)
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   try {
     for (let i = 0; i < 200; i++)
-      render(<AgentAvatar slug={`agent-${i}`} template="t" size={16} />);
-    render(<AgentAvatar slug="dev-old" template="t" size={16} />);
+      render(<AgentAvatar color={null} slug={`agent-${i}`} template="t" size={16} />);
+    render(<AgentAvatar color={null} slug="dev-old" template="t" size={16} />);
     expect(error.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
   } finally {
     error.mockRestore();
   }
+});
+
+test("an explicit colour fills the face over the slug's seed; Auto keeps the seed", () => {
+  const fillOf = (c: HTMLElement) => c.querySelector("svg g")?.getAttribute("fill");
+  const auto = render(<AgentAvatar color={null} slug="lead" size={20} />);
+  const seeded = fillOf(auto.container);
+  expect(seeded).toMatch(/^var\(--avatar-(?:[1-9]|1[0-2])\)$/);
+  const picked = render(<AgentAvatar color={12} slug="lead" size={20} />);
+  expect(fillOf(picked.container)).toBe("var(--avatar-12)");
+  const other = render(<AgentAvatar color={1} slug="lead" size={20} />);
+  expect(fillOf(other.container)).toBe("var(--avatar-1)");
+});
+
+test("a template avatar.svg still lies over the colour", () => {
+  const { container } = render(
+    <AgentAvatar color={5} slug="a" template="dev" avatarVersion="1-6" size={20} />,
+  );
+  expect(container.querySelector("img")).not.toBeNull();
 });

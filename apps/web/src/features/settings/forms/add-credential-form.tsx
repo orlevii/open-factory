@@ -13,7 +13,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { createCredential } from "@/features/settings/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
-import { TokenField, valueNoun, verdictOf } from "./shared";
+import { enterValueMessage, TokenField, valueNoun, verdictOf } from "./shared";
 
 const cap = (s: string) => s[0]?.toUpperCase() + s.slice(1);
 type Field = "name" | "value";
@@ -48,7 +48,7 @@ export function AddCredentialForm({
         if (!r.success) return r.error.issues[0]?.message;
         return existing.includes(name) ? FORM_MSG.nameTaken : undefined;
       },
-      value: () => (value.trim() === "" ? `Enter the ${valueNoun(kind)}.` : undefined),
+      value: () => (value.trim() === "" ? enterValueMessage(kind) : undefined),
     },
   });
 

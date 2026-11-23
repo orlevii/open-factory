@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { MoreHorizontal } from "lucide-react";
 import { type ReactElement, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   AdaptiveMenu,
   AdaptiveMenuContent,
@@ -13,7 +14,9 @@ import {
 } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
-import { archiveAgent, restoreAgent, resyncAgent } from "@/features/agents/lifecycle";
+import { archiveAgent, resetPersona, restoreAgent } from "@/features/agents/lifecycle";
+import type { AgentView } from "@/features/agents/view-memory";
+import { viewSwitchTarget } from "@/features/agents/view-switch";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { cn } from "@/lib/utils";
@@ -26,8 +29,8 @@ const newScheduleIntent = sheetIntent("new-schedule");
 
 /**
  * The one actions menu for an agent (U2 §8.4, U4 §6.5), in the session header, on a sidebar row and
- * on an Agents page row. Grouped: New task, New schedule · Edit, Usage, Open tasks, Agent details,
- * Compact…, Stop crons… · Re-sync from template…, Archive…, Restore, Terminate….
+ * on an Agents page row. Grouped: New task, New schedule · Edit, Configure, Usage, Open tasks, Agent details,
+ * Compact…, Stop crons… · Reset persona…, Archive…, Restore, Terminate….
  * Compact… and Terminate… open their own overlays from the menu's ⋯ button, so the menu hands
  * focus over instead of returning it. Stop crons state belongs to the session (`stop`), which
  * mounts the confirmation.
@@ -43,6 +46,7 @@ export function AgentMenu({
   triggerClassName,
   anchored,
   onLifecycle,
+  viewSwitch,
 }: {
   agent: AgentSummary;
   context: "session" | "sidebar" | "list";
@@ -55,6 +59,8 @@ export function AgentMenu({
   triggerClassName?: string;
   /** After Archive, its Undo, or Restore: the session holds its own copy of the agent to refresh. */
   onLifecycle?: () => void;
+  /** The header is crowded: its view switch moves here, to the top of the menu. The current view. */
+  viewSwitch?: AgentView;
   /** One shared instance for a list (the sidebar tree): controlled, with no ⋯ of its own. It opens
    *  below the right edge of `anchor` (the row the caller names) and hands focus back with `onClose`. */
   anchored?: {
@@ -75,6 +81,9 @@ export function AgentMenu({
   // menu, which reads as a focus outside and dismisses a popover at once.
   const handoff = useRef<(() => void) | null>(null);
   const [terminateOpen, setTerminateOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  // Mounted at the first opening and kept, so its close animation plays; a list of rows mounts none until asked.
+  const [resetMounted, setResetMounted] = useState(false);
   const qc = useQueryClient();
   const session = context === "session";
   const archived = agent.archivedAt !== null;
@@ -85,9 +94,11 @@ export function AgentMenu({
   const endedInList = context === "list" && (terminated || (spawned && !live));
   const canCompact = session && live && agent.status !== "errored";
   const canEdit = !spawned && !archived && !endedInList;
+  // Archived agents too: their configuration stays editable and applies when restored (I2 §12.4).
+  const canConfigure = !spawned && !terminated && !endedInList;
   const canStopCrons = session && stop !== undefined && agent.crons.length > 0;
   const canTerminate = session && spawned && live;
-  const canResync = !spawned && live;
+  const canResetPersona = !spawned && !terminated;
   const canArchive = !spawned && live;
   const canRestore = archived && !terminated && !endedInList;
   const editIntent = useMemo(() => sheetIntent("edit-agent", { kind: "edit-agent", slug }), [slug]);
@@ -126,7 +137,7 @@ export function AgentMenu({
   if (context === "sidebar")
     views.push(
       <AdaptiveMenuItem key="open" asChild>
-        <Link to="/agents/$slug" params={{ slug }}>
+        <Link to="/agents/$slug/session" params={{ slug }}>
           Open session
         </Link>
       </AdaptiveMenuItem>,
@@ -140,6 +151,14 @@ export function AgentMenu({
         onSelect={() => openAfterClose(() => openSheet({ kind: "edit-agent", slug }))}
       >
         Edit
+      </AdaptiveMenuItem>,
+    );
+  if (canConfigure)
+    views.push(
+      <AdaptiveMenuItem key="configure" asChild>
+        <Link to="/agents/$slug/config" params={{ slug }}>
+          Configure
+        </Link>
       </AdaptiveMenuItem>,
     );
   views.push(
@@ -197,10 +216,18 @@ export function AgentMenu({
       </AdaptiveMenuItem>,
     );
   const lifecycle: ReactElement[] = [];
-  if (canResync)
+  if (canResetPersona)
     lifecycle.push(
-      <AdaptiveMenuItem key="resync" onSelect={() => void resyncAgent(slug, qc, agent.template)}>
-        Re-sync from template…
+      <AdaptiveMenuItem
+        key="reset-persona"
+        opensOverlay
+        onSelect={() => {
+          handoff.current = () => {}; // as Stop crons…: the confirmation owns focus
+          setResetMounted(true);
+          setResetOpen(true);
+        }}
+      >
+        Reset persona…
       </AdaptiveMenuItem>,
     );
   if (canArchive)
@@ -236,7 +263,18 @@ export function AgentMenu({
         Terminate…
       </AdaptiveMenuItem>,
     );
-  const groups = [create, views, lifecycle].filter((g) => g.length > 0);
+  const nav: ReactElement[] = [];
+  if (viewSwitch) {
+    const target = viewSwitchTarget(viewSwitch);
+    nav.push(
+      <AdaptiveMenuItem key="view" asChild>
+        <Link to={target.to} params={{ slug }}>
+          {target.opens}
+        </Link>
+      </AdaptiveMenuItem>,
+    );
+  }
+  const groups = [nav, create, views, lifecycle].filter((g) => g.length > 0);
 
   // The row's box, measured when the menu opens and kept through the close, so the menu stays
   // over its row while it fades out (the page is scroll-locked while it is open).
@@ -310,6 +348,22 @@ export function AgentMenu({
           open={compactOpen}
           onOpenChange={setCompactOpen}
           anchor={trigger}
+        />
+      )}
+      {canResetPersona && resetMounted && (
+        <ConfirmDialog
+          open={resetOpen}
+          onOpenChange={setResetOpen}
+          title="Reset persona?"
+          body={`Replace @${slug}'s AGENTS.md with the template's. The current file is saved in state/agents/${slug}/persona/.`}
+          confirmLabel="Reset persona"
+          pendingLabel="Resetting…"
+          onConfirm={() => resetPersona(slug, qc, agent.template)}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            if (anchored) anchored.onClose();
+            else trigger.current?.focus();
+          }}
         />
       )}
       {spawned && session && (

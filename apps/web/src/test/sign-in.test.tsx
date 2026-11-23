@@ -54,7 +54,7 @@ test("USER_DISABLED shows the disabled line", async () => {
   renderApp("/sign-in", null);
   await signIn("alice@example.com", "password123");
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "This account is disabled. Ask a member of this factory to enable it.",
+    "This account is disabled. Ask a member.",
   );
 });
 
@@ -73,7 +73,7 @@ test("an unreachable server shows the network message", async () => {
   renderApp("/sign-in", null);
   await signIn("alice@example.com", "password123");
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Can't reach the server. Check that it's running, then try again.",
+    "Couldn't reach the server. Try again.",
   );
 });
 
@@ -84,7 +84,9 @@ test("a proxy's 502 with no error code also counts as unreachable", async () => 
   });
   renderApp("/sign-in", null);
   await signIn("alice@example.com", "password123");
-  expect(await screen.findByRole("alert")).toHaveTextContent("Can't reach the server.");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn't reach the server. Try again.",
+  );
 });
 
 test("the button shows the pending label while the request runs", async () => {
@@ -117,24 +119,37 @@ test("tabbing through an empty form shows no error", async () => {
   expect(screen.getByLabelText("Password")).not.toHaveAttribute("aria-invalid");
 });
 
-test("an invalid email shows its error on blur and clears on the keystroke that fixes it", async () => {
+test("an invalid email shows its error on blur and clears on the keystroke that makes it valid", async () => {
   renderApp("/sign-in", null);
   const user = userEvent.setup();
   const email = await screen.findByLabelText("Email");
   await user.type(email, "nope");
   await user.tab();
-  expect(email).toHaveAccessibleDescription("Enter a valid email");
+  expect(email).toHaveAttribute("aria-invalid", "true");
+  expect(email).toHaveAccessibleDescription("Enter a valid email.");
   await user.click(email);
-  await user.type(email, "@x.io");
+  // Still invalid while typing: the message stays (one-letter TLD).
+  await user.type(email, "@x.i");
+  expect(email).toHaveAttribute("aria-invalid", "true");
+  expect(email).toHaveAccessibleDescription("Enter a valid email.");
+  // The keystroke that makes it valid clears it.
+  await user.type(email, "o");
   expect(email).not.toHaveAttribute("aria-invalid");
+  expect(email).not.toHaveAccessibleDescription("Enter a valid email.");
 });
 
-test("submitting empty focuses Email and does not call the server", async () => {
+test("submitting empty flags both fields, focuses Email and does not call the server", async () => {
   renderApp("/sign-in", null);
   const user = userEvent.setup();
   await screen.findByLabelText("Email");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
-  expect(screen.getByLabelText("Email")).toHaveFocus();
+  const email = screen.getByLabelText("Email");
+  const password = screen.getByLabelText("Password");
+  expect(email).toHaveFocus();
+  expect(email).toHaveAttribute("aria-invalid", "true");
+  expect(email).toHaveAccessibleDescription("Enter a valid email.");
+  expect(password).toHaveAttribute("aria-invalid", "true");
+  expect(password).toHaveAccessibleDescription("Enter your password.");
   expect(auth.signIn.email).not.toHaveBeenCalled();
 });
 

@@ -34,17 +34,18 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   openTasks: 0,
   credential: "work",
   projects: [],
-  grantsOverridden: false,
   depth: 0,
   archivedAt: null,
   restartPending: false,
   restartWaitingOn: 0,
+  restartChanges: [],
   waitingOn: { tasks: [], crons: 0 },
   crons: [],
   cronZone: "UTC",
   stopCronsPending: false,
   scheduleCount: 0,
   avatarVersion: null,
+  color: null,
   ...over,
 });
 
@@ -52,7 +53,12 @@ export const detail = (
   over: Partial<AgentSummary> = {},
   queue: AgentDetail["queue"] = [],
   lastSeq = 10,
-): AgentDetail => ({ agent: agentSummary(over), queue, lastSeq });
+): AgentDetail => ({
+  agent: agentSummary(over),
+  model: { value: null, source: "default" },
+  queue,
+  lastSeq,
+});
 
 export function conversation(): EventsPage {
   resetSeq();
@@ -64,7 +70,14 @@ export function conversation(): EventsPage {
         {
           type: "message_in",
           messages: [
-            { id: "m1", from: "@or", kind: "message", urgent: true, body: "Please **list** files" },
+            {
+              id: "m1",
+              from: "@or",
+              fromKind: "human",
+              kind: "message",
+              urgent: true,
+              body: "Please **list** files",
+            },
           ],
         },
         null,

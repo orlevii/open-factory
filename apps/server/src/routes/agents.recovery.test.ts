@@ -26,7 +26,7 @@ async function agent(): Promise<{ slug: string; rt: AgentRuntime }> {
   return { slug, rt };
 }
 const send = async (slug: string, body: string) => {
-  const r = await post(`/api/agents/${slug}/messages`, { body, urgent: false });
+  const r = await post(`/api/messages`, { to: [slug], body, urgent: false });
   expect(r.statusCode).toBe(202);
 };
 const procsOf = (rt: AgentRuntime): FakeProcess[] =>

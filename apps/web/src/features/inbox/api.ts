@@ -1,5 +1,6 @@
 import {
   apiFetch,
+  type ChatRow,
   inboxItemResponseSchema,
   type inboxItemSchema,
   inboxPageSchema,
@@ -19,7 +20,7 @@ import {
 } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import { z } from "zod";
-import { fetchEvents } from "@/features/session/api";
+import { chatQueryOptions } from "@/features/chat/api";
 import { taskDetailOptions } from "@/features/tasks/api";
 
 export type InboxItem = z.infer<typeof inboxItemSchema>;
@@ -50,6 +51,23 @@ export const inboxQueryOptions = infiniteQueryOptions({
 /** The Inbox as one infinite query keyed `["inbox"]`; `inbox_changed` invalidates it. */
 export const useInbox = () => useInfiniteQuery(inboxQueryOptions);
 
+/** A chat row's id in the list, the selection and `?item=`: the item ids are uuids, so they never collide. */
+export const CHAT_ID_PREFIX = "chat:";
+export const chatRowId = (slug: string) => `${CHAT_ID_PREFIX}${slug}`;
+/** The agent slug of a `chat:<slug>` id, else undefined. */
+export const chatSlugOf = (id: string | undefined): string | undefined =>
+  id?.startsWith(CHAT_ID_PREFIX) && id.length > CHAT_ID_PREFIX.length
+    ? id.slice(CHAT_ID_PREFIX.length)
+    : undefined;
+
+const NO_CHATS: ChatRow[] = [];
+/** The unread chats (only the first page carries them); structurally shared, so a refetch that changes
+ *  nothing renders nothing. */
+const chatsOf = (d: { pages: { chats?: ChatRow[] | undefined }[] }): ChatRow[] =>
+  d.pages[0]?.chats ?? NO_CHATS;
+export const useInboxChats = () =>
+  useInfiniteQuery({ ...inboxQueryOptions, select: chatsOf }).data ?? NO_CHATS;
+
 /** One item, for a `?item=` outside the loaded pages (the list's pages don't change). */
 export const inboxItemOptions = (id: string) =>
   queryOptions({
@@ -60,33 +78,21 @@ export const inboxItemOptions = (id: string) =>
       ),
   });
 
-/** The reading pane's excerpt of a session: 7 events around `seq`, or the latest 7 without one. */
-export const EXCERPT_LIMIT = 7;
-export const excerptOptions = (slug: string, seq: number | undefined) =>
-  queryOptions({
-    queryKey: ["agent", slug, "excerpt", seq ?? "latest"] as const,
-    // The signal: a j/k sweep's passed-over rows are cancelled once the pane moves on.
-    queryFn: ({ signal }) =>
-      fetchEvents(
-        slug,
-        seq === undefined ? { limit: EXCERPT_LIMIT } : { around: seq, limit: EXCERPT_LIMIT },
-        signal,
-      ),
-  });
-
-/** Warms what the reading pane shows for `item`: the session excerpt at its target, or its task. */
+/** Warms what the reading pane shows for `item`: its task (a notice has nothing to fetch). */
 export function prefetchPane(qc: QueryClient, item: InboxItem) {
-  const link = item.link;
-  void (link.kind === "session"
-    ? qc.prefetchQuery(excerptOptions(link.agentSlug, link.seq))
-    : qc.prefetchQuery(taskDetailOptions(link.key)));
+  if (item.link.kind === "task") void qc.prefetchQuery(taskDetailOptions(item.link.key));
 }
 
-/** The 5 newest unread items: what the notifier reads. */
+/** Warms a chat row's pane: the chat's newest page. */
+export function prefetchChat(qc: QueryClient, slug: string) {
+  if (qc.getQueryData(chatQueryOptions(slug).queryKey) === undefined)
+    void qc.prefetchInfiniteQuery(chatQueryOptions(slug));
+}
+
+/** The 5 newest unread items and the unread chats: what the notifier reads. */
 export const homeInboxQueryOptions = queryOptions({
   queryKey: homeInboxQueryKey,
   queryFn: () => apiFetch("/api/inbox?unread=true&limit=5", { schema: inboxPageSchema }),
-  select: (p: Page) => p.items,
 });
 
 export type Unread = { count: number; byAgent: Record<string, number> };
@@ -134,7 +140,7 @@ export const postUndoReadAll = (readAt: string) =>
   });
 
 const fromAgent = (i: InboxItem) =>
-  i.kind === "message" && i.from.kind === "agent" ? i.from.name : null;
+  i.kind === "notice" && i.from.kind === "agent" ? i.from.name : null;
 
 /** Flips `read` for the given ids in every cached inbox view, and moves the unread count by `delta`. With `items`,
  *  each agent-sender's count moves too; without them `byAgent` is left for the refetch. */
@@ -168,9 +174,58 @@ export function useInboxCache() {
           return { ...c, count: Math.max(0, c.count + delta), byAgent: next };
         });
       },
+      /** Mark all read, for the chats it covers: each chat's row goes to no count (or back to `counts`), its
+       *  `byAgent` entry with it, and the total moves by their sum. */
+      setChatsRead(counts: ReadonlyMap<string, number>, read: boolean) {
+        let sum = 0;
+        for (const n of counts.values()) sum += n;
+        qc.setQueryData<InfiniteData<Page>>(
+          inboxQueryKey,
+          (d) =>
+            d && {
+              ...d,
+              pages: d.pages.map((p) => ({
+                ...p,
+                ...(p.chats && {
+                  chats: p.chats.map((c) =>
+                    counts.has(c.agent.slug)
+                      ? {
+                          ...c,
+                          unread: read ? 0 : Math.max(c.unread, counts.get(c.agent.slug) ?? 0),
+                        }
+                      : c,
+                  ),
+                }),
+              })),
+            },
+        );
+        qc.setQueryData<Unread>(unreadQueryKey, (c) => {
+          if (!c) return c;
+          const byAgent = { ...c.byAgent };
+          for (const [slug, n] of counts)
+            byAgent[slug] = read ? 0 : Math.max(0, (byAgent[slug] ?? 0) + n);
+          return { ...c, count: Math.max(0, c.count + (read ? -sum : sum)), byAgent };
+        });
+      },
       /** "Mark read" for one agent: its cached rows turn read and its count goes to zero. */
       readFrom(slug: string) {
         flipRows((i) => fromAgent(i) === slug, true);
+        // The chat's row stays in the cache with no count; the list drops it when it can (a held list waits).
+        qc.setQueryData<InfiniteData<Page>>(
+          inboxQueryKey,
+          (d) =>
+            d && {
+              ...d,
+              pages: d.pages.map((p) =>
+                p.chats?.some((c) => c.agent.slug === slug)
+                  ? {
+                      ...p,
+                      chats: p.chats.map((c) => (c.agent.slug === slug ? { ...c, unread: 0 } : c)),
+                    }
+                  : p,
+              ),
+            },
+        );
         qc.setQueryData<Unread>(
           unreadQueryKey,
           (c) =>

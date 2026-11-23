@@ -1,20 +1,5 @@
 import type postgres from "postgres";
-
-const CONFIG = {
-  name: "test",
-  displayName: "Test agent",
-  description: "",
-  runtime: "local",
-  permissionMode: "auto",
-  projects: [],
-  skills: [],
-  localSkills: true,
-  plugins: [],
-  secrets: [],
-  canSpawn: [],
-  maxLiveSpawns: 5,
-  // No warmWindowMinutes: like a template that omits it, the runtime uses the factory default (S10 §8.2).
-};
+import { claimTestHandleSql } from "../../test/handles.ts";
 
 /** A minimal agent row (plus a credential row with a dummy blob) for tests that don't start real agents. */
 export async function insertAgent(
@@ -24,7 +9,7 @@ export async function insertAgent(
     slug: string;
     sessionId?: string | null;
     status?: string;
-    /** Pins the warm window in the config snapshot; omitted by default. */
+    /** Pins the warm window in the overlay (I2: `agents.config` is the overlay); omitted by default. */
     warmWindowMinutes?: number;
     displayName?: string;
     reportsTo?: string | null;
@@ -40,9 +25,10 @@ export async function insertAgent(
   const credId = `cred-${a.id}`;
   await sql`insert into credentials (id, name, kind, value_enc)
             values (${credId}, ${`cred-${a.id}`}, 'oauth_token', ${Buffer.from("dummy")})`;
+  await claimTestHandleSql(sql, a.slug, "agent");
   await sql`insert into agents (id, slug, display_name, session_id, status, template, config, runtime, credential_id, reports_to, archived_at, error_kind, kind, terminated_at, terminated_by)
             values (${a.id}, ${a.slug}, ${a.displayName ?? "Dev agent"}, ${a.sessionId ?? null}, ${a.status ?? "hibernated"},
-                    'test', ${JSON.stringify({ ...CONFIG, ...(a.warmWindowMinutes !== undefined ? { warmWindowMinutes: a.warmWindowMinutes } : {}) })}::jsonb, 'local', ${credId},
+                    'test', ${JSON.stringify(a.warmWindowMinutes !== undefined ? { template: { warm_window_minutes: a.warmWindowMinutes } } : {})}::jsonb, 'local', ${credId},
                     ${a.reportsTo ?? null}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${a.kind ?? (a.terminatedAt ? "ephemeral" : "persistent")}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, ${a.terminatedAt ? "@factory" : null})`;
 }
 

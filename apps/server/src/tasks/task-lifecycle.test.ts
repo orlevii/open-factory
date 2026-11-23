@@ -195,12 +195,3 @@ test("start a new session with only a task_update queued starts an attempt (S5's
   expect(await reasons("dev")).toContain("reset");
   expect(procs("dev")).toHaveLength(1);
 });
-
-test("one namespace: an assignee named like both a user and an agent gets S6's sentence", async () => {
-  await h.sql`insert into users (id,name,email,handle) values ('twin-u','Twin','twin@x.io','twin')`;
-  await h.sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id)
-    select 'twin-a','twin','Twin','t','{}','local',credential_id from agents where slug = 'qa'`;
-  await expect(h.app.tasks.create(or, { title: "t", assignee: "twin" })).rejects.toMatchObject({
-    message: "'twin' matches both an agent and a user; ask a human to rename one.",
-  });
-});

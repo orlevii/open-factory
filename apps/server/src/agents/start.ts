@@ -1,7 +1,6 @@
 import { stat } from "node:fs/promises";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import type { AgentRuntimeSpec } from "@open-factory/harness";
-import { type TemplateConfig, templateConfigSchema } from "@open-factory/shared";
 import { asc, eq } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
@@ -10,12 +9,13 @@ import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError } from "../runtime/docker/errors.ts";
 import { MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "../scheduling/limits.ts";
-import { type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
+import { type DenyRules, type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
 import { maySpawn } from "../spawning/may-spawn.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import type { MountCheckContext } from "../workspace/mounts.ts";
 import type { Workspace } from "../workspace/workspace.ts";
+import type { ConfigResolver, Effective } from "./config-resolver.ts";
 import { AgentArchivedError, AgentStartError } from "./errors.ts";
 import { liveCredentialId } from "./live-credential.ts";
 import { buildAgentEnv, buildRuntimeSpec } from "./runtime-spec.ts";
@@ -33,10 +33,28 @@ export interface DockerLaunch {
  * The spec of one start; a Docker start also carries its `launch`. `credentialId` is the credential the process runs
  * on (a spawned agent's is its spawner's current one). Neither is passed to the driver.
  */
-export type PreparedSpec = AgentRuntimeSpec & { launch?: DockerLaunch; credentialId: string };
+export type PreparedSpec = AgentRuntimeSpec & {
+  launch?: DockerLaunch;
+  credentialId: string;
+  /** The config this start prepared; the runtime keeps it as `started` (spec §6.2). It holds env values: never log it. */
+  effective: Effective;
+};
 
-/** `extra.agentToken` is this launch's token (spec §5.2): it goes to the process env and nowhere else. */
+/** I2 §6.2: a loaded runtime's `started` config (what its running process started with); undefined when none runs. */
+export type StartedOf = (agentId: string) => Effective | undefined;
+
+/**
+ * `extra.agentToken` is this launch's token (spec §5.2): it goes to the process env and nowhere else. `extra.loaded`
+ * is `AgentRuntimes.startedOf` (I2 §6.2), which a spawned agent's inheritance reads for its spawner. `AgentRuntimes`
+ * adds it to every start, so no caller can leave it out.
+ */
 export type PrepareStart = (
+  agent: AgentRow,
+  extra: { agentToken: string; loaded: StartedOf },
+) => Promise<PreparedSpec>;
+
+/** What a runtime calls: `PrepareStart` with `loaded` already bound by `AgentRuntimes`. */
+export type StartPreparer = (
   agent: AgentRow,
   extra: { agentToken: string },
 ) => Promise<PreparedSpec>;
@@ -51,16 +69,58 @@ async function assertCliBundle(file: string): Promise<void> {
 
 type Granted = Extract<Inherited, { ok: true }>;
 
+/** The stricter of two permission modes: `auto` checks, `bypass` doesn't. */
+const stricterMode = (a: "auto" | "bypass", b: "auto" | "bypass") =>
+  a === "auto" || b === "auto" ? "auto" : "bypass";
+
+const both = (a: string[], b: string[]) => a.filter((x) => b.includes(x));
+const either = (a: string[], b: string[]) => [...new Set([...a, ...b])];
+
 /**
- * S7 §6.3: a spawned agent's inheritance, derived from its spawner's current state at every start (no snapshot):
- * secrets = template ∩ spawner's, deny rules = template ∪ spawner's (from the spawner's factory-owned template copy),
- * grants = spawner's current grants ∩ template projects, and the §6.2 refusals re-checked. Anything about the spawner
- * that can't be read fails the start closed: a child never runs with more than its spawner holds.
+ * I2 §6.2: what a spawner passes on, the stricter of what its running process started with and its current effective
+ * config: the stricter permission mode, secrets intersected, deny rules unioned. With no running process (`started`
+ * undefined) it is the current config alone. A child never holds more than either.
+ */
+export function spawnerHolds(
+  current: Effective,
+  started: Effective | undefined,
+): { permissionMode: "auto" | "bypass"; secrets: string[]; deny: DenyRules } {
+  const currentDeny = readDenyRules(current.doc.settings);
+  if (!started)
+    return {
+      permissionMode: current.config.permissionMode,
+      secrets: current.config.secrets,
+      deny: currentDeny,
+    };
+  const startedDeny = readDenyRules(started.doc.settings);
+  return {
+    permissionMode: stricterMode(current.config.permissionMode, started.config.permissionMode),
+    secrets: both(current.config.secrets, started.config.secrets),
+    deny: {
+      permissionsDeny: either(currentDeny.permissionsDeny, startedDeny.permissionsDeny),
+      softDeny: either(currentDeny.softDeny, startedDeny.softDeny),
+      hardDeny: either(currentDeny.hardDeny, startedDeny.hardDeny),
+    },
+  };
+}
+
+/**
+ * S7 §6.3 and I2 §6.2: a spawned agent's inheritance, derived from its spawner at every start (no snapshot). The
+ * spawner counts as the stricter of what its running process started with (`loaded`) and its current effective config:
+ * secrets intersected, deny rules unioned. A spawner with no running process (no `started`) counts as its current
+ * config alone.
+ * Grants = the spawner's current grants ∩ the child's projects, and the §6.2 refusals are re-checked. Anything about
+ * the spawner that can't be read fails the start closed: a child never runs with more than its spawner holds.
  */
 export async function deriveInheritance(
-  d: { db: Db; config: Config; workspace: Workspace },
+  d: {
+    db: Db;
+    config: Config;
+    resolver: ConfigResolver;
+    loaded: StartedOf;
+  },
   agent: AgentRow,
-  config: TemplateConfig,
+  effective: Effective,
 ): Promise<{ spawner: AgentRow; inherited: Granted }> {
   const child = `@${agent.slug}`;
   const [spawner] = agent.reportsTo
@@ -73,27 +133,15 @@ export async function deriveInheritance(
   const by = `@${spawner.slug}, which spawned ${child},`;
   if (spawner.archivedAt || spawner.terminatedAt || !spawner.credentialId)
     throw new AgentStartError(`${by} isn't active, so ${child} can't start.`);
-  const parsed = templateConfigSchema.safeParse(spawner.config);
-  if (!parsed.success)
-    throw new AgentStartError(
-      `The saved configuration of ${by} is invalid. Terminate it and spawn a new one.`,
-    );
-  let spawnerSettings: Record<string, unknown>;
+  let current: Effective;
   try {
-    spawnerSettings = await d.workspace.readTemplateSettings(spawner.slug);
+    current = await d.resolver.effective(spawner);
   } catch (err) {
-    if (err instanceof WorkspaceError)
+    // The spawner's own errors name its template or configuration, which the child's owner can't act on from here.
+    if (err instanceof AgentStartError)
       throw new AgentStartError(
-        `The template copy of ${by} can't be read. Terminate it and spawn a new one.`,
+        `The configuration of ${by} can't be read, so ${child} can't start.`,
       );
-    throw err;
-  }
-  let childSettings: Record<string, unknown>;
-  try {
-    childSettings = await d.workspace.readTemplateSettings(agent.slug);
-  } catch (err) {
-    if (err instanceof WorkspaceError)
-      throw new AgentStartError(err.message, err.fix, err.diagnosis);
     throw err;
   }
   const grants = await d.db
@@ -108,17 +156,15 @@ export async function deriveInheritance(
   const inherited = inheritFrom(
     {
       runtime: spawner.runtime,
-      permissionMode: parsed.data.permissionMode,
       credentialId: spawner.credentialId,
       grants,
-      secrets: parsed.data.secrets,
-      deny: readDenyRules(spawnerSettings),
+      ...spawnerHolds(current, d.loaded(spawner.id)),
     },
-    config,
-    readDenyRules(childSettings),
+    effective.config,
+    readDenyRules(effective.doc.settings),
     { localRuntimeAllowed: localRuntimeAllowed(d.config) },
   );
-  // A refusal is the spawn-time sentence; no fix, since editing or re-syncing a spawned agent can't lift it.
+  // A refusal is the spawn-time sentence; no fix, since configuring a spawned agent can't lift it.
   if (!inherited.ok) throw new AgentStartError(inherited.refusal);
   return { spawner, inherited };
 }
@@ -133,6 +179,7 @@ export function createPrepareStart(d: {
   config: Config;
   vault: Vault;
   workspace: Workspace;
+  resolver: ConfigResolver;
   lock: KeyedMutex;
   /** The one ContainerManager (built in buildApp). Docker starts fail without it. */
   containers?: Pick<ContainerManager, "stopIfRunning">;
@@ -140,7 +187,7 @@ export function createPrepareStart(d: {
   serverEnv?: NodeJS.ProcessEnv;
 }): PrepareStart {
   const serverEnv = d.serverEnv ?? process.env;
-  return (stale, { agentToken }) =>
+  return (stale, { agentToken, loaded }) =>
     d.lock.run(stale.slug, async () => {
       const [agent] = await d.db.select().from(schema.agents).where(eq(schema.agents.id, stale.id));
       if (!agent) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
@@ -148,18 +195,12 @@ export function createPrepareStart(d: {
       // The local gate fails closed before anything else: no prepare, no mounts, no process (spec §13).
       if (agent.runtime === "local" && !localRuntimeAllowed(d.config))
         throw new AgentStartError(LOCAL_RUNTIME_START_MESSAGE, "runtime");
-      // The jsonb column is typed, not enforced: parse the snapshot rather than trust the row type.
-      const parsedConfig = templateConfigSchema.safeParse(agent.config);
-      if (!parsedConfig.success) {
-        const diagnosis = `The saved configuration of @${agent.slug} is invalid.`;
-        throw new AgentStartError(
-          `${diagnosis} Edit the agent to fix it.`,
-          "edit_agent",
-          diagnosis,
-        );
-      }
-      const config = parsedConfig.data;
-      const spawned = agent.kind === "ephemeral" ? await deriveInheritance(d, agent, config) : null;
+      const effective = await d.resolver.effective(agent);
+      const config = effective.config;
+      const spawned =
+        agent.kind === "ephemeral"
+          ? await deriveInheritance({ ...d, loaded }, agent, effective)
+          : null;
       const docker = config.runtime === "docker";
       if (docker) {
         if (!d.containers)
@@ -271,14 +312,15 @@ export function createPrepareStart(d: {
           displayName: agent.displayName,
           description: agent.description,
           template: agent.template,
-          config,
+          effective,
           manager,
           grants,
           peers: hood.peers.map(entry),
           reports: hood.reports.map(entry),
+          humans: await d.neighborhood.humans(),
           kind: spawned ? "ephemeral" : "persistent",
           spawner: spawned ? { slug: spawned.spawner.slug } : null,
-          spawning: maySpawn(agent)
+          spawning: maySpawn(agent, config)
             ? { maxLive: config.maxLiveSpawns, perHour: d.config.maxSpawnsPerHour }
             : null,
           // S9 §10.5: only persistent agents hold the schedule tools.
@@ -331,11 +373,12 @@ export function createPrepareStart(d: {
         ? {
             ...spec,
             credentialId,
+            effective,
             launch: {
               image: resolveImage(config.image, d.config.defaultImage).tag,
               mountCheck: prepared.mountCheck,
             },
           }
-        : { ...spec, credentialId };
+        : { ...spec, credentialId, effective };
     });
 }

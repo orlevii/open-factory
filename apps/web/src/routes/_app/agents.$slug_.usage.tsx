@@ -1,11 +1,12 @@
 import { ApiError, type UsageDays, usageDaysSchema } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, notFound, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, notFound, useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 import { ErrorLine } from "@/components/error-line";
 import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceNotFound } from "@/components/route-states";
 import { Skeleton } from "@/components/ui/skeleton";
+import { BackToAgent } from "@/features/agents/back-to-agent";
 import { agentUsageQuery } from "@/features/usage/api";
 import { EstimateLine } from "@/features/usage/estimate-line";
 import { RangeFilter } from "@/features/usage/range-filter";
@@ -58,14 +59,7 @@ function AgentUsagePage() {
       <PageBody>
         <div className="grid gap-6">
           <div className="grid gap-3">
-            <Link
-              to="/agents/$slug"
-              params={{ slug }}
-              search={{}}
-              className="w-fit text-[0.8125rem] leading-[1.125rem] text-muted-foreground hover:text-foreground hover:underline"
-            >
-              ← @{slug}
-            </Link>
+            <BackToAgent slug={slug} />
             <RangeFilter
               value={days}
               onChange={(d) =>

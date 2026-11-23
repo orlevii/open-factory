@@ -20,7 +20,7 @@ export function QuietLine({
   const content = (
     <>
       {icon}
-      <span className="min-w-0">{children}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{children}</span>
     </>
   );
   if (!detail)

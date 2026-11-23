@@ -57,7 +57,7 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
   );
   renderApp("/agents", alice);
   const row = await screen.findByRole("link", { name: /Dev agent/ });
-  expect(row).toHaveAttribute("href", "/agents/dev");
+  expect(row).toHaveAttribute("href", "/agents/dev/chat");
   expect(within(row).getByText("Working")).toBeInTheDocument();
   expect(within(row).getAllByText("@dev").length).toBeGreaterThan(0);
   expect(within(row).getByText("developer")).toBeInTheDocument();
@@ -277,7 +277,7 @@ test("each Agents row has a ⋯ beside its link that opens the agent's menu", as
   const more = await within(main).findByRole("button", { name: "Actions for Dev agent" });
   // A sibling of the row's link, never inside it.
   expect(more.closest("a")).toBeNull();
-  expect(more.closest("li")?.querySelector('a[href="/agents/dev"]')).not.toBeNull();
+  expect(more.closest("li")?.querySelector('a[href="/agents/dev/chat"]')).not.toBeNull();
   await userEvent.click(more);
   const menu = await screen.findByRole("menu");
   expect(menuLayout(menu)).toEqual([
@@ -285,10 +285,11 @@ test("each Agents row has a ⋯ beside its link that opens the agent's menu", as
     "New schedule",
     "—",
     "Edit",
+    "Configure",
     "Usage",
     "Open tasks",
     "—",
-    "Re-sync from template…",
+    "Reset persona…",
     "Archive…",
   ]);
 });
@@ -321,7 +322,14 @@ test("Ended view: an archived row's menu restores it and toasts; a terminated ro
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await u.click(within(main).getByRole("button", { name: "Actions for Old one" }));
   const menu = await screen.findByRole("menu");
-  expect(menuLayout(menu)).toEqual(["Usage", "Open tasks", "—", "Restore"]);
+  expect(menuLayout(menu)).toEqual([
+    "Configure",
+    "Usage",
+    "Open tasks",
+    "—",
+    "Reset persona…",
+    "Restore",
+  ]);
   await u.click(within(menu).getByRole("menuitem", { name: "Restore" }));
   expect(await screen.findByText("Restored @old.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/old/unarchive")).toBe(

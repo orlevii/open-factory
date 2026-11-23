@@ -69,7 +69,13 @@ const posts = (api: { calls: { method: string; url: string; body: unknown }[] })
   api.calls.filter((c) => c.method === "POST" && c.url === "/api/agents");
 const created = (slug = "team-lead") => ({
   "POST /api/agents": () => json({ agent: agentSummary({ slug }) }, 201),
-  [`GET /api/agents/${slug}`]: () => json({ agent: agentSummary({ slug }), queue: [], lastSeq: 0 }),
+  [`GET /api/agents/${slug}`]: () =>
+    json({
+      agent: agentSummary({ slug }),
+      model: { value: null, source: "default" },
+      queue: [],
+      lastSeq: 0,
+    }),
   [`GET /api/agents/${slug}/events?`]: () =>
     json({ events: [], hasMore: { before: false, after: false } }),
 });
@@ -120,7 +126,7 @@ test("several credentials and the restored draft's one is gone: Choose a credent
   const { dialog } = await open({ credentials: [credential("work"), credential("other")] });
   expect(more()).toHaveAttribute("aria-expanded", "true");
   expect(within(dialog).getByText("Choose a credential.")).toBeInTheDocument();
-  expect(within(dialog).getByText("Credential prod was deleted.")).toBeInTheDocument();
+  expect(within(dialog).getByText("That credential was deleted.")).toBeInTheDocument();
 });
 
 test("leaving an unchosen Credential for its own Add credential button doesn't flag it", async () => {
@@ -287,7 +293,7 @@ test("a server fields.slug error opens the address input with the error", async 
 test("success closes the sheet, clears the draft and navigates to the session", async () => {
   const { api, router } = await openLead({ extra: created() });
   await userEvent.click(createButton());
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead"));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead/chat"));
   expect(getSheetState().parent).toBeUndefined();
   expect(hasDraft("new-agent")).toBe(false);
   expect(notify).not.toHaveBeenCalled();
@@ -388,10 +394,12 @@ test("while creating, Installing plugins… appears beside the button after 3 s"
   await act(async () => {
     vi.advanceTimersByTime(3000);
   });
-  expect(screen.getByText("Installing plugins…")).toBeInTheDocument();
+  const notice = screen.getByText("Installing plugins…");
+  expect(notice.closest("[data-slot=sheet-footer]")).not.toBeNull();
+  expect(notice).toHaveAttribute("data-shown");
 });
 
-test("a 502 shows the form error with a collapsed Show output", async () => {
+test("a plugin install failure is the footer's error, with Show output opening the output", async () => {
   await openLead({
     extra: {
       "POST /api/agents": () =>
@@ -408,10 +416,171 @@ test("a 502 shows the form error with a collapsed Show output", async () => {
     },
   });
   await userEvent.click(createButton());
-  const alert = await screen.findByText("Plugin install failed: superpowers@market.");
-  expect(alert.closest("[role=alert]")).not.toBeNull();
-  const details = screen.getByText("Show output").closest("details");
-  expect(details).not.toHaveAttribute("open");
+  const msg = await screen.findByText("Plugin install failed: superpowers@market.");
+  const alert = msg.closest("[role=alert]") as HTMLElement;
+  expect(alert.closest("[data-slot=sheet-footer]")).not.toBeNull();
+  // The output is never inline: no details, no pre in the form.
+  expect(screen.queryByText("npm ERR! nope")).toBeNull();
+  await userEvent.click(within(alert).getByRole("button", { name: "Show output" }));
+  const out = await screen.findByRole("alertdialog", { name: "Plugin install output" });
+  expect(within(out).getByText("npm ERR! nope")).toBeInTheDocument();
+  // The dialog's store is module state: close it so the next test starts without it.
+  await userEvent.click(within(out).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+});
+
+test("a plugin install failure with blank output has no Show output", async () => {
+  await openLead({
+    extra: {
+      "POST /api/agents": () =>
+        json(
+          {
+            error: {
+              code: "plugin_install_failed",
+              message: "Plugin install failed: superpowers@market.",
+              output: " \n",
+            },
+          },
+          502,
+        ),
+    },
+  });
+  await userEvent.click(createButton());
+  const msg = await screen.findByText("Plugin install failed: superpowers@market.");
+  const alert = msg.closest("[role=alert]") as HTMLElement;
+  expect(within(alert).queryByRole("button", { name: "Show output" })).toBeNull();
+});
+
+test("a failing submit with no credential chosen opens More options every time, and focuses Credential", async () => {
+  mockWorld({ credentials: [credential("work"), credential("prod")] });
+  const first = renderApp("/agents", alice);
+  await screen.findByRole("heading", { level: 1, name: "Agents" });
+  act(() => openSheet({ kind: "new-agent", template: "lead" }));
+  await sheet();
+  await vi.waitFor(() => expect(field("Display name").value).toBe("Team Lead"));
+  await userEvent.click(more());
+  await pickOption(field("Credential"), /^prod/);
+  act(() => closeSheet());
+  first.unmount();
+  // The restored draft's credential is gone and two are left: none is chosen.
+  const { api } = await open({ credentials: [credential("work"), credential("other")] });
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Ada");
+  for (let i = 0; i < 2; i++) {
+    expect(more()).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(more());
+    expect(more()).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(createButton());
+    await vi.waitFor(() => expect(field("Credential")).toHaveFocus());
+    expect(more()).toHaveAttribute("aria-expanded", "true");
+    expect(field("Credential")).toHaveAttribute("aria-invalid", "true");
+  }
+  expect(posts(api)).toHaveLength(0);
+});
+
+test("tabbing through untouched fields shows nothing", async () => {
+  const { dialog } = await open();
+  await vi.waitFor(() => expect(field("Template")).toHaveFocus());
+  for (let i = 0; i < 8; i++) await userEvent.tab();
+  expect(dialog.querySelector('[aria-invalid="true"]')).toBeNull();
+  expect(within(dialog).queryByText("Choose a template.")).toBeNull();
+  expect(within(dialog).queryByText("Enter a display name.")).toBeNull();
+});
+
+test("a template error is the field's note", async () => {
+  await open();
+  await userEvent.click(createButton());
+  const msg = await screen.findByText("Choose a template.");
+  expect(msg.closest(".field-note")).not.toBeNull();
+  await vi.waitFor(() => expect(field("Template")).toHaveFocus());
+});
+
+test("leaving a changed Template that now fails for its own New template button doesn't flag it", async () => {
+  const templates = [templateSummary("lead"), templateSummary("writer")];
+  const { dialog, queryClient } = await open({ templates });
+  await pickOption(field("Template"), /^lead/);
+  // Broken elsewhere: the chosen template now has errors, so the field's check fails.
+  templates[0] = templateSummary("lead", 2);
+  await act(() => queryClient.invalidateQueries({ queryKey: ["templates"] }));
+  await vi.waitFor(() => expect(field("Template")).toHaveTextContent("Choose a template"));
+  act(() => field("Template").focus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "New template" }));
+  await child("New template");
+  expect(within(dialog).queryByText("That template has errors; fix it first.")).toBeNull();
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
+});
+
+test("a first click on More options, with Template focused, opens it and flags nothing", async () => {
+  const { dialog } = await open();
+  await vi.waitFor(() => expect(field("Template")).toHaveFocus());
+  await userEvent.click(more());
+  expect(more()).toHaveAttribute("aria-expanded", "true");
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
+  expect(within(dialog).queryByText("Choose a template.")).toBeNull();
+});
+
+test("leaving a changed Template that now fails for More options doesn't flag it", async () => {
+  const templates = [templateSummary("lead"), templateSummary("writer")];
+  const { dialog, queryClient } = await open({ templates });
+  await pickOption(field("Template"), /^lead/);
+  templates[0] = templateSummary("lead", 2);
+  await act(() => queryClient.invalidateQueries({ queryKey: ["templates"] }));
+  await vi.waitFor(() => expect(field("Template")).toHaveTextContent("Choose a template"));
+  act(() => field("Template").focus());
+  await userEvent.click(more());
+  expect(more()).toHaveAttribute("aria-expanded", "true");
+  expect(within(dialog).queryByText("That template has errors; fix it first.")).toBeNull();
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
+});
+
+test("leaving a changed Credential that is now gone for Add credential doesn't flag it", async () => {
+  const credentials = [credential("work"), credential("prod"), credential("other")];
+  const { dialog, queryClient } = await open({ credentials });
+  await userEvent.click(more());
+  await pickOption(field("Credential"), /^prod/);
+  // Deleted elsewhere: the chosen credential is gone and two are left, so the field's check fails.
+  credentials.splice(1, 1);
+  await act(() => queryClient.invalidateQueries());
+  await vi.waitFor(() => expect(field("Credential")).toHaveTextContent("Choose a credential"));
+  act(() => field("Credential").focus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  await child("Add credential");
+  // "Choose a credential." stays as More options' reason; the field's note line is what must stay empty.
+  expect(dialog.querySelector("#field-credential-error")).not.toHaveAttribute("data-shown");
+  expect(field("Credential")).not.toHaveAttribute("aria-invalid");
+});
+
+test("leaving a changed, invalid Slug flags it", async () => {
+  await openLead();
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "!!!");
+  await userEvent.tab();
+  await vi.waitFor(() => expect(field("Slug")).toHaveFocus());
+  await userEvent.type(field("Slug"), "-bad-");
+  await userEvent.tab();
+  await vi.waitFor(() => expect(field("Slug")).toHaveAttribute("aria-invalid", "true"));
+});
+
+test("no templates: the label is plain text and a failing submit focuses the empty state", async () => {
+  const { dialog } = await open({ templates: [] });
+  expect(dialog.querySelector('label[for="field-template"]')).toBeNull();
+  const empty = within(dialog).getByText("No templates yet.");
+  await userEvent.type(field("Display name"), "Ada");
+  await userEvent.click(createButton());
+  const msg = await within(dialog).findByText("Choose a template.");
+  await vi.waitFor(() => expect(empty).toHaveFocus());
+  expect(empty.getAttribute("aria-describedby")?.split(" ")).toContain(msg.closest("[id]")?.id);
+});
+
+test("every template broken: the empty state carries the note too", async () => {
+  const { dialog } = await open({ templates: [templateSummary("lead", 1)] });
+  expect(dialog.querySelector('label[for="field-template"]')).toBeNull();
+  const empty = within(dialog).getByText(/No template is ready/);
+  expect(empty).toHaveAttribute("id", "field-template");
+  await userEvent.type(field("Display name"), "Ada");
+  await userEvent.click(createButton());
+  await within(dialog).findByText("Choose a template.");
+  await vi.waitFor(() => expect(empty).toHaveFocus());
 });
 
 test("a server projects error opens More options and focuses the group", async () => {
@@ -481,15 +650,13 @@ test("the manager picker leaves out spawned agents", async () => {
   ]);
 });
 
-test("projects: From the template, then Custom with Use template default", async () => {
+test("projects: the template's set is checked, and a toggle changes it", async () => {
   await openLead();
   await userEvent.click(more());
   const group = screen.getByRole("group", { name: /Projects/ });
-  expect(within(group).getByText("From the template")).toBeInTheDocument();
+  expect(within(group).getByRole("checkbox", { name: /docs/ })).not.toBeChecked();
   await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
-  expect(within(group).getByText("Custom")).toBeInTheDocument();
-  await userEvent.click(within(group).getByRole("button", { name: "Use template default" }));
-  expect(within(group).getByText("From the template")).toBeInTheDocument();
+  expect(within(group).getByRole("checkbox", { name: /docs/ })).toBeChecked();
 });
 
 // --- Dismissed while creating (break-ui M2) ---
@@ -511,7 +678,7 @@ test("a late success toasts Open, doesn't navigate, and clears the draft when no
   expect(router.state.location.pathname).toBe("/agents");
   expect(hasDraft("new-agent")).toBe(false);
   await act(async () => toast?.action?.run());
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead"));
+  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead/chat"));
 });
 
 test("a late success keeps the draft of a New agent reopened and typed into meanwhile", async () => {
@@ -802,18 +969,16 @@ test("the slow line is per attempt: a resubmit after a slow failure starts witho
   expect(screen.queryByText("Installing plugins…")).not.toBeInTheDocument();
 });
 
-test("toggling the grants back to the template's set is not Custom", async () => {
+test("a touched Projects group sends its set", async () => {
   const { api } = await openLead({
     extra: { "POST /api/agents": () => new Promise<Response>(() => {}) },
   });
   await userEvent.click(more());
   const group = screen.getByRole("group", { name: /Projects/ });
   await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
-  await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
-  expect(within(group).getByText("From the template")).toBeInTheDocument();
   await userEvent.click(createButton());
   await vi.waitFor(() => expect(posts(api)).toHaveLength(1));
-  expect(posts(api)[0]?.body).not.toHaveProperty("projects");
+  expect(posts(api)[0]?.body).toHaveProperty("projects", expect.arrayContaining(["docs"]));
 });
 
 test("no projects registered says so beside Add project", async () => {
@@ -830,12 +995,24 @@ test("no projects registered says so beside Add project", async () => {
 
 test("the template error waits for the list to close, and a pick doesn't flash it", async () => {
   await open();
+  await userEvent.click(createButton());
+  expect(await screen.findByText("Choose a template.")).toBeInTheDocument();
   await userEvent.click(field("Template"));
   await screen.findByRole("listbox");
-  expect(screen.queryByText("Choose a template.")).not.toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
-  expect(await screen.findByText("Choose a template.")).toBeInTheDocument();
+  expect(field("Template")).toHaveAccessibleDescription("Choose a template.");
   await pickOption(field("Template"), /^lead/);
+  // The note keeps its last text hidden (no layout shift); what counts is that it isn't shown.
+  expect(screen.getByText("Choose a template.").closest("p")).not.toHaveAttribute("data-shown");
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
+});
+
+test("opening and closing the template list untouched says nothing", async () => {
+  await open();
+  await userEvent.click(field("Template"));
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("{Escape}");
+  await act(async () => {});
   expect(screen.queryByText("Choose a template.")).not.toBeInTheDocument();
 });
 
@@ -1089,7 +1266,6 @@ test("Add project adds it to the grants as an override and focuses it", async ()
   const web = await within(group).findByRole("checkbox", { name: /web/ });
   expect(web).toBeChecked();
   expect(within(group).getByRole("checkbox", { name: /app/ })).toBeChecked();
-  expect(within(group).getByText("Custom")).toBeInTheDocument();
   await waitFor(() => expect(web).toHaveFocus());
 });
 

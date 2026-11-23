@@ -9,6 +9,7 @@ import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.
 import { insertAgent } from "../agents/testing/rows.ts";
 import { sendAs } from "../agents/testing/runtime-harness.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { asRunning } from "../test/running.ts";
 import { agentStateDir } from "../workspace/paths.ts";
 import { SWEEP_INTERVAL_MS } from "./lifecycle.ts";
 import { Reaper } from "./reaper.ts";
@@ -55,8 +56,10 @@ async function setup(o: { maxRunning?: number } = {}) {
   writeTemplate(app.factoryHome, "dev", "name: dev\ndisplay_name: Dev\nruntime: local\n");
   const lead = await app.seedAgent({
     slug: "lead",
-    config: { canSpawn: ["dev"], maxLiveSpawns: 10 },
+    config: { template: { can_spawn: ["dev"], max_live_spawns: 10 } },
   });
+  // I2 §6.2: spawning follows the spawner's running process.
+  await asRunning(app.app, lead);
   const { user } = await app.signUpUser();
   // The app's own boot sweep has finished: it can't interfere with this test's runs.
   await app.app.reaper.idle();

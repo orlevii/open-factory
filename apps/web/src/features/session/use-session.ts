@@ -150,11 +150,19 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
           // `?message=` resolves to the recipient's event, or says why it can't (UI design §2.5).
           try {
             const m = await fetchMessage(message);
-            if (m.state === "delivered" && m.recipientEvent?.agentSlug === slug) {
-              around = m.recipientEvent.seq;
+            // To this agent: its receiving event. From it (a reply to a human has no recipient event): its sending call.
+            const at =
+              m.recipientEvent?.agentSlug === slug
+                ? m.recipientEvent
+                : m.senderEvent?.agentSlug === slug
+                  ? m.senderEvent
+                  : undefined;
+            if (m.state === "delivered" && at) {
+              around = at.seq;
               setMessageSeq(around);
             } else if (m.state === "rejected") {
-              setMessageNotice({ kind: "rejected", to: m.to });
+              // The lookup names the recipient as `@slug`; the notice holds the bare slug.
+              setMessageNotice({ kind: "rejected", to: m.to.replace(/^@/, "") });
             } else if (m.state === "cancelled") {
               setMessageNotice({ kind: "cancelled" }); // U3 §6.4
             }
@@ -198,6 +206,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     () =>
       ws.listen((m) => {
         if (!("agent" in m) || m.agent !== slug) return; // other agents never touch this state
+        // The command list is the global handler's (`invalidateCommands`): no state, no commit.
+        if (m.type === "agent_commands_changed") return;
         queue.current.push(m);
         if (scheduled.current) return;
         if (document.hidden) {
@@ -295,14 +305,10 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
 
   const retry = useCallback(() => load(eventSeq), [load, eventSeq]);
 
-  /** A summary from a terminate or pin response: the view and the cached detail both take it. */
-  const setAgent = useCallback(
-    (agent: AgentSummary) => {
-      dispatch({ type: "agent", agent });
-      qc.setQueryData<AgentDetail>(["agent", agent.slug], (d) => (d ? { ...d, agent } : d));
-      void qc.invalidateQueries({ queryKey: ["agents"] });
-    },
-    [qc, dispatch],
+  /** A summary the layout brought (a terminate or pin response, a refetch): this view takes it. */
+  const adoptAgent = useCallback(
+    (agent: AgentSummary) => dispatch({ type: "agent", agent }),
+    [dispatch],
   );
 
   // Edit agent saves over this session and writes the saved summary into the detail cache: the view takes what a save
@@ -326,23 +332,6 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
       dispatch({ type: "agent_edited", fields });
     });
   }, [qc, slug, dispatch]);
-
-  /** Refetches the summary only (not the events): after a send raced a termination. */
-  const refreshAgent = useCallback(
-    () =>
-      qc.fetchQuery({ ...agentDetailQueryOptions(slug), staleTime: 0 }).then(
-        (d) => dispatch({ type: "agent", agent: d.agent }),
-        () => {},
-      ),
-    [qc, slug, dispatch],
-  );
-  // A status frame says `terminated` but carries no termination fields (who, when, the workspace):
-  // fetch them once. A failure leaves the strip without its sentence; the next load fills it.
-  const needsTermination =
-    state.agent?.status === "terminated" && state.agent.terminatedAt === undefined;
-  useEffect(() => {
-    if (needsTermination) void refreshAgent();
-  }, [needsTermination, refreshAgent]);
 
   /** The 202's item replaces its "Sending" block (U3 §13.2). Otherwise, while the socket is down no
    *  `queue` frame will come, so the accepted item shows at once (UI design §4.4); when connected the
@@ -404,8 +393,7 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     cancelItem,
     undoCancel,
     clearCancelled,
-    setAgent,
-    refreshAgent,
+    adoptAgent,
     missingEvent,
     messageSeq,
     messageNotice,

@@ -15,6 +15,7 @@ beforeAll(async () => {
     await h.close();
     await t.drop();
   };
+  await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('lead','agent')`;
   await sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
   await sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
   await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id) values
@@ -27,13 +28,13 @@ const bad = (q: Promise<unknown>) => expect(q).rejects.toThrow(/check/i);
 
 test("valid sender/recipient combinations", async () => {
   await ok(
-    sql`insert into messages (id,kind,from_user_id,to_agent_id,body) values ('1','message','u1','a1','x') returning id`,
+    sql`insert into messages (id,kind,from_user_id,to_agent_id,body,recipients) values ('1','message','u1','a1','x','{@test}') returning id`,
   );
   await ok(
-    sql`insert into messages (id,kind,from_agent_id,to_agent_id,body) values ('2','message','a1','a2','x') returning id`,
+    sql`insert into messages (id,kind,from_agent_id,to_agent_id,body,recipients) values ('2','message','a1','a2','x','{@test}') returning id`,
   );
   await ok(
-    sql`insert into messages (id,kind,from_agent_id,to_all_humans,body,state) values ('3','message','a1',true,'x','delivered') returning id`,
+    sql`insert into messages (id,kind,from_agent_id,to_all_humans,body,state,recipients) values ('3','message','a1',true,'x','delivered','{@test}') returning id`,
   );
   await ok(
     sql`insert into messages (id,kind,from_agent_id,to_agent_id,body) values ('4','member_update','a1','a2','x') returning id`,
@@ -51,7 +52,7 @@ test("valid sender/recipient combinations", async () => {
 
 test("invalid combinations are rejected", async () => {
   await bad(
-    sql`insert into messages (id,kind,from_user_id,from_agent_id,to_agent_id,body) values ('b1','message','u1','a1','a2','x')`,
+    sql`insert into messages (id,kind,from_user_id,from_agent_id,to_agent_id,body,recipients) values ('b1','message','u1','a1','a2','x','{@test}')`,
   );
   await bad(
     sql`insert into messages (id,kind,from_agent_id,subject_agent_id,notice,to_agent_id,body) values ('b2','member_update','a1','a1','denied','a2','x')`,
@@ -60,13 +61,13 @@ test("invalid combinations are rejected", async () => {
     sql`insert into messages (id,kind,from_agent_id,to_all_humans,body) values ('b3','member_update','a1',true,'x')`,
   );
   await bad(
-    sql`insert into messages (id,kind,from_agent_id,to_agent_id,to_all_humans,body) values ('b4','message','a1','a2',true,'x')`,
+    sql`insert into messages (id,kind,from_agent_id,to_agent_id,to_all_humans,body,recipients) values ('b4','message','a1','a2',true,'x','{@test}')`,
   );
   await bad(
     sql`insert into messages (id,kind,subject_agent_id,to_agent_id,body) values ('b5','peer_left','a1','a2','x')`,
   );
   await bad(
-    sql`insert into messages (id,kind,from_agent_id,to_agent_id,body,state) values ('b6','message','a1','a2','x','lost')`,
+    sql`insert into messages (id,kind,from_agent_id,to_agent_id,body,state,recipients) values ('b6','message','a1','a2','x','lost','{@test}')`,
   );
 });
 

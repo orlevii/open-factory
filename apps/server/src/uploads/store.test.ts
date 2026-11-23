@@ -236,6 +236,7 @@ test("Docker: the stored file is under the workdir mount the container sees and 
     workdir: wd,
     grantedPaths: [],
     hostSkillPaths: [],
+    templateSkillPaths: [],
     declaredMarketplaceDirs: [],
     pluginsDir: "/host/plugins",
     cliBundle: "/host/cli",

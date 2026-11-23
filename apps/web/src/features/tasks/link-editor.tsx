@@ -1,4 +1,4 @@
-import type { LinkInput } from "@open-factory/shared";
+import { type LinkInput, MSG } from "@open-factory/shared";
 import { Plus, X } from "lucide-react";
 import { type FocusEvent, useRef } from "react";
 import { FieldNote, noteDescribedBy } from "@/components/field-note";
@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { FORM_MSG } from "@/lib/form-messages";
 
 export type LinkRow = { id: string; kind: LinkInput["kind"]; target: string; title: string };
 
@@ -48,11 +49,11 @@ export function checkLink(
   const target = row.target.trim();
   if (!target) return undefined;
   if (row.kind === "url" || row.kind === "pr")
-    return isHttp(target) && target.length <= 2000 ? undefined : "Links must be http(s) URLs.";
+    return isHttp(target) && target.length <= 2000 ? undefined : MSG.linkUrl;
   if (row.kind === "file")
-    return /[\r\n]/.test(target) || target.length > 500 ? "Keep the path on one line." : undefined;
+    return /[\r\n]/.test(target) || target.length > 500 ? MSG.pathOneLine : undefined;
   const slug = target.replace(/^@/, "");
-  return knownSlugs && !knownSlugs.has(slug) ? `No agent @${slug}.` : undefined;
+  return knownSlugs && !knownSlugs.has(slug) ? FORM_MSG.noSuchAgent : undefined;
 }
 
 export const rowsToInput = (rows: LinkRow[]): LinkInput[] =>
@@ -112,6 +113,8 @@ export function LinkEditor({
         return (
           <div
             key={r.id}
+            // The row is the field: focusField scrolls all of it, note included, into view (AC3).
+            data-field=""
             className="grid grid-cols-[6rem_minmax(0,1fr)_auto] gap-x-2 [grid-template-areas:'kind_target_remove''note_note_note''title_title_title'] md:grid-cols-[6rem_minmax(0,1fr)_12rem_auto] md:[grid-template-areas:'kind_target_title_remove''note_note_note_note']"
           >
             <Select

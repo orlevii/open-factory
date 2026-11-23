@@ -1,5 +1,6 @@
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
@@ -67,7 +68,9 @@ test("starts on demand, writes one envelope turn, and persists everything in seq
       {
         id: expect.any(String),
         from: "@or",
+        fromKind: "human",
         kind: "message",
+        to: [expect.stringMatching(/^@/)],
         urgent: false,
         body: "hello",
         parts: [{ id: expect.any(String), body: "hello", createdAt: expect.any(String) }],
@@ -178,13 +181,8 @@ test("a prepareStart failure is an error event with its fix, errored, 503-style 
 test.each([
   [
     "edit_agent",
-    "The template copy /x/settings.json is missing. Re-sync the agent from its template.",
-    "The template copy /x/settings.json is missing.",
-  ],
-  [
-    "resync",
-    "Re-sync @dev to reinstall its plugins into the factory-managed location.",
-    "The plugins of @dev aren't installed in the factory-managed location.",
+    "The credential no longer exists. Edit the agent and choose a credential.",
+    "The credential no longer exists.",
   ],
 ] as const)(
   "a spawned agent's %s start error drops the fix and its advice for the terminate advice",
@@ -193,6 +191,8 @@ test.each([
       startError: new AgentStartError(message, fix, diagnosis),
       seed: async (id) => {
         await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
+        await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
+        await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
         await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
                   select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`} from agents where id = ${id}`;
         await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
@@ -220,6 +220,7 @@ test("a spawned agent keeps other fixes (secrets) unchanged", async () => {
     startError: new AgentStartError(message, "secrets"),
     seed: async (id) => {
       await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
+      await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
       await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
                   select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`} from agents where id = ${id}`;
       await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;

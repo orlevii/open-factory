@@ -1,18 +1,13 @@
 import { z } from "zod";
 import { imageStatusSchema } from "./images.ts";
 import { MSG } from "./messages.ts";
+import { modelSchema } from "./models.ts";
 import { hostSkillSchema, nameSchema, secretNameSchema } from "./names.ts";
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const TEMPLATE_FILES = ["template.yaml", "AGENTS.md", "settings.json", "mcp.json"] as const;
 export type TemplateFile = (typeof TEMPLATE_FILES)[number];
 export const templateFileSchema = z.enum(TEMPLATE_FILES);
-
-/** Passed to the CLI as `--model <m>`: a leading dash could be read as another flag. */
-const modelSchema = z
-  .string()
-  .min(1)
-  .refine((v) => !v.startsWith("-"), "Use a model alias or id such as haiku or claude-sonnet-4-5.");
 
 const pluginRef = z.string().regex(/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/, "Use name@marketplace.");
 
@@ -62,25 +57,43 @@ export const templateConfigSchema = z.object({
 });
 export type TemplateConfig = z.infer<typeof templateConfigSchema>;
 
+/**
+ * The field schemas of template.yaml, with no defaults and no transform. The overlay (config.ts) picks from
+ * this shape; a default would fill `skills: []` into every overlay.
+ */
+export const templateYamlShape = {
+  name: nameSchema,
+  display_name: z.string().min(1).max(80),
+  description: z.string().max(500).optional(),
+  runtime: z.enum(["docker", "local"]).optional(),
+  image: imageRefSchema.optional(),
+  permission_mode: z.enum(["auto", "bypass"]).optional(),
+  model: modelSchema.optional(),
+  effort: z.enum(EFFORTS).optional(),
+  projects: z.array(nameSchema).max(200).optional(),
+  skills: z.array(hostSkillSchema).max(200).optional(),
+  local_skills: z.boolean().optional(),
+  plugins: z.array(pluginRef).max(200).optional(),
+  secrets: z.array(secretNameSchema).max(200).optional(),
+  can_spawn: z.array(nameSchema).max(200).optional(),
+  max_live_spawns: z.number().int().min(0).max(50).optional(),
+  warm_window_minutes: z.number().int().min(1).max(1440).optional(),
+};
+
 /** template.yaml as written (snake_case, strict), transformed into TemplateConfig. */
 export const templateYamlSchema = z
   .strictObject({
-    name: nameSchema,
-    display_name: z.string().min(1).max(80),
-    description: z.string().max(500).default(""),
-    runtime: z.enum(["docker", "local"]).default("docker"),
-    image: imageRefSchema.optional(),
-    permission_mode: z.enum(["auto", "bypass"]).default("auto"),
-    model: modelSchema.optional(),
-    effort: z.enum(EFFORTS).optional(),
-    projects: z.array(nameSchema).default([]),
-    skills: z.array(hostSkillSchema).default([]),
-    local_skills: z.boolean().default(true),
-    plugins: z.array(pluginRef).default([]),
-    secrets: z.array(secretNameSchema).default([]),
-    can_spawn: z.array(nameSchema).default([]),
-    max_live_spawns: z.number().int().min(0).max(50).default(5),
-    warm_window_minutes: z.number().int().min(1).max(1440).optional(),
+    ...templateYamlShape,
+    description: templateYamlShape.description.default(""),
+    runtime: templateYamlShape.runtime.default("docker"),
+    permission_mode: templateYamlShape.permission_mode.default("auto"),
+    projects: templateYamlShape.projects.default([]),
+    skills: templateYamlShape.skills.default([]),
+    local_skills: templateYamlShape.local_skills.default(true),
+    plugins: templateYamlShape.plugins.default([]),
+    secrets: templateYamlShape.secrets.default([]),
+    can_spawn: templateYamlShape.can_spawn.default([]),
+    max_live_spawns: templateYamlShape.max_live_spawns.default(5),
   })
   .transform(
     (y): TemplateConfig => ({

@@ -46,7 +46,7 @@ test.each([
     {
       "template.yaml": "name: tech-lead\ndisplay_name: X\nmodel: --dangerously-skip-permissions\n",
     },
-    /Use a model alias or id such as haiku or claude-sonnet-4-5\./,
+    /Can't start with a dash\./,
   ],
   [
     "name != folder",

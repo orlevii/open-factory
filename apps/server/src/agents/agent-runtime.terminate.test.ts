@@ -823,6 +823,7 @@ test("a batch write in flight and the termination both complete: no deadlock", a
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
+    recipients: ["@test"],
     body: "mid-batch",
     urgent: false,
   });
@@ -957,6 +958,7 @@ test("last_activity_at is written after the batch commits, as its own statement 
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
+    recipients: ["@test"],
     body: "mid-batch",
     urgent: false,
   });

@@ -343,6 +343,7 @@ test("a hand-off of a row this runtime already wrote (boot wakes got it first) n
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body: "STOP",
     urgent: true,
   });
@@ -427,6 +428,7 @@ test("the first batch after a notice begins with it, even ahead of an older pend
   await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body: "old",
     urgent: false,
   });
@@ -512,6 +514,7 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body: "with an id",
     urgent: false,
     clientMessageId: cid,

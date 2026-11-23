@@ -40,7 +40,7 @@ test("agent tables exist; seq is unique per agent; deleting an agent cascades", 
   await expect(
     sql`insert into session_events (agent_id, seq, type, payload) values ('a1', 1, 'x', '{}')`,
   ).rejects.toThrow(/session_events_agent_seq_unique/);
-  await sql`insert into messages (id, from_user_id, to_agent_id, body) values ('m1', 'u1', 'a1', 'hi')`;
+  await sql`insert into messages (id, from_user_id, to_agent_id, body, recipients) values ('m1', 'u1', 'a1', 'hi', '{@test}')`;
   const [m] =
     await sql`select kind, state, urgent, delivered_turn_id from messages where id = 'm1'`;
   expect(m).toEqual({ kind: "message", state: "pending", urgent: false, delivered_turn_id: null });
@@ -61,9 +61,9 @@ test("0003: system rows need no user and a notice; user rows need a user and no 
     sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('n2','system',null,'a3','x')`,
   ).rejects.toThrow(/check/i);
   await expect(
-    sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('n3','message',null,'a3','x')`,
+    sql`insert into messages (id, kind, from_user_id, to_agent_id, body,recipients) values ('n3','message',null,'a3','x','{@test}')`,
   ).rejects.toThrow(/check/i);
-  await sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('m2','message','u2','a3','x')`;
+  await sql`insert into messages (id, kind, from_user_id, to_agent_id, body,recipients) values ('m2','message','u2','a3','x','{@test}')`;
   const [a] =
     await sql`select attempting, rate_limit_notice_owed, runtime_journal, last_error, error_kind from agents where id = 'a3'`;
   expect(a).toEqual({

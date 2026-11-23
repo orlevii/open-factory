@@ -156,6 +156,7 @@ const humanSend = async (body: string) => {
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body,
     urgent: false,
   });

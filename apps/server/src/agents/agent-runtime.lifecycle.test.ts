@@ -70,6 +70,7 @@ test("starts on demand, writes one envelope turn, and persists everything in seq
         from: "@or",
         fromKind: "human",
         kind: "message",
+        to: [expect.stringMatching(/^@/)],
         urgent: false,
         body: "hello",
         parts: [{ id: expect.any(String), body: "hello", createdAt: expect.any(String) }],

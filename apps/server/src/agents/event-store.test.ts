@@ -85,6 +85,7 @@ test("turns and messages", async () => {
   const m = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a1",
+    recipients: ["@test"],
     body: "hi",
     urgent: true,
   });
@@ -106,6 +107,7 @@ test("pendingQueue returns system notices first, including sender-less rows", as
   await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a2",
+    recipients: ["@test"],
     body: "older",
     urgent: false,
   });

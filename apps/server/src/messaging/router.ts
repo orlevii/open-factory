@@ -166,6 +166,8 @@ export class Router {
           kind: "message",
           fromAgentId: from.agentId,
           to: r.kind === "humans" ? "all" : { userId: r.userId },
+          // Task 1.7: the real list; one element for now.
+          recipients: [r.kind === "humans" ? "@humans" : `@${r.handle}`],
           body,
           urgent,
           fromToolUseId: from.toolUseId ?? null,
@@ -187,6 +189,7 @@ export class Router {
         const row = await this.d.store.createMessage({
           from: { agentId: from.agentId },
           toAgentId: r.agent.id,
+          recipients: [`@${r.agent.slug}`], // Task 1.7: the real list
           body,
           urgent,
           fromToolUseId: from.toolUseId ?? null,
@@ -240,7 +243,7 @@ export class Router {
     // ended, the message been written, its uploads been claimed by it). The insert below settles a concurrent repeat.
     if (clientMessageId) {
       const earlier = await this.d.store.byClientMessageId(from.userId, clientMessageId);
-      if (earlier) return this.repeated(earlier);
+      if (earlier[0]) return this.repeated(earlier[0]); // Task 1.7: one result per recipient
     }
     const agent = await this.d.store.agentBySlug(slug);
     if (!agent) return notFound(slug);
@@ -265,6 +268,7 @@ export class Router {
               {
                 fromUserId: from.userId,
                 toAgentId: agent.id,
+                recipients: [`@${agent.slug}`], // Task 1.7: the real list
                 body: fullBody,
                 urgent,
                 clientMessageId,
@@ -277,6 +281,7 @@ export class Router {
                 {
                   from: { userId: from.userId },
                   toAgentId: agent.id,
+                  recipients: [`@${agent.slug}`], // Task 1.7: the real list
                   body: fullBody,
                   urgent,
                   attachments,

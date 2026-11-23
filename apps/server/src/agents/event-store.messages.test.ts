@@ -31,6 +31,7 @@ test("pendingQueue names agent senders and subjects; notices first", async () =>
   const m = await store.createMessage({
     from: { agentId: "a1" },
     toAgentId: "a2",
+    recipients: ["@test"],
     body: "hi",
     urgent: false,
   });
@@ -87,6 +88,7 @@ test("bootWakes ignores young updates and peer rows", async () => {
 test("@humans fans out one inbox item per existing user, delivered at once", async () => {
   const { row, userIds } = await store.createHumanMessage({
     kind: "message",
+    recipients: ["@humans"],
     fromAgentId: "a1",
     to: "all",
     body: "hey",
@@ -116,6 +118,7 @@ test("inboxPage pages newest first with a cursor and links the sender's tool cal
   for (let i = 0; i < 3; i++) {
     const { row } = await store.createHumanMessage({
       kind: "message",
+      recipients: ["@humans"],
       fromAgentId: "a1",
       to: { userId: "u1" },
       body: `m${i}`,
@@ -138,6 +141,7 @@ test("markPending clears delivered_event_seq; rejected is a state", async () => 
   const m = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a2",
+    recipients: ["@test"],
     body: "x",
     urgent: false,
   });
@@ -162,6 +166,7 @@ test("rows stamped in the same millisecond keep insert order", async () => {
           await store.createMessage({
             from: { userId: "u1" },
             toAgentId: "a4",
+            recipients: ["@test"],
             body,
             urgent: false,
           })
@@ -178,6 +183,7 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
   const m = await store.createMessage({
     from: { agentId: "a1" },
     toAgentId: "a2",
+    recipients: ["@test"],
     body: "x",
     urgent: false,
   });
@@ -185,6 +191,7 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
   expect(lookup).toMatchObject({ kind: "message", from: "dev", to: "b", state: "pending" });
   const human = await store.createHumanMessage({
     kind: "message",
+    recipients: ["@humans"],
     fromAgentId: "a1",
     to: "all",
     body: "h",
@@ -215,6 +222,7 @@ test("messageLookup satisfies the shared schema and renders from and to", async 
   const fromUser = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a2",
+    recipients: ["@test"],
     body: "u",
     urgent: false,
   });
@@ -253,6 +261,7 @@ test("inbox preview is code-point safe", async () => {
   await t.sql`delete from messages where to_user_id is not null or to_all_humans`;
   await store.createHumanMessage({
     kind: "message",
+    recipients: ["@humans"],
     fromAgentId: "a1",
     to: { userId: "u1" },
     body: "😀".repeat(300),
@@ -266,6 +275,7 @@ test("markRejected only touches pending rows", async () => {
   const m = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a2",
+    recipients: ["@test"],
     body: "x",
     urgent: false,
   });
@@ -287,12 +297,14 @@ test("bootWakes orders by deliverable rows only", async () => {
   const m5 = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a5",
+    recipients: ["@test"],
     body: "m",
     urgent: false,
   });
   const m6 = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a6",
+    recipients: ["@test"],
     body: "m",
     urgent: false,
   });
@@ -310,6 +322,7 @@ test("a message row can be cancelled and carries a client id", async () => {
   const m = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: "a3",
+    recipients: ["@test"],
     body: "hi",
     urgent: false,
     clientMessageId: CID,
@@ -324,6 +337,7 @@ test("the same sender can't reuse a client id", async () => {
     store.createMessage({
       from: { userId: "u2" },
       toAgentId: "a4",
+      recipients: ["@test"],
       body,
       urgent: false,
       clientMessageId: CID,
@@ -334,7 +348,14 @@ test("the same sender can't reuse a client id", async () => {
 
 test("U3 §13.2: createClientMessage inserts once per (sender, client id), even concurrently", async () => {
   const cid = "6f1c1c2e-8f7e-4a43-9b7d-2f4d7f1f0a01";
-  const m = { fromUserId: "u1", toAgentId: "a1", body: "x", urgent: false, clientMessageId: cid };
+  const m = {
+    fromUserId: "u1",
+    toAgentId: "a1",
+    recipients: ["@test"],
+    body: "x",
+    urgent: false,
+    clientMessageId: cid,
+  };
   const results = await Promise.all([1, 2, 3, 4].map(() => store.createClientMessage(m)));
   expect(results.filter((r) => r.created)).toHaveLength(1);
   expect(new Set(results.map((r) => r.row.id)).size).toBe(1);
@@ -345,4 +366,23 @@ test("U3 §13.2: createClientMessage inserts once per (sender, client id), even 
   expect(
     (await t.sql`select count(*)::int as n from messages where client_message_id = ${cid}`)[0]?.n,
   ).toBe(2);
+});
+
+test("one client id covers a fan-out: a second recipient agent is a second row, listed together", async () => {
+  const cid = "0b8a3a52-6c1e-4c0e-8f35-7d5b1a9e2c10";
+  const m = {
+    fromUserId: "u1",
+    recipients: ["@test", "@other"],
+    body: "x",
+    urgent: false,
+    clientMessageId: cid,
+  };
+  const a = await store.createClientMessage({ ...m, toAgentId: "a1" });
+  const b = await store.createClientMessage({ ...m, toAgentId: "a2" });
+  expect([a.created, b.created]).toEqual([true, true]);
+  const again = await store.createClientMessage({ ...m, toAgentId: "a2" });
+  expect(again).toMatchObject({ created: false, row: { id: b.row.id } });
+  const rows = await store.byClientMessageId("u1", cid);
+  expect(rows.map((r) => r.toAgentId).sort()).toEqual(["a1", "a2"]);
+  expect(rows[0]?.recipients).toEqual(["@test", "@other"]);
 });

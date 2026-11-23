@@ -57,7 +57,7 @@ test("AC 1: send_message to a hibernated agent wakes it with agent_message; the 
   const out = JSON.parse(text(r));
   expect(out).toMatchObject({ to: "bob", status: "hibernated" });
   await settle("bob");
-  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "ada", kind: "message", body: "ping" });
+  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "@ada", kind: "message", body: "ping" });
   const b = await h.app.store.agentBySlug("bob");
   const started = (await h.app.store.after(b?.id ?? "", 0, 100)).map((e) => e.event);
   expect(started).toContainEqual(
@@ -160,6 +160,7 @@ test("a row loaded by init() and handed over again is written once and still wak
   const row = await h.app.store.createMessage({
     from: { agentId: a.id },
     toAgentId: b.id,
+    recipients: ["@test"],
     body: "once",
     urgent: false,
   });
@@ -263,6 +264,7 @@ test("archive between resolve and hand-off marks the row rejected", async () => 
   const row = await h.app.store.createMessage({
     from: { agentId: a.id },
     toAgentId: b.id,
+    recipients: ["@test"],
     body: "late",
     urgent: false,
   });
@@ -684,6 +686,7 @@ test("deliver with a reason wakes with it: a spawned agent's first wake records 
   const row = await h.app.store.createMessage({
     from: { agentId: ada },
     toAgentId: bob,
+    recipients: ["@test"],
     body: "your brief",
     urgent: false,
   });
@@ -693,5 +696,5 @@ test("deliver with a reason wakes with it: a spawned agent's first wake records 
   expect(started).toContainEqual(
     expect.objectContaining({ type: "process_started", reason: "spawned" }),
   );
-  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "ada", body: "your brief" });
+  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "@ada", body: "your brief" });
 });

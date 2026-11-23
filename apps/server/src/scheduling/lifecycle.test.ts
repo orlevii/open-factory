@@ -111,6 +111,7 @@ test("a mid-turn target gets the row written at once", async () => {
   const row = await h.app.store.createMessage({
     from: { userId },
     toAgentId: await idOf("ceo"),
+    recipients: ["@test"],
     body: "go",
     urgent: false,
   });
@@ -136,6 +137,7 @@ test("hibernated and queued at a cap of 1: the row waits and a second firing rep
   const b = await h.app.store.createMessage({
     from: { userId },
     toAgentId: await idOf("busy"),
+    recipients: ["@test"],
     body: "hold the slot",
     urgent: false,
   });

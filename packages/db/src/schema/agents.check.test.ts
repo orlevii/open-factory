@@ -58,3 +58,13 @@ test("kind is persistent or ephemeral; new columns default", async () => {
   expect(l).toMatchObject({ workspace_pinned: false, workspace_deleted_at: null });
   expect(l?.last_activity_at).toBeInstanceOf(Date);
 });
+test("a kind='message' row needs its recipients; other kinds don't", async () => {
+  await expect(sql`insert into messages (id, kind, from_agent_id, to_agent_id, body)
+                   values ('r1','message','lead','lead','x')`).rejects.toMatchObject({
+    code: "23514",
+  });
+  await sql`insert into messages (id, kind, from_agent_id, to_agent_id, body, recipients)
+            values ('r2','message','lead','lead','x', ${["@lead"]})`;
+  await sql`insert into messages (id, kind, subject_agent_id, notice, to_agent_id, body)
+            values ('r3','peer_joined','lead','peer','lead','x')`;
+});

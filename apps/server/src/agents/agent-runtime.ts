@@ -336,6 +336,7 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   kind: kindOf(e.row),
   from: e.from,
   fromKind: e.fromKind,
+  ...(e.row.recipients ? { to: e.row.recipients } : {}),
   urgent: e.row.urgent,
   body: e.row.body,
   createdAt: e.row.createdAt,

@@ -130,7 +130,13 @@ async function agent(o: { status?: string } = {}): Promise<string> {
   return id;
 }
 const pending = (id: string, body: string) =>
-  store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
+  store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: id,
+    recipients: ["@test"],
+    body,
+    urgent: false,
+  });
 const openTurn = (id: string) => store.openTurn(id, null);
 const setJournal = (id: string, j: Omit<RuntimeJournal, "takenAt">) =>
   store.setRuntimeJournal(id, { ...j, takenAt: new Date().toISOString() });

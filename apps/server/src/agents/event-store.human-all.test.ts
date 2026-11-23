@@ -16,6 +16,7 @@ test("a message to @humans with no users still writes its row and no inbox items
   const store = new EventStore(t.db);
   const { row, userIds } = await store.createHumanMessage({
     kind: "message",
+    recipients: ["@humans"],
     fromAgentId: "a1",
     to: "all",
     body: "anyone?",

@@ -172,6 +172,8 @@ export const messages = pgTable(
     toAllHumans: boolean("to_all_humans").notNull().default(false),
     fromToolUseId: text("from_tool_use_id"),
     deliveredEventSeq: integer("delivered_event_seq"),
+    // I1: the full recipient list of a `kind='message'` row, as `@handle`s (a fan-out writes one row per agent).
+    recipients: text("recipients").array(),
     body: text("body").notNull(),
     urgent: boolean("urgent").notNull().default(false),
     state: text("state").notNull().default("pending"),
@@ -201,8 +203,9 @@ export const messages = pgTable(
       .on(t.deliveredTurnId)
       .where(sql`${t.deliveredTurnId} is not null`),
     uniqueIndex("messages_client_id_unique")
-      .on(t.fromUserId, t.clientMessageId)
+      .on(t.fromUserId, t.clientMessageId, t.toAgentId)
       .where(sql`${t.clientMessageId} is not null`),
+    check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipients} IS NOT NULL`),
   ],
 );
 

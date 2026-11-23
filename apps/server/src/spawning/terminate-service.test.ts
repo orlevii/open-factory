@@ -201,6 +201,7 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   const direct = await t.app.store.createMessage({
     from: { userId: user.id },
     toAgentId: a.id,
+    recipients: ["@test"],
     body: "are you there?",
     urgent: false,
   });
@@ -272,6 +273,7 @@ test("rows handed over during the provisional window are rejected once it commit
     const direct = await t.app.store.createMessage({
       from: { userId: user.id },
       toAgentId: child.id,
+      recipients: ["@test"],
       body: "late",
       urgent: false,
     });
@@ -297,6 +299,7 @@ test("a failed transaction undoes the provisional latch: what arrived meanwhile 
   const row = await t.app.store.createMessage({
     from: { userId: user.id },
     toAgentId: child.id,
+    recipients: ["@test"],
     body: "meanwhile",
     urgent: false,
   });

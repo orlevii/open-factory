@@ -101,6 +101,7 @@ const send = async (body: string, urgent = false) => {
   const row = await store.createMessage({
     from: { userId: "smoke" },
     toAgentId: rt.agent.id,
+    recipients: ["@test"],
     body,
     urgent,
   });

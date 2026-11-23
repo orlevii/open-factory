@@ -1,8 +1,7 @@
 import { signUpSchema } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
-import { flushSync } from "react-dom";
+import { useRef, useState } from "react";
 import { z } from "zod";
 import { AuthCard } from "@/components/auth-card";
 import {
@@ -17,8 +16,8 @@ import {
 } from "@/components/auth-error";
 import { ErrorLine } from "@/components/error-line";
 import { FormField } from "@/components/form-field";
-import { focusField } from "@/components/forms/focus-field";
 import { NO_OUTCOME, useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { signUpStateQueryOptions } from "@/features/auth/api";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
@@ -93,45 +92,42 @@ function SignInLink() {
 }
 
 type Values = Record<AuthField, string>;
-type Errors = Partial<Record<AuthField, string>>;
+const FIELDS: readonly AuthField[] = ["name", "handle", "email", "password"];
 
 function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [values, setValues] = useState<Values>({ name: "", handle: "", email: "", password: "" });
-  const [errors, setErrors] = useState<Errors>({});
   const o = useOutcome();
   const [submitting, setSubmitting] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const check = (field: AuthField) => () =>
+    signUpSchema.shape[field].safeParse(values[field]).error?.issues[0]?.message;
+  const f = useFieldErrors({
+    form: formRef,
+    fields: FIELDS,
+    checks: {
+      name: check("name"),
+      handle: check("handle"),
+      email: check("email"),
+      password: check("password"),
+    },
+  });
 
-  // Editing a field clears its error; there is no live re-validation while typing.
   const set = (field: AuthField, value: string) => {
     setValues((v) => ({ ...v, [field]: value }));
-    setErrors((e) => (e[field] ? { ...e, [field]: undefined } : e));
+    f.change(field);
   };
 
-  const showFieldErrors = (form: HTMLFormElement, next: Errors) => {
-    flushSync(() => setErrors(next));
-    focusField(form);
-  };
-
-  async function submit(form: HTMLFormElement) {
+  async function submit() {
     o.clear();
-    const parsed = signUpSchema.safeParse(values);
-    if (!parsed.success) {
-      const next: Errors = {};
-      for (const issue of parsed.error.issues) {
-        const field = issue.path[0] as AuthField;
-        next[field] ??= issue.message;
-      }
-      showFieldErrors(form, next);
-      return;
-    }
-    setErrors({});
+    if (!f.submit()) return;
+    const parsed = signUpSchema.parse(values);
     setSubmitting(true);
     try {
       // `invite` isn't a user field the client knows; the server's catch-all consumes it (spec §9.3).
-      const withInvite = { ...parsed.data, ...(invite ? { invite } : {}) };
-      const body: typeof parsed.data = withInvite;
+      const withInvite = { ...parsed, ...(invite ? { invite } : {}) };
+      const body: typeof parsed = withInvite;
       const failure = await authClient.signUp.email(body).then(
         ({ error }) => (error ? { error } : null),
         (thrown: unknown) => ({ thrown }),
@@ -140,8 +136,7 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
         const m = mapAuthFailure(failure);
         if (bootstrap && "error" in failure && authErrorCode(failure.error) === "invite_required")
           m.message = INVITE_LOST_RACE_MESSAGE;
-        if (m.field) showFieldErrors(form, { [m.field]: m.message });
-        else o.fail(m.message);
+        if (!f.server(m.field ? { [m.field]: m.message } : undefined)) o.fail(m.message);
         return;
       }
       await refreshSession(qc);
@@ -160,7 +155,8 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
       pendingLabel="Signing up…"
       submitting={submitting}
       outcome={o.outcome}
-      onSubmit={(form) => void submit(form)}
+      ref={formRef}
+      onSubmit={() => void submit()}
       footer={<SignInLink />}
     >
       {bootstrap && <p className="text-[0.8125rem] leading-[1.125rem]">{FIRST_USER_MESSAGE}</p>}
@@ -171,7 +167,8 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
         autoFocus
         value={values.name}
         onChange={(e) => set("name", e.target.value)}
-        error={errors.name}
+        onBlur={(e) => f.blur("name", e)}
+        error={f.errors.name}
       />
       <FormField
         name="handle"
@@ -186,7 +183,8 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
         className="font-mono"
         value={values.handle}
         onChange={(e) => set("handle", e.target.value.toLowerCase())}
-        error={errors.handle}
+        onBlur={(e) => f.blur("handle", e)}
+        error={f.errors.handle}
       />
       <FormField
         name="email"
@@ -195,7 +193,8 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
         autoComplete="email"
         value={values.email}
         onChange={(e) => set("email", e.target.value)}
-        error={errors.email}
+        onBlur={(e) => f.blur("email", e)}
+        error={f.errors.email}
       />
       <FormField
         name="password"
@@ -205,7 +204,8 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
         help="At least 8 characters."
         value={values.password}
         onChange={(e) => set("password", e.target.value)}
-        error={errors.password}
+        onBlur={(e) => f.blur("password", e)}
+        error={f.errors.password}
       />
     </AuthCard>
   );

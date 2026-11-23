@@ -491,10 +491,11 @@ test("two config notices before delivery are one pending row: the union of the l
 
 test("concurrent merges through the store never create two rows", async () => {
   const m = (line: string) =>
-    store.createNotice(
-      { toAgentId: agentId, notice: "config_changed", body: notices.configChanged([line]) },
-      { merge: true },
-    );
+    store.createNotice({
+      toAgentId: agentId,
+      notice: "config_changed",
+      body: notices.configChanged([line]),
+    });
   await Promise.all([m("b"), m("a"), m("c")]);
   const rows = await configRows();
   expect(rows).toHaveLength(1);
@@ -528,10 +529,11 @@ test("a change landing while the start is in prepare is held for the next proces
   });
   const p = send("hi");
   await h.prepared(1); // the start read the config (or is about to): the change may be missing from it
-  const row = await store.createNotice(
-    { toAgentId: agentId, notice: "config_changed", body: CONFIG },
-    { merge: true },
-  );
+  const row = await store.createNotice({
+    toAgentId: agentId,
+    notice: "config_changed",
+    body: CONFIG,
+  });
   const adopted = rt.adoptNotice(row.id); // queued behind the start job
   open();
   await p;

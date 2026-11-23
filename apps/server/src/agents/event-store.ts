@@ -1114,8 +1114,8 @@ export class EventStore {
    * A system notice from `@factory`. One pending notice of each type per agent: a second one replaces the pending
    * one's body (same row); a written (delivered) one, or one in `inFlightIds`, is never touched.
    *
-   * `merge` (I2 §7.3, `config_changed`): the pending body's lines and the new body's are united, sorted, instead of
-   * replaced, and the row's `createdAt` moves to now, because it now holds a change newer than any process already
+   * `config_changed` (I2 §7.3) merges instead: the pending body's lines and the new body's are united, sorted, instead
+   * of replaced (no other type's body has lines to unite), and the row's `createdAt` moves to now, because it now holds a change newer than any process already
    * running (the runtime holds such rows for the next process). Serialised per agent and type, so two concurrent
    * merges never create two rows.
    */
@@ -1124,7 +1124,6 @@ export class EventStore {
     o: {
       /** Ids written to a process but not yet marked delivered: never replaced or merged into. */
       inFlightIds?: string[];
-      merge?: boolean;
     } = {},
   ): Promise<MessageRow> {
     const inFlightIds = o.inFlightIds ?? [];
@@ -1135,7 +1134,7 @@ export class EventStore {
       eq(messages.state, "pending"),
       ...(inFlightIds.length ? [notInArray(messages.id, inFlightIds)] : []),
     );
-    if (o.merge)
+    if (m.notice === "config_changed")
       return this.db.transaction(async (tx) => {
         await tx.execute(
           sql`select pg_advisory_xact_lock(hashtext(${`notice:${m.notice}:${m.toAgentId}`}))`,

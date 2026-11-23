@@ -447,10 +447,11 @@ export class AgentRuntimes {
     if (!lines.length) return;
     const rt = await this.get(agentId);
     if (rt) return rt.recordConfigNotice(lines);
-    const row = await this.d.store.createNotice(
-      { toAgentId: agentId, notice: "config_changed", body: notices.configChanged(lines) },
-      { merge: true },
-    );
+    const row = await this.d.store.createNotice({
+      toAgentId: agentId,
+      notice: "config_changed",
+      body: notices.configChanged(lines),
+    });
     await (await this.get(agentId))?.adoptNotice(row.id);
   }
 

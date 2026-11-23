@@ -100,9 +100,12 @@ export class TemplateIndex {
   private readonly config: Config;
   private readonly log: Pick<FastifyBaseLogger, "error"> | undefined;
   private readonly listeners: TemplateChangeListener[] = [];
-  /** Per-template serial dispatch chains (in memory: a crash loses a pending dispatch, spec §7.1). */
-  /** One parse-upsert-CAS at a time per template, so a scan always compares against what its predecessor wrote. */
+  /**
+   * One parse-upsert-CAS (and one row delete) at a time per template, so a scan always compares against what its
+   * predecessor wrote.
+   */
   private readonly locks = new KeyLock();
+  /** Per-template serial dispatch chains (in memory: a crash loses a pending dispatch, spec §7.1). */
   private readonly queues = new Map<string, Promise<void>>();
 
   constructor(d: { db: Db; config: Config; log?: Pick<FastifyBaseLogger, "error"> }) {
@@ -318,9 +321,7 @@ export class TemplateIndex {
   private async scanOneFull(name: string, by: string) {
     const dir = this.folder(name);
     if (!(await isDir(dir)) || !(await readOrNull(path.join(dir, "template.yaml")))) {
-      await this.locks.run(name, () =>
-        this.db.delete(schema.templates).where(eq(schema.templates.name, name)),
-      );
+      await this.deleteRow(name);
       return undefined;
     }
     return this.index(name, await this.context(), by);
@@ -435,7 +436,7 @@ export class TemplateIndex {
     try {
       st = await lstat(dir);
     } catch {
-      await this.db.delete(schema.templates).where(eq(schema.templates.name, name));
+      await this.deleteRow(name);
       throw notFound(name);
     }
     const users = await this.db
@@ -456,7 +457,14 @@ export class TemplateIndex {
     }
     if (st.isSymbolicLink()) await unlink(dir);
     else await rm(dir, { recursive: true });
-    await this.db.delete(schema.templates).where(eq(schema.templates.name, name));
+    await this.deleteRow(name);
+  }
+
+  /** Under the template's lock, so an index in flight can't upsert the row back after the delete. */
+  private deleteRow(name: string) {
+    return this.locks.run(name, () =>
+      this.db.delete(schema.templates).where(eq(schema.templates.name, name)),
+    );
   }
 
   /** For agent starts and creation: the validated template, its folder, its parts and its ConfigDoc. */

@@ -832,13 +832,10 @@ export class AgentRuntime {
    * Adds (or refreshes) a `@factory` notice. Call inside a job. A new notice goes ahead of every non-notice entry
    * (older pending messages, rolled-back batches); a replaced pending one only changes its body. Starts nothing.
    */
-  async addNotice(type: NoticeType, body: string, o: { merge?: boolean } = {}) {
+  async addNotice(type: NoticeType, body: string) {
     const row = await this.d.store.createNotice(
       { toAgentId: this.agent.id, notice: type, body },
-      {
-        inFlightIds: this.inFlight.flat().map((e) => e.row.id),
-        ...(o.merge ? { merge: true } : {}),
-      },
+      { inFlightIds: this.inFlight.flat().map((e) => e.row.id) },
     );
     this.placeNotice(row);
     this.publishQueue();
@@ -870,7 +867,7 @@ export class AgentRuntime {
   recordConfigNotice(lines: string[]): Promise<void> {
     return this.run(async () => {
       if (this.terminationCommitted || !lines.length) return;
-      await this.addNotice("config_changed", notices.configChanged(lines), { merge: true });
+      await this.addNotice("config_changed", notices.configChanged(lines));
     });
   }
 

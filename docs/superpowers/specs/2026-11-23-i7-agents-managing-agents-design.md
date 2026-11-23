@@ -340,13 +340,11 @@ Registered together by `orgTools(d)` (`mcp/tools/org-tools.ts`, one file per gro
 1. checks `baseHash` against the file on disk (409 on a miss);
 2. computes the issues of the whole template as it would be written: `validate(name, file, content)`, the existing method (`:272`). For an agent actor it also runs `touchesLocalRuntime` and `agentPolicyIssues` (§6.1);
 3. refuses on **errors the write caused**, meaning errors absent from the current template's issues, compared by `message` and `path` (I2's overlay rule). An agent can therefore still edit, and fix, a template that is already broken in another file. Humans keep today's behaviour of saving with errors, because their editor shows them;
-4. records the write's author before the rename, then writes with temp + rename and scans once, still inside the lock.
-   - The author is recorded only when the write leaves the template valid **and** changes its `ConfigDoc` hash. An `AGENTS.md`-only write, or a write into a template that is still broken, changes nothing that dispatches.
-   - It goes in an in-memory map, `templateAuthors.set(name, { actor, expectedHash })`, where `expectedHash` is the hash the write produces.
-   - When I2's compare-and-set winner dispatches `templateChanged` and the new hash equals `expectedHash`, the winner takes `by` and the actor from the entry, whoever it is (this writer's scan, a watcher, or a start's `loadValid`). Otherwise `by` is `"file change"`.
-   - The entry is removed once it is used. The scan runs inside the lock, so a second writer can't replace the entry before then.
+4. writes with temp + rename, runs `scanOne`, and runs I2's compare-and-set, all still inside the lock. It passes `by` and the actor **directly** to the `templateChanged` dispatch.
+   - The per-template scan (`scanOne`, and `loadValid`'s index of one template) takes the **same** `KeyedLock`, so no other scan can win the compare-and-set for a write in progress. A start calling `loadValid` just waits briefly for a write that is under way. Scans of different templates don't wait on each other.
+   - This can't deadlock: dispatch is never awaited (I2 §7.1), and the writer's scan doesn't wait on any runtime job.
    
-   So the attribution, the self-wake (§9.5) and the manager notice (§8.2) never depend on which scan wins.
+   So the attribution, the self-wake (§9.5) and the manager notice (§8.2) always carry the writer.
 
 **Every template write path takes the lock:**
 - `writeFile`;
@@ -377,11 +375,13 @@ The policy's `can_spawn` runtime lookups read other templates' last valid parse 
 
 ### 7.5 `update_agent`
 
-- **Order:** both parts are validated before anything is written, so a refusal of either writes nothing:
-  1. `config`: the version, the schema, `validateEffective` and the policy;
-  2. the identity fields: names resolve, the manager has no cycle, and the policy.
+- **All or nothing.** The overlay (`agents.config`) and the identity fields live on the same `agents` row, so validation and both writes run in **one transaction**. `saveOverlay` and `AgentService.update` each accept an optional `tx`, and `update_agent` runs both inside one `db.transaction`:
+  1. lock the row (`FOR NO KEY UPDATE`);
+  2. `config`: the version, the schema, `validateEffective` and the policy;
+  3. the identity fields: names resolve, the manager has no cycle, and the policy;
+  4. write both.
   
-  Then the overlay is saved, then the identity. Only a conflicting write landing between the two saves (for example a human archiving the agent) can fail the second one. In that case the result says which part was saved.
+  Any refusal rolls back, and nothing is written. The events (`config_changed`, peer events, `org_action`, `report_config_changed`) and the restart requests are emitted **after the commit**.
 - Identity fields go through `AgentService.update(slug, patch, actor)`, with today's restart rules. A human edit of `description` sets `description_by` to null; an agent edit sets it to the agent's id (§10).
 - `config` goes through the overlay save, `ConfigService.saveOverlay(slug, overlay, baseVersion, actor)`:
   - the version check (stale gives the Q14 sentence);
@@ -473,7 +473,9 @@ The policy's `can_spawn` runtime lookups read other templates' last valid parse 
 | 11 | Running, no turn work, nothing lost, task notifications still owed (`owedNotifications > 0`) | Not stopped now, because that would drop a finished task's result: `requestRestart(id, {changes})`, the existing restart-when-idle path, which the owed bound releases within about 30 s (`:3400`). `{status: "restart_pending", note: "@dev restarts in a moment, once a finished task's result is delivered."}` |
 | 12 | Running, idle, nothing lost or owed | An idle restart (§9.2.2). `{status: "restarted_idle"}` |
 
-**The local runtime.** Rows 6, 9 and 10 start a process. For a target whose runtime is `local`, while the local runtime is disabled, they are refused with `runtime_disabled`, as today's Restart is. Rows 11 and 12 start nothing.
+**The local runtime.** Rows 6, 9 and 10 start a process. For a target whose runtime is `local`, while the local runtime is disabled **in this factory** (`runtimeAllowed` false), they are refused with `runtime_disabled`, as today's Restart is. Rows 11 and 12 start nothing.
+
+This is **not** the R1 local-runtime refusal (§6.2 rule 8). Agents may restart local-runtime reports, because R1 keeps restarts and reads allowed, so `touchesLocalRuntime` is never wired into `restart_agent`.
 
 **A paused credential** (rate limited) needs no special case. The started process holds its deliveries until the reset wake, as it does today.
 
@@ -686,12 +688,12 @@ The live run of AC 10 with real Claude is Or's, to do or waive.
 Three stacked PRs on I5's last branch, in a line: `i7/1-manage-org` → `i7/2-template-tools` → `i7/3-restart`. Each links this spec, the plan and the decision issue. Each intermediate state is a valid product.
 
 1. **`i7/1-manage-org`:** §5, §6 (the whole policy, including `touchesLocalRuntime`, which PR 2 reuses), §7 except the template write tools (`list_templates` and `get_template` are reads and land here), §8, §10 (the PR 1 lines and `writtenBy`), §11, the self-edit wake for overlay self-edits (§9.5, because `update_agent` on oneself lands here; the `wake` path is runtime-only and doesn't need `restart_agent`), and the docs for these.
-2. **`i7/2-template-tools`:** `create_template` (with `copyFrom`), `write_template_file`, validate-first template writes (§7.3a), the author map, the template `org_action` toast, the PR 2 CLAUDE.md line, and the docs.
+2. **`i7/2-template-tools`:** `create_template` (with `copyFrom`), `write_template_file`, validate-first template writes under the lock (§7.3a), the template `org_action` toast, the PR 2 CLAUDE.md line, and the docs.
 3. **`i7/3-restart`:** §9.1–§9.4 (tool, `restartNow`, REST, UI), §10 "Restarting reports" and the PR 3 line, the I1 text fix, and the docs.
 
 ## 16. Decisions
 
-Rationale and alternatives are in the decision issue. **Bold** marks the ones flagged for Or (certainty 3 or lower).
+Rationale and alternatives are in the decision issue. **Bold** marks the ones flagged for Or (certainty 3 or lower). The owner-proxy approved the plan; the plan review's changes are recorded as P1–P4 below.
 
 | # | Decision | Certainty |
 |---|---|---|
@@ -731,7 +733,12 @@ Rationale and alternatives are in the decision issue. **Bold** marks the ones fl
 | T1 | `Actor` passed to services (required, no default) for attribution, the policy and self rules | 5 |
 | T2 | `restartNow` replaces the errored-only `restart()`; an idle restart is a hibernate; the note is still delivered | 4 |
 | T3 | `agents.description_by` and `writtenBy` quoting for agent-written descriptions; a human edit clears it | **3** |
-| T4 | Tasks started during a cut restart's interrupt window are killed and reported, not a reason to abandon the restart (tech lead) | 4 |
+| T4 | Tasks started during a cut restart's interrupt window are killed and reported, not a reason to abandon the restart (tech lead; confirmed by the owner) | 4 |
+| B1/M5 | One module-store restart-confirm dialog; errored Restart errors go to a toast; the Session's restart-error notice row is deleted (React plan review; confirmed) | 4 |
+| M2 | A trailing org toast after the fixed 2 s window (React plan review; confirmed) | **3** |
+| P1 | `update_agent` is all-or-nothing: one transaction for validation and both writes; events after the commit (owner plan review) | 4 |
+| P2 | The template author is carried by the per-template lock: scans of that template take the same lock, and the writer dispatches with its own `by`; the author map is dropped (owner plan review) | 4 |
+| P3 | `runtime_disabled` means only "the local runtime is disabled in this factory"; restarting local-runtime reports stays allowed (owner plan review) | 4 |
 
 ## 17. Follow-ups and open items (separate issues)
 

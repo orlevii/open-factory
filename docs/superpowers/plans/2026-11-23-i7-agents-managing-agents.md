@@ -103,7 +103,7 @@ git checkout -b i7/1-manage-org
 | `mcp/tools/org-tools.ts` (new) | `orgTools(d)`: agent tools and reads (A); template writes (B) | A, B |
 | `mcp/tools/org-errors.ts` (new) | `toolErrorOf(err)`: `FieldError`/`ApiError`/policy issues → one sentence | A |
 | `mcp/tools/restart-agent.ts` (new) | `restartAgentTool(d)` | C |
-| `templates/template-index.ts` | `KeyedMutex` on every write path; validate-first `writeFile`; `copyFrom`; `templateAuthors` | B |
+| `templates/template-index.ts` | `KeyedMutex` on every write path and the per-template scan; validate-first `writeFile`; `copyFrom`; dispatch with the writer's `by` | B |
 | `routes/agents.ts` | pass `Actor`; `manageOrg` PATCH; `/restart {force}` (C) | A, C |
 | `routes/templates.ts` | pass `Actor` | B |
 | `app.ts` | tool registration, ports | A, B, C |
@@ -293,10 +293,12 @@ Spec §5.3, §7.5, §8.1, §9.5 (the request side).
 
 ```ts
 export class ConfigService {
-  saveOverlay(slug: string, overlay: unknown, baseVersion: string, actor: Actor):
-    Promise<{ overlay: AgentOverlay; version: string; changes: string[]; restart: boolean; checked: "full" | "schema" }>;
-  validateOverlay(slug: string, overlay: unknown, baseVersion: string, actor: Actor): Promise<ValidatedOverlay>; // no write; used by update_agent (A7)
+  saveOverlay(slug: string, overlay: unknown, baseVersion: string, actor: Actor, tx?: Tx):
+    Promise<{ overlay: AgentOverlay; version: string; changes: string[]; restart: boolean; checked: "full" | "schema"; after(): Promise<void> }>;
+  // With `tx`, it validates and writes inside the caller's transaction and returns `after`, which the caller runs after the
+  // commit (events, notices, restart requests). Without `tx`, it opens its own transaction and runs `after` itself.
 }
+// AgentService.update(slug, patch, actor, tx?) follows the same contract (A3 adds the parameter).
 // ConfigChanges.apply(agent, actor: Actor, beforeDoc, afterDoc)   // was `by: string`
 ```
 
@@ -410,6 +412,7 @@ The tools are `get_agent`, `create_agent`, `update_agent`, `archive_agent`, `una
     - `config` without `base_hash` is a schema error;
     - a stale hash gives the Q14 sentence;
     - identity and `config` together, with an invalid `config`, write nothing (the row is unchanged);
+    - a valid identity patch together with a stale `base_hash` writes nothing: neither the identity nor the overlay changes, and no event or `org_action` is emitted;
     - `changed` lists the field names plus `describeChanges` lines.
   - **`get_agent`:** `overlay_hash` equals I2's `overlayVersion`; `effective` keeps `${GH_TOKEN}` literal; `credential` and `projects` are names.
   - **`get_template`:** a linked file returns `{error: "settings.json is a link; ask a human."}`.
@@ -420,7 +423,7 @@ The tools are `get_agent`, `create_agent`, `update_agent`, `archive_agent`, `una
 - [ ] **Step 3: Implement.**
   - Each handler starts with the call-time check (`loadAgent(callerOf(tctx))`).
   - Slugs accept a leading `@`.
-  - `update_agent` calls `config.validateOverlay` first, then `agents.update` validation, then saves both (spec §7.5 order). If the second save fails, the result says which part was saved.
+  - `update_agent` runs `db.transaction(async tx => { lock the row; const c = await config.saveOverlay(…, tx); const u = await agents.update(…, tx); })`, then awaits `c.after()` and `u.after()` after the commit (spec §7.5: all or nothing; events after the commit).
   - In `app.ts`: `...(caller.manageOrg ? orgTools(...) : [])`.
 - [ ] **Step 4: Run** the tests (CI) and `pnpm typecheck`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(mcp): org tools for manage_org agents`.
@@ -549,7 +552,7 @@ Spec §12 (the PR 1 parts), §14.
 
 Implements spec §2 AC 9–10, §6.2 rule 8 for templates, §7.1 (`create_template`, `write_template_file`), §7.3, §7.3a, §10 (the PR 2 line). Cut it with `git checkout -b i7/2-template-tools i7/1-manage-org`.
 
-### Task B1: Validate-first template writes under a lock, with the author map
+### Task B1: Validate-first template writes under a per-template lock
 
 Spec §7.3a, AC 9 (the last clause).
 
@@ -563,7 +566,7 @@ Spec §7.3a, AC 9 (the last clause).
 writeFile(name: string, file: TemplateFile, content: string, baseHash: string | null, actor: Actor): Promise<{ hash: string; issues: TemplateIssue[] }>;
 create(b: { name: string; displayName: string; description?: string }, actor: Actor): Promise<void>;
 remove(name: string, actor: Actor): Promise<void>;
-// private: lock = new KeyedMutex() (workspace/lock.ts); templateAuthors = new Map<string, { actor: Actor; expectedHash: string }>()
+// private: lock = new KeyedMutex() (workspace/lock.ts), taken by every write path and by the per-template scan (scanOne / loadValid's index)
 ```
 
 - [ ] **Step 1: Write the failing tests:**
@@ -574,14 +577,15 @@ remove(name: string, actor: Actor): Promise<void>;
   - an agent write to a template whose folder or target file is a symlink → "x is a link; ask a human.";
   - an agent write to a template with an **archived** local agent on it → `LOCAL_RUNTIME_REFUSAL` (R9);
   - a human write keeps today's behaviour (saves with errors);
-  - **the author map:** an agent write changing `can_spawn`, followed by a concurrent `loadValid` scan that wins the CAS, still dispatches `templateChanged` with `by: "@hr"` (assert on the `config_changed` event). An `AGENTS.md`-only write records no entry.
+  - **the lock carries the author:** an agent write changing `can_spawn`, with a concurrent `loadValid` of the same template started mid-write, makes `loadValid` wait for the writer. The single dispatch carries the writer's `by: "@hr"` (assert on the `config_changed` event). A scan of another template doesn't wait.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/templates/template-index.write.test.ts`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
   - Every write path takes `lock.run(name, …)`: `writeFile`, I2's config write, `create`, `copyFrom` (B2) and `remove`.
   - Inside the lock: check the hash, then `validate` with overrides, then, for agent actors, `touchesLocalRuntime` (with `policy.templateHasLocalAgents(name)` and the `can_spawn` runtimes) and `agentPolicyIssues`.
   - Refuse on caused errors (an agent) or on none (a human).
-  - Record `templateAuthors` only when the write leaves the template valid and changes its ConfigDoc hash. Then temp + rename and `scanOne`, still inside the lock.
-  - The CAS winner reads `templateAuthors.get(name)` when `newHash === expectedHash`, then deletes the entry.
+  - Temp + rename, `scanOne` and I2's compare-and-set all run inside the lock, with `by: actorBy(actor)` and the actor passed directly to the dispatch.
+  - `scanOne` and `loadValid`'s per-template index take the same lock, so a start just waits briefly for a write under way.
+  - No deadlock: dispatch is never awaited (I2 §7.1), and the writer's scan waits on no runtime job.
   - Routes pass `{kind: "human", handle}`.
 - [ ] **Step 4: Run** the test and the existing `routes/templates.test.ts`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(server): validate-first template writes under a per-template lock`.
@@ -682,7 +686,7 @@ restartNow(r: { by: string; force: boolean; changes: string[] | null; runtimeAll
   - row 8: `lost_work` with `data` carrying the task descriptions and cron schedules, after which the target is **still running and not errored** (`apiJob` passes it through);
   - row 11: owed notifications only → `restart_pending`, with `restartPending` set;
   - row 12: an idle target hibernates and gets a passive `config_changed` with the lines, and with `changes: []` no notice;
-  - `runtime_disabled` for a local target on rows 6, 9 and 10, but row 12 is allowed.
+  - `runtime_disabled` for a local target on rows 6, 9 and 10, but row 12 is allowed. `runtimeAllowed` means only "the local runtime is disabled in this factory". It is not the R1 refusal: an agent restarting a local-runtime report is allowed (test it), and `touchesLocalRuntime` is never called from `restartNow` or `restart_agent`.
 - [ ] **Step 2: Run** `pnpm typecheck`. Expected: FAIL (`restartNow` missing).
 - [ ] **Step 3: Implement** the table in an `apiJob`. Row 6 reuses the old `restart()` body, which is then deleted. Rows 9 and 10 call into C2 (stub them to refuse until C2, then remove the stub in C2's commit).
 - [ ] **Step 4: Run** the tests (CI). Expected: PASS for rows 1–8, 11 and 12.

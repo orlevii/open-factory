@@ -14,6 +14,8 @@ import {
 import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import {
+  type ConfigDoc,
+  canonicalJson,
   isUserImageRef,
   NAME_PATTERN,
   TEMPLATE_FILES,
@@ -22,7 +24,8 @@ import {
   type TemplateFile,
   type TemplateIssue,
 } from "@open-factory/shared";
-import { and, count, eq, isNull, notInArray } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
+import type { FastifyBaseLogger } from "fastify";
 import { stringify } from "yaml";
 import { type Config, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
@@ -33,6 +36,21 @@ import { type ValidationContext, validateTemplate } from "./validate.ts";
 export type TemplateRow = typeof schema.templates.$inferSelect;
 
 export const fileHash = (buf: Buffer) => createHash("sha256").update(buf).digest("hex");
+
+/** The change-detection key of a parse: the canonical ConfigDoc, so AGENTS.md and files/ edits never move it. */
+export const configDocHash = (doc: ConfigDoc) =>
+  createHash("sha256").update(canonicalJson(doc)).digest("hex");
+
+/** `by` of a change that did not come through the API (spec §7.1). */
+export const FILE_CHANGE = "file change";
+
+export type TemplateChange = {
+  name: string;
+  before: ConfigDoc | null;
+  after: ConfigDoc;
+  by: string;
+};
+export type TemplateChangeListener = (e: TemplateChange) => void | Promise<void>;
 
 const notFound = (name: string) =>
   new ApiError(404, "template_not_found", `Template ${name} not found.`);
@@ -78,10 +96,15 @@ export class TemplateIndex {
   readonly dir: string;
   private readonly db: Db;
   private readonly config: Config;
+  private readonly log: Pick<FastifyBaseLogger, "error"> | undefined;
+  private readonly listeners: TemplateChangeListener[] = [];
+  /** Per-template serial dispatch chains (in memory: a crash loses a pending dispatch, spec §7.1). */
+  private readonly queues = new Map<string, Promise<void>>();
 
-  constructor(d: { db: Db; config: Config }) {
+  constructor(d: { db: Db; config: Config; log?: Pick<FastifyBaseLogger, "error"> }) {
     this.db = d.db;
     this.config = d.config;
+    this.log = d.log;
     this.dir = path.join(d.config.factoryHome, "templates");
   }
 
@@ -149,16 +172,58 @@ export class TemplateIndex {
     };
   }
 
+  /** Registers a listener for template changes. Listeners run off the scan's path and are never awaited by it. */
+  onChange(listener: TemplateChangeListener): void {
+    this.listeners.push(listener);
+  }
+
+  /** The last valid parse of a template: a DB read only, never a disk read. */
+  async lastValid(name: string): Promise<ConfigDoc | null> {
+    const [row] = await this.db
+      .select({ doc: schema.templates.lastValid })
+      .from(schema.templates)
+      .where(eq(schema.templates.name, name));
+    return row?.doc ?? null;
+  }
+
+  /** Enqueues a change on the template's chain, started in a microtask and never awaited by the caller. */
+  private dispatch(e: TemplateChange) {
+    const prev = this.queues.get(e.name) ?? Promise.resolve();
+    const run = async () => {
+      for (const l of this.listeners) {
+        try {
+          await l(e);
+        } catch (err) {
+          this.log?.error({ err, template: e.name }, "template change listener failed");
+        }
+      }
+    };
+    const next = new Promise<void>((resolve) => {
+      queueMicrotask(() => {
+        void prev.then(run).then(resolve);
+      });
+    });
+    this.queues.set(e.name, next);
+    void next.then(() => {
+      if (this.queues.get(e.name) === next) this.queues.delete(e.name);
+    });
+  }
+
   private async index(
     name: string,
     ctx: ValidationContext,
+    by: string,
   ): Promise<{
     row: TemplateRow;
+    doc: ConfigDoc;
+    tplYaml: Record<string, unknown>;
     tplSettings: Record<string, unknown>;
     tplMcp: { mcpServers: Record<string, unknown> };
   }> {
     const dir = path.join(this.dir, name);
     const v = await validateTemplate(dir, name, ctx);
+    const doc: ConfigDoc = { template: v.tplYaml, settings: v.tplSettings, mcp: v.tplMcp };
+    const isValid = !!v.config && !v.issues.some((i) => i.severity === "error");
     const values = {
       name,
       path: dir,
@@ -173,16 +238,57 @@ export class TemplateIndex {
       .onConflictDoUpdate({ target: schema.templates.name, set: values })
       .returning();
     if (!row) throw new Error("template upsert returned no row");
-    return { row, tplSettings: v.tplSettings, tplMcp: v.tplMcp };
+    // The upsert never touches last_valid*; `row` still holds the previous values.
+    if (!isValid) {
+      if (row.valid)
+        await this.db
+          .update(schema.templates)
+          .set({ valid: false })
+          .where(eq(schema.templates.name, name));
+      return {
+        row: { ...row, valid: false },
+        doc,
+        tplYaml: v.tplYaml,
+        tplSettings: v.tplSettings,
+        tplMcp: v.tplMcp,
+      };
+    }
+    const hash = configDocHash(doc);
+    if (hash !== row.lastValidHash) {
+      // Compare-and-set: only the caller whose update returns a row dispatches, so concurrent scans fire once.
+      const won = await this.db
+        .update(schema.templates)
+        .set({ lastValid: doc, lastValidHash: hash, valid: true })
+        .where(
+          and(
+            eq(schema.templates.name, name),
+            sql`${schema.templates.lastValidHash} IS NOT DISTINCT FROM ${row.lastValidHash}`,
+          ),
+        )
+        .returning({ name: schema.templates.name });
+      if (won.length) this.dispatch({ name, before: row.lastValid, after: doc, by });
+    } else if (!row.valid) {
+      await this.db
+        .update(schema.templates)
+        .set({ valid: true })
+        .where(eq(schema.templates.name, name));
+    }
+    return {
+      row: { ...row, valid: true },
+      doc,
+      tplYaml: v.tplYaml,
+      tplSettings: v.tplSettings,
+      tplMcp: v.tplMcp,
+    };
   }
 
-  async scan(): Promise<TemplateRow[]> {
+  async scan(by = FILE_CHANGE): Promise<TemplateRow[]> {
     const names = await this.names();
     const ctx = await this.context();
     const rows: TemplateRow[] = [];
     for (const n of names) {
       try {
-        rows.push((await this.index(n, ctx)).row);
+        rows.push((await this.index(n, ctx, by)).row);
       } catch {
         // An unreadable folder is skipped; its previous row stays until the folder is gone.
       }
@@ -193,17 +299,17 @@ export class TemplateIndex {
     return rows;
   }
 
-  private async scanOneFull(name: string) {
+  private async scanOneFull(name: string, by: string) {
     const dir = this.folder(name);
     if (!(await isDir(dir)) || !(await readOrNull(path.join(dir, "template.yaml")))) {
       await this.db.delete(schema.templates).where(eq(schema.templates.name, name));
       return undefined;
     }
-    return this.index(name, await this.context());
+    return this.index(name, await this.context(), by);
   }
 
-  async scanOne(name: string): Promise<TemplateRow | undefined> {
-    return (await this.scanOneFull(name))?.row;
+  async scanOne(name: string, by = FILE_CHANGE): Promise<TemplateRow | undefined> {
+    return (await this.scanOneFull(name, by))?.row;
   }
 
   /** Non-archived agents per template name. */
@@ -249,6 +355,7 @@ export class TemplateIndex {
     file: TemplateFile,
     content: string,
     baseHash: string | null,
+    by: string,
   ): Promise<{ hash: string; issues: TemplateIssue[] }> {
     const dir = this.folder(name);
     if (!(await isDir(dir))) throw notFound(name);
@@ -265,7 +372,7 @@ export class TemplateIndex {
     const tmp = `${target}.${randomBytes(4).toString("hex")}.tmp`;
     await writeFile(tmp, content);
     await rename(tmp, target);
-    const row = await this.scanOne(name);
+    const row = await this.scanOne(name, by);
     return { hash: fileHash(Buffer.from(content)), issues: row?.issues ?? [] };
   }
 
@@ -313,25 +420,43 @@ export class TemplateIndex {
       await this.db.delete(schema.templates).where(eq(schema.templates.name, name));
       throw notFound(name);
     }
+    const users = await this.db
+      .select({ slug: schema.agents.slug, archived: isNotNull(schema.agents.archivedAt) })
+      .from(schema.agents)
+      .where(and(eq(schema.agents.template, name), isNull(schema.agents.terminatedAt)))
+      .orderBy(sql`${schema.agents.archivedAt} IS NOT NULL`, asc(schema.agents.createdAt));
+    const first = users[0];
+    if (first) {
+      const more = users.length > 1 ? ` and ${users.length - 1} more` : "";
+      const archived = users.filter((u) => u.archived).length;
+      const arch = archived ? ` (${archived} archived)` : "";
+      throw new ApiError(
+        409,
+        "template_in_use",
+        `@${first.slug}${more}${arch} ${users.length === 1 ? "uses" : "use"} this template. Archive and recreate them first.`,
+      );
+    }
     if (st.isSymbolicLink()) await unlink(dir);
     else await rm(dir, { recursive: true });
     await this.db.delete(schema.templates).where(eq(schema.templates.name, name));
   }
 
-  /** For agent creation and re-sync: the validated template, its folder and the two JSON copies. */
+  /** For agent starts and creation: the validated template, its folder, its parts and its ConfigDoc. */
   async loadValid(name: string): Promise<{
     dir: string;
     config: TemplateConfig;
+    tplYaml: Record<string, unknown>;
     tplSettings: Record<string, unknown>;
     tplMcp: { mcpServers: Record<string, unknown> };
+    doc: ConfigDoc;
   }> {
-    const full = await this.scanOneFull(name);
+    const full = await this.scanOneFull(name, FILE_CHANGE);
     if (!full) throw new ApiError(409, "template_missing", `Template ${name} no longer exists.`);
-    const { row, tplSettings, tplMcp } = full;
+    const { row, tplYaml, tplSettings, tplMcp, doc } = full;
     if (row.issues.some((i) => i.severity === "error") || !row.config)
       throw new ApiError(409, "template_invalid", `Template ${name} has errors.`, {
         issues: row.issues,
       });
-    return { dir: row.path, config: row.config, tplSettings, tplMcp };
+    return { dir: row.path, config: row.config, tplYaml, tplSettings, tplMcp, doc };
   }
 }

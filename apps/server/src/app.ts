@@ -256,7 +256,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     )
       void runtimes.settingsChanged();
   });
-  const templates = new TemplateIndex({ db: deps.db, config });
+  const templates = new TemplateIndex({ db: deps.db, config, log: app.log });
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
   // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
   const clock = deps.clock ?? (() => new Date());

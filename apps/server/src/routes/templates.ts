@@ -36,6 +36,10 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
   });
   // onRequest, not preHandler: auth must come before validation (401 before 400).
   app.addHook("onRequest", requireUser);
+  const handleOf = (req: FastifyRequest) => {
+    if (!req.user) throw new Error("requireUser did not set request.user");
+    return req.user.handle;
+  };
 
   app.get("/api/templates", { schema: { response: { 200: templatesListSchema } } }, async (req) => {
     const rows = await app.templates.scan();
@@ -125,6 +129,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
         req.params.file,
         req.body.content,
         req.body.baseHash,
+        `@${handleOf(req)}`,
       ),
   );
 

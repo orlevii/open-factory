@@ -55,7 +55,11 @@ function setup(fakeEnv: Record<string, string> = {}) {
     description: "d",
     template: "lead",
     config,
-    effective: { doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp }, config },
+    effective: {
+      doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
+      config,
+      templatePlugins: [],
+    },
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
     peers: [],

@@ -67,7 +67,11 @@ beforeEach(async () => {
     displayName: "Lead",
     description: "d",
     template: "lead",
-    effective: { doc: { template: {}, settings: {}, mcp: { mcpServers: {} } }, config },
+    effective: {
+      doc: { template: {}, settings: {}, mcp: { mcpServers: {} } },
+      config,
+      templatePlugins: [],
+    },
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
@@ -181,6 +185,7 @@ function withPlugins() {
     effective: {
       doc: { ...prep.effective.doc, settings: tpl.tplSettings },
       config,
+      templatePlugins: [],
     },
   };
 }

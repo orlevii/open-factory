@@ -52,6 +52,8 @@ if (argv0[0] === "plugin") {
       process.stderr.write(
         `\u2718 Failed to install plugin "${ref}": Plugin not found in marketplace\n`,
       );
+      // Extra failure output a test wants echoed (secret-shaped fixtures for the redaction tests).
+      if (process.env.FAKE_CLAUDE_PLUGIN_ECHO) process.stderr.write(`${process.env.FAKE_CLAUDE_PLUGIN_ECHO}\n`);
       process.exit(1);
     }
     if (process.env.FAKE_CLAUDE_PLUGIN_SLEEP_MS)

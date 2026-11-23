@@ -378,6 +378,8 @@ const MOUNT_CHECK: MountCheckContext = {
   workdir: "/nonexistent/of-test/workdir",
   grantedPaths: [],
   hostSkillPaths: [],
+  templateSkillPaths: [],
+  templateDir: "/nonexistent/of-test/home/templates/t",
   declaredMarketplaceDirs: [],
   pluginsDir: "/nonexistent/of-test/plugins",
   cliBundle: "/nonexistent/of-test/cli.mjs",

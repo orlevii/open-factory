@@ -11,8 +11,11 @@ import { ApiError } from "../errors.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { AgentStartError } from "./errors.ts";
 
-/** What an agent runs with: the merged three-part document and the parsed template config (spec §6.1). */
-export type Effective = { doc: ConfigDoc; config: TemplateConfig };
+/**
+ * What an agent runs with: the merged three-part document and the parsed template config (spec §6.1).
+ * `templatePlugins` is what the template alone lists, so a plugin that fails to install names its fix.
+ */
+export type Effective = { doc: ConfigDoc; config: TemplateConfig; templatePlugins: string[] };
 
 const missing = (template: string) => new AgentStartError(`Template ${template} no longer exists.`);
 const invalidTemplate = (template: string) =>
@@ -55,6 +58,10 @@ export class ConfigResolver {
     // The template parsed on its own, so a failure here is the overlay's.
     if (!parsed.success) throw invalidOverlay(agent.slug);
     // The runtime is fixed at creation (spec §6.6): the row wins over the template.
-    return { doc, config: { ...parsed.data, runtime: agent.runtime } };
+    const listed = base.template.plugins;
+    const templatePlugins = Array.isArray(listed)
+      ? listed.filter((p): p is string => typeof p === "string")
+      : [];
+    return { doc, config: { ...parsed.data, runtime: agent.runtime }, templatePlugins };
   }
 }

@@ -2460,6 +2460,7 @@ export class AgentRuntime {
       source: "spawn",
       message,
       ...(known && err.fix ? { fix: err.fix } : {}),
+      ...(known && err.detail ? { detail: err.detail } : {}),
     });
     await this.setErrored(message, "start");
     this.publishStatus();

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Pre-release, ADR 0028: no compatibility code, no shims, no aliases for old shapes, no data migration or backfill. Migrations are `pnpm --filter @open-factory/db generate` output plus, in PR 1 only, one hand-appended `INSERT` of the reserved handle rows. **Reset local data** (drop the database, recreate agents) before the first boot of PR 1.
+- Pre-release, ADR 0028: no compatibility code, no shims, no aliases for old shapes, no data migration or backfill. Migrations are `pnpm --filter @open-factory/db generate` output only (no reserved rows: `RESERVED_HANDLES` is the one owner). **Reset local data** (drop the database, recreate agents) before the first boot of PR 1.
 - Never run real Claude. No spike credentials; never read `~/.open-factory-spike`. The fake Claude only.
 - Server DB tests (anything using `makeTestApp`, `createTestDb`, `seedTestAgent` or a runtime harness with a DB) **run only in CI**: the local Postgres role is unavailable. Locally run unit tests that need no DB, `pnpm typecheck`, `pnpm lint`, and the web tests. Each task that adds DB tests says so; push and read CI for them.
 - Every task touching `apps/web`: **Implementer and reviewer invoke `vercel-react-best-practices` and follow it.** (React + Vite + TanStack Router/Query: skip Next-only rules.)
@@ -40,7 +40,7 @@ All in `/Users/orlevi/projects/open-factory/.worktrees/spec-i1`. When a lower br
 
 # Part 1: `i1/1-handles-recipients` (spec §4)
 
-### Task 1.1: Branch, `handles` table, FKs, reserved rows, fixture helper
+### Task 1.1: Branch, `handles` table, FKs, fixture helper
 
 **Files:**
 - Create: `packages/db/src/schema/handles.ts`
@@ -51,7 +51,7 @@ All in `/Users/orlevi/projects/open-factory/.worktrees/spec-i1`. When a lower br
 - Test: `packages/db/src/schema/handles.test.ts` (DB: CI only)
 
 **Interfaces:**
-- Produces: `schema.handles` (`handle text pk`, `kind 'agent'|'user'|'reserved'`, `claimedAt`); `claimTestHandle(db, handle, kind)` in `apps/server/src/test/handles.ts`.
+- Produces: `schema.handles` (`handle text pk`, `kind 'agent'|'user'`, `claimedAt`); `claimTestHandle(db, handle, kind)` in `apps/server/src/test/handles.ts`.
 
 - [ ] **Step 1:** `git switch -c i1/1-handles-recipients spec/i1-chat-and-session`.
 - [ ] **Step 2: Write the failing test** (`packages/db/src/schema/handles.test.ts`, modelled on `agents.check.test.ts`):
@@ -60,12 +60,8 @@ All in `/Users/orlevi/projects/open-factory/.worktrees/spec-i1`. When a lower br
 test("an agent row needs a handles row", async () => {
   await expect(db.insert(schema.agents).values(agentValues({ slug: "nohandle" }))).rejects.toThrow(/foreign key/);
 });
-test("reserved rows are seeded by the migration", async () => {
-  const rows = await db.select().from(schema.handles).where(eq(schema.handles.kind, "reserved"));
-  expect(rows.map((r) => r.handle).sort()).toEqual([...RESERVED_HANDLES].sort());
-});
 test("kind is checked", async () => {
-  await expect(db.insert(schema.handles).values({ handle: "x1", kind: "team" as never })).rejects.toThrow(/check/);
+  await expect(db.insert(schema.handles).values({ handle: "x1", kind: "reserved" as never })).rejects.toThrow(/check/);
 });
 ```
 - [ ] **Step 3:** Add the table:
@@ -76,15 +72,15 @@ export const handles = pgTable(
   "handles",
   {
     handle: text("handle").primaryKey(),
-    kind: text("kind").notNull().$type<"agent" | "user" | "reserved">(),
+    kind: text("kind").notNull().$type<"agent" | "user">(),
     claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [check("handles_kind", sql`${t.kind} IN ('agent','user','reserved')`)],
+  (t) => [check("handles_kind", sql`${t.kind} IN ('agent','user')`)],
 );
 ```
   and `.references(() => handles.handle)` on `agents.slug` and `users.handle` (keep their unique indexes).
-- [ ] **Step 4:** `pnpm --filter @open-factory/db generate`; append to the generated SQL, after the DDL, one statement: `INSERT INTO "handles" ("handle","kind") VALUES ('me','reserved'),('factory','reserved'),('scheduler','reserved'),('all','reserved'),('system','reserved'),('humans','reserved');--> statement-breakpoint` (values from `RESERVED_HANDLES` in `packages/shared/src/handle.ts`; a comment above it says it is part of the schema, not a backfill).
-- [ ] **Step 5:** `apps/server/src/test/handles.ts`: `claimTestHandle(db, handle, kind)` = `db.insert(handles).values({handle, kind}).onConflictDoNothing()`. Call it before every direct insert into `agents`/`users` in `insertAgent`, `seedTestAgent`, `runtime-harness.ts` and the smoke scripts; any helper that truncates tables re-seeds the reserved rows (`INSERT … ON CONFLICT DO NOTHING`).
+- [ ] **Step 4:** `pnpm --filter @open-factory/db generate` (generated output only; nothing appended).
+- [ ] **Step 5:** `apps/server/src/test/handles.ts`: `claimTestHandle(db, handle, kind)` = `db.insert(handles).values({handle, kind}).onConflictDoNothing()`. Call it before every direct insert into `agents`/`users` in `insertAgent`, `seedTestAgent`, `runtime-harness.ts` and the smoke scripts.
 - [ ] **Step 6:** `pnpm typecheck && pnpm lint`. DB tests run in CI only (push the branch later in Task 1.15).
 - [ ] **Step 7:** Commit `feat(db): handles table claimed by agents and users`.
 
@@ -105,7 +101,7 @@ export const handles = pgTable(
     | { kind: "channel"; name: string }
     | { kind: "none"; name: string };
   export async function resolveName(db: Db | Tx, raw: string): Promise<ResolvedName>;
-  export async function handleKind(db: Db | Tx, handle: string): Promise<"agent" | "user" | "reserved" | undefined>; // the cheap pre-read
+  export async function handleKind(db: Db | Tx, handle: string): Promise<"agent" | "user" | undefined>; // the cheap pre-read
   ```
 
 - [ ] **Step 1: Failing tests** (`principals.test.ts`):
@@ -123,15 +119,17 @@ test("a referenced claim is taken", async () => {
   await seedUser(db, { handle: "cy" }); // inserts the claim and the user
   expect(await claimHandle(db, "cy", "user")).toBe(false);
 });
-test("reserved is never reclaimed", async () => {
-  expect(await claimHandle(db, "humans", "user")).toBe(false);
+test("a reserved name is refused by validation before any claim", async () => {
+  expect(handleSchema.safeParse("humans").success).toBe(false);
+  expect(slugSchema.safeParse("factory").success).toBe(false);
+  // and the hook/agent create return before calling claimHandle (spy: not called)
 });
 test.each([
   ["#ops", "channel"], ["@humans", "reserved"], ["humans", "reserved"], ["@nobody", "none"],
 ])("resolveName(%s) is %s", async (raw, kind) => expect((await resolveName(db, raw)).kind).toBe(kind));
 test("resolveName reports a disabled user", async () => { /* set disabled_at, expect disabled: true */ });
 ```
-- [ ] **Step 2:** Implement `claimHandle` with the spec §4.1 statement through Drizzle's `sql` (`RETURNING handle`; true when a row comes back). `resolveName`: trim; `#` prefix → `channel`; strip one `@`; `select handles left join agents on slug left join users on handle where handles.handle = name`; map by `kind`. Delete `isNameTaken` and the `ambiguous`/`humans` kinds.
+- [ ] **Step 2:** Implement `claimHandle` with the spec §4.1 statement (no reserved clause: same-kind already excludes any other kind) through Drizzle's `sql` (`RETURNING handle`; true when a row comes back). `resolveName`: trim; `#` prefix → `channel`; strip one `@`; a name in `RESERVED_HANDLES` → `reserved` before the lookup; `select handles left join agents on slug left join users on handle where handles.handle = name`; map by `kind`. Delete `isNameTaken` and the `ambiguous`/`humans` kinds.
 - [ ] **Step 3:** `pnpm typecheck` (callers break: fixed in Tasks 1.3, 1.4, 1.7). Lint.
 - [ ] **Step 4:** Commit `feat(server): one handle claim and one name lookup`.
 
@@ -244,21 +242,11 @@ test("other kinds carry from_kind and no to", () => {
 
 **Files:**
 - Modify: `apps/server/src/tasks/task-service.ts` (~L89, L177-188, L240, L336-343, L804-842, L919-922), `apps/server/src/mcp/tools/task-tools.ts` (L240 description, L249 result), `apps/server/src/agents/event-store.ts` (L1210, L1339 → `"everyone"` for `toAllHumans`), `apps/server/src/spawning/spawn-service.ts` (L76, L144, L163, L217, L303)
-- Create: `apps/server/src/no-humans-handle.test.ts`
 - Test: `apps/server/src/tasks/task-service.test.ts`, `apps/server/src/mcp/tools/task-tools.test.ts` (DB: CI only)
 
 - [ ] **Step 1: Failing tests:** a comment mentioning `@humans` posts and `not_reached` = `[{name: "humans", reason: "reserved"}]` with the reason text "`@humans` isn't a handle. Mention people by handle; list_peers lists them."; no inbox items are written; spawn failures read "ask your manager" for a caller with a manager and "ask a human (list_peers lists them)" otherwise.
-- [ ] **Step 2:** The grep test:
-
-```ts
-test("no agent-facing @humans outside the reserved list", async () => {
-  const files = await glob("apps/server/src/**/*.ts", { ignore: ["**/*.test.ts"] });
-  const hits = files.filter((f) => readFileSync(f, "utf8").includes("@humans"));
-  expect(hits).toEqual([]);
-});
-```
-- [ ] **Step 3:** Delete the `humans` branches; route `humans` through the reserved path; add the reserved-text override for `humans` in `comment_task`'s result; relabel; rewrite spawn copy (`fail(callerHasManager ? "…ask your manager." : "…ask a human (list_peers lists them).")`).
-- [ ] **Step 4:** typecheck, lint, `pnpm vitest run apps/server/src/no-humans-handle.test.ts`. Commit `feat(server): remove @humans; agents address people by handle`.
+- [ ] **Step 2:** Delete the `humans` branches; route `humans` through the reserved path; add the reserved-text override for `humans` in `comment_task`'s result; relabel; rewrite spawn copy (`fail(callerHasManager ? "…ask your manager." : "…ask a human (list_peers lists them).")`).
+- [ ] **Step 3:** typecheck, lint (no grep test: the whole-branch review in Task 5.1 checks no agent-facing `@humans` remains). Commit `feat(server): remove @humans; agents address people by handle`.
 
 ### Task 1.10: `list_peers` one `peers` list; disabled users left out
 
@@ -357,7 +345,7 @@ test("aliases count as known", () => expect(classifyInput("/cost", new Set(["cos
 - Create: `packages/shared/scripts/claude-builtins.mjs` (generator; new folder), `packages/shared/src/claude-builtins.ts` (generated, checked in), `packages/shared/src/claude-builtins.test.ts`
 
 - [ ] **Step 1: Failing test:** the snapshot equals the `builtin: true` entries of `packages/harness/fixtures/u3/control-initialize-commands.jsonl` (`{name, description, argumentHint, aliases}`), 55 entries, includes `context` and `clear` with aliases `["reset","new"]`.
-- [ ] **Step 2:** Write the generator (reads the fixture's `control_response.response.commands`, filters `builtin`, writes the TS module with a header comment naming Claude Code 2.1.327 and the regenerate command); run it.
+- [ ] **Step 2:** Write the generator (reads the fixture's `control_response.response.commands`, filters `builtin`, writes the TS module with a header comment naming the source fixture `packages/harness/fixtures/u3/control-initialize-commands.jsonl`, Claude Code 2.1.327 and the regenerate command; the script stays, since #138 regenerates the snapshot on each Claude Code bump); run it.
 - [ ] **Step 3:** Test PASS. Commit `feat(shared): Claude Code built-ins listed before a first start`.
 
 ### Task 2.3: `GET /commands` lists built-ins before a first start, flags denied names
@@ -732,9 +720,13 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 - [ ] `git clone` the repo into `$TMPDIR/i1-verify`, `git switch i1/4-send-command`, then `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm test && pnpm build` (the DB suites need CI; say which ran where) and the dev loop: `pnpm compose up -d` for Postgres if available, `pnpm dev`, open the app, sign up, create an agent from the fake (`FACTORY_CLAUDE_BIN` = the harness fake wrapper), confirm Chat opens and a message round-trips. Record results in the PR 4 body.
 
-### Task 5.3: Real-browser evidence of every acceptance criterion
+### Task 5.3: Real-browser evidence of the acceptance criteria with a UI
 
-- [ ] Use `/Users/orlevi/projects/open-factory/docs/product/ui-review/u4-evidence/harness` through its `run.sh` lock (one pass at a time on this machine; fake Claude only, never real agents). Snapshot the built `i1/4-send-command` (`./snapshot.sh /Users/orlevi/projects/open-factory/.worktrees/spec-i1 $TMPDIR/u4-evidence-snapshot-i1`), write checks under `docs/product/ui-review/i1-evidence/checks/` (main checkout), one per AC in spec §2 (1-23), using `u4lib` variants (320, 390, 1024, 1440; light/dark; 200% text) in **Chromium and WebKit** headless (`U4_ENGINE=webkit`). Drive agents with `$mcp` (send_message, send_command) and raw directives. Record frame-by-frame (Playwright `page.video` or `requestAnimationFrame` screenshots at 16ms) the working→outcome swap and the raw Sending→row handoff, and assert no blank frame and one element. Results in `docs/product/ui-review/i1-evidence/results`, linked from the PR 3 and PR 4 bodies with the failed-count table.
+- [ ] Use `/Users/orlevi/projects/open-factory/docs/product/ui-review/u4-evidence/harness` through its `run.sh` lock (one pass at a time on this machine; fake Claude only, never real agents). Snapshot the built `i1/4-send-command` (`./snapshot.sh /Users/orlevi/projects/open-factory/.worktrees/spec-i1 $TMPDIR/u4-evidence-snapshot-i1`); write checks under `docs/product/ui-review/i1-evidence/checks/` (main checkout). Drive agents with `$mcp` (send_message, send_command) and raw directives.
+- [ ] **AC table** (in the PR 3 and PR 4 bodies): every AC in spec §2 with how it is shown. ACs with a UI get a browser check, in **Chromium and WebKit** headless (`U4_ENGINE=webkit`). Server-only ACs cite their CI tests instead (the database namespace AC 6, `list_peers` AC 7, `send_command` refusals AC 22, the envelope bytes of AC 2/4 and the like).
+- [ ] **Matrix:** the full `u4lib` matrix (320, 390, 1024, 1440; light and dark; 200% text) only on the layout-sensitive views: the Chat, the Chat composer with recipients, the header switch at 320/390, Inbox chat rows and the reading pane (AC 1, 3, 15-17, 19, 23). Every other UI check at one width (1440) and one theme (light), in both engines.
+- [ ] **Recordings:** frame-by-frame (Playwright `page.video` or `requestAnimationFrame` screenshots at 16ms) of the working→outcome swap and the raw Sending→row handoff; assert no blank frame and one element.
+- [ ] Results in `docs/product/ui-review/i1-evidence/results`, linked from the PR 3 and PR 4 bodies with the failed-count table.
 
 ### Task 5.4: Push and CI
 

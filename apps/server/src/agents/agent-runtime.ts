@@ -206,6 +206,28 @@ type MessageEntry = {
   about?: string;
   subject?: Subject;
 };
+/**
+ * I1 §6.3 (D3): a written batch, kept until the turn that consumes it closes. `workingFor` answers from these, so a page
+ * knows whose message a turn is working on from the write, long before `turn_started` or the stamp.
+ */
+type WrittenBatch = {
+  ids: string[];
+  /** Each row's human sender (`null` for an agent, a schedule, the factory). */
+  senders: Map<string, string | null>;
+  writtenAt: string;
+  /** The id of each human's first `message` row in the batch. */
+  firstIdBySender: Map<string, string>;
+};
+function writtenBatch(batch: MessageEntry[], writtenAt: string): WrittenBatch {
+  const senders = new Map<string, string | null>();
+  const firstIdBySender = new Map<string, string>();
+  for (const { row } of batch) {
+    senders.set(row.id, row.fromUserId);
+    if (row.kind === "message" && row.fromUserId && !firstIdBySender.has(row.fromUserId))
+      firstIdBySender.set(row.fromUserId, row.id);
+  }
+  return { ids: [...senders.keys()], senders, writtenAt, firstIdBySender };
+}
 type CompactEntry = {
   kind: "compact";
   id: string;
@@ -427,7 +449,10 @@ export class AgentRuntime {
   private held: MessageEntry[] = [];
   private readonly seen = new Set<string>(); // every row id this runtime loaded or was handed (S6 §7.3)
   private inFlight: MessageEntry[][] = []; // written, waiting for session_started
-  private awaiting: string[][] = []; // written with no open turn, waiting for a user-initiated turn_end
+  private awaiting: WrittenBatch[] = []; // written with no open turn, waiting for a user-initiated turn_end
+  private absorbed: WrittenBatch[] = []; // written into the open turn (already stamped with it)
+  /** An exit's snapshot of `awaiting` and `absorbed` until its close settles, so `workingFor` never goes blank (I1 §6.3). */
+  private closing: WrittenBatch[] | undefined;
   private awaitingKinds: MessageKind[][] = []; // the kinds of each `awaiting` batch (an update-only turn, S6 §8.1)
   private turnKinds: MessageKind[] = []; // kinds written into the open turn (absorbed)
   // S6 §8.1: rows pending when a turn (not update-only) ended are due at once; cleared when held is written.
@@ -435,6 +460,19 @@ export class AgentRuntime {
   private heldTimer: ReturnType<typeof setTimeout> | undefined;
   private heldFiredFor: number | undefined; // the due time the held timer last fired for: never fired twice
   private compactInFlight = false;
+  /**
+   * I1 §6.3 (D3): the user's message a turn is working on, read synchronously for `GET /chat`. `key` is the id of the
+   * user's first message in the batch (or, with none awaiting, the first absorbed into the open turn); `since` is that
+   * batch's write time. Reports an exit's snapshot until its close settles.
+   */
+  workingFor(userId: string): { key: string; since: string } | null {
+    for (const b of [...(this.closing ?? []), ...this.awaiting, ...this.absorbed]) {
+      const key = b.firstIdBySender.get(userId);
+      if (key) return { key, since: b.writtenAt };
+    }
+    return null;
+  }
+
   /** I1 §5.1: a raw entry was written and its turn hasn't ended; nothing is written behind it (like a compact). */
   private rawInFlight = false;
   /** U3 §13.3: written commands' ids and senders (the newest few), for the Cancel that arrives too late. */
@@ -2657,6 +2695,7 @@ export class AgentRuntime {
         this.openTurnId = await this.d.store.openTurn(this.agent.id, this.procCredentialId ?? null);
         this.lastUsage = undefined;
         this.turnKinds = [];
+        this.absorbed = [];
         this.turnStartedAt = (await this.append(this.openTurnId, e)).at;
         break;
       case "usage":
@@ -2689,11 +2728,18 @@ export class AgentRuntime {
           // transaction, so `attributeTask` sees it. A self-started turn (cron, task notification) never consumes
           // `awaiting` and isn't attributed.
           if (!e.originKind) {
-            await this.d.store.closeTurnWith(turnId, close, this.awaiting.flat(), true, endSeq);
+            await this.d.store.closeTurnWith(
+              turnId,
+              close,
+              this.awaiting.flatMap((b) => b.ids),
+              true,
+              endSeq,
+            );
             this.awaiting = [];
             this.awaitingKinds = [];
           } else await this.d.store.closeTurnWith(turnId, close, [], false, endSeq);
         }
+        this.absorbed = []; // the stamp and the close committed: the batch is no longer working
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
         if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
           await this.attemptSucceeded();
@@ -2888,11 +2934,13 @@ export class AgentRuntime {
     this.rawInFlight = false;
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
     const batchUnanswered = this.awaiting.length > 0;
-    const unansweredIds = this.awaiting.flat(); // stamped by the close below (I1 §6.3)
+    const unansweredIds = this.awaiting.flatMap((b) => b.ids); // stamped by the close below (I1 §6.3)
+    const closingBatches = [...this.awaiting, ...this.absorbed];
     const credentialId = this.procCredentialId ?? null; // cleared below, the close still records it
     this.awaiting = [];
     this.awaitingKinds = [];
     this.turnKinds = [];
+    this.absorbed = [];
     if (this.proc === proc) {
       this.proc = undefined;
       this.procCredentialId = undefined;
@@ -2901,6 +2949,7 @@ export class AgentRuntime {
     const live = { turnOpen: Boolean(openTurnId), batchUnanswered, lost };
     const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
+    this.closing = closingBatches;
     try {
       // S10 §11: close the turn before the cleanup, which can take seconds (a Docker stop). A status frame published
       // meanwhile already says turnOpen false, so the row must be closed by then. A failed close must not skip the
@@ -2915,6 +2964,7 @@ export class AgentRuntime {
         () => undefined,
         (err: unknown) => ({ err }),
       );
+      this.closing = undefined; // the stamp and the close settled: the outcome is readable
       // Terminated: Docker removes the container rather than stopping it (S7 §8 step 4).
       if (terminating) keepSlot = !(await this.terminationCleanup());
       else if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, forced));
@@ -2953,6 +3003,7 @@ export class AgentRuntime {
       if (!crash) await this.writeJournal();
       else await this.persistJournal();
     } finally {
+      this.closing = undefined;
       this.publishQueue();
       // Every exit gives the slot back once it is recorded (spec §5.2), even when recording failed; a crash whose
       // cleanup failed keeps it (stop_failed, §9.6).
@@ -3863,10 +3914,14 @@ export class AgentRuntime {
     if (this.attempting) this.attemptBatchWritten = true;
     if (!this.started) this.inFlight.push(batch);
     const kinds = batch.map((e) => kindOf(e.row));
+    const written = writtenBatch(batch, new Date().toISOString());
     if (!turnAtWrite) {
-      this.awaiting.push(ids);
+      this.awaiting.push(written);
       this.awaitingKinds.push(kinds);
-    } else this.turnKinds.push(...kinds);
+    } else {
+      this.absorbed.push(written);
+      this.turnKinds.push(...kinds);
+    }
     this.publishQueue();
     return true;
   }

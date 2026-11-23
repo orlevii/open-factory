@@ -1,12 +1,18 @@
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { claimTestHandle } from "../test/handles.ts";
 import { ev } from "./testing/fake-driver.ts";
-import { RuntimeHarness } from "./testing/runtime-harness.ts";
+import { RuntimeHarness, sendAs } from "./testing/runtime-harness.ts";
 
 // I1 §6.3: every turn that read a message is stamped, however it ends, and the runtime knows whose message a turn is
 // working on (D2, D3).
 
 const h = new RuntimeHarness();
-beforeAll(() => h.setup());
+beforeAll(async () => {
+  await h.setup();
+  await claimTestHandle(h.t.db, "ann", "user");
+  await h.t
+    .sql`insert into users (id, name, email, handle) values ('u2', 'Ann', 'ann@x.io', 'ann')`;
+});
 afterAll(() => h.close());
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
@@ -93,4 +99,93 @@ test("closeDanglingTurns stamps the dangling turn's delivered messages", async (
   expect(turn).toMatchObject({ terminal_reason: "factory_restarted", is_error: true });
   expect(turn?.end_event_seq).toBeGreaterThan(0);
   expect(await deliveredTurn(m.id)).toBe(turnId);
+});
+
+// workingFor(userId): the key (the user's first message in the batch) and the batch's write time (D3).
+
+const sendU2 = (body: string) => sendAs(h.store, h.rt, { fromUserId: "u2", body, urgent: false });
+
+test("workingFor is null before any write", async () => {
+  await h.makeRuntime();
+  expect(h.rt.workingFor("u1")).toBeNull();
+});
+
+test("workingFor is set from the batch write, before turn_started (cold start)", async () => {
+  await h.makeRuntime();
+  const m = await h.send("hello");
+  const w = h.rt.workingFor("u1");
+  expect(w?.key).toBe(m.id);
+  expect(w?.since).toBe(new Date(Date.now()).toISOString());
+  expect(h.rt.workingFor("u2")).toBeNull(); // another user's batch is not yours
+});
+
+test("the key survives turn_started and a cron turn starting meanwhile", async () => {
+  await idle();
+  const m = await h.send("hello");
+  const before = h.rt.workingFor("u1");
+  h.driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "cron" }));
+  await h.rt.settled();
+  expect(h.rt.workingFor("u1")).toEqual(before);
+  h.driver.last.emit(ev.turn());
+  await h.rt.settled();
+  expect(h.rt.workingFor("u1")).toEqual(before);
+  expect(before?.key).toBe(m.id);
+});
+
+test("a batch with two of your messages keys on the first; another user's batch is null for you", async () => {
+  await idle();
+  h.driver.last.failWrites = true;
+  const first = await h.send("one");
+  await sendU2("not yours");
+  h.driver.last.failWrites = false;
+  await h.send("two");
+  expect(h.driver.last.sent.at(-1)).toHaveLength(3);
+  expect(h.rt.workingFor("u1")?.key).toBe(first.id);
+  expect(h.rt.workingFor("u2")?.key).not.toBe(first.id);
+  expect(h.rt.workingFor("u2")).not.toBeNull();
+});
+
+test("a message absorbed into the open turn is working until the turn closes", async () => {
+  await idle();
+  h.driver.last.emit(ev.turn()); // a self-started turn: nothing of yours awaits
+  await h.rt.settled();
+  expect(h.rt.workingFor("u1")).toBeNull();
+  const m = await h.send("mid-turn");
+  expect(h.rt.workingFor("u1")?.key).toBe(m.id);
+  h.driver.last.emit(ev.usage(), ev.end());
+  await h.rt.settled();
+  expect(h.rt.workingFor("u1")).toBeNull();
+});
+
+test("null after turn_end's close commits", async () => {
+  await idle();
+  await h.send("hello");
+  h.driver.last.emit(ev.turn(), ev.usage(), ev.end());
+  await h.rt.settled();
+  expect(h.rt.workingFor("u1")).toBeNull();
+});
+
+test("during onExited's close the runtime still reports the closing turn's batch", async () => {
+  await idle();
+  const m = await h.send("hello");
+  h.driver.last.emit(ev.turn());
+  await h.rt.settled();
+  let entered!: () => void;
+  const inClose = new Promise<void>((r) => (entered = r));
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const closeTurnWith = h.store.closeTurnWith.bind(h.store);
+  vi.spyOn(h.store, "closeTurnWith").mockImplementation(async (...a) => {
+    entered();
+    await gate;
+    return closeTurnWith(...a);
+  });
+  h.driver.last.exit(1, "boom");
+  await inClose;
+  expect(h.rt.workingFor("u1")?.key).toBe(m.id);
+  expect(h.rt.workingFor("u2")).toBeNull();
+  release();
+  await h.rt.settled();
+  vi.restoreAllMocks();
+  expect(h.rt.workingFor("u1")).toBeNull();
 });

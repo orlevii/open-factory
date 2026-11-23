@@ -138,7 +138,11 @@ test("a first false frame is not an edge; the first open invalidates nothing, a 
   expect(usage()).toBe(0);
   expect(spy).not.toHaveBeenCalled();
   act(() => h.opts?.onOpen?.()); // reconnect
-  expect(spy).toHaveBeenCalledWith(); // everything: only mounted queries refetch
+  // Everything but the chats (they refresh their newest page themselves); only mounted queries refetch.
+  const filters = spy.mock.calls[0]?.[0];
+  const predicate = filters?.predicate as unknown as (q: { queryKey: unknown[] }) => boolean;
+  expect(predicate({ queryKey: ["agents"] })).toBe(true);
+  expect(predicate({ queryKey: ["chat", "dev"] })).toBe(false);
 });
 
 test("a reconnect refetches the mounted inbox list, and not a first open", async () => {

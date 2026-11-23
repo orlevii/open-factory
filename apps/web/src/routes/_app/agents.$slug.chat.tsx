@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
 import { chatAroundQueryOptions, chatQueryOptions } from "@/features/chat/api";
 import { ChatView } from "@/features/chat/chat-view";
+import { refreshChat } from "@/features/chat/use-chat";
 
 export const Route = createFileRoute("/_app/agents/$slug/chat")({
   validateSearch: z.object({
@@ -9,21 +10,19 @@ export const Route = createFileRoute("/_app/agents/$slug/chat")({
     message: z.string().min(1).optional().catch(undefined),
   }),
   loaderDeps: ({ search }) => ({ message: search.message }),
-  // A hover or a navigation starts the thread's fetch. Cached, it refreshes behind what is on screen;
-  // uncached, the page waits for it (an error is the view's to show, with its retry).
+  // A hover or a navigation starts the thread's fetch. Cached, the newest page refreshes behind what
+  // is on screen (through the union); uncached, the page waits for it (an error is the view's to
+  // show, with its retry).
   loader: async ({ context, params, deps }) => {
     const qc = context.queryClient;
-    if (deps.message) {
-      const opts = chatAroundQueryOptions(params.slug, deps.message);
-      const cached = qc.getQueryData(opts.queryKey) !== undefined;
-      const run = qc.prefetchQuery(opts);
-      if (!cached) await run;
+    const opts = deps.message
+      ? chatAroundQueryOptions(params.slug, deps.message)
+      : chatQueryOptions(params.slug);
+    if (qc.getQueryData(opts.queryKey) === undefined) {
+      await qc.prefetchInfiniteQuery(opts);
       return;
     }
-    const opts = chatQueryOptions(params.slug);
-    const cached = qc.getQueryData(opts.queryKey) !== undefined;
-    const run = qc.prefetchInfiniteQuery(opts);
-    if (!cached) await run;
+    if (!deps.message) void refreshChat(qc, params.slug, "other");
   },
   component: function ChatRoute() {
     const { slug } = Route.useParams();

@@ -1,16 +1,16 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import {
-  agentDraftKey,
   readDraft,
   readUnconfirmed,
+  sessionDraftKey,
   taskDraftKey,
   useDraft,
   writeUnconfirmed,
 } from "./drafts";
 
-const KEY = agentDraftKey("dev");
-const stored = () => localStorage.getItem("of-draft:v1:agent:dev");
+const KEY = sessionDraftKey("dev");
+const stored = () => localStorage.getItem("of-draft:v1:session:dev");
 
 beforeEach(() => localStorage.clear());
 afterEach(() => vi.useRealTimers());
@@ -34,7 +34,7 @@ function storageEvent(oldText: string | null, newText: string | null) {
   act(() => {
     window.dispatchEvent(
       new StorageEvent("storage", {
-        key: "of-draft:v1:agent:dev",
+        key: "of-draft:v1:session:dev",
         oldValue: enc(oldText),
         newValue: enc(newText),
         storageArea: localStorage,
@@ -44,7 +44,7 @@ function storageEvent(oldText: string | null, newText: string | null) {
 }
 
 test("keys are versioned per agent and per task", () => {
-  expect(agentDraftKey("dev")).toBe("agent:dev");
+  expect(sessionDraftKey("dev")).toBe("session:dev");
   expect(taskDraftKey("OF-12")).toBe("task:OF-12");
 });
 

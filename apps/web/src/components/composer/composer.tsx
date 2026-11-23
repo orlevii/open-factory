@@ -46,8 +46,6 @@ export const UNCONFIRMED_EDITED =
   "Couldn't confirm the send. It may still arrive; check before sending again.";
 /** Where attachments aren't supported, a pasted or dropped file is ignored with this note (Q38). */
 export const FILES_NOTE = "Files can be sent in an agent's session";
-/** Send's reason while a restored command waits for the commands list. */
-export const LOADING_COMMANDS = "Loading this agent's commands…";
 /** A phone's composer controls are 40px (U4 §11.4). The coarse-pointer form too: `size="icon"` sets
  *  `pointer-coarse:size-9`, which would otherwise beat a bare `size-10` on a touch screen (evidence D1). */
 const PHONE_ICON = "size-10 pointer-coarse:size-10";
@@ -89,7 +87,11 @@ export type CompletionItem = {
   group: string;
   /** Starts a group headed by this text in the menu (the `/` menu while browsing, U3 §13.3). */
   heading?: string;
-  exact?: boolean;
+  /** Enter sends the text as typed instead of accepting this row (a name typed in full); Tab and a
+   *  click still accept it. */
+  enterSends?: boolean;
+  /** A row that can't be picked, with the reason shown in its place (a denied command). */
+  disabled?: string;
   /** An agent row's face (16px). */
   avatar?: { slug: string; template?: string; avatarVersion?: string | null };
   /** A `/` row: `label` is `/name` in mono, `hint` the argument hint, `detail` the description. */
@@ -97,8 +99,6 @@ export type CompletionItem = {
   /** "alias: cost": the alias the query matched, on the canonical row. */
   alias?: string;
 };
-/** Command mode (U3 §13.3): the box holds the arguments of `name`, with a "Command" chip at its left. */
-export type CommandMode = { name: string; placeholder: string };
 /** A `/` or `@` menu's source (Tasks 52 and 56); a module constant or built with `useMemo`. */
 export type CompletionSource = {
   trigger: "/" | "@";
@@ -114,26 +114,20 @@ export type CompletionSource = {
     text: string,
     from: number,
     caret: number,
-  ): { text: string; caret: number; command?: CommandMode };
-  /** Enter accepts only a row marked `exact` (the `/` menu's name matches); otherwise it sends. Tab
-   *  accepts any row. Without it Enter accepts any row (`@`). */
-  enterNeedsExact?: boolean;
+  ): { text: string; caret: number };
   /** A line in the open menu, given how many rows it has: with none, the menu still opens for it (an
    *  empty state); undefined closes a menu with no rows. */
   menuNote?(rows: number): string | undefined;
   /** Every row renders and the list scrolls at about 8 rows' height (the `/` menu: a short, fixed list
    *  where a cap would hide the built-ins behind the skills). Without it, the best 8 (`@`). */
   allRows?: boolean;
-  /** Whether the data `commandFor` reads has loaded (or failed to): until then a stored `/name args`
-   *  can't be told from text, and Send waits. Without it, always decided. */
-  ready?(): boolean;
-  /** Under the box while a token of this source matches no row (`/foo` sends as text). */
-  missNote?(): string | undefined;
-  /** Under the box for the whole text, at any time (`//x`); cheap, it runs on every render. */
-  textNote?(text: string): string | undefined;
-  /** A typed text that enters command mode by itself (an exact name and a space). */
-  commandFor?(text: string): CommandMode | undefined;
+  /** The note slot's text for the whole text, at any time; cheap, it runs on every render. A
+   *  `refusal` holds Send (its reason is the text). `sending` is true when Enter or Send was pressed:
+   *  the first token then counts as complete without a trailing space. */
+  textNote?(text: string, sending?: boolean): SourceNote | undefined;
 };
+/** A note a completion source puts in the slot: a refusal also holds Send. */
+export type SourceNote = { kind: "refusal" | "hint"; text: string };
 
 /**
  * The one external note the composer may show (I1 §5.4, DESIGN §9.3): a stable object from the caller.
@@ -173,9 +167,6 @@ export type ComposerProps = {
   /** Called right after the box empties (its synchronous part runs first); resolve when the server
    *  took the text, reject with a `SubmitError` to put the text back with the reason. */
   onSubmit(text: string, o: SubmitOptions): Promise<void>;
-  /** Command mode's Enter (U3 §13.3): the chosen command's own name and the arguments, never sent as
-   *  text. Reject with a `SubmitError` to show the reason and come back in command mode. */
-  onCommand?(name: string, args: string, o: { clientMessageId: string }): Promise<void>;
   turnOpen?: boolean;
   compacting?: boolean;
   /** Stop resets on every change (a turn edge, an unconfirmed stop). Stop shows with `onStop`. */
@@ -184,9 +175,11 @@ export type ComposerProps = {
   completions?: { slash?: CompletionSource; at?: CompletionSource };
   /** A Write/Preview toggle in the toolbar (task comments). */
   preview?: boolean;
-  /** Files can be attached (the session: its per-agent upload store, a stable object); elsewhere a
-   *  pasted or dropped file gets `FILES_NOTE`. */
+  /** Files can be attached (the chat: its per-agent upload store, a stable object); elsewhere a
+   *  pasted or dropped file gets `noFilesNote`. */
   attachments?: AttachmentStore;
+  /** The note a pasted or dropped file gets where files can't go (default `FILES_NOTE`). */
+  noFilesNote?: string;
   /** ↑ in an empty box with the caret at 0: the text to fill it with (U3 §13.2), if any. */
   recall?(): string | undefined;
   /** Without one there is no hint line. */
@@ -210,8 +203,6 @@ export type ComposerProps = {
   ref?: Ref<ComposerHandle>;
 };
 
-/** A draft stored in command mode: `/name args` on one line (U3 §13.3). */
-const STORED_COMMAND = /^\/(\S+) ([^\n]*)$/;
 /** At most this many rows in a caret menu (U3 §13.3, §13.4). */
 const MAX_ROWS = 8;
 const NO_ITEMS: CompletionItem[] = [];
@@ -240,7 +231,6 @@ export const Composer = memo(function Composer({
   turnPlaceholder,
   label,
   onSubmit,
-  onCommand,
   turnOpen = false,
   compacting = false,
   stopEpoch,
@@ -248,6 +238,7 @@ export const Composer = memo(function Composer({
   preview = false,
   attachments,
   recall,
+  noFilesNote = FILES_NOTE,
   hintMode,
   note,
   waiting = false,
@@ -266,16 +257,11 @@ export const Composer = memo(function Composer({
     const form = formRef.current;
     return docked && form ? registerDockedComposer(dockId, form) : undefined;
   }, [docked, dockId]);
-  // Command mode as last set (state may not have committed): the draft stores `/name args` while it is
-  // on, so a restored draft shows what it is and never sends the args as a message (U3 §13.3).
-  const commandRef = useRef<CommandMode | undefined>(undefined);
-  const storedText = useCallback(
-    (t: string) => (commandRef.current ? `/${commandRef.current.name} ${t}` : t),
-    [],
-  );
-  const [text, setText, draft] = useDraft(draftKey, storedText);
+  const [text, setText, draft] = useDraft(draftKey);
   const [error, setError] = useState<string | undefined>();
   const [filesNote, setFilesNote] = useState(false);
+  // A refusal from the `/` source when Enter was pressed on a first token still being typed.
+  const [sentRefusal, setSentRefusal] = useState<string | undefined>();
   // The reason a held Send showed when it was pressed; it goes when the box changes or the hold does.
   const [heldShownFor, setHeldShownFor] = useState<string | undefined>();
   // Files (U3 §13.5): the counts Send reads; a progress tick never changes them.
@@ -352,69 +338,6 @@ export const Composer = memo(function Composer({
     () => (slash || at ? [slash, at].filter((c) => c !== undefined) : NO_SOURCES),
     [slash, at],
   );
-  // Command mode (U3 §13.3): the box holds the arguments; the `/` menu doesn't open inside them.
-  const [command, setCommandState] = useState<CommandMode | undefined>();
-  /** Set before the text, so the draft write that follows stores the right form. */
-  const setCommand = useCallback((m: CommandMode | undefined) => {
-    commandRef.current = m;
-    setCommandState(m);
-  }, []);
-  // A stored `/name args` comes back in command mode when the list knows the name (one look, at
-  // mount); otherwise it stays plain text.
-  // After a reload the list usually isn't loaded at mount: the restore waits for it (the source's
-  // `watch`) while the box still holds exactly the stored text; typing gives up on it (evidence D2).
-  const pendingRestore = useRef(STORED_COMMAND.test(text) ? text : undefined);
-  // While the list is still loading, Send holds: an Enter would send the stored `/name args` as a
-  // message (re-verification N5). A source without `ready` is taken as decided.
-  const [restoring, setRestoring] = useState(
-    () => pendingRestore.current !== undefined && slash?.ready?.() === false,
-  );
-  const textNow = useRef(text);
-  useLayoutEffect(() => {
-    textNow.current = text;
-    // Typed over: the stored text is the person's now.
-    if (pendingRestore.current !== undefined && text !== pendingRestore.current) {
-      pendingRestore.current = undefined;
-      setRestoring(false);
-    }
-  });
-  useLayoutEffect(() => {
-    if (pendingRestore.current === undefined) return;
-    let stop: (() => void) | undefined;
-    const tryRestore = () => {
-      const stored = pendingRestore.current;
-      if (stored === undefined || textNow.current !== stored) {
-        pendingRestore.current = undefined;
-        setRestoring(false);
-        stop?.();
-        return;
-      }
-      const m = STORED_COMMAND.exec(stored);
-      const mode = m ? slash?.commandFor?.(`/${m[1]} `) : undefined;
-      if (!m || !mode) {
-        // The list is in and doesn't know the name (or the GET failed): it stays text.
-        if (slash?.ready?.() !== false) {
-          pendingRestore.current = undefined;
-          setRestoring(false);
-          stop?.();
-        }
-        return;
-      }
-      pendingRestore.current = undefined;
-      setRestoring(false);
-      stop?.();
-      setCommand(mode);
-      setText(m[2] ?? "");
-    };
-    tryRestore();
-    if (pendingRestore.current === undefined || !slash?.watch) return;
-    stop = slash.watch(tryRestore);
-    return stop;
-  }, [slash, setCommand, setText]);
-  const menuSources = useMemo(
-    () => (command ? sources.filter((c) => c.trigger !== "/") : sources),
-    [command, sources],
-  );
   // A paste never opens a menu (U3 §13.3): the change it makes is skipped, and so is the text it left
   // until something is typed.
   const pasted = useRef(false);
@@ -448,7 +371,7 @@ export const Composer = memo(function Composer({
       return;
     }
     const caret = box.selectionStart === box.selectionEnd ? box.selectionStart : null;
-    for (const source of caret === null ? NO_SOURCES : menuSources) {
+    for (const source of caret === null ? NO_SOURCES : sources) {
       const hit = source.opensAt(box.value, caret as number);
       if (!hit) continue;
       if (dismissedAt.current === hit.from) break;
@@ -458,7 +381,7 @@ export const Composer = memo(function Composer({
       } else setMenu({ source, ...hit, anchor: caretAnchor(box, hit.from) });
       return;
     }
-    if (caret !== null && !menuSources.some((c) => c.opensAt(box.value, caret))) {
+    if (caret !== null && !sources.some((c) => c.opensAt(box.value, caret))) {
       dismissedAt.current = undefined;
     }
     if (menuState) setMenu(undefined);
@@ -474,12 +397,11 @@ export const Composer = memo(function Composer({
       const caret = box.selectionStart ?? box.value.length;
       const r = menu.source.accept(item, box.value, menu.from, caret);
       setMenu(undefined);
-      if (r.command) setCommand(r.command);
       setText(r.text);
       pendingCaret.current = { at: r.caret, look: false };
       box.focus();
     },
-    [menu, setText, setCommand],
+    [menu, setText],
   );
   /** The toolbar's `@`: inserts the trigger at the caret (after a space when it follows a word). */
   const insertTrigger = (trigger: string) => {
@@ -552,13 +474,13 @@ export const Composer = memo(function Composer({
   );
 
   const empty = text.trim() === "";
-  // A command carries no files, so they never hold it.
-  const blocked = command ? undefined : sendBlockedBy(uploads);
+  const blocked = sendBlockedBy(uploads);
   // Why Send holds while there are files (U3 §13.5), shown under the box: Send stays focusable
   // (aria-disabled), so the reason is reachable by keyboard too.
-  const held = restoring
-    ? LOADING_COMMANDS
-    : (blocked ?? (uploads.count > 0 && empty && !command ? ADD_A_MESSAGE : undefined));
+  // A refusal from the `/` source (a denied command) holds Send too; its reason is in the slot.
+  const slashNote = slash?.textNote?.(text);
+  const slashRefusal = slashNote?.kind === "refusal" ? slashNote.text : undefined;
+  const held = blocked ?? (uploads.count > 0 && empty ? ADD_A_MESSAGE : undefined) ?? slashRefusal;
   const retryable = unconfirmed !== undefined && text === unconfirmed.sent;
   const shownError =
     error === UNCONFIRMED && !retryable ? UNCONFIRMED_EDITED : (error ?? stopError);
@@ -575,72 +497,19 @@ export const Composer = memo(function Composer({
     return box;
   };
 
-  /** Leaves command mode: the name goes back in front of what was typed, as text (Esc, Backspace). */
-  const leaveCommand = (look: boolean) => {
-    if (!command) return;
-    const t = text ? `/${command.name} ${text}` : `/${command.name}`;
-    setCommand(undefined);
-    setText(t);
-    // Esc leaves the menu closed on the name it put back (only typing opens it again; evidence D12).
-    if (!look) dismissedAt.current = 0;
-    pendingCaret.current = { at: t.length, look };
-  };
-
-  /** Command mode's Enter: the command's name and the arguments go to `onCommand`, never as text. On a
-   *  refusal the box comes back in command mode with the arguments (unless it was used since). */
-  async function runCommand() {
-    if (!command || !onCommand || waiting) return;
-    const mode = command;
-    const sent = text;
-    const full = `/${mode.name} ${sent}`;
-    setError(undefined);
-    setFilesNote(false);
-    draft.hold(full);
-    setCommand(undefined);
-    setText("");
-    setMenu(undefined);
-    setPending((n) => n + 1);
-    let run: Promise<void>;
-    try {
-      run = onCommand(mode.name, sent.trim(), { clientMessageId: crypto.randomUUID() });
-    } catch (e) {
-      run = Promise.reject(e);
-    }
-    boxRef.current?.focus();
-    try {
-      await run;
-      draft.clearSent(full);
-    } catch (e) {
-      draft.release(full);
-      let cur = "";
-      setText((c) => {
-        cur = c;
-        return c;
-      });
-      if (commandRef.current) {
-        // Another command was started meanwhile: it stays; the error says what happened to this one.
-      } else if (cur.trim() === "") {
-        setCommand(mode);
-        setText(sent);
-      } else {
-        // The box was used since: the command goes after it as text, never lost (and never run).
-        setText(`${cur}\n${full}`);
-      }
-      draft.persist();
-      setError(e instanceof Error && e.message ? e.message : NETWORK_ERROR);
-    } finally {
-      setPending((n) => n - 1);
-    }
-  }
-
   async function send(urgent = false) {
-    if (command) return runCommand();
     // A held Send is pressable: it says why, in the note slot.
     if (held !== undefined) {
       setHeldShownFor(held);
       return;
     }
-    if (empty || waiting || blocked || restoring) return;
+    // A denied command whose first token is still the whole text: refused here, as when it is complete.
+    const refused = slash?.textNote?.(text, true);
+    if (refused?.kind === "refusal") {
+      setSentRefusal(refused.text);
+      return;
+    }
+    if (empty || waiting) return;
     const sent = text;
     const invalid = validate?.(sent, uploads.count);
     if (invalid) {
@@ -659,6 +528,7 @@ export const Composer = memo(function Composer({
     setError(undefined);
     setFilesNote(false);
     setAttachNote(undefined);
+    setSentRefusal(undefined);
     // The finished files leave the composer with the text (back on a failure).
     const taken = attachments?.take();
     // Optimistic: the box empties at once; the stored draft keeps the text until the server takes it.
@@ -700,7 +570,7 @@ export const Composer = memo(function Composer({
     }
   }
 
-  // U3 §6.2 and §13.3, in order: IME guard, the caret menu, Esc (menu, command mode, peek, stop),
+  // U3 §6.2 and §13.3, in order: IME guard, the caret menu, Esc (menu, peek, stop),
   // ⌥Enter, Enter. Recall joins later.
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -715,8 +585,7 @@ export const Composer = memo(function Composer({
       // Tab commits too (Q43). In the `/` menu Enter takes only a name match; otherwise it sends the
       // text as typed (below), and with no row Tab moves on.
       if (plain && (e.key === "Enter" || e.key === "Tab")) {
-        const exactOnly = e.key === "Enter" && menu.source.enterNeedsExact === true;
-        if (menuRef.current?.accept(exactOnly)) {
+        if (menuRef.current?.accept(e.key === "Enter")) {
           e.preventDefault();
           return;
         }
@@ -734,21 +603,9 @@ export const Composer = memo(function Composer({
     if (e.key === "Escape") {
       // An open peek or popover took this Esc first (Radix marks it handled): let it just close.
       if (e.nativeEvent.defaultPrevented) return;
-      if (command) {
-        e.preventDefault();
-        e.stopPropagation();
-        leaveCommand(false);
-        return;
-      }
       if (!stopRef.current?.stop()) return;
       e.preventDefault();
       e.stopPropagation();
-      return;
-    }
-    // Backspace in an empty command mode takes the name back as text, its menu open again.
-    if (command && e.key === "Backspace" && text === "") {
-      e.preventDefault();
-      leaveCommand(true);
       return;
     }
     // Recall (U3 §13.2): ↑ in an empty box with the caret at 0 fills it with your last message's text.
@@ -759,7 +616,6 @@ export const Composer = memo(function Composer({
       !e.ctrlKey &&
       !e.metaKey &&
       !e.shiftKey &&
-      !command &&
       text === "" &&
       e.currentTarget.selectionStart === 0 &&
       e.currentTarget.selectionEnd === 0
@@ -775,8 +631,7 @@ export const Composer = memo(function Composer({
     const urgent = isUrgentSendKey(e.nativeEvent);
     if (!urgent && !isSendKey(e.nativeEvent)) return;
     e.preventDefault();
-    // ⌥Enter acts as Enter in command mode: a command is never an urgent message.
-    void (command ? runCommand() : send(urgent));
+    void send(urgent);
   };
 
   /** Files from a paste, a drop or the picker (U3 §13.5); past the limit the rest are left out. */
@@ -830,20 +685,16 @@ export const Composer = memo(function Composer({
     addFiles(files, folders);
   };
 
-  // `/foo` matching nothing, or `//x`: it goes as text, and the box says so (U3 §13.3).
-  const slashNote =
-    (menu && !menuOpen ? menu.source.missNote?.() : undefined) ??
-    (command ? undefined : slash?.textNote?.(text));
   const hintShown = hintMode !== undefined && hintMode !== "none" && turnOpen;
-  const commandId = `${uid}-command`;
   // The one note: the highest priority wins, the earlier of equals (the more specific first). Picked
   // here, in render: no state, no effect.
   const candidates: (Shown | undefined)[] = [
     shownError ? { kind: "error", text: shownError } : undefined,
     held !== undefined && heldShownFor === held ? { kind: "refusal", text: held } : undefined,
-    filesNote ? { kind: "refusal", text: FILES_NOTE } : undefined,
+    filesNote ? { kind: "refusal", text: noFilesNote } : undefined,
     attachNote ? { kind: "refusal", text: attachNote } : undefined,
-    slashNote ? { kind: "hint", text: slashNote } : undefined,
+    slashNote,
+    sentRefusal ? { kind: "refusal", text: sentRefusal } : undefined,
     pendingLabel && pending > 0
       ? { kind: "hint", text: <span role="status">{pendingLabel}</span> }
       : undefined,
@@ -877,9 +728,7 @@ export const Composer = memo(function Composer({
     ) : (
       <span role="status">{slotNote.text}</span>
     );
-  const describedBy =
-    [command && commandId, hintId, phone && slotNote && lineId].filter(Boolean).join(" ") ||
-    undefined;
+  const describedBy = [hintId, phone && slotNote && lineId].filter(Boolean).join(" ") || undefined;
   // 2 → 6 lines or 35svh below md, 2 → 12 lines or 40svh from md; then it scrolls (U3 §13.1).
   const growth =
     "min-h-[calc(2lh_+_1rem)] max-h-[min(calc(6lh_+_1rem),35svh)] md:max-h-[min(calc(12lh_+_1rem),40svh)] overflow-y-auto";
@@ -917,18 +766,7 @@ export const Composer = memo(function Composer({
           )}
           {attachments && <AttachmentChips store={attachments} />}
           {view === "write" ? (
-            // Always this wrapper, so entering command mode never remounts the textarea (focus stays).
             <div className="flex min-w-0 items-start">
-              {command && (
-                <span
-                  id={commandId}
-                  data-command-chip
-                  className="mt-2 ml-2 flex max-w-[50%] shrink-0 items-center gap-1.5 rounded-sm border border-border px-1.5 text-[0.8125rem] leading-5"
-                >
-                  <span className="text-muted-foreground">Command</span>
-                  <span className="truncate font-mono">/{command.name}</span>
-                </span>
-              )}
               <Textarea
                 ref={boxRef}
                 id={boxId}
@@ -940,6 +778,7 @@ export const Composer = memo(function Composer({
                   setFilesNote(false);
                   setAttachNote(undefined);
                   setHeldShownFor(undefined);
+                  setSentRefusal(undefined);
                   if (pasted.current) {
                     pasted.current = false;
                     pastedText.current = value;
@@ -947,14 +786,6 @@ export const Composer = memo(function Composer({
                     return;
                   }
                   pastedText.current = undefined;
-                  // An exact name and a space, typed: command mode (U3 §13.3).
-                  const mode = command ? undefined : slash?.commandFor?.(value);
-                  if (mode) {
-                    setCommand(mode);
-                    setText("");
-                    setMenu(undefined);
-                    return;
-                  }
                   if (sources.length) lookForMenu(e.target);
                 }}
                 onSelect={sources.length ? (e) => lookForMenu(e.currentTarget) : undefined}
@@ -968,13 +799,7 @@ export const Composer = memo(function Composer({
                 onBlur={draft.bind.onBlur}
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
-                placeholder={
-                  command
-                    ? command.placeholder
-                    : phone && turnOpen && turnPlaceholder
-                      ? turnPlaceholder
-                      : placeholder
-                }
+                placeholder={phone && turnOpen && turnPlaceholder ? turnPlaceholder : placeholder}
                 rows={2}
                 aria-describedby={describedBy}
                 className={`${growth} min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent shadow-none focus-visible:outline-none dark:bg-transparent`} // ui-contract:allow the frame shows focus-within
@@ -1015,7 +840,7 @@ export const Composer = memo(function Composer({
                 variant="ghost"
                 size="icon"
                 aria-label={slash.label}
-                disabled={!empty || command !== undefined || view !== "write"}
+                disabled={!empty || view !== "write"}
                 className={cn("shrink-0 text-muted-foreground", phone && PHONE_ICON)}
                 onClick={() => insertTrigger("/")}
               >
@@ -1165,9 +990,17 @@ export const Composer = memo(function Composer({
                 type="submit"
                 size={phone ? "icon" : "default"}
                 aria-label={phone ? "Send" : undefined}
-                disabled={held === undefined && ((empty && !command) || waiting)}
+                disabled={held === undefined && (empty || waiting)}
                 aria-disabled={held !== undefined || undefined}
-                aria-describedby={held ? sendReasonId : undefined}
+                aria-describedby={
+                  held
+                    ? held === slashRefusal
+                      ? phone
+                        ? lineId
+                        : hintId
+                      : sendReasonId
+                    : undefined
+                }
                 className={cn("transition-none", phone && PHONE_ICON)}
               >
                 {phone ? <ArrowUp aria-hidden="true" /> : "Send"}
@@ -1186,10 +1019,7 @@ export const Composer = memo(function Composer({
             {slotBody}
           </p>
         ) : null}
-        <p aria-live="polite" className="sr-only">
-          {command ? `Command mode: /${command.name}. Esc to leave.` : ""}
-        </p>
-        {held !== undefined && (
+        {held !== undefined && held !== slashRefusal && (
           <span id={sendReasonId} data-send-reason className="sr-only">
             {held}
           </span>

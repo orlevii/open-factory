@@ -548,7 +548,7 @@ const accepted = (body: string) => () =>
 
 test("disconnected: an accepted message shows as queued at once", async () => {
   ws.connects = false;
-  routes["/api/agents/dev/messages"] = accepted("offline hello");
+  routes["/api/agents/dev/input"] = accepted("offline hello");
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   await userEvent.type(screen.getByRole("combobox", { name: /Message to/ }), "offline hello");
@@ -561,7 +561,7 @@ test("disconnected: an accepted message shows as queued at once", async () => {
 });
 
 test("connected: the 202's item replaces the Sending block, once (U3 §13.2)", async () => {
-  routes["/api/agents/dev/messages"] = accepted("online hello");
+  routes["/api/agents/dev/input"] = accepted("online hello");
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));

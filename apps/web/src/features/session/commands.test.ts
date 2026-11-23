@@ -7,11 +7,8 @@ import {
   commandsQueryOptions,
   EMPTY_COMMANDS,
   FROM_TEMPLATE,
-  NOT_A_COMMAND,
   rankCommands,
-  SENDS_AS_TEXT,
   slashOpensAt,
-  unescapeSlash,
 } from "./commands";
 
 const cmd = (name: string, o: Partial<Command> = {}): Command => ({
@@ -52,7 +49,7 @@ test("opens only for a single `/` token on one line", () => {
   expect(slashOpensAt("/", 1)).toEqual({ query: "", from: 0 });
   expect(slashOpensAt("/co", 3)).toEqual({ query: "co", from: 0 });
   expect(slashOpensAt("/acme:lint", 10)).toEqual({ query: "acme:lint", from: 0 });
-  for (const t of ["hi /co", "/co x", "/co\n", "/co\nmore", "//co", " /co", "/co "])
+  for (const t of ["hi /co", "/co x", "/co\n", "/co\nmore", " /co", "/co "])
     expect(slashOpensAt(t, t.length)).toBeUndefined();
   // The caret before the `/` isn't in the token.
   expect(slashOpensAt("/co", 0)).toBeUndefined();
@@ -90,7 +87,6 @@ test("rows: `/name`, the argument hint, the description without its source tag, 
     hint: "[low|medium|high] [<target>]",
     detail: "Review the current diff",
     alias: "alias: review",
-    exact: true,
     kind: "command",
   });
   expect(src.items("deploy")[0]?.detail).toBe("Ship the app to staging");
@@ -99,25 +95,57 @@ test("rows: `/name`, the argument hint, the description without its source tag, 
   expect(src.items("compact")[0]?.group).toBe("Factory");
 });
 
-test("accepting a row enters command mode with its argument hint as the placeholder", () => {
+test("accepting a row inserts `/name ` and puts the caret after it; nothing else", () => {
   respond();
   const src = commandSource(qc, "dev");
   const [review] = src.items("code");
   expect(review && src.accept(review, "/code", 0, 5)).toEqual({
-    text: "",
-    caret: 0,
-    command: { name: "code-review", placeholder: "[low|medium|high] [<target>]" },
+    text: "/code-review ",
+    caret: 13,
   });
 });
 
-test("an exact name or alias and a space enter command mode; anything else doesn't", () => {
+test("Enter sends a name or alias typed in full, and text that matched only part of a name or a description", () => {
   respond();
   const src = commandSource(qc, "dev");
-  expect(src.commandFor?.("/context ")).toEqual({ name: "context", placeholder: "" });
-  expect(src.commandFor?.("/cost ")).toMatchObject({ name: "usage" });
-  expect(src.commandFor?.("/model ")).toBeUndefined();
-  expect(src.commandFor?.("/context")).toBeUndefined();
-  expect(src.commandFor?.("/context x")).toBeUndefined();
+  expect(src.items("context")[0]?.enterSends).toBe(true);
+  expect(src.items("cost")[0]).toMatchObject({ id: "usage", enterSends: true });
+  expect(src.items("con")[0]?.enterSends).toBeUndefined(); // a prefix: Enter accepts it
+  expect(src.items("diff")[0]?.enterSends).toBe(true); // a description match
+});
+
+test("denied names show only when typed in full, disabled with their reason", () => {
+  const reason = "/clear isn't available: each agent keeps one session.";
+  respond({
+    commands: [...LIST, cmd("clear", { builtin: true, denied: reason, aliases: ["reset"] })],
+  });
+  const src = commandSource(qc, "dev");
+  expect(src.items("").some((i) => i.id === "clear")).toBe(false);
+  expect(src.items("cle").some((i) => i.id === "clear")).toBe(false);
+  expect(src.items("clear")[0]).toMatchObject({ id: "clear", disabled: reason, detail: reason });
+  expect(src.items("reset")[0]).toMatchObject({ id: "clear", disabled: reason });
+});
+
+test("a denied first token is refused with the denylist's reason once it is complete", () => {
+  const src = commandSource(qc, "dev");
+  const refusal = (reason: string) => ({ kind: "refusal", text: reason });
+  expect(src.textNote?.("/clear ")).toEqual(
+    refusal("/clear isn't available: each agent keeps one session."),
+  );
+  expect(src.textNote?.("  /Model gpt")).toEqual(
+    refusal("/Model isn't available: the model and effort come from the agent's template."),
+  );
+  expect(src.textNote?.("/resume\nmore")).toEqual(
+    refusal("/resume isn't available: the factory runs this agent's process."),
+  );
+  // Still being typed: nothing, until Enter.
+  expect(src.textNote?.("/clear")).toBeUndefined();
+  expect(src.textNote?.("/logout", true)).toEqual(
+    refusal("/logout isn't available: credentials are managed in Settings \u2192 Credentials."),
+  );
+  // Anything else, a path and an unknown skill included, shows nothing.
+  for (const t of ["/news-digest ", "/Users/or/log.txt ", "//clear ", "hi /clear ", "/", "clear "])
+    expect(src.textNote?.(t, true)).toBeUndefined();
 });
 
 test("menu notes: the empty state, From template, Commands as of …", () => {
@@ -136,27 +164,6 @@ test("menu notes: the empty state, From template, Commands as of …", () => {
   expect(src.menuNote?.(2)).toBe("Commands as of 09:05; updates when the agent next starts");
   respond();
   expect(src.menuNote?.(2)).toBeUndefined();
-});
-
-test("a typed `/foo` that matches nothing says it sends as text; only once the list loaded", () => {
-  const src = commandSource(qc, "dev");
-  expect(src.missNote?.()).toBeUndefined();
-  respond();
-  expect(src.missNote?.()).toBe(NOT_A_COMMAND);
-  expect(NOT_A_COMMAND).toBe("Not a command for this agent; sends as text");
-});
-
-test("`//x` says it sends as text, and sends with one `/`", () => {
-  const src = commandSource(qc, "dev");
-  expect(src.textNote?.("//deploy now")).toBe(SENDS_AS_TEXT);
-  expect(SENDS_AS_TEXT).toBe("Sends as text; the agent may still run a skill by that name");
-  for (const t of ["/deploy", "// a comment", "hi //x", "///"])
-    expect(src.textNote?.(t)).toBeUndefined();
-  expect(unescapeSlash("//deploy now")).toBe("/deploy now");
-  // A pasted comment or multi-line text is left alone.
-  expect(unescapeSlash("// a comment")).toBe("// a comment");
-  expect(unescapeSlash("//x\nmore")).toBe("//x\nmore");
-  expect(unescapeSlash("/x")).toBe("/x");
 });
 
 test("watch loads the list once and reports when it changes", async () => {
@@ -186,7 +193,6 @@ test("a list that failed to load says so in the menu", async () => {
   const src = commandSource(qc, "dev");
   expect(COMMANDS_FAILED).toBe("Couldn't load this agent's commands.");
   expect(src.menuNote?.(0)).toBe(COMMANDS_FAILED);
-  expect(src.missNote?.()).toBeUndefined();
   vi.unstubAllGlobals();
 });
 
@@ -210,9 +216,8 @@ test("browsing (`/` alone) groups the rows Skills, Commands, Factory, each heade
   expect(src.items("co").some((i) => i.heading)).toBe(false);
 });
 
-test("ready: undecided until the list has loaded or failed; watch hears a failure too", async () => {
+test("watch hears a failed load too", async () => {
   const src = commandSource(qc, "dev");
-  expect(src.ready?.()).toBe(false);
   const heard = vi.fn();
   vi.stubGlobal(
     "fetch",
@@ -223,9 +228,6 @@ test("ready: undecided until the list has loaded or failed; watch hears a failur
   );
   const stop = src.watch?.(heard);
   await vi.waitFor(() => expect(heard).toHaveBeenCalled());
-  expect(src.ready?.()).toBe(true);
   stop?.();
   vi.unstubAllGlobals();
-  respond();
-  expect(src.ready?.()).toBe(true);
 });

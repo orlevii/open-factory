@@ -383,7 +383,7 @@ test("Cancel with text in the box leaves it; the line goes on your next send", a
   vi.useRealTimers();
   world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
   api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
-  api.on("POST /api/agents/dev/messages", () => json({ item: mine("m2", "draft") }, 202));
+  api.on("POST /api/agents/dev/input", () => json({ item: mine("m2", "draft") }, 202));
   await open();
   await userEvent.type(composer(), "draft");
   await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));

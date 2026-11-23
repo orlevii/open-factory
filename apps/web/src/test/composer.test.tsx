@@ -72,8 +72,8 @@ test("Enter sends, Shift+Enter adds a newline, the box clears on 202", async () 
   await vi.waitFor(() =>
     expect(posted).toEqual([
       {
-        url: "/api/agents/dev/messages",
-        body: { body: "line one\nline two", urgent: false, clientMessageId: expect.any(String) },
+        url: "/api/agents/dev/input",
+        body: { text: "line one\nline two", clientMessageId: expect.any(String) },
       },
     ]),
   );
@@ -131,13 +131,13 @@ test("503 clears the box (the message is queued); a 400 keeps the text and shows
   expect(input).toHaveValue("big");
 });
 
-test("slash text is sent as a plain message", async () => {
+test("slash text goes to /input as typed", async () => {
   renderApp("/agents/dev", alice);
   await userEvent.type(await box(), "/compact{Enter}");
   await vi.waitFor(() =>
     expect(posted[0]).toEqual({
-      url: "/api/agents/dev/messages",
-      body: { body: "/compact", urgent: false, clientMessageId: expect.any(String) },
+      url: "/api/agents/dev/input",
+      body: { text: "/compact", clientMessageId: expect.any(String) },
     }),
   );
 });

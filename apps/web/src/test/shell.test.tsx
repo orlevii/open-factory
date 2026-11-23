@@ -256,6 +256,14 @@ test("on a live agent's session the Agents row is not active and the agent row i
   );
 });
 
+test("a live agent's row is active on its Chat too, and links to the Chat", async () => {
+  liveAgents();
+  renderApp("/agents/dev/chat", alice);
+  const row = await screen.findByRole("treeitem", { name: /^Dev agent/ });
+  expect(row).toHaveAttribute("aria-current", "page");
+  expect(row).toHaveAttribute("href", "/agents/dev/chat");
+});
+
 test("on an ended agent's session the Agents row is active", async () => {
   liveAgents();
   renderApp("/agents/gone/session", alice);

@@ -212,6 +212,40 @@ test("'Agent details' is offered on a session page", async () => {
   expect(within(actions).getByRole("option", { name: "Agent details" })).toBeInTheDocument();
 });
 
+async function openOn(path: string, composer: string) {
+  const app = renderApp(path, alice);
+  await screen.findByRole("combobox", { name: composer });
+  fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+  const dialog = await screen.findByRole("dialog", { name: "Search" });
+  return {
+    dialog,
+    router: app.router,
+    actions: within(dialog).getByRole("group", { name: "Actions" }),
+  };
+}
+
+test("in the Chat the palette offers 'Open session' and not 'Open chat'; it goes to the session", async () => {
+  const { actions, router } = await openOn("/agents/dev/chat", "Message to Dev agent");
+  expect(within(actions).queryByRole("option", { name: "Open chat" })).toBeNull();
+  expect(within(actions).getByRole("option", { name: "Agent details" })).toBeInTheDocument();
+  await userEvent.click(within(actions).getByRole("option", { name: "Open session" }));
+  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/session"));
+});
+
+test("in the Session the palette offers 'Open chat' and not 'Open session'; it goes to the chat", async () => {
+  const { actions, router } = await openOn("/agents/dev/session", "Message to Dev agent");
+  expect(within(actions).queryByRole("option", { name: "Open session" })).toBeNull();
+  await userEvent.click(within(actions).getByRole("option", { name: "Open chat" }));
+  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
+});
+
+test("off an agent page neither view action is offered", async () => {
+  const { dialog } = await openFromInput();
+  const actions = within(dialog).getByRole("group", { name: "Actions" });
+  expect(within(actions).queryByRole("option", { name: "Open session" })).toBeNull();
+  expect(within(actions).queryByRole("option", { name: "Open chat" })).toBeNull();
+});
+
 test("Go to includes Usage and each Settings page; Images links /templates/images", async () => {
   const { dialog, router } = await openFromInput();
   const goTo = within(dialog).getByRole("group", { name: "Go to" });

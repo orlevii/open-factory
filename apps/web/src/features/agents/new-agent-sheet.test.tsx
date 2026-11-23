@@ -388,10 +388,12 @@ test("while creating, Installing plugins… appears beside the button after 3 s"
   await act(async () => {
     vi.advanceTimersByTime(3000);
   });
-  expect(screen.getByText("Installing plugins…")).toBeInTheDocument();
+  const notice = screen.getByText("Installing plugins…");
+  expect(notice.closest("[data-slot=sheet-footer]")).not.toBeNull();
+  expect(notice).toHaveAttribute("data-shown");
 });
 
-test("a 502 shows the form error with a collapsed Show output", async () => {
+test("a plugin install failure is the footer's error, with Show output opening the output", async () => {
   await openLead({
     extra: {
       "POST /api/agents": () =>
@@ -408,10 +410,76 @@ test("a 502 shows the form error with a collapsed Show output", async () => {
     },
   });
   await userEvent.click(createButton());
-  const alert = await screen.findByText("Plugin install failed: superpowers@market.");
-  expect(alert.closest("[role=alert]")).not.toBeNull();
-  const details = screen.getByText("Show output").closest("details");
-  expect(details).not.toHaveAttribute("open");
+  const msg = await screen.findByText("Plugin install failed: superpowers@market.");
+  const alert = msg.closest("[role=alert]") as HTMLElement;
+  expect(alert.closest("[data-slot=sheet-footer]")).not.toBeNull();
+  // The output is never inline: no details, no pre in the form.
+  expect(screen.queryByText("npm ERR! nope")).toBeNull();
+  await userEvent.click(within(alert).getByRole("button", { name: "Show output" }));
+  const out = await screen.findByRole("alertdialog", { name: "Plugin install output" });
+  expect(within(out).getByText("npm ERR! nope")).toBeInTheDocument();
+  // The dialog's store is module state: close it so the next test starts without it.
+  await userEvent.click(within(out).getByRole("button", { name: "Close" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+});
+
+test("a failing submit with no credential chosen opens More options every time, and focuses Credential", async () => {
+  mockWorld({ credentials: [credential("work"), credential("prod")] });
+  const first = renderApp("/agents", alice);
+  await screen.findByRole("heading", { level: 1, name: "Agents" });
+  act(() => openSheet({ kind: "new-agent", template: "lead" }));
+  await sheet();
+  await vi.waitFor(() => expect(field("Display name").value).toBe("Team Lead"));
+  await userEvent.click(more());
+  await pickOption(field("Credential"), /^prod/);
+  act(() => closeSheet());
+  first.unmount();
+  // The restored draft's credential is gone and two are left: none is chosen.
+  const { api } = await open({ credentials: [credential("work"), credential("other")] });
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "Ada");
+  for (let i = 0; i < 2; i++) {
+    expect(more()).toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(more());
+    expect(more()).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(createButton());
+    await vi.waitFor(() => expect(field("Credential")).toHaveFocus());
+    expect(more()).toHaveAttribute("aria-expanded", "true");
+    expect(field("Credential")).toHaveAttribute("aria-invalid", "true");
+  }
+  expect(posts(api)).toHaveLength(0);
+});
+
+test("tabbing through untouched fields shows nothing", async () => {
+  const { dialog } = await open();
+  await vi.waitFor(() => expect(field("Template")).toHaveFocus());
+  for (let i = 0; i < 8; i++) await userEvent.tab();
+  expect(dialog.querySelector('[aria-invalid="true"]')).toBeNull();
+  expect(within(dialog).queryByText("Choose a template.")).toBeNull();
+  expect(within(dialog).queryByText("Enter a display name.")).toBeNull();
+});
+
+test("a template error is the field's note", async () => {
+  await open();
+  await userEvent.click(createButton());
+  const msg = await screen.findByText("Choose a template.");
+  expect(msg.closest(".field-note")).not.toBeNull();
+  await vi.waitFor(() => expect(field("Template")).toHaveFocus());
+});
+
+test("leaving a changed Template that now fails for its own New template button doesn't flag it", async () => {
+  const templates = [templateSummary("lead"), templateSummary("writer")];
+  const { dialog, queryClient } = await open({ templates });
+  await pickOption(field("Template"), /^lead/);
+  // Broken elsewhere: the chosen template now has errors, so the field's check fails.
+  templates[0] = templateSummary("lead", 2);
+  await act(() => queryClient.invalidateQueries({ queryKey: ["templates"] }));
+  await vi.waitFor(() => expect(field("Template")).toHaveTextContent("Choose a template"));
+  act(() => field("Template").focus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "New template" }));
+  await child("New template");
+  expect(within(dialog).queryByText("That template has errors; fix it first.")).toBeNull();
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
 });
 
 test("a server projects error opens More options and focuses the group", async () => {
@@ -830,12 +898,24 @@ test("no projects registered says so beside Add project", async () => {
 
 test("the template error waits for the list to close, and a pick doesn't flash it", async () => {
   await open();
+  await userEvent.click(createButton());
+  expect(await screen.findByText("Choose a template.")).toBeInTheDocument();
   await userEvent.click(field("Template"));
   await screen.findByRole("listbox");
-  expect(screen.queryByText("Choose a template.")).not.toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
-  expect(await screen.findByText("Choose a template.")).toBeInTheDocument();
+  expect(field("Template")).toHaveAccessibleDescription("Choose a template.");
   await pickOption(field("Template"), /^lead/);
+  // The note keeps its last text hidden (no layout shift); what counts is that it isn't shown.
+  expect(screen.getByText("Choose a template.").closest("p")).not.toHaveAttribute("data-shown");
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
+});
+
+test("opening and closing the template list untouched says nothing", async () => {
+  await open();
+  await userEvent.click(field("Template"));
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("{Escape}");
+  await act(async () => {});
   expect(screen.queryByText("Choose a template.")).not.toBeInTheDocument();
 });
 

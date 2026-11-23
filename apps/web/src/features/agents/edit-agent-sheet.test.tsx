@@ -184,6 +184,26 @@ test("Save is described by the restart notice, so it is heard", async () => {
   );
 });
 
+test("the restart notice is the footer's notice; a save failure replaces it until the next edit", async () => {
+  await open({
+    agents: [lead({ status: "idle" })],
+    credentials: [credential("work"), credential("prod")],
+    extra: { "PATCH /api/agents/lead": () => Promise.reject(new TypeError("Failed to fetch")) },
+  });
+  await pickOption(field("Credential"), /^prod/);
+  const notice = await screen.findByText(/^Saving restarts @lead/);
+  expect(notice.closest("[data-slot=sheet-footer]")).not.toBeNull();
+  expect(notice).toHaveAttribute("data-shown");
+  await userEvent.click(saveButton());
+  const error = await screen.findByText("Couldn't reach the server. Try again.");
+  expect(error.closest("[role=alert]")?.closest("[data-slot=sheet-footer]")).not.toBeNull();
+  expect(screen.getByText(/^Saving restarts @lead/)).not.toHaveAttribute("data-shown");
+  expect(saveButton()).not.toHaveAccessibleDescription();
+  await rename("Boss");
+  expect(screen.queryByText("Couldn't reach the server. Try again.")).toBeNull();
+  expect(screen.getByText(/^Saving restarts @lead/)).toHaveAttribute("data-shown");
+});
+
 test("a text change names the running direct reports that restart too", async () => {
   await open({
     agents: [
@@ -348,7 +368,12 @@ test("a server projects error shows under Projects", async () => {
   const group = within(dialog).getByRole("group", { name: /Projects/ });
   await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
   await userEvent.click(saveButton());
-  expect(await within(group).findByText("Project docs isn't registered.")).toBeInTheDocument();
+  const msg = await within(group).findByText("Project docs isn't registered.");
+  expect(msg.closest(".field-note")).not.toBeNull();
+  expect(group).toHaveAttribute("aria-invalid", "true");
+  await vi.waitFor(() =>
+    expect(within(group).getByRole("checkbox", { name: /app/ })).toHaveFocus(),
+  );
   expect(getSheetState().parent?.kind).toBe("edit-agent");
 });
 

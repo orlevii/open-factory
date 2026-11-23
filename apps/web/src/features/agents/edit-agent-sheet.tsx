@@ -19,7 +19,6 @@ import { flushSync } from "react-dom";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
-import { NO_OUTCOME } from "@/components/forms/form-outcome";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import type { ComboOption } from "@/components/ui/combobox";
@@ -33,9 +32,8 @@ import {
 import { SheetBody, SheetClose, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
-import { leavesForOwnAdd } from "@/features/agents/add-for";
 import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
-import { FIELDS, type PatchField, useAgentFormState } from "@/features/agents/agent-form-state";
+import { type PatchField, useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions, updateAgent } from "@/features/agents/api";
 import { restoreAgent } from "@/features/agents/lifecycle";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
@@ -167,12 +165,12 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   const qc = useQueryClient();
   const slug = agent.slug;
   const draftKey = `edit-agent:${slug}` as const;
-  const s = useAgentFormState({ mode: "edit", agent, draftKey });
-  const { values, shown, errors, set, blur, claim, pending, outcome, changes } = s;
+  const form = useRef<HTMLFormElement>(null);
+  const s = useAgentFormState({ mode: "edit", agent, draftKey, form });
+  const { values, shown, errors, set, blur, claim, pending, changes } = s;
   const { noCredentials, credentials, staleNotes } = s;
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
   const projects = useQuery(projectsQueryOptions);
-  const form = useRef<HTMLFormElement>(null);
   const latestShown = useRef(shown);
   useLayoutEffect(() => {
     latestShown.current = shown;
@@ -220,7 +218,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
       variant="ghost"
       size="sm"
       inForm
-      data-add-for="credential"
+      data-skip-validate
       onClick={onAddCredential}
     >
       <Plus aria-hidden="true" data-icon="inline-start" />
@@ -260,15 +258,6 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     () => (managerMissing ? (m: string) => `@${m} (archived)` : undefined),
     [managerMissing],
   );
-
-  // Focus moves to the first error once it renders, and once the fieldset is enabled again after a server answer.
-  const wantFocus = useRef(false);
-  useEffect(() => {
-    if (pending || !wantFocus.current) return;
-    wantFocus.current = false;
-    const first = FIELDS.find((f) => errors[f]);
-    if (first) form.current?.querySelector<HTMLElement>(`#field-${first}`)?.focus();
-  }, [pending, errors]);
 
   const running = isRunning(agent);
   // A display name or description change also restarts the agent's live direct reports (their prompt names their
@@ -369,15 +358,14 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (pending) return;
-    wantFocus.current = true;
     void s.submit(save);
   }
 
   return (
     <form ref={form} onSubmit={onSubmit} noValidate className="flex min-h-0 flex-1 flex-col">
       <Description agent={agent} />
-      <SheetBody className="grid content-start gap-5">
-        <fieldset disabled={pending} className="grid min-w-0 gap-5">
+      <SheetBody className="field-stack">
+        <fieldset disabled={pending} className="field-stack">
           <legend className="sr-only">Edit agent</legend>
           <FormField
             name="displayName"
@@ -386,7 +374,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             value={shown.displayName}
             onChange={(e) => set("displayName", e.target.value)}
             onFocus={() => claim("displayName")}
-            onBlur={() => blur("displayName")}
+            onBlur={(e) => blur("displayName", e)}
             autoComplete="off"
           />
           <FieldShell
@@ -424,7 +412,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
                 value={shown.description}
                 onChange={(e) => set("description", e.target.value)}
                 onFocus={() => claim("description")}
-                onBlur={() => blur("description")}
+                onBlur={(e) => blur("description", e)}
               />
             )}
           </FieldShell>
@@ -451,7 +439,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
                     id={a.id}
                     aria-invalid={a.invalid || undefined}
                     aria-describedby={a.describedBy}
-                    onBlur={(e) => !leavesForOwnAdd(e, "credential") && blur("credential")}
+                    onBlur={(e) => blur("credential", e)}
                   >
                     <SelectValue placeholder="Choose a credential">
                       {credentials ? undefined : shown.credential || "Loading…"}
@@ -478,7 +466,6 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             onAddProject={onAddProject}
           />
         </fieldset>
-        <InlineOutcome tone={outcome?.tone}>{outcome?.content}</InlineOutcome>
       </SheetBody>
       <SheetFormFooter
         submitLabel="Save changes"
@@ -487,7 +474,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
         restored={s.restored}
         onDiscard={s.discard}
         submitClassName="min-w-32"
-        outcome={{ ...NO_OUTCOME, notice: restartNotice }}
+        outcome={{ ...s.outcome, notice: restartNotice }}
       />
     </form>
   );

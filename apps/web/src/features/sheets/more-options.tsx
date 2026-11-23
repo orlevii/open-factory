@@ -53,7 +53,7 @@ export function MoreOptions({
         {reason && <span className="text-muted-foreground">{reason}</span>}
       </div>
       {open && (
-        <div id={id} className="grid gap-5">
+        <div id={id} className="field-stack">
           {children}
         </div>
       )}

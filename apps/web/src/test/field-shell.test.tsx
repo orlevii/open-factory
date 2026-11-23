@@ -35,6 +35,27 @@ test("FieldShell legend renders a fieldset", () => {
   expect(screen.getByRole("group", { name: "Projects" })).toBeInTheDocument();
 });
 
+test("FieldShell legend is invalid with an error, and its label may carry a marker", () => {
+  render(
+    <FieldShell
+      name="projects"
+      label={
+        <>
+          Projects <span id="m">Custom</span>
+        </>
+      }
+      legend
+      describedBy="m"
+      error="Project docs isn't registered."
+    >
+      {() => <input aria-label="x" />}
+    </FieldShell>,
+  );
+  const group = screen.getByRole("group", { name: "Projects Custom" });
+  expect(group).toHaveAttribute("aria-invalid", "true");
+  expect(group).toHaveAttribute("aria-describedby", "field-projects-error m");
+});
+
 test("FormField keeps its API (S1 tests stay green)", () => {
   render(<FormField name="email" label="Email" error="Wrong" />);
   expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Wrong");

@@ -4,7 +4,8 @@ import { Label } from "@/components/ui/label";
 
 type Props = {
   name: string;
-  label: string;
+  /** A string for a single input; a legend may carry a marker beside the name (Projects' "Custom"). */
+  label: ReactNode;
   error?: string;
   /** Muted hint under the field. An error or warning replaces it in the same reserved line. */
   help?: string;
@@ -48,7 +49,12 @@ export function FieldShell({
   );
   if (legend) {
     return (
-      <fieldset data-field="" className="grid min-w-0 gap-1.5" aria-describedby={describedBy}>
+      <fieldset
+        data-field=""
+        className="grid min-w-0 gap-1.5"
+        aria-describedby={describedBy}
+        aria-invalid={error ? true : undefined}
+      >
         <legend className="text-[0.8125rem] font-medium">{label}</legend>
         {body}
         {tail}

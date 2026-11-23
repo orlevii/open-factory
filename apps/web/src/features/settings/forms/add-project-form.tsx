@@ -50,7 +50,7 @@ export function AddProjectForm({
     } catch (err) {
       setPending(false);
       if (err instanceof ApiError && err.code === "project_exists")
-        f.set("name", err.message, { focus: true });
+        f.set("name", FORM_MSG.nameTaken, { focus: true });
       else if (!f.server(fieldsOf(err)))
         o.fail(err instanceof ApiError ? err.message : FORM_MSG.addProjectFailed);
     }

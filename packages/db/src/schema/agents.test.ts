@@ -23,7 +23,7 @@ test("agent tables exist; seq is unique per agent; deleting an agent cascades", 
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
     values ('a1', 'dev', 'Dev agent', 'dev', '{}', 'local', 'c1'), ('a2', 'other', 'Other', 'dev', '{}', 'local', 'c1')`;
   const [a] = await sql`
-    select status, description, session_id, kind, reports_to, grants_overridden, archived_at
+    select status, description, session_id, kind, reports_to, archived_at
     from agents where id = 'a1'`;
   expect(a).toEqual({
     status: "hibernated",
@@ -31,7 +31,6 @@ test("agent tables exist; seq is unique per agent; deleting an agent cascades", 
     session_id: null,
     kind: "persistent",
     reports_to: null,
-    grants_overridden: false,
     archived_at: null,
   });
   await sql`insert into turns (id, agent_id, started_at) values ('t1', 'a1', now())`;

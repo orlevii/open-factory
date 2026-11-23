@@ -25,7 +25,10 @@ export const templates = pgTable("templates", {
   config: jsonb("config").$type<TemplateConfig>(),
   issues: jsonb("issues").$type<TemplateIssue[]>().notNull().default([]),
   contentHash: text("content_hash").notNull(),
-  /** The last parse that had no errors; agents merge against this, so a broken edit never reaches them. */
+  /**
+   * The last parse that had no errors (I2 §7.1). Never run on: a start merges against the template read from disk. It is
+   * the "before" of the next change's diff, and what `usedBy` and a spawned child's grants read without touching disk.
+   */
   lastValid: jsonb("last_valid").$type<ConfigDoc>(),
   lastValidHash: text("last_valid_hash"),
   valid: boolean("valid").notNull().default(false),

@@ -389,11 +389,18 @@ export function CredentialsSection(p: { arriveAt?: string }) {
   });
   const { data } = query;
   const focusLater = useFocusLater();
-  // Unset until the user opens or closes the form: then a live `create` attempt opens it (AC2, R6).
+  // Unset until the first sign-in answer or the user opens or closes the form (AC2, R6).
   const [adding, setAdding] = useState<boolean>();
   // Narrowed to the boolean, so an attempt change re-renders the section only when it flips (rerender-derived-state).
-  const { data: liveCreate = false } = useQuery({ ...signInQueryOptions, select: isLiveCreate });
-  const showAdd = adding ?? liveCreate;
+  const { data: liveCreate = false, isPending: signInPending } = useQuery({
+    ...signInQueryOptions,
+    select: isLiveCreate,
+  });
+  // Latched once, on load (§8.1): a form opened for a restored attempt stays open when the attempt ends, so its
+  // ending line shows; an attempt appearing later never opens it. Adjusting state in render; it converges as
+  // `adding` is then set.
+  if (adding === undefined && !signInPending) setAdding(liveCreate);
+  const showAdd = adding ?? false;
   const [outcome, setOutcome] = useState<Outcome>();
   const [rowOutcome, setRowOutcome] = useState<Record<string, Outcome>>({});
   const [verifying, setVerifying] = useState<ReadonlySet<string>>(new Set());

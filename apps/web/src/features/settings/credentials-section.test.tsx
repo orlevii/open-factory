@@ -1,4 +1,4 @@
-import type { AttemptView, CredentialSummary } from "@open-factory/shared";
+import { type AttemptView, type CredentialSummary, MSG } from "@open-factory/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -313,11 +313,39 @@ test("a sign-in attempt change does not re-render the Settings section (select n
   });
   await settle();
   expect(renders).toBe(before);
-  // The boolean flipping does render it: the inline form opens.
+  // An attempt appearing after load never opens the form (§8.1: on load).
   await act(async () => {
     qc.setQueryData(signInQueryOptions.queryKey, { available: true, attempt: attempt() });
   });
   await settle();
-  expect(renders).toBeGreaterThan(before);
-  expect(await screen.findByRole("form", { name: "Add credential" })).toBeInTheDocument();
+  expect(screen.queryByRole("form", { name: "Add credential" })).toBeNull();
+});
+
+test("a create attempt appearing after load does not open the inline form", async () => {
+  let live = false;
+  mockApi({
+    "GET /api/credentials": () => json({ credentials: [] }),
+    "GET /api/claude-sign-in": () => json({ available: true, attempt: live ? attempt() : null }),
+  });
+  const { qc } = renderSection([]);
+  await waitFor(() => expect(qc.getQueryData(signInQueryOptions.queryKey)).toBeDefined());
+  live = true;
+  await act(() => qc.refetchQueries({ queryKey: signInQueryOptions.queryKey }));
+  expect(screen.queryByRole("form", { name: "Add credential" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Add credential" })).toBeInTheDocument();
+});
+
+test("a form opened for a restored attempt stays open, with the ending line, when the attempt ends", async () => {
+  let ended = false;
+  mockApi({
+    "GET /api/credentials": () => json({ credentials: [] }),
+    "GET /api/claude-sign-in": () => json({ available: true, attempt: ended ? null : attempt() }),
+  });
+  const { qc } = renderSection([]);
+  await screen.findByRole("link", { name: "Open sign-in page" });
+  ended = true;
+  await act(() => qc.refetchQueries({ queryKey: signInQueryOptions.queryKey }));
+  expect(screen.getByRole("form", { name: "Add credential" })).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole("link", { name: "Open sign-in page" })).toBeNull());
+  expect(await screen.findByText(MSG.signInEnded)).toBeInTheDocument();
 });

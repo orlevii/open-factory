@@ -105,9 +105,10 @@ export function AddCredentialForm({
     if (!f.submit(["name", "value"])) return;
     setPending(true);
     try {
-      onDone(await createCredential({ name, kind: KIND_OF[m], value: values[m] }));
+      const c = await createCredential({ name, kind: KIND_OF[m], value: values[m] });
       // The server ended this caller's sign-in attempt (spec §5.4).
       void qc.invalidateQueries({ queryKey: signInQueryOptions.queryKey });
+      onDone(c);
     } catch (err) {
       setPending(false);
       const v = verdictOf(err);

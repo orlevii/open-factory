@@ -64,7 +64,9 @@ import {
   verdictOf,
 } from "./forms/shared";
 import { RATE_LIMIT_REFETCH_MS, RateLimitLine } from "./rate-limit-line";
+import { isLiveCreate, signInQueryOptions } from "./sign-in/api";
 import { type ExpiryState, expiryState } from "./sign-in/expiry";
+import { cancelCreateAttempt } from "./sign-in/use-sign-in";
 
 const FIELDS = ["value"] as const;
 
@@ -387,7 +389,11 @@ export function CredentialsSection(p: { arriveAt?: string }) {
   });
   const { data } = query;
   const focusLater = useFocusLater();
-  const [adding, setAdding] = useState(false);
+  // Unset until the user opens or closes the form: then a live `create` attempt opens it (AC2, R6).
+  const [adding, setAdding] = useState<boolean>();
+  // Narrowed to the boolean, so an attempt change re-renders the section only when it flips (rerender-derived-state).
+  const { data: liveCreate = false } = useQuery({ ...signInQueryOptions, select: isLiveCreate });
+  const showAdd = adding ?? liveCreate;
   const [outcome, setOutcome] = useState<Outcome>();
   const [rowOutcome, setRowOutcome] = useState<Record<string, Outcome>>({});
   const [verifying, setVerifying] = useState<ReadonlySet<string>>(new Set());
@@ -578,11 +584,13 @@ export function CredentialsSection(p: { arriveAt?: string }) {
           {outcome?.content}
         </InlineOutcome>
       </div>
-      {adding ? (
+      {showAdd ? (
         <AddCredentialForm
           frame="inline"
           existing={credentials.map((c) => c.name)}
           onCancel={() => {
+            // Inline Cancel ends the attempt (D13); the sheet's Close keeps it.
+            void cancelCreateAttempt(qc);
             setAdding(false);
             focusLater("credentials-add");
           }}

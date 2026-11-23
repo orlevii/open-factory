@@ -21,6 +21,10 @@ export function verdictOf(err: unknown): Verdict | undefined {
   return undefined;
 }
 
+/** Paste a token's help (spec §8.1): a pasted token's expiry is unknown, so it is never warned about. */
+export const OAUTH_TOKEN_HELP =
+  "Create one with `claude setup-token`. You won't be warned before it expires.";
+
 export function TokenField({
   name,
   label,
@@ -44,7 +48,7 @@ export function TokenField({
       label={label}
       error={verdict.error}
       warning={verdict.warning}
-      help={kind === "oauth_token" ? "Create one with `claude setup-token`." : undefined}
+      help={kind === "oauth_token" ? OAUTH_TOKEN_HELP : undefined}
     >
       {(a) => (
         <PasswordInput

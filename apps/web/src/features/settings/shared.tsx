@@ -278,6 +278,7 @@ export function InlineForm({
   pending,
   outcome,
   autoFocusId,
+  autoFocus = true,
   reveal = false,
   ref,
 }: {
@@ -292,6 +293,8 @@ export function InlineForm({
   ref?: Ref<HTMLFormElement>;
   /** The field to focus on open, when it isn't the first one (a prefilled name). */
   autoFocusId?: string;
+  /** False: no focus on mount (a restored sign-in moves focus itself). */
+  autoFocus?: boolean;
   /** Opened by a link (?addSecret): bring the whole form into view, wherever it sits on the page. */
   reveal?: boolean;
 }) {
@@ -307,9 +310,11 @@ export function InlineForm({
   const router = useRouter();
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
   useEffect(() => {
-    const first = autoFocusId
-      ? document.getElementById(autoFocusId)
-      : form.current?.querySelector<HTMLElement>("input:not([type=hidden]), textarea");
+    const first = !autoFocus
+      ? null
+      : autoFocusId
+        ? document.getElementById(autoFocusId)
+        : form.current?.querySelector<HTMLElement>("input:not([type=hidden]), textarea");
     first?.focus({ preventScroll: reveal });
     if (!reveal) return;
     const show = () => form.current?.scrollIntoView?.({ block: "nearest" });

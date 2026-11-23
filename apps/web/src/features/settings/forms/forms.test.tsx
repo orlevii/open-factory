@@ -30,6 +30,10 @@ function inSheet(title: string, form: ReactNode) {
     </QueryClientProvider>,
   );
 }
+/** Add credential opens on Sign in with Claude (spec §8.1); these tests use the Paste a token method. */
+async function pasteToken(dialog: HTMLElement) {
+  await userEvent.click(within(dialog).getByRole("radio", { name: "Paste a token" }));
+}
 const describedText = (el: HTMLElement) =>
   (el.getAttribute("aria-describedby") ?? "")
     .split(" ")
@@ -58,9 +62,11 @@ test("credential: validates, submits once on Enter, maps a rejection under the t
   // The sheet header has its own Close; the form's is the footer one.
   const close = within(dialog).getAllByRole("button", { name: "Close" }).at(-1) as HTMLElement;
   expect(close).toHaveAttribute("type", "button");
+  await pasteToken(dialog);
   await userEvent.type(within(dialog).getByLabelText("Name"), "taken{Enter}");
   expect(describedText(within(dialog).getByLabelText("Name"))).toBe("That name is taken.");
-  expect(api.calls).toHaveLength(0);
+  // Only the sign-in GET (the form reads whether sign-in is available): nothing was submitted.
+  expect(api.calls.filter((c) => c.method !== "GET")).toHaveLength(0);
   const name = within(dialog).getByLabelText("Name");
   await userEvent.clear(name);
   await userEvent.type(name, "work");
@@ -363,6 +369,8 @@ test("every add form: empty submit focuses the first field, and an untouched blu
   for (const [title, form] of forms) {
     const { unmount } = inSheet(title, form);
     const dialog = screen.getByRole("dialog", { name: title });
+    // Sign in with Claude's Start runs no field checks (R8): the credential form is checked as a paste.
+    if (title === "Add credential") await pasteToken(dialog);
     const first = within(dialog).getByLabelText("Name");
     await userEvent.click(first);
     await userEvent.tab();
@@ -426,6 +434,7 @@ test("secret and credential: a server fields.* lands under its field and focuses
   );
   dialog = screen.getByRole("dialog", { name: "Add credential" });
   await userEvent.type(within(dialog).getByLabelText("Name"), "work");
+  await pasteToken(dialog);
   await userEvent.type(within(dialog).getByLabelText("Token"), "t{Enter}");
   await waitFor(() => expect(within(dialog).getByLabelText("Name")).toHaveFocus());
   expect(describedText(within(dialog).getByLabelText("Name"))).toBe("Nope.");
@@ -441,8 +450,11 @@ test("credential: unverifiable is a warning in the token note plus a form line; 
     <AddCredentialForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
   );
   const dialog = screen.getByRole("dialog", { name: "Add credential" });
+  await pasteToken(dialog);
   const token = within(dialog).getByLabelText("Token");
-  expect(describedText(token)).toBe("Create one with claude setup-token.");
+  expect(describedText(token)).toBe(
+    "Create one with claude setup-token. You won't be warned before it expires.",
+  );
   await userEvent.type(within(dialog).getByLabelText("Name"), "work");
   await userEvent.type(token, "t{Enter}");
   const alert = await within(dialog).findByText("Couldn't add the credential.");
@@ -450,7 +462,9 @@ test("credential: unverifiable is a warning in the token note plus a form line; 
   expect(describedText(token)).toBe("Couldn't reach Claude to check.");
   expect(token).not.toHaveAttribute("aria-invalid");
   await userEvent.type(token, "x");
-  expect(describedText(token)).toBe("Create one with claude setup-token.");
+  expect(describedText(token)).toBe(
+    "Create one with claude setup-token. You won't be warned before it expires.",
+  );
 });
 
 test("credential and project: a duplicate-name code shows the short copy under Name with focus", async () => {
@@ -465,6 +479,7 @@ test("credential and project: a duplicate-name code shows the short copy under N
   );
   let dialog = screen.getByRole("dialog", { name: "Add credential" });
   await userEvent.type(within(dialog).getByLabelText("Name"), "work");
+  await pasteToken(dialog);
   await userEvent.type(within(dialog).getByLabelText("Token"), "t{Enter}");
   await waitFor(() => expect(within(dialog).getByLabelText("Name")).toHaveFocus());
   expect(describedText(within(dialog).getByLabelText("Name"))).toBe("That name is taken.");
@@ -498,6 +513,7 @@ test("a validation_error with no mapped fields falls to the form-level alert in 
   );
   let dialog = screen.getByRole("dialog", { name: "Add credential" });
   await userEvent.type(within(dialog).getByLabelText("Name"), "work");
+  await pasteToken(dialog);
   await userEvent.type(within(dialog).getByLabelText("Token"), "t{Enter}");
   await alertText(dialog);
   c.unmount();
@@ -540,6 +556,7 @@ test("credential: a server fields.value lands under the token and focuses it", a
   );
   const dialog = screen.getByRole("dialog", { name: "Add credential" });
   await userEvent.type(within(dialog).getByLabelText("Name"), "work");
+  await pasteToken(dialog);
   const token = within(dialog).getByLabelText("Token");
   await userEvent.type(token, "t{Enter}");
   await waitFor(() => expect(token).toHaveFocus());

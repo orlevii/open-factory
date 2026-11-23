@@ -147,7 +147,7 @@ test("TokenField shows the OAuth help for oauth_token only", () => {
   };
   const { rerender } = render(<TokenField {...props} kind="oauth_token" />);
   expect(screen.getByLabelText("Token")).toHaveAccessibleDescription(
-    "Create one with claude setup-token.",
+    "Create one with claude setup-token. You won't be warned before it expires.",
   );
   rerender(<TokenField {...props} kind="api_key" />);
   expect(screen.getByLabelText("Token")).not.toHaveAccessibleDescription();

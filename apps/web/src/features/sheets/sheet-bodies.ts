@@ -8,6 +8,7 @@ import {
   secretsQueryOptions,
   usersQueryOptions,
 } from "@/features/settings/api";
+import { signInQueryOptions } from "@/features/settings/sign-in/api";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 import { hostQueryOptions } from "@/lib/host";
 import type { ChildSpec, SheetSpec } from "./sheet-store";
@@ -92,6 +93,8 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     load: () => import("./setup-sheets").then((m) => ({ default: m.AddCredentialSheet })),
     prefetch(qc) {
       warm(qc, credentialsQueryOptions);
+      // A restored attempt never flashes Idle first (spec §8.3).
+      warm(qc, signInQueryOptions);
     },
     title: "Add credential",
     note: "Saved to Settings → Credentials; other agents can use it.",

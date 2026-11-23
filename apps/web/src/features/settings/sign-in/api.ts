@@ -20,6 +20,15 @@ export const signInQueryOptions = queryOptions({
   queryFn: ({ signal }) => apiFetch("/api/claude-sign-in", { schema: signInStatusSchema, signal }),
 });
 
+/**
+ * A `create` attempt still in progress (never `settled`, spec §8.1): Settings opens its inline add form for one.
+ * Module-level, so a `select` using it stays stable and the section re-renders only when the boolean flips.
+ */
+export function isLiveCreate(s: { attempt: AttemptView | null }): boolean {
+  const a = s.attempt;
+  return a !== null && a.purpose === "create" && a.state !== "settled";
+}
+
 export type SignInOutcome =
   | { kind: "done"; credential: CredentialSummary }
   | { kind: "pending"; attempt: AttemptView };

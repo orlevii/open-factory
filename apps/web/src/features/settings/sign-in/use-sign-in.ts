@@ -188,6 +188,21 @@ export function resetSignIn() {
   submittedHere.clear();
 }
 
+/**
+ * Settings' inline Cancel (D13): ends this tab's `create` attempt while it still waits for its code. One past the
+ * code can't be cancelled (the server refuses); its wait loop delivers the outcome.
+ */
+export async function cancelCreateAttempt(qc: QueryClient) {
+  const a = qc.getQueryData(KEY)?.attempt;
+  if (a?.purpose !== "create" || (a.state !== "starting" && a.state !== "awaiting_code")) return;
+  try {
+    await cancelSignIn(a.attemptId);
+    patchAttempt(qc, a.attemptId, () => null);
+  } catch {
+    void qc.invalidateQueries({ queryKey: KEY });
+  }
+}
+
 /** What the panel last showed: the attempt id, its last deadline, whether it was past the code, and its line. */
 type Shown = { id?: string; deadline?: string; past?: boolean; line?: Line };
 

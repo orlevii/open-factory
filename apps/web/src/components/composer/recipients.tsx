@@ -76,8 +76,10 @@ export const Recipients = memo(function Recipients({
           data-recipients
           className="flex min-w-0 items-start gap-2 px-2.5 pt-2 text-[0.8125rem] leading-6 text-muted-foreground"
         >
-          <span className="shrink-0">
-            To: <span className="text-foreground">{primaryName}</span>
+          {/* The name truncates (to at most 60% of the row) before the chips or "To:" give way. */}
+          <span data-recipients-to className="flex min-w-0 max-w-[60%] shrink-0">
+            <span className="shrink-0 whitespace-pre">To: </span>
+            <span className="truncate text-foreground">{primaryName}</span>
           </span>
           <ul
             ref={box}

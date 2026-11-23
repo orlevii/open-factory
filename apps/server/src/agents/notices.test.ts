@@ -32,7 +32,7 @@ test("the other notices", () => {
     "The factory restarted while you were working. Check the state of that work and continue where you left off.",
   );
   expect(notices.factoryRestarted({ tasks: ["a", "b"] })).toContain("`a`, `b`.");
-  expect(notices.restart({ by: "or", tasks: [], crons: [] })).toBe(
+  expect(notices.restart({ by: "@or", tasks: [], crons: [] })).toBe(
     "Restarted by @or after an error.",
   );
   expect(notices.restart({ by: "@or", tasks: ["x"], crons: ["daily"] })).toBe(

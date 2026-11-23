@@ -42,6 +42,7 @@ export type { ComposerHandle };
 /** U3 §13.2: a send not answered in this long is aborted; it may still land, so a retry reuses its id. */
 export const SEND_TIMEOUT_MS = 15_000;
 const NO_LANDED: ReadonlySet<string> = new Set();
+const WAITS_NOTE = { kind: "hint", text: "Messages wait until a new session is started." } as const;
 
 /** Moves focus to the composer's textarea (after a Restart or a new session, UI design §3.1). */
 export function focusComposer() {
@@ -351,7 +352,7 @@ export const Composer = memo(function SessionComposer({
       onStop={stopEpoch === undefined ? undefined : onStop}
       hintMode={hintMode}
       completions={completions}
-      note={waitsForNewSession ? "Messages wait until a new session is started." : undefined}
+      note={waitsForNewSession ? WAITS_NOTE : undefined}
       attachments={inSession ? uploadsFor(userId, slug) : undefined}
       recall={recall}
     />

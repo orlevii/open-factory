@@ -1194,9 +1194,9 @@ test("an Esc a peek already took closes only the peek: command mode stays", asyn
   expect(chip()).not.toBeNull();
 });
 
-test("the slash note's live region is there before the note", async () => {
+test("the note slot's live region is there before the note", async () => {
   const { box } = setupSlash();
-  const region = document.querySelector("[data-slash-note]") as HTMLElement;
+  const region = document.querySelector("[data-composer-hint]") as HTMLElement;
   expect(region).toHaveAttribute("aria-live", "polite");
   expect(region).toHaveTextContent("");
   await userEvent.type(box, "/foo");
@@ -1567,4 +1567,92 @@ test("a Preview left open shows Write again on a phone, where there is no toggle
   } finally {
     window.matchMedia = real;
   }
+});
+
+// The one note slot (I1 §5.4, DESIGN §9.3).
+const slot = () => document.querySelector("[data-composer-hint]") as HTMLElement;
+const noteLine = () => document.querySelector("[data-composer-note-line]");
+
+test("a fine pointer shows the note in the toolbar slot and the frame never changes height", () => {
+  const rect = vi.spyOn(Element.prototype, "getBoundingClientRect");
+  const { box, rerender } = setup();
+  const frame = box.closest("[data-composer-frame]") as HTMLElement;
+  const heightOf = () => frame.getBoundingClientRect().height;
+  const before = heightOf();
+  const siblings = frame.parentElement?.children.length;
+  rerender({ note: { kind: "refusal", text: "Nope, not here." } });
+  expect(slot()).toHaveTextContent("Nope, not here.");
+  expect(frame.querySelector("[data-composer-toolbar]")?.contains(slot())).toBe(true);
+  expect(slot()).toHaveClass("h-5", "truncate"); // a fixed line, whatever it holds
+  expect(heightOf()).toBe(before);
+  expect(frame.parentElement?.children.length).toBe(siblings); // nothing is added under the frame
+  expect(noteLine()).toBeNull();
+  rect.mockRestore();
+});
+
+test("below md the one line is reserved under the frame, with no note in it", () => {
+  const restore = onPhone();
+  try {
+    const { box, rerender } = setup();
+    const line = noteLine() as HTMLElement;
+    expect(line).not.toBeNull();
+    expect(line).toBeEmptyDOMElement();
+    expect(line).toHaveClass("h-[1.125rem]");
+    const frame = box.closest("[data-composer-frame]") as HTMLElement;
+    const siblings = frame.parentElement?.children.length;
+    rerender({ note: { kind: "conflict", text: "Several recipients." } });
+    expect(noteLine()).toBe(line); // the same element, filled
+    expect(line).toHaveTextContent("Several recipients.");
+    expect(frame.parentElement?.children.length).toBe(siblings);
+  } finally {
+    restore();
+  }
+});
+
+test("one note at a time: error > refusal > conflict > hint", async () => {
+  const onSubmit = vi.fn(async () => {
+    throw new SubmitError("It failed.");
+  });
+  const { box, rerender } = setup({ onSubmit, note: { kind: "hint", text: "A hint." } });
+  expect(slot()).toHaveTextContent("A hint.");
+  rerender({ onSubmit, note: { kind: "conflict", text: "A conflict." } });
+  expect(slot()).toHaveTextContent("A conflict.");
+  // A dropped file is a refusal: it outranks the conflict.
+  fireEvent.drop(box.closest("[data-composer-frame]") as HTMLElement, {
+    dataTransfer: { files: [file("a.txt")], items: [], types: ["Files"] },
+  });
+  expect(slot()).toHaveTextContent(FILES_NOTE);
+  expect(slot()).not.toHaveTextContent("A conflict.");
+  rerender({ onSubmit, note: { kind: "refusal", text: "A refusal." } });
+  expect(slot()).toHaveTextContent(FILES_NOTE); // equal rank: the composer's own is the more specific
+  // An error outranks all of them.
+  await userEvent.type(box, "x{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent("It failed.");
+  expect(slot()).toHaveTextContent("It failed.");
+  expect(slot()).not.toHaveTextContent("A refusal.");
+});
+
+test("the slot is announced through the live region mounted with the box", () => {
+  const { rerender } = setup();
+  expect(slot()).toHaveAttribute("aria-live", "polite");
+  expect(slot()).toBeEmptyDOMElement();
+  rerender({ note: { kind: "refusal", text: "Refused." } });
+  expect(slot()).toHaveAttribute("aria-live", "polite");
+  expect(slot()).toHaveTextContent("Refused.");
+});
+
+test("a held Send is focusable and aria-disabled, its reason linked; pressing it shows the reason", async () => {
+  const { box, onSubmit } = setupFiles();
+  await userEvent.type(box, "see these");
+  pasteFiles(box, [file("a.txt")]);
+  const send = screen.getByRole("button", { name: "Send" });
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  expect(send).toBeEnabled();
+  expect(send).toHaveAccessibleDescription("Waiting for 1 upload");
+  expect(slot()).not.toHaveTextContent("Waiting for 1 upload"); // not until it is pressed
+  send.focus();
+  expect(send).toHaveFocus();
+  await userEvent.click(send);
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(slot()).toHaveTextContent("Waiting for 1 upload");
 });

@@ -5,6 +5,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
   memo,
+  type ReactNode,
   type Ref,
   useCallback,
   useEffect,
@@ -134,6 +135,15 @@ export type CompletionSource = {
   commandFor?(text: string): CommandMode | undefined;
 };
 
+/**
+ * The one external note the composer may show (I1 §5.4, DESIGN §9.3): a stable object from the caller.
+ * The composer shows one note at a time, picked during render by priority: error > refusal > conflict >
+ * hint, merged with its own notes (error, files, pending, a held Send's reason).
+ */
+export type ComposerNote = { kind: "refusal" | "conflict" | "hint"; text: ReactNode };
+type Shown = { kind: "error" | ComposerNote["kind"]; text: ReactNode };
+const NOTE_RANK = { error: 0, refusal: 1, conflict: 2, hint: 3 } as const;
+
 /** What callers do to the box from outside it: Reply, a deep link's prefill, Cancel and its Undo. */
 export type ComposerHandle = {
   /** Write mode, then the textarea takes focus (scrolled into view). */
@@ -181,8 +191,8 @@ export type ComposerProps = {
   recall?(): string | undefined;
   /** Without one there is no hint line. */
   hintMode?: HintMode;
-  /** A muted line under the frame that describes the box (who it goes to, why messages wait). */
-  note?: string;
+  /** The one external note slot (who it goes to, why messages wait, a refusal). */
+  note?: ComposerNote;
   /** Sending waits (typing works). */
   waiting?: boolean;
   /** A muted status line while a submit is pending ("Posting…" for comments, which have no
@@ -266,6 +276,8 @@ export const Composer = memo(function Composer({
   const [text, setText, draft] = useDraft(draftKey, storedText);
   const [error, setError] = useState<string | undefined>();
   const [filesNote, setFilesNote] = useState(false);
+  // The reason a held Send showed when it was pressed; it goes when the box changes or the hold does.
+  const [heldShownFor, setHeldShownFor] = useState<string | undefined>();
   // Files (U3 §13.5): the counts Send reads; a progress tick never changes them.
   const uploads = useSyncExternalStore(
     attachments?.subscribe ?? noSubscribe,
@@ -330,7 +342,7 @@ export const Composer = memo(function Composer({
   const uid = useId();
   const boxId = `${uid}-box`;
   const hintId = `${uid}-hint`;
-  const noteId = `${uid}-note`;
+  const lineId = `${uid}-line`;
   const sendReasonId = `${uid}-send-reason`;
 
   // Caret menus (U3 §13.3, §13.4). `items` runs only while one is open (review note M3).
@@ -623,6 +635,11 @@ export const Composer = memo(function Composer({
 
   async function send(urgent = false) {
     if (command) return runCommand();
+    // A held Send is pressable: it says why, in the note slot.
+    if (held !== undefined) {
+      setHeldShownFor(held);
+      return;
+    }
     if (empty || waiting || blocked || restoring) return;
     const sent = text;
     const invalid = validate?.(sent, uploads.count);
@@ -819,8 +836,49 @@ export const Composer = memo(function Composer({
     (command ? undefined : slash?.textNote?.(text));
   const hintShown = hintMode !== undefined && hintMode !== "none" && turnOpen;
   const commandId = `${uid}-command`;
+  // The one note: the highest priority wins, the earlier of equals (the more specific first). Picked
+  // here, in render: no state, no effect.
+  const candidates: (Shown | undefined)[] = [
+    shownError ? { kind: "error", text: shownError } : undefined,
+    held !== undefined && heldShownFor === held ? { kind: "refusal", text: held } : undefined,
+    filesNote ? { kind: "refusal", text: FILES_NOTE } : undefined,
+    attachNote ? { kind: "refusal", text: attachNote } : undefined,
+    slashNote ? { kind: "hint", text: slashNote } : undefined,
+    pendingLabel && pending > 0
+      ? { kind: "hint", text: <span role="status">{pendingLabel}</span> }
+      : undefined,
+    note,
+  ];
+  let slotNote: Shown | undefined;
+  for (const n of candidates)
+    if (n && (!slotNote || NOTE_RANK[n.kind] < NOTE_RANK[slotNote.kind])) slotNote = n;
+  const slotBody =
+    slotNote === undefined ? undefined : slotNote.kind === "error" ? (
+      <span role="alert" className="text-destructive">
+        <CircleAlert
+          aria-hidden="true"
+          className="mr-1.5 mb-px inline size-3.5 align-text-bottom"
+        />
+        {slotNote.text}
+        {slotNote.text === UNCONFIRMED && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="h-5"
+            onClick={() => void send()}
+          >
+            Retry
+          </Button>
+        )}
+      </span>
+    ) : slotNote.kind === "hint" ? (
+      slotNote.text
+    ) : (
+      <span role="status">{slotNote.text}</span>
+    );
   const describedBy =
-    [command && commandId, note && noteId, hintShown && hintId].filter(Boolean).join(" ") ||
+    [command && commandId, hintId, phone && slotNote && lineId].filter(Boolean).join(" ") ||
     undefined;
   // 2 → 6 lines or 35svh below md, 2 → 12 lines or 40svh from md; then it scrolls (U3 §13.1).
   const growth =
@@ -881,6 +939,7 @@ export const Composer = memo(function Composer({
                   setError(undefined);
                   setFilesNote(false);
                   setAttachNote(undefined);
+                  setHeldShownFor(undefined);
                   if (pasted.current) {
                     pasted.current = false;
                     pastedText.current = value;
@@ -1024,10 +1083,9 @@ export const Composer = memo(function Composer({
                 </Button>
               </div>
             )}
-            {hintMode === undefined ? (
-              <span className="min-w-0 flex-1 basis-0" />
-            ) : phone ? (
-              // No hint line on a phone: the free room is empty and the hint stays the box's description.
+            {phone ? (
+              // No slot in the toolbar on a phone: the note has its own line under the frame, and the
+              // turn hint stays the box's description.
               <>
                 <span className="min-w-0 flex-1 basis-0" />
                 <p id={hintId} data-composer-hint className="sr-only">
@@ -1035,13 +1093,15 @@ export const Composer = memo(function Composer({
                 </p>
               </>
             ) : (
-              // A fixed height whether or not it has text (a minimum would let the key caps grow it).
+              // The note slot: a fixed height whether or not it has text (a minimum would let the key
+              // caps grow it), so a note never moves the composer (DESIGN §9.3).
               <p
                 id={hintId}
                 data-composer-hint
+                aria-live="polite"
                 className="h-5 min-w-0 flex-1 basis-0 truncate px-1.5 text-[0.8125rem] leading-5 text-muted-foreground"
               >
-                {hintShown ? <Hint mode={hintMode} compacting={compacting} /> : null}
+                {slotBody ?? (hintShown ? <Hint mode={hintMode} compacting={compacting} /> : null)}
               </p>
             )}
             <div data-composer-actions className="ml-auto flex shrink-0 items-center gap-2">
@@ -1115,69 +1175,24 @@ export const Composer = memo(function Composer({
             </div>
           </div>
         </div>
-        {note && (
-          <p id={noteId} className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-            {note}
-          </p>
-        )}
-        {pendingLabel && pending > 0 ? (
+        {phone ? (
+          // Below md the slot is one line reserved under the frame (DESIGN §9.3).
           <p
-            role="status"
-            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
+            id={lineId}
+            data-composer-note-line
+            aria-live="polite"
+            className="mt-1 h-[1.125rem] truncate text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
           >
-            {pendingLabel}
+            {slotBody}
           </p>
         ) : null}
-        {/* Live regions mounted with the box, so a note that appears is announced. */}
-        <p
-          aria-live="polite"
-          data-slash-note
-          className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground empty:mt-0"
-        >
-          {slashNote}
-        </p>
         <p aria-live="polite" className="sr-only">
           {command ? `Command mode: /${command.name}. Esc to leave.` : ""}
         </p>
-        {held && (
-          <p
-            id={sendReasonId}
-            role="status"
-            data-send-reason
-            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-          >
+        {held !== undefined && (
+          <span id={sendReasonId} data-send-reason className="sr-only">
             {held}
-          </p>
-        )}
-        {attachNote && (
-          <p
-            role="status"
-            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-          >
-            {attachNote}
-          </p>
-        )}
-        {filesNote && (
-          <p
-            role="status"
-            className="mt-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground"
-          >
-            {FILES_NOTE}
-          </p>
-        )}
-        {shownError && (
-          <p
-            role="alert"
-            className="mt-2 flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
-          >
-            <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-            {shownError}
-            {shownError === UNCONFIRMED && (
-              <Button type="button" variant="ghost" size="xs" onClick={() => void send()}>
-                Retry
-              </Button>
-            )}
-          </p>
+          </span>
         )}
       </div>
     </form>

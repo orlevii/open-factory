@@ -100,9 +100,13 @@ export function CommentComposer({
   // `@` completes a handle as `@slug ` (routing as today, U3 §13.4).
   const at = useMentionSource(COMMENT_AT_LABEL);
   const completions = useMemo(() => ({ at }), [at]);
-  const who = assignee
-    ? `Goes to @${assignee} and anyone you @mention.`
-    : "No assignee: only the people and agents you @mention are notified.";
+  const coarse = isCoarsePointer();
+  const note = useMemo(() => {
+    const who = assignee
+      ? `Goes to @${assignee} and anyone you @mention.`
+      : "No assignee: only the people and agents you @mention are notified.";
+    return { kind: "hint" as const, text: coarse ? who : `${who} Enter to post.` };
+  }, [assignee, coarse]);
   return (
     <>
       <Composer
@@ -112,7 +116,7 @@ export function CommentComposer({
         placeholder=""
         onSubmit={onSubmit}
         completions={completions}
-        note={isCoarsePointer() ? who : `${who} Enter to post.`}
+        note={note}
         preview
         pendingLabel="Posting…"
       />

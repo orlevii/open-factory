@@ -23,7 +23,7 @@ import { type Auth, createAuth } from "./auth/auth.ts";
 import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
-import { probePython, startHostPty } from "./credentials/sign-in/host-pty.ts";
+import { probePython, startHostPty, sweepStaleDirs } from "./credentials/sign-in/host-pty.ts";
 import { runSetupToken } from "./credentials/sign-in/setup-token.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
@@ -378,7 +378,10 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     "invites",
     new InviteService({ db: deps.db, now: clock, publicUrl: config.publicUrl, bus }),
   );
-  app.decorate("userAdmin", new UserAdminService({ db: deps.db, now: clock, bus }));
+  app.decorate(
+    "userAdmin",
+    new UserAdminService({ db: deps.db, now: clock, bus, signIn: app.signIn }),
+  );
   app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
   app.decorate("vault", vault);
@@ -452,6 +455,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     scheduler.stop();
     // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
     await runtimes.close();
+    // Sign-in attempts hold a host process (I3 §5.4): ended before the DB closes.
+    await app.signIn.closeAll();
     // Every process has exited: no token may outlive it (spec §5.2). Then the agent listener (§5.3).
     tokens.revokeAll();
     await agentListener?.close();
@@ -531,6 +536,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     void uploadSweep.run();
     uploadSweep.start();
     scheduler.start();
+    // I3 §5.2: a crashed server's sign-in temp dirs.
+    void sweepStaleDirs(os.tmpdir(), clock().getTime());
   } catch (err) {
     // A wake may already have started a process. The onClose hook closes the agent listener after the runtimes. A
     // failing close is logged and never masks the boot's error.

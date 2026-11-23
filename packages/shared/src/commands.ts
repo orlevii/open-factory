@@ -86,3 +86,65 @@ export type RunCommandBody = z.infer<typeof runCommandBodySchema>;
 /** The raw line a command is written as (U3 §13.3): `/name`, then one space and the args when there are any. */
 export const commandText = (name: string, args: string): string =>
   args ? `/${name} ${args}` : `/${name}`;
+
+/** Commands the factory never forwards to Claude, by the group their reason belongs to. Keys are lowercase. */
+export const DENIED_COMMANDS: Readonly<
+  Record<string, "session" | "model" | "credentials" | "process">
+> = {
+  clear: "session",
+  new: "session",
+  reset: "session",
+  model: "model",
+  effort: "model",
+  login: "credentials",
+  logout: "credentials",
+  exit: "process",
+  quit: "process",
+  resume: "process",
+  continue: "process",
+};
+
+const DENIED_WHY = {
+  session: "each agent keeps one session.",
+  model: "the model and effort come from the agent's template.",
+  credentials: "credentials are managed in Settings \u2192 Credentials.",
+  process: "the factory runs this agent's process.",
+} as const;
+
+/** Why `/typed` is refused, naming it as typed, or undefined when it isn't on the denylist. */
+export function deniedReason(typed: string): string | undefined {
+  const key = typed.toLowerCase();
+  if (!Object.hasOwn(DENIED_COMMANDS, key)) return undefined;
+  return `/${typed} isn't available: ${DENIED_WHY[DENIED_COMMANDS[key] as keyof typeof DENIED_WHY]}`;
+}
+
+export type InputClass =
+  | { kind: "text" }
+  | { kind: "command"; name: string; args: string; denied?: string; multiline: boolean };
+
+/**
+ * What a line of session input is. A command when its first token (after `/`, lowercased) is a known name or alias or
+ * is on the denylist; anything else, a path included, is text. `text` is already trimEnd'ed; `known` holds lowercase
+ * names and aliases (the list, the snapshot and the template's skills).
+ */
+export function classifyInput(text: string, known: ReadonlySet<string>): InputClass {
+  const t = text.trimStart();
+  if (!t.startsWith("/")) return { kind: "text" };
+  const m = /^\/(\S*)\s*([\s\S]*)$/.exec(t);
+  const typed = m?.[1] ?? "";
+  const name = typed.toLowerCase();
+  if (!name || !(known.has(name) || Object.hasOwn(DENIED_COMMANDS, name))) return { kind: "text" };
+  return {
+    kind: "command",
+    name,
+    args: m?.[2] ?? "",
+    denied: deniedReason(typed),
+    multiline: t.includes("\n"),
+  };
+}
+
+/** `POST /api/agents/:slug/input`: the raw text a human types into the session, and the sender's optimistic-row id. */
+export const inputBodySchema = z.object({
+  text: z.string().min(1),
+  clientMessageId: z.string().uuid(),
+});

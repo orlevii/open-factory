@@ -175,8 +175,11 @@ it("pending labels: Starting…, Signing in…, Verifying…", async () => {
   const name = within(dialog).getByLabelText("Name");
   expect(name).toHaveAttribute("readonly");
   expect(name).toHaveAttribute("aria-disabled", "true");
+  // Method is locked mid sign-in: a paste body must not replace a save that is still running.
+  for (const r of within(dialog).getAllByRole("radio")) expect(r).toBeDisabled();
   code.resolve(ok({ attempt: { attemptId: "a1", state: "verifying", purpose: "create" } }, 202));
   await waitFor(() => expect(primary(dialog)).toHaveTextContent("Verifying…"));
+  for (const r of within(dialog).getAllByRole("radio")) expect(r).toBeDisabled();
   wait.resolve(ok({ credential: cred() }, 201));
   await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
 });

@@ -98,6 +98,8 @@ export function AddCredentialForm({
   const s = useSignIn({ purpose: "create", fields: f, outcome: o, onDone });
   const signingIn = method === "sign_in";
   const busy = signingIn && (s.phase === "exchanging" || s.phase === "verifying");
+  // Switching Method mid sign-in would show a paste body while its save still lands (onDone).
+  const methodLocked = signingIn && (s.phase === "starting" || busy);
 
   async function paste(m: PasteMethod) {
     o.clear();
@@ -199,7 +201,7 @@ export function AddCredentialForm({
                 <RadioGroupItem
                   id={`credential-method-${m.value}`}
                   value={m.value}
-                  disabled={m.value === "sign_in" && !available}
+                  disabled={methodLocked || (m.value === "sign_in" && !available)}
                 />
                 {m.label}
               </label>

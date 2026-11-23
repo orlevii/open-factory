@@ -51,7 +51,7 @@ The max running agents, the default warm window and the member update debounce a
 ## Run an agent
 
 1. Start Postgres and the server: `docker compose -f docker-compose.dev.yml up -d`, then `pnpm dev` (or the Quickstart above), and sign up (the first sign-up bootstraps the factory; later ones need an invite). Docker must be running on the machine that runs the server.
-2. In **Settings**, add a credential: Settings → Credentials → Add credential → Sign in with Claude (needs python3 on the server); pasting a token still works. Agents never use your own `~/.claude` login; each runs with its own config dir under `FACTORY_HOME`, with the credential you pick for it.
+2. In **Settings**, add a credential: Credentials → Add credential → Sign in with Claude (needs python3 on the server); pasting a token still works. Agents never use your own `~/.claude` login; each runs with its own config dir under `FACTORY_HOME`, with the credential you pick for it.
 3. Optional: register a project (a git repo on this machine) so agents can be granted access to it.
 4. Create a template, in the UI or as a folder under `~/open-factory/templates/<name>/` (see "Templates"). `runtime` defaults to `docker`.
 5. Create an agent from the template, pick its credential, and send it a message.

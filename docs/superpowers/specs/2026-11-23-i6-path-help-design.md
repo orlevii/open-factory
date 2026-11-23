@@ -68,8 +68,9 @@ export function expandHome(p: string, home = os.homedir()): string
 // "~" → home; "~/x" → path.join(home, "x"); anything else unchanged. No path.resolve here.
 
 export async function resolveHostFolder(field: string, input: string, home = os.homedir()): Promise<string>
-// 1. const p = expandHome(input.trim(), home)
-// 2. if (!path.isAbsolute(p)) throw new FieldError(field, MSG.hostPathStart)
+// 1. const t = input.trim(); if (!isHostPathShape(t)) throw new FieldError(field, MSG.hostPathStart)
+//    (the web's rule, one shared definition; owner plan review N1)
+// 2. const p = expandHome(t, home)
 // 3. realpath + stat.isDirectory, else FieldError(field, <I4's FIELD_MSG entry for "No folder at this path.">)
 // 4. return the realpath
 ```
@@ -77,7 +78,7 @@ export async function resolveHostFolder(field: string, input: string, home = os.
 - `config.ts` deletes its private `expandHome` (which today also calls `path.resolve`), imports the new one, and wraps both call sites (`FACTORY_HOME`, `FACTORY_HOST_SKILLS_DIR`) in `path.resolve(expandHome(...))`, since env values may be relative to the working directory, which host-path fields never are. `config.test.ts`'s `~/x/../y` case keeps passing.
 - `ProjectService.resolveFolder` is deleted; `create` and `update` call `resolveHostFolder("hostPath", b.hostPath)`. The stored value stays the realpath, so `~` is never stored (Q4). `update`'s "same folder" short-circuit compares realpaths, so `~/web` for a project already at `/Users/or/web` is a no-op, as before.
 - `ProjectService` does not take a home; its tests stub `HOME` (`vi.stubEnv("HOME", tmp)`; `os.homedir()` reads `$HOME` first on POSIX). The `home` parameter is for `host-path.test.ts`.
-- `~user/…` is not expanded, so `path.isAbsolute` fails and it gets "Start with / or ~/." (Q4).
+- `~user/…` fails `isHostPathShape` and gets "Start with / or ~/." (Q4).
 - The body schemas (`createProjectBodySchema`, `patchProjectBodySchema`) stay `z.string().trim().min(1)`: the shape check lives in `resolveHostFolder`, so every caller (I5 included) gets the same field error.
 
 **`GET /api/host` (new, `apps/server/src/routes/host.ts`)** behind `requireUser` (`onRequest`), response `hostInfoSchema`:

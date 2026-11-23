@@ -964,8 +964,8 @@ test("200 rows at rest mount no menu root and read no phone or pointer query (me
   }) as typeof window.matchMedia;
   try {
     await setup();
-    expect(document.querySelectorAll("[data-row-menu]").length).toBeGreaterThan(190);
-    expect(document.querySelectorAll('[aria-haspopup="menu"]').length).toBeGreaterThan(190);
+    expect(document.querySelectorAll("[data-row-menu]")).toHaveLength(198);
+    expect(document.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(198);
     expect(document.querySelector('[data-slot="dropdown-menu-trigger"]')).toBeNull();
     expect(document.querySelector('[data-slot="drawer-content"]')).toBeNull();
     const menuQueries = [...reads.keys()].filter(

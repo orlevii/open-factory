@@ -212,8 +212,8 @@ test("project: a relative path shows the start message on blur; a server hostPat
         {
           error: {
             code: "validation_error",
-            message: MSG.hostPathStart,
-            fields: { hostPath: MSG.hostPathStart },
+            message: "Not here.",
+            fields: { hostPath: "Not here." },
           },
         },
         400,
@@ -232,7 +232,7 @@ test("project: a relative path shows the start message on blur; a server hostPat
   await userEvent.type(within(dialog).getByLabelText("Name"), "web");
   await userEvent.type(path, "/code/web{Enter}");
   await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));
-  expect(describedText(path)).toContain(MSG.hostPathStart);
+  expect(describedText(path)).toContain("Not here.");
   expect(path).toHaveFocus();
 });
 

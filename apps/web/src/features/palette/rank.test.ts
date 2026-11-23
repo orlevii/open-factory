@@ -1,6 +1,6 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
-import { isTaskKey, rankAgents } from "./rank";
+import { GO_TO, isTaskKey, rankAgents } from "./rank";
 
 const a = (slug: string, displayName = slug): AgentSummary =>
   ({ slug, displayName }) as unknown as AgentSummary;
@@ -97,5 +97,26 @@ describe("isTaskKey", () => {
     expect(isTaskKey("t-")).toBe(false);
     expect(isTaskKey("t-4a")).toBe(false);
     expect(isTaskKey(" t-4")).toBe(false);
+  });
+});
+
+describe("GO_TO", () => {
+  test("has unique ids that open the expected paths", () => {
+    const ids = GO_TO.map((g) => g.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(Object.fromEntries(GO_TO.map((g) => [g.id, g.to]))).toEqual({
+      inbox: "/inbox",
+      agents: "/agents",
+      tasks: "/tasks",
+      templates: "/templates",
+      images: "/templates/images",
+      schedules: "/schedules",
+      usage: "/usage",
+      "settings-credentials": "/settings/credentials",
+      "settings-secrets": "/settings/secrets",
+      "settings-projects": "/settings/projects",
+      "settings-users": "/settings/users",
+      "settings-factory": "/settings/factory",
+    });
   });
 });

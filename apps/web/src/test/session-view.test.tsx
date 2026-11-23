@@ -899,6 +899,16 @@ test.each([
   expect(screen.queryByRole("button", { name: "Edit the agent" })).not.toBeInTheDocument();
 });
 
+test("a resume error shows its message in the timeline", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "resume",
+    message: "No conversation found",
+  });
+  renderApp("/agents/dev/session", alice);
+  expect(await screen.findByText("No conversation found")).toBeInTheDocument();
+});
+
 test("an error with fix edit_agent opens Edit agent", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",

@@ -52,6 +52,9 @@ test("every valid sender/recipient shape passes (chat, member, system, task and 
     sql`insert into messages (id,kind,subject_agent_id,notice,to_agent_id,body) values ('6','peer_joined','a1','peer','a2','x') returning id`,
   );
   await ok(
+    sql`insert into messages (id,kind,subject_agent_id,notice,to_agent_id,body) values ('6b','peer_left','a1','peer','a2','x') returning id`,
+  );
+  await ok(
     sql`insert into messages (id,kind,notice,subject_agent_id,to_all_humans,body,state) values ('7','system','agent_errored','a1',true,'x','delivered') returning id`,
   );
   await ok(

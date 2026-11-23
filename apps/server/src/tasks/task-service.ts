@@ -86,7 +86,8 @@ type Outcome = {
   view: TaskView;
   changed: string[];
   agentRows: { row: PendingRow; wake: "human" | "task_message" }[];
-  humans: boolean;
+  /** Users a human row was written for. */
+  userIds: string[];
   keys: string[];
   /** Recipients of a `task_assigned` row, for the errored note (computed after the commit). */
   assignedAgentIds: string[];
@@ -174,7 +175,7 @@ export class TaskService {
    * enqueues its wake), then the hand-offs and frames. Returns the notes.
    */
   private async finish(
-    out: { agentRows: Outcome["agentRows"]; humans: boolean; keys: string[] },
+    out: { agentRows: Outcome["agentRows"]; userIds: string[]; keys: string[] },
     erroredCheck: string[],
   ): Promise<string[]> {
     const notes: string[] = [];
@@ -185,7 +186,7 @@ export class TaskService {
         );
     }
     this.d.router.handOffTaskRows(out.agentRows);
-    if (out.humans) this.d.bus.publishAll({ type: "inbox_changed" });
+    for (const userId of out.userIds) this.d.bus.publishToUser(userId, { type: "inbox_changed" });
     this.d.bus.publishAll({ type: "tasks_changed", keys: out.keys });
     return notes;
   }
@@ -327,10 +328,12 @@ export class TaskService {
       const slug = await this.slugOf(r.row.toAgentId as string, tx);
       if (!deliveredTo.includes(slug)) deliveredTo.push(slug);
     }
-    const mentionedHumans = written.humans ? userIds.map((u) => `@${handles.get(u)}`) : [];
+    const mentionedHumans = userIds
+      .filter((u) => written.userIds.includes(u))
+      .map((u) => `@${handles.get(u)}`);
     return {
       agentRows: written.agentRows,
-      humans: written.humans,
+      userIds: written.userIds,
       keys: [taskKey(task.number)],
       result: {
         id: comment.id,
@@ -697,7 +700,7 @@ export class TaskService {
       view,
       changed: changedNames,
       agentRows: written.agentRows,
-      humans: written.humans,
+      userIds: written.userIds,
       keys: [...new Set(keys)],
       assignedAgentIds: planned
         .filter((p) => p.kind === "task_assigned")
@@ -791,10 +794,10 @@ export class TaskService {
     planned: PlannedRow[],
   ): Promise<{
     agentRows: { row: PendingRow; wake: "human" | "task_message" }[];
-    humans: boolean;
+    userIds: string[];
   }> {
     const agentRows: { row: PendingRow; wake: "human" | "task_message" }[] = [];
-    let humans = false;
+    const userIds = new Set<string>();
     for (const p of planned) {
       if (typeof p.to === "object" && "agentId" in p.to) {
         const row = await this.d.store.createTaskMessage(tx, {
@@ -824,11 +827,11 @@ export class TaskService {
           },
           tx,
         );
-        humans = true;
+        userIds.add(p.to.userId);
       }
     }
     void actor;
-    return { agentRows, humans };
+    return { agentRows, userIds: [...userIds] };
   }
 
   private async labelOf(tx: Exec, p: Principal): Promise<string> {

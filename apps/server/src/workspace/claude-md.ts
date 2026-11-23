@@ -107,7 +107,7 @@ function lifecycleSection(spawner: string): string[] {
   ];
 }
 
-function spawningSection(s: { maxLive: number; perHour: number }): string[] {
+function spawningSection(s: { maxLive: number; perHour: number }, hasManager: boolean): string[] {
   return [
     "## Spawning",
     "- Spawn a fresh agent for each phase of work instead of carrying one context through everything: fresh context keeps each phase focused.",
@@ -115,7 +115,7 @@ function spawningSection(s: { maxLive: number; perHour: number }): string[] {
     "- `mcp__factory__spawn_agent` returns at once; the child's text reaches you as updates, and you can message it directly.",
     `- Terminate a child with \`mcp__factory__terminate_agent\` when its phase is done: you can have at most ${s.maxLive} live children, and idle ones are terminated after 3 days anyway.`,
     "- Termination discards the child's session, and its working directory is deleted 3 days later: ask it to put anything worth keeping in a granted project or a message first.",
-    `- Spawning is capped at ${s.perHour} per hour; if you need more, ask the humans.`,
+    `- Spawning is capped at ${s.perHour} per hour; if you need more, ${hasManager ? "ask your manager" : "ask a human (list_peers lists them)"}.`,
     "",
   ];
 }
@@ -200,7 +200,7 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
     ...messagingSection(i),
     ...tasksSection(),
     ...schedulingSection(i.scheduling),
-    ...(i.spawning && !spawner ? spawningSection(i.spawning) : []),
+    ...(i.spawning && !spawner ? spawningSection(i.spawning, i.manager != null) : []),
     "## Your workspace",
     `- Your working directory is ${i.workdir}. It is yours; files you create there persist. Keep notes you want to carry forward in AGENTS.md: a CLAUDE.md you create in the working directory is not loaded.`,
     ...(i.projects.length

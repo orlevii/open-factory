@@ -774,7 +774,7 @@ export class AgentRuntime {
     const entry: CompactEntry = {
       kind: "compact",
       id: randomUUID(),
-      by: c.byHandle,
+      by: `@${c.byHandle}`,
       createdAt: new Date(),
       ...(c.focus ? { focus: c.focus } : {}),
     };
@@ -1878,7 +1878,7 @@ export class AgentRuntime {
         : {
             id: e.id,
             kind: "compact",
-            from: `@${e.by}`,
+            from: e.by,
             fromKind: "human",
             createdAt: e.createdAt.toISOString(),
             ...(e.focus ? { focus: e.focus } : {}),
@@ -3589,7 +3589,7 @@ export class AgentRuntime {
         await this.append(null, {
           type: "control",
           cmd: "compact",
-          by: `@${head.by}`,
+          by: head.by,
           ...(head.focus ? { arg: head.focus } : {}),
         });
         this.publishQueue();

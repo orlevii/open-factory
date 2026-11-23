@@ -293,8 +293,10 @@ test("a write through the API reports its author; scanOne never awaits listeners
     release = r;
   });
   const slow = new TemplateIndex({ db: t.db, config: cfg });
-  slow.onChange(async () => {
+  const slowSeen: TemplateChange[] = [];
+  slow.onChange(async (e) => {
     started = true;
+    slowSeen.push(e);
     await gate;
   });
   await slow.scanOne("cd7");
@@ -311,6 +313,7 @@ test("a write through the API reports its author; scanOne never awaits listeners
   ]);
   expect(res).not.toBe("timeout");
   await vi.waitFor(() => expect(started).toBe(true));
+  expect(slowSeen.at(-1)?.by).toBe("@ana");
   release();
 });
 
@@ -333,8 +336,11 @@ test("a failing listener is logged and does not stop the next one", async () => 
   await own.scanOne("cd8");
   await vi.waitFor(() => expect(seen).toEqual(["cd8"]));
   expect(logged).toHaveLength(1);
-  // The dispatched doc carries the MCP env; a failure log names the template only, never the doc.
-  expect(JSON.stringify(logged)).not.toContain(SECRET);
+  // The dispatched doc carries the MCP env; the log payload is exactly the error and the template name.
+  const [payload] = logged[0] as [Record<string, unknown>, string];
+  expect(Object.keys(payload).sort()).toEqual(["err", "template"]);
+  expect(payload.template).toBe("cd8");
+  expect(JSON.stringify({ ...payload, err: undefined })).not.toContain(SECRET);
 });
 
 async function seedUser(
@@ -350,7 +356,26 @@ async function seedUser(
     valueEnc: Buffer.from("x"),
   });
   if (o.terminated) {
-    const [mgr] = await t.db.select({ id: schema.agents.id }).from(schema.agents).limit(1);
+    const mgrSlug = `mgr-${slug}`;
+    await claimTestHandle(t.db, mgrSlug, "agent");
+    const mgrCred = `cred-${mgrSlug}`;
+    await t.db.insert(schema.credentials).values({
+      id: mgrCred,
+      name: mgrCred,
+      kind: "oauth_token",
+      valueEnc: Buffer.from("x"),
+    });
+    const [mgr] = await t.db
+      .insert(schema.agents)
+      .values({
+        id: `id-${mgrSlug}`,
+        slug: mgrSlug,
+        displayName: mgrSlug,
+        template: "mgr-template",
+        runtime: "local",
+        credentialId: mgrCred,
+      })
+      .returning({ id: schema.agents.id });
     await t.db.insert(schema.agents).values({
       id: `id-${slug}`,
       slug,
@@ -393,4 +418,24 @@ test("terminated spawned agents don't block deletion", async () => {
   await seedUser("dee", { template: "use2", terminated: true });
   await idx.remove("use2");
   expect(existsSync(path.join(home, "templates/use2"))).toBe(false);
+});
+
+test("a slow older scan cannot regress last_valid after a newer scan won", async () => {
+  await idx.create({ name: "cd9", displayName: "C" });
+  await idx.scanOne("cd9");
+  await settle("cd9", 1);
+  writeFileSync(yamlPath("cd9"), yamlWith("cd9", "skills: [tdd]\n"));
+  const first = idx.scanOne("cd9");
+  // The second scan starts while the first is in flight and the file moves on.
+  writeFileSync(yamlPath("cd9"), yamlWith("cd9", "skills: [release]\n"));
+  const second = idx.scanOne("cd9");
+  await Promise.all([first, second]);
+  await settle("cd9", 2);
+  await idx.scanOne("cd9");
+  await new Promise((r) => setTimeout(r, 50));
+  const e = eventsFor("cd9");
+  // Whatever the interleaving, the chain of events is consistent and ends on the file's content.
+  expect((await idx.lastValid("cd9"))?.template.skills).toEqual(["release"]);
+  for (let i = 1; i < e.length; i++) expect(e[i]?.before).toEqual(e[i - 1]?.after);
+  expect(e.at(-1)?.after.template.skills).toEqual(["release"]);
 });

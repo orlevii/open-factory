@@ -31,6 +31,7 @@ import { type Config, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { imageDir } from "../images/context.ts";
 import { avatarStat } from "./avatar.ts";
+import { KeyLock } from "./key-lock.ts";
 import { type ValidationContext, validateTemplate } from "./validate.ts";
 
 export type TemplateRow = typeof schema.templates.$inferSelect;
@@ -99,6 +100,8 @@ export class TemplateIndex {
   private readonly log: Pick<FastifyBaseLogger, "error"> | undefined;
   private readonly listeners: TemplateChangeListener[] = [];
   /** Per-template serial dispatch chains (in memory: a crash loses a pending dispatch, spec §7.1). */
+  /** One parse-upsert-CAS at a time per template, so a scan always compares against what its predecessor wrote. */
+  private readonly locks = new KeyLock();
   private readonly queues = new Map<string, Promise<void>>();
 
   constructor(d: { db: Db; config: Config; log?: Pick<FastifyBaseLogger, "error"> }) {
@@ -209,7 +212,11 @@ export class TemplateIndex {
     });
   }
 
-  private async index(
+  private index(name: string, ctx: ValidationContext, by: string) {
+    return this.locks.run(name, () => this.indexLocked(name, ctx, by));
+  }
+
+  private async indexLocked(
     name: string,
     ctx: ValidationContext,
     by: string,
@@ -302,7 +309,9 @@ export class TemplateIndex {
   private async scanOneFull(name: string, by: string) {
     const dir = this.folder(name);
     if (!(await isDir(dir)) || !(await readOrNull(path.join(dir, "template.yaml")))) {
-      await this.db.delete(schema.templates).where(eq(schema.templates.name, name));
+      await this.locks.run(name, () =>
+        this.db.delete(schema.templates).where(eq(schema.templates.name, name)),
+      );
       return undefined;
     }
     return this.index(name, await this.context(), by);

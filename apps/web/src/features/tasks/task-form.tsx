@@ -17,7 +17,7 @@ import { MoreOptions } from "@/features/sheets/more-options";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 import type { CreateTaskBody } from "./api";
 import { checkDependencies, DependencyEditor } from "./dependency-editor";
-import { checkLink, LinkEditor, type LinkRow, rowsToInput } from "./link-editor";
+import { checkLink, LinkEditor, type LinkRow, linkRowErrors, rowsToInput } from "./link-editor";
 
 type Values = { title: string; body: string; assignee: string; deps: string; rows: LinkRow[] };
 const blank = (prefill?: { assignee?: string }): Values => ({
@@ -126,19 +126,7 @@ export function TaskForm({
   const hasValues = deps.trim() !== "" || rows.length > 0;
   const moreOpen = userOpen ?? (hasValues || Boolean(f.errors.dependsOn || f.errors.links));
 
-  // Row notes: a checked row shows its own message while links are flagged. A links error no row explains (the
-  // server's) goes to the first row's note.
-  const linksError = f.errors.links;
-  const rowErrors: Record<string, string | undefined> = {};
-  if (linksError) {
-    let own = false;
-    for (const r of rows) {
-      const m = checkLink(r, known);
-      if (m) own = true;
-      if (checkedRows.has(r.id)) rowErrors[r.id] = m;
-    }
-    if (!own && rows[0]) rowErrors[rows[0].id] = linksError;
-  }
+  const rowErrors = linkRowErrors(rows, known, checkedRows, f.errors.links);
 
   async function submit(ev: FormEvent) {
     ev.preventDefault();
@@ -275,9 +263,9 @@ export function TaskForm({
                 f.change("links");
               }}
               errors={rowErrors}
-              onBlurRow={(id) => {
+              onBlurRow={(id, e) => {
                 setCheckedRows((s) => (s.has(id) ? s : new Set(s).add(id)));
-                f.blur("links");
+                f.blur("links", e);
               }}
             />
           </MoreOptions>

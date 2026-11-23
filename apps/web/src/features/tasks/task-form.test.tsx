@@ -593,3 +593,17 @@ test("a stale assignee blocks the submit until another is picked; Unassigned goe
     links: [],
   });
 });
+
+test("moving from an edited, invalid Description to More options by keyboard doesn't validate it", async () => {
+  mockApi(base);
+  renderApp("/tasks/new", alice);
+  const body = await screen.findByLabelText("Description");
+  act(() => body.focus());
+  fireEvent.change(body, { target: { value: "x".repeat(70_000) } });
+  // A keyboard move: the blur's relatedTarget is More options, with no pointerdown to fall back on.
+  act(() => moreToggle().focus());
+  expect(body).not.toHaveAttribute("aria-invalid");
+  act(() => body.focus());
+  act(() => screen.getByRole("button", { name: "Create task" }).focus());
+  expect(body).toHaveAttribute("aria-invalid", "true");
+});

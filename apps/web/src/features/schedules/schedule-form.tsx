@@ -9,7 +9,15 @@ import {
   validateCron,
 } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { FieldShell } from "@/components/field-shell";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
@@ -191,6 +199,16 @@ export function ScheduleForm({
   };
   const f = useFieldErrors<Field>({ form, fields: FIELDS, checks });
 
+  // The Message textarea exists only in Write, and its tab panel mounts a commit after the switch, too late for the
+  // hook's focus: a failing submit switches to Write and the textarea takes focus when it mounts.
+  const [bodyView, setBodyView] = useState<"write" | "preview">("write");
+  const focusBody = useRef(false);
+  const focusBodyOnMount = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el || !focusBody.current) return;
+    focusBody.current = false;
+    el.focus();
+  }, []);
+
   // A draft or link may name an agent that has since ended or never existed: clear it, with the reason under Target,
   // set during render so it shows in the commit that empties the field.
   const live = useQuery({ ...agentsListQueryOptions("exclude"), enabled: create });
@@ -246,7 +264,13 @@ export function ScheduleForm({
     ev.preventDefault();
     if (pending || locked) return;
     o.clear();
-    if (!f.submit(FIELDS.filter(relevant))) return;
+    const toCheck = FIELDS.filter(relevant);
+    if (bodyView === "preview" && toCheck.includes("body") && checks.body()) {
+      setBodyView("write");
+      // Message is the last field: it takes focus only when nothing above it fails too.
+      focusBody.current = toCheck.every((k) => k === "body" || !checks[k]());
+    }
+    if (!f.submit(toCheck)) return;
     if (!create && !dirty) return;
     setPending(true);
     try {
@@ -365,6 +389,9 @@ export function ScheduleForm({
             value={v.body}
             proportional
             invalid={Boolean(f.errors.body)}
+            view={bodyView}
+            onViewChange={setBodyView}
+            textareaRef={focusBodyOnMount}
             onChange={(body) => {
               set({ body });
               f.change("body");

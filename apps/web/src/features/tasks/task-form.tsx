@@ -223,7 +223,7 @@ export function TaskForm({
                   update({ body: next });
                   f.change("body");
                 }}
-                onBlur={() => f.blur("body")}
+                onBlur={(e) => f.blur("body", e)}
                 {...(a.describedBy ? { "aria-describedby": a.describedBy } : {})}
               />
             )}

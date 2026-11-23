@@ -6,11 +6,11 @@ import {
 } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { CodeText } from "@/components/code-text";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
-import { InlineOutcome } from "@/components/inline-outcome";
+import { FormOutcome, useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -25,7 +25,6 @@ const FIELDS = [
 ] as const;
 type Field = (typeof FIELDS)[number];
 type Values = Record<Field, string>;
-type Errors = Partial<Record<Field, string>>;
 
 const valuesOf = (s: FactorySettingsDto): Values => ({
   maxRunningAgents: String(s.maxRunningAgents),
@@ -85,14 +84,24 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
   const [v, setV] = useState<Values>(() => valuesOf(server));
   // The values the form was loaded with (or last saved): edits and conflicts compare against them.
   const base = useRef<Values>(valuesOf(server));
-  const [errors, setErrors] = useState<Errors>({});
   const [pending, setPending] = useState(false);
-  const [outcome, setOutcome] = useState<"saved" | "failed" | undefined>();
+  const o = useOutcome();
   const [conflict, setConflict] = useState(false);
   const form = useRef<HTMLFormElement>(null);
 
   const changed = (f: Field) => v[f] !== base.current[f];
   const dirty = FIELDS.some(changed);
+
+  const f = useFieldErrors({
+    form,
+    fields: FIELDS,
+    checks: {
+      maxRunningAgents: () => check("maxRunningAgents", v.maxRunningAgents),
+      defaultWarmWindowMinutes: () => check("defaultWarmWindowMinutes", v.defaultWarmWindowMinutes),
+      memberUpdateDebounceSeconds: () =>
+        check("memberUpdateDebounceSeconds", v.memberUpdateDebounceSeconds),
+    },
+  });
 
   // A `settings_changed` frame refetches the settings (the app shell invalidates them). Clean, the
   // form takes the new values; dirty, it keeps the edits and says so. Our own save's echo equals
@@ -118,28 +127,22 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
     setConflict(false);
   }, [serverKey, dirty, pending]);
 
-  const focus = (f: Field) => form.current?.querySelector<HTMLElement>(`#field-${f}`)?.focus();
-
   function reload() {
     base.current = serverValues;
     setV(serverValues);
-    setErrors({});
-    setOutcome(undefined);
+    f.reset();
+    o.clear();
     setConflict(false);
   }
 
   async function submit(ev: FormEvent) {
     ev.preventDefault();
     if (pending) return;
-    setOutcome(undefined);
-    const found: Errors = {};
-    for (const f of FIELDS) if (changed(f)) found[f] = check(f, v[f]);
-    setErrors(found);
-    const first = FIELDS.find((f) => found[f]);
-    if (first) return focus(first);
-    if (!dirty) return;
+    o.clear();
+    const changedFields = FIELDS.filter(changed);
+    if (!f.submit(changedFields) || !dirty) return;
     const body: PatchFactorySettings = {};
-    for (const f of FIELDS) if (changed(f)) body[f] = toNumber(v[f]);
+    for (const k of changedFields) body[k] = toNumber(v[k]);
     setPending(true);
     try {
       const saved = await patchFactorySettings(body);
@@ -149,48 +152,36 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
       setV(next);
       setConflict(false);
       qc.setQueryData(factorySettingsQueryOptions.queryKey, saved);
-      setOutcome("saved");
-    } catch (err) {
-      if (err instanceof ApiError) {
-        const fields = (err.body.fields ?? {}) as Record<string, string>;
-        const e: Errors = {};
-        for (const f of FIELDS) if (fields[f]) e[f] = fields[f];
-        if (Object.keys(e).length > 0) {
-          // Commit now: the fieldset must be enabled again before its field can take focus.
-          flushSync(() => {
-            setErrors(e);
-            setPending(false);
-          });
-          focus(FIELDS.find((f) => e[f]) as Field);
-          return;
-        }
-      }
-      setOutcome("failed");
-    } finally {
       setPending(false);
+      o.succeed("Saved.");
+    } catch (err) {
+      setPending(false);
+      const fields =
+        err instanceof ApiError ? (err.body.fields as Record<string, string>) : undefined;
+      if (!f.server(fields)) o.fail("Couldn't save. Try again.");
     }
   }
 
-  const numberField = (f: Field, suffix?: string, after?: ReactNode) => (
-    <FieldShell name={f} label={LABELS[f]} error={errors[f]} help={HINTS[f]}>
+  const numberField = (k: Field, suffix?: string, after?: ReactNode) => (
+    <FieldShell name={k} label={LABELS[k]} error={f.errors[k]} help={HINTS[k]}>
       {(a) => (
         <div className="flex items-center gap-2">
           <Input
             id={a.id}
-            name={f}
+            name={k}
             type="number"
             inputMode="numeric"
             aria-invalid={a.invalid || undefined}
             aria-describedby={a.describedBy}
             className="h-9 w-28 tabular-nums"
-            value={v[f]}
+            value={v[k]}
             onChange={(e) => {
               const value = e.target.value;
-              setV((x) => ({ ...x, [f]: value }));
-              setErrors((x) => ({ ...x, [f]: undefined }));
-              setOutcome(undefined);
+              setV((x) => ({ ...x, [k]: value }));
+              f.change(k);
+              o.clear();
             }}
-            onBlur={() => setErrors((x) => ({ ...x, [f]: check(f, v[f]) }))}
+            onBlur={(e) => f.blur(k, e)}
           />
           {suffix && (
             <span aria-hidden="true" className={`${smallClass} text-muted-foreground`}>
@@ -204,7 +195,7 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
   );
 
   return (
-    <form ref={form} noValidate onSubmit={submit} className="grid max-w-xl gap-5">
+    <form ref={form} noValidate onSubmit={submit} className="field-stack max-w-xl">
       {conflict && dirty && (
         <div role="status" className={`${smallClass} flex items-center gap-2`}>
           <span>These settings were changed elsewhere.</span>
@@ -213,7 +204,7 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
           </Button>
         </div>
       )}
-      <fieldset disabled={pending} className="grid min-w-0 gap-5">
+      <fieldset disabled={pending} className="field-stack">
         {numberField("maxRunningAgents", undefined, <RunningCount />)}
         {numberField("defaultWarmWindowMinutes", "min")}
         {numberField("memberUpdateDebounceSeconds", "s")}
@@ -225,16 +216,12 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
             <CodeText text="Set `FACTORY_ALLOW_LOCAL_RUNTIME` on the server and restart to change it." />
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <FormOutcome outcome={o.outcome} pending={pending ? "Saving…" : undefined} />
+        <div>
           <Button type="submit" aria-disabled={pending || undefined}>
             {pending && <Spinner />}
             Save
           </Button>
-          <InlineOutcome
-            tone={outcome === "saved" ? "success" : outcome === "failed" ? "error" : undefined}
-          >
-            {outcome === "saved" ? "Saved." : "Couldn't save. Try again."}
-          </InlineOutcome>
         </div>
       </fieldset>
     </form>

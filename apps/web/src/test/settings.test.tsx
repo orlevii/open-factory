@@ -175,6 +175,38 @@ test("add credential: an unverifiable check is a warning, not a bad token", asyn
   expect(key).toHaveValue("sk-ant");
 });
 
+test("Replace token and Update value validate on blur of a changed field", async () => {
+  world({
+    credentials: [cred({ name: "work" })],
+    secrets: [secret({ name: "GH_TOKEN" })],
+  });
+  renderApp("/settings/credentials", alice);
+  const u = userEvent.setup();
+  const creds = await section("Credentials");
+  await waitFor(() => expect(row(creds, "work")).toBeDefined());
+  await u.click(within(row(creds, "work")).getByRole("button", { name: "Actions for work" }));
+  await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
+  const token = within(creds).getByLabelText("New token");
+  await u.type(token, "a");
+  await u.clear(token);
+  await u.tab();
+  expect(describedText(token)).toBe("Enter the token.");
+});
+
+test("Update value validates on blur of a changed field", async () => {
+  world({ secrets: [secret({ name: "GH_TOKEN" })] });
+  renderApp("/settings/secrets", alice);
+  const u = userEvent.setup();
+  const region = await section("Secrets");
+  await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
+  await u.click(within(row(region, "GH_TOKEN")).getByRole("button", { name: "Update" }));
+  const value = within(region).getByLabelText("New value");
+  await u.type(value, "a");
+  await u.clear(value);
+  await u.tab();
+  expect(describedText(value)).toBe("Enter a value.");
+});
+
 test("credential row: Verify visible, Replace token and Delete… in the menu; used ones can't be deleted", async () => {
   const { api } = world({
     credentials: [

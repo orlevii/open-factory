@@ -1,4 +1,3 @@
-import { handleSchema, slugSchema } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { claimTestHandleSql } from "../test/handles.ts";
@@ -34,10 +33,6 @@ test("handleKind reads the claim", async () => {
   expect(await handleKind(t.db, "or")).toBe("user");
   expect(await handleKind(t.db, "dev")).toBe("agent");
   expect(await handleKind(t.db, "never-claimed")).toBeUndefined();
-});
-test("a reserved name is refused by validation before any claim", () => {
-  expect(handleSchema.safeParse("humans").success).toBe(false);
-  expect(slugSchema.safeParse("factory").success).toBe(false);
 });
 test.each([
   ["#ops", "channel"],

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
 
@@ -35,8 +35,18 @@ test("two agent recipients make two rows, one per agent, with both recipients", 
   const res = await post({ to: ["dev", "ops"], body: "both" });
   expect(res.statusCode).toBe(202);
   expect(res.json().results).toEqual([
-    expect.objectContaining({ to: "@dev", status: "queued", id: expect.any(String) }),
-    expect.objectContaining({ to: "@ops", status: "queued", id: expect.any(String) }),
+    expect.objectContaining({
+      to: "@dev",
+      status: "queued",
+      id: expect.any(String),
+      item: expect.objectContaining({ body: "both" }),
+    }),
+    expect.objectContaining({
+      to: "@ops",
+      status: "queued",
+      id: expect.any(String),
+      item: expect.objectContaining({ body: "both" }),
+    }),
   ]);
   const rows = await rowsOf("both");
   expect(rows.map((r) => r.to_agent_id).sort()).toEqual([agentIds.dev, agentIds.ops].sort());
@@ -56,6 +66,28 @@ test("a human recipient is refused", async () => {
     },
   ]);
   expect(await rowsOf("to a person")).toEqual([]);
+});
+
+test("the human REST send resolves only agents: each refused target is its own result", async () => {
+  const one = (slug: string) => post({ to: [slug], body: "only agents" });
+  for (const slug of ["or", "nobody", "humans", "factory"]) {
+    const r = await one(slug);
+    expect(r.statusCode).toBe(202);
+    expect(r.json().results).toEqual([
+      expect.objectContaining({ to: `@${slug}`, status: "refused", reason: expect.any(String) }),
+    ]);
+  }
+  await s.seedAgent({ slug: "shelved" });
+  await s.app.agents.archive("shelved");
+  expect((await one("shelved")).json().results).toEqual([
+    {
+      to: "@shelved",
+      status: "refused",
+      reason: "@shelved is archived and can't receive messages.",
+      code: "archived",
+    },
+  ]);
+  expect(await rowsOf("only agents")).toEqual([]);
 });
 
 test("attachments with two recipients are 422", async () => {
@@ -86,6 +118,25 @@ test("one refused recipient beside sent ones is a 202 with mixed results", async
   const rows = await rowsOf("mixed");
   expect(rows).toHaveLength(1);
   expect(rows[0]?.recipients).toEqual(["@dev"]);
+});
+
+test("a hand-off that throws for one recipient is that recipient's start_failed, not the call's", async () => {
+  const real = s.app.runtimes.deliver.bind(s.app.runtimes);
+  const spy = vi.spyOn(s.app.runtimes, "deliver").mockImplementation(async (row, ...rest) => {
+    if (row.toAgentId === agentIds.dev) throw new Error("boom");
+    return real(row, ...rest);
+  });
+  try {
+    const res = await post({ to: ["dev", "ops"], body: "partial-fail" });
+    expect(res.statusCode).toBe(202);
+    expect(res.json().results.map((x: { status: string }) => x.status)).toEqual([
+      "start_failed",
+      "queued",
+    ]);
+    expect(await rowsOf("partial-fail")).toHaveLength(2);
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 test("start_failed keeps that recipient's row pending", async () => {

@@ -20,7 +20,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
-import { gif, heic, jpeg, png, webp } from "../uploads/fixtures.ts";
+import { heic, jpeg, png } from "../uploads/fixtures.ts";
 import { UploadService } from "../uploads/service.ts";
 import { agentWorkdir } from "../workspace/paths.ts";
 
@@ -103,13 +103,10 @@ test("POST stores a PNG under .factory/uploads with a safe name and answers its 
   expect(statSync(uploadsDir("dev")).mode & 0o777).toBe(0o755);
 });
 
-test("jpeg, gif, webp and UTF-8 text are accepted by content", async () => {
+test("a JPEG and UTF-8 text are accepted by content (sniff.test.ts owns every type)", async () => {
   for (const [data, name, kind] of [
     [jpeg(100, 50), "a.jpg", "image"],
-    [gif(10, 10), "b.gif", "image"],
-    [webp(30, 20), "c.webp", "image"],
     [Buffer.from("# Notes\nhello\n"), "notes.md", "text"],
-    [Buffer.from('{"a":1}'), "data.json", "text"],
   ] as const) {
     const res = await upload("dev", data, name);
     expect(res.statusCode, name).toBe(201);
@@ -344,16 +341,13 @@ test("the sweep deletes unsent uploads older than 24 hours, and only those", asy
   expect(left).toEqual(expect.arrayContaining([fresh.uploadId, oldSent.uploadId]));
 });
 
-test("the first upload adds .factory/ to the repository's info/exclude, once, never touching .gitignore", async () => {
+test("an upload adds .factory/ to the repository's info/exclude (git-exclude.test.ts owns the detail)", async () => {
   await t.seedAgent({ slug: "repo" });
   execFileSync("git", ["init", "-q"], { cwd: wd("repo") });
-  writeFileSync(path.join(wd("repo"), ".gitignore"), "dist\n");
   mkdirSync(path.join(wd("repo"), ".git/info"), { recursive: true });
   expect((await upload("repo", Buffer.from("a\n"), "a.txt")).statusCode).toBe(201);
-  expect((await upload("repo", Buffer.from("b\n"), "b.txt")).statusCode).toBe(201);
   const exclude = readFileSync(path.join(wd("repo"), ".git/info/exclude"), "utf8");
-  expect(exclude.split("\n").filter((l) => l === ".factory/")).toHaveLength(1);
-  expect(readFileSync(path.join(wd("repo"), ".gitignore"), "utf8")).toBe("dist\n");
+  expect(exclude.split("\n")).toContain(".factory/");
 });
 
 test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connection closes", async () => {

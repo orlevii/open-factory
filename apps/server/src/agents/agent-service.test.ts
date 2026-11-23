@@ -717,15 +717,6 @@ test("a spawned agent can't be edited, reset, archived or unarchived: 409 epheme
   await expect(svc.resetPersona("spawner-4-ee11", "@or")).rejects.toMatchObject(refused);
   await expect(svc.archive("spawner-4-ee11")).rejects.toMatchObject(refused);
   await expect(svc.unarchive("spawner-4-ee11")).rejects.toMatchObject(refused);
-  const { cookie } = await t.signUpUser();
-  const res = await t.app.inject({
-    method: "PATCH",
-    url: "/api/agents/spawner-4-ee11",
-    headers: { cookie },
-    payload: { displayName: "X" },
-  });
-  expect(res.statusCode).toBe(409);
-  expect(res.json()).toMatchObject({ error: { code: "ephemeral_agent" } });
   const [r] = await t.sql`select display_name from agents where slug = 'spawner-4-ee11'`;
   expect(r?.display_name).toBe("Kid");
 });

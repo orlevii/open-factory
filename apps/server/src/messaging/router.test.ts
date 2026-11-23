@@ -267,36 +267,6 @@ test("AC 6: a valid agent token on a REST route is 401", async () => {
   expect(await pendingOf("bob")).toEqual([]);
 });
 
-test("the human REST send resolves only agents: each refused target is its own result", async () => {
-  const { cookie } = await signUp(h.app, { handle: "orla" });
-  const post = (slug: string) =>
-    h.app.inject({
-      method: "POST",
-      url: "/api/messages",
-      headers: { cookie },
-      payload: { to: [slug], body: "x" },
-    });
-  for (const slug of ["orla", "nobody", "humans", "factory"]) {
-    const r = await post(slug);
-    expect(r.statusCode).toBe(202);
-    expect(r.json().results).toEqual([
-      expect.objectContaining({ to: `@${slug}`, status: "refused", reason: expect.any(String) }),
-    ]);
-  }
-  await h.app.agents.archive("bob");
-  const r = await post("bob");
-  expect(r.json().results).toEqual([
-    {
-      to: "@bob",
-      status: "refused",
-      reason: "@bob is archived and can't receive messages.",
-      code: "archived",
-    },
-  ]);
-  expect(await pendingOf("bob")).toEqual([]);
-  expect(await h.sql`select id from inbox_items`).toEqual([]);
-});
-
 test("AC 4: list_peers returns relations, scope all, and the humans every time", async () => {
   await signUp(h.app, { handle: "or", name: "Or" });
   const ops = await h.seedAgent({ slug: "ops" }); // top-level, a peer of lead
@@ -919,45 +889,6 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
       "not_found",
       "invalid_attachment",
       "invalid_attachment",
-    ]);
-  });
-
-  test("a hand-off that throws for one recipient is that recipient's start_failed, not the call's", async () => {
-    const { user } = await signUp(h.app, { handle: "orla" });
-    const real = h.app.runtimes.deliver.bind(h.app.runtimes);
-    const spy = vi.spyOn(h.app.runtimes, "deliver").mockImplementation(async (row, ...rest) => {
-      if (row.toAgentId === (await h.app.store.agentBySlug("bob"))?.id) throw new Error("boom");
-      return real(row, ...rest);
-    });
-    try {
-      const r = await h.app.router.send(
-        { userId: user.id, handle: user.handle },
-        ["bob", "lead"],
-        "partial-fail",
-        false,
-      );
-      expect(r.results.map((x) => x.status)).toEqual(["start_failed", "queued"]);
-      expect(await rowsOf("partial-fail")).toHaveLength(2);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  test("the human REST route answers 202 with one result per recipient", async () => {
-    const { cookie } = await signUp(h.app, { handle: "orla" });
-    const res = await h.app.inject({
-      method: "POST",
-      url: "/api/messages",
-      headers: { cookie },
-      payload: { to: ["bob"], body: "shape" },
-    });
-    expect(res.statusCode).toBe(202);
-    expect(res.json().results).toEqual([
-      expect.objectContaining({
-        to: "@bob",
-        status: "queued",
-        item: expect.objectContaining({ body: "shape" }),
-      }),
     ]);
   });
 });

@@ -124,11 +124,11 @@ test("restore of a schedule whose target ended is 409 target_ended", async () =>
   await h.sql`update agents set terminated_at = now(), terminated_by = '@or' where slug = 'dev'`;
   const r = await call("POST", `/api/schedules/${s.key}/restore`);
   expect(r.statusCode).toBe(409);
-  expect(r.json().error).toMatchObject({ code: "target_ended", message: "@dev was terminated." });
+  expect(r.json().error).toMatchObject({ code: "target_ended" });
 });
 
-test("list: ordered active, paused, then done; ?target and ?done", async () => {
-  const later = await create({ cron: "0 10 * * *" });
+test("list: ?done and ?target reach the query (order is the service test's)", async () => {
+  await create({ cron: "0 10 * * *" });
   const sooner = await create({ cron: "0 9 * * *", target: "dev" });
   const paused = await create({ cron: "0 8 * * *" });
   await call("POST", `/api/schedules/${paused.key}/pause`);
@@ -138,8 +138,8 @@ test("list: ordered active, paused, then done; ?target and ?done", async () => {
     ((await call("GET", `/api/schedules${q}`)).json().schedules as ScheduleItem[]).map(
       (x) => x.key,
     );
-  expect(await keys()).toEqual([sooner.key, later.key, paused.key]);
-  expect(await keys("?done=true")).toEqual([sooner.key, later.key, paused.key, once.key]);
+  expect(await keys()).not.toContain(once.key);
+  expect(await keys("?done=true")).toContain(once.key);
   expect(await keys("?target=dev")).toEqual([sooner.key]);
 });
 

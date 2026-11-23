@@ -43,13 +43,15 @@ export const cappedList = (items: string[], max = 3) => {
   return `${items.slice(0, max).join(", ")}${rest > 0 ? ` +${rest} more` : ""}`;
 };
 
-/** "@lead restarts when idle to use it. Its crons from this session stop." */
+const list = (slugs: string[]) => cappedList(slugs.map((s) => `@${s}`));
+
+/** "@lead restarts when idle; past three agents: "@a, @b, @c +1 more restart ..." to use it. Its crons from this session stop." */
 export const restartNote = (slugs: string[]) =>
   slugs.length === 0
     ? ""
     : slugs.length === 1
-      ? `${tags(slugs)} restarts when idle to use it. Its crons from this session stop.`
-      : `${tags(slugs)} restart when idle to use it. Their crons from this session stop.`;
+      ? `${list(slugs)} restarts when idle to use it. Its crons from this session stop.`
+      : `${list(slugs)} restart when idle to use it. Their crons from this session stop.`;
 
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [

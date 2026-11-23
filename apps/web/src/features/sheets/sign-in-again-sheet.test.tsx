@@ -153,7 +153,7 @@ it("success closes the sheet with one toast and the restart note, and refetches 
   expect(bodyOf(CODE)).toEqual({ attemptId: "a1", code: SYN_CODE });
   expect(notify).toHaveBeenCalledTimes(1);
   expect(notify).toHaveBeenCalledWith({
-    text: "Signed in again: work. @a, @b, @c +1 more restart when idle to use it.",
+    text: "Signed in again: work. @a, @b, @c +1 more restart when idle to use it. Their crons from this session stop.",
   });
   const keys = invalidate.mock.calls.map((c) => c[0]?.queryKey);
   expect(keys).toContainEqual(inboxQueryKey);

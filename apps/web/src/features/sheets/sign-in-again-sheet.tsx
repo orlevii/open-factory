@@ -5,7 +5,7 @@ import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { SheetBody } from "@/components/ui/sheet";
 import { notify } from "@/components/ui/toaster";
 import { credentialsQueryOptions } from "@/features/settings/api";
-import { cappedList } from "@/features/settings/shared";
+import { restartNote } from "@/features/settings/shared";
 import { isLiveReplace, signInQueryOptions } from "@/features/settings/sign-in/api";
 import { SignInPanel } from "@/features/settings/sign-in/sign-in-panel";
 import { useSignIn } from "@/features/settings/sign-in/use-sign-in";
@@ -18,12 +18,6 @@ const CHECKS = {};
 const PRIMARY = 'button[type="submit"]';
 const LINK = "[data-sign-in-link]";
 
-/** " @a, @b, @c +2 more restart when idle to use it." when agents use the credential, else nothing. */
-const restartNote = (usedBy: string[]) =>
-  usedBy.length === 0
-    ? ""
-    : ` ${cappedList(usedBy.map((s) => `@${s}`))} ${usedBy.length === 1 ? "restarts" : "restart"} when idle to use it.`;
-
 /**
  * The Sign in again sheet body (spec §8.5): the sign-in panel for `replace`, no Name or Method. Start sign-in, then
  * Sign in and replace. A restored attempt moves focus itself (to Open sign-in page), so the mount focus follows it.
@@ -32,8 +26,8 @@ export default function SignInAgainSheet({
   spec,
   close,
 }: BodyProps<{ kind: "sign-in-again"; name: string }>) {
-  // Two independent reads, both warm from `prefetch` (no `enabled` chain). Credentials stay mounted so the
-  // post-success refetch lands in the open list; the sign-in answer decides the mount focus.
+  // Two independent reads, both warm from `prefetch` (no `enabled` chain). The credentials one is unused here:
+  // it keeps the list observed. The sign-in answer decides the mount focus.
   useQuery(credentialsQueryOptions);
   const { data: status } = useQuery(signInQueryOptions);
   const restoring = isLiveReplace(status, spec.name);
@@ -47,7 +41,7 @@ export default function SignInAgainSheet({
     fields: f,
     outcome: o,
     onDone(c) {
-      notify({ text: `Signed in again: ${c.name}.${restartNote(c.usedBy)}` });
+      notify({ text: `Signed in again: ${c.name}. ${restartNote(c.usedBy)}`.trim() });
       close();
     },
   });

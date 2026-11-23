@@ -24,7 +24,7 @@ import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
-import { commandsResponse, findCommand } from "../agents/commands.ts";
+import { commandsResponse } from "../agents/commands.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -343,7 +343,10 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
       const { name, args, clientMessageId } = req.body;
       const allowed = commandsResponse(await app.store.agentCommands(row.id), row.config.skills);
-      const entry = findCommand(allowed.commands, name);
+      // Until the input route replaces this one: the entry the typed token names, by name or alias.
+      const entry = allowed.commands.find(
+        (c) => !c.denied && (c.name === name || c.aliases?.includes(name)),
+      );
       const audit = { user: u.id, agent: row.slug, command: entry?.name ?? null };
       const refuse = (status: number, code: string, message: string) => {
         app.log.info({ ...audit, refused: code }, "command refused");

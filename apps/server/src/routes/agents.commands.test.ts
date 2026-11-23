@@ -13,7 +13,13 @@ describe("U3 §13.3: dispatch, hold and cancel a slash command", () => {
     { name: "research", description: "Research (project)", argumentHint: "[topic]" },
     // A skill alias naming a refused built-in never resolves (the allowlist drops it).
     { name: "triage", description: "Triage (project)", argumentHint: "", aliases: ["model"] },
-    { name: "code-review", description: "Review", argumentHint: "", builtin: true },
+    {
+      name: "code-review",
+      description: "Review",
+      argumentHint: "",
+      builtin: true,
+      aliases: ["review"],
+    },
     {
       name: "usage",
       description: "Cost",
@@ -91,7 +97,6 @@ describe("U3 §13.3: dispatch, hold and cancel a slash command", () => {
     "model",
     "Model",
     "MODEL",
-    "batch",
     "COMPACT",
     "Code-Review",
     "nope",
@@ -180,11 +185,12 @@ describe("U3 §13.3: dispatch, hold and cancel a slash command", () => {
       expect(res.statusCode).toBe(422);
       expect(res.json().error.code).toBe("unknown_command");
     }
-    const names = (await call(or, "GET", "/api/agents/dev/commands"))
-      .json()
-      .commands.map((c: { name: string }) => c.name);
-    expect(names).not.toContain("clear");
-    expect(names).toContain("compact");
+    const commands = (await call(or, "GET", "/api/agents/dev/commands")).json().commands;
+    // The list keeps `clear` and says why it can't run.
+    expect(commands.find((c: { name: string }) => c.name === "clear")?.denied).toMatch(
+      /isn't available/,
+    );
+    expect(commands.find((c: { name: string }) => c.name === "compact")?.denied).toBeUndefined();
   });
 
   test("written raw when the turn ends, then the event; a written command can't be cancelled", async () => {
@@ -213,7 +219,7 @@ describe("U3 §13.3: dispatch, hold and cancel a slash command", () => {
     drv.last.emit(ev.end({ command: "usage", numTurns: 0 })); // the /usage above ends: idle
     await settled();
     const before = commandWrites().length;
-    for (const name of ["model", "Model", "clear", "batch"]) {
+    for (const name of ["model", "Model", "clear"]) {
       expect((await dispatch({ name, args: "x" })).statusCode).toBe(422);
     }
     expect(commandWrites()).toHaveLength(before);

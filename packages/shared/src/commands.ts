@@ -18,6 +18,8 @@ export const commandSchema = z.object({
   argumentHint: z.string().max(500),
   builtin: z.boolean().optional(),
   aliases: z.array(commandName).max(20).optional(),
+  /** Why the factory won't run it (the denylist's reason); the menu shows it instead of offering the command. */
+  denied: z.string().max(MAX_COMMAND_DESCRIPTION).optional(),
 });
 export type Command = z.infer<typeof commandSchema>;
 

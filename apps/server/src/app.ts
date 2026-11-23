@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +22,9 @@ import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
+import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
+import { probePython, startHostPty } from "./credentials/sign-in/host-pty.ts";
+import { runSetupToken } from "./credentials/sign-in/setup-token.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
@@ -41,6 +45,7 @@ import { Router } from "./messaging/router.ts";
 import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { claudeSignInRoutes } from "./routes/claude-sign-in.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
 import { hostRoutes } from "./routes/host.ts";
 import { hostSkillsRoutes } from "./routes/host-skills.ts";
@@ -105,6 +110,10 @@ declare module "fastify" {
     configChanges: ConfigChanges;
     agents: AgentService;
     credentials: CredentialService;
+    /** I3 §5.4: the in-memory "Sign in with Claude" attempts, one per user. */
+    signIn: SignInAttempts;
+    /** I3 §5.5: whether a working python3 (with `pty`) is on the host; probed once, then cached. */
+    signInAvailable(): Promise<boolean>;
     secrets: SecretService;
     projects: ProjectService;
     router: Router;
@@ -145,6 +154,8 @@ export interface AppDeps {
     setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
     clearTimer: (t: ReturnType<typeof setTimeout>) => void;
   };
+  /** Spawns the sign-in PTY bridge and the python3 probe (I3); the real `spawn` unless a test injects one. */
+  signInSpawn?: typeof spawn;
   /** Checked for the removed env vars (S10 Q6) to warn at boot; `process.env` when absent. */
   env?: NodeJS.ProcessEnv;
 }
@@ -331,6 +342,24 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
   });
   app.decorate("credentials", credentials);
+  // I3 §5.4: before UserAdminService, which ends a disabled user's attempt.
+  const signInSpawn = deps.signInSpawn ?? spawn;
+  app.decorate(
+    "signIn",
+    new SignInAttempts({
+      startPty: () => startHostPty({ claudeBin: config.claudeBin, spawnFn: signInSpawn }),
+      run: (pty) => runSetupToken(pty),
+      verify: (value) => verifier.verify("oauth_token", value),
+      credentials,
+      now: () => clock().getTime(),
+      log: app.log,
+    }),
+  );
+  let pythonProbe: Promise<boolean> | undefined;
+  app.decorate("signInAvailable", () => {
+    pythonProbe ??= probePython(signInSpawn);
+    return pythonProbe;
+  });
   app.decorate(
     "usage",
     new UsageService({ db: deps.db, now: clock, timezone: () => config.factoryTimezone }),
@@ -444,6 +473,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);
+  await app.register(claudeSignInRoutes);
   await app.register(usageRoutes);
   await app.register(signUpStateRoutes, { db: deps.db });
   await app.register(usersRoutes);

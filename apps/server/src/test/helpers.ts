@@ -42,8 +42,12 @@ export interface TestAppOptions {
   /** The scheduling clock and timer functions (S9); real ones when absent. */
   clock?: AppDeps["clock"];
   schedulerTimers?: AppDeps["schedulerTimers"];
-  /** Capture the app's real log output (production redact config, no transport) at info level. */
+  /** Capture the app's real log output (production redact config, no transport) at `logLevel`. */
   logStream?: { write(s: string): void };
+  /** The capture's level; `"info"` when absent. */
+  logLevel?: string;
+  /** Spawns the sign-in bridge and python3 probe (I3); the real `spawn` when absent. */
+  signInSpawn?: AppDeps["signInSpawn"];
   /** Written to the `factory_settings` row before the first boot only, not on `reopen()` (S10 §8.1: no longer env vars). */
   factorySettings?: Partial<FactorySettingsValues>;
 }
@@ -79,11 +83,12 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
             const { transport: _t, ...rest } = loggerOptions(config) as ReturnType<
               typeof loggerOptions
             > & { transport?: unknown };
-            return { ...rest, level: "info", stream: o.logStream };
+            return { ...rest, level: o.logLevel ?? "info", stream: o.logStream };
           })()
         : false,
       harnessDriver: o.harnessDriver,
       ...(o.docker ? { docker: o.docker } : {}),
+      ...(o.signInSpawn ? { signInSpawn: o.signInSpawn } : {}),
       ...(o.clock ? { clock: o.clock } : {}),
       ...(o.schedulerTimers ? { schedulerTimers: o.schedulerTimers } : {}),
     });

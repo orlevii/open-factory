@@ -1,8 +1,9 @@
 import { ApiError, type CredentialKind } from "@open-factory/shared";
 import { TriangleAlert } from "lucide-react";
+import { CodeText } from "@/components/code-text";
 import { FieldShell } from "@/components/field-shell";
 import { PasswordInput } from "@/components/password-input";
-import { CodeText, smallClass } from "@/features/settings/shared";
+import { smallClass } from "@/features/settings/shared";
 
 /** Field pieces and checks shared by the Add forms and the Replace, Update and Change path forms. */
 

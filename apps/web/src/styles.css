@@ -428,6 +428,45 @@
   }
 }
 
+/* I4 (spec §5): one reserved note line. The type sits on the cell, so 1lh is one note line. */
+.field-note {
+  display: grid;
+  min-width: 0;
+  min-height: 1lh;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+}
+.field-note > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 100ms var(--ease-out),
+    visibility 100ms var(--ease-out);
+}
+.field-note > [data-shown] {
+  opacity: 1;
+  visibility: visible;
+  transition-duration: 150ms;
+}
+.field-stack {
+  display: grid;
+  row-gap: 0.75rem;
+  align-content: start;
+  min-width: 0;
+}
+/* The invalid edge arrives with the note (150ms) and leaves with it (100ms). */
+.field-edge-transition {
+  transition-property: border-color, background-color, color;
+  transition-duration: 100ms;
+  transition-timing-function: var(--ease-out);
+}
+.field-edge-transition[aria-invalid="true"],
+.field-edge-transition:has([aria-invalid="true"]) {
+  transition-duration: 150ms;
+}
+
 @keyframes of-ignite {
   0% {
     clip-path: inset(0 100% 0 0);

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type Db, schema } from "@open-factory/db";
-import type { CredentialKind, CredentialSummary } from "@open-factory/shared";
+import { type CredentialKind, type CredentialSummary, MSG } from "@open-factory/shared";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
@@ -249,7 +249,7 @@ export class CredentialService {
   }
 
   private notFoundById() {
-    return new ApiError(404, "credential_not_found", "That credential no longer exists.");
+    return new ApiError(404, "credential_not_found", MSG.credentialDeleted);
   }
 
   async reverify(name: string): Promise<CredentialSummary> {

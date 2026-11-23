@@ -27,8 +27,8 @@ export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
       // flight. The mutex is in-process and assumes one server process (ADR 0013); a multi-instance deployment needs a
       // Postgres advisory lock here as well.
       const signOut = request.method === "POST" && url.pathname === "/api/auth/sign-out";
-      // Resolved before forwarding: a successful sign-out deletes the session. Spec I3 §5.4.
-      const session = signOut ? await app.auth.api.getSession({ headers }) : null;
+      // Resolved before forwarding: a successful sign-out deletes the session. Spec I3 §5.4. A lookup failure never fails the sign-out.
+      const session = signOut ? await app.auth.api.getSession({ headers }).catch(() => null) : null;
       const res =
         request.method === "POST" && url.pathname === "/api/auth/sign-up/email"
           ? await handleSignUp(

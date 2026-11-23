@@ -231,7 +231,7 @@ export function runSetupToken(
       if (t) return finish(null, t);
       if (hasOAuthError(buf)) return finish("code_rejected");
       // Anything but a token that parses strictly between the anchors ends the attempt (Q12).
-      if (buf.includes(TOKEN_AFTER)) finish("exchange_failed");
+      if (stripTerminal(buf).includes(TOKEN_AFTER)) finish("exchange_failed");
     }
   });
   void pty.exit.then(() => fail("exchange_failed"));

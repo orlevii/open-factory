@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { signUp, TEST_ORIGIN } from "../test/helpers.ts";
 import { appWithFakeClaude } from "../test/sign-in-helpers.ts";
 
@@ -66,6 +66,18 @@ describe.skipIf(!hasPython)("sign-in attempts end without a request (fake CLI)",
     const other = await signUp(h.app, { handle: "al" });
     expect((await get(h, other.cookie)).json().attempt).toBeNull();
     await gone(pid);
+  });
+
+  it("a failing session lookup never fails the sign-out", async () => {
+    const h = await setup();
+    vi.spyOn(h.app.auth.api, "getSession").mockRejectedValueOnce(new Error("db down"));
+    const out = await h.app.inject({
+      method: "POST",
+      url: "/api/auth/sign-out",
+      headers: { cookie: h.cookie, origin: TEST_ORIGIN, "content-type": "application/json" },
+      payload: {},
+    });
+    expect(out.statusCode).toBe(200);
   });
 
   it("a sign-out without a session leaves the attempt alone", async () => {

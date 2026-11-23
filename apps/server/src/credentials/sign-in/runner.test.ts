@@ -116,6 +116,13 @@ describe("runSetupToken", () => {
     expect(f.killed()).toBe(1);
   });
 
+  it("the after-anchor fails fast even when cursor moves separate its words", async () => {
+    const { f, p } = await submitted();
+    f.emit(`${BEFORE}\nhello there\n${AFTER.replaceAll(" ", "\x1b[1C")}\n`);
+    expect(await reason(p)).toBe("exchange_failed");
+    expect(f.killed()).toBe(1);
+  });
+
   it("exit without a token is exchange_failed", async () => {
     const { f, p } = await submitted();
     f.exitWith(0);

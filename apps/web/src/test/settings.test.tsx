@@ -62,6 +62,7 @@ function world(w: World = {}) {
     projects: w.projects ?? [],
   };
   const api = mockApi({
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
     "GET /api/credentials": () => json({ credentials: state.credentials }),
     "GET /api/secrets": () => json({ secrets: state.secrets }),
     "GET /api/projects": () => json({ projects: state.projects }),
@@ -638,6 +639,38 @@ test("Change path saves with the restart warning; a missing folder is a field er
   ).toBeInTheDocument();
 });
 
+test("Change path has the help button, accepts ~/x, and Esc in the popover keeps the form open", async () => {
+  const { api } = world({
+    projects: [project({ name: "app" })],
+    extra: {
+      "PATCH /api/projects/app": (body) =>
+        json({
+          project: project({ name: "app", hostPath: (body as { hostPath: string }).hostPath }),
+        }),
+    },
+  });
+  renderApp("/settings/projects", alice);
+  const region = await section("Projects");
+  await waitFor(() => expect(row(region, "app")).toBeDefined());
+  await userEvent.click(
+    within(row(region, "app")).getByRole("button", { name: "Actions for app" }),
+  );
+  await userEvent.click(screen.getByRole("menuitem", { name: "Change path" }));
+  const help = await within(region).findByRole("button", { name: "How do I find this path?" });
+  await userEvent.click(help);
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  const path = within(region).getByLabelText("Path");
+  expect(path).toBeInTheDocument();
+  await userEvent.clear(path);
+  await userEvent.type(path, "~/x");
+  await userEvent.click(within(region).getByRole("button", { name: "Save path" }));
+  await waitFor(() =>
+    expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({ hostPath: "~/x" }),
+  );
+});
+
 test("add project: a missing folder lands under Path, then the row appears", async () => {
   const { api, state } = world({
     extra: {
@@ -659,9 +692,7 @@ test("add project: a missing folder lands under Path, then the row appears", asy
   await userEvent.click(within(region).getByRole("button", { name: "Add project" }));
   await userEvent.type(within(region).getByLabelText("Name"), "app");
   const path = within(region).getByLabelText("Path");
-  expect(describedText(path)).toBe(
-    "Absolute path to a folder on this machine, usually a git repository.",
-  );
+  expect(describedText(path)).toBe("A folder on the factory's machine, like ~/code/web.");
   await userEvent.type(path, "/x");
   await userEvent.click(within(region).getByRole("button", { name: "Add project" }));
   await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));

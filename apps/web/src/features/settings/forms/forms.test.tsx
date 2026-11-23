@@ -1,3 +1,4 @@
+import { MSG } from "@open-factory/shared";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -135,6 +136,7 @@ test("project: validates, submits once on Enter, maps a duplicate under Name", a
   let posts = 0;
   let release: (r: Response) => void = () => {};
   const api = mockApi({
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
     "POST /api/projects": () => {
       posts++;
       return new Promise<Response>((r) => {
@@ -149,7 +151,7 @@ test("project: validates, submits once on Enter, maps a duplicate under Name", a
   const dialog = screen.getByRole("dialog", { name: "Add project" });
   await userEvent.type(within(dialog).getByLabelText("Name"), "app");
   await userEvent.type(within(dialog).getByLabelText("Path"), "rel{Enter}");
-  expect(describedText(within(dialog).getByLabelText("Path"))).toContain("Enter an absolute path.");
+  expect(describedText(within(dialog).getByLabelText("Path"))).toContain(MSG.hostPathStart);
   expect(api.calls).toHaveLength(0);
   const path = within(dialog).getByLabelText("Path");
   await userEvent.clear(path);
@@ -162,7 +164,66 @@ test("project: validates, submits once on Enter, maps a duplicate under Name", a
   await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
   expect(describedText(name)).toBe("A project named app exists.");
   expect(posts).toBe(1);
-  expect(api.calls[0]?.body).toEqual({ name: "app", hostPath: "/code/app" });
+  expect(api.calls.find((c) => c.method === "POST")?.body).toEqual({
+    name: "app",
+    hostPath: "/code/app",
+  });
+});
+
+test("project: ~ paths post unexpanded; Path has the help line and the find-path button", async () => {
+  const api = mockApi({
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
+    "POST /api/projects": () =>
+      json({ project: { name: "web", hostPath: "~/code/web", grantedTo: [] } }, 201),
+  });
+  inSheet(
+    "Add project",
+    <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add project" });
+  const path = within(dialog).getByLabelText("Path");
+  expect(describedText(path)).toContain("A folder on the factory's machine, like ~/code/web.");
+  const find = within(dialog).getByRole("button", { name: "How do I find this path?" });
+  expect(find.parentElement).toHaveTextContent("Path");
+  await userEvent.type(within(dialog).getByLabelText("Name"), "web");
+  await userEvent.type(path, "~/code/web{Enter}");
+  await waitFor(() => expect(api.calls.some((c) => c.method === "POST")).toBe(true));
+  expect(api.calls.find((c) => c.method === "POST")?.body).toEqual({
+    name: "web",
+    hostPath: "~/code/web",
+  });
+});
+
+test("project: a relative path shows the start message on blur; a server hostPath error focuses Path", async () => {
+  mockApi({
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
+    "POST /api/projects": () =>
+      json(
+        {
+          error: {
+            code: "validation_error",
+            message: MSG.hostPathStart,
+            fields: { hostPath: MSG.hostPathStart },
+          },
+        },
+        400,
+      ),
+  });
+  inSheet(
+    "Add project",
+    <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add project" });
+  const path = within(dialog).getByLabelText("Path");
+  await userEvent.type(path, "code/web");
+  await userEvent.tab();
+  expect(describedText(path)).toContain("Start with / or ~/.");
+  await userEvent.clear(path);
+  await userEvent.type(within(dialog).getByLabelText("Name"), "web");
+  await userEvent.type(path, "/code/web{Enter}");
+  await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));
+  expect(describedText(path)).toContain(MSG.hostPathStart);
+  expect(path).toHaveFocus();
 });
 
 test("secret: the inline frame shows a form-level error through the outcome line, above the buttons", async () => {

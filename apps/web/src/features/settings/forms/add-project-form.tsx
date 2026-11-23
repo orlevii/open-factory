@@ -2,10 +2,11 @@ import { ApiError, nameSchema, type ProjectSummary } from "@open-factory/shared"
 import { useState } from "react";
 import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
+import { checkHostPath, PathField } from "@/components/path-field";
 import { createProject } from "@/features/settings/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
-import { checkPath, fieldsOf, PATH_HELP } from "./shared";
+import { fieldsOf } from "./shared";
 
 export function AddProjectForm({
   frame,
@@ -33,7 +34,7 @@ export function AddProjectForm({
     document.getElementById(f === "name" ? "field-project-name" : "field-project-path")?.focus();
 
   async function submit() {
-    const found = { name: checkName(name), hostPath: checkPath(hostPath) };
+    const found = { name: checkName(name), hostPath: checkHostPath(hostPath) };
     setErrors(found);
     o.clear();
     if (found.name || found.hostPath) return focus(found.name ? "name" : "hostPath");
@@ -82,21 +83,17 @@ export function AddProjectForm({
         spellCheck={false}
         className="font-mono"
       />
-      <FormField
+      <PathField
         name="project-path"
         label="Path"
-        help={PATH_HELP}
+        help="A folder on the factory's machine, like ~/code/web."
         error={errors.hostPath}
         value={hostPath}
         onChange={(e) => {
           setHostPath(e.target.value);
           setErrors((x) => ({ ...x, hostPath: undefined }));
         }}
-        onBlur={() => setErrors((x) => ({ ...x, hostPath: checkPath(hostPath) }))}
-        autoComplete="off"
-        autoCapitalize="none"
-        spellCheck={false}
-        className="font-mono"
+        onBlur={() => setErrors((x) => ({ ...x, hostPath: checkHostPath(hostPath) }))}
       />
     </FormFrame>
   );

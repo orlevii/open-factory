@@ -491,8 +491,13 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               onJump={jumpTo}
             />
           )}
-          <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="min-w-0 gap-3">
-            {/* Below 40rem the strip clips at 390px (U4 evidence): the same tabs as a Select. Both render; CSS hides one. */}
+          <Tabs
+            value={tab}
+            onValueChange={(v) => setTab(v as Tab)}
+            // A container: the strip turns into the Select by its own width, so 200% text gets it too.
+            className="@container min-w-0 gap-3"
+          >
+            {/* Below 40rem of its own width (a container query) the strip is the same tabs as a Select. Both render; CSS hides one. */}
             <TabSelect
               tab={tab}
               onTab={setTab}
@@ -502,7 +507,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
             />
             <TabsList
               variant="line"
-              className="h-9! w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0 max-[40rem]:hidden"
+              className="h-9! w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0 @max-[40rem]:hidden"
             >
               <TabsTrigger
                 value="config"
@@ -965,7 +970,7 @@ function TabSelect({
       .join(", ");
   const label = (name: string, m: string) => (m ? `${name} (${m})` : name);
   return (
-    <div className="min-[40rem]:hidden">
+    <div className="@min-[40rem]:hidden">
       <Select value={tab} onValueChange={(v) => onTab(v as Tab)}>
         <SelectTrigger aria-label={TEMPLATE_TAB_COPY.tabPicker} className="w-full">
           <SelectValue />

@@ -105,6 +105,30 @@ test("the page: header, tabs, the template's rows, and a footer in the flow whil
   expect(save()).toHaveAttribute("aria-disabled", "true");
 });
 
+test("the header keeps '@ana · Template dev' at every width: it wraps, it never hides", async () => {
+  await open();
+  const link = screen.getByRole("link", { name: "dev" });
+  const meta = link.closest("[data-slot=config-meta]") as HTMLElement;
+  expect(meta).not.toBeNull();
+  expect(meta.className).not.toMatch(/hidden/);
+  expect(meta.className).not.toMatch(/truncate/);
+  expect(meta).toHaveTextContent("@ana · Template dev");
+  // The header may take a second line, where the meta moves when it can't fit beside the title.
+  expect(meta.closest("header")?.className).toMatch(/flex-wrap/);
+});
+
+test("Discard works with only an MCP editor open, and closes it", async () => {
+  await open();
+  await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+  const discard = screen.getByRole("button", { name: "Discard" });
+  expect(discard).not.toHaveAttribute("aria-disabled");
+  await userEvent.click(discard);
+  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+  // Nothing was edited: no "Discarded." with an Undo that would have nothing to restore.
+  expect(within(footer()).queryByText(CONFIG_PAGE_MSG.discarded)).toBeNull();
+  expect(screen.getByRole("button", { name: "Discard" })).toHaveAttribute("aria-disabled", "true");
+});
+
 test("the footer is sticky only while dirty, or while an outcome shows", async () => {
   await open();
   expect(footer()).not.toHaveAttribute("data-sticky");

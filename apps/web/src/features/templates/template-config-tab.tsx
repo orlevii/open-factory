@@ -125,6 +125,11 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
   const usage = templateUsageLine(data.agents.live, data.agents.cantStart, valid);
 
   function onDiscard() {
+    // Only an MCP editor open, nothing edited: close it (the remount), with no "Discarded." and nothing to undo.
+    if (!dirty) {
+      setFormEpoch((n) => n + 1);
+      return;
+    }
     draft.current.discard();
     setIssuesOverride(null);
     setFormEpoch((n) => n + 1);
@@ -235,7 +240,7 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
         sticky={dirty || shown}
         pending={save.isPending}
         canSave={dirty && valid && !lockedBy}
-        canDiscard={dirty}
+        canDiscard={dirty || editorOpen}
         onSave={() => void onSave()}
         onDiscard={onDiscard}
         saveId={saveId}

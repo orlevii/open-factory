@@ -135,6 +135,7 @@ const ConfigHeader = memo(function ConfigHeader({
 }) {
   return (
     <PageHeader
+      wrap
       title={CONFIG_PAGE_COPY.title}
       documentTitle={`${CONFIG_PAGE_COPY.title} · ${agent?.displayName ?? `@${slug}`}`}
       leading={
@@ -150,7 +151,11 @@ const ConfigHeader = memo(function ConfigHeader({
       }
       meta={
         agent ? (
-          <span className="min-w-0 truncate text-[0.8125rem] text-muted-foreground @max-[28rem]:hidden">
+          // Never hidden: on a narrow header it moves to its own line under the title, and wraps.
+          <span
+            data-slot="config-meta"
+            className="min-w-0 text-[0.8125rem] text-muted-foreground [overflow-wrap:anywhere] @max-[28rem]:order-last @max-[28rem]:basis-full"
+          >
             <span className="font-mono">@{slug}</span> · Template{" "}
             <Link
               to="/templates/$name"
@@ -350,6 +355,11 @@ function AgentConfigEditor({
   }, []);
 
   function onDiscard() {
+    // Only an MCP editor open, nothing edited: close it (the remount), with no "Discarded." and nothing to undo.
+    if (!dirty) {
+      setFormEpoch((n) => n + 1);
+      return;
+    }
     discardedRaw.current = raw && !raw.error ? raw : null;
     d.discard();
     setRaw(null);
@@ -523,7 +533,7 @@ function AgentConfigEditor({
         sticky={dirty || outcomeShown}
         pending={save.isPending}
         canSave={dirty && !rawError}
-        canDiscard={dirty}
+        canDiscard={dirty || editorOpen}
         onSave={() => void onSave()}
         onDiscard={onDiscard}
         onHeight={setFooterHeight}

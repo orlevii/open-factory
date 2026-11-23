@@ -264,17 +264,30 @@ test("Discard closes an open MCP editor; an open editor survives a visit to mcp.
   await waitFor(() => expect(calls("PUT", "/api/templates/dev/config")).toHaveLength(1));
 });
 
-test("below 40rem the tabs are a Select listing every tab with its marks", async () => {
+test("Discard works with only an MCP editor open, and closes it", async () => {
+  await open();
+  await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+  const discard = screen.getByRole("button", { name: "Discard" });
+  expect(discard).not.toHaveAttribute("aria-disabled");
+  await userEvent.click(discard);
+  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Discard" })).toHaveAttribute("aria-disabled", "true");
+});
+
+test("below 40rem of its own width the tab strip is a Select listing every tab with its marks", async () => {
   tpl = detail([{ severity: "error", file: "settings.json", message: "JSON: bad", line: 1 }]);
   renderApp("/templates/dev", alice);
   // An error in settings.json opens template.yaml; the form (its doc mocked valid) is a click away.
   await userEvent.click(await screen.findByRole("tab", { name: /^Configuration/ }));
   await screen.findByRole("heading", { level: 2, name: "Model" });
   const strip = screen.getByRole("tablist");
-  expect(strip.className).toMatch(/max-\[40rem\]:hidden/);
+  // A container query on the strip's wrapper, not the viewport: 200% text gets the Select too.
+  expect(strip.closest("[data-slot=tabs]")?.className).toMatch(/@container/);
+  expect(strip.className).toMatch(/@max-\[40rem\]:hidden/);
+  expect(strip.className).not.toMatch(/(^|\s)max-\[40rem\]/);
   await addAllowRule("Read");
   const picker = screen.getByRole("combobox", { name: "File" });
-  expect(picker.closest("div")?.className).toMatch(/min-\[40rem\]:hidden/);
+  expect(picker.closest("div")?.className).toMatch(/@min-\[40rem\]:hidden/);
   await userEvent.click(picker);
   const names = screen.getAllByRole("option").map((o) => o.textContent);
   expect(names).toEqual([

@@ -52,7 +52,13 @@ const pendingOf = (slug: string) =>
 
 test("AC 1: send_message to a hibernated agent wakes it with agent_message; the result names its status; the tool-use id is stored", async () => {
   const tokA = await startIdle("ada");
-  const r = await callTool(url, tokA, "send_message", { to: "@bob", body: "ping" }, "toolu_01ABC");
+  const r = await callTool(
+    url,
+    tokA,
+    "send_message",
+    { to: ["@bob"], body: "ping" },
+    "toolu_01ABC",
+  );
   expect(r.isError).toBeFalsy();
   const out = JSON.parse(text(r)).results[0];
   expect(out).toMatchObject({
@@ -76,7 +82,7 @@ test("AC 1: send_message to a hibernated agent wakes it with agent_message; the 
 test("rejections are tool errors with one sentence", async () => {
   const tokA = await startIdle("ada");
   const err = async (to: string) => {
-    const r = await callTool(url, tokA, "send_message", { to, body: "x" });
+    const r = await callTool(url, tokA, "send_message", { to: [to], body: "x" });
     expect(r.isError).toBe(true);
     return text(r);
   };
@@ -94,7 +100,7 @@ test("an agent id smuggled in the tool arguments is ignored: the caller is the t
   const tokA = await startIdle("ada");
   const lead = await h.app.store.agentBySlug("lead");
   const r = await callTool(url, tokA, "send_message", {
-    to: "bob",
+    to: ["bob"],
     body: "who am I",
     agentId: lead?.id,
     from: "lead",
@@ -110,7 +116,7 @@ test("an errored recipient: accepted and pending, no attempt, the note says so",
   await h.sql`update agents set status = 'errored', error_kind = 'crash', last_error = 'boom' where slug = 'bob'`;
   const tokA = await startIdle("ada");
   const out = JSON.parse(
-    text(await callTool(url, tokA, "send_message", { to: "bob", body: "are you ok" })),
+    text(await callTool(url, tokA, "send_message", { to: ["bob"], body: "are you ok" })),
   ).results[0];
   expect(out).toMatchObject({
     to: "@bob",
@@ -131,7 +137,7 @@ test("AC 3: an urgent message from an agent interrupts a working recipient", asy
   await startIdle("lead");
   proc("lead")?.emit(ev.turn());
   await settle("lead");
-  await callTool(url, tokA, "send_message", { to: "lead", body: "stop!", urgent: true });
+  await callTool(url, tokA, "send_message", { to: ["lead"], body: "stop!", urgent: true });
   await settle("lead");
   expect(proc("lead")?.controls).toContainEqual({ kind: "control", cmd: "interrupt" });
   const lead = await h.app.store.agentBySlug("lead");
@@ -144,7 +150,7 @@ test("AC 5: a message to a person is one inbox item for them, delivered at once,
   await signUp(h.app, { handle: "sam" });
   const tokA = await startIdle("ada"); // signs up a third user, "hada"
   const one = JSON.parse(
-    text(await callTool(url, tokA, "send_message", { to: "or", body: "just you" })),
+    text(await callTool(url, tokA, "send_message", { to: ["or"], body: "just you" })),
   ).results[0];
   expect(one).toMatchObject({ to: "@or", kind: "human", status: "inbox" });
   expect(await h.sql`select user_id from inbox_items where message_id = ${one.id}`).toHaveLength(1);
@@ -156,7 +162,7 @@ test("AC 5: a message to a person is one inbox item for them, delivered at once,
 test("`@humans` isn't a handle: refused with guidance, nothing is written", async () => {
   await signUp(h.app, { handle: "or" });
   const tokA = await startIdle("ada");
-  const r = await callTool(url, tokA, "send_message", { to: "@humans", body: "need a decision" });
+  const r = await callTool(url, tokA, "send_message", { to: ["@humans"], body: "need a decision" });
   expect(r.isError).toBe(true);
   expect(text(r)).toBe(
     "`@humans` isn't a handle. Message people by handle; list_peers lists them.",
@@ -469,7 +475,7 @@ test("a report's top-level text is persisted for its manager and handed over as 
 test("a recipient whose init fails after the commit doesn't fail the sender's call; the row stays pending", async () => {
   const tokA = await startIdle("ada");
   vi.spyOn(h.app.runtimes, "load").mockRejectedValue(new Error("init failed"));
-  const r = await callTool(url, tokA, "send_message", { to: "bob", body: "still here" });
+  const r = await callTool(url, tokA, "send_message", { to: ["bob"], body: "still here" });
   expect(r.isError).toBeFalsy();
   expect(JSON.parse(text(r)).results[0]).toMatchObject({
     to: "@bob",

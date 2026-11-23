@@ -11,7 +11,7 @@ import {
 } from "../server.ts";
 
 /**
- * `send_message(to, body, urgent?)` (spec §6.1). The sender is always the token's agent; returns once the row is
+ * `send_message(to[], body, urgent?)` (spec §6.1, I1 §4.4). The sender is always the token's agent; returns once the row is
  * committed and handed to the recipient, never waiting for a wake or a start.
  */
 export function sendMessageTool(router: Pick<Router, "send">): ToolRegistration {
@@ -21,13 +21,13 @@ export function sendMessageTool(router: Pick<Router, "send">): ToolRegistration 
         "send_message",
         {
           description:
-            'Send a message to another agent (by slug) or a human (by handle; "@humans" reaches every human). Set urgent to interrupt an agent that is working.',
+            "Send a message to one or more handles (an agent's @slug or a person's @handle), up to 10. Every recipient sees the full list. Set urgent to interrupt agents that are working.",
           inputSchema: sendMessageToolSchema,
         },
-        async (args: { to: string; body: string; urgent?: boolean }, tctx: ToolContext) => {
+        async (args: { to: string[]; body: string; urgent?: boolean }, tctx: ToolContext) => {
           const { results } = await router.send(
             { agentId: callerOf(tctx), toolUseId: toolUseIdOf(tctx) },
-            [args.to],
+            args.to,
             args.body,
             args.urgent ?? false,
           );

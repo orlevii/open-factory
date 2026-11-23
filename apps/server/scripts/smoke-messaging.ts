@@ -610,8 +610,8 @@ try {
       "ada",
       [
         "Use mcp__factory__send_message to ask bob for a random word.",
-        'Call the tool mcp__factory__send_message with to: "bob" and body: "Please reply with one random word." Then stop.',
-        'You must call mcp__factory__send_message now, exactly once, with to: "bob" and body: "Please reply with one random word.". Do not use any other tool.',
+        'Call the tool mcp__factory__send_message with to: ["bob"] and body: "Please reply with one random word." Then stop.',
+        'You must call mcp__factory__send_message now, exactly once, with to: ["bob"] and body: "Please reply with one random word.". Do not use any other tool.',
       ],
       (es) =>
         okCalls(es, "mcp__factory__send_message").find((c) =>
@@ -782,8 +782,8 @@ try {
     ask(
       "ada",
       [
-        'Send an urgent message to lead: call mcp__factory__send_message with to: "lead", urgent: true and body: "Urgent: please stop and reply."',
-        'Call mcp__factory__send_message exactly once with to: "lead", body: "Urgent: please stop and reply." and urgent: true. Then stop.',
+        'Send an urgent message to lead: call mcp__factory__send_message with to: ["lead"], urgent: true and body: "Urgent: please stop and reply."',
+        'Call mcp__factory__send_message exactly once with to: ["lead"], body: "Urgent: please stop and reply." and urgent: true. Then stop.',
         'You must call mcp__factory__send_message now with the arguments {"to": "lead", "body": "Urgent: please stop and reply.", "urgent": true}. No other tool.',
       ],
       (es) =>
@@ -863,19 +863,21 @@ try {
     `result: ${brief(peersRaw, 400)}`,
   );
 
-  // 6. AC5: ada messages @humans; both users have the inbox item.
-  const t6 = await step("6. ada messages @humans", () =>
+  // 6. AC5: ada messages both people by handle; each has the inbox item.
+  const t6 = await step("6. ada messages @or and @sam", () =>
     ask(
       "ada",
       [
-        `Use mcp__factory__send_message to tell @humans: "Hello humans, ${WORD}".`,
-        `Call mcp__factory__send_message with to: "@humans" and body: "Hello humans, ${WORD}". Then stop.`,
-        `You must call mcp__factory__send_message now with {"to": "@humans", "body": "Hello humans, ${WORD}"}. No other tool.`,
+        `Use mcp__factory__send_message to tell @or and @sam: "Hello people, ${WORD}".`,
+        `Call mcp__factory__send_message with to: ["@or", "@sam"] and body: "Hello people, ${WORD}". Then stop.`,
+        `You must call mcp__factory__send_message now with {"to": ["@or", "@sam"], "body": "Hello people, ${WORD}"}. No other tool.`,
       ],
       (es) =>
         okCalls(es, "mcp__factory__send_message").find((c) => {
           const i = c.event.input as { to?: unknown; body?: unknown };
-          return /humans/.test(String(i.to)) && String(i.body).includes(WORD);
+          return (
+            /or/.test(String(i.to)) && /sam/.test(String(i.to)) && String(i.body).includes(WORD)
+          );
         }) ?? undefined,
     ),
   );
@@ -898,10 +900,10 @@ try {
       ).items ?? [];
     const item = items.find((i) => i.preview.includes(WORD));
     check(
-      `6. AC5: GET /api/inbox for @${handle} has ada's @humans message, linked to the send_message call`,
+      `6. AC5: GET /api/inbox for @${handle} has ada's message, linked to the send_message call`,
       res.statusCode === 200 &&
         item?.from.name === "ada" &&
-        item.to === "@humans" &&
+        item.to === `@${handle}` &&
         item.link.agentSlug === "ada" &&
         item.link.seq === t6.got.seq,
       `${res.statusCode}: ${brief(JSON.stringify(item ?? items), 300)}; call seq ${t6.got.seq}`,

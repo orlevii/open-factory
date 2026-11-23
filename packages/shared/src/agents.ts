@@ -148,7 +148,7 @@ export const sendMessageBodySchema = z.object({
   attachments: z.array(z.string().min(1).max(64)).max(10).optional(),
 });
 export const sendMessageToolSchema = z.object({
-  to: z.string().min(1).max(64),
+  to: z.array(z.string().min(1).max(65)).min(1).max(10, "Send to at most 10 recipients at once."),
   body: sendMessageBodySchema.shape.body,
   urgent: z.boolean().default(false),
 });

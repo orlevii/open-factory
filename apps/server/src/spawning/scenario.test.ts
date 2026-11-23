@@ -157,7 +157,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   open(tlProc, "sess-tl");
   open(rvProc, "sess-rv");
   const ask = await call("tech-lead-t1", "send_message", {
-    to: "proxy-reviewer-r1",
+    to: ["proxy-reviewer-r1"],
     body: "Is plan.md the right scope?",
   });
   expect(ask.isError).toBe(false);
@@ -167,7 +167,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   );
   open(rvProc, "sess-rv");
   const reply = await call("proxy-reviewer-r1", "send_message", {
-    to: "tech-lead-t1",
+    to: ["tech-lead-t1"],
     body: "Yes, ship it.",
   });
   expect(reply.isError).toBe(false);

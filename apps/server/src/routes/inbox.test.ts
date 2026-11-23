@@ -47,8 +47,8 @@ async function aCalls(toolUseId: string, input: object) {
 }
 
 test("GET /api/inbox: newest first, link to the sender's send_message call, preview capped, human session only", async () => {
-  await aCalls("toolu_01X", { to: "@or", body: "first" });
-  await callTool(url, tokA, "send_message", { to: "@or", body: "x".repeat(400), urgent: true });
+  await aCalls("toolu_01X", { to: ["@or"], body: "first" });
+  await callTool(url, tokA, "send_message", { to: ["@or"], body: "x".repeat(400), urgent: true });
   const r = await get("/api/inbox");
   expect(r.statusCode).toBe(200);
   const page = r.json();
@@ -68,7 +68,7 @@ test("GET /api/inbox: newest first, link to the sender's send_message call, prev
 
 test("GET /api/inbox pages with a cursor; a bad cursor or limit is a 400, not a 500", async () => {
   for (let i = 0; i < 3; i += 1)
-    await callTool(url, tokA, "send_message", { to: "@or", body: `m${i}` });
+    await callTool(url, tokA, "send_message", { to: ["@or"], body: `m${i}` });
   const p1 = (await get("/api/inbox?limit=2")).json();
   expect(p1.items.map((i: { preview: string }) => i.preview)).toEqual(["m2", "m1"]);
   const p2 = (await get(`/api/inbox?limit=2&before=${p1.nextCursor}`)).json();
@@ -102,7 +102,7 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
   expect(missing.json().error.code).toBe("message_not_found");
 
   const out = JSON.parse(
-    (await aCalls("toolu_01Y", { to: "bob", body: "hello bob" })).content[0]?.text ?? "{}",
+    (await aCalls("toolu_01Y", { to: ["bob"], body: "hello bob" })).content[0]?.text ?? "{}",
   ).results[0];
   // The send woke the hibernated `bob`: its start job, settled, has written the batch, and no session has begun.
   const b = await h.app.runtimes.bySlug("bob");
@@ -135,7 +135,7 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
 
 test("spec §5.1: a live agent token is refused by the inbox and message lookup routes", async () => {
   const out = JSON.parse(
-    (await callTool(url, tokA, "send_message", { to: "@or", body: "for or" })).content[0]?.text ??
+    (await callTool(url, tokA, "send_message", { to: ["@or"], body: "for or" })).content[0]?.text ??
       "{}",
   ).results[0];
   const bearer = { authorization: `Bearer ${tokA}` };
@@ -233,8 +233,8 @@ test("POST /api/inbox/:id/read marks only the caller's item, idempotently; anoth
 
 test("unread-count byAgent counts unread messages by sending agent only", async () => {
   const { or, agent } = await actors();
-  await aCalls("toolu_m1", { to: "@or", body: "one" });
-  await aCalls("toolu_m2", { to: "@or", body: "two" });
+  await aCalls("toolu_m1", { to: ["@or"], body: "one" });
+  await aCalls("toolu_m2", { to: ["@or"], body: "two" });
   // A mention is a different inbox kind: it must not count toward byAgent.
   await h.app.tasks.create(or, { title: "t" });
   await h.app.tasks.comment(agent, "T-1", "@humans hi");
@@ -280,7 +280,7 @@ test("read-all marks up to upTo (a newer item stays unread) and Undo restores ex
 });
 
 test("read-from marks that agent's unread messages up to upTo, idempotent, user-scoped", async () => {
-  await aCalls("toolu_r1", { to: "@or", body: "one" });
+  await aCalls("toolu_r1", { to: ["@or"], body: "one" });
   const sam = (await signUp(h.app, { handle: "sam" })).cookie;
   const upTo = new Date().toISOString();
   const readFrom = (c: string, slug = "ada", body: object = { upTo }) =>
@@ -295,13 +295,13 @@ test("read-from marks that agent's unread messages up to upTo, idempotent, user-
   expect((await readFrom(cookie, "ada", { upTo: "yesterday" })).statusCode).toBe(400);
   // A message after upTo stays unread.
   await new Promise((r) => setTimeout(r, 5));
-  await aCalls("toolu_r2", { to: "@or", body: "later" });
+  await aCalls("toolu_r2", { to: ["@or"], body: "later" });
   expect((await readFrom(cookie)).json().marked).toBe(0);
   expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({ ada: 1 });
 });
 
 test("read-from publishes inbox_changed only when it marked something", async () => {
-  await aCalls("toolu_r1", { to: "@or", body: "one" });
+  await aCalls("toolu_r1", { to: ["@or"], body: "one" });
   const orId = ((await get("/api/me")).json() as { id: string }).id;
   let n = 0;
   h.app.bus.subscribeUser(orId, (m) => m.type === "inbox_changed" && n++);

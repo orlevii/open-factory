@@ -435,6 +435,41 @@ test("folder_exists: a random suffix retries, an explicit one is reported taken"
   });
 });
 
+test("a taken suffix retries the next name: a user claim at the pre-read, a claim that lands after it", async () => {
+  const { t, lead } = await setup();
+  // A user's claim holds the first name: the pre-read skips it.
+  await claimTestHandle(t.db, "tech-lead-aaaa", "user");
+  // A user claim lands after the pre-read (during materialize): the claim in the transaction refuses it.
+  const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
+  vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
+    if (a[0] === "tech-lead-bbbb") await claimTestHandle(t.db, "tech-lead-bbbb", "user");
+    return realMaterialize(...a);
+  });
+  const suffixes = ["aaaa", "bbbb", "dddd"];
+  const svc = new SpawnService({ ...serviceDeps(t), random: () => suffixes.shift() ?? "zzzz" });
+  expect(await svc.spawn(lead.id, args(), null)).toMatchObject({
+    ok: true,
+    slug: "tech-lead-dddd",
+  });
+  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-bbbb"))).toBe(false);
+  const [claim] = await t.sql`select kind from handles where handle = 'tech-lead-dddd'`;
+  expect(claim?.kind).toBe("agent");
+});
+
+test("an explicit suffix taken by a user claim after the pre-read is reported taken", async () => {
+  const { t, lead } = await setup();
+  const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
+  vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
+    await claimTestHandle(t.db, "tech-lead-mine", "user");
+    return realMaterialize(...a);
+  });
+  expect(await t.app.spawner.spawn(lead.id, args({ suffix: "mine" }), null)).toEqual({
+    ok: false,
+    message: "@tech-lead-mine is taken; pick another suffix or leave it out.",
+  });
+  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(false);
+});
+
 test("a template that is missing or invalid on disk is refused before anything is made", async () => {
   const { t, lead } = await setup();
   writeTemplate(t.factoryHome, "dev", "name: dev\nruntime: nonsense\n");

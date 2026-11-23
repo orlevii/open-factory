@@ -8,9 +8,10 @@ import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type Config, localRuntimeAllowed } from "../config.ts";
+import { pgCode } from "../db-errors.ts";
 import { FieldError } from "../errors.ts";
 import type { SpawnArgs, SpawnResult } from "../mcp/tools/spawn-agent.ts";
-import { isNameTaken } from "../messaging/principals.ts";
+import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { Router } from "../messaging/router.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
@@ -81,7 +82,7 @@ export class SpawnService {
     for (let attempt = 0; attempt < (args.suffix !== undefined ? 1 : 5); attempt++) {
       const named = spawnSlug(args.template, args.suffix, this.d.random);
       if (!named.ok) return fail(named.message);
-      if (await isNameTaken(this.d.db, named.slug)) {
+      if (await handleKind(this.d.db, named.slug)) {
         if (named.explicit) return taken(named.slug);
         continue;
       }
@@ -98,7 +99,20 @@ export class SpawnService {
         continue;
       }
       if (made !== "ok") return made;
-      return this.insert(caller.id, named.slug, args.template, desc, prompt, tpl, toolUseId);
+      const done = await this.insert(
+        caller.id,
+        named.slug,
+        args.template,
+        desc,
+        prompt,
+        tpl,
+        toolUseId,
+      );
+      if (done === "taken") {
+        if (named.explicit) return taken(named.slug);
+        continue;
+      }
+      return done;
     }
     return fail(`Couldn't find a free name for ${args.template}-xxxx; pass a suffix.`);
   }
@@ -227,7 +241,7 @@ export class SpawnService {
     prompt: string,
     tpl: Template,
     toolUseId: string | null,
-  ): Promise<SpawnResult> {
+  ): Promise<SpawnResult | "taken"> {
     const { db, store, router } = this.d;
     const id = randomUUID();
     const at = new Date(this.now());
@@ -238,9 +252,9 @@ export class SpawnService {
       peers: PendingRow[];
       inherited: Granted;
     };
-    let out: Done | Refused;
+    let out: Done | Refused | "taken";
     try {
-      out = await db.transaction(async (tx): Promise<Done | Refused> => {
+      out = await db.transaction(async (tx): Promise<Done | Refused | "taken"> => {
         // Lock order (§5.7): the spawner's row first, FOR NO KEY UPDATE (never FOR UPDATE), then message rows.
         const [spawner] = await tx
           .select()
@@ -251,7 +265,7 @@ export class SpawnService {
         if (!spawner || !maySpawn(spawner)) return fail(CANT_SPAWN);
         if (!spawner.config.canSpawn.includes(template))
           return fail(`You can't spawn template ${template}.`);
-        if (await isNameTaken(tx, slug)) return taken(slug);
+        if (!(await claimHandle(tx, slug, "agent"))) return "taken";
         // Re-read the credential and grants under the lock (an update during materialize must not be missed).
         const c = await this.check(spawner, tpl, tx);
         if (!c.ok) return c;
@@ -299,8 +313,14 @@ export class SpawnService {
       });
     } catch (err) {
       await this.discard(slug);
+      // Lost the agents.slug unique index to a concurrent claimer that committed first.
+      if (pgCode(err, "23505")) return "taken";
       this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
       return fail(`Setting up @${slug} failed; ask @humans to check the factory log.`);
+    }
+    if (out === "taken") {
+      await this.discard(slug);
+      return out;
     }
     if (!out.ok) {
       await this.discard(slug);

@@ -483,6 +483,52 @@ test("create refuses a slug that is a human handle", async () => {
   ).rejects.toMatchObject({ code: "slug_taken" });
 });
 
+const createBody = (slug: string) => ({
+  template: "lead",
+  slug,
+  displayName: slug,
+  description: "",
+  reportsTo: null,
+  credential: "work",
+});
+const agentRows = async (slug: string) =>
+  t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
+
+test("create refuses a slug whose user claim is in flight (claim, no user row yet)", async () => {
+  await claimTestHandleSql(t.sql, "inflight", "user");
+  await expect(svc.create(createBody("inflight"))).rejects.toMatchObject({ code: "slug_taken" });
+  expect(await agentRows("inflight")).toEqual([]);
+  expect(existsSync(path.join(home, "agents/inflight"))).toBe(false);
+});
+
+test("create claims the slug in its transaction: the claim is an agent claim", async () => {
+  await svc.create(createBody("claimed-one"));
+  const [h] = await t.sql`select kind from handles where handle = 'claimed-one'`;
+  expect(h?.kind).toBe("agent");
+});
+
+test("two concurrent creates of one slug: one succeeds, the other is slug_taken, no duplicate", async () => {
+  const results = await Promise.allSettled([
+    svc.create(createBody("dup-race")),
+    svc.create(createBody("dup-race")),
+  ]);
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  const failed = results.find((r) => r.status === "rejected");
+  expect(failed).toMatchObject({ reason: { code: "slug_taken" } });
+  expect(await agentRows("dup-race")).toHaveLength(1);
+});
+
+test("a competing agent commits the slug while this create materialises: slug_taken, one row", async () => {
+  const spy = vi.spyOn(t.app.workspace, "materialize").mockImplementationOnce(async () => {
+    await claimTestHandleSql(t.sql, "late-dup", "agent");
+    await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
+                select 'late-dup-id', 'late-dup', 'x', 'lead', config, 'local', credential_id from agents where slug = 'lead'`;
+  });
+  await expect(svc.create(createBody("late-dup"))).rejects.toMatchObject({ code: "slug_taken" });
+  spy.mockRestore();
+  expect(await agentRows("late-dup")).toHaveLength(1);
+});
+
 async function createSpawner(slug: string) {
   await svc.create({
     template: "lead",

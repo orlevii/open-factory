@@ -136,6 +136,7 @@ function ReplaceForm({
           setVerdict({});
         }}
         verdict={verdict}
+        kind={credential.kind}
       />
     </InlineForm>
   );

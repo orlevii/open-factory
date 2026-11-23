@@ -147,6 +147,7 @@ export function AddCredentialForm({
           if (v) setVerdict({ error: v });
         }}
         verdict={verdict}
+        kind={kind}
       />
     </FormFrame>
   );

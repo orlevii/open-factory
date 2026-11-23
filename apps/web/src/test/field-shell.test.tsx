@@ -4,6 +4,7 @@ import { expect, test } from "vitest";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { PasswordInput } from "@/components/password-input";
+import { TokenField } from "@/features/settings/forms/shared";
 
 const input = (a: { id: string; describedBy?: string; invalid: boolean }) => (
   <input id={a.id} aria-describedby={a.describedBy} aria-invalid={a.invalid || undefined} />
@@ -53,4 +54,64 @@ test("PasswordInput toggles visibility and opts out of managers", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Show value" }));
   expect(field).toHaveAttribute("type", "text");
   expect(screen.getByRole("button", { name: "Hide value" })).toBeInTheDocument();
+});
+
+test("the note line is always rendered, also without help or error", () => {
+  const { container } = render(
+    <FieldShell name="t" label="Title">
+      {input}
+    </FieldShell>,
+  );
+  expect(container.querySelector(".field-note")).toBeInTheDocument();
+  expect(container.querySelector("[data-field]")).toBeInTheDocument();
+  expect(screen.getByLabelText("Title")).not.toHaveAttribute("aria-describedby");
+});
+
+test("extra describedBy ids are kept beside the visible note", () => {
+  render(
+    <FieldShell name="p" label="Projects" legend help="h" describedBy="marker">
+      {() => <input aria-label="x" />}
+    </FieldShell>,
+  );
+  expect(screen.getByRole("group", { name: "Projects" })).toHaveAttribute(
+    "aria-describedby",
+    "field-p-help marker",
+  );
+});
+
+test("below renders after the note", () => {
+  const { container } = render(
+    <FieldShell name="t" label="T" below={<p>summary</p>}>
+      {input}
+    </FieldShell>,
+  );
+  const note = container.querySelector(".field-note")!;
+  expect(note.nextElementSibling).toHaveTextContent("summary");
+});
+
+test("a warning describes the control but doesn't mark it invalid", () => {
+  render(
+    <FieldShell name="tok" label="Token" warning="Couldn't reach Claude. Try again.">
+      {input}
+    </FieldShell>,
+  );
+  const el = screen.getByLabelText("Token");
+  expect(el).toHaveAccessibleDescription("Couldn't reach Claude. Try again.");
+  expect(el).not.toBeInvalid();
+});
+
+test("TokenField shows a warning in its note, not in a second alert", () => {
+  render(
+    <TokenField
+      name="credential-value"
+      label="Token"
+      value=""
+      onChange={() => {}}
+      verdict={{ warning: "Couldn't reach Claude. Try again." }}
+    />,
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByLabelText("Token")).toHaveAccessibleDescription(
+    "Couldn't reach Claude. Try again.",
+  );
 });

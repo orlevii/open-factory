@@ -169,7 +169,7 @@ test("add credential: an unverifiable check is a warning, not a bad token", asyn
   await userEvent.type(key, "sk-ant");
   await userEvent.click(within(region).getByRole("button", { name: "Verify and add" }));
   const note = await within(region).findByText("Couldn't reach Claude to verify. Try again.");
-  expect(note.closest("[role=alert]")).not.toBeNull();
+  expect(note).toBeInTheDocument();
   expect(key).not.toHaveAttribute("aria-invalid");
   expect(describedText(key)).toContain("Couldn't reach Claude to verify. Try again.");
   expect(key).toHaveValue("sk-ant");

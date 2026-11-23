@@ -419,3 +419,34 @@ test("overlayIssues never echoes secret-shaped values", async () => {
   expect(issues.length).toBeGreaterThan(0);
   expect(JSON.stringify(issues)).not.toContain(secret);
 });
+
+test("validateEffective never echoes an env name that fails the name rule", async () => {
+  const bad = "OPEN_FACTORY_sk-ant-SECRET0123";
+  const issues = await validateEffective(
+    { ...baseDoc(), settings: { env: { [bad]: "v" } } },
+    ctx,
+    "human",
+  );
+  expect(issues).toEqual([expect.objectContaining({ severity: "error", path: "settings.env" })]);
+  expect(JSON.stringify(issues)).not.toContain("sk-ant");
+});
+
+test("an overlay secret the factory owns gives one issue", async () => {
+  const issues = await overlayIssues(baseDoc(), { template: { secrets: ["OPEN_FACTORY_X"] } }, ctx);
+  expect(issues.filter((i) => i.path === "template.secrets.0")).toHaveLength(1);
+});
+
+test("schema and name issues are rooted like the semantic ones", async () => {
+  const r = await validateTemplate(
+    tpl({ ...base, "template.yaml": "name: other\ndisplay_name: X\n" }),
+    "tech-lead",
+    ctx,
+  );
+  expect(r.issues.map((i) => i.path)).toEqual(["template.name"]);
+  const z = await validateTemplate(
+    tpl({ ...base, "template.yaml": "name: tech-lead\ndisplay_name: X\nmodle: o\n" }),
+    "tech-lead",
+    ctx,
+  );
+  expect(z.issues[0]?.path).toBe("template.modle");
+});

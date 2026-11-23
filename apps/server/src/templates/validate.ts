@@ -6,6 +6,7 @@ import {
   CONFIG_MSG,
   type ConfigDoc,
   canonicalJson,
+  ENV_NAME,
   isFactoryEnvName,
   mergeConfig,
   type TemplateConfig,
@@ -202,8 +203,11 @@ export async function validateEffective(
   if (doc.settings.enabledPlugins !== undefined)
     s("enabledPlugins is ignored: list plugins in template.yaml.", ["enabledPlugins"], "warning");
   const env = isObj(doc.settings.env) ? doc.settings.env : {};
-  for (const name of Object.keys(env))
-    if (isFactoryEnvName(name)) s(FIELD_MSG.factoryEnv(name), ["env", name], "error");
+  for (const name of Object.keys(env)) {
+    // A name that fails the name rule may be a pasted value: never echo it.
+    if (!ENV_NAME.test(name)) s(CONFIG_MSG.envName, ["env"], "error");
+    else if (isFactoryEnvName(name)) s(FIELD_MSG.factoryEnv(name), ["env", name], "error");
+  }
 
   const servers = doc.mcp.mcpServers;
   if (Object.hasOwn(servers, "factory"))
@@ -257,6 +261,8 @@ export async function overlayIssues(
     for (const z of parsed.error.issues) {
       // An env name that fails the name rule may be a pasted value: report the env object instead.
       const at = (z.message === CONFIG_MSG.envName ? z.path.slice(0, -1) : z.path).map(String);
+      // One issue per path: a reserved secret name trips both the name schema and the factory rule.
+      if (out.some((o) => o.path === at.join("."))) continue;
       const root = (at[0] ?? "template") as Root;
       out.push({
         severity: "error",
@@ -329,13 +335,16 @@ export async function validateTemplate(
           if (issue.code === "unrecognized_keys") {
             for (const key of issue.keys) {
               const p = [...issue.path, key].map((s) => (typeof s === "symbol" ? String(s) : s));
-              err("template.yaml", `Unknown field ${key}.`, { line: lineOf(p), path: p.join(".") });
+              err("template.yaml", `Unknown field ${key}.`, {
+                line: lineOf(p),
+                path: ["template", ...p].join("."),
+              });
             }
           } else {
             const p = issue.path.map((s) => (typeof s === "symbol" ? String(s) : s));
             err("template.yaml", `${p.join(".")}: ${issue.message}`, {
               line: lineOf(p),
-              path: p.join("."),
+              path: ["template", ...p].join("."),
             });
           }
         }
@@ -371,7 +380,7 @@ export async function validateTemplate(
   if (config && config.name !== folderName)
     err("template.yaml", `name "${config.name}" doesn't match the folder name "${folderName}".`, {
       line: lineOf(["name"]),
-      path: "name",
+      path: "template.name",
     });
   const effective = await validateEffective(
     { template: tplYaml, settings: tplSettings, mcp: tplMcp },

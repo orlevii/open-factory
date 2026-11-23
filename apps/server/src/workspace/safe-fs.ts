@@ -19,7 +19,7 @@ export class WorkspaceError extends Error {
   readonly diagnosis: string;
   constructor(
     message: string,
-    readonly fix?: "projects" | "edit_agent" | "resync",
+    readonly fix?: "projects" | "edit_agent" | "resync" | "template" | "config",
     diagnosis?: string,
   ) {
     super(message);

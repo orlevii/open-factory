@@ -67,7 +67,7 @@ beforeEach(async () => {
     displayName: "Lead",
     description: "d",
     template: "lead",
-    config,
+    effective: { doc: { template: {}, settings: {}, mcp: { mcpServers: {} } }, config },
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
@@ -79,7 +79,7 @@ beforeEach(async () => {
     spawning: null,
     secretNames: config.secrets,
   };
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", "lead", tpl, { ...prep, config });
   workdir = ws.workdir("lead");
 });
 
@@ -177,7 +177,13 @@ function withPlugins() {
       extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/mk" } } },
     },
   };
-  prep = { ...prep, config };
+  prep = {
+    ...prep,
+    effective: {
+      doc: { ...prep.effective.doc, settings: tpl.tplSettings },
+      config,
+    },
+  };
 }
 const pluginLog = (): { argv: string[]; env: string[]; cwd: string; configDir: string }[] => {
   try {
@@ -255,7 +261,10 @@ test("a .claude-config/plugins symlink to a host dir is replaced, never followed
 
 // Spec §11.4 part 2: mounts come from factory-owned inputs only.
 const asDocker = () => {
-  prep = { ...prep, config: { ...prep.config, runtime: "docker" } };
+  prep = {
+    ...prep,
+    effective: { ...prep.effective, config: { ...prep.effective.config, runtime: "docker" } },
+  };
 };
 
 test("a marketplace path planted in the agent's config-dir settings never becomes a mount", async () => {

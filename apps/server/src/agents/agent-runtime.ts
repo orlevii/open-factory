@@ -2314,7 +2314,8 @@ export class AgentRuntime {
       if (this.terminated) throw new AgentStartError(TERMINATED_START);
       return this.failStart(err, "prepareStart failed");
     }
-    const { launch: dockerLaunch, credentialId, ...prepSpec } = prepared;
+    // `effective` holds env values: it is kept out of the spec the driver sees (A10 stores it as `started`).
+    const { launch: dockerLaunch, credentialId, effective: _effective, ...prepSpec } = prepared;
     let spec: AgentRuntimeSpec = prepSpec;
     if (!this.firstStartDone) {
       this.firstStartDone = true;

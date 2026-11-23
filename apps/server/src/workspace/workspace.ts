@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
 import type { TemplateConfig } from "@open-factory/shared";
+import type { Effective } from "../agents/config-resolver.ts";
 import { FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import type { DenyRules } from "../spawning/inherit.ts";
@@ -10,7 +11,6 @@ import { buildClaudeMd, type OrgEntry, type OrgHuman } from "./claude-md.ts";
 import {
   backupDiffering,
   copyTargets,
-  pendingTargets,
   resyncStamp,
   stageTargets,
   templateTargets,
@@ -58,7 +58,8 @@ export interface PrepareInput {
   displayName: string;
   description: string;
   template: string;
-  config: TemplateConfig;
+  /** The merged template and overlay this start runs with (spec §6.3). */
+  effective: Effective;
   manager: { slug: string; displayName: string } | null;
   grants: { name: string; hostPath: string }[];
   peers: OrgEntry[];
@@ -82,6 +83,7 @@ export interface PrepareInput {
 /** What `materialize` checks: the prepare input minus what only a start knows. */
 export type MaterializeCheck = Omit<
   PrepareInput,
+  | "effective"
   | "mcpUrl"
   | "peers"
   | "reports"
@@ -92,7 +94,7 @@ export type MaterializeCheck = Omit<
   | "scheduling"
   | "inheritedDeny"
   | "secretNames"
->;
+> & { config: TemplateConfig };
 
 export interface TemplateSource {
   dir: string;
@@ -256,19 +258,6 @@ export class Workspace {
     return backup ? path.relative(this.d.factoryHome, backup) : undefined;
   }
 
-  /** Applies a staged re-sync (backup + SafeFs writes) and removes it. A failure keeps it staged. */
-  private async applyPending(slug: string): Promise<void> {
-    const pending = resyncPendingDir(this.d.factoryHome, slug);
-    const targets = await pendingTargets(pending);
-    if (!targets.length) {
-      await rm(pending, { recursive: true, force: true });
-      return;
-    }
-    const backup = await this.applyTargets(slug, targets);
-    await rm(pending, { recursive: true, force: true });
-    this.log.warn({ slug, backupDir: backup }, "applied the staged re-sync files");
-  }
-
   /**
    * Lock contract: no Workspace method takes a lock itself except `deleteWorkspace`. Callers must hold
    * `lock.run(slug, …)` around materialize, resync and prepare (createPrepareStart does so for prepare).
@@ -284,19 +273,12 @@ export class Workspace {
     const configDir = agentConfigDir(workdir);
     const configRel = path.relative(workdir, configDir);
     const safe = new SafeFs(workdir);
-    // Staged re-sync files go first: no process runs during prepare (spec §11.4 part 4).
-    await this.applyPending(i.slug);
-    const copy = templateCopyDir(this.d.factoryHome, i.slug);
-    const tpl = await this.readTemplateJson<Record<string, unknown>>(copy, "settings.json");
-    const tplMcp = await this.readTemplateJson<{ mcpServers: Record<string, unknown> }>(
-      copy,
-      "mcp.json",
-    );
+    const { config, doc } = i.effective;
     // Fail closed before touching anything: plugins are third-party code, so a start never installs
     // them (S4 Q7); an S4 agent, or one whose install didn't finish, needs the human's re-sync.
     const pluginKeys = await this.readPluginKeys(i.slug);
     const installed = obj(pluginKeys.enabledPlugins);
-    if (i.config.plugins.some((p) => !Object.hasOwn(installed, p))) {
+    if (config.plugins.some((p) => !Object.hasOwn(installed, p))) {
       throw new WorkspaceError(
         `Re-sync @${i.slug} to reinstall its plugins into the factory-managed location.`,
         "resync",
@@ -304,17 +286,17 @@ export class Workspace {
       );
     }
     await this.linkPlugins(i.slug, workdir);
-    const skills = await resolveHostSkills(this.d.hostSkillsDir, i.config.skills);
+    const skills = await resolveHostSkills(this.d.hostSkillsDir, config.skills);
     await linkHostSkills(workdir, this.d.hostSkillsDir, skills);
     await linkProjects(workdir, i.grants);
     const grantedPaths = i.grants.map((g) => g.hostPath);
     const settings = buildSettings({
-      tpl,
+      tpl: doc.settings,
       pluginKeys,
       slug: i.slug,
       workdir,
-      permissionMode: i.config.permissionMode,
-      plugins: i.config.plugins,
+      permissionMode: config.permissionMode,
+      plugins: config.plugins,
       grantedPaths,
       mcpUrl: i.mcpUrl,
       ...(i.inheritedDeny ? { inherited: i.inheritedDeny } : {}),
@@ -322,7 +304,7 @@ export class Workspace {
     await safe.writeFile(path.join(configRel, "settings.json"), JSON.stringify(settings, null, 2));
     await safe.writeFile(
       ".mcp.json",
-      JSON.stringify(buildMcpJson(tplMcp, { url: i.mcpUrl }), null, 2),
+      JSON.stringify(buildMcpJson(doc.mcp, { url: i.mcpUrl }), null, 2),
     );
     await safe.writeFile(
       path.join(configRel, "CLAUDE.md"),
@@ -344,12 +326,12 @@ export class Workspace {
         scheduling: i.scheduling ?? null,
       }),
     );
-    // Spec §11.4: mounts come only from factory-owned inputs (`tpl` is the copy under state/).
+    // Spec §11.4: mounts come only from factory-owned inputs (the template folder and the overlay in the database).
     const mountInputs = {
       workdir,
       grantedPaths,
       hostSkillPaths: skills.map((s) => s.realDir),
-      declaredMarketplaceDirs: declaredMarketplaceDirs(tpl),
+      declaredMarketplaceDirs: declaredMarketplaceDirs(doc.settings),
       pluginsDir: path.join(pluginsConfigDir(this.d.factoryHome, i.slug), "plugins"),
       cliBundle: this.d.cliBundle,
     };
@@ -357,7 +339,7 @@ export class Workspace {
     // Local agents ignore mounts. A Docker start fails closed on any refused mount and gets the
     // checked (realpath) mounts plus the context, so the launcher re-checks right before each
     // container create/start (checkMounts' doc comment).
-    if (i.config.runtime === "docker") {
+    if (config.runtime === "docker") {
       const home = os.homedir();
       const mountCheck: MountCheckContext = {
         ...mountInputs,
@@ -368,38 +350,6 @@ export class Workspace {
       return { workdir, configDir, mounts: await checkMounts(mounts, mountCheck), mountCheck };
     }
     return { workdir, configDir, mounts };
-  }
-
-  /** An agent's factory-owned template `settings.json` (`state/agents/<slug>/template/`), read as `prepare` reads it.
-   *  Throws `WorkspaceError` when it is missing or isn't a JSON object. Callers hold no lock: the copy is written whole. */
-  async readTemplateSettings(slug: string): Promise<Record<string, unknown>> {
-    const copy = templateCopyDir(this.d.factoryHome, slug);
-    const v = await this.readTemplateJson<unknown>(copy, "settings.json");
-    if (!v || typeof v !== "object" || Array.isArray(v)) {
-      const diagnosis = `The template copy ${path.join(copy, "settings.json")} isn't a JSON object.`;
-      throw new WorkspaceError(
-        `${diagnosis} Re-sync the agent from its template.`,
-        "edit_agent",
-        diagnosis,
-      );
-    }
-    return v as Record<string, unknown>;
-  }
-
-  private async readTemplateJson<T>(copy: string, file: string): Promise<T> {
-    const p = path.join(copy, file);
-    try {
-      return JSON.parse(await readFile(p, "utf8"));
-    } catch (err) {
-      const why =
-        (err as NodeJS.ErrnoException).code === "ENOENT" ? "is missing" : "isn't valid JSON";
-      const diagnosis = `The template copy ${p} ${why}.`;
-      throw new WorkspaceError(
-        `${diagnosis} Re-sync the agent from its template.`,
-        "edit_agent",
-        diagnosis,
-      );
-    }
   }
 
   /** Installs into the factory-owned plugins-config/, never the agent's config dir or cwd (§11.7, R1). */

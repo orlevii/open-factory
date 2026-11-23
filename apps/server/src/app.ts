@@ -12,6 +12,7 @@ import {
 import type postgres from "postgres";
 import { AgentService } from "./agents/agent-service.ts";
 import { ChatStore } from "./agents/chat-store.ts";
+import { ConfigResolver } from "./agents/config-resolver.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
@@ -214,11 +215,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
+  const templates = new TemplateIndex({ db: deps.db, config, log: app.log });
   const prepareStart = createPrepareStart({
     db: deps.db,
     config,
     vault,
     workspace,
+    resolver: new ConfigResolver({ templates }),
     lock,
     containers,
     neighborhood,
@@ -256,7 +259,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     )
       void runtimes.settingsChanged();
   });
-  const templates = new TemplateIndex({ db: deps.db, config, log: app.log });
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
   // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
   const clock = deps.clock ?? (() => new Date());

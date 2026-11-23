@@ -53,6 +53,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
     description: "d",
     template: "lead",
     config,
+    effective: { doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp }, config },
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
@@ -156,21 +157,29 @@ test("prepare treats a non-object previous settings.json like a parse failure", 
   }
 });
 
-test("prepare reports a missing or malformed template copy as a WorkspaceError", async () => {
+test("prepare writes the effective settings and mcp, never the state template copy", async () => {
   const { home, ws, tpl, prep } = setup();
   await ws.materialize("lead", "lead", tpl, prep);
   const copy = path.join(home, "state/agents/lead/template");
   writeFileSync(path.join(copy, "settings.json"), "{nope");
-  await expect(ws.prepare(prep)).rejects.toMatchObject({
-    name: "WorkspaceError",
-    message: expect.stringContaining("settings.json"),
-  });
-  writeFileSync(path.join(copy, "settings.json"), "{}");
   rmSync(path.join(copy, "mcp.json"));
-  await expect(ws.prepare(prep)).rejects.toMatchObject({
-    name: "WorkspaceError",
-    message: expect.stringContaining("mcp.json"),
-  });
+  const effective = {
+    ...prep.effective,
+    doc: {
+      ...prep.effective.doc,
+      settings: {
+        ...prep.effective.doc.settings,
+        permissions: { deny: ["Bash(curl:*)", "Bash(rm:*)"] },
+      },
+      mcp: { mcpServers: { x: { command: "x" }, extra: { command: "y" } } },
+    },
+  };
+  await ws.prepare({ ...prep, effective });
+  const wd = ws.workdir("lead");
+  const s = JSON.parse(readFileSync(path.join(wd, ".claude-config/settings.json"), "utf8"));
+  expect(s.permissions.deny).toEqual(["Bash(curl:*)", "Bash(rm:*)", "SendMessage", "ListAgents"]);
+  const mcp = JSON.parse(readFileSync(path.join(wd, ".mcp.json"), "utf8"));
+  expect(Object.keys(mcp.mcpServers)).toEqual(["x", "extra", "factory"]);
 });
 
 test(".mcp.json gets the factory server with an env-expanded header and no secret", async () => {

@@ -183,6 +183,7 @@ async function setupAgent(plugins: string[]) {
     description: "d",
     template: "lead",
     config,
+    effective: { doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp }, config },
     manager: null,
     grants: [],
     peers: [],
@@ -241,7 +242,9 @@ test("an S4 agent with plugins and no plugins-config fails to start with the re-
 test("a plugin listed in the snapshot but missing from plugins-config also asks for a re-sync", async () => {
   const { ws, prep } = await setupAgent(["p@mk"]);
   const config = { ...prep.config, plugins: ["p@mk", "q@mk"] };
-  await expect(ws.prepare({ ...prep, config })).rejects.toMatchObject({ fix: "resync" });
+  await expect(
+    ws.prepare({ ...prep, effective: { ...prep.effective, config } }),
+  ).rejects.toMatchObject({ fix: "resync" });
 });
 
 test("re-sync installs into plugins-config, moves the old real plugins dir to plugins-legacy-<ts>/ and links it", async () => {

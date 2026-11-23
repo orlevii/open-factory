@@ -192,6 +192,19 @@ test("admin frames invalidate their keys; build log batches don't", async () => 
   expect(keys()).toContain("templates");
 });
 
+test("config_changed invalidates exactly the agent's and the template's configuration", async () => {
+  const { spy } = await mounted();
+  act(() => h.opts?.onMessage?.({ type: "config_changed", agent: "ana" }));
+  act(() => h.opts?.onMessage?.({ type: "config_changed", template: "dev" }));
+  act(() => h.opts?.onMessage?.({ type: "config_changed", agent: "bo", template: "ops" }));
+  expect(spy.mock.calls.map(([f]) => f)).toEqual([
+    { queryKey: ["agent-config", "ana"], exact: true },
+    { queryKey: ["template-config", "dev"], exact: true },
+    { queryKey: ["agent-config", "bo"], exact: true },
+    { queryKey: ["template-config", "ops"], exact: true },
+  ]);
+});
+
 test("unmounting the layout flushes queued status frames and stops listening for visibilitychange", async () => {
   mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }) });
   const { unmount, queryClient: qc } = renderApp("/inbox", alice);

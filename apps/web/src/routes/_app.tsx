@@ -9,6 +9,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { OutputDialogHost } from "@/features/agents/show-output";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { onChatChanged } from "@/features/chat/use-chat";
+import { agentConfigQueryOptions, templateConfigQueryOptions } from "@/features/config/api";
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
@@ -122,6 +123,19 @@ function AppLayout() {
         if (m.type === "images_changed" || (m.type === "image_build" && !m.lines)) {
           void qc.invalidateQueries({ queryKey: ["images"] });
           void qc.invalidateQueries({ queryKey: ["templates"] });
+        }
+        // I2 §12.4: an open Configuration page (or template tab) refetches; nothing else reads these keys.
+        if (m.type === "config_changed") {
+          if (m.agent)
+            void qc.invalidateQueries({
+              queryKey: agentConfigQueryOptions(m.agent).queryKey,
+              exact: true,
+            });
+          if (m.template)
+            void qc.invalidateQueries({
+              queryKey: templateConfigQueryOptions(m.template).queryKey,
+              exact: true,
+            });
         }
         if (m.type === "agent_status") {
           // Before the first frame for an agent, the cached list or detail (fetched over REST) tells

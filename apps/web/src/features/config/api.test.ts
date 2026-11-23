@@ -1,5 +1,13 @@
+import type { PutAgentConfigResponse } from "@open-factory/shared";
+import { QueryClient } from "@tanstack/react-query";
 import { expect, test } from "vitest";
-import { agentConfigQueryOptions, hostSkillsQueryOptions, templateConfigQueryOptions } from "./api";
+import {
+  agentConfigQueryOptions,
+  cacheSavedAgentConfig,
+  hostSkillsQueryOptions,
+  saveAgentConfigMutation,
+  templateConfigQueryOptions,
+} from "./api";
 
 test("config queries are keyed per agent and template and never served stale", () => {
   expect(agentConfigQueryOptions("ana").queryKey).toEqual(["agent-config", "ana"]);
@@ -7,4 +15,27 @@ test("config queries are keyed per agent and template and never served stale", (
   expect(agentConfigQueryOptions("ana").staleTime).toBe(0);
   expect(templateConfigQueryOptions("dev").staleTime).toBe(0);
   expect(hostSkillsQueryOptions.staleTime).toBe(5 * 60_000);
+});
+
+test("a saved config replaces the cached GET without its save-only fields", () => {
+  const qc = new QueryClient();
+  const r: PutAgentConfigResponse = {
+    overlay: { template: { model: "opus" } },
+    version: "v2",
+    template: { name: "dev", doc: null, valid: false },
+    merged: null,
+    issues: [],
+    changes: ["model: sonnet → opus"],
+    restartChecked: true,
+    checked: "schema",
+  };
+  cacheSavedAgentConfig(qc, "ana", r);
+  expect(qc.getQueryData(agentConfigQueryOptions("ana").queryKey)).toEqual({
+    overlay: { template: { model: "opus" } },
+    version: "v2",
+    template: { name: "dev", doc: null, valid: false },
+    merged: null,
+    issues: [],
+  });
+  expect(saveAgentConfigMutation("ana").mutationKey).toEqual(["agent-config", "ana", "save"]);
 });

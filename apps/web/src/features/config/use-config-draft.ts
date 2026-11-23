@@ -52,22 +52,30 @@ export function useConfigDraft<T>(loaded: Loaded<T>) {
     setS(null);
   }, []);
 
-  /** After a 409 or a refetch with drift: re-apply my edits (base → draft) over the loaded value. Still unsaved. */
-  const rebaseDraft = useCallback(() => {
-    if (!s || s.base.version === version) return;
-    const r = rebase(s.base.value, s.edits, value);
-    setS({
-      edits: r.value,
-      base: { value, version },
-      conflicts: [...new Set([...s.conflicts, ...r.conflicts])],
-    });
-  }, [s, value, version]);
+  /**
+   * After a 409 or a refetch with drift: re-apply my edits (base → draft) over the loaded value, or over `onto` when the
+   * caller has just fetched it and it hasn't rendered yet (Reload). Still unsaved.
+   */
+  const rebaseDraft = useCallback(
+    (onto: Loaded<T> = { value, version }) => {
+      if (!s || s.base.version === onto.version) return;
+      const r = rebase(s.base.value, s.edits, onto.value);
+      setS({
+        edits: r.value,
+        base: onto,
+        conflicts: [...new Set([...s.conflicts, ...r.conflicts])],
+      });
+    },
+    [s, value, version],
+  );
 
   return {
     draft: s ? s.edits : value,
     setDraft,
     dirty: s !== null,
     drift: s !== null && s.base.version !== version,
+    /** The version a save sends as `baseVersion`: what the edits started from, else the loaded one. */
+    baseVersion: s ? s.base.version : version,
     conflicts: s ? s.conflicts : NONE,
     discard,
     undoDiscard,

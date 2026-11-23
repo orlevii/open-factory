@@ -62,6 +62,28 @@ test("rebase re-applies my edits over the loaded value, reports conflicts, and s
   expect(result.current.dirty).toBe(true);
 });
 
+test("rebase onto a version fetched in the same handler, before it renders, lands without drift", () => {
+  const { result, rerender } = setup();
+  act(() => result.current.setDraft((d) => ({ ...d, settings: { a: 1 } })));
+  expect(result.current.baseVersion).toBe("v1");
+  const v2 = { value: { template: { model: "sonnet" } } as V, version: "v2" };
+  act(() => result.current.rebase(v2));
+  rerender({ loaded: v2 });
+  expect(result.current.drift).toBe(false);
+  expect(result.current.baseVersion).toBe("v2");
+  expect(result.current.draft).toEqual({ template: { model: "sonnet" }, settings: { a: 1 } });
+  expect(result.current.conflicts).toEqual([]);
+});
+
+test("baseVersion is what the edits started from, or the loaded version while clean", () => {
+  const { result, rerender } = setup();
+  act(() => result.current.setDraft(() => ({})));
+  rerender({ loaded: { value: {}, version: "v2" } });
+  expect(result.current.baseVersion).toBe("v1");
+  act(() => result.current.discard());
+  expect(result.current.baseVersion).toBe("v2");
+});
+
 test("discard goes back to the loaded value; undo restores the edits until the next edit", () => {
   const { result } = setup();
   act(() => result.current.setDraft(() => ({ template: { model: "haiku" } })));

@@ -9,21 +9,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Trash2, TriangleAlert, UserPlus } from "lucide-react";
-import {
-  type ComponentPropsWithoutRef,
-  type CSSProperties,
-  forwardRef,
-  lazy,
-  memo,
-  Suspense,
-  useCallback,
-  useEffect,
-  useId,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
@@ -44,9 +30,14 @@ import {
   templateQueryOptions,
   validateTemplateFile,
 } from "./api";
-import type { default as CodeEditorComponent, CodeEditorHandle } from "./code-editor";
+import type { CodeEditorHandle } from "./code-editor";
 import type { Diag, Lang } from "./code-editor-setup";
-import { CodeTextarea } from "./code-textarea";
+import {
+  CodeSurface,
+  type CodeSurfaceProps,
+  focusTextareaLine,
+  isEditorSettled,
+} from "./code-surface";
 import { ImageStatusLabel } from "./image-status";
 import { IssueIcon, IssueList, sortIssues } from "./issue-list";
 
@@ -88,83 +79,10 @@ const initial = (t: TemplateDetail): Record<TemplateFile, FileState> =>
 
 const isDirty = (s: FileState) => s.started && (s.content !== s.saved || s.baseHash === null);
 
-function lineOffset(content: string, line: number) {
-  const lines = content.split("\n");
-  const n = Math.min(Math.max(line, 1), lines.length);
-  return lines.slice(0, n - 1).reduce((sum, l) => sum + l.length + 1, 0);
-}
-
 /** A save or reload in flight blocks another; a blur validate never does (Save supersedes it). */
 const isBusy = (o?: Outcome) => o?.tone === "pending" && o.kind !== "checking";
 
 const goneMessage = "This template no longer exists on disk.";
-
-/** Focus a textarea at a line's start and scroll it to the middle (the jump, without CodeMirror). */
-function focusTextareaLine(el: HTMLTextAreaElement, line: number) {
-  const at = lineOffset(el.value, line);
-  el.focus({ preventScroll: true });
-  el.setSelectionRange(at, at);
-  const lh = Number.parseFloat(getComputedStyle(el).lineHeight) || 20;
-  el.scrollTop = Math.max(0, (line - 1) * lh - el.clientHeight / 2);
-  el.scrollIntoView?.({ block: "nearest" });
-}
-
-type EditorProps = ComponentPropsWithoutRef<typeof CodeEditorComponent>;
-
-/** Stands in for the editor when its chunk can't load (offline, a stale deploy's chunk): the file
- *  stays editable as text, with the same handle. */
-const TextareaEditor = forwardRef<CodeEditorHandle, EditorProps>(function TextareaEditor(p, ref) {
-  const el = useRef<HTMLTextAreaElement>(null);
-  useImperativeHandle(
-    ref,
-    () => ({
-      focusLine(line) {
-        if (el.current) focusTextareaLine(el.current, line);
-      },
-      restore({ anchor, head, focus }) {
-        const t = el.current;
-        if (!t) return;
-        t.setSelectionRange(
-          Math.min(anchor, head),
-          Math.max(anchor, head),
-          anchor > head ? "backward" : "forward",
-        );
-        if (focus) t.focus();
-      },
-    }),
-    [],
-  );
-  return (
-    <CodeTextarea
-      id={p.id}
-      aria-labelledby={p.labelledBy}
-      describedBy={p.describedBy}
-      value={p.value}
-      onChange={p.onChange}
-      onBlur={p.onBlur}
-      onSave={p.onSave}
-      textareaRef={el}
-    />
-  );
-});
-
-// Set once the chunk has settled: from then on a fallback textarea is only ever detached by the
-// swap itself, so that's the only detach whose selection is carried over.
-let editorSettled = false;
-// Its own chunk (CodeMirror), preloaded by the route's loader on a real visit (spec §12.2). A failed
-// load falls back to the textarea rather than taking the page down.
-const CodeEditor = lazy(() =>
-  import("./code-editor").then(
-    (m) => {
-      editorSettled = true;
-      return m;
-    },
-    () => {
-      editorSettled = true;
-      return { default: TextareaEditor };
-    },
-  ),
-);
 
 const LANGUAGE: Record<TemplateFile, Lang> = {
   "template.yaml": "yaml",
@@ -258,7 +176,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
         // The swap detaches it while it's still in the DOM: note where the user was, for the editor
         // replacing it. Any other detach (a tab switch, Discard) leaves nothing to carry.
         if (!el) carried.current[f] = undefined;
-        if (!el && prev && editorSettled)
+        if (!el && prev && isEditorSettled())
           carried.current[f] = {
             anchor:
               prev.selectionDirection === "backward" ? prev.selectionEnd : prev.selectionStart,
@@ -667,20 +585,6 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
 
 const NO_DIAGS: Diag[] = [];
 
-// The fallback's text starts where the editor's will, so the swap doesn't move it: the line-number
-// gutter (16px padding plus one 14px-mono digit, 8.4px, per digit of the line count, CodeMirror's own
-// sizing), its 1px border, the lint gutter (19.6px, from md) and the line's 8px inset. On touch the
-// editor's lines are 24px, so the fallback's are too. Measured in Chromium and WebKit (Task 42).
-const GUTTER_PAD =
-  "pl-[calc(var(--gutter-digits)_*_8.4px_+_44.6px)] max-md:pl-[calc(var(--gutter-digits)_*_8.4px_+_25px)] pointer-coarse:leading-6";
-
-/** The digits of the line count: CodeMirror's line-number gutter is as wide as the widest number. */
-function gutterDigits(value: string) {
-  let lines = 1;
-  for (let i = value.indexOf("\n"); i !== -1; i = value.indexOf("\n", i + 1)) lines++;
-  return String(lines).length;
-}
-
 // Inside MarkdownEditor's frame the surface drops its own frame (border, radius, focus ring).
 const EMBEDDED =
   "[&>div>div:first-child]:rounded-none [&>div>div:first-child]:border-0 [&>div>div:first-child]:ring-0! [&>div>p]:px-3 [&>div>p]:pb-2";
@@ -698,58 +602,11 @@ function keepInPlace(el: HTMLElement | null, by: number) {
   window.scrollBy(0, by);
 }
 
-type SurfaceProps = {
-  file: TemplateFile;
-  value: string;
-  onChange(v: string): void;
-  onBlur(): void;
-  onSave(): void;
-  describedBy?: string;
-  labelledBy: string;
-  fileKey: string;
-  states: Map<string, EditorState>;
-  diagnostics: readonly Diag[];
-  textareaRef(el: HTMLTextAreaElement | null): void;
-  editorRef(h: CodeEditorHandle | null): void;
-};
+type SurfaceProps = Omit<CodeSurfaceProps, "id" | "label" | "language"> & { file: TemplateFile };
 
-/** One file in CodeMirror. Until its chunk arrives, the textarea, with its text where the editor's
- *  will be; on the swap the selection, scroll and focus carry over (the template editor's refs). */
-function FileSurface(p: SurfaceProps) {
-  const id = `editor-${p.file}`;
-  return (
-    <Suspense
-      fallback={
-        <CodeTextarea
-          id={id}
-          aria-label={p.file}
-          describedBy={p.describedBy}
-          value={p.value}
-          onChange={p.onChange}
-          onBlur={p.onBlur}
-          onSave={p.onSave}
-          textareaRef={p.textareaRef}
-          className={GUTTER_PAD}
-          style={{ "--gutter-digits": gutterDigits(p.value) } as CSSProperties}
-        />
-      }
-    >
-      <CodeEditor
-        ref={p.editorRef}
-        id={id}
-        labelledBy={p.labelledBy}
-        describedBy={p.describedBy}
-        value={p.value}
-        onChange={p.onChange}
-        onBlur={p.onBlur}
-        onSave={p.onSave}
-        language={LANGUAGE[p.file]}
-        fileKey={p.fileKey}
-        states={p.states}
-        diagnostics={p.diagnostics}
-      />
-    </Suspense>
-  );
+/** One template file in the shared code surface, named and typed by its file. */
+function FileSurface({ file, ...p }: SurfaceProps) {
+  return <CodeSurface {...p} id={`editor-${file}`} label={file} language={LANGUAGE[file]} />;
 }
 
 /** The page header and the config line under it. Memoized: neither reads the files being edited,

@@ -752,7 +752,7 @@ test("Colour sits after Display name, names Auto's seeded hue, and sends color a
     agents: [lead({ status: "idle" })],
     extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 4 })) },
   });
-  const group = screen.getByRole("radiogroup", { name: "Colour" });
+  const group = screen.getByRole("radiogroup", { name: /^Colour/ });
   expect(screen.getByText(/^Colour · Auto \(\w+\)$/)).toBeInTheDocument();
   expect(field("Display name").compareDocumentPosition(group)).toBe(
     Node.DOCUMENT_POSITION_FOLLOWING,
@@ -764,6 +764,18 @@ test("Colour sits after Display name, names Auto's seeded hue, and sends color a
   await waitFor(() => expect(notify).toHaveBeenCalledOnce());
   expect(vi.mocked(notify).mock.calls[0]?.[0].text).toBe("Saved @lead.");
   expect(patches(api.api)).toEqual([{ color: 4 }]);
+});
+
+test("a saved colour invalidates the inbox list so chat rows recolour", async () => {
+  const { queryClient } = await open({
+    agents: [lead({ status: "idle" })],
+    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 4 })) },
+  });
+  const spy = vi.spyOn(queryClient, "invalidateQueries");
+  await userEvent.click(radio("Teal"));
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] });
 });
 
 test("arrow keys move and select, Home and End jump, roving tabindex follows", async () => {
@@ -787,7 +799,7 @@ test("arrow keys move and select, Home and End jump, roving tabindex follows", a
 test("an agent whose template has an avatar.svg gets the line, not the group", async () => {
   await open({ agents: [lead({ avatarVersion: "v1" })] });
   expect(screen.getByText("This template's avatar.svg sets the avatar.")).toBeInTheDocument();
-  expect(screen.queryByRole("radiogroup", { name: "Colour" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
 });
 
 test("a running agent's colour with another field still restarts", async () => {

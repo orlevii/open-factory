@@ -38,6 +38,7 @@ import { agentsListQueryOptions, updateAgent } from "@/features/agents/api";
 import { ColourField } from "@/features/agents/colour-field";
 import { restoreAgent } from "@/features/agents/lifecycle";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
+import { inboxQueryKey } from "@/features/inbox/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { projectsQueryOptions } from "@/features/settings/api";
 import { BodySkeleton } from "@/features/sheets/body-skeleton";
@@ -315,6 +316,8 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     );
     void qc.invalidateQueries({ queryKey: ["agents"] });
     void qc.invalidateQueries({ queryKey: ["agent", slug] });
+    // The Inbox chat rows carry the agent's colour.
+    void qc.invalidateQueries({ queryKey: inboxQueryKey });
     const late = !stillOpen();
     // Late: dismissed, or the sheet now shows another state the user is reading; it stays. A late success clears the
     // draft only if it still holds what was sent; this agent's Edit reopened on those untouched values closes. Edits

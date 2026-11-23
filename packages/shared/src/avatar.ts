@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /**
  * Identity colours (spec §11). The order is stored in `agents.color`, so it is
  * fixed here and the CSS tokens `--avatar-1..12` are checked against it.
@@ -28,6 +30,9 @@ export const AVATAR_HUES: readonly {
 ];
 
 export const AVATAR_COUNT = AVATAR_HUES.length;
+
+/** A stored identity colour: an index into `AVATAR_HUES`. The one range every schema shares. */
+export const avatarColorSchema = z.number().int().min(1).max(AVATAR_COUNT);
 
 const L: Record<AvatarTheme, Record<AvatarTier, number>> = {
   light: { deep: 0.56, light: 0.68 },

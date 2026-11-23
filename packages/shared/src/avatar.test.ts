@@ -46,3 +46,11 @@ test("oklchDistance is symmetric and zero on identity", () => {
   expect(oklchDistance(a, a)).toBe(0);
   expect(oklchDistance(a, b)).toBeCloseTo(oklchDistance(b, a), 12);
 });
+
+test("avatarColorSchema accepts 1..AVATAR_COUNT and nothing else", async () => {
+  const { avatarColorSchema, AVATAR_COUNT } = await import("./avatar.ts");
+  expect(avatarColorSchema.safeParse(1).success).toBe(true);
+  expect(avatarColorSchema.safeParse(AVATAR_COUNT).success).toBe(true);
+  expect(avatarColorSchema.safeParse(0).success).toBe(false);
+  expect(avatarColorSchema.safeParse(AVATAR_COUNT + 1).success).toBe(false);
+});

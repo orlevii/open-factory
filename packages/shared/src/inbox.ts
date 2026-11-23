@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { agentStatusSchema } from "./agents.ts";
+import { avatarColorSchema } from "./avatar.ts";
 import { inboxItemSchema } from "./messaging.ts";
 
 /**
@@ -12,7 +13,7 @@ export const chatRowSchema = z.object({
     displayName: z.string(),
     template: z.string(),
     avatarVersion: z.string().nullable(),
-    color: z.number().int().min(1).max(12).nullable(),
+    color: avatarColorSchema.nullable(),
     kind: z.enum(["persistent", "ephemeral"]),
     status: agentStatusSchema,
     archivedAt: z.string().nullable(),

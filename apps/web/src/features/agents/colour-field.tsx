@@ -1,9 +1,8 @@
 import { AVATAR_HUES } from "@open-factory/shared";
 import { type KeyboardEvent, type MouseEvent, memo, useRef } from "react";
-import { AgentAvatar } from "@/components/agent-avatar";
+import { AgentAvatar, partsFor } from "@/components/agent-avatar";
 import { FieldShell } from "@/components/field-shell";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { botParts } from "@/lib/factory-bot";
 import { cn } from "@/lib/utils";
 
 /** The line that replaces the field when the template's avatar.svg sets the avatar (spec §12.6, verbatim; a muted line, not a field message, so the 40-character rule doesn't apply). */
@@ -24,7 +23,7 @@ const HUE_NAME = new Map(AVATAR_HUES.map((h) => [h.index, h.name]));
 /** "Teal", or "Auto (Jade)": the legend row always names what the avatar will wear. */
 export function colourName(value: number | null, slug: string): string {
   return value === null
-    ? `Auto (${HUE_NAME.get(botParts(slug).fill) ?? ""})`
+    ? `Auto (${HUE_NAME.get(partsFor(slug).fill) ?? ""})`
     : (HUE_NAME.get(value) ?? "");
 }
 
@@ -54,7 +53,7 @@ const Swatch = memo(function Swatch({
           className={cn(
             SWATCH,
             option.value === null && "border border-dashed border-input",
-            checked && "ring-2 ring-foreground ring-offset-2 ring-offset-background",
+            checked && "ring-2 ring-foreground ring-offset-2 ring-offset-popover",
           )}
         >
           <AgentAvatar slug={slug} color={option.value} size={24} />
@@ -96,6 +95,7 @@ export function ColourField({
     if (v !== undefined) onChange(v);
   };
   const onKeyDown = (e: KeyboardEvent) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
     const at = OPTIONS.findIndex((o) => o.value === value);
     const last = OPTIONS.length - 1;
     const next =
@@ -120,7 +120,7 @@ export function ColourField({
         <div
           ref={group}
           role="radiogroup"
-          aria-label="Colour"
+          aria-labelledby="field-color-legend"
           className="flex items-center gap-2"
           onClick={onClick}
           onKeyDown={onKeyDown}

@@ -5,7 +5,7 @@ import { type BotParts, botParts } from "../lib/factory-bot";
 
 /** Parts are a pure function of the slug, so one result serves every avatar of that agent. */
 const PARTS = new Map<string, BotParts>();
-function partsFor(slug: string): BotParts {
+export function partsFor(slug: string): BotParts {
   let p = PARTS.get(slug);
   if (!p) {
     p = botParts(slug);

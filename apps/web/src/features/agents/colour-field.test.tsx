@@ -37,6 +37,21 @@ test("thirteen radios, Auto first, one tab stop on the selected one", () => {
   );
 });
 
+test("the group is named once, by the legend, and the ring offset takes the sheet colour", () => {
+  render(<Harness start={4} />);
+  expect(screen.getByRole("radiogroup", { name: "Colour · Teal" })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "Teal" }).className).toContain("ring-offset-popover");
+});
+
+test("arrow keys with Alt, Ctrl or Meta are left to the browser", async () => {
+  render(<Harness start={4} />);
+  screen.getByRole("radio", { name: "Teal" }).focus();
+  await userEvent.keyboard(
+    "{Alt>}{ArrowRight}{/Alt}{Control>}{ArrowLeft}{/Control}{Meta>}{Home}{/Meta}",
+  );
+  expect(screen.getByRole("radio", { name: "Teal" })).toHaveAttribute("aria-checked", "true");
+});
+
 test("a hue's name shows as a tooltip on focus", async () => {
   vi.useRealTimers();
   render(<Harness />);

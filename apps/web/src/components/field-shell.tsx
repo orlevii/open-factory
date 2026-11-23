@@ -58,7 +58,9 @@ export function FieldShell({
         aria-describedby={describedBy}
         aria-invalid={error ? true : undefined}
       >
-        <legend className="text-[0.8125rem] font-medium">{label}</legend>
+        <legend id={`${id}-legend`} className="text-[0.8125rem] font-medium">
+          {label}
+        </legend>
         {body}
         {tail}
       </fieldset>

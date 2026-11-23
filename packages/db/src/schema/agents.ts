@@ -83,6 +83,7 @@ export const agents = pgTable(
       "agents_live_credential",
       sql`${t.credentialId} IS NOT NULL OR ${t.terminatedAt} IS NOT NULL`,
     ),
+    // The literal 1..12 mirrors AVATAR_COUNT (packages/shared/src/avatar.ts); a SQL CHECK can't import it.
     check("agents_color", sql`${t.color} IS NULL OR ${t.color} BETWEEN 1 AND 12`),
     check("agents_kind", sql`${t.kind} IN ('persistent','ephemeral')`),
     check(

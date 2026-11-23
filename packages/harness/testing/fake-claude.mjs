@@ -41,6 +41,7 @@ if (argv0[0] === "setup-token") {
     process.stdin.pause();
     if (buf === "bad") {
       process.stdout.write("\r\nOAuth error: Invalid code\r\nPress Enter to retry.\r\n");
+      buf = "";
       process.stdin.resume();
       return;
     }
@@ -54,7 +55,13 @@ if (argv0[0] === "setup-token") {
     if (buf === "slow") setTimeout(done, 70_000);
     else done();
   });
-  process.stdin.on("end", () => process.exit(1));
+  // A CLI that outlives a terminal hangup (only the group kill can stop it), for transport tests.
+  if (process.env.FAKE_CLAUDE_STUBBORN) {
+    process.on("SIGHUP", () => {});
+    process.stdin.on("error", () => {});
+    process.stdout.on("error", () => {});
+    setInterval(() => {}, 60_000);
+  } else process.stdin.on("end", () => process.exit(1));
   await new Promise(() => {}); // never falls through to the plugin block or the scenario code
 }
 if (argv0[0] === "plugin") {

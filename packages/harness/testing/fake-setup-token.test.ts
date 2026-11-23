@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { createFakeClaude } from "./index.js";
 import { SYNTHETIC_CODE, SYNTHETIC_TOKEN, SYNTHETIC_URL } from "./synthetic-sign-in.mjs";
 
@@ -14,8 +14,8 @@ import os, pty, sys, time, select
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp(sys.argv[1], sys.argv[1:])
-code = os.environ["CODE"].encode()
-out = b""; sent = False; t0 = time.time()
+codes = [c.encode() for c in os.environ["CODE"].split(",")]
+out = b""; sent = 0; t0 = time.time()
 while time.time() - t0 < 10:
     r, _, _ = select.select([fd], [], [], 0.2)
     if fd in r:
@@ -23,9 +23,11 @@ while time.time() - t0 < 10:
         except OSError: break
         if not d: break
         out += d
-    if not sent and b"Paste code here" in out:
-        os.write(fd, code); time.sleep(0.15); os.write(fd, b"\r"); sent = True
-        if code == b"bad":
+    # the first code after the prompt, each later one after a "Press Enter to retry"
+    if sent < len(codes) and b"Paste code here" in out and out.count(b"Press Enter to retry") == sent:
+        code = codes[sent]; sent += 1
+        os.write(fd, code); time.sleep(0.15); os.write(fd, b"\r")
+        if code == b"bad" and sent == len(codes):
             t0 = time.time() - 8
 sys.stdout.buffer.write(out)
 try:
@@ -54,6 +56,9 @@ const gone = (pid: number) => {
   }
 };
 
+// A pid left by an earlier run would make the liveness check pass without proving anything.
+beforeEach(() => rmSync(pidFile, { force: true }));
+
 afterAll(() => {
   try {
     process.kill(Number(readFileSync(pidFile, "utf8")), 9);
@@ -76,6 +81,18 @@ describe.skipIf(!hasPython)("fake claude setup-token", () => {
     const r = pty("bad");
     expect(r.stdout).toContain("OAuth error:");
     expect(gone(Number(readFileSync(pidFile, "utf8")))).toBe(true);
+  });
+
+  it("judges each retry on its own: bad again fails, a good code then succeeds", () => {
+    const twice = pty("bad,bad");
+    expect(twice.stdout.split("OAuth error:")).toHaveLength(3);
+    expect(twice.stdout).not.toContain(SYNTHETIC_TOKEN.slice(0, 30));
+    expect(gone(Number(readFileSync(pidFile, "utf8")))).toBe(true);
+    rmSync(pidFile, { force: true });
+    const r = pty(`bad,${SYNTHETIC_CODE}`);
+    expect(r.stdout).toContain("OAuth error:");
+    expect(r.stdout).toContain(SYNTHETIC_TOKEN.slice(0, 30));
+    expect(r.stderr).toContain("exit=0");
   });
 
   it("exits 1 without a tty", () => {

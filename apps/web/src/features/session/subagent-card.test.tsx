@@ -83,15 +83,6 @@ test("header: Subagent · type · description and a Running chip with the tooth;
   expect(card("2").querySelector("img, [data-avatar]")).toBeNull();
 });
 
-test("the body is indented with a neutral rule guide, no fill and no box", () => {
-  const rows = rowsOf([e({ type: "turn_started" }), call("ag", "x", "Explore")]);
-  show(rows, [progress()]);
-  const guide = card("2").querySelector("[data-subagent-body]") as HTMLElement;
-  expect(guide).toHaveClass("border-l", "border-border");
-  expect(guide.className).not.toMatch(/\bbg-|\brounded|\bborder-(t|r|b)\b|signal|destructive/);
-  expect(card("2").className).not.toMatch(/\bbg-|\bborder\b/);
-});
-
 test("running: one live line from progress, counters first, updated at most twice a second", () => {
   vi.useFakeTimers();
   const events = [

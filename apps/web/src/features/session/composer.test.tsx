@@ -1,6 +1,13 @@
 import type { AgentSummary, QueueItem, SessionEvent } from "@open-factory/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, type ReactNode, useCallback, useReducer, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -418,6 +425,8 @@ test("the draft is in localStorage under a versioned key and survives a remount"
   box.blur();
   expect(readDraft(sessionDraftKey("dev"))).toBe("half a thought");
   expect(localStorage.getItem("of-draft:v1:session:dev")).not.toBeNull();
+  cleanup();
+  expect(renderSession()).toHaveValue("half a thought");
 });
 
 test("a message_in echoing the id removes the block in one step", async () => {
@@ -791,10 +800,14 @@ test("a known command over several lines is refused in the slot and held", async
 
 test("on a phone the session composer reserves the note line", () => {
   const real = window.matchMedia;
-  fakeMatchMedia.install(true);
   try {
+    fakeMatchMedia.install(true);
     raw();
     expect(document.querySelector("[data-composer-note-line]")).not.toBeNull();
+    cleanup();
+    fakeMatchMedia.install(false);
+    raw();
+    expect(document.querySelector("[data-composer-note-line]")).toBeNull();
   } finally {
     window.matchMedia = real;
   }

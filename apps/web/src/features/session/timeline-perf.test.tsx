@@ -630,6 +630,8 @@ test("itemPropsEqual: unrelated keys and fresh but equal sets are not a change",
   expect(itemPropsEqual(props(), props({ failedIds: new Set(["x"]) }))).toBe(true);
   expect(itemPropsEqual(props(), props({ row: { ...parent } }))).toBe(false);
   expect(itemPropsEqual(props(), props({ lit: true }))).toBe(false);
+  expect(itemPropsEqual(props(), props({ live: true }))).toBe(false);
+  expect(itemPropsEqual(props({ live: true }), props({ live: false }))).toBe(false);
   // The deep-link tint's phase reaches only the item holding it.
   expect(itemPropsEqual(props(), props({ arrivedKey: "4", arrival: "on" }))).toBe(false);
   expect(
@@ -963,6 +965,7 @@ test("200 rows at rest mount no menu root and read no phone or pointer query (me
   try {
     await setup();
     expect(document.querySelectorAll("[data-row-menu]").length).toBeGreaterThan(190);
+    expect(document.querySelectorAll('[aria-haspopup="menu"]').length).toBeGreaterThan(190);
     expect(document.querySelector('[data-slot="dropdown-menu-trigger"]')).toBeNull();
     expect(document.querySelector('[data-slot="drawer-content"]')).toBeNull();
     const menuQueries = [...reads.keys()].filter(

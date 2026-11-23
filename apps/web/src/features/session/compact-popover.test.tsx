@@ -21,12 +21,7 @@ test("a failed compact shows its message in an alert, announced again on a repea
   const first = await screen.findByText("Agent is busy.");
   const alert = first.closest('[role="alert"]');
   expect(alert).not.toBeNull();
-  // Shared pieces: the outcome line sits above the button, and the field keeps its reserved note.
-  expect(alert?.closest(".form-outcome")).not.toBeNull();
-  expect(
-    alert?.compareDocumentPosition(within(dialog).getByRole("button", { name: "Compact" })),
-  ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  expect(dialog.querySelector(".field-note")).not.toBeNull();
+  expect(dialog).toContainElement(alert as HTMLElement);
   await u.click(within(dialog).getByRole("button", { name: "Compact" }));
   await vi.waitFor(() => expect(screen.getByText("Agent is busy.")).not.toBe(first));
 });

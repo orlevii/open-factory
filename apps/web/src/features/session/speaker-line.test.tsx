@@ -142,24 +142,7 @@ test("a sender's kind decides how it shows, whatever its sigil: an `@` agent is 
   expect(within(human as HTMLElement).getByText("@zed")).toHaveClass("font-mono");
 });
 
-test("several recipients: the first two handles and a count; the full list names the line", async () => {
-  const handles = Array.from({ length: 10 }, (_, i) => `@r${i}`);
-  await show(
-    <SpeakerLine
-      from="dev"
-      fromKind="agent"
-      self
-      to={handles.map((handle) => ({ handle }))}
-      at={AT}
-    />,
-  );
-  const l = line();
-  expect(within(l).getByText("@r0, @r1 +8")).toHaveClass("font-mono");
-  expect(l).toHaveAccessibleName(`To ${handles.join(", ")}`);
-  expect(within(l).queryByText("All humans")).toBeNull();
-});
-
-const chip = (l: HTMLElement) => l.querySelector("[style*='width: 20px']");
+const chip = (l: HTMLElement) => l.querySelector("[data-agent-avatar]");
 
 test("an agent the server names by kind is a chip even before the lists load (no flip on first paint)", async () => {
   const requestEnded = vi.fn();

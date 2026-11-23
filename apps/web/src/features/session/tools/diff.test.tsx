@@ -168,18 +168,13 @@ test("Show all anchors its row through the timeline's expandAnchor before it exp
   }
 });
 
-test("partial: Diff truncated · show raw output", async () => {
+test("partial: Diff truncated · show raw output keeps the marker and shows the call's input", async () => {
   render(<Harness open row={edit([HUNK], true)} />);
   const line = screen.getByText(/^Diff truncated/).closest("p");
   expect(line).toHaveTextContent("Diff truncated · show raw output");
   await userEvent.click(screen.getByRole("button", { name: "show raw output" }));
-  // The result's text says nothing more; the raw view is the call's input (see the next test).
+  // The result's text says nothing more; the raw view is the call's input.
   expect(screen.getByText(/"old_string": "x"/)).toBeInTheDocument();
-});
-
-test("partial: show raw output keeps the 'Diff truncated' marker and shows the call's input", async () => {
-  render(<Harness open row={edit([HUNK], true)} />);
-  await userEvent.click(screen.getByRole("button", { name: "show raw output" }));
   expect(screen.getByText(/^Diff truncated/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "show raw output" })).toBeNull();
   const plates = [...document.querySelectorAll("pre")].map((p) => p.textContent ?? "");

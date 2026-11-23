@@ -129,7 +129,7 @@ test("expanded: stderr that ends the content gets its own plate with a label", (
   expect(out.textContent).toBe("built a\nbuilt b");
   const err = screen.getByText("warning: deprecated");
   expect(err).not.toBe(out);
-  expect(screen.getByText("stderr")).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "stderr" })).toHaveTextContent("warning: deprecated");
 });
 
 test("expanded: stderr that does not end the content stays in the output", () => {
@@ -187,11 +187,14 @@ test("a failed call with a 64 KB single-line error renders its detail line witho
   expect(screen.getByText(/^Error: y+$/)).toBeInTheDocument();
 });
 
-test("Show input anchors itself through the timeline's toggle rule (aria-expanded)", () => {
+test("Show input is a disclosure button: aria-expanded flips when it is clicked", async () => {
   render(<Harness open row={bashRow({ command: "a\nb" }, { content: "x" })} />);
-  expect(screen.getByRole("button", { name: "Show input" })).toHaveAttribute(
+  const button = screen.getByRole("button", { name: "Show input" });
+  expect(button).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(button);
+  expect(screen.getByRole("button", { name: /Show input|Hide input/ })).toHaveAttribute(
     "aria-expanded",
-    "false",
+    "true",
   );
 });
 
@@ -242,22 +245,6 @@ test("a one-line command short enough to read on the row needs no Show input, wi
     <Harness open row={bashRow({ command, description: "Run the tests" }, { content: "ok" })} />,
   );
   expect(screen.queryByRole("button", { name: "Show input" })).not.toBeInTheDocument();
-});
-
-test("the stderr plate is named by its label", () => {
-  render(
-    <Harness
-      open
-      row={bashRow(
-        { command: "make" },
-        {
-          content: "built\nwarning: deprecated",
-          meta: { tool: "Bash", interrupted: false, stderr: "warning: deprecated" },
-        },
-      )}
-    />,
-  );
-  expect(screen.getByRole("group", { name: "stderr" })).toHaveTextContent("warning: deprecated");
 });
 
 test("a call cut by Stop reads 'Interrupted', not 'Failed', with no error detail line", () => {

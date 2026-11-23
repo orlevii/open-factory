@@ -73,6 +73,7 @@ test("a send to ten people reads 'Ada → @a, @b +8'; the full list is the line'
   const line = document.querySelector("[data-speaker-line]") as HTMLElement;
   expect(line).toHaveTextContent(/^Ada.*@ada.*@a, @b \+8/);
   expect(line).toHaveAccessibleName(`To ${ten.join(", ")}`);
+  expect(within(line).queryByText("All humans")).toBeNull();
   expect(rowMenuItems(r, "ada").find((i) => i.kind === "recipients")).toMatchObject({
     label: "Recipients",
     text: ten.join(", "),
@@ -190,5 +191,5 @@ test("the result's kind is matched to the argument whatever its case", async () 
   await show(row(["@Ada2"], [{ to: "@ada2", kind: "agent", status: "inbox", id: "m1" }]));
   const line = document.querySelector("[data-speaker-line]") as HTMLElement;
   // An agent by the result's word, so a chip (beside Ada's own), though the index doesn't know it.
-  expect(line.querySelectorAll("[style*='width: 20px']")).toHaveLength(2);
+  expect(line.querySelectorAll("[data-agent-avatar]")).toHaveLength(2);
 });

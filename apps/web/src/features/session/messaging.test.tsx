@@ -489,7 +489,7 @@ const lookupWorld = (
       json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
   });
 
-test("?message= opens the recipient's event window, or says why it can't", async () => {
+test("?message= for an unknown message falls back to the latest with a note", async () => {
   mockApi({
     "GET /api/messages/gone": () =>
       json({ error: { code: "message_not_found", message: "x" } }, 404),
@@ -943,34 +943,6 @@ test("the announcer announces a send whose call was on screen at load and whose 
 });
 
 // ---- S8: task messages in the timeline and the queue ----
-test("a task_assigned envelope is a Factory message block with a badge linking to the task", async () => {
-  await open(
-    [
-      {
-        type: "message_in",
-        messages: [
-          env({
-            id: "t1",
-            from: "@factory",
-            kind: "task_assigned",
-            taskKey: "T-1",
-            taskTitle: "Plan the migration",
-            body: "@or assigned you T-1\nThe task, written by @or:\n> Read this",
-          }),
-        ],
-      },
-    ],
-    /assigned you T-1/,
-  );
-  const block = document.querySelector("[data-message-block]") as HTMLElement;
-  expect(within(block).getByText("Factory")).toBeInTheDocument();
-  const badge = within(block).getByRole("link", { name: "Task T-1: Plan the migration" });
-  expect(badge).toHaveAttribute("href", "/tasks/T-1");
-  // The brief is two clamped lines until Show all (U3 §7.2).
-  await userEvent.click(within(block).getByRole("button", { name: "Show all" }));
-  expect(within(block).getByRole("blockquote")).toHaveTextContent("Read this");
-});
-
 test("a task_comment from a human shows the handle and a badge that opens that comment", async () => {
   await open(
     [
@@ -1153,24 +1125,6 @@ test("your own message says 'You'; a known human shows their name", async () => 
     expect(b?.querySelector("[data-message-body]")).toHaveAttribute("dir", "auto");
 });
 
-test("an outgoing card reads 'Name → Recipient' with the agent's name", async () => {
-  await open(
-    [
-      { type: "turn_started" },
-      call({ to: ["@alice"], body: "ping you" }),
-      result(
-        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m9" }] }),
-      ),
-    ],
-    "ping you",
-  );
-  const block = screen.getByRole("article", { name: "Message from @dev to @alice" });
-  const sender = block.querySelector("[data-speaker-line]") as HTMLElement;
-  expect(sender.textContent).toMatch(/^Dev agent@dev.*You\d\d:\d\d$/);
-  // The session's own agent is never a link.
-  expect(within(sender).queryByRole("link")).toBeNull();
-});
-
 test("a task_assigned notice is a quiet line: the factory mark, the badge, two muted clamped lines with Show all", async () => {
   const body =
     "@or assigned you T-1\n\nThe task, written by @or:\n\n> Read this\n\nThen this.\n\nAnd this.";
@@ -1197,7 +1151,7 @@ test("a task_assigned notice is a quiet line: the factory mark, the badge, two m
   expect(notice.querySelector("svg")).not.toBeNull();
   expect(
     within(notice).getByRole("link", { name: "Task T-1: Plan the migration" }),
-  ).toBeInTheDocument();
+  ).toHaveAttribute("href", "/tasks/T-1");
   const shown = notice.querySelector("[data-message-body]") as HTMLElement;
   expect(shown).toHaveClass("text-muted-foreground");
   expect(shown.querySelector(".line-clamp-2")).not.toBeNull();

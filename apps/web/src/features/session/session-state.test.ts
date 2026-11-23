@@ -67,6 +67,7 @@ test("window mode counts live events instead of appending them", () => {
     message: { type: "session_event", agent: "dev", event: ev(10) },
   });
   expect(eventsInOrder(s).map((e) => e.seq)).toEqual([3, 4, 5]);
+  expect(s.maxSeenSeq).toBe(10);
 });
 
 test("earlier pages prepend; status, queue and resync frames", () => {
@@ -164,7 +165,11 @@ test("window mode ignores an already-present live event without counting it", ()
     detail,
     mode: "window",
   });
+  const before = s;
   s = sessionReducer(s, frame({ type: "session_event", agent: "dev", event: ev(4) }));
+  expect(s).toBe(before);
+  expect(s.maxSeenSeq).toBe(9);
+  expect(s.newSpeech).toBe(0);
 });
 
 test("an agent_status frame without lastError clears the previous one", () => {

@@ -403,6 +403,6 @@ test("a queued item's sender is read by the kind it carries: an agent is a chip,
   );
   await waitFor(() => expect(document.querySelectorAll("[data-speaker-line]")).toHaveLength(2));
   const lines = document.querySelectorAll<HTMLElement>("[data-speaker-line]");
-  expect(lines[0]?.querySelector("[style*='width: 20px']")).not.toBeNull();
-  expect(lines[1]?.querySelector("[style*='width: 20px']")).toBeNull();
+  expect(lines[0]?.querySelector("[data-agent-avatar]")).not.toBeNull();
+  expect(lines[1]?.querySelector("[data-agent-avatar]")).toBeNull();
 });

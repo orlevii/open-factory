@@ -268,7 +268,6 @@ test("a refused clipboard says Couldn't copy inline", async () => {
   expect(await screen.findByText("Couldn't copy")).toBeInTheDocument();
 });
 
-const many = Array.from({ length: 200 }, (_, i) => text(i + 1));
 const timeline = (rows: Row[]) => (
   <Timeline
     slug="dev"
@@ -281,14 +280,6 @@ const timeline = (rows: Row[]) => (
     footer={null}
   />
 );
-
-test("200 rows mount 200 plain triggers and no menu root", async () => {
-  renderInRouter(timeline(many));
-  await screen.findByText("200");
-  expect(document.querySelectorAll("[data-copy-link]")).toHaveLength(200);
-  expect(document.querySelectorAll('[data-slot="dropdown-menu-trigger"]')).toHaveLength(0);
-  expect(document.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(200);
-});
 
 test("applyTo skips the trigger: only the tab row's trigger is tabbable", async () => {
   renderInRouter(timeline([text(1), text(2), text(3)]));

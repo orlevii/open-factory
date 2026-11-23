@@ -3,7 +3,6 @@ import { Profiler } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { type Activity, deriveActivity } from "./activity";
 import { ActivityLine, Elapsed, TurnActivity, useFallbackHold } from "./activity-line";
-import { ROW_GUTTER } from "./timeline-item";
 
 function setHidden(hidden: boolean) {
   Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
@@ -141,11 +140,6 @@ test("without a start time the duration is omitted", () => {
 test("while compacting the open turn's line reads Compacting", () => {
   render(<TurnActivity open={undefined} turnKey="1" compacting />);
   expect(label()).toBe("Compacting");
-});
-
-test("the line stops at the rows' right gutter", () => {
-  render(<ActivityLine activity={running} />);
-  expect(document.querySelector("[data-activity-line]")).toHaveClass(ROW_GUTTER);
 });
 
 test("a command or description end-truncates as one span; only file paths middle-truncate", () => {

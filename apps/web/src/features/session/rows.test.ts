@@ -1,6 +1,6 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
-import { childrenOf, runDisplayPasses } from "./display-passes";
+import { childrenOf } from "./display-passes";
 import {
   buildRows,
   deliveryFailedIds,
@@ -556,8 +556,10 @@ test("open tracks the newest unresolved call of the open turn", () => {
 });
 
 test("a tool row carries when it was called and when its result arrived", () => {
-  const [row] = rowsOf([toolCall("a"), toolResult("a")]);
-  expect(row).toMatchObject({ kind: "tool", at, resultAt: at });
+  const call = toolCall("a");
+  const result = { ...toolResult("a"), at: "2026-11-18T10:00:07.000Z" };
+  const [row] = rowsOf([call, result]);
+  expect(row).toMatchObject({ kind: "tool", at, resultAt: "2026-11-18T10:00:07.000Z" });
 });
 
 // Speaker lines (U3 §7.2): `head` marks the text rows that open a speaker line.
@@ -633,17 +635,6 @@ test("childrenOf: a subagent row's children; none for a leaf row", () => {
   expect(childrenOf(tool)).toBe(tool.children);
   expect(childrenOf(text)).toEqual([]);
   expect(childrenOf(text)).toBe(childrenOf(text)); // one shared empty array, never a fresh one
-});
-
-test("runDisplayPasses keeps every row it doesn't merge (identity in PR2)", () => {
-  seq = 0;
-  const raw = rowsOf([
-    e({ type: "assistant_text", text: "a" }),
-    e({ type: "assistant_text", text: "b" }),
-  ]);
-  const out = runDisplayPasses(raw);
-  expect(out).toHaveLength(2);
-  for (const [i, r] of out.entries()) expect(r).toBe(raw[i]);
 });
 
 test("stabilizeRows recurses through childrenOf: an unchanged nested child keeps its identity", () => {

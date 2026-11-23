@@ -55,6 +55,7 @@ test("live inputs outrank rows (PR4 shape); thinking, then live text, then worki
   expect(deriveActivity(undefined, { thinking: { tokens: 10 }, texts: ["x"] })).toEqual({
     kind: "thinking",
   });
+  expect(deriveActivity(undefined, { thinking: { tokens: 0 }, texts: [] }).kind).toBe("thinking");
   expect(deriveActivity(undefined, { texts: ["x"] })).toEqual({ kind: "text" });
   expect(deriveActivity(undefined, { texts: [] })).toEqual({ kind: "working" });
 });
@@ -109,9 +110,4 @@ test("live tool input reads through the open tool's formatter, so the label does
     kind: "tool_input",
     tool: "Write",
   });
-});
-
-test("thinking counts only while a thinking block is open", () => {
-  expect(deriveActivity(undefined, { thinking: { tokens: 0 }, texts: [] }).kind).toBe("thinking");
-  expect(deriveActivity(undefined, { texts: [] }).kind).toBe("working");
 });

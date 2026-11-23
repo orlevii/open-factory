@@ -22,7 +22,6 @@ import {
 import { RecoveryActions } from "@/features/session/recovery-actions";
 import { StatusBadge, statusLabel } from "@/features/session/status-badge";
 import type { StopCrons } from "@/features/session/stop-crons";
-import { cn } from "@/lib/utils";
 import type { AgentView } from "./view-memory";
 import { ViewSwitch } from "./view-switch";
 
@@ -58,15 +57,14 @@ export const AgentHeader = memo(function AgentHeader({
 }) {
   const archived = agent.archivedAt !== null;
   // A third header action (Restart / Start a new session, or Pin) beside Agent details and ⋯, each a 40px box on
-  // touch: below a 22rem header (320px) the avatar gives way so the row stays one line (break H3, evidence D2).
-  const crowded =
-    (!archived && agent.status === "errored") || (agent.status === "terminated" && canPin(agent));
+  // touch: below a 22rem header the avatar, the view switch and the details toggle give way (the ⋯ menu carries
+  // both) so the row stays one line. 22rem is 352px at 100% text and 704px at 200%: a phone at either.
   return (
     <PageHeader
       title={agent.displayName}
       titleFromData
       leading={
-        <span data-header-avatar className={cn("contents", crowded && "@max-[22rem]:hidden")}>
+        <span data-header-avatar className={"contents @max-[22rem]:hidden"}>
           <AgentAvatar
             slug={agent.slug}
             template={agent.template}
@@ -161,6 +159,7 @@ function AgentActions({
             id={AGENT_DETAILS_TOGGLE_ID}
             variant="ghost"
             size="icon"
+            className="@max-[22rem]:hidden"
             aria-label="Agent details"
             aria-expanded={panel.open}
             aria-controls={AGENT_DETAILS_ID}

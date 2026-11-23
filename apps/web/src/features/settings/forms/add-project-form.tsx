@@ -1,6 +1,7 @@
 import { ApiError, nameSchema, type ProjectSummary } from "@open-factory/shared";
 import { useState } from "react";
 import { FormField } from "@/components/form-field";
+import { useOutcome } from "@/components/forms/form-outcome";
 import { createProject } from "@/features/settings/api";
 import { FormFrame, type FormFrameKind } from "./form-frame";
 import { checkPath, fieldsOf, PATH_HELP } from "./shared";
@@ -19,7 +20,7 @@ export function AddProjectForm({
   const [name, setName] = useState("");
   const [hostPath, setHostPath] = useState("");
   const [errors, setErrors] = useState<{ name?: string; hostPath?: string }>({});
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
 
   const checkName = (n: string) => {
@@ -34,7 +35,7 @@ export function AddProjectForm({
   async function submit() {
     const found = { name: checkName(name), hostPath: checkPath(hostPath) };
     setErrors(found);
-    setFormError(undefined);
+    o.clear();
     if (found.name || found.hostPath) return focus(found.name ? "name" : "hostPath");
     setPending(true);
     try {
@@ -48,9 +49,7 @@ export function AddProjectForm({
         setErrors({ name: fields.name, hostPath: fields.hostPath });
         focus(fields.name ? "name" : "hostPath");
       } else {
-        setFormError(
-          err instanceof ApiError ? err.message : "Couldn't add the project. Try again.",
-        );
+        o.fail(err instanceof ApiError ? err.message : "Couldn't add the project. Try again.");
       }
     } finally {
       setPending(false);
@@ -66,7 +65,7 @@ export function AddProjectForm({
       submitLabel="Add project"
       pendingLabel="Adding…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
     >
       <FormField
         name="project-name"

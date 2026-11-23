@@ -478,9 +478,6 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
           />
         </fieldset>
         <InlineOutcome tone={outcome?.tone}>{outcome?.content}</InlineOutcome>
-        <span role="status" className="sr-only">
-          {pending ? "Saving…" : ""}
-        </span>
       </SheetBody>
       <SheetFormFooter
         submitLabel="Save changes"
@@ -489,7 +486,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
         restored={s.restored}
         onDiscard={s.discard}
         submitClassName="min-w-32"
-        above={restartNotice}
+        outcome={{ outcomeKey: 0, notice: restartNotice }}
       />
     </form>
   );

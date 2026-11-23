@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
+import { NO_OUTCOME } from "@/components/forms/form-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import type { ComboOption } from "@/components/ui/combobox";
 import { SheetBody } from "@/components/ui/sheet";
@@ -279,6 +280,7 @@ export function TaskForm({
         </fieldset>
       </SheetBody>
       <SheetFormFooter
+        outcome={NO_OUTCOME}
         submitLabel="Create task"
         pendingLabel="Creating…"
         pending={pending}

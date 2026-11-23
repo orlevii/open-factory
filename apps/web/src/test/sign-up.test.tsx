@@ -276,5 +276,5 @@ test.each([
   await screen.findByLabelText("Name");
   await fill(valid);
   await waitFor(() => expect(screen.getByLabelText(label)).toHaveAccessibleDescription(message));
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
 });

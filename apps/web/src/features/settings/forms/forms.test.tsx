@@ -166,3 +166,27 @@ test("project: validates, submits once on Enter, maps a duplicate under Name", a
   expect(posts).toBe(1);
   expect(api.calls[0]?.body).toEqual({ name: "app", hostPath: "/code/app" });
 });
+
+test("secret: the inline frame shows a form-level error through the outcome line, above the buttons", async () => {
+  mockApi({
+    "PUT /api/secrets/MY_VAR": () =>
+      json({ error: { code: "boom", message: "The store is unavailable." } }, 500),
+  });
+  render(
+    <AddSecretForm
+      frame="inline"
+      initialName=""
+      existing={[]}
+      onDone={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  const form = screen.getByRole("form", { name: "Add secret" });
+  await userEvent.type(within(form).getByLabelText("Name"), "my_var");
+  await userEvent.type(within(form).getByLabelText("Value"), "v{Enter}");
+  const text = await within(form).findByText("The store is unavailable.");
+  expect(text.closest("[role=alert]")).toBeTruthy();
+  const submit = within(form).getByRole("button", { name: "Add secret" });
+  const line = text.closest(".form-outcome") as HTMLElement;
+  expect(line.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});

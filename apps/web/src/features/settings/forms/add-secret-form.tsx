@@ -1,6 +1,7 @@
 import { ApiError, type SecretSummary, secretNameSchema } from "@open-factory/shared";
 import { type ChangeEvent, useState } from "react";
 import { FormField } from "@/components/form-field";
+import { useOutcome } from "@/components/forms/form-outcome";
 import { putSecret } from "@/features/settings/api";
 import { FormFrame, type FormFrameKind } from "./form-frame";
 import { ValueField } from "./shared";
@@ -21,7 +22,7 @@ export function AddSecretForm({
   const [name, setName] = useState(initialName);
   const [value, setValue] = useState("");
   const [errors, setErrors] = useState<{ name?: string; value?: string }>({});
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
 
   const checkName = (n: string) => {
@@ -51,13 +52,13 @@ export function AddSecretForm({
   async function submit() {
     const found = { name: checkName(name), value: checkValue(value) };
     setErrors(found);
-    setFormError(undefined);
+    o.clear();
     if (found.name || found.value) return focus(found.name ? "name" : "value");
     setPending(true);
     try {
       onDone(await putSecret(name, value));
     } catch (err) {
-      if (!(err instanceof ApiError)) return setFormError("Couldn't add the secret. Try again.");
+      if (!(err instanceof ApiError)) return o.fail("Couldn't add the secret. Try again.");
       // Server field errors land under their fields whatever the code; a reserved name is a
       // Name error even when the server sends no `fields`.
       const fields = (err.body.fields ?? {}) as Record<string, string | undefined>;
@@ -65,7 +66,7 @@ export function AddSecretForm({
       if (fields.name || fields.value) {
         setErrors({ name: fields.name, value: fields.value });
         focus(fields.name ? "name" : "value");
-      } else setFormError(err.message);
+      } else o.fail(err.message);
     } finally {
       setPending(false);
     }
@@ -80,7 +81,7 @@ export function AddSecretForm({
       submitLabel="Add secret"
       pendingLabel="Adding…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
       autoFocusId={initialName ? "field-secret-value" : undefined}
       reveal={Boolean(initialName)}
     >

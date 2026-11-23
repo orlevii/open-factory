@@ -4,7 +4,7 @@ import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-ro
 import { useState } from "react";
 import { flushSync } from "react-dom";
 import { z } from "zod";
-import { AuthCard, focusFirstInvalid } from "@/components/auth-card";
+import { AuthCard } from "@/components/auth-card";
 import {
   type AuthField,
   authErrorCode,
@@ -17,6 +17,8 @@ import {
 } from "@/components/auth-error";
 import { ErrorLine } from "@/components/error-line";
 import { FormField } from "@/components/form-field";
+import { focusField } from "@/components/forms/focus-field";
+import { NO_OUTCOME, useOutcome } from "@/components/forms/form-outcome";
 import { signUpStateQueryOptions } from "@/features/auth/api";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
@@ -50,6 +52,7 @@ function SignUpPage() {
           pendingLabel="Signing up…"
           submitting={false}
           hideSubmit
+          outcome={NO_OUTCOME}
           onSubmit={() => {}}
           footer={<SignInLink />}
         >
@@ -68,6 +71,7 @@ function SignUpPage() {
         pendingLabel="Signing up…"
         submitting={false}
         hideSubmit
+        outcome={NO_OUTCOME}
         onSubmit={() => {}}
         footer={<SignInLink />}
       >
@@ -96,7 +100,7 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
   const navigate = useNavigate();
   const [values, setValues] = useState<Values>({ name: "", handle: "", email: "", password: "" });
   const [errors, setErrors] = useState<Errors>({});
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [submitting, setSubmitting] = useState(false);
 
   // Editing a field clears its error; there is no live re-validation while typing.
@@ -107,11 +111,11 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
 
   const showFieldErrors = (form: HTMLFormElement, next: Errors) => {
     flushSync(() => setErrors(next));
-    focusFirstInvalid(form);
+    focusField(form);
   };
 
   async function submit(form: HTMLFormElement) {
-    setFormError(undefined);
+    o.clear();
     const parsed = signUpSchema.safeParse(values);
     if (!parsed.success) {
       const next: Errors = {};
@@ -137,13 +141,13 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
         if (bootstrap && "error" in failure && authErrorCode(failure.error) === "invite_required")
           m.message = INVITE_LOST_RACE_MESSAGE;
         if (m.field) showFieldErrors(form, { [m.field]: m.message });
-        else setFormError(m.message);
+        else o.fail(m.message);
         return;
       }
       await refreshSession(qc);
       await navigate({ to: "/inbox" });
     } catch {
-      setFormError(mapAuthError(undefined, "").message);
+      o.fail(mapAuthError(undefined, "").message);
     } finally {
       setSubmitting(false);
     }
@@ -155,7 +159,7 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
       submitLabel="Sign up"
       pendingLabel="Signing up…"
       submitting={submitting}
-      formError={formError}
+      outcome={o.outcome}
       onSubmit={(form) => void submit(form)}
       footer={<SignInLink />}
     >

@@ -14,6 +14,7 @@ import { flushSync } from "react-dom";
 import type { z } from "zod";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
+import { useOutcome } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
@@ -100,7 +101,7 @@ export function NewTemplateForm({
   const [v, setV] = useState<Values>(() => (stacked ? blank() : draft.start));
   const [restored, setRestored] = useState(!stacked && draft.restored);
   const [errors, setErrors] = useState<Errors>({});
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const form = useRef<HTMLDivElement>(null);
@@ -145,7 +146,7 @@ export function NewTemplateForm({
     if (inFlight.current) return;
     inFlight.current = true;
     try {
-      setFormError(undefined);
+      o.clear();
       const values = { ...v, name };
       const found: Errors = {};
       for (const f of ORDER) {
@@ -197,8 +198,8 @@ export function NewTemplateForm({
           const e: Errors = {};
           for (const f of ORDER) if (fields[f]) e[f] = fields[f];
           if (ORDER.some((f) => e[f])) show(e);
-          else setFormError(message);
-        } else setFormError(message);
+          else o.fail(message);
+        } else o.fail(message);
       } finally {
         setPending(false);
       }
@@ -216,7 +217,7 @@ export function NewTemplateForm({
       submitLabel="Create template"
       pendingLabel="Creating…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
       left={
         restored && (
           <span className="inline-flex items-center">

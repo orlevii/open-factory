@@ -95,9 +95,10 @@ test("the footer has Save changes, Close and a ghost crimson Delete schedule on 
   const del = within(dialog).getByRole("button", { name: "Delete schedule" });
   expect(del).toHaveClass("text-destructive");
   const footer = del.closest("[data-slot=sheet-footer]") as HTMLElement;
-  expect(footer.firstElementChild?.contains(del)).toBe(true);
-  // A viewport breakpoint: the footer is not inside the body's @container, so a container query never matched.
-  expect(footer.firstElementChild).toHaveClass("sm:mr-auto");
+  const aside = footer.querySelector(".sm\\:mr-auto");
+  expect(aside?.contains(del)).toBe(true);
+  // The outcome line leads the footer; the aside follows it on the left.
+  expect(footer.firstElementChild).toHaveClass("form-outcome");
 });
 
 test("phones: the footer stacks Save changes first and Close last, Delete between", async () => {

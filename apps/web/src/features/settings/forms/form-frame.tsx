@@ -1,8 +1,16 @@
-import { type FormEvent, type ReactNode, useEffect, useRef } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+} from "react";
+import { FormOutcome, type Outcome } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
 import { SheetBody, SheetFooter } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
-import { InlineForm, smallClass } from "@/features/settings/shared";
+import { InlineForm } from "@/features/settings/shared";
 import { isMobileNow } from "@/hooks/use-mobile";
 
 export type FormFrameKind = "inline" | "sheet";
@@ -20,10 +28,11 @@ export function FormFrame({
   submitLabel,
   pendingLabel,
   pending,
-  formError,
+  outcome,
   autoFocusId,
   reveal,
   left,
+  ref,
   children,
 }: {
   frame: FormFrameKind;
@@ -33,7 +42,8 @@ export function FormFrame({
   submitLabel: string;
   pendingLabel: string;
   pending: boolean;
-  formError?: string;
+  outcome: Outcome;
+  ref?: Ref<HTMLFormElement>;
   autoFocusId?: string;
   reveal?: boolean;
   /** Sheet frame only: a quiet note at the footer's left ("Draft restored · Discard"). */
@@ -44,6 +54,7 @@ export function FormFrame({
   // keyboard doesn't rise mid-slide; desktop the field a prefilled form names, else its first field.
   // (`reveal` only scrolls an inline form into view, which a sheet doesn't need.)
   const form = useRef<HTMLFormElement>(null);
+  useImperativeHandle(ref, () => form.current as HTMLFormElement);
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
   useEffect(() => {
     if (frame !== "sheet") return;
@@ -70,7 +81,8 @@ export function FormFrame({
         submitLabel={submitLabel}
         pendingLabel={pendingLabel}
         pending={pending}
-        formError={formError}
+        outcome={outcome}
+        ref={ref}
         autoFocusId={autoFocusId}
         reveal={reveal}
       >
@@ -89,22 +101,19 @@ export function FormFrame({
       }}
       className="flex min-h-0 flex-1 flex-col"
     >
-      <SheetBody className="grid content-start gap-4">
-        {children}
-        <div role="alert" className={`${smallClass} text-destructive empty:hidden`}>
-          {formError}
-        </div>
-        <span role="status" className="sr-only">
-          {pending ? pendingLabel : ""}
-        </span>
-      </SheetBody>
-      <SheetFooter>
+      <SheetBody className="grid content-start gap-4">{children}</SheetBody>
+      <SheetFooter className="pt-2">
+        <FormOutcome
+          outcome={outcome}
+          pending={pending ? pendingLabel : undefined}
+          className="basis-full -mb-1"
+        />
         {left && (
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] text-muted-foreground mr-auto">
             {left}
           </div>
         )}
-        <Button type="button" variant="ghost" onClick={onCancel}>
+        <Button type="button" variant="ghost" data-skip-validate onClick={onCancel}>
           Close
         </Button>
         <Button type="submit" aria-disabled={pending || undefined}>

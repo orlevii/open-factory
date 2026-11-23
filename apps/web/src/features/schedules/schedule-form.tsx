@@ -10,6 +10,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { FieldShell } from "@/components/field-shell";
+import { NO_OUTCOME } from "@/components/forms/form-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
@@ -400,6 +401,7 @@ export function ScheduleForm({
         {fields}
       </SheetBody>
       <SheetFormFooter
+        outcome={NO_OUTCOME}
         submitLabel={create ? "Create schedule" : "Save changes"}
         pendingLabel={create ? "Creating…" : "Saving…"}
         pending={pending}

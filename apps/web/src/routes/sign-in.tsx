@@ -3,9 +3,11 @@ import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-ro
 import { useState } from "react";
 import { flushSync } from "react-dom";
 import { z } from "zod";
-import { AuthCard, focusFirstInvalid } from "@/components/auth-card";
+import { AuthCard } from "@/components/auth-card";
 import { mapAuthError, mapAuthFailure } from "@/components/auth-error";
 import { FormField } from "@/components/form-field";
+import { focusField } from "@/components/forms/focus-field";
+import { useOutcome } from "@/components/forms/form-outcome";
 import { signUpStateQueryOptions } from "@/features/auth/api";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
@@ -32,7 +34,7 @@ function SignIn() {
   const bootstrap = useQuery(signUpStateQueryOptions()).data?.bootstrap === true;
   const [values, setValues] = useState({ email: "", password: "" });
   const [errors, setErrors] = useState<Errors>({});
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [submitting, setSubmitting] = useState(false);
 
   // Editing a field clears its error; there is no live re-validation while typing.
@@ -43,11 +45,11 @@ function SignIn() {
 
   const showFieldErrors = (form: HTMLFormElement, next: Errors) => {
     flushSync(() => setErrors(next));
-    focusFirstInvalid(form);
+    focusField(form);
   };
 
   async function submit(form: HTMLFormElement) {
-    setFormError(undefined);
+    o.clear();
     const parsed = signInSchema.safeParse(values);
     if (!parsed.success) {
       const next: Errors = {};
@@ -66,13 +68,13 @@ function SignIn() {
         const m = mapAuthFailure(failure);
         if (m.field === "email" || m.field === "password")
           showFieldErrors(form, { [m.field]: m.message });
-        else setFormError(m.message);
+        else o.fail(m.message);
         return;
       }
       await refreshSession(qc);
       await navigate({ to: "/inbox" });
     } catch {
-      setFormError(mapAuthError(undefined, "").message);
+      o.fail(mapAuthError(undefined, "").message);
     } finally {
       setSubmitting(false);
     }
@@ -84,7 +86,7 @@ function SignIn() {
       submitLabel="Sign in"
       pendingLabel="Signing in…"
       submitting={submitting}
-      formError={formError}
+      outcome={o.outcome}
       onSubmit={(form) => void submit(form)}
       footer={
         bootstrap ? (

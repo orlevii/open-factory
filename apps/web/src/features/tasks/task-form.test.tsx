@@ -198,9 +198,8 @@ test("a server field error lands under its field; another failure is one alert l
     "true",
   );
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Couldn't create the task. Try again.",
-  );
+  // The body still has its own alert until the task form moves to the outcome line, so find by text.
+  expect(await screen.findByText("Couldn't create the task. Try again.")).toBeInTheDocument();
 });
 
 test("Close dismisses the sheet without a dialog and keeps the draft", async () => {

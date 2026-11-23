@@ -459,9 +459,6 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
           </MoreOptions>
         </fieldset>
         <InlineOutcome tone={outcome?.tone}>{outcome?.content}</InlineOutcome>
-        <span role="status" className="sr-only">
-          {busy && !slow ? "Creating the agent…" : ""}
-        </span>
       </SheetBody>
       <SheetFormFooter
         submitLabel="Create agent"
@@ -470,7 +467,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
         restored={s.restored}
         onDiscard={s.discard}
         submitClassName="min-w-32"
-        note={slow ? <span role="status">Installing plugins…</span> : undefined}
+        outcome={{ outcomeKey: 0, notice: slow ? "Installing plugins…" : undefined }}
       />
     </form>
   );

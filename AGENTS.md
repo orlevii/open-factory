@@ -18,6 +18,22 @@ Open Factory is pre-release (roadmap v0.0.x; see `docs/product/decisions/0028-pr
 - No data migration: a schema change ships as the generated schema migration only, without backfilling or converting existing rows. Resetting local data is fine.
 - Prefer clean, maintainable code over branchy code. If keeping old data or callers working would add a branch, break them instead.
 
+## Testing standards
+
+A test earns its place by failing when a behaviour a user, caller or operator relies on breaks. Before adding a test, name the regression it would catch; if you can't, don't add it.
+
+- **Test observable behaviour.** Assert what a caller sees: HTTP status and body, rows written, events and messages published, files on disk, text and state on screen, focus, what the agent process was sent. Not how the code gets there.
+- **Cover the failure cases.** Validation errors, refused permissions, missing or ended targets, server errors, timeouts and races sit next to the happy path. Security boundaries (auth, permission checks, secret redaction) always have a test that tries to cross them.
+- **No existence-only tests.** Don't assert that a file, export, key, column, enum value, constant or element merely exists, and don't compare a constant to its own literal. The type checker and the behavioural tests already catch those. Test the rule the value encodes (a schema test feeds bad input and expects a refusal).
+- **No implementation details.** Don't assert call counts of internal helpers, private method calls, CSS class names, DOM structure or incidental copy. A class or attribute is fair only when it is the sole observable signal of a user-visible state (selected, disabled, pending), and the test says so.
+- **Every test can fail.** No assertion-free tests, no `expect(true)`, no assertions on values or mocks the test set up itself, no `toContain("")`. When you write or strengthen a test, break the behaviour once (or reason it through) and see it fail for the right reason.
+- **Mock only boundaries.** Fake the network, Docker, the Claude process (fake Claude) and the clock; keep the real path in between. Server tests run against a real Postgres. An over-mocked test that never runs the real code protects nothing.
+- **One behaviour per test, named for it.** The name says the behaviour and the outcome ("a terminated agent's input is refused with 409"), and the body checks everything the name promises. Use `test.each` for the same behaviour over several inputs instead of near-copies.
+- **One home per behaviour.** Test a rule once, at the cheapest level that can fail for the right reason: a pure function in a unit test, an HTTP contract in a route test, a flow across screens in an app-level test. Higher levels check the wiring, not every case again.
+- **A bug fix ships with its regression test**, one that fails without the fix. Name it for the behaviour, not the ticket.
+- **Keep tests fast and independent.** No real sleeps: use fake timers or wait for the condition. Share expensive fixtures (databases, apps) per file, but never depend on another test's state or order.
+- **No tombstones.** Pre-release, a deleted route, component or field needs no test that it stays deleted.
+
 ## Git worktrees
 
 Create git worktrees under `.worktrees/` at the repo root (for example `git worktree add .worktrees/<branch> -b <branch>`). The directory is gitignored.

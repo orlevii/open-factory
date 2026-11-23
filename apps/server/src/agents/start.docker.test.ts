@@ -23,11 +23,13 @@ import {
   dockerTransport,
 } from "../runtime/docker/exec-transport.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
+import { TemplateIndex } from "../templates/template-index.ts";
 import { claimTestHandle, claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
+import { ConfigResolver } from "./config-resolver.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
@@ -96,6 +98,7 @@ afterEach(async () => {
 async function setup(scenario: string | FakeScenario = "reply", image?: string): Promise<World> {
   seq += 1;
   await t.sql`delete from agents`;
+  await t.sql`delete from templates`;
   await t.sql`delete from credentials`;
   const home = realpathSync(mkdtempSync(path.join(tmpdir(), "of-dstart-")));
   const hs = realpathSync(mkdtempSync(path.join(tmpdir(), "hs-")));
@@ -113,6 +116,17 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
   const tdir = path.join(home, "templates/dock");
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Dock\n");
+  writeFileSync(
+    path.join(tdir, "template.yaml"),
+    JSON.stringify({
+      name: "dock",
+      display_name: "Dock",
+      runtime: "docker",
+      ...(image ? { image } : {}),
+      skills: [],
+      plugins: [],
+    }),
+  );
   await t.db.insert(schema.credentials).values({
     id: "c1",
     name: "work",
@@ -127,7 +141,7 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
       slug,
       displayName: "Dock",
       template: "dock",
-      config,
+      config: {},
       runtime: "docker",
       credentialId: "c1",
     })
@@ -183,6 +197,9 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     config: factoryConfig,
     vault,
     workspace,
+    resolver: new ConfigResolver({
+      templates: new TemplateIndex({ db: t.db, config: factoryConfig }),
+    }),
     lock,
     containers,
     neighborhood: new Neighborhood(t.db),

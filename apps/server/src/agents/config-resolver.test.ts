@@ -83,6 +83,15 @@ describe("ConfigResolver.effective", () => {
     expect(err.fix).toBeUndefined();
   });
 
+  test("a template name that isn't found reads as missing", async () => {
+    const r = resolverWith(async () => {
+      throw new ApiError(404, "template_not_found", "Template dev not found.");
+    });
+    const err = await r.effective(agent()).catch((e) => e);
+    expect(err.message).toBe("Template dev no longer exists.");
+    expect(err.fix).toBeUndefined();
+  });
+
   test("an invalid template fixes in Templates", async () => {
     const r = resolverWith(async () => {
       throw new ApiError(409, "template_invalid", "Template dev has errors.", { issues: [] });

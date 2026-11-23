@@ -131,11 +131,6 @@ export async function stageTargets(
   }
 }
 
-/** The staged files as targets (`from` inside `pendingDir`), or none when nothing is pending. */
-export async function pendingTargets(pendingDir: string): Promise<{ from: string; to: string }[]> {
-  return (await walk(pendingDir)).map((r) => ({ from: path.join(pendingDir, r), to: r }));
-}
-
 /** Copies the workdir files an incoming template would change into `<backupRoot>/<stamp>/`.
  *  A symlink is backed up as a symlink, never its target's bytes. Returns that absolute dir, or
  *  undefined when nothing differed. */

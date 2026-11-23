@@ -794,3 +794,44 @@ test("spawning is computed from the effective config being prepared, not from st
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
   expect(md(agent.slug)).toContain("## Spawning");
 });
+
+test("a spawner that dropped a secret and a deny rule since it started: the child still gets neither secret, and keeps the deny rule", async () => {
+  const child = await seedChild();
+  loaded.set(agent.id, await resolver.effective(agent)); // started with GH_TOKEN and Bash(rm:*)
+  writeYaml("lead", { name: "lead", display_name: "Lead", runtime: "local", secrets: [] });
+  writeFileSync(leadTemplateSettings(), JSON.stringify({}));
+  const spec = await prepareStart(child, { agentToken: "tok" });
+  expect(spec.env.GH_TOKEN).toBeUndefined();
+  expect(spec.env.NPM_TOKEN).toBeUndefined();
+  expect(settingsOf(child.slug).permissions.deny).toContain("Bash(rm:*)");
+});
+
+test("the stricter permission mode of started and current counts: a spawner that was auto at start still refuses a bypass child", async () => {
+  const child = await seedChild({ permission_mode: "bypass" });
+  loaded.set(agent.id, await resolver.effective(agent)); // started in auto
+  writeYaml("lead", {
+    name: "lead",
+    display_name: "Lead",
+    runtime: "local",
+    permission_mode: "bypass",
+    secrets: ["GH_TOKEN"],
+  });
+  await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
+    message:
+      "Template dev runs without permission checks, which you don't have, so you can't spawn it.",
+  });
+  loaded.clear(); // not loaded: its current bypass mode alone counts
+  await expect(prepareStart(child, { agentToken: "tok" })).resolves.toBeDefined();
+});
+
+test("a spawner whose template is invalid fails the child's start generically, with no fix and no cause", async () => {
+  const child = await seedChild();
+  writeTemplateFile("lead", "template.yaml", "name: [");
+  const err = await prepareStart(child, { agentToken: "tok" }).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(AgentStartError);
+  expect(err).toMatchObject({
+    message: `The configuration of @${agent.slug}, which spawned @${child.slug}, can't be read, so @${child.slug} can't start.`,
+    fix: undefined,
+  });
+  expect((err as Error).message).not.toContain("Template lead");
+});

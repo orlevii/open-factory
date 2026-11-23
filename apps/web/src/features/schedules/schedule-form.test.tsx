@@ -109,7 +109,10 @@ test("the zone select is grouped by region, always holds UTC and the current val
   expect(g.map((x) => x.region)).toEqual(["America", "Europe", "Other"]);
   expect(g.find((x) => x.region === "Other")?.zones).toEqual(["Mars/Base", "UTC"]);
   await openNew();
-  expect(screen.getByRole("combobox", { name: /^Time zone, / })).toBeInTheDocument();
+  const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  expect(screen.getByRole("combobox", { name: /^Time zone, / })).toHaveAccessibleName(
+    `Time zone, ${detected}`,
+  );
 });
 
 test("the preview updates on blur and zone change, not per keystroke, with 'your time' when zones differ", async () => {

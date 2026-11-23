@@ -212,7 +212,7 @@ test("a failed Pause says so with Retry; a restore refused because the target en
   ).toBeInTheDocument();
 });
 
-test("filters live in the URL; empty states, the cap line and the load error", async () => {
+test("filters live in the URL; empty states, and the cap line", async () => {
   const api = mockApi({ "GET /api/agents?": agents, "GET /api/schedules?": () => list([]) });
   const u = userEvent.setup();
   const { router } = renderApp("/schedules", alice);
@@ -229,7 +229,19 @@ test("filters live in the URL; empty states, the cap line and the load error", a
   api.on("GET /api/schedules?", () => list([sched(1)], true));
   act(() => ws.push({ type: "schedules_changed" }));
   expect(await screen.findByText("Showing the first 500 schedules.")).toBeInTheDocument();
-  api.on("GET /api/schedules?", () => json({ error: { code: "x", message: "x" } }, 500));
+});
+
+test("a failed first load shows the load error with Retry, and Retry loads the list", async () => {
+  const api = mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/schedules?": () => json({ error: { code: "x", message: "x" } }, 500),
+  });
+  renderApp("/schedules", alice);
+  expect(await screen.findByText("Couldn't load schedules.")).toBeInTheDocument();
+  api.on("GET /api/schedules?", () => list([sched(1)]));
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(screen.queryByText("Couldn't load schedules.")).toBeNull());
+  expect(screen.queryByText("No schedules yet.")).toBeNull();
 });
 
 test("Show done: on touch the label around the box is the 40px hit area, and a tap on its text toggles", async () => {

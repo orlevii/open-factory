@@ -57,31 +57,8 @@ test("an error hides the notice and is announced", () => {
   expect(document.querySelector(".form-outcome-notice")).not.toHaveAttribute("data-shown");
 });
 
-test("Discard skips the leaving field's validation", () => {
-  render(
-    <Sheet open onOpenChange={() => {}}>
-      <SheetContent>
-        <SheetHeader>
-          <SheetTitle>T</SheetTitle>
-        </SheetHeader>
-        <form>
-          <SheetFormFooter
-            submitLabel="Save"
-            pendingLabel="Saving…"
-            pending={false}
-            restored
-            onDiscard={() => {}}
-            outcome={{ outcomeKey: 0 }}
-          />
-        </form>
-      </SheetContent>
-    </Sheet>,
-  );
-  expect(screen.getByRole("button", { name: "Discard" })).toHaveAttribute("data-skip-validate");
-});
-
 /** A one-field sheet form: Title is required once changed. */
-function TitleSheet() {
+function TitleSheet({ restored = false }: { restored?: boolean }) {
   const form = useRef<HTMLFormElement>(null);
   const [title, setTitle] = useState("x");
   const f = useFieldErrors<"title">({
@@ -111,7 +88,7 @@ function TitleSheet() {
             submitLabel="Save"
             pendingLabel="Saving…"
             pending={false}
-            restored={false}
+            restored={restored}
             onDiscard={() => {}}
             outcome={{ outcomeKey: 0 }}
           />
@@ -121,25 +98,18 @@ function TitleSheet() {
   );
 }
 
-// The header's X comes first in the DOM, the footer's Close last.
+// The header's X comes first in the DOM, the footer's Close last; Discard shows on a restored draft.
 test.each([
-  ["the header's X", 0],
-  ["the footer's Close", 1],
-])("pressing %s doesn't count as leaving a changed field", async (_, index) => {
-  render(<TitleSheet />);
+  ["the header's X", () => screen.getAllByRole("button", { name: "Close" })[0]],
+  ["the footer's Close", () => screen.getAllByRole("button", { name: "Close" })[1]],
+  ["Discard", () => screen.getByRole("button", { name: "Discard" })],
+])("pressing %s doesn't count as leaving a changed field", async (_, button) => {
+  render(<TitleSheet restored />);
   const title = screen.getByLabelText("Title");
   await userEvent.clear(title);
   expect(title).toHaveFocus();
-  const closes = screen.getAllByRole("button", { name: "Close" });
-  expect(closes).toHaveLength(2);
-  await userEvent.click(closes[index] as HTMLElement);
+  expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(2);
+  await userEvent.click(button() as HTMLElement);
   expect(title).not.toHaveAttribute("aria-invalid");
   expect(screen.queryByText("Enter a title.")).toBeNull();
-});
-
-test("the footer's Close and the header's X both carry data-skip-validate", () => {
-  renderFooter({ outcomeKey: 0 });
-  const closes = screen.getAllByRole("button", { name: "Close" });
-  expect(closes).toHaveLength(2);
-  for (const c of closes) expect(c).toHaveAttribute("data-skip-validate");
 });

@@ -1,13 +1,6 @@
 import { expect, test } from "vitest";
 import { formatTokens } from "@/features/session/format";
-import {
-  formatCost,
-  formatCostEst,
-  formatDayShort,
-  niceMax,
-  parseDay,
-  RATE_LIMIT_WINDOW,
-} from "./format";
+import { formatCost, formatCostEst, formatDayShort, niceMax, parseDay } from "./format";
 
 test("formatCost", () => {
   expect(formatCost(0.004, 1)).toBe("<$0.01");
@@ -57,8 +50,4 @@ test("niceMax rounds up to 1/2/5 x 10^n", () => {
   expect(niceMax(5)).toBe(5);
   expect(niceMax(0.07)).toBe(0.1);
   expect(niceMax(0)).toBe(1);
-});
-
-test("rate limit windows", () => {
-  expect(RATE_LIMIT_WINDOW).toEqual({ five_hour: "5-hour", seven_day: "7-day" });
 });

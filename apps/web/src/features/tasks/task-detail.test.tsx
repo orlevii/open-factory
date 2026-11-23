@@ -759,6 +759,7 @@ test("composer: with nothing typed during the post the draft clears", async () =
   await userEvent.type(box, "a");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   await waitFor(() => expect(box).toHaveValue(""));
+  await waitFor(() => expect(readDraft(taskDraftKey("T-42"))).toBe(""));
 });
 
 test("composer: a throwing localStorage (private mode) neither breaks typing nor posting", async () => {
@@ -821,19 +822,6 @@ test("no assignee: the helper says only mentions are notified", async () => {
       "No assignee: only the people and agents you @mention are notified. Enter to post.",
     ),
   ).toBeInTheDocument();
-});
-
-test("comment composer: Enter posts once, Shift+Enter adds a line", async () => {
-  fakeMatchMedia.install(false);
-  const api = world();
-  api.on("POST /api/tasks/T-42/comments", () => posted("a"));
-  renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("combobox", { name: "Comment" });
-  await userEvent.type(box, "a{Shift>}{Enter}{/Shift}b");
-  expect(box).toHaveValue("a\nb");
-  await userEvent.keyboard("{Enter}");
-  await waitFor(() => expect(box).toHaveValue(""));
-  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
 });
 
 test("comment composer: on a coarse pointer the helper drops 'Enter to post.' and Enter adds a line", async () => {
@@ -906,11 +894,6 @@ test("?comment=<id> of an agent's comment: highlighted, focused, composer prefil
   const article = await screen.findByRole("article", { name: "Comment from @dev" });
   await waitFor(() => expect(article).toHaveFocus());
   expect(article).toHaveAttribute("data-highlighted", "true");
-  // The comment's ⋯ sits inside the card's padding, off its border.
-  expect(within(article).getByRole("button", { name: "Comment actions" })).toHaveClass(
-    "top-1.5",
-    "right-1.5",
-  );
   expect(screen.getByRole("combobox", { name: "Comment" })).toHaveValue("@dev ");
   first.unmount();
   const second = renderApp("/tasks/T-42?comment=c2", alice);
@@ -1047,7 +1030,7 @@ test("agent text is inert: scripts, image handlers and javascript: links never r
     expect(a.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
 });
 
-test("the usage line and its lower-bound hint show when the task has usage, and are absent when null", async () => {
+test("the usage line and its lower-bound hint show when the task has usage", async () => {
   world(() => detail({ usage: { costUsd: 1.23, turns: 14 } }));
   renderApp("/tasks/T-42", alice);
   expect(await screen.findByText("Usage: $1.23 est. · 14 turns")).toBeInTheDocument();

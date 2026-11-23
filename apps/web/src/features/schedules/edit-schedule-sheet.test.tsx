@@ -670,7 +670,7 @@ test("a late Delete failure toasts the error with Open form", async () => {
   expect(n?.action?.label).toBe("Open form");
 });
 
-test("a double click on Delete sends one DELETE, and Delete waits while a Save is pending", async () => {
+test("a double click on Delete sends one DELETE", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
   const api = mockApi({

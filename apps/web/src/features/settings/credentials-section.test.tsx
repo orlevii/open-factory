@@ -313,12 +313,6 @@ test("a sign-in attempt change does not re-render the Settings section (select n
   });
   await settle();
   expect(renders).toBe(before);
-  // An attempt appearing after load never opens the form (§8.1: on load).
-  await act(async () => {
-    qc.setQueryData(signInQueryOptions.queryKey, { available: true, attempt: attempt() });
-  });
-  await settle();
-  expect(screen.queryByRole("form", { name: "Add credential" })).toBeNull();
 });
 
 test("a create attempt appearing after load does not open the inline form", async () => {

@@ -216,12 +216,16 @@ test("a row shows the preview as plain text, the context on its own line and an 
   expect(row.getByText("see the PR now").className).toContain("truncate");
 });
 
-test("a message row's context line names the recipient; the sender is an agent chip", async () => {
-  mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [item(1)], nextCursor: null }) });
+test("a message row's context line names the recipient unless it is the viewer; the sender is an agent chip", async () => {
+  mockApi({
+    "GET /api/inbox?": () =>
+      json({ chats: [], items: [item(1), item(2, { to: "@alice" })], nextCursor: null }),
+  });
   renderApp("/inbox", alice);
-  const link = await screen.findByRole("link", { name: /From @dev/ });
-  expect(within(link).getByText("→ @bob")).toBeInTheDocument();
-  expect(link.querySelector("[data-agent-avatar]")).not.toBeNull();
+  const [link, mine] = await screen.findAllByRole("link", { name: /From @dev/ });
+  expect(within(link as HTMLElement).getByText("→ @bob")).toBeInTheDocument();
+  expect(within(mine as HTMLElement).queryByText("→ @alice")).toBeNull();
+  expect((link as HTMLElement).querySelector("[data-agent-avatar]")).not.toBeNull();
 });
 
 test("unread rows have an ink dot, medium weight and an 'Unread, ' name; read rows are muted and have none", async () => {

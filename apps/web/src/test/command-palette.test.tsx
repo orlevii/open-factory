@@ -250,6 +250,11 @@ test("Go to includes Usage and each Settings page; Images links /templates/image
     .map((o) => o.textContent);
   expect(names).toEqual(
     expect.arrayContaining([
+      "Inbox",
+      "Agents",
+      "Tasks",
+      "Templates",
+      "Schedules",
       "Usage",
       "Settings: Credentials",
       "Settings: Secrets",
@@ -258,6 +263,7 @@ test("Go to includes Usage and each Settings page; Images links /templates/image
       "Settings: Factory",
     ]),
   );
+  expect(new Set(names).size).toBe(names.length);
   await userEvent.click(within(goTo).getByRole("option", { name: "Images" }));
   await waitFor(() => expect(router.state.location.pathname).toBe("/templates/images"));
   expect(router.state.location.hash).toBe("");

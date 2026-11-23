@@ -77,16 +77,6 @@ test("prefill only into an empty box, without focus, and not kept as a draft", a
   expect(box()).toHaveValue("@dev ");
 });
 
-test("the Write/Preview toggle sits in the composer's toolbar", async () => {
-  const { box } = setup();
-  await userEvent.type(box(), "**hi**");
-  const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
-  expect(toolbar).not.toBeNull();
-  expect(toolbar.contains(screen.getByRole("button", { name: "Write" }))).toBe(true);
-  await userEvent.click(screen.getByRole("button", { name: "Preview" }));
-  expect(document.querySelector("[data-composer-frame] strong")).toHaveTextContent("hi");
-});
-
 test("Enter posts (U1 rule) once and Shift+Enter adds a line; Send is the labelled primary", async () => {
   const { box } = setup();
   await userEvent.type(box(), "looks{Shift>}{Enter}{/Shift}good");

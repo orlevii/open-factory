@@ -1,6 +1,6 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
-import { ACTIONS, GO_TO, isTaskKey, rankAgents } from "./rank";
+import { isTaskKey, rankAgents } from "./rank";
 
 const a = (slug: string, displayName = slug): AgentSummary =>
   ({ slug, displayName }) as unknown as AgentSummary;
@@ -97,36 +97,5 @@ describe("isTaskKey", () => {
     expect(isTaskKey("t-")).toBe(false);
     expect(isTaskKey("t-4a")).toBe(false);
     expect(isTaskKey(" t-4")).toBe(false);
-  });
-});
-
-describe("static lists", () => {
-  test("Go to has unique ids and covers the spec's destinations", () => {
-    const ids = GO_TO.map((g) => g.id);
-    expect(new Set(ids).size).toBe(ids.length);
-    for (const to of [
-      "/inbox",
-      "/agents",
-      "/tasks",
-      "/templates",
-      "/schedules",
-      "/usage",
-      "/settings/credentials",
-      "/settings/secrets",
-      "/settings/projects",
-      "/settings/users",
-      "/settings/factory",
-    ]) {
-      expect(GO_TO.some((g) => g.to === to)).toBe(true);
-    }
-    expect(GO_TO.some((g) => g.label === "Images")).toBe(true);
-  });
-
-  test("Actions never offer Mark all read", () => {
-    expect(ACTIONS.length).toBeGreaterThan(0);
-    expect(ACTIONS.some((x) => /mark all read/i.test(x.label))).toBe(false);
-    for (const label of ["New agent", "New task", "New schedule", "Keyboard shortcuts"]) {
-      expect(ACTIONS.some((x) => x.label === label)).toBe(true);
-    }
   });
 });

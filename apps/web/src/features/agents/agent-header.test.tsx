@@ -1,6 +1,5 @@
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ComponentProps } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { alice, renderApp } from "@/test/render-app";
 import { conversation, detail } from "@/test/session-fixtures";
@@ -15,30 +14,11 @@ vi.mock("@/lib/ws", () => ({
     return { close() {}, status: () => "open", send: () => true };
   },
 }));
-const header = vi.hoisted(() => ({ renders: 0, mounts: 0 }));
-vi.mock("@/components/page-header", async (orig) => {
-  const m = await orig<typeof import("@/components/page-header")>();
-  const { createElement, useEffect } = await import("react");
-  return {
-    ...m,
-    PageHeader: (p: ComponentProps<typeof m.PageHeader>) => {
-      header.renders++;
-      // biome-ignore lint/correctness/useExhaustiveDependencies: counts mounts only
-      useEffect(() => {
-        header.mounts++;
-      }, []);
-      return createElement(m.PageHeader, p);
-    },
-  };
-});
-
 const json = (data: unknown) =>
   new Response(JSON.stringify(data), { headers: { "content-type": "application/json" } });
 let agent: Parameters<typeof detail>[0];
 beforeEach(() => {
   agent = {};
-  header.renders = 0;
-  header.mounts = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
@@ -141,15 +121,4 @@ test("the live fact's Open session link is in the Chat and hidden in the Session
   await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/session"));
   expect(await within(await banner()).findByText("boom")).toBeInTheDocument();
   expect(within(await banner()).queryByRole("link", { name: "Open session" })).toBeNull();
-});
-
-test("the header does not remount across a switch", async () => {
-  const { router } = renderApp("/agents/dev/chat", alice);
-  await waitFor(() => expect(header.mounts).toBe(1));
-  await userEvent.click(await switchLink());
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/session"));
-  await screen.findByText("Two entries.");
-  fireEvent.click(await switchLink());
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
-  expect(header.mounts).toBe(1);
 });

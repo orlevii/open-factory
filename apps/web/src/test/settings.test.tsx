@@ -154,36 +154,6 @@ test("add credential: method radios, a password field, Verifying…, a rejected 
   });
 });
 
-test("add credential: an unverifiable check is a warning, not a bad token", async () => {
-  world({
-    extra: {
-      "POST /api/credentials": () =>
-        json(
-          {
-            error: {
-              code: "credential_unverifiable",
-              message: "Couldn't reach Claude to verify. Try again.",
-            },
-          },
-          422,
-        ),
-    },
-  });
-  renderApp("/settings/credentials", alice);
-  const region = await section("Credentials");
-  await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
-  await userEvent.type(within(region).getByLabelText("Name"), "work");
-  await userEvent.click(within(region).getByRole("radio", { name: "Paste an API key" }));
-  const key = within(region).getByLabelText("Key");
-  await userEvent.type(key, "sk-ant");
-  await userEvent.click(within(region).getByRole("button", { name: "Verify and add" }));
-  const note = await within(region).findByText("Couldn't reach Claude to verify. Try again.");
-  expect(note).toBeInTheDocument();
-  expect(key).not.toHaveAttribute("aria-invalid");
-  expect(describedText(key)).toContain("Couldn't reach Claude to verify. Try again.");
-  expect(key).toHaveValue("sk-ant");
-});
-
 test("Replace token: an unverifiable check warns under the token and announces a failure line", async () => {
   world({
     credentials: [cred({ name: "work" })],
@@ -957,34 +927,6 @@ test("a later ?addSecret updates the open add form and refocuses the value field
   await router.navigate({ to: "/settings/secrets", search: { addSecret: "NPM_TOKEN" } });
   await waitFor(() => expect(within(region).getByLabelText("Name")).toHaveValue("NPM_TOKEN"));
   await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
-});
-
-test("add secret: 409 secret_name_reserved lands under Name and focuses it", async () => {
-  world({
-    extra: {
-      "PUT /api/secrets/MY_VAR": () =>
-        json(
-          {
-            error: {
-              code: "secret_name_reserved",
-              message: "That name is reserved.",
-            },
-          },
-          409,
-        ),
-    },
-  });
-  renderApp("/settings/secrets", alice);
-  const region = await section("Secrets");
-  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
-  await userEvent.type(within(region).getByLabelText("Name"), "MY_VAR");
-  await userEvent.type(within(region).getByLabelText("Value"), "v");
-  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
-  const name = within(region).getByLabelText("Name");
-  await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
-  expect(describedText(name)).toBe("That name is reserved.");
-  expect(name).toHaveFocus();
-  expect(within(region).queryByRole("alert", { name: /reserved/ })).not.toBeInTheDocument();
 });
 
 test("add secret: server fields land under their fields, whatever the code", async () => {

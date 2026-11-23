@@ -259,15 +259,6 @@ test("a j/k sweep loads the pane's body only for the item it rests on", async ()
   expect(bodyGets("/api/tasks/T-7")).toBeGreaterThan(0);
 });
 
-test("a message row's context line hides the recipient when it is the viewer", async () => {
-  api.on("GET /api/inbox?", () =>
-    json({ chats: [], items: [item(1, { to: "@alice" }), item(2)], nextCursor: null }),
-  );
-  await visit(1280);
-  expect(within(row("i2") as HTMLElement).getByText("→ @bob")).toBeInTheDocument();
-  expect(within(row("i1") as HTMLElement).queryByText("→ @alice")).toBeNull();
-});
-
 test("a dwell is cancelled by a click elsewhere and on unmount; a pending prefetch too", async () => {
   const app = await visit(1280, "/inbox?item=i1");
   (row("i1") as HTMLElement).focus();

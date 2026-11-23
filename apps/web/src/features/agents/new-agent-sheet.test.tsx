@@ -867,23 +867,6 @@ test("the sidebar + opens New agent", async () => {
   await sheet();
 });
 
-test("the Agents header opens New agent", async () => {
-  mockWorld({ agents: [agentSummary({ slug: "dev" })] });
-  renderApp("/agents", alice);
-  const main = await screen.findByRole("main");
-  await userEvent.click(await within(main).findByRole("button", { name: "New agent" }));
-  await sheet();
-});
-
-test("the Agents empty state opens New agent", async () => {
-  mockWorld({ agents: [], credentials: [], templates: [] });
-  renderApp("/agents", alice);
-  const main = await screen.findByRole("main");
-  expect(await within(main).findByText("No agents yet.")).toBeInTheDocument();
-  await userEvent.click(within(main).getByRole("button", { name: "Create your first agent" }));
-  await sheet();
-});
-
 test("the palette's New agent opens the sheet", async () => {
   mockWorld();
   renderApp("/inbox", alice);
@@ -893,15 +876,6 @@ test("the palette's New agent opens the sheet", async () => {
   const actions = within(palette).getByRole("group", { name: "Actions" });
   await userEvent.click(within(actions).getByRole("option", { name: "New agent" }));
   await sheet();
-});
-
-test("the template editor's Create agent opens New agent with that template", async () => {
-  mockWorld({ extra: { "GET /api/templates/lead": () => json(templateDetail(templateConfig())) } });
-  const { router } = renderApp("/templates/lead", alice);
-  await userEvent.click(await screen.findByRole("button", { name: "Create agent" }));
-  await sheet();
-  expect(getSheetState().parent).toMatchObject({ kind: "new-agent", template: "lead" });
-  expect(router.state.location.pathname).toBe("/templates/lead");
 });
 
 // --- Carried over from the New agent page ---

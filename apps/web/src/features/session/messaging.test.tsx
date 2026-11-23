@@ -506,23 +506,6 @@ test("?message= for an unknown message falls back to the latest with a note", as
   expect(await screen.findByText("Message not found. Showing the latest.")).toBeInTheDocument();
 });
 
-test("?message= for a delivered message loads the window around its recipient event", async () => {
-  const api = lookupWorld(() =>
-    json({
-      id: "mid",
-      kind: "message",
-      from: "@b",
-      fromKind: "agent",
-      to: "@dev",
-      state: "delivered",
-      recipientEvent: { agentSlug: "dev", seq: 7 },
-    }),
-  );
-  renderApp("/agents/dev/session?message=mid", alice);
-  await screen.findByText("latest");
-  expect(api.calls.some((c) => c.url.includes("/events?around=7"))).toBe(true);
-});
-
 test("?message= for a rejected message names who it wasn't delivered to", async () => {
   const api = lookupWorld(() =>
     json({

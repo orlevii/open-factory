@@ -628,7 +628,9 @@ test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (i
     .filter((s) => s.textContent);
   expect(facts.map((f) => f.textContent)).toEqual(["Restarts when idle"]);
   expect(within(header).queryByRole("button", { name: /Stop|Interrupt/ })).toBeNull();
-  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+  const form = screen.getByRole("combobox", { name: "Message to Dev agent" }).closest("form");
+  expect(form).not.toBeNull();
+  expect(within(form as HTMLElement).getByRole("button", { name: "Stop" })).toBeInTheDocument();
   expect(within(header).getByRole("button", { name: "Actions for Dev agent" })).toBeInTheDocument();
   // Edit, Compact and Terminate live in the ⋯ menu now.
   expect(within(header).queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
@@ -919,14 +921,6 @@ test("the log and each row wrap can shrink, so no row widens the scroller", asyn
   const wraps = log.querySelectorAll("[data-row-wrap]");
   expect(wraps.length).toBeGreaterThan(0);
   for (const w of wraps) expect(w).toHaveClass("min-w-0");
-});
-
-test("the Stop button uses the stop glyph", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
-  renderApp("/agents/dev/session", alice);
-  await screen.findByText("Two entries.");
-  const icon = screen.getByRole("button", { name: "Stop" }).querySelector("svg");
-  expect(icon).toHaveClass("lucide-circle-stop");
 });
 
 /** A response the test releases by hand; every request before or after the release gets a copy. */

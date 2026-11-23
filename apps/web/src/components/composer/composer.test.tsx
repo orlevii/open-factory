@@ -107,6 +107,7 @@ test("Send is labelled Send, disabled-shaped while empty, primary at once when t
   await userEvent.clear(box);
   await userEvent.type(box, "   ");
   expect(send).toBeDisabled();
+  expect(screen.queryByRole("checkbox", { name: "Urgent" })).toBeNull();
 });
 
 test("Stop's slot keeps its width with no turn open (an invisible stand-in), so a turn edge never re-wraps", () => {

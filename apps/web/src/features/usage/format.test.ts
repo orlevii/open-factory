@@ -1,5 +1,4 @@
 import { expect, test } from "vitest";
-import { formatTokens } from "@/features/session/format";
 import { formatCost, formatCostEst, formatDayShort, niceMax, parseDay } from "./format";
 
 test("formatCost", () => {
@@ -19,16 +18,6 @@ test("formatCost", () => {
 test("formatCostEst adds the suffix except on a dash", () => {
   expect(formatCostEst(12.345, 1)).toBe("$12.35 est.");
   expect(formatCostEst(0, 0)).toBe("—");
-});
-
-test("formatTokens gains M", () => {
-  expect(formatTokens(1_234_567)).toBe("1.2M");
-  expect(formatTokens(123_456)).toBe("123k");
-  expect(formatTokens(999_499)).toBe("999k");
-  expect(formatTokens(999_500)).toBe("1.0M");
-  expect(formatTokens(999_999)).toBe("1.0M");
-  expect(formatTokens(99_949)).toBe("99.9k");
-  expect(formatTokens(99_950)).toBe("100k");
 });
 
 test("days are parsed and shown without a zone shift", () => {

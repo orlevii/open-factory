@@ -72,23 +72,6 @@ test("a failed session check shows the error state once its retries run out; Ret
   expect(await screen.findByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
 });
 
-test("ResourceNotFound shows a given detail instead of the default line", async () => {
-  const { ResourceNotFound } = await import("@/components/route-states");
-  const { renderInRouter } = await import("./render-in-router");
-  const view = renderInRouter(
-    <ResourceNotFound
-      title="Task not found."
-      detail="No task T-999."
-      backTo="/tasks"
-      backLabel="Back to tasks"
-    />,
-  );
-  expect(await screen.findByText("No task T-999.")).toBeInTheDocument();
-  expect(screen.queryByText("It may have been renamed or deleted.")).toBeNull();
-  expect(screen.getByRole("link", { name: "Back to tasks" })).toHaveAttribute("href", "/tasks");
-  view.unmount();
-});
-
 test("AppPending inside the shell stays in the content area; at the root it covers the page", () => {
   const inShell = render(
     <ShellContext.Provider value={{ connectionLost: false }}>

@@ -70,16 +70,6 @@ test("errored: Restart and Start a new session replace Compact/Stop", async () =
   expect(screen.queryByRole("button", { name: "Start a new session" })).not.toBeInTheDocument();
 });
 
-test("the header has no Stop: it lives in the composer, left of Send (U3 §6.1, §14)", async () => {
-  world({ status: "working", turnOpen: true });
-  await open();
-  const header = screen.getByRole("banner");
-  expect(within(header).queryByRole("button", { name: /Stop|Interrupt/ })).toBeNull();
-  const form = composer().closest("form");
-  expect(form).not.toBeNull();
-  expect(within(form as HTMLElement).getByRole("button", { name: "Stop" })).toBeInTheDocument();
-});
-
 test("a crash offers Restart only", async () => {
   world({ status: "errored", errorKind: "crash" });
   await open();

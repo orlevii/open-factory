@@ -2,7 +2,6 @@ import {
   eventsQuerySchema,
   type ServerMessage,
   type SessionEvent,
-  sendMessagesBodySchema,
   taskCommentBodySchema,
 } from "@open-factory/shared";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -231,20 +230,6 @@ test("a mention by a human leaves the composer empty", async () => {
   const p = pane();
   await waitFor(() => expect(within(p).getByText("comment h1")).toBeInTheDocument());
   expect(within(p).getByRole("combobox", { name: "Comment" })).toHaveValue("");
-});
-
-test("the mention reply is the shared composer: Write/Preview in its toolbar, no attach, a file gets the note", async () => {
-  setup([mention(1, "h1", { kind: "human", name: "bob" })]);
-  await visit("/inbox?item=i1");
-  const p = pane();
-  const box = await within(p).findByRole("combobox", { name: "Comment" });
-  const toolbar = box.closest("[data-composer-frame]")?.querySelector("[data-composer-toolbar]");
-  expect(toolbar?.contains(within(p).getByRole("button", { name: "Preview" }))).toBe(true);
-  expect(within(p).queryByRole("button", { name: /attach/i })).toBeNull();
-  const file = new File(["x"], "shot.png", { type: "image/png" });
-  fireEvent.paste(box, { clipboardData: { files: [file], getData: () => "", types: ["Files"] } });
-  expect(within(p).getByText("Files can be sent in an agent's session")).toBeInTheDocument();
-  expect(box).toHaveValue("");
 });
 
 test("a task event shows the fact and Open task, with no composer", async () => {

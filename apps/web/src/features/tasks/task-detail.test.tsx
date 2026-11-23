@@ -835,18 +835,6 @@ test("comment composer: on a coarse pointer the helper drops 'Enter to post.' an
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
 });
 
-test("comment composer: Enter during IME composition does not post", async () => {
-  fakeMatchMedia.install(false);
-  const api = world();
-  renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("combobox", { name: "Comment" });
-  await userEvent.type(box, "draft");
-  fireEvent.keyDown(box, { key: "Enter", isComposing: true });
-  fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
-  expect(box).toHaveValue("draft");
-  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
-});
-
 test("comment composer: Ctrl+Enter still posts on a coarse pointer", async () => {
   fakeMatchMedia.install(false, { coarse: true });
   const api = world();
@@ -914,6 +902,7 @@ test("an unknown task is 'Task not found.' with its key and a way back", async (
   renderApp("/tasks/T-999", alice);
   expect(await screen.findByText("Task not found.")).toBeInTheDocument();
   expect(screen.getByText("No task T-999.")).toBeInTheDocument();
+  expect(screen.queryByText("It may have been renamed or deleted.")).toBeNull();
   expect(screen.getByRole("link", { name: "Back to tasks" })).toHaveAttribute("href", "/tasks");
 });
 

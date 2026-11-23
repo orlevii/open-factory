@@ -121,6 +121,7 @@ test("secret: uppercases, validates, submits once on Enter, maps a reserved name
   await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
   expect(describedText(name)).toBe("That name is reserved.");
   expect(name).toHaveFocus();
+  expect(within(dialog).queryByRole("alert", { name: /reserved/ })).not.toBeInTheDocument();
   expect(puts).toBe(1);
 });
 
@@ -441,6 +442,7 @@ test("credential: unverifiable is a warning in the token note plus a form line; 
   expect(alert.closest("[role=alert]")).toBeTruthy();
   expect(describedText(token)).toBe("Couldn't reach Claude to check.");
   expect(token).not.toHaveAttribute("aria-invalid");
+  expect(token).toHaveValue("t");
   await userEvent.type(token, "x");
   expect(describedText(token)).toBe(
     "Create one with claude setup-token. You won't be warned before it expires.",

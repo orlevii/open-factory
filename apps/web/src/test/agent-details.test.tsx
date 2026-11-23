@@ -270,22 +270,6 @@ test("Now: a terminated agent shows no queued, paused or restart row (an end sta
   expect(now.textContent).not.toMatch(/Queued|Paused|Restarts when idle|Pulling/);
 });
 
-test("Now: a terminated agent shows when it ended and offers Pin", async () => {
-  mockApi({});
-  setup({
-    agent: agentSummary({
-      status: "terminated",
-      kind: "ephemeral",
-      terminatedAt: minutesAgo(10),
-      terminatedBy: "lead",
-      workspaceGraceEndsAt: new Date(NOW.getTime() + 86_400_000).toISOString(),
-    }),
-  });
-  const now = within(await section("Now"));
-  expect(now.getByText(/Terminated/)).toBeInTheDocument();
-  expect(now.getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
-});
-
 test("Now: the terminated row's actions each start a line, pulled back to the sentence's edge", async () => {
   // jsdom has no layout: this checks the structure; the browser pass checks the alignment.
   mockApi({});

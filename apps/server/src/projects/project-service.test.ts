@@ -2,8 +2,9 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
+import { MSG } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { ProjectService } from "./project-service.ts";
@@ -69,9 +70,25 @@ test("a missing path or a file path is a hostPath field error", async () => {
   await expect(svc.create({ name: "x", hostPath: file })).rejects.toMatchObject({
     message: FIELD_MSG.noFolder,
   });
-  await expect(svc.create({ name: "x", hostPath: "relative/dir" })).rejects.toMatchObject({
-    extra: { fields: { hostPath: FIELD_MSG.absolutePath } },
-  });
+  for (const bad of ["relative/dir", "~other/x"]) {
+    await expect(svc.create({ name: "x", hostPath: bad })).rejects.toMatchObject({
+      extra: { fields: { hostPath: MSG.hostPathStart } },
+    });
+  }
+});
+
+test("~/… is stored as the realpath under HOME; update with ~ to the same folder is a no-op", async () => {
+  const home = dir("home");
+  mkdirSync(path.join(home, "code", "tilde"), { recursive: true });
+  vi.stubEnv("HOME", home);
+  try {
+    const p = await svc.create({ name: "tilde", hostPath: "~/code/tilde" });
+    expect(p.hostPath).toBe(realpathSync(path.join(home, "code/tilde")));
+    const again = await svc.update("tilde", "~/code/tilde");
+    expect(again.hostPath).toBe(p.hostPath);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 test("duplicate name is 409 project_exists; duplicate path is a hostPath field error", async () => {

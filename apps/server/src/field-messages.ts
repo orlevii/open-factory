@@ -1,6 +1,5 @@
 /** Server field messages. Spec §8: at most 40 characters, no interpolated user value, one rule each. */
 export const FIELD_MSG = {
-  absolutePath: "Enter an absolute path.",
   noFolder: "No folder at this path.",
   folderInUse: "Another project uses this folder.",
   chooseCredential: "Choose a credential.",

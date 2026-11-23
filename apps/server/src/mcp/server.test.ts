@@ -12,9 +12,14 @@ beforeAll(async () => {
   t = await createTestDb();
   await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
+  await claimTestHandleSql(t.sql, "ana", "user");
+  await t.sql`insert into users (id,name,email,handle) values ('u2','Ana','ana@x.io','ana')`;
+  await claimTestHandleSql(t.sql, "gone", "user");
+  await t.sql`insert into users (id,name,email,handle,disabled_at) values ('u3','Gone','gone@x.io','gone', now())`;
   await insertAgent(t.sql, { id: "lead", slug: "lead", displayName: "Lead" });
   await insertAgent(t.sql, { id: "dev", slug: "dev", displayName: "Dev", reportsTo: "lead" });
   await insertAgent(t.sql, { id: "ops", slug: "ops", displayName: "Ops" });
+  await insertAgent(t.sql, { id: "side", slug: "side", displayName: "Side", reportsTo: "ops" });
 });
 afterAll(async () => t.close());
 
@@ -47,15 +52,36 @@ test("list_peers reads the caller from authInfo and reports relations and status
     return JSON.parse(json.result.content[0]?.text ?? "null");
   };
   const dev = await call("dev");
-  expect(dev.agents).toEqual([
-    { slug: "lead", displayName: "Lead", description: "", relation: "manager", status: "idle" },
-  ]);
-  expect(dev.humans).toEqual([{ handle: "or", name: "Or" }]);
+  expect(dev).toEqual({
+    peers: [
+      {
+        handle: "@lead",
+        kind: "agent",
+        displayName: "Lead",
+        description: "",
+        relation: "manager",
+        status: "idle",
+      },
+      { handle: "@ana", kind: "human", name: "Ana" },
+      { handle: "@or", kind: "human", name: "Or" },
+    ],
+  });
   const lead = await call("lead", "all");
-  expect(lead.agents.map((a: { slug: string; relation: string }) => [a.slug, a.relation])).toEqual([
-    ["ops", "peer"],
-    ["dev", "report"],
+  expect(
+    lead.peers.map((p: { handle: string; kind: string; relation?: string }) => [
+      p.handle,
+      p.kind,
+      p.relation,
+    ]),
+  ).toEqual([
+    ["@ops", "agent", "peer"],
+    ["@dev", "agent", "report"],
+    ["@side", "agent", "other"],
+    ["@ana", "human", undefined],
+    ["@or", "human", undefined],
   ]);
+  const hood = await call("lead");
+  expect(hood.peers.some((p: { relation?: string }) => p.relation === "other")).toBe(false);
   expect(errors).toEqual([]);
 });
 
@@ -99,9 +125,11 @@ test("an agent id smuggled in the arguments is ignored: list_peers answers for t
       "null",
   );
   // dev's view (its manager), not lead's (its report and peer)
-  expect(out.agents.map((a: { slug: string; relation: string }) => [a.slug, a.relation])).toEqual([
-    ["lead", "manager"],
-  ]);
+  expect(
+    out.peers
+      .filter((p: { kind: string }) => p.kind === "agent")
+      .map((p: { handle: string; relation: string }) => [p.handle, p.relation]),
+  ).toEqual([["@lead", "manager"]]);
 });
 
 test("an unknown caller gets no server: the request fails and no tools are built", async () => {

@@ -62,6 +62,7 @@ export class Neighborhood {
     return this.db
       .select({ handle: schema.users.handle, name: schema.users.name })
       .from(schema.users)
+      .where(isNull(schema.users.disabledAt))
       .orderBy(asc(schema.users.name), asc(schema.users.handle));
   }
 }

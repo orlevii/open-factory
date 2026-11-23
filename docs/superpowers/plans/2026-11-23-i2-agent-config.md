@@ -71,6 +71,8 @@ Commands used throughout:
 | `templates.ts` (modify) | Uses `templateYamlShape` and the new model schema; the agent config API schemas |
 | `agents.ts` (modify) | `AgentSummary`: `color`, `restartChanges`, no `grantsOverridden`; `PatchAgentBody`: `color`, no `projects: null`; resync schema deleted; reset-persona response |
 | `events.ts` (modify) | `config_changed` event; fix codes `template` and `config` |
+| `ws.ts` (modify) | Global WS frame `{ type: "config_changed", agent?: string, template?: string }` (A11) |
+| `sha256.ts` (new) | Pure JS sha256 (no `node:*`) |
 
 **DB (`packages/db/src/schema/`)**
 
@@ -99,6 +101,7 @@ Commands used throughout:
 | `secrets/secret-service.ts` | `usedBy` reads effective secrets |
 | `spawning/spawn-service.ts`, `may-spawn.ts`, `app.ts` | Read `started` / effective |
 | `routes/agents.ts`, `routes/templates.ts`, `routes/host-skills.ts` (new, Part C) | API |
+| `ws/route.ts` and the server WS bus | Publish `config_changed` from `ConfigChanges` (A11) and from the template config write (C1); the session replay `resync` frame stays |
 
 **Web (`apps/web/src/`)**
 
@@ -106,7 +109,10 @@ Commands used throughout:
 |---|---|
 | `features/agents/agent-menu.tsx`, `lifecycle.ts`, `api.ts`, `project-grant-picker.tsx`, `features/session/timeline-row.tsx`, `features/settings/factory-section.tsx` | Removals; Reset persona; Configure |
 | `components/agent-avatar.tsx`, `lib/factory-bot.ts`, `styles.css`, `features/agents/colour-field.tsx` (new), `edit-agent-sheet.tsx` | Part B |
-| `features/config/*` (new), `routes/_app/agents.$slug_.config.tsx` (new), `features/templates/template-editor.tsx` | Part C |
+| `features/config/*` (new: `use-config-draft.ts`, `rebase.ts`, `fields.ts`, `json-path-line.ts`, `config-form.tsx`, sections, `raw-json-tab.tsx`, `page-footer.tsx`), `routes/_app/agents.$slug_.config.tsx` (new), `features/templates/template-editor.tsx` | Part C |
+| `features/templates/code-surface.tsx` (new) | `LazyCodeEditor`, `TextareaEditor` and the Suspense fallback, shared by the template editor and the config page (C4) |
+| `features/templates/code-editor.tsx`, `code-editor-setup.ts` | `readOnly` (compartment) and `scrollMarginBottom` props (C4) |
+| `routes/_app.tsx` | Handles the WS `config_changed` frame by invalidating `["agent-config", slug]` / `["template-config", name]` (C4) |
 
 ---
 
@@ -263,7 +269,12 @@ function deepMerge(a: unknown, b: unknown): unknown {
   if (b === undefined) return structuredClone(a);
   if (Array.isArray(a) && Array.isArray(b)) {
     const seen = new Set(a.map(canonicalJson));
-    return [...structuredClone(a), ...structuredClone(b).filter((x) => !seen.has(canonicalJson(x)) && seen.add(canonicalJson(x)))];
+    const added: unknown[] = [];
+    for (const x of b) {
+      const key = canonicalJson(x); // computed once per item
+      if (!seen.has(key)) { seen.add(key); added.push(structuredClone(x)); }
+    }
+    return [...structuredClone(a), ...added];
   }
   if (isObj(a) && isObj(b)) {
     const out: Record<string, unknown> = structuredClone(a);
@@ -314,7 +325,7 @@ Implements spec §7.2. Must be secret-safe.
 - [ ] **Step 2: Run** → FAIL.
 - [ ] **Step 3: Implement.**
   - Compare scalars by key from a fixed table: `model`, `effort`, `warm_window_minutes` → "warm window", `max_live_spawns` → "max live spawns", `image`, `permission_mode` → "permission mode", `local_skills` → "template skills on/off".
-  - List keys use set difference with these labels: `skills`→"skill", `plugins`→"plugin", `secrets`→"secret", `can_spawn`→"can spawn", `local_skill_names`→"template skill", `settings.permissions.allow`→"allow rule", `settings.permissions.deny`→"deny rule", `settings.autoMode.environment`→"trust note" (no value), `soft_deny`/`hard_deny`→"deny rule".
+  - List keys use set difference (build a `Set` per side once; never `includes` in a loop) with these labels: `skills`→"skill", `plugins`→"plugin", `secrets`→"secret", `can_spawn`→"can spawn", `local_skill_names`→"template skill", `settings.permissions.allow`→"allow rule", `settings.permissions.deny`→"deny rule", `settings.autoMode.environment`→"trust note" (no value), `soft_deny`/`hard_deny`→"deny rule".
   - `settings.env` and `mcp.mcpServers` are compared by name, with `canonicalJson` used for "changed".
   - Every other top-level settings key (minus `permissions`, `autoMode` and `env`, which are handled above) gives `settings key <k> changed` when its `canonicalJson` differs.
   - Ignored: `name`, `display_name`, `description`, `projects`, `runtime`.
@@ -676,7 +687,7 @@ Implements spec §11. **Web:** the implementer and reviewer invoke `vercel-react
 - Shared: `AgentSummary.color: number | null`; `PatchAgentBody.color?: number | null` (int 1–12 or null); I1's `ChatRow.agent.color`; the mention, people and peer payloads that carry `avatarVersion`.
 - Server: `agent-service.ts` `update` (a colour-only change never calls `requestRestart`; it is refused for spawned agents as today) and every summary builder.
 - Web:
-  - `components/agent-avatar.tsx` takes `color?: number | null` and passes it into `BotSvg` (memo), which uses `fill = color ?? parts.fill`, so a colour change re-renders only the SVG;
+  - `components/agent-avatar.tsx` takes `color?: number | null` and passes it into `BotSvg` (memo), which uses `fill = color ?? parts.fill`, so a colour change re-renders only the SVG. Drop the redundant `useMemo(() => partsFor(slug))` in `BotSvg`, because `partsFor` already caches (L6);
   - every `<AgentAvatar` call site passes `color`. Run `rg -n "<AgentAvatar" apps/web/src` to get the list: today `address-line.tsx` (New agent: Auto, so `null`), `sidebar-tree.tsx` ×2, `session-view.tsx`, `agent-chip.tsx`, `composer/caret-menu.tsx`, plus I1's chat and inbox views.
 - Tests:
   - server (DB, CI): a colour PATCH doesn't restart; a spawned agent is refused; the CHECK rejects 13;
@@ -796,6 +807,9 @@ Implements spec §12.2, §12.3 and §10. **Web:** the implementer and reviewer i
 
 **Rules:**
 - **Hooks and state.** Derive values during render, keep no effect-driven state sync, and add no new dependencies.
+- **Conditional render (L1).** Write `count > 0 ? … : null`, never `list.length && …`.
+- **Lookups (L2).** Use `Set`s for duplicate checks and inside `rebase`. Group issues by path once, in a `useMemo`, as `template-editor.tsx:397` does.
+- **Field errors (L4).** `useFieldErrors` takes a static fields list (`use-field-errors.ts:39-47`). Define fixed field ids per section and per list (`model`, `effort`, `warmWindow`, `maxLiveSpawns`, `skills`, `plugins`, `allow`, `deny`, `trustNotes`, `env`, `envSecrets`, `canSpawn`, `mcp`) in `features/config/fields.ts`. Map each issue's item path (`settings.permissions.allow.3`) to its list id with `fieldForPath(path)`; the row note shows the message for that row.
 - **Expensive derivations (M2).** `mergeConfig`, `describeChanges`/`summarizeChanges` and `canonicalJson` run on `useDeferredValue(draft)` inside `useMemo`, so typing never waits on them.
 - **Lists (M3).**
   - Rows are keyed by value; template rows are additionally keyed by group.
@@ -936,7 +950,7 @@ Implements spec §12.5 and DESIGN.md amendment 6. **Web:** the implementer and r
 - **Tab strip:**
   - the Configuration tab comes first, labelled in Geist with a 1px rule before the mono file tabs;
   - it is the default when the template is valid, else `template.yaml`;
-  - below 40rem the strip becomes a `Select` that lists every tab with its dirty and error marks;
+  - below 40rem the strip becomes a `Select` that lists every tab with its dirty and error marks. Switch with a CSS breakpoint (render both, hide one with `max-[40rem]:` classes) or the existing `use-mobile` hook; add no new resize listener (L5);
   - the file tabs adopt the page-footer rule.
 - **One draft per file:**
   - while `template.yaml`, `settings.json` or `mcp.json` is dirty, the form is read-only, with "settings.json has unsaved edits. Save or discard them first." and a jump;

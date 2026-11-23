@@ -25,7 +25,7 @@ import {
   showsNotice,
   useOutcome,
 } from "@/components/forms/form-outcome";
-import { useFieldErrors } from "@/components/forms/use-field-errors";
+import { skippedLeave, useFieldErrors } from "@/components/forms/use-field-errors";
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { PageHeader } from "@/components/page-header";
@@ -603,7 +603,7 @@ function BodyEditor({
               f.change("body");
               o.clear();
             }}
-            onBlur={() => f.blur("body")}
+            onBlur={(e) => f.blur("body", e)}
             textareaRef={focusOnMount}
             variant="detail"
             {...(a.describedBy ? { "aria-describedby": a.describedBy } : {})}
@@ -857,16 +857,18 @@ function DependsOnEditor({ task, save, onClose }: { task: Detail; save: Save; on
           f.change("dependsOn");
           o.clear();
         }}
-        onBlur={() => {
+        onBlur={(e) => {
           // Focus leaving the window is not a leave (D11).
           if (!document.hasFocus()) return;
+          // Toward Cancel (§5.4) the lookup still resolves the badges, but says no error.
+          const quiet = skippedLeave(e);
           const typed = text;
           checkDependencies(typed, task.key).then(
             (r) => {
               if (latest.current !== typed) return;
               setResolved(r.resolved);
               // Blur only adds: an edit clears through `f.change`, so a server error survives tabbing out.
-              if (r.error) f.set("dependsOn", r.error);
+              if (r.error && !quiet) f.set("dependsOn", r.error);
             },
             // A failed lookup on leave says nothing; Save says it.
             () => {},

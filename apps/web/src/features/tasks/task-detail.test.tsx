@@ -631,6 +631,21 @@ test("description editor: an over-long body on Save from Preview goes back to Wr
   expect(patches(api)).toHaveLength(0);
 });
 
+test("description editor: leaving an edited, invalid body for Cancel doesn't validate it; leaving it for Save does", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit description" }));
+  const area = screen.getByRole("textbox", { name: "Description" });
+  fireEvent.change(area, { target: { value: "x".repeat(70_000) } });
+  // A keyboard move: the blur's relatedTarget is Cancel, with no pointerdown to fall back on.
+  act(() => screen.getByRole("button", { name: "Cancel" }).focus());
+  expect(area).not.toHaveAttribute("aria-invalid");
+  act(() => area.focus());
+  act(() => screen.getByRole("button", { name: "Save" }).focus());
+  expect(area).toHaveAttribute("aria-invalid", "true");
+  expect(area).toHaveAccessibleDescription("Shorten this to 64 KB or less.");
+});
+
 test("an empty body says so and offers Add a description", async () => {
   world(() => detail({ body: "" }));
   renderApp("/tasks/T-42", alice);

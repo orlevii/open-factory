@@ -19,4 +19,10 @@ export const FORM_MSG = {
   noSuchAgent: "No such agent.",
   credentialDeleted: "That credential was deleted.",
   projectsRemoved: "Some chosen projects were removed.",
+  chooseAgent: "Choose an agent.",
+  enterPattern: "Enter a pattern.",
+  chooseTime: "Choose a date and time.",
+  timePassed: "That time has passed.",
+  unknownZone: "Unknown time zone.",
+  enterMessage: "Enter a message.",
 } as const;

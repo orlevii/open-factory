@@ -127,11 +127,20 @@ test("dependency keys resolve in one request on leave and show as a summary; err
   expect(api.calls.filter((c) => c.url.includes("keys="))).toHaveLength(1);
   await userEvent.clear(deps);
   await userEvent.type(deps, "banana");
+  // Tab lands on Add link, a data-skip-validate control: not a leave that says an error (§5.4).
   await userEvent.tab();
+  expect(screen.getByRole("button", { name: "Add link" })).toHaveFocus();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  expect(deps).not.toHaveAttribute("aria-invalid");
+  // Leaving for another field is.
+  await userEvent.click(deps);
+  await userEvent.click(screen.getByLabelText("Title"));
   expect(await screen.findByText("Use task keys, like T-41.")).toBeInTheDocument();
   await userEvent.clear(deps);
   await userEvent.type(deps, "T-99");
-  await userEvent.tab();
+  await userEvent.click(screen.getByLabelText("Title"));
   expect(await screen.findByText("No such task.")).toBeInTheDocument();
 });
 

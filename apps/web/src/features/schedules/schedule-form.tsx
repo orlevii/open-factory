@@ -2,6 +2,7 @@ import {
   ApiError,
   formatOffsetIso,
   isValidZone,
+  MSG,
   parseAt,
   SCHEDULE_BODY_MAX,
   type ScheduleItem,
@@ -150,6 +151,18 @@ export function ScheduleForm({
   );
   const spawnedPicked = agents.find((a) => a.slug === v.target)?.kind === "ephemeral";
 
+  // A stale preset cleared is not an edit: the cleared form becomes the untouched baseline, so closing leaves no draft
+  // and the next preset still applies. `draft.rebase` writes a ref, so it runs in an effect, not in the render that
+  // clears the field (set there, further down), and before the draft save below, so that save compares with the new
+  // baseline. `restored` is the form's own state, so after Discard the preset counts as a fresh one.
+  const [rebaseStale, setRebaseStale] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `draft.rebase` and `blank` only write the draft's ref
+  useEffect(() => {
+    if (!rebaseStale) return;
+    setRebaseStale(false);
+    draft.rebase({ ...blank(), target: "" });
+  }, [rebaseStale]);
+
   // An effect, not a write in each setter: the many field handlers all go through `v`, and the draft only has to be
   // current when the sheet closes. An untouched form (equal to its start values, or to its base) holds no draft.
   const { save: saveDraft } = draft;
@@ -160,20 +173,20 @@ export function ScheduleForm({
   }, [create, saveDraft, v, base]);
 
   const checks = {
-    target: () => (v.target ? undefined : "Choose an agent."),
-    cron: () => (!v.cron.trim() ? "Enter a pattern." : (validateCron(v.cron) ?? undefined)),
+    target: () => (v.target ? undefined : FORM_MSG.chooseAgent),
+    cron: () => (!v.cron.trim() ? FORM_MSG.enterPattern : (validateCron(v.cron) ?? undefined)),
     at: () => {
-      if (!v.local) return "Choose a date and time.";
-      const at = parseAt(v.local, v.zone);
-      if (!at) return "Choose a date and time.";
-      return at.getTime() <= Date.now() ? "That time has passed." : undefined;
+      const at = v.local ? parseAt(v.local, v.zone) : undefined;
+      if (!at) return FORM_MSG.chooseTime;
+      return at.getTime() <= Date.now() ? FORM_MSG.timePassed : undefined;
     },
-    timezone: () => (isValidZone(v.zone) ? undefined : "Unknown time zone."),
+    // No blur: the zone is picked from a list, so only a restored draft can hold a bad one, and the submit says so.
+    timezone: () => (isValidZone(v.zone) ? undefined : FORM_MSG.unknownZone),
     body: () =>
       !v.body.trim()
-        ? "Enter a message."
+        ? FORM_MSG.enterMessage
         : bytes(v.body) > SCHEDULE_BODY_MAX
-          ? "Shorten the message to 64 KB or less."
+          ? MSG.bodyTooLong
           : undefined,
   };
   const f = useFieldErrors<Field>({ form, fields: FIELDS, checks });
@@ -191,10 +204,7 @@ export function ScheduleForm({
   ) {
     const gone = v.target;
     const hasEnded = [...live.data, ...endedList.data].some((a) => a.slug === gone);
-    // A stale preset cleared is not an edit: the cleared form becomes the untouched baseline (a ref write, idempotent),
-    // so closing leaves no draft and the next preset still applies. `restored` is the form's own state, so after
-    // Discard the preset counts as a fresh one.
-    if (!restored && gone === presetTarget) draft.rebase({ ...blank(), target: "" });
+    if (!restored && gone === presetTarget) setRebaseStale(true);
     setV((x) => ({ ...x, target: "" }));
     const staleError = hasEnded ? FORM_MSG.agentEnded : FORM_MSG.agentMissing;
     // Guarded, not left to the updater's bail-out: any setState call during render schedules another render.
@@ -333,7 +343,6 @@ export function ScheduleForm({
               f.change("timezone");
               refresh({ zone });
             }}
-            onBlur={() => f.blur("timezone")}
           />
         )}
       </FieldShell>
@@ -360,7 +369,7 @@ export function ScheduleForm({
               set({ body });
               f.change("body");
             }}
-            onBlur={() => f.blur("body")}
+            onBlur={(e) => f.blur("body", e)}
             {...(a.describedBy ? { "aria-describedby": a.describedBy } : {})}
           />
         )}

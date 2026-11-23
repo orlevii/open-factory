@@ -188,15 +188,23 @@ test("Save sends only the changed fields and shows Saved.", async () => {
   expect(within(region).queryByText("Saved.")).not.toBeInTheDocument();
 });
 
-test("blur on an unchanged number field shows nothing", async () => {
-  world();
+test("blur on an unchanged number field shows nothing, even when its value fails the check", async () => {
+  // A stored cap outside today's bounds (1–64): only a change makes leaving the field validate.
+  world({}, settings({ maxRunningAgents: 100 }));
   const user = userEvent.setup();
   renderApp("/settings/factory", alice);
   const cap = await field("Concurrency cap");
-  await waitFor(() => expect(cap).toHaveValue(8));
+  await waitFor(() => expect(cap).toHaveValue(100));
   await user.click(cap);
   await user.tab();
+  expect(cap).not.toHaveAttribute("aria-invalid");
   expect(cap).toHaveAccessibleDescription(CAP_HINT);
+  // The same value typed back in is a change: now the leave flags it.
+  await user.clear(cap);
+  await user.type(cap, "100");
+  await user.tab();
+  expect(cap).toHaveAttribute("aria-invalid", "true");
+  expect(cap).not.toHaveAccessibleDescription(CAP_HINT);
 });
 
 test("a failed save says so in an alert", async () => {

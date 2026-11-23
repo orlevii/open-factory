@@ -1,4 +1,5 @@
 import { parseTaskKey, type TaskSummary } from "@open-factory/shared";
+import type { FocusEvent } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
 import { FORM_MSG } from "@/lib/form-messages";
@@ -56,7 +57,7 @@ export function DependencyEditor({
 }: {
   value: string;
   onChange(v: string): void;
-  onBlur(): void;
+  onBlur(e: FocusEvent<HTMLInputElement>): void;
   error?: string | undefined;
   resolvedKeys: string[];
   name?: string;

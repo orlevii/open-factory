@@ -255,7 +255,7 @@ export class PolicyInputs {
 }
 // agent-service.ts (all take a required actor; no default)
 create(b: CreateAgentBody & { config?: AgentOverlay }, actor: Actor): Promise<AgentSummary>;
-update(slug: string, b: PatchAgentBody, actor: Actor): Promise<AgentSummary>;
+update(slug: string, b: PatchAgentBody, actor: Actor, tx?: Tx): Promise<AgentSummary & { after(): Promise<void> }>; // with tx: writes in the caller's transaction; `after` emits events and restarts post-commit
 archive(slug: string, actor: Actor): Promise<AgentSummary>;
 unarchive(slug: string, actor: Actor): Promise<AgentSummary>;
 export class OrgRefusedError extends Error { constructor(message: string) }  // mapped to 403 for REST, a tool error for MCP

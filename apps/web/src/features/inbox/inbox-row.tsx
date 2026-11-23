@@ -1,7 +1,7 @@
 import { plainPreview } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
-import { type MouseEvent, memo, type ReactNode, useMemo } from "react";
+import { type ComponentProps, type MouseEvent, memo, type ReactNode, useMemo } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
@@ -108,7 +108,7 @@ function labelOf(item: InboxItem, time: string, now: number): string {
   const unread = item.read ? "" : "Unread, ";
   if (item.kind === "credential") {
     const { text } = credentialLine(item, new Date(now));
-    const name = item.link.kind === "credential" ? item.link.name : "";
+    const name = aboutOf(item) ?? "";
     return `${unread}Factory, ${name} ${text.charAt(0).toLowerCase()}${text.slice(1)}, ${time}`;
   }
   const task = item.task ? `${item.task.key} ${item.task.title}` : "";
@@ -158,7 +158,7 @@ export const InboxRow = memo(function InboxRow({
   const time = formatInboxTime(at, new Date(now));
   const previewId = `inbox-preview-${item.id}`;
   const preview = useMemo(() => previewOf(item.preview), [item.preview]);
-  const common = {
+  const common: RowCommon = {
     "data-inbox-id": item.id,
     "aria-label": labelOf(item, time, now),
     "aria-describedby": previewId,
@@ -173,7 +173,7 @@ export const InboxRow = memo(function InboxRow({
       if (e.button === 1) onOpen(item, e);
     },
     className: `${LINK_CLASS} grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`,
-  } as const;
+  };
   const body = (
     <>
       <span
@@ -218,6 +218,9 @@ export const InboxRow = memo(function InboxRow({
   );
 });
 
+type RowCommon = Omit<ComponentProps<typeof Link>, "to" | "params" | "search" | "children"> &
+  Record<`data-${string}`, string>;
+
 /** The row's link, by kind; a new kind fails to compile here. */
 function RowLink({
   link,
@@ -225,7 +228,7 @@ function RowLink({
   children,
 }: {
   link: InboxItem["link"];
-  common: Record<string, unknown>;
+  common: RowCommon;
   children: ReactNode;
 }) {
   switch (link.kind) {

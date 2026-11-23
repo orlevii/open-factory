@@ -137,6 +137,17 @@ test("credential titles: Credential expiring, then Credential expired once past"
   expect(notificationTitle(cred("2020-01-01T00:00:00Z"))).toBe("Credential expired");
 });
 
+test("an expired credential title does not depend on current", () => {
+  const signedInAgain = item(1, {
+    kind: "credential",
+    from: { kind: "factory", name: "factory" },
+    task: undefined,
+    credential: { name: "work", expiresAt: "2020-01-01T00:00:00Z", current: false },
+    link: { kind: "credential", name: "work" },
+  });
+  expect(notificationTitle(signedInAgain)).toBe("Credential expired");
+});
+
 test("a credential notification's click opens the credentials deep link", async () => {
   localStorage.setItem("of-notifications", "1");
   stubNotification("granted");

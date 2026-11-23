@@ -2,8 +2,8 @@ import type { ChatRow } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { expiryState } from "@/features/settings/sign-in/expiry";
 import { homeInboxQueryOptions, type InboxItem, useOpenItem } from "./api";
-import { credentialLine } from "./credential-notice";
 
 const KEY = "of-notifications";
 const PREVIEW_CAP = 120;
@@ -84,7 +84,7 @@ export function notificationTitle(i: InboxItem): string {
   if (i.kind === "task_event")
     return `${i.task?.key ?? "A task"} ${i.fact === "cancelled" ? "was cancelled" : "is done"}`;
   if (i.kind === "credential")
-    return credentialLine(i, new Date()).tone === "crimson"
+    return expiryState(i.credential?.expiresAt ?? null, new Date()).tone === "crimson"
       ? "Credential expired"
       : "Credential expiring";
   if (i.from.kind === "factory") return `Factory${i.about ? ` about @${i.about}` : ""}`;

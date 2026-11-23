@@ -29,6 +29,11 @@ function formatter(kind: Kind, locale: string | undefined, timeZone: string | un
   return f;
 }
 
+/** A date as "12 Nov 2027", the same text the expiry line uses. */
+export function formatExpiryDate(d: Date, locale?: string, timeZone?: string): string {
+  return formatter("date", locale, timeZone).format(d);
+}
+
 /** The calendar date in the zone, as a UTC midnight, so two of them differ by whole days. */
 function calendarDay(d: Date, timeZone: string | undefined): number {
   return Date.parse(`${formatter("day", undefined, timeZone).format(d)}T00:00:00Z`);
@@ -47,7 +52,7 @@ export function expiryState(
   if (delta <= 0)
     return {
       tone: "crimson",
-      text: `Expired ${formatter("date", locale, timeZone).format(at)}`,
+      text: `Expired ${formatExpiryDate(at, locale, timeZone)}`,
       needsSignIn: true,
     };
   if (delta <= WARN_DAYS * DAY_MS) {

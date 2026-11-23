@@ -20,6 +20,7 @@ import { ViewSwitch } from "@/features/agents/view-switch";
 import { ChatBody, type PaneOptions } from "@/features/chat/chat-view";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusBadge } from "@/features/session/status-badge";
+import { formatExpiryDate } from "@/features/settings/sign-in/expiry";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { taskDetailOptions } from "@/features/tasks/api";
@@ -192,12 +193,6 @@ function NoticeContent({ item }: { item: InboxItem }) {
   );
 }
 
-const EXPIRY_DATE = new Intl.DateTimeFormat(undefined, {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
-
 /** A credential's expiry: the live fact from `expiresAt` (not the stored body), then Sign in again. No reply. */
 function CredentialContent({
   item,
@@ -215,7 +210,7 @@ function CredentialContent({
   const at = credential?.expiresAt ? new Date(credential.expiresAt) : undefined;
   // Read per render: the pane is not memoised.
   const fact = at
-    ? `${name} ${at.getTime() <= Date.now() ? "expired" : "expires"} on ${EXPIRY_DATE.format(at)}.`
+    ? `${name} ${at.getTime() <= Date.now() ? "expired" : "expires"} on ${formatExpiryDate(at)}.`
     : item.preview;
   return (
     <Body>

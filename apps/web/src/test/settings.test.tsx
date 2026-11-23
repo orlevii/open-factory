@@ -107,6 +107,7 @@ test("add credential: method radios, a password field, Verifying…, a rejected 
   renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
+  expect(within(region).getByLabelText("Name")).toHaveFocus();
   await userEvent.click(within(region).getByRole("radio", { name: "Paste a token" }));
   expect(within(region).getByRole("radio", { name: "Paste a token" })).toBeChecked();
   expect(within(region).getByRole("radio", { name: "Paste an API key" })).not.toBeChecked();

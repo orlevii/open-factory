@@ -162,11 +162,11 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/sheets/sheet-store.test.ts`, `apps/web/src/features/setup/api.test.ts`
 
 **Interfaces:**
-- Produces: `setupQueryOptions = queryOptions({ queryKey: ["setup"], queryFn: () => api.get("/api/setup", setupStatusSchema), staleTime: 0, refetchOnWindowFocus: true })`; `useSetup()`.
+- Produces: `setupQueryOptions = queryOptions({ queryKey: ["setup"], queryFn: () => api.get("/api/setup", setupStatusSchema), staleTime: (q) => (q.state.data?.hasAgent ? Infinity : 30_000), refetchOnWindowFocus: true })` (once an agent exists the answer never changes back, Q11); `useSetup()`. New agent's success also calls `qc.setQueryData(["setup"], (d) => d && { ...d, hasAgent: true })` so the block leaves without a round trip.
 
 - [ ] **Step 1: Failing tests:** `openSheet({kind:"add-credential"})` at top level renders the add-credential body (the same component instance type as the child); submitting it closes the sheet and focus returns to the opener; a child add-credential still returns to its parent (existing test stays green); creating a credential, a template or an agent invalidates `["setup"]`; an `org_action` frame invalidates it.
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/sheets/sheet-store.test.ts` — FAIL.
-- [ ] **Step 3: Implement** (no new body component; one `kind` branch in the host's switch).
+- [ ] **Step 3: Implement** (no new body component; one `kind` branch in the host's switch). The Add credential body branches on `getSheetState().parent?.id === sheetId`: as a child it returns its result to the parent as today; top-level it writes the credentials list into the cache, invalidates `["setup"]` and calls `close()`.
 - [ ] **Step 4: Run** PASS.
 - [ ] **Step 5: Commit** `feat(web): Add credential opens as a top-level sheet; the setup query`.
 
@@ -176,12 +176,14 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 **Files:**
 - Create: `apps/web/src/features/setup/setup-steps.tsx`
-- Modify: `apps/web/src/routes/_app/inbox.tsx` (loader also `ensureQueryData(setupQueryOptions)`, errors swallowed), `apps/web/src/features/inbox/inbox-list.tsx` (L121: the empty line is held while setup is pending; below 1024 the block renders at the top of the list and the empty line is omitted while `hasAgent` is false), `apps/web/src/features/inbox/inbox-pane.tsx` (L473: with nothing selected and `hasAgent` false, the pane renders `<SetupSteps/>` max-w-[40rem] instead of "No item selected.")
+- Modify: `apps/web/src/routes/_app/inbox.tsx` (loader fetches both in parallel: `await Promise.all([context.queryClient.ensureInfiniteQueryData(inboxQueryOptions).catch(noop), context.queryClient.ensureQueryData(setupQueryOptions).catch(noop)])`), `apps/web/src/features/inbox/inbox-list.tsx` (L121: the empty line is held while setup is pending; below 1024 the block renders at the top of the list and the empty line is omitted while `hasAgent` is false), `apps/web/src/features/inbox/inbox-pane.tsx` (L473: with nothing selected and `hasAgent` false, the pane renders `<SetupSteps/>` max-w-[40rem] instead of "No item selected.")
 - Test: `apps/web/src/features/setup/setup-steps.test.tsx`, `apps/web/src/test/inbox-setup.test.tsx`, update `apps/web/src/test/inbox-pane.test.tsx`
 
 **Interfaces:**
-- Consumes: `useSetup()`, `openSheet` from the sheet store, I1's list-stability helper (deferred apply while pointer/focus are in the list).
-- Produces: `<SetupSteps status={SetupStatus} />`.
+- Consumes: `useSetup()`, `openSheet` from the sheet store.
+- Produces: `<SetupSteps status={SetupStatus} />`; `useSetupVisible(hasAgent: boolean | undefined): { shown: boolean; listProps: { onPointerEnter; onPointerLeave; onFocusCapture; onBlurCapture }; blockProps: { onFocusCapture; onBlurCapture } }` (`features/setup/use-setup-visible.ts`), called **once** in `InboxPage` and passed to `InboxList` and `InboxPane`.
+
+`useSetupVisible` (spec §4.2, React review M2, option A): pointer-in-list and focus-in-list are **refs**; the only state is `held: boolean`. `shown` is adjusted **during render** (the `useRested` pattern): when `hasAgent` becomes true and neither the pointer is over the list column nor focus is inside the list column, `shown` turns false in the same render; otherwise `held` is set and the pointer-leave / blur handlers clear it. Focus inside the block itself does **not** hold it. A `focusInside` ref is set by the block's focus handlers; a `useLayoutEffect` keyed on `shown` moves focus to the first Inbox row, or to the page `h1` when the Inbox is empty, when `shown` went false with `focusInside` set. No effect mirrors the query into state.
 
 Spec §4.2–4.3 copy and layout verbatim:
 - `<section aria-labelledby="setup-h">`, `<h2 id="setup-h">` "Set up your factory" in the State heading role (Archivo `text-[1rem] leading-[1.25rem] font-semibold`).
@@ -193,10 +195,10 @@ Spec §4.2–4.3 copy and layout verbatim:
   - inbox (wide, `matchMedia` mocked ≥1024): with `hasAgent` false and nothing selected the pane shows the block and the list shows "Nothing in your inbox."; selecting an item shows the item; clearing returns the block.
   - inbox (narrow): the block is at the top of the list; with no items there is no "Nothing in your inbox."; with an item it follows below.
   - first paint: render with the inbox query resolved and setup pending → neither the empty line nor the block; then setup resolves → block (assert "Nothing in your inbox." never appeared: spy on the text across renders).
-  - leaving: `hasAgent` flips true → the block unmounts at once when pointer and focus are outside; with focus on a step row it waits until focus leaves (`fireEvent.blur`/pointer leave), and when it unmounts with focus inside, focus lands on the first inbox row (or the `h1` when empty).
+  - leaving, through the real paths (an `org_action` frame invalidating `["setup"]`, and a window-focus refetch, with the API mock flipping `hasAgent`): the block unmounts in that render when the pointer is outside the list column; with the pointer over the list column (or focus inside the list column) it stays until pointer leave / blur; focus on a step row does **not** hold it, and when it unmounts with focus inside, focus lands on the first inbox row (or the `h1` when empty) in a layout effect (no frame with focus on `body`).
   - no horizontal overflow class combos (`min-w-0` on text column).
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/setup apps/web/src/test/inbox-setup.test.tsx` — FAIL.
-- [ ] **Step 3: Implement.** The block reads `status` via props (the parents call `useSetup()` once each; no context). Visibility state for the deferred leave lives in the list column component, not in an effect that mirrors the query.
+- [ ] **Step 3: Implement.** `InboxPage` calls `useSetup()` and `useSetupVisible(data?.hasAgent)` once and passes `status` and `shown` down; the block reads them via props (no context, no second subscription).
 - [ ] **Step 4: Run** PASS; `inbox-pane.test.tsx` "No item selected." tests updated to set `hasAgent: true` in their setup mock.
 - [ ] **Step 5: Commit** `feat(web): first-run steps on the Inbox`.
 
@@ -220,7 +222,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 ### Task 1.7: PR 1 review, verification, push, draft PR, CI
 
-- [ ] **Step 1: Whole-PR review.** A fresh read-only reviewer on `git diff spec/i8-quality-of-life...i8/1-first-run` checks spec §4 and AC 1–4, copy verbatim, ADR 0028 (I7's "refuses manageOrg" test replaced, not kept), and **the React diff against `vercel-react-best-practices`** (the reviewer invokes the skill first; Next-only rules skipped and said so): no effect that mirrors query data into state, no component defined inside a component, stable query keys, the deferred-leave logic without timers leaking, focus moves done in event handlers or layout effects with cleanup. Fix findings as their own commits.
+- [ ] **Step 1: Whole-PR review.** A fresh read-only reviewer on `git diff spec/i8-quality-of-life...i8/1-first-run` checks spec §4 and AC 1–4, copy verbatim, ADR 0028 (I7's "refuses manageOrg" test replaced, not kept), and **the React diff against `vercel-react-best-practices`** (the reviewer invokes the skill first; Next-only rules skipped and said so): no effect that mirrors query data into state, no component defined inside a component, stable query keys, the `/inbox` loader fetches inbox and setup in parallel (`Promise.all`), `useSetupVisible` keeps pointer/focus in refs and adjusts `shown` during render, focus moves done in a layout effect keyed on `shown`. Fix findings as their own commits.
 - [ ] **Step 2: Full verification** under `/tmp/of-v002-heavy.lock`: `pnpm install --frozen-lockfile` (no lockfile change), `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`; the dev loop from a clean clone (clone to a temp dir, install, build, `pnpm dev` with a throwaway DB and fake Claude, load the Inbox, shut down, delete the clone). Release the lock.
 - [ ] **Step 3: Push and draft PR.** Merge the base again, push `i8/1-first-run`, `gh pr create --draft --base <I7 head branch>`, title `feat(web): first-run steps on the Inbox`, body per `.github/pull_request_template.md` (What, Why, Approach bullets "<decision>, rather than <alternative>, because <reason>", Changes), links to the spec, this plan and #169, "Closes #102" only if every #102 bullet it covers is the first-run one (else "Part of #102"), docs updated, DB tests in CI, retarget after the base merges; template comments removed; ends with the attribution line. `gh pr checks --watch` until green, fixing on the branch. Never merge.
 
@@ -233,10 +235,10 @@ Implements spec §5, AC 5–7. Cut from `spec/i8-quality-of-life` merged with th
 ### Task 2.1: `firstUnreadId` on chat rows; `notice` on @factory items; chats come from agent messages only
 
 **Files:**
-- Modify: `packages/shared/src/messaging.ts` (`chatRowSchema.firstUnreadId: z.string()`; `inboxItemSchema.notice: z.string().optional()`), `apps/server/src/agents/event-store.ts` (`inboxPage`: per chat `min(message id by created_at)` of unread items; `toEntries`: `notice` for `kind = 'system'` rows; the `chats` grouping selects only rows with `from_agent_id` set and `kind = 'message'`, so `system` rows stay in `items`)
+- Modify: `packages/shared/src/messaging.ts` (`chatRowSchema.firstUnreadId: z.string()`; `inboxItemSchema.notice: z.string().optional()`), `apps/server/src/agents/event-store.ts` (`inboxPage`: per chat `min(message id by created_at)` of unread items; the `notify=true` filter (routes/inbox.ts query schema gains `notify: z.coerce.boolean().optional()`); `toEntries`: `notice` for `kind = 'system'` rows; the `chats` grouping selects only rows with `from_agent_id` set and `kind = 'message'`, so `system` rows stay in `items`)
 - Test: `apps/server/src/routes/inbox.test.ts` (DB, CI)
 
-- [ ] **Step 1: Failing tests:** three unread messages from @ada → `chats[0].firstUnreadId` is the oldest; read the first → it becomes the second; an `agent_errored` notice appears in `items` with `notice: "agent_errored"` and never in `chats`; I3's credential item still in `items`.
+- [ ] **Step 1: Failing tests:** `GET /api/inbox?unread=true&notify=true` returns all chats and every unread `mention`, `agent_errored`, `credential` and `loop_held` item (and nothing else) newest first, capped at 200; three unread messages from @ada → `chats[0].firstUnreadId` is the oldest; read the first → it becomes the second; an `agent_errored` notice appears in `items` with `notice: "agent_errored"` and never in `chats`; I3's credential item still in `items`.
 - [ ] **Step 2–4:** run (CI), implement, typecheck.
 - [ ] **Step 5: Commit** `feat(server): chat rows carry their first unread message; @factory items carry their notice`.
 
@@ -282,7 +284,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/inbox/notifications.test.tsx`
 
 **Interfaces:**
-- Produces: `class Notifier { constructor(onOpen: (b: Burst) => void); baseline(bs: Burst[]): void; update(bs: Burst[], visible: boolean): void }` (module-level per tab; holds `seen: Set<string>` of newest ids and `shown: Map<key, { tag; n: Notification }>`).
+- Produces: `class Notifier { constructor(onOpen: (b: Burst) => void); baseline(bs: Burst[]): void; update(bs: Burst[], visible: boolean): void; closeAll(): void; reset(): void }` (holds `seen: Set<string>` of newest ids and `shown: Map<key, { tag; n: Notification }>`).
+- Lifecycle (React review M3, option A): one instance per `AppLayout` (`routes/_app.tsx`): `const [notifier] = useState(() => new Notifier((b) => onOpenRef.current(b)))`, with `onOpenRef.current` updated in an effect (not during render). `reset()` closes every shown notification and clears `seen`/`shown`; it is called on sign-out next to `resetSheets()`. Delete the render-time `notifyRef.current = notify` write in `_app.tsx`; the WS handler calls `notifier`-driving `useInboxNotifier`'s stable callback. Tests create a fresh instance each.
+- Data (React review M4): the notifier reads `GET /api/inbox?unread=true&notify=true`, which returns every chat plus every unread `mention`, `agent_errored`, `credential` and `loop_held` item (newest first, capped at 200), so a key never looks read because its items fell off the first page. The callback: cheap `isOn()` guard before fetching; read `document.visibilityState` **after** the await; only the latest fetch is applied (a sequence number), and a frame arriving mid-fetch schedules exactly one trailing fetch.
 
 `update` per spec §5.2:
 1. For each shown key not in `bs`, or `resolved`: `n.close()`, delete.
@@ -295,6 +299,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   - a second chat message while unread → a construction with the **same tag** (silent replacement), body "2 new messages";
   - the chat read (burst gone) → `close()` called; the next message → a new tag;
   - partial read elsewhere (first unread changed, no new item) → old one closed, nothing new;
+  - 6 unread mention items across 2 tasks spread over more than one inbox page → neither notification closes (the `notify=true` response holds them all);
+  - turning the switch off closes this tab's shown notifications (spec §5.2, m7); `reset()` on sign-out closes and clears;
+  - two frames during one fetch → one trailing fetch, and a stale response arriving after a newer one is ignored;
   - task_event and other facts → nothing;
   - baseline: unread at load never notifies;
   - a constructor that throws → `supported` false, no unhandled rejection;
@@ -475,7 +482,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it (the
 
 **Files:**
 - Create: `apps/server/src/routes/loop-holds.ts`, `apps/server/src/messaging/loop-resume.ts`
-- Modify: `apps/server/src/app.ts`, `apps/server/src/agents/event-store.ts` (inbox `toEntries`: for `notice = 'loop_held'` rows with `loop_hold_id`, join `loop_holds`, both agents' slug and live status, `waiting` = count of `loop_held` rows with that id, `resumedBy` = `'@' || users.handle`), `packages/shared/src/messaging.ts` (`loopHold` per spec §6.4; `resumeLoopHoldResponseSchema = z.object({ sentOn: z.number().int() })`, 409 body `{ resumedBy: string, resumedAt: string }`)
+- Modify: `apps/server/src/app.ts`, `apps/server/src/agents/event-store.ts` (inbox `toEntries`: for `notice = 'loop_held'` rows with `loop_hold_id`, join `loop_holds`, both agents' slug and live status, `waiting` = count of `loop_held` rows with that id, `sentOn` = count of rows with that id whose state is neither `loop_held` nor `rejected`, `resumedBy` = `'@' || users.handle`), `packages/shared/src/messaging.ts` (`loopHold` per spec §6.4; `resumeLoopHoldResponseSchema = z.object({ sentOn: z.number().int() })`, 409 body `{ resumedBy: string, resumedAt: string }`)
 - Test: `apps/server/src/routes/loop-holds.test.ts` (CI)
 
 ```ts
@@ -491,7 +498,7 @@ const rows = await tx.update(messages).set({ state: "pending" })
 // after commit: rows sorted by createdAt → router hand-off (agent sender: enqueue as today); publishAll inbox_changed
 ```
 
-- [ ] **Step 1: Failing tests:** Resume flips every held row to pending, hands them off in `created_at` order, returns `{ sentOn: n }`, sets `resumed_at`/`resumed_by`; a second Resume → 409 with `resumedBy: "@or"`; unknown id → 404; no session → 401; the window restarts at `resumed_at` (N more each way before a new hold); **race:** a send paused (test hook) between `check` (saw the hold open) and its insert while Resume runs → Resume waits on the pair lock, the send commits its held row, Resume then flips it too (no `loop_held` row left on a closed hold); a hold whose rows were all rejected resumes with `sentOn: 0`; the inbox entry's `loopHold` has `waiting`, both statuses and `resumedBy`.
+- [ ] **Step 1: Failing tests:** the inbox entry's `loopHold.sentOn` = count of rows with that `loop_hold_id` whose state is neither `loop_held` nor `rejected` (0 before Resume, n after, unchanged by a remount); Resume flips every held row to pending, hands them off in `created_at` order, returns `{ sentOn: n }`, sets `resumed_at`/`resumed_by`; a second Resume → 409 with `resumedBy: "@or"`; unknown id → 404; no session → 401; the window restarts at `resumed_at` (N more each way before a new hold); **race:** a send paused (test hook) between `check` (saw the hold open) and its insert while Resume runs → Resume waits on the pair lock, the send commits its held row, Resume then flips it too (no `loop_held` row left on a closed hold); a hold whose rows were all rejected resumes with `sentOn: 0`; the inbox entry's `loopHold` has `waiting`, `sentOn`, both statuses and `resumedBy`.
 - [ ] **Step 2–4:** implement. **Step 5: Commit** `feat(server): humans resume a held pair`.
 
 ### Task 3.8: The two settings
@@ -512,6 +519,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 **Files:**
 - Create: `apps/web/src/features/inbox/loop-hold-pane.tsx`
 - Modify: `apps/web/src/features/inbox/inbox-row.tsx` (muted label "Held" / "Resumed" after the sender on line one, `shrink-0`, never truncated, when `item.loopHold`), `apps/web/src/features/inbox/inbox-pane.tsx` (the body switch: `notice === "loop_held"` → `LoopHoldPane`; hide the header `OpenLink`; no excerpt, no composer), `apps/web/src/features/inbox/api.ts` (`useResumeHold` mutation → on success `invalidateQueries(inboxQueryKey)` and the item query)
+
+React review M5: the result line renders from the **mutation's data** right after a Resume (`m.data.sentOn`), and from `loopHold` otherwise; `loopHold.sentOn` is derived server-side (Task 3.7) so every pane and every remount shows "· 4 messages sent on". A `focusResult` ref is set in the click handler's `mutate(undefined, { onSuccess: () => { focusResult.current = true } })`; the status line moves focus in a `useLayoutEffect` (or callback ref) when the flag is set, then clears it. The click handler starts with `if (m.isPending) return`. A 409 renders "Resumed by @ana · …" from the error body at once, then invalidates the inbox and item queries.
 - Test: `apps/web/src/features/inbox/loop-hold-pane.test.tsx`, `inbox-row.test.tsx`
 
 Pane per spec §6.7 (copy verbatim): body text with handles in `font-mono` and `[overflow-wrap:anywhere]`; waiting line (`plural`: "1 message waiting" / "4 messages waiting" / "Nothing is waiting"); a terminated agent line "@b was terminated; its held messages were rejected."; the action slot at one fixed `min-h` holding either the primary button "Resume @a and @b" (wraps, `min-w` kept while pending with "Resuming…" and the spinner, `aria-disabled`) or the `role="status"` `tabIndex={-1}` line (focused after your own Resume via a ref in the mutation's `onSuccess`): "Resumed by you · {formatInboxTime} · {n} messages sent on" / "… · nothing was left to send"; another human's or a 409: "Resumed by @ana · {time}" (`title` = full timestamp); two ghost links "Open @a's session" / "Open @b's session" to `/agents/$slug/session`; a non-409 failure keeps the button and shows `FormOutcome` with `FORM_MSG.resumeFailed = "Couldn't resume. Try again."`. No toast. The notifier closes the hold's notification once `resumedAt` is set (Task 2.3 `resolved`).
@@ -524,10 +533,11 @@ Pane per spec §6.7 (copy verbatim): body text with handles in `font-mono` and `
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 **Files:**
-- Modify: `apps/web/src/routes/_app/inbox.tsx` (replace the L49 effect: below `WIDE`, keep `?item=` while `usePaneItem(itemId)` resolves; when it resolves to an item whose `notice` is in `FULL_WIDTH_NOTICES` (`["loop_held"]` here; PR 4 adds `"worktrees_kept"`), render `<InboxPane>` full-width as the page body with a "Back" link (`navigate({ search: {} })`); otherwise `navigate` to the item's own target with `replace: true`; while resolving, render the pane's loading state, never the list), `apps/web/src/features/inbox/inbox-row.tsx` (rows of those notices link to `/inbox?item=<id>` at every width)
+- Modify: `apps/web/src/routes/_app/inbox.tsx` (React review M6: **delete** the L47-50 effect; narrow passes `itemId` to `useLoadedItem` too; below `WIDE` with an `itemId` the page renders `<NarrowItem id={itemId} />` instead of the list), `apps/web/src/features/inbox/api.ts` (move `usePaneItem` here from `inbox-pane.tsx` and export it), `apps/web/src/features/inbox/inbox-row.tsx` (rows of `FULL_WIDTH_NOTICES` link to `/inbox?item=<id>` at every width)
+- Create: `apps/web/src/features/inbox/narrow-item.tsx`: `NarrowItem` resolves the item with `usePaneItem(id)`: a `chat:<slug>` id returns `<Navigate to="/agents/$slug/chat" params={{ slug }} replace />` with no fetch; while resolving, a static skeleton (never the list); an item whose `notice` is in `FULL_WIDTH_NOTICES` (`["loop_held"]` here; PR 4 adds `"worktrees_kept"`) renders `<InboxPane>` full-width with Back as `<Link to="/inbox" search={{}}>`; any other kind returns `<Navigate replace … />` to the item's own target (no navigate-in-effect).
 - Test: `apps/web/src/test/inbox-route.test.tsx`
 
-- [ ] **Step 1: Failing tests** (narrow `matchMedia`): `/inbox?item=<hold>` renders the hold pane full-width with Back and Resume; Back returns to the list; `/inbox?item=<mention>` replaces the URL with the task target; an unloaded item id (not in the first page) is fetched and rendered without the list flashing; a hold row's link is `/inbox?item=` at 390 and 1440.
+- [ ] **Step 1: Failing tests** (narrow `matchMedia`): `/inbox?item=chat:ada` navigates to `/agents/ada/chat` without fetching the item (assert no request); `/inbox?item=<hold>` renders the hold pane full-width with Back and Resume; Back returns to the list; `/inbox?item=<mention>` replaces the URL with the task target; an unloaded item id (not in the first page) is fetched and rendered without the list flashing; a hold row's link is `/inbox?item=` at 390 and 1440.
 - [ ] **Step 2–4:** implement. **Step 5: Commit** `feat(web): a hold opens full-width below 1024px`.
 
 ### Task 3.11: DESIGN.md, product docs, evidence, review, PR 3
@@ -617,7 +627,7 @@ export async function git(repo, args, { timeoutMs = 15_000 } = {}) {
 ### Task 4.2: Per-project cleanup steps
 
 **Files:**
-- Create: `apps/server/src/spawning/cleanup-project.ts`
+- Create: `apps/server/src/spawning/cleanup-project.ts` (spec §7.5 step 4: a metadata mismatch skips the whole project, stricter than per-worktree)
 - Test: `apps/server/src/spawning/cleanup-project.test.ts`, `cleanup.hardening.test.ts` (real git, temp repos, no DB)
 
 **Interfaces:**
@@ -706,8 +716,8 @@ Steps, exactly (spec §7.5; every refusal becomes `error` and stops that project
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 **Files:**
-- Modify: `apps/web/src/features/session/rows.ts` / `timeline-row.tsx` (a `workspace_cleanup` event renders as a muted factory line grouped by project, branch names `font-mono [overflow-wrap:anywhere]`, copy from spec §7.5), `apps/web/src/features/inbox/inbox-pane.tsx` (`notice === "worktrees_kept"` → `CleanupPane`; no excerpt, no composer; header `OpenLink` stays and targets the event seq), `apps/web/src/routes/_app/inbox.tsx` (`FULL_WIDTH_NOTICES` gains `"worktrees_kept"`)
-- Create: `apps/web/src/features/inbox/cleanup-pane.tsx` (the body's lines grouped by project, branch names mono with `copy-feedback.tsx`, then "Push them to keep the work, or delete them in the project's repository.")
+- Modify: `packages/shared/src/messaging.ts` + `apps/server/src/agents/event-store.ts` (React review m10: inbox items of `notice = 'worktrees_kept'` gain `cleanup?: ProjectResult[]`, built in `toEntries` from the referenced `workspace_cleanup` event's payload; `ProjectResult` moves to `packages/shared/src/events.ts`), `apps/web/src/features/session/rows.ts` / `timeline-row.tsx` (a `workspace_cleanup` event renders as a muted factory line grouped by project, branch names `font-mono [overflow-wrap:anywhere]`, copy from spec §7.5), `apps/web/src/features/inbox/inbox-pane.tsx` (`notice === "worktrees_kept"` → `CleanupPane`; no excerpt, no composer; header `OpenLink` stays and targets the event seq), `apps/web/src/routes/_app/inbox.tsx` (`FULL_WIDTH_NOTICES` gains `"worktrees_kept"`)
+- Create: `apps/web/src/features/inbox/cleanup-pane.tsx` (renders from `item.cleanup`, the same `ProjectResult[]` shape as the session line, never by parsing the body: lines grouped by project, branch names mono with `copy-feedback.tsx`, then "Push them to keep the work, or delete them in the project's repository.")
 - Test: `cleanup-pane.test.tsx`, a `rows` test, `inbox-route.test.tsx` (full width at 390)
 
 - [ ] **Step 1–4:** failing tests (copy, mono branches, copy button feedback, long branch names wrap without page overflow, no composer, full-width at 390 with Back, no desktop notification for this notice — Task 2.2's test already covers it); implement; pass.

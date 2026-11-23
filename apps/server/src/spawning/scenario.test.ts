@@ -245,6 +245,8 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
 
   const peers = await call("developer-d1", "list_peers", {});
   expect(
-    peers.out.agents.map((a: { slug: string; relation: string }) => [a.slug, a.relation]),
-  ).toEqual([["lead", "manager"]]);
+    peers.out.peers
+      .filter((p: { kind: string }) => p.kind === "agent")
+      .map((p: { handle: string; relation: string }) => [p.handle, p.relation]),
+  ).toEqual([["@lead", "manager"]]);
 });

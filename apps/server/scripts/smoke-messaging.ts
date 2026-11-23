@@ -847,12 +847,15 @@ try {
     ),
   );
   const peersRaw = resultOf(t5.turn, t5.got.event.toolUseId)?.content ?? "";
-  let peers: { agents?: { slug: string; relation: string }[]; humans?: { handle: string }[] } = {};
+  let peers: { peers?: { handle: string; kind: string; relation?: string }[] } = {};
   try {
     peers = JSON.parse(peersRaw);
   } catch {}
-  const rel = (slug: string) => peers.agents?.find((a) => a.slug === slug)?.relation;
-  const handles = (peers.humans ?? []).map((h) => h.handle);
+  const rel = (slug: string) =>
+    peers.peers?.find((a) => a.kind === "agent" && a.handle === `@${slug}`)?.relation;
+  const handles = (peers.peers ?? [])
+    .filter((p) => p.kind === "human")
+    .map((h) => h.handle.slice(1));
   check(
     "5. AC4: list_peers names lead as manager, bob as peer, humans or and sam",
     rel("lead") === "manager" &&

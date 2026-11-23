@@ -338,15 +338,19 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
   const ops = await h.seedAgent({ slug: "ops" }); // top-level, a peer of lead
   const tokA = await startIdle("ada");
   const near = JSON.parse(text(await callTool(url, tokA, "list_peers", {})));
-  expect(near.agents.map((x: { slug: string; relation: string }) => [x.slug, x.relation])).toEqual([
-    ["lead", "manager"],
-    ["bob", "peer"],
+  const agentsOf = (r: { peers: { kind: string; handle: string; relation?: string }[] }) =>
+    r.peers.filter((x) => x.kind === "agent");
+  expect(agentsOf(near).map((x) => [x.handle, x.relation])).toEqual([
+    ["@lead", "manager"],
+    ["@bob", "peer"],
   ]);
-  expect(near.humans).toEqual(expect.arrayContaining([{ handle: "or", name: "Or" }]));
+  expect(near.peers).toContainEqual({ handle: "@or", kind: "human", name: "Or" });
   expect(JSON.stringify(near)).not.toContain("@example.com"); // never emails
   const all = JSON.parse(text(await callTool(url, tokA, "list_peers", { scope: "all" })));
-  expect(all.agents).toContainEqual(expect.objectContaining({ slug: ops.slug, relation: "other" }));
-  expect(all.agents.find((x: { slug: string }) => x.slug === "ada")).toBeUndefined();
+  expect(all.peers).toContainEqual(
+    expect.objectContaining({ handle: `@${ops.slug}`, relation: "other" }),
+  );
+  expect(all.peers.find((x: { handle: string }) => x.handle === "@ada")).toBeUndefined();
 });
 
 test("Router.forward: a report's text goes to its manager as a held member_update; a top-level agent's errored goes to the humans once", async () => {

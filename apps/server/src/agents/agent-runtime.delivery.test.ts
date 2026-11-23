@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { renderEnvelopes } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { CompactingError, NoOpenTurnError } from "./errors.ts";
@@ -10,7 +11,7 @@ import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
-import { noForward, noopTokens, sendAs } from "./testing/runtime-harness.ts";
+import { noForward, noopTokens, sendAs, testEffective } from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -19,6 +20,7 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -67,6 +69,7 @@ async function makeRuntime(
         runtime: "local",
         permissionMode: "auto",
         mounts: [],
+        effective: testEffective(),
       };
     },
     log: silentLog,
@@ -177,24 +180,6 @@ test("urgent while a turn is open: interrupt first, hold, then the message on th
   ]);
 });
 
-test("the hold is released after 10 s if no result arrives", async () => {
-  await makeRuntime({ realHold: true });
-  await startedIdle();
-  await send("long task");
-  driver.last.emit(ev.turn());
-  await rt.settled();
-  fakeHoldTimer();
-  await send("STOP", true);
-  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
-  await vi.advanceTimersByTimeAsync(9_999);
-  await rt.settled();
-  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
-  await vi.advanceTimersByTimeAsync(1);
-  await rt.settled();
-  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("STOP");
-  expect(await types()).toContain("interrupt_unconfirmed");
-});
-
 test("a DB failure in the hold-timeout flush stops the process and marks errored", async () => {
   await makeRuntime({ realHold: true });
   await startedIdle();
@@ -247,23 +232,35 @@ test("a second interrupt during the hold writes nothing", async () => {
   ]);
 });
 
-test("the 10 s fallback appends interrupt_unconfirmed, then sends the held messages", async () => {
-  await makeRuntime({ realHold: true });
-  await startedWithOpenTurn();
-  fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
-  await send("steer");
-  await vi.advanceTimersByTimeAsync(9_999);
-  await rt.settled();
-  expect(await types()).not.toContain("interrupt_unconfirmed");
-  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
-  await vi.advanceTimersByTimeAsync(1);
-  await rt.settled();
-  const after = (await types()).slice(-2);
-  expect(after).toEqual(["interrupt_unconfirmed", "message_in"]); // the line lands before the held message
-  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["steer"]);
-  expect(rt.queueItems()).toEqual([]);
-});
+test.each([
+  [
+    "a plain interrupt",
+    "steer",
+    async () => {
+      await rt.interrupt({ byHandle: "or" });
+      await send("steer");
+    },
+  ],
+  ["an urgent send", "STOP", () => send("STOP", true)],
+])(
+  "the 10 s fallback after %s appends interrupt_unconfirmed, then sends the held messages",
+  async (_name, held, trigger) => {
+    await makeRuntime({ realHold: true });
+    await startedWithOpenTurn();
+    fakeHoldTimer();
+    await trigger();
+    await vi.advanceTimersByTimeAsync(9_999);
+    await rt.settled();
+    expect(await types()).not.toContain("interrupt_unconfirmed");
+    expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
+    await vi.advanceTimersByTimeAsync(1);
+    await rt.settled();
+    const after = (await types()).slice(-2);
+    expect(after).toEqual(["interrupt_unconfirmed", "message_in"]); // the line lands before the held message
+    expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual([held]);
+    expect(rt.queueItems()).toEqual([]);
+  },
+);
 
 test("a hold ended by the turn's result never appends interrupt_unconfirmed afterwards", async () => {
   await makeRuntime({ realHold: true });
@@ -341,6 +338,7 @@ test("a hand-off of a row this runtime already wrote (boot wakes got it first) n
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body: "STOP",
     urgent: true,
   });
@@ -425,6 +423,7 @@ test("the first batch after a notice begins with it, even ahead of an older pend
   await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body: "old",
     urgent: false,
   });
@@ -510,6 +509,7 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
   const row = await store.createMessage({
     from: { userId: "u1" },
     toAgentId: agentId,
+    recipients: ["@test"],
     body: "with an id",
     urgent: false,
     clientMessageId: cid,

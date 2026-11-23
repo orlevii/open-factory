@@ -141,7 +141,7 @@ test("a cron turn ends while a task batch awaits: the batch stays unstamped, the
   expect(await deliveredTurn(m.id)).toBe(turn?.id);
 });
 
-test("a process exit with an open turn and an awaiting task batch: NULL, the batch unstamped", async () => {
+test("a process exit with an open turn and an awaiting task batch: the batch is stamped and the task attributed (I1 §6.3)", async () => {
   await idle();
   const t1 = await newTask();
   const awaiting = await sendTask(t1);
@@ -154,9 +154,9 @@ test("a process exit with an open turn and an awaiting task batch: NULL, the bat
   await h.rt.settled();
   const [row] = await h.t
     .sql`select task_id, ended_at, terminal_reason from turns where id = ${turnId ?? ""}`;
-  expect(row).toMatchObject({ task_id: null, terminal_reason: "process_exited" });
+  expect(row).toMatchObject({ task_id: t1, terminal_reason: "process_exited" });
   expect(row?.ended_at).not.toBeNull();
-  expect(await deliveredTurn(awaiting.id)).toBeNull();
+  expect(await deliveredTurn(awaiting.id)).toBe(turnId);
 });
 
 test("a normal turn_end with no delivered messages (e.g. a manual /compact): NULL", async () => {

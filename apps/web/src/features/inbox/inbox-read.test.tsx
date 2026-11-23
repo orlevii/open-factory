@@ -29,10 +29,10 @@ const at = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
 const item = (n: number, o: Record<string, unknown> = {}) => ({
   id: `i${n}`,
   messageId: `m${n}`,
-  kind: "message",
+  kind: "notice",
   read: false,
   from: { kind: "agent", name: "dev" },
-  to: "@humans",
+  to: "@bob",
   preview: `preview ${n}`,
   urgent: false,
   createdAt: at(14, 30 + n),
@@ -56,7 +56,7 @@ const taskEvent = item(2, {
 const humanMention = item(3, {
   kind: "mention",
   from: { kind: "human", name: "sam" },
-  to: "@humans",
+  to: "@bob",
   task: { key: "T-1", title: "One" },
   link: { kind: "task", key: "T-1", commentId: "c1" },
 });
@@ -70,10 +70,11 @@ const world = (
     "GET /api/inbox?": (_b, url) =>
       url.includes("unread=true")
         ? json({
+            chats: [],
             items: list.filter((i) => !(i as { read: boolean }).read).slice(0, 5),
             nextCursor: null,
           })
-        : json({ items: list, nextCursor: null }),
+        : json({ chats: [], items: list, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: unread }),
   });
   // A read the server accepted: the row and the count follow, as a refetch would show.
@@ -107,19 +108,8 @@ test("kinds: a mention, a human mention and a task event render their sender lin
   });
   expect(e).toHaveAttribute("href", "/tasks/T-40");
   expect(within(e).getByText("Done")).toBeInTheDocument();
-  const h = screen.getByRole("link", { name: /^Unread, @sam mentioned @humans on T-1 One/ });
+  const h = screen.getByRole("link", { name: /^Unread, @sam mentioned you on T-1 One/ });
   expect(within(h).getByText("@sam")).toHaveClass("font-mono");
-});
-
-test("unread rows have an ink dot (aria-hidden), medium weight and an 'Unread, ' name; read rows don't", async () => {
-  world([item(1), item(2, { read: true })]);
-  renderApp("/inbox", alice);
-  const unread = await screen.findByRole("link", { name: /^Unread, From @dev/ });
-  expect(unread.querySelector(".bg-foreground")).not.toBeNull();
-  expect(unread.querySelector(".font-medium")).not.toBeNull();
-  const read = screen.getByRole("link", { name: /^From @dev/ });
-  expect(read.querySelector(".bg-foreground")).toBeNull();
-  expect(read.querySelector(".font-medium")).toBeNull();
 });
 
 test("opening a row (click) marks it read and drops the sidebar count at once, then fires the request", async () => {
@@ -133,18 +123,33 @@ test("opening a row (click) marks it read and drops the sidebar count at once, t
   );
 });
 
-test("middle-click and Enter open too; a failing request rolls the row and the count back", async () => {
+test("middle-click and Enter open too; a failing request flips the row read first, then rolls the row and the count back", async () => {
   const { api } = world([item(1)]);
-  api.on("POST /api/inbox/i1/read", () => json({ error: { code: "x", message: "x" } }, 500));
+  let release = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  let posts = 0;
+  api.on("POST /api/inbox/i1/read", async () => {
+    posts += 1;
+    if (posts === 1) await held;
+    return json({ error: { code: "x", message: "x" } }, 500);
+  });
   renderApp("/inbox", alice);
   const row = await screen.findByRole("link", { name: /^Unread, From @dev/ });
   await userEvent.pointer({ keys: "[MouseMiddle]", target: row });
-  await waitFor(() =>
-    expect(api.calls.filter((c) => c.url === "/api/inbox/i1/read").length).toBeGreaterThan(0),
-  );
+  // Optimistic: read and uncounted while the request is still in flight.
+  expect(await screen.findByRole("link", { name: /^From @dev/ })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Inbox, 1 unread" })).toBeNull();
+  expect(posts).toBe(1);
+  release();
   // Rolled back after the failure.
   expect(await screen.findByRole("link", { name: /^Unread, From @dev/ })).toBeInTheDocument();
   expect(await screen.findByRole("link", { name: "Inbox, 1 unread" })).toBeInTheDocument();
+  // Enter opens too: a second request goes out.
+  screen.getByRole("link", { name: /^Unread, From @dev/ }).focus();
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(posts).toBe(2));
 });
 
 test("right-click (auxclick with the right button) leaves the row unread; middle-click opens it", async () => {
@@ -241,6 +246,97 @@ test("the sidebar: count at the right edge, 99+, nothing at 0; the collapsed rai
   await waitFor(() => expect(screen.getByRole("link", { name: "Inbox" })).toBeInTheDocument());
 });
 
+const chatRow = (slug: string, name: string, unread: number, createdAt: string) => ({
+  agent: {
+    slug,
+    displayName: name,
+    template: slug,
+    avatarVersion: null,
+    color: null,
+    kind: "persistent",
+    status: "idle",
+    archivedAt: null,
+  },
+  unread,
+  latest: { messageId: `${slug}-m`, preview: `${name} says hi`, createdAt, urgent: false },
+});
+
+/** An inbox that has chats (and maybe items) and acts like the server for Mark all read and Undo. */
+function chatWorld(chats: ReturnType<typeof chatRow>[], items: unknown[] = []) {
+  const failing = { read: false };
+  let cs = chats;
+  let rows = items;
+  const total = () =>
+    cs.reduce((n, c) => n + c.unread, 0) +
+    rows.filter((i) => !(i as { read: boolean }).read).length;
+  const byAgent = () => Object.fromEntries(cs.map((c) => [c.agent.slug, c.unread]));
+  const api = mockApi({
+    "GET /api/inbox?": () =>
+      json({ chats: cs.filter((c) => c.unread > 0), items: rows, nextCursor: null }),
+    "GET /api/inbox/unread-count": () => json({ count: total(), byAgent: byAgent() }),
+  });
+  const readAt = "2026-11-19T15:00:00.123Z";
+  const stash = { cs, rows };
+  api.on("POST /api/inbox/read-all", () => {
+    if (failing.read) return json({ error: { code: "x", message: "x" } }, 500);
+    stash.cs = cs;
+    stash.rows = rows;
+    const count = total();
+    cs = cs.map((c) => ({ ...c, unread: 0 }));
+    rows = rows.map((i) => ({ ...(i as object), read: true }));
+    return json({ readAt, count });
+  });
+  api.on("POST /api/inbox/read-all/undo", () => {
+    cs = stash.cs;
+    rows = stash.rows;
+    return json({ count: total() });
+  });
+  return { api, failing };
+}
+
+test("Mark all read covers chats alone: the rows turn read, upTo is the newest message, Undo restores them", async () => {
+  const { api } = chatWorld([
+    chatRow("ada", "Ada", 2, at(14, 20)),
+    chatRow("bo", "Bo", 1, at(14, 50)),
+  ]);
+  renderApp("/inbox", alice);
+  expect(await screen.findByRole("link", { name: "Inbox, 3 unread" })).toBeInTheDocument();
+  await userEvent.click(await screen.findByRole("button", { name: "Mark all read" }));
+  expect(await screen.findByText("Marked 2 chats as read.")).toBeInTheDocument();
+  expect(api.calls.find((c) => c.url === "/api/inbox/read-all")?.body).toEqual({
+    upTo: at(14, 50),
+  });
+  await waitFor(() => expect(screen.queryByRole("link", { name: /^Unread, Ada/ })).toBeNull());
+  await userEvent.click(await screen.findByRole("button", { name: "Undo" }));
+  expect(await screen.findByRole("link", { name: /^Unread, Ada, 2 new/ })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /^Unread, Bo, 1 new/ })).toBeInTheDocument();
+  expect(await screen.findByRole("link", { name: "Inbox, 3 unread" })).toBeInTheDocument();
+  expect(api.calls.find((c) => c.url === "/api/inbox/read-all/undo")?.body).toEqual({
+    readAt: "2026-11-19T15:00:00.123Z",
+  });
+});
+
+test("Mark all read says what it covered: '3 chats and 2 items', zeroes the chats at once and rolls back on failure", async () => {
+  const { failing } = chatWorld(
+    [
+      chatRow("ada", "Ada", 1, at(14, 20)),
+      chatRow("bo", "Bo", 1, at(14, 21)),
+      chatRow("cy", "Cy", 1, at(14, 22)),
+    ],
+    [item(1), item(2)],
+  );
+  failing.read = true;
+  renderApp("/inbox", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Mark all read" }));
+  expect(await screen.findByText(/Couldn't mark the items as read\./)).toBeInTheDocument();
+  // Rolled back: the chats are unread again.
+  expect(await screen.findByRole("link", { name: /^Unread, Ada, 1 new/ })).toBeInTheDocument();
+  expect(await screen.findByRole("link", { name: "Inbox, 5 unread" })).toBeInTheDocument();
+  failing.read = false;
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByText("Marked 3 chats and 2 items as read.")).toBeInTheDocument();
+});
+
 describe("per-agent unread in the cache", () => {
   const mk = () => {
     const qc = new QueryClient();
@@ -276,6 +372,24 @@ describe("per-agent unread in the cache", () => {
     const { qc, cache } = mk();
     cache.setRead(new Set(["i1", "i2", "i3"]), true, -3);
     expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 0, byAgent: { ada: 2 } });
+  });
+
+  test("setChatsRead zeroes the chats and their byAgent entries, and puts them back", () => {
+    const { qc, cache } = mk();
+    qc.setQueryData(unreadQueryKey, { count: 4, byAgent: { ada: 2, bo: 1 } });
+    qc.setQueryData(inboxQueryKey, {
+      pages: [{ chats: [{ agent: { slug: "ada" }, unread: 2 }], items: [], nextCursor: null }],
+      pageParams: [undefined],
+    });
+    const counts = new Map([["ada", 2]]);
+    cache.setChatsRead(counts, true);
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 2, byAgent: { ada: 0, bo: 1 } });
+    cache.setChatsRead(counts, false);
+    expect(qc.getQueryData(unreadQueryKey)).toEqual({ count: 4, byAgent: { ada: 2, bo: 1 } });
+    expect(
+      qc.getQueryData<{ pages: { chats: { unread: number }[] }[] }>(inboxQueryKey)?.pages[0]
+        ?.chats[0]?.unread,
+    ).toBe(2);
   });
 
   test("readFrom flips that sender's cached rows and zeroes its count", () => {

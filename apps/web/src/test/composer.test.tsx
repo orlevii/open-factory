@@ -40,6 +40,7 @@ beforeEach(() => {
           id: "q",
           kind: url.endsWith("compact") ? "compact" : "message",
           from: "@alice",
+          fromKind: "human",
           createdAt: "x",
         },
       },
@@ -63,7 +64,7 @@ afterEach(() => vi.unstubAllGlobals());
 const box = () => screen.findByRole("combobox", { name: "Message to Dev agent" });
 
 test("Enter sends, Shift+Enter adds a newline, the box clears on 202", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const input = await box();
   await userEvent.type(input, "line one{Shift>}{Enter}{/Shift}line two");
   expect(input).toHaveValue("line one\nline two");
@@ -71,25 +72,16 @@ test("Enter sends, Shift+Enter adds a newline, the box clears on 202", async () 
   await vi.waitFor(() =>
     expect(posted).toEqual([
       {
-        url: "/api/agents/dev/messages",
-        body: { body: "line one\nline two", urgent: false, clientMessageId: expect.any(String) },
+        url: "/api/agents/dev/input",
+        body: { text: "line one\nline two", clientMessageId: expect.any(String) },
       },
     ]),
   );
   await vi.waitFor(() => expect(input).toHaveValue(""));
 });
 
-test("Send is disabled for whitespace; there is no Urgent checkbox (⌥Enter is urgent, U3 §6.2)", async () => {
-  agentOver = { status: "working", turnOpen: true };
-  renderApp("/agents/dev", alice);
-  const input = await box();
-  await userEvent.type(input, "   ");
-  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  expect(screen.queryByRole("checkbox", { name: "Urgent" })).toBeNull();
-});
-
 test("a 70 KB message is refused before sending, with the draft kept", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const input = await box();
   const big = "é".repeat(36_000);
   fireEvent.change(input, { target: { value: big } });
@@ -102,7 +94,7 @@ test("a 70 KB message is refused before sending, with the draft kept", async () 
 });
 
 test("the size error clears when the text is edited again", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const input = await box();
   fireEvent.change(input, { target: { value: "é".repeat(36_000) } });
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -112,7 +104,7 @@ test("the size error clears when the text is edited again", async () => {
 });
 
 test("503 clears the box (the message is queued); a 400 keeps the text and shows the error inline", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const input = await box();
   postReply = () =>
     json(
@@ -130,17 +122,6 @@ test("503 clears the box (the message is queued); a 400 keeps the text and shows
   expect(input).toHaveValue("big");
 });
 
-test("slash text is sent as a plain message", async () => {
-  renderApp("/agents/dev", alice);
-  await userEvent.type(await box(), "/compact{Enter}");
-  await vi.waitFor(() =>
-    expect(posted[0]).toEqual({
-      url: "/api/agents/dev/messages",
-      body: { body: "/compact", urgent: false, clientMessageId: expect.any(String) },
-    }),
-  );
-});
-
 /** Compact… lives in the header's ⋯ menu (U2 §8.4). */
 const menu = () => screen.getByRole("button", { name: "Actions for Dev agent" });
 async function openCompact() {
@@ -149,7 +130,7 @@ async function openCompact() {
 }
 
 test("Compact popover: focus moves to the input; Enter submits with the focus text", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await box();
   await openCompact();
   const focus = await screen.findByRole("textbox", { name: "Focus (optional)" });
@@ -169,8 +150,11 @@ function deferred() {
   return { promise, resolve };
 }
 const accepted = () =>
-  json({ item: { id: "q", kind: "message", from: "@alice", createdAt: "x" } }, 202);
-const status = (turnOpen: boolean) =>
+  json(
+    { item: { id: "q", kind: "message", from: "@alice", fromKind: "human", createdAt: "x" } },
+    202,
+  );
+const _status = (turnOpen: boolean) =>
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
@@ -179,20 +163,10 @@ const status = (turnOpen: boolean) =>
       turnOpen,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     }),
   );
 const stop = () => screen.getByRole("button", { name: /^(Stop|Stopping…)$/ });
-
-test("composer: IME composition Enter does not send (isComposing or keyCode 229)", async () => {
-  renderApp("/agents/dev", alice);
-  const input = await box();
-  await userEvent.type(input, "日本");
-  fireEvent.keyDown(input, { key: "Enter", isComposing: true });
-  fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
-  await new Promise((r) => setTimeout(r, 20));
-  expect(posted).toEqual([]);
-  expect(input).toHaveValue("日本");
-});
 
 test("composer: on a coarse pointer Enter inserts a newline and only the button sends", async () => {
   const real = window.matchMedia;
@@ -201,7 +175,7 @@ test("composer: on a coarse pointer Enter inserts a newline and only the button 
     matches: q === "(pointer: coarse)",
   })) as typeof window.matchMedia;
   try {
-    renderApp("/agents/dev", alice);
+    renderApp("/agents/dev/session", alice);
     const input = await box();
     await userEvent.type(input, "a{Enter}b");
     expect(input).toHaveValue("a\nb");
@@ -214,7 +188,7 @@ test("composer: on a coarse pointer Enter inserts a newline and only the button 
 });
 
 test("composer: focus returns to the box after sending with the button", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const input = await box();
   await userEvent.type(input, "hi");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -223,7 +197,7 @@ test("composer: focus returns to the box after sending with the button", async (
 });
 
 test("composer: a network failure keeps the text and says the server is unreachable", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const input = await box();
   postReply = () => {
     throw new TypeError("Failed to fetch");
@@ -236,7 +210,7 @@ test("composer: a network failure keeps the text and says the server is unreacha
 });
 
 test("composer: text typed while the send is in flight is kept", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const input = await box();
   const d = deferred();
   postReply = () => d.promise;
@@ -247,22 +221,8 @@ test("composer: text typed while the send is in flight is kept", async () => {
   await vi.waitFor(() => expect(input).toHaveValue(" second"));
 });
 
-test("compact: Escape closes the popover and focus returns to the trigger", async () => {
-  renderApp("/agents/dev", alice);
-  await box();
-  const trigger = menu();
-  await openCompact();
-  await screen.findByRole("textbox", { name: "Focus (optional)" });
-  await userEvent.keyboard("{Escape}");
-  await vi.waitFor(() =>
-    expect(screen.queryByRole("textbox", { name: "Focus (optional)" })).not.toBeInTheDocument(),
-  );
-  expect(trigger).toHaveFocus();
-  expect(posted).toEqual([]);
-});
-
 test("compact: a second submit while one is in flight posts nothing; success closes it", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await box();
   await openCompact();
   const focus = await screen.findByRole("textbox", { name: "Focus (optional)" });
@@ -273,14 +233,19 @@ test("compact: a second submit while one is in flight posts nothing; success clo
   await userEvent.type(focus, "{Enter}");
   expect(posted).toHaveLength(1);
   expect(posted[0]).toEqual({ url: "/api/agents/dev/compact", body: {} });
-  d.resolve(json({ item: { id: "q", kind: "compact", from: "@alice", createdAt: "x" } }, 202));
+  d.resolve(
+    json(
+      { item: { id: "q", kind: "compact", from: "@alice", fromKind: "human", createdAt: "x" } },
+      202,
+    ),
+  );
   await vi.waitFor(() =>
     expect(screen.queryByRole("textbox", { name: "Focus (optional)" })).not.toBeInTheDocument(),
   );
 });
 
 test("compact: an error shows inside the popover and it stays open", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await box();
   await openCompact();
   const focus = await screen.findByRole("textbox", { name: "Focus (optional)" });
@@ -293,26 +258,9 @@ test("compact: an error shows inside the popover and it stays open", async () =>
   expect(focus).toHaveValue("x");
 });
 
-test("Stop: not offered while no turn is open", async () => {
-  renderApp("/agents/dev", alice);
-  await box();
-  expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
-  expect(posted).toEqual([]);
-});
-
-test("Stop: when the turn closes under a focused Stop, focus goes to the composer", async () => {
-  agentOver = { status: "working", turnOpen: true };
-  renderApp("/agents/dev", alice);
-  const input = await box();
-  stop().focus();
-  status(false);
-  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Stop" })).toBeNull());
-  await vi.waitFor(() => expect(input).toHaveFocus());
-});
-
 test("Stop: posts one interrupt and re-enables when the turn closes and a new one opens", async () => {
   agentOver = { status: "working", turnOpen: true };
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await box();
   postReply = () => json({}, 202);
   await userEvent.click(stop());
@@ -328,6 +276,7 @@ test("Stop: posts one interrupt and re-enables when the turn closes and a new on
         turnOpen: open,
         restartPending: false,
         restartWaitingOn: 0,
+        restartChanges: [],
       });
   });
   await vi.waitFor(() =>

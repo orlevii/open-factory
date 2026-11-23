@@ -10,6 +10,7 @@ import {
 import { createFakeClaude } from "@open-factory/harness/testing";
 import type { HarnessEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { FIELD_MSG } from "../field-messages.ts";
 import { CredentialVerifier } from "./verify.ts";
 
 test("success: env is minimal, haiku, temp dir removed", async () => {
@@ -68,15 +69,15 @@ test("401 → rejected; api_key wording", async () => {
   expect(await v.verify("oauth_token", "bad")).toEqual({
     ok: false,
     kind: "rejected",
-    message: "Claude rejected this token. Create a new one with `claude setup-token`.",
+    message: FIELD_MSG.tokenRejected,
   });
   expect(await v.verify("api_key", "bad")).toMatchObject({
     ok: false,
-    message: "Claude rejected this API key.",
+    message: FIELD_MSG.apiKeyRejected,
   });
 });
 
-test("no session / timeout → unreachable", async () => {
+test("a missing claude binary → unreachable", async () => {
   const v = new CredentialVerifier({
     driver: createClaudeDriver({ transports: { local: localTransport } }),
     claudeBin: "/nonexistent/claude",
@@ -84,7 +85,7 @@ test("no session / timeout → unreachable", async () => {
   expect(await v.verify("oauth_token", "x")).toEqual({
     ok: false,
     kind: "unreachable",
-    message: "Couldn't reach Claude to verify. Try again.",
+    message: FIELD_MSG.claudeUnreachable,
   });
 });
 
@@ -95,7 +96,14 @@ test("a process that never answers times out as unreachable", async () => {
     claudeBin: fake.bin,
     timeoutMs: 300,
   });
-  expect((await v.verify("oauth_token", "x")).ok).toBe(false);
+  const started = Date.now();
+  expect(await v.verify("oauth_token", "x")).toEqual({
+    ok: false,
+    kind: "unreachable",
+    message: FIELD_MSG.claudeUnreachable,
+  });
+  // timeoutMs (300 ms) took effect rather than the 60 s default.
+  expect(Date.now() - started).toBeLessThan(5000);
 });
 
 test("the verification process's live queue is drained", async () => {

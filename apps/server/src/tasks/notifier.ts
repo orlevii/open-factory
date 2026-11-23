@@ -2,7 +2,7 @@ import type { TaskNotice, TaskStatus } from "@open-factory/shared";
 import { taskAssignedBody, taskUpdateBody, type UpdateLine } from "./bodies.ts";
 import type { Actor } from "./permission.ts";
 
-export type Recipient = { agentId: string } | { userId: string } | "all";
+export type Recipient = { agentId: string } | { userId: string };
 
 export type PlannedRow = {
   kind: "task_assigned" | "task_comment" | "task_update";
@@ -13,7 +13,6 @@ export type PlannedRow = {
   from?: { agentId: string } | { userId: string };
   body: string;
   inboxKind?: "mention" | "task_event";
-  exceptUserId?: string;
   /** A human's comment to an agent wakes it as a human message; everything else as a task message. */
   wake: "human" | "task_message";
 };
@@ -55,7 +54,7 @@ export type PlanInput = {
     id: string;
     body: string;
     mentionedAgentIds: string[];
-    mentionedUserIds: string[] | "all";
+    mentionedUserIds: string[];
   };
 };
 
@@ -239,32 +238,18 @@ function commentRows(i: PlanInput, c: NonNullable<PlanInput["comment"]>): Planne
     });
   }
   const authorId = i.actor.kind === "user" ? i.actor.userId : undefined;
-  if (c.mentionedUserIds === "all") {
+  for (const userId of c.mentionedUserIds) {
+    if (userId === authorId) continue;
     rows.push({
       kind: "task_comment",
       taskId: i.task.id,
-      to: "all",
+      to: { userId },
       commentId: c.id,
       from,
       body: c.body,
       inboxKind: "mention",
-      ...(authorId ? { exceptUserId: authorId } : {}),
       wake: "task_message",
     });
-  } else {
-    for (const userId of c.mentionedUserIds) {
-      if (userId === authorId) continue;
-      rows.push({
-        kind: "task_comment",
-        taskId: i.task.id,
-        to: { userId },
-        commentId: c.id,
-        from,
-        body: c.body,
-        inboxKind: "mention",
-        wake: "task_message",
-      });
-    }
   }
   return rows;
 }

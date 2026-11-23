@@ -6,9 +6,12 @@ import { InlineOutcome } from "@/components/inline-outcome";
 test("success renders inside the status region, error inside the alert region", () => {
   const { rerender } = render(<InlineOutcome tone="success">Saved.</InlineOutcome>);
   expect(screen.getByRole("status")).toHaveTextContent("Saved.");
-  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+  const alert = screen.getByRole("alert");
+  expect(alert).toBeEmptyDOMElement();
   rerender(<InlineOutcome tone="error">Could not save.</InlineOutcome>);
-  expect(screen.getByRole("alert")).toHaveTextContent("Could not save.");
+  // The alert region was mounted before its text arrived (screen readers announce the change).
+  expect(screen.getByRole("alert")).toBe(alert);
+  expect(alert).toHaveTextContent("Could not save.");
   expect(screen.getByRole("status")).toBeEmptyDOMElement();
 });
 
@@ -34,22 +37,14 @@ test("focusOnMount without undo focuses the line", () => {
   expect(screen.getByText("Nope.").closest("[tabindex]")).toHaveFocus();
 });
 
-test("error text appears in an already-mounted alert region", () => {
-  const { rerender } = render(<InlineOutcome tone="success">Saved.</InlineOutcome>);
-  const alert = screen.getByRole("alert");
-  rerender(<InlineOutcome tone="error">Could not save.</InlineOutcome>);
-  expect(screen.getByRole("alert")).toBe(alert);
-  expect(alert).toHaveTextContent("Could not save.");
-});
-
 test("with no tone both regions are mounted and empty; pending goes in the status region", () => {
   const { rerender } = render(<InlineOutcome />);
   const status = screen.getByRole("status");
   expect(status).toBeEmptyDOMElement();
   expect(screen.getByRole("alert")).toBeEmptyDOMElement();
-  rerender(<InlineOutcome tone="pending">Re-syncing…</InlineOutcome>);
+  rerender(<InlineOutcome tone="pending">Saving…</InlineOutcome>);
   expect(screen.getByRole("status")).toBe(status);
-  expect(status).toHaveTextContent("Re-syncing…");
+  expect(status).toHaveTextContent("Saving…");
 });
 
 test("a new focusKey moves focus to the line; the first render doesn't", () => {

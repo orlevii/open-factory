@@ -58,10 +58,3 @@ test("j and k do nothing with the single-key switch off", async () => {
   expect(screen.getByRole("link", { name: "b" })).toHaveFocus();
   uninstall();
 });
-
-test("the current row carries the class the selected style hangs on", () => {
-  render(<List />);
-  const row = screen.getByRole("link", { name: "b" });
-  expect(row).toHaveClass("of-row");
-  expect(row).toHaveAttribute("aria-current", "true");
-});

@@ -105,13 +105,16 @@ test("the new redact paths hide sentinels at every shape", () => {
   log.info({ x: { ANTHROPIC_API_KEY: S } }, "a1");
   log.info({ env: { ANTHROPIC_API_KEY: S } }, "a2");
   log.info({ spec: { env: { ANTHROPIC_API_KEY: S } } }, "a3");
+  log.info({ x: { CLAUDE_CODE_OAUTH_TOKEN: S } }, "o1");
+  log.info({ env: { CLAUDE_CODE_OAUTH_TOKEN: S } }, "o2");
+  log.info({ spec: { env: { CLAUDE_CODE_OAUTH_TOKEN: S } } }, "o3");
   log.info({ secret: { value: S } }, "v1");
   log.info({ body: { inner: { value: S } } }, "v2");
   log.info({ cred: { token: S } }, "t1");
   log.info({ spec: { env: { ANY_NAME: S, OTHER: S } } }, "e1");
   log.info({ req: { password: S }, password: S }, "p1");
   const text = out();
-  for (const m of ["a1", "a2", "a3", "v1", "v2", "t1", "e1", "p1"])
+  for (const m of ["a1", "a2", "a3", "o1", "o2", "o3", "v1", "v2", "t1", "e1", "p1"])
     expect(text).toContain(`"msg":"${m}"`);
   expect(text).not.toContain(S);
 });

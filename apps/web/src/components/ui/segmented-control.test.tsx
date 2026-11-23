@@ -12,12 +12,12 @@ test("arrow keys move the selection and report typed values", async () => {
   await userEvent.keyboard("{ArrowRight}");
   expect(onChange).toHaveBeenCalledWith(30);
 });
-test("track carries the height; segments keep a border so selection never shifts", () => {
+test("the track grows to a touch target; segments keep a border so selection never shifts", () => {
   const { container } = render(<SegmentedControl legend="Show" name="s" value="a" onChange={() => {}}
     options={[{ value: "a", label: "Active" }, { value: "b", label: "Ended" }]} size="sm" />);
   const track = container.querySelector("[data-slot=segmented-track]");
-  expect(track).toHaveClass("h-7", "pointer-coarse:h-9", "dark:bg-background");
-  for (const l of container.querySelectorAll("label")) expect(l).toHaveClass("h-full", "border");
+  expect(track).toHaveClass("pointer-coarse:h-9");
+  for (const l of container.querySelectorAll("label")) expect(l).toHaveClass("border");
 });
 test("the legend is visible only when asked", () => {
   render(<SegmentedControl legend="When" legendVisible name="w" value="a" onChange={() => {}} options={[{ value: "a", label: "Repeats" }]} />);

@@ -6,11 +6,13 @@ import {
   createContext,
   type FormEvent,
   type ReactNode,
+  type Ref,
   use,
   useCallback,
   useEffect,
   useRef,
 } from "react";
+import { FormOutcome, type Outcome } from "@/components/forms/form-outcome";
 import { AdaptiveMenu } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -41,13 +43,15 @@ export const cappedList = (items: string[], max = 3) => {
   return `${items.slice(0, max).join(", ")}${rest > 0 ? ` +${rest} more` : ""}`;
 };
 
-/** "@lead restarts when idle to use it. Its crons from this session stop." */
+const list = (slugs: string[]) => cappedList(slugs.map((s) => `@${s}`));
+
+/** "@lead restarts when idle; past three agents: "@a, @b, @c +1 more restart ..." to use it. Its crons from this session stop." */
 export const restartNote = (slugs: string[]) =>
   slugs.length === 0
     ? ""
     : slugs.length === 1
-      ? `${tags(slugs)} restarts when idle to use it. Its crons from this session stop.`
-      : `${tags(slugs)} restart when idle to use it. Their crons from this session stop.`;
+      ? `${list(slugs)} restarts when idle to use it. Its crons from this session stop.`
+      : `${list(slugs)} restart when idle to use it. Their crons from this session stop.`;
 
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
@@ -77,25 +81,6 @@ export function TimeAgo({ iso }: { iso: string }) {
   );
 }
 
-/** Server copy marks commands with backticks ("`claude setup-token`"): render them as code. */
-export function CodeText({ text }: { text: string }) {
-  const parts = text.split("`");
-  return (
-    <>
-      {parts.map((p, i) =>
-        i % 2 === 1 ? (
-          // biome-ignore lint/suspicious/noArrayIndexKey: static split of one string
-          <code key={i} className={monoClass}>
-            {p}
-          </code>
-        ) : (
-          p
-        ),
-      )}
-    </>
-  );
-}
-
 /** Agent handles as links, joined "@a, @b". `edit` makes each a button opening Edit agent (where a fix is made). */
 export function AgentLinks({ slugs, edit }: { slugs: string[]; edit?: boolean }) {
   return (
@@ -113,7 +98,11 @@ export function AgentLinks({ slugs, edit }: { slugs: string[]; edit?: boolean })
               @{s}
             </button>
           ) : (
-            <Link to="/agents/$slug" params={{ slug: s }} className={`${monoClass} ${linkClass}`}>
+            <Link
+              to="/agents/$slug/chat"
+              params={{ slug: s }}
+              className={`${monoClass} ${linkClass}`}
+            >
               @{s}
             </Link>
           )}
@@ -196,7 +185,9 @@ export function RowLine({ children, actions }: { children: ReactNode; actions: R
   return (
     <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
       {children}
-      <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>
+      <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
+        {actions}
+      </div>
     </div>
   );
 }
@@ -287,9 +278,11 @@ export function InlineForm({
   submitLabel,
   pendingLabel,
   pending,
-  formError,
+  outcome,
   autoFocusId,
+  autoFocus = true,
   reveal = false,
+  ref,
 }: {
   label: string;
   onSubmit(): void;
@@ -298,22 +291,35 @@ export function InlineForm({
   submitLabel: string;
   pendingLabel: string;
   pending: boolean;
-  formError?: string;
+  outcome: Outcome;
+  ref?: Ref<HTMLFormElement>;
   /** The field to focus on open, when it isn't the first one (a prefilled name). */
   autoFocusId?: string;
+  /** False: no focus on mount (a restored sign-in moves focus itself). */
+  autoFocus?: boolean;
   /** Opened by a link (?addSecret): bring the whole form into view, wherever it sits on the page. */
   reveal?: boolean;
 }) {
-  const ref = useRef<HTMLFormElement>(null);
+  const form = useRef<HTMLFormElement | null>(null);
+  const setForm = useCallback(
+    (el: HTMLFormElement | null) => {
+      form.current = el;
+      if (typeof ref === "function") return ref(el);
+      if (ref) ref.current = el;
+    },
+    [ref],
+  );
   const router = useRouter();
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
   useEffect(() => {
-    const first = autoFocusId
-      ? document.getElementById(autoFocusId)
-      : ref.current?.querySelector<HTMLElement>("input:not([type=hidden]), textarea");
+    const first = !autoFocus
+      ? null
+      : autoFocusId
+        ? document.getElementById(autoFocusId)
+        : form.current?.querySelector<HTMLElement>("input:not([type=hidden]), textarea");
     first?.focus({ preventScroll: reveal });
     if (!reveal) return;
-    const show = () => ref.current?.scrollIntoView?.({ block: "nearest" });
+    const show = () => form.current?.scrollIntoView?.({ block: "nearest" });
     show();
     // The navigation that opened the form resets the page to the top once it has rendered, which
     // is after this effect: show the form again then. Only that one navigation.
@@ -325,7 +331,7 @@ export function InlineForm({
   }, []);
   return (
     <form
-      ref={ref}
+      ref={setForm}
       aria-label={label}
       noValidate
       onSubmit={(e: FormEvent) => {
@@ -338,31 +344,29 @@ export function InlineForm({
           onCancel();
         }
       }}
-      className="grid max-w-xl gap-4 py-3"
+      className="field-stack max-w-xl py-3"
     >
       {children}
-      <div className="grid gap-2">
-        <div role="alert" className={`${smallClass} text-destructive empty:hidden`}>
-          {formError}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button type="submit" size="lg" aria-disabled={pending || undefined}>
-            {pending && <Spinner />}
-            {pending ? pendingLabel : submitLabel}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="lg"
-            aria-disabled={pending || undefined}
-            onClick={() => !pending && onCancel()}
-          >
-            Cancel
-          </Button>
-          <span role="status" className="sr-only">
-            {pending ? pendingLabel : ""}
-          </span>
-        </div>
+      <FormOutcome
+        outcome={outcome}
+        pending={pending ? pendingLabel : undefined}
+        className="-mt-2"
+      />
+      <div className="mt-1 flex items-center gap-2">
+        <Button type="submit" size="lg" aria-disabled={pending || undefined}>
+          {pending && <Spinner />}
+          {pending ? pendingLabel : submitLabel}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="lg"
+          data-skip-validate
+          aria-disabled={pending || undefined}
+          onClick={() => !pending && onCancel()}
+        >
+          Cancel
+        </Button>
       </div>
     </form>
   );

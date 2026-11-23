@@ -1,9 +1,9 @@
-import { parseTaskKey, type TaskSummary } from "@open-factory/shared";
+import { MSG, parseTaskKey, type TaskSummary } from "@open-factory/shared";
+import type { FocusEvent } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
+import { FORM_MSG } from "@/lib/form-messages";
 import { lookupTasks } from "./api";
-import { StatusLabel } from "./status-label";
-import { TaskBadge } from "./task-badge";
 
 /** Keys separated by commas or spaces, as typed ("T-41, T-44") -> canonical keys, duplicates dropped. */
 export function parseKeys(text: string): { keys: string[]; bad?: string } {
@@ -26,60 +26,59 @@ export async function checkDependencies(
   selfKey?: string,
 ): Promise<{ keys: string[]; resolved: TaskSummary[]; error?: string }> {
   const { keys, bad } = parseKeys(text);
-  if (bad !== undefined) return { keys, resolved: [], error: "Use task keys, like T-41." };
-  if (keys.length > 50)
-    return { keys, resolved: [], error: "A task can depend on at most 50 tasks." };
-  if (selfKey && keys.includes(selfKey))
-    return { keys, resolved: [], error: "A task can't depend on itself." };
+  if (bad !== undefined) return { keys, resolved: [], error: FORM_MSG.taskKeys };
+  if (keys.length > 50) return { keys, resolved: [], error: MSG.dependsMax };
+  if (selfKey && keys.includes(selfKey)) return { keys, resolved: [], error: FORM_MSG.dependsSelf };
   if (!keys.length) return { keys, resolved: [] };
   const found = await lookupTasks(keys);
   const missing = keys.find((k) => !found.some((t) => t.key === k));
   const resolved = keys.flatMap((k) => found.filter((t) => t.key === k));
-  return missing ? { keys, resolved, error: `No task ${missing}.` } : { keys, resolved };
+  return missing ? { keys, resolved, error: FORM_MSG.noSuchTask } : { keys, resolved };
 }
 
-/** One text input for the keys, with the resolved tasks below as badges with their status. */
+/** "Depends on T-41.", "... T-41 and T-52." or "... T-41, T-44 and 3 more." (kept short for the one-line note). */
+export function dependsSummary(keys: string[]): string {
+  if (!keys.length) return "";
+  if (keys.length === 1) return `Depends on ${keys[0]}.`;
+  if (keys.length === 2) return `Depends on ${keys[0]} and ${keys[1]}.`;
+  return `Depends on ${keys[0]}, ${keys[1]} and ${keys.length - 2} more.`;
+}
+
+/** One text input for the keys; the resolved keys are summarized in the note. */
 export function DependencyEditor({
   value,
   onChange,
   onBlur,
   error,
-  resolved,
+  resolvedKeys,
   name = "dependsOn",
 }: {
   value: string;
   onChange(v: string): void;
-  onBlur(): void;
+  onBlur(e: FocusEvent<HTMLInputElement>): void;
   error?: string | undefined;
-  resolved: TaskSummary[];
+  resolvedKeys: string[];
   name?: string;
 }) {
   return (
-    <FieldShell name={name} label="Depends on" error={error} help="Task keys, like T-41.">
+    <FieldShell
+      name={name}
+      label="Depends on"
+      error={error}
+      help={resolvedKeys.length ? dependsSummary(resolvedKeys) : "Task keys, like T-41."}
+    >
       {(a) => (
-        <>
-          <Input
-            id={a.id}
-            name={name}
-            value={value}
-            aria-invalid={a.invalid || undefined}
-            aria-describedby={a.describedBy}
-            autoComplete="off"
-            onChange={(e) => onChange(e.target.value)}
-            onBlur={onBlur}
-            className="h-9 font-mono"
-          />
-          {resolved.length > 0 && (
-            <ul aria-label="Resolved dependencies" className="grid gap-1">
-              {resolved.map((t) => (
-                <li key={t.key} className="flex min-w-0 items-center gap-2 text-[0.8125rem]">
-                  <TaskBadge taskKey={t.key} title={t.title} />
-                  <StatusLabel status={t.status} className="ml-auto text-muted-foreground" />
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+        <Input
+          id={a.id}
+          name={name}
+          value={value}
+          aria-invalid={a.invalid || undefined}
+          aria-describedby={a.describedBy}
+          autoComplete="off"
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          className="h-9 font-mono"
+        />
       )}
     </FieldShell>
   );

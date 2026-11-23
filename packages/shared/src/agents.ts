@@ -1,7 +1,10 @@
 import { z } from "zod";
+import { avatarColorSchema } from "./avatar.ts";
+import { configDocSchema } from "./config.ts";
 import { sessionEventSchema } from "./events.ts";
 import { nameSchema, slugSchema } from "./names.ts";
 import { liveCronSchema } from "./schedules.ts";
+import { templateIssueSchema } from "./templates.ts";
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_FOCUS_CHARS = 2000;
@@ -46,6 +49,8 @@ export const agentLiveShape = {
   turnStartedAt: z.string().optional(),
   /** U3: a compaction is running. */
   compacting: z.boolean().optional(),
+  /** I2 §7.3: the config change lines a pending restart applies (empty when none is pending). */
+  restartChanges: z.array(z.string()),
 };
 
 export const agentSummarySchema = z.object({
@@ -64,9 +69,10 @@ export const agentSummarySchema = z.object({
   openTasks: z.number().int().nonnegative().default(0),
   /** U2: the avatar's cache-busting version, null when the agent has no avatar. */
   avatarVersion: z.string().nullable().default(null),
+  /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto. */
+  color: avatarColorSchema.nullable().default(null),
   credential: z.string().nullable(),
   projects: z.array(z.string()),
-  grantsOverridden: z.boolean(),
   depth: z.number().int().nonnegative(),
   archivedAt: z.string().nullable(),
   terminatedAt: z.string().optional(),
@@ -90,7 +96,7 @@ export type AgentSummary = z.infer<typeof agentSummarySchema>;
 
 export const queueItemSchema = z.object({
   id: z.string(),
-  kind: z.enum(["message", "compact", "notice", "held", "command"]),
+  kind: z.enum(["message", "compact", "notice", "held", "raw"]),
   body: z.string().optional(),
   count: z.number().int().positive().optional(),
   about: z.string().optional(),
@@ -102,6 +108,8 @@ export const queueItemSchema = z.object({
   focus: z.string().optional(),
   urgent: z.boolean().optional(),
   from: z.string(),
+  /** What `from` is; the UI never guesses it from the handle. */
+  fromKind: z.enum(["human", "agent", "factory"]),
   taskKey: z.string().optional(),
   taskTitle: z.string().optional(),
   commentId: z.string().optional(),
@@ -118,8 +126,16 @@ export const agentListSchema = z.object({
   more: z.boolean().default(false),
   running: z.object({ count: z.number().int().nonnegative(), max: z.number().int().positive() }),
 });
+/** The model an agent runs with and where it comes from (I2 §12.3): its own overlay, its template, or Claude's default. */
+export const agentModelSchema = z.object({
+  value: z.string().nullable(),
+  source: z.enum(["agent", "template", "default"]),
+});
+export type AgentModel = z.infer<typeof agentModelSchema>;
+
 export const agentDetailSchema = z.object({
   agent: agentSummarySchema,
+  model: agentModelSchema,
   queue: z.array(queueItemSchema),
   lastSeq: z.number().int().nonnegative(),
 });
@@ -136,7 +152,9 @@ export const eventsPageSchema = z.object({
 });
 export type EventsPage = z.infer<typeof eventsPageSchema>;
 
-export const sendMessageBodySchema = z.object({
+/** I1 §6.6: one human message to one to ten agents; attachments only with a single recipient. */
+export const sendMessagesBodySchema = z.object({
+  to: z.array(z.string().min(1).max(65)).min(1).max(10),
   body: z
     .string()
     .trim()
@@ -147,10 +165,48 @@ export const sendMessageBodySchema = z.object({
   /** U3 §13.5: upload ids from `POST /api/agents/:slug/uploads`, at most 10. */
   attachments: z.array(z.string().min(1).max(64)).max(10).optional(),
 });
+/** Why a recipient was refused: the router's codes, so a client never parses `reason`. */
+export const REFUSAL_CODES = [
+  "not_found",
+  "reserved",
+  "channel",
+  "self",
+  "archived",
+  "terminated",
+  "disabled",
+  "human",
+  "invalid_attachment",
+  "too_large",
+] as const;
+export type RefusalCode = (typeof REFUSAL_CODES)[number];
+/** One recipient's outcome: `start_failed` keeps its row pending; `refused` wrote nothing. */
+export const sendMessagesResultSchema = z.object({
+  to: z.string(),
+  status: z.enum(["queued", "start_failed", "refused"]),
+  id: z.string().optional(),
+  item: queueItemSchema.optional(),
+  reason: z.string().optional(),
+  /** Set when `status` is `refused`. */
+  code: z.enum(REFUSAL_CODES).optional(),
+});
+export const sendMessagesResponseSchema = z.object({ results: z.array(sendMessagesResultSchema) });
+export type SendMessagesResponse = z.infer<typeof sendMessagesResponseSchema>;
 export const sendMessageToolSchema = z.object({
-  to: z.string().min(1).max(64),
-  body: sendMessageBodySchema.shape.body,
+  to: z
+    .array(
+      z
+        .string()
+        .max(65)
+        .refine((s) => s.trim().length > 0, "Name a recipient"),
+    )
+    .min(1)
+    .max(10, "Send to at most 10 recipients at once."),
+  body: sendMessagesBodySchema.shape.body,
   urgent: z.boolean().default(false),
+});
+export const sendCommandToolSchema = z.object({
+  target: z.string().max(65), // a handle (64) with its @
+  command: z.string(),
 });
 export const listPeersToolSchema = z.object({
   scope: z.enum(["neighborhood", "all"]).optional(),
@@ -189,13 +245,50 @@ export const patchAgentBodySchema = z
     description: z.string().trim().max(500),
     reportsTo: slugSchema.nullable(),
     credential: nameSchema,
-    projects: z.array(nameSchema).nullable(),
+    projects: z.array(nameSchema),
+    color: avatarColorSchema.nullable(),
   })
   .partial();
 export type PatchAgentBody = z.infer<typeof patchAgentBodySchema>;
 export const agentResponseSchema = z.object({ agent: agentSummarySchema });
-export const resyncResponseSchema = z.object({
-  agent: agentSummarySchema,
-  backupDir: z.string().optional(),
+/** `backupDir` is relative to the factory home, and absent when nothing differed or the reset is staged. */
+export const resetPersonaResponseSchema = z.object({
   applied: z.enum(["now", "on_restart"]),
+  backupDir: z.string().optional(),
 });
+export type ResetPersonaResponse = z.infer<typeof resetPersonaResponseSchema>;
+
+/** `GET /api/agents/:slug/config` (I2 §12.1). `doc` and `merged` are null while the template is invalid or missing. */
+export const agentConfigResponseSchema = z.object({
+  overlay: z.record(z.string(), z.unknown()),
+  version: z.string(),
+  template: z.object({
+    name: z.string(),
+    doc: configDocSchema.nullable(),
+    valid: z.boolean(),
+  }),
+  merged: configDocSchema.nullable(),
+  issues: z.array(templateIssueSchema),
+});
+export type AgentConfigResponse = z.infer<typeof agentConfigResponseSchema>;
+
+/**
+ * `PUT /api/agents/:slug/config`. `overlay` is checked by `agentOverlaySchema` in the service, so a bad one answers
+ * with `issues` (paths and constant messages) instead of a generic body error.
+ */
+export const putAgentConfigBodySchema = z.object({
+  overlay: z.record(z.string(), z.unknown()),
+  baseVersion: z.string().min(1).max(100),
+});
+export type PutAgentConfigBody = z.infer<typeof putAgentConfigBodySchema>;
+
+/**
+ * The saved config, plus the change lines and whether a restart check was scheduled. `restartChecked` is not "will
+ * restart": a running process restarts when idle only if what it started with differs.
+ */
+export const putAgentConfigResponseSchema = agentConfigResponseSchema.extend({
+  changes: z.array(z.string()),
+  restartChecked: z.boolean(),
+  checked: z.enum(["full", "schema"]),
+});
+export type PutAgentConfigResponse = z.infer<typeof putAgentConfigResponseSchema>;

@@ -69,10 +69,6 @@ describe("deriveSlug", () => {
     expect(s).toBe(`${"a".repeat(37)}-2`);
     expect(s).not.toMatch(/--/);
   });
-
-  test("reserved and human handles count as taken", () => {
-    expect(deriveSlug("Me", new Set(["me"]))).toBe("me-2");
-  });
 });
 
 test("foldLetters folds what NFKD leaves alone", () => {

@@ -3,7 +3,6 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   writeFileSync,
@@ -14,9 +13,11 @@ import path from "node:path";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { AgentStartError } from "../agents/errors.ts";
 import { KeyedMutex } from "./lock.ts";
 import { pluginsConfigDir } from "./paths.ts";
 import {
+  capOutput,
   installPlugins,
   marketplaceSourceArg,
   PluginInstallError,
@@ -60,18 +61,8 @@ test("adds marketplaces then installs, with a minimal env", async () => {
     expect(existsSync(l.cwd)).toBe(false);
   }
 });
-test("failure carries redacted output; budget enforced", async () => {
-  const fake = createFakeClaude({ scenario: "reply", env: { FAKE_CLAUDE_PLUGIN_FAIL: "p@mk" } });
+test("the install budget is enforced", async () => {
   const cfg = mkdtempSync(path.join(tmpdir(), "cfg-"));
-  await expect(
-    installPlugins({
-      claudeBin: fake.bin,
-      pluginsConfig: cfg,
-      plugins: ["p@mk"],
-      tplSettings,
-      ...hostEnv,
-    }),
-  ).rejects.toBeInstanceOf(PluginInstallError);
   const slow = createFakeClaude({
     scenario: "reply",
     env: { FAKE_CLAUDE_PLUGIN_SLEEP_MS: "2000" },
@@ -156,7 +147,7 @@ test("failure message and output are redacted; timeouts say so; dash-leading arg
 });
 
 // Spec §11.7: plugins live in the factory-owned plugins-config/, linked into the agent's config dir.
-async function setupAgent(plugins: string[]) {
+async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {}) {
   const home = realpathSync(mkdtempSync(path.join(tmpdir(), "of-plug-")));
   const hs = mkdtempSync(path.join(tmpdir(), "hs-"));
   const tdir = path.join(home, "templates/lead");
@@ -168,7 +159,7 @@ async function setupAgent(plugins: string[]) {
     runtime: "local",
     plugins,
   });
-  const fake = createFakeClaude({ scenario: "reply" });
+  const fake = createFakeClaude({ scenario: "reply", env: fakeEnv });
   const ws = new Workspace({
     factoryHome: home,
     hostSkillsDir: hs,
@@ -183,10 +174,16 @@ async function setupAgent(plugins: string[]) {
     description: "d",
     template: "lead",
     config,
+    effective: {
+      doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
+      config,
+      templatePlugins: [],
+    },
     manager: null,
     grants: [],
     peers: [],
     reports: [],
+    humans: [],
     mcpUrl: "http://127.0.0.1:3001/mcp",
     kind: "persistent" as const,
     spawner: null,
@@ -199,14 +196,25 @@ async function setupAgent(plugins: string[]) {
     const f = path.join(fake.dir, "plugin.log");
     return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").length : 0;
   };
-  /** Turns the agent back into an S4 one: plugins installed in a real config-dir folder. */
-  const makeS4 = async () => {
-    await rm(pluginsConfigDir(home, "lead"), { recursive: true, force: true });
-    await rm(`${workdir}/.claude-config/plugins`, { recursive: true, force: true });
-    mkdirSync(`${workdir}/.claude-config/plugins/cache`, { recursive: true });
-    writeFileSync(`${workdir}/.claude-config/plugins/installed_plugins.json`, "{}");
+  const pluginLog = (): { argv: string[]; env: string[]; cwd: string }[] => {
+    const f = path.join(fake.dir, "plugin.log");
+    return existsSync(f)
+      ? readFileSync(f, "utf8")
+          .trim()
+          .split("\n")
+          .map((l) => JSON.parse(l))
+      : [];
   };
-  return { home, ws, tpl, prep, workdir, pluginRuns, makeS4 };
+  /** The agent as it is after a template or overlay adds plugins: the effective list, and who lists them. */
+  const withPlugins = (list: string[], fromTemplate: string[]) => ({
+    ...prep,
+    effective: {
+      ...prep.effective,
+      config: { ...prep.effective.config, plugins: list },
+      templatePlugins: fromTemplate,
+    },
+  });
+  return { home, ws, tpl, prep, workdir, pluginRuns, pluginLog, withPlugins };
 }
 
 test("materialize installs into plugins-config; prepare links .claude-config/plugins to plugins-config/plugins", async () => {
@@ -222,57 +230,148 @@ test("materialize installs into plugins-config; prepare links .claude-config/plu
   expect(s.extraKnownMarketplaces).toHaveProperty("mk");
 });
 
-test("an S4 agent with plugins and no plugins-config fails to start with the re-sync fix, and nothing is installed", async () => {
-  const { home, ws, prep, workdir, pluginRuns, makeS4 } = await setupAgent(["p@mk"]);
-  await makeS4();
-  const before = pluginRuns();
-  const err = await ws.prepare(prep).catch((e) => e);
-  expect(err).toBeInstanceOf(WorkspaceError);
-  expect(err.message).toBe(
-    "Re-sync @lead to reinstall its plugins into the factory-managed location.",
-  );
-  expect(err.fix).toBe("resync");
-  expect(pluginRuns()).toBe(before);
-  expect(existsSync(pluginsConfigDir(home, "lead"))).toBe(false);
-  expect(lstatSync(`${workdir}/.claude-config/plugins`).isDirectory()).toBe(true);
+test("start installs only the listed plugins that are missing, through the hardened env and an empty cwd", async () => {
+  const { ws, prep, workdir, pluginLog, withPlugins } = await setupAgent(["a@mk"]);
+  const before = pluginLog().length;
+  await ws.prepare(withPlugins(["a@mk", "b@mk"], ["a@mk", "b@mk"]));
+  const runs = pluginLog().slice(before);
+  expect(runs.map((r) => r.argv.slice(1, 3))).toEqual([
+    ["marketplace", "add"],
+    ["install", "b@mk"],
+  ]);
+  for (const r of runs) {
+    const added = ["PWD", "OLDPWD", "SHLVL", "_", "__CF_USER_TEXT_ENCODING"];
+    const own = r.env.filter((k) => !k.startsWith("FAKE_CLAUDE_") && !added.includes(k));
+    expect(own).toEqual(["CLAUDE_CONFIG_DIR", "HOME", "PATH"]);
+    expect(r.cwd.startsWith(workdir)).toBe(false);
+  }
+  const s = JSON.parse(readFileSync(`${workdir}/.claude-config/settings.json`, "utf8"));
+  expect(s.enabledPlugins).toEqual({ "a@mk": true, "b@mk": true });
+  // Nothing is missing now: the next start installs nothing.
+  const after = pluginLog().length;
+  await ws.prepare(withPlugins(["a@mk", "b@mk"], ["a@mk", "b@mk"]));
+  expect(pluginLog().length).toBe(after);
+  await ws.prepare(prep); // dropping a plugin from the list uninstalls nothing and installs nothing
+  expect(pluginLog().length).toBe(after);
 });
 
-test("a plugin listed in the snapshot but missing from plugins-config also asks for a re-sync", async () => {
-  const { ws, prep } = await setupAgent(["p@mk"]);
-  const config = { ...prep.config, plugins: ["p@mk", "q@mk"] };
-  await expect(ws.prepare({ ...prep, config })).rejects.toMatchObject({ fix: "resync" });
-});
-
-test("re-sync installs into plugins-config, moves the old real plugins dir to plugins-legacy-<ts>/ and links it", async () => {
-  const { home, ws, tpl, prep, workdir, makeS4 } = await setupAgent(["p@mk"]);
-  await makeS4();
-  await ws.resync("lead", tpl, { canWriteNow: true });
-  const cfg = pluginsConfigDir(home, "lead");
-  expect(JSON.parse(readFileSync(`${cfg}/settings.json`, "utf8")).enabledPlugins).toEqual({
-    "p@mk": true,
-  });
-  expect(await readlink(`${workdir}/.claude-config/plugins`)).toBe(`${cfg}/plugins`);
-  const state = path.dirname(cfg);
-  const legacy = readdirSync(state).filter((d) => d.startsWith("plugins-legacy-"));
-  expect(legacy).toHaveLength(1);
-  expect(legacy[0]).toMatch(/^plugins-legacy-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/);
-  expect(existsSync(path.join(state, legacy[0] as string, "installed_plugins.json"))).toBe(true);
-  await ws.prepare(prep); // the start now succeeds
-});
-
-test("an S4 agent without plugins migrates silently at prepare", async () => {
-  const { home, ws, prep, workdir, pluginRuns } = await setupAgent([]);
+test("a start installs a plugin whose plugins-config is gone", async () => {
+  const { home, ws, prep, pluginRuns } = await setupAgent(["p@mk"]);
   await rm(pluginsConfigDir(home, "lead"), { recursive: true, force: true });
-  // Claude writes plugins/store/ into a writable plugins dir at start, so an S4 dir may not be empty.
+  const before = pluginRuns();
+  await ws.prepare(prep);
+  expect(pluginRuns()).toBeGreaterThan(before);
+  expect(
+    JSON.parse(readFileSync(`${pluginsConfigDir(home, "lead")}/settings.json`, "utf8"))
+      .enabledPlugins,
+  ).toEqual({ "p@mk": true });
+});
+
+test("marketplace sources come from the effective settings, never from the workdir", async () => {
+  const { ws, workdir, pluginLog, withPlugins } = await setupAgent(["a@mk"]);
+  mkdirSync(`${workdir}/.claude`, { recursive: true });
+  writeFileSync(
+    `${workdir}/.claude/settings.json`,
+    JSON.stringify({
+      extraKnownMarketplaces: { mk2: { source: { source: "directory", path: "/evil" } } },
+    }),
+  );
+  const p = withPlugins(["a@mk", "b@mk2"], []);
+  await expect(ws.prepare(p)).rejects.toMatchObject({
+    message: "Plugin b@mk2 didn't install.",
+    fix: "config",
+  });
+  expect(pluginLog().flatMap((r) => r.argv)).not.toContain("/evil");
+});
+
+test("a failed install fails the start closed; the fix names who lists the plugin", async () => {
+  const { ws, withPlugins } = await setupAgent(["a@mk"], { FAKE_CLAUDE_PLUGIN_FAIL: "b@mk" });
+  const fromTemplate = await ws.prepare(withPlugins(["a@mk", "b@mk"], ["b@mk"])).catch((e) => e);
+  expect(fromTemplate).toBeInstanceOf(AgentStartError);
+  expect(fromTemplate).toMatchObject({ message: "Plugin b@mk didn't install.", fix: "template" });
+  const fromOverlay = await ws.prepare(withPlugins(["a@mk", "b@mk"], ["a@mk"])).catch((e) => e);
+  expect(fromOverlay).toMatchObject({ message: "Plugin b@mk didn't install.", fix: "config" });
+  expect(fromOverlay.detail).toContain("Failed to install plugin");
+});
+
+// Secret-shaped values only: redaction recognises shapes, not arbitrary env values.
+const ECHO =
+  "ANTHROPIC_API_KEY=sk-ant-api03-SECRETVALUE0123 GITHUB_TOKEN=ghp_SECRETTOKEN0123 " +
+  "cloning https://user:tok-SECRET@host.example/org/mk.git Authorization: Bearer abc.SECRET.def " +
+  "retry with token=hunter2SECRET";
+const SECRETS = [
+  "sk-ant-api03-SECRETVALUE0123",
+  "ghp_SECRETTOKEN0123",
+  "tok-SECRET",
+  "abc.SECRET.def",
+  "hunter2SECRET",
+];
+
+test("a failed install's output reaches the error through redactOutput", async () => {
+  const { ws, withPlugins } = await setupAgent(["a@mk"], {
+    FAKE_CLAUDE_PLUGIN_FAIL: "b@mk",
+    FAKE_CLAUDE_PLUGIN_ECHO: ECHO,
+  });
+  const err = await ws.prepare(withPlugins(["a@mk", "b@mk"], ["b@mk"])).catch((e) => e);
+  expect(err).toBeInstanceOf(AgentStartError);
+  const text = `${err.message}\n${err.detail}`;
+  for (const secret of SECRETS) expect(text).not.toContain(secret);
+  expect(err.detail).toContain("[redacted]@host.example");
+  expect(err.detail).toContain("Failed to install plugin");
+});
+
+test("a failure with no output still says why, redacted", async () => {
+  const { ws, prep } = await setupAgent([], { FAKE_CLAUDE_PLUGIN_SILENT_FAIL: "marketplace" });
+  const url = "https://user:tok-SECRET@host.example/org/mk.git";
+  const err = await ws
+    .prepare({
+      ...prep,
+      effective: {
+        ...prep.effective,
+        doc: {
+          ...prep.effective.doc,
+          settings: { extraKnownMarketplaces: { mk2: { source: { source: "git", url } } } },
+        },
+        config: { ...prep.effective.config, plugins: ["b@mk2"] },
+        templatePlugins: [],
+      },
+    })
+    .catch((e) => e);
+  expect(err).toMatchObject({ message: "Plugin b@mk2 didn't install.", fix: "config" });
+  // The command line (with the marketplace URL) is the only clue; its credentials are redacted.
+  expect(err.detail).toContain("marketplace add https://[redacted]@host.example/org/mk.git");
+  expect(err.detail).not.toContain("tok-SECRET");
+});
+
+test("a failed install's output is the last 20 lines, at most 4 KB", async () => {
+  const noisy = Array.from({ length: 60 }, (_, i) => `line ${i} ${"x".repeat(400)}`).join("\n");
+  const { ws, withPlugins } = await setupAgent(["a@mk"], {
+    FAKE_CLAUDE_PLUGIN_FAIL: "b@mk",
+    FAKE_CLAUDE_PLUGIN_ECHO: noisy,
+  });
+  const err = await ws.prepare(withPlugins(["a@mk", "b@mk"], ["b@mk"])).catch((e) => e);
+  expect(Buffer.byteLength(err.detail)).toBeLessThanOrEqual(4096);
+  expect(err.detail).toContain("line 59 ");
+  expect(err.detail).not.toContain("line 10 ");
+  const few = Array.from({ length: 30 }, (_, i) => `short ${i}`).join("\n");
+  expect(capOutput(few).split("\n")).toHaveLength(20);
+  expect(capOutput(few)).toContain("short 29");
+  expect(capOutput(few)).not.toContain("short 9\n");
+});
+
+test("a real plugins folder is refused, never moved aside", async () => {
+  const { ws, prep, workdir } = await setupAgent([]);
   mkdirSync(`${workdir}/.claude-config/plugins/store`, { recursive: true });
   writeFileSync(`${workdir}/.claude-config/plugins/store/builtin.json`, "{}");
-  await ws.prepare(prep);
-  expect(await readlink(`${workdir}/.claude-config/plugins`)).toBe(
-    `${pluginsConfigDir(home, "lead")}/plugins`,
-  );
-  expect(existsSync(`${pluginsConfigDir(home, "lead")}/plugins`)).toBe(true);
-  expect(pluginRuns()).toBe(0);
+  const err = await ws.prepare(prep).catch((e) => e);
+  expect(err).toBeInstanceOf(WorkspaceError);
+  expect(err.message).toBe(`${workdir}/.claude-config/plugins isn't a link; move it away.`);
+  expect(existsSync(`${workdir}/.claude-config/plugins/store/builtin.json`)).toBe(true);
+});
+
+test("an agent without plugins gets its plugins link at start", async () => {
   const fresh = await setupAgent([]);
-  await fresh.ws.prepare(fresh.prep); // missing dir: the link is created too
+  await fresh.ws.prepare(fresh.prep);
   expect(lstatSync(`${fresh.workdir}/.claude-config/plugins`).isSymbolicLink()).toBe(true);
+  expect(fresh.pluginRuns()).toBe(0);
 });

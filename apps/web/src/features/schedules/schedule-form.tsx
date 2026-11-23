@@ -2,14 +2,25 @@ import {
   ApiError,
   formatOffsetIso,
   isValidZone,
+  MSG,
   parseAt,
   SCHEDULE_BODY_MAX,
   type ScheduleItem,
   validateCron,
 } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { FieldShell } from "@/components/field-shell";
+import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
@@ -19,6 +30,7 @@ import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { mergeServer } from "@/features/sheets/merge-server";
 import { useAssignableAgents } from "@/features/tasks/agent-picker";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import type { CreateScheduleBody, PatchScheduleBody } from "./api";
 import { browserZone } from "./format";
 import { type Preview, previewOf, RunPreview } from "./run-preview";
@@ -27,7 +39,6 @@ import { WhenField, type WhenMode } from "./when-field";
 
 const FIELDS = ["target", "cron", "at", "timezone", "body"] as const;
 type Field = (typeof FIELDS)[number];
-type Errors = Partial<Record<Field, string>>;
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
 type FormValues = {
@@ -55,9 +66,10 @@ function valuesOf(s: ScheduleItem): FormValues {
 }
 
 /**
- * Create and edit, always in a sheet (§9). Each field validates when you leave it, never while you type; everything
- * changed is checked again on submit, which moves focus to the first invalid field. Edit sends only the fields that
- * changed. The values live in a draft (`new-schedule`, or `edit-schedule:<key>` holding `{ values, base }`).
+ * Create and edit, always in a sheet (§9). Validation timing and focus belong to `useFieldErrors`: a changed field
+ * validates when you leave it, never while you type; the submit checks every field on create and only the changed ones
+ * on edit, and moves focus to the first invalid field. Edit sends only the fields that changed. The values live in a
+ * draft (`new-schedule`, or `edit-schedule:<key>` holding `{ values, base }`).
  */
 export function ScheduleForm({
   initial,
@@ -105,7 +117,6 @@ export function ScheduleForm({
   const [v, setV] = useState<FormValues>(start.values);
   /** The server copy the values were edited against; a field equal to it is untouched. */
   const [base, setBase] = useState<FormValues>(start.base);
-  const [errors, setErrors] = useState<Errors>({});
   const [preview, setPreview] = useState<Preview | undefined>(() =>
     initial
       ? previewOf({
@@ -128,8 +139,7 @@ export function ScheduleForm({
   }
 
   const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const [toFocus, setToFocus] = useState<Field | null>(null);
+  const o = useOutcome();
   const form = useRef<HTMLFormElement>(null);
   useFocusOnOpen(form);
   const { agents } = useAssignableAgents();
@@ -149,6 +159,18 @@ export function ScheduleForm({
   );
   const spawnedPicked = agents.find((a) => a.slug === v.target)?.kind === "ephemeral";
 
+  // A stale preset cleared is not an edit: the cleared form becomes the untouched baseline, so closing leaves no draft
+  // and the next preset still applies. `draft.rebase` writes a ref, so it runs in an effect, not in the render that
+  // clears the field (set there, further down), and before the draft save below, so that save compares with the new
+  // baseline. `restored` is the form's own state, so after Discard the preset counts as a fresh one.
+  const [rebaseStale, setRebaseStale] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `draft.rebase` and `blank` only write the draft's ref
+  useEffect(() => {
+    if (!rebaseStale) return;
+    setRebaseStale(false);
+    draft.rebase({ ...blank(), target: "" });
+  }, [rebaseStale]);
+
   // An effect, not a write in each setter: the many field handlers all go through `v`, and the draft only has to be
   // current when the sheet closes. An untouched form (equal to its start values, or to its base) holds no draft.
   const { save: saveDraft } = draft;
@@ -158,7 +180,37 @@ export function ScheduleForm({
     if (!submitted.current) saveDraft(create ? v : { values: v, base });
   }, [create, saveDraft, v, base]);
 
-  // A draft or link may name an agent that has since ended or never existed: clear it, with the reason under Target.
+  const checks = {
+    target: () => (v.target ? undefined : FORM_MSG.chooseAgent),
+    cron: () => (!v.cron.trim() ? FORM_MSG.enterPattern : (validateCron(v.cron) ?? undefined)),
+    at: () => {
+      const at = v.local ? parseAt(v.local, v.zone) : undefined;
+      if (!at) return FORM_MSG.chooseTime;
+      return at.getTime() <= Date.now() ? FORM_MSG.timePassed : undefined;
+    },
+    // No blur: the zone is picked from a list, so only a restored draft can hold a bad one, and the submit says so.
+    timezone: () => (isValidZone(v.zone) ? undefined : FORM_MSG.unknownZone),
+    body: () =>
+      !v.body.trim()
+        ? FORM_MSG.enterMessage
+        : bytes(v.body) > SCHEDULE_BODY_MAX
+          ? MSG.bodyTooLong
+          : undefined,
+  };
+  const f = useFieldErrors<Field>({ form, fields: FIELDS, checks });
+
+  // The Message textarea exists only in Write, and its tab panel mounts a commit after the switch, too late for the
+  // hook's focus: a failing submit switches to Write and the textarea takes focus when it mounts.
+  const [bodyView, setBodyView] = useState<"write" | "preview">("write");
+  const focusBody = useRef(false);
+  const focusBodyOnMount = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el || !focusBody.current) return;
+    focusBody.current = false;
+    el.focus();
+  }, []);
+
+  // A draft or link may name an agent that has since ended or never existed: clear it, with the reason under Target,
+  // set during render so it shows in the commit that empties the field.
   const live = useQuery({ ...agentsListQueryOptions("exclude"), enabled: create });
   const endedList = useQuery({ ...agentsListQueryOptions("only"), enabled: create });
   if (
@@ -170,54 +222,31 @@ export function ScheduleForm({
   ) {
     const gone = v.target;
     const hasEnded = [...live.data, ...endedList.data].some((a) => a.slug === gone);
-    // A stale preset cleared is not an edit: the cleared form becomes the untouched baseline (a ref write, idempotent),
-    // so closing leaves no draft and the next preset still applies. `restored` is the form's own state, so after
-    // Discard the preset counts as a fresh one.
-    if (!restored && gone === presetTarget) draft.rebase({ ...blank(), target: "" });
+    if (!restored && gone === presetTarget) setRebaseStale(true);
     setV((x) => ({ ...x, target: "" }));
-    setErrors((e) => ({
-      ...e,
-      target: hasEnded ? `@${gone} has ended; pick another.` : `There is no agent @${gone}.`,
-    }));
+    const staleError = hasEnded ? FORM_MSG.agentEnded : FORM_MSG.agentMissing;
+    // Guarded, not left to the updater's bail-out: any setState call during render schedules another render.
+    if (f.errors.target !== staleError) f.set("target", staleError);
   }
 
-  const changed = (f: keyof FormValues) => v[f] !== base[f];
+  const changed = (k: keyof FormValues) => v[k] !== base[k];
   const dirty = (Object.keys(v) as (keyof FormValues)[]).some(changed);
 
   const set = (patch: Partial<FormValues>) => setV((x) => ({ ...x, ...patch }));
-  const setError = (f: Field, m: string | undefined) => setErrors((e) => ({ ...e, [f]: m }));
-  const refresh = (o: Partial<FormValues> = {}) => {
-    const x = { ...v, ...o };
+  const refresh = (patch: Partial<FormValues> = {}) => {
+    const x = { ...v, ...patch };
     setPreview(previewOf({ mode: x.mode, cron: x.cron, local: x.local, zone: x.zone }));
   };
 
-  const check = {
-    target: (x = v) => (x.target ? undefined : "Choose an agent."),
-    cron: (x = v) => (!x.cron.trim() ? "Enter a pattern." : (validateCron(x.cron) ?? undefined)),
-    at: (x = v) => {
-      if (!x.local) return "Choose a date and time.";
-      const at = parseAt(x.local, x.zone);
-      if (!at) return "Choose a date and time.";
-      return at.getTime() <= Date.now() ? "That time has passed." : undefined;
-    },
-    timezone: (x = v) => (isValidZone(x.zone) ? undefined : "Unknown time zone."),
-    body: (x = v) =>
-      !x.body.trim()
-        ? "Enter a message."
-        : bytes(x.body) > SCHEDULE_BODY_MAX
-          ? "Shorten the message to 64 KB or less."
-          : undefined,
-  };
-
   /** Fields that count on submit: everything on create; only what changed on edit. */
-  const relevant = (f: Field): boolean => {
-    if (create) return f === "cron" ? v.mode === "repeats" : f === "at" ? v.mode === "once" : true;
+  const relevant = (k: Field): boolean => {
+    if (create) return k === "cron" ? v.mode === "repeats" : k === "at" ? v.mode === "once" : true;
     const modeChanged = changed("mode");
-    if (f === "target") return changed("target");
-    if (f === "cron") return v.mode === "repeats" && (modeChanged || changed("cron"));
-    if (f === "at")
+    if (k === "target") return changed("target");
+    if (k === "cron") return v.mode === "repeats" && (modeChanged || changed("cron"));
+    if (k === "at")
       return v.mode === "once" && (modeChanged || changed("local") || changed("zone"));
-    if (f === "timezone") return changed("zone");
+    if (k === "timezone") return changed("zone");
     return changed("body");
   };
 
@@ -231,27 +260,17 @@ export function ScheduleForm({
     return out as CreateScheduleBody;
   }
 
-  const focus = (f: Field) =>
-    form.current
-      ?.querySelector<HTMLElement>(`#field-${f === "timezone" ? "timezone" : f}`)
-      ?.focus();
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when asked for
-  useEffect(() => {
-    if (!toFocus) return;
-    focus(toFocus);
-    setToFocus(null);
-  }, [toFocus]);
-
   async function submit(ev: FormEvent) {
     ev.preventDefault();
     if (pending || locked) return;
-    setFailed(false);
-    const found: Errors = {};
-    for (const f of FIELDS) if (relevant(f)) found[f] = check[f]();
-    setErrors(found);
-    const first = FIELDS.find((f) => found[f]);
-    if (first) return focus(first);
+    o.clear();
+    const toCheck = FIELDS.filter(relevant);
+    if (bodyView === "preview" && toCheck.includes("body") && checks.body()) {
+      setBodyView("write");
+      // Message is the last field: it takes focus only when nothing above it fails too.
+      focusBody.current = toCheck.every((k) => k === "body" || !checks[k]());
+    }
+    if (!f.submit(toCheck)) return;
     if (!create && !dirty) return;
     setPending(true);
     try {
@@ -259,27 +278,22 @@ export function ScheduleForm({
       submitted.current = true;
       if (!create) setPending(false); // `base` follows the saved values through the refreshed `initial`
     } catch (err) {
+      const fields =
+        err instanceof ApiError
+          ? (err.body.fields as Record<string, string> | undefined)
+          : undefined;
+      // Re-enabled in the commit that focuses the field.
       setPending(false);
-      if (err instanceof ApiError) {
-        const fields = (err.body.fields ?? {}) as Record<string, string>;
-        const e: Errors = {};
-        for (const f of FIELDS) if (fields[f]) e[f] = fields[f];
-        if (Object.keys(e).length > 0) {
-          setErrors(e);
-          setToFocus(FIELDS.find((f) => e[f]) as Field); // once the fieldset is enabled again
-          return;
-        }
-      }
-      setFailed(true);
+      if (!f.server(fields)) o.fail(FORM_MSG.saveScheduleFailed);
     }
   }
 
   const fields = (
-    <fieldset disabled={pending || locked} className="grid min-w-0 gap-5">
+    <fieldset disabled={pending || locked} className="field-stack">
       <FieldShell
         name="target"
         label="Target"
-        error={errors.target}
+        error={f.errors.target}
         help={
           spawnedPicked
             ? "The schedule wakes this agent at each run. Spawned agents end when their work is done; this schedule is deleted with it."
@@ -298,7 +312,7 @@ export function ScheduleForm({
             renderValue={renderEndedTarget}
             onValueChange={(slug) => {
               set({ target: slug ?? "" });
-              setError("target", undefined);
+              f.change("target");
             }}
           />
         )}
@@ -307,31 +321,30 @@ export function ScheduleForm({
         mode={v.mode}
         onMode={(mode) => {
           set({ mode });
-          setErrors((e) => ({ ...e, cron: undefined, at: undefined }));
           refresh({ mode });
         }}
         cron={v.cron}
         onCron={(cron) => {
           set({ cron });
-          setError("cron", undefined);
+          f.change("cron");
         }}
         local={v.local}
         onLocal={(local) => {
           set({ local });
-          setError("at", undefined);
+          f.change("at");
         }}
-        errors={errors}
-        onBlurCron={() => {
-          setError("cron", check.cron());
+        errors={f.errors}
+        onBlurCron={(e) => {
+          f.blur("cron", e);
           refresh();
         }}
-        onBlurLocal={() => {
-          setError("at", check.at());
+        onBlurLocal={(e) => {
+          f.blur("at", e);
           refresh();
         }}
         onPreset={(cron) => {
           set({ cron });
-          setError("cron", undefined);
+          f.change("cron");
           refresh({ cron });
         }}
         zone={v.zone}
@@ -340,7 +353,7 @@ export function ScheduleForm({
       <FieldShell
         name="timezone"
         label="Time zone"
-        error={errors.timezone}
+        error={f.errors.timezone}
         help="Times are read and shown in this zone."
       >
         {(a) => (
@@ -351,10 +364,9 @@ export function ScheduleForm({
             invalid={a.invalid}
             onChange={(zone) => {
               set({ zone });
-              setError("timezone", undefined);
+              f.change("timezone");
               refresh({ zone });
             }}
-            onBlur={() => setError("timezone", check.timezone())}
           />
         )}
       </FieldShell>
@@ -362,7 +374,7 @@ export function ScheduleForm({
       <FieldShell
         name="body"
         label="Message"
-        error={errors.body}
+        error={f.errors.body}
         help={
           create
             ? "Delivered as written, from @scheduler, with you as its author."
@@ -376,30 +388,30 @@ export function ScheduleForm({
             id={a.id}
             value={v.body}
             proportional
+            invalid={Boolean(f.errors.body)}
+            view={bodyView}
+            onViewChange={setBodyView}
+            textareaRef={focusBodyOnMount}
             onChange={(body) => {
               set({ body });
-              setError("body", undefined);
+              f.change("body");
             }}
-            onBlur={() => setError("body", check.body())}
+            onBlur={(e) => f.blur("body", e)}
             {...(a.describedBy ? { "aria-describedby": a.describedBy } : {})}
           />
         )}
       </FieldShell>
-      {failed && (
-        <p role="alert" className="text-[0.8125rem] leading-[1.125rem] text-destructive">
-          Couldn't save the schedule. Try again.
-        </p>
-      )}
     </fieldset>
   );
 
   return (
     <form ref={form} onSubmit={submit} noValidate className="flex min-h-0 flex-1 flex-col">
-      <SheetBody className="grid content-start gap-5">
+      <SheetBody className="field-stack">
         {lead}
         {fields}
       </SheetBody>
       <SheetFormFooter
+        outcome={o.outcome}
         submitLabel={create ? "Create schedule" : "Save changes"}
         pendingLabel={create ? "Creating…" : "Saving…"}
         pending={pending}
@@ -409,7 +421,8 @@ export function ScheduleForm({
           draft.clear();
           const fresh = server ?? blank();
           setV(fresh);
-          setErrors({});
+          f.reset();
+          o.clear();
           setPreview(
             initial
               ? previewOf({

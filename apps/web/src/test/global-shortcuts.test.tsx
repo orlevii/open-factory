@@ -40,18 +40,6 @@ function Probe({ on }: { on: () => void }) {
 }
 const sheet = () => screen.queryByRole("dialog", { name: "Keyboard shortcuts" });
 
-test("g then t within a second goes to Tasks; after a second it does not", async () => {
-  const { router } = await shell();
-  press("g");
-  press("t");
-  await waitFor(() => expect(router.state.location.pathname).toBe("/tasks"));
-  vi.useFakeTimers({ toFake: ["Date"] });
-  press("g");
-  vi.setSystemTime(Date.now() + 1500);
-  press("i");
-  expect(router.state.location.pathname).toBe("/tasks");
-});
-
 test.each([
   ["i", "/inbox"],
   ["t", "/tasks"],

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { MAX_AGENT_SCHEDULES } from "./limits.ts";
 import { type Actor, ScheduleService } from "./schedule-service.ts";
@@ -16,6 +17,7 @@ const agent = (id: string): Actor => ({ agentId: id });
 
 beforeAll(async () => {
   t = await createTestDb();
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -165,9 +167,7 @@ test("targets: unknown, humans, a handle, reserved, archived and terminated", as
   });
   const to = (target: string) => svc.create(or, { target, ...weekday });
   await expect(to("nobody")).rejects.toMatchObject({ code: "target_not_found" });
-  await expect(to("@humans")).rejects.toMatchObject({
-    message: "Schedules can only be addressed to agents.",
-  });
+  await expect(to("@humans")).rejects.toMatchObject({ code: "reserved" });
   await expect(to("@or")).rejects.toMatchObject({
     message: "Schedules can only be addressed to agents.",
   });
@@ -261,7 +261,7 @@ test("a spawned agent can't create schedules even when called directly (Q12)", a
 test("review 4: an empty cron is not 'absent': it gets the field sentence", async () => {
   await rejects(
     svc.create(or, { target: "ceo", cron: "", timezone: "UTC", body: "x" }),
-    "Use 5 fields: minute hour day-of-month month day-of-week.",
+    "Use 5 fields, like 0 9 * * 1-5.",
   );
   await rejects(
     svc.create(or, { target: "ceo", at: "", timezone: "UTC", body: "x" }),

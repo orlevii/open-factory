@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { clientMessageSchema, liveKey, serverMessageSchema } from "./ws.ts";
+import { clientMessageSchema, serverMessageSchema } from "./ws.ts";
 
 test("parses client ping and rejects unknown types", () => {
   expect(clientMessageSchema.parse({ type: "ping" })).toEqual({ type: "ping" });
@@ -31,6 +31,7 @@ test("subscribe frames and new server frames parse", () => {
       turnOpen: false,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     }).type,
   ).toBe("agent_status");
   expect(serverMessageSchema.parse({ type: "resync", agent: "dev" }).type).toBe("resync");
@@ -106,6 +107,14 @@ test("live frame rejects bad shapes", () => {
   for (const f of bad) expect(serverMessageSchema.safeParse(f).success).toBe(false);
 });
 
-test("liveKey joins a message id and block index (the retire key)", () => {
-  expect(liveKey("msg_1", 2)).toBe("msg_1:2");
+test("I2 config_changed frames parse with an agent, a template, and no other field", () => {
+  for (const f of [
+    { type: "config_changed", agent: "ana" },
+    { type: "config_changed", template: "dev" },
+  ])
+    expect(serverMessageSchema.parse(f)).toEqual(f);
+  // Names only: a frame never carries the change lines (they hold config names), the zod object strips extras.
+  expect(
+    serverMessageSchema.parse({ type: "config_changed", agent: "ana", changes: ["env X changed"] }),
+  ).toEqual({ type: "config_changed", agent: "ana" });
 });

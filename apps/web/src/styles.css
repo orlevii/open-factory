@@ -55,6 +55,10 @@
   --color-avatar-6: var(--avatar-6);
   --color-avatar-7: var(--avatar-7);
   --color-avatar-8: var(--avatar-8);
+  --color-avatar-9: var(--avatar-9);
+  --color-avatar-10: var(--avatar-10);
+  --color-avatar-11: var(--avatar-11);
+  --color-avatar-12: var(--avatar-12);
   --color-avatar-ink: var(--avatar-ink);
   --color-signal: var(--signal);
   --color-signal-text: var(--signal-text);
@@ -115,15 +119,19 @@
   --ring: oklch(0.6 0.2 37);
   --float-edge: oklch(0.8 0.006 255); /* hairline on floating surfaces */
 
-  /* avatar hues (identity colours, eight steps round the wheel) */
-  --avatar-1: oklch(0.62 0.07 120);
-  --avatar-2: oklch(0.62 0.07 180);
-  --avatar-3: oklch(0.62 0.07 205);
-  --avatar-4: oklch(0.62 0.07 230);
-  --avatar-5: oklch(0.62 0.07 270);
-  --avatar-6: oklch(0.62 0.07 295);
-  --avatar-7: oklch(0.62 0.07 320);
-  --avatar-8: oklch(0.62 0.07 345);
+  /* avatar hues (identity colours, twelve hues in two lightness tiers) */
+  --avatar-1: oklch(0.56 0.07 115);
+  --avatar-2: oklch(0.68 0.07 130);
+  --avatar-3: oklch(0.56 0.07 175);
+  --avatar-4: oklch(0.68 0.07 190);
+  --avatar-5: oklch(0.56 0.07 205);
+  --avatar-6: oklch(0.68 0.07 220);
+  --avatar-7: oklch(0.56 0.07 270);
+  --avatar-8: oklch(0.68 0.07 285);
+  --avatar-9: oklch(0.56 0.07 300);
+  --avatar-10: oklch(0.68 0.07 315);
+  --avatar-11: oklch(0.56 0.07 330);
+  --avatar-12: oklch(0.68 0.07 345);
   --avatar-ink: oklch(0.2 0.008 255); /* ink drawn on every avatar fill, both themes */
 
   /* Signal Orange, the safety light. Light mode deepens it: #FF5A1F is 2.8:1 on the steel ground. */
@@ -212,14 +220,18 @@
   --ring: oklch(0.682 0.211 37.7);
   --float-edge: oklch(0.38 0.008 255);
 
-  --avatar-1: oklch(0.7 0.07 120);
-  --avatar-2: oklch(0.7 0.07 180);
-  --avatar-3: oklch(0.7 0.07 205);
-  --avatar-4: oklch(0.7 0.07 230);
-  --avatar-5: oklch(0.7 0.07 270);
-  --avatar-6: oklch(0.7 0.07 295);
-  --avatar-7: oklch(0.7 0.07 320);
-  --avatar-8: oklch(0.7 0.07 345);
+  --avatar-1: oklch(0.64 0.07 115);
+  --avatar-2: oklch(0.76 0.07 130);
+  --avatar-3: oklch(0.64 0.07 175);
+  --avatar-4: oklch(0.76 0.07 190);
+  --avatar-5: oklch(0.64 0.07 205);
+  --avatar-6: oklch(0.76 0.07 220);
+  --avatar-7: oklch(0.64 0.07 270);
+  --avatar-8: oklch(0.76 0.07 285);
+  --avatar-9: oklch(0.64 0.07 300);
+  --avatar-10: oklch(0.76 0.07 315);
+  --avatar-11: oklch(0.64 0.07 330);
+  --avatar-12: oklch(0.76 0.07 345);
   --avatar-ink: oklch(0.2 0.008 255);
 
   --signal: oklch(0.682 0.211 37.7); /* exactly #FF5A1F: ≥5.1:1 on every dark surface */
@@ -325,10 +337,11 @@
 }
 
 /* Live arrival (U3 §5.2, §8.3): a row that arrived by a live frame and replaces nothing on screen,
-   and the activity line, fade in once when inserted. `@starting-style` applies on insertion only,
+   the Chat's working line and the activity line fade in once when inserted live (`data-live`, never on load). `@starting-style` applies on insertion only,
    so a re-render never replays it; reduced motion keeps the fade (opacity only). */
 [data-row-wrap][data-live],
-[data-activity-line] {
+[data-status-line][data-live],
+[data-activity-line][data-live] {
   transition: opacity 150ms var(--ease-out);
   @starting-style {
     opacity: 0;
@@ -340,6 +353,17 @@
    `data-focus-ring` until blur, drawn the same ("ring = focus", U3 §7.4). */
 [data-row]:focus-visible,
 [data-row][data-focus-ring] {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+/* The credentials page's arrival (I3 §8.6) focuses the credential row (`[data-credential-row]`, tabindex -1) or
+   its Sign in again button (`[data-sign-in-again]`). Both take the same inset ring: the row on :focus-visible
+   or `data-focus-ring` (mouse arrival), the button on `data-focus-ring` only (its own :focus-visible ring
+   stays the global one). Scoped to these attributes so nothing else picks it up. */
+[data-credential-row]:focus-visible,
+[data-credential-row][data-focus-ring],
+[data-sign-in-again][data-focus-ring] {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
@@ -426,6 +450,45 @@
   .jump-pill[data-shown] {
     translate: -50% 0;
   }
+}
+
+/* I4 (spec §5): one reserved note line. The type sits on the cell, so 1lh is one note line. */
+.field-note {
+  display: grid;
+  min-width: 0;
+  min-height: 1lh;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+}
+.field-note > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 100ms var(--ease-out),
+    visibility 100ms var(--ease-out);
+}
+.field-note > [data-shown] {
+  opacity: 1;
+  visibility: visible;
+  transition-duration: 150ms;
+}
+.field-stack {
+  display: grid;
+  row-gap: 0.75rem;
+  align-content: start;
+  min-width: 0;
+}
+/* The invalid edge arrives with the note (150ms) and leaves with it (100ms). */
+.field-edge-transition {
+  transition-property: border-color, background-color, color;
+  transition-duration: 100ms;
+  transition-timing-function: var(--ease-out);
+}
+.field-edge-transition[aria-invalid="true"],
+.field-edge-transition:has([aria-invalid="true"]) {
+  transition-duration: 150ms;
 }
 
 @keyframes of-ignite {
@@ -893,4 +956,38 @@
     transparent calc(var(--hole) / 2),
     #000 calc(var(--hole) / 2)
   );
+}
+
+/* Form-level outcome line: one reserved grid cell; notice, error and success stack in it. */
+.form-outcome {
+  display: grid;
+  min-width: 0;
+  min-height: 1lh;
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+}
+.form-outcome > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+.form-outcome-notice {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 100ms var(--ease-out),
+    visibility 100ms var(--ease-out);
+}
+.form-outcome-notice[data-shown] {
+  opacity: 1;
+  visibility: visible;
+  transition-duration: 150ms;
+}
+/* Live regions never transition visibility (spec 5.5): the inserted line fades in and leaves at once. */
+.form-outcome-line {
+  transition: opacity 150ms var(--ease-out);
+}
+@starting-style {
+  .form-outcome-line {
+    opacity: 0;
+  }
 }

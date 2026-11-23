@@ -8,6 +8,7 @@ beforeAll(async () => {
   tdb = await createMigratedTestDatabase();
   sql = postgres(tdb.url, { max: 1, onnotice: () => {} });
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1','c1','oauth_token',${Buffer.from("x")}), ('c2','c2','oauth_token',${Buffer.from("x")})`;
+  await sql`insert into handles (handle, kind) values ('lead','agent'),('kid-abcd','agent')`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id) values ('lead','lead','Lead','t','{}','local','c1')`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
             values ('kid','kid-abcd','Kid','t','{}','local','c2','ephemeral','lead', now(), 'lead')`;
@@ -54,4 +55,14 @@ test("kind is persistent or ephemeral; new columns default", async () => {
     await sql`select workspace_pinned, workspace_deleted_at, last_activity_at from agents where id = 'lead'`;
   expect(l).toMatchObject({ workspace_pinned: false, workspace_deleted_at: null });
   expect(l?.last_activity_at).toBeInstanceOf(Date);
+});
+test("a kind='message' row needs its recipients; other kinds don't", async () => {
+  await expect(sql`insert into messages (id, kind, from_agent_id, to_agent_id, body)
+                   values ('r1','message','lead','lead','x')`).rejects.toMatchObject({
+    code: "23514",
+  });
+  await sql`insert into messages (id, kind, from_agent_id, to_agent_id, body, recipients)
+            values ('r2','message','lead','lead','x', ${["@lead"]})`;
+  await sql`insert into messages (id, kind, subject_agent_id, notice, to_agent_id, body)
+            values ('r3','peer_joined','lead','peer','lead','x')`;
 });

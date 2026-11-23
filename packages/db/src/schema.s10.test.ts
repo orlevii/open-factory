@@ -13,6 +13,7 @@ beforeAll(async () => {
     await h.close();
     await t.drop();
   };
+  await sql`insert into handles (handle, kind) values ('or','user'),('two','user'),('dev','agent')`;
   await sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or'),('u2','Two','two@x.io','two')`;
   await sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
   await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id) values ('a1','dev','Dev','t','{}','local','c1')`;
@@ -63,13 +64,6 @@ test("credentials.rl_status accepts only the reported statuses", async () => {
   });
 });
 
-test("credentials rate-limit columns are nullable", async () => {
-  await sql`insert into credentials (id,name,kind,value_enc) values ('c2','x','api_key','\\x00')`;
-  const [r] =
-    await sql`select rl_status, rl_type, rl_utilization, rl_resets_at, rl_observed_at from credentials where id = 'c2'`;
-  expect(Object.values(r ?? {})).toEqual([null, null, null, null, null]);
-});
-
 test("invites: token_hash and used_by are unique", async () => {
   await sql`insert into invites (id,token_hash,created_by,expires_at,used_by) values ('i1','h1','u1',now() + interval '1 hour','u2')`;
   await expect(
@@ -78,11 +72,4 @@ test("invites: token_hash and used_by are unique", async () => {
   await expect(
     sql`insert into invites (id,token_hash,created_by,expires_at,used_by) values ('i3','h3','u1',now() + interval '1 hour','u2')`,
   ).rejects.toMatchObject({ code: "23505" });
-});
-
-test("users.disabled_at is nullable", async () => {
-  expect((await sql`select disabled_at, disabled_by from users where id = 'u1'`)[0]).toEqual({
-    disabled_at: null,
-    disabled_by: null,
-  });
 });

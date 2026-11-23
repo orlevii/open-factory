@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { EMAIL_MAX, signUpSchema, USER_NAME_MAX } from "./schemas.ts";
+import { signUpSchema } from "./schemas.ts";
 
 const base = {
   name: "Alice",
@@ -11,11 +11,6 @@ const base = {
 const emailOf = (length: number) => `${"a".repeat(length - "@example.com".length)}@example.com`;
 
 describe("signUpSchema lengths", () => {
-  test("the limits are 80 and 254", () => {
-    expect(USER_NAME_MAX).toBe(80);
-    expect(EMAIL_MAX).toBe(254);
-  });
-
   test("a name of 80 characters is accepted, 81 is refused with the field message", () => {
     expect(signUpSchema.safeParse({ ...base, name: "n".repeat(80) }).success).toBe(true);
     const r = signUpSchema.safeParse({ ...base, name: "n".repeat(81) });
@@ -23,7 +18,7 @@ describe("signUpSchema lengths", () => {
     expect(r.error?.issues).toEqual([
       expect.objectContaining({
         path: ["name"],
-        message: "Keep your name to 80 characters or fewer.",
+        message: "Use 80 characters or fewer.",
       }),
     ]);
   });
@@ -43,7 +38,7 @@ describe("signUpSchema lengths", () => {
     expect(r.error?.issues).toEqual([
       expect.objectContaining({
         path: ["email"],
-        message: "Keep your email to 254 characters or fewer.",
+        message: "Use 254 characters or fewer.",
       }),
     ]);
   });

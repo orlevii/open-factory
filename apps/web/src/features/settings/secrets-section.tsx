@@ -4,6 +4,8 @@ import { CircleCheck, Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
+import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import { deleteSecret, putSecret, secretsQueryOptions } from "@/features/settings/api";
@@ -21,8 +23,11 @@ import {
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { AddSecretForm } from "./forms/add-secret-form";
 import { ValueField } from "./forms/shared";
+
+const FIELDS = ["value"] as const;
 
 type Outcome = { tone: "success" | "error" | "pending"; content: ReactNode; focusKey?: number };
 
@@ -38,24 +43,25 @@ function UpdateForm({
   onCancel(): void;
 }) {
   const [value, setValue] = useState("");
-  const [error, setError] = useState<string>();
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
-  const field = `secret-update-${secret.name}`;
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const f = useFieldErrors({
+    form: formRef,
+    fields: FIELDS,
+    checks: { value: () => (value === "" ? FORM_MSG.enterValue : undefined) },
+  });
 
   async function submit() {
-    setFormError(undefined);
-    if (value === "") {
-      setError("Enter a value.");
-      return document.getElementById(`field-${field}`)?.focus();
-    }
+    o.clear();
+    if (!f.submit()) return;
     setPending(true);
     try {
       onDone(await putSecret(secret.name, value));
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : "Couldn't save the value. Try again.");
-    } finally {
       setPending(false);
+      o.fail(err instanceof ApiError ? err.message : "Couldn't save the value. Try again.");
     }
   }
 
@@ -67,17 +73,19 @@ function UpdateForm({
       submitLabel="Save value"
       pendingLabel="Saving…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
+      ref={formRef}
     >
       <ValueField
-        name={field}
+        name={`secret-update-${secret.name}`}
         label="New value"
         value={value}
-        error={error}
+        error={f.errors.value}
         onChange={(v) => {
           setValue(v);
-          setError(undefined);
+          f.change("value");
         }}
+        onBlur={(e) => f.blur("value", e)}
       />
     </InlineForm>
   );

@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 export class PluginInstallError extends Error {
+  /**
+   * The plugin being installed when it failed, redacted like the output (a ref can carry URL
+   * credentials, and this error is logged whole); `installPlugins` always sets it.
+   */
+  plugin?: string;
   constructor(
     message: string,
     readonly output: string,
@@ -26,6 +31,19 @@ export function marketplaceSourceArg(entry: unknown): string {
   if (typeof value !== "string")
     throw new PluginInstallError("Plugin install failed: unknown marketplace source.", "");
   return value;
+}
+
+/** What a failed install's output may carry into an event: the last 20 lines, at most 4 KB (its tail). */
+export const OUTPUT_MAX_LINES = 20;
+export const OUTPUT_MAX_BYTES = 4096;
+
+export function capOutput(s: string): string {
+  const lines = s.split("\n").filter((l) => l.trim());
+  const text = lines.slice(-OUTPUT_MAX_LINES).join("\n");
+  const bytes = Buffer.from(text);
+  return bytes.length <= OUTPUT_MAX_BYTES
+    ? text
+    : bytes.subarray(bytes.length - OUTPUT_MAX_BYTES).toString();
 }
 
 export function redactOutput(s: string): string {
@@ -78,6 +96,8 @@ async function runInstall(
 ): Promise<void> {
   const children = new Set<ReturnType<typeof execFile>>();
   let over = false;
+  // The plugin the failing step is for (a marketplace step counts for the first plugin that needs it).
+  let current = o.plugins[0];
 
   const run = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
@@ -105,7 +125,7 @@ async function runInstall(
           reject(
             new PluginInstallError(
               `Plugin install failed: ${redactOutput(first)}`,
-              redactOutput(lines.slice(-20).join("\n")),
+              capOutput(redactOutput(lines.join("\n"))),
             ),
           );
         },
@@ -116,8 +136,14 @@ async function runInstall(
   const sequence = async () => {
     const markets = new Set(o.plugins.map((p) => p.slice(p.lastIndexOf("@") + 1)).filter((m) => m));
     const known = (o.tplSettings.extraKnownMarketplaces ?? {}) as Record<string, unknown>;
-    for (const m of markets) await run(["marketplace", "add", marketplaceSourceArg(known[m])]);
-    for (const p of o.plugins) await run(["install", p]);
+    for (const m of markets) {
+      current = o.plugins.find((p) => p.slice(p.lastIndexOf("@") + 1) === m);
+      await run(["marketplace", "add", marketplaceSourceArg(known[m])]);
+    }
+    for (const p of o.plugins) {
+      current = p;
+      await run(["install", p]);
+    }
   };
 
   let timer: NodeJS.Timeout | undefined;
@@ -130,6 +156,9 @@ async function runInstall(
   });
   try {
     await Promise.race([sequence(), budget]);
+  } catch (err) {
+    if (err instanceof PluginInstallError && current) err.plugin = redactOutput(current);
+    throw err;
   } finally {
     clearTimeout(timer);
     budget.catch(() => {});

@@ -8,7 +8,6 @@ import { createFakeClaude, FakeTransport } from "../../testing/index.ts";
 import { readFixture } from "../test-fixtures.ts";
 import { localTransport } from "../transport/local.ts";
 import { type AgentRuntimeSpec, ProcessNotRunningError } from "../types.ts";
-import { buildClaudeArgs } from "./args.ts";
 import { createClaudeDriver } from "./driver.ts";
 import { ClaudeProcess, StderrTail } from "./process.ts";
 
@@ -39,34 +38,14 @@ async function collectUntil(
   }
 }
 
-test("args: fixed flags, resume and model only when given", () => {
-  const base = [
-    "-p",
-    "--input-format",
-    "stream-json",
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--include-partial-messages",
-    "--permission-mode",
-    "auto",
-  ];
-  expect(buildClaudeArgs(spec("c"), {})).toEqual(base);
-  expect(buildClaudeArgs(spec("c", { model: "haiku" }), { resumeSessionId: "s1" })).toEqual([
-    ...base,
-    "--resume",
-    "s1",
-    "--model",
-    "haiku",
-  ]);
-});
-
 test("send writes one envelope turn; events are mapped; env passes through unchanged", async () => {
   const fake = createFakeClaude({ scenario: "reply" });
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
   const done = collectUntil(p.events, (e) => e.type === "turn_end", events);
-  await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "hi" }]);
+  await p.send([
+    { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
+  ]);
   await done;
   expect(events.map((e) => e.type)).toEqual([
     "session_started",
@@ -83,7 +62,7 @@ test("send writes one envelope turn; events are mapped; env passes through uncha
     message: {
       role: "user",
       content:
-        '<factory-message from="@or" kind="message" urgent="false" id="m1">\nhi\n</factory-message>',
+        '<factory-message from="@or" from_kind="human" kind="message" urgent="false" id="m1">\nhi\n</factory-message>',
     },
   });
   const start = log.find((e) => e.kind === "start");
@@ -144,7 +123,9 @@ test("interrupt writes a control_request", async () => {
   const fake = createFakeClaude({ scenario: "long-tool" });
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
   const events: HarnessEvent[] = [];
-  await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "ping" }]);
+  await p.send([
+    { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "ping" },
+  ]);
   await collectUntil(p.events, (e) => e.type === "tool_call", events);
   await p.control("interrupt");
   await collectUntil(p.events, (e) => e.type === "turn_end", events);
@@ -167,7 +148,9 @@ test("stop closes stdin; the process exits 0 and emits exited{expected:true}", a
   const events: HarnessEvent[] = [];
   // A finished turn proves the fake is up and reading stdin. Stopping a process that hasn't booted yet races the
   // grace against node's startup (seconds under full-suite load), and a SIGTERM then wins instead of the stdin close.
-  await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "hi" }]);
+  await p.send([
+    { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
+  ]);
   await collectUntil(p.events, (e) => e.type === "turn_end", events);
   const all = collectUntil(p.events, () => false, events);
   const info = await p.stop({ graceMs: 3000 });
@@ -175,14 +158,18 @@ test("stop closes stdin; the process exits 0 and emits exited{expected:true}", a
   expect(info).toMatchObject({ code: 0 });
   expect(events.at(-1)).toMatchObject({ type: "exited", code: 0, expected: true });
   await expect(
-    p.send([{ id: "m", from: "@or", kind: "message", urgent: false, body: "x" }]),
+    p.send([
+      { id: "m", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "x" },
+    ]),
   ).rejects.toBeInstanceOf(ProcessNotRunningError);
 });
 
 test("stop falls back to SIGTERM when the process doesn't exit on stdin close", async () => {
   const fake = createFakeClaude({ scenario: "long-tool" });
   const p = createClaudeDriver({ transports: { local: localTransport } }).start(spec(fake.bin), {});
-  await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "ping" }]);
+  await p.send([
+    { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "ping" },
+  ]);
   // Mid-tool, so the fake is up (its SIGTERM handler installed) and won't exit on the stdin close.
   await collectUntil(p.events, (e) => e.type === "tool_call", []);
   const info = await p.stop({ graceMs: 200, termWaitMs: 5000 });
@@ -396,7 +383,9 @@ describe("commands", () => {
   test("a send before the list arrives is written at once", async () => {
     const t = new FakeTransport();
     const p = new ClaudeProcess(spec("c"), {}, t);
-    await p.send([{ id: "m1", from: "@or", kind: "message", urgent: false, body: "hi" }]);
+    await p.send([
+      { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
+    ]);
     expect(written(t).map((w) => w.type)).toEqual(["control_request", "user"]);
     t.exitWith(0);
     await expect(p.commands()).resolves.toBeUndefined();
@@ -486,10 +475,10 @@ describe("commands", () => {
     });
   });
 
-  test("command() writes the raw text as one user line", async () => {
+  test("raw() writes the raw text as one user line", async () => {
     const t = new FakeTransport();
     const p = new ClaudeProcess(spec("c"), {}, t);
-    await p.command("/code-review src/");
+    await p.raw("/code-review src/");
     expect(t.writes.at(-1)).toBe(
       '{"type":"user","message":{"role":"user","content":"/code-review src/"}}',
     );

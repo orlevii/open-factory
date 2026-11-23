@@ -43,6 +43,8 @@ beforeEach(() => {
     workdir,
     grantedPaths: [],
     hostSkillPaths: [],
+    templateSkillPaths: [],
+    templateDir: path.join(factoryHome, "templates/t"),
     declaredMarketplaceDirs: [],
     pluginsDir,
     cliBundle,
@@ -92,55 +94,10 @@ test("container name: open-factory-<slug>-<first 8 of the agent id>", () => {
   expect(containerName("lead", AGENT)).toBe("open-factory-lead-01234567");
 });
 
-test("hardened create options", () => {
-  const o = createOptions(inputs);
-  expect(o.HostConfig?.SecurityOpt).toEqual(["no-new-privileges:true"]);
-  expect(o.HostConfig?.Privileged).toBeFalsy();
-  expect(o.HostConfig?.CapAdd).toBeUndefined();
-  expect(o.HostConfig?.NetworkMode ?? "default").not.toBe("host");
-  expect(o.HostConfig?.PidMode).toBeUndefined();
-  expect(o.HostConfig?.Tmpfs).toEqual({ "/run/open-factory": "" });
-  expect(o.HostConfig?.ExtraHosts).toEqual(["host.docker.internal:host-gateway"]);
-  expect(o.Env).toEqual([`HOST_UID=${inputs.uid}`, `HOST_GID=${inputs.gid}`]);
-  expect(o.Labels).toMatchObject({
-    "io.open-factory.agent-id": inputs.agentId,
-    "io.open-factory.spec-hash": inputs.specHash,
-  });
-});
-
-test("create options: labels, image, bind mounts only from the input, nothing else that widens the box", () => {
-  const o = createOptions(inputs);
-  expect(o.name).toBe(inputs.name);
-  expect(o.Image).toBe("sha256:img1"); // the hashed id, never the (retaggable) ref
-  expect(o.Cmd).toBeUndefined(); // the image default (`sleep infinity`)
-  expect(o.User).toBeUndefined();
-  expect(o.Labels).toEqual({
-    "io.open-factory.agent-id": AGENT,
-    "io.open-factory.slug": "lead",
-    "io.open-factory.spec-hash": "abc123",
-    "io.open-factory.image-id": "sha256:img1",
-    "io.open-factory.image": IMAGE,
-  });
-  expect(o.HostConfig?.Mounts).toEqual([
-    { Type: "bind", Source: "/b", Target: CLI_BUNDLE_TARGET, ReadOnly: true },
-    { Type: "bind", Source: "/w", Target: "/w", ReadOnly: false },
-  ]);
-  expect(o.HostConfig?.Binds).toBeUndefined();
-  expect(o.HostConfig?.Init).toBeUndefined();
-  expect(o.HostConfig?.Devices).toBeUndefined();
-  expect(o.HostConfig?.IpcMode).toBeUndefined();
-  expect(o.HostConfig?.UsernsMode).toBeUndefined();
-  expect(o.HostConfig?.VolumesFrom).toBeUndefined();
-  expect(Object.keys(o.HostConfig ?? {}).sort()).toEqual(
-    ["ExtraHosts", "Mounts", "SecurityOpt", "Tmpfs"].sort(),
-  );
-  expect(Object.keys(o).sort()).toEqual(["Env", "HostConfig", "Image", "Labels", "name"].sort());
-});
-
 test("pinned create options and spec hash (changed? check the hardening, then update the pins)", () => {
   expect(createOptions(inputs)).toEqual({
     name: "open-factory-lead-01234567",
-    Image: "sha256:img1",
+    Image: "sha256:img1", // the hashed id, never the (retaggable) ref
     Env: ["HOST_UID=501", "HOST_GID=20"],
     Labels: {
       "io.open-factory.agent-id": AGENT,
@@ -330,6 +287,7 @@ test("a running container with the same spec is reused without a start", async (
   });
   expect(r).toMatchObject({ containerId: first.containerId, action: "started" });
   expect(docker.ops()).not.toContain("create");
+  expect(docker.ops()).not.toContain("start");
 });
 
 test("ready timeout surfaces the container logs", async () => {

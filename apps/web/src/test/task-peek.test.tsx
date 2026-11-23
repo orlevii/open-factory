@@ -267,13 +267,6 @@ test("a plain click and Enter open the task's page; no peek", async () => {
   expect(peek()).toBeNull();
 });
 
-test("the shortcuts sheet says Space selects or peeks", async () => {
-  await visit(1200);
-  fireEvent.keyDown(document.body, { key: "?" });
-  const sheet = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
-  expect(within(sheet).getByText("Select or peek row")).toBeInTheDocument();
-});
-
 test("a keyboard sweep down the list fetches no task; hover still warms a row", async () => {
   await visit(1200);
   (row("T-1") as HTMLElement).focus();

@@ -36,7 +36,7 @@ afterEach(() => {
   document.body.style.pointerEvents = "";
 });
 
-async function visit(width: number, path = "/agents/dev") {
+async function visit(width: number, path = "/agents/dev/session") {
   const viewport = fakeMatchMedia.installWidth(width);
   const app = renderApp(path, alice);
   await screen.findByText("Two entries.");
@@ -145,18 +145,21 @@ test("below 768, ] opens the drawer and closes it again; other keys stay blocked
 
 test("the overlay sits below the header: Stop and the toggle stay clickable", async () => {
   vi.unstubAllGlobals();
-  mockApi({
+  const api = mockApi({
     "GET /api/agents/dev": () => json(detail({ status: "working", turnOpen: true })),
     "GET /api/agents/dev/events?": () => json(conversation()),
+    "POST /api/agents/dev/interrupt": () => json({}, 202),
   });
   await visit(900);
   await userEvent.click(toggle());
   await waitFor(() => expect(modeOf(container())).toBe("overlay"));
   const sheet = container() as HTMLElement;
-  expect(sheet).toHaveClass("top-12");
   expect(sheet).not.toHaveAttribute("aria-modal");
-  // Still in the accessibility tree (a modal would hide the page behind).
-  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+  // Still in the accessibility tree and clickable (a modal would hide the page behind).
+  await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+  await waitFor(() =>
+    expect(api.calls.filter((c) => c.url === "/api/agents/dev/interrupt")).toHaveLength(1),
+  );
   await userEvent.click(toggle());
   await waitFor(() => expect(container()).toBeNull());
 });
@@ -164,7 +167,7 @@ test("the overlay sits below the header: Stop and the toggle stay clickable", as
 test("switching agents keeps an open panel open (≥1024) and retargets the overlay in place", async () => {
   const wide = await visit(1100);
   await userEvent.click(toggle());
-  await act(() => wide.router.navigate({ to: "/agents/$slug", params: { slug: "lead" } }));
+  await act(() => wide.router.navigate({ to: "/agents/$slug/session", params: { slug: "lead" } }));
   await screen.findByRole("heading", { level: 1, name: "Lead agent" });
   await waitFor(() => expect(within(container() as HTMLElement).getByText("@lead")).toBeTruthy());
   expect(modeOf(container())).toBe("inflow");
@@ -174,7 +177,7 @@ test("switching agents keeps an open panel open (≥1024) and retargets the over
   await userEvent.click(toggle());
   await waitFor(() => expect(modeOf(container())).toBe("overlay"));
   const sheet = container();
-  await act(() => mid.router.navigate({ to: "/agents/$slug", params: { slug: "lead" } }));
+  await act(() => mid.router.navigate({ to: "/agents/$slug/session", params: { slug: "lead" } }));
   await screen.findByRole("heading", { level: 1, name: "Lead agent" });
   await waitFor(() => expect(within(container() as HTMLElement).getByText("@lead")).toBeTruthy());
   // The same sheet node: its content swapped in place, it never closed and reopened.
@@ -242,7 +245,7 @@ test("an open sheet closes when the next agent fails to load, rather than stayin
   const app = await visit(900);
   await userEvent.click(toggle());
   await waitFor(() => expect(modeOf(container())).toBe("overlay"));
-  await act(() => app.router.navigate({ to: "/agents/$slug", params: { slug: "lead" } }));
+  await act(() => app.router.navigate({ to: "/agents/$slug/session", params: { slug: "lead" } }));
   await screen.findByText(/Couldn't load this session/);
   await waitFor(() => expect(container()).toBeNull());
 });

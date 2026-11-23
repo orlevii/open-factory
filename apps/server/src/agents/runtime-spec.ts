@@ -1,5 +1,5 @@
 import type { AgentRuntimeSpec, Mount } from "@open-factory/harness";
-import type { TemplateConfig } from "@open-factory/shared";
+import { isFactoryEnvName, type TemplateConfig } from "@open-factory/shared";
 
 /** Copied from the server env when set. Everything else is withheld from agents (fail closed). */
 export const ENV_ALLOWLIST = [
@@ -50,6 +50,14 @@ export function buildAgentEnv(
   }
   // Last, so no secret can override it. Never log it.
   env.OPEN_FACTORY_AGENT_TOKEN = extra.agentToken;
+  // The list in shared is what overlays and templates may never set; it must name everything set here.
+  for (const k of Object.keys(env))
+    if (
+      !(extra.secrets && k in extra.secrets) &&
+      !(ENV_ALLOWLIST as readonly string[]).includes(k) &&
+      !isFactoryEnvName(k)
+    )
+      throw new Error(`buildAgentEnv set ${k}, which is not in FACTORY_ENV_NAMES.`);
   return env;
 }
 

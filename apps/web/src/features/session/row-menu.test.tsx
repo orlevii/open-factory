@@ -28,7 +28,7 @@ const tool = (name: string, input: Record<string, unknown>): Row => ({
   children: [],
   key: "2",
 });
-const outgoing = (to: string, result?: Record<string, unknown>): Row => ({
+const outgoing = (to: string | string[], result?: Record<string, unknown>): Row => ({
   kind: "outgoing",
   seq: 3,
   at,
@@ -36,7 +36,7 @@ const outgoing = (to: string, result?: Record<string, unknown>): Row => ({
     type: "tool_call",
     toolUseId: "t3",
     name: "mcp__factory__send_message",
-    input: { to, body: "ping **you**" },
+    input: { to: [to].flat(), body: "ping **you**" },
   },
   ...(result
     ? {
@@ -74,28 +74,67 @@ test("items, only those that apply: Copy text on agent text, Copy command on Bas
   expect(labels(footer)).toEqual(["Copy link"]);
 });
 
+const reached = (to: string, kind: "agent" | "human", id = "m1") =>
+  kind === "human"
+    ? { to, kind, status: "inbox", id }
+    : { to, kind, status: "queued", recipient_status: "idle", id };
+
+const messageFrom = (from: string, fromKind: "human" | "agent"): Row => ({
+  kind: "message",
+  seq: 4,
+  at,
+  message: { id: "m4", from, fromKind, kind: "message", urgent: false, body: "hi" },
+  key: "4",
+});
+
+test("Open in chat: on your own messages with this agent, and on a send to you", () => {
+  const chat = (row: Row, self?: string) =>
+    rowMenuItems(row, "dev", self).filter((i) => i.kind === "chat");
+  expect(chat(messageFrom("@or", "human"), "or")).toEqual([
+    { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m4" },
+  ]);
+  // Someone else's message, or no known handle: it isn't in your chat.
+  expect(chat(messageFrom("@sam", "human"), "or")).toEqual([]);
+  expect(chat(messageFrom("@or", "human"))).toEqual([]);
+  expect(chat(messageFrom("@lead", "agent"), "or")).toEqual([]);
+  expect(chat(outgoing("@or", { results: [reached("@or", "human", "m5")] }), "or")).toEqual([
+    { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m5" },
+  ]);
+  expect(chat(outgoing("@sam", { results: [reached("@sam", "human")] }), "or")).toEqual([]);
+});
+
 test("outgoing: View tool call, and Open in inbox only when it went to a human", () => {
-  expect(labels(outgoing("@humans", { id: "m1", to: "@humans", status: "inbox" }))).toEqual([
+  expect(labels(outgoing("@or", { results: [reached("@or", "human")] }))).toEqual([
     "Copy link",
     "Copy text",
     "View tool call",
     "Open in inbox",
   ]);
-  expect(labels(outgoing("b", { id: "m1", to: "b", status: "idle" }))).toEqual([
+  expect(labels(outgoing("@b", { results: [reached("@b", "agent")] }))).toEqual([
     "Copy link",
     "Copy text",
     "View tool call",
     "View in @b's session",
   ]);
   // Not sent yet: nothing to view in the recipient's session.
-  expect(labels(outgoing("b"))).toEqual(["Copy link", "Copy text", "View tool call"]);
+  expect(labels(outgoing("@b"))).toEqual(["Copy link", "Copy text", "View tool call"]);
+});
+
+test("a send to several people lists everyone in a Recipients item and links to none", () => {
+  const to = ["@a", "@b", "@c", "@d"];
+  const row = outgoing(to, { results: to.map((t) => reached(t, "agent", t)) });
+  expect(labels(row)).toEqual(["Copy link", "Copy text", "View tool call", "Recipients"]);
+  expect(rowMenuItems(row, "dev").find((i) => i.kind === "recipients")).toMatchObject({
+    text: "@a, @b, @c, @d",
+  });
+  expect(rowMenuTitle(row, "dev")).toMatch(/^Message to @a, @b \+2 · /);
 });
 
 test("the copied text is the markdown source; the link is the row's deep link", () => {
   const items = rowMenuItems(text(1), "my agent");
   expect(items[0]).toMatchObject({
     kind: "copy",
-    text: `${location.origin}/agents/my%20agent?event=1`,
+    text: `${location.origin}/agents/my%20agent/session?event=1`,
   });
   expect(items[1]).toMatchObject({ kind: "copy", text: "Text **1**" });
   expect(rowMenuItems(tool("Bash", { command: "ls -la" }), "dev")[1]).toMatchObject({
@@ -229,7 +268,6 @@ test("a refused clipboard says Couldn't copy inline", async () => {
   expect(await screen.findByText("Couldn't copy")).toBeInTheDocument();
 });
 
-const many = Array.from({ length: 200 }, (_, i) => text(i + 1));
 const timeline = (rows: Row[]) => (
   <Timeline
     slug="dev"
@@ -242,14 +280,6 @@ const timeline = (rows: Row[]) => (
     footer={null}
   />
 );
-
-test("200 rows mount 200 plain triggers and no menu root", async () => {
-  renderInRouter(timeline(many));
-  await screen.findByText("200");
-  expect(document.querySelectorAll("[data-copy-link]")).toHaveLength(200);
-  expect(document.querySelectorAll('[data-slot="dropdown-menu-trigger"]')).toHaveLength(0);
-  expect(document.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(200);
-});
 
 test("applyTo skips the trigger: only the tab row's trigger is tabbable", async () => {
   renderInRouter(timeline([text(1), text(2), text(3)]));
@@ -286,7 +316,14 @@ const card = (kind: "system" | "message", seq: number): Row => ({
   kind: "message",
   seq,
   at,
-  message: { id: `m${seq}`, from: "@factory", kind, urgent: false, body: `Body ${seq}` },
+  message: {
+    id: `m${seq}`,
+    from: "@factory",
+    fromKind: "factory",
+    kind,
+    urgent: false,
+    body: `Body ${seq}`,
+  },
   key: `${seq}:0`,
 });
 
@@ -294,7 +331,7 @@ test("cards span the column with ⋯ inside their padding; unboxed rows keep the
   renderInRouter(
     timeline([
       text(1),
-      outgoing("bob", { id: "m1", to: "bob", status: "delivered" }),
+      outgoing("@bob", { results: [reached("@bob", "agent")] }),
       card("message", 5),
       card("system", 6),
     ]),
@@ -334,7 +371,7 @@ const message: Row = {
   kind: "message",
   seq: 4,
   at,
-  message: { id: "m4", from: "@or", kind: "message", urgent: false, body: "Hi" },
+  message: { id: "m4", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "Hi" },
   key: "4:0",
 };
 
@@ -343,7 +380,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
   expect(rowMenuTitle(message, "dev")).toBe(`Message from @or · ${t}`);
   expect(rowMenuTitle(tool("Bash", { command: "ls" }), "dev")).toBe(`Bash · ${t}`);
   expect(rowMenuTitle(text(1), "dev")).toBe(`@dev · ${t}`);
-  expect(rowMenuTitle(outgoing("bob"), "dev")).toBe(`Message to @bob · ${t}`);
+  expect(rowMenuTitle(outgoing("@bob"), "dev")).toBe(`Message to @bob · ${t}`);
   expect(rowMenuTitle(footer, "dev")).toBe("Turn summary");
   const peer = (left?: { reason: "archived" }): Row => ({
     kind: "peer",
@@ -352,6 +389,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
     envelope: {
       id: "e8",
       from: "@factory",
+      fromKind: "factory",
       kind: left ? "peer_left" : "peer_joined",
       urgent: false,
       body: "",

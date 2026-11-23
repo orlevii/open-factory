@@ -134,8 +134,13 @@ test("the creator filter lists Anyone and Me first, then agents", async () => {
   renderApp("/tasks", alice);
   await screen.findByRole("link", { name: /^T-1,/ });
   const names = await comboOptionNames(screen.getByLabelText("Created by"));
-  expect(names.slice(0, 2)).toEqual(["Anyone", "Me"]);
-  expect(names.length).toBeGreaterThan(2);
+  expect(names.map((n) => n.replace(/(@[\w-]+)+$/, "").trim())).toEqual([
+    "Anyone",
+    "Me",
+    "Dev agent",
+    "Lead",
+    "Old",
+  ]);
 });
 
 test("filters from the URL are applied and an ended assignee shows while selected", async () => {

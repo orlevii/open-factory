@@ -5,13 +5,22 @@ import {
   mkdtempSync,
   readlinkSync,
   realpathSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
-import { linkHostSkills, linkProjects, resolveHostSkills, WorkspaceError } from "./links.ts";
+import {
+  linkProjects,
+  linkSkills,
+  resolveHostSkills,
+  resolveTemplateSkills,
+  WorkspaceError,
+} from "./links.ts";
+
+const noTpl = () => ({ templateDir: tmp("notpl-"), skills: [] });
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p));
 
@@ -27,7 +36,7 @@ test("host skills: resolved, linked, stale links removed, non-links never touche
   mkdirSync(path.join(wd, ".claude/skills/local-one"));
   const skills = await resolveHostSkills(hs, ["grilling", "linked"]);
   expect(skills.find((s) => s.name === "linked")?.realDir).toBe(real);
-  await linkHostSkills(wd, hs, skills);
+  await linkSkills(wd, { dir: hs, skills }, noTpl());
   expect(readlinkSync(path.join(wd, ".claude/skills/grilling"))).toBe(path.join(hs, "grilling"));
   expect(existsSync(path.join(wd, ".claude/skills/old"))).toBe(false);
   expect(lstatSync(path.join(wd, ".claude/skills/local-one")).isDirectory()).toBe(true);
@@ -37,7 +46,7 @@ test("host skills: resolved, linked, stale links removed, non-links never touche
   mkdirSync(path.join(wd, ".claude/skills/grilling2"));
   mkdirSync(path.join(hs, "grilling2"));
   await expect(
-    linkHostSkills(wd, hs, await resolveHostSkills(hs, ["grilling2"])),
+    linkSkills(wd, { dir: hs, skills: await resolveHostSkills(hs, ["grilling2"]) }, noTpl()),
   ).rejects.toBeInstanceOf(WorkspaceError);
 });
 
@@ -70,7 +79,7 @@ test("links: unnormalized hostSkillsDir, symlinked or file parents, bad project 
   const wd = tmp("wd-");
   mkdirSync(path.join(wd, ".claude/skills"), { recursive: true });
   symlinkSync(path.join(hs, "old"), path.join(wd, ".claude/skills/old"));
-  await linkHostSkills(wd, `${hs}/`, []);
+  await linkSkills(wd, { dir: `${hs}/`, skills: [] }, noTpl());
   expect(existsSync(path.join(wd, ".claude/skills/old"))).toBe(false);
   const outside = tmp("out-");
   const other = tmp("other-");
@@ -85,4 +94,127 @@ test("links: unnormalized hostSkillsDir, symlinked or file parents, bad project 
   await expect(
     linkProjects(tmp("wd4-"), [{ name: "../x", hostPath: other }]),
   ).rejects.toBeInstanceOf(WorkspaceError);
+});
+
+// Spec §6.4. The default layout puts FACTORY_HOME under the host home.
+function tplLayout() {
+  const home = realpathSync(tmp("home-"));
+  const factory = path.join(home, "open-factory");
+  const tplDir = path.join(factory, "templates/t");
+  mkdirSync(path.join(tplDir, "skills/x"), { recursive: true });
+  mkdirSync(path.join(tplDir, "skills/y"), { recursive: true });
+  writeFileSync(path.join(tplDir, "skills/x/SKILL.md"), "x");
+  return { home, factory, tplDir, wd: tmp("wd-") };
+}
+
+test("template skills: linked to realpath(tpl/skills)/<name>; a removed one's link goes, own folders stay", async () => {
+  const { tplDir, wd } = tplLayout();
+  const hs = tmp("hs-");
+  const skills = await resolveTemplateSkills(tplDir);
+  expect(skills).toEqual([
+    { name: "x", realDir: path.join(tplDir, "skills/x") },
+    { name: "y", realDir: path.join(tplDir, "skills/y") },
+  ]);
+  await linkSkills(wd, { dir: hs, skills: [] }, { templateDir: tplDir, skills });
+  expect(readlinkSync(path.join(wd, ".claude/skills/x"))).toBe(path.join(tplDir, "skills/x"));
+  mkdirSync(path.join(wd, ".claude/skills/mine"));
+  rmSync(path.join(tplDir, "skills/y"), { recursive: true });
+  await linkSkills(
+    wd,
+    { dir: hs, skills: [] },
+    { templateDir: tplDir, skills: await resolveTemplateSkills(tplDir) },
+  );
+  expect(existsSync(path.join(wd, ".claude/skills/y"))).toBe(false);
+  expect(lstatSync(path.join(wd, ".claude/skills/x")).isSymbolicLink()).toBe(true);
+  expect(lstatSync(path.join(wd, ".claude/skills/mine")).isDirectory()).toBe(true);
+  // With local_skills off, every template link goes.
+  await linkSkills(wd, { dir: hs, skills: [] }, { templateDir: tplDir, skills: [] });
+  expect(existsSync(path.join(wd, ".claude/skills/x"))).toBe(false);
+});
+
+test("template skills: a real folder with a template skill's name fails; a template link is refused", async () => {
+  const { tplDir, wd } = tplLayout();
+  mkdirSync(path.join(wd, ".claude/skills/x"), { recursive: true });
+  await expect(
+    linkSkills(
+      wd,
+      { dir: tmp("hs-"), skills: [] },
+      { templateDir: tplDir, skills: await resolveTemplateSkills(tplDir) },
+    ),
+  ).rejects.toThrow(`${wd}/.claude/skills/x isn't a link to the template skill; move it away.`);
+});
+
+test("a host skill and a template skill with the same name fail the start, naming the clash", async () => {
+  const { tplDir, wd } = tplLayout();
+  const hs = tmp("hs-");
+  mkdirSync(path.join(hs, "x"));
+  const run = linkSkills(
+    wd,
+    { dir: hs, skills: await resolveHostSkills(hs, ["x"]) },
+    { templateDir: tplDir, skills: await resolveTemplateSkills(tplDir) },
+  );
+  await expect(run).rejects.toBeInstanceOf(WorkspaceError);
+  await expect(run).rejects.toMatchObject({
+    message: "Skill x is both a host skill and a template skill. Fix it in Configuration.",
+    diagnosis: "Skill x is both a host skill and a template skill.",
+    fix: "config",
+  });
+  // Nothing was linked: the clash is found before any write.
+  expect(existsSync(path.join(wd, ".claude/skills/x"))).toBe(false);
+});
+
+test("a template folder gone by the link step fails the start with the missing-template message", async () => {
+  const { tplDir, wd } = tplLayout();
+  rmSync(tplDir, { recursive: true });
+  await expect(
+    linkSkills(wd, { dir: tmp("hs-"), skills: [] }, { templateDir: tplDir, skills: [] }),
+  ).rejects.toMatchObject({ name: "WorkspaceError", message: "Template t no longer exists." });
+});
+
+test.each([
+  ["a skill entry symlinked to ~/.ssh", "entry", ".ssh", "skills/z must be a folder, not a link."],
+  [
+    "a skill entry symlinked to state/agents/bob",
+    "entry",
+    "state",
+    "skills/z must be a folder, not a link.",
+  ],
+  ["skills/ symlinked to ~/.ssh", "dir", ".ssh", "skills/ must be a folder, not a link."],
+  [
+    "skills/ symlinked to state/agents/bob",
+    "dir",
+    "state",
+    "skills/ must be a folder, not a link.",
+  ],
+])("resolveTemplateSkills refuses %s", async (_n, what, to, message) => {
+  const { home, factory, tplDir } = tplLayout();
+  const target = to === ".ssh" ? path.join(home, ".ssh") : path.join(factory, "state/agents/bob");
+  mkdirSync(target, { recursive: true });
+  if (what === "entry") symlinkSync(target, path.join(tplDir, "skills/z"));
+  else {
+    rmSync(path.join(tplDir, "skills"), { recursive: true });
+    symlinkSync(target, path.join(tplDir, "skills"));
+  }
+  await expect(resolveTemplateSkills(tplDir)).rejects.toMatchObject({
+    message,
+    fix: "template",
+  });
+});
+
+test("resolveTemplateSkills: a file entry is refused, hidden files and a missing skills/ are fine", async () => {
+  const { tplDir } = tplLayout();
+  writeFileSync(path.join(tplDir, "skills/.DS_Store"), "");
+  expect((await resolveTemplateSkills(tplDir)).map((s) => s.name)).toEqual(["x", "y"]);
+  writeFileSync(path.join(tplDir, "skills/README.md"), "");
+  await expect(resolveTemplateSkills(tplDir)).rejects.toThrow(
+    "skills/README.md must be a folder, not a link.",
+  );
+  expect(await resolveTemplateSkills(tmp("empty-"))).toEqual([]);
+});
+
+test("a symlinked template folder resolves to the real skills path", async () => {
+  const { tplDir, factory } = tplLayout();
+  const alias = path.join(factory, "templates/alias");
+  symlinkSync(tplDir, alias);
+  expect((await resolveTemplateSkills(alias))[0]?.realDir).toBe(path.join(tplDir, "skills/x"));
 });

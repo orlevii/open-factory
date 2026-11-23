@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { renderInRouter } from "@/test/render-in-router";
@@ -370,56 +370,39 @@ test("after a successful Undo focus goes to the restored message's Cancel, else 
   }
 });
 
-// ---- Command items (U3 §13.3, Q39) ----
+// ---- Raw items are tail blocks of the timeline, not lines here (I1 §5) ----
 
-const command = (o: Record<string, unknown>) =>
-  ({
+test("a raw queue item and a raw sending block draw nothing in the queue area", () => {
+  const raw = {
     id: "c1",
-    kind: "command",
+    kind: "raw",
     from: "@alice",
-    body: "/code-review src/ --fix",
-    waitReason: "turn",
+    body: "/context",
     createdAt: local(13, 59),
-    ...o,
-  }) as never;
-
-test("a held command is one truncated line: the name waits for the turn, args after, the whole in its title", () => {
-  render(<QueueItems items={[command({})]} agent={agentSummary()} self="alice" />);
-  const el = document.querySelector("[data-command-item]") as HTMLElement;
-  const text = el.querySelector("[title]") as HTMLElement;
-  expect(text).toHaveClass("truncate");
-  expect(text).toHaveAttribute("title", "/code-review src/ --fix");
-  expect(text.textContent).toBe("/code-review waits for the turn to end: src/ --fix");
-  expect(within(el).getByText("/code-review")).toHaveClass("font-mono");
-  expect(screen.queryByText(/Compact queued/)).toBeNull();
+  } as never;
+  const { container } = render(
+    <QueueItems
+      items={[raw]}
+      sending={[{ clientMessageId: "x", body: "hi", urgent: false, raw: true }]}
+      agent={agentSummary()}
+      self="alice"
+    />,
+  );
+  expect(container).toBeEmptyDOMElement();
 });
 
-test("Cancel on your own held command only; no Undo once cancelled", async () => {
+test("a queued item's sender is read by the kind it carries: an agent is a chip, a human a handle", async () => {
   vi.useRealTimers();
-  const onCancel = vi.fn();
-  const mine = command({});
-  const { rerender } = render(
+  const item = (id: string, from: string, fromKind: "agent" | "human") =>
+    ({ id, kind: "message", from, fromKind, body: id, createdAt: local(13, 59) }) as never;
+  renderInRouter(
     <QueueItems
-      items={[mine, command({ id: "c2", from: "@bob", body: "/context" })]}
+      items={[item("a", "@gone-ab12", "agent"), item("h", "@orla", "human")]}
       agent={agentSummary()}
-      self="alice"
-      onCancel={onCancel}
     />,
   );
-  const cancels = screen.getAllByRole("button", { name: "Cancel" });
-  expect(cancels).toHaveLength(1);
-  await userEvent.click(cancels[0] as HTMLElement);
-  expect(onCancel).toHaveBeenCalledWith(expect.objectContaining({ id: "c1" }));
-  rerender(
-    <QueueItems
-      items={[command({ id: "c2", from: "@bob", body: "/context" })]}
-      cancelled={new Map([["c1", { item: mine, index: 0 }]])}
-      agent={agentSummary()}
-      self="alice"
-      onCancel={onCancel}
-      onUndo={() => {}}
-    />,
-  );
-  expect(screen.getByText("Command cancelled.")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  await waitFor(() => expect(document.querySelectorAll("[data-speaker-line]")).toHaveLength(2));
+  const lines = document.querySelectorAll<HTMLElement>("[data-speaker-line]");
+  expect(lines[0]?.querySelector("[data-agent-avatar]")).not.toBeNull();
+  expect(lines[1]?.querySelector("[data-agent-avatar]")).toBeNull();
 });

@@ -3,6 +3,7 @@ import {
   formatKey,
   formatOffsetIso,
   isValidZone,
+  MSG,
   minGapMinutes,
   nextRun,
   parseAt,
@@ -96,15 +97,9 @@ export class ScheduleService {
     const now = this.d.now();
     const when = this.checkTiming(actor, input, now);
     const body = input.body;
-    if (bytes(body) < 1)
-      throw new ScheduleError("invalid_schedule", "The message can't be empty.", 400, "body");
+    if (bytes(body) < 1) throw new ScheduleError("invalid_schedule", MSG.messageEmpty, 400, "body");
     if (bytes(body) > SCHEDULE_BODY_MAX)
-      throw new ScheduleError(
-        "invalid_schedule",
-        "The message is too long (64 KB at most).",
-        400,
-        "body",
-      );
+      throw new ScheduleError("invalid_schedule", MSG.bodyTooLong, 400, "body");
     const target = await this.resolveTarget(actor, input.target);
 
     const out = await withDeadlockRetry(() =>
@@ -210,33 +205,21 @@ export class ScheduleService {
     }
     if (name === "") throw new ScheduleError("invalid_schedule", "Choose an agent.", 400, "target");
     const r = await resolveName(this.d.db, name);
-    switch (r.kind) {
-      case "agent":
-        return { id: r.agent.id, slug: r.agent.slug };
-      case "none":
-        throw notFound(r.name);
-      case "ambiguous":
-        throw new ScheduleError(
-          "ambiguous",
-          `'${r.name}' matches both an agent and a user; ask a human to rename one.`,
-          400,
-          "target",
-        );
-      case "reserved":
-        throw new ScheduleError(
-          "reserved",
-          `'${r.name}' is reserved and can't receive messages.`,
-          400,
-          "target",
-        );
-      default:
-        throw new ScheduleError(
-          "target_not_agent",
-          "Schedules can only be addressed to agents.",
-          400,
-          "target",
-        );
-    }
+    if (r.kind === "agent") return { id: r.agent.id, slug: r.agent.slug };
+    if (r.kind === "none" || r.kind === "channel") throw notFound(r.name);
+    if (r.kind === "reserved")
+      throw new ScheduleError(
+        "reserved",
+        `'${r.name}' is reserved and can't receive messages.`,
+        400,
+        "target",
+      );
+    throw new ScheduleError(
+      "target_not_agent",
+      "Schedules can only be addressed to agents.",
+      400,
+      "target",
+    );
   }
 
   private requireLive(t: LockedAgent) {
@@ -593,15 +576,9 @@ export class ScheduleService {
     return new ScheduleError("schedule_not_found", "There is no such schedule.", 404);
   }
   private checkBody(body: string) {
-    if (bytes(body) < 1)
-      throw new ScheduleError("invalid_schedule", "The message can't be empty.", 400, "body");
+    if (bytes(body) < 1) throw new ScheduleError("invalid_schedule", MSG.messageEmpty, 400, "body");
     if (bytes(body) > SCHEDULE_BODY_MAX)
-      throw new ScheduleError(
-        "invalid_schedule",
-        "The message is too long (64 KB at most).",
-        400,
-        "body",
-      );
+      throw new ScheduleError("invalid_schedule", MSG.bodyTooLong, 400, "body");
   }
 
   /** The item the API returns: derived state, names, no status column (Q15). */

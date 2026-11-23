@@ -1,5 +1,11 @@
 import { expect, test } from "vitest";
-import { boundVersion, MAX_COMMANDS, parseCommands } from "./commands.ts";
+import {
+  boundVersion,
+  classifyInput,
+  deniedReason,
+  MAX_COMMANDS,
+  parseCommands,
+} from "./commands.ts";
 
 const ok = (name: string, over: Record<string, unknown> = {}) => ({
   name,
@@ -46,3 +52,55 @@ test("the version is kept only as a short plain string", () => {
   expect(boundVersion("2.1\nx")).toBeUndefined();
   expect(boundVersion(2)).toBeUndefined();
 });
+
+test.each(["/clear", "/NEW", "  /quit", "/Resume x", "/continue"])("%s is denied", (t) =>
+  expect(classifyInput(t, new Set())).toMatchObject({
+    kind: "command",
+    denied: expect.stringContaining("isn't available"),
+  }),
+);
+const WHY = {
+  session: "each agent keeps one session.",
+  model: "the model and effort come from the agent's template.",
+  credentials: "credentials are managed in Settings \u2192 Credentials.",
+  process: "the factory runs this agent's process.",
+};
+test.each([
+  ["clear", WHY.session],
+  ["new", WHY.session],
+  ["reset", WHY.session],
+  ["model", WHY.model],
+  ["effort", WHY.model],
+  ["login", WHY.credentials],
+  ["logout", WHY.credentials],
+  ["exit", WHY.process],
+  ["quit", WHY.process],
+  ["resume", WHY.process],
+  ["continue", WHY.process],
+])("/%s has its exact reason", (name, why) => {
+  expect(deniedReason(name)).toBe(`/${name} isn't available: ${why}`);
+  expect(deniedReason(name.toUpperCase())).toBe(`/${name.toUpperCase()} isn't available: ${why}`);
+});
+test("a name off the denylist has no reason", () =>
+  expect(deniedReason("toString")).toBeUndefined());
+test.each(["\n", "\r", "\u0085", "\u2028", "\u2029"])(
+  "a line break %j makes a command multiline",
+  (sep) =>
+    expect(classifyInput(`/context${sep}more`, new Set(["context"]))).toMatchObject({
+      kind: "command",
+      multiline: true,
+    }),
+);
+test("one line is not multiline", () =>
+  expect(classifyInput("/context  more", new Set(["context"]))).toMatchObject({
+    multiline: false,
+  }));
+test("/news-digest is not /new", () =>
+  expect(classifyInput("/news-digest", new Set(["news-digest"]))).toMatchObject({
+    kind: "command",
+    denied: undefined,
+  }));
+test("an unknown /path is text, even on several lines", () =>
+  expect(classifyInput("/Users/or/log.txt shows:\nError", new Set())).toEqual({ kind: "text" }));
+test("aliases count as known", () =>
+  expect(classifyInput("/cost", new Set(["cost"]))).toMatchObject({ kind: "command" }));

@@ -8,7 +8,9 @@ import {
   secretsQueryOptions,
   usersQueryOptions,
 } from "@/features/settings/api";
+import { signInQueryOptions } from "@/features/settings/sign-in/api";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
+import { hostQueryOptions } from "@/lib/host";
 import type { ChildSpec, SheetSpec } from "./sheet-store";
 
 export type BodyProps<S> = { spec: S; sheetId: number; close(): void };
@@ -24,6 +26,10 @@ type Entry = {
   titleClass?: string;
   /** A stacked child's line after "For <parent>." in its description. */
   note?: string;
+  /** A top-level sheet's description under its title (Sign in again names the credential). */
+  description?: (spec: any) => string;
+  /** Classes for the description (mono for a name). */
+  descriptionClass?: string;
 };
 
 /** kind → lazy body. PR1 registers new-task, new-schedule and edit-schedule; PR2 the rest. */
@@ -91,6 +97,8 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     load: () => import("./setup-sheets").then((m) => ({ default: m.AddCredentialSheet })),
     prefetch(qc) {
       warm(qc, credentialsQueryOptions);
+      // A restored attempt never flashes Idle first (spec §8.3).
+      warm(qc, signInQueryOptions);
     },
     title: "Add credential",
     note: "Saved to Settings → Credentials; other agents can use it.",
@@ -99,6 +107,8 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     load: () => import("./setup-sheets").then((m) => ({ default: m.AddProjectSheet })),
     prefetch(qc) {
       warm(qc, projectsQueryOptions);
+      // Direct, not through `warm`: host info is constant, and `warm` would cap its staleTime at 10s.
+      void qc.prefetchQuery(hostQueryOptions);
     },
     title: "Add project",
   },
@@ -108,6 +118,17 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
       warm(qc, secretsQueryOptions);
     },
     title: "Add secret",
+  },
+  "sign-in-again": {
+    load: () => import("./sign-in-again-sheet"),
+    // Together, so every entry point's intent preloads both in parallel; a restored attempt never flashes Idle.
+    prefetch(qc) {
+      warm(qc, credentialsQueryOptions);
+      warm(qc, signInQueryOptions);
+    },
+    title: "Sign in again",
+    description: (spec: { name: string }) => spec.name,
+    descriptionClass: "font-mono",
   },
   "edit-schedule": {
     load: () => import("@/features/schedules/edit-schedule-sheet"),
@@ -127,6 +148,13 @@ export function sheetTitle(kind: SheetKind, spec: SheetSpec | ChildSpec): string
 }
 
 export const sheetTitleClass = (kind: SheetKind) => sheetBodies[kind]?.titleClass;
+
+/** A top-level sheet's own description, when its entry has one. */
+export function sheetDescription(kind: SheetKind, spec: SheetSpec | ChildSpec): string | undefined {
+  return sheetBodies[kind]?.description?.(spec);
+}
+
+export const sheetDescriptionClass = (kind: SheetKind) => sheetBodies[kind]?.descriptionClass;
 
 /** A stacked child's description: whom it serves ("For New agent."), then its own note. */
 export function childDescription(kind: SheetKind, parentTitle: string): string {

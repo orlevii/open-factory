@@ -2,11 +2,19 @@ import { type Db, schema } from "@open-factory/db";
 import type { UserAdminItem } from "@open-factory/shared";
 import { and, asc, eq, gt, isNull } from "drizzle-orm";
 import type { EventBus } from "../agents/event-bus.ts";
+import type { SignInAttempts } from "../credentials/sign-in/attempts.ts";
 import { ApiError } from "../errors.ts";
 
 /** S10 spec §9.4: list, disable and enable users. Every user is an admin. */
 export class UserAdminService {
-  constructor(private readonly d: { db: Db; now: () => Date; bus: EventBus }) {}
+  constructor(
+    private readonly d: {
+      db: Db;
+      now: () => Date;
+      bus: EventBus;
+      signIn: Pick<SignInAttempts, "endFor">;
+    },
+  ) {}
 
   async list(): Promise<UserAdminItem[]> {
     const rows = await this.d.db
@@ -82,6 +90,7 @@ export class UserAdminService {
       return revoked.length;
     });
     this.d.bus.closeUser(targetId);
+    this.d.signIn.endFor(targetId);
     this.d.bus.publishAll({ type: "users_changed" });
     return { revokedInvites };
   }

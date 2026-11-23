@@ -1,5 +1,5 @@
-import { CircleAlert } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect } from "react";
+import { type FormEvent, type ReactNode, type Ref, useEffect } from "react";
+import { FormOutcome, type Outcome } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Wordmark } from "@/components/wordmark";
@@ -12,7 +12,8 @@ export function AuthCard(props: {
   submitting: boolean;
   /** Hides the submit button (states with no form to submit). */
   hideSubmit?: boolean;
-  formError?: string;
+  outcome: Outcome;
+  ref?: Ref<HTMLFormElement>;
   onSubmit(form: HTMLFormElement): void;
   footer: ReactNode;
   children: ReactNode;
@@ -31,17 +32,9 @@ export function AuthCard(props: {
         <h1 className="mb-6 font-heading text-[1.375rem] leading-7 font-bold tracking-[-0.015em]">
           {props.title}
         </h1>
-        <form onSubmit={submit} noValidate className="grid gap-4">
+        <form ref={props.ref} onSubmit={submit} noValidate className="field-stack">
           {props.children}
-          {props.formError && (
-            <p
-              role="alert"
-              className="flex items-start gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
-            >
-              <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-              {props.formError}
-            </p>
-          )}
+          <FormOutcome outcome={props.outcome} className="-mt-2" />
           {!props.hideSubmit && (
             <Button type="submit" className="h-9 w-full" disabled={props.submitting}>
               {props.submitting && <Spinner size="text" />}
@@ -53,9 +46,4 @@ export function AuthCard(props: {
       </div>
     </main>
   );
-}
-
-/** After a failed submit, move focus to the first invalid field (call after the errors rendered). */
-export function focusFirstInvalid(form: HTMLFormElement) {
-  form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
 }

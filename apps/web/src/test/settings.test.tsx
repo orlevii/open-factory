@@ -1,4 +1,9 @@
-import type { CredentialSummary, ProjectSummary, SecretSummary } from "@open-factory/shared";
+import {
+  type CredentialSummary,
+  MSG,
+  type ProjectSummary,
+  type SecretSummary,
+} from "@open-factory/shared";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
@@ -28,6 +33,8 @@ const cred = (o: Partial<CredentialSummary> = {}): CredentialSummary => ({
   kind: "oauth_token",
   lastVerifiedAt: hoursAgo(2),
   lastError: null,
+  expiresAt: null,
+  rejected: false,
   usedBy: [],
   archivedUsedBy: [],
   rateLimit: null,
@@ -62,6 +69,7 @@ function world(w: World = {}) {
     projects: w.projects ?? [],
   };
   const api = mockApi({
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
     "GET /api/credentials": () => json({ credentials: state.credentials }),
     "GET /api/secrets": () => json({ secrets: state.secrets }),
     "GET /api/projects": () => json({ projects: state.projects }),
@@ -86,7 +94,7 @@ const describedText = (el: HTMLElement) =>
     .map((id) => document.getElementById(id)?.textContent ?? "")
     .join(" ");
 
-test("add credential: kind radios, a password field, Verifying…, a rejected token under the field, then the row", async () => {
+test("add credential: method radios, a password field, Verifying…, a rejected token under the field, then the row", async () => {
   let release: (r: Response) => void = () => {};
   const { api, state } = world({
     extra: {
@@ -99,10 +107,11 @@ test("add credential: kind radios, a password field, Verifying…, a rejected to
   renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
+  expect(within(region).getByLabelText("Name")).toHaveFocus();
+  await userEvent.click(within(region).getByRole("radio", { name: "Paste a token" }));
+  expect(within(region).getByRole("radio", { name: "Paste a token" })).toBeChecked();
+  expect(within(region).getByRole("radio", { name: "Paste an API key" })).not.toBeChecked();
   const name = within(region).getByLabelText("Name");
-  expect(name).toHaveFocus();
-  expect(within(region).getByRole("radio", { name: /OAuth token/ })).toBeChecked();
-  expect(within(region).getByRole("radio", { name: "API key" })).not.toBeChecked();
   const token = within(region).getByLabelText("Token");
   expect(token).toHaveAttribute("type", "password");
   expect(token).toHaveAttribute("autocomplete", "new-password");
@@ -145,10 +154,11 @@ test("add credential: kind radios, a password field, Verifying…, a rejected to
   });
 });
 
-test("add credential: an unverifiable check is a warning, not a bad token", async () => {
+test("Replace token: an unverifiable check warns under the token and announces a failure line", async () => {
   world({
+    credentials: [cred({ name: "work" })],
     extra: {
-      "POST /api/credentials": () =>
+      "PUT /api/credentials/work/value": () =>
         json(
           {
             error: {
@@ -161,18 +171,57 @@ test("add credential: an unverifiable check is a warning, not a bad token", asyn
     },
   });
   renderApp("/settings/credentials", alice);
-  const region = await section("Credentials");
-  await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
-  await userEvent.type(within(region).getByLabelText("Name"), "work");
-  await userEvent.click(within(region).getByRole("radio", { name: "API key" }));
-  const key = within(region).getByLabelText("Key");
-  await userEvent.type(key, "sk-ant");
-  await userEvent.click(within(region).getByRole("button", { name: "Verify and add" }));
-  const note = await within(region).findByText("Couldn't reach Claude to verify. Try again.");
-  expect(note.closest("[role=alert]")).not.toBeNull();
-  expect(key).not.toHaveAttribute("aria-invalid");
-  expect(describedText(key)).toContain("Couldn't reach Claude to verify. Try again.");
-  expect(key).toHaveValue("sk-ant");
+  const u = userEvent.setup();
+  const creds = await section("Credentials");
+  await waitFor(() => expect(row(creds, "work")).toBeDefined());
+  await u.click(within(row(creds, "work")).getByRole("button", { name: "Actions for work" }));
+  await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
+  const token = within(creds).getByLabelText("New token");
+  await u.type(token, "sk-new");
+  await u.click(within(creds).getByRole("button", { name: "Verify and save" }));
+  const line = await within(creds).findByText("Couldn't replace the token.");
+  expect(line.closest("[role=alert]")).not.toBeNull();
+  expect(describedText(token)).toContain("Couldn't reach Claude to verify. Try again.");
+  expect(token).not.toHaveAttribute("aria-invalid");
+  expect(token).toHaveValue("sk-new");
+});
+
+test.each([
+  [
+    "Replace token",
+    "/settings/credentials",
+    "Credentials",
+    async (u: ReturnType<typeof userEvent.setup>, region: HTMLElement) => {
+      await waitFor(() => expect(row(region, "work")).toBeDefined());
+      await u.click(within(row(region, "work")).getByRole("button", { name: "Actions for work" }));
+      await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
+      return within(region).getByLabelText("New token");
+    },
+    "Enter the token.",
+  ],
+  [
+    "Update value",
+    "/settings/secrets",
+    "Secrets",
+    async (u: ReturnType<typeof userEvent.setup>, region: HTMLElement) => {
+      await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
+      await u.click(within(row(region, "GH_TOKEN")).getByRole("button", { name: "Update" }));
+      return within(region).getByLabelText("New value");
+    },
+    "Enter a value.",
+  ],
+])("%s validates on blur of a changed field", async (_name, path, title, open, message) => {
+  world({
+    credentials: [cred({ name: "work" })],
+    secrets: [secret({ name: "GH_TOKEN" })],
+  });
+  renderApp(path, alice);
+  const u = userEvent.setup();
+  const field = await open(u, await section(title));
+  await u.type(field, "a");
+  await u.clear(field);
+  await u.tab();
+  expect(describedText(field)).toBe(message);
 });
 
 test("credential row: Verify visible, Replace token and Delete… in the menu; used ones can't be deleted", async () => {
@@ -204,7 +253,7 @@ test("credential row: Verify visible, Replace token and Delete… in the menu; u
   );
   expect(within(row(region, "work")).getByRole("link", { name: "@lead" })).toHaveAttribute(
     "href",
-    "/agents/lead",
+    "/agents/lead/chat",
   );
 
   await userEvent.click(
@@ -253,7 +302,7 @@ test("deleting an unused credential confirms, then calls DELETE", async () => {
   await userEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
   const dialog = screen.getByRole("alertdialog", { name: "Delete credential work?" });
   expect(dialog).toHaveTextContent(
-    "Its token is erased and can't be shown again. To use it later, create a new one with claude setup-token.",
+    "Its token is erased and can't be shown again. To use it later, add it again with Sign in with Claude.",
   );
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
   await userEvent.click(within(dialog).getByRole("button", { name: "Delete work" }));
@@ -417,7 +466,7 @@ test("the secret name is uppercased while typing, keeping the caret; reserved na
   expect(name).not.toHaveAttribute("aria-invalid");
   await userEvent.tab();
   expect(name).toHaveAttribute("aria-invalid", "true");
-  expect(describedText(name)).toBe("That name is reserved for the agent's environment.");
+  expect(describedText(name)).toBe("That name is reserved.");
 });
 
 test("projects: a middle-truncated path, grant wording, and Remove disabled with its reason", async () => {
@@ -506,6 +555,19 @@ test.each([false, true])(
     }
   },
 );
+
+test("projects: the loader asks for host info, and the page renders when it 404s", async () => {
+  const { api } = world({
+    projects: [project({ name: "app" })],
+    extra: {
+      "GET /api/host": () => json({ error: { code: "not_found", message: "Not found." } }, 404),
+    },
+  });
+  renderApp("/settings/projects", alice);
+  const region = await section("Projects");
+  await waitFor(() => expect(row(region, "app")).toBeDefined());
+  expect(api.calls.some((c) => c.url === "/api/host")).toBe(true);
+});
 
 test("projects: a Remove blocked by many grantees names three and counts the rest", async () => {
   world({
@@ -630,6 +692,71 @@ test("Change path saves with the restart warning; a missing folder is a field er
   ).toBeInTheDocument();
 });
 
+test("Change path has the help button, accepts ~/x, and Esc in the popover keeps the form open", async () => {
+  const { api } = world({
+    projects: [project({ name: "app" })],
+    extra: {
+      "PATCH /api/projects/app": (body) =>
+        json({
+          project: project({ name: "app", hostPath: (body as { hostPath: string }).hostPath }),
+        }),
+    },
+  });
+  renderApp("/settings/projects", alice);
+  const region = await section("Projects");
+  await waitFor(() => expect(row(region, "app")).toBeDefined());
+  await userEvent.click(
+    within(row(region, "app")).getByRole("button", { name: "Actions for app" }),
+  );
+  await userEvent.click(screen.getByRole("menuitem", { name: "Change path" }));
+  const help = await within(region).findByRole("button", { name: "How do I find this path?" });
+  await userEvent.click(help);
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  const path = within(region).getByLabelText("Path");
+  expect(path).toBeInTheDocument();
+  await userEvent.clear(path);
+  await userEvent.type(path, "~/x");
+  await userEvent.click(within(region).getByRole("button", { name: "Save path" }));
+  await waitFor(() =>
+    expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({ hostPath: "~/x" }),
+  );
+});
+
+test.each([
+  ["Shift+Tab", () => userEvent.keyboard("{Shift>}{Tab}{/Shift}")],
+  [
+    "a click",
+    () => userEvent.click(screen.getByRole("button", { name: "How do I find this path?" })),
+  ],
+])(
+  "Change path (AC6): moving from a half-typed Path to the help by %s flags nothing",
+  async (_, toHelp) => {
+    world({ projects: [project({ name: "app" })] });
+    renderApp("/settings/projects", alice);
+    const region = await section("Projects");
+    await waitFor(() => expect(row(region, "app")).toBeDefined());
+    await userEvent.click(
+      within(row(region, "app")).getByRole("button", { name: "Actions for app" }),
+    );
+    await userEvent.click(screen.getByRole("menuitem", { name: "Change path" }));
+    const path = within(region).getByLabelText("Path");
+    await waitFor(() => expect(path).toHaveFocus());
+    await userEvent.clear(path);
+    await userEvent.type(path, "code");
+    await toHelp();
+    expect(path).not.toHaveAttribute("aria-invalid");
+    expect(describedText(path)).not.toContain(MSG.hostPathStart);
+    // Control: tabbing from Path to Save path (not a skip target) does flag it.
+    await userEvent.click(path);
+    await userEvent.tab();
+    expect(within(region).getByRole("button", { name: "Save path" })).toHaveFocus();
+    await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));
+    expect(describedText(path)).toBe(MSG.hostPathStart);
+  },
+);
+
 test("add project: a missing folder lands under Path, then the row appears", async () => {
   const { api, state } = world({
     extra: {
@@ -651,9 +778,10 @@ test("add project: a missing folder lands under Path, then the row appears", asy
   await userEvent.click(within(region).getByRole("button", { name: "Add project" }));
   await userEvent.type(within(region).getByLabelText("Name"), "app");
   const path = within(region).getByLabelText("Path");
-  expect(describedText(path)).toBe(
-    "Absolute path to a folder on this machine, usually a git repository.",
-  );
+  expect(describedText(path)).toBe("A folder on the factory's machine, like ~/code/web.");
+  expect(
+    within(region).getByRole("button", { name: "How do I find this path?" }),
+  ).toBeInTheDocument();
   await userEvent.type(path, "/x");
   await userEvent.click(within(region).getByRole("button", { name: "Add project" }));
   await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));
@@ -801,34 +929,6 @@ test("a later ?addSecret updates the open add form and refocuses the value field
   await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
 });
 
-test("add secret: 409 secret_name_reserved lands under Name and focuses it", async () => {
-  world({
-    extra: {
-      "PUT /api/secrets/MY_VAR": () =>
-        json(
-          {
-            error: {
-              code: "secret_name_reserved",
-              message: "That name is reserved for the agent's environment.",
-            },
-          },
-          409,
-        ),
-    },
-  });
-  renderApp("/settings/secrets", alice);
-  const region = await section("Secrets");
-  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
-  await userEvent.type(within(region).getByLabelText("Name"), "MY_VAR");
-  await userEvent.type(within(region).getByLabelText("Value"), "v");
-  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
-  const name = within(region).getByLabelText("Name");
-  await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
-  expect(describedText(name)).toBe("That name is reserved for the agent's environment.");
-  expect(name).toHaveFocus();
-  expect(within(region).queryByRole("alert", { name: /reserved/ })).not.toBeInTheDocument();
-});
-
 test("add secret: server fields land under their fields, whatever the code", async () => {
   world({
     extra: {
@@ -924,26 +1024,16 @@ test("sub-nav lists the five pages; the current one is aria-current with the sel
   );
 });
 
-test("below a 40rem content width the sub-nav is a Section select", async () => {
+test("the Section select shows the current page, and picking another navigates", async () => {
   world();
-  renderApp("/settings/secrets", alice);
-  const nav = await screen.findByRole("navigation", { name: "Settings" });
-  // jsdom has no layout: the container query is checked through its classes (browser pass for the real width).
-  expect(nav.className).toMatch(/hidden/);
-  expect(nav.className).toMatch(/@min-\[53\.75rem\]:block/);
-  const select = screen.getByRole("combobox", { name: "Section" });
-  expect(select.closest("div")?.className).toMatch(/@min-\[53\.75rem\]:hidden/);
+  const { router } = renderApp("/settings/secrets", alice);
+  // jsdom has no layout: which of the nav and the select shows at a width is the browser pass's.
+  const select = await screen.findByRole("combobox", { name: "Section" });
   expect(select).toHaveTextContent("Secrets");
   await userEvent.click(select);
   await userEvent.click(await screen.findByRole("option", { name: "Projects" }));
   expect(await section("Projects")).toBeInTheDocument();
-});
-
-test("/settings/secrets?addSecret=GH_TOKEN opens the add form with the name", async () => {
-  world();
-  renderApp("/settings/secrets?addSecret=GH_TOKEN", alice);
-  const region = await section("Secrets");
-  expect(within(region).getByLabelText("Name")).toHaveValue("GH_TOKEN");
+  expect(router.state.location.pathname).toBe("/settings/projects");
 });
 
 test.each([

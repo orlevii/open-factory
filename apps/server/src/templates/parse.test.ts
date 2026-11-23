@@ -10,4 +10,11 @@ test("yaml syntax error has line and column; paths map to lines", () => {
 test("json syntax error has line and column", () => {
   expect(parseJson('{\n  "a": 1,\n}').error).toMatchObject({ line: 3 });
   expect(parseJson('{"a":1}').value).toEqual({ a: 1 });
+  // Constant-text messages keep V8's own wording and position.
+  expect(parseJson('{\n  "a": "x').error).toMatchObject({
+    message: "JSON: Unterminated string in JSON at position 11 (line 2 column 10)",
+    line: 2,
+    column: 10,
+  });
+  expect(parseJson('{"a": "\\q"}').error).toMatchObject({ line: 1 });
 });

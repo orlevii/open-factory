@@ -8,21 +8,27 @@ import {
   postUndoReadAll,
   unreadCountQueryOptions,
   useInboxCache,
+  useInboxChats,
 } from "./api";
 
+/** What a Mark all read covered: the chats (by unread count) and the loaded items it turned read. */
+type Covered = { counts: ReadonlyMap<string, number>; ids: Set<string> };
+
 type Outcome =
-  | { tone: "success"; count: number; readAt: string; key: number }
+  | { tone: "success"; chats: number; items: number; readAt: string; covered: Covered; key: number }
   | { tone: "error"; kind: "mark" | "undo"; key: number }
   | undefined;
 
 /**
- * Mark all read with an exact Undo (UI design §3). The loaded rows turn read at once; the request carries `upTo` (the
- * newest loaded item), so items arriving meanwhile stay unread. `outcome` feeds `InlineOutcome` in the page body.
+ * Mark all read with an exact Undo (UI design §3, I1 §6.7). The loaded rows and the unread chats turn read at once;
+ * the request carries `upTo` (the newest of the loaded items and the chats' newest messages), so messages arriving
+ * meanwhile stay unread. `outcome` feeds `InlineOutcome` in the page body.
  */
 export function useMarkAllRead(buttonRef: RefObject<HTMLButtonElement | null>) {
   const cache = useInboxCache();
   const { data: items } = useInfiniteQuery(inboxQueryOptions);
   const { data: unread = 0 } = useQuery(unreadCountQueryOptions);
+  const chats = useInboxChats();
   const [outcome, setOutcome] = useState<Outcome>();
   const [pending, setPending] = useState(false);
   const key = useRef(0);
@@ -37,27 +43,47 @@ export function useMarkAllRead(buttonRef: RefObject<HTMLButtonElement | null>) {
 
   async function run() {
     const loaded = items ?? [];
-    const newest = loaded[0];
-    if (!newest || pending) return;
+    const unreadChats = chats.filter((c) => c.unread > 0);
+    const newest = [loaded[0]?.createdAt, ...unreadChats.map((c) => c.latest.createdAt)]
+      .filter((t): t is string => t !== undefined)
+      .reduce<string | undefined>((a, t) => (a === undefined || t > a ? t : a), undefined);
+    if (newest === undefined || pending) return;
     const ids = new Set(loaded.filter((i) => !i.read).map((i) => i.id));
+    const counts = new Map(unreadChats.map((c) => [c.agent.slug, c.unread]));
+    const messages = unreadChats.reduce((n, c) => n + c.unread, 0);
     cache.setRead(ids, true, -ids.size);
+    cache.setChatsRead(counts, true);
     setOutcome(undefined);
     setPending(true);
     try {
-      const r = await postReadAll(newest.createdAt);
-      setOutcome({ tone: "success", count: r.count, readAt: r.readAt, key: ++key.current });
+      const r = await postReadAll(newest);
+      setOutcome({
+        tone: "success",
+        chats: counts.size,
+        // The server counts every row, a chat's messages too; the rest are items.
+        items: Math.max(0, r.count - messages),
+        readAt: r.readAt,
+        covered: { counts, ids },
+        key: ++key.current,
+      });
       cache.refetch();
     } catch {
       cache.setRead(ids, false, +ids.size);
+      cache.setChatsRead(counts, false);
       setOutcome({ tone: "error", kind: "mark", key: ++key.current });
     } finally {
       setPending(false);
     }
   }
-  async function undo(readAt: string) {
+  async function undo(readAt: string, covered?: Covered) {
     setPending(true);
     try {
       await postUndoReadAll(readAt);
+      // The rows come back at once; the refetch is the truth.
+      if (covered) {
+        cache.setRead(covered.ids, false, +covered.ids.size);
+        cache.setChatsRead(covered.counts, false);
+      }
       setOutcome(undefined);
       focusButton.current = true;
       cache.refetch();
@@ -72,8 +98,19 @@ export function useMarkAllRead(buttonRef: RefObject<HTMLButtonElement | null>) {
     pending,
     outcome,
     run: () => void run(),
-    undo: (readAt: string) => void undo(readAt),
+    undo: (readAt: string, covered?: Covered) => void undo(readAt, covered),
   };
+}
+
+const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
+
+/** "3 chats and 2 items", "1 chat", "1 item": only what there was. */
+function markedSentence(chats: number, items: number): string {
+  const parts = [
+    chats > 0 && plural(chats, "chat"),
+    (items > 0 || chats === 0) && plural(items, "item"),
+  ];
+  return parts.filter(Boolean).join(" and ");
 }
 
 export function MarkAllReadButton({
@@ -105,10 +142,10 @@ export function MarkAllReadOutcome({
     <InlineOutcome
       tone={o?.tone}
       focusKey={o?.key}
-      {...(o?.tone === "success" ? { undo: () => state.undo(o.readAt) } : {})}
+      {...(o?.tone === "success" ? { undo: () => state.undo(o.readAt, o.covered) } : {})}
     >
       {o?.tone === "success" ? (
-        `Marked ${o.count} ${o.count === 1 ? "item" : "items"} as read.`
+        `Marked ${markedSentence(o.chats, o.items)} as read.`
       ) : o?.tone === "error" ? (
         <>
           {o.kind === "mark" ? "Couldn't mark the items as read." : "Couldn't undo. Try again."}{" "}

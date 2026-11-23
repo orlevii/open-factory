@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { formatKey, parseKey } from "./keys.ts";
+import { MSG } from "./messages.ts";
 import { taskUsageSchema } from "./usage.ts";
 
 export const TASK_STATUSES = ["open", "in_progress", "done", "cancelled"] as const;
@@ -25,22 +26,20 @@ const oneLine = (s: string) => !/[\r\n]/.test(s);
 export const taskTitleSchema = z
   .string()
   .trim()
-  .min(1, "Enter a title.")
-  .max(200, "Keep the title to 200 characters or fewer.")
-  .refine(oneLine, "Keep the title on one line.");
-export const taskBodySchema = z
-  .string()
-  .refine((s) => bytes(s) <= BODY_MAX, "Shorten the description to 64 KB or less.");
+  .min(1, MSG.titleRequired)
+  .max(200, MSG.titleLength)
+  .refine(oneLine, MSG.titleOneLine);
+export const taskBodySchema = z.string().refine((s) => bytes(s) <= BODY_MAX, MSG.bodyTooLong);
 export const commentBodySchema = z
   .string()
   .trim()
-  .min(1, "Write a comment first.")
-  .refine((s) => bytes(s) <= BODY_MAX, "Shorten the comment to 64 KB or less.");
+  .min(1, MSG.commentRequired)
+  .refine((s) => bytes(s) <= BODY_MAX, MSG.bodyTooLong);
 
 const httpUrl = z
   .string()
   .trim()
-  .max(2000, "Links must be http(s) URLs.")
+  .max(2000, MSG.linkUrl)
   .refine((s) => {
     try {
       const u = new URL(s);
@@ -48,20 +47,14 @@ const httpUrl = z
     } catch {
       return false;
     }
-  }, "Links must be http(s) URLs.");
-const linkTitle = z
-  .string()
-  .trim()
-  .min(1)
-  .max(200)
-  .refine(oneLine, "Keep it on one line.")
-  .optional();
+  }, MSG.linkUrl);
+const linkTitle = z.string().trim().min(1).max(200).refine(oneLine, MSG.oneLine).optional();
 export const linkInputSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("url"), target: httpUrl, title: linkTitle }),
   z.object({ kind: z.literal("pr"), target: httpUrl, title: linkTitle }),
   z.object({
     kind: z.literal("file"),
-    target: z.string().trim().min(1).max(500).refine(oneLine, "Keep the path on one line."),
+    target: z.string().trim().min(1).max(500).refine(oneLine, MSG.pathOneLine),
     title: linkTitle,
   }),
   z.object({
@@ -74,8 +67,8 @@ export type LinkInput = z.infer<typeof linkInputSchema>;
 
 const taskRef = z.string().min(1).max(20);
 const name = z.string().min(1).max(64);
-const deps = z.array(taskRef).max(50, "A task can depend on at most 50 tasks.");
-const links = z.array(linkInputSchema).max(50, "A task can have at most 50 links.");
+const deps = z.array(taskRef).max(50, MSG.dependsMax);
+const links = z.array(linkInputSchema).max(50, MSG.linksMax);
 
 /** MCP inputs (snake_case, as the product's tool signatures). Parameter semantics only; rules live in CLAUDE.md. */
 export const createTaskToolSchema = z.object({

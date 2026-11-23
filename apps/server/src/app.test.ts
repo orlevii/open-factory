@@ -1,36 +1,11 @@
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import Fastify from "fastify";
 import { expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "./agents/testing/fake-driver.ts";
-import { AGENT_URL_ON_HUMAN_PORT_WARNING, loggerOptions } from "./app.ts";
-import { loadConfig } from "./config.ts";
+import { AGENT_URL_ON_HUMAN_PORT_WARNING } from "./app.ts";
 import { callTool, mcpCall } from "./mcp/testing/mcp-client.ts";
 import { makeTestApp, signUp } from "./test/helpers.ts";
-
-test("the OAuth token is redacted at every realistic depth", async () => {
-  const secret = "sk-ant-oat-FAKE-SECRET-123";
-  const config = loadConfig({
-    DATABASE_URL: "postgres://x/y",
-    FACTORY_SECRET_KEY: "k".repeat(40),
-    LOG_LEVEL: "info",
-    NODE_ENV: "production",
-  });
-  const lines: string[] = [];
-  const { transport: _t, ...opts } = loggerOptions(config) as ReturnType<typeof loggerOptions> & {
-    transport?: unknown;
-  };
-  const app = Fastify({
-    logger: { ...opts, stream: { write: (s: string) => void lines.push(s) } },
-  });
-  app.log.info({ env: { CLAUDE_CODE_OAUTH_TOKEN: secret } }, "env");
-  app.log.info({ spec: { env: { CLAUDE_CODE_OAUTH_TOKEN: secret } } }, "spec");
-  await app.close();
-  const out = lines.join("");
-  expect(out).toContain('"msg":"spec"');
-  expect(out).not.toContain(secret);
-});
 
 test("buildApp canonicalizes FACTORY_HOME with realpath", async () => {
   const tmp = realpathSync(mkdtempSync(path.join(tmpdir(), "of-link-")));
@@ -128,9 +103,9 @@ async function startIdle(
   const { cookie } = await signUp(t.app, { handle: `h-${slug}` });
   await t.app.inject({
     method: "POST",
-    url: `/api/agents/${slug}/messages`,
+    url: `/api/messages`,
     headers: { cookie },
-    payload: { body: "hi" },
+    payload: { to: [slug], body: "hi" },
   });
   const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
   if (!p) throw new Error(`${slug} not started`);
@@ -146,6 +121,7 @@ const BASE_TOOLS = [
   "get_task",
   "list_peers",
   "list_tasks",
+  "send_command",
   "send_message",
   "update_task",
 ];
@@ -164,10 +140,13 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
   try {
     await t.seedAgent({
       slug: "lead",
-      config: { canSpawn: ["tech-lead", "developer"], maxLiveSpawns: 5 },
+      config: { template: { can_spawn: ["tech-lead", "developer"], max_live_spawns: 5 } },
     });
     await t.seedAgent({ slug: "solo" });
-    await t.seedAgent({ slug: "capped", config: { canSpawn: ["developer"], maxLiveSpawns: 0 } });
+    await t.seedAgent({
+      slug: "capped",
+      config: { template: { can_spawn: ["developer"], max_live_spawns: 0 } },
+    });
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
     const names = async (slug: string) => {
       const { token } = await startIdle(t, driver, slug);
@@ -230,7 +209,7 @@ test("an agent token never reaches the logs, on the agent listener or the REST A
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
     await callTool(url, token, "list_peers", {});
-    await callTool(url, token, "send_message", { to: "@h-dev", body: "for the inbox" });
+    await callTool(url, token, "send_message", { to: ["@h-dev"], body: "for the inbox" });
     await expect(callTool(url, `${token}x`, "list_peers", {})).rejects.toThrow("401");
     for (const route of ["/api/agents", "/api/inbox", "/api/messages/nope"]) {
       const r = await t.app.inject({

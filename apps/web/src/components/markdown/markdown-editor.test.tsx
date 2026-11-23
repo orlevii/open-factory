@@ -35,3 +35,14 @@ test("a form can label the textarea through id", () => {
   );
   expect(screen.getByRole("textbox", { name: "Body" })).toBeInTheDocument();
 });
+
+test("without a writeSurface it is a plain textarea", () => {
+  render(<MarkdownEditor value="" onChange={() => {}} aria-label="Description" />);
+  expect(screen.getByRole("textbox", { name: "Description" }).tagName).toBe("TEXTAREA");
+});
+
+test("invalid marks the textarea and the frame", () => {
+  const { container } = render(<MarkdownEditor value="" onChange={() => {}} invalid />);
+  expect(screen.getByRole("textbox")).toHaveAttribute("aria-invalid", "true");
+  expect(container.querySelector("[data-invalid]")).toBeInTheDocument();
+});

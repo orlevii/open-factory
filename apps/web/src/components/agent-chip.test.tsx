@@ -130,12 +130,6 @@ test("a click on a truncated name inside a link still follows the link", async (
   expect(follow).toHaveBeenCalledTimes(1);
 });
 
-test("the slug reserves no minimum width, so a short handle leaves no gap before the time", () => {
-  wrap(<AgentChip agent={lead} showSlug />);
-  const slug = screen.getAllByText("@lead")[0]?.closest(".font-mono") as HTMLElement;
-  expect(slug.className).not.toMatch(/\bmin-w-24\b/);
-});
-
 test("an inline chip keeps name and handle on one line at any width (it truncates, never stacks)", () => {
   const { container } = wrap(<AgentChip agent={lead} showSlug inline />);
   expect((container.firstElementChild as HTMLElement).className).not.toMatch(/flex-col/);

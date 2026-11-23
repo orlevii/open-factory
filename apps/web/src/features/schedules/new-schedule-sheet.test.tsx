@@ -107,13 +107,36 @@ test("the spec's target fills an empty draft only; a draft keeps its own", async
   expect(await target()).toHaveTextContent("Dev");
 });
 
-test("an ended target stays empty and says so", async () => {
-  mockApi(base());
+test("an ended target stays empty and says so, without looping the render", async () => {
+  const api = mockApi(base());
+  renderApp("/inbox", alice);
+  await screen.findByRole("heading", { level: 1 });
+  const before = api.calls.filter((c) => c.url.includes("ended=only")).length;
+  act(() => openSheet({ kind: "new-schedule", target: "old" }));
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
+  expect(await target()).toHaveTextContent("Choose an agent…");
+  expect(await target()).toHaveAttribute("aria-invalid", "true");
+  expect(api.calls.filter((c) => c.url.includes("ended=only")).length - before).toBe(1);
+});
+
+test("a stale target blocks the submit and focuses Target until another is picked", async () => {
+  const api = mockApi({
+    ...base(),
+    "POST /api/schedules": () => json({ schedule: item }, 201),
+  });
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   act(() => openSheet({ kind: "new-schedule", target: "old" }));
-  expect(await screen.findByText("@old has ended; pick another.")).toBeInTheDocument();
-  expect(await target()).toHaveTextContent("Choose an agent…");
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
+  await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Daily at 09:00");
+  await userEvent.type(screen.getByLabelText("Message"), "Review");
+  await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+  await waitFor(async () => expect(await target()).toHaveFocus());
+  expect(screen.getByText("That agent has ended; pick another.")).toBeInTheDocument();
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+  await pickComboOption(await target(), /@ceo/);
+  expect(document.getElementById("field-target-error")).not.toHaveAttribute("data-shown");
+  expect(await target()).not.toHaveAttribute("aria-invalid");
 });
 
 test("an unknown target stays empty and says so", async () => {
@@ -121,7 +144,7 @@ test("an unknown target stays empty and says so", async () => {
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   act(() => openSheet({ kind: "new-schedule", target: "nobody" }));
-  expect(await screen.findByText("There is no agent @nobody.")).toBeInTheDocument();
+  expect(await screen.findByText("No such agent; pick another.")).toBeInTheDocument();
   expect(await target()).toHaveTextContent("Choose an agent…");
 });
 
@@ -130,7 +153,7 @@ test("a stale target cleared from the spec leaves no draft, so the next target s
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   act(() => openSheet({ kind: "new-schedule", target: "old" }));
-  expect(await screen.findByText("@old has ended; pick another.")).toBeInTheDocument();
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   expect(hasDraft("new-schedule")).toBe(false);
@@ -150,7 +173,7 @@ test("Discard over a stale preset leaves no phantom draft", async () => {
   act(() => openSheet({ kind: "new-schedule", target: "old" }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-  expect(await screen.findByText("@old has ended; pick another.")).toBeInTheDocument();
+  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   expect(hasDraft("new-schedule")).toBe(false);
@@ -170,6 +193,8 @@ test("success closes, clears the draft and toasts Created with Open for the Edit
     cron: "0 9 * * *",
     body: "Review",
   });
+  // The list shows no inline Created line; the toast carries it.
+  expect(screen.queryByText("Created S-8.")).toBeNull();
   const n = vi.mocked(notify).mock.calls[0]?.[0];
   expect(n).toEqual({ text: "Created S-8.", action: { label: "Open", run: expect.any(Function) } });
   act(() => n?.action?.run());
@@ -177,15 +202,6 @@ test("success closes, clears the draft and toasts Created with Open for the Edit
   // The draft is gone: a new sheet starts blank.
   act(() => openSheet({ kind: "new-schedule" }));
   expect(screen.queryByText(/Draft restored/)).toBeNull();
-});
-
-test("the list shows no inline Created line", async () => {
-  mockApi({ ...base(), "POST /api/schedules": () => json({ schedule: item }, 201) });
-  renderApp("/schedules", alice);
-  await userEvent.click(await screen.findByRole("button", { name: "New schedule" }));
-  await fillAndSubmit();
-  await waitFor(() => expect(notify).toHaveBeenCalled());
-  expect(screen.queryByText("Created S-8.")).toBeNull();
 });
 
 test("dismissing never asks, and keeps the draft", async () => {

@@ -4,7 +4,7 @@ export type WakeReason =
   | "scheduled" // a `scheduled` row waits (S9 §8.4); never wakes an errored agent
   | "spawned" // a spawned agent's first wake (S7 §5.6); never wakes an errored agent
   | "compact"
-  | "command" // a human's slash command (U3 §13.3)
+  | "raw" // a human's raw session input (I1 §5.1)
   | "crash_recovery"
   | "restart"
   | "reset"

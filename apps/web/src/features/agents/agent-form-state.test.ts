@@ -22,9 +22,11 @@ function wrapper() {
 type Args = Parameters<typeof useAgentFormState>[0];
 const mount = (args: Args) =>
   renderHook((a: Args) => useAgentFormState(a), { initialProps: args, wrapper: wrapper() });
+const form = { current: null };
 const create = (over: Partial<Args> = {}): Args => ({
   mode: "create",
   draftKey: "new-agent",
+  form,
   ...over,
 });
 const lead = agentSummary({ slug: "lead", displayName: "Lead", description: "Leads" });
@@ -32,30 +34,32 @@ const edit = (agent = lead): Args => ({
   mode: "edit",
   agent,
   draftKey: `edit-agent:${agent.slug}`,
+  form,
 });
 
-test("each field validates on blur, with the form's messages", async () => {
+test("each changed field validates on blur, with the form's messages", async () => {
   const { result } = mount(create());
   await waitFor(() => expect(result.current.credentials).toBeDefined());
   act(() => result.current.set("slug", "Bad_Slug"));
   act(() => result.current.blur("slug"));
   expect(result.current.errors.slug).toBeTruthy();
+  // Untouched: leaving it says nothing.
+  act(() => result.current.blur("displayName"));
+  expect(result.current.errors.displayName).toBeUndefined();
+  act(() => result.current.set("displayName", "x"));
+  act(() => result.current.set("displayName", ""));
   act(() => result.current.blur("displayName"));
   expect(result.current.errors.displayName).toBe("Enter a display name.");
   act(() => result.current.set("displayName", "x".repeat(81)));
   act(() => result.current.blur("displayName"));
-  expect(result.current.errors.displayName).toBe(
-    "Keep the display name to 80 characters or fewer.",
-  );
+  expect(result.current.errors.displayName).toBe("Use 80 characters or fewer.");
   act(() => result.current.set("description", "x".repeat(501)));
   act(() => result.current.blur("description"));
-  expect(result.current.errors.description).toBe(
-    "Keep the description to 500 characters or fewer.",
-  );
+  expect(result.current.errors.description).toBe("Use 500 characters or fewer.");
   act(() => result.current.blur("template"));
-  expect(result.current.errors.template).toBe("Choose a template.");
+  expect(result.current.errors.template).toBeUndefined();
   // Typing clears a field's error.
-  act(() => result.current.set("slug", "ok"));
+  act(() => result.current.set("slug", "okay"));
   expect(result.current.errors.slug).toBeUndefined();
 });
 
@@ -70,6 +74,7 @@ test("submit with invalid fields reports them all and sends nothing", async () =
   expect(r).toBe("invalid");
   expect(onSubmit).not.toHaveBeenCalled();
   expect(Object.keys(result.current.errors).sort()).toEqual(["displayName", "slug", "template"]);
+  expect(result.current.attempt).toBe(1);
 });
 
 test("New agent: the template fills untouched fields, and the slug is not prefilled", async () => {
@@ -107,7 +112,7 @@ test("Edit: the body is the diff from the saved agent, and no change is nothing 
     r = await result.current.submit(onSubmit);
   });
   expect(r).toBe("nothing");
-  expect(result.current.outcome?.content).toBe("Nothing to save: no field changed.");
+  expect(result.current.outcome.success).toBe("Nothing to save: no field changed.");
   act(() => result.current.set("displayName", " Boss "));
   await act(async () => {
     r = await result.current.submit(onSubmit);
@@ -116,7 +121,8 @@ test("Edit: the body is the diff from the saved agent, and no change is nothing 
   expect(onSubmit).toHaveBeenCalledOnce();
   expect(onSubmit).toHaveBeenCalledWith({ displayName: "Boss" });
   // The sheet closes and toasts; no inline success line.
-  expect(result.current.outcome).toBeUndefined();
+  expect(result.current.outcome.success).toBeUndefined();
+  expect(result.current.outcome.error).toBeUndefined();
   // The saved copy is the new base: saving again changes nothing.
   await act(async () => {
     r = await result.current.submit(onSubmit);
@@ -143,13 +149,98 @@ test("a server field error lands under its field; any other error is the outcome
   expect(r).toBe("failed");
   expect(result.current.errors.slug).toBe("That slug is taken.");
   expect(result.current.pending).toBe(false);
+  // A mapped server error is a focus request.
+  expect(result.current.attempt).toBe(1);
+  expect(result.current.outcome.error).toBeUndefined();
+  act(() => result.current.set("slug", "free"));
   await act(async () => {
     r = await result.current.submit(async () => {
       throw new Error("offline");
     });
   });
   expect(r).toBe("failed");
-  expect(result.current.outcome).toMatchObject({ tone: "error" });
+  expect(result.current.outcome.error).toBe("Couldn't reach the server. Try again.");
+  // The next edit clears it.
+  act(() => result.current.set("displayName", "Tee"));
+  expect(result.current.outcome.error).toBeUndefined();
+});
+
+type State = ReturnType<typeof useAgentFormState>;
+const fill = (s: State) =>
+  act(() => {
+    s.set("slug", "plug");
+    s.set("displayName", "P");
+    s.set("template", "lead");
+  });
+const failPlugin = async () => {
+  throw new ApiError(502, "plugin_install_failed", "Plugin install failed: x.", {
+    output: "npm ERR! nope",
+  });
+};
+
+test("an edit clears a plugin install failure's output with its line", async () => {
+  const { result } = mount(create());
+  await waitFor(() => expect(result.current.credentials).toBeDefined());
+  fill(result.current);
+  const edits: [string, (s: State) => void][] = [
+    ["set", (s) => s.set("displayName", "Q")],
+    ["setProjects", (s) => s.setProjects(["app"])],
+  ];
+  for (const [name, edit] of edits) {
+    await act(async () => {
+      await result.current.submit(failPlugin);
+    });
+    expect(result.current.pluginOutput, name).toBe("npm ERR! nope");
+    act(() => edit(result.current));
+    expect(result.current.outcome.error, name).toBeUndefined();
+    expect(result.current.pluginOutput, name).toBeUndefined();
+  }
+});
+
+test("a plugin install failure keeps its output as data until the next submit", async () => {
+  const { result } = mount(create());
+  await waitFor(() => expect(result.current.credentials).toBeDefined());
+  act(() => {
+    result.current.set("slug", "plug");
+    result.current.set("displayName", "P");
+    result.current.set("template", "lead");
+  });
+  await act(async () => {
+    await result.current.submit(async () => {
+      throw new ApiError(502, "plugin_install_failed", "Plugin install failed: x.", {
+        output: "npm ERR! nope",
+      });
+    });
+  });
+  expect(result.current.outcome.error).toBe("Plugin install failed: x.");
+  expect(result.current.pluginOutput).toBe("npm ERR! nope");
+  let release = () => {};
+  await act(async () => {
+    void result.current.submit(() => new Promise<void>((res) => (release = res)));
+  });
+  expect(result.current.pluginOutput).toBeUndefined();
+  expect(result.current.outcome.error).toBeUndefined();
+  await act(async () => release());
+});
+
+test("Discard clears errors and the outcome", async () => {
+  const { result } = mount(create());
+  await waitFor(() => expect(result.current.credentials).toBeDefined());
+  await act(async () => {
+    await result.current.submit(vi.fn());
+  });
+  expect(result.current.errors.template).toBe("Choose a template.");
+  act(() => result.current.discard());
+  expect(result.current.errors).toEqual({});
+  fill(result.current);
+  await act(async () => {
+    await result.current.submit(failPlugin);
+  });
+  expect(result.current.outcome.error).toBe("Plugin install failed: x.");
+  expect(result.current.pluginOutput).toBe("npm ERR! nope");
+  act(() => result.current.discard());
+  expect(result.current.outcome.error).toBeUndefined();
+  expect(result.current.pluginOutput).toBeUndefined();
 });
 
 test("a second submit while one is in flight is ignored", async () => {
@@ -230,7 +321,7 @@ test("a restored draft's gone credential reads as empty, with the reason", async
   first.unmount();
   const second = mount(create());
   await waitFor(() =>
-    expect(second.result.current.staleNotes.credential).toBe("Credential prod was deleted."),
+    expect(second.result.current.staleNotes.credential).toBe("That credential was deleted."),
   );
   // One credential left: it is the default again.
   expect(second.result.current.shown.credential).toBe("work");

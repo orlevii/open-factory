@@ -109,7 +109,10 @@ test("the zone select is grouped by region, always holds UTC and the current val
   expect(g.map((x) => x.region)).toEqual(["America", "Europe", "Other"]);
   expect(g.find((x) => x.region === "Other")?.zones).toEqual(["Mars/Base", "UTC"]);
   await openNew();
-  expect(screen.getByRole("combobox", { name: /^Time zone, / })).toBeInTheDocument();
+  const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  expect(screen.getByRole("combobox", { name: /^Time zone, / })).toHaveAccessibleName(
+    `Time zone, ${detected}`,
+  );
 });
 
 test("the preview updates on blur and zone change, not per keystroke, with 'your time' when zones differ", async () => {
@@ -132,24 +135,28 @@ test("validates on leave with each sentence; submit focuses the first invalid fi
   await openNew();
   await chooseCustom();
   const cron = screen.getByLabelText("Repeats", { selector: "input:not([type=radio])" });
+  // Leaving an untouched field says nothing.
   await userEvent.click(cron);
+  await userEvent.tab();
+  expect(document.getElementById("field-cron-error")).not.toHaveAttribute("data-shown");
+  await userEvent.type(cron, "x");
+  await userEvent.clear(cron);
   await userEvent.tab();
   expect(await screen.findByText("Enter a pattern.")).toBeInTheDocument();
   await userEvent.type(cron, "@daily");
   await userEvent.tab();
-  expect(
-    await screen.findByText("Use 5 fields: minute hour day-of-month month day-of-week."),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("Use 5 fields, like 0 9 * * 1-5.")).toBeInTheDocument();
   await userEvent.clear(cron);
   await userEvent.type(cron, "0 9 L * *");
   await userEvent.tab();
-  expect(
-    await screen.findByText("Only numbers, *, ranges, lists, steps and names are allowed."),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("Use numbers, *, -, / and commas.")).toBeInTheDocument();
   await userEvent.clear(cron);
   await userEvent.type(cron, "61 * * * *");
   await userEvent.tab();
-  expect(await screen.findByText(/minute/i, { selector: "#field-cron-error" })).toBeInTheDocument();
+  expect(
+    await screen.findByText(/minute/i, { selector: "#field-cron-error span" }),
+  ).toBeInTheDocument();
+  expect(document.getElementById("field-cron-error")).toHaveAttribute("data-shown");
   await userEvent.clear(cron);
   await userEvent.type(cron, "0 0 30 2 *");
   await userEvent.tab();
@@ -157,7 +164,37 @@ test("validates on leave with each sentence; submit focuses the first invalid fi
   await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
   expect(await screen.findByText("Choose an agent.")).toBeInTheDocument();
   expect(await screen.findByText("Enter a message.")).toBeInTheDocument();
-  expect(within(screen.getByRole("dialog")).getByLabelText("Target")).toHaveFocus();
+  await waitFor(() =>
+    expect(within(screen.getByRole("dialog")).getByLabelText("Target")).toHaveFocus(),
+  );
+  // The Message editor's frame takes the invalid edge with its note.
+  expect(screen.getByLabelText("Message")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Message").closest("[data-invalid]")).not.toBeNull();
+});
+
+test("a server failure with no field says so above the buttons, and Create stays usable", async () => {
+  mockApi({
+    ...base(),
+    "POST /api/schedules": () =>
+      json({ error: { code: "internal_error", message: "Database is down" } }, 500),
+  });
+  renderApp("/schedules/new", alice);
+  await screen.findByRole("dialog", { name: "New schedule" });
+  await pick("ceo");
+  await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Weekdays at 09:00");
+  await userEvent.type(screen.getByLabelText("Message"), "x");
+  await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+  const dialog = screen.getByRole("dialog");
+  await waitFor(() =>
+    expect(
+      within(dialog)
+        .getAllByRole("alert")
+        .map((a) => a.textContent),
+    ).toContain("Couldn't save the schedule. Try again."),
+  );
+  expect(screen.getByRole("button", { name: "Create schedule" })).not.toHaveAttribute(
+    "aria-disabled",
+  );
 });
 
 test("the target picker starts at 'Choose an agent…' and a spawned agent adds the helper", async () => {
@@ -276,4 +313,33 @@ test("Repeats starts unchosen, Time zone follows When, the preview sits under Re
   expect(repeats.compareDocumentPosition(live) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(live.compareDocumentPosition(zoneLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByLabelText("Message").className).not.toContain("font-mono");
+});
+
+test("a submit from the Message's Preview goes back to Write and focuses it when it's the only invalid field", async () => {
+  const api = await openNew();
+  await pick("ceo");
+  await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Weekdays at 09:00");
+  const message = screen.getByLabelText("Message");
+  const frame = message.closest("[data-slot=tabs]") as HTMLElement;
+  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
+  expect(screen.queryByLabelText("Message")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+  const back = await screen.findByLabelText("Message");
+  await waitFor(() => expect(back).toHaveFocus());
+  expect(back).toHaveAttribute("aria-invalid", "true");
+  expect(back).toHaveAccessibleDescription("Enter a message.");
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+});
+
+test("from Preview with an earlier field invalid too, the earlier field keeps the focus", async () => {
+  await openNew();
+  await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Weekdays at 09:00");
+  const frame = screen.getByLabelText("Message").closest("[data-slot=tabs]") as HTMLElement;
+  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
+  await userEvent.click(screen.getByRole("button", { name: "Create schedule" }));
+  const back = await screen.findByLabelText("Message");
+  expect(back).toHaveAttribute("aria-invalid", "true");
+  await waitFor(() =>
+    expect(within(screen.getByRole("dialog")).getByLabelText("Target")).toHaveFocus(),
+  );
 });

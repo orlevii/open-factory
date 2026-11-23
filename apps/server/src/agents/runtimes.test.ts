@@ -22,6 +22,7 @@ test("get never creates a runtime; bySlug caches one per agent; liveFields has d
     turnOpen: false,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     waitingOn: { tasks: [], crons: 0 },
     crons: [],
     cronZone: expect.any(String),

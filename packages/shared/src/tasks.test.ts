@@ -22,7 +22,7 @@ test("title: trimmed, 1–200, one line", () => {
   expect(taskTitleSchema.parse("  Plan  ")).toBe("Plan");
   expect(taskTitleSchema.safeParse("").error?.issues[0]?.message).toBe("Enter a title.");
   expect(taskTitleSchema.safeParse("x".repeat(201)).error?.issues[0]?.message).toBe(
-    "Keep the title to 200 characters or fewer.",
+    "Use 200 characters or fewer.",
   );
   expect(taskTitleSchema.safeParse("a\nb").error?.issues[0]?.message).toBe(
     "Keep the title on one line.",

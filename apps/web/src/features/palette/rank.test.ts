@@ -1,6 +1,6 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
-import { ACTIONS, GO_TO, isTaskKey, rankAgents } from "./rank";
+import { GO_TO, isTaskKey, rankAgents } from "./rank";
 
 const a = (slug: string, displayName = slug): AgentSummary =>
   ({ slug, displayName }) as unknown as AgentSummary;
@@ -100,33 +100,23 @@ describe("isTaskKey", () => {
   });
 });
 
-describe("static lists", () => {
-  test("Go to has unique ids and covers the spec's destinations", () => {
+describe("GO_TO", () => {
+  test("has unique ids that open the expected paths", () => {
     const ids = GO_TO.map((g) => g.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const to of [
-      "/inbox",
-      "/agents",
-      "/tasks",
-      "/templates",
-      "/schedules",
-      "/usage",
-      "/settings/credentials",
-      "/settings/secrets",
-      "/settings/projects",
-      "/settings/users",
-      "/settings/factory",
-    ]) {
-      expect(GO_TO.some((g) => g.to === to)).toBe(true);
-    }
-    expect(GO_TO.some((g) => g.label === "Images")).toBe(true);
-  });
-
-  test("Actions never offer Mark all read", () => {
-    expect(ACTIONS.length).toBeGreaterThan(0);
-    expect(ACTIONS.some((x) => /mark all read/i.test(x.label))).toBe(false);
-    for (const label of ["New agent", "New task", "New schedule", "Keyboard shortcuts"]) {
-      expect(ACTIONS.some((x) => x.label === label)).toBe(true);
-    }
+    expect(Object.fromEntries(GO_TO.map((g) => [g.id, g.to]))).toEqual({
+      inbox: "/inbox",
+      agents: "/agents",
+      tasks: "/tasks",
+      templates: "/templates",
+      images: "/templates/images",
+      schedules: "/schedules",
+      usage: "/usage",
+      "settings-credentials": "/settings/credentials",
+      "settings-secrets": "/settings/secrets",
+      "settings-projects": "/settings/projects",
+      "settings-users": "/settings/users",
+      "settings-factory": "/settings/factory",
+    });
   });
 });

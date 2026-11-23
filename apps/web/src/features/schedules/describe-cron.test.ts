@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { describeCron, presetOf, REPEATS_PRESETS } from "./describe-cron";
+import { describeCron, presetOf } from "./describe-cron";
 
 test.each([
   ["*/15 * * * *", "Every 15 minutes"],
@@ -41,12 +41,6 @@ test.each([
 ])("%s → %s", (c, out) => expect(describeCron(c)).toBe(out));
 
 test("presets", () => {
-  expect(REPEATS_PRESETS.map((p) => p.cron)).toEqual([
-    "0 * * * *",
-    "0 9 * * *",
-    "0 9 * * 1-5",
-    "0 9 * * 1",
-  ]);
   expect(presetOf("0 9 * * 1-5")).toBe("Weekdays at 09:00");
   expect(presetOf("0 9 * * 2")).toBeUndefined();
 });

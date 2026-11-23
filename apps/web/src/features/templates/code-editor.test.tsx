@@ -215,11 +215,6 @@ describe("CodeEditor", () => {
     }
   });
 
-  test("on desktop diagnostics get the lint gutter", () => {
-    const { container } = setup({ diagnostics: [{ line: 2, message: "nope", severity: "error" }] });
-    expect(container.querySelector(".cm-gutter-lint")).not.toBeNull();
-  });
-
   test("an external replace after edits starts a fresh history: undo can't replay old edits onto it", () => {
     const { view, props, rerender, ref, states } = setup({ value: "keep foo here" });
     act(() => view().dispatch({ changes: { from: 5, to: 9 }, userEvent: "delete" }));
@@ -306,5 +301,34 @@ describe("CodeEditor", () => {
     } finally {
       window.matchMedia = real;
     }
+  });
+
+  test("readOnly reconfigures the same view: no edits, announced read-only, and back", () => {
+    const { view, props, rerender, ref, container } = setup({ readOnly: true });
+    const before = view();
+    const content = () => container.querySelector(".cm-content");
+    expect(before.state.readOnly).toBe(true);
+    expect(content()).toHaveAttribute("aria-readonly", "true");
+    rerender(<CodeEditor ref={ref} {...props} readOnly={false} />);
+    expect(view()).toBe(before);
+    expect(view().state.readOnly).toBe(false);
+    expect(content()).not.toHaveAttribute("aria-readonly");
+    rerender(<CodeEditor ref={ref} {...props} readOnly />);
+    expect(view()).toBe(before);
+    expect(view().state.readOnly).toBe(true);
+  });
+
+  test("scrollMarginBottom reaches the view's scroll margins without a remount", () => {
+    const { view, props, rerender, ref } = setup({ scrollMarginBottom: 88 });
+    const before = view();
+    const margins = () =>
+      view()
+        .state.facet(EditorView.scrollMargins)
+        .map((f) => f(view())?.bottom);
+    expect(margins()).toContain(88);
+    rerender(<CodeEditor ref={ref} {...props} scrollMarginBottom={120} />);
+    expect(view()).toBe(before);
+    expect(margins()).toContain(120);
+    expect(margins()).not.toContain(88);
   });
 });

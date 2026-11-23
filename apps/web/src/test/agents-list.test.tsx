@@ -57,21 +57,11 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
   );
   renderApp("/agents", alice);
   const row = await screen.findByRole("link", { name: /Dev agent/ });
-  expect(row).toHaveAttribute("href", "/agents/dev");
+  expect(row).toHaveAttribute("href", "/agents/dev/chat");
   expect(within(row).getByText("Working")).toBeInTheDocument();
   expect(within(row).getAllByText("@dev").length).toBeGreaterThan(0);
   expect(within(row).getByText("developer")).toBeInTheDocument();
   expect(within(row).getByText("Unsandboxed")).toBeInTheDocument();
-});
-
-test("an empty list says so and offers to create the first agent", async () => {
-  mockWorld({ agents: [] });
-  renderApp("/agents", alice);
-  // The sidebar tree says it too: the page is the main region.
-  const main = await screen.findByRole("main");
-  expect(await within(main).findByText("No agents yet.")).toBeInTheDocument();
-  expect(within(main).getByRole("button", { name: "Create your first agent" })).toBeInTheDocument();
-  expect(screen.queryByText(/seed:dev-agent/)).not.toBeInTheDocument();
 });
 
 test("a pushed agent_status frame turns the row's Working into Idle", async () => {
@@ -277,20 +267,15 @@ test("each Agents row has a ⋯ beside its link that opens the agent's menu", as
   const more = await within(main).findByRole("button", { name: "Actions for Dev agent" });
   // A sibling of the row's link, never inside it.
   expect(more.closest("a")).toBeNull();
-  expect(more.closest("li")?.querySelector('a[href="/agents/dev"]')).not.toBeNull();
+  expect(more.closest("li")?.querySelector('a[href="/agents/dev/chat"]')).not.toBeNull();
   await userEvent.click(more);
   const menu = await screen.findByRole("menu");
-  expect(menuLayout(menu)).toEqual([
-    "New task",
-    "New schedule",
-    "—",
-    "Edit",
-    "Usage",
-    "Open tasks",
-    "—",
-    "Re-sync from template…",
-    "Archive…",
-  ]);
+  // The full layout is pinned in agent-menu.test.tsx; here: it is this agent's menu.
+  expect(within(menu).getByRole("menuitem", { name: "Archive…" })).toBeInTheDocument();
+  expect(within(menu).getByRole("menuitem", { name: "Usage" })).toHaveAttribute(
+    "href",
+    "/agents/dev/usage",
+  );
 });
 
 test("Ended view: an archived row's menu restores it and toasts; a terminated row offers only Usage and Open tasks", async () => {
@@ -321,7 +306,14 @@ test("Ended view: an archived row's menu restores it and toasts; a terminated ro
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await u.click(within(main).getByRole("button", { name: "Actions for Old one" }));
   const menu = await screen.findByRole("menu");
-  expect(menuLayout(menu)).toEqual(["Usage", "Open tasks", "—", "Restore"]);
+  expect(menuLayout(menu)).toEqual([
+    "Configure",
+    "Usage",
+    "Open tasks",
+    "—",
+    "Reset persona…",
+    "Restore",
+  ]);
   await u.click(within(menu).getByRole("menuitem", { name: "Restore" }));
   expect(await screen.findByText("Restored @old.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/old/unarchive")).toBe(

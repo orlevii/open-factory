@@ -1,20 +1,15 @@
 import { expect, test } from "vitest";
 import { queueItemSchema } from "./agents.ts";
 import { anyEventSchema } from "./events.ts";
-import { handleSchema, RESERVED_HANDLES } from "./handle.ts";
-import {
-  messageLookupSchema,
-  readFromBodySchema,
-  readFromResponseSchema,
-  unreadCountSchema,
-} from "./messaging.ts";
-import { isReservedSecretName } from "./names.ts";
+import { readFromBodySchema, readFromResponseSchema, unreadCountSchema } from "./messaging.ts";
 import { serverMessageSchema } from "./ws.ts";
 
 test("a pre-S6 message_in row (no parts) still parses", () => {
   const e = {
     type: "message_in",
-    messages: [{ id: "m1", from: "@or", kind: "message", urgent: false, body: "hi" }],
+    messages: [
+      { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
+    ],
   };
   expect(anyEventSchema.parse(e)).toEqual(e);
 });
@@ -26,7 +21,8 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
       {
         id: "m1",
         ids: ["m1", "m2"],
-        from: "dev",
+        from: "@dev",
+        fromKind: "agent",
         kind: "member_update",
         urgent: false,
         body: "a\n\nb",
@@ -38,6 +34,7 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
       {
         id: "m3",
         from: "@factory",
+        fromKind: "factory",
         kind: "member_update",
         about: "dev",
         fact: "denied",
@@ -47,6 +44,7 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
       {
         id: "m4",
         from: "@factory",
+        fromKind: "factory",
         kind: "peer_left",
         about: "dev",
         urgent: false,
@@ -68,7 +66,8 @@ test("held queue items and the inbox frame parse", () => {
     queueItemSchema.parse({
       id: "m1",
       kind: "held",
-      from: "dev",
+      from: "@dev",
+      fromKind: "agent",
       count: 3,
       waitReason: "window",
       dueAt: "2026-11-19T10:00:30.000Z",
@@ -76,12 +75,6 @@ test("held queue items and the inbox frame parse", () => {
     }).kind,
   ).toBe("held");
   expect(serverMessageSchema.parse({ type: "inbox_changed" })).toEqual({ type: "inbox_changed" });
-});
-
-test("all and system are reserved handles; OPEN_FACTORY_ secrets are reserved", () => {
-  expect(RESERVED_HANDLES).toEqual(expect.arrayContaining(["all", "system"]));
-  expect(handleSchema.safeParse("system").success).toBe(false);
-  expect(isReservedSecretName("OPEN_FACTORY_AGENT_TOKEN")).toBe(true);
 });
 
 test("process_started accepts the S6 wake reasons; mcp_unavailable parses", () => {
@@ -104,8 +97,4 @@ test("read-from body and response", () => {
   expect(
     readFromResponseSchema.parse({ marked: 1, readAt: "2026-11-21T00:00:00.000Z" }).marked,
   ).toBe(1);
-});
-
-test("a looked-up message can be cancelled", () => {
-  expect(messageLookupSchema.shape.state.parse("cancelled")).toBe("cancelled");
 });

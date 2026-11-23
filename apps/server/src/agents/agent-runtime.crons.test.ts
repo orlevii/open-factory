@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
@@ -6,7 +7,7 @@ import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
-import { noForward, noopTokens, sendAs } from "./testing/runtime-harness.ts";
+import { noForward, noopTokens, sendAs, testEffective } from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -15,6 +16,7 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -45,6 +47,7 @@ async function make(runtime: "local" | "docker" = "local") {
       runtime: "local",
       permissionMode: "auto",
       mounts: [],
+      effective: testEffective(),
     }),
     log: { debug() {}, info() {}, warn() {}, error() {} },
     slots: unlimitedSlots,
@@ -88,13 +91,20 @@ test("the status lists live crons: a one-shot with nextFireAt, a recurring one w
   expect(rt.waitingOn().crons).toBe(2);
 });
 
-test("a deleted cron and a one-shot after its firing turn disappear", async () => {
+test("a deleted cron disappears at once; a one-shot disappears after its cron turn ends", async () => {
   await started();
-  driver.last.emit(ev.cron("r1"), ev.cron("o1", { recurring: false }));
+  driver.last.emit(ev.cron("r1"), ev.cron("o1", { recurring: false, inMs: -1_000 }));
   await rt.settled();
   driver.last.emit({ type: "cron_deleted", cronId: "r1" });
   await rt.settled();
   expect(rt.live().crons.map((c) => c.cronId)).toEqual(["o1"]);
+  // The one-shot's time has passed, but it stays until a cron turn ends.
+  driver.last.emit(ev.end());
+  await rt.settled();
+  expect(rt.live().crons.map((c) => c.cronId)).toEqual(["o1"]);
+  driver.last.emit(ev.turn(), ev.end({ originKind: "cron" }));
+  await rt.settled();
+  expect(rt.live().crons).toEqual([]);
 });
 
 test("cronZone is UTC for a Docker agent and the server's zone for a local one", async () => {

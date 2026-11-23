@@ -1,6 +1,7 @@
 import { schema } from "@open-factory/db";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { TaskStore } from "./task-store.ts";
 
@@ -12,8 +13,10 @@ let tick = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new TaskStore({ db: t.db, clock: () => new Date(Date.UTC(2026, 0, 1) + ++tick * 1000) });
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id,name,email,handle) values (${ids.or},'Or','or@x.io','or')`;
   await t.sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
+  for (const slug of ["lead", "dev", "kid"]) await claimTestHandleSql(t.sql, slug, "agent");
   await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,credential_id) values
     (${ids.lead},'lead','Lead','t','{}','local','persistent',null,'c1')`;
   await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,credential_id) values
@@ -72,9 +75,21 @@ test("lockAgents is one statement ordered persistent before spawned, then id, wi
       x === ids.kid ? 1 : y === ids.kid ? -1 : x < y ? -1 : 1,
     ),
   );
-  const plan =
-    await t.sql`explain (format json) select id from agents where id in (${ids.kid}, ${ids.dev}) order by (kind = 'ephemeral'), id for share`;
-  const json = JSON.stringify(plan[0]);
+  // EXPLAIN the statement lockAgents itself sends, not a hand-written copy.
+  const plans: unknown[] = [];
+  await t.db.transaction((tx) =>
+    store.lockAgents(
+      {
+        execute: async (q: Parameters<typeof tx.execute>[0]) => {
+          plans.push(await tx.execute(sql`explain (format json) ${q}`));
+          return tx.execute(q);
+        },
+      } as never,
+      [ids.kid, ids.dev],
+    ),
+  );
+  expect(plans).toHaveLength(1);
+  const json = JSON.stringify(plans[0]);
   expect(json.indexOf('"LockRows"')).toBeGreaterThan(-1);
   expect(json.indexOf('"LockRows"')).toBeLessThan(json.indexOf('"Sort"'));
 });
@@ -159,11 +174,14 @@ test("comments and events insert with strictly increasing times", async () => {
     { taskId: a.id, actor: { agentId: ids.dev }, type: "status", from: "open", to: "done" },
   ]);
   const ev = await t.db.select().from(schema.taskEvents).orderBy(sql`at`);
-  expect(ev.filter((e) => e.taskId === a.id).map((e) => e.type)).toEqual(["created", "status"]);
+  const mine = ev.filter((e) => e.taskId === a.id);
+  expect(mine.map((e) => e.type)).toEqual(["created", "status"]);
+  expect(mine[1]?.at.getTime()).toBeGreaterThan(mine[0]?.at.getTime() as number);
   const c = await store.insertComment(t.db, {
     taskId: a.id,
     author: { agentId: ids.dev },
     body: "hi",
   });
   expect(c.authorAgentId).toBe(ids.dev);
+  expect(c.createdAt.getTime()).toBeGreaterThan(mine[1]?.at.getTime() as number);
 });

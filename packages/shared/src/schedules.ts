@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isValidZone, validateCron } from "./cron.ts";
+import { MSG } from "./messages.ts";
 
 export const SCHEDULE_STATES = [
   "active",
@@ -16,8 +17,8 @@ const bytes = (s: string) => new TextEncoder().encode(s).length;
 
 export const scheduleBodySchema = z
   .string()
-  .refine((s) => bytes(s) >= 1, "The message can't be empty.")
-  .refine((s) => bytes(s) <= SCHEDULE_BODY_MAX, "The message is too long (64 KB at most).");
+  .refine((s) => bytes(s) >= 1, MSG.messageEmpty)
+  .refine((s) => bytes(s) <= SCHEDULE_BODY_MAX, MSG.bodyTooLong);
 
 export const cronFieldSchema = z.string().superRefine((s, ctx) => {
   const e = validateCron(s);

@@ -1,5 +1,5 @@
 import { ApiError, type ServerMessage } from "@open-factory/shared";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
@@ -95,9 +95,10 @@ test("the footer has Save changes, Close and a ghost crimson Delete schedule on 
   const del = within(dialog).getByRole("button", { name: "Delete schedule" });
   expect(del).toHaveClass("text-destructive");
   const footer = del.closest("[data-slot=sheet-footer]") as HTMLElement;
-  expect(footer.firstElementChild?.contains(del)).toBe(true);
-  // A viewport breakpoint: the footer is not inside the body's @container, so a container query never matched.
-  expect(footer.firstElementChild).toHaveClass("sm:mr-auto");
+  const aside = footer.querySelector(".sm\\:mr-auto");
+  expect(aside?.contains(del)).toBe(true);
+  // The outcome line leads the footer; the aside follows it on the left.
+  expect(footer.firstElementChild).toHaveClass("form-outcome");
 });
 
 test("phones: the footer stacks Save changes first and Close last, Delete between", async () => {
@@ -220,6 +221,80 @@ test("a done one-shot's message can still be edited: only that field is validate
   expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({
     body: "Morning review\nsecond line more",
   });
+});
+
+test("a leave-flagged Date and time reverted, then a Message edit saves: only changed fields count (the subset rule)", async () => {
+  const done = sched({
+    cron: undefined,
+    at: "2020-01-01T09:00:00.000Z",
+    timezone: "UTC",
+    nextRunAt: null,
+    done: true,
+    ran: true,
+    state: "done",
+    lastFiredAt: "2020-01-01T09:00:00.000Z",
+  });
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  const api = mockApi({
+    ...common(done),
+    "PATCH /api/schedules/S-3": async () => {
+      await gate;
+      return json({ schedule: done });
+    },
+  });
+  await openOver();
+  const at = await within(await sheet()).findByLabelText("Date and time");
+  await userEvent.click(at);
+  fireEvent.change(at, { target: { value: "2020-01-02T09:00" } });
+  await userEvent.tab();
+  expect(await screen.findByText("That time has passed.")).toBeInTheDocument();
+  await userEvent.click(at);
+  fireEvent.change(at, { target: { value: "2020-01-01T09:00" } });
+  await userEvent.type(await message(), " more");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await screen.findByRole("button", { name: "Saving…" });
+  expect(at).not.toHaveAttribute("aria-invalid");
+  expect(document.getElementById("field-at-error")).not.toHaveAttribute("data-shown");
+  expect(api.calls.find((c) => c.method === "PATCH")?.body).toEqual({
+    body: "Morning review\nsecond line more",
+  });
+  release();
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "S-3" })).toBeNull());
+});
+
+test("a server field error on save focuses its field; a failure with no field says so above the buttons", async () => {
+  let fields: Record<string, string> | undefined = { body: "Server says no." };
+  mockApi({
+    ...common(sched()),
+    "PATCH /api/schedules/S-3": () =>
+      json({ error: { code: "invalid_schedule", message: "Server says no.", fields } }, 400),
+  });
+  await openOver();
+  await userEvent.type(await message(), " x");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByText("Server says no.")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByLabelText("Message")).toHaveFocus());
+  fields = undefined;
+  await userEvent.type(screen.getByLabelText("Message"), "y");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByText("Couldn't save the schedule. Try again.")).toBeInTheDocument();
+});
+
+test("leaving an edited, invalid Message for Delete schedule doesn't validate it; leaving it for Save does", async () => {
+  mockApi(common(sched()));
+  await openOver();
+  const msg = await message();
+  await userEvent.clear(msg);
+  const del = screen.getByRole("button", { name: "Delete schedule" });
+  expect(del).toHaveAttribute("data-skip-validate");
+  // A keyboard move: the blur's relatedTarget is the Delete button, with no pointerdown to fall back on.
+  act(() => del.focus());
+  expect(msg).not.toHaveAttribute("aria-invalid");
+  act(() => msg.focus());
+  act(() => screen.getByRole("button", { name: "Save changes" }).focus());
+  expect(msg).toHaveAttribute("aria-invalid", "true");
+  expect(msg).toHaveAccessibleDescription("Enter a message.");
 });
 
 test("an archived target stays selected as an extra option; the helper names the author change; pending notes", async () => {
@@ -595,7 +670,7 @@ test("a late Delete failure toasts the error with Open form", async () => {
   expect(n?.action?.label).toBe("Open form");
 });
 
-test("a double click on Delete sends one DELETE, and Delete waits while a Save is pending", async () => {
+test("a double click on Delete sends one DELETE", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
   const api = mockApi({

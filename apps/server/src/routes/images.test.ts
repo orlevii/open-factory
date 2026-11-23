@@ -42,22 +42,40 @@ test("GET /api/images returns the folder, the base image and every image's statu
   expect(body.images).toEqual([{ name: "smoke", status: "not_built", usedBy: [] }]);
 });
 
+/** Holds the next build open once Docker has it, so the running build's `pull` can be read. */
+function gatedBuild() {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const reached = new Promise<void>((r) => {
+    docker.builds.push({ gate, emitted: r });
+  });
+  return { reached, release };
+}
+const buildCall = () => docker.calls.find((c) => c.op === "buildImage")?.args[0];
+
 test("POST build answers 202 building and builds with pull on by default", async () => {
+  const { reached, release } = gatedBuild();
   const r = await req("POST", "/api/images/smoke/build");
   expect(r.statusCode).toBe(202);
   expect(r.json()).toEqual({ state: "building" });
-  await h.app.images.build("smoke", { pull: true });
-  expect(docker.calls.find((c) => c.op === "buildImage")?.args[0]).toMatchObject({
-    tag: TAG,
-    pull: true,
-  });
+  await reached;
+  expect(h.app.images.runningPull("smoke")).toBe(true);
+  expect(buildCall()).toMatchObject({ tag: TAG, pull: true });
+  release();
+  await vi.waitFor(() => expect(h.app.images.running("smoke")).toBe(false));
 });
 
 test("POST build with pull:false passes it to Docker", async () => {
+  const { reached, release } = gatedBuild();
   const r = await req("POST", "/api/images/smoke/build", { pull: false });
   expect(r.statusCode).toBe(202);
-  await h.app.images.build("smoke", { pull: false });
-  expect(docker.calls.find((c) => c.op === "buildImage")?.args[0]).toMatchObject({ pull: false });
+  await reached;
+  expect(h.app.images.runningPull("smoke")).toBe(false);
+  expect(buildCall()).toMatchObject({ pull: false });
+  release();
+  await vi.waitFor(() => expect(h.app.images.running("smoke")).toBe(false));
 });
 
 test("with Accept ndjson the response streams the lines and ends with the state", async () => {

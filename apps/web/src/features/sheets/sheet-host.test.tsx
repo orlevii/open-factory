@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { NO_OUTCOME } from "@/components/forms/form-outcome";
 import { createQueryClient } from "@/lib/query-client";
 import { agentSummary } from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -10,7 +11,15 @@ import { alice, renderApp } from "@/test/render-app";
 import { useSheetDraft } from "./drafts";
 import { SheetFormFooter } from "./form-footer";
 import { type BodyProps, sheetBodies } from "./sheet-bodies";
-import { closeSheet, openChildSheet, openSheet } from "./sheet-store";
+import {
+  closeSheet,
+  completeChild,
+  getSheetState,
+  openChildSheet,
+  openSheet,
+  openSheetForResult,
+  returnFocusAfterChild,
+} from "./sheet-store";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
@@ -43,6 +52,7 @@ function StubTask({ close }: BodyProps<{ kind: "new-task" }>) {
         }}
       />
       <SheetFormFooter
+        outcome={NO_OUTCOME}
         submitLabel="Create task"
         pendingLabel="Creating…"
         pending={false}
@@ -80,6 +90,11 @@ beforeEach(() => {
     },
     prefetch: () => {},
     title: "New task",
+  };
+  sheetBodies["add-secret"] = {
+    load: async () => ({ default: StubChild as never }),
+    prefetch: () => {},
+    title: "Add secret",
   };
   sheetBodies["add-project"] = {
     load: async () => ({ default: StubChild as never }),
@@ -235,12 +250,28 @@ test("edit-schedule prefetches the detail and the live agents only (edit mode ne
   ]);
 });
 
+test("add-project prefetch requests host info with the never-stale options", () => {
+  const prefetchQuery = vi.fn(() => Promise.resolve());
+  restoreBodies["add-project"]?.prefetch({ prefetchQuery } as never, { kind: "add-project" });
+  const opts = (
+    prefetchQuery.mock.calls as unknown as [{ queryKey: unknown; staleTime?: number }][]
+  ).map((c) => c[0]);
+  expect(opts.find((o) => (o.queryKey as string[])[0] === "host")?.staleTime).toBe(
+    Number.POSITIVE_INFINITY,
+  );
+});
+
 test("intent prefetch has its own freshness window: hover, press and open fetch each list once", async () => {
   const api = mockApi({
     "GET /api/credentials": () => json({ credentials: [] }),
     "GET /api/projects": () => json({ projects: [] }),
     "GET /api/agents/lead": () =>
-      json({ agent: agentSummary({ slug: "lead" }), queue: [], lastSeq: 0 }),
+      json({
+        agent: agentSummary({ slug: "lead" }),
+        model: { value: null, source: "default" },
+        queue: [],
+        lastSeq: 0,
+      }),
     "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
   });
   const qc = createQueryClient({ queries: { retry: false } });
@@ -280,4 +311,44 @@ test("each open has its own opener: one started from the page body doesn't retur
   } finally {
     button.remove();
   }
+});
+
+test("Add secret opened from a page returns focus to the field it filled, not to its opener", async () => {
+  await shell();
+  const opener = document.createElement("button");
+  opener.textContent = "Insert secret";
+  const value = document.createElement("input");
+  value.setAttribute("aria-label", "Value");
+  document.body.append(opener, value);
+  try {
+    opener.focus();
+    act(() =>
+      openSheetForResult({ kind: "add-secret", name: "" }, (name) => {
+        value.value = `\${${name}}`;
+        returnFocusAfterChild(() => value);
+      }),
+    );
+    await screen.findByRole("dialog", { name: "Add secret" });
+    act(() => completeChild(getSheetState().parent?.id ?? -1, "GH_TOKEN"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add secret" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(value));
+    expect(value.value).toBe(`\${GH_TOKEN}`);
+  } finally {
+    opener.remove();
+    value.remove();
+  }
+});
+
+test("a top-level sheet shows its entry's description, in its class", async () => {
+  await shell();
+  sheetBodies["new-task"] = {
+    ...sheetBodies["new-task"]!,
+    description: () => "work",
+    descriptionClass: "font-mono",
+  };
+  act(() => openSheet({ kind: "new-task" }));
+  const panel = await screen.findByRole("dialog", { name: "New task" });
+  const description = within(panel).getByText("work");
+  expect(description).toHaveAttribute("data-slot", "sheet-description");
+  expect(description).toHaveClass("font-mono");
 });

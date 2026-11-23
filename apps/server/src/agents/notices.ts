@@ -5,7 +5,28 @@ export type NoticeType =
   | "restart"
   | "restart_crons"
   | "rate_limit_reset"
-  | "crons_stopped";
+  | "crons_stopped"
+  | "compact_continue"
+  | "config_changed";
+
+/** I2 §7.3: the fixed first line of the `config_changed` notice; every following line is one change, as "- …". */
+export const CONFIG_NOTICE_HEADER = "Your configuration changed:";
+
+/**
+ * I2 §7.3: the `config_changed` body, which `parseConfigNotice` reads back: the header, then each line once, sorted.
+ * The lines are `describeChanges` output (secret-safe); a line break inside one is flattened so the body stays parseable.
+ */
+export function renderConfigNotice(lines: readonly string[]): string {
+  const items = [...new Set(lines.map((l) => l.replace(/\s*\n\s*/g, " ").trim()))]
+    .filter(Boolean)
+    .sort();
+  return [CONFIG_NOTICE_HEADER, ...items.map((l) => `- ${l}`)].join("\n");
+}
+
+/** The change lines of a `config_changed` body (`renderConfigNotice`'s inverse); anything else in it is ignored. */
+export function parseConfigNotice(body: string): string[] {
+  return body.split("\n").flatMap((l) => (l.startsWith("- ") ? [l.slice(2)] : []));
+}
 
 const tasksSentence = (tasks: string[]) =>
   tasks.length
@@ -44,9 +65,8 @@ export const notices = {
     ].join(" ");
   },
   restart(i: { by: string; tasks: string[]; crons: string[] }): string {
-    const by = i.by.startsWith("@") ? i.by : `@${i.by}`;
     return [
-      `Restarted by ${by} after an error.`,
+      `Restarted by ${i.by} after an error.`,
       ...tasksSentence(i.tasks),
       ...cronsSentence(i.crons),
     ].join(" ");
@@ -62,6 +82,14 @@ export const notices = {
   cronsStopped(i: { by: string; crons: string[] }): string {
     return `${i.by} stopped your crons: ${i.crons.join("; ")}. Don't recreate them unless you are asked to.`;
   },
+  /** I1 §7: an agent compacted itself. Fixed text: Claude's failure text is process output and is never quoted. */
+  compactContinue(i: { failed: boolean }): string {
+    return i.failed
+      ? "Your /compact didn't run (see the Session). Continue where you left off."
+      : "Your /compact finished. Continue where you left off.";
+  },
+  /** I2 §7.3: passive; one pending row accumulates every change (`EventStore.createNotice`'s merge mode). */
+  configChanged: renderConfigNotice,
   /** `at` only when the reset time was exact. */
   rateLimitReset(i: { credential: string; at?: Date }): string {
     return `The rate limit on credential \`${i.credential}\` reset${i.at ? ` at ${hhmm(i.at)}` : ""}. Continue where you left off.`;

@@ -489,7 +489,7 @@ try {
       }),
   );
   await step("1. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step(
     `1. templates sched and kid (${LOCAL ? "local" : "docker"}, haiku, warm window 1 min) are valid`,
@@ -650,17 +650,15 @@ try {
     // 5 (early). ceo spawns a kid; the kid lists none of the three tools.
     const ceoFrom2 = await lastSeq("ceo");
     const spawnArgs = `{"template": "kid", "suffix": "one", "description": "says hello", "prompt": "Reply with the word pineapple and nothing else."}`;
-    const ask = await step(
-      "2. @or asks ceo to spawn a kid (POST /api/agents/ceo/messages)",
-      async () => {
-        const r = await api("POST", "/api/agents/ceo/messages", {
-          body: `You must call mcp__factory__spawn_agent now, exactly once, with ${spawnArgs}. No other tool.`,
-          urgent: false,
-        });
-        if (r.statusCode !== 202) throw new Error(`${r.statusCode} ${brief(r.body)}`);
-        return (r.json() as { item: { id: string } }).item.id;
-      },
-    );
+    const ask = await step("2. @or asks ceo to spawn a kid (POST /api/messages)", async () => {
+      const r = await api("POST", "/api/messages", {
+        to: ["ceo"],
+        body: `You must call mcp__factory__spawn_agent now, exactly once, with ${spawnArgs}. No other tool.`,
+        urgent: false,
+      });
+      if (r.statusCode !== 202) throw new Error(`${r.statusCode} ${brief(r.body)}`);
+      return (r.json() as { results: { id: string }[] }).results[0]?.id as string;
+    });
     await step("2. ceo's turn for the spawn request ends", () => turnOf("ceo", ask, ceoFrom2));
     const kid = await step("2. the kid's process initialises", () =>
       until(
@@ -692,9 +690,9 @@ try {
       1000,
     );
   const tell = async (slug: Slug, body: string) => {
-    const r = await api("POST", `/api/agents/${slug}/messages`, { body, urgent: false });
+    const r = await api("POST", "/api/messages", { to: [slug], body, urgent: false });
     if (r.statusCode !== 202) throw new Error(`${r.statusCode} ${brief(r.body)}`);
-    return (r.json() as { item: { id: string } }).item.id;
+    return (r.json() as { results: { id: string }[] }).results[0]?.id as string;
   };
   const resultOf = (es: SessionEvent[], c: { event: { toolUseId: string } }) => {
     const r = es.find(

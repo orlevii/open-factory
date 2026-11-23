@@ -30,6 +30,7 @@ import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { dockerodeClient } from "../src/runtime/docker/client.ts";
 import { containerName, LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { claimTestHandle } from "../src/test/handles.ts";
 import { agentWorkdir } from "../src/workspace/paths.ts";
 
 const IMAGE = "open-factory-base:dev";
@@ -248,8 +249,12 @@ async function turn(body: string, ms = 240_000): Promise<{ from: number; events:
   const from = await lastSeq();
   const rt = await app.runtimes.bySlug(SLUG);
   if (!rt) throw new Error(`no runtime for ${SLUG}`);
-  const sent = await app.router.send({ userId: "smoke", handle: "smoke" }, SLUG, body, false);
-  if (!sent.ok) throw new Error(`send to ${SLUG} failed: ${sent.message}`);
+  const [sent] = (await app.router.send({ userId: "smoke", handle: "smoke" }, [SLUG], body, false))
+    .results;
+  if (!sent || sent.status === "refused" || sent.status === "start_failed")
+    throw new Error(
+      `send to ${SLUG} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+    );
   const got = await until(
     "the turn to end",
     async () => {
@@ -351,10 +356,11 @@ try {
   appBuilt = true;
   await app.listen({ host: config.host, port: config.port });
   say(`  server: http://${config.host}:${config.port}; agents reach it at ${config.agentUrl}`);
+  await claimTestHandle(conn.db, "smoke", "user");
   await conn.sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
 
   await step("0. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step("0. temp git repo registered as project smoke-repo", () =>
     app.projects.create({ name: "smoke-repo", hostPath: repoDir }),

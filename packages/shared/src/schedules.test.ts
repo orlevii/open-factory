@@ -1,6 +1,5 @@
 import { expect, test } from "vitest";
 import { anyEventSchema } from "./events.ts";
-import { MESSAGE_KINDS } from "./messaging.ts";
 import {
   createScheduleBodySchema,
   scheduleItemSchema,
@@ -14,9 +13,7 @@ test("the tool schema accepts a weekday cron and refuses a nickname with the 5-f
   );
   const r = scheduleMessageToolSchema.safeParse({ body: "x", cron: "@daily" });
   expect(r.success).toBe(false);
-  expect(r.error?.issues[0]?.message).toBe(
-    "Use 5 fields: minute hour day-of-month month day-of-week.",
-  );
+  expect(r.error?.issues[0]?.message).toBe("Use 5 fields, like 0 9 * * 1-5.");
 });
 test("an unknown zone names the zone", () => {
   const r = scheduleMessageToolSchema.safeParse({
@@ -71,8 +68,7 @@ test("an item parses with either author kind", () => {
     scheduleItemSchema.safeParse({ ...base, createdBy: agent, bodyAuthor: human }).success,
   ).toBe(true);
 });
-test("the scheduled kind, the crons_stopped reasons and the frame", () => {
-  expect(MESSAGE_KINDS).toContain("scheduled");
+test("the crons_stopped reasons, the scheduled wake reason and the frame", () => {
   expect(
     anyEventSchema.safeParse({ type: "hibernated", reason: "crons_stopped", by: "@or" }).success,
   ).toBe(true);
@@ -90,4 +86,12 @@ test("the scheduled kind, the crons_stopped reasons and the frame", () => {
       .success,
   ).toBe(true);
   expect(serverMessageSchema.safeParse({ type: "schedules_changed" }).success).toBe(true);
+  expect(
+    anyEventSchema.safeParse({
+      type: "background_work_lost",
+      reason: "not_a_reason",
+      tasks: [],
+      crons: [],
+    }).success,
+  ).toBe(false);
 });

@@ -1,4 +1,5 @@
-import { type AgentSummary, ApiError } from "@open-factory/shared";
+import { type AgentSummary, ApiError, summarizeChanges } from "@open-factory/shared";
+import { Link } from "@tanstack/react-router";
 import { Pin, PinOff } from "lucide-react";
 import { useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
@@ -49,6 +50,16 @@ function terminatedText(agent: AgentSummary, now: Date): string {
   return parts.join(" · ");
 }
 
+/** I2 §7.3: what the pending restart applies, as at most three kinds; the full list is the title. */
+function restartFact(changes: string[]): LiveFact {
+  if (changes.length === 0) return { kind: "restart", text: "Restarts when idle" };
+  return {
+    kind: "restart",
+    text: `Restarts when idle to apply: ${summarizeChanges(changes)}`,
+    title: changes.join("\n"),
+  };
+}
+
 function queuedText(agent: AgentSummary, slotsMax?: number): string | null {
   if (agent.pulling) return "Pulling the image…";
   if (agent.status !== "queued" || !slotsMax) return null;
@@ -73,7 +84,7 @@ export function liveFact(
     };
   const queued = queuedText(agent, ctx.slotsMax);
   if (queued) return { kind: "queued", text: queued };
-  if (agent.restartPending) return { kind: "restart", text: "Restarts when idle" };
+  if (agent.restartPending) return restartFact(agent.restartChanges);
   const [first, ...rest] = agent.waitingOn.tasks;
   if (first)
     return {
@@ -88,16 +99,28 @@ export function liveFact(
 
 /** The fact as a truncating line (hidden below 640px; Agent details' Now carries it there). With
  *  no fact it is an empty, hidden region that takes no room. */
-export function LiveLine({ fact }: { fact: LiveFact | null }) {
+export function LiveLine({ fact, sessionOf }: { fact: LiveFact | null; sessionOf?: string }) {
   if (!fact) return <span role="status" className="hidden" />;
   return (
-    <span
-      role="status"
-      title={fact.title}
-      className="hidden min-w-[8rem] grow basis-0 truncate text-[0.8125rem] text-muted-foreground sm:block"
-    >
-      {fact.text}
-    </span>
+    <>
+      <span
+        role="status"
+        title={fact.title}
+        className="hidden min-w-[8rem] grow basis-0 truncate text-[0.8125rem] text-muted-foreground sm:block"
+      >
+        {fact.text}
+      </span>
+      {sessionOf !== undefined && (
+        // From the Chat: the fact's detail is in the session. Never shown in the Session itself.
+        <Link
+          to="/agents/$slug/session"
+          params={{ slug: sessionOf }}
+          className="hidden shrink-0 text-[0.8125rem] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline sm:block"
+        >
+          Open session
+        </Link>
+      )}
+    </>
   );
 }
 

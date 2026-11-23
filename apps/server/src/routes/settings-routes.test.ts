@@ -4,6 +4,8 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import { FIELD_MSG } from "../field-messages.ts";
+import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -74,7 +76,7 @@ test("projects: create 201, list, patch, conflicts, delete 204 or 409", async ()
   expect(dup.json().error.code).toBe("project_exists");
   const missing = await call("POST", "/api/projects", { name: "nope", hostPath: "/x" });
   expect(missing.statusCode).toBe(400);
-  expect(missing.json().error.fields.hostPath).toBe("No folder at /x.");
+  expect(missing.json().error.fields.hostPath).toBe(FIELD_MSG.noFolder);
   expect(
     (await call("POST", "/api/projects", { name: "Bad Name", hostPath: dirB })).statusCode,
   ).toBe(400);
@@ -106,6 +108,7 @@ test("projects: a project granted only to a terminated spawned agent can be remo
     201,
   );
   const lead = await t.seedAgent({ slug: "lead-t" });
+  await claimTestHandle(t.db, "kid-term-ab12", "agent");
   await t.db.insert(schema.agents).values({
     id: "kid-term",
     slug: "kid-term-ab12",

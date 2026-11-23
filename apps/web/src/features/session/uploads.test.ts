@@ -266,25 +266,21 @@ test("only the lines of the message's own uploads are hidden; a typed one stays 
   expect(stripAttachedLines("[attached: ../x]", [att(ID)])).toBe("[attached: ../x]");
 });
 
-test("recall is the newest message you sent in the loaded timeline, without its attachment lines", () => {
-  const ev = (seq: number, from: string, body: string, attachments?: MessageAttachment[]) =>
+test("recall is your newest operator_input in the loaded timeline, as typed", () => {
+  const ev = (seq: number, by: string, text: string) =>
     ({
       seq,
       agentSlug: "dev",
       turnId: null,
       at: "2026-11-22T10:00:00.000Z",
-      event: {
-        type: "message_in",
-        messages: [{ id: `m${seq}`, from, kind: "message", urgent: false, body, attachments }],
-      },
+      event: { type: "operator_input", text, by, byKind: "human", entryId: `e${seq}` },
     }) as SessionEvent;
-  const line = `[attached: .factory/uploads/20261122-${ID}-a.png]`;
   const ordered = [
     ev(1, "@alice", "older"),
-    ev(2, "@alice", `see this\n\n${line}`, [att(ID)]),
+    ev(2, "@alice", "/context  "),
     ev(3, "@bob", "not mine"),
   ];
-  expect(recallText(ordered, "alice")).toBe("see this");
+  expect(recallText(ordered, "alice")).toBe("/context  ");
   expect(recallText(ordered, "carol")).toBeUndefined();
   expect(recallText([], "alice")).toBeUndefined();
 });

@@ -1,26 +1,17 @@
 import { ApiError, type CredentialKind } from "@open-factory/shared";
-import { TriangleAlert } from "lucide-react";
+import type { FocusEvent } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { PasswordInput } from "@/components/password-input";
-import { CodeText, smallClass } from "@/features/settings/shared";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 
 /** Field pieces and checks shared by the Add forms and the Replace, Update and Change path forms. */
 
 export const valueNoun = (k: CredentialKind) => (k === "oauth_token" ? "token" : "key");
-/** A transient verification failure: the token may be fine, so it isn't marked invalid. */
-function Unverifiable({ id, message }: { id: string; message?: string }) {
-  return (
-    <div role="alert">
-      {message && (
-        <p id={id} className={`flex items-start gap-1.5 ${smallClass}`}>
-          <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
-          {message}
-        </p>
-      )}
-    </div>
-  );
-}
-
+/** Per-noun constants, so the copy stays in FORM_MSG (spec §8) rather than interpolated. */
+export const enterValueMessage = (k: CredentialKind) =>
+  k === "oauth_token" ? FORM_MSG.enterToken : FORM_MSG.enterKey;
+export const replaceFailedMessage = (k: CredentialKind) =>
+  k === "oauth_token" ? FORM_MSG.replaceTokenFailed : FORM_MSG.replaceKeyFailed;
 export type Verdict = { error?: string; warning?: string };
 /** 422s from a verification turn: a rejection is the token's fault, the rest is transient. */
 export function verdictOf(err: unknown): Verdict | undefined {
@@ -30,6 +21,10 @@ export function verdictOf(err: unknown): Verdict | undefined {
   return undefined;
 }
 
+/** Paste a token's help (spec §8.1): a pasted token's expiry is unknown, so it is never warned about. */
+export const OAUTH_TOKEN_HELP =
+  "Create one with `claude setup-token`. You won't be warned before it expires.";
+
 export function TokenField({
   name,
   label,
@@ -37,39 +32,37 @@ export function TokenField({
   onChange,
   onBlur,
   verdict,
+  kind,
 }: {
   name: string;
   label: string;
   value: string;
   onChange(v: string): void;
-  onBlur?(): void;
+  onBlur?(e: FocusEvent<HTMLInputElement>): void;
   verdict: Verdict;
+  kind?: CredentialKind;
 }) {
-  const warnId = `field-${name}-warning`;
   return (
-    <div className="grid gap-1.5">
-      <FieldShell
-        name={name}
-        label={label}
-        error={verdict.error && <CodeText text={verdict.error} />}
-      >
-        {(a) => (
-          <PasswordInput
-            id={a.id}
-            name={name}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onBlur={onBlur}
-            spellCheck={false}
-            aria-invalid={a.invalid || undefined}
-            aria-describedby={
-              [a.describedBy, verdict.warning && warnId].filter(Boolean).join(" ") || undefined
-            }
-          />
-        )}
-      </FieldShell>
-      <Unverifiable id={warnId} message={verdict.warning} />
-    </div>
+    <FieldShell
+      name={name}
+      label={label}
+      error={verdict.error}
+      warning={verdict.warning}
+      help={kind === "oauth_token" ? OAUTH_TOKEN_HELP : undefined}
+    >
+      {(a) => (
+        <PasswordInput
+          id={a.id}
+          name={name}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          spellCheck={false}
+          aria-invalid={a.invalid || undefined}
+          aria-describedby={a.describedBy}
+        />
+      )}
+    </FieldShell>
   );
 }
 
@@ -86,7 +79,7 @@ export function ValueField({
   value: string;
   error?: string;
   onChange(v: string): void;
-  onBlur?(): void;
+  onBlur?(e: FocusEvent<HTMLInputElement>): void;
 }) {
   return (
     <FieldShell name={name} label={label} error={error}>
@@ -105,14 +98,6 @@ export function ValueField({
     </FieldShell>
   );
 }
-
-export const PATH_HELP = "Absolute path to a folder on this machine, usually a git repository.";
-export const checkPath = (p: string) =>
-  p.trim() === ""
-    ? "Enter a path."
-    : p.trim().startsWith("/")
-      ? undefined
-      : "Enter an absolute path.";
 
 /** Server field errors (`400 validation_error` with `fields`) for this form's fields. */
 export const fieldsOf = (err: unknown): Record<string, string> | undefined =>

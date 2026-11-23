@@ -2,8 +2,11 @@ import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
+import { MSG } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { FIELD_MSG } from "../field-messages.ts";
+import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { ProjectService } from "./project-service.ts";
 
@@ -60,17 +63,33 @@ test("a missing path or a file path is a hostPath field error", async () => {
   await expect(svc.create({ name: "x", hostPath: "/x" })).rejects.toMatchObject({
     status: 400,
     code: "validation_error",
-    message: "No folder at /x.",
-    extra: { fields: { hostPath: "No folder at /x." } },
+    message: FIELD_MSG.noFolder,
+    extra: { fields: { hostPath: FIELD_MSG.noFolder } },
   });
   const file = path.join(root, "a-file");
   writeFileSync(file, "hi");
   await expect(svc.create({ name: "x", hostPath: file })).rejects.toMatchObject({
-    message: `No folder at ${file}.`,
+    message: FIELD_MSG.noFolder,
   });
-  await expect(svc.create({ name: "x", hostPath: "relative/dir" })).rejects.toMatchObject({
-    extra: { fields: { hostPath: "Enter an absolute path." } },
-  });
+  for (const bad of ["relative/dir", "~other/x"]) {
+    await expect(svc.create({ name: "x", hostPath: bad })).rejects.toMatchObject({
+      extra: { fields: { hostPath: MSG.hostPathStart } },
+    });
+  }
+});
+
+test("~/… is stored as the realpath under HOME; update with ~ to the same folder is a no-op", async () => {
+  const home = dir("home");
+  mkdirSync(path.join(home, "code", "tilde"), { recursive: true });
+  vi.stubEnv("HOME", home);
+  try {
+    const p = await svc.create({ name: "tilde", hostPath: "~/code/tilde" });
+    expect(p.hostPath).toBe(realpathSync(path.join(home, "code/tilde")));
+    const again = await svc.update("tilde", "~/code/tilde");
+    expect(again.hostPath).toBe(p.hostPath);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 test("duplicate name is 409 project_exists; duplicate path is a hostPath field error", async () => {
@@ -82,8 +101,8 @@ test("duplicate name is 409 project_exists; duplicate path is a hostPath field e
     svc.create({ name: "second", hostPath: path.join(root, "link-app") }),
   ).rejects.toMatchObject({
     code: "validation_error",
-    message: "Project app already uses this folder.",
-    extra: { fields: { hostPath: "Project app already uses this folder." } },
+    message: FIELD_MSG.folderInUse,
+    extra: { fields: { hostPath: FIELD_MSG.folderInUse } },
   });
 });
 
@@ -104,7 +123,7 @@ test("update re-points the folder and restarts exactly the granted active agents
   });
   await svc.create({ name: "web", hostPath: dir("web") });
   await expect(svc.update("web", moved)).rejects.toMatchObject({
-    message: "Project app already uses this folder.",
+    message: FIELD_MSG.folderInUse,
   });
 });
 
@@ -164,6 +183,7 @@ test("a terminated grantee does not block removal; a live spawned grantee is nam
     terminatedAt: terminated ? new Date() : null,
     terminatedBy: terminated ? "boss" : null,
   });
+  for (const slug of ["tl-ab12", "tl-dead"]) await claimTestHandle(t.db, slug, "agent");
   await t.db.insert(schema.agents).values([kid("tl-ab12", false), kid("tl-dead", true)]);
   await t.db
     .insert(schema.agentProjectGrants)

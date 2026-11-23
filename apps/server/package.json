@@ -29,6 +29,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
+    "sign-in:record": "node --import tsx scripts/sign-in-record.ts",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts"
   }
 }

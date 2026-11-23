@@ -24,6 +24,7 @@ test("migrate creates auth tables and is idempotent; handle is unique", async ()
     expect(rows.map((r) => r.table_name)).toEqual(
       expect.arrayContaining(["accounts", "sessions", "users", "verifications"]),
     );
+    await sql`insert into handles (handle, kind) values ('dup','user')`;
     await sql`insert into users (id, name, email, handle) values ('1', 'A', 'a@x.io', 'dup')`;
     await expect(
       sql`insert into users (id, name, email, handle) values ('2', 'B', 'b@x.io', 'dup')`,

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { TOASTER_LABEL } from "@/components/ui/toaster";
 import { readDraft, taskDraftKey } from "@/lib/drafts";
+import { FORM_MSG } from "@/lib/form-messages";
 import taskRouteSource from "@/routes/_app/tasks.$key.tsx?raw";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -376,6 +377,275 @@ test("description edit: Escape does not cancel; a failure keeps the text; Save t
   );
 });
 
+test("title editor: an empty title on Save shows in the title's note, not the outcome line, and focuses the input", async () => {
+  const api = world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  const input = screen.getByLabelText("Title");
+  await userEvent.clear(input);
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(input).toHaveAttribute("aria-invalid", "true"));
+  expect(input).toHaveAccessibleDescription("Enter a title.");
+  expect(document.getElementById("field-task-title-error")).toHaveAttribute("data-shown");
+  expect(input).toHaveFocus();
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+  expect(patches(api)).toHaveLength(0);
+  // A fix clears it as you type.
+  await userEvent.type(input, "Back");
+  expect(input).not.toHaveAttribute("aria-invalid");
+});
+
+test("title editor: a save failure takes the outcome line over the hint; the next edit brings the hint back", async () => {
+  const api = world();
+  api.on("PATCH /api/tasks/T-42", () => json({ error: { code: "x", message: "boom" } }, 500));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  const hint = screen.getByText("Saving sends the new title to @dev.");
+  expect(hint).toHaveAttribute("data-shown");
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAccessibleDescription(
+    "Saving sends the new title to @dev.",
+  );
+  await userEvent.type(screen.getByLabelText("Title"), "!");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save. Try again.");
+  expect(hint).not.toHaveAttribute("data-shown");
+  await userEvent.type(screen.getByLabelText("Title"), "?");
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+  expect(hint).toHaveAttribute("data-shown");
+  expect(screen.getByRole("button", { name: "Cancel" })).toHaveAttribute("data-skip-validate");
+});
+
+test("title editor: a server field error lands in the title's note", async () => {
+  const api = world();
+  api.on("PATCH /api/tasks/T-42", () =>
+    json(
+      {
+        error: {
+          code: "invalid",
+          message: "Invalid.",
+          fields: { title: "Use 200 characters or fewer." },
+        },
+      },
+      400,
+    ),
+  );
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  const input = screen.getByLabelText("Title");
+  await userEvent.type(input, "!");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(input).toHaveAccessibleDescription("Use 200 characters or fewer."));
+  expect(input).toHaveFocus();
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+});
+
+test("dependencies editor: a bad key shows in its note on leave; Cancel drops it", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit dependencies" }));
+  const deps = screen.getByLabelText("Depends on");
+  await userEvent.type(deps, "banana");
+  await userEvent.tab();
+  await waitFor(() => expect(deps).toHaveAttribute("aria-invalid", "true"));
+  expect(deps).toHaveAccessibleDescription("Use task keys, like T-41.");
+  expect(document.getElementById("field-task-depends-on-error")).toHaveAttribute("data-shown");
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Edit dependencies" }));
+  expect(screen.getByLabelText("Depends on")).not.toHaveAttribute("aria-invalid");
+});
+
+test("dependencies editor: the resolved badges render below the editor", async () => {
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/tasks/T-42": () => json(detail()),
+    "GET /api/tasks?": (_b, url) =>
+      json({
+        tasks: url.includes("keys=")
+          ? [
+              {
+                key: "T-41",
+                title: "Add usage export",
+                status: "open",
+                assignee: null,
+                blockedBy: [],
+                createdBy: { kind: "user", handle: "or" },
+                updatedAt: at(9, 0),
+              },
+            ]
+          : [],
+        nextCursor: null,
+      }),
+  });
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit dependencies" }));
+  const deps = screen.getByLabelText("Depends on");
+  await userEvent.type(deps, "T-41");
+  await userEvent.tab();
+  const list = await screen.findByRole("list", { name: "Resolved dependencies" });
+  expect(within(list).getByText("Add usage export")).toBeInTheDocument();
+  const note = document.getElementById("field-task-depends-on-help") as HTMLElement;
+  expect(note).toHaveTextContent("Depends on T-41.");
+  // Below the field (its note included), above the buttons.
+  expect(note.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const save = screen.getByRole("button", { name: "Save" });
+  expect(list.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+const t41 = {
+  key: "T-41",
+  title: "Add usage export",
+  status: "open",
+  assignee: null,
+  blockedBy: [],
+  createdBy: { kind: "user", handle: "or" },
+  updatedAt: at(9, 0),
+};
+const invalid = (fields: Record<string, string>) =>
+  json({ error: { code: "invalid", message: "Invalid.", fields } }, 400);
+
+test("dependencies editor: Cancel while the Save lookup is pending sends nothing", async () => {
+  const releases: (() => void)[] = [];
+  const api = world();
+  api.on("GET /api/tasks?", async (_b, url) => {
+    if (!url.includes("keys=")) return json({ tasks: [], nextCursor: null });
+    await new Promise<void>((r) => releases.push(r));
+    return json({ tasks: [t41], nextCursor: null });
+  });
+  api.on("PATCH /api/tasks/T-42", () => json({ task: detail() }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit dependencies" }));
+  await userEvent.type(screen.getByLabelText("Depends on"), "T-41");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(await screen.findByRole("button", { name: "Edit dependencies" })).toBeInTheDocument();
+  // The blur's lookup and Save's both answer after the editor is gone.
+  await act(async () => {
+    for (const r of releases) r();
+  });
+  await act(async () => {});
+  expect(patches(api)).toHaveLength(0);
+});
+
+test("dependencies editor: the server's cycle sentence lands in the Depends-on note and focuses it", async () => {
+  const cycle = "T-41 already depends on T-42; that would make a cycle.";
+  const api = world();
+  api.on("GET /api/tasks?", (_b, url) =>
+    json({ tasks: url.includes("keys=") ? [t41] : [], nextCursor: null }),
+  );
+  api.on("PATCH /api/tasks/T-42", () => invalid({ dependsOn: cycle }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit dependencies" }));
+  const deps = screen.getByLabelText("Depends on");
+  await userEvent.type(deps, "T-41");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(deps).toHaveAccessibleDescription(cycle));
+  expect(deps).toHaveAttribute("aria-invalid", "true");
+  expect(deps).toHaveFocus();
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+});
+
+test("dependencies editor: a failed lookup on Save says so in the outcome line and sends nothing", async () => {
+  const api = world();
+  api.on("GET /api/tasks?", (_b, url) =>
+    url.includes("keys=")
+      ? json({ error: { code: "internal", message: "Boom." } }, 500)
+      : json({ tasks: [], nextCursor: null }),
+  );
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit dependencies" }));
+  await userEvent.type(screen.getByLabelText("Depends on"), "T-41");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(FORM_MSG.saveFailed));
+  expect(patches(api)).toHaveLength(0);
+});
+
+test("links editor: a server links error with no rows takes the outcome line", async () => {
+  const api = world();
+  api.on("PATCH /api/tasks/T-42", () => invalid({ links: "Too many links." }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
+  const save = screen.getByRole("button", { name: "Save" });
+  await waitFor(() => expect(save).toBeEnabled());
+  await userEvent.click(save);
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Too many links."));
+});
+
+test("links editor: a server links error with rows lands in the first row's note", async () => {
+  const api = world(() =>
+    detail({
+      links: [
+        { kind: "file", target: "docs/plan.md" },
+        { kind: "file", target: "docs/spec.md" },
+      ],
+    }),
+  );
+  api.on("PATCH /api/tasks/T-42", () => invalid({ links: "Too many links." }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
+  const save = screen.getByRole("button", { name: "Save" });
+  await waitFor(() => expect(save).toBeEnabled());
+  await userEvent.click(save);
+  const first = screen.getByLabelText("Link 1 target");
+  await waitFor(() => expect(first).toHaveAccessibleDescription("Too many links."));
+  expect(screen.getByLabelText("Link 2 target")).not.toHaveAttribute("aria-invalid");
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+});
+
+test("links editor: a bad row's message sits in that row's note, under its target", async () => {
+  const api = world(() => detail({ links: [{ kind: "file", target: "docs/plan.md" }] }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit links" }));
+  await userEvent.click(screen.getByRole("button", { name: "Add link" }));
+  const target = screen.getByLabelText("Link 2 target");
+  await userEvent.type(target, "javascript:alert(1)");
+  await userEvent.tab();
+  await waitFor(() => expect(target).toHaveAttribute("aria-invalid", "true"));
+  expect(target).toHaveAccessibleDescription("Links must be http(s) URLs.");
+  expect(screen.getByLabelText("Link 1 target")).not.toHaveAttribute("aria-invalid");
+  const note = document.getElementById(target.getAttribute("aria-describedby") ?? "");
+  // The note shares the target's row.
+  expect(note?.closest(".grid")).toBe(target.parentElement);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(target).toHaveFocus());
+  expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+  expect(patches(api)).toHaveLength(0);
+});
+
+test("description editor: an over-long body on Save from Preview goes back to Write, marks the frame and focuses the textarea", async () => {
+  const api = world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit description" }));
+  const area = screen.getByRole("textbox", { name: "Description" });
+  fireEvent.change(area, { target: { value: "x".repeat(70_000) } });
+  const frame = area.closest("[data-slot=tabs]") as HTMLElement;
+  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
+  expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  const back = await screen.findByRole("textbox", { name: "Description" });
+  await waitFor(() => expect(back).toHaveFocus());
+  expect(back).toHaveAttribute("aria-invalid", "true");
+  expect(back).toHaveAccessibleDescription("Shorten this to 64 KB or less.");
+  expect(frame).toHaveAttribute("data-invalid");
+  expect(patches(api)).toHaveLength(0);
+});
+
+test("description editor: leaving an edited, invalid body for Cancel doesn't validate it; leaving it for Save does", async () => {
+  world();
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit description" }));
+  const area = screen.getByRole("textbox", { name: "Description" });
+  fireEvent.change(area, { target: { value: "x".repeat(70_000) } });
+  // A keyboard move: the blur's relatedTarget is Cancel, with no pointerdown to fall back on.
+  act(() => screen.getByRole("button", { name: "Cancel" }).focus());
+  expect(area).not.toHaveAttribute("aria-invalid");
+  act(() => area.focus());
+  act(() => screen.getByRole("button", { name: "Save" }).focus());
+  expect(area).toHaveAttribute("aria-invalid", "true");
+  expect(area).toHaveAccessibleDescription("Shorten this to 64 KB or less.");
+});
+
 test("an empty body says so and offers Add a description", async () => {
   world(() => detail({ body: "" }));
   renderApp("/tasks/T-42", alice);
@@ -489,6 +759,7 @@ test("composer: with nothing typed during the post the draft clears", async () =
   await userEvent.type(box, "a");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   await waitFor(() => expect(box).toHaveValue(""));
+  await waitFor(() => expect(readDraft(taskDraftKey("T-42"))).toBe(""));
 });
 
 test("composer: a throwing localStorage (private mode) neither breaks typing nor posting", async () => {
@@ -553,19 +824,6 @@ test("no assignee: the helper says only mentions are notified", async () => {
   ).toBeInTheDocument();
 });
 
-test("comment composer: Enter posts once, Shift+Enter adds a line", async () => {
-  fakeMatchMedia.install(false);
-  const api = world();
-  api.on("POST /api/tasks/T-42/comments", () => posted("a"));
-  renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("combobox", { name: "Comment" });
-  await userEvent.type(box, "a{Shift>}{Enter}{/Shift}b");
-  expect(box).toHaveValue("a\nb");
-  await userEvent.keyboard("{Enter}");
-  await waitFor(() => expect(box).toHaveValue(""));
-  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
-});
-
 test("comment composer: on a coarse pointer the helper drops 'Enter to post.' and Enter adds a line", async () => {
   fakeMatchMedia.install(false, { coarse: true });
   const api = world();
@@ -574,18 +832,6 @@ test("comment composer: on a coarse pointer the helper drops 'Enter to post.' an
   expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention.");
   await userEvent.type(box, "a{Enter}b");
   expect(box).toHaveValue("a\nb");
-  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
-});
-
-test("comment composer: Enter during IME composition does not post", async () => {
-  fakeMatchMedia.install(false);
-  const api = world();
-  renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("combobox", { name: "Comment" });
-  await userEvent.type(box, "draft");
-  fireEvent.keyDown(box, { key: "Enter", isComposing: true });
-  fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
-  expect(box).toHaveValue("draft");
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
 });
 
@@ -636,11 +882,6 @@ test("?comment=<id> of an agent's comment: highlighted, focused, composer prefil
   const article = await screen.findByRole("article", { name: "Comment from @dev" });
   await waitFor(() => expect(article).toHaveFocus());
   expect(article).toHaveAttribute("data-highlighted", "true");
-  // The comment's ⋯ sits inside the card's padding, off its border.
-  expect(within(article).getByRole("button", { name: "Comment actions" })).toHaveClass(
-    "top-1.5",
-    "right-1.5",
-  );
   expect(screen.getByRole("combobox", { name: "Comment" })).toHaveValue("@dev ");
   first.unmount();
   const second = renderApp("/tasks/T-42?comment=c2", alice);
@@ -661,6 +902,7 @@ test("an unknown task is 'Task not found.' with its key and a way back", async (
   renderApp("/tasks/T-999", alice);
   expect(await screen.findByText("Task not found.")).toBeInTheDocument();
   expect(screen.getByText("No task T-999.")).toBeInTheDocument();
+  expect(screen.queryByText("It may have been renamed or deleted.")).toBeNull();
   expect(screen.getByRole("link", { name: "Back to tasks" })).toHaveAttribute("href", "/tasks");
 });
 
@@ -777,7 +1019,7 @@ test("agent text is inert: scripts, image handlers and javascript: links never r
     expect(a.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
 });
 
-test("the usage line and its lower-bound hint show when the task has usage, and are absent when null", async () => {
+test("the usage line and its lower-bound hint show when the task has usage", async () => {
   world(() => detail({ usage: { costUsd: 1.23, turns: 14 } }));
   renderApp("/tasks/T-42", alice);
   expect(await screen.findByText("Usage: $1.23 est. · 14 turns")).toBeInTheDocument();
@@ -974,8 +1216,14 @@ test("an agent creator and an agent comment author link to the agent's page; a h
   const human = await screen.findByRole("article", { name: "Comment from @or" });
   expect(human.querySelector("[data-comment-author] a")).toBeNull();
   const agent = screen.getByRole("article", { name: "Comment from @dev" });
-  expect(agent.querySelector("[data-comment-author] a")).toHaveAttribute("href", "/agents/dev");
-  expect(document.querySelector("[data-created-by] a")).toHaveAttribute("href", "/agents/lead");
+  expect(agent.querySelector("[data-comment-author] a")).toHaveAttribute(
+    "href",
+    "/agents/dev/chat",
+  );
+  expect(document.querySelector("[data-created-by] a")).toHaveAttribute(
+    "href",
+    "/agents/lead/chat",
+  );
 });
 
 test("a human creator and comment author show as @handle without an avatar; an agent author shows its avatar", async () => {

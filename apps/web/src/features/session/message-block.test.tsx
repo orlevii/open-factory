@@ -60,7 +60,7 @@ const fence = (n: number) =>
   `Run this:\n\n\`\`\`\n${Array.from({ length: n }, (_, i) => `line ${i}`).join("\n")}\n\`\`\``;
 
 test("a queued (brief) body with a code block is cut before rendering and capped at three lines; Show all reveals it", () => {
-  render(<MessageBlock from="@alice" body={fence(2000)} brief queued={{}} />);
+  render(<MessageBlock from="@alice" fromKind="human" body={fence(2000)} brief queued={{}} />);
   const body = document.querySelector("[data-message-body]") as HTMLElement;
   // The pre never escapes the clamp: the source is cut, and a code block is capped at three 24px lines.
   const box = body.querySelector(".line-clamp-3") as HTMLElement;
@@ -72,7 +72,7 @@ test("a queued (brief) body with a code block is cut before rendering and capped
 });
 
 test("a short queued body has no Show all", () => {
-  render(<MessageBlock from="@alice" body="hello" brief queued={{}} />);
+  render(<MessageBlock from="@alice" fromKind="human" body="hello" brief queued={{}} />);
   expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
 });
 
@@ -89,7 +89,7 @@ test("Show all moves focus to its row without scrolling it into view (nothing ab
 });
 
 const notice = (body: string) => (
-  <MessageBlock from="@factory" system body={body} at="2026-11-19T10:00:00Z" />
+  <MessageBlock from="@factory" fromKind="factory" system body={body} at="2026-11-19T10:00:00Z" />
 );
 
 test("once layout has measured a notice, the measurement decides: a long notice that fits has no Show all", () => {
@@ -114,7 +114,7 @@ test("once layout has measured it, a queued body with a short code block still o
   const sh = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(72);
   const ch = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(72);
   try {
-    render(<MessageBlock from="@alice" body={fence(6)} brief queued={{}} />);
+    render(<MessageBlock from="@alice" fromKind="human" body={fence(6)} brief queued={{}} />);
     fireEvent.click(screen.getByRole("button", { name: "Show all" }));
     expect(screen.getByText(/line 5/)).toBeInTheDocument();
   } finally {
@@ -132,7 +132,9 @@ test("a measured code plate that overflows its cap offers Show all", () => {
   const ch = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(72);
   try {
     // Two long code lines: within the box's line count, but wider plates wrap nothing; the plate measures over.
-    render(<MessageBlock from="@alice" body={"```\na\nb\n```"} brief queued={{}} />);
+    render(
+      <MessageBlock from="@alice" fromKind="human" body={"```\na\nb\n```"} brief queued={{}} />,
+    );
     expect(screen.getByRole("button", { name: "Show all" })).toBeInTheDocument();
   } finally {
     sh.mockRestore();

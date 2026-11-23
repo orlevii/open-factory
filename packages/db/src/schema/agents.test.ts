@@ -15,12 +15,13 @@ afterAll(async () => {
 
 test("agent tables exist; seq is unique per agent; deleting an agent cascades", async () => {
   const { sql } = h;
+  await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('other','agent')`;
   await sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1', 'main', 'oauth_token', ${Buffer.from("x")})`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
     values ('a1', 'dev', 'Dev agent', 'dev', '{}', 'local', 'c1'), ('a2', 'other', 'Other', 'dev', '{}', 'local', 'c1')`;
   const [a] = await sql`
-    select status, description, session_id, kind, reports_to, grants_overridden, archived_at
+    select status, description, session_id, kind, reports_to, archived_at
     from agents where id = 'a1'`;
   expect(a).toEqual({
     status: "hibernated",
@@ -28,7 +29,6 @@ test("agent tables exist; seq is unique per agent; deleting an agent cascades", 
     session_id: null,
     kind: "persistent",
     reports_to: null,
-    grants_overridden: false,
     archived_at: null,
   });
   await sql`insert into turns (id, agent_id, started_at) values ('t1', 'a1', now())`;
@@ -37,7 +37,7 @@ test("agent tables exist; seq is unique per agent; deleting an agent cascades", 
   await expect(
     sql`insert into session_events (agent_id, seq, type, payload) values ('a1', 1, 'x', '{}')`,
   ).rejects.toThrow(/session_events_agent_seq_unique/);
-  await sql`insert into messages (id, from_user_id, to_agent_id, body) values ('m1', 'u1', 'a1', 'hi')`;
+  await sql`insert into messages (id, from_user_id, to_agent_id, body, recipients) values ('m1', 'u1', 'a1', 'hi', '{@test}')`;
   const [m] =
     await sql`select kind, state, urgent, delivered_turn_id from messages where id = 'm1'`;
   expect(m).toEqual({ kind: "message", state: "pending", urgent: false, delivered_turn_id: null });
@@ -48,6 +48,7 @@ test("agent tables exist; seq is unique per agent; deleting an agent cascades", 
 
 test("0003: system rows need no user and a notice; user rows need a user and no notice", async () => {
   const { sql } = h;
+  await sql`insert into handles (handle, kind) values ('al','user'),('third','agent')`;
   await sql`insert into users (id, name, email, handle) values ('u2', 'Al', 'al@x.io', 'al')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c2', 'two', 'oauth_token', ${Buffer.from("x")})`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
@@ -57,9 +58,9 @@ test("0003: system rows need no user and a notice; user rows need a user and no 
     sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('n2','system',null,'a3','x')`,
   ).rejects.toThrow(/check/i);
   await expect(
-    sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('n3','message',null,'a3','x')`,
+    sql`insert into messages (id, kind, from_user_id, to_agent_id, body,recipients) values ('n3','message',null,'a3','x','{@test}')`,
   ).rejects.toThrow(/check/i);
-  await sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('m2','message','u2','a3','x')`;
+  await sql`insert into messages (id, kind, from_user_id, to_agent_id, body,recipients) values ('m2','message','u2','a3','x','{@test}')`;
   const [a] =
     await sql`select attempting, rate_limit_notice_owed, runtime_journal, last_error, error_kind from agents where id = 'a3'`;
   expect(a).toEqual({

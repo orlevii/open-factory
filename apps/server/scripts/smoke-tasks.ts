@@ -477,7 +477,7 @@ try {
   );
   samUser = { userId: users.sam.userId, handle: "sam" };
   await step("1. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step(`1. template tasks (${LOCAL ? "local" : "docker"}, haiku) is valid`, async () => {
     writeTemplate("tasks", {

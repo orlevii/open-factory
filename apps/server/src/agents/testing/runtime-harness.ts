@@ -1,8 +1,10 @@
-import type { ServerMessage } from "@open-factory/shared";
+import type { ServerMessage, TemplateConfig } from "@open-factory/shared";
 import type { Forward } from "../../messaging/forwarder.ts";
 import type { SlotPort } from "../../supervisor/slots.ts";
+import { claimTestHandle } from "../../test/handles.ts";
 import { createTestDb } from "../../test/helpers.ts";
 import { AgentRuntime, type RuntimeDeps } from "../agent-runtime.ts";
+import type { Effective } from "../config-resolver.ts";
 import { EventBus } from "../event-bus.ts";
 import { EventStore, type PendingRow } from "../event-store.ts";
 import type { PreparedSpec } from "../start.ts";
@@ -19,6 +21,7 @@ export function humanRow(
   return store.createMessage({
     from: { userId: m.fromUserId },
     toAgentId: rt.agent.id,
+    recipients: [`@${rt.agent.slug}`],
     body: m.body,
     urgent: m.urgent,
   });
@@ -53,12 +56,39 @@ export const noopTokens = {
   revoke: () => {},
 };
 
-/** A local spec on the agent's own credential (`cred-<id>`, as `insertAgent` names it, when the row has none). */
-export const okSpec = (a: {
-  id: string;
-  slug: string;
-  credentialId?: string | null;
-}): PreparedSpec => ({
+/** An effective config for a fake start (I2 §6.2): a local agent with nothing in it; `config` overrides fields. */
+export const testEffective = (config: Partial<TemplateConfig> = {}): Effective => ({
+  doc: { template: {}, settings: {}, mcp: { mcpServers: {} } },
+  config: {
+    name: "test",
+    displayName: "Test agent",
+    description: "",
+    runtime: "local",
+    permissionMode: "auto",
+    projects: [],
+    skills: [],
+    localSkills: true,
+    plugins: [],
+    secrets: [],
+    canSpawn: [],
+    maxLiveSpawns: 5,
+    ...config,
+  },
+  templatePlugins: [],
+});
+
+/**
+ * A local spec on the agent's own credential (`cred-<id>`, as `insertAgent` names it, when the row has none);
+ * `config` goes into the effective config it started with (`started`).
+ */
+export const okSpec = (
+  a: {
+    id: string;
+    slug: string;
+    credentialId?: string | null;
+  },
+  config: Partial<TemplateConfig> = {},
+): PreparedSpec => ({
   credentialId: a.credentialId ?? `cred-${a.id}`,
   agentId: a.id,
   slug: a.slug,
@@ -68,6 +98,7 @@ export const okSpec = (a: {
   runtime: "local",
   permissionMode: "auto",
   mounts: [],
+  effective: testEffective(config),
 });
 
 /**
@@ -109,6 +140,7 @@ export class RuntimeHarness {
   async setup() {
     this.t = await createTestDb();
     this.store = new EventStore(this.t.db);
+    await claimTestHandle(this.t.db, "or", "user");
     await this.t
       .sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
   }
@@ -124,7 +156,7 @@ export class RuntimeHarness {
       sessionId?: string;
       status?: string;
       slots?: SlotPort;
-      /** Pins the warm window in the agent's config snapshot; omitted (the factory default) by default. */
+      /** Pins the warm window in the started config (the default spec's); omitted (the factory default) by default. */
       warmWindowMinutes?: number;
       cleanup?: RuntimeDeps["cleanup"];
       journal?: RuntimeDeps["journal"];
@@ -140,6 +172,8 @@ export class RuntimeHarness {
       seed?: (agentId: string) => Promise<void>;
       /** The interrupt hold's fallback (200ms by default). */
       holdTimeoutMs?: number;
+      /** I2 §6.2: the runtime's `nextImage` (what `AgentRuntimes` sets at load); pair it with a Docker spec. */
+      nextImage?: string;
     } = {},
   ) {
     this.n += 1;
@@ -195,7 +229,11 @@ export class RuntimeHarness {
         this.lastAgentToken = extra.agentToken;
         if (this.prepareGate) await this.prepareGate;
         if (this.startError) throw this.startError;
-        return opts.spec ? opts.spec(a) : okSpec(a);
+        if (opts.spec) return opts.spec(a);
+        return okSpec(
+          a,
+          opts.warmWindowMinutes !== undefined ? { warmWindowMinutes: opts.warmWindowMinutes } : {},
+        );
       },
       log: silentLog,
       forward: async (f) => {
@@ -214,6 +252,7 @@ export class RuntimeHarness {
         ? { defaultWarmWindowMinutes: opts.defaultWarmWindowMinutes }
         : {}),
     });
+    this.rt.nextImage = opts.nextImage;
     await opts.seed?.(this.agentId);
     await this.rt.init();
     return this.rt;

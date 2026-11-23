@@ -1,13 +1,22 @@
-import type { AgentSummary, AgentsUsage } from "@open-factory/shared";
+import { type AgentSummary, type AgentsUsage, summarizeChanges } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { RotateCw, X } from "lucide-react";
-import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import { AgentChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { CONFIG_PAGE_COPY } from "@/features/config/messages";
 import { schedulesListOptions } from "@/features/schedules/api";
 import { ScheduleTime } from "@/features/schedules/schedule-time";
 import { preloadSheet, sheetIntent } from "@/features/sheets/sheet-bodies";
@@ -207,17 +216,31 @@ function Now({
       });
     const detail = detailText(agent, slotsMax);
     if (detail) rows.push({ key: "detail", node: <span>{detail}</span> });
-    if (agent.restartPending)
+    if (agent.restartPending) {
+      const changes = agent.restartChanges;
       rows.push({
         key: "restart",
         node: (
           <span className="inline-flex flex-wrap items-center gap-x-1.5">
             <RotateCw aria-hidden="true" className="size-3.5 shrink-0" />
-            Restarts when idle to apply changes{waitingText(agent.restartWaitingOn)}
+            {changes.length > 0
+              ? `Restarts when idle to apply: ${summarizeChanges(changes)}`
+              : "Restarts when idle to apply changes"}
+            {waitingText(agent.restartWaitingOn)}
             <Why label="Why does it restart?">{RESTART_WHY}</Why>
+            {changes.length > 0 && (
+              <span className="block basis-full pl-5 [overflow-wrap:anywhere]">
+                {changes.map((c) => (
+                  <span key={c} className="block">
+                    {c}
+                  </span>
+                ))}
+              </span>
+            )}
           </span>
         ),
       });
+    }
     for (const t of agent.waitingOn.tasks)
       rows.push({
         key: t.taskId,
@@ -432,6 +455,17 @@ function Runtime({ agent }: { agent: AgentSummary }) {
             {agent.template}
           </Link>
         </dd>
+        {/* A terminated agent has nothing to configure (AgentMenu hides Configure for it too). */}
+        {agent.status !== "terminated" && !agent.terminatedAt && (
+          <>
+            <dt className="text-muted-foreground">Configuration</dt>
+            <dd className="min-w-0">
+              <Link to="/agents/$slug/config" params={{ slug: agent.slug }} className={LINK_CLASS}>
+                {CONFIG_PAGE_COPY.openConfiguration}
+              </Link>
+            </dd>
+          </>
+        )}
         {agent.credential !== null && (
           <>
             <dt className="text-muted-foreground">Credential</dt>
@@ -602,7 +636,7 @@ export function useAgentDetailsPanel(slug: string): AgentDetailsPanel {
     // The phone drawer is modal, and `]` still closes it (§8.1: at every width).
     { allowInModal: ownsDetails },
   );
-  return { open, toggle, setOpen, mode, timeline };
+  return useMemo(() => ({ open, toggle, setOpen, mode, timeline }), [open, toggle, setOpen, mode]);
 }
 
 /**

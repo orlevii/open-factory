@@ -7,7 +7,8 @@ export type SheetSpec =
   | { kind: "new-task"; assignee?: string }
   | { kind: "new-schedule"; target?: string }
   | { kind: "edit-schedule"; key: string }
-  | { kind: "new-template"; then: "open-editor" };
+  | { kind: "new-template"; then: "open-editor" }
+  | { kind: "sign-in-again"; name: string };
 
 /** A sheet stacked on top of a parent sheet, returning a name to it. */
 export type ChildSpec =
@@ -16,7 +17,8 @@ export type ChildSpec =
   | { kind: "add-secret"; name: string }
   | { kind: "new-template"; then: "return" };
 
-export type OpenParent = SheetSpec & { id: number; at: string; instant: boolean };
+/** A parent layer: a top-level sheet, or a setup sheet a page opened for a result (`openSheetForResult`). */
+export type OpenParent = (SheetSpec | ChildSpec) & { id: number; at: string; instant: boolean };
 export type OpenChild = ChildSpec & { id: number; parentId: number };
 export type SheetState = { parent?: OpenParent; child?: OpenChild };
 
@@ -39,15 +41,24 @@ export function setPathnameSource(fn: () => string) {
 }
 
 export function openSheet(spec: SheetSpec, opts?: { instant?: boolean; at?: string }) {
+  openParent(spec, opts);
+}
+
+function openParent(
+  spec: SheetSpec | ChildSpec,
+  opts?: { instant?: boolean; at?: string },
+): number {
   pending.clear();
+  const id = nextId++;
   set({
     parent: {
       ...spec,
-      id: nextId++,
+      id,
       at: opts?.at ?? currentPathname(),
       instant: opts?.instant ?? false,
     },
   });
+  return id;
 }
 
 export function openChildSheet(spec: ChildSpec, onDone: (name: string) => void) {
@@ -64,13 +75,28 @@ export function openChildSheet(spec: ChildSpec, onDone: (name: string) => void) 
   set({ parent, child: { ...spec, id, parentId: parent.id } });
 }
 
-/** Delivers a child's result, only if the parent instance that opened it is still the open one. */
+/**
+ * A setup sheet (Add secret) opened from a page for its result: it stacks on an open parent sheet, else it opens as
+ * the parent layer and serves itself. `onDone` gets the new name; closing without one drops it.
+ */
+export function openSheetForResult(spec: ChildSpec, onDone: (name: string) => void) {
+  if (state.parent) {
+    openChildSheet(spec, onDone);
+    return;
+  }
+  const id = openParent(spec);
+  pending.set(id, { parentId: id, onDone });
+}
+
+/** Delivers a child's result, only if the parent instance that opened it is still the open one. A parent layer
+ *  opened for a result (`openSheetForResult`) serves itself: it closes, then delivers. */
 export function completeChild(childId: number, name: string) {
   const entry = pending.get(childId);
   pending.delete(childId);
-  const current = state.child?.id === childId;
-  if (current) set({ parent: state.parent });
-  if (entry && state.parent?.id === entry.parentId) entry.onDone(name);
+  const serves = entry !== undefined && state.parent?.id === entry.parentId;
+  if (state.child?.id === childId) set({ parent: state.parent });
+  else if (state.parent?.id === childId) set({});
+  if (serves) entry.onDone(name);
 }
 
 /** Called from a parent's `onDone`: the child's close focuses this (looked up on close, after the value rendered)

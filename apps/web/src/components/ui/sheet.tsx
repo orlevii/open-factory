@@ -236,7 +236,14 @@ function SheetHeader({ className, children, ...props }: React.ComponentProps<"di
     >
       {children}
       <SheetPrimitive.Close asChild>
-        <Button variant="ghost" size="icon-sm" className="shrink-0" aria-label="Close">
+        {/* Closing doesn't count as leaving a field (DESIGN.md Validation). */}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0"
+          aria-label="Close"
+          data-skip-validate
+        >
           <XIcon />
         </Button>
       </SheetPrimitive.Close>

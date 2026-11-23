@@ -98,6 +98,27 @@ test("a rejected onConfirm keeps the dialog open and shows the message in an ale
   expect(screen.getByRole("alert")).toBeEmptyDOMElement();
 });
 
+test("a failure shows in the footer band, not the scrolling middle; an identical failure re-inserts the text", async () => {
+  const onConfirm = vi.fn(() => Promise.reject(new ApiError(409, "x", "Still used.")));
+  render(
+    <ConfirmDialog
+      open
+      onOpenChange={() => {}}
+      title="T"
+      body="B"
+      confirmLabel="Go"
+      pendingLabel="Going…"
+      onConfirm={onConfirm}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Go" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert.closest("[data-slot=alert-dialog-footer],[data-slot=drawer-footer]")).toBeTruthy();
+  const first = screen.getByText("Still used.");
+  await userEvent.click(screen.getByRole("button", { name: "Go" }));
+  await vi.waitFor(() => expect(screen.getByText("Still used.")).not.toBe(first));
+});
+
 test("a non-API rejection shows the generic message", async () => {
   const onConfirm = vi.fn(() => Promise.reject(new Error("boom")));
   render(
@@ -130,12 +151,17 @@ test("while pending the action keeps focus, and Escape and Cancel are ignored", 
     />,
   );
   await userEvent.click(screen.getByRole("button", { name: "Go" }));
-  expect(screen.getByRole("button", { name: "Going…" })).toHaveFocus();
-  await userEvent.click(screen.getByRole("button", { name: "Going…" }));
+  const action = screen.getByRole("button", { name: "Going…" });
+  expect(action).toHaveFocus();
+  expect(action).toHaveAttribute("aria-busy", "true");
+  expect(action).toHaveAttribute("aria-disabled", "true");
+  expect(action.querySelector("svg.motion-safe\\:animate-spin")).not.toBeNull();
+  await userEvent.click(action);
   expect(onConfirm).toHaveBeenCalledTimes(1);
   await userEvent.keyboard("{Escape}");
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(onOpenChange).not.toHaveBeenCalled();
+  expect(screen.getByRole("alertdialog")).toBeInTheDocument();
 });
 
 const SECRET = "A".repeat(64);
@@ -204,19 +230,6 @@ test.each([
     expect(action).not.toHaveClass("truncate");
   },
 );
-
-test("desktop: while pending the action shows the pending label and a spinner, and Esc does nothing", async () => {
-  const onOpenChange = vi.fn();
-  render(<Confirm onConfirm={held()} onOpenChange={onOpenChange} />);
-  await userEvent.click(screen.getByRole("button", { name: `Delete ${SECRET}` }));
-  const action = screen.getByRole("button", { name: "Deleting…" });
-  expect(action).toHaveAttribute("aria-busy", "true");
-  expect(action).toHaveAttribute("aria-disabled", "true");
-  expect(action.querySelector("svg.motion-safe\\:animate-spin")).not.toBeNull();
-  await userEvent.keyboard("{Escape}");
-  expect(onOpenChange).not.toHaveBeenCalled();
-  expect(screen.getByRole("alertdialog")).toBeInTheDocument();
-});
 
 /** Selectors of every styles.css rule that sets `animation: none` (jsdom does not cascade stylesheets). */
 function animationNoneSelectors() {

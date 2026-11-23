@@ -157,13 +157,13 @@ test("resolveName reports a disabled user", async () => { /* set disabled_at, ex
 - [ ] **Step 1: Failing tests:**
   - "sign-up with an agent's slug → 422 HANDLE_TAKEN";
   - "a sign-up that fails with an email in use leaves a claim that the next sign-up with that handle reclaims";
-  - "update-user with a handle and no session → 401 and no handles row";
+  - "update-user with a handle and no session → 401 and no handles row" (assert `select count(*) from handles where handle = <h>` is 0);
   - "update-user to an invalid handle → 400 and no claim";
   - "update-user keeping one's own handle is not a change";
   - "the before-hook runs before the user insert on sign-up and update-user" (spy on `claimHandle` and the adapter's create/update; assert call order);
   - "update-user and sign-up are serialised" (two requests; the mutex spy sees both keys `sign-up`).
 - [ ] **Step 2:** In the hook: `const r = handleSchema.safeParse(handle); if (!r.success) return;`. For `/update-user`: `const session = await getSessionFromCtx(ctx); if (!session) return; if (session.user.handle === handle) return;`. Then `if (!(await p.claim(handle))) throw new APIError("UNPROCESSABLE_ENTITY", { code: "HANDLE_TAKEN", message: "That handle is already taken" });`.
-- [ ] **Step 3:** `routes/auth.ts`: `url.pathname === "/api/auth/update-user" && request.method === "POST"` → `signUpMutex.run("sign-up", () => app.auth.handler(req))`.
+- [ ] **Step 3:** `routes/auth.ts`: `url.pathname === "/api/auth/update-user" && request.method === "POST"` → `signUpMutex.run("sign-up", () => app.auth.handler(req))`, with a code comment: the mutex is in-process and assumes one server process (ADR 0013); a multi-instance deployment needs a Postgres advisory lock here too.
 - [ ] **Step 4:** Guard check (spec §4.1): the claim path is the one statement plus `handleSchema`; if implementing needs more, stop and tell the tech-lead.
 - [ ] **Step 5:** typecheck, lint. Commit `feat(server): users claim their handle before better-auth writes`.
 
@@ -228,6 +228,7 @@ test("other kinds carry from_kind and no to", () => {
 - [ ] **Step 1: Failing tests:** dedupe (`["dev", "@dev"]` → one row, one result); self refused alone; a terminated recipient refused alone while the others get rows; all refused; `#ops` → channel reason; `@humans` → the exact `@humans` sentence; disabled user → "@x's account is disabled."; human sender with a human target → refused; every accepted row has the same `recipients` (accepted only, in order); one inbox item per human recipient and `inbox_changed` published to that user only (`publishToUser`); errored agent → `pending` with the note; client-id retry returns every row's result.
 - [ ] **Step 2:** Implement: resolve all; build accepted list; one transaction inserting rows (agent: `createMessage` / `createClientMessage`; human: `createHumanMessage({to: {userId}, recipients})`); after commit, hand over agent rows (human sender awaited, `AgentStartError` → `start_failed` for that recipient with its row pending; agent sender enqueued); results in input order. Attachments only with one agent recipient (else `invalid_attachment` for all). `createHumanMessage`'s `"all"` throws unless `kind === "system"`.
 - [ ] **Step 3:** typecheck, lint. Commit `feat(server): send to a list of recipients, each succeeding or failing alone`.
+- Note (M7): the old `POST /api/agents/:slug/messages` route keeps its response shape (`queueItemResponseSchema`, built from the single result's `item`) until Task 3.5 deletes it, so the web's `postMessage` parser in `features/session/api.ts` is untouched in PR 1; a route test asserts the shape.
 
 ### Task 1.8: `send_message` tool
 
@@ -288,7 +289,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/session/outgoing-message.test.tsx` (create), existing `message-block`/`speaker-line` tests
 
 - [ ] **Step 1: Failing tests:** a `send_message` call to 10 recipients renders "Ada → @a, @b +8" with the full list in the row menu's Recipients item and the line's accessible name; a result with one `refused` and one `pending` renders one muted line each ("Not sent to @x: terminated"); a call without a result renders from its arguments; an agent sender in a `message_in` envelope is rendered from `fromKind: "agent"`.
-- [ ] **Step 2:** Implement; memoised components keep stable props (no new arrays per render: derive the "+N" label with `useMemo` keyed on the recipients array).
+- [ ] **Step 2:** Implement. No `useMemo` for "+N" (a cheap string); extend the existing `parsedResults` WeakMap in `outgoing-message.tsx` to cache the parsed `{results}`; `Intl` objects (`PluralRules`, `NumberFormat`) are module-level.
 - [ ] **Step 3:** `pnpm vitest run --project web apps/web/src/features/session`; typecheck; lint. Commit `feat(web): senders by kind and outgoing cards to several recipients`.
 
 ### Task 1.13: Fake Claude learns `$mcp`
@@ -307,6 +308,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 ### Task 1.15: PR 1 review, verification, PR, CI
 
 - [ ] **Step 1:** Review the PR 1 diff (`git diff spec/i1-chat-and-session...`) against spec §4: every bullet has code and a test. The reviewer checks the React diff (`apps/web`) against `vercel-react-best-practices`.
+- React checklist (copied from Task 5.1, the reviewer ticks each): stable references in live lists; memoised rows and markdown; no effects that derive state; query keys per data; no request waterfalls in route loaders; suspense/preload in loaders; handoffs (optimistic → server, queued → timeline, working → outcome) keyed in the **same parent array** so the node is reused; no new arrays, objects or elements passed as memo props; ws frames routed in one place (global `onMessage` or the per-agent session stream), never both.
 - [ ] **Step 2:** `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm vitest run --project web && pnpm build`.
 - [ ] **Step 3:** `git push -u origin i1/1-handles-recipients`; `gh pr create --base <i6/path-help or spec/i6-path-help> --title "feat: @ handles for everyone, list recipients, no @humans"` with the template filled (Approach bullets: claim-first handles rather than triggers because …; per-recipient rows with a recipients column rather than a group id because …; `@humans` as a reserved name rather than a refusal branch because …), "Reset local data before the first boot", the product docs list, the fake's `$mcp` note, and "Server DB tests run in CI only (local Postgres role unavailable)".
 - [ ] **Step 4:** Watch CI (`gh pr checks --watch`); fix until green. Never merge.
@@ -381,6 +383,7 @@ test("aliases count as known", () => expect(classifyInput("/cost", new Set(["cos
 
 **Files:**
 - Modify: `apps/server/src/agents/agent-runtime.ts` (`CommandEntry`→`RawEntry` ~L211-224 with `by`, `userId?`, `clientMessageId?`, `self?`; `commandInFlight`→`rawInFlight` (L421, L847, L1458, L1639, L1827, L2663, L2820, L3559, L3636); `command()`→`rawInput()` ~L787; `writeCommand`→`writeRaw` ~L3622 appending `operator_input`; `ERRORED_WAKES` unchanged), `packages/harness/src/types.ts` + `packages/harness/src/claude/process.ts` (`command(text)`→`raw(text)` L235), `packages/shared/src/agents.ts` (queue item kind `command`→`raw`, carry `clientMessageId`), `packages/shared/src/events.ts` (wake reason `command`→`raw` L179; control cmd enum drops `command` L185; new event `operator_input{text, by, clientMessageId?, entryId}`)
+- Modify (the shared rename breaks them; Implementer and reviewer invoke `vercel-react-best-practices` and follow it): `apps/web/src/features/session/rows.ts`, `queue-items.tsx`, `session-view.tsx`, `row-menu.tsx`, `timeline-item.tsx` (kind `command` → `raw`, `control{cmd:"command"}` → `operator_input`; a minimal rename here, rendering in Task 2.11)
 - Test: `apps/server/src/agents/agent-runtime.commands.test.ts` (rename to `agent-runtime.raw.test.ts`; runtime harness with the fake driver; DB: CI only), `packages/harness/src/claude/process.test.ts`
 
 **Interfaces:**
@@ -424,10 +427,10 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/components/composer/composer.test.tsx`
 
 **Interfaces:**
-- Produces: `Composer` prop `notes?: { kind: "error" | "refusal" | "conflict" | "hint"; text: string; id: string }[]`; the slot shows the highest-priority one; `held` gains `reason` linked by `aria-describedby`.
+- Produces: `Composer` prop `note?: { kind: "refusal" | "conflict" | "hint"; text: string }` (one external note, a stable object from the caller); the composer picks the shown note **during render** by priority (error > refusal > conflict > hint), merging it with its internal notes (error, pending, attach); no effect, no state for the choice. `held` gains `reason` linked by `aria-describedby`.
 
 - [ ] **Step 1: Failing tests:** with a fine pointer the note renders in the toolbar hint slot and the frame's height (`getBoundingClientRect().height`) is equal before and after a refusal appears; below `md` (coarse) the reserved line exists with no note; priority error > refusal > conflict > hint; the slot is announced via the existing live region; a held Send is `aria-disabled`, focusable, and pressing it shows the reason.
-- [ ] **Step 2:** Implement; notes array identity-stable from callers (callers memoise).
+- [ ] **Step 2:** Implement.
 - [ ] **Step 3:** `pnpm vitest run --project web apps/web/src/components/composer`; commit `feat(web): one note slot that never moves the composer`.
 
 ### Task 2.10: Web: Session composer in raw mode
@@ -439,7 +442,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/session/composer.test.tsx`
 
 - [ ] **Step 1: Failing tests:** placeholder "Raw input to Claude · / for commands"; at rest the hint "Goes to Claude as typed · Message Ada in Chat" (the link goes to `/agents/ada/chat` — until PR 3 it targets `/agents/ada`, and PR 3 updates the test); with a turn open "Runs after the current turn."; toolbar has `/` and no `@` or attach; a dropped file shows "Files can be sent from the chat"; ⌥Enter sends like Enter; typing `/clear ` shows the reason in the note slot and Send is held; `/news-digest` shows nothing while typed; Enter on `/context` while the commands query is pending POSTs `/input` with `/context`; a pasted `/context` + Enter POSTs `/input`; an empty list + `/context` POSTs `/input`; Esc closes the menu, else stops the turn.
-- [ ] **Step 2:** Implement.
+- [ ] **Step 2:** Implement. The denied-command note and (PR 3) the Chat's leading-`/` note come from the identity-stable `/` source's `textNote(text)`; the lowercase known-name `Set` is built once per commands data (a WeakMap keyed on the query data object), never per keystroke; no effects. Drafts: rename `agentDraftKey` to `sessionDraftKey` (`session:<slug>` under `of-draft:v1:`), no alias.
 - [ ] **Step 3:** web tests; typecheck; lint. Commit `feat(web): the session composer writes raw input`.
 
 ### Task 2.11: Web: one node from Sending to the `operator_input` row
@@ -450,7 +453,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Modify: `apps/web/src/features/session/session-state.ts` (handoff ~L352-371 extended to `operator_input` by `clientMessageId`), `apps/web/src/features/session/queue-items.tsx` (L219-255: raw item rendered in the speech shape, keyed by `clientMessageId ?? id`), `apps/web/src/features/session/rows.ts` / `timeline-row.tsx` (an `operator_input` row: speaker "You · raw" / "{name} · raw", mono for commands, `pre-wrap` + `overflow-wrap:anywhere`, the clamp)
 - Test: `apps/web/src/features/session/session-state.test.ts`, `queue-items.test.tsx`, `timeline-row.test.tsx`
 
-- [ ] **Step 1: Failing tests:** the reducer replaces the raw queue item with the `operator_input` row in one step and lists it in `handedOff` (no fade); the Sending block, queued item and row share one React key (render count test: one mount); `SLOW_SEND_MS` and `YOUNG_ITEM_MS` hide "Sending…"/"Runs after…" for fast paths; Cancel on a queued raw item; ↑ recalls your newest `operator_input`.
+- Placement (H1): pending and queued raw blocks render as **tail items of `Timeline`'s items** (like `liveRows`), keyed `raw:${clientMessageId}`, not in a separate queue list; `rows.ts` gives an `operator_input` row with a `clientMessageId` the same key, so React reuses the node across the three states.
+- [ ] **Step 1: Failing tests:** the reducer replaces the raw queue item with the `operator_input` row in one step and lists it in `handedOff` (no fade); the Sending block, queued item and row are one element (a ref callback counts mounts: exactly one across Sending → queued → row); `SLOW_SEND_MS` and `YOUNG_ITEM_MS` hide "Sending…"/"Runs after…" for fast paths; Cancel on a queued raw item; ↑ recalls your newest `operator_input`.
 - [ ] **Step 2:** Implement. **Step 3:** web tests; commit `feat(web): raw input keeps one block from send to timeline`.
 
 ### Task 2.12: Web: fresh command list after a start
@@ -458,10 +462,10 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 **Files:**
-- Modify: `apps/web/src/features/session/use-session.ts` (on `agent_commands_changed` for its slug: `qc.invalidateQueries({ queryKey: ["agent-commands", slug] })`), `apps/web/src/lib/ws.ts` if frame routing needs it
+- Modify: `apps/web/src/routes/_app.tsx` (the global `onMessage`: `agent_commands_changed` → `qc.invalidateQueries({ queryKey: ["agent-commands", m.agent] })`), `apps/web/src/features/session/use-session.ts` (skips `agent_commands_changed` and, from PR 3, `chat_changed`)
 - Test: `apps/web/src/features/session/messaging.test.tsx` (or `commands.test.ts`)
 
-- [ ] **Step 1: Failing test:** a frame invalidates the query; the open menu re-reads rows (`watch`).
+- [ ] **Step 1: Failing tests:** the global handler invalidates the query for `m.agent`; the open menu re-reads rows (`watch`); `use-session`'s reducer ignores the frame (no state change, no re-render).
 - [ ] **Step 2:** Implement. Commit `fix(web): the command list refreshes when the agent starts`.
 
 ### Task 2.13: Product docs for PR 2 (main checkout)
@@ -470,7 +474,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 ### Task 2.14: PR 2 review, verification, PR, CI
 
-- [ ] Review the PR 2 diff against spec §5 and the React diff against `vercel-react-best-practices`; `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm vitest run --project web && pnpm build`; push; `gh pr create --base i1/1-handles-recipients --title "feat: raw session input with a denylist; fix /context"` (Approach: one raw route rather than an allowlisted command route because …; classification by known names rather than any leading `/` because …; built-ins snapshot rather than an empty list because …); CI until green; never merge.
+- [ ] Review the PR 2 diff against spec §5 and the React diff against `vercel-react-best-practices` (React checklist below); `pnpm install --frozen-lockfile && pnpm typecheck && pnpm lint && pnpm vitest run --project web && pnpm build`; push; `gh pr create --base i1/1-handles-recipients --title "feat: raw session input with a denylist; fix /context"` (Approach: one raw route rather than an allowlisted command route because …; classification by known names rather than any leading `/` because …; built-ins snapshot rather than an empty list because …); CI until green; never merge.
+- React checklist (copied from Task 5.1, the reviewer ticks each): stable references in live lists; memoised rows and markdown; no effects that derive state; query keys per data; no request waterfalls in route loaders; suspense/preload in loaders; handoffs (optimistic → server, queued → timeline, working → outcome) keyed in the **same parent array** so the node is reused; no new arrays, objects or elements passed as memo props; ws frames routed in one place (global `onMessage` or the per-agent session stream), never both.
 
 ---
 
@@ -523,7 +528,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 **Files:**
 - Create: `apps/server/src/routes/messages.ts` (extend: `POST /api/messages`)
-- Modify: `apps/server/src/routes/agents.ts` (delete L204-241), `packages/shared/src/agents.ts` (`sendMessagesBodySchema = {to: string[] 1..10, body, urgent, clientMessageId, attachments?}`; `sendMessagesResponseSchema = {results}`)
+- Modify: `apps/server/src/routes/agents.ts` (delete L204-241), `apps/web/src/features/session/api.ts` (delete `postMessage`, the old route's caller; the inbox pane's reply that still uses it is replaced in Task 3.14, so do this deletion as the last step of Task 3.14 if 3.5 lands first: the web must never call a deleted route), `packages/shared/src/agents.ts` (`sendMessagesBodySchema = {to: string[] 1..10, body, urgent, clientMessageId, attachments?}`; `sendMessagesResponseSchema = {results}`)
 - Test: `apps/server/src/routes/messages.test.ts` (DB: CI only)
 
 - [ ] **Step 1: Failing tests:** two agent recipients → two rows, one per agent, `recipients` both; a human recipient → refused; attachments with two `to` → 422; one refused recipient with others sent → 202 with mixed results; `start_failed` per recipient keeps its row pending; retry with the same `clientMessageId` returns every row's result; 401 for agent tokens.
@@ -548,7 +553,13 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Modify: every link builder to an agent (grep `to: "/agents/$slug"` and `/agents/${`): `features/agents/sidebar-tree.tsx`, `features/agents/agent-tree.tsx`, `features/palette/command-palette.tsx`, `features/inbox/*`, `features/tasks/*`, `features/schedules/*`, `features/session/row-menu.tsx` ("Open in chat"), `features/session/live-line.tsx`; document titles in both routes ("Ada · Chat", "Ada · Session", status prefix kept)
 - Test: `apps/web/src/routes/agents.routes.test.tsx` (create), existing link tests
 
-- [ ] **Step 1: Failing tests:** `/agents/ada` redirects to `/agents/ada/chat` (replace); a sidebar row links to `/chat`; a session-event link goes to `/session?event=`; titles per view; the sidebar row is active on both children.
+- Route details (H3, H4, M2):
+  - `validateSearch` (`event`, `message`) lives on the child routes; the `key` remount (`${slug}:${event}:${message}`) applies to the child views only, never the layout.
+  - `useAgentSummary(slug)`: a narrow `select` over the agent cache that `enqueueStatusFrame` updates; the header reads only that.
+  - Header notices (`restartError`, `pinOutcome`, `raceNotice`) are lifted to the layout and exposed to the children through a context of stable setters.
+  - Scroll and pin per view: a module-level per-slug map (`features/agents/view-memory.ts`: `{chat?: {top, pinned}, session?: {top, pinned}}`) restored on mount; the Session's events refetch on return (accepted).
+  - Chat child loader with `loaderDeps: ({search}) => ({message: search.message})`: on `preload`, `prefetchInfiniteQuery`; when the chat is cached, start a non-awaited fetch; await only when uncached. Keys `["chat", slug]` and `["chat", slug, "around", id]`.
+- [ ] **Step 1: Failing tests:** `/agents/ada` redirects to `/agents/ada/chat` (replace); a sidebar row links to `/chat`; a session-event link goes to `/session?event=`; titles per view; the sidebar row is active on both children; the header does not re-render on a `?event=` change or a chat refetch (render count); a Chat → Session → Chat switch restores the chat's scroll and pin from the map.
 - [ ] **Step 2:** Implement (the route tree `apps/web/src/routeTree.gen.ts` is checked in: regenerate it with `pnpm --filter @open-factory/web build` and commit it).
 - [ ] **Step 3:** web tests; commit `feat(web): an agent opens as its chat; the session has its own route`.
 
@@ -562,7 +573,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/agents/agent-header.test.tsx`
 
 - [ ] **Step 1: Failing tests:** in Chat the switch reads "Session" with `SquareTerminal`, in Session "Chat" with `MessageSquare`; its slot keeps one width for both labels; icon-only below 24rem with `aria-label`; with Restart visible below 22rem the switch moves to the top of ⋯ and Restart stays; the live line's "Open session" is hidden in the Session; the header does not remount across a switch (render count).
-- [ ] **Step 2:** Implement. Commit `feat(web): one agent header with a chat/session switch`.
+- [ ] **Step 2:** Implement. `agent-header.tsx` and `view-switch.tsx` never import `session-view.tsx` (shared pieces move to `features/agents/`). Commit `feat(web): one agent header with a chat/session switch`.
 
 ### Task 3.9: Web: chat data (query, union, live cursor)
 
@@ -575,7 +586,12 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 **Interfaces:**
 - Produces: `useChat(slug, {messageId?}) → { entries: ChatEntry[]; working: ChatPage["working"]; live: ReadonlySet<string>; loadEarlier(); hasEarlier; status; error; retry() }`; entries keep identity across merges when unchanged.
 
-- [ ] **Step 1: Failing tests:** union never drops cached entries (60 rows arriving between frames refetch until they meet the cache); an optimistic entry and its server row merge into one key; a pending→delivered change keeps the entry object's key; only frame-driven refetches add to `live`; a focus refetch adds nothing to `live`; two frames in flight make one trailing refetch.
+- Fetching (H2, M1):
+  - Frames, focus and reconnect fetch the **newest page only** and write it with `qc.setQueryData` through the chat union, which reuses the previous object for every unchanged key; the query sets `structuralSharing: false` (the union is the sharing).
+  - `refetchOnWindowFocus: false`, `refetchOnReconnect: false`; our own newest-page refresh runs on window focus and on the ws `openCount` change.
+  - `chat_changed` is routed in the global `onMessage` (`routes/_app.tsx`) to a module-level per-slug coalescer (one in flight + one trailing).
+  - `select` is a module-level function (stable).
+- [ ] **Step 1: Failing tests:** a 51st entry arriving leaves the other 50 entry objects `===` to before and renders exactly one row; union never drops cached entries (60 rows arriving between frames refetch until they meet the cache); an optimistic entry and its server row merge into one key; a pending→delivered change keeps the entry object's key; only frame-driven refetches add to `live`; a focus refetch adds nothing to `live`; two frames in flight make one trailing refetch.
 - [ ] **Step 2:** Implement. Commit `feat(web): chat data that never flashes or drops rows`.
 
 ### Task 3.10: Web: Chat view rows and states
@@ -588,7 +604,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/chat/chat-view.test.tsx`, `apps/web/src/features/chat/chat-perf.test.tsx` (U1 `timeline-perf` pattern)
 
 - [ ] **Step 1: Failing tests:** your message is a card with "You" and the clamp; the agent's reply is unboxed `.prose-of` and never clamped; "also to @dev and 8 others" with the full list in the row menu and accessible name; row menu items Copy text, Copy link (`/chat?message=`), View in session, Recipients; pending row "Waiting for Ada's current step" + Cancel → "Message cancelled. Undo"; rejected "This message wasn't delivered: …"; states (skeleton, "No messages with Ada yet.", "Couldn't load this chat." + Retry); `?message=` lands with the arrival tint on the card; read-only line for terminated/archived; stick-to-bottom and Jump to latest; Load earlier keeps the top row; live entries fade, loaded ones don't; one new entry renders one row.
-- [ ] **Step 2:** Implement. Commit `feat(web): the chat view`.
+- [ ] **Step 2:** Implement. `ChatRow` takes a `live` boolean (not the live Set) and one stable menu handler from the view; markdown memoised; `warmHighlighter()` on Chat mount. Commit `feat(web): the chat view`.
 
 ### Task 3.11: Web: working and outcome line
 
@@ -600,7 +616,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/chat/turn-line.test.tsx`
 
 - [ ] **Step 1: Failing tests:** the working line is the thread's last row ("[tooth] 42s · Ada is working · Open session"), duration first and tabular; a tick re-renders only the duration (0 row renders); status frames never hide it; when the page brings the outcome for its `key`, the same node shows the outcome (same element, no fade attribute) and the link keeps its x; when the agent replied the line goes in the same commit as the reply; "Open session at 14:02" accessible names; names middle-truncate at 390px; the Session's activity line no longer fades on mount from load.
-- [ ] **Step 2:** Implement. Commit `feat(web): working and outcome lines that hand off in place`.
+- [ ] **Step 2:** Implement. Placement (H1): the working line is a tail item of the chat's single entries array keyed `turn:${key}`, and the outcome entry has the same key, so React reuses the node. `data-live` is decided once at mount (a ref), never toggled after. Commit `feat(web): working and outcome lines that hand off in place`.
 
 ### Task 3.12: Web: Chat composer
 
@@ -612,7 +628,11 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/chat/chat-composer.test.tsx`
 
 - [ ] **Step 1: Failing tests:** no "To:" row with one recipient; accepting `@dev` opens "To: Ada [@dev ×]", removes the typed token, announces "Also sending to @dev", placeholder "Message Ada and 1 other"; Backspace in an empty box selects then removes the last chip ("Removed @dev"); max 10; recipients survive a remount from the draft; with two recipients the paperclip is `aria-disabled` and pressing it shows "Files go to one agent at a time"; `/context` shows "Commands run in the session · Open session" only for a known command or an unloaded list, and the link writes the text into `of-draft:session:ada`; Stop shows only while `working`; Esc stops that turn; ⌥Enter urgent; refused recipients each show "Not sent to @x: …" in the note slot; the chat's agent refused keeps the draft; toolbar `@` + attach, no `/`.
-- [ ] **Step 2:** Implement (POST `/api/messages`; the optimistic block keyed by `clientMessageId`). Commit `feat(web): the chat composer`.
+- [ ] **Step 2:** Implement:
+  - POST `/api/messages`; the optimistic block is a tail item of the chat's entries keyed by `clientMessageId`, the key its server row takes (H1).
+  - Recipients are data: `Composer` props `recipients: readonly Recipient[]` and a stable `onRecipientsChange`; the Composer renders the "To:" row (M3).
+  - Drafts (M8): `chatDraftKey(slug)` under `of-draft:v1:`; recipients validated on read (`string[]`, ≤ 10, else dropped); the key is removed only when text and recipients are both empty; "Open session" writes `sessionDraftKey(slug)` in its click handler.
+  - Commit `feat(web): the chat composer`.
 
 ### Task 3.13: Web: Inbox chat rows and list stability
 
@@ -624,7 +644,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/inbox/inbox-list.test.tsx`, `use-held-list.test.ts`
 
 - [ ] **Step 1: Failing tests:** chat row anatomy (AgentChip 16 with handle tooltip and `· ab12` for spawned, "· 3 new", Urgent, "archived"/"terminated", time; name truncates first); interleave order; a read row stays (read, no count) while the pointer or focus is in the list and leaves once both are out; a new message re-sorts only after both leave; j/k keeps the list held; a visible chat in the pane doesn't bump its count; below 1024px a click navigates to the Chat.
-- [ ] **Step 2:** Implement. Commit `feat(web): unread chats as inbox rows that never move under you`.
+- [ ] **Step 2:** Implement `useHeldList` (M5): pointer and focus inside the list live in refs; only `held: boolean` is state; while held, order comes from a snapshot of keys taken when holding began and data from a live `Map` by key; no copying items into state in effects. `inbox-list` passes a minute-rounded number for "now", never a new `Date` per render. Commit `feat(web): unread chats as inbox rows that never move under you`.
 
 ### Task 3.14: Web: reading pane hosts the Chat; read rules
 
@@ -635,7 +655,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Test: `apps/web/src/features/inbox/inbox-pane.test.tsx`, `use-read-from.test.ts`
 
 - [ ] **Step 1: Failing tests:** the pane shows the Chat thread and composer under the strip, no ⋯/`]`/Agent details; selecting keeps focus in the list; the composer takes focus only on Enter or `r`; retargeting swaps instantly, nothing fades; it opens at the first unread with a "New" divider when unread messages are taller than the pane; read after `INBOX_DWELL_MS`, cancelled when the selection moves; the Chat page reads at once; the Session view reads what it rendered; a reload with `?item=chat:ada` shows Ada's chat even with nothing unread; Undo of Mark all read sticks while the chat is open.
-- [ ] **Step 2:** Implement. Commit `feat(web): the inbox pane hosts the chat`.
+- [ ] **Step 2:** Implement (M6, M2): `useReadFrom` compares the newest agent-message time with a ref of the last `upTo` it posted and drops `hasUnread` from its deps; the dwell timer is an effect keyed on the selected slug with cleanup; the pane renders `key={slug}`; no `keepPreviousData` across slugs; a non-suspense `useInfiniteQuery`; `prefetchPane` prefetches the chat rows for a hovered/next chat row. Commit `feat(web): the inbox pane hosts the chat`.
 
 ### Task 3.15: Web: Mark all read with chats; notifications and recent senders
 
@@ -662,7 +682,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 
 ### Task 3.18: PR 3 review, verification, PR, CI
 
-- [ ] Review against spec §6 and the React diff against `vercel-react-best-practices`; full local verification as in 1.15; push; `gh pr create --base i1/2-raw-session --title "feat: per-human chat as the default agent view, with chat rows in the inbox"` (Approach: chat from message rows plus turn stamps rather than a projection of the session stream because …; a per-user `chat_changed` frame rather than session subscriptions because …; held list changes rather than instant removal because …); CI until green; never merge.
+- [ ] Review against spec §6 and the React diff against `vercel-react-best-practices` (React checklist below); full local verification as in 1.15; push; `gh pr create --base i1/2-raw-session --title "feat: per-human chat as the default agent view, with chat rows in the inbox"` (Approach: chat from message rows plus turn stamps rather than a projection of the session stream because …; a per-user `chat_changed` frame rather than session subscriptions because …; held list changes rather than instant removal because …); CI until green; never merge.
+- React checklist (copied from Task 5.1, the reviewer ticks each): stable references in live lists; memoised rows and markdown; no effects that derive state; query keys per data; no request waterfalls in route loaders; suspense/preload in loaders; handoffs (optimistic → server, queued → timeline, working → outcome) keyed in the **same parent array** so the node is reused; no new arrays, objects or elements passed as memo props; ws frames routed in one place (global `onMessage` or the per-agent session stream), never both.
 
 ---
 
@@ -680,7 +701,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
 - Produces: result JSON `{target, status: "queued", note}`.
 
 - [ ] **Step 1: Failing tests:** self via `"me"` and own handle; a direct report; a spawned report; a non-report → "@x isn't you or one of your direct reports."; a spawned caller targeting anyone else → refused (its description says "only yourself"); denied command → its reason; multi-line → "A command must be one line."; no leading `/` → "A command starts with /."; arguments neutralised; `/compact focus` → the Compact flow with `by: "@caller"`; notes for open turn / idle / hibernated (woken) / errored; self note texts exact (spec §7).
-- [ ] **Step 2:** Implement. Commit `feat(mcp): send_command for yourself and your direct reports`.
+- [ ] **Step 2:** Implement. Nobody can cancel an agent's queued `send_command` entry in the UI: agents never cancel, and humans can't cancel another principal's input (the queue item shows no Cancel; `DELETE …/queue/:id` → 403 `not_sender`); a test covers it. Commit `feat(mcp): send_command for yourself and your direct reports`.
 
 ### Task 4.2: Self-compact continue notice; one pending self-command
 

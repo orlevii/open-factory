@@ -139,7 +139,7 @@ const KINDS: readonly Kind[] = [
 ];
 
 const kindOf = (line: string): string =>
-  KINDS.find((k) => k.test.test(line))?.label ?? line.split(/:| /, 1)[0] ?? line;
+  KINDS.find((k) => k.test.test(line))?.label ?? line.split(": ", 1)[0] ?? line;
 
 /** "model, 1 skill, 2 rules and 3 more": at most three kinds, in line order, then the count of the rest. */
 export function summarizeChanges(lines: string[]): string {

@@ -247,6 +247,20 @@ describe("summarizeChanges", () => {
       ]),
     ).toBe("1 rule, 1 plugin, 1 secret and 4 more"));
 
+  it("keeps multi-word scalar labels whole", () =>
+    expect(
+      summarizeChanges([
+        "warm window: 70 → 30 min",
+        "max live spawns: 5 → 1",
+        "permission mode: auto → bypass",
+      ]),
+    ).toBe("warm window, max live spawns, permission mode"));
+
+  it("names can spawn and template skills kinds", () =>
+    expect(
+      summarizeChanges(["can spawn: added x", "template skills off", "added template skill y"]),
+    ).toBe("can spawn, template skills, 1 template skill"));
+
   it("is empty for no lines", () => expect(summarizeChanges([])).toBe(""));
 });
 

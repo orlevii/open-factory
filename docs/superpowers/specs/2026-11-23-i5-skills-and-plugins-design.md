@@ -105,17 +105,17 @@ Today means the I3 branch as specified. The I2 rows describe I2's design, becaus
 
 | Area | Today (code, or the I2 design) | After I5 |
 |---|---|---|
-| Host Claude dir | `FACTORY_HOST_SKILLS_DIR` (`config.ts:80`, default `~/.claude/skills`), the README row, `.env.example`, 8 smoke scripts, `config.test.ts` | `FACTORY_HOST_CLAUDE_DIR` (default `~/.claude`). Skills are read from `<dir>/skills`, and host plugins from `<dir>/plugins` (read only). The old variable is deleted everywhere, with no warning or alias (Q11, ADR 0028) |
+| Host Claude dir | `FACTORY_HOST_SKILLS_DIR` (`config.ts:80`, default `~/.claude/skills`), the README row, `.env.example`, 8 smoke scripts, `config.test.ts` | `FACTORY_HOST_CLAUDE_DIR` (default `~/.claude`). Skills are read from `<dir>/skills`, and host plugins from `<dir>/plugins` (read only). The old variable is deleted everywhere and never read, with no alias (Q11, ADR 0028); like S10's removed variables, it is named in the `REMOVED_ENV` boot warning ("FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder.") |
 | Skill refs | `skills: [name]`, `hostSkillSchema`, resolved only against the host dir (`links.ts resolveHostSkills`; `validate.ts:158`) | Same field, resolved against the Library: host, folder, GitHub, plus the template's `skills/` (§5) |
 | Template-local skills | I2: linked live from `realpath(<tpl>/skills)/<name>`, with a mount exemption (I2 §6.4) | Unchanged, plus the `.claude-plugin/` refusal. Listed in the Library under "Template skills" |
 | Host skill list API | I2: `GET /api/host-skills` | Deleted in PR 1. Replaced by `GET /api/library/skills` |
 | Plugins key | `template.yaml plugins: [name@mkt]` (`templates.ts:16,56,78`); overlay `template.plugins` (I2) | Deleted. `settings.json enabledPlugins` is the truth (Q4) |
 | `enabledPlugins` | A warning, "ignored: list plugins in template.yaml" (`validate.ts:237`); derived at start from the per-agent install (`settings.ts buildSettings`) | The validated truth: `true` values only, and each marketplace must be declared and registered (§7.4). A factory-owned key in the generated file |
 | Marketplaces | Declared by hand in the template's `extraKnownMarketplaces`, with types `directory`, `git` and `github`; `ref`/`path` refused (`validate.ts:191–216`) | A factory registry (the `marketplaces` table). Template entries are copies of the store's recorded source, validated against the registry (Q5). The `ref`/`path` refusal stays (R2) |
-| Plugin install | Per agent at create and re-sync (I2: at start when missing), into `state/agents/<slug>/plugins-config/` (`workspace.ts install`, `plugins.ts installPlugins`) | Once per version into the store `state/plugins/`, a Claude Code seed, written only by the factory (§7.2). Deleted: `plugins-config/`, `readPluginKeys`, `pluginsConfigDir`, `linkPlugins`, and the plugin part of `materialize` |
+| Plugin install | Per agent at create and re-sync (I2: at start when missing), into `state/agents/<slug>/plugins-config/` (`Workspace.ensurePlugins`, `plugins.ts installPlugins`) | Once per version into the store `state/plugins/`, a Claude Code seed, written only by the factory (§7.2). Deleted: `plugins-config/`, `ensurePlugins`, `readPluginKeys`, `pluginsConfigDir`, `linkPlugins`, `Effective.templatePlugins`, and the plugin part of `materialize` |
 | `.claude-config/plugins` | A symlink to the agent's own `plugins-config/plugins` | A real folder of the agent's own, scrubbed at every start down to `data/` (R1). Plugins load from the seed through `CLAUDE_CODE_PLUGIN_SEED_DIR` |
 | Docker mounts | The agent's own plugins dir (ro); declared directory marketplaces (ro); host skill dirs (ro) (`mounts.ts`) | The store (ro); registered directory marketplaces of enabled plugins (ro); every resolved skill dir (ro). Two new exact-location classes, for the GitHub cache and the store (§6.5) |
-| Change flow | I2 `describeChanges(ConfigDoc, ConfigDoc)`; restart check on `started.doc` | Both compare `{doc, library}` (§8) |
+| Change flow | I2 `describeChanges(ConfigDoc, ConfigDoc)`; restart check on `started.doc` | Both compare `{doc, library}` (§8); the doc-only part is kept as `describeDocChanges` for the web's pre-save summary |
 | UI | I2's combobox over host skills; plugins typed as text | The Skills page (Skills, Plugins, Marketplaces), add sheets, peeks and pickers (§10) |
 
 **Verified on this host** (Claude Code's plugin dir, v2 format):
@@ -477,7 +477,7 @@ A shared hold can't cover Claude's own read of the seed after spawn. Operations 
 5. **A plugin is missing.** Release the shared hold, take `storeLock` exclusively, **check again** (another start may have installed it), then:
    - **Pinned** (§7.5): install it, then recompute `closure` from the new manifests and repeat step 4. This holds a start slot for at most the 240 s budget, and other starts that need the store wait behind it (stated). A failure gives `AgentStartError("Plugin x@y didn't install.", fix)` with redacted output.
    - **Unpinned:** fail closed with "Plugin x@y isn't installed. Install it in Skills." and fix `library` (§8.4). Nothing is fetched without a human (Q9.1).
-6. **Env.** The factory adds `CLAUDE_CODE_PLUGIN_SEED_DIR=<store>` and `DISABLE_AUTOUPDATER=1`. These names join I2's `FACTORY_ENV_NAMES`, so no template, overlay or secret can set them:
+6. **Env.** The factory adds `CLAUDE_CODE_PLUGIN_SEED_DIR=<store>` and `DISABLE_AUTOUPDATER=1`. These names join `FACTORY_ENV_NAMES` (`packages/shared/src/config.ts`), so no template, overlay or secret can set them, and `buildAgentEnv` accepts them:
    - `CLAUDE_CODE_PLUGIN_SEED_DIR`, `CLAUDE_CODE_PLUGIN_CACHE_DIR`, `CLAUDE_CODE_PLUGIN_DIRS`;
    - `FORCE_AUTOUPDATE_PLUGINS`, `DISABLE_AUTOUPDATER`, `DISABLE_UPDATES`;
    - `CLAUDE_CODE_SYNC_PLUGIN_INSTALL`.
@@ -494,7 +494,7 @@ A shared hold can't cover Claude's own read of the seed after spawn. Operations 
    - the store, read-only;
    - the registered **directory** marketplaces of plugins in `closure`, read-only, because their relative-path plugins load in place.
 
-**Create and spawn never install.** `materialize` loses `install`, `rm(pluginsConfigDir)` and the plugin part of `TemplateSource`. `PluginInstallError` leaves `agent-service.ts` and `spawn-service.ts`, and so does `502 plugin_install_failed`.
+**Create and spawn never install.** `materialize` loses `ensurePlugins`, `rm(pluginsConfigDir)` and the plugin part of `TemplateSource`. `PluginInstallError` leaves `agent-service.ts` and `spawn-service.ts`, and so does `502 plugin_install_failed`.
 
 ### 7.4 `enabledPlugins` (Q4, Q5; amends I2 S1)
 
@@ -540,7 +540,7 @@ On top of that, every dependency must be pinned the same way, with **no version 
 - a template or overlay save that newly enables a **pinned**, missing plugin, enqueued in the background and never awaited;
 - a start (§7.3).
 
-Install state (`installing` | `failed`, with `since`) is kept in memory per key. A failed background install shows "Install failed" on the row, with the redacted reason in the peek, and writes the activity event `plugin_install_failed { key, by }` (T6). A save that worked therefore never silently leaves a plugin uninstalled. The state clears on restart, and the start check then speaks for it.
+Install state (`installing` | `failed`, with `since`) is kept in memory per key. A failed background install shows "Install failed" on the row, with the redacted reason in the peek, and sends the user who saved an Inbox `notice` (`notice: "plugin_install_failed"`, body "Couldn't install x@y. See Skills for details."), the path I3 uses for credential facts; there is no factory-level activity log, and no new inbox kind (T6). A save that worked therefore never silently leaves a plugin uninstalled. The state clears on restart, and the start check then speaks for it.
 
 **Update** (Q10, T7, R9):
 - **Offer.** The Plugins view shows "Update available" when the plugin's pinned marketplace entry differs from the installed one: in `version`, `sha` or source, or, for a relative-path plugin, in the tree at its path (`rev-parse <pin>:<path>` against the commit recorded at install). Relative entries often have no `version`, and their source never changes, so the tree comparison is what catches them (self-review r2 M7).
@@ -614,7 +614,7 @@ The result is cached in memory by `installPath`, which is immutable per version.
 
 ### 7.9 Claude Code version floor (Q21)
 
-- **The floor.** `CLAUDE_PLUGIN_FLOOR` (one constant in `library/claude-flags.ts`) is the lowest version with everything G1 verified on the shipped version:
+- **The floor.** There is one floor: the harness's existing `MIN_CLAUDE_VERSION` (`packages/harness/src/claude/version.ts`, today 2.1.327, until now a warning only), set from G1. There is no second constant and no second `checkClaudeVersion`; the server's `assertPluginFloor` builds on the harness check. It is the lowest version with everything G1 verified on the shipped version:
   - the seed;
   - `syncClaudeAiPlugins`;
   - `mcpb/` (2.1.324 in the docs);
@@ -626,7 +626,7 @@ The result is cached in memory by `installPath`, which is immutable per version.
   - the store runner, before each operation;
   - **every** local-runtime agent at start, not only those with plugins, because synced-plugin suppression and the skills-folder rules matter for any agent signed in through I3;
   - Docker images, once per image digest, by `docker run --rm --network none --entrypoint claude <image> --version`, cached.
-- **Below the floor**, the start fails closed: "Claude Code {found} is too old; update it to {CLAUDE_PLUGIN_FLOOR} or later." Both versions are interpolated. There is no fallback (ADR 0028).
+- **Below the floor**, the start fails closed: "Claude Code {found} is too old; update it to {MIN_CLAUDE_VERSION} or later." Both versions are interpolated. There is no fallback (ADR 0028).
 
 ### 7.10 `RESERVED_SETTINGS_KEYS`: the one list (R11)
 
@@ -638,7 +638,7 @@ The result is cached in memory by `installPath`, which is immutable per version.
 - **Running commands** (every key the settings reference marks "Any file" and describes as running a command or executable, checked against the shipped version's settings reference):
   - `hooks`, `statusLine`, `fileSuggestion`;
   - `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `otelHeadersHelper`.
-- **`env`:** any entry whose name is in `FACTORY_ENV_NAMES`, so a project `env` can't redirect `CLAUDE_CODE_PLUGIN_SEED_DIR` or turn auto-update back on.
+- **`env`:** any entry whose name `isFactoryEnvName` accepts (`FACTORY_ENV_NAMES` or the `OPEN_FACTORY_` prefix), so a project `env` can't redirect `CLAUDE_CODE_PLUGIN_SEED_DIR` or turn auto-update back on.
 
 Templates and overlays keep I2's rules (templates are trusted operator input; overlays refuse the factory keys). The start check (§7.3) refuses **every** key in this list in agent-writable project and local settings. The plan's first PR 1 task re-reads the shipped version's settings reference and updates the list, and a test pins it.
 
@@ -668,6 +668,8 @@ describeChanges(a: { doc: ConfigDoc; library: Library }, b: { doc: ConfigDoc; li
 ```
 
 The restart decision is `describeChanges(runtime.started, after)` being non-empty, so a repin or a plugin update restarts the agents that use it.
+
+Today's doc-only body is kept as `describeDocChanges(a: ConfigDoc, b: ConfigDoc)`, and `describeChanges` is `[...describeDocChanges(a.doc, b.doc), ...libraryLines]`, sorted. The web's pre-save summary (`config-page.tsx`) has no library client-side, so it uses the doc-only part. Every server caller (`agent-runtime.ts` `requestRestart`, `config-changes.ts` `templateChanged` and `apply`) moves to `{doc, library}`, through a `currentEffective()` port that replaces `currentDoc()`. A `libraryChanged` also rescans templates, so a template's stored issues don't go stale when a skill it lists goes missing.
 
 New lines, sorted and secret-safe:
 - "skill x updated a1b2c3d → e4f5a6b";
@@ -762,7 +764,7 @@ Every task that touches the web names `vercel-react-best-practices` for both imp
 ### 10.1 Navigation and header
 
 - **Sidebar.** The `nav` gains **Skills** (icon `Blocks`) between Templates and Schedules. Its shortcut is `g k`, listed in the shortcuts sheet and in the palette's Go to group. `g s` stays Schedules.
-- **Routes** (all lazy): `/skills` in PR 1, then `/skills/plugins` and `/skills/marketplaces` in PR 2.
+- **Routes** (code-split by the router's `autoCodeSplitting`, never a hand-written `lazy()`): `/skills` in PR 1, then `/skills/plugins` and `/skills/marketplaces` in PR 2.
 - **`SkillsHeader`** holds:
   - the h1 "Skills";
   - the view switch "Skills | Plugins | Marketplaces" (`SegmentedLinks`). PR 1 has a single view, so it renders no switch until PR 2;
@@ -991,7 +993,7 @@ Both sheets use `FormFrame`, I4's `useFieldErrors`, `FormOutcome` and `field-sta
   - already-selected entries.
 - **No virtualisation in I5.** cmdk handles hundreds of options, and its DOM-based keyboard navigation works badly with virtual rows. Options are keyed by name, and the filter is a pure function over the loaded list. If a factory ever reaches about 1,000 skills, a sibling component with `aria-activedescendant` replaces this (§15).
 - **Skills.**
-  - Selected rows are I2 `ConfigList` rows that add their source and pin ("GitHub · a1b2c3d") and any state ("Missing", "Hidden").
+  - The picker lives in I2's `SkillsSection` (`features/config/skills-section.tsx`). Selected rows are I2 `ConfigList` rows that add their source and pin ("GitHub · a1b2c3d") and any state ("Missing", "Hidden").
   - Template-local skills stay read-only, labelled "Template skill".
 - **Plugins:** **store** plugins only (Q7).
   - Template mode lists every store plugin, with the footer "Install more in Skills".
@@ -1012,8 +1014,8 @@ The only links on these surfaces are the GitHub compare link and links to factor
 
 A `library` fix navigates to the item's view and passes `{ peek: item }` in router state, not in the URL (D11 stands). The view:
 1. scrolls the row to the centre;
-2. focuses it with the deep-link arrival (a 6% signal tint for 2 s);
-3. opens its peek.
+2. focuses it with the deep-link arrival (a 6% signal tint for 2 s), reusing I3's `lib/use-arrival.ts` (`arrive`, `useArrivalTint`), as the credentials page does;
+3. opens its peek. A second arrival on an already-mounted view (a new `location.key`) opens its peek too.
 
 "Open in Skills" from the form does the same.
 
@@ -1086,7 +1088,7 @@ There is no change to the `agents` or `templates` columns.
 
 **Reset step**, stated in each PR and in the plan:
 - **Everywhere:** drop the database and recreate agents.
-- **PR 1:** rename `FACTORY_HOST_SKILLS_DIR` to `FACTORY_HOST_CLAUDE_DIR` in `.env` (pointing at the Claude dir, not its `skills/`). The old name is simply ignored, with no warning.
+- **PR 1:** rename `FACTORY_HOST_SKILLS_DIR` to `FACTORY_HOST_CLAUDE_DIR` in `.env` (pointing at the Claude dir, not its `skills/`). The old name is never read; boot warns once if it is still set.
 - **PR 2:**
   - templates listing `plugins:` fail validation ("Unknown field."): move them to `enabledPlugins` in `settings.json`;
   - add their marketplaces in Skills;
@@ -1215,7 +1217,7 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
   - each skill message;
   - the template-local collision, for templates and overlays;
   - `enabledPlugins` cases: false, undeclared, unregistered, source mismatch, an overlay plugin from a non-template marketplace, a refused source kind, and `syncClaudeAiPlugins` in a template.
-- **Marketplace add,** with fake Claude (extended so `marketplace add` writes `known_marketplaces.json` and a git clone of a fixture marketplace, `install` writes `installed_plugins.json` and a cache dir, and scenarios can "pull the marketplace", "install an extra dependency" or "install an unexpected marketplace"):
+- **Marketplace add,** with fake Claude (its old per-agent `plugin` mode replaced by a seed mode chosen through `FAKE_CLAUDE_PLUGIN_SCENARIO`, so `marketplace add` writes `known_marketplaces.json` and a git clone of a fixture marketplace, `install` writes `installed_plugins.json` and a cache dir, and scenarios can "pull the marketplace", "install an extra dependency" or "install an unexpected marketplace"):
   - preview before touching the store;
   - a taken or reserved name is refused;
   - a failure removes only what the add created (a pre-existing marketplace with the same name survives);
@@ -1231,7 +1233,7 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
   - locks serialise, and a slug named `store` doesn't collide;
   - the provenance sidecar holds only its fields;
   - update: the preview diff, an apply whose sha doesn't match rolls back, and the throwaway dir is removed;
-  - a failed background install writes `plugin_install_failed` and the row state;
+  - a failed background install sends the `plugin_install_failed` Inbox notice and sets the row state;
   - redaction.
 - **The agent's plugins root.** The scrub keeps `data/` only, and an old link at that path is replaced by a folder.
 - **Start checks** (R11, R12):
@@ -1287,7 +1289,7 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
 - `library_changed` invalidation;
 - fix-link arrival.
 
-**Evidence pass** (the plan's last tasks). Real browser, Chromium and WebKit headless, through the U4 harness's `run.sh` lock, with fake Claude only. GitHub fetches go to a local fixture repo through `FACTORY_GITHUB_URL=file://…`. At most one heavy job at a time, on `/tmp/of-v002-heavy.lock`. Covered: the three views, the peeks, the add sheets and the pickers, at 1440, 1024, 390 and 375px, and 390px at 200% text. Acceptance flows 1–6 run in PR 1, and flows 8–13 in PR 2.
+**Evidence pass** (the plan's last tasks). Real browser, Chromium and WebKit headless, through the U4 harness's `run.sh` lock, with fake Claude only. GitHub fetches go to a local fixture repo through `FACTORY_GITHUB_URL=file://…`. Covered: the three views, the peeks, the add sheets and the pickers, at 1440, 1024, 390 and 375px, and 390px at 200% text. Acceptance flows 1–6 run in PR 1, and flows 8–13 in PR 2.
 
 **Worst-case fixture:**
 - a 40-skill GitHub source;
@@ -1357,7 +1359,7 @@ Three stacked PRs on I3's last branch, in a line: `i5/1-library-skills` → `i5/
 - **ADR 0024:** the I5 consequences: S2 kept (Q5); Install in factory (Q7); unpinned plugins (Q9); the seed (Q21); no ref (R2); skills-directory plugins refused (R3).
 - **Data model:** the two tables.
 - **Agent runtime:** the seed env, the reserved env names, the version floor.
-- **Base image:** pin Claude Code at or above `CLAUDE_PLUGIN_FLOOR` instead of "latest at build time", and record its version as an image label.
+- **Base image:** pin Claude Code at or above `MIN_CLAUDE_VERSION` instead of "latest at build time", and record its version as an image label.
 - **I6 path help:** the I5 fields now exist. The README replaces `FACTORY_HOST_SKILLS_DIR` with `FACTORY_HOST_CLAUDE_DIR`.
 - **Factory MCP (I7 note):** Library tools are read-only, and `enabledPlugins` is a code-running key.
 

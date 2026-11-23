@@ -42,65 +42,74 @@
   - check-all 4 at a time;
   - previews swept after 1 h.
 - **Patterns.** `HOST_SKILL_PATTERN` for every Library skill name. `MARKETPLACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/`, minus the reserved names. `PLUGIN_REF_PATTERN`: a name of at most 64 characters, then `@`, then a marketplace name.
-- **I4 form rules.** `FieldShell`/`FieldNote`, `useFieldErrors`, `FormOutcome` and `field-stack`. Field and outcome messages are exported constants of at most 40 characters, never interpolated (spec §10.4 lists them). User-facing copy says "Skills", never "Library".
-- **Database tests run only in CI.** Tests that use `createTestDb`/`makeTestApp` (`apps/server/src/test/helpers.ts`) need Postgres, and the local Postgres role is unavailable. Locally, run the pure unit tests and the web tests, plus `pnpm typecheck`; read CI for the DB suites.
-- **React.** Every task that touches `apps/web` states: "Implementer and reviewer invoke `vercel-react-best-practices` and follow it." Next-only rules don't apply (this is React + Vite + TanStack).
+- **I4 form rules.** Field and outcome messages are exported constants of at most 40 characters, never interpolated (spec §10.4 lists them). User-facing copy says "Skills", never "Library". The real homes (re-validated against the merged I1–I4/I6 code):
+  - `FieldShell` `apps/web/src/components/field-shell.tsx`; `FieldNote` + `noteDescribedBy` `components/field-note.tsx`; `useFieldErrors` `components/forms/use-field-errors.ts`; `FormOutcome`, `useOutcome`, `NO_OUTCOME` `components/forms/form-outcome.tsx`; `focusField` `components/forms/focus-field.ts`; `FormFrame` (kind `"inline" | "sheet"`) `features/settings/forms/form-frame.tsx`; the `.field-stack` CSS class `apps/web/src/styles.css`; `PathField` `components/path-field.tsx`; `MiddleTruncate` `components/middle-truncate.tsx`.
+  - Messages: field messages the server returns go in shared `MSG` (`packages/shared/src/messages.ts`, tested by `messages.test.ts`); server-only field messages in `FIELD_MSG` (`apps/server/src/field-messages.ts`); web form-level, outcome and load lines in `FORM_MSG` (`apps/web/src/lib/form-messages.ts`, tested by `form-messages.test.ts`); config-form copy in `apps/web/src/features/config/messages.ts` (`CONFIG_FIELD_MSG`, `CONFIG_FORM_MSG`, `CONFIG_PAGE_MSG`, `CONFIG_COPY`). Reuse `MSG.hostPathStart`, `FIELD_MSG.noFolder` and `FORM_MSG.enterPath` for the folder path.
+  - Sheets: kinds are declared in `features/sheets/sheet-store.ts` (`SheetSpec`, `ChildSpec`); bodies in `features/sheets/sheet-bodies.ts` (with the `warm()` prefetch helper); drafts that survive close in `features/sheets/drafts.ts`.
+- **I2 config form (where I5's pickers live).** The section is `apps/web/src/features/config/skills-section.tsx` (`SkillsSection`, titled "Skills and plugins", with `SkillPicker` via `PickAdd` and the plugins `ListField`), placed by `config-form.tsx`. Lists: `list-field.tsx` → `config-list.tsx`; the add control is `pick-add.tsx`; field paths are in `fields.ts`; `PageFooter` is `features/config/page-footer.tsx`. The agent page is `features/config/config-page.tsx` (route `routes/_app/agents.$slug_.config.tsx`); the template tab is `features/templates/template-config-tab.tsx` (route `routes/_app/templates.$name.tsx`). There is no `features/config/sections/` directory.
+- **Database tests run only in CI.** Tests that use `makeTestApp` (`apps/server/src/test/helpers.ts`, which uses `createTestDatabase` from `@open-factory/db/testing`) need Postgres, and the local Postgres role is unavailable. Locally, run the pure unit tests and the web tests you touched; read CI for the DB suites.
+- **Tests per task, full suite per Part.** Each implementer and each reviewer runs **only the test files it created or changed** (`pnpm vitest run <files>`). The full suite, `pnpm typecheck`, `pnpm lint` and `pnpm build` run **once at the end of each Part** (A16, B12, C3); CI is the full-suite check, because local full runs are slow and flaky on this machine. A task may run `pnpm typecheck` when it deletes or renames an exported symbol, to find the callers.
+- **One reviewer per task.** After each task, one fresh reviewer checks that task's diff against the spec sections it cites and this plan; for React tasks it also checks the diff against `vercel-react-best-practices`.
+- **React.** The React parts of this plan were checked against `vercel-react-best-practices` when it was re-validated (React + Vite + TanStack Router/Query; Next-only rules don't apply). Whoever edits a React task of this plan MUST invoke the `vercel-react-best-practices` skill first and keep the task compliant. Every task that touches `apps/web` says: "The plan is already React-compliant; follow it as written and report any deviation." The implementer follows it; the per-task reviewer and the Part's final review check the React diff against the skill.
 - **React rules from the plan review** (binding for every web task; the branch reviews check each one):
   - **R-Q1. POSTs are mutations.**
     - These are `useMutation`, started from click handlers and kept in component state, never under the `["library"]` key: `update-preview` (B10), Check for updates per source (A12), Find skills and Find more skills (A12, A13), Install and Install in factory (B10).
     - Test: a `library_changed` frame while an update view is open doesn't call `update-preview` again.
+    - A mutation's result is kept in component state keyed by what it is for (`key`, source `id`). When the peek retargets, the stale result is dropped during render (`if (resultFor !== key) setResult(undefined)`), never in an effect.
   - **R-Q2. Query keys.** Pinned keys, arrays of primitives:
     - `["library","skills"]`, `["library","skill",group,name]`, `["library","source",id]`;
     - `["library","plugins"]`, `["library","plugin",key,from]`, `["library","marketplaces"]`;
     - file text as `["library-file", group|key, name, path, pin]`, outside the `["library"]` prefix, with `staleTime: Infinity` when pinned. It is fetched only while View file is open (`enabled: open`), prefetched on pointer-enter or focus of the toggle, and rendered with `UntrustedCode`, never CodeMirror.
     - `libraryQueryOptions` uses `staleTime: 0`, so a window focus refreshes the host and template-local lists (spec §9.5).
-  - **R-Q3. Coalesced invalidation.** `lib/ws.ts` coalesces `library_changed` invalidation to at most one per 250 ms, as `features/agents/status-frames.ts` batches frames. Test: 10 frames in one tick give one list refetch.
-  - **R-E1. One elapsed timer.** A single leaf `<Elapsed since />` ticks itself. It shows nothing for the first 10 s, then a 1 s tick, paused through `hooks/use-document-visible.ts`. Extract it from `features/session/activity-line.tsx` if that ticker fits. Rows and headers pass only `since`. Test: a tick doesn't re-render sibling rows.
-  - **R-L1. Rows and `j`/`k`.** Rows are `memo` components with primitive props (`shown`, `name`, `state`, `since`) and stable handlers, as in `features/tasks/task-list.tsx`. `lib/row-nav.ts` `onRowKeyDown` is extended to `<button>` rows and source headers, never a per-list `j`/`k` handler.
-  - **R-L2. Peek from the cached row.** The peek reads the row with `useQuery({...libraryQueryOptions, select})`, where `select` is defined at module level or in a `useCallback` keyed on group and name. The detail comes from its own query, and the view is derived during render (`detail ?? rowFields`, plus skeletons from `contentsSummary`). Never `initialData`, and never an effect.
+  - **R-Q3. Coalesced invalidation.** WS frames are handled in `apps/web/src/routes/_app.tsx` `onMessage` (`lib/ws.ts` is only the socket). Add `onLibraryChanged(qc)` in `apps/web/src/lib/library.ts`: a **module-level** 250 ms trailing timer (like `features/agents/status-frames.ts`'s batching, never per render) that invalidates `["library"]` once; `onMessage` calls it for `library_changed`. The reconnect path already invalidates everything but chat, so no reconnect code is added. Test (`lib/library.test.ts`): 10 frames in one tick give one invalidation.
+  - **R-E1. One elapsed timer.** `Elapsed` already exists in `features/session/activity-line.tsx` (memo, ticks itself, paused when the document is hidden via `hooks/use-document-visible.ts`) but shows from 0 s. Move it to `apps/web/src/components/elapsed.tsx`, add `hideUnderMs?: number` (renders nothing until then and schedules its first tick at that point), and import it back into `activity-line.tsx`. Rows and headers render `<Elapsed since={since} hideUnderMs={10_000} />` and pass only `since`. Test: a tick doesn't re-render sibling rows.
+  - **R-L1. Rows and `j`/`k`.** Rows are `memo` components with primitive props (`shown`, `name`, `state`, `since`) and stable handlers, as in `features/tasks/task-list.tsx`. `lib/row-nav.ts` `onRowKeyDown` today returns unless the target is an `<a>` and queries `a`; change it to select rows by a `data-row` attribute (set on the anchors in the existing task, agent and inbox lists, and on the new button rows and source headers), and update `test/row-nav.test.tsx`. Never a per-list `j`/`k` handler.
+  - **R-L2. Peek from the cached row.** The peek reads the row with `useQuery({...libraryQueryOptions, select})`, where `select` comes from a module-level factory (`selectSkillRow(group, name)`) memoised with `useCallback` keyed on `[group, name]`; an inline `select` re-runs every render. The detail comes from its own query, and the view is derived during render (`detail ?? rowFields`, plus skeletons from `contentsSummary`). Never `initialData` or `placeholderData`, and never an effect.
   - **R-L3. Aborting Find.** The Find sheet keeps one `AbortController` in a ref:
     - a new Find aborts the previous one inside its click handler;
     - Close aborts in its handler;
     - an unmount cleanup aborts as well, and that cleanup is the only effect.
     
     The signal goes through the `mutationFn`. Tests: unmount aborts; a second Find drops the first response.
-  - **R-L4. Arrival.** `useLibraryArrival()` sets the initial peek during render from router state, with a lazy `useState` keyed on `location.key`. An effect is used only to scroll and focus, with deps `[location.key, rowFound]`, guarded by a ref so it runs once per arrival. Test: a `library_changed` after arrival doesn't scroll again.
+  - **R-L4. Arrival.** Reuse I3's `apps/web/src/lib/use-arrival.ts` (`arrive(row)`: focus without scroll plus the `data-focus-ring` stand-in; `useArrivalTint()`: `{arrival, start, onArrivedEnd}`, a 2 s visible-time tint with stable callbacks; used by `features/settings/credentials-section.tsx`). `useLibraryArrival()` keeps `[arrivedKey, setArrivedKey] = useState<string>()` and adjusts during render: `if (state.peek && location.key !== arrivedKey) { setArrivedKey(location.key); setPeek(state.peek) }` (the adjust-state-while-rendering pattern `credentials-section.tsx` uses; a lazy `useState` would not re-run for a second arrival on the same mounted page). One effect, deps `[location.key, rowFound]`, ref-guarded per key: `row.scrollIntoView({ block: "center" }); arrive(row); start()`. Rows take `arrival`/`onArrivedEnd` as props. Router state stays (spec R6). Test: a `library_changed` after arrival doesn't scroll again; a second arrival on the mounted page opens its peek.
   - **R-L5. Holding a row in place.** A row moving groups (B10) keeps a `held` snapshot:
     - set in `onPointerEnter` and `onFocus`;
     - cleared in `onPointerLeave` and `onBlur`, checking `relatedTarget`;
     - then `view = held ?? data` during render.
     
-    Reuse or extract `useHeldWhileSelected` from `features/session/agent-text.tsx`.
-  - **R-C1. Multi Combobox.** The snapshot of what to leave out next time is taken in the `onOpenChange(true)` handler, never in an effect. Callers keep `added` stable (`useMemo` over the selected names). Picked options keep cmdk's `disabled` prop, so the highlight skips them.
+    Write a new `useHeldWhileInside()` in `features/skills/use-held.ts`. (`useHeldWhileSelected` in `features/session/agent-text.tsx` holds on text selection, not hover or focus, so it doesn't fit.)
+  - **R-C1. Multi Combobox.** The existing `Combobox` (`components/ui/combobox.tsx`) has an `onOpen` prop and an internal `onOpenChange`. The snapshot of what to leave out next time is taken in that open handler (`onOpen`), never in an effect. Callers keep `added` stable with a primitive key: `useMemo(() => new Set(names), [names.join("\0")])`, because the config draft's `readList` may return a fresh array each render. Picked options keep cmdk's `disabled` prop, so the highlight skips them.
   - **R-F1. Find results.** Ticks are a `Set<name>` updated with functional `setState`. The filtered rows, the toggle label and "None of these can be added" are derived during render. Old ticks merge with new names in the Find success handler. No `useDeferredValue`.
   - **R-H1. Hoisting.** No section component (Runs code, Files, Used by, Provenance, `renderOption`) is ever defined inside another component. Static skeleton rows are hoisted to module scope and sized from counts.
-  - **R-B1. Routes and loaders.** Routes are code-split by `autoCodeSplitting: true` in `vite.config.ts`; never add `lazy()` by hand. The loader follows `routes/_app/settings.projects.tsx`: `void qc.prefetchQuery(hostQueryOptions)`, then `await Promise.allSettled([preload ? qc.ensureQueryData(lib) : qc.fetchQuery(lib)])`. The sidebar link relies on the router's `defaultPreload: "intent"`.
+  - **R-B1. Routes and loaders.** Routes are code-split by `autoCodeSplitting: true` in `vite.config.ts`; never add `lazy()` by hand. The loader follows `routes/_app/settings.projects.tsx`: `void qc.prefetchQuery(hostQueryOptions)`, then `await Promise.allSettled([preload ? qc.ensureQueryData(lib) : qc.fetchQuery(lib)])`. The sidebar link relies on the router's `defaultPreload: "intent"` (`router.tsx`). Every page that renders a Library picker prefetches the Library without awaiting it: `void qc.prefetchQuery(libraryQueryOptions)` in both `routes/_app/agents.$slug_.config.tsx` (replacing today's host-skills prefetch) and `routes/_app/templates.$name.tsx`, so the picker never starts a fetch on mount (no waterfall).
+  - **R-T1. Timers from handlers.** A delay that follows a user action (Add skills' 300 ms inert primary, Undo windows) is started in the handler that caused it (`onSuccess`: `setInertUntil(Date.now() + 300)` plus one `setTimeout`), not by an effect watching state.
   - **R-P1. `content-visibility`.** Not used, because it can break `scrollIntoView({block:"center"})` on arrival. Add it only if the A16 evidence shows slow renders, and say so.
-- **Heavy jobs.** At most one evidence pass or full suite at a time, under `/tmp/of-v002-heavy.lock`: `mkdir /tmp/of-v002-heavy.lock` (retry while it exists; write your pid inside), and remove it when done. Never write sleep or wait loops on other agents' processes.
-- **Git.** Merge, never rebase. Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never merge a PR.
+- **No shared heavy-job lock.** There is no `/tmp/of-v002-heavy.lock`. Browser evidence still goes through the evidence harness's own `run.sh` lock. Never write sleep or wait loops on other agents' processes.
+- **Git.** Merge, never rebase. Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never merge a PR; Or merges the stack.
+- **PRs.** Each of the three PRs opens **ready for review, not draft**, only after its final review's findings are fixed and CI is green. Base is the previous branch of the stack: `i5/1-library-skills` → `i3/claude-sign-in`, `i5/2-plugins` → `i5/1-library-skills`, `i5/3-polish-docs` → `i5/2-plugins`.
 
 ## Branches
 
-All work happens in the worktree `/Users/orlevi/projects/open-factory/.worktrees/spec-i5`.
+All work happens in the worktree `/Users/orlevi/projects/open-factory/.worktrees/spec-i5`. `spec/i5-skills-and-plugins` already merges `origin/i3/claude-sign-in` (I4, I6, I1, I2 and I3 implemented; I3 is PR #185).
 
-- **Part A, `i5/1-library-skills`:** cut from `spec/i5-skills-and-plugins`, after merging in the latest I3 branch on origin (`i3/claude-sign-in` if it exists, else `spec/i3-claude-sign-in`).
-- **Part B, `i5/2-plugins`:** cut from `i5/1-library-skills`. Its implementation (B2 onwards) **waits for Or's Gate G1 result** (Task B1).
+- **Part A, `i5/1-library-skills`:** cut from `spec/i5-skills-and-plugins`, after merging the latest `origin/i3/claude-sign-in` again.
+- **Part B, `i5/2-plugins`:** cut from `i5/1-library-skills`. Its implementation (B2 onwards) **waits for Or's Gate G1 result** (Task B1, a manual step for Or).
 - **Part C, `i5/3-polish-docs`:** cut from `i5/2-plugins`. Fold it into Part B if it is small.
 
 ```bash
 cd /Users/orlevi/projects/open-factory/.worktrees/spec-i5
 git fetch origin
-git merge --no-edit origin/i3/claude-sign-in 2>/dev/null || git merge --no-edit origin/spec/i3-claude-sign-in
+git merge --no-edit origin/i3/claude-sign-in
 git checkout -b i5/1-library-skills
 ```
 
-Before each push, merge the latest lower branch again (never rebase).
+Before each push, and before `pnpm db:generate` (A2, B3), merge the latest lower branch again (never rebase): a later I3 migration would take I5's number.
 
 **Commands:**
-- one file: `pnpm vitest run <path>`;
-- the whole suite: `pnpm test` (heavy; take the lock);
+- the files you touched: `pnpm vitest run <paths>`;
+- the whole suite, once per Part: `pnpm test`;
 - `pnpm typecheck`, `pnpm lint`, `pnpm build`;
-- migrations: `pnpm db:generate`.
+- migrations: `pnpm db:generate` (migrations live in `packages/db/migrations/`; the last on the branch is `0020_superb_lyja.sql`, so A2 generates `0021_*` and B3 `0022_*` unless a later lower-branch merge added one).
 
 ## File map
 
@@ -108,12 +117,13 @@ Before each push, merge the latest lower branch again (never rebase).
 
 | File | Purpose | Part |
 |---|---|---|
-| `library.ts` (new) | Patterns, reserved names, `OFFICIAL_MARKETPLACES`, input normalisers (`normalizeRepo`, `normalizeSubpath`, `checkBranchName`, `checkGitUrl`), schemas for every API in spec §9, `SkillGroup`, `SkillEntry`, `ROW_STATE_ORDER`, `cutGraphemes` | A (plugin schemas in B) |
-| `settings-keys.ts` (new) | `RESERVED_SETTINGS_KEYS`, `reservedKeysIn(settings, factoryEnvNames)` | A |
-| `config-changes.ts` (modify, from I2) | `describeChanges({doc, library}, {doc, library})`, the library lines, `summarizeChanges` counts | A (plugin lines in B) |
-| `templates.ts` (modify) | `plugins` removed; `PLUGIN_REF_PATTERN` | B |
+| `library.ts` (new) | Patterns (imports `HOST_SKILL_PATTERN` from `names.ts`), reserved names, `OFFICIAL_MARKETPLACES`, `PLUGIN_REF_PATTERN`, input normalisers (`normalizeRepo`, `normalizeSubpath`, `checkBranchName`, `checkGitUrl`), schemas for every API in spec §9, `SkillGroup`, `SkillEntry`, `ROW_STATE_ORDER`, `cutGraphemes` | A (plugin schemas in B) |
+| `settings-keys.ts` (new) | `RESERVED_SETTINGS_KEYS`, `reservedKeysIn(settings)` (uses `isFactoryEnvName`) | A |
+| `config-changes.ts` (modify, from I2) | `describeDocChanges(a, b)` (today's doc-only body), `describeChanges({doc, library}, {doc, library})`, the library lines, `summarizeChanges` counts | A (plugin lines in B) |
+| `templates.ts` (modify) | `PLUGIN_REF` deleted (A1, replaced by `PLUGIN_REF_PATTERN`); `plugins`, `PLUGIN_REF_MSG` and `pluginRef` removed (B8) | A, B |
+| `config.ts` (modify, from I2/I6) | host-skills schema and `HOST_SKILL_DESCRIPTION_MAX` deleted (A8); `FACTORY_ENV_NAMES` gains the seed names (B7); `overlayTemplateSchema.plugins` removed (B8) | A, B |
 | `ws.ts` (modify) | `{ type: "library_changed" }` | A |
-| `messages.ts` (modify) | I4 `MSG` constants from spec §10.4 | A |
+| `messages.ts` (modify) | I4 `MSG` constants from spec §10.4 that the server returns | A |
 | `index.ts` | exports | A, B |
 
 **DB (`packages/db/src/schema/`)**
@@ -126,8 +136,8 @@ Before each push, merge the latest lower branch again (never rebase).
 
 | File | Purpose | Part |
 |---|---|---|
-| `redact.ts` (new; moved from `workspace/plugins.ts`) | `redactOutput` | A |
-| `config.ts` | `hostClaudeDir` replaces `hostSkillsDir`; `githubUrl` | A |
+| `redact.ts` (new; moved from `workspace/plugins.ts`) | `redactOutput`, `capOutput`, `OUTPUT_MAX_LINES`, `OUTPUT_MAX_BYTES` | A |
+| `config.ts` | `hostClaudeDir` replaces `hostSkillsDir`; `githubUrl`; `FACTORY_HOST_SKILLS_DIR` joins the `REMOVED_ENV` boot warning | A |
 | `library/git.ts` (new) | `runGit`, `GIT_FLAGS`, `gitEnv` | A |
 | `library/git-fetch.ts` (new) | `resolveRef`, `fetchCommit`, `checkoutSize`, `treeShas`, `installCheckout` | A |
 | `library/skill-md.ts` (new) | `readSkillMd(dir)` → `{ name?, description?, hooks[] }` (O_NOFOLLOW, 64 KB) | A |
@@ -136,31 +146,42 @@ Before each push, merge the latest lower branch again (never rebase).
 | `library/sources-service.ts` (new) | preview, add, find, check, update, fetch, remove, restore, purge | A |
 | `library/locks.ts` (new) | `libraryLock` (KeyedMutex), `storeLock` (RwLock, B) | A, B |
 | `library/library-sweep.ts` (new) | previews > 1 h, soft-delete purge, boot purge | A |
-| `library/claude-flags.ts` (new) | `CLAUDE_PLUGIN_FLOOR`, `AUTO_UPDATE_ENV`, `checkClaudeVersion` | B |
+| `library/claude-flags.ts` (new) | `AUTO_UPDATE_ENV`, `assertPluginFloor` (on the harness's `checkClaudeVersion`), `checkImageClaudeVersion`, `versionCheckEnv` (moved from `agents/runtimes.ts`) | B |
 | `library/store-runner.ts` (new) | `StoreRunner.run(args, { op })` | B |
 | `library/plugin-store.ts` (new) | `installed()`, `marketplaceIndex()`, `install`, `updatePreview`, `update`, journal, provenance | B |
 | `library/marketplaces-service.ts` (new) | preview, add, boot repair, `assertMarketplacePinned`, check, update, remove | B |
 | `library/plugin-contents.ts` (new) | `readContents(root)` | B |
 | `library/host-plugins.ts` (new) | `HostPlugins.list()`, `installInFactory` | B |
 | `library/plugin-settings.ts` (new) | `buildPluginSettings(closure, store, registry)` → the `--settings` JSON | B |
-| `workspace/links.ts` | `resolveSkills`, prefix set, `.claude-plugin` check | A |
+| `workspace/links.ts` | `resolveSkills` (replaces `resolveHostSkills`), prefix set, `.claude-plugin` check | A |
 | `workspace/agent-folders.ts` (new) | `scrubAgentFolders`, `checkProjectSettings`, `checkAgentFrontmatter` | A |
-| `workspace/mounts.ts` | `skillPaths`; the GitHub-skill class (A); `storeDir` and the store class (B) | A, B |
-| `workspace/workspace.ts` | `prepare` steps from spec §7.3; per-agent installs deleted (B) | A, B |
-| `workspace/settings.ts` | `buildSettings` loses plugin keys (B) | B |
+| `workspace/mounts.ts` | `skillPaths`; the GitHub-skill class (A); `storeDir` and the store class, `declaredMarketplaceDirs` replaced (B) | A, B |
+| `workspace/workspace.ts` | takes `library: LibraryIndex` instead of `hostSkillsDir`; `materialize` and `prepare` steps from spec §7.3; `ensurePlugins` deleted (B) | A, B |
+| `workspace/paths.ts` | `pluginsConfigDir` deleted (B) | B |
+| `workspace/settings.ts` | `buildSettings` loses `pluginKeys` and `plugins` (B) | B |
 | `workspace/plugins.ts` | deleted (B) | B |
-| `templates/validate.ts` (I2's `validateEffective`) | spec §6.6 and §7.4 rules | A, B |
-| `agents/config-resolver.ts`, `agents/config-changes.ts` (from I2) | `Effective.library`; `libraryChanged` | A |
-| `runtime/runtime-spec.ts` | `FACTORY_ENV_NAMES` additions; `--settings` arg; seed env | B |
+| `templates/validate.ts` (I2's `validateEffective`) | spec §6.6 and §7.4 rules; `ValidationContext.library` replaces `hostSkillsDir` | A, B |
+| `templates/template-index.ts` | `context()` passes `library`; rescans on `libraryChanged` | A |
+| `agents/config-resolver.ts`, `agents/config-changes.ts` (from I2) | `Effective.library`; `currentEffective` port; `libraryChanged`; `Effective.templatePlugins` deleted (B) | A, B |
+| `agents/agent-runtime.ts`, `agents/runtimes.ts` | `requestRestart` compares `{doc, library}` | A |
+| `agents/runtime-spec.ts` | `buildAgentEnv` adds the seed and auto-update env; passes `settingsJson` | B |
+| `packages/harness/src/types.ts`, `packages/harness/src/claude/args.ts` | `AgentRuntimeSpec.settingsJson`; `buildClaudeArgs` pushes `--settings` | B |
+| `packages/harness/src/claude/version.ts` | `MIN_CLAUDE_VERSION` becomes the one floor (G1) | B |
 | `routes/library.ts` (new) | spec §9 routes, `requireUser` only | A, B |
-| `routes/host-skills.ts` (from I2) | deleted | A |
+| `routes/host-skills.ts` (from I2) | deleted (its `skillDescription` moves to `library/skill-md.ts`) | A |
 | `app.ts` | wiring, sweeps, boot repair | A, B |
 
 **Web (`apps/web/src/`)**
 
 | File | Purpose | Part |
 |---|---|---|
-| `lib/library.ts` (new) | query options, `libraryChanged` invalidation | A |
+| `lib/library.ts` (new) | query options (A8), `onLibraryChanged` coalesced invalidation (A11) | A |
+| `routes/_app.tsx` | `onMessage` calls `onLibraryChanged` | A |
+| `routes/_app/agents.$slug_.config.tsx`, `routes/_app/templates.$name.tsx` | non-awaited `libraryQueryOptions` prefetch | A |
+| `features/config/api.ts` | `hostSkillsQueryOptions` deleted | A |
+| `components/elapsed.tsx` (moved from `features/session/activity-line.tsx`) | `Elapsed` with `hideUnderMs` | A |
+| `lib/row-nav.ts` | rows selected by `data-row` | A |
+| `features/skills/use-held.ts` (new) | `useHeldWhileInside` | B |
 | `routes/_app/skills.tsx`, `skills.index.tsx` (new); `skills.plugins.tsx`, `skills.marketplaces.tsx` (B) | routes | A, B |
 | `features/skills/skills-header.tsx` | header, Check for updates outcome | A |
 | `features/skills/skill-list.tsx`, `source-header.tsx`, `row-state.tsx` | lists and states | A |
@@ -172,9 +193,10 @@ Before each push, merge the latest lower branch again (never rebase).
 | `components/untrusted-text.tsx` (new) | `UntrustedCode`, `UntrustedProse`, `visibleControls()` | A |
 | `components/ui/combobox.tsx` | a `multiple` mode | A |
 | `components/ui/checkbox.tsx` | disabled shapes (decision 21) | A |
-| `features/config/sections/skills-plugins.tsx` (from I2) | Library pickers | A (plugins B) |
-| `components/app-sidebar.tsx`, `features/shortcuts/global-shortcuts.tsx`, `shortcuts-sheet.tsx`, palette Go to | nav, `g k` | A |
-| `features/sheets/sheet-bodies.ts` | `add-skills`, `add-marketplace` kinds | A, B |
+| `features/config/skills-section.tsx`, `config-list.tsx`, `pick-add.tsx`, `fields.ts` (from I2) | Library pickers | A (plugins B) |
+| `components/app-sidebar.tsx`, `features/shortcuts/global-shortcuts.tsx`, `shortcuts-sheet.tsx`, `features/palette/rank.ts` (`GO_TO`) | nav, `g k` (free) | A |
+| `features/sheets/sheet-store.ts`, `sheet-bodies.ts` | `add-skills`, `add-marketplace` kinds | A, B |
+| `features/agents/agent-form-state.ts`, `show-output.tsx` | per-agent install output deleted | B |
 
 ---
 
@@ -190,15 +212,16 @@ Implements spec §2 AC 1–7, §5, §6, §7.3 step 3, §7.10, §8 (skills), §9.
 
 **Files:**
 - Create: `packages/shared/src/library.ts`, `packages/shared/src/settings-keys.ts`
-- Modify: `packages/shared/src/ws.ts`, `packages/shared/src/messages.ts`, `packages/shared/src/index.ts`
-- Test: `packages/shared/src/library.test.ts`, `packages/shared/src/settings-keys.test.ts`, `packages/shared/src/ws.test.ts`
+- Modify: `packages/shared/src/ws.ts`, `packages/shared/src/messages.ts`, `packages/shared/src/index.ts`, `packages/shared/src/templates.ts` (delete `PLUGIN_REF`; `pluginRef` uses `PLUGIN_REF_PATTERN` until B8), `apps/web/src/lib/form-messages.ts` (the web-only §10.4 lines)
+- Test: `packages/shared/src/library.test.ts`, `packages/shared/src/settings-keys.test.ts`, `packages/shared/src/ws.test.ts`, `packages/shared/src/messages.test.ts`, `apps/web/src/lib/form-messages.test.ts`
 
 **Interfaces (produces):**
 
 ```ts
 export const MARKETPLACE_PATTERN: RegExp; export const RESERVED_MARKETPLACES: readonly string[];
 export const OFFICIAL_MARKETPLACES: Record<string, { source: "github"; repo: string }>;
-export const PLUGIN_REF_PATTERN: RegExp;
+export const PLUGIN_REF_PATTERN: RegExp;  // the one plugin-ref pattern; templates.ts's PLUGIN_REF is deleted
+// HOST_SKILL_PATTERN is imported from ./names.ts (hostSkillSchema), never redefined
 export function normalizeRepo(input: string): { owner: string; repo: string } | null;  // owner/repo or https://github.com/o/r[.git]
 export function normalizeSubpath(input: string): string | null;  // "" ok; refuses ".", "..", absolute
 export function checkBranchName(b: string): boolean;              // git ref-format rules in TS, refuses "@{", "..", ctrl, ~^:?*[\, leading "-", ".lock"
@@ -209,7 +232,7 @@ export type RowState = "adding" | "installing" | "checking" | "add_failed" | "in
 export const skillSourcePreviewBodySchema, skillSourceAddBodySchema, skillGroupsResponseSchema, skillDetailSchema, sourceDetailSchema;  // spec §9.1–§9.2
 // settings-keys.ts
 export const RESERVED_SETTINGS_KEYS: readonly string[];  // dotted paths, spec §7.10
-export function reservedKeysIn(settings: unknown, factoryEnvNames: readonly string[]): string[];  // the dotted keys set, plus "env.<NAME>" hits
+export function reservedKeysIn(settings: unknown): string[];  // the dotted keys set, plus "env.<NAME>" for every name isFactoryEnvName (./config.ts) accepts: the list or the OPEN_FACTORY_ prefix
 ```
 
 - [ ] **Step 1: Write failing tests.** In `library.test.ts`:
@@ -223,7 +246,7 @@ export function reservedKeysIn(settings: unknown, factoryEnvNames: readonly stri
 
   In `settings-keys.test.ts`:
   - every key listed in spec §7.10 is present;
-  - `reservedKeysIn({ hooks: {}, permissions: { defaultMode: "x" }, env: { CLAUDE_CODE_PLUGIN_SEED_DIR: "/x", FOO: "1" } }, ["CLAUDE_CODE_PLUGIN_SEED_DIR"])` returns `["env.CLAUDE_CODE_PLUGIN_SEED_DIR", "hooks", "permissions.defaultMode"]` (sorted).
+  - `reservedKeysIn({ hooks: {}, permissions: { defaultMode: "x" }, env: { OPEN_FACTORY_URL: "/x", FOO: "1" } })` returns `["env.OPEN_FACTORY_URL", "hooks", "permissions.defaultMode"]` (sorted), and an `env` name from `FACTORY_ENV_NAMES` is reported too. (The seed names join `FACTORY_ENV_NAMES` in B7.)
 
   In `ws.test.ts`: `library_changed` parses.
 - [ ] **Step 2: Run** `pnpm vitest run packages/shared/src/library.test.ts packages/shared/src/settings-keys.test.ts packages/shared/src/ws.test.ts`. Expected: FAIL (modules missing).
@@ -231,15 +254,16 @@ export function reservedKeysIn(settings: unknown, factoryEnvNames: readonly stri
   - `RESERVED_SETTINGS_KEYS` holds the spec §7.10 list verbatim: `enabledPlugins`, `extraKnownMarketplaces`, `syncClaudeAiPlugins`, `strictKnownMarketplaces`, `permissions.defaultMode`, `permissions.additionalDirectories`, `claudeMdExcludes`, `hooks`, `statusLine`, `fileSuggestion`, `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh` and `otelHeadersHelper`.
   - Before committing, re-read the shipped Claude Code's settings reference (`curl -sL https://code.claude.com/docs/en/settings-reference.md`, reading only). Add any other key marked "Any file" that runs a command or executable, then pin the list in the test.
   - Add a doc comment saying that I7's `agent` policy reuses this constant.
-  - Add the spec §10.4 messages to `MSG`.
-- [ ] **Step 4: Run** the same command. Expected: PASS. Also run `pnpm vitest run packages/shared/src/messages.test.ts` (I4's length tests).
+  - Add the spec §10.4 messages: field messages the server returns ("Can't share your home folder.", "No such branch." …) to shared `MSG`; web-only outcome and load lines ("Couldn't load skills." …) to `FORM_MSG` in `apps/web/src/lib/form-messages.ts`. Reuse `MSG.hostPathStart`, `FIELD_MSG.noFolder` and `FORM_MSG.enterPath` for the folder path instead of adding near-duplicates.
+  - Delete `PLUGIN_REF` from `templates.ts`; `pluginRef` uses `PLUGIN_REF_PATTERN` until B8 removes it.
+- [ ] **Step 4: Run** the same command plus `pnpm vitest run packages/shared/src/messages.test.ts apps/web/src/lib/form-messages.test.ts` (I4's length tests). Expected: PASS.
 - [ ] **Step 5: Commit** `feat(shared): Library schemas, patterns and reserved settings keys`.
 
 ### Task A2: `skill_sources` table and config rename
 
 **Files:**
-- Create: `packages/db/src/schema/library.ts`, the generated migration
-- Modify: `packages/db/src/schema/index.ts`, `apps/server/src/config.ts`, `apps/server/src/config.test.ts`, `README.md`, `.env.example`, `apps/server/scripts/smoke-*.ts` (8 files), `apps/server/src/test/helpers.ts`, and every `hostSkillsDir` use
+- Create: `packages/db/src/schema/library.ts`, the generated migration (`packages/db/migrations/0021_*.sql` on today's branch; merge the latest `origin/i3/claude-sign-in` first)
+- Modify: `packages/db/src/schema/index.ts`, `apps/server/src/config.ts`, `apps/server/src/config.test.ts`, `README.md`, `.env.example`, `apps/server/scripts/smoke-*.ts` (8 files; e.g. `smoke-workspace.ts` creates `host-skills/<name>`), `apps/server/src/test/helpers.ts`, and every `hostSkillsDir` use, including the tests that write skills under it: `routes/agents.test.ts`, `routes/host-skills.test.ts` (deleted in A8), `templates/validate.test.ts`, `templates/template-index.test.ts`, `runtime/docker/docker.int.test.ts`, `workspace/workspace.test.ts`, `workspace/hardening.test.ts`, `workspace/plugins.test.ts`, `agents/start.test.ts`, `agents/start.docker.test.ts`, and `scripts/smoke-harness.ts`
 - Test: `apps/server/src/config.test.ts`, `packages/db/src/schema/library.test.ts`
 
 **Interfaces (produces):**
@@ -248,13 +272,15 @@ export function reservedKeysIn(settings: unknown, factoryEnvNames: readonly stri
 - the `skillSources` Drizzle table with exactly the spec §5.1 columns, plus `state: "ready" | "adding"` and `startedAt`, so a GitHub add that must re-fetch can show a pending header (spec §10.4).
 
 - [ ] **Step 1: Write failing tests.**
-  - `config.test.ts`: `FACTORY_HOST_CLAUDE_DIR: "~/c"` gives `hostClaudeDir === join(home, "c")`, and `FACTORY_HOST_SKILLS_DIR` is no longer read (an env holding only it leaves the default).
+  - `config.test.ts`: `FACTORY_HOST_CLAUDE_DIR: "~/c"` gives `hostClaudeDir === join(home, "c")`; `FACTORY_HOST_SKILLS_DIR` is no longer read (an env holding only it leaves the default), and `removedEnvWarnings` returns "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder." for it.
   - `library.test.ts` (schema, CI only): insert, then read back, a GitHub row with `skills: ["a"]` and `trees`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/config.test.ts`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-  - Rename the config field and fix every user: grep `hostSkillsDir|FACTORY_HOST_SKILLS_DIR` and update the 8 smoke scripts, the test helpers, `.env.example` and the README row. There is no warning for the old name (ADR 0028).
-  - Add the table, then run `pnpm db:generate`.
-- [ ] **Step 4: Run** `pnpm vitest run apps/server/src/config.test.ts` and `pnpm typecheck`. Expected: PASS. The schema test runs in CI.
+  - Rename the config field and fix every user: grep `hostSkillsDir|FACTORY_HOST_SKILLS_DIR` and update the smoke scripts, the test helpers, the tests listed above, `.env.example` and the README row.
+  - `makeTestApp` sets `FACTORY_HOST_CLAUDE_DIR` to a temp dir and creates `<dir>/skills/`. Every test and smoke script that wrote `<hostSkillsDir>/<name>` now writes `<hostClaudeDir>/skills/<name>`. For tests, `makeTestApp` returns `hostSkillsDir: path.join(config.hostClaudeDir, "skills")`; `Config` itself has no `hostSkillsDir`.
+  - Use the S10 precedent for the old name: `REMOVED_ENV` in `config.ts` becomes a record of name → message, and `FACTORY_HOST_SKILLS_DIR` maps to "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder." It is a boot warning only; nothing reads the old variable (ADR 0028: no shim). The variable changes meaning (the skills folder becomes its parent), so the warning is worth its one line.
+  - Add the table, merge the latest lower branch, then run `pnpm db:generate`.
+- [ ] **Step 4: Run** `pnpm vitest run apps/server/src/config.test.ts` and `pnpm typecheck` (a rename; finds the callers). Expected: PASS. The schema test runs in CI.
 - [ ] **Step 5: Commit** `feat: skill_sources table; FACTORY_HOST_CLAUDE_DIR replaces FACTORY_HOST_SKILLS_DIR`.
 
 ### Task A3: `redact.ts` and the hardened `runGit`
@@ -263,8 +289,8 @@ Implements spec §6.2 Runner.
 
 **Files:**
 - Create: `apps/server/src/redact.ts`, `apps/server/src/library/git.ts`
-- Modify: `apps/server/src/workspace/plugins.ts` (import `redactOutput` from `../redact.ts`)
-- Test: `apps/server/src/library/git.test.ts`, `apps/server/src/redact.test.ts` (move the existing redaction cases)
+- Modify: `apps/server/src/workspace/plugins.ts` and `apps/server/src/workspace/workspace.ts` (import `redactOutput`, `capOutput` from `../redact.ts`). Move `redactOutput`, `capOutput`, `OUTPUT_MAX_LINES` and `OUTPUT_MAX_BYTES` together; "last 20 lines, at most 4 KB" below is `capOutput`. Leave I3's transcript-specific `apps/server/scripts/sign-in-redact.ts` alone.
+- Test: `apps/server/src/library/git.test.ts`, `apps/server/src/redact.test.ts` (move the existing redaction cases out of `workspace/plugins.test.ts`)
 
 **Interfaces (produces):**
 
@@ -283,7 +309,7 @@ export async function runGit(args: string[], o: { cwd: string; allowFile: boolea
   - A command that sleeps past `timeoutMs` is killed.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/library/git.test.ts`. Expected: FAIL.
 - [ ] **Step 3: Implement** with `execFile` (never a shell). The cwd is `mkdtemp(tmpdir(), "of-git-")`, removed in `finally` when `runGit` created it. Keep the last 20 lines, at most 4 KB, redacted.
-- [ ] **Step 4: Run** the test, plus `pnpm vitest run apps/server/src/redact.test.ts`. Expected: PASS.
+- [ ] **Step 4: Run** the test, plus `pnpm vitest run apps/server/src/redact.test.ts apps/server/src/workspace/plugins.test.ts`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(server): hardened git runner and shared redaction`.
 
 ### Task A4: GitHub fetch into the cache
@@ -333,8 +359,11 @@ Implements spec §5.2, §5.3 and §6.6.
 ```ts
 export async function readSkillMd(dir: string): Promise<{ name?: string; description?: string; hooks: HookDecl[] } | null>;  // O_NOFOLLOW, 64 KB
 export type ResolveFail = "not_added" | "missing" | "hidden" | "unusable";
+// TemplateIndex validates through the Library (A9) and LibraryIndex reads template groups, so the
+// template side is a lazy port, wired in app.ts after both exist (no construction cycle).
+export type TemplatesPort = Pick<TemplateIndex, "names" | "localSkillsOf" /* + whatever usedBy needs */>;
 export class LibraryIndex {
-  constructor(d: { db; hostClaudeDir: string; factoryHome: string; templates: TemplateIndex });
+  constructor(d: { db; hostClaudeDir: string; factoryHome: string; templates: () => TemplatesPort });
   skills(): Promise<SkillGroup[]>;  // spec §5.3 order: host, sources, template groups, unknown
   resolveSkill(name: string): Promise<{ ok: true; name: string; dir: string; ref: string } | { ok: false; reason: ResolveFail; detail?: string }>;
   usedBy(name: string): Promise<{ templates: string[]; agents: string[] }>;
@@ -352,7 +381,7 @@ export class LibraryIndex {
   - a description longer than 200 characters is cut with "…";
   - `readSkillMd` refuses a symlinked `SKILL.md` and parses frontmatter `hooks`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/library/skill-md.test.ts apps/server/src/library/library-index.test.ts`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Use the `yaml` package (already a dependency) for frontmatter. Discovery is live on every call, with no cache.
+- [ ] **Step 3: Implement.** Use the `yaml` package (already a dependency) for frontmatter. Discovery is live on every call, with no cache. Move `skillDescription()` from `routes/host-skills.ts` into `readSkillMd` (so A8's delete loses nothing), and `cutGraphemes` with the 200 limit replaces `HOST_SKILL_DESCRIPTION_MAX`. Use `HOST_SKILL_PATTERN` from `packages/shared/src/names.ts`.
 - [ ] **Step 4: Run.** Expected: PASS (`usedBy` in CI).
 - [ ] **Step 5: Commit** `feat(server): LibraryIndex with live discovery and the unusable rules`.
 
@@ -368,8 +397,8 @@ Implements spec §6.1 (folder check) and §6.5 (only the GitHub-skill class in P
 **Interfaces (produces):**
 - `forbiddenSet(ctx: { home: string; factoryHome: string; dockerSockets: string[] }): Promise<{ path: string; name: string }[]>`
 - `checkSkillFolder(real: string, ctx): Promise<void>`, which throws `FieldError("path", MSG.shareHome | MSG.shareFactory | MSG.shareFolder)`
-- `buildMounts({ …, skillPaths: string[] })`, replacing `hostSkillPaths`
-- `MountCheckContext.factoryHome` used for the class `join(realpath(<FH>/state/library/github), id, sha[, name])`, with an lstat walk from `<FH>/state`
+- `buildMounts({ …, skillPaths: string[] })`, replacing `hostSkillPaths` (in both `buildMounts` and `MountCheckContext`)
+- `MountCheckContext.factoryHome` (already there) used for the class `join(realpath(<FH>/state/library/github), id, sha[, name])`, with an lstat walk from `<FH>/state`
 
 - [ ] **Step 1: Write failing tests** (default layout with `FACTORY_HOME` under a temp `HOME`):
   - `checkSkillFolder` refuses `~`, an ancestor of `~`, `FACTORY_HOME/x` and an ancestor of `FACTORY_HOME`, and allows `~/code/skills`;
@@ -395,9 +424,9 @@ Implements spec §6.1, §6.3, §9.2, §9.4 and §9.6.
 **Interfaces (produces):**
 
 ```ts
-export const libraryLock: KeyedMutex;  // own instance
+export const libraryLock: KeyedMutex;  // own instance of KeyedMutex from apps/server/src/workspace/lock.ts
 export class SourcesService {
-  preview(b: SkillSourcePreviewBody, by: string): Promise<SourcePreview>;  // folder: resolveHostFolder + checkSkillFolder; github: resolveRef + fetchCommit into state/library/preview/<uuid>/
+  preview(b: SkillSourcePreviewBody, by: string): Promise<SourcePreview>;  // folder: resolveHostFolder (apps/server/src/host-path.ts) + checkSkillFolder; github: resolveRef + fetchCommit into state/library/preview/<uuid>/
   add(b: SkillSourceAddBody, by: string): Promise<{ status: 201 | 202; source: SourceDetail }>;  // libraryLock; re-check names/states; move preview or re-fetch (202, state "adding")
   find(id: string): Promise<SourcePreview>; addSkills(id: string, skills: string[], by: string): Promise<SourceDetail>;
   check(id: string): Promise<SourceDetail>;                 // ls-remote; preview fetch; update* or checkError
@@ -425,9 +454,9 @@ After `update` and `restore` release `libraryLock`, they call `configChanges.lib
   - restore works within 30 s, is refused after 30 s, and is refused once a name has been taken;
   - boot purge removes rows past their window; a cache dir referenced by a loaded runtime is kept;
   - `checkAll` never runs more than 4 at once (a fake `runGit` counts concurrency).
-- [ ] **Step 2: Run** `pnpm typecheck`. Expected: FAIL (the service is missing). The DB tests run in CI.
+- [ ] **Step 2: Run** `pnpm vitest run` on the pure parts of the new test files (the DB parts run in CI). Expected: FAIL (the service is missing).
 - [ ] **Step 3: Implement.** The lock order is workspace → Library → store, and the code holding `libraryLock` never awaits a runtime job.
-- [ ] **Step 4: Run** `pnpm typecheck` (PASS), then push to read CI.
+- [ ] **Step 4: Run** the same files (PASS), then push to read CI.
 - [ ] **Step 5: Commit** `feat(server): skill sources with pins, updates, Undo and sweeps`.
 
 ### Task A8: Library routes; delete `/api/host-skills`
@@ -436,10 +465,17 @@ Implements spec §9.1, §9.2, §9.4, §9.5 and §11.1.
 
 **Files:**
 - Create: `apps/server/src/routes/library.ts`
-- Delete: `apps/server/src/routes/host-skills.ts` and its test (from I2)
-- Modify (web; implementer and reviewer invoke `vercel-react-best-practices` and follow it): I2's host-skills reader in `apps/web/src/features/config/` is switched to `libraryQueryOptions` here, so `/api/host-skills` has no web caller left (A14 then replaces the picker itself)
+- Delete: `apps/server/src/routes/host-skills.ts` and its test (from I2); `hostSkillsResponseSchema`, `HostSkillsResponse` and `HOST_SKILL_DESCRIPTION_MAX` in `packages/shared/src/config.ts`
+- Create (web): `apps/web/src/lib/library.ts` with the query options only (`libraryQueryOptions`, `skillQueryOptions(group, name)`, `sourceQueryOptions(id)`); A11 adds `onLibraryChanged` to it.
+- Modify (web; the plan is already React-compliant; follow it as written and report any deviation):
+  - `apps/web/src/features/config/api.ts`: delete `hostSkillsQueryOptions`;
+  - `apps/web/src/features/config/skills-section.tsx`: `SkillPicker` reads `libraryQueryOptions` (host group only, until A14 replaces the picker);
+  - `apps/web/src/routes/_app/agents.$slug_.config.tsx`: `void qc.prefetchQuery(libraryQueryOptions)` replaces the host-skills prefetch;
+  - `apps/web/src/routes/_app/templates.$name.tsx`: add the same non-awaited prefetch (R-B1).
+
+  After this, `/api/host-skills` has no caller.
 - Modify: `apps/server/src/app.ts` (registration, `LibrarySweep`, the `library_changed` publish)
-- Test: `apps/server/src/routes/library.test.ts` (CI)
+- Test: `apps/server/src/routes/library.test.ts` (CI), `apps/web/src/features/config/sections.test.tsx` and `apps/web/src/test/agent-config-page.test.tsx` (mock `/api/library/skills` instead of `/api/host-skills`)
 
 **Interfaces (produces):**
 - `GET /api/library/skills`
@@ -460,9 +496,9 @@ All of them are `requireUser` only. Every write publishes `{ type: "library_chan
   - the file route refuses a link, a binary file and a path outside the skill;
   - a write publishes `library_changed`;
   - `/api/host-skills` is 404.
-- [ ] **Step 2: Run** `pnpm typecheck`. Expected: FAIL.
+- [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/config/sections.test.tsx apps/web/src/test/agent-config-page.test.tsx`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Responses are parsed with the shared schemas. Field errors use I4's `fields` shape.
-- [ ] **Step 4: Run** `pnpm typecheck` (PASS). CI covers the rest.
+- [ ] **Step 4: Run** the same files and `pnpm typecheck` (deleted exports; finds the callers). Expected: PASS. CI covers the route tests.
 - [ ] **Step 5: Commit** `feat(server): Library routes for skills; drop host-skills`.
 
 ### Task A9: Effective library, validation, linking, start checks, change flow
@@ -472,14 +508,19 @@ Implements spec §6.4, §6.6, §7.3 step 3, §7.10, §8 and AC 5–7.
 **Files:**
 - Create: `apps/server/src/workspace/agent-folders.ts`
 - Modify:
-  - `apps/server/src/workspace/links.ts`;
-  - `apps/server/src/workspace/workspace.ts` (`prepare`);
-  - `apps/server/src/templates/validate.ts` (`validateEffective`);
+  - `apps/server/src/workspace/links.ts` (`resolveHostSkills` deleted; `linkSkills`'s `host: {dir, skills}` param becomes `library: {name, dir}[]`, with prefixes from `LibraryIndex`: host `skills/`, each folder source, the GitHub cache root);
+  - `apps/server/src/workspace/workspace.ts`: `Workspace` takes `library: LibraryIndex` instead of `hostSkillsDir`; both `materialize` (check-only, at create) and `prepare` use `resolveSkills(lib, names)`;
+  - `apps/server/src/templates/validate.ts` (`validateEffective`; `ValidationContext.hostSkillsDir` → `library: Pick<LibraryIndex, "resolveSkill">`);
+  - `apps/server/src/templates/template-index.ts` (`context()` passes `library`; `rescan()` on `libraryChanged`, so stored template issues don't go stale);
+  - `apps/server/src/agents/agent-service.ts` (the `overlayIssues` ctx);
   - `apps/server/src/agents/config-resolver.ts`, `apps/server/src/agents/config-changes.ts`;
-  - `packages/shared/src/config-changes.ts`.
+  - `apps/server/src/agents/agent-runtime.ts` (`requestRestart`: `current` returns `{doc, library}` and is compared with `this.started` as `{doc, library}`), `apps/server/src/agents/runtimes.ts` (`requestRestart` passthrough);
+  - `apps/server/src/app.ts` (construct `LibraryIndex` with a lazy `templates` port, then `TemplateIndex` with it, then `Workspace` with `library`), `apps/server/scripts/smoke-harness.ts`;
+  - `packages/shared/src/config-changes.ts`;
+  - `apps/web/src/features/config/config-page.tsx` (its pre-save restart summary calls `describeDocChanges`).
 - Test:
-  - `apps/server/src/workspace/agent-folders.test.ts`, `apps/server/src/workspace/links.test.ts`;
-  - `apps/server/src/templates/validate.test.ts`;
+  - `apps/server/src/workspace/agent-folders.test.ts`, `apps/server/src/workspace/links.test.ts`, `apps/server/src/workspace/workspace.test.ts`;
+  - `apps/server/src/templates/validate.test.ts`, `apps/server/src/templates/template-index.test.ts` (their ctx gains `library`);
   - `packages/shared/src/config-changes.test.ts`;
   - `apps/server/src/agents/config-changes.test.ts` (CI).
 
@@ -488,7 +529,7 @@ Implements spec §6.4, §6.6, §7.3 step 3, §7.10, §8 and AC 5–7.
 ```ts
 // agent-folders.ts
 export async function scrubAgentFolders(workdir: string): Promise<void>;            // empty .claude-config/{skills,agents,commands} via SafeFs
-export async function checkProjectSettings(workdir: string, envNames: readonly string[]): Promise<void>;  // .claude/settings.json + settings.local.json; lstat; link fails; reservedKeysIn → WorkspaceError naming file and key
+export async function checkProjectSettings(workdir: string): Promise<void>;  // .claude/settings.json + settings.local.json; lstat; link fails; reservedKeysIn → WorkspaceError naming file and key
 export async function checkAgentFrontmatter(workdir: string, factoryLinks: Set<string>): Promise<void>;   // non-factory .claude/skills/*/SKILL.md hooks; .claude/agents/*.md hooks|mcpServers; .claude/commands/*.md hooks
 export async function checkSkillPlugins(workdir: string): Promise<void>;           // every .claude/skills entry: stat(<entry>/.claude-plugin) → fail
 // links.ts
@@ -496,16 +537,22 @@ export async function resolveSkills(lib: LibraryIndex, names: string[]): Promise
 // config-resolver.ts: Effective gains
 library: { skills: Record<string, string>; plugins: Record<string, string> };  // plugins {} in PR 1
 // shared config-changes.ts
-export function describeChanges(a: { doc: ConfigDoc; library: Library }, b: { doc: ConfigDoc; library: Library }): string[];
+export function describeDocChanges(a: ConfigDoc, b: ConfigDoc): string[];  // today's describeChanges body, renamed; the web's pre-save summary uses it (no library client-side)
+export function describeChanges(a: { doc: ConfigDoc; library: Library }, b: { doc: ConfigDoc; library: Library }): string[];  // [...describeDocChanges, ...libraryLines], sorted
 // config-changes.ts (server)
-libraryChanged(e: { skills?: string[]; plugins?: string[]; by: string }): Promise<void>;
+libraryChanged(e: { skills?: string[]; plugins?: string[]; by: string }): Promise<void>;  // also triggers templates.rescan()
+// ConfigChangeAgents port: currentDoc() becomes currentEffective(): Promise<{ doc; library } | undefined>;
+// a new allLive() (or liveUsing(skills, plugins)) lists the runtimes libraryChanged must compare;
+// templateChanged/apply resolve both sides' library through LibraryIndex; runtimes.startedOf(id) is used whole, not .doc
 ```
+
+Every current caller of `describeChanges(ConfigDoc, ConfigDoc)` moves: `agents/agent-runtime.ts` (`requestRestart`), `agents/config-changes.ts` (`templateChanged` gate and `apply`) and `runtimes.startedOf(id)?.doc` take `{doc, library}`; the web `config-page.tsx` takes `describeDocChanges`.
 
 - [ ] **Step 1: Write failing tests.**
   - `agent-folders.test.ts`:
     - `settings.local.json` with `{ "hooks": {} }` fails with "….claude/settings.local.json sets hooks, which agents can't set; remove it.";
     - the test iterates **every** key in `RESERVED_SETTINGS_KEYS` for both files;
-    - `env.CLAUDE_CODE_PLUGIN_SEED_DIR` fails, and `env.FOO` passes;
+    - `env.OPEN_FACTORY_URL` and a `FACTORY_ENV_NAMES` entry fail, and `env.FOO` passes;
     - a link at `.claude/settings.json` fails;
     - an agent-written skill folder whose `SKILL.md` declares `hooks` fails, while a factory link to a Library skill with hooks passes;
     - `.claude/agents/a.md` with `hooks` fails, and so does one with `mcpServers`;
@@ -514,10 +561,11 @@ libraryChanged(e: { skills?: string[]; plugins?: string[]; by: string }): Promis
     - a `.claude/skills/x` link the agent made to a folder holding `.claude-plugin/` fails.
   - `links.test.ts`: the drop-unlisted pass removes links under every known prefix and leaves a real folder.
   - `validate.test.ts`: each §6.6 message, and the template-local collision in templates and overlays.
-  - `config-changes.test.ts` (shared): "skill x updated a1b2c3d → e4f5a6b", "skill x now from GitHub", and a library-only difference is non-empty.
-  - Server `config-changes.test.ts` (CI): a GitHub update writes `config_changed` and requests a restart only for agents using the skill, compared against `started.library`.
-- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/workspace/agent-folders.test.ts apps/server/src/workspace/links.test.ts apps/server/src/templates/validate.test.ts packages/shared/src/config-changes.test.ts`. Expected: FAIL.
-- [ ] **Step 3: Implement.** In `prepare`, the order is:
+  - `config-changes.test.ts` (shared): "skill x updated a1b2c3d → e4f5a6b", "skill x now from GitHub", a library-only difference is non-empty, and `describeDocChanges` equals today's doc-only output.
+  - `workspace.test.ts`: `materialize` refuses a skill the Library can't resolve, with the §6.6 message.
+  - Server `config-changes.test.ts` (CI): a GitHub update writes `config_changed` and requests a restart only for agents using the skill, compared against `started.library`; a template whose skill became `missing` shows the issue after `libraryChanged` (rescan).
+- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/workspace/agent-folders.test.ts apps/server/src/workspace/links.test.ts apps/server/src/workspace/workspace.test.ts apps/server/src/templates/validate.test.ts apps/server/src/templates/template-index.test.ts packages/shared/src/config-changes.test.ts`. Expected: FAIL.
+- [ ] **Step 3: Implement.** In `materialize`, skills are resolved and linked check-only, as today with host skills. In `prepare`, the order is:
   1. resolve and link skills;
   2. `checkSkillPlugins`;
   3. `scrubAgentFolders`;
@@ -526,12 +574,12 @@ libraryChanged(e: { skills?: string[]; plugins?: string[]; by: string }): Promis
   6. the rest as I2 has it.
 
   `Effective.library.skills` comes from `resolveSkill` refs.
-- [ ] **Step 4: Run.** Expected: PASS (the CI parts in CI).
+- [ ] **Step 4: Run** the same files and `pnpm typecheck` (signature changes; finds the callers). Expected: PASS (the CI parts in CI).
 - [ ] **Step 5: Commit** `feat(server): Library skills at start, reserved settings and frontmatter checks, library change flow`.
 
 ### Task A10: Web primitives: untrusted text, checkbox, multi Combobox
 
-Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+The plan is already React-compliant; follow it as written and report any deviation.
 
 **Files:**
 - Create: `apps/web/src/components/untrusted-text.tsx`
@@ -548,7 +596,8 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
   - the highlight moves to the next enabled option;
   - placement locks on the first pick;
   - never `aria-multiselectable`;
-  - the trigger is supplied by the caller (`trigger` prop);
+  - an optional `trigger` prop lets the caller supply the trigger; without it the existing `<button data-slot="combobox-trigger">` stays the default, since `PickAdd` and every current picker rely on it;
+  - the leave-out snapshot is taken in the existing open handler (`onOpen`), per R-C1;
 - `Checkbox` disabled shapes: unchecked is a rule box with a muted border, checked is an `ink-muted` fill, with no opacity.
 
 - [ ] **Step 1: Write failing tests.**
@@ -560,34 +609,38 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
     - the highlight is on the next option;
     - the listbox has no `aria-multiselectable`;
     - `announce` is called with "Added tdd".
-  - Checkbox: disabled + checked has no `opacity-50` class.
+  - Checkbox (new file `components/ui/checkbox.test.tsx`): disabled + checked has no `opacity-50` class (today's `disabled:opacity-50` goes).
+  - `UntrustedCode` builds on `components/code-text.tsx`'s mono styling if it fits, rather than duplicating its classes.
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/components/untrusted-text.test.tsx apps/web/src/components/ui/checkbox.test.tsx apps/web/src/components/ui/combobox.test.tsx`. Expected: FAIL.
-- [ ] **Step 3: Implement.** The single-value Combobox behaves exactly as before (existing tests keep passing). The live region is rendered by the caller, outside the popover.
+- [ ] **Step 3: Implement.** The single-value Combobox behaves exactly as before (run its existing test file). The live region is rendered by the caller, outside the popover. `renderOption` stays a module-level function at every call site (R-H1).
 - [ ] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(web): untrusted text, disabled checkbox shapes and a multi-pick Combobox mode`.
 
 ### Task A11: Skills route, header, nav, lists and states
 
-Implements spec §10.1, §10.2, §10.7 and §10.8 (skills). Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+Implements spec §10.1, §10.2, §10.7 and §10.8 (skills). The plan is already React-compliant; follow it as written and report any deviation.
 
 **Files:**
 - Create:
-  - `apps/web/src/lib/library.ts`;
   - `apps/web/src/routes/_app/skills.tsx`, `apps/web/src/routes/_app/skills.index.tsx`;
-  - `apps/web/src/features/skills/skills-header.tsx`, `skill-list.tsx`, `source-header.tsx`, `row-state.tsx`.
+  - `apps/web/src/features/skills/skills-header.tsx`, `skill-list.tsx`, `source-header.tsx`, `row-state.tsx`, `use-library-arrival.ts`;
+  - `apps/web/src/components/elapsed.tsx` (moved from `features/session/activity-line.tsx`, R-E1).
 - Modify:
-  - `apps/web/src/components/app-sidebar.tsx`;
-  - `apps/web/src/features/shortcuts/global-shortcuts.tsx`, `shortcuts-sheet.tsx`;
-  - the palette Go to group;
-  - `apps/web/src/lib/ws.ts` (`library_changed` → invalidate `["library"]`).
+  - `apps/web/src/lib/library.ts` (from A8: add `onLibraryChanged`, R-Q3), `apps/web/src/routes/_app.tsx` (`onMessage` calls it for `library_changed`);
+  - `apps/web/src/components/app-sidebar.tsx` (the nav array: Skills between Templates and Schedules, icon `Blocks`);
+  - `apps/web/src/features/shortcuts/global-shortcuts.tsx` (`g k` is free), `shortcuts-sheet.tsx`;
+  - `apps/web/src/features/palette/rank.ts` (`GO_TO` gains `{ id: "skills", label: "Skills", to: "/skills" }`);
+  - `apps/web/src/lib/row-nav.ts` (rows by `data-row`, R-L1) and the lists that use it (tasks, agents, inbox: add `data-row` to their row anchors);
+  - `apps/web/src/features/session/activity-line.tsx` (imports `Elapsed`).
 - Test:
   - `apps/web/src/features/skills/skill-list.test.tsx`, `skills-header.test.tsx`;
-  - `apps/web/src/test/shell.test.tsx` (the nav item and `g k`).
+  - `apps/web/src/lib/library.test.ts` (10 frames → one invalidation);
+  - `apps/web/src/test/shell.test.tsx` (the nav item and the nav-order string), `apps/web/src/test/global-shortcuts.test.tsx` (`g k`), `apps/web/src/test/row-nav.test.tsx`.
 
 **Interfaces (produces):**
-- `libraryQueryOptions`, `skillQueryOptions(group, name)`, `sourceQueryOptions(id)`;
-- `<RowState state since? />`, which maps `ROW_STATE_ORDER` to its icon and colour per spec §10.2 and shows elapsed time from the server's `since` after 10 s;
-- `useLibraryArrival()`, which reads `{ peek }` from router state, scrolls the row to the centre, focuses it with the arrival tint, and opens its peek.
+- `onLibraryChanged(qc)` (module-level 250 ms coalescer, R-Q3);
+- `<RowState state since? />`, which maps `ROW_STATE_ORDER` to its icon and colour per spec §10.2; the "installing/checking" icons use `components/ui/spinner.tsx` (the ui-contract test allows only it to spin), and it renders `<Elapsed since hideUnderMs={10_000} />` from the server's `since`;
+- `useLibraryArrival()` (R-L4: reuses `arrive` and `useArrivalTint` from `@/lib/use-arrival`), which reads `{ peek }` from router state, scrolls the row to the centre, focuses it with the arrival tint, and opens its peek.
 
 - [ ] **Step 1: Write failing tests.**
   - `skill-list.test.tsx`:
@@ -604,19 +657,21 @@ Implements spec §10.1, §10.2, §10.7 and §10.8 (skills). Implementer and revi
     - in PR 1 there is no view switch;
     - "Check for updates" calls `POST /api/library/check`, and the outcome line reads "Checked 12 sources · 2 updates · 1 couldn't be reached" from mocked server state;
     - below `sm` the actions are icon-only, with aria-labels.
-  - `shell.test.tsx`: the Skills nav item sits between Templates and Schedules; `g k` navigates; `g s` still opens Schedules.
-- [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/skills apps/web/src/test/shell.test.tsx`. Expected: FAIL.
+  - `shell.test.tsx`: the nav order string becomes "Inbox, Tasks, Templates, Skills, Schedules, Usage, Settings"; `global-shortcuts.test.tsx`: `g k` navigates and `g s` still opens Schedules; the palette Go to lists Skills.
+  - `row-nav.test.tsx`: `j`/`k` move across `data-row` anchors and buttons alike.
+  - Arrival (R-L4): a second arrival on the mounted page opens its peek; a `library_changed` after arrival doesn't scroll again.
+- [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/skills apps/web/src/lib/library.test.ts apps/web/src/test/shell.test.tsx apps/web/src/test/global-shortcuts.test.tsx apps/web/src/test/row-nav.test.tsx`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-  - The route loader prefetches `libraryQueryOptions` and, without awaiting, `hostQueryOptions`.
+  - The route loader follows R-B1: `void qc.prefetchQuery(hostQueryOptions)`, then `await Promise.allSettled([...])` on `libraryQueryOptions`.
   - No effect fetches, and no derived state is held in an effect.
   - At ≥54rem of container, the peek gets the `@container` + `@[54rem]:data-[open]:pr-[30rem]` treatment.
   - F6 moves into the peek (the `task-list.tsx` pattern).
-- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 4: Run** the same files, plus the existing tests of the lists whose anchors gained `data-row` and of `activity-line`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(web): Skills page, nav and grouped skill list`.
 
 ### Task A12: Source and skill peeks, update view, View file
 
-Implements spec §10.3 (skill and source peeks) and §10.6. Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+Implements spec §10.3 (skill and source peeks) and §10.6. The plan is already React-compliant; follow it as written and report any deviation.
 
 **Files:**
 - Create: `apps/web/src/features/skills/peeks/use-peek.ts`, `source-peek.tsx`, `skill-peek.tsx`, `update-view.tsx`, `file-view.tsx`
@@ -642,7 +697,10 @@ Implements spec §10.3 (skill and source peeks) and §10.6. Implementer and revi
   - A U+202E hook command renders `⟨U+202E⟩`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/skills/peeks`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-  - A peek renders from the cached list row first, then refines from the detail query.
+  - A peek renders from the cached list row first, then refines from the detail query (R-L2: a module-level `select` factory memoised on `[group, name]`; never `initialData`, `placeholderData` or an effect).
+  - Check for updates, Find more skills and Update are mutations (R-Q1); their results are dropped during render when the peek retargets.
+  - The Undo toast window comes from `undoUntil` in the remove handler (R-T1).
+  - Section components (Runs code, Files, Used by, Provenance) and static skeleton rows are module-level (R-H1).
   - Keyboard opening and retarget are instant; a click uses the sheet motion.
   - Back is instant and refocuses the row it came from; Esc closes the whole peek.
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -650,11 +708,11 @@ Implements spec §10.3 (skill and source peeks) and §10.6. Implementer and revi
 
 ### Task A13: Add skills sheet
 
-Implements spec §10.4 (Add skills). Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+Implements spec §10.4 (Add skills). The plan is already React-compliant; follow it as written and report any deviation.
 
 **Files:**
 - Create: `apps/web/src/features/skills/add-skills-sheet.tsx`, `add-skills-results.tsx`
-- Modify: `apps/web/src/features/sheets/sheet-bodies.ts` (kind `add-skills`, prefetch `hostQueryOptions`)
+- Modify: `apps/web/src/features/sheets/sheet-store.ts` (`SheetSpec` gains `{ kind: "add-skills" }`), `apps/web/src/features/sheets/sheet-bodies.ts` (an entry with `load`, `prefetch: warm(qc, hostQueryOptions)` and `title`)
 - Test: `apps/web/src/features/skills/add-skills-sheet.test.tsx`
 
 - [ ] **Step 1: Write failing tests.**
@@ -673,17 +731,20 @@ Implements spec §10.4 (Add skills). Implementer and reviewer invoke `vercel-rea
   - Close during Find aborts the request (the `AbortSignal` is asserted) and keeps the draft.
   - On phones there is a single scroller (no nested `overflow-auto` in the list).
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/skills/add-skills-sheet.test.tsx`. Expected: FAIL.
-- [ ] **Step 3: Implement** with `FormFrame`, `useFieldErrors` and `FormOutcome`. The request's `AbortController` is owned by the sheet and aborted on close.
+- [ ] **Step 3: Implement** with `FormFrame` (kind `"sheet"`), `useFieldErrors`, `FormOutcome` and `PathField`. The draft that survives close uses `features/sheets/drafts.ts`. Find is a `useMutation` (R-Q1) with the `AbortController` in a ref (R-L3): a new Find aborts the previous one in its click handler, Close aborts in its handler, and the unmount cleanup is the only effect. Ticks follow R-F1. The 300 ms inert primary is set in Find's `onSuccess` (R-T1), not in an effect.
 - [ ] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(web): Add skills sheet with find, pick and stale results`.
 
 ### Task A14: Skill picker in the Configuration form
 
-Implements spec §10.5 (skills). Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+Implements spec §10.5 (skills). The plan is already React-compliant; follow it as written and report any deviation.
 
 **Files:**
-- Modify: `apps/web/src/features/config/sections/skills-plugins.tsx` (I2), `apps/web/src/features/config/config-list.tsx` (I2: a source tag, pin and state on a row; a `labelAction` slot)
-- Test: `apps/web/src/features/config/sections/skills-plugins.test.tsx`
+- Modify:
+  - `apps/web/src/features/config/skills-section.tsx` (I2's `SkillsSection`/`SkillPicker`/`LocalSkills`);
+  - `apps/web/src/features/config/config-list.tsx` (I2): add `labelAction?: ReactNode`, rendered in the "This agent" label row (agent mode) and in the list label row (template mode); the per-row source tag, pin and state go through the existing `format` prop;
+  - `apps/web/src/features/config/pick-add.tsx`: use the A10 multi Combobox with a caller trigger.
+- Test: `apps/web/src/features/config/skills-section.test.tsx` (new), plus `apps/web/src/features/config/sections.test.tsx` and `apps/web/src/test/agent-config-page.test.tsx`, `apps/web/src/test/template-config-tab.test.tsx`
 
 - [ ] **Step 1: Write failing tests.**
   - The ghost "Add skill" sits in the "This agent" label row (agent mode) or the list label row (template mode).
@@ -694,8 +755,9 @@ Implements spec §10.5 (skills). Implementer and reviewer invoke `vercel-react-b
   - A selected row shows "GitHub · a1b2c3d" and any state.
   - Template-local skills are read-only "Template skill".
   - The plugins input stays as I2 built it, until Task B11.
-- [ ] **Step 2: Run** the test. Expected: FAIL.
-- [ ] **Step 3: Implement.**
+  - The picker doesn't fetch on mount: the Library list is already in the cache from the route prefetch (R-B1).
+- [ ] **Step 2: Run** the test files above. Expected: FAIL.
+- [ ] **Step 3: Implement.** `added` is memoised on a primitive key (R-C1: `names.join("\0")`). The grouped `renderOption` is module-level like today's `renderSkill` (R-H1). Template-local names come from the draft, derived during render.
 - [ ] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(web): Library skill picker in the Configuration form`.
 
@@ -706,30 +768,30 @@ Implements spec §10.5 (skills). Implementer and reviewer invoke `vercel-react-b
 ### Task A16: Finish PR 1
 
 - [ ] **Branch review.** A fresh reviewer, read-only, on `git diff spec/i5-skills-and-plugins...i5/1-library-skills` against spec §5, §6, §7.3 step 3, §7.10, §8–§10 and AC 1–7. It checks:
-  - ADR 0028: no compatibility code, and no warning for the old env var;
+  - ADR 0028: no compatibility code; the old env var is never read, only named by the `REMOVED_ENV` boot warning;
   - hardened runners: argv, env and redaction tests present;
   - the I4 message rules;
-  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill first. Next-only rules are skipped, and the review says so. It covers effects only for external sync, no fetch in effects, stable query keys, no components defined inside components, abort on unmount for Find, and loaders that never await the host query, plus every R-Q, R-E, R-L, R-C, R-F, R-H, R-B and R-P rule in Global Constraints. This checklist is reused by B12 and C3.
+  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill first. Next-only rules are skipped, and the review says so. It covers effects only for external sync, no fetch in effects, stable query keys, no components defined inside components, abort on unmount for Find, and loaders that never await the host query, plus every R-Q, R-E, R-L, R-C, R-F, R-H, R-B, R-T and R-P rule in Global Constraints, that the `library_changed` coalescer is module-level (not per render), and that arrival uses `arrive`/`useArrivalTint`. This checklist is reused by B12 and C3.
 
   Apply fixes as their own commits (apps/web fixes follow `vercel-react-best-practices`).
-- [ ] **Full verification** under `/tmp/of-v002-heavy.lock`:
-  - `pnpm install --frozen-lockfile` (no lockfile change), `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`;
+- [ ] **Full verification, once for the Part** (the only full run in Part A):
+  - `pnpm install --frozen-lockfile` (no lockfile change), `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`; if the local full suite is flaky, CI is the authority;
   - the dev loop from a clean clone: `git clone` the branch into a temp dir, `pnpm install --frozen-lockfile`, `pnpm build`, then `pnpm dev` with a throwaway DB, fake Claude, a temp `FACTORY_HOST_CLAUDE_DIR` holding one skill and `FACTORY_GITHUB_URL=file://<fixture>`;
   - load `/skills`, then shut down and remove the clone.
 
   DB tests: confirm them in CI.
-- [ ] **Real-browser evidence.** Use the harness at `/Users/orlevi/projects/open-factory/docs/product/ui-review/u4-evidence/harness` through its `run.sh` lock, plus `/tmp/of-v002-heavy.lock`. Fake Claude only, and the fixture repo through `FACTORY_GITHUB_URL=file://…` (built with `makeFixtureRepo`), never the network. Chromium and WebKit headless.
+- [ ] **Real-browser evidence.** Use the harness at `/Users/orlevi/projects/open-factory/docs/product/ui-review/u4-evidence/harness` through its own `run.sh` lock. Fake Claude only, and the fixture repo through `FACTORY_GITHUB_URL=file://…` (built with `makeFixtureRepo`), never the network. Chromium and WebKit headless.
   - Add `i5a_*.py` checks for AC 1–7.
   - Widths: 1440, 1024, 390 and 375px, plus 390px at 200% text, in light and dark.
   - Worst-case data from spec §14: a 40-skill source, a 64-character name, 190 users, zero-found and all-unpickable repos, a failing check, a 200-character subject ending in an emoji, a 120-character path.
   - Measure and record the §10.1 header thresholds.
   - Screenshots and a results table go to `docs/product/ui-review/i5-evidence/` in the main checkout (gitignored).
 - [ ] **Push and PR.**
-  - `git fetch origin`, merge the latest I3 branch, push `i5/1-library-skills`.
-  - Open a **draft** PR with base = `i3/claude-sign-in` if it exists, else `spec/i3-claude-sign-in` (note that it should be retargeted).
+  - `git fetch origin`, merge the latest `origin/i3/claude-sign-in`, push `i5/1-library-skills`, and get CI green on the branch (fix failures as commits).
+  - Then open the PR **ready for review (not draft)** with base `i3/claude-sign-in`.
   - Title: `feat: skills Library with host, folder and pinned GitHub sources`.
   - Body per `.github/pull_request_template.md`, linking the spec, this plan and #153. State the reset step, the env rename, the deletion of `/api/host-skills`, and that DB tests run only in CI. End with the attribution line.
-  - Run `gh pr checks --watch` until green, fixing failures on the branch. Never merge.
+  - Confirm `gh pr checks` is green. Never merge; Or merges the stack.
 
 ---
 
@@ -750,10 +812,10 @@ Today `images/base/Dockerfile` already installs an exact `CLAUDE_CODE_VERSION`, 
 **Files:**
 - Create: `images/base/claude-code-version` (one line, e.g. `2.1.3xx`)
 - Modify: `.github/workflows/base-image.yml` (the "Resolve latest Claude Code version" step reads the file; the weekly no-cache rebuild keeps the pinned version)
-- Modify: `apps/server/src/library/claude-flags.ts` gets `CLAUDE_PLUGIN_FLOOR` in B3; until then the planned floor is this pinned version.
+- The one floor is the harness's `MIN_CLAUDE_VERSION` (`packages/harness/src/claude/version.ts`, today `2.1.327`); B3 sets it from the G1 report. Until then the planned floor is this pinned version.
 
 - [ ] **Step 1: Choose the version.** It must meet all three:
-  - at or above the documented floor features (seed, `syncClaudeAiPlugins`, `mcpb/`, dependency auto-install, so at least 2.1.324);
+  - at or above `MIN_CLAUDE_VERSION` (2.1.327) and the documented floor features (seed, `syncClaudeAiPlugins`, `mcpb/`, dependency auto-install);
   - at least 14 days old (the repo's minimum-release-age policy, applied to the CLI too);
   - the newest version that meets both.
   
@@ -792,24 +854,28 @@ Implements spec §13. **The executor writes the script but never runs it.** Runn
   - it refuses to run with `HOME` pointing at a dir that contains `.open-factory-spike`;
   - each item writes PASS, FAIL or RECORDED plus the evidence into `report.md`, from `report-template.md`.
 - [ ] **Step 3:** `bash -n scripts/g1/run.sh` and `shellcheck scripts/g1/*.sh` (if installed). Commit `chore: Gate G1 script and fixture for Or`.
-- [ ] **Step 4:** **Stop.** Hand off to tech-lead-i5 / main: "G1 is ready: Or runs `scripts/g1/run.sh` with Claude Code **<exact version from `images/base/claude-code-version`>** (B0) and posts `report.md` on #153." `run.sh` checks `claude --version` against that file, and refuses to run when the versions differ. Tasks B2 onward start only after Or's report. **Any FAIL goes back to owner-i5 before the design adapts.** The RECORDED items fill the constants in Tasks B3, B6 and B7: the floor, update against fresh install, and whether `mcpb/` is scrubbed.
+- [ ] **Step 4:** **Stop. Gate G1 is a manual step for Or; the executor never runs real Claude.** Hand off to tech-lead-i5 / main: "G1 is ready: Or runs `scripts/g1/run.sh` with Claude Code **<exact version from `images/base/claude-code-version`>** (B0) and posts `report.md` on #153." `run.sh` checks `claude --version` against that file, and refuses to run when the versions differ. Tasks B2 onward start only after Or's report. **Any FAIL goes back to owner-i5 before the design adapts.** The RECORDED items fill the constants in Tasks B3, B6 and B7: the floor, update against fresh install, and whether `mcpb/` is scrubbed.
 
 ### Task B2: Fake Claude: plugin seed mode
 
 **Files:**
-- Modify: `packages/harness/testing/fake-claude.mjs`, `packages/harness/src/fake-claude.test.ts`
+- Modify: `packages/harness/testing/fake-claude.mjs` (**replace** the existing `argv[0] === "plugin"` block, which serves the old per-agent installs deleted in B7; ADR 0028) (extra env already goes in through `createFakeClaude({ env })` in `packages/harness/testing/index.ts`)
+- Test: `packages/harness/testing/fake-plugin.test.ts` (new, next to I3's `fake-setup-token.test.ts`)
+
+Follow the shape of I3's `setup-token` mode: an early argv branch before the session scenario is read, behaviour chosen by env knobs, never falling through. `FAKE_CLAUDE_SCENARIO` stays the *path* of the session scenario JSON and can't carry plugin scenarios.
 
 **Interfaces (produces).** Fake Claude honours `CLAUDE_CODE_PLUGIN_CACHE_DIR` for `plugin marketplace add <arg>`, `install <key>` and `update <key>`:
 - it writes `known_marketplaces.json` and `installed_plugins.json` in the v2 shape of spec §4, `marketplaces/<name>/` as a `git clone` of a local fixture marketplace, and `cache/<mkt>/<plugin>/<version>/`;
-- it records argv and env to `$FAKE_CLAUDE_DIR/plugin.log`.
+- it records argv and env to `$FAKE_CLAUDE_DIR/plugin.log`;
+- `--version` (`argv[0] === "--version"`) prints `${FAKE_CLAUDE_VERSION ?? "2.1.327"} (Claude Code)`, for the floor tests in B3 and B7.
 
-Scenarios through `FAKE_CLAUDE_SCENARIO`: `pull-marketplace`, `extra-dependency`, `unexpected-marketplace`, `orphan-marker` and `fail`. In a normal session the init event lists `plugins` from the seed, filtered by `--settings` `enabledPlugins`.
+Plugin scenarios come from `FAKE_CLAUDE_PLUGIN_SCENARIO=pull-marketplace|extra-dependency|unexpected-marketplace|orphan-marker|fail`, set through `createFakeClaude({ env })`. Keep `FAKE_CLAUDE_PLUGIN_SLEEP_MS` (B9 needs a blocking install) and `FAKE_CLAUDE_PLUGIN_ECHO` (redaction tests); `FAKE_CLAUDE_PLUGIN_FAIL` and `_SILENT_FAIL`, which `fail` covers, are deleted in B7 with their last users. In a normal session the init event lists `plugins` from the seed, filtered by `--settings` `enabledPlugins`.
 
 - [ ] Steps:
-  1. Write failing fake tests for each scenario.
-  2. Run `pnpm vitest run packages/harness/src/fake-claude.test.ts` → FAIL.
+  1. Write failing fake tests for each scenario and for `--version`.
+  2. Run `pnpm vitest run packages/harness/testing/fake-plugin.test.ts` → FAIL.
   3. Implement.
-  4. Run again → PASS.
+  4. Run again → PASS, plus the server test files that use the old knobs (`workspace/plugins.test.ts`, `agents/agent-service.test.ts`, the spawn-service tests). Those tests are deleted in B7, so B2 keeps `_FAIL` and `_SILENT_FAIL` working on the new block until B7 deletes them with their last users.
   5. Commit `test: fake Claude plugin seed mode`.
 
 ### Task B3: `marketplaces` table, locks, version floor, store runner
@@ -817,16 +883,16 @@ Scenarios through `FAKE_CLAUDE_SCENARIO`: `pull-marketplace`, `extra-dependency`
 Implements spec §5.1 (marketplaces), §7.2 and §7.9.
 
 **Files:**
-- Modify: `packages/db/src/schema/library.ts` (+ generated migration), `apps/server/src/library/locks.ts` (add `storeLock`)
+- Modify: `packages/db/src/schema/library.ts` (+ generated migration, `0022_*` on today's branch; merge the lower branch first), `apps/server/src/library/locks.ts` (add `storeLock`), `packages/harness/src/claude/version.ts` (`MIN_CLAUDE_VERSION` set from G1), `apps/server/src/agents/runtimes.ts` (imports `versionCheckEnv` from `library/claude-flags.ts`)
 - Create: `apps/server/src/library/claude-flags.ts`, `apps/server/src/library/store-runner.ts`
 - Test: `apps/server/src/library/locks.test.ts`, `apps/server/src/library/store-runner.test.ts`, `apps/server/src/library/claude-flags.test.ts`
 
-**Interfaces (produces):**
+**Interfaces (produces).** There is one floor: the harness already exports `checkClaudeVersion(bin, env): Promise<{ version?, tooOld }>`, `compareVersions` and `MIN_CLAUDE_VERSION` (`packages/harness/src/claude/version.ts`, used by `agents/runtimes.ts` as a warning). B3 sets `MIN_CLAUDE_VERSION` to the G1 floor (it must be <= the B0 pin in `images/base/claude-code-version`; if G1 fails on the pinned version, that is a FAIL for owner-i5; never raise the pin past the 14-day rule to chase a fix) and adds no second constant and no second `checkClaudeVersion` (ADR 0028).
 
 ```ts
 export const storeLock: RwLock;  // { read<T>(fn): Promise<T>; write<T>(fn): Promise<T> }
-export const CLAUDE_PLUGIN_FLOOR: string;  // from the G1 report; must be <= the B0 pin (images/base/claude-code-version). If G1 fails on the pinned version, that is a FAIL for owner-i5; never raise the pin past the 14-day rule to chase a fix
-export async function checkClaudeVersion(bin: string, env): Promise<void>;  // fails "Claude Code {found} is too old; update it to {floor} or later."
+export function versionCheckEnv(server: NodeJS.ProcessEnv): Record<string, string>;  // moved from agents/runtimes.ts
+export async function assertPluginFloor(bin: string, env): Promise<void>;  // on the harness checkClaudeVersion; throws "Claude Code {found} is too old; update it to {MIN_CLAUDE_VERSION} or later."
 export async function checkImageClaudeVersion(image: string, digest: string): Promise<void>;  // docker run --rm --network none --entrypoint claude <image> --version, cached by digest
 export class StoreRunner {
   constructor(d: { claudeBin: string; factoryHome: string; serverEnv: NodeJS.ProcessEnv; registry: () => Promise<RegistryRow[]> });
@@ -843,7 +909,7 @@ export class StoreRunner {
     - the runner settings file declares exactly the store's marketplaces;
     - a leading-dash argument is refused;
     - output is redacted.
-  - The floor: a fake `claude --version` printing `2.1.1` fails with the interpolated message.
+  - The floor: fake Claude with `FAKE_CLAUDE_VERSION=2.1.1` makes `assertPluginFloor` fail with the interpolated message; at `MIN_CLAUDE_VERSION` it passes.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/library/locks.test.ts apps/server/src/library/store-runner.test.ts apps/server/src/library/claude-flags.test.ts` → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** → PASS.
@@ -881,7 +947,7 @@ export class MarketplacesService {
   - the check result lists every installed or enabled plugin whose version, source or contents change at the new commit (a version or `sha` change, a source change, or a changed tree for a relative path, using `rev-parse <old>:<path>` against `<new>:<path>`). Plugins whose code-running parts change (hooks, MCP, LSP, status line, monitors, `bin/`, `package.json`, dependencies) are flagged `runsCodeChanged` and sorted first (owner plan review change 4);
   - remove is refused with "Uninstalling plugins isn't available yet." while plugins are installed;
   - the purge re-checks under `storeLock`.
-- [ ] **Step 2: Run** `pnpm typecheck` → FAIL. Pure parts: `pnpm vitest run apps/server/src/library/marketplaces-service.test.ts -t pure`.
+- [ ] **Step 2: Run** the pure parts: `pnpm vitest run apps/server/src/library/marketplaces-service.test.ts -t pure` → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** → PASS (DB parts in CI).
 - [ ] **Step 5: Commit** `feat(server): pinned marketplace registry`.
@@ -955,8 +1021,10 @@ export class PluginStore {
   - `provenance.json` holds only `{ marketplace, marketplaceCommit, installedBy, installedAt }`;
   - `updatePreview` never writes the real store (snapshot the tree before and after);
   - `update` with a different sha rolls back;
-  - a failed background install records the state and writes `plugin_install_failed`;
+  - a failed background install records the state and sends the `plugin_install_failed` notice (below);
   - relative-path update detection works by tree.
+
+  **Where a failed background install is reported.** There is no factory-level activity log (session events are per agent). The failure is an Inbox `notice`, the path I3 uses for credential facts (`credentials/expiry-check.ts`): `eventStore.createHumanMessage({ kind: "system", notice: "plugin_install_failed", to: { userId: by }, inboxKind: "notice", body: "Couldn't install x@y. See Skills for details.", urgent: false, createdAt })`, then `bus.publishToUser(by, { type: "inbox_changed" })`. The body is a fixed sentence with only the key interpolated; the redacted reason stays in the plugin peek. No new inbox kind.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/library/plugin-store.test.ts` → FAIL.
 - [ ] **Step 3: Implement.** If G1 item 10 said `update` can't be pinned, implement it as a fresh install of the new version next to the old one, never uninstall-first.
 - [ ] **Step 4: Run** → PASS.
@@ -971,26 +1039,33 @@ Implements spec §7.3 steps 1–2 and 4–8, §6.5 (store class), and AC 9, 10, 
 - Modify:
   - `apps/server/src/workspace/workspace.ts`;
   - `apps/server/src/workspace/settings.ts`;
-  - `apps/server/src/workspace/mounts.ts` (`storeDir` + store class; drop `pluginsDir`);
-  - `apps/server/src/workspace/paths.ts`;
-  - `apps/server/src/runtime/runtime-spec.ts`;
-  - `apps/server/src/agents/agent-service.ts`, `apps/server/src/spawning/spawn-service.ts`;
+  - `apps/server/src/workspace/mounts.ts` (`storeDir` + store class; drop `pluginsDir`; `declaredMarketplaceDirs` goes, since the store replaces template-declared directory marketplaces as a mount class);
+  - `apps/server/src/workspace/paths.ts` (`pluginsConfigDir` deleted);
+  - `apps/server/src/agents/runtime-spec.ts` (`buildAgentEnv` adds the seed and auto-update env; `buildRuntimeSpec` takes `settingsJson`);
+  - `packages/shared/src/config.ts` (`FACTORY_ENV_NAMES` gains the spec §7.3 step 6 names; without this `buildAgentEnv` throws at every start, because it refuses names `isFactoryEnvName` doesn't accept);
+  - `packages/harness/src/types.ts` (`AgentRuntimeSpec.settingsJson?: string`), `packages/harness/src/claude/args.ts` (`buildClaudeArgs` pushes `--settings`, `spec.settingsJson` when set; the Docker exec path builds from the same spec);
+  - `apps/server/src/agents/config-resolver.ts` (`Effective.templatePlugins` deleted; it existed only to name a failed install's fix);
+  - `apps/server/src/agents/agent-service.ts` (`pluginFailure` deleted), `apps/server/src/spawning/spawn-service.ts` (the `PluginInstallError` branch deleted);
+  - `apps/server/src/workspace/settings.ts` (`SettingsInput` loses `pluginKeys` and `plugins`; `workspace.ts` stops passing them);
   - `apps/server/src/workspace/agent-folders.ts` (scrub the plugins root to `data/`);
-  - web (implementer and reviewer invoke `vercel-react-best-practices` and follow it): `apps/web/src/features/agents/agent-form-state.ts:281-282` (the "Installing plugins…" pending label goes, since create never installs) and its test.
+  - `packages/harness/testing/fake-claude.mjs` (delete `FAKE_CLAUDE_PLUGIN_FAIL` and `_SILENT_FAIL` with their last users);
+  - web (the plan is already React-compliant; follow it as written and report any deviation): `apps/web/src/features/agents/agent-form-state.ts` (delete `pluginOutput`/`setPluginOutput`, the "Installing plugins…" slow label and the `plugin_install_failed` handling, since create never installs), and `apps/web/src/features/agents/show-output.tsx` if nothing else uses it.
 - Delete:
   - `apps/server/src/workspace/plugins.ts` and its test;
-  - `pluginsConfigDir`, `readPluginKeys`, `linkPlugins`, `install` in `workspace.ts`;
+  - `Workspace.ensurePlugins` (called from `materialize` and `prepare`), `readPluginKeys`, `linkPlugins` in `workspace.ts`; `pluginsConfigDir` in `paths.ts`;
   - `PluginInstallError` uses and `502 plugin_install_failed`.
 - Test:
   - `apps/server/src/library/plugin-settings.test.ts`, `apps/server/src/workspace/settings.test.ts`, `apps/server/src/workspace/workspace.test.ts`;
   - `apps/server/src/workspace/mounts.test.ts`, `apps/server/src/workspace/agent-folders.test.ts`;
-  - `apps/server/src/spawning/spawn-service.test.ts` (CI).
+  - `packages/harness/src/claude/args.test.ts`, `packages/shared/src/config.test.ts`;
+  - `apps/web/src/features/agents/agent-form-state.test.ts`, `apps/web/src/features/agents/new-agent-sheet.test.tsx` (their plugin-output cases go);
+  - `apps/server/src/spawning/spawn-service.test.ts`, `apps/server/src/agents/agent-service.test.ts` (CI).
 
 **Interfaces (produces):**
 - `buildPluginSettings(i: { closure: string[]; storePlugins: string[]; storeCatalogs: string[]; registry: RegistryRow[]; skillsDirNames: string[] }): { enabledPlugins: Record<string, boolean>; extraKnownMarketplaces: Record<string, { source; autoUpdate: false }>; syncClaudeAiPlugins: false }`;
-- `PreparedSpec.extraArgs` gains `["--settings", JSON.stringify(pluginSettings)]`;
+- `AgentRuntimeSpec.settingsJson = JSON.stringify(pluginSettings)`, which `buildClaudeArgs` turns into `--settings <json>`;
 - `buildAgentEnv` adds `CLAUDE_CODE_PLUGIN_SEED_DIR` and `DISABLE_AUTOUPDATER=1`;
-- `FACTORY_ENV_NAMES` gains the seven names from spec §7.3 step 6.
+- `FACTORY_ENV_NAMES` (shared) gains the names from spec §7.3 step 6.
 
 - [ ] **Step 1: Write failing tests.**
   - `plugin-settings.test.ts`:
@@ -1008,11 +1083,12 @@ Implements spec §7.3 steps 1–2 and 4–8, §6.5 (store class), and AC 9, 10, 
     - an unpinned missing plugin fails "Plugin x@y isn't installed. Install it in Skills." with fix `library`;
     - a pinned missing one installs, then the closure is recomputed;
     - a local agent below the floor fails.
-  - Fake Claude records `--settings` in argv.
+  - `args.test.ts`: `buildClaudeArgs` emits `--settings <json>` only when `settingsJson` is set; fake Claude records it in argv.
+  - `config.test.ts` (shared): every seed name is a factory env name.
   - `mounts.test.ts`: the store class at exactly `realpath(<FH>/state/plugins)`; `state/plugins/cache` is refused.
   - `spawn-service.test.ts` (CI): three spawns produce at most one `install` in the log, and `spawn_agent` returns without one.
   - A template, overlay or secret setting `CLAUDE_CODE_PLUGIN_SEED_DIR` is an error.
-- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/library/plugin-settings.test.ts apps/server/src/workspace` → FAIL.
+- [ ] **Step 2: Run** `pnpm vitest run` on the test files listed above that run locally → FAIL.
 - [ ] **Step 3: Implement.** If G1 item 7 said `mcpb/` isn't re-extracted, take that back to owner-i5 before changing the scrub.
 - [ ] **Step 4: Run** → PASS. Then `pnpm typecheck` (no references to deleted symbols remain).
 - [ ] **Step 5: Commit** `feat(server): agents load plugins from the factory seed; per-agent installs removed`.
@@ -1022,8 +1098,12 @@ Implements spec §7.3 steps 1–2 and 4–8, §6.5 (store class), and AC 9, 10, 
 Implements spec §7.4, §7.7 and R14.
 
 **Files:**
-- Modify: `packages/shared/src/templates.ts`, I2's `packages/shared/src/config.ts` (overlay schema), `apps/server/src/templates/validate.ts`, `packages/shared/src/config-changes.ts` (plugin lines)
-- Modify (web; implementer and reviewer invoke `vercel-react-best-practices` and follow it): `apps/web/src/features/agents/template-field.tsx:187` (`config.plugins.length` becomes the count of `effectivePlugins`) and any other web reader of `TemplateConfig.plugins` found by `pnpm typecheck`
+- Modify:
+  - `packages/shared/src/templates.ts`: remove `plugins` from `templateConfigSchema`, `templateYamlShape` and the `normalize` mapping; delete `PLUGIN_REF_MSG` and `pluginRef`;
+  - `packages/shared/src/config.ts`: remove `overlayTemplateSchema.plugins`;
+  - `apps/server/src/templates/validate.ts`: delete the warning "enabledPlugins is ignored: list plugins in template.yaml." and the `config.plugins` marketplace check (replaced by the `enabledPlugins` rules); keep the `ref`/`path` refusal;
+  - `packages/shared/src/config-changes.ts`: delete the `listLines(ta.plugins…)` line and the `plugin` kind (replaced by the plugin library lines).
+- Modify (web; the plan is already React-compliant; follow it as written and report any deviation): `apps/web/src/features/agents/template-field.tsx:178` (`config.plugins.length` becomes the count of `effectivePlugins`), `apps/web/src/features/config/messages.ts` (delete `CONFIG_FIELD_MSG.pluginRef`; `CONFIG_COPY.pluginsHelp*` go in B11), and any other web reader of `TemplateConfig.plugins` found by `pnpm typecheck`
 - Test: `packages/shared/src/templates.test.ts`, `apps/server/src/templates/validate.test.ts`, `packages/shared/src/config-changes.test.ts`
 
 - [ ] **Step 1: Write failing tests.**
@@ -1040,7 +1120,7 @@ Implements spec §7.4, §7.7 and R14.
   - `describeChanges`: "added plugin x@y", and "plugin x@y updated 1.2.0 → 1.3.0" (a hex version shows as "commit 0120fb8 → 9a8b7c6").
 - [ ] **Step 2: Run** `pnpm vitest run packages/shared/src/templates.test.ts apps/server/src/templates/validate.test.ts packages/shared/src/config-changes.test.ts` → FAIL.
 - [ ] **Step 3: Implement.** Delete the old "enabledPlugins is ignored" warning. Keep the `ref`/`path` refusal. Fix every reader of `TemplateConfig.plugins` to use `effectivePlugins(doc)`.
-- [ ] **Step 4: Run** → PASS, then `pnpm typecheck`.
+- [ ] **Step 4: Run** → PASS, then `pnpm typecheck` (removed fields; finds the readers).
 - [ ] **Step 5: Commit** `feat: enabledPlugins is the plugin truth; plugins: removed`.
 
 ### Task B9: Host plugins, plugin and marketplace routes, change flow
@@ -1073,21 +1153,24 @@ Implements spec §7.6, §9.1 (plugins), §9.3, §8.3 (plugins) and AC 9.
     - a template save and an overlay save that newly enable a pinned, missing plugin each enqueue exactly one install, and the PUT resolves before fake Claude's `install` finishes (the scenario blocks until released);
     - an unpinned missing plugin enqueues nothing, and the save shows the warning;
     - two saves racing for the same key produce one `install` in the plugin log;
-    - a failed background install writes `plugin_install_failed` and the row state (already in B6, re-used here).
+    - a failed background install sends the `plugin_install_failed` Inbox notice to the saver and sets the row state (already in B6, re-used here).
   - Commit `feat(server): saves enqueue background installs of pinned plugins`.
 
 ### Task B10: Plugins and Marketplaces views, peeks, Add marketplace
 
-Implements spec §10.1–§10.4 (plugins). Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+Implements spec §10.1–§10.4 (plugins). The plan is already React-compliant; follow it as written and report any deviation.
 
 **Files:**
 - Create:
   - `apps/web/src/routes/_app/skills.plugins.tsx`, `skills.marketplaces.tsx`;
   - `apps/web/src/features/skills/plugin-list.tsx`, `marketplace-list.tsx`;
   - `peeks/plugin-peek.tsx`, `peeks/marketplace-peek.tsx`;
-  - `add-marketplace-sheet.tsx`.
-- Modify: `skills-header.tsx` (the switch; a `Select` below about 16rem), `apps/web/src/features/sheets/sheet-bodies.ts`
+  - `add-marketplace-sheet.tsx`;
+  - `use-held.ts` (`useHeldWhileInside`, R-L5).
+- Modify: `skills-header.tsx` (the switch; a `Select` below about 16rem), `apps/web/src/features/sheets/sheet-store.ts` (`{ kind: "add-marketplace" }`), `apps/web/src/features/sheets/sheet-bodies.ts`
 - Test: `apps/web/src/features/skills/plugin-list.test.tsx`, `peeks/plugin-peek.test.tsx`, `peeks/marketplace-peek.test.tsx`, `add-marketplace-sheet.test.tsx`
+
+React notes (already applied; follow them): `update-preview`, Install and Install in factory are mutations kept in component state keyed by `key` and dropped during render on retarget (R-Q1); the "Update…" disclosure starts the preview in its click handler; rows that move groups use `useHeldWhileInside` (R-L5); pending rows render `<Elapsed since hideUnderMs={10_000} />` (R-E1); section components are module-level (R-H1).
 
 - [ ] **Step 0 (owner plan review change 4):** the Marketplace peek's update view renders "Plugins in use that change" from the check result, with the `runsCodeChanged` plugins first, each marked "Runs code changed". Add a test for it next to the Step 1 tests.
 - [ ] **Step 1: Write failing tests.**
@@ -1120,11 +1203,14 @@ Implements spec §10.1–§10.4 (plugins). Implementer and reviewer invoke `verc
 
 ### Task B11: Plugin picker in the Configuration form
 
-Implements spec §10.5 (plugins) and AC 9 and 13. Implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+Implements spec §10.5 (plugins) and AC 9 and 13. The plan is already React-compliant; follow it as written and report any deviation.
 
 **Files:**
-- Modify: `apps/web/src/features/config/sections/skills-plugins.tsx` (replace I2's `name@marketplace` text input)
-- Test: `apps/web/src/features/config/sections/skills-plugins.test.tsx`
+- Modify:
+  - `apps/web/src/features/config/skills-section.tsx` (replace I2's `name@marketplace` `ListField` with `check={checkPlugin}` by the Library picker);
+  - `apps/web/src/features/config/fields.ts` (`FIELD_PATHS.plugins` moves from `["template","plugins"]` to `["settings","enabledPlugins"]`, an object, not a list, so `ListFieldId` loses `"plugins"`);
+  - `apps/web/src/features/config/messages.ts` (delete `CONFIG_COPY.pluginsHelp*`; add the B11 footers to `CONFIG_COPY`).
+- Test: `apps/web/src/features/config/skills-section.test.tsx`, `apps/web/src/features/config/sections.test.tsx`
 
 - [ ] **Step 1: Write failing tests.**
   - Only store plugins are offered, grouped by marketplace.
@@ -1144,19 +1230,19 @@ Implements spec §10.5 (plugins) and AC 9 and 13. Implementer and reviewer invok
   - no `ref` anywhere;
   - no `marketplace update` call;
   - the lock order, and that `libraryChanged` runs after the locks;
-  - the deletions are complete: grep `plugins-config|pluginsConfigDir|readPluginKeys|linkPlugins|PluginInstallError|plugin_install_failed` finds no matches except the new event name;
+  - the deletions are complete: grep `plugins-config|pluginsConfigDir|readPluginKeys|linkPlugins|ensurePlugins|templatePlugins|pluginFailure|pluginOutput|PluginInstallError|plugin_install_failed|FAKE_CLAUDE_PLUGIN_FAIL|FAKE_CLAUDE_PLUGIN_SILENT_FAIL` finds no matches except the new `plugin_install_failed` Inbox notice;
   - ADR 0028;
   - **the React diff against `vercel-react-best-practices`** (the reviewer invokes the skill first and skips Next-only rules, saying so), using A16's checklist, with R-Q1 (update-preview as a mutation), R-Q3, R-L5 and R-E1 checked on the plugin views.
 
   Fix the findings.
-- [ ] **Full verification**, as in A16, with a fixture marketplace through `file://` for fake Claude.
+- [ ] **Full verification, once for the Part**, as in A16, with a fixture marketplace through `file://` for fake Claude.
 - [ ] **Real-browser evidence**, as in A16:
   - add `i5b_*.py` checks for AC 8–13;
   - worst-case data: a plugin with 12 hooks, a U+202E command and a multi-line `bash -c`; a `hooks.json` link; more than 2,000 files; `rust-analyzer-lsp@claude-plugins-official` with a 12-hex version; two git-URL marketplaces on one host; an empty Plugins view.
 - [ ] **Push and PR.**
-  - Merge `i5/1-library-skills`, then push.
-  - Open a draft PR with base `i5/1-library-skills`, titled `feat: plugins installed once into a factory seed from pinned marketplaces`. It links the spec, the plan and #153, the G1 report, the reset step, and says that DB tests run in CI.
-  - Watch CI until it is green. Never merge.
+  - Merge `i5/1-library-skills`, then push and get CI green on the branch.
+  - Then open the PR **ready for review (not draft)** with base `i5/1-library-skills`, titled `feat: plugins installed once into a factory seed from pinned marketplaces`. It links the spec, the plan and #153, Or's G1 report, the reset step, and says that DB tests run in CI.
+  - Confirm `gh pr checks` is green. Never merge; Or merges the stack.
 
 ---
 
@@ -1166,9 +1252,9 @@ Cut it with `git checkout -b i5/3-polish-docs i5/2-plugins`. If the evidence fix
 
 ### Task C1: Evidence fixes
 
-Implementer and reviewer invoke `vercel-react-best-practices` and follow it, for any apps/web fix.
+For any apps/web fix: the plan is already React-compliant; follow it as written and report any deviation.
 
-- [ ] Fix each failing evidence item from A16 and B12 as its own commit, then re-run the affected checks under the locks.
+- [ ] Fix each failing evidence item from A16 and B12 as its own commit, run the test files you changed, then re-run the affected browser checks through the harness's `run.sh` lock.
 
 ### Task C2: Product docs (for the lead)
 
@@ -1187,11 +1273,16 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it, for
 ### Task C3: Final whole-branch review, verification, PR
 
 - [ ] **Whole-branch review** of `git diff spec/i5-skills-and-plugins...i5/3-polish-docs` (all of I5) against the whole spec and all 14 acceptance criteria. **The React diff is checked against `vercel-react-best-practices`** with A16's checklist and every R-* rule in Global Constraints: the reviewer invokes the skill, skips Next-only rules and says so.
-- [ ] **Full verification** under `/tmp/of-v002-heavy.lock`: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, and the dev loop from a clean clone.
+- [ ] **Full verification, once for the Part**: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, and the dev loop from a clean clone.
 - [ ] **Real-browser re-check** of every UI acceptance criterion in Chromium and WebKit headless, through the harness `run.sh` lock. Use fake Claude and the `file://` fixture only.
-- [ ] **Push and draft PR.** Base `i5/2-plugins`, titled `chore: Skills evidence fixes and docs list`. Watch CI until it is green. Never merge.
+- [ ] **Push and PR.** Push, get CI green, then open the PR **ready for review (not draft)** with base `i5/2-plugins`, titled `chore: Skills evidence fixes and docs list`. Never merge; Or merges the stack.
 
 ## Manual steps for Or (the executor never does these)
 
 1. **Gate G1** (Task B1): push the fixture repo, run `scripts/g1/run.sh` with the exact Claude Code version pinned in B0, and post `report.md` on #153. Part B starts only after that.
 2. **Review the certainty-3-or-lower decisions** listed on #153: Q3, Q5, Q6, Q7, Q9, Q12, Q15, Q18, T1, T7, T8, R5 and R12.
+3. **Confirm the re-validation calls** (made against the merged I1–I4/I6 code on 2026-11-24; the plan and spec already follow them):
+   - the old `FACTORY_HOST_SKILLS_DIR` gets S10's `REMOVED_ENV` boot warning (never read, no alias), which reverses the spec's earlier "no warning" (Q11);
+   - a failed background plugin install is an Inbox `notice` to the saver, not a new activity log or inbox kind (T6);
+   - one Claude Code floor: the harness's `MIN_CLAUDE_VERSION`, set from G1, instead of a second `CLAUDE_PLUGIN_FLOOR`;
+   - `describeDocChanges` stays for the web's pre-save summary, and `describeChanges` adds the library lines on the server.

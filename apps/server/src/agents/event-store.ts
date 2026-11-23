@@ -116,9 +116,12 @@ export interface InboxEntry {
   task?: { key: string; title: string };
   /** A task event's notice, so the UI never parses the preview. */
   fact?: "done" | "cancelled";
+  /** The credential a `credential` item is about; `current` while its expiry notice has not been re-armed. */
+  credential?: { name: string; expiresAt: string | null; current: boolean };
   link:
     | { kind: "session"; agentSlug: string; seq?: number }
-    | { kind: "task"; key: string; commentId?: string };
+    | { kind: "task"; key: string; commentId?: string }
+    | { kind: "credential"; name: string };
 }
 export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 /** The pool or a caller's transaction. */
@@ -953,14 +956,18 @@ export class EventStore {
       fromUserId?: string;
       notice?: string;
       subjectAgentId?: string;
+      /** I3: the credential a `system` notice is about. */
+      subjectCredentialId?: string;
       taskId?: string;
       commentId?: string;
+      /** The message's timestamp when it must equal another written elsewhere (the expiry check); the clock otherwise. */
+      createdAt?: Date;
       /** `"all"` (every user) is for factory facts (`kind: "system"`) only; people are addressed by handle. */
       to: { userId: string } | "all";
       /** A `kind: "message"` row's recipient list, as `@handle`s. */
       recipients?: string[];
       /** The inbox item's kind; `message` when not given. */
-      inboxKind?: "message" | "mention" | "task_event";
+      inboxKind?: "message" | "mention" | "task_event" | "credential";
       body: string;
       urgent: boolean;
       fromToolUseId?: string | null;
@@ -970,9 +977,13 @@ export class EventStore {
     return outer.transaction(async (tx) => {
       // Per kind, the sender columns the schema's CHECK allows, said as a sentence before the database says it.
       const authors = (m.fromAgentId ? 1 : 0) + (m.fromUserId ? 1 : 0);
-      if (m.kind === "system" ? !m.subjectAgentId : m.kind === "message" && !m.fromAgentId)
+      if (
+        m.kind === "system"
+          ? !m.subjectAgentId && !m.subjectCredentialId
+          : m.kind === "message" && !m.fromAgentId
+      )
         throw new Error(
-          "a human message needs a sender agent; a factory fact needs its subject agent",
+          "a human message needs a sender agent; a factory fact needs its subject agent or credential",
         );
       if (m.kind === "message" && !m.recipients?.length)
         throw new Error("a human message needs its recipients");
@@ -989,7 +1000,7 @@ export class EventStore {
           ? await tx.select({ id: users.id }).from(users).orderBy(asc(users.id))
           : [{ id: m.to.userId }];
       const userIds = targets.map((u) => u.id);
-      const now = this.clock();
+      const now = m.createdAt ?? this.clock();
       const [row] = await tx
         .insert(messages)
         .values({
@@ -999,6 +1010,7 @@ export class EventStore {
           fromUserId: m.fromUserId ?? null,
           notice: m.notice ?? null,
           subjectAgentId: m.subjectAgentId ?? null,
+          subjectCredentialId: m.subjectCredentialId ?? null,
           taskId: m.taskId ?? null,
           commentId: m.commentId ?? null,
           toUserId: m.to === "all" ? null : m.to.userId,
@@ -1400,6 +1412,9 @@ export class EventStore {
         fromHandle: fu.handle,
         subjectSlug: sa.slug,
         toHandle: tu.handle,
+        credName: credentials.name,
+        credExpiresAt: credentials.expiresAt,
+        credNotifiedAt: credentials.expiryNotifiedAt,
         taskNumber: tasks.number,
         taskTitle: tasks.title,
         preview: sql<string>`left(${messages.body}, 280)`,
@@ -1411,6 +1426,7 @@ export class EventStore {
       .leftJoin(fu, eq(fu.id, messages.fromUserId))
       .leftJoin(sa, eq(sa.id, messages.subjectAgentId))
       .leftJoin(tu, eq(tu.id, messages.toUserId))
+      .leftJoin(credentials, eq(credentials.id, messages.subjectCredentialId))
       .leftJoin(tasks, eq(tasks.id, messages.taskId))
       .where(where);
   }
@@ -1422,6 +1438,27 @@ export class EventStore {
     const senders = await this.senderEvents(page.map((r) => r.m));
     const items: InboxEntry[] = [];
     for (const r of page) {
+      // I3 §5.8: a credential notice is built first, so it never reaches the session link with an empty slug.
+      if (r.m.subjectCredentialId && r.credName !== null) {
+        items.push({
+          id: r.item.id,
+          messageId: r.m.id,
+          kind: "credential",
+          read: r.item.readAt !== null,
+          from: { kind: "factory", name: "factory" },
+          to: r.m.toAllHumans ? "everyone" : `@${r.toHandle ?? ""}`,
+          preview: r.preview,
+          urgent: r.m.urgent,
+          createdAt: r.item.createdAt.toISOString(),
+          credential: {
+            name: r.credName,
+            expiresAt: r.credExpiresAt?.toISOString() ?? null,
+            current: r.credNotifiedAt?.getTime() === r.m.createdAt.getTime(),
+          },
+          link: { kind: "credential", name: r.credName },
+        });
+        continue;
+      }
       // By kind and sender columns: a human-authored mention is that human, not the factory.
       const factory =
         !r.fromHandle && (r.m.kind === "system" || r.m.kind === "task_update" || !r.fromSlug);

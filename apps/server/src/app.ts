@@ -22,6 +22,7 @@ import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
+import { ExpiryCheck } from "./credentials/expiry-check.ts";
 import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
 import { probePython, startHostPty, sweepStaleDirs } from "./credentials/sign-in/host-pty.ts";
 import { runSetupToken } from "./credentials/sign-in/setup-token.ts";
@@ -445,11 +446,20 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("uploads", uploads);
   const uploadSweep = new UploadSweep({ uploads, log: app.log, now: clock });
+  const expiryCheck = new ExpiryCheck({
+    db: deps.db,
+    store,
+    bus,
+    zone: config.factoryTimezone,
+    now: clock,
+    log: app.log,
+  });
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
     // A send still waiting for a boot that failed must not hold the agent listener open.
     router.close();
+    expiryCheck.stop();
     reaper.stop();
     uploadSweep.stop();
     scheduler.stop();
@@ -463,6 +473,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     // A sweep that was under way finishes against a closing factory (nothing starts); the DB closes after this hook.
     await reaper.idle();
     await uploadSweep.idle();
+    await expiryCheck.idle();
     await scheduler.idle();
   });
 
@@ -535,6 +546,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     reaper.start();
     void uploadSweep.run();
     uploadSweep.start();
+    void expiryCheck.run();
+    expiryCheck.start();
     scheduler.start();
     // I3 §5.2: a crashed server's sign-in temp dirs.
     void sweepStaleDirs(os.tmpdir(), clock().getTime());

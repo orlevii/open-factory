@@ -3,7 +3,7 @@ import {
   anyEventSchema,
   handleSchema,
   MAX_BODY_BYTES,
-  sendMessageBodySchema,
+  sendMessagesBodySchema,
   sessionEventSchema,
 } from "./index.ts";
 
@@ -93,10 +93,13 @@ describe("event schemas", () => {
   });
 });
 
-describe("sendMessageBodySchema", () => {
+describe("sendMessagesBodySchema", () => {
   test("trims and rejects empty", () => {
-    expect(sendMessageBodySchema.safeParse({ body: "   ", urgent: false }).success).toBe(false);
-    expect(sendMessageBodySchema.parse({ body: " hi ", urgent: true })).toEqual({
+    expect(
+      sendMessagesBodySchema.safeParse({ to: ["dev"], body: "   ", urgent: false }).success,
+    ).toBe(false);
+    expect(sendMessagesBodySchema.parse({ to: ["dev"], body: " hi ", urgent: true })).toEqual({
+      to: ["dev"],
       body: "hi",
       urgent: true,
     });
@@ -104,8 +107,12 @@ describe("sendMessageBodySchema", () => {
   test("limits UTF-8 bytes, not chars", () => {
     const ok = "é".repeat(MAX_BODY_BYTES / 2);
     const tooBig = `${ok}x`;
-    expect(sendMessageBodySchema.safeParse({ body: ok, urgent: false }).success).toBe(true);
-    expect(sendMessageBodySchema.safeParse({ body: tooBig, urgent: false }).success).toBe(false);
+    expect(sendMessagesBodySchema.safeParse({ to: ["dev"], body: ok, urgent: false }).success).toBe(
+      true,
+    );
+    expect(
+      sendMessagesBodySchema.safeParse({ to: ["dev"], body: tooBig, urgent: false }).success,
+    ).toBe(false);
   });
 });
 

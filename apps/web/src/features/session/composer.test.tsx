@@ -56,7 +56,21 @@ beforeEach(() => {
     url.endsWith("/interrupt")
       ? json({}, 202)
       : json(
-          { item: { id: "q", kind: "message", from: "@alice", fromKind: "human", createdAt: "x" } },
+          {
+            results: [
+              {
+                to: "@dev",
+                status: "queued",
+                item: {
+                  id: "q",
+                  kind: "message",
+                  from: "@alice",
+                  fromKind: "human",
+                  createdAt: "x",
+                },
+              },
+            ],
+          },
           202,
         );
   vi.stubGlobal(
@@ -207,7 +221,7 @@ test("⌥Enter posts urgent:true; Enter and ⌘Enter post urgent:false", async (
       });
   await userEvent.type(box, "a");
   fireEvent.keyDown(box, { key: "Enter", altKey: true });
-  await vi.waitFor(() => expect(sends()).toEqual([{ body: "a", urgent: true }]));
+  await vi.waitFor(() => expect(sends()).toEqual([{ to: ["dev"], body: "a", urgent: true }]));
   await vi.waitFor(() => expect(box).toHaveValue(""));
   await userEvent.type(box, "b{Enter}");
   await vi.waitFor(() => expect(sends()).toHaveLength(2));
@@ -216,9 +230,9 @@ test("⌥Enter posts urgent:true; Enter and ⌘Enter post urgent:false", async (
   fireEvent.keyDown(box, { key: "Enter", metaKey: true });
   await vi.waitFor(() =>
     expect(sends()).toEqual([
-      { body: "a", urgent: true },
-      { body: "b", urgent: false },
-      { body: "c", urgent: false },
+      { to: ["dev"], body: "a", urgent: true },
+      { to: ["dev"], body: "b", urgent: false },
+      { to: ["dev"], body: "c", urgent: false },
     ]),
   );
   expect(screen.queryByRole("checkbox", { name: "Urgent" })).toBeNull();
@@ -428,16 +442,22 @@ const queueEl = () => screen.getByTestId("queue");
 const accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
   json(
     {
-      item: {
-        id: "m1",
-        kind: "message",
-        from: "@alice",
-        fromKind: "human",
-        body: "hello",
-        clientMessageId,
-        createdAt: new Date().toISOString(),
-        ...over,
-      },
+      results: [
+        {
+          to: "@dev",
+          status: "queued",
+          item: {
+            id: "m1",
+            kind: "message",
+            from: "@alice",
+            fromKind: "human",
+            body: "hello",
+            clientMessageId,
+            createdAt: new Date().toISOString(),
+            ...over,
+          },
+        },
+      ],
     },
     202,
   );
@@ -490,7 +510,12 @@ test("Enter clears the box and shows a muted Sending block: no time, no Cancel, 
   expect(within(block).queryByRole("button")).toBeNull();
   expect(block.querySelector("[data-message-body]")).toHaveClass("text-muted-foreground");
   const sent = messageSends()[0];
-  expect(sent).toEqual({ body: "hello", urgent: false, clientMessageId: expect.any(String) });
+  expect(sent).toEqual({
+    to: ["dev"],
+    body: "hello",
+    urgent: false,
+    clientMessageId: expect.any(String),
+  });
   expect(sent?.clientMessageId).toMatch(/^[0-9a-f-]{36}$/);
   // The stored draft keeps the text until the server accepts it (after the 150ms write throttle).
   await sleep(200);

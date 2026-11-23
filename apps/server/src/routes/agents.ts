@@ -19,7 +19,6 @@ import {
   patchAgentBodySchema,
   queueItemResponseSchema,
   resyncResponseSchema,
-  sendMessageBodySchema,
   slugSchema,
   stopCronsResponseSchema,
 } from "@open-factory/shared";
@@ -256,51 +255,6 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       });
       if (!page) return err(reply, 404, "event_not_found", `Event ${around} isn't in this session`);
       return eventsPageSchema.parse(page);
-    },
-  );
-
-  app.post(
-    "/api/agents/:slug/messages",
-    { schema: { params: slugParams, body: sendMessageBodySchema } },
-    async (req, reply) => {
-      const u = user(req);
-      try {
-        // A human sender addresses agents only; the path's slug is the one recipient.
-        const {
-          results: [r],
-        } = await app.router.send(
-          { userId: u.id, handle: u.handle },
-          [req.params.slug],
-          req.body.body,
-          req.body.urgent,
-          {
-            ...(req.body.clientMessageId ? { clientMessageId: req.body.clientMessageId } : {}),
-            ...(req.body.attachments?.length ? { attachments: req.body.attachments } : {}),
-          },
-        );
-        if (!r) throw new Error("a send returned no result");
-        if (r.status === "refused") {
-          if (r.code === "invalid_attachment") return err(reply, 422, r.code, r.reason);
-          // The `[attached: …]` lines pushed the body over the limit the schema checks without them.
-          if (r.code === "too_large") return err(reply, 400, "validation_error", r.reason);
-          if (r.code === "archived") {
-            const e = new AgentArchivedError(req.params.slug);
-            return err(reply, 409, "agent_archived", e.message);
-          }
-          if (r.code === "terminated") return err(reply, 409, "agent_terminated", r.reason);
-          return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-        }
-        if (r.status === "start_failed") return err(reply, 503, "agent_start_failed", r.note);
-        return reply
-          .code(202)
-          .send(queueItemResponseSchema.parse({ item: "item" in r ? r.item : undefined }));
-      } catch (e) {
-        if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
-        if (e instanceof AgentTerminatedError)
-          return err(reply, 409, "agent_terminated", e.message);
-        if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
-        throw e;
-      }
     },
   );
 

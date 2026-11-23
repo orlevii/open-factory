@@ -113,15 +113,13 @@ export class TerminateService implements TerminatePort {
     // READ COMMITTED doesn't show the transaction that row) is pending still: reject it now. Any later hand-off finds
     // the committed latch, which rejects it.
     rt.chatChanged(
-      await this.d.store
-        .rejectPending(agentId)
-        .catch((err: unknown) => {
-          this.d.log.error(
-            { err, agent: rt.agent.slug },
-            "rejecting late rows to a terminated agent failed",
-          );
-          return [];
-        }),
+      await this.d.store.rejectPending(agentId).catch((err: unknown) => {
+        this.d.log.error(
+          { err, agent: rt.agent.slug },
+          "rejecting late rows to a terminated agent failed",
+        );
+        return [];
+      }),
     );
     this.d.router.handOffHeldRows(peerRows);
     // §8 step 3: the stop and the container removal continue in the background; the status frame reports their end.

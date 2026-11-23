@@ -236,9 +236,9 @@ describe("I1 §6.3: the chat thread", () => {
     test("is the runtime's fact: set from the batch write, gone once the turn closes with its outcome", async () => {
       const sent = await s.app.inject({
         method: "POST",
-        url: "/api/agents/dev/messages",
+        url: "/api/messages",
         headers: { cookie: or.cookie },
-        payload: { body: "please", urgent: false },
+        payload: { to: ["dev"], body: "please", urgent: false },
       });
       expect(sent.statusCode).toBeLessThan(300);
       const rt = await s.app.runtimes.bySlug("dev");

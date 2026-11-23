@@ -17,9 +17,9 @@ beforeEach(async () => {
   cookie = (await signUp(h.app, { handle: "or" })).cookie;
   await h.app.inject({
     method: "POST",
-    url: "/api/agents/ada/messages",
+    url: "/api/messages",
     headers: { cookie },
-    payload: { body: "hi" },
+    payload: { to: ["ada"], body: "hi" },
   });
   driver.last.emit(...ev.fullTurn("sess-a"));
   await (await h.app.runtimes.bySlug("ada"))?.settled();

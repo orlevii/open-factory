@@ -117,9 +117,9 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   const { cookie } = await h.signUpUser();
   const sent = await h.app.inject({
     method: "POST",
-    url: "/api/agents/lead/messages",
+    url: "/api/messages",
     headers: { cookie },
-    payload: { body: "start" },
+    payload: { to: ["lead"], body: "start" },
   });
   expect(sent.statusCode).toBeLessThan(300);
   const leadProc = procOf("lead");

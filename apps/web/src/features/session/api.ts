@@ -1,5 +1,6 @@
 import {
   type AgentSummary,
+  ApiError,
   agentDetailSchema,
   agentListSchema,
   agentResponseSchema,
@@ -7,6 +8,7 @@ import {
   eventsPageSchema,
   messageLookupSchema,
   queueItemResponseSchema,
+  sendMessagesResponseSchema,
 } from "@open-factory/shared";
 import { type QueryClient, queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
@@ -83,23 +85,38 @@ export function fetchEvents(
 export const fetchMessage = (id: string) =>
   apiFetch(`/api/messages/${encodeURIComponent(id)}`, { schema: messageLookupSchema });
 
-/** U3 §13.2: `clientMessageId` makes a retry idempotent (the server answers a repeat with the original). */
-export const postMessage = (
+/**
+ * `POST /api/messages` to one agent. U3 §13.2: `clientMessageId` makes a retry idempotent. The recipient's result
+ * is the call's: a refusal or a failed start throws as the per-agent route's errors did.
+ */
+export const postMessage = async (
   slug: string,
   body: string,
   o: { urgent: boolean; clientMessageId?: string; attachments?: string[]; signal?: AbortSignal },
-) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/messages`, {
+) => {
+  const { results } = await apiFetch("/api/messages", {
     method: "POST",
     body: {
+      to: [slug],
       body,
       urgent: o.urgent,
       ...(o.clientMessageId ? { clientMessageId: o.clientMessageId } : {}),
       ...(o.attachments?.length ? { attachments: o.attachments } : {}),
     },
-    schema: queueItemResponseSchema,
+    schema: sendMessagesResponseSchema,
     ...(o.signal ? { signal: o.signal } : {}),
-  }).then((r) => r.item);
+  });
+  const r = results[0];
+  if (r?.status === "queued" && r.item) return r.item;
+  const reason = r?.reason ?? "The message wasn't sent.";
+  if (r?.status === "start_failed") throw new ApiError(503, "agent_start_failed", reason);
+  const code = /archived/.test(reason)
+    ? "agent_archived"
+    : /terminated/.test(reason)
+      ? "agent_terminated"
+      : "agent_not_found";
+  throw new ApiError(409, code, reason);
+};
 
 /** `POST /api/agents/:slug/input`: the raw text a human types into the session, exactly as typed (I1 §5.1).
  *  `clientMessageId` makes a retry idempotent. */

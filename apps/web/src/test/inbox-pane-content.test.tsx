@@ -2,7 +2,7 @@ import {
   eventsQuerySchema,
   type ServerMessage,
   type SessionEvent,
-  sendMessageBodySchema,
+  sendMessagesBodySchema,
   taskCommentBodySchema,
 } from "@open-factory/shared";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -146,18 +146,24 @@ async function visit(path: string) {
 test("a message shows 7 rows around seq, the target highlighted and scrolled to its start; a reply goes to the sender and marks the item read", async () => {
   setup([item(1)]);
   api.on(
-    "POST /api/agents/dev/messages",
-    validBody(sendMessageBodySchema, (b) =>
+    "POST /api/messages",
+    validBody(sendMessagesBodySchema, (b) =>
       json(
         {
-          item: {
-            id: "q1",
-            kind: "message",
-            body: (b as { body: string }).body,
-            from: "@alice",
-            fromKind: "human",
-            createdAt: at(0),
-          },
+          results: [
+            {
+              to: "@dev",
+              status: "queued",
+              item: {
+                id: "q1",
+                kind: "message",
+                body: (b as { body: string }).body,
+                from: "@alice",
+                fromKind: "human",
+                createdAt: at(0),
+              },
+            },
+          ],
         },
         202,
       ),
@@ -187,9 +193,12 @@ test("a message shows 7 rows around seq, the target highlighted and scrolled to 
   await userEvent.type(box, "On it");
   fireEvent.click(within(p).getByRole("button", { name: "Send" }));
   await waitFor(() =>
-    expect(
-      api.calls.find((c) => c.method === "POST" && c.url === "/api/agents/dev/messages")?.body,
-    ).toEqual({ body: "On it", urgent: false, clientMessageId: expect.any(String) }),
+    expect(api.calls.find((c) => c.method === "POST" && c.url === "/api/messages")?.body).toEqual({
+      to: ["dev"],
+      body: "On it",
+      urgent: false,
+      clientMessageId: expect.any(String),
+    }),
   );
   await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]));
   // The session's composer, keys and reserved hint line included (U3 §6.2).
@@ -219,11 +228,23 @@ test("a @factory message targets the subject agent", async () => {
   api.on("GET /api/agents/ops", () => json(agentDetail({ slug: "ops", displayName: "Ops" })));
   api.on("GET /api/agents/ops/events?", validQuery(eventsQuerySchema, eventsRoute("ops")));
   api.on(
-    "POST /api/agents/ops/messages",
-    validBody(sendMessageBodySchema, () =>
+    "POST /api/messages",
+    validBody(sendMessagesBodySchema, () =>
       json(
         {
-          item: { id: "q1", kind: "message", from: "@alice", fromKind: "human", createdAt: at(0) },
+          results: [
+            {
+              to: "@ops",
+              status: "queued",
+              item: {
+                id: "q1",
+                kind: "message",
+                from: "@alice",
+                fromKind: "human",
+                createdAt: at(0),
+              },
+            },
+          ],
         },
         202,
       ),
@@ -236,9 +257,7 @@ test("a @factory message targets the subject agent", async () => {
   await userEvent.type(box, "Restarting you");
   fireEvent.click(within(p).getByRole("button", { name: "Send" }));
   await waitFor(() =>
-    expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/ops/messages")).toBe(
-      true,
-    ),
+    expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/messages")).toBe(true),
   );
   expect(api.calls.some((c) => c.url.startsWith("/api/agents/dev"))).toBe(false);
 });

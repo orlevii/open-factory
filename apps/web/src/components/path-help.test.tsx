@@ -113,29 +113,33 @@ test.each(["{Escape}", "{Tab}"])("inside a Sheet: %s closes only the popover", a
   expect(screen.getByRole("dialog", { name: "S" })).toBeInTheDocument();
 });
 
-test("inside an InlineForm: Esc closes the popover, not the form", async () => {
-  mockApi({ "GET /api/host": host("linux", "box", "/home/or") });
-  const cancel = vi.fn();
-  const user = userEvent.setup();
-  wrap(
-    <InlineForm
-      label="F"
-      onSubmit={() => {}}
-      onCancel={cancel}
-      submitLabel="Save"
-      pendingLabel="Saving"
-      pending={false}
-      outcome={{ outcomeKey: 0 }}
-    >
-      <PathHelp />
-    </InlineForm>,
-  );
-  await user.click(trigger());
-  await screen.findByRole("dialog");
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(cancel).not.toHaveBeenCalled();
-});
+test.each(["{Escape}", "{Tab}"])(
+  "inside an InlineForm: %s closes the popover, not the form",
+  async (key) => {
+    mockApi({ "GET /api/host": host("linux", "box", "/home/or") });
+    const cancel = vi.fn();
+    const user = userEvent.setup();
+    wrap(
+      <InlineForm
+        label="F"
+        onSubmit={() => {}}
+        onCancel={cancel}
+        submitLabel="Save"
+        pendingLabel="Saving"
+        pending={false}
+        outcome={{ outcomeKey: 0 }}
+      >
+        <PathHelp />
+      </InlineForm>,
+    );
+    await user.click(trigger());
+    await screen.findByRole("dialog");
+    await user.keyboard(key);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(cancel).not.toHaveBeenCalled();
+    expect(screen.getByRole("form", { name: "F" })).toBeInTheDocument();
+  },
+);
 
 test("trigger is a non-submitting, validation-skipping button", () => {
   mockApi({});

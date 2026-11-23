@@ -110,6 +110,20 @@ export async function linkSkills(
 ): Promise<void> {
   const parentRel = path.join(".claude", "skills");
   const parent = path.join(workdir, parentRel);
+  // One link per name: a template skill would silently replace the host skill the config lists.
+  const hostNames = new Set(host.skills.map((s) => s.name));
+  const clash = template.skills.find((s) => hostNames.has(s.name));
+  if (clash) {
+    const diagnosis = `Skill ${clash.name} is both a host skill and a template skill.`;
+    throw new WorkspaceError(`${diagnosis} Fix it in Configuration.`, "config", diagnosis);
+  }
+  let realTemplate: string;
+  try {
+    realTemplate = await realpath(template.templateDir);
+  } catch {
+    // Gone since the config was resolved (spec §6.1's message, not a raw ENOENT).
+    throw new WorkspaceError(`Template ${path.basename(template.templateDir)} no longer exists.`);
+  }
   await syncLinks(
     workdir,
     parentRel,
@@ -127,7 +141,7 @@ export async function linkSkills(
     ],
     {
       ...opts,
-      onlyUnder: [host.dir, path.join(await realpath(template.templateDir), "skills")],
+      onlyUnder: [host.dir, path.join(realTemplate, "skills")],
     },
   );
 }

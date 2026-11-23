@@ -331,20 +331,26 @@ describe("template skills", () => {
     ).rejects.toThrow("it is inside FACTORY_HOME");
   });
 
+  // The reasons are the general rules': the exemption never applied. Were its `lstat` or realpath checks gone, a link
+  // into the home would mount and a link into state would hit the exemption's own refusal instead.
+  const OUTSIDE = "it isn't one of the agent's allowed mounts";
+  const IN_FACTORY = "it is inside FACTORY_HOME and isn't this agent's workdir or plugins dir";
   test.each([
-    ["a skill entry symlinked to ~/.ssh", "entry", () => path.join(hostHome, ".ssh")],
+    ["a skill entry symlinked to ~/.ssh", "entry", () => path.join(hostHome, ".ssh"), OUTSIDE],
     [
       "a skill entry symlinked to state/agents/bob",
       "entry",
       () => path.join(tctx.factoryHome, "state/agents/bob"),
+      IN_FACTORY,
     ],
-    ["skills/ symlinked to ~/.ssh", "dir", () => path.join(hostHome, ".ssh")],
+    ["skills/ symlinked to ~/.ssh", "dir", () => path.join(hostHome, ".ssh"), OUTSIDE],
     [
       "skills/ symlinked to state/agents/bob",
       "dir",
       () => path.join(tctx.factoryHome, "state/agents/bob"),
+      IN_FACTORY,
     ],
-  ])("refuses %s at start", async (_n, what, target) => {
+  ])("refuses %s at start", async (_n, what, target, reason) => {
     const to = target();
     mkdirSync(path.join(to, "x"), { recursive: true });
     let declared: string;
@@ -360,7 +366,7 @@ describe("template skills", () => {
     // Declared both as its real path and as the link's spelling: neither is allowed.
     for (const d of [declared, skill]) {
       declare(d);
-      await expect(checkMounts([mountOf(d)], tctx)).rejects.toThrow(MountRefusedError);
+      await expect(checkMounts([mountOf(d)], tctx)).rejects.toThrow(reason);
     }
   });
 
@@ -371,7 +377,8 @@ describe("template skills", () => {
     mkdirSync(nested);
     for (const p of [other, nested, path.join(tplDir, "skills"), tplDir]) {
       declare(p);
-      await expect(checkMounts([mountOf(p)], tctx)).rejects.toThrow(MountRefusedError);
+      // Refused by the general FACTORY_HOME rule: the exemption's exact-location check left it out.
+      await expect(checkMounts([mountOf(p)], tctx)).rejects.toThrow(IN_FACTORY);
     }
   });
 
@@ -393,9 +400,15 @@ describe("template skills", () => {
 
   test("the host home, state, workdirs and their ancestors stay refused", async () => {
     const stateDir = path.join(tctx.factoryHome, "state");
-    for (const p of [hostHome, tctx.factoryHome, stateDir, tctx.workdir]) {
+    for (const [p, reason] of [
+      [hostHome, "it is the host home directory"],
+      [tctx.factoryHome, "it is FACTORY_HOME"],
+      [stateDir, "it is the factory state directory"],
+      // Allowed only as the writable workdir: declaring it a template skill never makes it a read-only mount.
+      [tctx.workdir, "it must be writable"],
+    ] as const) {
       declare(p);
-      await expect(checkMounts([mountOf(p)], tctx)).rejects.toThrow(MountRefusedError);
+      await expect(checkMounts([mountOf(p)], tctx)).rejects.toThrow(`isn't allowed: ${reason}.`);
     }
   });
 

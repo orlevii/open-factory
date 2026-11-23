@@ -144,6 +144,33 @@ test("template skills: a real folder with a template skill's name fails; a templ
   ).rejects.toThrow(`${wd}/.claude/skills/x isn't a link to the template skill; move it away.`);
 });
 
+test("a host skill and a template skill with the same name fail the start, naming the clash", async () => {
+  const { tplDir, wd } = tplLayout();
+  const hs = tmp("hs-");
+  mkdirSync(path.join(hs, "x"));
+  const run = linkSkills(
+    wd,
+    { dir: hs, skills: await resolveHostSkills(hs, ["x"]) },
+    { templateDir: tplDir, skills: await resolveTemplateSkills(tplDir) },
+  );
+  await expect(run).rejects.toBeInstanceOf(WorkspaceError);
+  await expect(run).rejects.toMatchObject({
+    message: "Skill x is both a host skill and a template skill. Fix it in Configuration.",
+    diagnosis: "Skill x is both a host skill and a template skill.",
+    fix: "config",
+  });
+  // Nothing was linked: the clash is found before any write.
+  expect(existsSync(path.join(wd, ".claude/skills/x"))).toBe(false);
+});
+
+test("a template folder gone by the link step fails the start with the missing-template message", async () => {
+  const { tplDir, wd } = tplLayout();
+  rmSync(tplDir, { recursive: true });
+  await expect(
+    linkSkills(wd, { dir: tmp("hs-"), skills: [] }, { templateDir: tplDir, skills: [] }),
+  ).rejects.toMatchObject({ name: "WorkspaceError", message: "Template t no longer exists." });
+});
+
 test.each([
   ["a skill entry symlinked to ~/.ssh", "entry", ".ssh", "skills/z must be a folder, not a link."],
   [

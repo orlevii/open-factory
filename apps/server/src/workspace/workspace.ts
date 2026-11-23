@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, readlink, rm } from "node:fs/promises";
+import { mkdir, readFile, readlink, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
@@ -40,16 +40,6 @@ import { buildSettings } from "./settings.ts";
 
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-
-async function _exists(p: string): Promise<boolean> {
-  try {
-    await lstat(p);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw err;
-  }
-}
 
 export interface PrepareInput {
   slug: string;
@@ -277,7 +267,8 @@ export class Workspace {
         `Plugin ${plugin} didn't install.`,
         i.effective.templatePlugins.includes(plugin) ? "template" : "config",
         undefined,
-        err.output || undefined,
+        // No output (a silent exit, a timeout): the error's own line, already redacted, says why.
+        err.output || err.message,
       );
     }
     const pluginKeys = await this.readPluginKeys(i.slug);

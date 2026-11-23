@@ -330,6 +330,29 @@ test("a failed install's output reaches the error through redactOutput", async (
   expect(err.detail).toContain("Failed to install plugin");
 });
 
+test("a failure with no output still says why, redacted", async () => {
+  const { ws, prep } = await setupAgent([], { FAKE_CLAUDE_PLUGIN_SILENT_FAIL: "marketplace" });
+  const url = "https://user:tok-SECRET@host.example/org/mk.git";
+  const err = await ws
+    .prepare({
+      ...prep,
+      effective: {
+        ...prep.effective,
+        doc: {
+          ...prep.effective.doc,
+          settings: { extraKnownMarketplaces: { mk2: { source: { source: "git", url } } } },
+        },
+        config: { ...prep.effective.config, plugins: ["b@mk2"] },
+        templatePlugins: [],
+      },
+    })
+    .catch((e) => e);
+  expect(err).toMatchObject({ message: "Plugin b@mk2 didn't install.", fix: "config" });
+  // The command line (with the marketplace URL) is the only clue; its credentials are redacted.
+  expect(err.detail).toContain("marketplace add https://[redacted]@host.example/org/mk.git");
+  expect(err.detail).not.toContain("tok-SECRET");
+});
+
 test("a failed install's output is the last 20 lines, at most 4 KB", async () => {
   const noisy = Array.from({ length: 60 }, (_, i) => `line ${i} ${"x".repeat(400)}`).join("\n");
   const { ws, withPlugins } = await setupAgent(["a@mk"], {

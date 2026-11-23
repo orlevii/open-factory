@@ -71,12 +71,12 @@ function useLiveRows(texts: readonly LiveText[], head: boolean, off: boolean): r
 export type TimelineHandle = Pick<StickToBottom, "captureAnchor" | "expandAnchor" | "repin">;
 
 /** Visible time the deep-link tint holds before it fades (U3 §7.4, Q28). */
-const ARRIVAL_MS = 2000;
+export const ARRIVAL_MS = 2000;
 
 /** Focuses a deep-linked row without scrolling again. A programmatic focus after a mouse navigation
  *  may not match `:focus-visible`; the row then carries `data-focus-ring`, styled the same, until it
  *  loses focus ("ring = focus"). */
-function arrive(row: HTMLElement) {
+export function arrive(row: HTMLElement) {
   row.focus({ preventScroll: true });
   let visible = false;
   try {

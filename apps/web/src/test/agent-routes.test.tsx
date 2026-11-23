@@ -173,12 +173,12 @@ test("a Chat → Session → Chat switch restores the chat's scroll and pin", as
     expect(document.querySelector("[data-chat-view]")).toBeNull();
     await toChat(router);
     expect((await view()).scrollTop).toBe(120);
-    // Left at the bottom, it comes back pinned: nothing to restore.
+    // Left at the bottom, it comes back pinned: at the bottom (1000), not at the stored top.
     writeViewPosition("dev", "chat", { top: 900, pinned: true });
     await toSession(router);
     await screen.findByText("Two entries.");
     await toChat(router);
-    expect((await view()).scrollTop).toBe(0);
+    expect((await view()).scrollTop).toBe(1000);
   } finally {
     restore();
   }

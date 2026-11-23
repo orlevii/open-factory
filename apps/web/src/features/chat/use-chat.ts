@@ -164,11 +164,13 @@ export function useChat(slug: string, o: { messageId?: string | undefined } = {}
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, [qc, slug, around]);
+  // The socket's first open follows the loader's fetch; a later one is a reconnect that may have missed frames.
   const opened = useRef(openCount);
   useEffect(() => {
+    const first = opened.current === 0;
     if (opened.current === openCount) return;
     opened.current = openCount;
-    if (!around) void refreshChat(qc, slug, "other");
+    if (!first && !around) void refreshChat(qc, slug, "other");
   }, [openCount, qc, slug, around]);
 
   const loadEarlier = useCallback(async () => {

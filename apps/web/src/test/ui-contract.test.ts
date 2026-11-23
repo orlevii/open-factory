@@ -180,6 +180,7 @@ describe("secondary buttons", () => {
     "features/inbox/inbox-list.tsx": 1, // Load earlier
     "features/inbox/inbox-pane.tsx": 1, // Open in session / Open task in the pane header (spec §11.2)
     "features/session/timeline.tsx": 1, // Load earlier
+    "features/chat/chat-view.tsx": 1, // Load earlier
     "features/session/agent-details.tsx": 1, // Edit agent: the details footer's standalone action
     "components/composer/stop-button.tsx": 1, // Stop: the composer's one control on the running turn (U3 §6.1)
     "features/settings/credentials-section.tsx": 1, // Verify

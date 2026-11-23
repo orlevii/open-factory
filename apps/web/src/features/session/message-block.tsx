@@ -131,8 +131,10 @@ export function MessageBlock(props: {
   body: string;
   urgent?: boolean;
   at?: string;
-  queued?: { reason?: string };
-  failed?: boolean;
+  /** Held, not delivered yet: `reason` follows "Not delivered yet:"; `text` replaces the whole line. */
+  queued?: { reason?: string; text?: string };
+  /** Not delivered; a string is the line's text (the Chat's rejected row), else "Not delivered". */
+  failed?: boolean | string;
   /** S8: the task badge of a task message, after the sender. */
   badge?: ReactNode;
   /** S9: a scheduled message: sender "Scheduler", the schedule badge, who wrote it, and the notes. */
@@ -199,7 +201,7 @@ export function MessageBlock(props: {
   ) : queued ? (
     <span className="flex items-center gap-1 text-muted-foreground">
       <Clock aria-hidden="true" className="size-3.5" />
-      {queued.reason ? `Not delivered yet: ${queued.reason}` : "Not delivered yet"}
+      {queued.text ?? (queued.reason ? `Not delivered yet: ${queued.reason}` : "Not delivered yet")}
     </span>
   ) : null;
   // A delivered factory notice is no card: a quiet line with the factory mark and its badge, the
@@ -278,7 +280,7 @@ export function MessageBlock(props: {
       )}
       {failed && (
         <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-          Not delivered
+          {typeof failed === "string" ? failed : "Not delivered"}
         </p>
       )}
       {/* One wrapper either way, so a send becoming its queued item keeps the parsed body. The prose

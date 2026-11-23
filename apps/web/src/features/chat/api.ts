@@ -17,6 +17,8 @@ const OWN_REFRESH = {
   refetchOnWindowFocus: false,
   refetchOnReconnect: false,
   refetchOnMount: false,
+  // An error shows with its Retry; opening the view does not fetch again behind it.
+  retryOnMount: false,
   structuralSharing: false,
 } as const;
 

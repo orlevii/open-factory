@@ -1,28 +1,378 @@
-import { useCallback, useLayoutEffect, useRef } from "react";
+import type { ChatEntry } from "@open-factory/shared";
+import { ApiError } from "@open-factory/shared";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { CircleAlert } from "lucide-react";
+import {
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { warmHighlighter } from "@/components/markdown/highlight";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useAgentActions } from "@/features/agents/agent-layout";
+import { ArchivedNotice } from "@/features/agents/archived-notice";
+import { useAgentSummary } from "@/features/agents/use-agent-summary";
 import { readViewPosition, useRememberPosition } from "@/features/agents/view-memory";
+import { cancelQueued, restoreQueued } from "@/features/session/api";
+import { NETWORK_ERROR } from "@/features/session/composer";
+import { JumpPill } from "@/features/session/jump-pill";
+import { SpeakerProvider } from "@/features/session/speaker-line";
+import { useStickToBottom } from "@/features/session/stick-to-bottom";
+import { ARRIVAL_MS, arrive } from "@/features/session/timeline";
+import { useDocumentVisible } from "@/hooks/use-document-visible";
+import { sessionQueryOptions } from "@/lib/session";
+import { type Arrival, type CancelNote, ChatRow, rowGap, StatusLine } from "./chat-row";
+import { entryKey, keysOf } from "./chat-state";
+import { useChat } from "./use-chat";
 
-/** A bottom within this many px counts as pinned (the session's slack). */
-const SLACK = 8;
+const toHandle = (s: { user: { handle: string } } | null) => s?.user.handle;
+const failureText = (e: unknown) => (e instanceof ApiError ? e.message : NETWORK_ERROR);
+const NO_NOTES: ReadonlyMap<string, CancelNote> = new Map();
 
-/** The chat thread. The thread itself is built in the next tasks; this holds the view's place: the
- *  scroller whose position and pin the per-slug memory keeps across a Chat/Session switch. */
-export function ChatView({ slug }: { slug: string; messageId?: string | undefined }) {
-  const scroller = useRef<HTMLDivElement>(null);
-  const isPinned = useCallback(() => {
-    const el = scroller.current;
-    return !el || el.scrollHeight - el.clientHeight - el.scrollTop <= SLACK;
-  }, []);
-  useRememberPosition(slug, "chat", scroller, isPinned);
-  // Restored on mount: a view left unpinned comes back where it was.
-  useLayoutEffect(() => {
-    const left = readViewPosition(slug, "chat");
-    if (scroller.current && left && !left.pinned) scroller.current.scrollTop = left.top;
-  }, [slug]);
+/** The chat with one agent (I1 §6.4): one column, newest at the bottom, the reader's place kept. */
+export function ChatView({ slug, messageId }: { slug: string; messageId?: string | undefined }) {
+  // The highlighter's import lands in idle time while the thread loads, before any reply renders.
+  useEffect(() => warmHighlighter(), []);
+  const agent = useAgentSummary(slug, { refetchOnMount: false });
+  const { refreshAgent } = useAgentActions();
+  const archived = agent?.archivedAt != null;
+  const terminated = agent?.status === "terminated";
   return (
-    <div
-      ref={scroller}
-      data-chat-view
-      className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
-    />
+    <>
+      <SpeakerProvider
+        slug={slug}
+        {...(agent
+          ? {
+              displayName: agent.displayName,
+              template: agent.template,
+              kind: agent.kind,
+              avatarVersion: agent.avatarVersion,
+            }
+          : {})}
+      >
+        <Thread slug={slug} messageId={messageId} agentName={agent?.displayName ?? slug} />
+      </SpeakerProvider>
+      {archived ? (
+        <ArchivedNotice slug={slug} onRestored={() => void refreshAgent()} />
+      ) : terminated ? (
+        <div className="shrink-0 border-t border-border px-4 py-3 md:px-6">
+          <p data-readonly-line className="max-w-[52rem] text-sm text-muted-foreground">
+            This agent was terminated. The chat is read-only.
+          </p>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function Thread({
+  slug,
+  messageId,
+  agentName,
+}: {
+  slug: string;
+  messageId: string | undefined;
+  agentName: string;
+}) {
+  const chat = useChat(slug, { messageId });
+  const { entries, working, live, windowed, status } = chat;
+  const self = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
+  const navigate = useNavigate();
+  const scroller = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const loaded = status === "success";
+
+  // The highest entry on screen when the reader left the bottom; the pill counts what came after.
+  const [seen, setSeen] = useState<ReadonlySet<string>>();
+  const latest = useRef(entries);
+  useLayoutEffect(() => {
+    latest.current = entries;
+  }, [entries]);
+  const stick = useStickToBottom(scroller, log, (pinned) =>
+    setSeen(pinned ? undefined : keysOf(latest.current)),
+  );
+  const isPinned = useCallback(() => stick.pinned.current, [stick]);
+  useRememberPosition(slug, "chat", scroller, isPinned, !windowed);
+
+  // The deep link: the thread opens around the message and tints it, as the session does.
+  const targetKey = useMemo(() => {
+    if (!messageId) return undefined;
+    const hit = entries.find((e) => e.kind === "message" && e.id === messageId);
+    return hit && entryKey(hit);
+  }, [entries, messageId]);
+  const [arrival, setArrival] = useState<Arrival>();
+  const centred = useRef(false);
+  const restored = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs after every content commit (the height changed)
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    if (targetKey !== undefined && !centred.current) {
+      centred.current = true;
+      restored.current = true;
+      stick.unpin();
+      const row = el.querySelector<HTMLElement>(`[data-row="${CSS.escape(targetKey)}"]`);
+      row?.scrollIntoView?.({ block: "center" });
+      if (row) arrive(row);
+      setArrival("on");
+      return;
+    }
+    if (!restored.current && loaded) {
+      restored.current = true;
+      const left = windowed ? undefined : readViewPosition(slug, "chat");
+      if (left && !left.pinned) {
+        stick.unpin();
+        el.scrollTop = left.top;
+        return;
+      }
+    }
+    // Pinned: the bottom, at once. Unpinned: the anchor row keeps its place (Load earlier included).
+    stick.settle();
+  }, [entries, working, loaded, targetKey, stick, slug, windowed]);
+  // The tint fades after 2s of visible time; hidden, the clock stops.
+  const visible = useDocumentVisible();
+  const arrivalLeft = useRef(ARRIVAL_MS);
+  useEffect(() => {
+    if (arrival !== "on" || !visible) return;
+    const start = Date.now();
+    const t = setTimeout(() => setArrival("fading"), arrivalLeft.current);
+    return () => {
+      clearTimeout(t);
+      arrivalLeft.current = Math.max(0, arrivalLeft.current - (Date.now() - start));
+    };
+  }, [arrival, visible]);
+  const onArrivedEnd = useCallback(() => setArrival(undefined), []);
+
+  // Cancel and Undo of a held message of yours, in the row's place.
+  const [notes, setNotes] = useState<ReadonlyMap<string, CancelNote>>(NO_NOTES);
+  const setNote = useCallback((id: string, note: CancelNote | undefined) => {
+    setNotes((m) => {
+      const next = new Map(m);
+      if (note) next.set(id, note);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const onCancel = useCallback(
+    (id: string) => {
+      setNote(id, {});
+      cancelQueued(slug, id).catch((e: unknown) =>
+        setNote(id, { error: failureText(e), rolledBack: true }),
+      );
+    },
+    [slug, setNote],
+  );
+  const onUndo = useCallback(
+    (id: string) => {
+      restoreQueued(slug, id).then(
+        () => setNote(id, undefined),
+        (e: unknown) => setNote(id, { error: failureText(e) }),
+      );
+    },
+    [slug, setNote],
+  );
+
+  // One tab stop in the log; the arrows move between rows.
+  const [activeKey, setActiveKey] = useState<string>();
+  const onRowFocus = useCallback((k: string) => setActiveKey(k), []);
+  // The first message until one is focused, as the session's timeline: appending never changes it.
+  const firstKey = useMemo(() => {
+    const first = entries.find((e) => e.kind === "message");
+    return first && entryKey(first);
+  }, [entries]);
+  const tabKey =
+    activeKey !== undefined && entries.some((e) => entryKey(e) === activeKey)
+      ? activeKey
+      : firstKey;
+  const onKeyDown = (e: KeyboardEvent) => {
+    const active = document.activeElement as HTMLElement | null;
+    if (!active?.hasAttribute("data-row")) return;
+    const list = [...(log.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [])];
+    const i = list.indexOf(active);
+    const go = (n: number) => {
+      e.preventDefault();
+      list[Math.max(0, Math.min(list.length - 1, n))]?.focus();
+    };
+    if (e.key === "ArrowDown") go(i + 1);
+    else if (e.key === "ArrowUp") go(i - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") {
+      go(list.length - 1);
+      stick.repin();
+    }
+  };
+
+  const rowEls = useMemo(
+    () =>
+      entries.map((e, i) => {
+        const key = entryKey(e);
+        if (e.kind === "turn_outcome")
+          return (
+            <StatusLine
+              key={key}
+              slug={slug}
+              name={agentName}
+              at={e.endedAt}
+              outcome={e.outcome}
+              eventSeq={e.eventSeq}
+              live={live.has(key)}
+              gap={rowGap(i === 0, true)}
+            />
+          );
+        return (
+          <ChatRow
+            key={key}
+            entry={e}
+            slug={slug}
+            agentName={agentName}
+            self={self}
+            live={live.has(key)}
+            gap={rowGap(i === 0)}
+            tabbable={key === tabKey}
+            arrival={key === targetKey ? arrival : undefined}
+            note={notes.get(e.id)}
+            onCancel={onCancel}
+            onUndo={onUndo}
+            onRowFocus={onRowFocus}
+            onArrivedEnd={onArrivedEnd}
+          />
+        );
+      }),
+    [
+      entries,
+      live,
+      slug,
+      agentName,
+      self,
+      tabKey,
+      targetKey,
+      arrival,
+      notes,
+      onCancel,
+      onUndo,
+      onRowFocus,
+      onArrivedEnd,
+    ],
+  );
+
+  // The working line fades in only when it appears while the thread is open, never on load or a switch.
+  const [baseline, setBaseline] = useState<string | null>();
+  if (loaded && baseline === undefined) setBaseline(working?.key ?? null);
+  const workingEl =
+    working && !entries.some((e) => e.kind === "turn_outcome" && e.key === working.key) ? (
+      <StatusLine
+        key={`turn:${working.key}`}
+        slug={slug}
+        name={agentName}
+        at={working.since}
+        live={baseline !== undefined && working.key !== baseline}
+        gap={rowGap(entries.length === 0, true)}
+      />
+    ) : null;
+
+  const speech = useMemo(() => {
+    if (!seen) return 0;
+    let n = 0;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i] as ChatEntry;
+      if (seen.has(entryKey(e))) break;
+      if (e.kind === "message") n++;
+    }
+    return n;
+  }, [entries, seen]);
+  const leaveWindow = useCallback(
+    () => void navigate({ to: "/agents/$slug/chat", params: { slug }, search: {} }),
+    [navigate, slug],
+  );
+  const onJump = useCallback(() => {
+    if (windowed) return leaveWindow();
+    stick.repin();
+    const rows = log.current?.querySelectorAll<HTMLElement>("[data-row]");
+    rows?.[rows.length - 1]?.focus({ preventScroll: true });
+  }, [windowed, leaveWindow, stick]);
+
+  const loadEarlier = async () => {
+    // The top visible row keeps its place when the earlier entries land above it.
+    stick.expandAnchor();
+    await chat.loadEarlier();
+  };
+
+  return (
+    <div className="relative min-h-0 flex-1">
+      <div ref={scroller} data-chat-view className="h-full overflow-y-auto px-4 py-4 md:px-6">
+        <div
+          ref={log}
+          role="log"
+          aria-label="Chat"
+          aria-live="off"
+          onKeyDown={onKeyDown}
+          className="max-w-[52rem] min-w-0 overflow-x-clip"
+        >
+          {status === "pending" && <ChatSkeleton />}
+          {status === "error" && (
+            <div className="flex items-center gap-2 text-sm">
+              <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
+              <span className="min-w-0">Couldn't load this chat.</span>
+              <Button variant="ghost" size="sm" onClick={chat.retry}>
+                Retry
+              </Button>
+            </div>
+          )}
+          {loaded && chat.hasEarlier && (
+            <div className="mb-3 flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void loadEarlier()}
+                disabled={chat.loadingEarlier}
+              >
+                {chat.loadingEarlier ? "Loading…" : "Load earlier"}
+              </Button>
+              {chat.earlierError && (
+                <span className="flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem]">
+                  <CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-destructive" />
+                  Couldn't load earlier messages.
+                </span>
+              )}
+            </div>
+          )}
+          {loaded && entries.length === 0 && !working && (
+            <p className="text-sm text-muted-foreground">No messages with {agentName} yet.</p>
+          )}
+          {/* One flat keyed list: the working line and the outcome that replaces it share a key. */}
+          {workingEl ? [...rowEls, workingEl] : rowEls}
+        </div>
+      </div>
+      {/* Centred on the 52rem column, not the scroller. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-3 px-4 md:px-6">
+        <div className="relative max-w-[52rem]">
+          <JumpPill
+            shown={windowed || speech > 0}
+            speech={speech}
+            other={false}
+            windowed={windowed}
+            onJump={onJump}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Static speech rows where the thread will be. */
+function ChatSkeleton() {
+  return (
+    <div data-chat-skeleton aria-hidden="true" className="grid gap-3">
+      <Skeleton className="h-4 w-1/3" />
+      <Skeleton className="h-16" />
+      <Skeleton className="h-4 w-1/4" />
+      <Skeleton className="h-10 w-5/6" />
+    </div>
   );
 }

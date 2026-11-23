@@ -410,13 +410,51 @@ test("reset persona: an archived agent is allowed (no notice), a broken or AGENT
   });
 });
 
+test("reset persona: a symlinked template AGENTS.md is refused, and an unloaded agent still gets the event", async () => {
+  await makeStageAgent("persona-e");
+  writeFileSync(path.join(home, "agents/persona-e/AGENTS.md"), "edited");
+  const real = path.join(home, "templates/persona-e/real.md");
+  writeFileSync(real, "# linked\n");
+  rmSync(path.join(home, "templates/persona-e/AGENTS.md"));
+  symlinkSync(real, path.join(home, "templates/persona-e/AGENTS.md"));
+  await expect(svc.resetPersona("persona-e", "@or")).rejects.toMatchObject({
+    status: 409,
+    code: "template_invalid",
+  });
+  rmSync(path.join(home, "templates/persona-e/AGENTS.md"));
+  writeFileSync(path.join(home, "templates/persona-e/AGENTS.md"), "# NEW\n");
+  await svc.resetPersona("persona-e", "@or");
+  const id = await idOf("persona-e");
+  await vi.waitFor(async () => {
+    const ev =
+      await t.sql`select payload from session_events where agent_id = ${id} and type = 'config_changed'`;
+    expect(ev.map((e) => e.payload)).toEqual([
+      expect.objectContaining({ by: "@or", changes: ["AGENTS.md reset from template persona-e"] }),
+    ]);
+  });
+});
+
+test("reset persona: a recreated (missing) AGENTS.md records the notice without a saved-file claim", async () => {
+  await makeStageAgent("persona-f");
+  rmSync(path.join(home, "agents/persona-f/AGENTS.md"));
+  expect(await svc.resetPersona("persona-f", "@or")).toEqual({ applied: "now" });
+  await vi.waitFor(async () =>
+    expect(await pendingConfigLines("persona-f")).toEqual([
+      "- AGENTS.md reset from template persona-f.",
+    ]),
+  );
+});
+
 test("reset persona refuses an agent whose workdir is a link, writing nothing through it", async () => {
   await makeStageAgent("persona-d");
   const wd = path.join(home, "agents/persona-d");
   const outside = mkdtempSync(path.join(tmpdir(), "outside-"));
   rmSync(wd, { recursive: true });
   symlinkSync(outside, wd);
-  await expect(svc.resetPersona("persona-d", "@or")).rejects.toBeDefined();
+  await expect(svc.resetPersona("persona-d", "@or")).rejects.toMatchObject({
+    status: 409,
+    code: "workdir_unusable",
+  });
   expect(existsSync(path.join(outside, "AGENTS.md"))).toBe(false);
 });
 

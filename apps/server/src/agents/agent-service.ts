@@ -26,7 +26,8 @@ import type { KeyedMutex } from "../workspace/lock.ts";
 import { PluginInstallError } from "../workspace/plugins.ts";
 import type { MaterializeCheck, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
-import type { Exec, Tx } from "./event-store.ts";
+import type { EventBus } from "./event-bus.ts";
+import type { EventStore, Exec, Tx } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 
 const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
@@ -97,6 +98,9 @@ export class AgentService {
       containers?: Pick<ContainerManager, "isRunning">;
       /** Peer events (spec §10.2): the router snapshots the neighborhood and writes the rows. */
       router: Pick<Router, "peerEvents" | "snapshot">;
+      /** Reset persona writes its `config_changed` event here when the agent has no loaded runtime. */
+      store: Pick<EventStore, "append">;
+      bus: Pick<EventBus, "publishAll">;
       /** S9 §10.1: unarchive recomputes every schedule targeting the agent in its transaction (no catch-up). */
       scheduling?: {
         recomputeForTarget(tx: Tx, agentId: string): Promise<void>;
@@ -657,13 +661,19 @@ export class AgentService {
     this.assertPersistent(row);
     const tpl = await this.d.templates.loadValid(row.template);
     const agentsMd = path.join(tpl.dir, "AGENTS.md");
-    if (
-      !(await lstat(agentsMd).then(
-        (s) => !s.isDirectory(),
+    // A regular file only: a link would copy its target's bytes into the agent's workdir.
+    const templateFileOk = () =>
+      lstat(agentsMd).then(
+        (s) => s.isFile(),
         () => false,
-      ))
-    )
-      throw new ApiError(409, "template_invalid", `Template ${row.template} has no AGENTS.md.`);
+      );
+    const badTemplate = () =>
+      new ApiError(
+        409,
+        "template_invalid",
+        `Template ${row.template} needs an AGENTS.md that is a regular file.`,
+      );
+    if (!(await templateFileOk())) throw badTemplate();
     let r: Awaited<ReturnType<Workspace["resetPersona"]>>;
     try {
       r = await workspace.lock.run(slug, async () => {
@@ -674,23 +684,36 @@ export class AgentService {
         return workspace.resetPersona(slug, agentsMd, { canWriteNow });
       });
     } catch (err) {
-      throw pluginFailure(err);
+      // The template file went away after the check above: the template's fault, not the workdir's.
+      if (!(await templateFileOk())) throw badTemplate();
+      // Anything else here is the agent's workdir (a link planted in it, AGENTS.md not a file): never the template.
+      if (err instanceof WorkspaceError) throw new ApiError(409, "workdir_unusable", err.message);
+      throw err;
     }
-    const staged = r.applied === "on_restart";
     // Applied now with nothing differing changes nothing: no notice, no event.
-    if (staged || r.backupDir) this.scheduleResetEffects(row, by, staged);
-    return r;
+    if (r.changed) this.scheduleResetEffects(row, by, r);
+    return { applied: r.applied, ...(r.backupDir ? { backupDir: r.backupDir } : {}) };
   }
 
-  private scheduleResetEffects(row: AgentRow, by: string, staged: boolean): void {
-    const { runtimes, log } = this.d;
+  private scheduleResetEffects(
+    row: AgentRow,
+    by: string,
+    r: { applied: "now" | "on_restart"; backupDir?: string },
+  ): void {
+    const { runtimes, log, store, bus } = this.d;
+    const staged = r.applied === "on_restart";
     const what = `AGENTS.md reset from template ${row.template}`;
+    // Staged: the old file is saved when the next start applies it. Now: only when one existed to save.
+    const saved = staged || r.backupDir ? "; the previous file is saved." : ".";
     const work = (async () => {
       const rt = await runtimes.get(row.id);
       const jobs: Promise<unknown>[] = [];
+      // Through the runtime when loaded (published in seq order), else straight to the store, as ConfigChanges does.
       if (rt) jobs.push(rt.appendConfigChanged(by, [what]));
+      else await store.append(row.id, null, { type: "config_changed", by, changes: [what] });
+      bus.publishAll({ type: "config_changed", agent: row.slug });
       if (!row.archivedAt) {
-        jobs.push(runtimes.recordConfigNotice(row.id, [`${what}; the previous file is saved.`]));
+        jobs.push(runtimes.recordConfigNotice(row.id, [`${what}${saved}`]));
         if (staged)
           jobs.push(runtimes.requestRestart(row.id, { changes: ["persona reset from template"] }));
       }

@@ -160,9 +160,18 @@ test("resetPersona backs up a differing AGENTS.md, writes the template's and nev
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
   expect(existsSync(path.join(wd, "mine.md"))).toBe(true);
   // Nothing differs now: no backup.
+  expect(r.changed).toBe(true);
   expect(await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true })).toEqual({
     applied: "now",
+    changed: false,
   });
+  // A deleted AGENTS.md is recreated: a change, with nothing to save.
+  rmSync(path.join(wd, "AGENTS.md"));
+  expect(await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: true })).toEqual({
+    applied: "now",
+    changed: true,
+  });
+  expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("# Lead\n");
 });
 
 test("resetPersona backs a symlinked AGENTS.md up as a link and replaces it, never writing through", async () => {
@@ -200,7 +209,7 @@ test("a staged persona reset leaves the workdir alone until prepare applies it, 
   const wd = ws.workdir("lead");
   writeFileSync(path.join(wd, "AGENTS.md"), "edited");
   const r = await ws.resetPersona("lead", tplMd(tpl), { canWriteNow: false });
-  expect(r).toEqual({ applied: "on_restart" });
+  expect(r).toEqual({ applied: "on_restart", changed: true });
   const pending = path.join(home, "state/agents/lead/persona-pending/AGENTS.md");
   expect(readFileSync(pending, "utf8")).toBe("# Lead\n");
   expect(readFileSync(path.join(wd, "AGENTS.md"), "utf8")).toBe("edited");

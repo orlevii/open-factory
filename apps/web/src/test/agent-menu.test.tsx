@@ -487,6 +487,7 @@ test.each([
 test.each([
   ["template_invalid", "Template developer has errors."],
   ["template_missing", "Template developer no longer exists."],
+  ["workdir_unusable", "/x/AGENTS.md isn't a file; move it away."],
   ["agent_not_found", "No agent named dev"],
 ])("a reset refused with %s toasts the server's own reason", async (code, message) => {
   mockApi({

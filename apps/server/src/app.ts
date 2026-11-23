@@ -310,6 +310,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
     containers,
     router,
+    store,
+    bus,
     scheduling: schedules,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.

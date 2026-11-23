@@ -572,6 +572,8 @@ describe("S7: the ended list is bounded", () => {
       runtimes: s.app.runtimes,
       log: s.app.log,
       router: s.app.router,
+      store: s.app.store,
+      bus: s.app.bus,
     });
     for (const ended of ["exclude", "only"] as const) {
       queries.length = 0;

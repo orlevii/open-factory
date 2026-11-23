@@ -194,28 +194,34 @@ export class Workspace {
    * Reset persona (spec §9), under the caller-held lock. `tplAgentsMd` is the template's AGENTS.md. Either replace
    * the agent's AGENTS.md at once (`canWriteNow`: nothing can race the write; the file it replaces is saved under
    * `state/agents/<slug>/persona/<stamp>/`) or stage the template's file in `persona-pending/` for the next
-   * `prepare`. `backupDir` is relative to FACTORY_HOME and absent when nothing differed.
+   * `prepare`. `backupDir` is relative to FACTORY_HOME and absent when there was no differing file to save; `changed` is false only
+   * when the file already matched.
    */
   async resetPersona(
     slug: string,
     tplAgentsMd: string,
     opts: { canWriteNow: boolean },
-  ): Promise<{ applied: "now" | "on_restart"; backupDir?: string }> {
+  ): Promise<{ applied: "now" | "on_restart"; backupDir?: string; changed: boolean }> {
     const data = await readFile(tplAgentsMd);
     const pending = personaPendingDir(this.d.factoryHome, slug);
     if (!opts.canWriteNow) {
       await writeAtomic(path.join(pending, "AGENTS.md"), data);
-      return { applied: "on_restart" };
+      return { applied: "on_restart", changed: true };
     }
-    const backupDir = await this.applyPersona(slug, data);
+    const { backupDir, changed } = await this.applyPersona(slug, data);
     // A fresh reset supersedes anything staged earlier, but only once it applied: a failed apply keeps the old one.
     await rm(pending, { recursive: true, force: true });
-    return { applied: "now", ...(backupDir ? { backupDir } : {}) };
+    return { applied: "now", changed, ...(backupDir ? { backupDir } : {}) };
   }
 
   /** Saves the AGENTS.md being replaced (a link is saved as a link), then writes the new one through SafeFs. */
-  private async applyPersona(slug: string, data: Buffer): Promise<string | undefined> {
+  private async applyPersona(
+    slug: string,
+    data: Buffer,
+  ): Promise<{ backupDir?: string; changed: boolean }> {
     const workdir = this.workdir(slug);
+    // A missing file is recreated: that is a change with nothing to back up.
+    const existed = (await new SafeFs(workdir).entry("AGENTS.md")) !== null;
     const backup = await backupDiffering(
       workdir,
       personaRoot(this.d.factoryHome, slug),
@@ -223,7 +229,10 @@ export class Workspace {
       utcStamp(),
     );
     await new SafeFs(workdir).writeFile("AGENTS.md", data);
-    return backup ? path.relative(this.d.factoryHome, backup) : undefined;
+    return {
+      ...(backup ? { backupDir: path.relative(this.d.factoryHome, backup) } : {}),
+      changed: backup !== undefined || !existed,
+    };
   }
 
   /** A reset staged while the agent ran: applied first, then removed. A failure keeps it staged. */

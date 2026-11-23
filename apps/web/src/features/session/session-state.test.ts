@@ -583,7 +583,7 @@ test("a windowed view counts speech in newSpeech: messages, agent text and sends
         type: "tool_call",
         toolUseId: "t1",
         name: "mcp__factory__send_message",
-        input: { to: "@or", body: "done" },
+        input: { to: ["@or"], body: "done" },
       } as SessionEvent["event"]),
       sessionEvent(23, {
         type: "tool_call",

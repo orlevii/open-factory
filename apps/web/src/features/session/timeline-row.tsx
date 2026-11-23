@@ -303,6 +303,7 @@ export function TimelineRow(props: TimelineRowProps) {
         <div {...rp}>
           <MessageBlock
             from={row.message.from}
+            fromKind={row.message.fromKind === "agent" ? "agent" : "human"}
             // `task_assigned` and `task_update` are from the factory; a `task_comment` is from its author.
             system={isNoticeKind(row.message.kind)}
             body={row.message.body}

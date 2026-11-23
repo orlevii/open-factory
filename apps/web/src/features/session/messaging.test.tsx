@@ -32,14 +32,14 @@ afterEach(() => {
   resetUploads(); // uploads live in a module store for the page's life
 });
 
-const kindOfFrom = (from: unknown) =>
-  from === "@factory" || from === "@scheduler"
-    ? "factory"
-    : typeof from === "string" && from.startsWith("@")
-      ? "human"
-      : "agent";
-const env = (o: Record<string, unknown>) =>
-  ({ urgent: false, fromKind: kindOfFrom(o.from), ...o }) as never;
+/** The server's envelope: every sender is `@handle`, and `fromKind` says what it is. */
+const HUMANS = new Set(["@or", "@alice", "@sam"]);
+const kindOfFrom = (from: string) =>
+  from === "@factory" || from === "@scheduler" ? "factory" : HUMANS.has(from) ? "human" : "agent";
+const env = (o: Record<string, unknown>) => {
+  const from = typeof o.from === "string" && !o.from.startsWith("@") ? `@${o.from}` : o.from;
+  return { urgent: false, fromKind: kindOfFrom(from as string), ...o, from } as never;
+};
 /** Opens /agents/dev with these events as its only page; `@b` is a known agent. */
 async function open(
   events: AnyEvent[],
@@ -334,8 +334,14 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
   await open(
     [
       { type: "turn_started" },
-      call({ to: "@b", body: "ping b" }),
-      result(JSON.stringify({ id: "m9", to: "b", status: "hibernated" })),
+      call({ to: ["@b"], body: "ping b" }),
+      result(
+        JSON.stringify({
+          results: [
+            { to: "@b", kind: "agent", status: "queued", recipient_status: "hibernated", id: "m9" },
+          ],
+        }),
+      ),
     ],
     "ping b",
   );
@@ -366,19 +372,21 @@ const inboxItem = (id: string, messageId: string) => ({
   kind: "message",
   read: false,
   from: { kind: "agent", name: "dev" },
-  to: "@humans",
+  to: "@alice",
   preview: "need a human",
   urgent: false,
   createdAt: "2026-11-21T10:00:00.000Z",
   link: { kind: "session", agentSlug: "dev" },
 });
 
-test("a send to humans has no footer; Open in inbox opens its inbox item", async () => {
+test("a send to a person has no footer; Open in inbox opens its inbox item", async () => {
   await open(
     [
       { type: "turn_started" },
-      call({ to: "@humans", body: "need a human" }),
-      result(JSON.stringify({ id: "m10", to: "@humans", status: "inbox" })),
+      call({ to: ["@alice"], body: "need a human" }),
+      result(
+        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m10" }] }),
+      ),
     ],
     "need a human",
     {
@@ -397,12 +405,14 @@ test("a send to humans has no footer; Open in inbox opens its inbox item", async
   expect(within(menu).queryByRole("menuitem", { name: /View this message/ })).toBeNull();
 });
 
-test("a send to humans with no inbox item of yours has no Open in inbox", async () => {
+test("a send to a person with no inbox item of yours has no Open in inbox", async () => {
   const api = await open(
     [
       { type: "turn_started" },
-      call({ to: "@humans", body: "need a human" }),
-      result(JSON.stringify({ id: "m10", to: "@humans", status: "inbox" })),
+      call({ to: ["@alice"], body: "need a human" }),
+      result(
+        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m10" }] }),
+      ),
     ],
     "need a human",
     { "GET /api/inbox?": () => json({ items: [inboxItem("i1", "m1")], nextCursor: null }) },
@@ -418,7 +428,7 @@ test("no result after the turn ended says 'Not sent'", async () => {
   await open(
     [
       { type: "turn_started" },
-      call({ to: "b", body: "lost one" }),
+      call({ to: ["@b"], body: "lost one" }),
       { type: "turn_end", isError: false, numTurns: 1 },
     ],
     "lost one",
@@ -430,7 +440,7 @@ test("an error shows the tool's sentence and no link", async () => {
   await open(
     [
       { type: "turn_started" },
-      call({ to: "nobody", body: "to nobody" }),
+      call({ to: ["@nobody"], body: "to nobody" }),
       result("No agent or user named 'nobody'. Call list_peers to see who you can message.", true),
     ],
     "to nobody",
@@ -586,17 +596,33 @@ test.each([
   },
 );
 
-test("the announcer says '<name> messaged you' for a send to this human or @humans, not to agents", async () => {
+test("the announcer says '<name> messaged you' for a send to this human, not to agents", async () => {
   await open([{ type: "assistant_text", text: "history" }], "history");
   const push = (event: AnyEvent) =>
     act(() => ws.onMessage?.({ type: "session_event", agent: "dev", event: se(event) }));
   const status = () =>
     document.querySelector<HTMLElement>("[role=status][aria-live=polite].sr-only") as HTMLElement;
-  push(call({ to: "b", body: "to an agent" }, "t_a"));
-  push(result(JSON.stringify({ id: "m1", to: "b", status: "idle" }), false, "t_a"));
+  push(call({ to: ["@b"], body: "to an agent" }, "t_a"));
+  push(
+    result(
+      JSON.stringify({
+        results: [
+          { to: "@b", kind: "agent", status: "queued", recipient_status: "idle", id: "m1" },
+        ],
+      }),
+      false,
+      "t_a",
+    ),
+  );
   expect(status()).toHaveTextContent("");
-  push(call({ to: "@alice", body: "to alice" }, "t_h"));
-  push(result(JSON.stringify({ id: "m2", to: "@alice", status: "inbox" }), false, "t_h"));
+  push(call({ to: ["@alice"], body: "to alice" }, "t_h"));
+  push(
+    result(
+      JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m2" }] }),
+      false,
+      "t_h",
+    ),
+  );
   expect(await within(status()).findByText("@dev messaged you")).toBeInTheDocument();
 });
 
@@ -604,8 +630,14 @@ test("Tab walks the focused row's controls: the recipient link, then the row men
   await open(
     [
       { type: "turn_started" },
-      call({ to: "b", body: "ping b" }),
-      result(JSON.stringify({ id: "m9", to: "b", status: "idle" })),
+      call({ to: ["@b"], body: "ping b" }),
+      result(
+        JSON.stringify({
+          results: [
+            { to: "@b", kind: "agent", status: "queued", recipient_status: "idle", id: "m9" },
+          ],
+        }),
+      ),
     ],
     "ping b",
   );
@@ -673,8 +705,14 @@ test("every escaped envelope tag in a fact's quote is decoded, as text", async (
 
 test("Load earlier does not announce an older send to the viewer", async () => {
   const older = [
-    se(call({ to: "@alice", body: "old" }, "t_old")),
-    se(result(JSON.stringify({ id: "m0", to: "@alice", status: "inbox" }), false, "t_old")),
+    se(call({ to: ["@alice"], body: "old" }, "t_old")),
+    se(
+      result(
+        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m0" }] }),
+        false,
+        "t_old",
+      ),
+    ),
   ];
   resetSeq();
   const latest = [se({ type: "assistant_text", text: "newest" })];
@@ -702,7 +740,7 @@ test("a denied send shows the denial sentence, not the raw tool result", async (
   await open(
     [
       { type: "turn_started" },
-      call({ to: "b", body: "denied one" }),
+      call({ to: ["@b"], body: "denied one" }),
       {
         type: "permission_denied",
         toolUseId: "toolu_1",
@@ -805,12 +843,24 @@ test("the announcer re-announces a second send to this human (the live text chan
     act(() => ws.onMessage?.({ type: "session_event", agent: "dev", event: se(event) }));
   const status = () =>
     document.querySelector<HTMLElement>("[role=status][aria-live=polite].sr-only") as HTMLElement;
-  push(call({ to: "@alice", body: "one" }, "t_1"));
-  push(result(JSON.stringify({ id: "m1", to: "@alice", status: "inbox" }), false, "t_1"));
+  push(call({ to: ["@alice"], body: "one" }, "t_1"));
+  push(
+    result(
+      JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m1" }] }),
+      false,
+      "t_1",
+    ),
+  );
   await vi.waitFor(() => expect(status()).toHaveTextContent("@dev messaged you"));
   const first = status().textContent;
-  push(call({ to: "@alice", body: "two" }, "t_2"));
-  push(result(JSON.stringify({ id: "m2", to: "@alice", status: "inbox" }), false, "t_2"));
+  push(call({ to: ["@alice"], body: "two" }, "t_2"));
+  push(
+    result(
+      JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m2" }] }),
+      false,
+      "t_2",
+    ),
+  );
   await vi.waitFor(() => expect(status().textContent).not.toBe(first));
   expect(status()).toHaveTextContent("@dev messaged you");
 });
@@ -819,9 +869,13 @@ test("the announcer announces a send whose call was on screen at load and whose 
   await open(
     [
       { type: "turn_started" },
-      call({ to: "@alice", body: "pending at load" }, "t_p"),
-      call({ to: "@alice", body: "done at load" }, "t_d"),
-      result(JSON.stringify({ id: "m0", to: "@alice", status: "inbox" }), false, "t_d"),
+      call({ to: ["@alice"], body: "pending at load" }, "t_p"),
+      call({ to: ["@alice"], body: "done at load" }, "t_d"),
+      result(
+        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m0" }] }),
+        false,
+        "t_d",
+      ),
     ],
     "pending at load",
   );
@@ -832,7 +886,13 @@ test("the announcer announces a send whose call was on screen at load and whose 
     ws.onMessage?.({
       type: "session_event",
       agent: "dev",
-      event: se(result(JSON.stringify({ id: "m1", to: "@alice", status: "inbox" }), false, "t_p")),
+      event: se(
+        result(
+          JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m1" }] }),
+          false,
+          "t_p",
+        ),
+      ),
     }),
   );
   await vi.waitFor(() => expect(status()).toHaveTextContent("@dev messaged you"));
@@ -1052,8 +1112,10 @@ test("an outgoing card reads 'Name → Recipient' with the agent's name", async 
   await open(
     [
       { type: "turn_started" },
-      call({ to: "@alice", body: "ping you" }),
-      result(JSON.stringify({ id: "m9", to: "@alice", status: "delivered" })),
+      call({ to: ["@alice"], body: "ping you" }),
+      result(
+        JSON.stringify({ results: [{ to: "@alice", kind: "human", status: "inbox", id: "m9" }] }),
+      ),
     ],
     "ping you",
   );

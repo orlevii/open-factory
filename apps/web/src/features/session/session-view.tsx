@@ -34,7 +34,7 @@ import { commandsQueryOptions } from "./commands";
 import { Composer, type ComposerHandle, focusReadOnly, TerminatedComposer } from "./composer";
 import { childrenOf } from "./display-passes";
 import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
-import { parseSendResult } from "./outgoing-message";
+import { parseSendResults } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
 import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
@@ -594,7 +594,7 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
       setMsg(statusAnnouncement(name, status, { rateLimitedUntil: until, rateLimitExact: exact }));
     prevStatus.current = status;
   }, [status, name, until, exact, setMsg]);
-  // An agent's text is not a reply to anyone: announce a successful message to this human or all.
+  // An agent's text is not a reply to anyone: announce a successful message to this human.
   // Only sends newer than what was on screen at load count, so Load earlier and reloads stay quiet,
   // plus calls that were on screen at load still waiting for their result.
   const baseSeq = useRef<number | undefined>(undefined);
@@ -609,9 +609,11 @@ function useAnnouncer(name: string, agent: AgentSummary | undefined, rows: Row[]
       for (const r of scan.outgoing) if (!r.result) pendingAtLoad.current.add(r.seq);
     }
     for (const r of scan.outgoing) {
-      const to = parseSendResult(r.result)?.to;
       const toMe =
-        to !== undefined && (to === "@humans" || (handle !== undefined && to === `@${handle}`));
+        handle !== undefined &&
+        parseSendResults(r.result)?.results.some(
+          (x) => "kind" in x && x.kind === "human" && x.to === `@${handle}`,
+        ) === true;
       const fresh = r.seq > baseSeq.current || pendingAtLoad.current.has(r.seq);
       if (toMe && fresh && !announced.current.has(r.seq)) {
         announced.current.add(r.seq);

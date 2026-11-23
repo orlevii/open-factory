@@ -32,7 +32,7 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
   kind: "message",
   read: false,
   from: { kind: "agent", name: "dev" },
-  to: "@humans",
+  to: "@bob",
   preview: `preview ${n}`,
   urgent: false,
   createdAt: at(14, 30 + n),
@@ -56,7 +56,7 @@ const taskEvent = item(2, {
 const humanMention = item(3, {
   kind: "mention",
   from: { kind: "human", name: "sam" },
-  to: "@humans",
+  to: "@bob",
   task: { key: "T-1", title: "One" },
   link: { kind: "task", key: "T-1", commentId: "c1" },
 });
@@ -107,7 +107,7 @@ test("kinds: a mention, a human mention and a task event render their sender lin
   });
   expect(e).toHaveAttribute("href", "/tasks/T-40");
   expect(within(e).getByText("Done")).toBeInTheDocument();
-  const h = screen.getByRole("link", { name: /^Unread, @sam mentioned @humans on T-1 One/ });
+  const h = screen.getByRole("link", { name: /^Unread, @sam mentioned you on T-1 One/ });
   expect(within(h).getByText("@sam")).toHaveClass("font-mono");
 });
 

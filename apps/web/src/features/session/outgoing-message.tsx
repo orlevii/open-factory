@@ -5,37 +5,65 @@ import { formatTime } from "./format";
 import { useLongPressRegion } from "./long-press-region";
 import { ClampedMarkdown } from "./message-block";
 import type { Row } from "./rows";
-import { SpeakerLine, useSpeakers } from "./speaker-line";
+import { type Party, type PartyKind, SpeakerLine } from "./speaker-line";
 import { denialText, ToolCallRow } from "./tool-call-row";
 
 type OutgoingRow = Extract<Row, { kind: "outgoing" }>;
 
-const sendResultSchema = z.object({
-  id: z.string(),
+const refusedSchema = z.object({
   to: z.string(),
+  status: z.literal("refused"),
+  reason: z.string(),
+});
+const reachedSchema = z.object({
+  to: z.string(),
+  kind: z.enum(["human", "agent"]),
   status: z.string(),
+  id: z.string(),
+  recipient_status: z.string().optional(),
   note: z.string().optional(),
 });
+const sendResultsSchema = z.object({ results: z.array(z.union([refusedSchema, reachedSchema])) });
 
-type SendResult = z.infer<typeof sendResultSchema>;
+type SendResults = z.infer<typeof sendResultsSchema>;
+export type RecipientResult = SendResults["results"][number];
 
 /** Parsed results by event: a result event keeps its identity in the session's events map, so each
  *  is parsed once rather than on every frame. */
-const parsedResults = new WeakMap<NonNullable<OutgoingRow["result"]>, SendResult | undefined>();
+const parsedResults = new WeakMap<NonNullable<OutgoingRow["result"]>, SendResults | undefined>();
 
-/** The tool's success result (`{ id, to, status, note? }`), or undefined for an error or odd text. */
-export function parseSendResult(result: OutgoingRow["result"]): SendResult | undefined {
+/** The tool's success result (`{ results: [one per recipient] }`), or undefined for an error or odd text. */
+export function parseSendResults(result: OutgoingRow["result"]): SendResults | undefined {
   if (!result || result.isError) return undefined;
   if (parsedResults.has(result)) return parsedResults.get(result);
-  let sent: SendResult | undefined;
+  let sent: SendResults | undefined;
   try {
-    const r = sendResultSchema.safeParse(JSON.parse(result.content));
+    const r = sendResultsSchema.safeParse(JSON.parse(result.content));
     sent = r.success ? r.data : undefined;
   } catch {
     sent = undefined;
   }
   parsedResults.set(result, sent);
   return sent;
+}
+
+/** A handle as written in a result or an argument: `@x`, however it was typed. */
+const handleOf = (to: string) => (/^[@#]/.test(to) ? to : `@${to}`);
+
+const recipientsOf = new WeakMap<object, readonly Party[]>();
+/** The recipients the call addressed, in order, each with its kind once a result names it. Cached by
+ *  the result (or, before one arrives, the call), so the speaker line's props stay identical. */
+function partiesOf(row: OutgoingRow, to: readonly string[]): readonly Party[] {
+  const key = row.result ?? row.call;
+  let parties = recipientsOf.get(key);
+  if (!parties) {
+    const kinds = new Map<string, PartyKind>();
+    for (const r of parseSendResults(row.result)?.results ?? [])
+      if ("kind" in r) kinds.set(handleOf(r.to).toLowerCase(), r.kind);
+    parties = to.map((t) => ({ handle: handleOf(t), kind: kinds.get(handleOf(t).toLowerCase()) }));
+    recipientsOf.set(key, parties);
+  }
+  return parties;
 }
 
 const STATUS_TEXT: Record<string, string> = {
@@ -61,33 +89,26 @@ export function OutgoingMessage({
   onToggleCall(): void;
   rowProps: Record<string, unknown>;
 }) {
-  const input = row.call.input as { to: string; body: string; urgent?: unknown };
-  const sent = parseSendResult(row.result);
-  const target = sent?.to ?? input.to;
-  const bare = target.replace(/^@/, "");
-  const speakers = useSpeakers();
-  // A result names agents bare and humans `@handle`; an unanswered call is only the argument.
-  const toAgent = sent
-    ? !sent.to.startsWith("@")
-    : !target.startsWith("@") || (bare !== "humans" && speakers.isAgent(bare));
-  const recipient = `@${bare}`;
+  const input = row.call.input as { to: string[]; body: string; urgent?: unknown };
+  const sent = parseSendResults(row.result);
+  const parties = partiesOf(row, input.to);
   const failed = row.result?.isError === true;
   return (
     <CallBlock
       row={row}
-      label={`Message from @${slug} to ${recipient}`}
+      label={`Message from @${slug} to ${parties.map((p) => p.handle).join(", ")}`}
       showCall={showCall}
       onToggleCall={onToggleCall}
       rowProps={rowProps}
       header={
-        // "Name → Recipient" (U3 §7.2): "You" for you, "All humans" for @humans.
-        <SpeakerLine from={slug} self to={toAgent ? bare : recipient} at={row.at}>
+        // "Name → Recipient" (U3 §7.2): "You" for you; several: "Name → @a, @b +8" (I1 §4.7).
+        <SpeakerLine from={slug} fromKind="agent" self to={parties} at={row.at}>
           {input.urgent === true && (
             <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
           )}
         </SpeakerLine>
       }
-      footer={failed || row.denial ? <FailedNote row={row} /> : sendNote(row, sent, toAgent, bare)}
+      footer={failed || row.denial ? <FailedNote row={row} /> : sendNote(row, sent)}
     >
       <div dir="auto">
         <ClampedMarkdown source={input.body} />
@@ -188,25 +209,27 @@ export function CallBlock({
   );
 }
 
-/** The status line's content, or null when a plain delivery leaves nothing to say. */
-function sendNote(
-  row: OutgoingRow,
-  sent: ReturnType<typeof parseSendResult>,
-  toAgent: boolean,
-  bare: string,
-): ReactNode {
+/** The status lines' content: one muted line per recipient that wasn't plainly delivered, or null
+ *  when a plain delivery leaves nothing to say. */
+function sendNote(row: OutgoingRow, sent: SendResults | undefined): ReactNode {
   if (!row.result) return <span>{row.turnOpen ? "Sending…" : "Not sent"}</span>;
-  // Delivered plainly: the card says nothing more (U3 §7.5); a state or a note still shows.
-  const state = sent && toAgent ? STATUS_TEXT[sent.status] : undefined;
-  if (!state && !sent?.note) return null;
-  return (
-    <>
-      {state && (
-        <span>
-          Sent · <span className="font-mono">@{bare}</span> was {state}
-        </span>
-      )}
-      {sent?.note && <span>{sent.note}</span>}
-    </>
-  );
+  const lines = (sent?.results ?? []).flatMap((r): ReactNode[] => {
+    const who = handleOf(r.to);
+    if ("reason" in r)
+      return [
+        <span key={who}>
+          Not sent to {who}: {r.reason}
+        </span>,
+      ];
+    if (r.note) return [<span key={who}>{r.note}</span>];
+    const state = r.kind === "agent" ? STATUS_TEXT[r.recipient_status ?? ""] : undefined;
+    return state
+      ? [
+          <span key={who}>
+            Sent · <span className="font-mono">{who}</span> was {state}
+          </span>,
+        ]
+      : [];
+  });
+  return lines.length ? <div className="flex basis-full flex-col gap-0.5">{lines}</div> : null;
 }

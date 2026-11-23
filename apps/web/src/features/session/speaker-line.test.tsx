@@ -93,20 +93,47 @@ test("a human: the name from the users list and the muted handle, no avatar; els
   expect(within(unknown as HTMLElement).getByText("@stranger")).toHaveClass("font-mono");
 });
 
-test("an outgoing card reads 'Name → Recipient': You for you, All humans for @humans", async () => {
+test("an outgoing card reads 'Name → Recipient': You for you, an agent as a link", async () => {
   await show(
     <>
-      <SpeakerLine from="dev" self to="@alice" at={AT} />
-      <SpeakerLine from="dev" self to="@humans" at={AT} />
-      <SpeakerLine from="dev" self to="b" at={AT} />
+      <SpeakerLine from="dev" self to={[{ handle: "@alice", kind: "human" }]} at={AT} />
+      <SpeakerLine from="dev" self to={[{ handle: "@b", kind: "agent" }]} at={AT} />
     </>,
   );
   const lines = [...document.querySelectorAll<HTMLElement>("[data-speaker-line]")];
   const text = (el: HTMLElement | undefined) =>
     (el?.textContent ?? "").replace(/\s+/g, " ").replace(/\d\d:\d\d$/, "");
   expect(text(lines[0])).toMatch(/^Developer.*@dev.*You$/);
-  expect(text(lines[1])).toMatch(/All humans$/);
-  expect(within(lines[2] as HTMLElement).getByRole("link")).toHaveAttribute("href", "/agents/b");
+  expect(within(lines[1] as HTMLElement).getByRole("link", { name: /Builder/ })).toHaveAttribute(
+    "href",
+    "/agents/b",
+  );
+});
+
+test("a sender's kind decides how it shows, whatever its sigil: an `@` agent is a chip, an unknown `@` handle plain", async () => {
+  await show(
+    <>
+      <SpeakerLine from="@b" fromKind="agent" at={AT} />
+      <SpeakerLine from="@b" at={AT} />
+      <SpeakerLine from="@zed" fromKind="human" at={AT} />
+    </>,
+  );
+  const [explicit, looked, human] = [
+    ...document.querySelectorAll<HTMLElement>("[data-speaker-line]"),
+  ] as HTMLElement[];
+  expect(within(explicit as HTMLElement).getByRole("link")).toHaveAttribute("href", "/agents/b");
+  expect(within(looked as HTMLElement).getByRole("link")).toHaveAttribute("href", "/agents/b");
+  expect(within(human as HTMLElement).queryByRole("link")).toBeNull();
+  expect(within(human as HTMLElement).getByText("@zed")).toHaveClass("font-mono");
+});
+
+test("several recipients: the first two handles and a count; the full list names the line", async () => {
+  const handles = Array.from({ length: 10 }, (_, i) => `@r${i}`);
+  await show(<SpeakerLine from="dev" self to={handles.map((handle) => ({ handle }))} at={AT} />);
+  const l = line();
+  expect(l).toHaveTextContent("@r0, @r1 +8");
+  expect(l).toHaveAccessibleName(`To ${handles.join(", ")}`);
+  expect(within(l).queryByText("All humans")).toBeNull();
 });
 
 test("outside a session the line still renders: a slug stands in for an unknown agent", () => {
@@ -188,7 +215,7 @@ test("the provider reads your handle itself, and asks for the ended list only on
       <QueryClientProvider client={qc}>
         <TooltipProvider>
           <SpeakerProvider slug="dev">
-            <SpeakerLine from="gone" at={AT} />
+            <SpeakerLine from="gone" fromKind="agent" at={AT} />
             <SpeakerLine from="@alice" at={AT} />
           </SpeakerProvider>
         </TooltipProvider>

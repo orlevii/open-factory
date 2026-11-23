@@ -15,6 +15,7 @@ import { json, mockApi } from "@/test/mock-api";
 import { resetSeq, se } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
 import { buildRows } from "./rows";
+import { buildSpeakerIndex, SpeakerContext } from "./speaker-line";
 import { TimelineRow } from "./timeline-row";
 
 beforeEach(() => {
@@ -61,10 +62,21 @@ const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
     },
   ],
 });
+const speakers = buildSpeakerIndex({
+  live: [
+    {
+      slug: "lead",
+      displayName: "Lead",
+      template: "lead",
+      kind: "persistent",
+      avatarVersion: null,
+    },
+  ],
+});
 function renderEvents(events: AnyEvent[]) {
   const { rows } = buildRows(events.map((e) => se(e, null)));
   return inRouter(
-    <div>
+    <SpeakerContext value={speakers}>
       {rows.map((row) => (
         <div key={row.key} data-row>
           <TimelineRow
@@ -78,7 +90,7 @@ function renderEvents(events: AnyEvent[]) {
           />
         </div>
       ))}
-    </div>,
+    </SpeakerContext>,
   );
 }
 
@@ -94,7 +106,7 @@ test("a delivered scheduled block: Scheduler, the S-3 badge opening the schedule
 });
 
 test("late and firings add the notes; an agent author links to its session", async () => {
-  const { container } = renderEvents([scheduled({ late: true, firings: 3, by: "lead" })]);
+  const { container } = renderEvents([scheduled({ late: true, firings: 3, by: "@lead" })]);
   await screen.findByText("Scheduler");
   expect(container.textContent).toContain(
     "due Mon 23 Nov 09:00 UTC+01:00 · delivered late · covers 3 runs",

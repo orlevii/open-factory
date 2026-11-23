@@ -31,7 +31,7 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
   kind: "message",
   read: false,
   from: { kind: "agent", name: "dev" },
-  to: "@humans",
+  to: "@bob",
   preview: `preview ${n}`,
   urgent: false,
   createdAt: at(50 - n),
@@ -279,7 +279,7 @@ test("a message row's context line hides the recipient when it is the viewer", a
     json({ items: [item(1, { to: "@alice" }), item(2)], nextCursor: null }),
   );
   await visit(1280);
-  expect(within(row("i2") as HTMLElement).getByText("→ @humans")).toBeInTheDocument();
+  expect(within(row("i2") as HTMLElement).getByText("→ @bob")).toBeInTheDocument();
   expect(within(row("i1") as HTMLElement).queryByText("→ @alice")).toBeNull();
 });
 

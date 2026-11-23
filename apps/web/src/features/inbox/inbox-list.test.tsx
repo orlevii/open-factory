@@ -32,7 +32,7 @@ const item = (n: number, o: Record<string, unknown> = {}) => ({
   kind: "message",
   read: true,
   from: { kind: "agent", name: "dev" },
-  to: "@humans",
+  to: "@bob",
   preview: `preview ${n}`,
   urgent: false,
   createdAt: new Date(2026, 10, 19, 14, 32).toISOString(),
@@ -45,7 +45,7 @@ test("rows link to the sender's call with an accessible name; the preview is the
     "GET /api/inbox?": () => json({ items: [item(1, { urgent: true })], nextCursor: null }),
   });
   renderApp("/inbox", alice);
-  const link = await screen.findByRole("link", { name: "From @dev to @humans, urgent, 14:32" });
+  const link = await screen.findByRole("link", { name: "From @dev to @bob, urgent, 14:32" });
   expect(link).toHaveAttribute("href", "/agents/dev?event=41");
   expect(link).toHaveAccessibleDescription("preview 1");
   expect(screen.getByRole("list", { name: "Inbox" })).toBeInTheDocument();
@@ -67,7 +67,7 @@ test("a factory item names what it is about; a row without seq links to the sess
   });
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", {
-    name: "From Factory about @ops to @humans, 14:32",
+    name: "From Factory about @ops to @bob, 14:32",
   });
   expect(link).toHaveAttribute("href", "/agents/ops");
 });
@@ -188,7 +188,7 @@ test("a row shows the preview as plain text, the context on its own line and an 
           item(1, {
             read: false,
             kind: "mention",
-            to: "@humans",
+            to: "@bob",
             preview: "see **the** [PR](https://x/y) `now`",
             task: { key: "T-6", title: "Ship it" },
             link: { kind: "task", key: "T-6" },
@@ -198,7 +198,7 @@ test("a row shows the preview as plain text, the context on its own line and an 
       }),
   });
   renderApp("/inbox", alice);
-  const link = await screen.findByRole("link", { name: /mentioned @humans/ });
+  const link = await screen.findByRole("link", { name: /mentioned you/ });
   expect(link).toHaveAccessibleDescription("see the PR now");
   const row = within(link);
   expect(row.getByText("T-6")).toBeInTheDocument();
@@ -213,7 +213,7 @@ test("a message row's context line names the recipient; the sender is an agent c
   mockApi({ "GET /api/inbox?": () => json({ items: [item(1)], nextCursor: null }) });
   renderApp("/inbox", alice);
   const link = await screen.findByRole("link", { name: /From @dev/ });
-  expect(within(link).getByText("→ @humans")).toBeInTheDocument();
+  expect(within(link).getByText("→ @bob")).toBeInTheDocument();
   expect(link.querySelector("[data-agent-avatar], img, svg")).not.toBeNull();
 });
 
@@ -226,7 +226,7 @@ test("read rows are muted, unread rows are not", async () => {
   const read = await screen.findByRole("link", { name: /^From @dev/, description: "preview 1" });
   const unread = screen.getByRole("link", { name: /^Unread, From @dev/ });
   expect(within(read).getByText("preview 1").className).toContain("text-muted-foreground");
-  expect(within(read).getByText("→ @humans").className).toContain("text-muted-foreground");
+  expect(within(read).getByText("→ @bob").className).toContain("text-muted-foreground");
   expect(unread.className).toContain("");
-  expect(within(unread).getByText("→ @humans").className).not.toContain("text-muted-foreground");
+  expect(within(unread).getByText("→ @bob").className).not.toContain("text-muted-foreground");
 });

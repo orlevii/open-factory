@@ -28,7 +28,7 @@ const tool = (name: string, input: Record<string, unknown>): Row => ({
   children: [],
   key: "2",
 });
-const outgoing = (to: string, result?: Record<string, unknown>): Row => ({
+const outgoing = (to: string | string[], result?: Record<string, unknown>): Row => ({
   kind: "outgoing",
   seq: 3,
   at,
@@ -36,7 +36,7 @@ const outgoing = (to: string, result?: Record<string, unknown>): Row => ({
     type: "tool_call",
     toolUseId: "t3",
     name: "mcp__factory__send_message",
-    input: { to, body: "ping **you**" },
+    input: { to: [to].flat(), body: "ping **you**" },
   },
   ...(result
     ? {
@@ -74,21 +74,36 @@ test("items, only those that apply: Copy text on agent text, Copy command on Bas
   expect(labels(footer)).toEqual(["Copy link"]);
 });
 
+const reached = (to: string, kind: "agent" | "human", id = "m1") =>
+  kind === "human"
+    ? { to, kind, status: "inbox", id }
+    : { to, kind, status: "queued", recipient_status: "idle", id };
+
 test("outgoing: View tool call, and Open in inbox only when it went to a human", () => {
-  expect(labels(outgoing("@humans", { id: "m1", to: "@humans", status: "inbox" }))).toEqual([
+  expect(labels(outgoing("@or", { results: [reached("@or", "human")] }))).toEqual([
     "Copy link",
     "Copy text",
     "View tool call",
     "Open in inbox",
   ]);
-  expect(labels(outgoing("b", { id: "m1", to: "b", status: "idle" }))).toEqual([
+  expect(labels(outgoing("@b", { results: [reached("@b", "agent")] }))).toEqual([
     "Copy link",
     "Copy text",
     "View tool call",
     "View in @b's session",
   ]);
   // Not sent yet: nothing to view in the recipient's session.
-  expect(labels(outgoing("b"))).toEqual(["Copy link", "Copy text", "View tool call"]);
+  expect(labels(outgoing("@b"))).toEqual(["Copy link", "Copy text", "View tool call"]);
+});
+
+test("a send to several people lists everyone in a Recipients item and links to none", () => {
+  const to = ["@a", "@b", "@c", "@d"];
+  const row = outgoing(to, { results: to.map((t) => reached(t, "agent", t)) });
+  expect(labels(row)).toEqual(["Copy link", "Copy text", "View tool call", "Recipients"]);
+  expect(rowMenuItems(row, "dev").find((i) => i.kind === "recipients")).toMatchObject({
+    text: "@a, @b, @c, @d",
+  });
+  expect(rowMenuTitle(row, "dev")).toMatch(/^Message to @a, @b \+2 · /);
 });
 
 test("the copied text is the markdown source; the link is the row's deep link", () => {
@@ -301,7 +316,7 @@ test("cards span the column with ⋯ inside their padding; unboxed rows keep the
   renderInRouter(
     timeline([
       text(1),
-      outgoing("bob", { id: "m1", to: "bob", status: "delivered" }),
+      outgoing("@bob", { results: [reached("@bob", "agent")] }),
       card("message", 5),
       card("system", 6),
     ]),
@@ -350,7 +365,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
   expect(rowMenuTitle(message, "dev")).toBe(`Message from @or · ${t}`);
   expect(rowMenuTitle(tool("Bash", { command: "ls" }), "dev")).toBe(`Bash · ${t}`);
   expect(rowMenuTitle(text(1), "dev")).toBe(`@dev · ${t}`);
-  expect(rowMenuTitle(outgoing("bob"), "dev")).toBe(`Message to @bob · ${t}`);
+  expect(rowMenuTitle(outgoing("@bob"), "dev")).toBe(`Message to @bob · ${t}`);
   expect(rowMenuTitle(footer, "dev")).toBe("Turn summary");
   const peer = (left?: { reason: "archived" }): Row => ({
     kind: "peer",

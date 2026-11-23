@@ -37,11 +37,12 @@ describe("mergeConfig", () => {
   );
 
   it.each(["skills", "plugins", "can_spawn", "secrets"])(
-    "unions %s keeping order, dropping duplicates",
+    "unions %s base first, dropping duplicates",
     (k) => {
-      const own = (base.template[k] as string[])[0]!;
-      expect(mergeConfig(base, { template: { [k]: [own, "new"] } }).template[k]).toEqual([
-        own,
+      const withTwo: ConfigDoc = { ...base, template: { [k]: ["b1", "b2"] } };
+      expect(mergeConfig(withTwo, { template: { [k]: ["new", "b2", "b1"] } }).template[k]).toEqual([
+        "b1",
+        "b2",
         "new",
       ]);
     },
@@ -88,13 +89,34 @@ describe("mergeConfig", () => {
   });
 
   it("an overlay deny rule added then removed gives the template list back", () => {
-    const added = mergeConfig(base, { settings: { permissions: { deny: ["WebFetch"] } } });
+    const withRule: AgentOverlay = { settings: { permissions: { deny: ["WebFetch"] } } };
+    const added = mergeConfig(base, withRule);
     expect((added.settings.permissions as { deny: string[] }).deny).toEqual([
       "Bash(rm:*)",
       "WebFetch",
     ]);
-    const removed = mergeConfig(base, { settings: { permissions: {} } });
-    expect(removed.settings.permissions).toEqual(base.settings.permissions);
+    const removed: AgentOverlay = structuredClone(withRule);
+    const perms = removed.settings?.permissions as { deny?: string[] };
+    delete perms.deny;
+    expect(perms).toEqual({});
+    expect(mergeConfig(base, removed).settings.permissions).toEqual(base.settings.permissions);
+    expect(mergeConfig(base, {})).toEqual(base);
+  });
+
+  it("keeps a __proto__ settings key as data and never alters prototypes", () => {
+    const overlay = JSON.parse(
+      '{"settings":{"__proto__":{"polluted":"yes"},"x":{"__proto__":{"z":2}}}}',
+    );
+    const m = mergeConfig(base, overlay);
+    expect(Object.hasOwn(m.settings, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(m.settings, "__proto__")?.value).toEqual({
+      polluted: "yes",
+    });
+    expect(Object.getPrototypeOf(m.settings)).toBe(Object.prototype);
+    expect((m.settings as { polluted?: string }).polluted).toBeUndefined();
+    expect(({} as { polluted?: string }).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(m.settings.x)).toBe(Object.prototype);
+    expect(Object.getOwnPropertyDescriptor(m.settings.x, "__proto__")?.value).toEqual({ z: 2 });
   });
 
   it("deep-merges unknown settings keys", () =>

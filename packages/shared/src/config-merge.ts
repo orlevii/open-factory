@@ -36,8 +36,14 @@ function deepMerge(a: unknown, b: unknown): unknown {
   }
   if (isObj(a) && isObj(b)) {
     const out: Record<string, unknown> = structuredClone(a);
+    // defineProperty: a plain assignment to an own "__proto__" key would set the prototype.
     for (const [k, v] of Object.entries(b))
-      out[k] = k in a ? deepMerge(a[k], v) : structuredClone(v);
+      Object.defineProperty(out, k, {
+        value: Object.hasOwn(a, k) ? deepMerge(a[k], v) : structuredClone(v),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     return out;
   }
   return structuredClone(b);

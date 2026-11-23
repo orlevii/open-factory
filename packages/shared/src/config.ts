@@ -29,6 +29,7 @@ export const isFactoryEnvName = (name: string): boolean =>
 
 /** Constant messages only: a message never carries a value (spec §7.2). Each is at most 40 characters. */
 export const CONFIG_MSG = {
+  unknownField: "Unknown field.",
   noMarketplaces: "Not allowed in an overlay.",
   noDefaultMode: "Set in the template, not here.",
   envName: "Use letters, digits and underscores.",
@@ -41,20 +42,31 @@ export const CONFIG_MSG = {
   overlayTooLarge: "At most 256 KB in total.",
 } as const;
 
+/** An unknown key never echoes the key: it could be a pasted secret. */
+const strictParams = {
+  error: (iss: { code: string }) =>
+    iss.code === "unrecognized_keys" ? CONFIG_MSG.unknownField : undefined,
+};
+
 /** The overlay's `template` part: only these keys, each optional and default-free. */
-export const overlayTemplateSchema = z.strictObject({
-  model: templateYamlShape.model,
-  effort: templateYamlShape.effort,
-  warm_window_minutes: templateYamlShape.warm_window_minutes,
-  max_live_spawns: templateYamlShape.max_live_spawns,
-  skills: templateYamlShape.skills,
-  plugins: templateYamlShape.plugins,
-  can_spawn: templateYamlShape.can_spawn,
-  secrets: z
-    .array(secretNameSchema.refine((n) => !isFactoryEnvName(n), CONFIG_MSG.factoryEnv))
-    .max(OVERLAY_LIMITS.listItems)
-    .optional(),
-});
+export const overlayTemplateSchema = z.strictObject(
+  {
+    model: templateYamlShape.model,
+    effort: templateYamlShape.effort,
+    warm_window_minutes: templateYamlShape.warm_window_minutes,
+    max_live_spawns: templateYamlShape.max_live_spawns,
+    skills: templateYamlShape.skills,
+    plugins: templateYamlShape.plugins,
+    can_spawn: templateYamlShape.can_spawn,
+    secrets: z
+      .array(secretNameSchema.refine((n) => !isFactoryEnvName(n), CONFIG_MSG.factoryEnv))
+      .max(OVERLAY_LIMITS.listItems)
+      .optional(),
+  },
+  strictParams,
+);
+
+const byteLength = (s: string): number => new TextEncoder().encode(s).length;
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -68,7 +80,7 @@ const checkLimits = (
 ) => {
   if (typeof v === "string") {
     const max = inList ? OVERLAY_LIMITS.item : OVERLAY_LIMITS.value;
-    if (v.length > max)
+    if (byteLength(v) > max)
       ctx.addIssue({
         code: "custom",
         path,
@@ -107,23 +119,29 @@ const settingsSchema = z.record(z.string(), z.unknown()).superRefine((s, ctx) =>
   checkLimits(s, [], ctx);
 });
 
-const mcpSchema = z.strictObject({
-  mcpServers: z
-    .record(z.string(), z.unknown())
-    .refine((m) => !("factory" in m), CONFIG_MSG.factoryServer)
-    .refine((m) => Object.keys(m).length <= OVERLAY_LIMITS.mcpServers, CONFIG_MSG.tooManyServers)
-    .superRefine((m, ctx) => checkLimits(m, [], ctx)),
-});
+const mcpSchema = z.strictObject(
+  {
+    mcpServers: z
+      .record(z.string(), z.unknown())
+      .refine((m) => !("factory" in m), CONFIG_MSG.factoryServer)
+      .refine((m) => Object.keys(m).length <= OVERLAY_LIMITS.mcpServers, CONFIG_MSG.tooManyServers)
+      .superRefine((m, ctx) => checkLimits(m, [], ctx)),
+  },
+  strictParams,
+);
 
 /** `agents.config`: what one agent changes on top of its template. `{}` means exactly the template. */
 export const agentOverlaySchema = z
-  .strictObject({
-    template: overlayTemplateSchema.optional(),
-    settings: settingsSchema.optional(),
-    mcp: mcpSchema.optional(),
-  })
+  .strictObject(
+    {
+      template: overlayTemplateSchema.optional(),
+      settings: settingsSchema.optional(),
+      mcp: mcpSchema.optional(),
+    },
+    strictParams,
+  )
   .superRefine((v, ctx) => {
-    if (JSON.stringify(v).length > OVERLAY_LIMITS.bytes)
+    if (byteLength(JSON.stringify(v)) > OVERLAY_LIMITS.bytes)
       ctx.addIssue({ code: "custom", message: CONFIG_MSG.overlayTooLarge });
   });
 export type AgentOverlay = z.infer<typeof agentOverlaySchema>;

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   agentOverlaySchema,
+  CONFIG_MSG,
   ENV_NAME,
   FACTORY_ENV_NAMES,
   isFactoryEnvName,
   OVERLAY_LIMITS,
 } from "./config.ts";
-import { MODEL_ALIASES, MODEL_IDS, modelSchema } from "./models.ts";
+import { MODEL_ALIASES, MODEL_IDS, MODEL_MSG, modelSchema } from "./models.ts";
 
 describe("agentOverlaySchema", () => {
   it("accepts {} and keeps it {} (no defaults)", () => {
@@ -88,6 +89,43 @@ describe("agentOverlaySchema", () => {
     const r2 = agentOverlaySchema.safeParse({ settings: { env: { "bad name": secret } } });
     expect(r2.success).toBe(false);
     expect(JSON.stringify(r2.error?.issues)).not.toContain(secret);
+  });
+  it("uses a constant message for unknown keys and never echoes the key", () => {
+    const secret = "sk-ant-api03-ZyXwVu9876543210_realistic-looking-key";
+    for (const v of [
+      { [secret]: 1 },
+      { template: { [secret]: 1 } },
+      { mcp: { mcpServers: {}, [secret]: 1 } },
+    ]) {
+      const r = agentOverlaySchema.safeParse(v);
+      expect(r.success).toBe(false);
+      expect(r.error?.issues.map((i) => i.message)).toEqual([CONFIG_MSG.unknownField]);
+      for (const i of r.error?.issues ?? []) expect(i.message).not.toContain(secret);
+    }
+  });
+  it("does not echo a secret-shaped item in secrets", () => {
+    const secret = "sk-ant-api03-QrStUv5555555555_realistic-looking-key";
+    const r = agentOverlaySchema.safeParse({ template: { secrets: [secret] } });
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r.error?.issues)).not.toContain(secret);
+  });
+  it("counts bytes, not UTF-16 units, for value and total limits", () => {
+    const wide = "é".repeat(OVERLAY_LIMITS.value / 2 + 1); // 16K+1 chars, 32K+2 bytes
+    expect(agentOverlaySchema.safeParse({ settings: { env: { A: wide } } }).success).toBe(false);
+    const item = "é".repeat(OVERLAY_LIMITS.item / 2 + 1);
+    expect(
+      agentOverlaySchema.safeParse({ settings: { permissions: { deny: [item] } } }).success,
+    ).toBe(false);
+    const v = "é".repeat(OVERLAY_LIMITS.value / 2);
+    const env = Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`K${i}`, v]));
+    // 5 x 32 KB is 160 KB (ok); 9 x 32 KB is 288 KB (over). A UTF-16 length count would see half of that.
+    const more = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`K${i}`, v]));
+    expect(agentOverlaySchema.safeParse({ settings: { env } }).success).toBe(true);
+    expect(agentOverlaySchema.safeParse({ settings: { env: more } }).success).toBe(false);
+  });
+  it("keeps every message at 40 characters or fewer", () => {
+    for (const m of [...Object.values(CONFIG_MSG), ...Object.values(MODEL_MSG)])
+      expect(m.length).toBeLessThanOrEqual(40);
   });
   it("refuses an MCP server named factory and more than 50 servers", () => {
     expect(agentOverlaySchema.safeParse({ mcp: { mcpServers: { factory: {} } } }).success).toBe(

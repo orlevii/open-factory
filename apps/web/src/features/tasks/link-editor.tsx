@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { FORM_MSG } from "@/lib/form-messages";
 
 export type LinkRow = { id: string; kind: LinkInput["kind"]; target: string; title: string };
 
@@ -52,7 +53,7 @@ export function checkLink(
   if (row.kind === "file")
     return /[\r\n]/.test(target) || target.length > 500 ? "Keep the path on one line." : undefined;
   const slug = target.replace(/^@/, "");
-  return knownSlugs && !knownSlugs.has(slug) ? `No agent @${slug}.` : undefined;
+  return knownSlugs && !knownSlugs.has(slug) ? FORM_MSG.noSuchAgent : undefined;
 }
 
 export const rowsToInput = (rows: LinkRow[]): LinkInput[] =>

@@ -224,15 +224,12 @@ export function useAgentFormState({
     credentials &&
     !credentials.some((c) => c.name === values.credential)
   )
-    staleNotes.credential = `Credential ${values.credential} was deleted.`;
+    staleNotes.credential = FORM_MSG.credentialDeleted;
   const goneProjects =
     create && values.custom && projectList.data
       ? values.projects.filter((p) => !projectList.data?.some((x) => x.name === p))
       : [];
-  if (goneProjects.length > 0)
-    staleNotes.projects = `${goneProjects.map((p) => `Project ${p}`).join(", ")} ${
-      goneProjects.length > 1 ? "were" : "was"
-    } removed.`;
+  if (goneProjects.length > 0) staleNotes.projects = FORM_MSG.projectsRemoved;
 
   // What the form shows and submits. New agent: the chosen template fills the fields the user
   // hasn't edited. A credential has to be picked; with exactly one there is nothing to choose.

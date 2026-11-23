@@ -15,4 +15,8 @@ export const FORM_MSG = {
   displayNameRequired: "Use 1 to 80 characters.",
   saveFailed: "Couldn't save. Try again.",
   saveScheduleFailed: "Couldn't save the schedule. Try again.",
+  noSuchTask: "No such task.",
+  noSuchAgent: "No such agent.",
+  credentialDeleted: "That credential was deleted.",
+  projectsRemoved: "Some chosen projects were removed.",
 } as const;

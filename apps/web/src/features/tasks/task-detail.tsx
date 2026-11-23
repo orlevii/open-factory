@@ -19,7 +19,12 @@ import {
 } from "react";
 import { PrincipalChip } from "@/components/agent-chip";
 import { FieldShell } from "@/components/field-shell";
-import { FormOutcome, type Outcome, useOutcome } from "@/components/forms/form-outcome";
+import {
+  FormOutcome,
+  type Outcome,
+  showsNotice,
+  useOutcome,
+} from "@/components/forms/form-outcome";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
@@ -124,7 +129,6 @@ function EditorButtons({
   outcome: Outcome;
 }) {
   const noticeId = useId();
-  const showsNotice = Boolean(outcome.notice) && !outcome.error && !outcome.success;
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-2">
       <FormOutcome
@@ -137,7 +141,7 @@ function EditorButtons({
           type="button"
           onClick={onSave}
           disabled={pending || saveDisabled}
-          aria-describedby={showsNotice ? noticeId : undefined}
+          aria-describedby={showsNotice(outcome) ? noticeId : undefined}
         >
           {pending ? "Saving…" : "Save"}
         </Button>
@@ -808,6 +812,8 @@ function DependsOnEditor({ task, save, onClose }: { task: Detail; save: Save; on
   const [pending, setPending] = useState(false);
   // A ref, not `pending`: a second Save can arrive during the lookup, before `pending` is set.
   const inFlight = useRef(false);
+  // Cancel stays live during the lookup; a Save whose lookup returns after it sends nothing.
+  const cancelled = useRef(false);
   const o = useOutcome();
   const form = useRef<HTMLDivElement>(null);
   const f = useFieldErrors<(typeof DEPENDS_FIELDS)[number]>({
@@ -821,6 +827,7 @@ function DependsOnEditor({ task, save, onClose }: { task: Detail; save: Save; on
     try {
       o.clear();
       const r = await checkDependencies(text, task.key).catch(() => undefined);
+      if (cancelled.current) return;
       if (r) setResolved(r.resolved);
       if (!f.submit(undefined, { dependsOn: r?.error })) return;
       // The lookup failed: nothing to save the keys from.
@@ -879,7 +886,10 @@ function DependsOnEditor({ task, save, onClose }: { task: Detail; save: Save; on
       <EditorButtons
         pending={pending}
         onSave={() => void commit()}
-        onCancel={onClose}
+        onCancel={() => {
+          cancelled.current = true;
+          onClose();
+        }}
         outcome={o.outcome}
       />
     </div>

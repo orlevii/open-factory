@@ -120,7 +120,7 @@ test("several credentials and the restored draft's one is gone: Choose a credent
   const { dialog } = await open({ credentials: [credential("work"), credential("other")] });
   expect(more()).toHaveAttribute("aria-expanded", "true");
   expect(within(dialog).getByText("Choose a credential.")).toBeInTheDocument();
-  expect(within(dialog).getByText("Credential prod was deleted.")).toBeInTheDocument();
+  expect(within(dialog).getByText("That credential was deleted.")).toBeInTheDocument();
 });
 
 test("leaving an unchosen Credential for its own Add credential button doesn't flag it", async () => {

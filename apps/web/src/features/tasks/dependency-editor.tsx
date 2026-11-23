@@ -1,6 +1,7 @@
 import { parseTaskKey, type TaskSummary } from "@open-factory/shared";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
+import { FORM_MSG } from "@/lib/form-messages";
 import { lookupTasks } from "./api";
 
 /** Keys separated by commas or spaces, as typed ("T-41, T-44") -> canonical keys, duplicates dropped. */
@@ -33,7 +34,7 @@ export async function checkDependencies(
   const found = await lookupTasks(keys);
   const missing = keys.find((k) => !found.some((t) => t.key === k));
   const resolved = keys.flatMap((k) => found.filter((t) => t.key === k));
-  return missing ? { keys, resolved, error: `No task ${missing}.` } : { keys, resolved };
+  return missing ? { keys, resolved, error: FORM_MSG.noSuchTask } : { keys, resolved };
 }
 
 /** "Depends on T-41.", "... T-41 and T-52." or "... T-41, T-44 and 3 more." (kept short for the one-line note). */

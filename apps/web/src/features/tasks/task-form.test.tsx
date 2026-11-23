@@ -132,7 +132,7 @@ test("dependency keys resolve in one request on leave and show as a summary; err
   await userEvent.clear(deps);
   await userEvent.type(deps, "T-99");
   await userEvent.tab();
-  expect(await screen.findByText("No task T-99.")).toBeInTheDocument();
+  expect(await screen.findByText("No such task.")).toBeInTheDocument();
 });
 
 test("links: add and remove rows; a javascript: target is refused on leave", async () => {
@@ -451,7 +451,7 @@ test("a dependency lookup that returns after the keys changed is dropped", async
   });
   expect(deps).not.toHaveAttribute("aria-invalid");
   expect(document.getElementById("field-dependsOn-error")).not.toHaveAttribute("data-shown");
-  expect(screen.queryByText("No task T-99.")).toBeNull();
+  expect(screen.queryByText("No such task.")).toBeNull();
 });
 
 test("a server dependency error survives tabbing out of the unchanged field", async () => {

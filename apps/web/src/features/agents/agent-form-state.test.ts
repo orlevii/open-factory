@@ -226,7 +226,7 @@ test("a restored draft's gone credential reads as empty, with the reason", async
   first.unmount();
   const second = mount(create());
   await waitFor(() =>
-    expect(second.result.current.staleNotes.credential).toBe("Credential prod was deleted."),
+    expect(second.result.current.staleNotes.credential).toBe("That credential was deleted."),
   );
   // One credential left: it is the default again.
   expect(second.result.current.shown.credential).toBe("work");

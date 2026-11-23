@@ -472,9 +472,16 @@ Implements spec §6.4.
   - a symlinked entry is refused;
   - a symlinked `skills/` pointing into `state/agents/bob` is refused, both by `resolveTemplateSkills` and by `checkMounts`;
   - a real skill folder under `FACTORY_HOME/templates/t/skills/x` is allowed as a ro mount;
-  - a source under `FACTORY_HOME/state`, an agent workdir or the host home stays refused even within the exemption.
+  - all of these run with the **default layout** (`FACTORY_HOME` = `<HOME>/open-factory`):
+    - a real template skill mounts;
+    - a skill entry symlinked to `~/.ssh` is refused, by `resolveTemplateSkills` (validation) and by `checkMounts` (start);
+    - a skill entry symlinked to `state/agents/bob` is refused at both stages;
+    - a `skills/` folder symlinked to `~/.ssh` is refused at both stages;
+    - a `skills/` folder symlinked to `state/agents/bob` is refused at both stages;
+  - the host home itself, `FACTORY_HOME/state`, every agent workdir and their ancestors stay refused;
+  - nothing else under the host home is newly allowed.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/workspace/links.test.ts apps/server/src/workspace/mounts.test.ts` → FAIL.
-- [ ] **Step 3: Implement** as spec §6.4. In `checkMounts`, the new class applies only when the source equals `join(realpath(templatesDir/<tpl>/skills), name)`, `lstat` of the entry and of `skills/` show directories, and the source is not under `FACTORY_HOME/state`, any workdir or the home directory.
+- [ ] **Step 3: Implement** as spec §6.4. In `checkMounts`, the new class applies only when the source equals `join(realpath(templatesDir/<tpl>/skills), name)`, `lstat` of the entry and of `skills/` show directories, and the source is not the home directory itself, not at or under `FACTORY_HOME/state` or any agent workdir, and not an ancestor of any of these. Being under the host home is not a refusal reason here: the default `FACTORY_HOME` lives there.
 - [ ] **Step 4: Run** → PASS.
 - [ ] **Step 5: Commit.** `feat(server): link template-local skills live`
 
@@ -487,7 +494,8 @@ Implements spec §6.5.
 - [ ] **Step 1: Failing tests** (fake `claude` binary as in today's `plugins.test.ts`):
   - with `enabledPlugins` holding `a@m`, an effective list `[a@m, b@m]` installs only `b@m`, through the hardened env allowlist and an empty temp cwd;
   - a failed install throws `AgentStartError("Plugin b@m didn't install.", fix)`, with fix `template` when the template lists it and `config` when only the overlay does;
-  - marketplace sources come from `effective.doc.settings.extraKnownMarketplaces` only.
+  - marketplace sources come from `effective.doc.settings.extraKnownMarketplaces` only;
+  - a failed install's output goes through `redactOutput` and is capped (last 20 lines, at most 4 KB). A fake `claude` that echoes an env value and `https://user:tok@host` never lands in the event verbatim.
 - [ ] **Step 2: Implement.**
   - Replace the "Re-sync to reinstall" throw (`workspace.ts:295`) with the ensure-install.
   - `materialize` calls the same function.
@@ -986,5 +994,5 @@ Implements spec §12.5 and DESIGN.md amendment 6. **Web:** the implementer and r
     - switch to Opus → the agent restarts → send a message → `system/init` shows the model, and the siblings and template are unchanged;
     - an MCP server with a secret reference → `.mcp.json` has `${NAME}`, no value on disk or in the UI, and the raw tab shows the entry;
     - an unknown key in Raw survives a form save.
-- [ ] **Step 5:** Merge `i2/2-colour` and I1's latest. Push. Open a draft PR with base `i2/2-colour` and title `feat(web): configuration form and raw JSON editor`, using the template body (Approach bullets per decision), links to the spec, plan and #142, the reset step, and the product docs updated. Watch CI until green.
+- [ ] **Step 5:** Merge `i2/2-colour` and I1's latest. Push. Open a draft PR with base `i2/2-colour` and title `feat(web): configuration form and raw JSON editor`, using the template body (Approach bullets per decision), links to the spec, plan and #142, the reset step, and the product docs updated. State in the body that "Insert secret" grants that secret to the agent (adds it to `template.secrets`) as an intended side effect. Watch CI until green.
 - [ ] **Step 6:** Report to the tech-lead: the three PR URLs, the CI status, the palette set shipped with its ΔE table, and any spec deviation found during implementation.

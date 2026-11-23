@@ -240,7 +240,20 @@ For each entry of the template's `skills/` that is a real directory, when `local
   
   - `lstat(<templates>/<template>/skills)` is a directory, not a link, and `realpath` of it equals `join(realpath(<templates>/<template>), "skills")`.
   
-  Even when the exemption applies, a source under `FACTORY_HOME/state`, under any agent workdir, or under the host home is still refused. Everything else under `FACTORY_HOME`, and every other refused path, stays refused. Symlinked skill entries and a symlinked `skills/` folder are validation errors (§5.3) and are refused again at start, so the exemption can't reach another workdir, `state/` or `~/.ssh`. Tests cover a symlinked entry and a symlinked `skills/` folder pointing into `state/agents/bob`.
+  The exemption accepts **only** a real directory at exactly `<realpath(templates)>/<template>/skills/<name>`, and nothing else is newly allowed (the default `FACTORY_HOME` is `~/open-factory`, under the host home, so the rule is stated by exact location, not by "under home"). These stay refused whatever the exemption says:
+  - the host home directory itself;
+  - `FACTORY_HOME/state` and anything at or under it;
+  - every agent workdir and anything at or under it;
+  - the ancestors of all of these.
+  
+  Every other path the check refuses today stays refused. Symlinked skill entries and a symlinked `skills/` folder are validation errors (§5.3) and are refused again at start. That is how the exemption is kept away from another workdir, `state/` and `~/.ssh`.
+  
+  **Tests,** with the default layout (`FACTORY_HOME` under `HOME`):
+  - a template skill mounts;
+  - a skill entry symlinked to `~/.ssh` is refused at validation and again at start;
+  - a skill entry symlinked to `state/agents/bob` is refused at validation and again at start;
+  - a `skills/` folder symlinked to `~/.ssh` is refused at validation and again at start;
+  - a `skills/` folder symlinked to `state/agents/bob` is refused at validation and again at start.
 - A non-link entry with a template skill's name in the workdir fails the start with "…isn't a link to the template skill; move it away." An agent created before I2 hits this; see the reset step in §13.
 - Skills an agent writes itself (real folders with other names) are left alone.
 
@@ -257,7 +270,7 @@ This changes workspace.md's "only at create and re-sync, never at start" (Q8). T
   
   Marketplace sources come only from the effective `extraKnownMarketplaces`, which is template-declared, never from the workdir.
 - **Cost.** This runs inside the start, under the workspace lock and holding a slot, for at most the existing install timeout. It is a one-time cost after a plugin is added. I5's shared store removes it.
-- **Failure.** A failed install fails the start closed with `AgentStartError("Plugin x@y didn't install.", fix)`; the redacted output goes into the error event. The fix is `template` when the template lists the plugin, else `config`. A process never starts without its plugins. The fix codes `template` and `config` join the unions in `safe-fs.ts:22`, `agents/errors.ts` and `events.ts:144`. `forSpawnedAgent` (`errors.ts:30`) drops `config` for spawned agents, as it drops `edit_agent` today.
+- **Failure.** A failed install fails the start closed with `AgentStartError("Plugin x@y didn't install.", fix)`; the output goes into the error event after `redactOutput` (`plugins.ts:31`, the redaction install errors already use: URL credentials, known token shapes, `Bearer`, `token=`/`password=`-style pairs), keeping the last 20 lines, at most 4 KB. Test: a fake `claude` that echoes an env value and `https://user:tok@host` never puts either into the event verbatim. The env allowlist makes secret values unlikely, but marketplace URLs can carry tokens. The fix is `template` when the template lists the plugin, else `config`. A process never starts without its plugins. The fix codes `template` and `config` join the unions in `safe-fs.ts:22`, `agents/errors.ts` and `events.ts:144`. `forSpawnedAgent` (`errors.ts:30`) drops `config` for spawned agents, as it drops `edit_agent` today.
 
 ### 6.6 Runtime fixed at creation
 

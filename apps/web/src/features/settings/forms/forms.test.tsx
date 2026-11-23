@@ -177,7 +177,7 @@ test("project: ~ paths post unexpanded; Path has the help line and the find-path
   const api = mockApi({
     "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
     "POST /api/projects": () =>
-      json({ project: { name: "web", hostPath: "~/code/web", grantedTo: [] } }, 201),
+      json({ project: { name: "web", hostPath: "/home/or/code/web", grantedTo: [] } }, 201),
   });
   inSheet(
     "Add project",

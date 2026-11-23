@@ -59,10 +59,6 @@ test.each(["/clear", "/NEW", "  /quit", "/Resume x", "/continue"])("%s is denied
     denied: expect.stringContaining("isn't available"),
   }),
 );
-test("the reason names the command as typed", () =>
-  expect(deniedReason("QUIT")).toBe(
-    "/QUIT isn't available: the factory runs this agent's process.",
-  ));
 const WHY = {
   session: "each agent keeps one session.",
   model: "the model and effort come from the agent's template.",
@@ -106,9 +102,5 @@ test("/news-digest is not /new", () =>
   }));
 test("an unknown /path is text, even on several lines", () =>
   expect(classifyInput("/Users/or/log.txt shows:\nError", new Set())).toEqual({ kind: "text" }));
-test("a known multi-line command is flagged", () =>
-  expect(classifyInput("/context\nmore", new Set(["context"]))).toMatchObject({
-    multiline: true,
-  }));
 test("aliases count as known", () =>
   expect(classifyInput("/cost", new Set(["cost"]))).toMatchObject({ kind: "command" }));

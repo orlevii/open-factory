@@ -55,10 +55,11 @@ test("a data title truncates to a floor; meta, badge, slug and actions follow th
   expect(actions).toHaveClass("ml-auto", "shrink-0");
 });
 
-test("a static title never shrinks", () => {
+test("a static title never shrinks and has no title attribute", () => {
   const { h1 } = setup(false);
   expect(h1).toHaveClass("shrink-0");
   expect(h1).not.toHaveClass("truncate");
+  expect(h1).not.toHaveAttribute("title");
 });
 
 test("a truncating custom heading keeps its full value in title", () => {
@@ -70,9 +71,4 @@ test("a truncating custom heading keeps its full value in title", () => {
   const h1 = screen.getByRole("heading", { level: 1 });
   expect(h1).toHaveClass("min-w-0", "truncate");
   expect(h1).toHaveAttribute("title", SLUG);
-});
-
-test("a static title has no title attribute", () => {
-  const { h1 } = setup(false);
-  expect(h1).not.toHaveAttribute("title");
 });

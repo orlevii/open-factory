@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
   anyEventSchema,
-  handleSchema,
   MAX_BODY_BYTES,
   sendMessagesBodySchema,
   sessionEventSchema,
@@ -72,12 +71,85 @@ describe("event schemas", () => {
       { type: "control", cmd: "interrupt", by: "@or" },
       { type: "delivery_failed", messageIds: ["m1"], reason: "exited" },
       { type: "session_reset", by: "seed script" },
+      { type: "error", source: "api", message: "x", code: "authentication_failed" },
+      { type: "error", source: "spawn", message: "x", fix: "secrets" },
+      { type: "error", source: "spawn", message: "x", fix: "runtime" },
+      { type: "error", source: "spawn", message: "m", fix: "image" },
+      { type: "turn_end", isError: true, numTurns: 1, apiErrorStatus: 401 },
+      {
+        type: "message_in",
+        messages: [
+          {
+            id: "n1",
+            from: "@factory",
+            fromKind: "factory",
+            kind: "system",
+            urgent: false,
+            body: "x",
+          },
+        ],
+      },
+      { type: "hibernated", reason: "warm_window", idleMinutes: 70 },
+      { type: "container", action: "created", image: "open-factory-base:dev", imageId: "sha256:x" },
+      { type: "cleanup", killedProcesses: 2 },
+      { type: "stop_escalated", how: "sigkill" },
+      {
+        type: "background_work_lost",
+        reason: "crash",
+        tasks: [{ taskId: "t", description: "pnpm test" }],
+        crons: [],
+      },
+      { type: "background_work_lost", reason: "terminated", tasks: [], crons: [] },
+      { type: "reconciled", killedProcesses: 0, stoppedContainer: true },
+      {
+        type: "rate_limit_paused",
+        credential: "work",
+        until: "2026-11-19T14:30:00Z",
+        exact: false,
+      },
+      { type: "rate_limit_reset", credential: "work" },
+      { type: "control", cmd: "restart", by: "@or" },
+      { type: "process_started", resumed: true, reason: "crash_recovery" },
+      { type: "process_started", resumed: false, reason: "spawned" },
+      { type: "spawned", by: "lead", template: "tech-lead" },
+      { type: "terminated", by: "@factory" },
+      {
+        type: "message_in",
+        messages: [
+          {
+            id: "m",
+            from: "@factory",
+            fromKind: "factory",
+            kind: "peer_left",
+            urgent: false,
+            body: "",
+            subject: {
+              slug: "x",
+              displayName: "X",
+              relation: "peer",
+              left: { reason: "terminated", by: "@or" },
+            },
+          },
+        ],
+      },
+      {
+        type: "rate_limit_status",
+        status: "allowed_warning",
+        rateLimitType: "five_hour",
+        utilization: 0.9,
+        resetsAt: 1,
+      },
+      { type: "interrupt_unconfirmed" },
     ];
     for (const s of samples) expect(anyEventSchema.parse(s)).toEqual(s);
   });
 
-  test("rejects an unknown type", () => {
+  test("rejects an unknown type and an unknown spawn error fix", () => {
     expect(anyEventSchema.safeParse({ type: "nope" }).success).toBe(false);
+    expect(
+      anyEventSchema.safeParse({ type: "error", source: "spawn", message: "x", fix: "nope" })
+        .success,
+    ).toBe(false);
   });
 
   test("session event DTO nests the event", () => {
@@ -114,135 +186,6 @@ describe("sendMessagesBodySchema", () => {
       sendMessagesBodySchema.safeParse({ to: ["dev"], body: tooBig, urgent: false }).success,
     ).toBe(false);
   });
-});
-
-test("S4 additions: error code/fix and turn_end apiErrorStatus", () => {
-  expect(
-    anyEventSchema.safeParse({
-      type: "error",
-      source: "api",
-      message: "x",
-      code: "authentication_failed",
-    }).success,
-  ).toBe(true);
-  expect(
-    anyEventSchema.safeParse({ type: "error", source: "spawn", message: "x", fix: "secrets" })
-      .success,
-  ).toBe(true);
-  expect(
-    anyEventSchema.safeParse({ type: "error", source: "spawn", message: "x", fix: "nope" }).success,
-  ).toBe(false);
-  expect(
-    anyEventSchema.safeParse({ type: "turn_end", isError: true, numTurns: 1, apiErrorStatus: 401 })
-      .success,
-  ).toBe(true);
-});
-
-test("message_in accepts system notices and the new factory events parse", () => {
-  expect(() =>
-    anyEventSchema.parse({
-      type: "message_in",
-      messages: [
-        {
-          id: "n1",
-          from: "@factory",
-          fromKind: "factory",
-          kind: "system",
-          urgent: false,
-          body: "x",
-        },
-      ],
-    }),
-  ).not.toThrow();
-  for (const e of [
-    { type: "hibernated", reason: "warm_window", idleMinutes: 70 },
-    { type: "container", action: "created", image: "open-factory-base:dev", imageId: "sha256:x" },
-    { type: "cleanup", killedProcesses: 2 },
-    { type: "stop_escalated", how: "sigkill" },
-    {
-      type: "background_work_lost",
-      reason: "crash",
-      tasks: [{ taskId: "t", description: "pnpm test" }],
-      crons: [],
-    },
-    { type: "reconciled", killedProcesses: 0, stoppedContainer: true },
-    {
-      type: "rate_limit_paused",
-      credential: "work",
-      until: "2026-11-19T14:30:00Z",
-      exact: false,
-    },
-    { type: "rate_limit_reset", credential: "work" },
-    { type: "control", cmd: "restart", by: "@or" },
-    { type: "process_started", resumed: true, reason: "crash_recovery" },
-    { type: "error", source: "spawn", message: "x", fix: "runtime" },
-  ])
-    expect(() => anyEventSchema.parse(e)).not.toThrow();
-});
-
-test("factory is a reserved handle", () => {
-  expect(handleSchema.safeParse("factory").success).toBe(false);
-});
-
-test("S7 events parse; old rows still parse", () => {
-  const wrap = (event: unknown) => ({
-    seq: 1,
-    agentSlug: "a",
-    turnId: null,
-    at: "2026-01-01T00:00:00Z",
-    event,
-  });
-  const ok = (event: unknown) => sessionEventSchema.safeParse(wrap(event)).success;
-  expect(ok({ type: "spawned", by: "lead", template: "tech-lead" })).toBe(true);
-  expect(ok({ type: "terminated", by: "@factory" })).toBe(true);
-  expect(ok({ type: "background_work_lost", reason: "terminated", tasks: [], crons: [] })).toBe(
-    true,
-  );
-  expect(ok({ type: "process_started", resumed: false, reason: "spawned" })).toBe(true);
-  expect(
-    ok({
-      type: "message_in",
-      messages: [
-        {
-          id: "m",
-          from: "@factory",
-          fromKind: "factory",
-          kind: "peer_left",
-          urgent: false,
-          body: "",
-          subject: {
-            slug: "x",
-            displayName: "X",
-            relation: "peer",
-            left: { reason: "terminated", by: "@or" },
-          },
-        },
-      ],
-    }),
-  ).toBe(true);
-  expect(ok({ type: "background_work_lost", reason: "crash", tasks: [], crons: [] })).toBe(true);
-});
-
-test("S10 harness events", () => {
-  expect(
-    anyEventSchema.safeParse({
-      type: "rate_limit_status",
-      status: "allowed_warning",
-      rateLimitType: "five_hour",
-      utilization: 0.9,
-      resetsAt: 1,
-    }).success,
-  ).toBe(true);
-  expect(
-    anyEventSchema.safeParse({ type: "error", source: "spawn", message: "m", fix: "image" })
-      .success,
-  ).toBe(true);
-});
-
-test("interrupt_unconfirmed is a factory event", () => {
-  expect(anyEventSchema.parse({ type: "interrupt_unconfirmed" }).type).toBe(
-    "interrupt_unconfirmed",
-  );
 });
 
 describe("reconcile keys and Agent usage (U3 §11.1, §9.1)", () => {

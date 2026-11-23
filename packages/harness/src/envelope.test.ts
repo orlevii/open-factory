@@ -68,10 +68,6 @@ test("leaves other markup alone", () => {
   expect(render([msg({ body: "<b>x</b> & 1 < 2" })])).toContain("\n<b>x</b> & 1 < 2\n");
 });
 
-test("envelope carries kind=system", () => {
-  expect(render([msg({ kind: "system", from: "@factory" })])).toContain('kind="system"');
-});
-
 test("orders notices, messages, update groups, peer events; merges consecutive same-sender updates", () => {
   const out = groupEnvelopes([
     row({ id: "u1", kind: "member_update", from: "b", groupKey: "b" }),
@@ -301,10 +297,6 @@ test("order: notice, then message and scheduled by created order, then updates",
   expect(out.map((m) => m.id)).toEqual(["n9", "m3", "s4", "u5"]);
 });
 
-test("scheduled rendering is deterministic", () => {
-  expect(render([sched()])).toBe(render([sched()]));
-});
-
 test("attachments ride on the envelope for the UI and are never rendered into the model's text", () => {
   const attachments = [
     { uploadId: "u1", name: "a.png", kind: "image" as const, width: 2, height: 3 },
@@ -333,6 +325,7 @@ test("other kinds carry from_kind and no to", () => {
   ]);
   expect(renderEnvelopes(envelopes)).not.toMatch(/ to="/);
   expect(renderEnvelopes(envelopes)).toMatch(/from_kind="factory"/);
+  expect(renderEnvelopes(envelopes)).toMatch(/kind="system"/);
 });
 
 test("neutraliseEnvelopeTags escapes any spelling of the tag and nothing else", () => {

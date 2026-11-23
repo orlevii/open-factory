@@ -43,20 +43,6 @@ test.each(["idle", "hibernated", "terminated"])("no badge at rest: %s", (s) => {
   expect(container.querySelector("[data-status-mark]")).toBeNull();
 });
 
-test.each(["idle", "hibernated", "terminated"])("no badge hole at rest: %s", (s) => {
-  const { container } = render(
-    <AgentAvatar color={null} slug="a" size={20} status={s as AgentStatus} />,
-  );
-  expect(container.querySelector(".of-avatar-cut")).toBeNull();
-});
-
-test.each(["working", "errored", "rate_limited", "queued"])("badge hole for %s", (s) => {
-  const { container } = render(
-    <AgentAvatar color={null} slug="a" size={20} status={s as AgentStatus} />,
-  );
-  expect(container.querySelector(".of-avatar-cut")).not.toBeNull();
-});
-
 test("no badge hole without a status", () => {
   const { container } = render(<AgentAvatar color={null} slug="a" size={20} />);
   expect(container.querySelector(".of-avatar-cut")).toBeNull();

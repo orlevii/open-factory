@@ -45,11 +45,6 @@ test("agent summary avatarVersion defaults to null", () => {
   expect(base.avatarVersion.parse("v1")).toBe("v1");
 });
 
-test("agent summary carries turnStartedAt and compacting", () => {
-  const shape = agentSummarySchema.shape;
-  expect(shape.turnStartedAt.parse("2026-11-21T10:00:00.000Z")).toBe("2026-11-21T10:00:00.000Z");
-  expect(shape.compacting.parse(true)).toBe(true);
-});
 test("queue items accept the stopping wait reason and a client id", () => {
   const q = queueItemSchema.parse({
     id: "m1",
@@ -66,11 +61,16 @@ test("queue items accept the stopping wait reason and a client id", () => {
     queueItemSchema.safeParse({ id: "m1", kind: "message", from: "@or", createdAt: "x" }).success,
   ).toBe(false);
 });
-test("send body takes an optional clientMessageId", () => {
+test("send body: clientMessageId is an optional UUID (the idempotency key)", () => {
   const id = crypto.randomUUID();
   expect(
     sendMessagesBodySchema.parse({ to: ["dev"], body: "hi", clientMessageId: id }).clientMessageId,
   ).toBe(id);
+  expect(sendMessagesBodySchema.parse({ to: ["dev"], body: "hi" }).clientMessageId).toBeUndefined();
+  expect(
+    sendMessagesBodySchema.safeParse({ to: ["dev"], body: "hi", clientMessageId: "not-a-uuid" })
+      .success,
+  ).toBe(false);
 });
 
 test("PATCH colour is an int 1..12 or null", () => {

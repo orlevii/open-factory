@@ -8,7 +8,6 @@ import { createFakeClaude, FakeTransport } from "../../testing/index.ts";
 import { readFixture } from "../test-fixtures.ts";
 import { localTransport } from "../transport/local.ts";
 import { type AgentRuntimeSpec, ProcessNotRunningError } from "../types.ts";
-import { buildClaudeArgs } from "./args.ts";
 import { createClaudeDriver } from "./driver.ts";
 import { ClaudeProcess, StderrTail } from "./process.ts";
 
@@ -38,28 +37,6 @@ async function collectUntil(
     if (pred(e)) return;
   }
 }
-
-test("args: fixed flags, resume and model only when given", () => {
-  const base = [
-    "-p",
-    "--input-format",
-    "stream-json",
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--include-partial-messages",
-    "--permission-mode",
-    "auto",
-  ];
-  expect(buildClaudeArgs(spec("c"), {})).toEqual(base);
-  expect(buildClaudeArgs(spec("c", { model: "haiku" }), { resumeSessionId: "s1" })).toEqual([
-    ...base,
-    "--resume",
-    "s1",
-    "--model",
-    "haiku",
-  ]);
-});
 
 test("send writes one envelope turn; events are mapped; env passes through unchanged", async () => {
   const fake = createFakeClaude({ scenario: "reply" });

@@ -59,8 +59,12 @@ export const cancelSignIn = (attemptId: string) =>
     throw e;
   });
 
-/** A wait that may simply be asked again: the network dropped, or a gateway answered with a bare HTTP status. */
+/**
+ * A wait that may simply be asked again (spec §8.3: "a network error or a 5xx from code joins the wait"): the network
+ * dropped, a gateway answered with a bare HTTP status, or the server's own unhandled 5xx (`internal_error`). A coded
+ * business error (`sign_in_failed`, `claude_unreachable`, …) is the outcome and never retries.
+ */
 export function isRetryableWaitError(err: unknown): boolean {
-  if (err instanceof ApiError) return /^http_\d+$/.test(err.code);
+  if (err instanceof ApiError) return /^http_\d+$/.test(err.code) || err.code === "internal_error";
   return err instanceof TypeError;
 }

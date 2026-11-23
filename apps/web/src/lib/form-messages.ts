@@ -44,4 +44,5 @@ export const FORM_MSG = {
   restartsSelf: "Saving restarts this agent when idle.",
   restartsReports: "Saving restarts its reports when idle.",
   restartsBoth: "Saving restarts it and its reports.",
+  signInOtherPanel: "Another sign-in is open; Start ends it.",
 } as const;

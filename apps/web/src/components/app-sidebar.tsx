@@ -52,6 +52,7 @@ import { useUnreadCount } from "@/features/inbox/api";
 import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifications";
 import { openPalette, prefetchPaletteData } from "@/features/palette/command-palette";
 import { resetUploads } from "@/features/session/uploads";
+import { resetSignIn } from "@/features/settings/sign-in/use-sign-in";
 import { resetDrafts } from "@/features/sheets/drafts";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet, resetSheets } from "@/features/sheets/sheet-store";
@@ -122,6 +123,8 @@ export function AppSidebar() {
     resetUploads();
     resetSheets();
     resetDrafts();
+    // Every sign-in wait loop stops and this tab forgets which attempts it submitted (I3 §8.3, R3).
+    resetSignIn();
     resetToasts();
     await authClient.signOut();
     await refreshSession(qc);

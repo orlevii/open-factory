@@ -57,6 +57,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
     reports: [],
+    humans: [],
     mcpUrl: "http://127.0.0.1:3001/mcp",
     kind: "persistent" as const,
     spawner: null,

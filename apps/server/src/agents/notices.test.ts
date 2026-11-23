@@ -45,3 +45,12 @@ test("the other notices", () => {
     "The rate limit on credential `work` reset at 14:30. Continue where you left off.",
   );
 });
+
+test("the self-compact continue notice has fixed texts", () => {
+  expect(notices.compactContinue({ failed: false })).toBe(
+    "Your /compact finished. Continue where you left off.",
+  );
+  expect(notices.compactContinue({ failed: true })).toBe(
+    "Your /compact didn't run (see the Session). Continue where you left off.",
+  );
+});

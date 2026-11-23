@@ -1,4 +1,5 @@
 import { type AgentSummary, ApiError } from "@open-factory/shared";
+import { Link } from "@tanstack/react-router";
 import { Pin, PinOff } from "lucide-react";
 import { useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
@@ -88,16 +89,28 @@ export function liveFact(
 
 /** The fact as a truncating line (hidden below 640px; Agent details' Now carries it there). With
  *  no fact it is an empty, hidden region that takes no room. */
-export function LiveLine({ fact }: { fact: LiveFact | null }) {
+export function LiveLine({ fact, sessionOf }: { fact: LiveFact | null; sessionOf?: string }) {
   if (!fact) return <span role="status" className="hidden" />;
   return (
-    <span
-      role="status"
-      title={fact.title}
-      className="hidden min-w-[8rem] grow basis-0 truncate text-[0.8125rem] text-muted-foreground sm:block"
-    >
-      {fact.text}
-    </span>
+    <>
+      <span
+        role="status"
+        title={fact.title}
+        className="hidden min-w-[8rem] grow basis-0 truncate text-[0.8125rem] text-muted-foreground sm:block"
+      >
+        {fact.text}
+      </span>
+      {sessionOf !== undefined && (
+        // From the Chat: the fact's detail is in the session. Never shown in the Session itself.
+        <Link
+          to="/agents/$slug/session"
+          params={{ slug: sessionOf }}
+          className="hidden shrink-0 text-[0.8125rem] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline sm:block"
+        >
+          Open session
+        </Link>
+      )}
+    </>
   );
 }
 

@@ -96,7 +96,11 @@ export function AgentLinks({ slugs, edit }: { slugs: string[]; edit?: boolean })
               @{s}
             </button>
           ) : (
-            <Link to="/agents/$slug" params={{ slug: s }} className={`${monoClass} ${linkClass}`}>
+            <Link
+              to="/agents/$slug/chat"
+              params={{ slug: s }}
+              className={`${monoClass} ${linkClass}`}
+            >
               @{s}
             </Link>
           )}

@@ -90,7 +90,7 @@ export type AgentSummary = z.infer<typeof agentSummarySchema>;
 
 export const queueItemSchema = z.object({
   id: z.string(),
-  kind: z.enum(["message", "compact", "notice", "held", "command"]),
+  kind: z.enum(["message", "compact", "notice", "held", "raw"]),
   body: z.string().optional(),
   count: z.number().int().positive().optional(),
   about: z.string().optional(),
@@ -102,6 +102,8 @@ export const queueItemSchema = z.object({
   focus: z.string().optional(),
   urgent: z.boolean().optional(),
   from: z.string(),
+  /** What `from` is; the UI never guesses it from the handle. */
+  fromKind: z.enum(["human", "agent", "factory"]),
   taskKey: z.string().optional(),
   taskTitle: z.string().optional(),
   commentId: z.string().optional(),
@@ -136,7 +138,9 @@ export const eventsPageSchema = z.object({
 });
 export type EventsPage = z.infer<typeof eventsPageSchema>;
 
-export const sendMessageBodySchema = z.object({
+/** I1 §6.6: one human message to one to ten agents; attachments only with a single recipient. */
+export const sendMessagesBodySchema = z.object({
+  to: z.array(z.string().min(1).max(65)).min(1).max(10),
   body: z
     .string()
     .trim()
@@ -147,10 +151,48 @@ export const sendMessageBodySchema = z.object({
   /** U3 §13.5: upload ids from `POST /api/agents/:slug/uploads`, at most 10. */
   attachments: z.array(z.string().min(1).max(64)).max(10).optional(),
 });
+/** Why a recipient was refused: the router's codes, so a client never parses `reason`. */
+export const REFUSAL_CODES = [
+  "not_found",
+  "reserved",
+  "channel",
+  "self",
+  "archived",
+  "terminated",
+  "disabled",
+  "human",
+  "invalid_attachment",
+  "too_large",
+] as const;
+export type RefusalCode = (typeof REFUSAL_CODES)[number];
+/** One recipient's outcome: `start_failed` keeps its row pending; `refused` wrote nothing. */
+export const sendMessagesResultSchema = z.object({
+  to: z.string(),
+  status: z.enum(["queued", "start_failed", "refused"]),
+  id: z.string().optional(),
+  item: queueItemSchema.optional(),
+  reason: z.string().optional(),
+  /** Set when `status` is `refused`. */
+  code: z.enum(REFUSAL_CODES).optional(),
+});
+export const sendMessagesResponseSchema = z.object({ results: z.array(sendMessagesResultSchema) });
+export type SendMessagesResponse = z.infer<typeof sendMessagesResponseSchema>;
 export const sendMessageToolSchema = z.object({
-  to: z.string().min(1).max(64),
-  body: sendMessageBodySchema.shape.body,
+  to: z
+    .array(
+      z
+        .string()
+        .max(65)
+        .refine((s) => s.trim().length > 0, "Name a recipient"),
+    )
+    .min(1)
+    .max(10, "Send to at most 10 recipients at once."),
+  body: sendMessagesBodySchema.shape.body,
   urgent: z.boolean().default(false),
+});
+export const sendCommandToolSchema = z.object({
+  target: z.string().max(65), // a handle (64) with its @
+  command: z.string(),
 });
 export const listPeersToolSchema = z.object({
   scope: z.enum(["neighborhood", "all"]).optional(),

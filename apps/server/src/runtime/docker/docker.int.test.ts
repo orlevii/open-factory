@@ -304,9 +304,9 @@ const runtime = async (w: World, slug = w.slug) => {
 const post = async (w: World, body = "hi", slug = w.slug) => {
   const res = await w.app.inject({
     method: "POST",
-    url: `/api/agents/${slug}/messages`,
+    url: `/api/messages`,
     headers: { cookie: w.cookie },
-    payload: { body, urgent: false },
+    payload: { to: [slug], body, urgent: false },
   });
   expect(res.statusCode).toBe(202);
 };
@@ -408,7 +408,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       );
     expect(stdin).toHaveLength(1);
     expect(stdin[0].message.content).toMatch(
-      /^<factory-message from="@or" kind="message" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
+      /^<factory-message from="@or" from_kind="human" kind="message" to="@[a-z0-9-]+" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
     );
     const types = (await events(w)).map((e) => e.type);
     expect(types).toEqual([
@@ -552,7 +552,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     const afterResume = log.slice(log.indexOf(resumed as FakeLogEntry));
     const first = afterResume.find((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user");
     expect(first?.kind === "stdin" && JSON.parse(first.line).message.content).toMatch(
-      /^<factory-message from="@factory" kind="system"[^>]*>\nYour previous process stopped unexpectedly \(exit code 137\) during a turn\./,
+      /^<factory-message from="@factory" from_kind="factory" kind="system"[^>]*>\nYour previous process stopped unexpectedly \(exit code 137\) during a turn\./,
     );
     expect(await claudes(w)).toHaveLength(1);
   });
@@ -736,9 +736,9 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       expect((await fetch(`${base}/api/status`).catch(() => undefined))?.ok).toBe(true);
     }, 60_000);
     for (const slug of ["dock", "loc"]) {
-      const res = await api(`/api/agents/${slug}/messages`, {
+      const res = await api(`/api/messages`, {
         method: "POST",
-        body: JSON.stringify({ body: "long job", urgent: false }),
+        body: JSON.stringify({ to: [slug], body: "long job", urgent: false }),
       });
       expect(res.status).toBe(202);
     }

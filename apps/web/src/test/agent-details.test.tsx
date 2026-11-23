@@ -311,7 +311,7 @@ test("Org: the manager, up to 8 reports, and All N reports to the Agents page", 
   });
   const org = within(await section("Org"));
   expect(org.getByText("Reports to")).toBeInTheDocument();
-  expect(org.getByRole("link", { name: /Big Boss/ })).toHaveAttribute("href", "/agents/boss");
+  expect(org.getByRole("link", { name: /Big Boss/ })).toHaveAttribute("href", "/agents/boss/chat");
   expect(org.getAllByRole("link", { name: /^Report \d$/ })).toHaveLength(8);
   expect(org.getByRole("link", { name: "All 10 reports" })).toHaveAttribute(
     "href",

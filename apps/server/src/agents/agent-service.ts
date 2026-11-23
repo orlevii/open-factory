@@ -10,10 +10,11 @@ import {
   treeOrder,
 } from "@open-factory/shared";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { isSlugUnique } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
-import { isNameTaken } from "../messaging/principals.ts";
+import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
@@ -28,14 +29,6 @@ import type { Exec, Tx } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 
 const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
-
-function isSlugUnique(e: unknown): boolean {
-  for (let x = e as { code?: string; constraint_name?: string; cause?: unknown } | undefined; x; ) {
-    if (x.code === "23505" && (x.constraint_name ?? "").includes("slug")) return true;
-    x = x.cause as typeof x;
-  }
-  return false;
-}
 
 function pluginFailure(err: unknown): unknown {
   if (err instanceof PluginInstallError)
@@ -468,9 +461,8 @@ export class AgentService {
 
   private async createLocked(b: CreateAgentBody): Promise<AgentSummary> {
     const { db, workspace } = this.d;
-    // One rule (spec §7.1). A simultaneous sign-up and agent create with the same name is an accepted race; sends then fail with 'matches both'.
-    const taken = await isNameTaken(db, b.slug);
-    if (taken === "agent" || taken === "user") throw slugTaken();
+    // The cheap pre-read before materialising; the claim in the insert transaction is the guarantee (spec §4.1).
+    if (await handleKind(db, b.slug)) throw slugTaken();
     const tpl = await this.d.templates.loadValid(b.template);
     const credentialId = await this.credentialId(b.credential);
     const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
@@ -497,6 +489,7 @@ export class AgentService {
     const id = randomUUID();
     try {
       await db.transaction(async (tx) => {
+        if (!(await claimHandle(tx, b.slug, "agent"))) throw slugTaken();
         await tx.insert(schema.agents).values({
           id,
           slug: b.slug,

@@ -90,8 +90,12 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   agentStatusFrameSchema,
   liveFrameSchema,
   z.object({ type: z.literal("resync"), agent: z.string() }),
+  /** I1 §5.3: the agent's stored command list changed (named apart from Claude's own `system/commands_changed`). */
+  z.object({ type: z.literal("agent_commands_changed"), agent: z.string() }),
   z.object({ type: z.literal("supervisor"), running: z.number().int(), max: z.number().int() }),
   z.object({ type: z.literal("inbox_changed") }),
+  /** I1 §6.5: per user; their chat with this agent (a message created or changed state, a batch written, a turn started or closed). */
+  z.object({ type: z.literal("chat_changed"), agent: z.string() }),
   /** S8: after any task commit (create, change, comment); the list and an open detail page refetch when their key is listed. */
   z.object({ type: z.literal("tasks_changed"), keys: z.array(z.string()) }),
   /** S9: after any schedule commit; the Schedules page, an open edit page and the strip's count refetch. */

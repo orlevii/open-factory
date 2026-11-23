@@ -149,7 +149,7 @@ test("A open, B collapsed with a working count named '1 working'", async () => {
   expect(row("Bravo")).toHaveAttribute("aria-level", "2");
   expect(row("Bravo")).toHaveAttribute("aria-setsize", "1");
   expect(row("Bravo")).toHaveAttribute("aria-posinset", "1");
-  expect(row("Bravo")).toHaveAttribute("href", "/agents/b");
+  expect(row("Bravo")).toHaveAttribute("href", "/agents/b/chat");
   expect(screen.getByRole("navigation", { name: "Agents" })).toContainElement(
     screen.getByRole("tree"),
   );
@@ -234,7 +234,7 @@ test("APG keys: one tab stop, ↓/↑, →/← open/close and move, Home/End, En
   await userEvent.keyboard("{ArrowLeft}");
   expect(row("Alpha")).toHaveFocus();
   await userEvent.keyboard("{Enter}");
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a"));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a/chat"));
 });
 
 test("an agent_status frame re-renders C's row only (B expanded) / B's row only (B collapsed)", async () => {
@@ -317,7 +317,11 @@ test("collapsed rail: only the active agent, unread and badge-worthy agents, ava
   });
   const rail = await screen.findByRole("navigation", { name: "Agents" });
   const links = within(rail).getAllByRole("link");
-  expect(links.map((l) => l.getAttribute("href"))).toEqual(["/agents/a", "/agents/c", "/agents/s"]);
+  expect(links.map((l) => l.getAttribute("href"))).toEqual([
+    "/agents/a/chat",
+    "/agents/c/chat",
+    "/agents/s/chat",
+  ]);
   expect(links[1]).toHaveAttribute("aria-current", "page");
   expect(links[0]).toHaveAccessibleName(/Alpha/);
   expect(screen.queryByRole("tree")).toBeNull();
@@ -344,7 +348,7 @@ test("a click through the rail's open tooltip still follows the link", async () 
   await screen.findByRole("tooltip");
   const trigger = link.querySelector("[data-slot=tooltip-trigger]") as HTMLElement;
   await userEvent.click(trigger);
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a"));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a/chat"));
 });
 
 test("a click on a collapsed manager's working count follows the row's link", async () => {
@@ -356,7 +360,7 @@ test("a click on a collapsed manager's working count follows the row's link", as
   await screen.findByRole("tooltip");
   const trigger = row("Bravo").querySelector("[data-slot=tooltip-trigger]") as HTMLElement;
   await userEvent.click(trigger);
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/b"));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/b/chat"));
 });
 
 test("each row carries a ⋯ that is out of the tab order; it opens the sidebar menu on its own row", async () => {

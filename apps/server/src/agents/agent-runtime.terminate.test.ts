@@ -715,10 +715,11 @@ function holdTermination(o: { fail?: Error } = {}) {
   const release = deferred();
   const original = h.store.terminateRows.bind(h.store);
   vi.spyOn(h.store, "terminateRows").mockImplementation(async (...a) => {
-    await original(...a);
+    const rejected = await original(...a);
     entered.resolve();
     await release.promise;
     if (o.fail) throw o.fail;
+    return rejected;
   });
   return { entered: entered.promise, release: release.resolve };
 }
@@ -823,6 +824,7 @@ test("a batch write in flight and the termination both complete: no deadlock", a
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
+    recipients: ["@test"],
     body: "mid-batch",
     urgent: false,
   });
@@ -957,6 +959,7 @@ test("last_activity_at is written after the batch commits, as its own statement 
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
+    recipients: ["@test"],
     body: "mid-batch",
     urgent: false,
   });

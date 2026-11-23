@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import { claimTestHandleSql } from "../../test/handles.ts";
 
 const CONFIG = {
   name: "test",
@@ -40,6 +41,7 @@ export async function insertAgent(
   const credId = `cred-${a.id}`;
   await sql`insert into credentials (id, name, kind, value_enc)
             values (${credId}, ${`cred-${a.id}`}, 'oauth_token', ${Buffer.from("dummy")})`;
+  await claimTestHandleSql(sql, a.slug, "agent");
   await sql`insert into agents (id, slug, display_name, session_id, status, template, config, runtime, credential_id, reports_to, archived_at, error_kind, kind, terminated_at, terminated_by)
             values (${a.id}, ${a.slug}, ${a.displayName ?? "Dev agent"}, ${a.sessionId ?? null}, ${a.status ?? "hibernated"},
                     'test', ${JSON.stringify({ ...CONFIG, ...(a.warmWindowMinutes !== undefined ? { warmWindowMinutes: a.warmWindowMinutes } : {}) })}::jsonb, 'local', ${credId},

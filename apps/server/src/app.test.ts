@@ -128,9 +128,9 @@ async function startIdle(
   const { cookie } = await signUp(t.app, { handle: `h-${slug}` });
   await t.app.inject({
     method: "POST",
-    url: `/api/agents/${slug}/messages`,
+    url: `/api/messages`,
     headers: { cookie },
-    payload: { body: "hi" },
+    payload: { to: [slug], body: "hi" },
   });
   const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
   if (!p) throw new Error(`${slug} not started`);
@@ -146,6 +146,7 @@ const BASE_TOOLS = [
   "get_task",
   "list_peers",
   "list_tasks",
+  "send_command",
   "send_message",
   "update_task",
 ];
@@ -230,7 +231,7 @@ test("an agent token never reaches the logs, on the agent listener or the REST A
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
     await callTool(url, token, "list_peers", {});
-    await callTool(url, token, "send_message", { to: "@h-dev", body: "for the inbox" });
+    await callTool(url, token, "send_message", { to: ["@h-dev"], body: "for the inbox" });
     await expect(callTool(url, `${token}x`, "list_peers", {})).rejects.toThrow("401");
     for (const route of ["/api/agents", "/api/inbox", "/api/messages/nope"]) {
       const r = await t.app.inject({

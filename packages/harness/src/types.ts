@@ -26,7 +26,10 @@ export interface AgentRuntimeSpec {
 export interface FactoryMessage {
   id: string;
   from: string;
+  fromKind: "human" | "agent" | "factory";
   kind: MessageKind;
+  /** The recipients of a `kind: "message"`, as `@handle`s; rendered as the envelope's `to`. */
+  to?: string[];
   urgent: boolean;
   /** Already escaped by groupEnvelopes (single/merge); renderEnvelopes writes it as given. */
   body: string;
@@ -68,8 +71,8 @@ export interface HarnessProcess {
   commands?(): Promise<Command[] | undefined>;
   /** The Claude Code version `initialize` reported, once it answered. */
   readonly claudeCodeVersion?: string | undefined;
-  /** U3 §13.3: writes `text` (a raw `/name args`) as one user line. The caller validates it. */
-  command?(text: string): Promise<void>;
+  /** I1 §5.1: writes `text` as one user line, no envelope. The caller classifies and neutralises it. */
+  raw?(text: string): Promise<void>;
   stop(opts?: { graceMs?: number; termWaitMs?: number }): Promise<ExitInfo>;
   /** SIGKILL-equivalent, for a process that outlived stop(). */
   forceKill(): Promise<void>;

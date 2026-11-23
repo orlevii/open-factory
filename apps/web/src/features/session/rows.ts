@@ -139,8 +139,17 @@ export type Row =
     }
   | { kind: "denied"; seq: number; event: Ev<"permission_denied">; key: string }
   | { kind: "quiet"; seq: number; event: AnyEvent; key: string }
-  /** A command a human ran (U3 §13.3, `control{cmd:"command"}`): `text` is `/name args`, `by` `@handle`. */
-  | { kind: "command"; seq: number; at: string; by: string; text: string; key: string }
+  /** Raw input a human sent (I1 §5.1, `operator_input`): `text` as typed, `by` `@handle`. `pending`
+   *  marks the tail block of a send that has no row yet. */
+  | {
+      kind: "command";
+      seq: number;
+      at: string;
+      by: string;
+      text: string;
+      key: string;
+      pending?: RawPending;
+    }
   /** What a local command printed (`/context`, `/usage` and its aliases). */
   | { kind: "command_output"; seq: number; at: string; command: string; text: string; key: string }
   /** Two or more consecutive foldable calls (U3 §9.4), keyed by the first; its summary is flat
@@ -237,12 +246,18 @@ function endedTurns(events: SessionEvent[]) {
 
 export const SEND_MESSAGE_TOOL = "mcp__factory__send_message";
 
-/** A `send_message` call with a string `to` and `body` renders as an outgoing message; any other
- *  shape falls back to the generic tool row (UI design §2.5). */
+/** A `send_message` call with a list of string recipients and a string `body` renders as an outgoing
+ *  message; any other shape (a bare string `to` is one) falls back to the generic tool row (UI design §2.5). */
 export function isSendMessageCall(e: Ev<"tool_call">): boolean {
   if (e.name !== SEND_MESSAGE_TOOL) return false;
   const i = e.input as Record<string, unknown> | null;
-  return !!i && typeof i.to === "string" && typeof i.body === "string";
+  return (
+    !!i &&
+    Array.isArray(i.to) &&
+    i.to.length > 0 &&
+    i.to.every((t) => typeof t === "string") &&
+    typeof i.body === "string"
+  );
 }
 
 /** Speech: what a reader scrolled away from is waiting for (U3 §8.2): a message, an outgoing
@@ -312,6 +327,18 @@ const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 /** The key a text block renders under (U3 §11.4): the live block and the persisted row that retires
  *  it share it, so React keeps the element (same DOM, selection and focus) at the handoff. */
 export const textRowKey = (messageId: string, blockIndex: number) => `t:${messageId}:${blockIndex}`;
+
+/** The key a raw send renders under (I1 §5): its "Sending" block, its queue item and the
+ *  `operator_input` row share it, so one node lives from send to timeline. */
+export const rawKey = (clientMessageId: string) => `raw:${clientMessageId}`;
+
+/** A raw block that isn't a timeline row yet: sending (the POST is in flight) or queued behind the
+ *  open turn. Its own Cancel is only on a queued block of yours. */
+export interface RawPending {
+  sending: boolean;
+  onCancel?: () => void;
+  error?: string;
+}
 
 export function buildRows(events: SessionEvent[]): {
   rows: Row[];
@@ -569,16 +596,17 @@ export function buildRows(events: SessionEvent[]): {
         usage = undefined;
         break;
       case "control":
-        if (e.cmd === "command")
-          top.push({
-            kind: "command",
-            seq: se.seq,
-            at: se.at,
-            by: e.by,
-            text: e.arg ?? "",
-            key: `${se.seq}`,
-          });
-        else top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
+        top.push({ kind: "quiet", seq: se.seq, event: e, key: `${se.seq}` });
+        break;
+      case "operator_input":
+        top.push({
+          kind: "command",
+          seq: se.seq,
+          at: se.at,
+          by: e.by,
+          text: e.text,
+          key: e.clientMessageId !== undefined ? rawKey(e.clientMessageId) : `${se.seq}`,
+        });
         break;
       case "command_output":
         top.push({

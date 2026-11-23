@@ -95,7 +95,7 @@ test("earlier pages prepend; status, queue and resync frames", () => {
     message: {
       type: "queue",
       agent: "dev",
-      items: [{ id: "q", kind: "compact", from: "@or", createdAt: "x" }],
+      items: [{ id: "q", kind: "compact", from: "@or", fromKind: "human", createdAt: "x" }],
     },
   });
   expect(s.queue).toHaveLength(1);
@@ -224,6 +224,7 @@ const qItem = (id: string) => ({
   body: id,
   urgent: false,
   from: "@or",
+  fromKind: "human" as const,
   createdAt: "2026-11-18T00:00:00.000Z",
 });
 
@@ -403,7 +404,14 @@ const sessionEvent = (seq: number, event: SessionEvent["event"]): SessionEvent =
 });
 const messageIn = (...ids: string[]): SessionEvent["event"] => ({
   type: "message_in",
-  messages: ids.map((id) => ({ id, from: "@or", kind: "message", urgent: false, body: id })),
+  messages: ids.map((id) => ({
+    id,
+    from: "@or",
+    fromKind: "human",
+    kind: "message",
+    urgent: false,
+    body: id,
+  })),
 });
 const turnEnd = (): SessionEvent["event"] => ({ type: "turn_end", isError: false, numTurns: 1 });
 const loaded = (
@@ -442,7 +450,15 @@ test("a merged envelope's ids hand off every matching queue item", () => {
   const ev10 = sessionEvent(10, {
     type: "message_in",
     messages: [
-      { id: "m1", ids: ["m1", "m2"], from: "@or", kind: "message", urgent: false, body: "x" },
+      {
+        id: "m1",
+        ids: ["m1", "m2"],
+        from: "@or",
+        fromKind: "human",
+        kind: "message",
+        urgent: false,
+        body: "x",
+      },
     ],
   });
   const s = sessionReducer(loaded({ queue: [qItem("m1"), qItem("m2")] }), frames([ev10]));
@@ -568,7 +584,7 @@ test("a windowed view counts speech in newSpeech: messages, agent text and sends
         type: "tool_call",
         toolUseId: "t1",
         name: "mcp__factory__send_message",
-        input: { to: "@or", body: "done" },
+        input: { to: ["@or"], body: "done" },
       } as SessionEvent["event"]),
       sessionEvent(23, {
         type: "tool_call",
@@ -741,6 +757,7 @@ test("a message_in echoing the id removes the block and its row is handed off", 
       {
         id: "m1",
         from: "@or",
+        fromKind: "human",
         kind: "message",
         urgent: false,
         body: "hello",
@@ -768,6 +785,7 @@ test("an unconfirmed send (15s abort) is remembered, and a late echo marks it la
       {
         id: "m1",
         from: "@or",
+        fromKind: "human",
         kind: "message",
         urgent: false,
         body: "hello",
@@ -1114,4 +1132,75 @@ test("a reload of the same session keeps live; another session starts empty", ()
     mode: "latest",
   });
   expect(other.live.texts).toEqual([]);
+});
+
+// I1 §5: a raw send is one node from Sending to the operator_input row.
+const rawInput = (cid: string): SessionEvent["event"] => ({
+  type: "operator_input",
+  text: "/context",
+  by: "@or",
+  clientMessageId: cid,
+  entryId: "e1",
+});
+
+test("an operator_input row replaces the raw queue item in one step and is handed off", () => {
+  const s = sessionReducer(
+    loaded({ queue: [{ ...qItem("q1"), kind: "raw", clientMessageId: "c1" }] }),
+    frames([sessionEvent(10, rawInput("c1"))]),
+  );
+  expect(s.queue).toEqual([]);
+  expect(s.handedOff.has("raw:c1")).toBe(true);
+});
+
+test("an operator_input row replaces the Sending block and lists it as landed", () => {
+  const sending = sessionReducer(loaded(), {
+    type: "sending",
+    block: { clientMessageId: "c2", body: "/context", urgent: false, raw: true },
+  });
+  const s = sessionReducer(sending, frames([sessionEvent(10, rawInput("c2"))]));
+  expect(s.sending).toEqual([]);
+  expect(s.landed.has("c2")).toBe(true);
+  expect(s.handedOff.has("raw:c2")).toBe(true);
+});
+
+test("an aborted raw send still lands when its operator_input row arrives", () => {
+  let s = sessionReducer(loaded(), {
+    type: "sending",
+    block: { clientMessageId: "c3", body: "/context", urgent: false, raw: true },
+  });
+  s = sessionReducer(s, { type: "send_failed", clientMessageId: "c3", unconfirmed: true });
+  expect(s.awaiting.has("c3")).toBe(true);
+  s = sessionReducer(s, frames([sessionEvent(10, rawInput("c3"))]));
+  expect(s.landed.has("c3")).toBe(true);
+  expect(s.awaiting.has("c3")).toBe(false);
+});
+
+test("a late 202 for a raw send whose row already landed queues nothing", () => {
+  let s = sessionReducer(loaded(), {
+    type: "sending",
+    block: { clientMessageId: "c4", body: "/context", urgent: false, raw: true },
+  });
+  s = sessionReducer(s, { type: "send_failed", clientMessageId: "c4", unconfirmed: true });
+  s = sessionReducer(s, frames([sessionEvent(10, rawInput("c4"))]));
+  const late = sessionReducer(s, {
+    type: "queued",
+    item: { ...qItem("q9"), kind: "raw", clientMessageId: "c4" },
+    live: false,
+  });
+  expect(late.queue).toEqual([]);
+});
+
+test("an operator_input row of someone else's send hands nothing off", () => {
+  const s = sessionReducer(loaded(), frames([sessionEvent(10, rawInput("zz"))]));
+  expect(s.handedOff.size).toBe(0);
+});
+
+test("an agent_commands_changed frame leaves the state as it was", () => {
+  const s = loaded();
+  expect(
+    sessionReducer(s, {
+      type: "frame",
+      message: { type: "agent_commands_changed", agent: "dev" },
+    }),
+  ).toBe(s);
 });

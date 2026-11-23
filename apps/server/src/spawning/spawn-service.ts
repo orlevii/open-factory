@@ -2,15 +2,16 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
-import { sendMessageBodySchema } from "@open-factory/shared";
+import { sendMessagesBodySchema } from "@open-factory/shared";
 import { and, asc, count, eq, gt, isNull } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type Config, localRuntimeAllowed } from "../config.ts";
+import { isSlugUnique } from "../db-errors.ts";
 import { FieldError } from "../errors.ts";
 import type { SpawnArgs, SpawnResult } from "../mcp/tools/spawn-agent.ts";
-import { isNameTaken } from "../messaging/principals.ts";
+import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { Router } from "../messaging/router.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
@@ -36,6 +37,10 @@ const taken = (slug: string) => fail(`@${slug} is taken; pick another suffix or 
  * re-checks everything and writes the child, its grants, its brief, its `spawned` event and the peer rows. A spawned
  * agent never holds anything its spawner lacks (§6, `inheritFrom`).
  */
+/** Who an agent that can't fix a problem itself goes to: its manager, or else a person (spec §4.5). */
+const askFor = (agent: Pick<AgentRow, "reportsTo">) =>
+  agent.reportsTo ? "ask your manager" : "ask a human (list_peers lists them)";
+
 export class SpawnService {
   private readonly now: () => number;
 
@@ -66,14 +71,14 @@ export class SpawnService {
       return fail(`You can't spawn template ${args.template}.`);
     const desc = args.description.trim();
     if (!desc || desc.length > 500) return fail("Give a description of 1 to 500 characters.");
-    const body = sendMessageBodySchema.shape.body.safeParse(args.prompt);
+    const body = sendMessagesBodySchema.shape.body.safeParse(args.prompt);
     if (!body.success) return fail(body.error.issues[0]?.message ?? "The prompt is invalid.");
     const prompt = body.data;
     let tpl: Template;
     try {
       tpl = await this.d.templates.loadValid(args.template);
     } catch {
-      return fail(`Template ${args.template} is missing or invalid; ask @humans to fix it.`);
+      return fail(`Template ${args.template} is missing or invalid; ${askFor(caller)} to fix it.`);
     }
     // Pre-checks without a lock (spec §5.2 step 2): nothing is materialized for a refused spawn.
     const pre = await this.check(caller, tpl, this.d.db);
@@ -81,7 +86,7 @@ export class SpawnService {
     for (let attempt = 0; attempt < (args.suffix !== undefined ? 1 : 5); attempt++) {
       const named = spawnSlug(args.template, args.suffix, this.d.random);
       if (!named.ok) return fail(named.message);
-      if (await isNameTaken(this.d.db, named.slug)) {
+      if (await handleKind(this.d.db, named.slug)) {
         if (named.explicit) return taken(named.slug);
         continue;
       }
@@ -98,7 +103,20 @@ export class SpawnService {
         continue;
       }
       if (made !== "ok") return made;
-      return this.insert(caller.id, named.slug, args.template, desc, prompt, tpl, toolUseId);
+      const done = await this.insert(
+        caller,
+        named.slug,
+        args.template,
+        desc,
+        prompt,
+        tpl,
+        toolUseId,
+      );
+      if (done === "taken") {
+        if (named.explicit) return taken(named.slug);
+        continue;
+      }
+      return done;
     }
     return fail(`Couldn't find a free name for ${args.template}-xxxx; pass a suffix.`);
   }
@@ -141,7 +159,9 @@ export class SpawnService {
       );
     const cap = this.d.config.maxSpawnsPerHour;
     if ((recent?.n ?? 0) >= cap)
-      return fail(`You've spawned ${cap} agents in the last hour; ask @humans if you need more.`);
+      return fail(
+        `You've spawned ${cap} agents in the last hour; ${askFor(spawner)} if you need more.`,
+      );
     const grants = await db
       .select({
         id: schema.projects.id,
@@ -160,7 +180,7 @@ export class SpawnService {
       deny = readDenyRules(JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>);
     } catch (err) {
       this.d.log.warn({ err, agent: spawner.slug }, "reading the spawner's template copy failed");
-      return fail("Your template copy can't be read; ask @humans to re-sync you.");
+      return fail(`Your template copy can't be read; ${askFor(spawner)} to re-sync you.`);
     }
     if (!spawner.credentialId) return fail(CANT_SPAWN);
     const inherited = inheritFrom(
@@ -214,20 +234,20 @@ export class SpawnService {
       )
         return fail(err.message);
       this.d.log.error({ err, agent: slug }, "materializing a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ask @humans to check the factory log.`);
+      return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
     }
   }
 
   /** §5.2 step 4: one transaction under the spawner's row lock; a failed re-check removes the folder. */
   private async insert(
-    callerId: string,
+    caller: AgentRow,
     slug: string,
     template: string,
     description: string,
     prompt: string,
     tpl: Template,
     toolUseId: string | null,
-  ): Promise<SpawnResult> {
+  ): Promise<SpawnResult | "taken"> {
     const { db, store, router } = this.d;
     const id = randomUUID();
     const at = new Date(this.now());
@@ -238,23 +258,24 @@ export class SpawnService {
       peers: PendingRow[];
       inherited: Granted;
     };
-    let out: Done | Refused;
+    let out: Done | Refused | "taken";
     try {
-      out = await db.transaction(async (tx): Promise<Done | Refused> => {
+      out = await db.transaction(async (tx): Promise<Done | Refused | "taken"> => {
         // Lock order (§5.7): the spawner's row first, FOR NO KEY UPDATE (never FOR UPDATE), then message rows.
         const [spawner] = await tx
           .select()
           .from(schema.agents)
-          .where(eq(schema.agents.id, callerId))
+          .where(eq(schema.agents.id, caller.id))
           .for("no key update");
         if (this.d.closing()) return fail(SHUTTING_DOWN);
         if (!spawner || !maySpawn(spawner)) return fail(CANT_SPAWN);
         if (!spawner.config.canSpawn.includes(template))
           return fail(`You can't spawn template ${template}.`);
-        if (await isNameTaken(tx, slug)) return taken(slug);
         // Re-read the credential and grants under the lock (an update during materialize must not be missed).
         const c = await this.check(spawner, tpl, tx);
         if (!c.ok) return c;
+        // Claim only once nothing can refuse any more: a refusal returns and commits, which would orphan the claim.
+        if (!(await claimHandle(tx, slug, "agent"))) return "taken";
         const [child] = await tx
           .insert(schema.agents)
           .values({
@@ -281,6 +302,7 @@ export class SpawnService {
           {
             from: { agentId: spawner.id },
             toAgentId: id,
+            recipients: [`@${slug}`],
             body: prompt,
             urgent: false,
             fromToolUseId: toolUseId,
@@ -298,9 +320,19 @@ export class SpawnService {
         return { ok: true, child, brief, peers, inherited: c.inherited };
       });
     } catch (err) {
+      // Lost the agents.slug unique index to a concurrent claimer that committed first: the workspace is theirs now.
+      if (isSlugUnique(err)) {
+        await this.discardUnlessWon(slug);
+        return "taken";
+      }
       await this.discard(slug);
       this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ask @humans to check the factory log.`);
+      return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
+    }
+    if (out === "taken") {
+      // A user's claim leaves our folder orphaned; an agent's claim means a winner owns it.
+      await this.discardUnlessWon(slug);
+      return out;
     }
     if (!out.ok) {
       await this.discard(slug);
@@ -311,6 +343,12 @@ export class SpawnService {
     router.handOffHeldRows(out.peers);
     const note = droppedNote(out.inherited.dropped);
     return { ok: true, slug, agentId: id, status, ...(note ? { note } : {}) };
+  }
+
+  /** `discard` unless an agent already holds the slug: that winner's workspace is never deleted. */
+  private async discardUnlessWon(slug: string): Promise<void> {
+    if (await this.d.store.agentBySlug(slug)) return;
+    await this.discard(slug);
   }
 
   /** Best effort: the folder was made by this spawn's materialize. */

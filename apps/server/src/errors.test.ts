@@ -1,4 +1,4 @@
-import { sendMessageBodySchema } from "@open-factory/shared";
+import { sendMessagesBodySchema } from "@open-factory/shared";
 import Fastify from "fastify";
 import {
   serializerCompiler,
@@ -48,7 +48,7 @@ test("a validation message is the issue's own sentence, never the schema path", 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   registerErrorHandlers(app);
-  app.post("/m", { schema: { body: sendMessageBodySchema } }, async () => ({}));
+  app.post("/m", { schema: { body: sendMessagesBodySchema } }, async () => ({}));
   app.get(
     "/p/:n",
     { schema: { params: z.object({ n: z.coerce.number().int("Must be a whole number") }) } },
@@ -57,7 +57,7 @@ test("a validation message is the issue's own sentence, never the schema path", 
   const big = await app.inject({
     method: "POST",
     url: "/m",
-    payload: { body: "x".repeat(70_000) },
+    payload: { to: ["dev"], body: "x".repeat(70_000) },
   });
   expect(big.json().error.message).toBe("Message is larger than 64 KB");
   const p = await app.inject({ method: "GET", url: "/p/1.5" });

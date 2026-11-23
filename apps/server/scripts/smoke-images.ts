@@ -439,12 +439,13 @@ try {
   const notBuilt =
     "Image `smoke` isn't built. Build it in Templates → Images, or run `open-factory images build smoke`.";
   await step("2. message smoke before the build → 202", async () => {
-    const r = await http("POST", "/api/agents/smoke/messages", or(), {
+    const r = await http("POST", "/api/messages", or(), {
+      to: ["smoke"],
       // The same instruction as the later message: this one stays queued through the failed start and may be
       // delivered in the same batch.
       body: ASK,
     });
-    expect(r, 202, "POST /api/agents/smoke/messages");
+    expect(r, 202, "POST /api/messages");
   });
   const startErr = await step("2. the start fails: error event (source spawn)", () =>
     until(
@@ -506,11 +507,12 @@ try {
     expect(r, 202, "POST /api/agents/smoke/restart");
   });
   const sent = await step("4. message smoke after the build → 202", async () => {
-    const r = await http("POST", "/api/agents/smoke/messages", or(), {
+    const r = await http("POST", "/api/messages", or(), {
+      to: ["smoke"],
       body: ASK,
     });
-    expect(r, 202, "POST /api/agents/smoke/messages");
-    return String((r.json as { item: { id: string } }).item.id);
+    expect(r, 202, "POST /api/messages");
+    return String((r.json as { results: { id: string }[] }).results[0]?.id);
   });
   const turn = await step("4. smoke's turn for that message ends", () =>
     until(

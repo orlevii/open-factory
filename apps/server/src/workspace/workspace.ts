@@ -6,7 +6,7 @@ import type { TemplateConfig } from "@open-factory/shared";
 import { FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import type { DenyRules } from "../spawning/inherit.ts";
-import { buildClaudeMd, type OrgEntry } from "./claude-md.ts";
+import { buildClaudeMd, type OrgEntry, type OrgHuman } from "./claude-md.ts";
 import {
   backupDiffering,
   copyTargets,
@@ -63,6 +63,7 @@ export interface PrepareInput {
   grants: { name: string; hostPath: string }[];
   peers: OrgEntry[];
   reports: OrgEntry[];
+  humans: OrgHuman[];
   /** The agent listener's MCP endpoint as this agent reaches it (local loopback, or the Docker agentUrl). */
   mcpUrl: string;
   kind: "persistent" | "ephemeral";
@@ -84,6 +85,7 @@ export type MaterializeCheck = Omit<
   | "mcpUrl"
   | "peers"
   | "reports"
+  | "humans"
   | "kind"
   | "spawner"
   | "spawning"
@@ -335,6 +337,7 @@ export class Workspace {
         secretNames: i.secretNames,
         peers: i.peers,
         reports: i.reports,
+        humans: i.humans,
         kind: i.kind,
         spawner: i.spawner,
         spawning: i.spawning,

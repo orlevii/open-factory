@@ -4,7 +4,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { eq } from "drizzle-orm";
 import type { Config } from "../config.ts";
 import { authSecret } from "../crypto/keys.ts";
-import { isNameTaken } from "../messaging/principals.ts";
+import { claimHandle } from "../messaging/principals.ts";
 import { signUpContext } from "../users/sign-up-gate.ts";
 import { authOptions } from "./options.ts";
 import { trustedOrigins } from "./origins.ts";
@@ -16,11 +16,7 @@ export function createAuth(config: Config, db: Db) {
       baseURL: config.publicUrl,
       trustedOrigins: trustedOrigins(config),
       database: drizzleAdapter(db, { provider: "pg", schema, usePlural: true }),
-      nameTaken: async (n) => {
-        const taken = await isNameTaken(db, n);
-        // Reserved handles fall through to handleSchema validation (400), not HANDLE_TAKEN.
-        return taken === "user" || taken === "agent";
-      },
+      claim: (handle) => claimHandle(db, handle, "user"),
       mayCreateUser: () => signUpContext.getStore()?.allowed === true,
       // One primary-key lookup.
       isDisabled: async (userId) => {

@@ -48,7 +48,8 @@ export function RepeatsField({
   const [listOpen, setListOpen] = useState(false);
   const opened = useRef(false);
   // Opening a Radix Select moves focus into its list, so the trigger blurs on open: the leave is the list closing,
-  // once the pick has rendered (TemplateField's pattern). Picking Custom isn't a leave: focus goes on to the input.
+  // once the pick has rendered (TemplateField's pattern). Picking Custom isn't a leave: focus returns to the trigger
+  // and the cron input appears below it, and that input's own blur is the leave from then on.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the list closes
   useEffect(() => {
     if (listOpen || !opened.current) return;
@@ -78,7 +79,7 @@ export function RepeatsField({
               aria-label="Repeats"
               aria-invalid={(!isCustom && a.invalid) || undefined}
               aria-describedby={isCustom ? undefined : a.describedBy}
-              // With Custom chosen the input is the field, so leaving the trigger isn't leaving it.
+              // With Custom chosen the cron input carries the field's id and note, so leaving the trigger isn't leaving it.
               onBlur={(e) => !listOpen && !isCustom && onBlurCron(e)}
             >
               <SelectValue placeholder="Choose…" />

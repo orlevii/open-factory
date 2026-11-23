@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness, sendAs } from "./testing/runtime-harness.ts";
 
-// U3 §13.3 (dispatch), Q39: a slash command is held like a compact, written raw on its own, and is a barrier until its
+// I1 §5.1: raw input is held like a compact, written as one unwrapped user line on its own, and is a barrier until its
 // turn ends. Its sender may cancel it while it is still queued (no restore).
 const h = new RuntimeHarness();
 beforeAll(() => h.setup());
@@ -14,9 +14,9 @@ beforeEach(async () => {
 const send = (body: string) =>
   sendAs(h.store, h.rt, { fromUserId: "u1", fromHandle: "or", body, urgent: false });
 const run = (name: string, args = "", userId = "u1") =>
-  h.rt.command({ name, args, userId, byHandle: "or" });
+  h.rt.rawInput({ text: args ? `/${name} ${args}` : `/${name}`, userId, by: "@or" });
 const events = async () => (await h.store.after(h.agentId, 0, 1000)).map((e) => e.event);
-const commandWrites = () => h.driver.last.writes.filter((w) => w.kind === "command");
+const commandWrites = () => h.driver.last.writes.filter((w) => w.kind === "raw");
 
 async function startedIdle() {
   await send("boot");
@@ -31,24 +31,26 @@ test("held while a turn is open, written raw on its own, and nothing is written 
   await h.rt.settled();
   const item = await run("code-review", "src/");
   expect(item).toMatchObject({
-    kind: "command",
+    kind: "raw",
     body: "/code-review src/",
     from: "@or",
+    fromKind: "human",
     waitReason: "turn",
   });
   await send("after the command");
   expect(commandWrites()).toEqual([]);
-  expect(h.rt.queueItems().map((q) => q.kind)).toEqual(["command", "message"]);
+  expect(h.rt.queueItems().map((q) => q.kind)).toEqual(["raw", "message"]);
 
   h.driver.last.emit(ev.usage(), ev.end());
   await h.rt.settled();
   // The exact raw line, never batched with the message queued behind it.
-  expect(commandWrites()).toEqual([{ kind: "command", text: "/code-review src/" }]);
+  expect(commandWrites()).toEqual([{ kind: "raw", text: "/code-review src/" }]);
   expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["long task"]);
   expect(h.rt.queueItems().map((q) => q.kind)).toEqual(["message"]);
   expect(h.rt.live().status).toBe("working");
-  expect((await events()).filter((e) => e.type === "control")).toEqual([
-    { type: "control", cmd: "command", arg: "/code-review src/", by: "@or" },
+  expect((await events()).filter((e) => e.type === "control")).toEqual([]);
+  expect((await events()).filter((e) => e.type === "operator_input")).toEqual([
+    expect.objectContaining({ type: "operator_input", text: "/code-review src/", by: "@or" }),
   ]);
 
   // A self-started turn ending meanwhile does not release it.
@@ -65,7 +67,7 @@ test("held while a turn is open, written raw on its own, and nothing is written 
 test("written at once when idle; a local command's turn_end (no turn_started) releases it", async () => {
   await startedIdle();
   await run("context");
-  expect(commandWrites()).toEqual([{ kind: "command", text: "/context" }]);
+  expect(commandWrites()).toEqual([{ kind: "raw", text: "/context" }]);
   await send("next");
   expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["boot"]);
   h.driver.last.emit(
@@ -76,12 +78,12 @@ test("written at once when idle; a local command's turn_end (no turn_started) re
   expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["next"]);
 });
 
-test("a hibernated agent wakes for it with the reason command", async () => {
+test("a hibernated agent wakes for it with the reason raw", async () => {
   await run("init");
   expect(h.driver.starts).toHaveLength(1);
-  expect(commandWrites()).toEqual([{ kind: "command", text: "/init" }]);
+  expect(commandWrites()).toEqual([{ kind: "raw", text: "/init" }]);
   expect(await events()).toContainEqual(
-    expect.objectContaining({ type: "process_started", reason: "command" }),
+    expect.objectContaining({ type: "process_started", reason: "raw" }),
   );
 });
 
@@ -106,7 +108,7 @@ test("your own held command cancels (removed, never written); another user's is 
   await expect(h.rt.cancelQueued(item.id, "u2")).rejects.toMatchObject({ code: "not_sender" });
   expect(h.rt.queueItems().map((q) => q.id)).toEqual([item.id]);
   const cancelled = await h.rt.cancelQueued(item.id, "u1");
-  expect(cancelled).toMatchObject({ id: item.id, kind: "command", body: "/code-review src/" });
+  expect(cancelled).toMatchObject({ id: item.id, kind: "raw", body: "/code-review src/" });
   expect(h.rt.queueItems()).toEqual([]);
   h.driver.last.emit(ev.usage(), ev.end());
   await h.rt.settled();
@@ -131,20 +133,8 @@ test("a retried dispatch with the same clientMessageId is the same queued item",
   h.driver.last.emit(ev.turn());
   await h.rt.settled();
   const id = crypto.randomUUID();
-  const a = await h.rt.command({
-    name: "init",
-    args: "",
-    userId: "u1",
-    byHandle: "or",
-    clientMessageId: id,
-  });
-  const b = await h.rt.command({
-    name: "init",
-    args: "",
-    userId: "u1",
-    byHandle: "or",
-    clientMessageId: id,
-  });
+  const a = await h.rt.rawInput({ text: "/init", userId: "u1", by: "@or", clientMessageId: id });
+  const b = await h.rt.rawInput({ text: "/init", userId: "u1", by: "@or", clientMessageId: id });
   expect(b.id).toBe(a.id);
   expect(a.clientMessageId).toBe(id);
   expect(h.rt.queueItems()).toHaveLength(1);
@@ -154,20 +144,14 @@ test("a passive notice at the head never holds a command back", async () => {
   await startedIdle();
   await h.rt.postNotice("crons_stopped", "stopped");
   await run("init");
-  expect(commandWrites()).toEqual([{ kind: "command", text: "/init" }]);
+  expect(commandWrites()).toEqual([{ kind: "raw", text: "/init" }]);
 });
 
 test("a retry with the same clientMessageId after the write returns the earlier item and writes nothing", async () => {
   await startedIdle();
   const id = crypto.randomUUID();
   const dispatch = () =>
-    h.rt.command({
-      name: "code-review",
-      args: "",
-      userId: "u1",
-      byHandle: "or",
-      clientMessageId: id,
-    });
+    h.rt.rawInput({ text: "/code-review", userId: "u1", by: "@or", clientMessageId: id });
   const a = await dispatch();
   expect(commandWrites()).toHaveLength(1);
   const b = await dispatch();
@@ -175,13 +159,7 @@ test("a retry with the same clientMessageId after the write returns the earlier 
   expect(commandWrites()).toHaveLength(1);
   expect(h.rt.queueItems()).toEqual([]);
   // Another sender's same id is their own command.
-  await h.rt.command({
-    name: "init",
-    args: "",
-    userId: "u2",
-    byHandle: "sam",
-    clientMessageId: id,
-  });
+  await h.rt.rawInput({ text: "/init", userId: "u2", by: "@sam", clientMessageId: id });
   expect(h.rt.queueItems().map((q) => q.body)).toEqual(["/init"]);
 });
 
@@ -241,7 +219,59 @@ test("a turn_end that names compact still ends a command's barrier", async () =>
 
 test("a process that can't run commands refuses the dispatch: nothing queued, nothing dropped silently", async () => {
   await startedIdle();
-  Reflect.set(h.driver.last, "command", undefined);
+  Reflect.set(h.driver.last, "raw", undefined);
   await expect(run("code-review")).rejects.toMatchObject({ code: "commands_unsupported" });
   expect(h.rt.queueItems()).toEqual([]);
+});
+
+test("plain text is written as one user line with no envelope, and operator_input records who and which send", async () => {
+  await startedIdle();
+  const clientMessageId = crypto.randomUUID();
+  const item = await h.rt.rawInput({
+    text: "just a note",
+    userId: "u1",
+    by: "@or",
+    clientMessageId,
+  });
+  expect(item).toMatchObject({ kind: "raw", body: "just a note", clientMessageId });
+  expect(commandWrites()).toEqual([{ kind: "raw", text: "just a note" }]);
+  expect((await events()).filter((e) => e.type === "operator_input")).toEqual([
+    { type: "operator_input", text: "just a note", by: "@or", clientMessageId, entryId: item.id },
+  ]);
+});
+
+test("raw text queued during a turn is written only after turn_end, and nothing else is written until its turn ends", async () => {
+  await startedIdle();
+  await send("long task");
+  h.driver.last.emit(ev.turn());
+  await h.rt.settled();
+  await h.rt.rawInput({ text: "note", userId: "u1", by: "@or" });
+  await send("later");
+  expect(commandWrites()).toEqual([]);
+  h.driver.last.emit(ev.usage(), ev.end());
+  await h.rt.settled();
+  expect(commandWrites()).toEqual([{ kind: "raw", text: "note" }]);
+  expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["long task"]);
+});
+
+test("an errored agent holds raw input and does not start a recovery", async () => {
+  await h.makeRuntime({ status: "errored", sessionId: "sess-1" });
+  const item = await h.rt.rawInput({ text: "hello", userId: "u1", by: "@or" });
+  await h.rt.settled();
+  expect(h.driver.starts).toHaveLength(0);
+  expect(h.rt.acceptsWake("raw")).toBe(false);
+  expect(h.rt.queueItems().map((q) => q.id)).toEqual([item.id]);
+});
+
+test("subscribers are told once the agent's command list is stored", async () => {
+  h.driver.commandList = [{ name: "context", description: "Context", argumentHint: "" }];
+  await send("boot");
+  await vi.waitFor(async () =>
+    expect(await h.store.agentCommands(h.agentId)).toMatchObject({
+      commands: [expect.objectContaining({ name: "context" })],
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(h.frames).toContainEqual({ type: "agent_commands_changed", agent: h.rt.agent.slug }),
+  );
 });

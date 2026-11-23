@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./auth.ts";
 import { credentials } from "./factory.ts";
+import { handles } from "./handles.ts";
 import { schedules } from "./schedules.ts";
 import { tasks } from "./tasks.ts";
 
@@ -33,7 +34,10 @@ export const agents = pgTable(
   "agents",
   {
     id: text("id").primaryKey(),
-    slug: text("slug").notNull().unique(),
+    slug: text("slug")
+      .notNull()
+      .unique()
+      .references(() => handles.handle),
     displayName: text("display_name").notNull(),
     description: text("description").notNull().default(""),
     sessionId: text("session_id"),
@@ -122,6 +126,8 @@ export const turns = pgTable(
     costUsd: numeric("cost_usd", { precision: 12, scale: 6, mode: "number" }),
     isError: boolean("is_error"),
     terminalReason: text("terminal_reason"),
+    // I1 §6.3: the seq of the turn's last event (its `turn_end` for a normal close); null when it has none.
+    endEventSeq: integer("end_event_seq"),
     taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
     credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
   },
@@ -168,6 +174,8 @@ export const messages = pgTable(
     toAllHumans: boolean("to_all_humans").notNull().default(false),
     fromToolUseId: text("from_tool_use_id"),
     deliveredEventSeq: integer("delivered_event_seq"),
+    // I1: the full recipient list of a `kind='message'` row, as `@handle`s (a fan-out writes one row per agent).
+    recipients: text("recipients").array(),
     body: text("body").notNull(),
     urgent: boolean("urgent").notNull().default(false),
     state: text("state").notNull().default("pending"),
@@ -197,8 +205,16 @@ export const messages = pgTable(
       .on(t.deliveredTurnId)
       .where(sql`${t.deliveredTurnId} is not null`),
     uniqueIndex("messages_client_id_unique")
-      .on(t.fromUserId, t.clientMessageId)
+      .on(t.fromUserId, t.clientMessageId, t.toAgentId)
       .where(sql`${t.clientMessageId} is not null`),
+    // I1 §6.3: the chat thread, both directions, newest first by (created_at, id).
+    index("messages_chat_in_idx")
+      .on(t.toAgentId, t.fromUserId, t.createdAt)
+      .where(sql`${t.kind} = 'message'`),
+    index("messages_chat_out_idx")
+      .on(t.toUserId, t.fromAgentId, t.createdAt)
+      .where(sql`${t.kind} = 'message'`),
+    check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipients} IS NOT NULL`),
   ],
 );
 

@@ -15,6 +15,8 @@ import {
   sendAs,
   silentLog,
 } from "../agents/testing/runtime-harness.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
+
 import { createTestDb } from "../test/helpers.ts";
 import { Supervisor } from "./supervisor.ts";
 
@@ -23,6 +25,7 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());

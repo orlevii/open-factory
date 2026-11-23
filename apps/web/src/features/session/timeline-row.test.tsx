@@ -253,6 +253,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
         {
           id: "p1",
           from: "@factory",
+          fromKind: "factory",
           kind: "peer_left",
           urgent: false,
           about: "tech-lead-ab12",
@@ -267,6 +268,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
         {
           id: "p2",
           from: "@factory",
+          fromKind: "factory",
           kind: "peer_left",
           urgent: false,
           about: "dev-cd34",
@@ -693,14 +695,14 @@ function renderRows(events: AnyEvent[]) {
   return rows;
 }
 
-test("a command renders like your message: the command in mono and 'ran a command'", () => {
+test("raw input renders like your message: You, raw, the command in mono", () => {
   const rows = renderRows([
-    { type: "control", cmd: "command", arg: "/code-review src/", by: "@alice" },
+    { type: "operator_input", text: "/code-review src/", by: "@alice", entryId: "e1" },
   ]);
   expect(rows.map((r) => r.kind)).toEqual(["command"]);
   const row = document.querySelector("[data-test-row=command]") as HTMLElement;
   expect(within(row).getByText("You")).toBeInTheDocument();
-  expect(within(row).getByText("ran a command")).toBeInTheDocument();
+  expect(within(row).getByText("· raw")).toBeInTheDocument();
   expect(within(row).getByText("/code-review src/")).toHaveClass("font-mono");
   expect(row.querySelector("[data-message-block]")).not.toBeNull();
 });
@@ -737,7 +739,7 @@ test("/usage and /cost output render as a code plate with Copy", () => {
 test("the row menu copies a command and its output", () => {
   const rows = buildRows(
     [
-      { type: "control", cmd: "command", arg: "/context", by: "@alice" } as AnyEvent,
+      { type: "operator_input", text: "/context", by: "@alice", entryId: "e2" } as AnyEvent,
       { type: "command_output", command: "context", text: "ctx" } as AnyEvent,
     ].map((e) => se(e)),
   ).rows;

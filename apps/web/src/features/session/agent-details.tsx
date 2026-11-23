@@ -2,7 +2,15 @@ import type { AgentSummary, AgentsUsage } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { RotateCw, X } from "lucide-react";
-import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import { AgentChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
@@ -602,7 +610,7 @@ export function useAgentDetailsPanel(slug: string): AgentDetailsPanel {
     // The phone drawer is modal, and `]` still closes it (§8.1: at every width).
     { allowInModal: ownsDetails },
   );
-  return { open, toggle, setOpen, mode, timeline };
+  return useMemo(() => ({ open, toggle, setOpen, mode, timeline }), [open, toggle, setOpen, mode]);
 }
 
 /**

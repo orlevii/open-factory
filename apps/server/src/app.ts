@@ -11,6 +11,7 @@ import {
 } from "fastify-type-provider-zod";
 import type postgres from "postgres";
 import { AgentService } from "./agents/agent-service.ts";
+import { ChatStore } from "./agents/chat-store.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
@@ -28,6 +29,7 @@ import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { scheduleTools } from "./mcp/tools/schedule-tools.ts";
+import { sendCommandTool } from "./mcp/tools/send-command.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
 import { taskTools } from "./mcp/tools/task-tools.ts";
@@ -89,6 +91,7 @@ declare module "fastify" {
     runtimes: AgentRuntimes;
     bus: EventBus;
     store: EventStore;
+    chat: ChatStore;
     vault: Vault;
     workspace: Workspace;
     /** Named workspaceLock because `lock` is a Fastify (websocket plugin) route method. */
@@ -334,6 +337,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("workspaceLock", lock);
   app.decorate("workspace", workspace);
   app.decorate("store", store);
+  app.decorate("chat", new ChatStore(deps.db));
   app.decorate("bus", bus);
   app.decorate("runtimes", runtimes);
   app.decorate("neighborhood", neighborhood);
@@ -518,6 +522,13 @@ async function listenForAgents(
     loadCaller: (id) => d.store.agentById(id),
     tools: (caller) => [
       sendMessageTool(d.router),
+      sendCommandTool({
+        caller,
+        neighborhood: d.neighborhood,
+        runtimes: d.runtimes,
+        store: d.store,
+        spawned: caller.kind === "ephemeral",
+      }),
       ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
       // Q12: persistent agents only; a spawned agent never sees the schedule tools.
       ...(caller.kind === "persistent"

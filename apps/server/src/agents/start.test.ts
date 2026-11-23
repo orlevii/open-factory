@@ -19,6 +19,7 @@ import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
+import { claimTestHandle } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
@@ -83,6 +84,7 @@ async function seedStartFixture() {
     valueEnc: vault.seal("gh-1", "secrets:s1"),
   });
   await t.db.insert(schema.projects).values({ id: "p1", name: "app", hostPath: repo });
+  await claimTestHandle(t.db, slug, "agent");
   const [row] = await t.db
     .insert(schema.agents)
     .values({
@@ -182,6 +184,7 @@ test("an api_key credential sets ANTHROPIC_API_KEY only", async () => {
 });
 
 test("the manager is described in CLAUDE.md", async () => {
+  await claimTestHandle(t.db, "boss", "agent");
   const mgr = await t.db
     .insert(schema.agents)
     .values({
@@ -370,6 +373,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Dev\n");
   const slug = `dev-ab${seq}`;
+  await claimTestHandle(t.db, slug, "agent");
   const [row] = await t.db
     .insert(schema.agents)
     .values({
@@ -651,6 +655,7 @@ test.each([
   // Only an ephemeral row can be terminated, and only a terminated row can have a null credential (CHECKs),
   // so the spawner here is itself spawned by a top agent.
   const child = await seedChild();
+  await claimTestHandle(t.db, `top-${seq}`, "agent");
   await t.db.insert(schema.agents).values({
     id: `top-${seq}`,
     slug: `top-${seq}`,

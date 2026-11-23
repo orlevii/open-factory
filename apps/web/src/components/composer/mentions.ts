@@ -15,9 +15,7 @@ export type Mention =
       template: string;
       avatarVersion: string | null;
     }
-  | { kind: "human" | "humans"; handle: string; name: string };
-
-const HUMANS: Mention = { kind: "humans", handle: "humans", name: "Humans" };
+  | { kind: "human"; handle: string; name: string };
 
 /** Before `@`: the start, or not a letter, digit, `_`, `/`, `.` or `@` (an email or a path never opens
  *  it, as `extractMentions` never reads one); then the handle typed so far, up to the caret. */
@@ -57,8 +55,8 @@ function matchClass(m: Mention, q: string): number {
 }
 
 /**
- * U3 §13.4: live agents (archived and terminated ones never), the enabled humans other than you, and
- * `@humans`. Prefix matches first; within them your recent senders (newest first), then your reports
+ * U3 §13.4: live agents (archived and terminated ones never), and the enabled humans other than
+ * you. Prefix matches first; within them your recent senders (newest first), then your reports
  * (the reporting line's roots, which answer to the humans, and any agent reporting to you), then
  * everyone alphabetically by name.
  */
@@ -105,7 +103,6 @@ export function rankMentions(
     if (h.disabledAt || h.handle === me) continue;
     add({ kind: "human", handle: h.handle, name: h.name || h.handle }, 2);
   }
-  add(HUMANS, 2);
   rows.sort(
     (a, b) =>
       a.cls - b.cls ||

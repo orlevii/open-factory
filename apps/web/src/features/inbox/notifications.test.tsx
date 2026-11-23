@@ -1,4 +1,5 @@
-import { act, renderHook, screen } from "@testing-library/react";
+import type { ChatRow } from "@open-factory/shared";
+import { act, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
@@ -7,13 +8,18 @@ import type { InboxItem } from "./api";
 import {
   BLOCKED_NOTE,
   notificationTitle,
-  notifyNewItems,
+  notifyNew,
   useBrowserNotifications,
 } from "./notifications";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
+const ws = vi.hoisted(() => ({ push: (_m: unknown) => {} }));
 vi.mock("@/lib/ws", () => ({
-  connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
+  connectWs: (o: { onMessage?: (m: unknown) => void; onOpen?: () => void }) => {
+    ws.push = (m) => o.onMessage?.(m);
+    setTimeout(() => o.onOpen?.(), 0);
+    return { close() {}, status: () => "open", send: () => true };
+  },
 }));
 
 type Opts = { body: string; tag: string; icon: string };
@@ -67,9 +73,29 @@ const item = (n: number, o: Record<string, unknown> = {}): InboxItem =>
     ...o,
   }) as InboxItem;
 
+const none = { item() {}, chat() {} };
+const chatRow = (over: Partial<ChatRow> = {}): ChatRow => ({
+  agent: {
+    slug: "ada",
+    displayName: "Ada",
+    template: "ada",
+    avatarVersion: null,
+    kind: "persistent",
+    status: "idle",
+    archivedAt: null,
+  },
+  unread: 3,
+  latest: {
+    messageId: "ada-m3",
+    preview: "ship it",
+    createdAt: "2026-11-19T14:32:00.000Z",
+    urgent: false,
+  },
+  ...over,
+});
+
 test("titles by kind", () => {
   expect(notificationTitle(item(1))).toBe("@dev mentioned you on T-42");
-  expect(notificationTitle(item(1, { to: "@humans" }))).toBe("@dev mentioned @humans on T-42");
   expect(
     notificationTitle(
       item(1, { kind: "task_event", fact: "done", task: { key: "T-40", title: "x" } }),
@@ -82,16 +108,13 @@ test("titles by kind", () => {
   ).toBe("T-40 was cancelled");
   expect(
     notificationTitle(
-      item(1, { kind: "message", task: undefined, link: { kind: "session", agentSlug: "dev" } }),
+      item(1, { kind: "notice", task: undefined, link: { kind: "session", agentSlug: "dev" } }),
     ),
   ).toBe("@dev messaged you");
-  expect(notificationTitle(item(1, { kind: "message", to: "@humans", task: undefined }))).toBe(
-    "@dev messaged @humans",
-  );
   expect(
     notificationTitle(
       item(1, {
-        kind: "message",
+        kind: "notice",
         from: { kind: "factory", name: "factory" },
         about: "ops",
         task: undefined,
@@ -140,7 +163,7 @@ test("a hidden tab shows one plain-text notification per new unread item: tag, i
   stubNotification("granted");
   const seen = new Set<string>(["old"]);
   const long = `${"x".repeat(200)}\n<b>y</b>`;
-  notifyNewItems([item(1, { preview: long }), item(2, { read: true }), item(3)], seen, () => {});
+  notifyNew({ items: [item(1, { preview: long }), item(2, { read: true }), item(3)] }, seen, none);
   expect(shown).toHaveLength(2);
   expect(shown[0]?.title).toBe("@dev mentioned you on T-42");
   expect(shown[0]?.opts.tag).toBe("i1");
@@ -148,7 +171,7 @@ test("a hidden tab shows one plain-text notification per new unread item: tag, i
   expect(shown[0]?.opts.body).toHaveLength(120);
   expect(shown[0]?.opts.body.endsWith("…")).toBe(true);
   // Everything handed over is now seen: the same items never notify twice.
-  notifyNewItems([item(1)], seen, () => {});
+  notifyNew({ items: [item(1)] }, seen, none);
   expect(shown).toHaveLength(2);
 });
 
@@ -156,11 +179,11 @@ test("a visible tab, an off switch and an already seen item show nothing", () =>
   stubNotification("granted");
   localStorage.setItem("of-notifications", "1");
   visibility("visible");
-  notifyNewItems([item(1)], new Set(), () => {});
+  notifyNew({ items: [item(1)] }, new Set(), none);
   visibility("hidden");
-  notifyNewItems([item(2)], new Set(["i2"]), () => {});
+  notifyNew({ items: [item(2)] }, new Set(["i2"]), none);
   localStorage.setItem("of-notifications", "0");
-  notifyNewItems([item(3)], new Set(), () => {});
+  notifyNew({ items: [item(3)] }, new Set(), none);
   expect(shown).toHaveLength(0);
 });
 
@@ -169,7 +192,7 @@ test("clicking focuses the window, closes it and opens the item (our own deep li
   stubNotification("granted");
   const focus = vi.spyOn(window, "focus").mockImplementation(() => {});
   const open = vi.fn();
-  notifyNewItems([item(1)], new Set(), open);
+  notifyNew({ items: [item(1)] }, new Set(), { ...none, item: open });
   shown[0]?.n.onclick?.();
   expect(focus).toHaveBeenCalled();
   expect(shown[0]?.n.close).toHaveBeenCalled();
@@ -180,7 +203,7 @@ test("the user menu has the switch under Theme; blocked keeps the menu open with
   stubNotification("default", async () => "denied");
   mockApi({
     "GET /api/inbox/unread-count": () => json({ count: 0 }),
-    "GET /api/inbox?": () => json({ items: [], nextCursor: null }),
+    "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
   });
   renderApp("/", alice);
   await userEvent.click(await screen.findByRole("button", { name: /Alice/ }));
@@ -197,10 +220,67 @@ test("the item is absent when the browser has no Notification API", async () => 
   vi.stubGlobal("Notification", undefined);
   mockApi({
     "GET /api/inbox/unread-count": () => json({ count: 0 }),
-    "GET /api/inbox?": () => json({ items: [], nextCursor: null }),
+    "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
   });
   renderApp("/", alice);
   await userEvent.click(await screen.findByRole("button", { name: /Alice/ }));
   await screen.findByRole("menuitemradio", { name: "Light" });
   expect(screen.queryByRole("menuitemcheckbox", { name: "Browser notifications" })).toBeNull();
+});
+
+test("a hidden tab notifies once per new chat message: 'Ada · 3 new', tagged with the newest message", () => {
+  localStorage.setItem("of-notifications", "1");
+  stubNotification("granted");
+  const seen = new Set<string>();
+  notifyNew({ items: [], chats: [chatRow()] }, seen, none);
+  expect(shown).toHaveLength(1);
+  expect(shown[0]?.title).toBe("Ada · 3 new");
+  expect(shown[0]?.opts).toMatchObject({ tag: "ada-m3", body: "ship it" });
+  notifyNew({ items: [], chats: [chatRow()] }, seen, none);
+  expect(shown).toHaveLength(1);
+  // A newer message is a new notification.
+  notifyNew(
+    {
+      items: [],
+      chats: [
+        chatRow({
+          unread: 4,
+          latest: {
+            messageId: "ada-m4",
+            preview: "and tests",
+            createdAt: "2026-11-19T14:40:00.000Z",
+            urgent: false,
+          },
+        }),
+      ],
+    },
+    seen,
+    none,
+  );
+  expect(shown.map((n) => n.title)).toEqual(["Ada · 3 new", "Ada · 4 new"]);
+});
+
+test("clicking a chat notification opens that chat on its newest message", async () => {
+  localStorage.setItem("of-notifications", "1");
+  stubNotification("granted");
+  vi.spyOn(window, "focus").mockImplementation(() => {});
+  let chats: ChatRow[] = [];
+  mockApi({
+    "GET /api/inbox/unread-count": () => json({ count: 0 }),
+    "GET /api/inbox?": () => json({ chats, items: [], nextCursor: null }),
+    "GET /api/agents/ada/chat?": () =>
+      json({ entries: [], nextCursor: null, newerCursor: null, working: null }),
+  });
+  const app = renderApp("/", alice);
+  await screen.findByRole("button", { name: /Alice/ });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  chats = [chatRow()];
+  act(() => ws.push({ type: "inbox_changed" }));
+  await waitFor(() => expect(shown).toHaveLength(1));
+  expect(shown[0]?.title).toBe("Ada · 3 new");
+  act(() => shown[0]?.n.onclick?.());
+  await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/ada/chat"));
+  expect(app.router.state.location.search).toEqual({ message: "ada-m3" });
 });

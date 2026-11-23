@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 const open = async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await screen.findByText("Two entries.");
 };
 const push = (m: ServerMessage) => act(() => ws.onMessage?.(m));
@@ -225,7 +225,7 @@ test("a confirmed reset whose status frame beats the response still closes the d
 test("announcer and document title follow status frames; a no-op until change says nothing new", async () => {
   world();
   await open();
-  expect(document.title).toBe("Idle · Dev agent · Open Factory");
+  expect(document.title).toBe("Idle · Dev agent · Session · Open Factory");
   const live = () =>
     screen
       .getAllByRole("status")
@@ -236,7 +236,7 @@ test("announcer and document title follow status frames; a no-op until change sa
   await vi.waitFor(() =>
     expect(live()).toHaveTextContent("Dev agent is rate-limited, retrying at 14:30"),
   );
-  expect(document.title).toBe("Rate-limited · Dev agent · Open Factory");
+  expect(document.title).toBe("Rate-limited · Dev agent · Session · Open Factory");
   frame({ status: "rate_limited", rateLimitedUntil: todayAt(15, 0), rateLimitExact: false });
   await vi.waitFor(() =>
     expect(screen.getByText("Rate-limited, retrying at 15:00")).toBeInTheDocument(),
@@ -246,7 +246,7 @@ test("announcer and document title follow status frames; a no-op until change sa
   await vi.waitFor(() => expect(live()).toHaveTextContent("Dev agent is hibernated"));
   frame({ status: "errored", errorKind: "crash" });
   await vi.waitFor(() => expect(live()).toHaveTextContent("Dev agent is errored"));
-  expect(document.title).toBe("Errored · Dev agent · Open Factory");
+  expect(document.title).toBe("Errored · Dev agent · Session · Open Factory");
 });
 
 test("header: the queued fact uses the slot cap from the agents list; Pulling the image… wins", async () => {
@@ -268,6 +268,7 @@ test("queued blocks: rate-limited (fallback) and waiting for a free slot", async
     body: "pending body",
     urgent: false,
     from: "@or",
+    fromKind: "human",
     createdAt: "2026-11-19T09:00:00.000Z",
   };
   world({ status: "rate_limited", rateLimitedUntil: todayAt(14, 30), rateLimitExact: false }, [
@@ -291,6 +292,7 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
     kind: "notice",
     body: "Restarted by @or after an error.",
     from: "@factory",
+    fromKind: "factory",
     createdAt: "2026-11-19T09:00:00.000Z",
   };
   world({ status: "queued" }, [notice]);
@@ -302,6 +304,7 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
           {
             id: "m9",
             from: "@factory",
+            fromKind: "factory",
             kind: "system",
             urgent: true,
             body: "Your previous process stopped unexpectedly.",
@@ -311,7 +314,7 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
       null,
     ),
   ]);
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const delivered = await screen.findByText("Your previous process stopped unexpectedly.");
   const block = delivered.closest("[data-message-block]") as HTMLElement;
   const sender = within(block).getByText("Factory");
@@ -341,6 +344,7 @@ const mine = (id: string, body: string): QueueItem => ({
   id,
   kind: "message",
   from: "@alice",
+  fromKind: "human",
   body,
   createdAt: todayAt(9, 59),
 });
@@ -379,7 +383,7 @@ test("Cancel with text in the box leaves it; the line goes on your next send", a
   vi.useRealTimers();
   world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
   api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
-  api.on("POST /api/agents/dev/messages", () => json({ item: mine("m2", "draft") }, 202));
+  api.on("POST /api/agents/dev/input", () => json({ item: mine("m2", "draft") }, 202));
   await open();
   await userEvent.type(composer(), "draft");
   await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));

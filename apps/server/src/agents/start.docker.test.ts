@@ -23,6 +23,7 @@ import {
   dockerTransport,
 } from "../runtime/docker/exec-transport.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
+import { claimTestHandle, claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
@@ -50,6 +51,7 @@ let seq = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -117,6 +119,7 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     kind: "oauth_token",
     valueEnc: vault.seal("tok-1", "credentials:c1"),
   });
+  await claimTestHandle(t.db, slug, "agent");
   const [agent] = await t.db
     .insert(schema.agents)
     .values({

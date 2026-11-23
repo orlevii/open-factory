@@ -52,6 +52,7 @@ test("every agent lists the five task tools; a spawner has two more", async () =
     "list_schedules",
     "list_tasks",
     "schedule_message",
+    "send_command",
     "send_message",
     "update_task",
   ];
@@ -100,6 +101,29 @@ test("update_task: null unassigns, a no-op reports changed [], an unrelated agen
   expect((await call("qa", "update_task", { id: "T-9", status: "done" })).text).toBe(
     "No task T-9.",
   );
+});
+
+test("comment_task: @humans is not reached, with the reason said in a sentence", async () => {
+  await call("lead", "create_task", { title: "Plan", assignee: "dev" });
+  const r = await call("dev", "comment_task", { id: "T-1", body: "@humans please look" });
+  expect(r.err).toBe(false);
+  expect(r.json).toMatchObject({ mentioned_humans: [], delivered_to: [] });
+  expect(r.json.not_reached).toEqual([
+    {
+      name: "humans",
+      reason: "reserved",
+      detail: "`@humans` isn't a handle. Mention people by handle; list_peers lists them.",
+    },
+  ]);
+  const g = await call("dev", "comment_task", { id: "T-1", body: "@ghost look" });
+  expect(g.json.not_reached).toEqual([
+    { name: "ghost", reason: "unknown", detail: "No agent or user named '@ghost'." },
+  ]);
+  const d = await mcpCall(url, tok.dev as string, "tools/list", {});
+  const tool = (d.json.result.tools as { name: string; description: string }[]).find(
+    (x) => x.name === "comment_task",
+  );
+  expect(tool?.description).not.toContain("@humans");
 });
 
 test("list_tasks: defaults, filters and the more note", async () => {

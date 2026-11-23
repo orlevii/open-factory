@@ -9,6 +9,7 @@ import { CompactingError } from "../agents/errors.ts";
 import { AgentEndedError } from "../agents/message-cancel.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { png } from "../uploads/fixtures.ts";
 
@@ -37,8 +38,8 @@ test("requires a signed-in user", async () => {
 test("auth runs before validation: signed-out bad input is 401, not 400", async () => {
   const post = await t.app.inject({
     method: "POST",
-    url: "/api/agents/dev/messages",
-    payload: { body: 42 },
+    url: "/api/messages",
+    payload: { to: ["dev"], body: 42 },
   });
   expect(post.statusCode).toBe(401);
   expect(post.json().error.code).toBe("unauthorized");
@@ -65,9 +66,14 @@ test("list and detail", async () => {
 });
 
 test("send, then read events back; interrupt 409 while idle, 202 with an open turn", async () => {
-  const sent = await req("POST", "/api/agents/dev/messages", { body: "hello", urgent: false });
+  const sent = await req("POST", "/api/messages", { to: ["dev"], body: "hello", urgent: false });
   expect(sent.statusCode).toBe(202);
-  expect(sent.json().item).toMatchObject({ kind: "message", body: "hello", from: "@or" });
+  expect(sent.json().results[0].item).toMatchObject({
+    kind: "message",
+    body: "hello",
+    from: "@or",
+    fromKind: "human",
+  });
   driver.last.emit(ev.session(), ev.turn(), ev.text("hi"), ev.usage(), ev.end());
   const rt = await t.app.runtimes.bySlug("dev");
   await rt?.settled();
@@ -126,28 +132,30 @@ test("compact is accepted and queued; validation errors are 400", async () => {
   expect(c.json().item).toMatchObject({ kind: "compact", focus: "keep the API" });
   expect((await req("POST", "/api/agents/dev/compact", {})).statusCode).toBe(202);
   expect(
-    (await req("POST", "/api/agents/dev/messages", { body: "  ", urgent: false })).statusCode,
+    (await req("POST", "/api/messages", { to: ["dev"], body: "  ", urgent: false })).statusCode,
   ).toBe(400);
   expect(
-    (await req("POST", "/api/agents/dev/messages", { body: "x".repeat(65_537), urgent: false }))
+    (await req("POST", "/api/messages", { to: ["dev"], body: "x".repeat(65_537), urgent: false }))
       .statusCode,
   ).toBe(400);
 });
 
-test("start failure is 503 with the fix text and the message stays queued", async () => {
+test("start failure is that recipient's result with the fix text and the message stays queued", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
     await t2.seedAgent({ config: { secrets: ["GH_TOKEN"] } });
     const c2 = (await t2.signUpUser({ handle: "or2" })).cookie;
     const res = await t2.app.inject({
       method: "POST",
-      url: "/api/agents/dev/messages",
+      url: "/api/messages",
       headers: { cookie: c2 },
-      payload: { body: "hi", urgent: false },
+      payload: { to: ["dev"], body: "hi", urgent: false },
     });
     const message = "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.";
-    expect(res.statusCode).toBe(503);
-    expect(res.json()).toEqual({ error: { code: "agent_start_failed", message } });
+    expect(res.statusCode).toBe(202);
+    expect(res.json().results).toEqual([
+      { to: "@dev", status: "start_failed", id: expect.any(String), reason: message },
+    ]);
     const detail = (
       await t2.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c2 } })
     ).json();
@@ -158,14 +166,27 @@ test("start failure is 503 with the fix text and the message stays queued", asyn
   }
 });
 
-test("an archived agent refuses messages, compact and interrupt with 409 agent_archived", async () => {
+test("an archived agent refuses messages (as a result), compact and interrupt (409 agent_archived)", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
     await t2.seedAgent();
     await t2.sql`update agents set archived_at = now() where slug = 'dev'`;
     const c2 = (await t2.signUpUser({ handle: "or3" })).cookie;
+    const sent = await t2.app.inject({
+      method: "POST",
+      url: "/api/messages",
+      headers: { cookie: c2 },
+      payload: { to: ["dev"], body: "hi", urgent: false },
+    });
+    expect(sent.json().results).toEqual([
+      {
+        to: "@dev",
+        status: "refused",
+        reason: "@dev is archived and can't receive messages.",
+        code: "archived",
+      },
+    ]);
     for (const [url, payload] of [
-      ["/api/agents/dev/messages", { body: "hi", urgent: false }],
       ["/api/agents/dev/compact", {}],
       ["/api/agents/dev/interrupt", undefined],
     ] as const) {
@@ -255,7 +276,6 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
       ["POST", "/api/agents/..%2F..%2Fetc/resync"],
       ["POST", "/api/agents/..%2F..%2Fetc/archive"],
       ["POST", "/api/agents/..%2F..%2Fetc/unarchive"],
-      ["POST", "/api/agents/..%2F..%2Fetc/messages"],
       ["POST", "/api/agents/..%2F..%2Fetc/compact"],
       ["POST", "/api/agents/..%2F..%2Fetc/interrupt"],
     ] as const) {
@@ -268,7 +288,7 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
   }
 });
 
-test("a human message to a terminated agent is 409 agent_terminated and writes nothing", async () => {
+test("a human message to a terminated agent is refused and writes nothing", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
     await t2.seedAgent();
@@ -278,12 +298,14 @@ test("a human message to a terminated agent is 409 agent_terminated and writes n
     const c2 = (await t2.signUpUser({ handle: "or4" })).cookie;
     const res = await t2.app.inject({
       method: "POST",
-      url: "/api/agents/dev/messages",
+      url: "/api/messages",
       headers: { cookie: c2 },
-      payload: { body: "hi", urgent: false },
+      payload: { to: ["dev"], body: "hi", urgent: false },
     });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().error.code).toBe("agent_terminated");
+    expect(res.statusCode).toBe(202);
+    expect(res.json().results).toEqual([
+      expect.objectContaining({ to: "@dev", status: "refused" }),
+    ]);
     expect((await t2.sql`select count(*)::int as n from messages`)[0]?.n).toBe(0);
   } finally {
     await t2.close();
@@ -308,6 +330,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
   ) => s.app.inject({ method, url, headers: { cookie: c }, ...(payload ? { payload } : {}) });
   /** A live spawned agent of boss, with a workdir of its own. */
   const child = async (slug: string) => {
+    await claimTestHandleSql(s.sql, slug, "agent");
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
       select ${randomUUID()}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id
       from agents where id = ${bossId}`;
@@ -357,11 +380,10 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     expect(ended.more).toBe(false);
   });
 
-  test("a terminated agent answers 409 agent_terminated to message, compact, interrupt, restart, reset-session", async () => {
+  test("a terminated agent answers 409 agent_terminated to compact, interrupt, restart, reset-session", async () => {
     await child("boss-bb22");
     expect((await call("POST", "/api/agents/boss-bb22/terminate")).statusCode).toBe(200);
     for (const [url, payload] of [
-      ["messages", { body: "hi", urgent: false }],
       ["compact", {}],
       ["interrupt", undefined],
       ["restart", undefined],
@@ -463,6 +485,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
   });
 
   test("a terminated agent whose stop failed is stuck, loaded or not", async () => {
+    await claimTestHandleSql(s.sql, "boss-ff66", "agent");
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to,
         terminated_at, terminated_by, status, error_kind, last_error)
       select ${randomUUID()}, 'boss-ff66', 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
@@ -492,14 +515,18 @@ describe("S7: the ended list is bounded", () => {
   afterAll(() => s.close());
   const get = (url: string) => s.app.inject({ method: "GET", url, headers: { cookie: c } });
   /** `n` archived agents, `old-<i>`, the higher `i` the older. */
-  const archived = (n: number, from = 0) =>
-    s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, archived_at)
+  const archived = async (n: number, from = 0) => {
+    await s.sql`insert into handles (handle, kind)
+      select 'old-' || i, 'agent' from generate_series(${from}::int, ${from + n - 1}::int) i on conflict do nothing`;
+    return s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, archived_at)
       select gen_random_uuid(), 'old-' || i, 'Old', template, config, runtime, credential_id,
              now() - make_interval(hours => 1 + i)
       from agents, generate_series(${from}::int, ${from + n - 1}::int) i where slug = 'boss'`;
+  };
 
   test("newest end first, archived and terminated together; at most 200 with more", async () => {
     await archived(199);
+    await claimTestHandleSql(s.sql, "boss-new1", "agent");
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
       select gen_random_uuid(), 'boss-new1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id, now(), '@factory'
       from agents where slug = 'boss'`;
@@ -586,14 +613,14 @@ describe("U3 §6.4: cancel and restore a held message", () => {
   /** A message sent while a Stop's hold is on: queued, unwritten. */
   async function held(body: string): Promise<string> {
     if (!drv.starts.length) {
-      await call(or, "POST", "/api/agents/dev/messages", { body: "work", urgent: false });
+      await call(or, "POST", "/api/messages", { to: ["dev"], body: "work", urgent: false });
       drv.last.emit(ev.session(), ev.turn());
       await settled();
       expect((await call(or, "POST", "/api/agents/dev/interrupt")).statusCode).toBe(202);
     }
-    const res = await call(or, "POST", "/api/agents/dev/messages", { body, urgent: false });
-    expect(res.json().item).toMatchObject({ body, waitReason: "stopping" });
-    return res.json().item.id;
+    const res = await call(or, "POST", "/api/messages", { to: ["dev"], body, urgent: false });
+    expect(res.json().results[0].item).toMatchObject({ body, waitReason: "stopping" });
+    return res.json().results[0].item.id;
   }
 
   test("the sender cancels (200 with the item); another user gets 403; the lookup reports cancelled", async () => {
@@ -686,9 +713,9 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
   const post = (cookie: string, payload: object) =>
     s.app.inject({
       method: "POST",
-      url: "/api/agents/dev/messages",
+      url: "/api/messages",
       headers: { cookie },
-      payload: { urgent: false, ...payload },
+      payload: { to: ["dev"], urgent: false, ...payload },
     });
   const rows = async (cid: string) =>
     s.sql`select id, from_user_id from messages where client_message_id = ${cid}`;
@@ -699,7 +726,7 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
     const cid = randomUUID();
     const first = await post(or, { body: "once", clientMessageId: cid });
     expect(first.statusCode).toBe(202);
-    expect(first.json().item).toMatchObject({ body: "once", clientMessageId: cid });
+    expect(first.json().results[0].item).toMatchObject({ body: "once", clientMessageId: cid });
     const before = sends().length;
     const second = await post(or, { body: "once", clientMessageId: cid });
     expect(second.statusCode).toBe(202);
@@ -716,7 +743,7 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
     const before = sends().length;
     const again = await post(or, { body: "a retry with other text", clientMessageId: cid });
     expect(again.statusCode).toBe(202);
-    expect(again.json().item).toEqual(first.json().item);
+    expect(again.json().results[0].item).toEqual(first.json().results[0].item);
     expect(await rows(cid)).toHaveLength(1);
     expect(sends()).toHaveLength(before);
   });
@@ -726,8 +753,12 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
     const a = await post(or, { body: "mine", clientMessageId: cid });
     const b = await post(sam, { body: "theirs", clientMessageId: cid });
     expect(b.statusCode).toBe(202);
-    expect(b.json().item.id).not.toBe(a.json().item.id);
-    expect(b.json().item).toMatchObject({ body: "theirs", from: "@sam8", clientMessageId: cid });
+    expect(b.json().results[0].item.id).not.toBe(a.json().results[0].item.id);
+    expect(b.json().results[0].item).toMatchObject({
+      body: "theirs",
+      from: "@sam8",
+      clientMessageId: cid,
+    });
     expect(await rows(cid)).toHaveLength(2);
   });
 
@@ -805,26 +836,34 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
   test("before the first start: the template's skills, source template", async () => {
     const res = await get();
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({
-      commands: [{ name: "research", description: "", argumentHint: "" }],
-      source: "template",
-      at: null,
-      stale: false,
+    expect(res.json()).toMatchObject({ source: "template", at: null, stale: false });
+    const commands = res.json().commands as { name: string; denied?: string }[];
+    expect(commands.map((c) => c.name)).toContain("context");
+    expect(commands.find((c) => c.name === "research")).toEqual({
+      name: "research",
+      description: "",
+      argumentHint: "",
     });
+    expect(commands.find((c) => c.name === "clear")?.denied).toMatch(/isn't available/);
   });
 
   test("after a start: the session's allowed list, stored apart from the agent row", async () => {
     drv.commandList = list;
     const sent = await s.app.inject({
       method: "POST",
-      url: "/api/agents/dev/messages",
+      url: "/api/messages",
       headers: { cookie },
-      payload: { body: "hi", urgent: false },
+      payload: { to: ["dev"], body: "hi", urgent: false },
     });
     expect(sent.statusCode).toBe(202);
     await expect.poll(async () => (await get()).json().source, { timeout: 5000 }).toBe("session");
     const body = (await get()).json();
-    expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["research", "usage"]);
+    expect(body.commands.map((c: { name: string }) => c.name)).toEqual([
+      "research",
+      "model",
+      "usage",
+      "batch",
+    ]);
     expect(body.stale).toBe(false);
     expect(Number.isNaN(Date.parse(body.at))).toBe(false);
     const [row] = await s.db.select().from(schema.agentCommands);
@@ -870,7 +909,12 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
     const body = (await get()).json();
     expect(body).toMatchObject({ source: "session", stale: true });
     // The session's list stays what the menu shows until the next start.
-    expect(body.commands.map((c: { name: string }) => c.name)).toEqual(["research", "usage"]);
+    expect(body.commands.map((c: { name: string }) => c.name)).toEqual([
+      "research",
+      "model",
+      "usage",
+      "batch",
+    ]);
   });
 });
 
@@ -905,9 +949,9 @@ describe("U3 §13.5: attachments on POST /messages", () => {
   const post = (payload: object, cookie = or, slug = "dev") =>
     s.app.inject({
       method: "POST",
-      url: `/api/agents/${slug}/messages`,
+      url: `/api/messages`,
       headers: { cookie },
-      payload: { urgent: false, ...payload },
+      payload: { to: [slug], urgent: false, ...payload },
     });
   const uploadRow = async (id: string) =>
     (await s.db.select().from(schema.uploads)).find((r) => r.id === id);
@@ -918,7 +962,7 @@ describe("U3 §13.5: attachments on POST /messages", () => {
     const txt = await upload("dev", Buffer.from("log line\n"), "run.log");
     const res = await post({ body: "look at these", attachments: [img, txt] });
     expect(res.statusCode).toBe(202);
-    const messageId = res.json().item.id as string;
+    const messageId = res.json().results[0].item.id as string;
     const imgRow = await uploadRow(img);
     const txtRow = await uploadRow(txt);
     expect(imgRow?.messageId).toBe(messageId);
@@ -1016,7 +1060,7 @@ describe("U3 §13.5: attachments on POST /messages", () => {
     const after = await s.sql`select count(*)::int as n from messages`;
     expect((after[0]?.n ?? 0) - (before[0]?.n ?? 0)).toBe(1);
     const winner = x.statusCode === 202 ? x : y;
-    expect((await uploadRow(a))?.messageId).toBe(winner.json().item.id);
+    expect((await uploadRow(a))?.messageId).toBe(winner.json().results[0].item.id);
   });
 
   test("the attached lines count in the 64 KB limit", async () => {

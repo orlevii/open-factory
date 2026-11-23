@@ -59,9 +59,8 @@ function AgentUsagePage() {
         <div className="grid gap-6">
           <div className="grid gap-3">
             <Link
-              to="/agents/$slug"
+              to="/agents/$slug/chat"
               params={{ slug }}
-              search={{}}
               className="w-fit text-[0.8125rem] leading-[1.125rem] text-muted-foreground hover:text-foreground hover:underline"
             >
               ← @{slug}

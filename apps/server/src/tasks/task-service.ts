@@ -230,16 +230,12 @@ export class TaskService {
     const candidates: { id: string; slug: string }[] = [];
     const userIds: string[] = [];
     const handles = new Map<string, string>();
-    let all = false;
     const isAuthorAgent = (id: string) => actor.kind === "agent" && actor.agentId === id;
     const isAuthorUser = (id: string) => actor.kind === "user" && actor.userId === id;
     const names = mentions.names.slice(0, MAX_MENTIONS);
     for (const name of names) {
       const r = await resolveName(tx, name);
       switch (r.kind) {
-        case "humans":
-          all = true;
-          break;
         case "user":
           if (!isAuthorUser(r.userId) && !userIds.includes(r.userId)) {
             userIds.push(r.userId);
@@ -253,9 +249,7 @@ export class TaskService {
         case "reserved":
           notReached.push({ name, reason: "reserved" });
           break;
-        case "ambiguous":
-          notReached.push({ name, reason: "ambiguous" });
-          break;
+        case "channel":
         case "none":
           notReached.push({ name, reason: "unknown" });
           break;
@@ -324,7 +318,7 @@ export class TaskService {
         id: comment.id,
         body: text,
         mentionedAgentIds,
-        mentionedUserIds: all ? "all" : userIds,
+        mentionedUserIds: userIds,
       },
     });
     const written = await this.write(tx, actor, planned);
@@ -333,11 +327,7 @@ export class TaskService {
       const slug = await this.slugOf(r.row.toAgentId as string, tx);
       if (!deliveredTo.includes(slug)) deliveredTo.push(slug);
     }
-    const mentionedHumans = !written.humans
-      ? []
-      : all
-        ? ["@humans"]
-        : userIds.map((u) => `@${handles.get(u)}`);
+    const mentionedHumans = written.humans ? userIds.map((u) => `@${handles.get(u)}`) : [];
     return {
       agentRows: written.agentRows,
       humans: written.humans,
@@ -819,7 +809,7 @@ export class TaskService {
         agentRows.push({ row, wake: p.wake });
       } else {
         if (p.kind === "task_assigned") continue; // humans are never assignees
-        const { row } = await this.d.store.createHumanMessage(
+        await this.d.store.createHumanMessage(
           {
             kind: p.kind,
             taskId: p.taskId,
@@ -827,15 +817,14 @@ export class TaskService {
             ...(p.notice ? { notice: p.notice } : {}),
             ...(p.from && "agentId" in p.from ? { fromAgentId: p.from.agentId } : {}),
             ...(p.from && "userId" in p.from ? { fromUserId: p.from.userId } : {}),
-            to: p.to === "all" ? "all" : { userId: p.to.userId },
-            ...(p.exceptUserId ? { exceptUserId: p.exceptUserId } : {}),
+            to: { userId: p.to.userId },
             ...(p.inboxKind ? { inboxKind: p.inboxKind } : {}),
             body: p.body,
             urgent: false,
           },
           tx,
         );
-        if (row) humans = true;
+        humans = true;
       }
     }
     void actor;
@@ -916,13 +905,6 @@ export class TaskService {
           400,
           "assignee",
         );
-      case "humans":
-        throw new TaskError(
-          "not_an_agent",
-          "Tasks can only be assigned to agents; @humans is not an agent.",
-          400,
-          "assignee",
-        );
       case "reserved":
         throw new TaskError(
           "reserved",
@@ -930,13 +912,7 @@ export class TaskService {
           400,
           "assignee",
         );
-      case "ambiguous":
-        throw new TaskError(
-          "ambiguous",
-          `'${r.name}' matches both an agent and a user; ask a human to rename one.`,
-          400,
-          "assignee",
-        );
+      case "channel":
       case "none":
         throw new TaskError(
           "not_found",

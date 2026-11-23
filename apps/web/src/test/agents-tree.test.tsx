@@ -57,9 +57,9 @@ test("rows keep server order and indent the name cell by depth", async () => {
   renderApp("/agents", alice);
   const links = await rows();
   expect(links.map((l) => l.getAttribute("href"))).toEqual([
-    "/agents/lead",
-    "/agents/dev-1",
-    "/agents/reviewer",
+    "/agents/lead/chat",
+    "/agents/dev-1/chat",
+    "/agents/reviewer/chat",
   ]);
   const nameCell = (l: HTMLElement) => l.querySelector<HTMLElement>("[data-depth]");
   expect(nameCell(links[0] as HTMLElement)?.style.paddingLeft).toBe("0px");
@@ -206,10 +206,10 @@ describe("the Ended view (S7 UI design §3)", () => {
     renderApp("/agents?ended=only", alice);
     const links = await rows();
     expect(links.map((l) => l.getAttribute("href"))).toEqual([
-      "/agents/tech-lead-ab12",
-      "/agents/tech-lead-cd34",
-      "/agents/tech-lead-ef56",
-      "/agents/old",
+      "/agents/tech-lead-ab12/chat",
+      "/agents/tech-lead-cd34/chat",
+      "/agents/tech-lead-ef56/chat",
+      "/agents/old/chat",
     ]);
     // Flat: no row is indented, even though the spawned ones report to @lead.
     for (const l of links)

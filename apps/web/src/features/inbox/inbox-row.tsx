@@ -1,3 +1,4 @@
+import { plainPreview } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { type MouseEvent, memo, useMemo } from "react";
 import { AgentChip } from "@/components/agent-chip";
@@ -6,7 +7,6 @@ import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { skipFocusPreload } from "@/lib/row-nav";
 import type { InboxItem } from "./api";
-import { plainPreview } from "./preview";
 
 const PREVIEW_MAX = 280;
 const previewOf = (markdown: string) => {
@@ -38,15 +38,7 @@ function SenderLine({ item }: { item: InboxItem }) {
     return (
       <>
         <Sender item={item} />
-        <span className="shrink-0 text-muted-foreground">
-          {item.to === "@humans" ? (
-            <>
-              mentioned <span className="font-mono">@humans</span>
-            </>
-          ) : (
-            "mentioned you"
-          )}
-        </span>
+        <span className="shrink-0 text-muted-foreground">mentioned you</span>
       </>
     );
   if (item.kind === "task_event")
@@ -78,7 +70,7 @@ function ContextLine({ item, viewer }: { item: InboxItem; viewer: string | undef
         <TaskBadge taskKey={item.task.key} title={item.task.title} />
       </span>
     );
-  if (item.kind === "message" && !(viewer && item.to === `@${viewer}`))
+  if (item.kind === "notice" && !(viewer && item.to === `@${viewer}`))
     return <span className={`min-w-0 truncate font-mono ${tone}`}>→ {item.to}</span>;
   return null;
 }
@@ -87,8 +79,7 @@ function labelOf(item: InboxItem, time: string): string {
   const unread = item.read ? "" : "Unread, ";
   const task = item.task ? `${item.task.key} ${item.task.title}` : "";
   if (item.kind === "mention") {
-    const what = item.to === "@humans" ? "mentioned @humans" : "mentioned you";
-    return `${unread}@${item.from.name} ${what} on ${task}, ${time}`;
+    return `${unread}@${item.from.name} mentioned you on ${task}, ${time}`;
   }
   if (item.kind === "task_event")
     return `${unread}Factory, ${item.fact === "cancelled" ? "cancelled" : "done"}, ${task}, ${time}`;
@@ -102,7 +93,7 @@ function labelOf(item: InboxItem, time: string): string {
 // A grid row's single track would stretch to the 4.5rem minimum, and the lines' auto tracks with it
 // (a two-line row's line one grew to 27px): `content-center` keeps the track at its content and
 // centres it, so line one is always one 18px line with the time on the name's baseline.
-const LINK_CLASS = "of-row grid min-h-[4.5rem] content-center py-2 pr-2 pl-0 text-sm";
+export const LINK_CLASS = "of-row grid min-h-[4.5rem] content-center py-2 pr-2 pl-0 text-sm";
 
 /**
  * One inbox row: a single link, three lines, an ink dot in a fixed slot when unread.
@@ -118,7 +109,8 @@ export const InboxRow = memo(function InboxRow({
   viewer,
 }: {
   item: InboxItem;
-  now: Date;
+  /** Epoch ms rounded to the minute: a primitive, so a row that didn't change doesn't render. */
+  now: number;
   onOpen(item: InboxItem, e: MouseEvent): void;
   /** The reading pane shows this row. */
   selected?: boolean;
@@ -129,7 +121,7 @@ export const InboxRow = memo(function InboxRow({
   viewer?: string;
 }) {
   const at = new Date(item.createdAt);
-  const time = formatInboxTime(at, now);
+  const time = formatInboxTime(at, new Date(now));
   const previewId = `inbox-preview-${item.id}`;
   const preview = useMemo(() => previewOf(item.preview), [item.preview]);
   const common = {
@@ -195,11 +187,15 @@ export const InboxRow = memo(function InboxRow({
         >
           {body}
         </Link>
+      ) : link.seq === undefined ? (
+        <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }} {...common}>
+          {body}
+        </Link>
       ) : (
         <Link
-          to="/agents/$slug"
+          to="/agents/$slug/session"
           params={{ slug: link.agentSlug }}
-          search={link.seq === undefined ? undefined : { event: link.seq }}
+          search={{ event: link.seq }}
           {...common}
         >
           {body}

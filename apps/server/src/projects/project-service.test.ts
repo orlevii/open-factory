@@ -6,6 +6,7 @@ import { MSG } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
+import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { ProjectService } from "./project-service.ts";
 
@@ -182,6 +183,7 @@ test("a terminated grantee does not block removal; a live spawned grantee is nam
     terminatedAt: terminated ? new Date() : null,
     terminatedBy: terminated ? "boss" : null,
   });
+  for (const slug of ["tl-ab12", "tl-dead"]) await claimTestHandle(t.db, slug, "agent");
   await t.db.insert(schema.agents).values([kid("tl-ab12", false), kid("tl-dead", true)]);
   await t.db
     .insert(schema.agentProjectGrants)

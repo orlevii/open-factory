@@ -200,18 +200,35 @@ export function SpeakerProvider({
 const SLUG_CLASS = "@max-[20rem]:hidden";
 const NAME_CLASS = "font-medium text-foreground";
 
-/** One side of a speaker line: an agent chip, a human's name and handle, "You" or "All humans". */
-function Speaker({ id, self }: { id: string; self: boolean }) {
+/** Who a handle belongs to: the server says (envelope, queue item, send result), never guessed from a
+ *  sigil. Only a call's own arguments carry no kind: those recipients are looked up (a handle is unique
+ *  across kinds). */
+export type PartyKind = "agent" | "human";
+/** A sender can also be the factory itself. */
+export type SenderKind = PartyKind | "factory";
+export type Party = { handle: string; kind?: PartyKind | undefined };
+
+const bareHandle = (h: string) => (h.startsWith("@") ? h.slice(1) : h);
+
+/** One side of a speaker line: an agent chip, a human's name and handle, or "You". */
+function Speaker({ id, kind, self }: { id: string; kind?: SenderKind | undefined; self: boolean }) {
   const s = useSpeakers();
-  const human = id.startsWith("@");
-  const handle = id.slice(1);
-  const resolved = human ? undefined : s.agent(id);
+  const handle = bareHandle(id);
+  const known = kind ?? (s.isAgent(handle) ? "agent" : "human");
+  const human = known === "human";
+  const resolved = known === "agent" ? s.agent(handle) : undefined;
   // Only once the live list is in: before it, every slug is a stand-in.
   const needEnded = s.ready && !human && resolved?.agent.stub === true && !self;
   const { requestEnded } = s;
   useEffect(() => {
     if (needEnded) requestEnded();
   }, [needEnded, requestEnded]);
+  if (known === "factory")
+    return (
+      <span dir="auto" className="min-w-0 truncate font-mono text-foreground">
+        @{handle}
+      </span>
+    );
   if (resolved)
     return (
       <AgentChip
@@ -224,12 +241,6 @@ function Speaker({ id, self }: { id: string; self: boolean }) {
         slugClassName={`font-normal ${SLUG_CLASS}`}
       />
     );
-  if (handle === "humans")
-    return (
-      <span dir="auto" className={NAME_CLASS}>
-        All humans
-      </span>
-    );
   if (s.selfHandle !== undefined && handle === s.selfHandle)
     return (
       <span dir="auto" className={NAME_CLASS}>
@@ -240,29 +251,45 @@ function Speaker({ id, self }: { id: string; self: boolean }) {
   if (!name)
     return (
       <span dir="auto" className="min-w-0 truncate font-mono text-foreground">
-        {id}
+        @{handle}
       </span>
     );
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <span dir="auto" title={`${name} ${id}`} className={`min-w-0 truncate ${NAME_CLASS}`}>
+      <span dir="auto" title={`${name} @${handle}`} className={`min-w-0 truncate ${NAME_CLASS}`}>
         {name}
       </span>
-      <span title={id} className={`min-w-0 font-mono text-muted-foreground ${SLUG_CLASS}`}>
-        <MiddleTruncate text={id} />
+      <span
+        title={`@${handle}`}
+        className={`min-w-0 font-mono text-muted-foreground ${SLUG_CLASS}`}
+      >
+        <MiddleTruncate text={`@${handle}`} />
       </span>
     </span>
   );
 }
 
+/** Recipients shown on a line before "+N". */
+const SHOWN_RECIPIENTS = 2;
+const COUNT = new Intl.NumberFormat("en");
+
+/** "@a, @b +8": the first two handles, then how many more. The full list is the line's accessible
+ *  name and the row menu's Recipients item. */
+export function recipientSummary(handles: readonly string[]): string {
+  const shown = handles.slice(0, SHOWN_RECIPIENTS).join(", ");
+  const more = handles.length - SHOWN_RECIPIENTS;
+  return more > 0 ? `${shown} +${COUNT.format(more)}` : shown;
+}
+
 /**
  * `[avatar 20] Name  @handle  14:02` (U3 §7.2): agents as a chip linking to their session (never
  * the session's own agent: `self`), humans by name or handle, your own messages "You". With `to`,
- * an outgoing card's "Name → Recipient". `children` (badges) follow the names; `status` takes the
- * time's place (queued, sending); `action` sits at the end.
+ * an outgoing card's "Name → Recipient", or "Name → @a, @b +8" for several (I1 §4.7). `children` (badges)
+ * follow the names; `status` takes the time's place (queued, sending); `action` sits at the end.
  */
 export const SpeakerLine = memo(function SpeakerLine({
   from,
+  fromKind,
   to,
   at,
   self = false,
@@ -270,10 +297,12 @@ export const SpeakerLine = memo(function SpeakerLine({
   action,
   children,
 }: {
-  /** A bare agent slug, or a human's `@handle`. */
+  /** A handle, with or without its `@`. */
   from: string;
-  /** An outgoing card's recipient: a bare slug, `@handle` or `@humans`. */
-  to?: string;
+  /** What `from` is; the server carries it on every sender, so it is never looked up or guessed. */
+  fromKind: SenderKind;
+  /** An outgoing card's recipients, in send order. Keep the array identity stable across renders. */
+  to?: readonly Party[];
   at?: string;
   /** `from` is the session's own agent: no link. */
   self?: boolean;
@@ -283,10 +312,17 @@ export const SpeakerLine = memo(function SpeakerLine({
 }) {
   // On a timeline row, a long-press here opens the row's menu (U4 §11.2).
   const region = useLongPressRegion();
+  const several = to !== undefined && to.length > 1;
   return (
     <div
       data-speaker-line
       {...region}
+      {...(several
+        ? {
+            role: "group",
+            "aria-label": `To ${to.map((r) => `@${bareHandle(r.handle)}`).join(", ")}`,
+          }
+        : {})}
       className="@container mb-1 flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] leading-[1.125rem]"
     >
       {/* The names and the time never wrap apart: alone on its line the group shrinks, and the names
@@ -294,11 +330,17 @@ export const SpeakerLine = memo(function SpeakerLine({
           so a long badge never squeezes the names away. */}
       <span className="flex min-w-0 flex-nowrap items-center gap-x-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          <Speaker id={from} self={self} />
-          {to !== undefined && (
+          <Speaker id={from} kind={fromKind} self={self} />
+          {to?.[0] && (
             <>
               <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-              <Speaker id={to} self={false} />
+              {several ? (
+                <span dir="auto" className="min-w-0 truncate font-mono text-foreground">
+                  {recipientSummary(to.map((r) => `@${bareHandle(r.handle)}`))}
+                </span>
+              ) : (
+                <Speaker id={to[0].handle} kind={to[0].kind} self={false} />
+              )}
             </>
           )}
         </span>

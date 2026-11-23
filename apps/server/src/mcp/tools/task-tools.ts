@@ -7,6 +7,7 @@ import {
   type TaskStatus,
   updateTaskToolSchema,
 } from "@open-factory/shared";
+import { HUMANS_MENTION_REFUSAL } from "../../messaging/principals.ts";
 import { TaskError } from "../../tasks/errors.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import type { TaskService } from "../../tasks/task-service.ts";
@@ -38,6 +39,19 @@ type TaskTools = {
  * The five task tools, registered for every agent (spec §9). The caller is always the token's agent. A `TaskError` is a
  * tool error with its sentence; `TaskService` is the only place that decides who may do what.
  */
+const NOT_REACHED_TEXT = {
+  unknown: (n: string) => `No agent or user named '@${n}'.`,
+  ambiguous: (n: string) => `'@${n}' matches more than one name.`,
+  archived: (n: string) => `@${n} is archived and can't receive messages.`,
+  terminated: (n: string) => `@${n} was terminated and can't receive messages.`,
+  reserved: (n: string) =>
+    n === "humans" ? HUMANS_MENTION_REFUSAL : `'${n}' is reserved and can't receive messages.`,
+  too_many: (n: string) => `Too many mentions in one comment; @${n} was left out.`,
+};
+/** One sentence per `not_reached` entry, so the tool's entries all have the same shape. */
+const notReachedText = (n: { name: string; reason: keyof typeof NOT_REACHED_TEXT }) =>
+  NOT_REACHED_TEXT[n.reason](n.name);
+
 export function taskTools(d: TaskTools): ToolRegistration[] {
   const actorOf = async (tctx: ToolContext): Promise<Actor> => {
     const id = callerOf(tctx);
@@ -237,7 +251,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           "comment_task",
           {
             description:
-              "Comment on a task. Mention @slug to bring an agent in, or @handle / @humans to reach people; it also goes to the assignee.",
+              "Comment on a task. Mention @slug to bring an agent in, or @handle to reach a person; it also goes to the assignee.",
             inputSchema: commentTaskToolSchema,
           },
           (args: { id: string; body: string }, tctx: ToolContext) =>
@@ -247,7 +261,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 id: r.id,
                 delivered_to: r.deliveredTo,
                 mentioned_humans: r.mentionedHumans,
-                not_reached: r.notReached,
+                not_reached: r.notReached.map((n) => ({ ...n, detail: notReachedText(n) })),
                 ...(r.note ? { note: r.note } : {}),
               };
             }),

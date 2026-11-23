@@ -187,6 +187,7 @@ async function setupAgent(plugins: string[]) {
     grants: [],
     peers: [],
     reports: [],
+    humans: [],
     mcpUrl: "http://127.0.0.1:3001/mcp",
     kind: "persistent" as const,
     spawner: null,

@@ -143,27 +143,23 @@ test("createHumanMessage: a task_update to a user is a task_event inbox item", a
   expect(items.map((i) => i.kind)).toEqual(["task_event"]);
 });
 
-test("createHumanMessage: a mention to @humans skips the author, and writes nothing when the author is the only human", async () => {
+test("createHumanMessage: `all` is for factory facts only; a comment can't address every human", async () => {
   await signUp(h.app, { handle: "sam" });
   const commentId = randomUUID();
   await h.sql`insert into task_comments (id, task_id, author_user_id, body) values (${commentId}, ${taskId}, ${creatorId}, 'hi')`;
-  const base = {
-    kind: "task_comment" as const,
-    taskId,
-    commentId,
-    fromUserId: creatorId,
-    to: "all" as const,
-    exceptUserId: creatorId,
-    inboxKind: "mention" as const,
-    body: "@humans hi",
-    urgent: false,
-  };
-  const r = await h.app.store.createHumanMessage(base);
-  expect(r.userIds).toHaveLength(1);
-  expect(r.userIds).not.toContain(creatorId);
-  const items =
-    await h.sql`select user_id, kind from inbox_items where message_id = ${r.row?.id as string}`;
-  expect(items.map((i) => i.kind)).toEqual(["mention"]);
+  await expect(
+    h.app.store.createHumanMessage({
+      kind: "task_comment",
+      taskId,
+      commentId,
+      fromUserId: creatorId,
+      to: "all",
+      inboxKind: "mention",
+      body: "hi",
+      urgent: false,
+    }),
+  ).rejects.toThrow("only a factory fact goes to every human");
+  expect(await h.sql`select id from messages where comment_id = ${commentId}`).toEqual([]);
 });
 
 test("createHumanMessage per kind: a task_update has no sender; a comment needs exactly one author", async () => {

@@ -26,6 +26,7 @@ import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { hashToken } from "../users/invites.ts";
 import { agentConfigDir, agentWorkdir, templateCopyDir } from "../workspace/paths.ts";
 import type { Workspace } from "../workspace/workspace.ts";
+import { claimTestHandle } from "./handles.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
 
@@ -157,6 +158,7 @@ export async function seedTestAgent(
     maxLiveSpawns: 5,
     ...opts.config,
   });
+  await claimTestHandle(app.db, slug, "agent");
   const [row] = await app.db
     .insert(schema.agents)
     .values({

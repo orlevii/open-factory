@@ -93,10 +93,11 @@ function holdTermination(app: T, during: () => Promise<void> = async () => {}) {
   });
   const original = app.app.store.terminateRows.bind(app.app.store);
   vi.spyOn(app.app.store, "terminateRows").mockImplementation(async (...a) => {
-    await original(...a);
+    const rejected = await original(...a);
     await during();
     enter();
     await released;
+    return rejected;
   });
   return { entered, release };
 }
@@ -201,6 +202,7 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   const direct = await t.app.store.createMessage({
     from: { userId: user.id },
     toAgentId: a.id,
+    recipients: ["@test"],
     body: "are you there?",
     urgent: false,
   });
@@ -220,8 +222,9 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   );
   // A new send is refused by the Router.
   expect(
-    await t.app.router.send({ userId: user.id, handle: user.handle }, a.slug, "hello?", false),
-  ).toMatchObject({ ok: false, code: "terminated" });
+    (await t.app.router.send({ userId: user.id, handle: user.handle }, [a.slug], "hello?", false))
+      .results,
+  ).toMatchObject([{ status: "refused", code: "terminated" }]);
 });
 
 test("a forward that started before the commit and finishes after it writes nothing", async () => {
@@ -248,13 +251,15 @@ test("a send racing the termination is accepted, then its row is rejected and ne
   await hold.entered;
   // The Router reads the child live (the commit hasn't happened); its row commits after terminateRows ran and is
   // handed to the provisional latch, which queues it without writing.
-  const r = await t.app.router.send(
+  const {
+    results: [r],
+  } = await t.app.router.send(
     { userId: user.id, handle: user.handle },
-    child.slug,
+    [child.slug],
     "still there?",
     false,
   );
-  if (!r.ok) throw new Error(r.message);
+  if (!r || r.status === "refused") throw new Error("the send was refused");
   hold.release();
   await terminating;
   expect(await stateOf(t, r.id)).toBe("rejected");
@@ -272,6 +277,7 @@ test("rows handed over during the provisional window are rejected once it commit
     const direct = await t.app.store.createMessage({
       from: { userId: user.id },
       toAgentId: child.id,
+      recipients: ["@test"],
       body: "late",
       urgent: false,
     });
@@ -297,6 +303,7 @@ test("a failed transaction undoes the provisional latch: what arrived meanwhile 
   const row = await t.app.store.createMessage({
     from: { userId: user.id },
     toAgentId: child.id,
+    recipients: ["@test"],
     body: "meanwhile",
     urgent: false,
   });

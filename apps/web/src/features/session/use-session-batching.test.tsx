@@ -144,6 +144,7 @@ test("a local queued dispatch flushes pending frames first, keeping their order"
     body: id,
     urgent: false,
     from: "@or",
+    fromKind: "human" as const,
     createdAt: "2026-11-18T00:00:00.000Z",
   });
   push({ type: "queue", agent: "dev", items: [item("q2")] });
@@ -320,4 +321,14 @@ test("a reset marks the view caught up: replayed rows before it don't fade", asy
     vi.advanceTimersToNextFrame();
   });
   expect(hook.result.current.state.liveAfter).toBe(6);
+});
+
+test("agent_commands_changed is skipped: no flush, no render", async () => {
+  const { push, renders } = await setup();
+  const before = renders();
+  push({ type: "agent_commands_changed", agent: "dev" });
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(renders()).toBe(before);
 });

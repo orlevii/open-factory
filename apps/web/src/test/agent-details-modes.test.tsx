@@ -36,7 +36,7 @@ afterEach(() => {
   document.body.style.pointerEvents = "";
 });
 
-async function visit(width: number, path = "/agents/dev") {
+async function visit(width: number, path = "/agents/dev/session") {
   const viewport = fakeMatchMedia.installWidth(width);
   const app = renderApp(path, alice);
   await screen.findByText("Two entries.");
@@ -164,7 +164,7 @@ test("the overlay sits below the header: Stop and the toggle stay clickable", as
 test("switching agents keeps an open panel open (≥1024) and retargets the overlay in place", async () => {
   const wide = await visit(1100);
   await userEvent.click(toggle());
-  await act(() => wide.router.navigate({ to: "/agents/$slug", params: { slug: "lead" } }));
+  await act(() => wide.router.navigate({ to: "/agents/$slug/session", params: { slug: "lead" } }));
   await screen.findByRole("heading", { level: 1, name: "Lead agent" });
   await waitFor(() => expect(within(container() as HTMLElement).getByText("@lead")).toBeTruthy());
   expect(modeOf(container())).toBe("inflow");
@@ -174,7 +174,7 @@ test("switching agents keeps an open panel open (≥1024) and retargets the over
   await userEvent.click(toggle());
   await waitFor(() => expect(modeOf(container())).toBe("overlay"));
   const sheet = container();
-  await act(() => mid.router.navigate({ to: "/agents/$slug", params: { slug: "lead" } }));
+  await act(() => mid.router.navigate({ to: "/agents/$slug/session", params: { slug: "lead" } }));
   await screen.findByRole("heading", { level: 1, name: "Lead agent" });
   await waitFor(() => expect(within(container() as HTMLElement).getByText("@lead")).toBeTruthy());
   // The same sheet node: its content swapped in place, it never closed and reopened.
@@ -242,7 +242,7 @@ test("an open sheet closes when the next agent fails to load, rather than stayin
   const app = await visit(900);
   await userEvent.click(toggle());
   await waitFor(() => expect(modeOf(container())).toBe("overlay"));
-  await act(() => app.router.navigate({ to: "/agents/$slug", params: { slug: "lead" } }));
+  await act(() => app.router.navigate({ to: "/agents/$slug/session", params: { slug: "lead" } }));
   await screen.findByText(/Couldn't load this session/);
   await waitFor(() => expect(container()).toBeNull());
 });

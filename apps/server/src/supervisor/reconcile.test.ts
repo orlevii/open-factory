@@ -15,6 +15,7 @@ import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ProcessJournal } from "../runtime/local/journal.ts";
 import { ScheduleStore } from "../scheduling/schedule-store.ts";
 import { Reaper } from "../spawning/reaper.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { ATTEMPT_CUT_SHORT, reconcile } from "./reconcile.ts";
 
@@ -23,6 +24,7 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -128,7 +130,13 @@ async function agent(o: { status?: string } = {}): Promise<string> {
   return id;
 }
 const pending = (id: string, body: string) =>
-  store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
+  store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: id,
+    recipients: ["@test"],
+    body,
+    urgent: false,
+  });
 const openTurn = (id: string) => store.openTurn(id, null);
 const setJournal = (id: string, j: Omit<RuntimeJournal, "takenAt">) =>
   store.setRuntimeJournal(id, { ...j, takenAt: new Date().toISOString() });

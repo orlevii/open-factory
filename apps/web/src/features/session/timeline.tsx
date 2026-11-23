@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { readViewPosition, useRememberPosition } from "@/features/agents/view-memory";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
 import { childrenOf, groupOpen, heldSeqs, innerKey, isFold } from "./display-passes";
@@ -29,6 +30,7 @@ const NO_KEYS: ReadonlySet<string> = new Set();
 const NO_TEXTS: readonly LiveText[] = [];
 const NO_PROGRESS: readonly SubagentProgress[] = [];
 type TextRow = Extract<Row, { kind: "text" }>;
+const NO_PENDING: readonly Row[] = [];
 const NO_LIVE_ROWS: readonly TextRow[] = [];
 
 /**
@@ -69,12 +71,12 @@ function useLiveRows(texts: readonly LiveText[], head: boolean, off: boolean): r
 export type TimelineHandle = Pick<StickToBottom, "captureAnchor" | "expandAnchor" | "repin">;
 
 /** Visible time the deep-link tint holds before it fades (U3 §7.4, Q28). */
-const ARRIVAL_MS = 2000;
+export const ARRIVAL_MS = 2000;
 
 /** Focuses a deep-linked row without scrolling again. A programmatic focus after a mouse navigation
  *  may not match `:focus-visible`; the row then carries `data-focus-ring`, styled the same, until it
  *  loses focus ("ring = focus"). */
-function arrive(row: HTMLElement) {
+export function arrive(row: HTMLElement) {
   row.focus({ preventScroll: true });
   let visible = false;
   try {
@@ -110,6 +112,8 @@ export function Timeline(props: {
   onLoadEarlier(): Promise<boolean>;
   earlierError: boolean;
   footer: ReactNode;
+  /** Raw sends without a row yet (`rawTailRows`): items after the rows, keyed like their rows. */
+  pendingRows?: readonly Row[];
   /** An older window (deep link): the Jump pill always shows and leaves it (U3 §8.2). */
   windowed?: boolean;
   /** The speech that arrived while windowed (the reducer counts it: those rows aren't appended). */
@@ -150,6 +154,11 @@ export function Timeline(props: {
           },
     ),
   );
+  // Where the reader left this agent's session (a Chat/Session switch remounts the view): recorded on
+  // scroll, restored once the rows are in. A deep-link window is not a place worth coming back to.
+  const isPinned = useCallback(() => stick.pinned.current, [stick]);
+  useRememberPosition(props.slug, "session", scroller, isPinned, !windowed);
+  const restored = useRef(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
   // The focused row's key and element, for the rows layout effect (refs: focus moving re-runs nothing).
@@ -196,6 +205,7 @@ export function Timeline(props: {
         return;
       }
       centred.current = true;
+      restored.current = true;
       stick.unpin();
       const target = el.querySelector<HTMLElement>(
         `[data-row="${CSS.escape(litPath.at(-1) ?? "")}"]`,
@@ -205,10 +215,19 @@ export function Timeline(props: {
       setArrival("on");
       return;
     }
+    if (!restored.current && rows.length > 0) {
+      restored.current = true;
+      const left = windowed ? undefined : readViewPosition(props.slug, "session");
+      if (left && !left.pinned) {
+        stick.unpin();
+        el.scrollTop = left.top;
+        return;
+      }
+    }
     // Pinned: the bottom, instantly (events arrive tens of times a minute). Unpinned: the anchor
     // row keeps its place, a Load earlier prepend included.
     stick.settle();
-  }, [rows, litPath, expanded, stick]);
+  }, [rows, litPath, expanded, stick, props.slug, windowed]);
 
   // The tint fades after 2s of visible time (U3 §7.4): hidden, the clock stops and keeps what's left.
   // An effect runs after the row painted, so the 2s start from the first frame that shows it.
@@ -439,8 +458,9 @@ export function Timeline(props: {
     ],
   );
   const liveTexts = props.liveTexts ?? NO_TEXTS;
+  const pendingRows = props.pendingRows ?? NO_PENDING;
   const items =
-    liveRows.length === 0
+    liveRows.length === 0 && pendingRows.length === 0
       ? rowEls
       : [
           ...rowEls,
@@ -466,8 +486,29 @@ export function Timeline(props: {
               onRowFocus={onRowFocus}
             />
           )),
+          ...pendingRows.map((row, i) => (
+            <TimelineItem
+              key={row.key}
+              row={row}
+              slug={slug}
+              spawned={spawned}
+              lit={false}
+              arrivedKey={undefined}
+              arrival={undefined}
+              onArrivedEnd={onArrivedEnd}
+              live={false}
+              firstOfSeq={false}
+              gap={rowGap(row, i === 0 ? (liveRows.at(-1) ?? rows.at(-1)) : pendingRows[i - 1])}
+              tabKey={tabKey}
+              expanded={expanded}
+              failedIds={failedIds}
+              interruptedEnds={interruptedEnds}
+              toggle={toggle}
+              onRowFocus={onRowFocus}
+            />
+          )),
         ];
-  const last = liveRows.at(-1) ?? rows.at(-1);
+  const last = pendingRows.at(-1) ?? liveRows.at(-1) ?? rows.at(-1);
 
   return (
     <div className="relative min-h-0 flex-1">

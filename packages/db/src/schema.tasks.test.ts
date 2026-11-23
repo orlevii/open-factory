@@ -15,6 +15,7 @@ beforeAll(async () => {
     await h.close();
     await t.drop();
   };
+  await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('lead','agent')`;
   await sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
   await sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
   await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id) values
@@ -34,10 +35,10 @@ test("keys come from a sequence", async () => {
 
 test("every pre-S8 shape still passes and new shapes pass", async () => {
   await ok(
-    sql`insert into messages (id,kind,from_user_id,to_agent_id,body) values ('m1','message','u1','a1','x') returning id`,
+    sql`insert into messages (id,kind,from_user_id,to_agent_id,body,recipients) values ('m1','message','u1','a1','x','{@test}') returning id`,
   );
   await ok(
-    sql`insert into messages (id,kind,from_agent_id,to_all_humans,body,state) values ('m2','message','a1',true,'x','delivered') returning id`,
+    sql`insert into messages (id,kind,from_agent_id,to_all_humans,body,state,recipients) values ('m2','message','a1',true,'x','delivered','{@test}') returning id`,
   );
   await ok(
     sql`insert into messages (id,kind,subject_agent_id,notice,to_agent_id,body) values ('m3','member_update','a1','denied','a2','x') returning id`,
@@ -73,7 +74,7 @@ test("every pre-S8 shape still passes and new shapes pass", async () => {
 
 test("wrong shapes are rejected", async () => {
   await bad(
-    sql`insert into messages (id,kind,task_id,to_agent_id,body) values ('b1','message','t1','a1','x')`,
+    sql`insert into messages (id,kind,task_id,to_agent_id,body,recipients) values ('b1','message','t1','a1','x','{@test}')`,
   );
   await bad(
     sql`insert into messages (id,kind,from_agent_id,task_id,to_agent_id,body) values ('b2','task_assigned','a2','t1','a1','x')`,

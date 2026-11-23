@@ -239,6 +239,8 @@ type CompactEntry = {
   id: string;
   focus?: string;
   by: string;
+  /** The agent compacts itself (`send_command`): no `userId`, so nobody can cancel it. */
+  self?: boolean;
   createdAt: Date;
   clientMessageId?: string;
 };
@@ -829,12 +831,14 @@ export class AgentRuntime {
     byHandle: string;
     userId?: string;
     clientMessageId?: string;
+    self?: boolean;
   }): Promise<QueueItem> {
     const entry: CompactEntry = {
       kind: "compact",
       id: randomUUID(),
       by: c.byHandle,
       createdAt: new Date(),
+      ...(c.self ? { self: true } : {}),
       ...(c.focus ? { focus: c.focus } : {}),
       ...(c.clientMessageId ? { clientMessageId: c.clientMessageId } : {}),
     };
@@ -1949,7 +1953,7 @@ export class AgentRuntime {
             id: e.id,
             kind: "compact",
             from: `@${e.by}`,
-            fromKind: "human",
+            fromKind: e.self ? "agent" : "human",
             createdAt: e.createdAt.toISOString(),
             ...(e.focus ? { focus: e.focus } : {}),
             ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),

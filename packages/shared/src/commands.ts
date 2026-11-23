@@ -92,6 +92,7 @@ export type InputClass =
 
 /** Any line break: LF, CR, NEL, U+2028, U+2029. One command is one line. */
 const LINE_BREAK = /[\n\r\u0085\u2028\u2029]/;
+export const hasLineBreak = (s: string): boolean => LINE_BREAK.test(s);
 
 /**
  * What a line of session input is. A command when its first token (after `/`, lowercased) is a known name or alias or

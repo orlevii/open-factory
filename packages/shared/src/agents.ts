@@ -190,6 +190,10 @@ export const sendMessageToolSchema = z.object({
   body: sendMessagesBodySchema.shape.body,
   urgent: z.boolean().default(false),
 });
+export const sendCommandToolSchema = z.object({
+  target: z.string().max(65),
+  command: z.string(),
+});
 export const listPeersToolSchema = z.object({
   scope: z.enum(["neighborhood", "all"]).optional(),
 });

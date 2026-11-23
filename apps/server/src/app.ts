@@ -29,6 +29,7 @@ import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { scheduleTools } from "./mcp/tools/schedule-tools.ts";
+import { sendCommandTool } from "./mcp/tools/send-command.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
 import { taskTools } from "./mcp/tools/task-tools.ts";
@@ -521,6 +522,13 @@ async function listenForAgents(
     loadCaller: (id) => d.store.agentById(id),
     tools: (caller) => [
       sendMessageTool(d.router),
+      sendCommandTool({
+        caller,
+        neighborhood: d.neighborhood,
+        runtimes: d.runtimes,
+        store: d.store,
+        spawned: caller.kind === "ephemeral",
+      }),
       ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
       // Q12: persistent agents only; a spawned agent never sees the schedule tools.
       ...(caller.kind === "persistent"

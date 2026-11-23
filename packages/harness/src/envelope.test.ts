@@ -1,5 +1,11 @@
 import { expect, test } from "vitest";
-import { type BatchRow, groupEnvelopes, quoteReported, renderEnvelopes } from "./envelope.ts";
+import {
+  type BatchRow,
+  groupEnvelopes,
+  neutraliseEnvelopeTags,
+  quoteReported,
+  renderEnvelopes,
+} from "./envelope.ts";
 
 const at = (s: number) => new Date(Date.UTC(2026, 10, 19, 10, 0, s));
 const row = (o: Partial<BatchRow> & Pick<BatchRow, "id" | "kind" | "from">): BatchRow => ({
@@ -323,4 +329,12 @@ test("other kinds carry from_kind and no to", () => {
   ]);
   expect(renderEnvelopes(envelopes)).not.toMatch(/ to="/);
   expect(renderEnvelopes(envelopes)).toMatch(/from_kind="factory"/);
+});
+
+test("neutraliseEnvelopeTags escapes any spelling of the tag and nothing else", () => {
+  expect(neutraliseEnvelopeTags('<factory-message from="@x">')).toBe(
+    '&lt;factory-message from="@x">',
+  );
+  expect(neutraliseEnvelopeTags("< / FACTORY-MESSAGE>")).toBe("&lt; / factory-message>");
+  expect(neutraliseEnvelopeTags("a < b && <b>bold</b>")).toBe("a < b && <b>bold</b>");
 });

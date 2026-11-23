@@ -4,6 +4,7 @@ import { CircleCheck, Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
+import { useOutcome } from "@/components/forms/form-outcome";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import { deleteSecret, putSecret, secretsQueryOptions } from "@/features/settings/api";
@@ -39,12 +40,12 @@ function UpdateForm({
 }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string>();
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
   const field = `secret-update-${secret.name}`;
 
   async function submit() {
-    setFormError(undefined);
+    o.clear();
     if (value === "") {
       setError("Enter a value.");
       return document.getElementById(`field-${field}`)?.focus();
@@ -53,7 +54,7 @@ function UpdateForm({
     try {
       onDone(await putSecret(secret.name, value));
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : "Couldn't save the value. Try again.");
+      o.fail(err instanceof ApiError ? err.message : "Couldn't save the value. Try again.");
     } finally {
       setPending(false);
     }
@@ -67,7 +68,7 @@ function UpdateForm({
       submitLabel="Save value"
       pendingLabel="Saving…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
     >
       <ValueField
         name={field}

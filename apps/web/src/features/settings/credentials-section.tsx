@@ -5,6 +5,7 @@ import { type ReactNode, useRef, useState } from "react";
 import { CodeText } from "@/components/code-text";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ErrorLine } from "@/components/error-line";
+import { useOutcome } from "@/components/forms/form-outcome";
 import { InlineOutcome } from "@/components/inline-outcome";
 import {
   AdaptiveMenuContent,
@@ -88,13 +89,13 @@ function ReplaceForm({
 }) {
   const [value, setValue] = useState("");
   const [verdict, setVerdict] = useState<Verdict>({});
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
   const noun = valueNoun(credential.kind);
   const fieldName = `credential-replace-${credential.name}`;
 
   async function submit() {
-    setFormError(undefined);
+    o.clear();
     if (value.trim() === "") {
       setVerdict({ error: `Enter the new ${noun}.` });
       return document.getElementById(`field-${fieldName}`)?.focus();
@@ -108,9 +109,7 @@ function ReplaceForm({
         setVerdict(v);
         if (v.error) document.getElementById(`field-${fieldName}`)?.focus();
       } else {
-        setFormError(
-          err instanceof ApiError ? err.message : `Couldn't replace the ${noun}. Try again.`,
-        );
+        o.fail(err instanceof ApiError ? err.message : `Couldn't replace the ${noun}. Try again.`);
       }
     } finally {
       setPending(false);
@@ -125,7 +124,7 @@ function ReplaceForm({
       submitLabel="Verify and save"
       pendingLabel="Verifying…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
     >
       <TokenField
         name={fieldName}

@@ -1,5 +1,6 @@
 import { ApiError } from "@open-factory/shared";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { FormOutcome, useOutcome } from "@/components/forms/form-outcome";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +29,7 @@ import { useLatchedMobile } from "@/hooks/use-latched-mobile";
  *  the touch-height override keeps `pointer-coarse:h-9` from pinning a wrapped label to one line. */
 const ACTION_CLASS =
   "shrink min-w-0 max-w-full whitespace-normal h-auto min-h-8 pointer-coarse:h-auto pointer-coarse:min-h-9 py-1.5 text-center [overflow-wrap:anywhere]";
-/** Body, detail and error stacked; the error line takes no room while empty. */
+/** Body and detail stacked; the outcome line lives in the footer band. */
 const MIDDLE_CLASS = "flex flex-col gap-3";
 
 /** For destructive, irreversible actions only. The action is named in the title and on the button.
@@ -60,21 +61,21 @@ export function ConfirmDialog({
   const mobile = useLatchedMobile(open);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
+  const o = useOutcome();
   // The error belongs to one opening of the dialog.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset on every open/close
-  useEffect(() => setError(undefined), [open]);
+  useEffect(() => o.clear(), [open]);
   async function confirm(e: { preventDefault(): void }) {
     // Radix closes on Action click; hold it open until the work resolves.
     e.preventDefault();
     if (pending) return;
     setPending(true);
-    setError(undefined);
+    o.clear();
     try {
       await onConfirm();
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong. Try again.");
+      o.fail(err instanceof ApiError ? err.message : "Something went wrong. Try again.");
     } finally {
       setPending(false);
     }
@@ -94,15 +95,15 @@ export function ConfirmDialog({
       {pending ? pendingLabel : confirmLabel}
     </Button>
   );
-  const errorLine = (
-    <div role="alert" className="text-[0.8125rem] leading-[1.125rem] text-destructive empty:hidden">
-      {error}
-    </div>
-  );
+  const outcomeLine = <FormOutcome outcome={o.outcome} className="basis-full" />;
 
   if (mobile) {
     return (
-      <Drawer open={open} onOpenChange={(o) => !pending && onOpenChange(o)} dismissible={!pending}>
+      <Drawer
+        open={open}
+        onOpenChange={(next) => !pending && onOpenChange(next)}
+        dismissible={!pending}
+      >
         <DrawerContent
           role="alertdialog"
           aria-modal="true"
@@ -120,9 +121,9 @@ export function ConfirmDialog({
           <DrawerBody className={MIDDLE_CLASS}>
             <DrawerDescription className="[overflow-wrap:anywhere]">{body}</DrawerDescription>
             {detail}
-            {errorLine}
           </DrawerBody>
-          <DrawerFooter>
+          <DrawerFooter className="pt-2">
+            {outcomeLine}
             {action}
             <Button
               ref={cancelRef}
@@ -139,7 +140,7 @@ export function ConfirmDialog({
   }
 
   return (
-    <AlertDialog open={open} onOpenChange={(o) => !pending && onOpenChange(o)}>
+    <AlertDialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <AlertDialogContent
         className="sm:max-w-md max-h-[calc(100svh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto]"
         onCloseAutoFocus={onCloseAutoFocus}
@@ -152,9 +153,9 @@ export function ConfirmDialog({
             {body}
           </AlertDialogDescription>
           {detail}
-          {errorLine}
         </div>
-        <AlertDialogFooter className="flex-wrap">
+        <AlertDialogFooter className="flex-wrap pt-2">
+          {outcomeLine}
           <AlertDialogCancel
             autoFocus
             aria-disabled={pending || undefined}

@@ -68,19 +68,23 @@ test("validates on leave, not while typing; typing clears the error", async () =
   await userEvent.click(title);
   await userEvent.tab();
   expect(await screen.findByText("Enter a title.")).toBeInTheDocument();
+  // The error layer stays mounted (it keeps its last text); "shown" is its data-shown attribute.
+  const titleError = () => document.getElementById("field-title-error");
+  expect(titleError()).toHaveAttribute("data-shown");
   await userEvent.type(title, "x");
-  expect(screen.queryByText("Enter a title.")).toBeNull();
+  expect(titleError()).not.toHaveAttribute("data-shown");
   await userEvent.clear(title);
-  expect(screen.queryByText("Enter a title.")).toBeNull();
+  expect(titleError()).not.toHaveAttribute("data-shown");
   // 200 characters pasted and the 201st typed: typing 201 keystrokes one by one takes about a second
   // alone and over 5 s in a loaded full run, and a timed-out test keeps typing and tabbing into the next.
   await userEvent.click(title);
   await userEvent.paste("a".repeat(200));
   await userEvent.type(title, "a");
   expect(title).toHaveValue("a".repeat(201));
-  expect(screen.queryByText("Keep the title to 200 characters or fewer.")).toBeNull();
+  expect(titleError()).not.toHaveAttribute("data-shown");
   await userEvent.tab();
   expect(await screen.findByText("Keep the title to 200 characters or fewer.")).toBeInTheDocument();
+  expect(titleError()).toHaveAttribute("data-shown");
 });
 
 test("submit checks everything again and focuses the first invalid field", async () => {
@@ -198,9 +202,8 @@ test("a server field error lands under its field; another failure is one alert l
     "true",
   );
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Couldn't create the task. Try again.",
-  );
+  // The body still has its own alert until the task form moves to the outcome line, so find by text.
+  expect(await screen.findByText("Couldn't create the task. Try again.")).toBeInTheDocument();
 });
 
 test("Close dismisses the sheet without a dialog and keeps the draft", async () => {

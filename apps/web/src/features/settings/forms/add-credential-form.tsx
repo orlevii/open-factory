@@ -7,6 +7,7 @@ import {
 import { useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
+import { useOutcome } from "@/components/forms/form-outcome";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { createCredential } from "@/features/settings/api";
 import { FormFrame, type FormFrameKind } from "./form-frame";
@@ -30,7 +31,7 @@ export function AddCredentialForm({
   const [value, setValue] = useState("");
   const [nameError, setNameError] = useState<string>();
   const [verdict, setVerdict] = useState<Verdict>({});
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
 
   const checkName = (n: string) => {
@@ -48,7 +49,7 @@ export function AddCredentialForm({
     const v = checkValue(value, kind);
     setNameError(n);
     setVerdict(v ? { error: v } : {});
-    setFormError(undefined);
+    o.clear();
     if (n || v) return focus(n ? "name" : "value");
     setPending(true);
     try {
@@ -66,11 +67,9 @@ export function AddCredentialForm({
         if (fields.name) setNameError(fields.name);
         if (fields.value) setVerdict({ error: fields.value });
         if (fields.name || fields.value) focus(fields.name ? "name" : "value");
-        else setFormError(err.message);
+        else o.fail(err.message);
       } else {
-        setFormError(
-          err instanceof ApiError ? err.message : "Couldn't add the credential. Try again.",
-        );
+        o.fail(err instanceof ApiError ? err.message : "Couldn't add the credential. Try again.");
       }
     } finally {
       setPending(false);
@@ -86,7 +85,7 @@ export function AddCredentialForm({
       submitLabel="Verify and add"
       pendingLabel="Verifying…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
     >
       <FormField
         name="credential-name"

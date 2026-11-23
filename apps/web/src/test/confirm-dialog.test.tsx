@@ -98,6 +98,27 @@ test("a rejected onConfirm keeps the dialog open and shows the message in an ale
   expect(screen.getByRole("alert")).toBeEmptyDOMElement();
 });
 
+test("a failure shows in the footer band, not the scrolling middle; an identical failure re-inserts the text", async () => {
+  const onConfirm = vi.fn(() => Promise.reject(new ApiError(409, "x", "Still used.")));
+  render(
+    <ConfirmDialog
+      open
+      onOpenChange={() => {}}
+      title="T"
+      body="B"
+      confirmLabel="Go"
+      pendingLabel="Going…"
+      onConfirm={onConfirm}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Go" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert.closest("[data-slot=alert-dialog-footer],[data-slot=drawer-footer]")).toBeTruthy();
+  const first = screen.getByText("Still used.");
+  await userEvent.click(screen.getByRole("button", { name: "Go" }));
+  await vi.waitFor(() => expect(screen.getByText("Still used.")).not.toBe(first));
+});
+
 test("a non-API rejection shows the generic message", async () => {
   const onConfirm = vi.fn(() => Promise.reject(new Error("boom")));
   render(

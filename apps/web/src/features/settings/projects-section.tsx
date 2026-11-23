@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { ErrorLine } from "@/components/error-line";
 import { FormField } from "@/components/form-field";
+import { useOutcome } from "@/components/forms/form-outcome";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import {
@@ -108,7 +109,7 @@ function ChangePathForm({
 }) {
   const [hostPath, setHostPath] = useState(project.hostPath);
   const [error, setError] = useState<string>();
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
   const field = `project-path-${project.name}`;
   const focus = () => document.getElementById(`field-${field}`)?.focus();
@@ -116,7 +117,7 @@ function ChangePathForm({
   async function submit() {
     const e = checkPath(hostPath);
     setError(e);
-    setFormError(undefined);
+    o.clear();
     if (e) return focus();
     setPending(true);
     try {
@@ -127,7 +128,7 @@ function ChangePathForm({
         setError(fields.hostPath);
         focus();
       } else {
-        setFormError(err instanceof ApiError ? err.message : "Couldn't save the path. Try again.");
+        o.fail(err instanceof ApiError ? err.message : "Couldn't save the path. Try again.");
       }
     } finally {
       setPending(false);
@@ -142,7 +143,7 @@ function ChangePathForm({
       submitLabel="Save path"
       pendingLabel="Saving…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
     >
       <FormField
         name={field}

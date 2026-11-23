@@ -25,6 +25,7 @@ import {
 import { flushSync } from "react-dom";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
+import { NO_OUTCOME } from "@/components/forms/form-outcome";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import type { ComboOption } from "@/components/ui/combobox";
@@ -459,9 +460,6 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
           </MoreOptions>
         </fieldset>
         <InlineOutcome tone={outcome?.tone}>{outcome?.content}</InlineOutcome>
-        <span role="status" className="sr-only">
-          {busy && !slow ? "Creating the agent…" : ""}
-        </span>
       </SheetBody>
       <SheetFormFooter
         submitLabel="Create agent"
@@ -470,7 +468,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
         restored={s.restored}
         onDiscard={s.discard}
         submitClassName="min-w-32"
-        note={slow ? <span role="status">Installing plugins…</span> : undefined}
+        outcome={{ ...NO_OUTCOME, notice: slow ? "Installing plugins…" : undefined }}
       />
     </form>
   );

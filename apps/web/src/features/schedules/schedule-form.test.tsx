@@ -149,7 +149,10 @@ test("validates on leave with each sentence; submit focuses the first invalid fi
   await userEvent.clear(cron);
   await userEvent.type(cron, "61 * * * *");
   await userEvent.tab();
-  expect(await screen.findByText(/minute/i, { selector: "#field-cron-error" })).toBeInTheDocument();
+  expect(
+    await screen.findByText(/minute/i, { selector: "#field-cron-error span" }),
+  ).toBeInTheDocument();
+  expect(document.getElementById("field-cron-error")).toHaveAttribute("data-shown");
   await userEvent.clear(cron);
   await userEvent.type(cron, "0 0 30 2 *");
   await userEvent.tab();

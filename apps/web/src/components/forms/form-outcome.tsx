@@ -10,6 +10,9 @@ export type Outcome = {
   action?: ReactNode;
 };
 
+/** For forms that have no form-level message yet. A module constant, so it is referentially stable. */
+export const NO_OUTCOME: Readonly<Outcome> = Object.freeze({ outcomeKey: 0 });
+
 export function FormOutcome({
   outcome,
   pending,

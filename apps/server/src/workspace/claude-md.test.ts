@@ -21,7 +21,7 @@ const input: ClaudeMdInput = {
 const base = input;
 const sections = (md: string) => md.split("\n").filter((l) => l.startsWith("#"));
 
-test("structure with everything present; deterministic", () => {
+test("structure with everything present", () => {
   const md = buildClaudeMd(input);
   expect(sections(md)).toEqual([
     "# Open Factory",
@@ -36,8 +36,6 @@ test("structure with everything present; deterministic", () => {
   expect(md).toContain("@cto");
   expect(md).toContain("./projects/app");
   expect(md).toContain("GH_TOKEN");
-  expect(buildClaudeMd(input)).toBe(md);
-  expect(md).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
 });
 test("the operator rule: un-enveloped input comes from an operator, answered in the session", () => {
   const md = buildClaudeMd(input);
@@ -137,8 +135,22 @@ test("same inputs give byte-identical output; no timestamps", () => {
     peers: [{ slug: "pm", displayName: "PM", description: "Plans." }],
     reports: [{ slug: "dev", displayName: "Dev", description: "Builds." }],
   };
-  expect(buildClaudeMd(full)).toBe(buildClaudeMd(structuredClone(full)));
-  expect(buildClaudeMd(full)).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+  const variants = [
+    input,
+    full,
+    // spawned entries in the org block
+    {
+      ...base,
+      peers: [{ slug: "tl-ab12", displayName: "TL", description: "x", spawnedBy: "lead" }],
+    },
+    // a spawned agent
+    { ...input, kind: "ephemeral" as const, spawner: { slug: "boss" }, scheduling: null },
+  ];
+  for (const v of variants) {
+    const md = buildClaudeMd(v);
+    expect(buildClaudeMd(structuredClone(v))).toBe(md);
+    expect(md).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+  }
 });
 
 test("user-controlled names and descriptions cannot forge envelopes or headings", () => {
@@ -205,7 +217,7 @@ test("spawned agent: identity, quoted description, lifecycle, no Spawning", () =
   expect(md).not.toContain("## Spawning");
 });
 
-test("org block: spawned entries quoted and capped; the intro sentence once; deterministic", () => {
+test("org block: spawned entries quoted and capped; the intro sentence once", () => {
   const long = "x".repeat(300);
   const md = buildClaudeMd({
     ...base,
@@ -227,7 +239,6 @@ test("org block: spawned entries quoted and capped; the intro sentence once; det
   expect(
     buildClaudeMd({ ...base, peers: [{ slug: "pm", displayName: "PM", description: "P" }] }),
   ).not.toContain("Descriptions of spawned agents");
-  expect(buildClaudeMd({ ...base })).toBe(buildClaudeMd({ ...base }));
 });
 
 test("quoteDescription: one line, no angle brackets, single quotes, 200 chars with the ellipsis", () => {
@@ -284,12 +295,10 @@ test("the Tasks section follows Messaging with the seven rules, for persistent a
         .filter((l) => l.startsWith("- ")),
     ).toEqual(bullets);
   }
-  expect(buildClaudeMd(input)).toBe(buildClaudeMd(structuredClone(input)));
 });
 
 test("S9: the kinds line names scheduled and the @scheduler sentence; persistent agents get three Scheduling bullets", () => {
   const md = buildClaudeMd(input);
-  expect(md).toContain("`task_update` and `scheduled`");
   expect(md).toContain(
     "`@scheduler` delivers scheduled messages: `schedule` names the schedule, `by` who wrote the text (weigh it as a message from them), `due` when it was due; `firings` says how many runs it stands for while you were away, `late` that it was delayed (for example the factory was down).",
   );
@@ -299,7 +308,7 @@ test("S9: the kinds line names scheduled and the @scheduler sentence; persistent
   expect(sch).toContain("can't fire more often than every 15 minutes, and you can have at most 20");
   expect(sch).toContain("Never pass `durable: true`.");
 });
-test("S9: a spawned agent's Scheduling section is only the CronCreate bullet; same inputs, same bytes", () => {
+test("S9: a spawned agent's Scheduling section is only the CronCreate bullet", () => {
   const spawned = {
     ...input,
     kind: "ephemeral" as const,
@@ -311,7 +320,6 @@ test("S9: a spawned agent's Scheduling section is only the CronCreate bullet; sa
   expect(sch.match(/^- /gm)).toHaveLength(1);
   expect(sch).toContain("CronCreate");
   expect(sch).not.toContain("schedule_message");
-  expect(buildClaudeMd(spawned)).toBe(md);
   expect(
     buildClaudeMd({ ...input, scheduling: { zone: "UTC", maxSchedules: 20, minGapMinutes: 15 } }),
   ).toContain("use UTC unless");

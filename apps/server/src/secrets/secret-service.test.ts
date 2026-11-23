@@ -73,13 +73,15 @@ test("remove of a missing secret is a 404", async () => {
   });
 });
 
-test("one failed restart does not abort the others or the write", async () => {
+test("one failed restart does not abort the others or the write, and is logged by slug only", async () => {
   const a = await t.seedAgent({ slug: "sec-fail-a", config: { template: { secrets: ["FAILS"] } } });
   const b = await t.seedAgent({ slug: "sec-fail-b", config: { template: { secrets: ["FAILS"] } } });
   const seen: string[] = [];
+  const warns: { obj: object; msg: string }[] = [];
   const failing = new SecretService({
     db: t.db,
     vault: t.app.vault,
+    log: { warn: (obj, msg) => void warns.push({ obj, msg }) },
     runtimes: {
       requestRestart: async (id: string) => {
         seen.push(id);
@@ -90,6 +92,11 @@ test("one failed restart does not abort the others or the write", async () => {
   const out = await failing.put("FAILS", VALUE);
   expect(out.name).toBe("FAILS");
   expect(seen.sort()).toEqual([a.id, b.id].sort());
+  const row = await rowOf("FAILS");
+  expect(t.app.vault.open(row.valueEnc, `secrets:${row.id}`)).toBe(VALUE);
+  expect(warns).toHaveLength(1);
+  expect(warns[0]?.obj).toEqual({ slug: "sec-fail-a" });
+  expect(JSON.stringify(warns)).not.toContain("boom");
   await failing.remove("FAILS");
 });
 

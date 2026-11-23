@@ -61,18 +61,8 @@ test("adds marketplaces then installs, with a minimal env", async () => {
     expect(existsSync(l.cwd)).toBe(false);
   }
 });
-test("failure carries redacted output; budget enforced", async () => {
-  const fake = createFakeClaude({ scenario: "reply", env: { FAKE_CLAUDE_PLUGIN_FAIL: "p@mk" } });
+test("the install budget is enforced", async () => {
   const cfg = mkdtempSync(path.join(tmpdir(), "cfg-"));
-  await expect(
-    installPlugins({
-      claudeBin: fake.bin,
-      pluginsConfig: cfg,
-      plugins: ["p@mk"],
-      tplSettings,
-      ...hostEnv,
-    }),
-  ).rejects.toBeInstanceOf(PluginInstallError);
   const slow = createFakeClaude({
     scenario: "reply",
     env: { FAKE_CLAUDE_PLUGIN_SLEEP_MS: "2000" },

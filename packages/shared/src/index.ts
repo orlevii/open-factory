@@ -4,6 +4,7 @@ export * from "./chat.ts";
 export * from "./claude-builtins.ts";
 export * from "./commands.ts";
 export * from "./config.ts";
+export * from "./config-changes.ts";
 export * from "./config-merge.ts";
 export * from "./cron.ts";
 export * from "./events.ts";

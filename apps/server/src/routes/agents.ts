@@ -157,7 +157,10 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const row = await app.store.agentBySlug(req.params.slug);
       if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-      return commandsResponse(await app.store.agentCommands(row.id), row.config.skills);
+      return commandsResponse(
+        await app.store.agentCommands(row.id),
+        await app.resolver.skillsOf(row, app.runtimes.startedOf(row.id)),
+      );
     },
   );
 
@@ -364,9 +367,10 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       if (utf8.encode(text).length > MAX_BODY_BYTES)
         return refuse("text", 400, "validation_error", "Input is larger than 64 KB.");
       const known = new Set(
-        commandList((await app.store.agentCommands(row.id))?.commands, row.config.skills).flatMap(
-          (c) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase()),
-        ),
+        commandList(
+          (await app.store.agentCommands(row.id))?.commands,
+          await app.resolver.skillsOf(row, rt.started),
+        ).flatMap((c) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase())),
       );
       const cls = classifyInput(text, known);
       if (cls.kind === "command") {

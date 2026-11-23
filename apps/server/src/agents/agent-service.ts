@@ -317,7 +317,9 @@ export class AgentService {
   /**
    * S7 §6.3: the one owner of live children's credential and grants. Call inside every transaction that changes a
    * spawner's credential or grants, after the spawner's row is written: it rewrites each live child's `credential_id`
-   * to the spawner's and its grants to the spawner's ∩ the child's template `projects`. Locks the spawner's row, then
+   * to the spawner's and its grants to the spawner's ∩ the child's template `projects`. The projects come from the
+   * template's last valid parse in the DB (I2 §6.2), never from disk: a disk read here would start change detection
+   * inside this transaction. A template with no valid parse yet grants nothing. Locks the spawner's row, then
    * the children's (§5.7). Returns the changed children's ids; the caller refreshes and restarts them after the commit.
    */
   async syncChildren(tx: Tx, spawnerId: string): Promise<string[]> {
@@ -340,9 +342,18 @@ export class AgentService {
       )
       .orderBy(asc(schema.agents.id))
       .for("no key update");
+    const projectsOf = new Map<string, string[]>();
+    for (const name of new Set(kids.map((k) => k.template))) {
+      const listed = (await this.d.templates.lastValid(name, tx))?.template.projects;
+      projectsOf.set(
+        name,
+        Array.isArray(listed) ? listed.filter((p): p is string => typeof p === "string") : [],
+      );
+    }
     const changed: string[] = [];
     for (const k of kids) {
-      const want = held.filter((p) => k.config.projects.includes(p.name));
+      const projects = projectsOf.get(k.template) ?? [];
+      const want = held.filter((p) => projects.includes(p.name));
       const have = (
         await tx
           .select({ id: schema.agentProjectGrants.projectId })

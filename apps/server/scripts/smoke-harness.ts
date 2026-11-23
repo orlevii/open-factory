@@ -52,7 +52,7 @@ const workspace = new Workspace({
 const agent = await seedTestAgent(
   { db, config, vault, workspace },
   {
-    config: { model: "haiku" },
+    config: { template: { model: "haiku" } },
     ...(process.env.CLAUDE_CODE_OAUTH_TOKEN
       ? { credentialValue: process.env.CLAUDE_CODE_OAUTH_TOKEN }
       : {}),

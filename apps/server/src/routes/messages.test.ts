@@ -81,7 +81,7 @@ test("one refused recipient beside sent ones is a 202 with mixed results", async
 test("start_failed keeps that recipient's row pending", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
-    await t2.seedAgent({ slug: "bad", config: { secrets: ["GH_TOKEN"] } });
+    await t2.seedAgent({ slug: "bad", config: { template: { secrets: ["GH_TOKEN"] } } });
     await t2.seedAgent({ slug: "fine" });
     const cookie = (await t2.signUpUser({ handle: "or2" })).cookie;
     const res = await t2.app.inject({

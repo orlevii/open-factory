@@ -9,6 +9,7 @@ import { AgentTerminatedError } from "../agents/errors.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { asRunning } from "../test/running.ts";
 
 type T = Awaited<ReturnType<typeof makeTestApp>>;
 let t: T | undefined;
@@ -43,8 +44,10 @@ async function setup() {
   );
   const lead = await app.seedAgent({
     slug: "lead",
-    config: { canSpawn: ["dev"], maxLiveSpawns: 5 },
+    config: { template: { can_spawn: ["dev"], max_live_spawns: 5 } },
   });
+  // I2 §6.2: spawning follows the spawner's running process.
+  await asRunning(app.app, lead);
   await app.db.insert(schema.agentProjectGrants).values({ agentId: lead.id, projectId });
   const pm = await app.seedAgent({ slug: "pm" });
   await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
@@ -147,7 +150,7 @@ test("terminate: one transaction (row, grants, peer rows), the stop job, and not
 
 test("terminate_agent: only your own spawned agents; idempotent; persistent agents refuse", async () => {
   const { t, driver, lead, pm } = await setup();
-  const other = await t.seedAgent({ slug: "other", config: { canSpawn: ["dev"] } });
+  const other = await t.seedAgent({ slug: "other", config: { template: { can_spawn: ["dev"] } } });
   const child = await spawnIdle(t, driver, lead, "x2");
   const notYours = (slug: string) => ({
     ok: false,

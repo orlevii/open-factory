@@ -16,6 +16,8 @@ import {
   type AgentStatus,
   type AgentStatusFrame,
   type AnyEvent,
+  type ConfigDoc,
+  describeChanges,
   type Envelope,
   type ErrorKind,
   errorKindSchema,
@@ -869,6 +871,16 @@ export class AgentRuntime {
   }
 
   /**
+   * I2 §7.3: the `config_changed` event, appended as a job so it is published in seq order with this runtime's other
+   * events (an open Session shows it live). `changes` are `describeChanges` lines only: never a config value.
+   */
+  appendConfigChanged(by: string, changes: string[]): Promise<void> {
+    return this.run(async () => {
+      await this.append(null, { type: "config_changed", by, changes });
+    });
+  }
+
+  /**
    * I2 §7.3: a `config_changed` row written through the store while this runtime was loading (its init may have read
    * the queue before that write committed). Re-read: queued, its entry is refreshed; unseen and still pending, queued.
    */
@@ -1139,8 +1151,14 @@ export class AgentRuntime {
    * `changes` (I2 §7.3) are the lines the restart applies, shown as `restartChanges` until the process exits; callers
    * that restart for other reasons (credential, grants, manager) pass none. `wake` is I7's (a waking self-restart
    * notice) and is ignored in I2.
+   * `after` (I2 §7.2): the effective doc the change produced. The restart then happens only when the running process
+   * started with something else (`describeChanges(started.doc, after)` non-empty), and those lines are what it
+   * applies. Decided here, in a job, so `started` is never read mid-start: a start that already runs on `after`
+   * restarts nothing, and two edits that cancel out restart nothing.
    */
-  async requestRestart(opts: { changes?: string[]; wake?: boolean } = {}): Promise<void> {
+  async requestRestart(
+    opts: { changes?: string[]; wake?: boolean; after?: ConfigDoc } = {},
+  ): Promise<void> {
     await this.run(async () => {
       // Not running (or already going away): the next start reads the new values anyway.
       if (
@@ -1150,8 +1168,13 @@ export class AgentRuntime {
         !this.stopping &&
         !this.terminated
       ) {
+        const changes =
+          opts.after && this.started
+            ? describeChanges(this.started.doc, opts.after)
+            : (opts.changes ?? []);
+        if (opts.after && this.started && !changes.length) return;
         this.restartPending = true;
-        for (const c of opts.changes ?? []) this.pendingChanges.add(c);
+        for (const c of changes) this.pendingChanges.add(c);
         this.maybeRestart();
       }
       this.publishStatus();

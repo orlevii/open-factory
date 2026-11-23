@@ -143,7 +143,7 @@ test("compact is accepted and queued; validation errors are 400", async () => {
 test("start failure is that recipient's result with the fix text and the message stays queued", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
-    await t2.seedAgent({ config: { secrets: ["GH_TOKEN"] } });
+    await t2.seedAgent({ config: { template: { secrets: ["GH_TOKEN"] } } });
     const c2 = (await t2.signUpUser({ handle: "or2" })).cookie;
     const res = await t2.app.inject({
       method: "POST",
@@ -799,7 +799,7 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
     const skill = path.join(s.config.hostSkillsDir, "research");
     mkdirSync(skill, { recursive: true });
     writeFileSync(path.join(skill, "SKILL.md"), "---\nname: research\ndescription: x\n---\n");
-    await s.seedAgent({ config: { skills: ["research"] } });
+    await s.seedAgent({ config: { template: { skills: ["research"] } } });
     cookie = (await s.signUpUser({ handle: "or13" })).cookie;
   });
   afterAll(() => s.close());
@@ -905,7 +905,7 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
     if (!agent) throw new Error("no agent");
     await s.db
       .update(schema.agents)
-      .set({ config: { ...agent.config, skills: ["research", "triage"] } });
+      .set({ config: { template: { skills: ["research", "triage"] } } });
     const body = (await get()).json();
     expect(body).toMatchObject({ source: "session", stale: true });
     // The session's list stays what the menu shows until the next start.

@@ -6,6 +6,7 @@ import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
+import { asRunning } from "../test/running.ts";
 import { ev, FakeDriver, type FakeProcess } from "./testing/fake-driver.ts";
 import { sendAs } from "./testing/runtime-harness.ts";
 
@@ -68,6 +69,8 @@ async function setup() {
     credential: "work",
   });
   const lead = await row(app, "lead");
+  // I2 §6.2: spawning follows the spawner's running process.
+  await asRunning(app.app, lead);
   return { t: app, driver, lead, projects, creds };
 }
 

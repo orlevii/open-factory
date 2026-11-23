@@ -9,7 +9,7 @@ import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError } from "../runtime/docker/errors.ts";
 import { MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "../scheduling/limits.ts";
-import { type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
+import { type DenyRules, type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
 import { maySpawn } from "../spawning/may-spawn.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
@@ -77,6 +77,34 @@ const both = (a: string[], b: string[]) => a.filter((x) => b.includes(x));
 const either = (a: string[], b: string[]) => [...new Set([...a, ...b])];
 
 /**
+ * I2 §6.2: what a spawner passes on, the stricter of what its running process started with and its current effective
+ * config: the stricter permission mode, secrets intersected, deny rules unioned. With no running process (`started`
+ * undefined) it is the current config alone. A child never holds more than either.
+ */
+export function spawnerHolds(
+  current: Effective,
+  started: Effective | undefined,
+): { permissionMode: "auto" | "bypass"; secrets: string[]; deny: DenyRules } {
+  const currentDeny = readDenyRules(current.doc.settings);
+  if (!started)
+    return {
+      permissionMode: current.config.permissionMode,
+      secrets: current.config.secrets,
+      deny: currentDeny,
+    };
+  const startedDeny = readDenyRules(started.doc.settings);
+  return {
+    permissionMode: stricterMode(current.config.permissionMode, started.config.permissionMode),
+    secrets: both(current.config.secrets, started.config.secrets),
+    deny: {
+      permissionsDeny: either(currentDeny.permissionsDeny, startedDeny.permissionsDeny),
+      softDeny: either(currentDeny.softDeny, startedDeny.softDeny),
+      hardDeny: either(currentDeny.hardDeny, startedDeny.hardDeny),
+    },
+  };
+}
+
+/**
  * S7 §6.3 and I2 §6.2: a spawned agent's inheritance, derived from its spawner at every start (no snapshot). The
  * spawner counts as the stricter of what its running process started with (`loaded`) and its current effective config:
  * secrets intersected, deny rules unioned. A spawner with no running process (no `started`) counts as its current
@@ -116,9 +144,6 @@ export async function deriveInheritance(
       );
     throw err;
   }
-  const started = d.loaded(spawner.id);
-  const currentDeny = readDenyRules(current.doc.settings);
-  const startedDeny = started ? readDenyRules(started.doc.settings) : undefined;
   const grants = await d.db
     .select({
       id: schema.projects.id,
@@ -131,21 +156,9 @@ export async function deriveInheritance(
   const inherited = inheritFrom(
     {
       runtime: spawner.runtime,
-      permissionMode: started
-        ? stricterMode(current.config.permissionMode, started.config.permissionMode)
-        : current.config.permissionMode,
       credentialId: spawner.credentialId,
       grants,
-      secrets: started
-        ? both(current.config.secrets, started.config.secrets)
-        : current.config.secrets,
-      deny: startedDeny
-        ? {
-            permissionsDeny: either(currentDeny.permissionsDeny, startedDeny.permissionsDeny),
-            softDeny: either(currentDeny.softDeny, startedDeny.softDeny),
-            hardDeny: either(currentDeny.hardDeny, startedDeny.hardDeny),
-          }
-        : currentDeny,
+      ...spawnerHolds(current, d.loaded(spawner.id)),
     },
     effective.config,
     readDenyRules(effective.doc.settings),

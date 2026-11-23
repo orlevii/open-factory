@@ -1,6 +1,11 @@
 import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
-import { type AgentStatus, errorKindSchema, type QueueItem } from "@open-factory/shared";
+import {
+  type AgentStatus,
+  type ConfigDoc,
+  errorKindSchema,
+  type QueueItem,
+} from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { resolveImage, USER_TAG_PREFIX, userNameOfTag } from "../images/resolve.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
@@ -417,11 +422,12 @@ export class AgentRuntimes {
 
   /**
    * Applies config changes at the next safe moment (spec §13); a no-op when no runtime is loaded. `changes` (I2 §7.3)
-   * are shown as `restartChanges` while it is pending; `wake` is I7's and ignored in I2.
+   * are shown as `restartChanges` while it is pending; `wake` is I7's and ignored in I2. `after` restarts only when the
+   * running process started with another config (see `AgentRuntime.requestRestart`).
    */
   async requestRestart(
     agentId: string,
-    opts: { changes?: string[]; wake?: boolean } = {},
+    opts: { changes?: string[]; wake?: boolean; after?: ConfigDoc } = {},
   ): Promise<void> {
     await (await this.get(agentId))?.requestRestart(opts);
   }

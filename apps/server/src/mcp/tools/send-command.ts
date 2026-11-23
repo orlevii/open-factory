@@ -8,6 +8,7 @@ import {
   sendCommandToolSchema,
 } from "@open-factory/shared";
 import { commandList } from "../../agents/commands.ts";
+import type { ConfigResolver } from "../../agents/config-resolver.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -39,6 +40,8 @@ export function sendCommandTool(d: {
   neighborhood: Neighborhood;
   runtimes: AgentRuntimes;
   store: Pick<EventStore, "agentBySlug" | "agentCommands">;
+  /** The skill list: the running process's (`started`), else the resolver's (I2 §6.2). */
+  resolver: Pick<ConfigResolver, "skillsOf">;
   spawned: boolean;
 }): ToolRegistration {
   return {
@@ -82,7 +85,7 @@ export function sendCommandTool(d: {
           const known = new Set(
             commandList(
               (await d.store.agentCommands(target.id))?.commands,
-              target.config.skills,
+              await d.resolver.skillsOf(target, d.runtimes.startedOf(target.id)),
             ).flatMap((c) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase())),
           );
           const cls = classifyInput(command, known);

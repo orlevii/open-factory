@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../../agents/testing/fake-driver.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import { makeTestApp, signUp } from "../../test/helpers.ts";
+import { asRunning } from "../../test/running.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
@@ -57,7 +58,12 @@ test("every agent lists the five task tools; a spawner has two more", async () =
     "update_task",
   ];
   expect(await names("qa")).toEqual(base);
-  await h.sql`update agents set config = jsonb_set(jsonb_set(config, '{canSpawn}', '["x"]'), '{maxLiveSpawns}', '3') where slug = 'lead'`;
+  // I2 §6.2: the spawn tools follow the config the running process started with.
+  await h.sql`update agents set config = '{"template":{"can_spawn":["x"],"max_live_spawns":3}}'::jsonb where slug = 'lead'`;
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!lead) throw new Error("no lead");
+  expect(await names("lead")).toEqual(base);
+  await asRunning(h.app, lead);
   expect(await names("lead")).toEqual([...base, "spawn_agent", "terminate_agent"].sort());
 });
 

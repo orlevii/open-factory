@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Db, schema } from "@open-factory/db";
 import type { SecretSummary } from "@open-factory/shared";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import type { Vault } from "../crypto/vault.ts";
 import { pgCode } from "../db-errors.ts";
@@ -31,15 +31,44 @@ export class SecretService {
     });
   }
 
-  /** Non-archived agents whose config snapshot lists the secret. */
+  /**
+   * I2 §6.7: the agents whose effective secrets include `name`, neither archived nor terminated: their template's last
+   * valid parse lists it, or their overlay does. Plus those agents' live spawned children, which inherit their spawner's
+   * secrets at each start. Rotate and delete restart exactly these; the Secrets page lists them.
+   */
   private async usedBy(name: string): Promise<{ id: string; slug: string }[]> {
-    return this.d.db
-      .select({ id: schema.agents.id, slug: schema.agents.slug })
-      .from(schema.agents)
+    const { agents, templates } = schema;
+    const users = await this.d.db
+      .select({ id: agents.id, slug: agents.slug })
+      .from(agents)
+      .leftJoin(templates, eq(templates.name, agents.template))
       .where(
-        and(isNull(schema.agents.archivedAt), sql`${schema.agents.config}->'secrets' ? ${name}`),
-      )
-      .orderBy(schema.agents.slug);
+        and(
+          isNull(agents.archivedAt),
+          isNull(agents.terminatedAt),
+          or(
+            sql`${templates.lastValid}->'template'->'secrets' ? ${name}`,
+            sql`${agents.config}->'template'->'secrets' ? ${name}`,
+          ),
+        ),
+      );
+    const children = users.length
+      ? await this.d.db
+          .select({ id: agents.id, slug: agents.slug })
+          .from(agents)
+          .where(
+            and(
+              inArray(
+                agents.reportsTo,
+                users.map((u) => u.id),
+              ),
+              eq(agents.kind, "ephemeral"),
+              isNull(agents.terminatedAt),
+            ),
+          )
+      : [];
+    const byId = new Map([...users, ...children].map((u) => [u.id, u]));
+    return [...byId.values()].sort((x, y) => x.slug.localeCompare(y.slug));
   }
 
   private summary(row: typeof schema.secrets.$inferSelect, users: { slug: string }[]) {

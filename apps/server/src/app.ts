@@ -12,6 +12,7 @@ import {
 import type postgres from "postgres";
 import { AgentService } from "./agents/agent-service.ts";
 import { ChatStore } from "./agents/chat-store.ts";
+import { ConfigChanges, dbConfigChangeAgents } from "./agents/config-changes.ts";
 import { ConfigResolver } from "./agents/config-resolver.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
@@ -98,6 +99,10 @@ declare module "fastify" {
     /** Named workspaceLock because `lock` is a Fastify (websocket plugin) route method. */
     workspaceLock: KeyedMutex;
     templates: TemplateIndex;
+    /** I2 §6.1: an agent's effective config (the current template plus its overlay). */
+    resolver: ConfigResolver;
+    /** I2 §7.2: the one change path for template changes and overlay saves. */
+    configChanges: ConfigChanges;
     agents: AgentService;
     credentials: CredentialService;
     secrets: SecretService;
@@ -266,6 +271,15 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       void runtimes.settingsChanged();
   });
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
+  // I2 §7.1: a template change is dispatched off the scan's path, on a per-template serial queue (never awaited there).
+  const configChanges = new ConfigChanges({
+    agents: dbConfigChangeAgents(deps.db),
+    store,
+    runtimes,
+    bus,
+    log: app.log,
+  });
+  templates.onChange((e) => configChanges.templateChanged(e));
   // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
   const clock = deps.clock ?? (() => new Date());
   const scheduleStore = new ScheduleStore();
@@ -341,6 +355,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
   app.decorate("vault", vault);
   app.decorate("templates", templates);
+  app.decorate("resolver", resolver);
+  app.decorate("configChanges", configChanges);
   app.decorate("agents", agents);
   app.decorate("workspaceLock", lock);
   app.decorate("workspace", workspace);
@@ -358,6 +374,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     workspace,
     router,
     runtimes,
+    resolver,
     config,
     log: app.log,
     closing: () => runtimes.supervisor.closing(),
@@ -451,6 +468,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       router,
       neighborhood,
       runtimes,
+      resolver,
       spawner,
       terminator,
       tasks,
@@ -507,6 +525,7 @@ async function listenForAgents(
     router: Router;
     neighborhood: Neighborhood;
     runtimes: AgentRuntimes;
+    resolver: ConfigResolver;
     spawner: SpawnPort;
     terminator: TerminatePort;
     tasks: TaskService;
@@ -538,6 +557,7 @@ async function listenForAgents(
           neighborhood: d.neighborhood,
           runtimes: d.runtimes,
           store: d.store,
+          resolver: d.resolver,
           spawned: caller.kind === "ephemeral",
         }),
         ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),

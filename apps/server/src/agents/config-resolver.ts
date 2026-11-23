@@ -28,6 +28,14 @@ const invalidOverlay = (slug: string) =>
   );
 
 /**
+ * The parsed config of a merged doc, with the agent's fixed runtime (spec §6.6); undefined when it doesn't parse.
+ */
+export function configOf(doc: ConfigDoc, runtime: AgentRow["runtime"]): TemplateConfig | undefined {
+  const parsed = templateYamlSchema.safeParse(doc.template);
+  return parsed.success ? { ...parsed.data, runtime } : undefined;
+}
+
+/**
  * Computes an agent's effective config at a start: the current template plus its overlay (spec §6.1).
  * Messages are the spec constants; they never carry a config value.
  */
@@ -54,14 +62,28 @@ export class ConfigResolver {
       overlay = checked.data;
     }
     const doc = mergeConfig(base, overlay);
-    const parsed = templateYamlSchema.safeParse(doc.template);
-    // The template parsed on its own, so a failure here is the overlay's.
-    if (!parsed.success) throw invalidOverlay(agent.slug);
     // The runtime is fixed at creation (spec §6.6): the row wins over the template.
+    const config = configOf(doc, agent.runtime);
+    // The template parsed on its own, so a failure here is the overlay's.
+    if (!config) throw invalidOverlay(agent.slug);
     const listed = base.template.plugins;
     const templatePlugins = Array.isArray(listed)
       ? listed.filter((p): p is string => typeof p === "string")
       : [];
-    return { doc, config: { ...parsed.data, runtime: agent.runtime }, templatePlugins };
+    return { doc, config, templatePlugins };
+  }
+
+  /**
+   * I2 §6.2: the skills of the running process (`started`), else those the next start would have. None when the config
+   * can't be read (a missing or broken template, an invalid overlay): that start fails closed anyway.
+   */
+  async skillsOf(agent: AgentRow, started: Effective | undefined): Promise<string[]> {
+    if (started) return started.config.skills;
+    try {
+      return (await this.effective(agent)).config.skills;
+    } catch (err) {
+      if (err instanceof AgentStartError) return [];
+      throw err;
+    }
   }
 }

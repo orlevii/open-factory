@@ -180,9 +180,12 @@ export class TemplateIndex {
     this.listeners.push(listener);
   }
 
-  /** The last valid parse of a template: a DB read only, never a disk read. */
-  async lastValid(name: string): Promise<ConfigDoc | null> {
-    const [row] = await this.db
+  /**
+   * The last valid parse of a template: a DB read only, never a disk read, so it is safe inside a transaction that holds
+   * row locks (`db` is then that transaction).
+   */
+  async lastValid(name: string, db: Pick<Db, "select"> = this.db): Promise<ConfigDoc | null> {
+    const [row] = await db
       .select({ doc: schema.templates.lastValid })
       .from(schema.templates)
       .where(eq(schema.templates.name, name));

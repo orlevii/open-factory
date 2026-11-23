@@ -22,6 +22,7 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../../agents/event-store.ts";
 import { makeTestApp } from "../../test/helpers.ts";
+import { asRunning } from "../../test/running.ts";
 import { agentWorkdir } from "../../workspace/paths.ts";
 import { dockerodeClient } from "./client.ts";
 import { containerName, LABEL_AGENT_ID, READY_MARKER } from "./containers.ts";
@@ -256,6 +257,10 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
   });
   const leadId = await idOf(t.db, "lead");
   agentIds.add(leadId);
+  // I2 §6.2: spawning follows the spawner's running process.
+  const leadRow = await t.app.store.agentById(leadId);
+  if (!leadRow) throw new Error("no lead");
+  await asRunning(t.app, leadRow);
   const cookie = (await t.signUpUser({ handle: "or" })).cookie;
 
   const r = await t.app.spawner.spawn(

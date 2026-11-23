@@ -64,10 +64,19 @@ export function TemplateField({
 
   const ready = templates.filter((t) => t.errors === 0);
   const broken = templates.filter((t) => t.errors > 0);
+  // No Select to label: the empty state's text stands in for it, so a failing submit focuses it and it carries the note.
+  const empty = (a: { id: string; describedBy?: string; invalid: boolean }) => ({
+    id: a.id,
+    tabIndex: -1,
+    "aria-describedby": a.describedBy,
+    "aria-invalid": a.invalid || undefined,
+    className: "text-[0.8125rem] text-muted-foreground",
+  });
   return (
     <FieldShell
       name="template"
       label="Template"
+      plainLabel={ready.length === 0}
       error={error}
       describedBy={describedBy}
       action={
@@ -87,9 +96,9 @@ export function TemplateField({
     >
       {(a) =>
         templates.length === 0 ? (
-          <p className="text-[0.8125rem] text-muted-foreground">No templates yet.</p>
+          <p {...empty(a)}>No templates yet.</p>
         ) : ready.length === 0 ? (
-          <p className="text-[0.8125rem] text-muted-foreground">
+          <p {...empty(a)}>
             No template is ready: fix the errors in{" "}
             {broken.length === 1 ? (
               <Link

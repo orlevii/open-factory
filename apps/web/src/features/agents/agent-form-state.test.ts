@@ -165,6 +165,39 @@ test("a server field error lands under its field; any other error is the outcome
   expect(result.current.outcome.error).toBeUndefined();
 });
 
+type State = ReturnType<typeof useAgentFormState>;
+const fill = (s: State) =>
+  act(() => {
+    s.set("slug", "plug");
+    s.set("displayName", "P");
+    s.set("template", "lead");
+  });
+const failPlugin = async () => {
+  throw new ApiError(502, "plugin_install_failed", "Plugin install failed: x.", {
+    output: "npm ERR! nope",
+  });
+};
+
+test("an edit clears a plugin install failure's output with its line", async () => {
+  const { result } = mount(create());
+  await waitFor(() => expect(result.current.credentials).toBeDefined());
+  fill(result.current);
+  const edits: [string, (s: State) => void][] = [
+    ["set", (s) => s.set("displayName", "Q")],
+    ["setProjects", (s) => s.setProjects(["app"])],
+    ["applyTemplateDefault", (s) => s.applyTemplateDefault()],
+  ];
+  for (const [name, edit] of edits) {
+    await act(async () => {
+      await result.current.submit(failPlugin);
+    });
+    expect(result.current.pluginOutput, name).toBe("npm ERR! nope");
+    act(() => edit(result.current));
+    expect(result.current.outcome.error, name).toBeUndefined();
+    expect(result.current.pluginOutput, name).toBeUndefined();
+  }
+});
+
 test("a plugin install failure keeps its output as data until the next submit", async () => {
   const { result } = mount(create());
   await waitFor(() => expect(result.current.credentials).toBeDefined());
@@ -200,6 +233,15 @@ test("Discard clears errors and the outcome", async () => {
   expect(result.current.errors.template).toBe("Choose a template.");
   act(() => result.current.discard());
   expect(result.current.errors).toEqual({});
+  fill(result.current);
+  await act(async () => {
+    await result.current.submit(failPlugin);
+  });
+  expect(result.current.outcome.error).toBe("Plugin install failed: x.");
+  expect(result.current.pluginOutput).toBe("npm ERR! nope");
+  act(() => result.current.discard());
+  expect(result.current.outcome.error).toBeUndefined();
+  expect(result.current.pluginOutput).toBeUndefined();
 });
 
 test("a second submit while one is in flight is ignored", async () => {

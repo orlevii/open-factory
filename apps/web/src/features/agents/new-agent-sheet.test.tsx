@@ -423,6 +423,28 @@ test("a plugin install failure is the footer's error, with Show output opening t
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
 });
 
+test("a plugin install failure with blank output has no Show output", async () => {
+  await openLead({
+    extra: {
+      "POST /api/agents": () =>
+        json(
+          {
+            error: {
+              code: "plugin_install_failed",
+              message: "Plugin install failed: superpowers@market.",
+              output: " \n",
+            },
+          },
+          502,
+        ),
+    },
+  });
+  await userEvent.click(createButton());
+  const msg = await screen.findByText("Plugin install failed: superpowers@market.");
+  const alert = msg.closest("[role=alert]") as HTMLElement;
+  expect(within(alert).queryByRole("button", { name: "Show output" })).toBeNull();
+});
+
 test("a failing submit with no credential chosen opens More options every time, and focuses Credential", async () => {
   mockWorld({ credentials: [credential("work"), credential("prod")] });
   const first = renderApp("/agents", alice);
@@ -480,6 +502,79 @@ test("leaving a changed Template that now fails for its own New template button 
   await child("New template");
   expect(within(dialog).queryByText("That template has errors; fix it first.")).toBeNull();
   expect(field("Template")).not.toHaveAttribute("aria-invalid");
+});
+
+test("a first click on More options, with Template focused, opens it and flags nothing", async () => {
+  const { dialog } = await open();
+  await vi.waitFor(() => expect(field("Template")).toHaveFocus());
+  await userEvent.click(more());
+  expect(more()).toHaveAttribute("aria-expanded", "true");
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
+  expect(within(dialog).queryByText("Choose a template.")).toBeNull();
+});
+
+test("leaving a changed Template that now fails for More options doesn't flag it", async () => {
+  const templates = [templateSummary("lead"), templateSummary("writer")];
+  const { dialog, queryClient } = await open({ templates });
+  await pickOption(field("Template"), /^lead/);
+  templates[0] = templateSummary("lead", 2);
+  await act(() => queryClient.invalidateQueries({ queryKey: ["templates"] }));
+  await vi.waitFor(() => expect(field("Template")).toHaveTextContent("Choose a template"));
+  act(() => field("Template").focus());
+  await userEvent.click(more());
+  expect(more()).toHaveAttribute("aria-expanded", "true");
+  expect(within(dialog).queryByText("That template has errors; fix it first.")).toBeNull();
+  expect(field("Template")).not.toHaveAttribute("aria-invalid");
+});
+
+test("leaving a changed Credential that is now gone for Add credential doesn't flag it", async () => {
+  const credentials = [credential("work"), credential("prod"), credential("other")];
+  const { dialog, queryClient } = await open({ credentials });
+  await userEvent.click(more());
+  await pickOption(field("Credential"), /^prod/);
+  // Deleted elsewhere: the chosen credential is gone and two are left, so the field's check fails.
+  credentials.splice(1, 1);
+  await act(() => queryClient.invalidateQueries());
+  await vi.waitFor(() => expect(field("Credential")).toHaveTextContent("Choose a credential"));
+  act(() => field("Credential").focus());
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  await child("Add credential");
+  // "Choose a credential." stays as More options' reason; the field's note line is what must stay empty.
+  expect(dialog.querySelector("#field-credential-error")).not.toHaveAttribute("data-shown");
+  expect(field("Credential")).not.toHaveAttribute("aria-invalid");
+});
+
+test("leaving a changed, invalid Slug flags it", async () => {
+  await openLead();
+  await userEvent.clear(field("Display name"));
+  await userEvent.type(field("Display name"), "!!!");
+  await userEvent.tab();
+  await vi.waitFor(() => expect(field("Slug")).toHaveFocus());
+  await userEvent.type(field("Slug"), "-bad-");
+  await userEvent.tab();
+  await vi.waitFor(() => expect(field("Slug")).toHaveAttribute("aria-invalid", "true"));
+});
+
+test("no templates: the label is plain text and a failing submit focuses the empty state", async () => {
+  const { dialog } = await open({ templates: [] });
+  expect(dialog.querySelector('label[for="field-template"]')).toBeNull();
+  const empty = within(dialog).getByText("No templates yet.");
+  await userEvent.type(field("Display name"), "Ada");
+  await userEvent.click(createButton());
+  const msg = await within(dialog).findByText("Choose a template.");
+  await vi.waitFor(() => expect(empty).toHaveFocus());
+  expect(empty.getAttribute("aria-describedby")?.split(" ")).toContain(msg.closest("[id]")?.id);
+});
+
+test("every template broken: the empty state carries the note too", async () => {
+  const { dialog } = await open({ templates: [templateSummary("lead", 1)] });
+  expect(dialog.querySelector('label[for="field-template"]')).toBeNull();
+  const empty = within(dialog).getByText(/No template is ready/);
+  expect(empty).toHaveAttribute("id", "field-template");
+  await userEvent.type(field("Display name"), "Ada");
+  await userEvent.click(createButton());
+  await within(dialog).findByText("Choose a template.");
+  await vi.waitFor(() => expect(empty).toHaveFocus());
 });
 
 test("a server projects error opens More options and focuses the group", async () => {

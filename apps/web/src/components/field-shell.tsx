@@ -21,6 +21,8 @@ type Props = {
   describedBy?: string;
   /** The label is for assistive tech only (a heading nearby already names the field). Single-input fields only. */
   hideLabel?: boolean;
+  /** The control isn't labelable (an empty state's text in its place): the label is plain text, not a `<label for>`. */
+  plainLabel?: boolean;
   children: (a: { id: string; describedBy?: string; invalid: boolean }) => ReactNode;
 };
 
@@ -35,6 +37,7 @@ export function FieldShell({
   below,
   describedBy: extra,
   hideLabel,
+  plainLabel,
   children,
 }: Props) {
   const id = `field-${name}`;
@@ -61,7 +64,9 @@ export function FieldShell({
       </fieldset>
     );
   }
-  const labelEl = (
+  const labelEl = plainLabel ? (
+    <span className="text-[0.8125rem] leading-none font-medium">{label}</span>
+  ) : (
     <Label htmlFor={id} className={hideLabel ? "sr-only" : "text-[0.8125rem]"}>
       {label}
     </Label>

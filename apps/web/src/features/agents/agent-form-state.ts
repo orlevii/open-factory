@@ -318,6 +318,12 @@ export function useAgentFormState({
     checks: Object.fromEntries(FIELDS.map((x) => [x, () => check(x, shown)])),
   });
 
+  /** The submit's line and the plugin output its Show output opens: they go together. */
+  const clearOutcome = () => {
+    o.clear();
+    setPluginOutput(undefined);
+  };
+
   const set = <K extends Field>(field: K, v: Values[K]) => {
     update({
       [field]: v,
@@ -327,7 +333,7 @@ export function useAgentFormState({
     });
     f.change(field);
     // The line describes the last submit; an edit makes it stale, and a notice it hid comes back.
-    o.clear();
+    clearOutcome();
   };
 
   const setProjects = (next: string[]) => {
@@ -344,13 +350,13 @@ export function useAgentFormState({
         : {}),
     });
     f.change("projects");
-    o.clear();
+    clearOutcome();
   };
   const applyTemplateDefault = () => {
     // The template's set when it's known; the server resolves it either way (projects: null).
     update({ custom: false, ...(config ? { projects: config.projects } : {}) });
     f.change("projects");
-    o.clear();
+    clearOutcome();
   };
 
   function body(): CreateAgentBody | PatchAgentBody | null {
@@ -399,8 +405,7 @@ export function useAgentFormState({
   ): Promise<SubmitResult> {
     // A ref, not `pending`: a second Enter can arrive before the first one's state has rendered.
     if (inFlight.current || noCredentials) return "nothing";
-    o.clear();
-    setPluginOutput(undefined);
+    clearOutcome();
     if (!f.submit()) return "invalid";
     const b = body();
     if (!b) {
@@ -444,8 +449,7 @@ export function useAgentFormState({
     latest.current = fresh;
     setValues(fresh);
     f.reset();
-    o.clear();
-    setPluginOutput(undefined);
+    clearOutcome();
     setRestored(false);
   }
 

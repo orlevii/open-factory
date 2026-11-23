@@ -26,6 +26,10 @@ type Entry = {
   titleClass?: string;
   /** A stacked child's line after "For <parent>." in its description. */
   note?: string;
+  /** A top-level sheet's description under its title (Sign in again names the credential). */
+  description?: (spec: any) => string;
+  /** Classes for the description (mono for a name). */
+  descriptionClass?: string;
 };
 
 /** kind → lazy body. PR1 registers new-task, new-schedule and edit-schedule; PR2 the rest. */
@@ -115,13 +119,16 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     },
     title: "Add secret",
   },
-  // Task 17 replaces the placeholder body.
   "sign-in-again": {
-    load: () => import("./sign-in-again-sheet-placeholder"),
+    load: () => import("./sign-in-again-sheet"),
+    // Together, so every entry point's intent preloads both in parallel; a restored attempt never flashes Idle.
     prefetch(qc) {
       warm(qc, credentialsQueryOptions);
+      warm(qc, signInQueryOptions);
     },
     title: "Sign in again",
+    description: (spec: { name: string }) => spec.name,
+    descriptionClass: "font-mono",
   },
   "edit-schedule": {
     load: () => import("@/features/schedules/edit-schedule-sheet"),
@@ -141,6 +148,13 @@ export function sheetTitle(kind: SheetKind, spec: SheetSpec | ChildSpec): string
 }
 
 export const sheetTitleClass = (kind: SheetKind) => sheetBodies[kind]?.titleClass;
+
+/** A top-level sheet's own description, when its entry has one. */
+export function sheetDescription(kind: SheetKind, spec: SheetSpec | ChildSpec): string | undefined {
+  return sheetBodies[kind]?.description?.(spec);
+}
+
+export const sheetDescriptionClass = (kind: SheetKind) => sheetBodies[kind]?.descriptionClass;
 
 /** A stacked child's description: whom it serves ("For New agent."), then its own note. */
 export function childDescription(kind: SheetKind, parentTitle: string): string {

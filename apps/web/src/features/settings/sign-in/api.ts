@@ -36,6 +36,15 @@ export function isLiveCreate(s: { attempt: AttemptView | null }): boolean {
   return a !== null && a.purpose === "create" && LIVE.has(a.state);
 }
 
+/** A live `replace` attempt for this credential: the Sign in again sheet restores it instead of focusing its primary. */
+export function isLiveReplace(
+  s: { attempt: AttemptView | null } | undefined,
+  name: string,
+): boolean {
+  const a = s?.attempt;
+  return a != null && a.purpose === "replace" && a.name === name && LIVE.has(a.state);
+}
+
 export type SignInOutcome =
   | { kind: "done"; credential: CredentialSummary }
   | { kind: "pending"; attempt: AttemptView };

@@ -150,8 +150,15 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
           // `?message=` resolves to the recipient's event, or says why it can't (UI design §2.5).
           try {
             const m = await fetchMessage(message);
-            if (m.state === "delivered" && m.recipientEvent?.agentSlug === slug) {
-              around = m.recipientEvent.seq;
+            // To this agent: its receiving event. From it (a reply to a human has no recipient event): its sending call.
+            const at =
+              m.recipientEvent?.agentSlug === slug
+                ? m.recipientEvent
+                : m.senderEvent?.agentSlug === slug
+                  ? m.senderEvent
+                  : undefined;
+            if (m.state === "delivered" && at) {
+              around = at.seq;
               setMessageSeq(around);
             } else if (m.state === "rejected") {
               // The lookup names the recipient as `@slug`; the notice holds the bare slug.

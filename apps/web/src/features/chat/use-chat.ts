@@ -47,11 +47,11 @@ function setCursor(qc: QueryClient, slug: string, data: ChatData | undefined) {
 async function run(qc: QueryClient, slug: string, source: Source) {
   const opts = chatQueryOptions(slug);
   const had = dataOf(qc, slug);
-  if (!had) {
-    await qc.fetchInfiniteQuery(opts);
-    return;
-  }
   try {
+    if (!had) {
+      await qc.fetchInfiniteQuery(opts);
+      return;
+    }
     const fetched = [await fetchChat(slug)];
     // More than a page arrived between refreshes: walk older until the pages meet the cache.
     const head = had.pages[0];
@@ -62,12 +62,22 @@ async function run(qc: QueryClient, slug: string, source: Source) {
       last = await fetchChat(slug, { before: last.nextCursor as string });
       fetched.push(last);
     }
-    // The cache may have moved while fetching (Load earlier): merge into what is there now.
-    const next = mergeNewest(dataOf(qc, slug), fetched);
-    if (source === "other" || document.hidden) setCursor(qc, slug, next);
+    // The gap was too wide to walk: the fetched pages replace the cache rather than leave a hole in it.
+    const gap = !meetsCache(fetched[fetched.length - 1] as ChatPage, head);
+    // Otherwise the cache may have moved while fetching (Load earlier): merge into what is there now.
+    const next: ChatData = gap
+      ? {
+          pages: fetched,
+          pageParams: fetched.map((_, i) =>
+            i === 0 ? "" : ((fetched[i - 1] as ChatPage).nextCursor as string),
+          ),
+        }
+      : mergeNewest(dataOf(qc, slug), fetched);
+    if (gap || source === "other" || document.hidden) setCursor(qc, slug, next);
     qc.setQueryData(opts.queryKey, next);
   } catch {
-    // A failed refresh keeps what is on screen; the next frame, focus or reconnect tries again.
+    // A failed first load stays the query's error state (shown with Retry); a failed refresh keeps
+    // what is on screen. The next frame, focus or reconnect tries again.
   }
 }
 
@@ -139,14 +149,15 @@ export function useChat(slug: string, o: { messageId?: string | undefined } = {}
     ...(around ? chatAroundQueryOptions(slug, messageId) : chatQueryOptions(slug)),
     select: flattenPages,
   });
-  const { fetchNextPage, refetch, isFetchNextPageError, isFetchingNextPage } = q;
+  const { fetchNextPage, isFetchNextPageError, isFetchingNextPage } = q;
   const thread = q.data ?? NOTHING;
 
   // A mounting view starts its live window at what it shows: nothing fades on load, on a reading
   // pane retarget or on a Chat/Session switch (idempotent, so safe to repeat).
-  useState(() => perClient(cursors, qc).delete(slug));
+  // A `?message=` window never touches the thread's cursor.
+  useState(() => !around && perClient(cursors, qc).delete(slug));
   const cursor = perClient(cursors, qc);
-  if (q.data && !cursor.has(slug)) cursor.set(slug, keysOf(thread.entries));
+  if (!around && q.data && !cursor.has(slug)) cursor.set(slug, keysOf(thread.entries));
   // The working line the view showed last: the outcome that replaces it never fades.
   const shownWorking = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -181,7 +192,16 @@ export function useChat(slug: string, o: { messageId?: string | undefined } = {}
       : chatQueryOptions(slug);
     setCursor(qc, slug, qc.getQueryData<ChatData>(queryKey));
   }, [fetchNextPage, qc, slug, messageId]);
-  const retry = useCallback(() => void refetch(), [refetch]);
+  // Retry fetches the first page again (through the union when the thread has pages), never every loaded page in turn.
+  const retry = useCallback(() => {
+    if (!around && dataOf(qc, slug)) void refreshChat(qc, slug, "other");
+    else
+      void qc
+        .fetchInfiniteQuery(
+          around ? chatAroundQueryOptions(slug, messageId) : chatQueryOptions(slug),
+        )
+        .catch(() => {});
+  }, [qc, slug, around, messageId]);
   return {
     entries: thread.entries,
     working: around ? null : thread.working,

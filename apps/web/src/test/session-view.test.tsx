@@ -69,7 +69,7 @@ afterEach(() => {
 test("renders the conversation: sender badge, collapsed tool call, text, compaction marker; never raw XML", async () => {
   renderApp("/agents/dev/session", alice);
   expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
-  const log = screen.getByRole("log", { name: "Session" });
+  const log = await screen.findByRole("log", { name: "Session" });
   // the heading comes from the agent detail; the events are a second request, so wait for the first row
   expect(await within(log).findByText("@or")).toBeInTheDocument();
   expect(within(log).getByText("Urgent")).toBeInTheDocument();
@@ -1064,6 +1064,22 @@ test("?message= resolves the message before asking for the events window", async
     }),
   );
   await vi.waitFor(() => expect(requested("around=5")).toBe(1));
+});
+
+test("?message= on a reply from this agent opens its sending call", async () => {
+  routes["/api/agents/dev/events?around=7"] = () => json(conversation());
+  routes["/api/messages/m2"] = () =>
+    json({
+      id: "m2",
+      kind: "message",
+      from: "@dev",
+      fromKind: "agent",
+      to: "@alice",
+      state: "delivered",
+      senderEvent: { agentSlug: "dev", seq: 7 },
+    });
+  renderApp("/agents/dev/session?message=m2", alice);
+  await vi.waitFor(() => expect(requested("around=7")).toBe(1));
 });
 
 const detailRequests = () =>

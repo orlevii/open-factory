@@ -32,7 +32,9 @@ export const rowGap = (first: boolean, statusLine = false) =>
 
 /** Everyone a message went to but you and the agent whose chat this is, as `@handle`s. */
 function othersOf(recipients: readonly string[], slug: string, self: string | undefined) {
-  const skip = new Set([`@${slug}`, ...(self ? [`@${self}`] : [])].map((h) => h.toLowerCase()));
+  // Until your handle is known "you" can't be told from another recipient: show nothing rather than "@you".
+  if (self === undefined) return [];
+  const skip = new Set([`@${slug}`, `@${self}`].map((h) => h.toLowerCase()));
   return recipients.filter((r) => !skip.has(r.toLowerCase()));
 }
 
@@ -118,7 +120,9 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
                 : {})}
               {...(entry.state === "rejected"
                 ? {
-                    failed: `This message wasn't delivered: ${entry.rejectReason ?? "the agent isn't available"}.`,
+                    failed: entry.rejectReason
+                      ? `This message wasn't delivered: ${entry.rejectReason.replace(/\.$/, "")}.`
+                      : "This message wasn't delivered.",
                   }
                 : {})}
               action={
@@ -139,6 +143,8 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
         ) : (
           <>
             <RowGutter />
+            {/* An agent's reply carries no attachments or urgency in a human's chat today (the send tool has neither
+                for a human recipient), so only the text renders. */}
             <div {...rowProps}>
               <SpeakerLine from={entry.from} fromKind={entry.fromKind} self at={entry.createdAt}>
                 {alsoTo}
@@ -195,6 +201,10 @@ const OUTCOME_TEXT: Record<Outcome, { suffix: string; Icon: typeof Check }> = {
   stopped: { suffix: " was stopped before replying", Icon: Square },
   error: { suffix: " hit an error before replying", Icon: CircleAlert },
 };
+
+/** "Ada hit an error before replying": the line's sentence, also what the live region announces. */
+export const outcomeSentence = (name: string, outcome: Outcome) =>
+  `${name}${OUTCOME_TEXT[outcome].suffix}`;
 
 /**
  * The thread's status line (I1 §6.4): "[tooth] 42s · Ada is working · Open session" while a turn that

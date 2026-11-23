@@ -45,7 +45,7 @@ export function ViewSwitch({
           size="default"
           className={cn("@max-[24rem]:px-0 @max-[24rem]:w-8", inMenu && "@max-[22rem]:hidden")}
         >
-          <Link data-view-switch to={to.to} params={{ slug }} aria-label={to.label}>
+          <Link data-view-switch to={to.to} params={{ slug }}>
             <to.Icon aria-hidden="true" />
             {/* Both labels share one grid cell: the wider sets the width, the other is never seen. */}
             <span className="grid @max-[24rem]:sr-only">

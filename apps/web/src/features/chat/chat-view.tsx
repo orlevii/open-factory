@@ -27,7 +27,14 @@ import { useStickToBottom } from "@/features/session/stick-to-bottom";
 import { ARRIVAL_MS, arrive } from "@/features/session/timeline";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { sessionQueryOptions } from "@/lib/session";
-import { type Arrival, type CancelNote, ChatRow, rowGap, StatusLine } from "./chat-row";
+import {
+  type Arrival,
+  type CancelNote,
+  ChatRow,
+  outcomeSentence,
+  rowGap,
+  StatusLine,
+} from "./chat-row";
 import { entryKey, keysOf } from "./chat-state";
 import { useChat } from "./use-chat";
 
@@ -276,6 +283,17 @@ function Thread({
       />
     ) : null;
 
+  // What arrived live, for assistive tech: the log itself is not live. Empty on load.
+  const announce = useMemo(() => {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i] as ChatEntry;
+      if (!live.has(entryKey(e))) continue;
+      if (e.kind === "turn_outcome") return `${outcomeSentence(agentName, e.outcome)}.`;
+      if (e.fromKind === "agent") return `${agentName}: ${e.body.split("\n", 1)[0]}`;
+    }
+    return "";
+  }, [entries, live, agentName]);
+
   const speech = useMemo(() => {
     if (!seen) return 0;
     let n = 0;
@@ -348,6 +366,9 @@ function Thread({
           {/* One flat keyed list: the working line and the outcome that replaces it share a key. */}
           {workingEl ? [...rowEls, workingEl] : rowEls}
         </div>
+      </div>
+      <div role="status" aria-live="polite" className="sr-only">
+        {announce}
       </div>
       {/* Centred on the 52rem column, not the scroller. */}
       <div className="pointer-events-none absolute inset-x-0 bottom-3 px-4 md:px-6">

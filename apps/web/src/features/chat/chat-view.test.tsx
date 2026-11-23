@@ -290,6 +290,19 @@ test("a live message fades in; what was loaded does not", async () => {
   expect(row("m2")?.closest("[data-row-wrap]")).not.toHaveAttribute("data-live");
 });
 
+test("a live reply and an outcome are announced politely; a load announces nothing", async () => {
+  let thread = [chatMsg(1)];
+  const { queryClient } =
+    (stubChatApi({ chat: () => page(thread) }), renderApp("/agents/dev/chat", alice));
+  await screen.findByText("Reply 1");
+  const status = () => document.querySelector<HTMLElement>('[data-chat-view] ~ [role="status"]');
+  expect(status()).toHaveAttribute("aria-live", "polite");
+  expect(status()).toHaveTextContent("");
+  thread = [...thread, chatMsg(2)];
+  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: "dev" }));
+  await waitFor(() => expect(status()).toHaveTextContent("Dev agent: Reply 2"));
+});
+
 test("Load earlier adds older messages above the loaded ones", async () => {
   stubChatApi({
     chat: (url) =>

@@ -12,7 +12,10 @@ export const readViewPosition = (slug: string, view: AgentView): ViewPosition | 
   memory.get(slug)?.[view];
 
 export function writeViewPosition(slug: string, view: AgentView, position: ViewPosition): void {
-  memory.set(slug, { ...memory.get(slug), [view]: position });
+  // Mutated in place: this runs on every scroll event and allocates no object per call for a seen slug.
+  const places = memory.get(slug);
+  if (places) places[view] = position;
+  else memory.set(slug, { [view]: position });
 }
 
 /** Forgets every place (a test's router starts from a clean slate). */

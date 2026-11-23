@@ -186,11 +186,15 @@ export const InboxRow = memo(function InboxRow({
         >
           {body}
         </Link>
+      ) : link.seq === undefined ? (
+        <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }} {...common}>
+          {body}
+        </Link>
       ) : (
         <Link
           to="/agents/$slug/session"
           params={{ slug: link.agentSlug }}
-          search={link.seq === undefined ? undefined : { event: link.seq }}
+          search={{ event: link.seq }}
           {...common}
         >
           {body}

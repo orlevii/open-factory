@@ -23,6 +23,7 @@ const msg = (i: number): ChatEntry => ({
 let thread: ChatEntry[];
 let requests: string[];
 let gate: Promise<void> | undefined;
+let failing = false;
 const json = (data: unknown) =>
   new Response(JSON.stringify(data), {
     status: 200,
@@ -43,10 +44,12 @@ beforeEach(() => {
   thread = Array.from({ length: 50 }, (_, i) => msg(i + 1));
   requests = [];
   gate = undefined;
+  failing = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
       requests.push(url);
+      if (failing) return new Response("{}", { status: 500 });
       const page = pageOf(url);
       await gate;
       return json(page);
@@ -56,7 +59,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 function setup() {
-  const qc = new QueryClient();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   let hub: WsHub = { send: () => true, listen: () => () => {}, status: "open", openCount: 1 };
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>
@@ -177,5 +180,32 @@ test("loadEarlier prepends older entries and none of them is live", async () => 
   expect(hook.result.current.hasEarlier).toBe(true);
   await act(() => hook.result.current.loadEarlier());
   await waitFor(() => expect(hook.result.current.entries).toHaveLength(100));
+  expect(hook.result.current.live.size).toBe(0);
+});
+
+test("a failed first load stays an error; frames reject nothing and a later frame still loads it", async () => {
+  failing = true;
+  const { qc, hook } = setup();
+  await waitFor(() => expect(hook.result.current.status).toBe("error"));
+  frame(qc);
+  frame(qc);
+  frame(qc);
+  await settle();
+  expect(hook.result.current.status).toBe("error");
+  failing = false;
+  frame(qc);
+  await waitFor(() => expect(hook.result.current.entries).toHaveLength(50));
+});
+
+test("a gap wider than the cap replaces the cache with the newest pages, leaving no hole", async () => {
+  const { qc, hook } = setup();
+  await waitFor(() => expect(hook.result.current.entries).toHaveLength(50));
+  for (let i = 51; i <= 1150; i++) thread.push(msg(i));
+  frame(qc);
+  await waitFor(() => expect(hook.result.current.entries).toHaveLength(1050));
+  const ids = hook.result.current.entries.map((e) => (e as { id: string }).id);
+  expect(ids[0]).toBe("m101");
+  expect(ids[1049]).toBe("m1150");
+  expect(hook.result.current.hasEarlier).toBe(true);
   expect(hook.result.current.live.size).toBe(0);
 });

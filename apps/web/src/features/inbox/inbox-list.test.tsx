@@ -52,7 +52,7 @@ test("rows link to the sender's call with an accessible name; the preview is the
   expect(screen.getByRole("list", { name: "Inbox" })).toBeInTheDocument();
 });
 
-test("a factory item names what it is about; a row without seq links to the session", async () => {
+test("a factory item names what it is about; a row without seq links to the chat", async () => {
   mockApi({
     "GET /api/inbox?": () =>
       json({
@@ -71,7 +71,7 @@ test("a factory item names what it is about; a row without seq links to the sess
   const link = await screen.findByRole("link", {
     name: "From Factory about @ops to @bob, 14:32",
   });
-  expect(link).toHaveAttribute("href", "/agents/ops/session");
+  expect(link).toHaveAttribute("href", "/agents/ops/chat");
 });
 
 test("empty state", async () => {

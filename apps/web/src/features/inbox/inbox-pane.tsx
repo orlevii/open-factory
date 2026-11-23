@@ -56,11 +56,15 @@ function OpenLink({ item }: { item: InboxItem }) {
         >
           Open task
         </Link>
+      ) : link.seq === undefined ? (
+        <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }}>
+          Open chat
+        </Link>
       ) : (
         <Link
           to="/agents/$slug/session"
           params={{ slug: link.agentSlug }}
-          search={link.seq === undefined ? undefined : { event: link.seq }}
+          search={{ event: link.seq }}
         >
           Open in session
         </Link>

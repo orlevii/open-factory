@@ -132,11 +132,13 @@ export function useInboxNotifier() {
           params: { key: l.key },
           search: l.commentId ? { comment: l.commentId } : {},
         });
+      else if (l.seq === undefined)
+        void navigate({ to: "/agents/$slug/chat", params: { slug: l.agentSlug } });
       else
         void navigate({
           to: "/agents/$slug/session",
           params: { slug: l.agentSlug },
-          search: l.seq === undefined ? undefined : { event: l.seq },
+          search: { event: l.seq },
         });
     },
     [open, navigate],

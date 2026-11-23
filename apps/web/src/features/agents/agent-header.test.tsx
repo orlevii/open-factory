@@ -95,7 +95,7 @@ test("the slot keeps the width of the wider label in both views, and only the ic
   expect(cell.children[1]).toHaveClass("invisible");
   // Below a 24rem header the label is for screen readers only (the accessible name is on the link).
   expect(cell).toHaveClass("@max-[24rem]:sr-only");
-  expect(link).toHaveAttribute("aria-label", "Chat");
+  expect(link).toHaveAccessibleName("Chat");
 });
 
 test("crowded by Restart, the switch leaves the header below 22rem and tops the ⋯ menu; Restart stays", async () => {

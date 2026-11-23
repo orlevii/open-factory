@@ -6,8 +6,18 @@ import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, conversation, detail } from "@/test/session-fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
+const ws = vi.hoisted(() => ({
+  frame: (_m: unknown) => {},
+  open: () => {},
+}));
 vi.mock("@/lib/ws", () => ({
-  connectWs: (o: { onStatus?: (s: string) => void; onOpen?: () => void }) => {
+  connectWs: (o: {
+    onStatus?: (s: string) => void;
+    onOpen?: () => void;
+    onMessage?: (m: unknown) => void;
+  }) => {
+    ws.frame = (m) => o.onMessage?.(m);
+    ws.open = () => o.onOpen?.();
     setTimeout(() => {
       o.onStatus?.("open");
       o.onOpen?.();
@@ -101,15 +111,40 @@ test("the header neither remounts across a switch nor renders for ?event or a ch
   await toSession(router, { event: 5 });
   await waitFor(() => expect(router.state.location.search).toEqual({ event: 5 }));
   await screen.findByText("Two entries.");
+  // `?event=` renders nothing in the header.
+  expect(header.renders).toBe(0);
   await toChat(router);
   await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 30));
+  });
+  // The switch changes the header's title and its switch label once.
+  expect(header.renders).toBeLessThanOrEqual(1);
+  const afterSwitch = header.renders;
   await act(() => queryClient.invalidateQueries({ queryKey: ["chat", "dev"] }));
   await act(async () => {
     await new Promise((r) => setTimeout(r, 30));
   });
+  // A chat refetch renders nothing in it.
+  expect(header.renders).toBe(afterSwitch);
   expect(header.mounts).toBe(1);
-  // The switch changes the header's title and its switch label once; the search and the refetch nothing.
-  expect(header.renders).toBeLessThanOrEqual(1);
+});
+
+test("a chat_changed frame through the socket refreshes the open chat once; a reconnect refreshes it once, not twice", async () => {
+  renderApp("/agents/dev/chat", alice);
+  await waitFor(() => expect(chatRequests).toHaveLength(1));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+  });
+  act(() => ws.frame({ type: "chat_changed", agent: "dev" }));
+  await waitFor(() => expect(chatRequests).toHaveLength(2));
+  // The socket reopens: the chat's own refresh runs, and the global invalidation leaves ["chat"] alone.
+  act(() => ws.open());
+  await waitFor(() => expect(chatRequests).toHaveLength(3));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  expect(chatRequests).toHaveLength(3);
 });
 
 test("the chat thread is fetched by the route's loader, once, before the view", async () => {

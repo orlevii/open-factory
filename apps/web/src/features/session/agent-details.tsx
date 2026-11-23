@@ -216,7 +216,7 @@ function Now({
     const detail = detailText(agent, slotsMax);
     if (detail) rows.push({ key: "detail", node: <span>{detail}</span> });
     if (agent.restartPending) {
-      const changes = agent.restartChanges ?? [];
+      const changes = agent.restartChanges;
       rows.push({
         key: "restart",
         node: (

@@ -49,7 +49,7 @@ export const agentLiveShape = {
   /** U3: a compaction is running. */
   compacting: z.boolean().optional(),
   /** I2 §7.3: the config change lines a pending restart applies (empty when none is pending). */
-  restartChanges: z.array(z.string()).optional(),
+  restartChanges: z.array(z.string()),
 };
 
 export const agentSummarySchema = z.object({

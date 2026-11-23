@@ -31,6 +31,7 @@ test("subscribe frames and new server frames parse", () => {
       turnOpen: false,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     }).type,
   ).toBe("agent_status");
   expect(serverMessageSchema.parse({ type: "resync", agent: "dev" }).type).toBe("resync");

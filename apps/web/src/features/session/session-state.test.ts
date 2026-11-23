@@ -27,7 +27,7 @@ const page = (seqs: number[], hasMore = { before: false, after: false }): Events
   events: seqs.map(ev),
   hasMore,
 });
-const noRestart = { restartPending: false, restartWaitingOn: 0 } as const;
+const noRestart = { restartPending: false, restartWaitingOn: 0, restartChanges: [] };
 const detail: AgentDetail = {
   agent: agentSummary(),
   model: { value: null, source: "default" },

@@ -25,6 +25,7 @@ function agent(over: Partial<AgentSummary> = {}): AgentSummary {
     archivedAt: null,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     ...over,
   });
 }
@@ -211,11 +212,8 @@ describe("restart line (I2 §7.3)", () => {
   });
 
   test("no known changes keeps the plain line", () => {
-    expect(liveFact(agent({ restartPending: true }), ctx)).toMatchObject({
-      text: "Restarts when idle",
-    });
-    expect(
-      liveFact(agent({ restartPending: true, restartChanges: [] }), ctx)?.title,
-    ).toBeUndefined();
+    const f = liveFact(agent({ restartPending: true }), ctx);
+    expect(f).toMatchObject({ text: "Restarts when idle" });
+    expect(f?.title).toBeUndefined();
   });
 });

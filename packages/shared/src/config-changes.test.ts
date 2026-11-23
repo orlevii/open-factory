@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConfigDoc } from "./config.ts";
-import {
-  CONFIG_NOTICE_HEADER,
-  describeChanges,
-  parseConfigNotice,
-  renderConfigNotice,
-  summarizeChanges,
-} from "./config-changes.ts";
+import { describeChanges, summarizeChanges } from "./config-changes.ts";
 
 const doc = (
   p: {
@@ -262,14 +256,4 @@ describe("summarizeChanges", () => {
     ).toBe("can spawn, template skills, 1 template skill"));
 
   it("is empty for no lines", () => expect(summarizeChanges([])).toBe(""));
-});
-
-describe("config notice", () => {
-  it("round-trips", () => {
-    const lines = ["model: a → b", "added allow rule `Bash(x:*)`"];
-    expect(parseConfigNotice(renderConfigNotice(lines))).toEqual(lines);
-    expect(renderConfigNotice(lines).startsWith(CONFIG_NOTICE_HEADER)).toBe(true);
-  });
-  it("parses a foreign body as no lines", () =>
-    expect(parseConfigNotice("hello\n- x")).toEqual([]));
 });

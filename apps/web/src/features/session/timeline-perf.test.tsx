@@ -278,6 +278,7 @@ test("an agent_status frame renders no row and no markdown", async () => {
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
   });
   frame();
   expect(count.rows.size).toBe(0);
@@ -648,6 +649,7 @@ test("buildRows runs once per events change, not for status or queue frames; ope
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
   });
   frame();
   // The frame did reach the hook (a render that skipped it would prove nothing).
@@ -702,6 +704,7 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     turnStartedAt: "2026-11-21T10:00:00.000Z",
   });
   frame();
@@ -745,6 +748,7 @@ test("SessionView: a live frame and an agent_status frame render the composer 0 
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     turnStartedAt: "2026-11-21T10:00:00.000Z",
   });
   frame();
@@ -770,6 +774,7 @@ test("SessionView: a status frame that opens the turn renders the composer once 
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
   });
   frame();
   expect(count.profiled.get("composer")).toBe(1);

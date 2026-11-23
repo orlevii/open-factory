@@ -153,14 +153,3 @@ export function summarizeChanges(lines: string[]): string {
   const more = parts.length - 3;
   return more > 0 ? `${shownParts} and ${more} more` : shownParts;
 }
-
-export const CONFIG_NOTICE_HEADER = "Your configuration changed:";
-
-export const renderConfigNotice = (lines: string[]): string =>
-  [CONFIG_NOTICE_HEADER, ...lines.map((l) => `- ${l}`)].join("\n");
-
-export function parseConfigNotice(body: string): string[] {
-  const [head, ...rest] = body.split("\n");
-  if (head !== CONFIG_NOTICE_HEADER) return [];
-  return rest.filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
-}

@@ -84,7 +84,7 @@ export function liveFact(
     };
   const queued = queuedText(agent, ctx.slotsMax);
   if (queued) return { kind: "queued", text: queued };
-  if (agent.restartPending) return restartFact(agent.restartChanges ?? []);
+  if (agent.restartPending) return restartFact(agent.restartChanges);
   const [first, ...rest] = agent.waitingOn.tasks;
   if (first)
     return {

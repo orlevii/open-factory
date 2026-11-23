@@ -183,6 +183,7 @@ const status = (turnOpen: boolean) =>
       turnOpen,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     }),
   );
 const stop = () => screen.getByRole("button", { name: /^(Stop|Stopping…)$/ });
@@ -337,6 +338,7 @@ test("Stop: posts one interrupt and re-enables when the turn closes and a new on
         turnOpen: open,
         restartPending: false,
         restartWaitingOn: 0,
+        restartChanges: [],
       });
   });
   await vi.waitFor(() =>

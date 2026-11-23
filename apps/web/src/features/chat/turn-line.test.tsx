@@ -64,6 +64,7 @@ test("status frames never hide the working line", async () => {
       turnOpen: false,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     });
     await new Promise((r) => requestAnimationFrame(() => r(undefined)));
   });

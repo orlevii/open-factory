@@ -2,10 +2,16 @@ import { ApiError, type CredentialKind } from "@open-factory/shared";
 import type { FocusEvent } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { PasswordInput } from "@/components/password-input";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 
 /** Field pieces and checks shared by the Add forms and the Replace, Update and Change path forms. */
 
 export const valueNoun = (k: CredentialKind) => (k === "oauth_token" ? "token" : "key");
+/** Per-noun constants, so the copy stays in FORM_MSG (spec §8) rather than interpolated. */
+export const enterValueMessage = (k: CredentialKind) =>
+  k === "oauth_token" ? FORM_MSG.enterToken : FORM_MSG.enterKey;
+export const replaceFailedMessage = (k: CredentialKind) =>
+  k === "oauth_token" ? FORM_MSG.replaceTokenFailed : FORM_MSG.replaceKeyFailed;
 export type Verdict = { error?: string; warning?: string };
 /** 422s from a verification turn: a rejection is the token's fault, the rest is transient. */
 export function verdictOf(err: unknown): Verdict | undefined {
@@ -92,10 +98,10 @@ export function ValueField({
 export const PATH_HELP = "Absolute path to a folder on this machine, usually a git repository.";
 export const checkPath = (p: string) =>
   p.trim() === ""
-    ? "Enter a path."
+    ? FORM_MSG.enterPath
     : p.trim().startsWith("/")
       ? undefined
-      : "Enter an absolute path.";
+      : FORM_MSG.absolutePath;
 
 /** Server field errors (`400 validation_error` with `fields`) for this form's fields. */
 export const fieldsOf = (err: unknown): Record<string, string> | undefined =>

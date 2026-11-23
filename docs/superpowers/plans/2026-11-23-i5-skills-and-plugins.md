@@ -825,7 +825,7 @@ Implements spec §5.1 (marketplaces), §7.2 and §7.9.
 
 ```ts
 export const storeLock: RwLock;  // { read<T>(fn): Promise<T>; write<T>(fn): Promise<T> }
-export const CLAUDE_PLUGIN_FLOOR: string;  // from the G1 report
+export const CLAUDE_PLUGIN_FLOOR: string;  // from the G1 report; must be <= the B0 pin (images/base/claude-code-version). If G1 fails on the pinned version, that is a FAIL for owner-i5; never raise the pin past the 14-day rule to chase a fix
 export async function checkClaudeVersion(bin: string, env): Promise<void>;  // fails "Claude Code {found} is too old; update it to {floor} or later."
 export async function checkImageClaudeVersion(image: string, digest: string): Promise<void>;  // docker run --rm --network none --entrypoint claude <image> --version, cached by digest
 export class StoreRunner {

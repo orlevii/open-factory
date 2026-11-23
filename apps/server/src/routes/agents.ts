@@ -161,9 +161,11 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const row = await app.store.agentBySlug(req.params.slug);
       if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      // The skills the next start would have, never `started`: a stored session list is the running process's own,
+      // so against `started` it could never be stale. Before the first start they are the list itself.
       return commandsResponse(
         await app.store.agentCommands(row.id),
-        await app.resolver.skillsOf(row, app.runtimes.startedOf(row.id)),
+        await app.resolver.skillsOf(row, undefined),
       );
     },
   );

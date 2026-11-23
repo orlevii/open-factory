@@ -34,7 +34,7 @@ import {
   personaRoot,
   pluginsConfigDir,
 } from "./paths.ts";
-import { installPlugins, PluginInstallError } from "./plugins.ts";
+import { installPlugins, PluginInstallError, redactOutput } from "./plugins.ts";
 import { SafeFs } from "./safe-fs.ts";
 import { buildSettings } from "./settings.ts";
 
@@ -262,10 +262,11 @@ export class Workspace {
       await this.ensurePlugins(i.slug, config.plugins, doc.settings);
     } catch (err) {
       if (!(err instanceof PluginInstallError)) throw err;
-      const plugin = err.plugin ?? config.plugins[0] ?? "";
+      // The error names the plugin redacted; the template's list is matched in the same form.
+      const plugin = err.plugin ?? redactOutput(config.plugins[0] ?? "");
       throw new AgentStartError(
         `Plugin ${plugin} didn't install.`,
-        i.effective.templatePlugins.includes(plugin) ? "template" : "config",
+        i.effective.templatePlugins.some((p) => redactOutput(p) === plugin) ? "template" : "config",
         undefined,
         // No output (a silent exit, a timeout): the error's own line, already redacted, says why.
         err.output || err.message,

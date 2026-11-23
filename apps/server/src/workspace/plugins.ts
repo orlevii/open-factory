@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 export class PluginInstallError extends Error {
-  /** The plugin being installed when it failed; `installPlugins` always sets it. */
+  /**
+   * The plugin being installed when it failed, redacted like the output (a ref can carry URL
+   * credentials, and this error is logged whole); `installPlugins` always sets it.
+   */
   plugin?: string;
   constructor(
     message: string,
@@ -154,7 +157,7 @@ async function runInstall(
   try {
     await Promise.race([sequence(), budget]);
   } catch (err) {
-    if (err instanceof PluginInstallError) err.plugin = current;
+    if (err instanceof PluginInstallError && current) err.plugin = redactOutput(current);
     throw err;
   } finally {
     clearTimeout(timer);

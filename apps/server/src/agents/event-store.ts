@@ -221,20 +221,26 @@ export class EventStore {
       .set({ terminatedAt: now, terminatedBy: by, attempting: false, updatedAt: now })
       .where(eq(agents.id, agentId));
     await tx.delete(agentProjectGrants).where(eq(agentProjectGrants.agentId, agentId));
-    await this.rejectPending(agentId, tx);
+    const rejected = await this.rejectPending(agentId, tx);
     // S9 §10.1: a terminated target's schedules are soft-deleted in the same transaction, after the agent locks
     // (agents before schedules). Soft: delivered `scheduled` rows keep their schedule, and Restore refuses.
     await tx
       .update(schedules)
       .set({ deletedAt: now, nextRunAt: null, updatedAt: now })
       .where(and(eq(schedules.targetAgentId, agentId), isNull(schedules.deletedAt)));
+    return rejected;
   }
-  /** Every pending row addressed to the agent becomes `rejected` (a terminated agent receives nothing). */
-  async rejectPending(agentId: string, tx: Exec = this.db) {
-    await tx
+  /**
+   * Every pending row addressed to the agent becomes `rejected` (a terminated agent receives nothing). Resolves to the
+   * human senders of those rows, for their `chat_changed`.
+   */
+  async rejectPending(agentId: string, tx: Exec = this.db): Promise<string[]> {
+    const rows = await tx
       .update(messages)
       .set({ state: "rejected" })
-      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")));
+      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
+      .returning({ from: messages.fromUserId });
+    return [...new Set(rows.flatMap((r) => (r.from ? [r.from] : [])))];
   }
   /**
    * Whether the agent has its `terminated` event. The type is a literal, not a parameter, so even a generic plan
@@ -1202,12 +1208,17 @@ export class EventStore {
       .returning({ id: messages.id });
     return rows.length > 0;
   }
-  /** The recipient was archived between the send check and the hand-off: the row tells the truth (spec §7.3). */
-  async markRejected(id: string, tx: Exec = this.db) {
-    await tx
+  /**
+   * The recipient was archived between the send check and the hand-off: the row tells the truth (spec §7.3). Resolves
+   * to the row's human sender when it changed, for their `chat_changed`.
+   */
+  async markRejected(id: string, tx: Exec = this.db): Promise<string | null> {
+    const [row] = await tx
       .update(messages)
       .set({ state: "rejected" })
-      .where(and(eq(messages.id, id), eq(messages.state, "pending")));
+      .where(and(eq(messages.id, id), eq(messages.state, "pending")))
+      .returning({ from: messages.fromUserId });
+    return row?.from ?? null;
   }
 
   /** One message with the events that show it on each side (spec §11); from and to rendered as in the inbox. */

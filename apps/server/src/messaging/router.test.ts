@@ -828,6 +828,26 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     expect((await rowsOf("to-mixed"))[0]?.recipients).toEqual(["@bob"]);
   });
 
+  test("chat_changed goes to the human party of each row only", async () => {
+    const or = await signUp(h.app, { handle: "or" });
+    const sam = await signUp(h.app, { handle: "sam" });
+    const got: Record<string, ServerMessage[]> = { or: [], sam: [] };
+    h.app.bus.subscribeUser(or.user.id, (m) => got.or?.push(m));
+    h.app.bus.subscribeUser(sam.user.id, (m) => got.sam?.push(m));
+    await sendAs("ada", ["or"], "to-or");
+    expect(got.or).toContainEqual({ type: "chat_changed", agent: "ada" });
+    expect(got.sam).toEqual([]);
+    got.or = [];
+    await h.app.inject({
+      method: "POST",
+      url: "/api/agents/bob/messages",
+      headers: { cookie: sam.cookie },
+      payload: { body: "hi bob" },
+    });
+    expect(got.sam).toContainEqual({ type: "chat_changed", agent: "bob" });
+    expect(got.or.filter((m) => m.type === "chat_changed")).toEqual([]);
+  });
+
   test("one inbox item per human recipient; inbox_changed goes to those users only", async () => {
     const or = await signUp(h.app, { handle: "or" });
     const sam = await signUp(h.app, { handle: "sam" });

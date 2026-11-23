@@ -228,6 +228,12 @@ function writtenBatch(batch: MessageEntry[], writtenAt: string): WrittenBatch {
   }
   return { ids: [...senders.keys()], senders, writtenAt, firstIdBySender };
 }
+/** The human senders of written batches, once each. */
+function sendersOf(batches: WrittenBatch[]): string[] {
+  const out = new Set<string>();
+  for (const b of batches) for (const u of b.senders.values()) if (u) out.add(u);
+  return [...out];
+}
 type CompactEntry = {
   kind: "compact";
   id: string;
@@ -581,7 +587,7 @@ export class AgentRuntime {
     if (this.terminationCommitted) {
       // S7 §8: a terminated agent receives nothing. A row still pending to it (one that raced in during a crash window)
       // is rejected, never queued.
-      await this.d.store.rejectPending(this.agent.id);
+      this.chatChanged(await this.d.store.rejectPending(this.agent.id));
       this.updateHeldTimer();
       return;
     }
@@ -633,11 +639,11 @@ export class AgentRuntime {
     return this.apiJob(async () => {
       if (this.terminationCommitted) {
         // S7 §8 step 2: the transaction rejected what was pending; a row handed over after it is rejected here.
-        await this.d.store.markRejected(row.id);
+        this.chatChanged([await this.d.store.markRejected(row.id)]);
         throw new AgentTerminatedError(this.agent.slug);
       }
       if (this.archived) {
-        await this.d.store.markRejected(row.id);
+        this.chatChanged([await this.d.store.markRejected(row.id)]);
         const at = this.queue.findIndex((e) => e.kind === "message" && e.row.id === row.id);
         if (at !== -1) {
           this.queue.splice(at, 1);
@@ -727,6 +733,7 @@ export class AgentRuntime {
       if (!(await this.d.store.cancelPending(messageId))) throw new AlreadyDeliveredError();
       this.queue.splice(at, 1);
       this.publishQueue();
+      this.chatChanged([userId]);
       return this.itemOf(entry);
     });
   }
@@ -773,6 +780,7 @@ export class AgentRuntime {
       this.seen.add(row.id);
       this.insertByCreated(entryOf(row));
       this.publishQueue();
+      this.chatChanged([userId]);
       if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
       else {
         if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
@@ -1184,7 +1192,7 @@ export class AgentRuntime {
       // was only queued in memory: reject it in the DB too (spec §8, "Pending messages vs. rejection").
       if (dropped.length)
         void this.run(async () => {
-          for (const id of dropped) await this.d.store.markRejected(id);
+          for (const id of dropped) this.chatChanged([await this.d.store.markRejected(id)]);
         }).catch((err: unknown) =>
           this.d.log.error({ err, agent: this.agent.slug }, "rejecting dropped rows failed"),
         );
@@ -2697,6 +2705,7 @@ export class AgentRuntime {
         this.turnKinds = [];
         this.absorbed = [];
         this.turnStartedAt = (await this.append(this.openTurnId, e)).at;
+        this.chatChanged(sendersOf(this.awaiting));
         break;
       case "usage":
         this.lastUsage = e;
@@ -2712,6 +2721,7 @@ export class AgentRuntime {
         this.turnKinds = [];
         // U3 §11.2: right after the turn_end row, in the same tick (no live patch in between), so the client clears its
         // live state first and the reset restores a block a self-started turn already began.
+        const closing = sendersOf([...this.awaiting, ...this.absorbed]);
         const endSeq = (
           await this.append(turnId, e, undefined, () =>
             this.liveState.endBefore(this.lineOf(proc, e), { subagents: false }),
@@ -2740,6 +2750,7 @@ export class AgentRuntime {
           } else await this.d.store.closeTurnWith(turnId, close, [], false, endSeq);
         }
         this.absorbed = []; // the stamp and the close committed: the batch is no longer working
+        this.chatChanged(closing);
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
         if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
           await this.attemptSucceeded();
@@ -2965,6 +2976,7 @@ export class AgentRuntime {
         (err: unknown) => ({ err }),
       );
       this.closing = undefined; // the stamp and the close settled: the outcome is readable
+      this.chatChanged(sendersOf(closingBatches));
       // Terminated: Docker removes the container rather than stopping it (S7 §8 step 4).
       if (terminating) keepSlot = !(await this.terminationCleanup());
       else if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, forced));
@@ -2972,7 +2984,8 @@ export class AgentRuntime {
       if (!terminating) await this.oweNoticeIfCutOff(); // the exit ended a turn the rate limit cut off
       for (const batch of rolledBack) {
         const ids = batch.map((m) => m.row.id);
-        if (terminating) for (const id of ids) await this.d.store.markRejected(id);
+        if (terminating)
+          for (const id of ids) this.chatChanged([await this.d.store.markRejected(id)]);
         else await this.d.store.markPending(ids);
         await this.append(null, {
           type: "delivery_failed",
@@ -3923,6 +3936,13 @@ export class AgentRuntime {
       this.turnKinds.push(...kinds);
     }
     this.publishQueue();
+    this.chatChanged(sendersOf([written]));
     return true;
+  }
+
+  /** I1 §6.5: each of these humans' chat with this agent changed (never anyone else). */
+  chatChanged(userIds: Iterable<string | null>): void {
+    for (const u of new Set(userIds))
+      if (u) this.d.bus.publishToUser(u, { type: "chat_changed", agent: this.agent.slug });
   }
 }

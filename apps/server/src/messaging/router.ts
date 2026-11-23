@@ -275,6 +275,23 @@ export class Router {
 
     for (const w of written)
       if (w.target.user) this.d.bus.publishToUser(w.target.user.userId, { type: "inbox_changed" });
+    // I1 §6.5: the human party's chat with each agent on the other side changed.
+    if ("userId" in from) {
+      for (const w of written)
+        if (w.created && w.target.agent)
+          this.d.bus.publishToUser(from.userId, {
+            type: "chat_changed",
+            agent: w.target.agent.slug,
+          });
+    } else {
+      const me = await this.d.store.agentById(from.agentId);
+      for (const w of written)
+        if (me && w.target.user)
+          this.d.bus.publishToUser(w.target.user.userId, {
+            type: "chat_changed",
+            agent: me.slug,
+          });
+    }
 
     const outcome = new Map<Target, RecipientResult>();
     for (const w of written)

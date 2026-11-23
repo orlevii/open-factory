@@ -715,10 +715,11 @@ function holdTermination(o: { fail?: Error } = {}) {
   const release = deferred();
   const original = h.store.terminateRows.bind(h.store);
   vi.spyOn(h.store, "terminateRows").mockImplementation(async (...a) => {
-    await original(...a);
+    const rejected = await original(...a);
     entered.resolve();
     await release.promise;
     if (o.fail) throw o.fail;
+    return rejected;
   });
   return { entered: entered.promise, release: release.resolve };
 }

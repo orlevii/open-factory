@@ -93,10 +93,11 @@ function holdTermination(app: T, during: () => Promise<void> = async () => {}) {
   });
   const original = app.app.store.terminateRows.bind(app.app.store);
   vi.spyOn(app.app.store, "terminateRows").mockImplementation(async (...a) => {
-    await original(...a);
+    const rejected = await original(...a);
     await during();
     enter();
     await released;
+    return rejected;
   });
   return { entered, release };
 }

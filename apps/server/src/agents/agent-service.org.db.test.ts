@@ -135,6 +135,24 @@ test("an agent can't create with a can_spawn that names a local template", async
   expect(await rowOf("spawner")).toBeUndefined();
 });
 
+test("an agent can't create when the template parses local though last_valid says docker", async () => {
+  writeTemplate("drifting", "docker");
+  await t.app.templates.scan();
+  writeTemplate("drifting", "local"); // edited on disk, not rescanned
+  await expect(svc.create(body("drift-1", "drifting"), hr)).rejects.toThrow(
+    new OrgRefusedError(LOCAL_RUNTIME_REFUSAL),
+  );
+  expect(await rowOf("drift-1")).toBeUndefined();
+  expect(existsSync(path.join(home, "agents/drift-1"))).toBe(false);
+});
+
+test("a malformed can_spawn gives invalid_config, not a TypeError", async () => {
+  await expect(
+    svc.create({ ...body("badspawn"), config: { template: { can_spawn: "x" } } as never }, hr),
+  ).rejects.toMatchObject({ code: "invalid_config" });
+  expect(await rowOf("badspawn")).toBeUndefined();
+});
+
 test("an agent can't edit, archive or unarchive a local agent", async () => {
   const refused = new OrgRefusedError(LOCAL_RUNTIME_REFUSAL);
   await expect(svc.update("loc", { displayName: "Other" }, hr)).rejects.toThrow(refused);
@@ -160,9 +178,20 @@ test("create with a config the agent policy refuses creates nothing", async () =
       { ...body("proxied"), config: { settings: { env: { HTTPS_PROXY: "http://x" } } } },
       hr,
     ),
-  ).rejects.toMatchObject({ code: "invalid_config" });
+  ).rejects.toMatchObject({
+    code: "invalid_config",
+    extra: {
+      issues: [expect.objectContaining({ message: "HTTPS_PROXY can only be set by a human." })],
+    },
+  });
   expect(await rowOf("proxied")).toBeUndefined();
   expect(existsSync(path.join(home, "agents/proxied"))).toBe(false);
+  // Positive control: a human creates with the same env.
+  await svc.create(
+    { ...body("proxied-h"), config: { settings: { env: { HTTPS_PROXY: "http://x" } } } },
+    human,
+  );
+  expect(await rowOf("proxied-h")).toBeDefined();
 });
 
 test("create with a config that fails the schema creates nothing, for a human too", async () => {
@@ -181,7 +210,8 @@ test("a null manager from an agent is top level", async () => {
 
 test("description_by names the agent that last wrote the description; a human edit clears it", async () => {
   await svc.update("target", { description: "by agent" }, hr);
-  expect((await rowOf("target"))?.descriptionBy).toBe(hr.kind === "agent" ? hr.id : "");
+  if (hr.kind !== "agent") throw new Error("hr is an agent");
+  expect((await rowOf("target"))?.descriptionBy).toBe(hr.id);
   await svc.update("target", { description: "by human" }, human);
   expect((await rowOf("target"))?.descriptionBy).toBeNull();
 });

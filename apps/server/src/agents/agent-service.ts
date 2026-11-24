@@ -511,6 +511,24 @@ export class AgentService {
       throw new OrgRefusedError(LOCAL_RUNTIME_REFUSAL);
   }
 
+  /** Rule 8 for create: the template and every can_spawn name. A malformed can_spawn is left for the overlay check to report. */
+  private async assertCreateNotLocal(
+    b: CreateAgentBody & { config?: AgentOverlay },
+    actor: Actor,
+    parsedTemplateRuntime?: string,
+  ) {
+    const raw: unknown = b.config?.template?.can_spawn;
+    const spawns = Array.isArray(raw) ? raw.filter((n): n is string => typeof n === "string") : [];
+    const [templateRuntime, ...canSpawnRuntimes] = await this.d.policy.templateRuntimes([
+      b.template,
+      ...spawns,
+    ]);
+    this.assertNotLocal(actor, {
+      templateRuntime: parsedTemplateRuntime ?? templateRuntime,
+      canSpawnRuntimes,
+    });
+  }
+
   async create(
     b: CreateAgentBody & { config?: AgentOverlay },
     actor: Actor,
@@ -518,14 +536,7 @@ export class AgentService {
     const slugOk = slugSchema.safeParse(b.slug);
     if (!slugOk.success)
       throw new FieldError("slug", slugOk.error.issues[0]?.message ?? FIELD_MSG.slugInvalid);
-    if (actor.kind === "agent") {
-      const spawns = b.config?.template?.can_spawn ?? [];
-      const [templateRuntime, ...canSpawnRuntimes] = await this.d.policy.templateRuntimes([
-        b.template,
-        ...spawns,
-      ]);
-      this.assertNotLocal(actor, { templateRuntime, canSpawnRuntimes });
-    }
+    if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor);
     return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b, actor));
   }
 
@@ -537,6 +548,8 @@ export class AgentService {
     // The cheap pre-read before materialising; the claim in the insert transaction is the guarantee (spec §4.1).
     if (await handleKind(db, b.slug)) throw slugTaken();
     const tpl = await this.d.templates.loadValid(b.template);
+    // Re-check under the lock against the template as just parsed: last_valid may have moved since the pre-check.
+    if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor, tpl.config.runtime);
     const credentialId = await this.credentialId(b.credential);
     const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
     const projects = await this.projectRows(b.projects ?? tpl.config.projects);

@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import {
+  invalidateLibrary,
   libraryQueryOptions,
   onLibraryChanged,
   resetLibraryChanged,
@@ -36,6 +37,17 @@ test("ten frames in one tick refetch the library once, when the window ends", ()
   vi.advanceTimersByTime(249);
   expect(invalidate).not.toHaveBeenCalled();
   vi.advanceTimersByTime(1);
+  expect(invalidate).toHaveBeenCalledTimes(1);
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["library"] });
+});
+
+test("a config change and a library frame in one tick share one refetch", () => {
+  const qc = new QueryClient();
+  const invalidate = vi.spyOn(qc, "invalidateQueries").mockResolvedValue();
+  invalidateLibrary(qc);
+  onLibraryChanged(qc, frame);
+  invalidateLibrary(qc);
+  vi.advanceTimersByTime(250);
   expect(invalidate).toHaveBeenCalledTimes(1);
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["library"] });
 });

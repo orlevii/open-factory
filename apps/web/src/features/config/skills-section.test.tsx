@@ -281,6 +281,17 @@ test("empty states: nothing in Skills, and everything already added", async () =
   expect(screen.getByText("Every skill is already added.")).toBeInTheDocument();
 });
 
+test("when every skill is unusable, the empty line doesn't claim there are none", async () => {
+  useLibrary({
+    hostDir: "/s",
+    groups: [{ group: "host", kind: "host", skills: [{ ...ok("broken"), state: "unusable" }] }],
+  });
+  render(<Form localSkills={[]} />);
+  await open();
+  expect(screen.getByText("1 skill can't be used here: hidden or unusable.")).toBeInTheDocument();
+  expect(screen.queryByText("No skills in Skills yet.")).not.toBeInTheDocument();
+});
+
 test("the picker does not fetch on mount: the Library list is already cached", async () => {
   const api = useLibrary();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

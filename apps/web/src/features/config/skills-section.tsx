@@ -209,9 +209,12 @@ function SkillPicker({
   const emptyText =
     isError || isPending
       ? pickEmpty({ isPending, isError }, "")
-      : options.length === 0
-        ? CONFIG_COPY.noSkills
-        : CONFIG_COPY.allSkillsAdded;
+      : options.length > 0
+        ? CONFIG_COPY.allSkillsAdded
+        : // Skills exist but none can be used here: the footer says so, and "No skills" would contradict it.
+          leftOut === 0
+          ? CONFIG_COPY.noSkills
+          : "";
   return (
     <PickAddMany
       slot={slot}

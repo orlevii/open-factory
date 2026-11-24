@@ -3,7 +3,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { parsePeekKey } from "../use-peek";
 import { SkillPeekBody } from "./skill-peek";
 import { SourcePeekBody } from "./source-peek";
-import { usePeekNav } from "./use-peek";
+import { usePeekNav } from "./use-peek-nav";
 
 /** The peek of the Skills page (spec §10.3): a non-modal sheet (a drawer below `md`) whose body is the Skill or Source peek.
  *  The sheet stays mounted while the key changes; only the body is keyed, so a retarget swaps it in place with its
@@ -25,11 +25,12 @@ export function PeekSheet({
   const [shown, setShown] = useState(peekKey);
   if (peekKey !== null && peekKey !== shown) setShown(peekKey);
   const { back, open, goBack } = usePeekNav(peekKey, show, contentRef);
-  // Where focus goes on the next close when it isn't the shown row (a removed source's neighbour). Set from a handler.
-  const focusInstead = useRef<string | null>(null);
+  // Where focus goes on the next close when it isn't the shown row: a removed source's neighbour header, else (the
+  // last source went) the header's Add skills button (spec §10.2). Set from a handler; `undefined` is a plain close.
+  const focusInstead = useRef<{ key: string | null } | undefined>(undefined);
   const target = shown ? parsePeekKey(shown) : undefined;
   const onRemoved = (nextKey: string | null) => {
-    focusInstead.current = nextKey;
+    focusInstead.current = { key: nextKey };
     onClose();
   };
   return (
@@ -46,8 +47,11 @@ export function PeekSheet({
         aria-describedby={undefined}
         returnFocus={() => {
           const instead = focusInstead.current;
-          focusInstead.current = null;
-          if (instead) return returnFocus(instead);
+          focusInstead.current = undefined;
+          if (instead)
+            return instead.key !== null
+              ? returnFocus(instead.key)
+              : document.querySelector<HTMLElement>("[data-add-skills]");
           return shown ? returnFocus(shown) : null;
         }}
       >

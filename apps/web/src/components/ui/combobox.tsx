@@ -2,6 +2,7 @@ import * as React from "react"
 import { cn } from "cn"
 import { Command as CommandPrimitive, defaultFilter } from "cmdk"
 import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react"
+import { FORM_MSG } from "@/lib/form-messages"
 import { lastInputModality } from "@/lib/input-modality"
 import { Popover, PopoverContent, PopoverTrigger } from "./popover"
 import { selectTriggerClass } from "./select"
@@ -375,7 +376,7 @@ function Combobox({
           options={listed}
           value={value}
           // Multi: once something is listed, an empty result is the filter's, not an empty list.
-          emptyText={isMulti && listed.length > 0 ? "No matches." : emptyText}
+          emptyText={isMulti && listed.length > 0 ? FORM_MSG.noMatches : emptyText}
           added={multiple?.added}
           onCommit={commit}
           onSearch={lockPlacement}

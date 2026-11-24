@@ -1,13 +1,10 @@
-import type { foundSkillSchema } from "@open-factory/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useRef, useState } from "react";
-import type { z } from "zod";
 import { Elapsed } from "@/components/elapsed";
 import { ErrorLine } from "@/components/error-line";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { SheetBody, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { notify } from "@/components/ui/toaster";
@@ -26,17 +23,14 @@ import {
   sourceQueryOptions,
   updateSource,
 } from "@/lib/library";
+import { AddSkillsResults, type Found, useTicks } from "../add-skills-results";
 import { count, pinLabel, sourceLabel, usedByText } from "../format";
 import { RowState } from "../row-state";
 import { skillKey } from "../use-peek";
 import { BackButton, failure, PinButton, Section, SkeletonRows } from "./sections";
 import { UpdateView } from "./update-view";
 
-type Found = z.infer<typeof foundSkillSchema>;
 type Line = { tone: "success" | "error"; node: React.ReactNode } | undefined;
-
-const FETCH_AGAIN = "Fetch again";
-const SERVER_DOWN = "Can't reach the server.";
 
 /** One inline outcome line (both live regions stay mounted so it is announced when it appears). */
 function Outcome({ line }: { line: Line }) {
@@ -56,44 +50,6 @@ function Pending({ label, since }: { label: string; since: number }) {
   );
 }
 
-const reasonText = (f: Found) =>
-  f.reason === "taken"
-    ? `The name is used by ${f.takenBy ?? "another source"}.`
-    : f.reason === "link"
-      ? "It's a link."
-      : f.detail;
-
-/** One result of Find more skills: a checkbox, or the reason it can't be picked. */
-function FoundRow({
-  f,
-  ticked,
-  onTick,
-}: {
-  f: Found;
-  ticked: boolean;
-  onTick(name: string, on: boolean): void;
-}) {
-  return (
-    <li className="flex items-start gap-2 py-1 text-[0.8125rem]">
-      <Checkbox
-        aria-label={f.name}
-        checked={f.pickable && ticked}
-        disabled={!f.pickable}
-        onCheckedChange={(c) => onTick(f.name, c === true)}
-        className="mt-0.5"
-      />
-      <span className="min-w-0 flex-1">
-        <span className="block font-mono">
-          <UntrustedProse text={f.name} />
-        </span>
-        <span className="block text-muted-foreground">
-          <UntrustedProse text={f.pickable ? f.description : (reasonText(f) ?? f.description)} />
-        </span>
-      </span>
-    </li>
-  );
-}
-
 /**
  * Find more skills (spec §10.3): the Add skills results step inline, with the source fixed. Its outcome is inline
  * because the control is still on screen, and there is no toast and no Undo. Find and Add are mutations from handlers
@@ -101,8 +57,9 @@ function FoundRow({
  */
 function FindMore({ id }: { id: string }) {
   const qc = useQueryClient();
-  const [found, setFound] = useState<Found[]>();
-  const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  const [found, setFound] = useState<{ list: Found[]; seq: number }>();
+  const [filter, setFilter] = useState("");
+  const { ticked, setTicked, onTick, onToggle } = useTicks();
   const [line, setLine] = useState<Line>();
   const find = useMutation({ mutationFn: () => findSkills(id) });
   const add = useMutation({
@@ -113,22 +70,17 @@ function FindMore({ id }: { id: string }) {
     setLine(undefined);
     find.mutate(undefined, {
       onSuccess: (r) => {
-        setFound(r.found);
+        setFound((p) => ({ list: r.found, seq: (p?.seq ?? 0) + 1 }));
+        setFilter("");
         setTicked(new Set(r.found.filter((f) => f.pickable).map((f) => f.name)));
-        if (!r.found.some((f) => f.pickable))
-          setLine({ tone: "success", node: "No more skills to add." });
+        if (r.found.length === 0) setLine({ tone: "success", node: FORM_MSG.noMoreSkills });
       },
-      onError: (e) => setLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
+      onError: (e) => setLine({ tone: "error", node: failure(e, FORM_MSG.unreachable) }),
     });
   };
-  const onTick = (name: string, on: boolean) =>
-    setTicked((s) => {
-      const next = new Set(s);
-      if (on) next.add(name);
-      else next.delete(name);
-      return next;
-    });
-  const picked = [...ticked].filter((n) => found?.some((f) => f.name === n && f.pickable));
+  const picked = found
+    ? found.list.filter((f) => f.pickable && ticked.has(f.name)).map((f) => f.name)
+    : [];
   const onAdd = () => {
     setLine(undefined);
     add.mutate(picked, {
@@ -136,7 +88,7 @@ function FindMore({ id }: { id: string }) {
         setFound(undefined);
         setLine({ tone: "success", node: `Added ${count(picked.length, "skill")}.` });
       },
-      onError: (e) => setLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
+      onError: (e) => setLine({ tone: "error", node: failure(e, FORM_MSG.unreachable) }),
     });
   };
   return (
@@ -155,13 +107,18 @@ function FindMore({ id }: { id: string }) {
           )}
         </Button>
       </div>
-      {found && found.length > 0 && (
+      {found && found.list.length > 0 && (
         <>
-          <ul>
-            {found.map((f) => (
-              <FoundRow key={f.name} f={f} ticked={ticked.has(f.name)} onTick={onTick} />
-            ))}
-          </ul>
+          <AddSkillsResults
+            result={{ found: found.list, source: "this source" }}
+            seq={found.seq}
+            stale={false}
+            ticked={ticked}
+            filter={filter}
+            onFilter={setFilter}
+            onTick={onTick}
+            onToggle={onToggle}
+          />
           <Button size="sm" disabled={picked.length === 0 || add.isPending} onClick={onAdd}>
             {add.isPending ? (
               <Pending label="Adding…" since={add.submittedAt} />
@@ -251,7 +208,7 @@ export function SourcePeekBody({
   const inUse = users > 0;
   const rows = group?.skills ?? [];
   const rowByName = new Map(rows.map((r) => [r.name, r]));
-  const missing = rows.some((r) => r.state === "missing" && r.stateDetail === FETCH_AGAIN);
+  const missing = rows.some((r) => r.state === "missing" && r.stateDetail === FORM_MSG.fetchAgain);
   const updateCommit = d?.updateCommit ?? null;
   const updateExpected = updateCommit !== null || (!d && summary?.update === true);
 
@@ -275,7 +232,7 @@ export function SourcePeekBody({
     update.mutate(updateCommit, {
       onSuccess: () =>
         setUpdateLine({ tone: "success", node: `Updated to ${updateCommit.slice(0, 7)}.` }),
-      onError: (e) => setUpdateLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
+      onError: (e) => setUpdateLine({ tone: "error", node: failure(e, FORM_MSG.unreachable) }),
     });
   };
   const onRemove = () => {
@@ -286,7 +243,7 @@ export function SourcePeekBody({
       { label, skills: skillCount },
       {
         onSuccess: () => onRemoved(next),
-        onError: (e) => setRemoveLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
+        onError: (e) => setRemoveLine({ tone: "error", node: failure(e, FORM_MSG.unreachable) }),
       },
     );
   };
@@ -378,7 +335,7 @@ export function SourcePeekBody({
                 {fetchAgain.isPending ? (
                   <Pending label="Fetching…" since={fetchAgain.submittedAt} />
                 ) : (
-                  FETCH_AGAIN
+                  FORM_MSG.fetchAgain
                 )}
               </Button>
             </p>

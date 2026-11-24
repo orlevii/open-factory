@@ -1,6 +1,7 @@
 import type { ServerMessage } from "@open-factory/shared";
 import { act, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
+import { resetLibraryChanged } from "@/lib/library";
 import type { WsOptions } from "@/lib/ws";
 import { useWs, type WsHub } from "@/lib/ws-context";
 import { json, mockApi } from "@/test/mock-api";
@@ -211,6 +212,23 @@ test("config_changed invalidates the agent's and the template's configuration, a
   expect(stale(["agent-config", "ana"])).toBe(true);
   expect(stale(["agent-config", "cy"])).toBe(true);
   expect(stale(["template-config", "ops"])).toBe(false);
+});
+
+test("config_changed refreshes the Skills lists, sharing one window with library_changed", async () => {
+  const { spy } = await mounted();
+  const library = () => spy.mock.calls.filter(([f]) => f?.queryKey?.[0] === "library").length;
+  resetLibraryChanged(); // an earlier test's real-timer window must not swallow this one
+  vi.useFakeTimers();
+  try {
+    act(() => h.opts?.onMessage?.({ type: "config_changed", template: "dev" }));
+    act(() => h.opts?.onMessage?.({ type: "library_changed" }));
+    expect(library()).toBe(0);
+    vi.advanceTimersByTime(250);
+    expect(library()).toBe(1);
+  } finally {
+    vi.useRealTimers();
+    resetLibraryChanged();
+  }
 });
 
 test("unmounting the layout flushes queued status frames", async () => {

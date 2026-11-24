@@ -157,6 +157,32 @@ test.each([
   expect(d.getByLabelText(label)).toBeInvalid();
 });
 
+test("a folder over the size limit is a form-level outcome on Find, not a field error", async () => {
+  const message = "Folder is over 50 MB.";
+  const { user, dialog: d } = await open({
+    "POST /api/library/sources/preview": () => json({ error: { code: "too_large", message } }, 400),
+  });
+  await folderFind(user, d);
+  expect(await d.findByRole("alert")).toHaveTextContent(message);
+  expect(d.getByLabelText("Path")).toBeValid();
+});
+
+test("a repo that returns another commit is a form-level outcome on Add, not a field error", async () => {
+  const message = "The repo returned another commit.";
+  const { user, dialog: d } = await open({
+    "POST /api/library/sources/preview": () => json(preview([found("alpha")])),
+    "POST /api/library/sources": () => json({ error: { code: "commit_mismatch", message } }, 400),
+  });
+  await user.click(d.getByRole("radio", { name: "GitHub" }));
+  await user.type(d.getByLabelText("Repository"), "acme/x");
+  await user.click(primary(d, "Find skills"));
+  await d.findByText("Found 1 skill");
+  await releaseInert();
+  await user.click(primary(d, "Add 1\u00a0skill"));
+  expect(await d.findByRole("alert")).toHaveTextContent(message);
+  expect(d.getByLabelText("Repository")).toBeValid();
+});
+
 test("after Find: focus is on the results label and the found line shows", async () => {
   const { user, dialog: d } = await open(
     previewRoute([

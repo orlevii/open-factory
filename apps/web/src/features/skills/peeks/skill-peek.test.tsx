@@ -230,3 +230,27 @@ test("a file the server refuses shows its sentence", async () => {
   await user.click(await screen.findByRole("button", { name: "View file" }));
   expect(await screen.findByText("Not a text file.")).toBeInTheDocument();
 });
+
+type Listed = Parameters<typeof library>[0][number];
+const FROM_CASES: [string, string, string, Listed][] = [
+  ["host", "host", "From the host's skills folder", hostGroup([skill("lint")])],
+  [
+    "unknown",
+    "unknown",
+    "Not found anywhere",
+    { group: "unknown", kind: "unknown", skills: [skill("lint", { state: "missing" })] },
+  ],
+];
+
+test.each(FROM_CASES)("the From line of a %s skill reads '%s'", async (_n, group, line, listed) => {
+  mockApi({
+    "GET /api/library/skills": () => json(library([listed])),
+    [`GET /api/library/skills/${group}/lint`]: () => json(detail(group, "lint")),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
+  });
+  const user = userEvent.setup();
+  renderApp("/skills", alice);
+  await user.click(await screen.findByRole("button", { name: /^lint/ }));
+  expect(await screen.findByText(line)).toBeInTheDocument();
+});

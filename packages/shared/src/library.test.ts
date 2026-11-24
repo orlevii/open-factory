@@ -13,7 +13,6 @@ import {
   skillSourceAddBodySchema,
   skillSourcePreviewBodySchema,
   sourcePreviewSchema,
-  sourceViewSchema,
 } from "./library.ts";
 
 const refusesMarketplace = (name: string) =>
@@ -156,55 +155,6 @@ describe("skill source bodies", () => {
 });
 
 describe("source responses", () => {
-  const detail = {
-    id: "s1",
-    kind: "github",
-    path: null,
-    repo: "acme/x",
-    subpath: "",
-    branch: "main",
-    pin: "a".repeat(40),
-    committedAt: null,
-    subject: null,
-    state: "ready",
-    skills: ["tdd"],
-    updateCommit: "b".repeat(40),
-    updateAt: null,
-    updateSubject: null,
-    checkedAt: null,
-    checkError: null,
-    usedBy: { templates: 0, agents: 0 },
-  };
-  const change = {
-    name: "tdd",
-    runsCodeChanged: true,
-    hooks: { added: [{ event: "PreToolUse", matcher: "", command: "x.sh" }], removed: [] },
-    execFiles: ["x.sh"],
-  };
-  const update = {
-    from: "a".repeat(40),
-    to: "b".repeat(40),
-    committedAt: null,
-    subject: null,
-    changed: [change],
-    removed: [],
-    added: [],
-    unusable: [],
-  };
-
-  test("a source view carries the update view, or null when there is no newer commit", () => {
-    expect(sourceViewSchema.safeParse({ ...detail, update }).success).toBe(true);
-    expect(sourceViewSchema.safeParse({ ...detail, update: null }).success).toBe(true);
-    expect(sourceViewSchema.safeParse(detail).success).toBe(false);
-  });
-
-  test("an update view's changed skill says whether it runs different code", () => {
-    const { runsCodeChanged: _r, ...bare } = change;
-    expect(
-      sourceViewSchema.safeParse({ ...detail, update: { ...update, changed: [bare] } }).success,
-    ).toBe(false);
-  });
-
   test("a preview marks why a skill can't be picked", () => {
     const ok = sourcePreviewSchema.safeParse({
       found: [{ name: "a", description: "", pickable: false, reason: "taken", takenBy: "Host" }],

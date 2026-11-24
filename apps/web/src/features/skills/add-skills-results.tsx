@@ -1,5 +1,5 @@
 import type { foundSkillSchema } from "@open-factory/shared";
-import { memo, useId } from "react";
+import { memo, useCallback, useId, useState } from "react";
 import type { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,9 +14,30 @@ export type Found = z.infer<typeof foundSkillSchema>;
 /** Past this many results a filter field sits above the list (spec §10.4). */
 export const FILTER_OVER = 20;
 
-export const NONE_ADDABLE = "None of these can be added.";
-const SELECT_ALL = "Select all";
-const SELECT_NONE = "Select none";
+/** The ticked names as a `Set` with stable, functionally-updated handlers (R-F1): a tick re-renders only its own row. */
+export function useTicks() {
+  const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  const onTick = useCallback((name: string, on: boolean) => {
+    setTicked((s) => {
+      const next = new Set(s);
+      if (on) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+  }, []);
+  /** Ticks (or unticks) exactly these names. */
+  const onToggle = useCallback((names: string[], on: boolean) => {
+    setTicked((s) => {
+      const next = new Set(s);
+      for (const n of names) {
+        if (on) next.add(n);
+        else next.delete(n);
+      }
+      return next;
+    });
+  }, []);
+  return { ticked, setTicked, onTick, onToggle };
+}
 
 /** Why a row can't be picked, in the spec's words. */
 export function reasonOf(f: Found): string | undefined {
@@ -164,7 +185,7 @@ export function AddSkillsResults({
             disabled={stale}
             onClick={() => onToggle(pickable, !allTicked)}
           >
-            {allTicked ? SELECT_NONE : SELECT_ALL}
+            {allTicked ? FORM_MSG.selectNone : FORM_MSG.selectAll}
           </Button>
         )}
       </div>
@@ -201,7 +222,9 @@ export function AddSkillsResults({
           className="h-9"
         />
       )}
-      {noneAddable && <p className="text-[0.8125rem] text-muted-foreground">{NONE_ADDABLE}</p>}
+      {noneAddable && (
+        <p className="text-[0.8125rem] text-muted-foreground">{FORM_MSG.noneAddable}</p>
+      )}
       <ul>
         {shown.map((f) => (
           <FoundRow

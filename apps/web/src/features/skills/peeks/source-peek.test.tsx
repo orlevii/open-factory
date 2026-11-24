@@ -346,7 +346,7 @@ test("Find more skills lists results inline and adds the ticked ones with an inl
   await user.click(await screen.findByRole("button", { name: "Find more skills" }));
   expect(await screen.findByRole("checkbox", { name: "alpha" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "taken" })).toBeDisabled();
-  expect(screen.getByText("The name is used by Host.")).toBeInTheDocument();
+  expect(screen.getByText("Name taken by Host")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /^Add 2\s+skills to this source$/ }));
   expect(await screen.findByText(/^Added 2\s+skills\.$/)).toBeInTheDocument();
   expect(mocks.calls.find((c) => c.url.endsWith("/skills/add"))?.body).toEqual({
@@ -356,6 +356,67 @@ test("Find more skills lists results inline and adds the ticked ones with an inl
   expect(
     within(screen.getByRole("dialog")).queryByRole("button", { name: "Undo" }),
   ).not.toBeInTheDocument();
+});
+
+const findRoute = (list: unknown[]) => (m: Mocks) =>
+  m.on("POST /api/library/sources/skills/find", () => json({ found: list }));
+const findMore = async (user: ReturnType<typeof userEvent.setup>) =>
+  user.click(await screen.findByRole("button", { name: "Find more skills" }));
+const pick = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    name: `s${String(i).padStart(2, "0")}`,
+    description: `desc ${i}`,
+    pickable: true,
+  }));
+
+test("Find more skills filters past 20 results and Select none and Select all act on the shown rows", async () => {
+  const { user } = await open(
+    detail("skills"),
+    findRoute([...pick(22), { ...pick(1)[0], name: "zeta", description: "z" }]),
+  );
+  await findMore(user);
+  await user.type(await screen.findByRole("searchbox", { name: "Filter skills" }), "zeta");
+  expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Select none" }));
+  expect(screen.getByRole("checkbox", { name: "zeta" })).not.toBeChecked();
+  expect(
+    screen.getByRole("button", { name: /^Add 22\s+skills to this source$/ }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Select all" }));
+  expect(
+    screen.getByRole("button", { name: /^Add 23\s+skills to this source$/ }),
+  ).toBeInTheDocument();
+});
+
+test("Find more skills with nothing pickable says so and its Add stays disabled", async () => {
+  const { user } = await open(
+    detail("skills"),
+    findRoute([
+      { name: "taken", description: "x", pickable: false, reason: "taken", takenBy: "Host" },
+    ]),
+  );
+  await findMore(user);
+  expect(await screen.findByText("None of these can be added.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Add 0\s+skills to this source$/ })).toBeDisabled();
+});
+
+test("Find more skills with no results says there are no more skills to add", async () => {
+  const { user } = await open(detail("skills"), findRoute([]));
+  await findMore(user);
+  expect(await screen.findByText("No more skills to add.")).toBeInTheDocument();
+});
+
+test("removing the last source moves focus to the header's Add skills button", async () => {
+  const { user } = await open(
+    detail("skills"),
+    (m) =>
+      m.on("DELETE /api/library/sources/skills", () =>
+        json({ undoUntil: new Date(Date.now() + 30_000).toISOString() }),
+      ),
+    library([hostGroup(), sourceGroup(source("skills", { skillCount: 1 }), [skill("review")])]),
+  );
+  await user.click(await screen.findByRole("button", { name: /^Remove source/ }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Add skills" })).toHaveFocus());
 });
 
 test("the pin button copies the full commit and names it", async () => {

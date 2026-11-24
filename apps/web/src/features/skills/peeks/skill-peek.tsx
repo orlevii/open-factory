@@ -147,7 +147,8 @@ function FromLine({
   onOpen(key: string): void;
 }) {
   const id = group.startsWith("source:") ? group.slice("source:".length) : undefined;
-  if (group === "host") return <p className="text-[0.8125rem] text-muted-foreground">From Host</p>;
+  if (group === "host")
+    return <p className="text-[0.8125rem] text-muted-foreground">From the host's skills folder</p>;
   if (group.startsWith("template:")) {
     const template = group.slice("template:".length);
     return (
@@ -160,7 +161,7 @@ function FromLine({
     );
   }
   if (id === undefined)
-    return <p className="text-[0.8125rem] text-muted-foreground">Not in any source</p>;
+    return <p className="text-[0.8125rem] text-muted-foreground">Not found anywhere</p>;
   // Derived from the group, so a cold cache still has the link; the label and pin join when the list arrives.
   const pin = source ? pinLabel(source) : undefined;
   const text = source ? `From ${sourceLabel(source)}${pin ? ` · ${pin}` : ""}` : "From source";

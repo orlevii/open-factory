@@ -7,7 +7,7 @@ import {
   type sourcePreviewSchema,
 } from "@open-factory/shared";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { z } from "zod";
 import { Elapsed } from "@/components/elapsed";
 import { FormField } from "@/components/form-field";
@@ -30,7 +30,7 @@ import {
   type SkillSourceAddBody,
   type SkillSourcePreviewBody,
 } from "@/lib/library";
-import { AddSkillsResults, type FindResult } from "./add-skills-results";
+import { AddSkillsResults, type FindResult, useTicks } from "./add-skills-results";
 import { count, sourceLabel } from "./format";
 
 type Mode = "folder" | "github";
@@ -97,7 +97,7 @@ export default function AddSkillsSheet({ sheetId, close }: BodyProps<{ kind: "ad
   const [values, setValues] = useState<Values>(draft.start);
   const [restored, setRestored] = useState(draft.restored);
   const [found, setFound] = useState<Found>();
-  const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  const { ticked, setTicked, onTick, onToggle } = useTicks();
   const [filter, setFilter] = useState("");
   const [inert, setInert] = useState(false);
   const o = useOutcome();
@@ -246,25 +246,6 @@ export default function AddSkillsSheet({ sheetId, close }: BodyProps<{ kind: "ad
       },
     );
   };
-
-  const onTick = useCallback((name: string, on: boolean) => {
-    setTicked((s) => {
-      const next = new Set(s);
-      if (on) next.add(name);
-      else next.delete(name);
-      return next;
-    });
-  }, []);
-  const onToggle = useCallback((names: string[], on: boolean) => {
-    setTicked((s) => {
-      const next = new Set(s);
-      for (const n of names) {
-        if (on) next.add(n);
-        else next.delete(n);
-      }
-      return next;
-    });
-  }, []);
 
   const onCancel = () => {
     ctl.current?.abort();

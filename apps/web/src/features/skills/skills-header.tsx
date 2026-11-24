@@ -140,7 +140,13 @@ export function SkillsHeader({ onAddSkills }: { onAddSkills(): void }) {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" aria-label="Add skills" onClick={onAddSkills} {...ADD_INTENT}>
+              <Button
+                variant="ghost"
+                aria-label="Add skills"
+                data-add-skills=""
+                onClick={onAddSkills}
+                {...ADD_INTENT}
+              >
                 <Plus aria-hidden="true" data-icon="inline-start" />
                 <span className="max-sm:sr-only">Add skills</span>
               </Button>

@@ -151,6 +151,14 @@ export function resetLibraryChanged() {
  */
 export function onLibraryChanged(qc: QueryClient, frame: LibraryChanged) {
   if (frame.addFailed !== undefined) notify({ text: `Couldn't add ${frame.addFailed}.` });
+  invalidateLibrary(qc);
+}
+
+/**
+ * Schedules the coalesced `["library"]` refetch without a frame. A template or agent config change (`config_changed`) moves
+ * the template-local lists and the used-by counts (spec §9.5), and shares the same 250 ms window as `library_changed`.
+ */
+export function invalidateLibrary(qc: QueryClient) {
   if (timer !== undefined) return;
   timer = setTimeout(() => {
     timer = undefined;

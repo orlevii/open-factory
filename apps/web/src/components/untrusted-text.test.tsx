@@ -10,6 +10,19 @@ test("visibleControls shows bidi, zero-width and control characters as tokens", 
   expect(visibleControls("a\tb\nc")).toBe("a\tb\nc");
 });
 
+test.each([
+  ["RLM", "\u200f", "⟨U+200F⟩"],
+  ["LRM", "\u200e", "⟨U+200E⟩"],
+  ["ALM", "\u061c", "⟨U+061C⟩"],
+  ["soft hyphen", "\u00ad", "⟨U+00AD⟩"],
+  ["invisible operator", "\u2062", "⟨U+2062⟩"],
+  ["mongolian vowel separator", "\u180e", "⟨U+180E⟩"],
+  ["C1 NEL", "\u0085", "⟨U+0085⟩"],
+  ["C1 last", "\u009f", "⟨U+009F⟩"],
+])("visibleControls tokenises %s", (_name, ch, token) => {
+  expect(visibleControls(`a${ch}b`)).toBe(`a${token}b`);
+});
+
 test("visibleControls reads CRLF as a line break and still shows a lone CR as a token", () => {
   expect(visibleControls("one\r\ntwo\r\n")).toBe("one\ntwo\n");
   expect(visibleControls("a\rb")).toBe("a⟨U+000D⟩b");

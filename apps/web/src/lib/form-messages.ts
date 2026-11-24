@@ -50,4 +50,11 @@ export const FORM_MSG = {
   sourceChanged: "The source changed. Find skills again.",
   checkFailed: "Couldn't check for updates.",
   noSourcesToCheck: "No sources to check.",
+  noMatches: "No matches.",
+  noneAddable: "None of these can be added.",
+  noMoreSkills: "No more skills to add.",
+  selectAll: "Select all",
+  selectNone: "Select none",
+  // The label of the row action, which is also the server's `stateDetail` for a cache that needs a fetch (no code yet).
+  fetchAgain: "Fetch again",
 } as const;

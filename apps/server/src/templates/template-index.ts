@@ -47,7 +47,7 @@ import { avatarStat } from "./avatar.ts";
 import { KeyLock } from "./key-lock.ts";
 import { parseJson, parseYaml } from "./parse.ts";
 import { type ValidationContext, validateTemplate } from "./validate.ts";
-import { applyConfigToYaml } from "./yaml-write.ts";
+import { applyConfigToYaml, copyIdentityToYaml } from "./yaml-write.ts";
 
 export type TemplateRow = typeof schema.templates.$inferSelect;
 
@@ -532,8 +532,23 @@ export class TemplateIndex {
       settings: v.tplSettings,
       mcp: v.tplMcp,
     });
-    const before = docOf(was);
-    const after = docOf(now);
+    const policyIssues = await this.agentPolicy(name, docOf(was), docOf(now));
+    const key = (i: TemplateIssue) => `${i.message}\0${i.path ?? ""}`;
+    const had = new Set(was.issues.map(key));
+    const caused = [...now.issues.filter((i) => i.severity === "error"), ...policyIssues].filter(
+      (i) => !had.has(key(i)),
+    );
+    if (caused.length)
+      throw new ApiError(400, "invalid_config", "The configuration has errors.", {
+        issues: caused,
+      });
+  }
+
+  /**
+   * The agent rules over a change from `before` to `after` of template `name`: a local runtime anywhere in it is
+   * refused outright (`OrgRefusedError`), anything else the policy objects to is returned. Reads only.
+   */
+  private async agentPolicy(name: string, before: ConfigDoc, after: ConfigDoc) {
     const runtimeOf = (d: ConfigDoc) => yamlPart(d.template).runtime;
     const spawns = (d: ConfigDoc) => {
       const raw = yamlPart(d.template).can_spawn;
@@ -554,7 +569,7 @@ export class TemplateIndex {
     )
       throw new OrgRefusedError(LOCAL_RUNTIME_REFUSAL);
     const y = yamlPart(before.template);
-    const policyIssues = agentPolicyIssues({
+    return agentPolicyIssues({
       target: "template",
       before,
       after,
@@ -565,15 +580,6 @@ export class TemplateIndex {
       },
       plugins: await this.policy.plugins([after]),
     });
-    const key = (i: TemplateIssue) => `${i.message}\0${i.path ?? ""}`;
-    const had = new Set(was.issues.map(key));
-    const caused = [...now.issues.filter((i) => i.severity === "error"), ...policyIssues].filter(
-      (i) => !had.has(key(i)),
-    );
-    if (caused.length)
-      throw new ApiError(400, "invalid_config", "The configuration has errors.", {
-        issues: caused,
-      });
   }
 
   /**
@@ -772,6 +778,109 @@ export class TemplateIndex {
       }
       await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
     });
+  }
+
+  /**
+   * I7 §7.3: a new template from an existing one. The source is checked (`scanOneFull` takes only its lock) and
+   * `from === name` refused before the new name's lock is taken, and no step holds two locks, so crossed copies
+   * can't deadlock. Under the new name's lock: `mkdir` (EEXIST is a 409), then template.yaml (name, display_name and
+   * description rewritten through the YAML Document, comments kept), the other three files as bytes and `skills/`
+   * entry by entry, every one `lstat`ed: a link refuses the whole copy and the half-made folder is removed. `files/`
+   * and `avatar.svg` stay behind. The agent policy runs with `before` = `after` = the source's doc (empty today by
+   * construction, so a future rule applies to copies too).
+   */
+  async copyFrom(
+    from: string,
+    b: { name: string; displayName: string; description?: string },
+    actor: Actor,
+  ): Promise<{ issues: TemplateIssue[] }> {
+    const srcDir = this.folder(from);
+    const dir = this.folder(b.name);
+    const exists = () =>
+      new ApiError(409, "template_exists", `A template named ${b.name} already exists.`);
+    if (from === b.name) throw exists();
+    const src = await this.scanOneFull(from, FILE_CHANGE);
+    if (!src) throw notFound(from);
+    // Links first: a linked `skills/` is also a template error, and the refusal should say which link it is.
+    const files = await this.planCopy(srcDir);
+    if (src.row.issues.some((i) => i.severity === "error") || !src.row.config)
+      throw new ApiError(409, "template_invalid", `Template ${from} has errors; fix it first.`, {
+        issues: src.row.issues,
+      });
+    if (actor.kind === "agent") {
+      const issues = await this.agentPolicy(from, src.doc, src.doc);
+      if (issues.length)
+        throw new ApiError(400, "invalid_config", "The configuration has errors.", { issues });
+    }
+    return this.locks.run(b.name, async () => {
+      await mkdir(this.dir, { recursive: true });
+      try {
+        await mkdir(dir);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EEXIST") throw exists();
+        throw e;
+      }
+      try {
+        await this.copyFiles(srcDir, dir, files, b);
+      } catch (e) {
+        await rm(dir, { recursive: true, force: true });
+        throw e;
+      }
+      const full = await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
+      return { issues: full.row.issues };
+    });
+  }
+
+  /**
+   * The files a copy takes, as paths relative to the template: template.yaml, the three other files that exist and
+   * every file under `skills/`. `lstat` on every entry: a link (or anything that isn't a file or folder) refuses the
+   * whole copy. Hidden entries of `skills/` are skipped, like validation.
+   */
+  private async planCopy(srcDir: string): Promise<string[]> {
+    const notLink = (rel: string, what: "file" | "folder") =>
+      new ApiError(400, "invalid_template", `${rel} must be a ${what}, not a link.`);
+    const out: string[] = [];
+    for (const f of ["template.yaml", "settings.json", "mcp.json", "AGENTS.md"]) {
+      const st = await lstat(path.join(srcDir, f)).catch(() => null);
+      if (st && !st.isFile()) throw notLink(f, "file");
+      if (st) out.push(f);
+    }
+    const walk = async (rel: string) => {
+      for (const e of await readdir(path.join(srcDir, rel), { withFileTypes: true })) {
+        const r = `${rel}/${e.name}`;
+        if (e.isDirectory()) await walk(r);
+        else if (e.isFile()) out.push(r);
+        else throw notLink(r, "file");
+      }
+    };
+    const skills = await lstat(path.join(srcDir, "skills")).catch(() => null);
+    if (!skills) return out;
+    if (!skills.isDirectory()) throw notLink("skills/", "folder");
+    for (const entry of (await readdir(path.join(srcDir, "skills"))).sort()) {
+      if (entry.startsWith(".")) continue;
+      const rel = `skills/${entry}`;
+      if (!(await lstat(path.join(srcDir, rel))).isDirectory()) throw notLink(rel, "folder");
+      await walk(rel);
+    }
+    return out;
+  }
+
+  private async copyFiles(
+    srcDir: string,
+    dir: string,
+    files: string[],
+    b: { name: string; displayName: string; description?: string },
+  ) {
+    for (const rel of files) {
+      const bytes = await readFile(path.join(srcDir, rel));
+      await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+      await writeFile(
+        path.join(dir, rel),
+        rel === "template.yaml"
+          ? copyIdentityToYaml(bytes.toString("utf8"), b.name, b.displayName, b.description ?? "")
+          : bytes,
+      );
+    }
   }
 
   /** `_actor` is for B2's policy; deleting a template is a human's call today and nothing is attributed. */

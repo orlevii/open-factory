@@ -85,3 +85,28 @@ function replaceValue(doc: Document, map: YAMLMap, key: string, old: unknown, wa
   }
   pair.value = doc.createNode(want);
 }
+
+/**
+ * `text` (a template.yaml that parses) with `name`, `display_name` and `description` set, through the YAML Document so
+ * comments, key order and every other key survive. A scalar replaced by a scalar keeps its trailing comment.
+ */
+export function copyIdentityToYaml(
+  text: string,
+  name: string,
+  displayName: string,
+  description: string,
+): string {
+  const doc = parseDocument(text) as unknown as Document;
+  if (!isMap(doc.contents)) throw new Error("template.yaml is not a mapping");
+  const map = doc.contents;
+  for (const [key, want] of [
+    ["name", name],
+    ["display_name", displayName],
+    ["description", description],
+  ] as const) {
+    const node = map.get(key, true);
+    if (isScalar(node) && !node.anchor) node.value = want;
+    else map.set(key, want);
+  }
+  return String(doc);
+}

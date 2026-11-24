@@ -1098,7 +1098,7 @@ There is no change to the `agents` or `templates` columns.
 
 ## 13. Gate G1: real Claude Code checks (Or, before PR 2's implementation)
 
-G1 needs real Claude Code, which the design team must not run. It is a **hard gate for PR 2** and runs on the **exact** version the base image ships (Q21). If any item fails, it goes back to owner-i5 before the design adapts. G1 doesn't block PR 1.
+G1 needs real Claude Code, which the design team must not run. It is a **hard gate for PR 2** and runs on the **exact** version the base image ships (Q21). If any pass/fail item fails, it goes back to owner-i5 before the design adapts. G1 doesn't block PR 1.
 
 The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a fixture recipe. This section fixes what it must prove, and how.
 
@@ -1177,6 +1177,22 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
    - record whether skills in `$AG/commands/` or `$AG/agents/` load.
 18. **Required synced plugins.** If Or's claude.ai organisation can mark a plugin required, record whether it loads with `syncClaudeAiPlugins: false` for a token-signed-in agent. If not, mark it untested.
 19. **The version floor.** The lowest version where items 1–4, 7, 12 and 18 hold (the seed, `mcpb/`, settings precedence and sync), if Or can test an older one. Otherwise the shipped version is the floor.
+20. **Install and start timing** (RECORDED, never PASS or FAIL). It measures what a per-agent install done by Claude Code at agent start would cost, so the §7 store design can be weighed against it. It runs inside a throwaway container from the pinned agent image, with no host installs, no credentials and no mounts (`docker run --rm --entrypoint bash <image>`), a fresh `CLAUDE_CONFIG_DIR` and `DISABLE_AUTOUPDATER=1`. Plugins:
+    - `obra/superpowers-marketplace` with `superpowers` (no dependencies);
+    - `anthropics/claude-plugins-official` with `skill-creator` and `frontend-design`;
+    - the fixture's `marker` (a `package.json` with a registry dependency and `preinstall`/`postinstall`) and `ranged` (a version-range plugin dependency), so at least one case performs a real dependency install.
+
+    Record, per plugin:
+    - (a) the wall time of `claude plugin marketplace add <repo>`;
+    - (b) the wall time of `claude plugin install <plugin>@<marketplace>`;
+    - (c) the wall time of a second install of the same plugin (already installed);
+    - (d) the size and file count of the plugins dir afterwards, and whether dependencies were installed (for example a `node_modules/`).
+
+    Record, for session start (stream-json `init` timestamps against process start):
+    - the extra time to `init` with the plugin already in the agent's plugins dir, against a run with no plugins;
+    - a **cold start**: the container's plugins dir empty but the plugin declared, measured from declaration to the plugin listed as loaded in `init`.
+
+    Run each cold case 2–3 times and report min and max. Record the network (for example home broadband) and the host (for example Docker Desktop on Apple silicon). For comparison, Or's own plain runs (Claude Code 2.1.327, `open-factory-base:dev`, no credentials) took: `superpowers-marketplace` add 1.4 s, `superpowers` install 1.2–1.4 s (2.7 MB, 273 files, v7.0.2), reinstall 0.3 s; `claude-plugins-official` add 2.5 s (a 29 MB clone), `skill-creator` and `frontend-design` 0.5 s each; `discord` and `telegram` 0.4–0.5 s, with no `node_modules` after install. Plain installs therefore don't cost the "tens of seconds" #56 reports; this item must find whether a real dependency install does.
 
 ## 14. Testing and evidence
 

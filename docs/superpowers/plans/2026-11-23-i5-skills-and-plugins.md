@@ -846,7 +846,7 @@ Implements spec §13. **The executor writes the script but never runs it.** Runn
   The README gives the push steps. It also states:
   - the npm dependency is exact-pinned, tiny and well known (named in the README);
   - `run.sh` uses a throwaway `HOME` and npm cache under its temp dir, so Or's machine isn't touched beyond that dir.
-- [ ] **Step 2:** Write `run.sh`, covering items 1–19 of spec §13 exactly as written:
+- [ ] **Step 2:** Write `run.sh`, covering items 1–20 of spec §13 exactly as written:
   - `set -eu`, with `mkdir -p $MARK` up front and `test -z "$(ls -A $MARK)"` checks;
   - full stream capture to `out.jsonl`, with `init` selected by `jq 'select(.type=="system" and .subtype=="init")'`;
   - clones detached **behind** origin (`checkout --detach HEAD~1`);
@@ -854,7 +854,13 @@ Implements spec §13. **The executor writes the script but never runs it.** Runn
   - the agent env exactly as in spec §7.3: a scrubbed plugins root, an empty `skills/`, `CLAUDE_CODE_PLUGIN_SEED_DIR`, `DISABLE_AUTOUPDATER=1`, and `--settings "$(cat plugin-settings.json)"`;
   - it refuses to run with `HOME` pointing at a dir that contains `.open-factory-spike`;
   - each item writes PASS, FAIL or RECORDED plus the evidence into `report.md`, from `report-template.md`.
-- [ ] **Step 3:** `bash -n scripts/g1/run.sh` and `shellcheck scripts/g1/*.sh` (if installed). Commit `chore: Gate G1 script and fixture for Or`.
+- [ ] **Step 2b (added after B1 shipped; Or's request): item 20, install and start timing.** Add a separate `scripts/g1/timing.sh`, called by `run.sh` as item 20 and runnable alone, that records spec §13 item 20 as RECORDED (never PASS or FAIL):
+  - it runs each case in `docker run --rm --entrypoint bash <image>` from the pinned agent image (the B0 version), with no mounts, no credentials, a fresh `CLAUDE_CONFIG_DIR` and `DISABLE_AUTOUPDATER=1`;
+  - it times (wall clock, `date +%s.%N` or `/usr/bin/time`) marketplace add, install, and a second install, for `superpowers@superpowers-marketplace`, `skill-creator` and `frontend-design@claude-plugins-official`, and the fixture's `marker` and `ranged`; then `du -sk` and a file count of the plugins dir, and whether a `node_modules/` exists;
+  - it measures the extra time to the stream-json `init` with the plugin already installed (against no plugins), and the cold start from an empty but declared plugins dir to the plugin listed in `init`;
+  - it runs each cold case 3 times and writes min and max into a table in `report.md`, with Or's reference numbers from spec §13 item 20 beside them, plus a line for the network and host that Or fills in;
+  - `report-template.md` gains the item 20 table.
+- [ ] **Step 3:** `bash -n scripts/g1/run.sh scripts/g1/timing.sh` and `shellcheck scripts/g1/*.sh` (if installed). Commit `chore: Gate G1 script and fixture for Or` (item 20: `chore: G1 install and start timing`).
 - [ ] **Step 4:** **Stop. Gate G1 is a manual step for Or; the executor never runs real Claude.** Hand off to tech-lead-i5 / main: "G1 is ready: Or runs `scripts/g1/run.sh` with Claude Code **<exact version from `images/base/claude-code-version`>** (B0) and posts `report.md` on #153." `run.sh` checks `claude --version` against that file, and refuses to run when the versions differ. Tasks B2 onward start only after Or's report. **Any FAIL goes back to owner-i5 before the design adapts.** The RECORDED items fill the constants in Tasks B3, B6 and B7: the floor, update against fresh install, and whether `mcpb/` is scrubbed.
 
 ### Task B2: Fake Claude: plugin seed mode

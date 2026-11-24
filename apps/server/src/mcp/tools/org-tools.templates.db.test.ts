@@ -162,7 +162,28 @@ test("create_template refuses an existing name, a missing source and a reserved 
   ).toBe("Template nope not found.");
   const reserved = await call("hr-bot", "create_template", { name: "new", display_name: "N" });
   expect(reserved.err).toBe(true);
+  expect(reserved.text).toBe(
+    "Input validation error: Invalid arguments for tool create_template: name: That name is reserved.",
+  );
+  expect(existsSync(dirOf("new"))).toBe(false);
   expect(existsSync(dirOf("gone"))).toBe(false);
+});
+
+test("create_template from an invalid source says so and leaves no folder", async () => {
+  mkdirSync(dirOf("broken"), { recursive: true });
+  writeFileSync(
+    path.join(dirOf("broken"), "template.yaml"),
+    "name: broken\ndisplay_name: Broken\nruntime: docker\n",
+  );
+  writeFileSync(path.join(dirOf("broken"), "AGENTS.md"), "# Broken\n");
+  writeFileSync(path.join(dirOf("broken"), "settings.json"), "{ not json");
+  const r = await call("hr-bot", "create_template", {
+    name: "copy-of-broken",
+    display_name: "Copy",
+    from: "broken",
+  });
+  expect(r).toMatchObject({ err: true, text: "Template broken has errors; fix it first." });
+  expect(existsSync(dirOf("copy-of-broken"))).toBe(false);
 });
 
 test("write_template_file writes the file, returns its new hash, and get_template reads that hash back", async () => {

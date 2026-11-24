@@ -26,7 +26,8 @@ export function toolErrorOf(err: unknown): ReturnType<typeof toolError> {
     return toolError(field ? `${TOOL_FIELD[field] ?? field}: ${err.message}` : err.message);
   }
   if (err instanceof ApiError) {
-    const issues = err.extra.issues as TemplateIssue[] | undefined;
+    const issues =
+      err.code === "invalid_config" ? (err.extra.issues as TemplateIssue[] | undefined) : undefined;
     const errors = issues?.filter((i) => i.severity === "error") ?? [];
     return toolError(errors.length ? errors.map(issueLine).join("\n") : err.message);
   }

@@ -89,7 +89,7 @@ export const writeTemplateFileToolSchema = z
       .describe("The hash get_template gave you; null only for a file that doesn't exist yet"),
   })
   .superRefine((v, ctx) => {
-    if (v.file === "AGENTS.md" && Buffer.byteLength(v.content) > AGENTS_MD_MAX_BYTES)
+    if (v.file === "AGENTS.md" && new TextEncoder().encode(v.content).length > AGENTS_MD_MAX_BYTES)
       ctx.addIssue({
         code: "custom",
         path: ["content"],

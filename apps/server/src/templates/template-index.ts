@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { Dirent } from "node:fs";
+import { constants, type Dirent } from "node:fs";
 import {
   lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -81,6 +82,16 @@ async function isDir(p: string) {
     return (await stat(p)).isDirectory();
   } catch {
     return false;
+  }
+}
+
+/** Reads a file through a handle opened with `O_NOFOLLOW`: a link swapped in after the check fails (ELOOP). */
+async function readNoFollow(p: string): Promise<Buffer> {
+  const h = await open(p, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    return await h.readFile();
+  } finally {
+    await h.close();
   }
 }
 
@@ -638,12 +649,13 @@ export class TemplateIndex {
    * `changed_on_disk` with today's hashes), the three new texts are built and the whole template is validated as it
    * would be written (an error gives a 400 and nothing is written), then only the files whose content changed are
    * written (temp + rename). The rescan inside the lock fires the template change once, with the caller as its actor.
+   * Human only, by type: no agent policy runs here, so no agent path exists (spec §7.3a).
    */
   async writeConfig(
     name: string,
     doc: ConfigDoc,
     baseHashes: ConfigHashes,
-    actor: Actor,
+    actor: Extract<Actor, { kind: "human" }>,
   ): Promise<{ hashes: ConfigHashes; issues: TemplateIssue[]; changed: boolean }> {
     const dir = this.folder(name);
     if (!(await isDir(dir))) throw notFound(name);
@@ -823,6 +835,7 @@ export class TemplateIndex {
       }
       try {
         await this.copyFiles(srcDir, dir, files, b);
+        if (actor.kind === "agent") await this.refuseCopied(from, src.doc, dir, b.name);
       } catch (e) {
         await rm(dir, { recursive: true, force: true });
         throw e;
@@ -866,6 +879,22 @@ export class TemplateIndex {
     return out;
   }
 
+  /** What was copied, not the snapshot: the new folder is validated and the agent rules run over it (spec §7.3). */
+  private async refuseCopied(from: string, before: ConfigDoc, dir: string, name: string) {
+    const v = await validateTemplate(dir, name, await this.context());
+    const doc: ConfigDoc = {
+      template: { ...v.tplYaml, [LOCAL_SKILL_NAMES]: v.localSkillNames },
+      settings: v.tplSettings,
+      mcp: v.tplMcp,
+    };
+    const issues = [
+      ...v.issues.filter((i) => i.severity === "error"),
+      ...(await this.agentPolicy(from, before, doc, true)),
+    ];
+    if (issues.length)
+      throw new ApiError(400, "invalid_config", "The configuration has errors.", { issues });
+  }
+
   private async copyFiles(
     srcDir: string,
     dir: string,
@@ -873,7 +902,7 @@ export class TemplateIndex {
     b: { name: string; displayName: string; description?: string },
   ) {
     for (const rel of files) {
-      const bytes = await readFile(path.join(srcDir, rel));
+      const bytes = await readNoFollow(path.join(srcDir, rel));
       await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
       await writeFile(
         path.join(dir, rel),

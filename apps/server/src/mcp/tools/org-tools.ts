@@ -101,7 +101,6 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     },
   });
   const noArgs = z.object({});
-  const templateName = (name: string) => name.trim();
 
   return [
     tool(
@@ -140,7 +139,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         };
         const { issues } =
           a.from !== undefined
-            ? await d.templates.copyFrom(templateName(a.from), b, actor)
+            ? await d.templates.copyFrom(a.from, b, actor)
             : await d.templates.create(b, actor);
         d.bus.publishAll({
           type: "org_action",
@@ -157,13 +156,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       writeTemplateFileToolSchema,
       async (a, actor) => {
         try {
-          return await d.templates.writeFile(
-            templateName(a.name),
-            a.file,
-            a.content,
-            a.base_hash,
-            actor,
-          );
+          return await d.templates.writeFile(a.name, a.file, a.content, a.base_hash, actor);
         } catch (err) {
           // A stale hash is a 409 for humans; the agent is told which file to re-read.
           if (err instanceof ApiError && err.code === "changed_on_disk")

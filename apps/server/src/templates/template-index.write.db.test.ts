@@ -164,7 +164,7 @@ test("an unparseable current template.yaml refuses every agent write", async () 
   ).rejects.toThrow(expected);
 });
 
-test("an agent write to a linked folder or target file is refused; a human's is not", async () => {
+test("an agent write to a linked folder or target file is refused", async () => {
   writeTemplate("realdir");
   renameSync(dirOf("realdir"), path.join(home, "realdir-target"));
   symlinkSync(path.join(home, "realdir-target"), dirOf("linkdir"));
@@ -180,6 +180,27 @@ test("an agent write to a linked folder or target file is refused; a human's is 
     idx.writeFile("linkfile", "AGENTS.md", "# x\n", hashOf("linkfile", "AGENTS.md"), hr),
   ).rejects.toThrow(new OrgRefusedError("AGENTS.md is a link; ask a human."));
   expect(readFileSync(path.join(home, "elsewhere.md"), "utf8")).toBe("# e\n");
+});
+
+test("an agent cannot write a template whose own runtime is local, even with no agents; a human can", async () => {
+  writeTemplate("ownlocal", {
+    "template.yaml": yamlOf("ownlocal", "runtime: local\n"),
+    "settings.json": "{}",
+  });
+  await idx.scan();
+  const before = readFileSync(fileOf("ownlocal", "AGENTS.md"));
+  for (const [file, content] of [
+    ["AGENTS.md", "# x\n"],
+    ["settings.json", '{"effortLevel":"high"}'],
+  ] as const) {
+    await expect(
+      idx.writeFile("ownlocal", file, content, hashOf("ownlocal", file), hr),
+    ).rejects.toThrow(new OrgRefusedError(LOCAL_RUNTIME_REFUSAL));
+  }
+  expect(readFileSync(fileOf("ownlocal", "AGENTS.md")).equals(before)).toBe(true);
+  expect(readFileSync(fileOf("ownlocal", "settings.json"), "utf8")).toBe("{}");
+  await idx.writeFile("ownlocal", "AGENTS.md", "# x\n", hashOf("ownlocal", "AGENTS.md"), human);
+  expect(readFileSync(fileOf("ownlocal", "AGENTS.md"), "utf8")).toBe("# x\n");
 });
 
 test("an agent write to a template with an archived local agent is refused (R9)", async () => {

@@ -41,7 +41,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
   });
   // onRequest, not preHandler: auth must come before validation (401 before 400).
   app.addHook("onRequest", requireUser);
-  const humanOf = (req: FastifyRequest): Actor => {
+  const humanOf = (req: FastifyRequest): Extract<Actor, { kind: "human" }> => {
     if (!req.user) throw new Error("requireUser did not set request.user");
     return { kind: "human", handle: req.user.handle };
   };

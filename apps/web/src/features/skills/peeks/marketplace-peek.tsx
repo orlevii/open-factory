@@ -10,6 +10,7 @@ import { SheetBody, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui
 import { notify } from "@/components/ui/toaster";
 import { UntrustedInlineCode, UntrustedProse, visibleControls } from "@/components/untrusted-text";
 import { LatestBadge } from "@/features/config/latest-badge";
+import { PLUGIN_COPY } from "@/features/config/messages";
 import { TimeAgo } from "@/features/settings/shared";
 import { FORM_MSG } from "@/lib/form-messages";
 import {
@@ -85,7 +86,9 @@ function UpdateChanges({ view, loading }: { view: View | null | undefined; loadi
               <span className="font-mono">
                 <UntrustedProse text={c.name} />
               </span>
-              {c.runsCodeChanged && <span className="font-medium">Runs code changed</span>}
+              {c.runsCodeChanged && (
+                <span className="font-medium">{PLUGIN_COPY.runsCodeChanged}</span>
+              )}
               <span className="text-muted-foreground">
                 {c.what.map((w) => WHAT[w]).join(", ")} changed
               </span>

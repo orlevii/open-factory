@@ -9,9 +9,8 @@ import {
   AdaptiveMenuTrigger,
 } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
-import { UntrustedProse } from "@/components/untrusted-text";
 import { PinButton, SkeletonRows } from "@/features/skills/peeks/sections";
-import { DiffLine } from "@/features/skills/peeks/update-view";
+import { ChangedHeader, DiffLine, hookText } from "@/features/skills/peeks/update-view";
 import { diffPlugin, type MarketplaceRow } from "@/lib/library";
 import { LatestBadge } from "./latest-badge";
 import { CONFIG_COPY, PLUGIN_COPY } from "./messages";
@@ -71,8 +70,6 @@ type DiffVars = { id: string; keys: readonly string[]; from: string; to: string 
 
 /** A diff line per change of one plugin, removals first within each kind. */
 function diffLines(d: Diff["diff"]): { sign: "+" | "−"; text: string }[] {
-  const hook = (h: { event: string; matcher: string; command: string }) =>
-    `${h.event}${h.matcher ? ` (${h.matcher})` : ""}: ${h.command}`;
   const mcp = (m: { name: string; command: string | null; url: string | null }) =>
     `MCP ${m.name}: ${m.command ?? m.url ?? ""}`;
   const part = (c: { kind: string; items: string[] }) => `${c.kind}: ${c.items.join(", ")}`;
@@ -81,7 +78,7 @@ function diffLines(d: Diff["diff"]): { sign: "+" | "−"; text: string }[] {
     ...c.added.map((t) => ({ sign: "+" as const, text: text(t) })),
   ];
   return [
-    ...both(d.hooks, hook),
+    ...both(d.hooks, hookText),
     ...both(d.mcp, mcp),
     ...both(d.codeParts, part),
     ...both(d.commands, (c) => `command ${c}`),
@@ -94,12 +91,7 @@ function PluginDiff({ d }: { d: Diff }) {
   const lines = diffLines(d.diff);
   return (
     <li className="space-y-1">
-      <div className="flex items-center gap-2 text-[0.8125rem]">
-        <span className="font-mono">
-          <UntrustedProse text={d.key} />
-        </span>
-        {d.diff.runsCode && <span className="font-medium">{PLUGIN_COPY.runsCodeChanged}</span>}
-      </div>
+      <ChangedHeader name={d.key} runsCodeChanged={d.diff.runsCode} />
       {!d.to.present && (
         <DiffLine sign="−" text={PLUGIN_COPY.notInCatalog(shortRef(d.to.commit))} />
       )}

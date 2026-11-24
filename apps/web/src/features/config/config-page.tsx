@@ -465,7 +465,7 @@ function AgentConfigEditor({
       >
         <TabsList
           variant="line"
-          className="h-9! w-full justify-start gap-1 rounded-none border-b p-0"
+          className="h-auto! min-h-9 w-full justify-start gap-1 rounded-none border-b p-0"
         >
           <TabsTrigger value="config" className={TAB}>
             {CONFIG_PAGE_COPY.tabForm}
@@ -543,5 +543,6 @@ function AgentConfigEditor({
   );
 }
 
+// A tab may wrap its label (at 200% text on a phone the two tabs don't fit one line); the list grows with it.
 const TAB =
-  "h-full flex-none rounded-none px-2 text-[0.8125rem] font-normal text-muted-foreground data-[state=active]:text-foreground group-data-horizontal/tabs:after:bottom-0";
+  "h-auto min-w-0 flex-initial self-stretch whitespace-normal [overflow-wrap:anywhere] rounded-none px-2 text-[0.8125rem] font-normal text-muted-foreground data-[state=active]:text-foreground group-data-horizontal/tabs:after:bottom-0";

@@ -45,6 +45,12 @@ export function PeekSheet({
         ref={contentRef}
         keepFocus
         aria-describedby={undefined}
+        // F6 from the list moved focus in; F6 here moves it back to the shown row (spec §10.2), the peek stays open.
+        onKeyDown={(e) => {
+          if (e.key !== "F6" || !shown) return;
+          e.preventDefault();
+          returnFocus(shown)?.focus();
+        }}
         returnFocus={() => {
           const instead = focusInstead.current;
           focusInstead.current = undefined;

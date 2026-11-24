@@ -400,7 +400,7 @@ try {
     const errs = r?.issues.filter((i) => i.severity === "error") ?? [];
     if (!r || errs.length) throw new Error(JSON.stringify(errs));
   });
-  await step("0. agent smoke-dock created (plugin installed into plugins-config)", () =>
+  await step("0. agent smoke-dock created (Claude Code installs the plugin at start)", () =>
     app.agents.create({
       template: "dock",
       slug: SLUG,

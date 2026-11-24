@@ -180,6 +180,63 @@ test("spawn: child row, grants ∩, brief, spawned event, peer rows (spawner exc
   expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-x1", "AGENTS.md"))).toBe(true);
 });
 
+// AC 10: spawn never installs; Claude Code does, at each agent's first start, into that agent's own plugins dir.
+test("three spawns of a template with a plugin return without an install; each start gets its own plugins dir", async () => {
+  const { t, driver, lead } = await setup();
+  const mk = mkdtempSync(path.join(tmpdir(), "of-mk-"));
+  mkdirSync(path.join(mk, ".claude-plugin"), { recursive: true });
+  writeFileSync(
+    path.join(mk, ".claude-plugin", "marketplace.json"),
+    JSON.stringify({ name: "mk", plugins: [{ name: "p", source: "./plugins/p" }] }),
+  );
+  mkdirSync(path.join(mk, "plugins/p/.claude-plugin"), { recursive: true });
+  writeFileSync(
+    path.join(mk, "plugins/p/.claude-plugin/plugin.json"),
+    JSON.stringify({ name: "p", version: "1.0.0" }),
+  );
+  await t.db.insert(schema.marketplaces).values({
+    name: "mk",
+    source: { source: "directory", path: mk },
+    tags: {},
+    state: "ready",
+    startedAt: new Date(),
+    addedBy: "@or",
+    addedAt: new Date(),
+  });
+  writeTemplate(t.factoryHome, "plugged", "name: plugged\ndisplay_name: P\nruntime: local\n");
+  writeFileSync(
+    path.join(t.factoryHome, "templates/plugged/settings.json"),
+    JSON.stringify({
+      extraKnownMarketplaces: { mk: { source: { source: "directory", path: mk } } },
+      enabledPlugins: { "p@mk": true },
+    }),
+  );
+  await t.db
+    .update(schema.agents)
+    .set({ config: { template: { can_spawn: ["plugged"], max_live_spawns: 5 } } })
+    .where(eq(schema.agents.id, lead.id));
+  const slugs: string[] = [];
+  for (const suffix of ["a", "b", "c"]) {
+    const r = await t.app.spawner.spawn(lead.id, args({ template: "plugged", suffix }), null);
+    expect(r).toMatchObject({ ok: true });
+    if (r.ok) slugs.push(r.slug);
+    // Spawn installed nothing: no plugins dir exists before the first start.
+    expect(
+      existsSync(path.join(t.factoryHome, "state/agents", slugs.at(-1) ?? "", "plugins")),
+    ).toBe(false);
+  }
+  await vi.waitFor(() => expect(driver.starts.length).toBeGreaterThanOrEqual(3));
+  const dirs = driver.starts.map((p) => p.spec.env.CLAUDE_CODE_PLUGIN_CACHE_DIR);
+  expect(new Set(dirs).size).toBe(dirs.length);
+  for (const slug of slugs) {
+    const start = driver.starts.find((p) => p.spec.slug === slug);
+    expect(start?.spec.env.CLAUDE_CODE_PLUGIN_CACHE_DIR).toMatch(
+      new RegExp(`state/agents/${slug}/plugins$`),
+    );
+    expect(JSON.parse(start?.spec.settingsJson ?? "{}").enabledPlugins["p@mk"]).toBe(true);
+  }
+});
+
 test("a random suffix is 4 letters and the display name carries it", async () => {
   const { t, lead } = await setup();
   const r = await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null);

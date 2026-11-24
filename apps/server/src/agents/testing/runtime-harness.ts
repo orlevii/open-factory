@@ -99,6 +99,7 @@ export const okSpec = (
   permissionMode: "auto",
   mounts: [],
   effective: testEffective(config),
+  plugins: [],
 });
 
 /**

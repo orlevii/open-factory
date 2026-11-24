@@ -1,5 +1,5 @@
 import type { AgentRow } from "@open-factory/db";
-import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
+import type { HarnessDriver } from "@open-factory/harness";
 import {
   type AgentStatus,
   type ConfigSnapshot,
@@ -8,7 +8,6 @@ import {
 } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { resolveImage, USER_TAG_PREFIX, userNameOfTag } from "../images/resolve.ts";
-import { versionCheckEnv } from "../library/claude-flags.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -143,7 +142,6 @@ export class AgentRuntimes {
   private readonly byId = new Map<string, Promise<AgentRuntime>>();
   /** The runtimes whose init finished: the Supervisor's synchronous view. */
   private readonly loaded = new Map<string, AgentRuntime>();
-  private versionChecked = false;
   /** The one owner of the cap; every runtime starts through it. */
   readonly supervisor: Supervisor;
   constructor(private readonly d: RuntimesDeps) {
@@ -240,10 +238,6 @@ export class AgentRuntimes {
               },
             }
           : {}),
-        // Local agents only: a Docker agent's claude runs in its image, not on the host.
-        onFirstStart: (spec) => {
-          if (spec.runtime === "local") this.checkVersionOnce(spec.claudeBin);
-        },
       });
       const pending = runtime.init().then(async () => {
         if (this.d.docker && row.runtime === "docker")
@@ -298,6 +292,11 @@ export class AgentRuntimes {
   /** I2 §6.2: what a loaded runtime's running process started with; undefined when not loaded or not running. */
   startedOf(agentId: string): Effective | undefined {
     return this.loaded.get(agentId)?.started;
+  }
+
+  /** The version of each plugin a loaded runtime's running process listed at its first `init` (spec §7.3 step 8). */
+  loadedPluginsOf(agentId: string): Record<string, string> | undefined {
+    return this.loaded.get(agentId)?.loadedPlugins;
   }
 
   /**
@@ -518,20 +517,5 @@ export class AgentRuntimes {
   private async all(): Promise<AgentRuntime[]> {
     const inits = await Promise.allSettled(this.byId.values());
     return inits.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
-  }
-
-  private checkVersionOnce(bin: string) {
-    if (this.versionChecked) return;
-    this.versionChecked = true;
-    void checkClaudeVersion(bin, versionCheckEnv(this.d.serverEnv ?? process.env)).then(
-      ({ version, tooOld }) => {
-        if (version) this.d.log.info({ version }, "Claude Code version");
-        if (tooOld)
-          this.d.log.warn(
-            { version, minimum: MIN_CLAUDE_VERSION },
-            "Claude Code is older than the version S3 was verified on",
-          );
-      },
-    );
   }
 }

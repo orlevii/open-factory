@@ -1,4 +1,7 @@
+import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -13,11 +16,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createFakeClaude } from "@open-factory/harness/testing";
+import { createFakeClaude, type FakeScenario } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { buildAgentEnv } from "../agents/runtime-spec.ts";
 import { FieldError } from "../errors.ts";
-import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
+import { hostOnlyLibrary, marketplaceRow, writeHostSkill } from "../test/library.ts";
 import { KeyedMutex } from "./lock.ts";
 import { Workspace } from "./workspace.ts";
 
@@ -39,8 +43,6 @@ function setup(fakeEnv: Record<string, string> = {}) {
     projects: ["app"],
   });
   const tplSettings = {
-    extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/mk" } } },
-    enabledPlugins: { "p@mk": true },
     permissions: { deny: ["Bash(curl:*)"] },
   };
   const fake = createFakeClaude({ scenario: "reply", env: fakeEnv });
@@ -92,7 +94,7 @@ test("materialize then prepare: the full layout", async () => {
   expect(lstatSync(path.join(wd, "projects/app")).isSymbolicLink()).toBe(true);
   expect(lstatSync(path.join(wd, ".claude/skills/grilling")).isSymbolicLink()).toBe(true);
   const s = JSON.parse(readFileSync(path.join(wd, ".claude-config/settings.json"), "utf8"));
-  expect(s.enabledPlugins).toEqual({ "p@mk": true });
+  expect(s).not.toHaveProperty("enabledPlugins");
   expect(s.permissions.additionalDirectories).toEqual([repo]);
   expect(s.permissions.deny).toEqual(["Bash(curl:*)", "SendMessage", "ListAgents"]);
   expect(JSON.parse(readFileSync(path.join(wd, ".mcp.json"), "utf8"))).toEqual({
@@ -111,8 +113,7 @@ test("materialize then prepare: the full layout", async () => {
     repo,
     realpathSync(path.join(hs, "grilling")),
     realpathSync(path.join(home, "templates/lead/skills/local")),
-    "/mk",
-    path.join(home, "state/agents/lead/plugins-config/plugins"),
+    realpathSync(path.join(home, "state/agents/lead/plugins")),
     "/opt/factory/bin/open-factory",
   ]);
 });
@@ -130,19 +131,25 @@ test("prepare drops agent-added settings keys and re-asserts template rules", as
   const again = JSON.parse(readFileSync(f, "utf8"));
   expect(again.permissions.deny).toEqual(["Bash(curl:*)", "SendMessage", "ListAgents"]);
   expect(again).not.toHaveProperty("mine");
-  expect(again.enabledPlugins).toEqual({ "p@mk": true });
 });
 
-test("materialize: existing folder → folder_exists; plugin failure → caller can discard", async () => {
-  const { ws, tpl, prep, home } = setup({ FAKE_CLAUDE_PLUGIN_FAIL: "p@mk" });
+test("materialize: an existing folder is folder_exists and left alone; the caller can discard its own", async () => {
+  const { ws, tpl, prep, home } = setup();
   mkdirSync(path.join(home, "agents/taken"), { recursive: true });
   await expect(
     ws.materialize("taken", "taken", tpl, { ...prep, slug: "taken" }),
   ).rejects.toBeInstanceOf(FieldError);
   expect(existsSync(path.join(home, "agents/taken"))).toBe(true);
-  await expect(ws.materialize("lead", "lead", tpl, prep)).rejects.toThrow(/Plugin install failed/);
+  await ws.materialize("lead", "lead", tpl, prep);
   await ws.discard("lead");
   expect(existsSync(path.join(home, "agents/lead"))).toBe(false);
+});
+
+test("materialize installs nothing and creates no plugins dir (spec §7.2)", async () => {
+  const { ws, tpl, prep, home } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  expect(existsSync(path.join(home, "state/agents/lead/plugins"))).toBe(false);
+  expect(existsSync(path.join(home, "state/agents/lead/plugins-config"))).toBe(false);
 });
 
 const STAMP = /^state\/agents\/lead\/persona\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/;
@@ -403,4 +410,299 @@ test("prepare reports the first failing step when two coexist: the plugin check,
   await expect(ws.prepare(prep)).rejects.toThrow("sets hooks");
   rmSync(path.join(wd, ".claude/settings.local.json"));
   await expect(ws.prepare(prep)).rejects.toThrow("agents/a.md declares hooks");
+});
+
+// Spec §7.3: Claude Code installs the plugins at the start. The fake does what it does, from the `--settings` JSON and
+// `CLAUDE_CODE_PLUGIN_CACHE_DIR` that `prepare` returns and `buildAgentEnv` turns into env.
+type Prepared = Awaited<ReturnType<Workspace["prepare"]>>;
+const GIT = {
+  GIT_AUTHOR_NAME: "t",
+  GIT_AUTHOR_EMAIL: "t@t",
+  GIT_COMMITTER_NAME: "t",
+  GIT_COMMITTER_EMAIL: "t@t",
+};
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+    cwd,
+    env: { ...process.env, ...GIT },
+    encoding: "utf8",
+  }).trim();
+
+/** A marketplace `mk` with the plugins `p` (needs `dep` when `dependsOn`) and `other`, at `version`. */
+function writeMarketplace(root: string, version: string, dependsOn?: string[]) {
+  mkdirSync(path.join(root, ".claude-plugin"), { recursive: true });
+  writeFileSync(
+    path.join(root, ".claude-plugin", "marketplace.json"),
+    JSON.stringify({
+      name: "mk",
+      plugins: ["p", "other", "dep"].map((name) => ({ name, source: `./plugins/${name}` })),
+    }),
+  );
+  for (const name of ["p", "other", "dep"]) {
+    const dir = path.join(root, "plugins", name, ".claude-plugin");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path.join(dir, "plugin.json"),
+      JSON.stringify({
+        name,
+        version: name === "p" ? version : "1.0.0",
+        ...(name === "p" && dependsOn ? { dependencies: dependsOn } : {}),
+      }),
+    );
+  }
+}
+
+const INIT_SCENARIO: FakeScenario = {
+  onStart: [{ emit: { fixture: "ancestor-agents-md-loads", lines: [1, 1] } }],
+  onUser: [],
+};
+
+type Decl = { source: Record<string, unknown> };
+
+function pluginSetup(o: { fakeEnv?: Record<string, string>; enabled?: string[] } = {}) {
+  const base = setup();
+  const home = realpathSync(base.home);
+  const root = mkdtempSync(path.join(tmpdir(), "of-plug-"));
+  // `o/r` as a GitHub repo with 1.0.0 then 2.0.0; each commit's tree is also the Library's checkout of it.
+  const gh = path.join(root, "gh");
+  const repo = path.join(gh, "o", "r.git");
+  mkdirSync(repo, { recursive: true });
+  git(repo, "init", "--quiet", "-b", "main");
+  const commits: string[] = [];
+  for (const v of ["1.0.0", "2.0.0"]) {
+    writeMarketplace(repo, v);
+    git(repo, "add", "-A");
+    git(repo, "commit", "--quiet", "-m", `v${v}`);
+    const sha = git(repo, "rev-parse", "HEAD");
+    commits.push(sha);
+    cpSync(repo, path.join(home, "state/library/marketplaces/mk", sha), {
+      recursive: true,
+      filter: (f) => path.basename(f) !== ".git",
+    });
+  }
+  const [c1, c2] = commits as [string, string];
+  const local = path.join(root, "local");
+  writeMarketplace(local, "1.0.0");
+  const rows = (kind: "github" | "directory") => [
+    kind === "github"
+      ? marketplaceRow("mk", { source: "github", repo: "o/r" }, { commit: c2 })
+      : marketplaceRow("mk", { source: "directory", path: local }),
+  ];
+  const fake = createFakeClaude({
+    scenario: INIT_SCENARIO,
+    env: { FAKE_CLAUDE_GITHUB_URL: `file://${gh}`, ...o.fakeEnv },
+  });
+  const ws = (kind: "github" | "directory" = "github") =>
+    new Workspace({
+      factoryHome: base.home,
+      library: hostOnlyLibrary(base.claude, base.home, [], rows(kind)),
+      claudeBin: fake.bin,
+      cliBundle: "/nonexistent/open-factory.js",
+      lock: new KeyedMutex(),
+    });
+  /** The prepare input for a template declaring `mk` as `decl` and enabling `enabled`. */
+  const input = (decl: Decl, enabled = o.enabled ?? ["p@mk"], pin = "commit") => {
+    const settings = {
+      extraKnownMarketplaces: { mk: decl },
+      enabledPlugins: Object.fromEntries(enabled.map((k) => [k, true])),
+    };
+    return {
+      ...base.prep,
+      effective: {
+        ...base.prep.effective,
+        doc: { ...base.prep.effective.doc, settings },
+        library: { skills: {}, plugins: Object.fromEntries(enabled.map((k) => [k, pin])) },
+      },
+    };
+  };
+  const github = (ref?: string): Decl => ({
+    source: { source: "github", repo: "o/r", ...(ref ? { ref } : {}) },
+  });
+  const directory: Decl = { source: { source: "directory", path: local } };
+  /** Starts the fake the way the factory starts Claude: its env, and `--settings` from the prepare. */
+  const run = (out: Prepared) => {
+    const env = buildAgentEnv(
+      { PATH: process.env.PATH },
+      {
+        configDir: out.configDir,
+        slug: "lead",
+        credential: { kind: "api_key", value: "k" },
+        secrets: {},
+        agentToken: "t",
+        plugins: out.plugins,
+      },
+      "local",
+    );
+    const r = spawnSync(fake.bin, ["--settings", out.plugins.settingsJson], {
+      input: "",
+      encoding: "utf8",
+      env,
+      timeout: 20_000,
+    });
+    const init = r.stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .find((x) => x.type === "system" && x.subtype === "init");
+    return { env, init, stderr: r.stderr };
+  };
+  const installs = () => {
+    const f = path.join(fake.dir, "plugin.log");
+    return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean) : [];
+  };
+  return { ...base, home, c1, c2, ws, input, github, directory, run, installs, fake, local };
+}
+
+test("a cold start installs into state/agents/<slug>/plugins and init lists the plugin; a restart installs nothing", async () => {
+  const x = pluginSetup();
+  const ws = x.ws();
+  const prep = x.input(x.github(x.c1));
+  await ws.materialize("lead", "lead", x.tpl, prep);
+  const out = await ws.prepare(prep);
+  const dir = path.join(x.home, "state/agents/lead/plugins");
+  expect(out.plugins.dir).toBe(dir);
+  expect(existsSync(dir)).toBe(true);
+  expect(out.plugins.expected).toEqual([{ key: "p@mk", pin: `commit:${x.c1}` }]);
+
+  const first = x.run(out);
+  expect(first.init.plugins).toEqual([
+    { name: "p", path: path.join(dir, "cache/mk/p/1.0.0"), source: "p@mk", version: "1.0.0" },
+  ]);
+  expect(x.installs()).toEqual([`install p@mk ${x.c1} ${path.join(dir, "cache/mk/p/1.0.0")}`]);
+
+  // The factory wrote nothing into the dir: Claude Code did.
+  expect(existsSync(path.join(dir, "installed_plugins.json"))).toBe(true);
+  const second = x.run(await ws.prepare(prep));
+  expect(second.init.plugins).toHaveLength(1);
+  expect(x.installs()).toHaveLength(1);
+});
+
+test("a template repin installs the new version at the next start", async () => {
+  const x = pluginSetup();
+  const ws = x.ws();
+  await ws.materialize("lead", "lead", x.tpl, x.input(x.github(x.c1)));
+  expect(x.run(await ws.prepare(x.input(x.github(x.c1)))).init.plugins[0].version).toBe("1.0.0");
+  const out = await ws.prepare(x.input(x.github(x.c2)));
+  expect(out.plugins.expected).toEqual([{ key: "p@mk", pin: `commit:${x.c2}` }]);
+  expect(x.run(out).init.plugins[0].version).toBe("2.0.0");
+  expect(x.installs()).toHaveLength(2);
+});
+
+test("the plugin settings: the closure true, the rest of the catalog and installed strangers false, marketplaces replaced", async () => {
+  const x = pluginSetup();
+  const ws = x.ws();
+  const prep = x.input(x.github(x.c1));
+  await ws.materialize("lead", "lead", x.tpl, prep);
+  const out = await ws.prepare(prep);
+  const settings = JSON.parse(out.plugins.settingsJson);
+  expect(settings).toEqual({
+    enabledPlugins: {
+      "p@mk": true,
+      "other@mk": false,
+      "dep@mk": false,
+      // The skills the agent is linked: switched off as skills-directory plugins too.
+      "grilling@skills-dir": false,
+      "local@skills-dir": false,
+    },
+    extraKnownMarketplaces: {
+      mk: { source: { source: "github", repo: "o/r", ref: x.c1 }, autoUpdate: false },
+    },
+    syncClaudeAiPlugins: false,
+  });
+  // A copy for diagnosis; the workdir's settings carry none of it.
+  expect(readFileSync(path.join(x.home, "state/agents/lead/plugin-settings.json"), "utf8")).toBe(
+    out.plugins.settingsJson,
+  );
+  // A plugin the agent installed itself is switched off at the next start (G1 item 10).
+  const installed = path.join(x.home, "state/agents/lead/plugins/installed_plugins.json");
+  writeFileSync(
+    installed,
+    JSON.stringify({ version: 2, plugins: { "mine@elsewhere": [{ installPath: "/nowhere" }] } }),
+  );
+  const again = JSON.parse((await ws.prepare(prep)).plugins.settingsJson);
+  expect(again.enabledPlugins["mine@elsewhere"]).toBe(false);
+});
+
+test("a plugin's readable dependencies join the closure, and an installed copy's dependency counts only for a declared marketplace", async () => {
+  const x = pluginSetup();
+  const ws = x.ws("directory");
+  const prep = x.input(x.directory, ["p@mk"], "live");
+  await ws.materialize("lead", "lead", x.tpl, prep);
+  const dir = path.join(x.home, "state/agents/lead/plugins");
+  // The agent's installed copy of p now names dep (declared marketplace) and evil (not declared).
+  const copy = path.join(dir, "cache/mk/p/1.0.0");
+  writeMarketplace(path.join(dir, "cache-src"), "1.0.0", ["dep", "evil@nowhere"]);
+  cpSync(path.join(dir, "cache-src/plugins/p"), copy, { recursive: true });
+  writeFileSync(
+    path.join(dir, "installed_plugins.json"),
+    JSON.stringify({ version: 2, plugins: { "p@mk": [{ scope: "user", installPath: copy }] } }),
+  );
+  const settings = JSON.parse((await ws.prepare(prep)).plugins.settingsJson);
+  expect(settings.enabledPlugins["dep@mk"]).toBe(true);
+  expect(settings.enabledPlugins).not.toHaveProperty("evil@nowhere", true);
+});
+
+test("the plugin switches follow the declarations: Latest forces auto-update, a remote marketplace syncs the install", async () => {
+  const x = pluginSetup();
+  const ws = x.ws();
+  await ws.materialize("lead", "lead", x.tpl, x.input(x.github(x.c1)));
+  const pinned = await ws.prepare(x.input(x.github(x.c1)));
+  expect(pinned.plugins).toMatchObject({ latest: false, remote: true });
+  const pinnedRun = x.run(pinned);
+  expect(pinnedRun.env.CLAUDE_CODE_PLUGIN_CACHE_DIR).toBe(pinned.plugins.dir);
+  expect(pinnedRun.env.DISABLE_AUTOUPDATER).toBe("1");
+  expect(pinnedRun.env).not.toHaveProperty("FORCE_AUTOUPDATE_PLUGINS");
+  expect(pinnedRun.env.CLAUDE_CODE_SYNC_PLUGIN_INSTALL).toBe("1");
+
+  const latest = await ws.prepare(x.input(x.github(), ["p@mk"], "latest"));
+  expect(JSON.parse(latest.plugins.settingsJson).extraKnownMarketplaces.mk).toEqual({
+    source: { source: "github", repo: "o/r" },
+    autoUpdate: true,
+  });
+  expect(latest.plugins).toMatchObject({ latest: true, remote: true });
+  expect(x.run(latest).env.FORCE_AUTOUPDATE_PLUGINS).toBe("1");
+
+  // A live directory marketplace: no sync, no forced auto-update, its folder mounts read-only.
+  const dirWs = x.ws("directory");
+  const live = await dirWs.prepare(x.input(x.directory, ["p@mk"], "live"));
+  expect(live.plugins).toMatchObject({ latest: false, remote: false, marketplaceDirs: [x.local] });
+  expect(x.run(live).env).not.toHaveProperty("CLAUDE_CODE_SYNC_PLUGIN_INSTALL");
+});
+
+test("no plugin is declared: Claude still gets its plugins dir and no self-update, and the dir stays empty", async () => {
+  const { ws, tpl, prep, home } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const out = await ws.prepare(prep);
+  expect(out.plugins).toMatchObject({ latest: false, remote: false, expected: [] });
+  expect(JSON.parse(out.plugins.settingsJson)).toEqual({
+    enabledPlugins: { "grilling@skills-dir": false, "local@skills-dir": false },
+    extraKnownMarketplaces: {},
+    syncClaudeAiPlugins: false,
+  });
+  expect(readdirSync(path.join(realpathSync(home), "state/agents/lead/plugins"))).toEqual([]);
+});
+
+test("a local start below the Claude Code floor fails, naming both versions", async () => {
+  const x = pluginSetup({ fakeEnv: { FAKE_CLAUDE_VERSION: "2.1.1" } });
+  const ws = x.ws();
+  await ws.materialize("lead", "lead", x.tpl, x.input(x.github(x.c1)));
+  await expect(ws.prepare(x.input(x.github(x.c1)))).rejects.toThrow(
+    "Claude Code 2.1.1 is too old; update it to 2.1.331 or later.",
+  );
+});
+
+test("a claude that prints no version fails the local start closed", async () => {
+  const x = pluginSetup();
+  const silent = path.join(mkdtempSync(path.join(tmpdir(), "silent-")), "claude");
+  writeFileSync(silent, "#!/bin/sh\nexit 0\n");
+  chmodSync(silent, 0o755);
+  const ws = new Workspace({
+    factoryHome: x.home,
+    library: hostOnlyLibrary(x.claude, x.home),
+    claudeBin: silent,
+    cliBundle: "/nonexistent/open-factory.js",
+    lock: new KeyedMutex(),
+  });
+  await ws.materialize("lead", "lead", x.tpl, x.prep);
+  await expect(ws.prepare(x.prep)).rejects.toThrow(/printed no readable version/);
 });

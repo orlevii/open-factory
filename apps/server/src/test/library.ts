@@ -30,6 +30,34 @@ export function folderSource(dir: string, skills: string[]): SkillSourceRow {
   };
 }
 
+/** A ready marketplace row at `commit` (none for a directory); `over` overrides any column. */
+export function marketplaceRow(
+  name: string,
+  source: MarketplaceRow["source"],
+  over: Partial<MarketplaceRow> = {},
+): MarketplaceRow {
+  return {
+    name,
+    source,
+    branch: source.source === "directory" ? null : "main",
+    commit: null,
+    committedAt: null,
+    subject: null,
+    updateCommit: null,
+    updateAt: null,
+    updateSubject: null,
+    checkedAt: null,
+    checkError: null,
+    tags: {},
+    state: "ready",
+    startedAt: new Date(0),
+    addedBy: "@or",
+    addedAt: new Date(0),
+    deletedAt: null,
+    ...over,
+  };
+}
+
 /**
  * A Library over the host's skills and the given sources (no agents, no templates), for tests that need no database
  * of their own.

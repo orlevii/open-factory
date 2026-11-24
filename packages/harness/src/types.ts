@@ -18,6 +18,8 @@ export interface AgentRuntimeSpec {
   model?: string;
   effort?: string;
   permissionMode: "auto" | "bypass";
+  /** The factory-owned settings as an inline JSON string, passed as `--settings` (spec §7.3 step 5). Holds no secrets. */
+  settingsJson?: string;
   mounts: Mount[];
   /** Set by the server for Docker starts. */
   docker?: { containerId: string; claudeBin: string };

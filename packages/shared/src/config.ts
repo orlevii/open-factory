@@ -22,6 +22,14 @@ export const FACTORY_ENV_NAMES: readonly string[] = [
   "GIT_AUTHOR_EMAIL",
   "GIT_COMMITTER_NAME",
   "GIT_COMMITTER_EMAIL",
+  // The plugin env (spec §7.3 step 4): Claude Code's plugins dir and update switches are the factory's.
+  "CLAUDE_CODE_PLUGIN_CACHE_DIR",
+  "CLAUDE_CODE_PLUGIN_SEED_DIR",
+  "CLAUDE_CODE_PLUGIN_DIRS",
+  "CLAUDE_CODE_SYNC_PLUGIN_INSTALL",
+  "DISABLE_AUTOUPDATER",
+  "DISABLE_UPDATES",
+  "FORCE_AUTOUPDATE_PLUGINS",
 ];
 const FACTORY_ENV_PREFIX = "OPEN_FACTORY_";
 export const isFactoryEnvName = (name: string): boolean =>

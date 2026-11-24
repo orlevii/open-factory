@@ -24,6 +24,8 @@ export function buildAgentEnv(
     secrets: Record<string, string>;
     agentUrl?: string;
     agentToken: string;
+    /** The plugin switches of this start (spec §7.3 step 4). */
+    plugins: { dir: string; latest: boolean; remote: boolean };
   },
   runtime: "local" | "docker",
 ): Record<string, string> {
@@ -36,6 +38,15 @@ export function buildAgentEnv(
     else delete env[k];
   }
   env.CLAUDE_CONFIG_DIR = extra.configDir;
+  // Plugins (spec §7.3 step 4): Claude Code keeps them in the agent's own dir and never updates itself. The plugin
+  // auto-update pass needs `FORCE_AUTOUPDATE_PLUGINS` once `DISABLE_AUTOUPDATER` is set; a remote marketplace needs the
+  // synchronous install, or its plugins miss the first `init` (G1 item 8).
+  env.CLAUDE_CODE_PLUGIN_CACHE_DIR = extra.plugins.dir;
+  env.DISABLE_AUTOUPDATER = "1";
+  delete env.FORCE_AUTOUPDATE_PLUGINS;
+  delete env.CLAUDE_CODE_SYNC_PLUGIN_INSTALL;
+  if (extra.plugins.latest) env.FORCE_AUTOUPDATE_PLUGINS = "1";
+  if (extra.plugins.remote) env.CLAUDE_CODE_SYNC_PLUGIN_INSTALL = "1";
   const [credVar, otherVar] =
     extra.credential.kind === "api_key"
       ? ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
@@ -69,6 +80,8 @@ export function buildRuntimeSpec(i: {
   claudeBin: string;
   config: TemplateConfig;
   mounts: Mount[];
+  /** The factory-owned plugin settings, passed as `--settings` (spec §7.3 step 5). */
+  settingsJson: string;
 }): AgentRuntimeSpec {
   return {
     agentId: i.agentId,
@@ -80,6 +93,7 @@ export function buildRuntimeSpec(i: {
     ...(i.config.model ? { model: i.config.model } : {}),
     ...(i.config.effort ? { effort: i.config.effort } : {}),
     permissionMode: i.config.permissionMode,
+    settingsJson: i.settingsJson,
     mounts: i.mounts,
   };
 }

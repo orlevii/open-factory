@@ -9,19 +9,17 @@ const strs = (v: unknown): string[] =>
 
 export interface SettingsInput {
   tpl: Record<string, unknown>;
-  /** `enabledPlugins`/`extraKnownMarketplaces` from the factory-owned `plugins-config/settings.json`
-   *  (spec §11.7), never from the agent's config-dir settings, which the agent can write. */
-  pluginKeys: Record<string, unknown>;
   slug: string;
   workdir: string;
   permissionMode: "auto" | "bypass";
-  plugins: string[];
   grantedPaths: string[];
   /** The exact agent MCP URL this agent reaches (spec §10.4). */
   mcpUrl: string;
   /** Deny rules inherited from the spawner (spec §6); appended after the template's own. */
   inherited?: DenyRules;
 }
+
+const PLUGIN_KEYS = ["enabledPlugins", "extraKnownMarketplaces", "syncClaudeAiPlugins"] as const;
 
 /** Claude Code's built-in agent-team tools would bypass the factory's messaging (spec §10.4). */
 const BUILT_IN_TEAM_TOOLS = ["SendMessage", "ListAgents"];
@@ -56,15 +54,8 @@ export function claudeMdExcludes(workdir: string): string[] {
 
 export function buildSettings(i: SettingsInput): Record<string, unknown> {
   const tpl = structuredClone(i.tpl);
-  delete tpl.enabledPlugins;
-  const installed = obj(i.pluginKeys.enabledPlugins);
-  const enabledPlugins = Object.fromEntries(
-    Object.entries(installed).filter(([k]) => i.plugins.includes(k)),
-  );
-  const extraKnownMarketplaces = {
-    ...obj(i.pluginKeys.extraKnownMarketplaces),
-    ...obj(i.tpl.extraKnownMarketplaces),
-  };
+  // The plugin keys never reach the workdir: the factory passes its own with `--settings` (spec §7.3 step 5).
+  for (const key of PLUGIN_KEYS) delete tpl[key];
   const perms = obj(tpl.permissions);
   const permissions = {
     ...perms,
@@ -98,8 +89,6 @@ export function buildSettings(i: SettingsInput): Record<string, unknown> {
   }
   return {
     ...tpl,
-    extraKnownMarketplaces,
-    enabledPlugins,
     permissions,
     autoMode,
     claudeMdExcludes: [...strs(tpl.claudeMdExcludes), ...claudeMdExcludes(i.workdir)],

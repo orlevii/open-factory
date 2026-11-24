@@ -70,6 +70,7 @@ async function makeRuntime(
         permissionMode: "auto",
         mounts: [],
         effective: testEffective(),
+        plugins: [],
       };
     },
     log: silentLog,

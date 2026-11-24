@@ -19,5 +19,6 @@ export function buildClaudeArgs(
   if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
   if (spec.model) args.push("--model", spec.model);
   if (spec.effort) args.push("--effort", spec.effort);
+  if (spec.settingsJson) args.push("--settings", spec.settingsJson);
   return args;
 }

@@ -24,6 +24,7 @@ import type { AgentService } from "./agent-service.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 import { sendAs } from "./testing/runtime-harness.ts";
 
+let fake: ReturnType<typeof createFakeClaude>;
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let svc: AgentService;
 let runtimes: AgentRuntimes;
@@ -44,10 +45,7 @@ const idOf = async (slug: string) => {
 };
 
 beforeAll(async () => {
-  const fake = createFakeClaude({
-    scenario: "reply",
-    env: { FAKE_CLAUDE_PLUGIN_FAIL: "bad@mk" },
-  });
+  fake = createFakeClaude({ scenario: "reply" });
   t = await makeTestApp({ env: { FACTORY_CLAUDE_BIN: fake.bin } });
   home = t.factoryHome;
   svc = t.app.agents;
@@ -77,7 +75,7 @@ beforeAll(async () => {
     path.join(home, "templates/plugged/settings.json"),
     JSON.stringify({
       extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/mk" } } },
-      enabledPlugins: { "bad@mk": true },
+      enabledPlugins: { "p@mk": true },
     }),
   );
   writeTemplate("broken", "name: broken\nruntime: nonsense\n");
@@ -184,20 +182,18 @@ test("create with a reserved slug is refused before any claim", async () => {
   }
 });
 
-test("create: plugin failure removes the folder and inserts no row; existing folder → folder_exists, untouched", async () => {
-  await expect(
-    svc.create({
-      template: "plugged",
-      slug: "plug",
-      displayName: "P",
-      description: "",
-      reportsTo: null,
-      credential: "work",
-    }),
-  ).rejects.toMatchObject({ code: "plugin_install_failed" });
-  expect(existsSync(path.join(home, "agents/plug"))).toBe(false);
-  for (const ended of ["exclude", "only"] as const)
-    expect((await svc.list(ended)).agents.map((a) => a.slug)).not.toContain("plug");
+test("create: a template with a plugin installs nothing and runs no claude; an existing folder → folder_exists, untouched", async () => {
+  await svc.create({
+    template: "plugged",
+    slug: "plug",
+    displayName: "P",
+    description: "",
+    reportsTo: null,
+    credential: "work",
+  });
+  expect(existsSync(path.join(home, "agents/plug"))).toBe(true);
+  expect(existsSync(path.join(home, "state/agents/plug/plugins"))).toBe(false);
+  expect(existsSync(path.join(fake.dir, "plugin.log"))).toBe(false);
   mkdirSync(path.join(home, "agents/occupied"), { recursive: true });
   writeFileSync(path.join(home, "agents/occupied/keep.txt"), "k");
   await expect(

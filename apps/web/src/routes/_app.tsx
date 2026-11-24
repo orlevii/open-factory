@@ -6,7 +6,6 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/toaster";
-import { OutputDialogHost } from "@/features/agents/show-output";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { onChatChanged } from "@/features/chat/use-chat";
 import { agentConfigQueryOptions, templateConfigQueryOptions } from "@/features/config/api";
@@ -249,7 +248,6 @@ function AppLayout() {
             <Outlet />
           </SidebarInset>
           <Toaster />
-          <OutputDialogHost />
           <CommandPalette />
           <GlobalShortcuts />
           <SheetHost />

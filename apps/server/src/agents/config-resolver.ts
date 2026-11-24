@@ -16,7 +16,7 @@ import {
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
 import type { CatalogEntry } from "../library/marketplaces-service.ts";
-import { readContents } from "../library/plugin-contents.ts";
+import { dependencyKeys, readManifest } from "../library/plugin-settings.ts";
 import { classifyPluginSource } from "../library/plugin-sources.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { AgentStartError } from "./errors.ts";
@@ -35,7 +35,7 @@ export type Effective = {
 };
 
 /** A pin as the library map carries it (spec §8.1). */
-const pinString = (pin: Pin): string =>
+export const pinString = (pin: Pin): string =>
   pin.kind === "commit" ? `commit:${pin.sha}` : pin.kind === "tag" ? `tag:${pin.name}` : pin.kind;
 
 /** What one `libraryOf` call has read: a marketplace's catalog at a ref, and each plugin's dependencies. */
@@ -114,14 +114,18 @@ export class ConfigResolver {
       plugins[key] = pinString(pin);
       const row = rows.get(mkt);
       if (!row) continue;
-      for (const dep of await this.dependenciesOf(row, name, pin, memo)) todo.push(`${dep}@${mkt}`);
+      // A dependency naming a marketplace this config doesn't declare stays out: it is never enabled (spec §7.3 step 2).
+      for (const dep of await this.dependenciesOf(row, name, pin, memo)) {
+        const depMkt = dep.slice(dep.lastIndexOf("@") + 1);
+        if (Object.hasOwn(markets, depMkt)) todo.push(dep);
+      }
     }
     return plugins;
   }
 
   /**
-   * The dependencies a relative-path plugin names at the Library's checkout of its marketplace at `pin`. Each is taken
-   * to live in the same marketplace at the same pin; mapping a dependency that names another marketplace is B7's.
+   * The dependency keys a relative-path plugin names at the Library's checkout of its marketplace at `pin`; one with no
+   * marketplace of its own lives in the plugin's.
    */
   private async dependenciesOf(
     row: Parameters<LibraryIndex["catalogAt"]>[0],
@@ -147,10 +151,8 @@ export class ConfigResolver {
     if (catalog.dir && entry) {
       const info = classifyPluginSource(entry.raw);
       if (info.kind === "relative") {
-        const contents = await readContents(path.join(catalog.dir, info.path)).catch(
-          () => undefined,
-        );
-        deps = (contents?.dependencies ?? []).map((d) => d.split("@", 1)[0] ?? d).filter(Boolean);
+        const manifest = await readManifest(path.join(catalog.dir, info.path));
+        deps = manifest ? dependencyKeys(manifest, row.name) : [];
       }
     }
     memo.deps.set(key, deps);

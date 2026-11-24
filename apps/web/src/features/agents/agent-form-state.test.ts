@@ -172,56 +172,9 @@ const fill = (s: State) =>
     s.set("displayName", "P");
     s.set("template", "lead");
   });
-const failPlugin = async () => {
-  throw new ApiError(502, "plugin_install_failed", "Plugin install failed: x.", {
-    output: "npm ERR! nope",
-  });
+const failCreate = async () => {
+  throw new ApiError(500, "boom", "Creating failed: x.");
 };
-
-test("an edit clears a plugin install failure's output with its line", async () => {
-  const { result } = mount(create());
-  await waitFor(() => expect(result.current.credentials).toBeDefined());
-  fill(result.current);
-  const edits: [string, (s: State) => void][] = [
-    ["set", (s) => s.set("displayName", "Q")],
-    ["setProjects", (s) => s.setProjects(["app"])],
-  ];
-  for (const [name, edit] of edits) {
-    await act(async () => {
-      await result.current.submit(failPlugin);
-    });
-    expect(result.current.pluginOutput, name).toBe("npm ERR! nope");
-    act(() => edit(result.current));
-    expect(result.current.outcome.error, name).toBeUndefined();
-    expect(result.current.pluginOutput, name).toBeUndefined();
-  }
-});
-
-test("a plugin install failure keeps its output as data until the next submit", async () => {
-  const { result } = mount(create());
-  await waitFor(() => expect(result.current.credentials).toBeDefined());
-  act(() => {
-    result.current.set("slug", "plug");
-    result.current.set("displayName", "P");
-    result.current.set("template", "lead");
-  });
-  await act(async () => {
-    await result.current.submit(async () => {
-      throw new ApiError(502, "plugin_install_failed", "Plugin install failed: x.", {
-        output: "npm ERR! nope",
-      });
-    });
-  });
-  expect(result.current.outcome.error).toBe("Plugin install failed: x.");
-  expect(result.current.pluginOutput).toBe("npm ERR! nope");
-  let release = () => {};
-  await act(async () => {
-    void result.current.submit(() => new Promise<void>((res) => (release = res)));
-  });
-  expect(result.current.pluginOutput).toBeUndefined();
-  expect(result.current.outcome.error).toBeUndefined();
-  await act(async () => release());
-});
 
 test("Discard clears errors and the outcome", async () => {
   const { result } = mount(create());
@@ -234,13 +187,11 @@ test("Discard clears errors and the outcome", async () => {
   expect(result.current.errors).toEqual({});
   fill(result.current);
   await act(async () => {
-    await result.current.submit(failPlugin);
+    await result.current.submit(failCreate);
   });
-  expect(result.current.outcome.error).toBe("Plugin install failed: x.");
-  expect(result.current.pluginOutput).toBe("npm ERR! nope");
+  expect(result.current.outcome.error).toBe("Creating failed: x.");
   act(() => result.current.discard());
   expect(result.current.outcome.error).toBeUndefined();
-  expect(result.current.pluginOutput).toBeUndefined();
 });
 
 test("a second submit while one is in flight is ignored", async () => {

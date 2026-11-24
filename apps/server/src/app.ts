@@ -31,6 +31,7 @@ import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
 import { ImageBuilder } from "./images/builder.ts";
+import { checkImageClaudeVersion } from "./library/claude-flags.ts";
 import { LibraryIndex } from "./library/library-index.ts";
 import { LibrarySweep, skillDirsInUse } from "./library/library-sweep.ts";
 import { dbSourcesStore, SourcesService } from "./library/sources-service.ts";
@@ -243,7 +244,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   // dockerode connects lazily: constructing these makes no Docker call.
   const docker = deps.docker ?? dockerodeClient();
-  const containers = new ContainerManager({ docker, log: app.log });
+  const containers = new ContainerManager({
+    docker,
+    log: app.log,
+    checkImage: checkImageClaudeVersion,
+  });
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
@@ -347,6 +352,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     workspace,
     lock,
     runtimes,
+    resolver,
     log: app.log,
     containers,
     router,

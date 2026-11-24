@@ -175,6 +175,12 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
       );
     case "mcp_unavailable":
       return "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive.";
+    case "plugin_not_loaded":
+      return (
+        <>
+          Plugin <Mono>{e.key}</Mono> didn't load. Claude Code's output is in the session log.
+        </>
+      );
     case "interrupt_unconfirmed":
       return "The turn didn't confirm the stop within 10 seconds, so held messages were sent anyway.";
     default:
@@ -208,6 +214,7 @@ function quietIcon(e: AnyEvent): ReactNode {
   // One crash is red once: the unexpected exit, never a separate crimson error row.
   if (e.type === "exited" && !e.expected)
     return <CircleAlert aria-hidden="true" className="text-destructive" />;
+  if (e.type === "plugin_not_loaded") return <CircleAlert aria-hidden="true" />;
   if (e.type === "spawned") return <GitFork aria-hidden="true" />;
   if (e.type === "terminated") return <CircleX aria-hidden="true" />;
   return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;

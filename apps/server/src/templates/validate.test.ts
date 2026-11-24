@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { MarketplaceRow } from "@open-factory/db";
-import { emptyDoc } from "@open-factory/shared";
+import { emptyDoc, FACTORY_ENV_NAMES } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import {
@@ -731,6 +731,41 @@ test("validateEffective never echoes an env name that fails the name rule", asyn
   expect(issues).toEqual([expect.objectContaining({ severity: "error", path: "settings.env" })]);
   expect(JSON.stringify(issues)).not.toContain("sk-ant");
 });
+
+const PLUGIN_ENV = [
+  "CLAUDE_CODE_PLUGIN_CACHE_DIR",
+  "CLAUDE_CODE_PLUGIN_SEED_DIR",
+  "CLAUDE_CODE_PLUGIN_DIRS",
+  "CLAUDE_CODE_SYNC_PLUGIN_INSTALL",
+  "DISABLE_AUTOUPDATER",
+  "DISABLE_UPDATES",
+  "FORCE_AUTOUPDATE_PLUGINS",
+];
+
+// Spec §7.3 step 4: the plugin env is the factory's. No template, overlay or secret can set it (a project's own
+// settings `env` is refused at the start: workspace/agent-folders.test.ts runs every name in FACTORY_ENV_NAMES).
+test.each(PLUGIN_ENV)(
+  "%s is a factory env name no template, overlay or secret can set",
+  async (name) => {
+    expect(FACTORY_ENV_NAMES).toContain(name);
+    const template = await validateEffective(
+      { ...baseDoc(), settings: { env: { [name]: "1" } } },
+      ctx,
+      "human",
+    );
+    expect(template).toEqual([
+      expect.objectContaining({ severity: "error", message: `${name} is set by the factory.` }),
+    ]);
+    const overlayEnv = overlaySchemaIssues({ settings: { env: { [name]: "1" } } });
+    expect(overlayEnv).toEqual([
+      expect.objectContaining({ severity: "error", path: `settings.env.${name}` }),
+    ]);
+    const secret = overlaySchemaIssues({ template: { secrets: [name] } });
+    expect(secret).toEqual([
+      expect.objectContaining({ severity: "error", path: "template.secrets.0" }),
+    ]);
+  },
+);
 
 test("an overlay secret the factory owns gives one issue", async () => {
   const issues = await overlayIssues(baseDoc(), { template: { secrets: ["OPEN_FACTORY_X"] } }, ctx);

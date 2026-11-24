@@ -15,7 +15,6 @@ import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { Router } from "../messaging/router.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
-import { PluginInstallError } from "../workspace/plugins.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 import { droppedNote, type Inherited, inheritFrom, readDenyRules } from "./inherit.ts";
 import { maySpawn } from "./may-spawn.ts";
@@ -232,12 +231,7 @@ export class SpawnService {
       // folder_exists: the folder isn't ours (a crash's leftover or a human's); never remove it.
       if (err instanceof FieldError && err.code === "folder_exists") return "taken";
       await this.discard(slug);
-      if (
-        err instanceof PluginInstallError ||
-        err instanceof WorkspaceError ||
-        err instanceof FieldError
-      )
-        return fail(err.message);
+      if (err instanceof WorkspaceError || err instanceof FieldError) return fail(err.message);
       this.d.log.error({ err, agent: slug }, "materializing a spawned agent failed");
       return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
     }

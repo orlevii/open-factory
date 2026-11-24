@@ -38,6 +38,8 @@ export type PreparedSpec = AgentRuntimeSpec & {
   credentialId: string;
   /** The config this start prepared; the runtime keeps it as `started` (spec §6.2). It holds env values: never log it. */
   effective: Effective;
+  /** The plugins this start expects Claude Code to load, each with its pin; the runtime checks the first `init` (spec §7.3 step 8). */
+  plugins: { key: string; pin: string }[];
 };
 
 /** I2 §6.2: a loaded runtime's `started` config (what its running process started with); undefined when none runs. */
@@ -362,23 +364,27 @@ export function createPrepareStart(d: {
             secrets,
             agentUrl: d.config.agentUrl,
             agentToken,
+            plugins: prepared.plugins,
           },
           config.runtime,
         ),
         claudeBin: d.config.claudeBin,
         config,
         mounts: prepared.mounts,
+        settingsJson: prepared.plugins.settingsJson,
       });
+      const plugins = prepared.plugins.expected;
       return docker && prepared.mountCheck
         ? {
             ...spec,
             credentialId,
             effective,
+            plugins,
             launch: {
               image: resolveImage(config.image, d.config.defaultImage).tag,
               mountCheck: prepared.mountCheck,
             },
           }
-        : { ...spec, credentialId, effective };
+        : { ...spec, credentialId, effective, plugins };
     });
 }

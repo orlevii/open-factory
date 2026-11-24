@@ -268,6 +268,12 @@ export const agentConfigResponseSchema = z.object({
     valid: z.boolean(),
   }),
   merged: configDocSchema.nullable(),
+  /**
+   * What the merged config runs as plugins: each key with its pin (`commit:<sha>`, `tag:<name>`, `latest`, `live`,
+   * `missing`), and `loaded`, the version the running process's first `init` listed (spec §7.3 step 8). Empty while
+   * `merged` is null.
+   */
+  plugins: z.array(z.object({ key: z.string(), pin: z.string(), loaded: z.string().optional() })),
   issues: z.array(templateIssueSchema),
 });
 export type AgentConfigResponse = z.infer<typeof agentConfigResponseSchema>;

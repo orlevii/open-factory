@@ -79,66 +79,6 @@ if (argv0[0] === "setup-token") {
   } else process.stdin.on("end", () => process.exit(1));
   await new Promise(() => {}); // never falls through to the plugin block or the scenario code
 }
-// Plugin subcommands: the factory's per-agent installs, as before ef9de2d9. deleted in B7.
-if (argv0[0] === "plugin") {
-  const cfg = process.env.CLAUDE_CONFIG_DIR;
-  // Like Claude, apply `env` from the config-dir and project settings (S5 R1: that is how a planted
-  // settings.json reached git), then emulate git honouring GIT_TRACE and a `!touch` credential helper.
-  const readJson = (p) => {
-    try {
-      return JSON.parse(readFileSync(p, "utf8"));
-    } catch {
-      return {};
-    }
-  };
-  for (const p of [
-    `${cfg}/settings.json`,
-    `${process.cwd()}/.claude/settings.json`,
-    `${process.cwd()}/.claude/settings.local.json`,
-  ])
-    Object.assign(process.env, readJson(p).env ?? {});
-  if (process.env.GIT_TRACE?.startsWith("/")) appendFileSync(process.env.GIT_TRACE, "trace\n");
-  for (let i = 0; i < Number(process.env.GIT_CONFIG_COUNT ?? 0); i++) {
-    const helper = /^!touch (.+)$/.exec(process.env[`GIT_CONFIG_VALUE_${i}`] ?? "");
-    if (process.env[`GIT_CONFIG_KEY_${i}`] === "credential.helper" && helper)
-      writeFileSync(helper[1], "");
-  }
-  appendFileSync(
-    `${process.env.FAKE_CLAUDE_DIR}/plugin.log`,
-    `${JSON.stringify({ argv: argv0, env: Object.keys(process.env).sort(), cwd: process.cwd(), configDir: cfg })}\n`,
-  );
-  mkdirSync(`${cfg}/plugins`, { recursive: true });
-  // A failure that prints nothing (`marketplace` or `install`): the caller only has the exit to go on.
-  if (process.env.FAKE_CLAUDE_PLUGIN_SILENT_FAIL === argv0[1]) process.exit(1);
-  const f = `${cfg}/settings.json`;
-  const s = existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {};
-  if (argv0[1] === "marketplace" && argv0[2] === "add") {
-    const src = argv0[3];
-    const name = src.split("/").pop();
-    s.extraKnownMarketplaces = {
-      ...s.extraKnownMarketplaces,
-      [name]: { source: { source: "directory", path: src } },
-    };
-  } else if (argv0[1] === "install") {
-    const ref = argv0[2];
-    if ((process.env.FAKE_CLAUDE_PLUGIN_FAIL ?? "").split(",").includes(ref)) {
-      process.stderr.write(
-        `\u2718 Failed to install plugin "${ref}": Plugin not found in marketplace\n`,
-      );
-      // Extra failure output a test wants echoed (secret-shaped fixtures for the redaction tests).
-      if (process.env.FAKE_CLAUDE_PLUGIN_ECHO)
-        process.stderr.write(`${process.env.FAKE_CLAUDE_PLUGIN_ECHO}\n`);
-      process.exit(1);
-    }
-    if (process.env.FAKE_CLAUDE_PLUGIN_SLEEP_MS)
-      await new Promise((r) => setTimeout(r, Number(process.env.FAKE_CLAUDE_PLUGIN_SLEEP_MS)));
-    s.enabledPlugins = { ...s.enabledPlugins, [ref]: true };
-  }
-  writeFileSync(f, JSON.stringify(s, null, 2));
-  process.stdout.write("\u2714 ok\n");
-  process.exit(0);
-}
-
 // Session start (spec §7.3 steps 4-8): Claude Code reads `--settings` and installs each enabled plugin of a
 // directory or git marketplace into CLAUDE_CODE_PLUGIN_CACHE_DIR, at the declared ref, before `init`.
 const COMMIT = /^[0-9a-f]{40}$/;

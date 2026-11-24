@@ -377,6 +377,7 @@ function deferred(): Deferred {
 
 const IMAGE = "open-factory-base:test";
 const MOUNT_CHECK: MountCheckContext = {
+  slug: "lead",
   workdir: "/nonexistent/of-test/workdir",
   grantedPaths: [],
   skillPaths: [],

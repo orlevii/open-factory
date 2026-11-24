@@ -60,7 +60,9 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
   const actorOf = async (tctx: ToolContext): Promise<AgentActor> => {
     const row = await d.loadAgent(callerOf(tctx));
     if (!row || row.archivedAt || row.terminatedAt || !row.manageOrg)
-      throw new OrgRefusedError(row ? `@${row.slug} can't manage the org any more.` : "You can't manage the org any more.");
+      throw new OrgRefusedError(
+        row ? `@${row.slug} can't manage the org any more.` : "You can't manage the org any more.",
+      );
     return { kind: "agent", id: row.id, slug: row.slug };
   };
   const handler =

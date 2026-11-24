@@ -4,7 +4,6 @@ import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
   type Actor,
-  type AgentConfigResponse,
   type AgentModel,
   type AgentOverlay,
   type AgentSummary,
@@ -14,16 +13,12 @@ import {
   type ConfigDoc,
   type CreateAgentBody,
   LOCAL_RUNTIME_REFUSAL,
-  mergeConfig,
   nameSchema,
-  overlayVersion,
   type PatchAgentBody,
-  type PutAgentConfigBody,
   type PutAgentConfigResponse,
   slugSchema,
   touchesLocalRuntime,
   treeOrder,
-  yamlPart,
 } from "@open-factory/shared";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { isSlugUnique } from "../db-errors.ts";
@@ -441,21 +436,6 @@ export class AgentService {
       changed.push(k.id);
     }
     return changed;
-  }
-
-  private async liveChildren(spawnerId: string): Promise<string[]> {
-    const rows = await this.d.db
-      .select({ id: schema.agents.id })
-      .from(schema.agents)
-      .where(
-        and(
-          eq(schema.agents.reportsTo, spawnerId),
-          eq(schema.agents.kind, "ephemeral"),
-          isNull(schema.agents.terminatedAt),
-        ),
-      )
-      .orderBy(asc(schema.agents.id));
-    return rows.map((r) => r.id);
   }
 
   /** After the commit: the Supervisor reads the credential from the loaded row, so reload, then apply (§6.3). */

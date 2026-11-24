@@ -11,6 +11,7 @@ import {
   libraryQueryOptions,
   onLibraryChanged,
   resetLibraryChanged,
+  selectSourceGroup,
   skillQueryOptions,
   sourceQueryOptions,
 } from "./library";
@@ -149,4 +150,17 @@ test("one invalidation of the library prefix reaches the list, a skill and a sou
   expect(invalidated()).toEqual([false, false, false]);
   await qc.invalidateQueries({ queryKey: ["library"], refetchType: "none" });
   expect(invalidated()).toEqual([true, true, true]);
+});
+
+test("a select is the same function for the same key, and the cache is bounded", () => {
+  const first = selectSourceGroup("s0");
+  expect(selectSourceGroup("s0")).toBe(first);
+  // Well past the cap: the oldest keys are dropped, so the first one is rebuilt rather than kept forever...
+  for (let i = 1; i <= 300; i++) selectSourceGroup(`s${i}`);
+  expect(selectSourceGroup("s0")).not.toBe(first);
+  // ...while a recent one is still the same function.
+  const recent = selectSourceGroup("s300");
+  expect(selectSourceGroup("s300")).toBe(recent);
+  // The rebuilt select still answers.
+  expect(first({ hostDir: "/h", groups: [] })).toBeUndefined();
 });

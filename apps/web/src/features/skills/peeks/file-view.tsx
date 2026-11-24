@@ -37,8 +37,11 @@ export function FileView({
   const pathId = useId();
   const q = useQuery({ ...options, enabled: open && inlineText === undefined });
   const text = inlineText ?? q.data?.text;
+  // Only a pinned file is warmed: it never goes stale, so the warmed text is what opening shows. A live file is
+  // stale at once, so a warm-up would just be fetched again when the toggle opens.
   const warm = () => {
-    if (inlineText === undefined) void qc.prefetchQuery(options);
+    if (inlineText === undefined && options.staleTime === Number.POSITIVE_INFINITY)
+      void qc.prefetchQuery(options);
   };
   return (
     <li className="py-1">

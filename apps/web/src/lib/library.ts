@@ -82,37 +82,48 @@ export type SkillRowView = {
   source: SourceGroup["source"] | undefined;
 };
 
-const rowSelectors = new Map<string, (data: SkillGroupsResponse) => SkillRowView | undefined>();
+const SELECTORS_MAX = 200;
+
+/** A `select` per key, made once and handed back every render. Bounded: past the cap the oldest is dropped (its next
+ *  caller just builds a fresh one), so a long session opening many peeks doesn't grow the map without end. */
+function memoSelectors<D, R>() {
+  const cache = new Map<string, (data: D) => R>();
+  return (key: string, make: () => (data: D) => R) => {
+    let select = cache.get(key);
+    if (select)
+      cache.delete(key); // re-inserted below: the map's order is recency
+    else {
+      select = make();
+      if (cache.size >= SELECTORS_MAX) cache.delete(cache.keys().next().value as string);
+    }
+    cache.set(key, select);
+    return select;
+  };
+}
+
+const rowSelectors = memoSelectors<SkillGroupsResponse, SkillRowView | undefined>();
 
 /**
  * `select` for a peek reading one skill's row from the cached list (R-L2). Memoised per `(group, name)` at module level,
  * so a render hands `useQuery` the same function and it doesn't re-select on every render.
  */
 export function selectSkillRow(group: string, name: string) {
-  const key = `${group}\0${name}`;
-  let select = rowSelectors.get(key);
-  if (!select) {
-    select = (data) => {
-      const g = data.groups.find((x) => x.group === group);
-      const row = g?.skills.find((r) => r.name === name);
-      return g && row ? { row, source: g.kind === "source" ? g.source : undefined } : undefined;
-    };
-    rowSelectors.set(key, select);
-  }
-  return select;
+  return rowSelectors(`${group}\0${name}`, () => (data) => {
+    const g = data.groups.find((x) => x.group === group);
+    const row = g?.skills.find((r) => r.name === name);
+    return g && row ? { row, source: g.kind === "source" ? g.source : undefined } : undefined;
+  });
 }
 
-const sourceSelectors = new Map<string, (data: SkillGroupsResponse) => SourceGroup | undefined>();
+const sourceSelectors = memoSelectors<SkillGroupsResponse, SourceGroup | undefined>();
 
 /** `select` for a Source peek: the source's group (its summary and its skills' rows) from the cached list. */
 export function selectSourceGroup(id: string) {
-  let select = sourceSelectors.get(id);
-  if (!select) {
-    select = (data) =>
-      data.groups.find((g): g is SourceGroup => g.kind === "source" && g.source.id === id);
-    sourceSelectors.set(id, select);
-  }
-  return select;
+  return sourceSelectors(
+    id,
+    () => (data) =>
+      data.groups.find((g): g is SourceGroup => g.kind === "source" && g.source.id === id),
+  );
 }
 
 export type SkillSourcePreviewBody = z.infer<typeof skillSourcePreviewBodySchema>;
@@ -223,43 +234,29 @@ export type PluginRowView =
   | { from: "library"; entry: PluginEntry; marketplace: string; commit: string | null }
   | { from: "host"; entry: HostEntry };
 
-const pluginSelectors = new Map<string, (data: PluginsResponse) => PluginRowView | undefined>();
+const pluginSelectors = memoSelectors<PluginsResponse, PluginRowView | undefined>();
 
 /** `select` for a peek reading one plugin's row (module-level and memoised per `(key, from)`, R-L2). */
 export function selectPluginRow(key: string, from: PluginFrom) {
-  const id = `${from} ${key}`;
-  let select = pluginSelectors.get(id);
-  if (!select) {
-    select = (data) => {
-      if (from === "host") {
-        const entry = data.host.find((h) => h.key === key);
-        return entry ? { from: "host", entry } : undefined;
-      }
-      for (const m of data.marketplaces) {
-        const entry = m.plugins.find((p) => p.key === key);
-        if (entry) return { from: "library", entry, marketplace: m.name, commit: m.commit };
-      }
-      return undefined;
-    };
-    pluginSelectors.set(id, select);
-  }
-  return select;
+  return pluginSelectors(`${from}\0${key}`, () => (data) => {
+    if (from === "host") {
+      const entry = data.host.find((h) => h.key === key);
+      return entry ? { from: "host", entry } : undefined;
+    }
+    for (const m of data.marketplaces) {
+      const entry = m.plugins.find((p) => p.key === key);
+      if (entry) return { from: "library", entry, marketplace: m.name, commit: m.commit };
+    }
+    return undefined;
+  });
 }
 
 export type MarketplaceRow = MarketplacesResponse["marketplaces"][number];
-const marketplaceSelectors = new Map<
-  string,
-  (data: MarketplacesResponse) => MarketplaceRow | undefined
->();
+const marketplaceSelectors = memoSelectors<MarketplacesResponse, MarketplaceRow | undefined>();
 
 /** `select` for a Marketplace peek: its row (with its plugins and users) from the cached list. */
 export function selectMarketplaceRow(name: string) {
-  let select = marketplaceSelectors.get(name);
-  if (!select) {
-    select = (data) => data.marketplaces.find((m) => m.name === name);
-    marketplaceSelectors.set(name, select);
-  }
-  return select;
+  return marketplaceSelectors(name, () => (data) => data.marketplaces.find((m) => m.name === name));
 }
 
 export type MarketplacePreviewBody = z.infer<typeof marketplacePreviewBodySchema>;

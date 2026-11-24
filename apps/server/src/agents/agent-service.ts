@@ -43,18 +43,11 @@ import type { MaterializeCheck, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
 import type { ConfigChanges } from "./config-changes.ts";
 import type { ConfigResolver } from "./config-resolver.ts";
+import { OrgRefusedError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Exec, Tx } from "./event-store.ts";
 import type { PolicyInputs } from "./policy-inputs.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
-
-/** An agent actor asked for something only a human may do (spec §7.2): a 403 for REST, a tool error for MCP. */
-export class OrgRefusedError extends ApiError {
-  constructor(message: string) {
-    super(403, "org_refused", message);
-    this.name = "OrgRefusedError";
-  }
-}
 
 /** What `planUpdate` validated: `write` runs in the caller's transaction (which holds the row lock), `after` once it commits. */
 export type UpdatePlan = {

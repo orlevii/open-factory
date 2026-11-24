@@ -8,7 +8,8 @@ import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
-import { type AgentService, OrgRefusedError } from "./agent-service.ts";
+import type { AgentService } from "./agent-service.ts";
+import { OrgRefusedError } from "./errors.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;

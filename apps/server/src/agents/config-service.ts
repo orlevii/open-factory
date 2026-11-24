@@ -7,6 +7,7 @@ import {
   agentPolicyIssues,
   type ConfigDoc,
   effectivePlugins,
+  emptyDoc,
   LOCAL_RUNTIME_REFUSAL,
   mergeConfig,
   overlayVersion,
@@ -19,9 +20,9 @@ import { eq } from "drizzle-orm";
 import { ApiError } from "../errors.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { overlayIssues, overlaySchemaIssues } from "../templates/validate.ts";
-import { OrgRefusedError } from "./agent-service.ts";
 import type { ConfigChanges } from "./config-changes.ts";
 import type { ConfigResolver } from "./config-resolver.ts";
+import { OrgRefusedError } from "./errors.ts";
 import type { Tx } from "./event-store.ts";
 import type { PolicyInputs } from "./policy-inputs.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
@@ -163,24 +164,27 @@ export class ConfigService {
   ): Promise<TemplateIssue[]> {
     const stored = agentOverlaySchema.safeParse(this.overlayOf(row));
     const before = stored.success ? stored.data : {};
-    if (!base) {
-      const had = new Set(effectivePlugins({ settings: before.settings ?? {} }));
-      return effectivePlugins({ settings: overlay.settings ?? {} })
-        .filter((key) => !had.has(key))
-        .map((key) => ({
-          severity: "error",
-          file: "settings.json",
-          path: `settings.enabledPlugins.${key}`,
-          message: `Plugin ${key} has no valid template to declare it; ask a human.`,
-        }));
-    }
-    return agentPolicyIssues({
+    const declaredBy = base?.doc ?? emptyDoc();
+    const issues = agentPolicyIssues({
       target: "overlay",
       before,
       after: overlay,
-      declaredBy: base.doc,
-      plugins: await this.d.policy.plugins([base.doc]),
+      declaredBy,
+      plugins: await this.d.policy.plugins(base ? [base.doc] : []),
     });
+    if (base) return issues;
+    // No valid template declares anything, so a plugin the save adds is refused outright.
+    const had = new Set(effectivePlugins({ settings: before.settings ?? {} }));
+    for (const key of effectivePlugins({ settings: overlay.settings ?? {} }).filter(
+      (k) => !had.has(k),
+    ))
+      issues.push({
+        severity: "error",
+        file: "settings.json",
+        path: `settings.enabledPlugins.${key}`,
+        message: `Plugin ${key} has no valid template to declare it; ask a human.`,
+      });
+    return issues;
   }
 
   /** Rule 8: an agent never reaches a local runtime, as the target or through a `can_spawn` name. */

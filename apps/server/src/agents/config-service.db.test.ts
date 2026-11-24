@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
@@ -8,8 +8,8 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { ApiError } from "../errors.ts";
 import { makeTestApp } from "../test/helpers.ts";
-import { OrgRefusedError } from "./agent-service.ts";
 import type { ConfigService } from "./config-service.ts";
+import { OrgRefusedError } from "./errors.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cfg: ConfigService;
@@ -193,4 +193,46 @@ test("a save whose version went stale under the lock is refused and writes nothi
     t.db.transaction(async (tx) => plan.write(tx, await rowOf("dev"))),
   ).rejects.toMatchObject({ status: 409, code: "config_changed" });
   expect((await rowOf("dev")).config).toEqual({ template: { model: "haiku" } });
+});
+
+test("with an invalid template the agent policy still applies to an overlay; a human only gets the schema check", async () => {
+  const tdir = path.join(home, "templates", "dev");
+  const good = readFileSync(path.join(tdir, "template.yaml"), "utf8");
+  const stored = { settings: { permissions: { deny: ["Bash(rm:*)"] } } };
+  await t.db.update(schema.agents).set({ config: stored }).where(eq(schema.agents.slug, "dev"));
+  writeFileSync(path.join(tdir, "template.yaml"), "name: [unclosed\n");
+  try {
+    const version = await versionOf("dev");
+    const removed = await refusal(cfg.saveOverlay("dev", {}, version, hr));
+    expect(removed).toMatchObject({ status: 400, code: "invalid_config" });
+    expect(JSON.stringify(removed.extra)).toContain("Deny rules can only be removed by a human.");
+    expect((await rowOf("dev")).config).toEqual(stored);
+
+    const env = { ...stored, settings: { ...stored.settings, env: { HTTPS_PROXY: "http://x" } } };
+    const proxied = await refusal(cfg.saveOverlay("dev", env, version, hr));
+    expect(proxied).toMatchObject({ status: 400, code: "invalid_config" });
+    expect(JSON.stringify(proxied.extra)).toContain("HTTPS_PROXY");
+    expect((await rowOf("dev")).config).toEqual(stored);
+
+    await cfg.saveOverlay("dev", {}, version, human);
+    expect((await rowOf("dev")).config).toEqual({});
+  } finally {
+    writeFileSync(path.join(tdir, "template.yaml"), good);
+    await t.db.update(schema.agents).set({ config: {} }).where(eq(schema.agents.slug, "dev"));
+  }
+});
+
+test("an agent's save that goes stale between planning and the row lock is an org refusal", async () => {
+  const plan = await cfg.planOverlay("dev", {}, await versionOf("dev"), hr);
+  await t.db
+    .update(schema.agents)
+    .set({ config: { template: { can_spawn: ["x"] } } })
+    .where(eq(schema.agents.slug, "dev"));
+  try {
+    await expect(
+      t.db.transaction(async (tx) => plan.write(tx, await rowOf("dev"))),
+    ).rejects.toBeInstanceOf(OrgRefusedError);
+  } finally {
+    await t.db.update(schema.agents).set({ config: {} }).where(eq(schema.agents.slug, "dev"));
+  }
 });

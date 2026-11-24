@@ -390,7 +390,7 @@ test("Restart of a stop_failed agent with no process: one more cleanup; a failur
   expect(h.rt.live().errorKind).toBe("stop_failed");
   slots.events.length = 0;
 
-  await h.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await h.rt.settled();
   expect(cleanup).toHaveBeenCalledTimes(2);
   expect(h.rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
@@ -401,7 +401,7 @@ test("Restart of a stop_failed agent with no process: one more cleanup; a failur
   // The retry succeeds: the held slot is released, then the restart's wake follows as usual.
   fail = false;
   slots.events.length = 0;
-  await h.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await h.rt.settled();
   expect(slots.events.slice(0, 2)).toEqual([["release"], ["request", "restart"]]);
   expect(await events()).toContainEqual({ type: "cleanup", container: "stopped" });

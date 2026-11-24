@@ -299,9 +299,9 @@ test("compact, interrupt, restart and reset-session are refused once terminated"
   h.rt.markTerminated({ committed: true });
   await expect(h.rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentTerminatedError);
   await expect(h.rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(AgentTerminatedError);
-  await expect(h.rt.restart({ byHandle: "or", runtimeAllowed: true })).rejects.toBeInstanceOf(
-    AgentTerminatedError,
-  );
+  await expect(
+    h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true }),
+  ).rejects.toBeInstanceOf(AgentTerminatedError);
   await expect(h.rt.resetSession({ byHandle: "or" })).rejects.toBeInstanceOf(AgentTerminatedError);
   expect(h.driver.starts).toHaveLength(0);
 });

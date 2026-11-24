@@ -46,6 +46,18 @@ test("the other notices", () => {
   );
 });
 
+test("restart_applied names the changes, then what was stopped, then asks to continue", () => {
+  expect(
+    notices.restartApplied({ by: "@lead", changes: ["model", "1 skill"], tasks: [], crons: [] }),
+  ).toBe("Restarted by @lead to apply: model, 1 skill. Continue where you left off.");
+  expect(notices.restartApplied({ by: "@lead", changes: [], tasks: ["x"], crons: ["daily"] })).toBe(
+    "Restarted by @lead. These background tasks were stopped: `x`. These crons were stopped: daily. Continue where you left off.",
+  );
+  expect(notices.restartApplied({ by: "@lead", changes: null, tasks: [], crons: [] })).toBe(
+    "Restarted by @lead. Continue where you left off.",
+  );
+});
+
 test("the config_changed notice: a fixed header, one sorted line per change, parsed back", () => {
   const body = notices.configChanged([
     "model: sonnet → opus",

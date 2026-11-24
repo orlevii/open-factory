@@ -451,6 +451,26 @@ type LiveCron = {
 const toEnvelopes = (batch: MessageEntry[]): FactoryMessage[] =>
   groupEnvelopes(batch.map(toBatchRow));
 
+/** I7 §9.2: what a `restartNow` did; it never waits for the start. */
+export type RestartOutcome = {
+  status: "restarting" | "restart_pending" | "not_running" | "restarted_idle";
+  note?: string;
+};
+
+/** I7 §9.2 row 8: the refusal text, from what a forced restart would stop. */
+const lostWorkMessage = (slug: string, lost: { tasks: string[]; crons: string[] }) => {
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const parts = [
+    ...(lost.tasks.length
+      ? [
+          `${plural(lost.tasks.length, "background task")} (${lost.tasks.map((t) => `\`${t}\``).join(", ")})`,
+        ]
+      : []),
+    ...(lost.crons.length ? [plural(lost.crons.length, "cron")] : []),
+  ];
+  return `@${slug} has ${parts.join(" and ")}; pass force: true to restart anyway.`;
+};
+
 export class AgentRuntime {
   agent: AgentRow;
   private readonly jobs = new SerialQueue();
@@ -1225,13 +1245,7 @@ export class AgentRuntime {
         !this.stopping &&
         !this.terminated
       ) {
-        // A cleared restart (stop, exit, takeover) leaves nothing of its causes behind.
-        if (!this.restartPending) {
-          this.pendingWake = false;
-          this.otherRestartCause = false;
-          this.configChanges = [];
-          this.pendingChanges.clear();
-        }
+        this.dropClearedRestart();
         if (opts.current && this.started) {
           if (!now) {
             this.publishStatus();
@@ -1256,46 +1270,123 @@ export class AgentRuntime {
     });
   }
 
+  /** A cleared restart (stop, exit, takeover) leaves nothing of its causes behind. */
+  private dropClearedRestart() {
+    if (this.restartPending) return;
+    this.pendingWake = false;
+    this.otherRestartCause = false;
+    this.configChanges = [];
+    this.pendingChanges.clear();
+  }
+
+  /** In a job: a restart when idle for a cause other than a config diff (`requestRestart` without `current`, for jobs). */
+  private markRestartPending(changes: string[]) {
+    this.dropClearedRestart();
+    this.otherRestartCause = true;
+    for (const c of changes) this.pendingChanges.add(c);
+    this.restartPending = true;
+    this.maybeRestart();
+  }
+
   /**
-   * Restart (spec §9.7): the restart notice, `control{restart}`, then one attempt. A process left is force-stopped
-   * and its exit makes the wake; a `stop_failed` agent gets one more escalation try first (§9.6).
+   * Restart now (I7 §9.2), for agents and humans: one check table, the first match deciding, run in an API job. The
+   * errored rows (1, 5, 6) come before the starting and stopping rows (2-4) because a `stop_failed` agent keeps
+   * `deadProc` set and `stopping` true. Never call a public runtime method in here: each is its own job, and jobs are
+   * serial, so it would wait on itself. `by` is an `@handle`. `changes` are the caller's `describeChanges` lines, `null`
+   * when its resolver failed. `runtimeAllowed` is only "the local runtime is disabled in this factory".
    */
-  restart(r: { byHandle: string; runtimeAllowed: boolean }): Promise<void> {
+  restartNow(r: {
+    by: string;
+    force: boolean;
+    changes: string[] | null;
+    runtimeAllowed: boolean;
+  }): Promise<RestartOutcome> {
     return this.apiJob(async () => {
+      const { by } = r;
+      const slug = this.agent.slug;
       this.refuseTerminated();
-      if (this.archived) throw new AgentArchivedError(this.agent.slug);
-      this.refuseRecoveryWhileAttempting();
-      if (!this.errored)
+      if (this.archived) throw new AgentArchivedError(slug);
+      if (this.errored) {
+        if (this.errorKind === "resume_unrecoverable")
+          throw new RecoveryRefusedError(
+            "resume_unrecoverable",
+            `@${slug}'s session can't be resumed; a human must start a new session.`,
+          );
+        return this.restartErrored(by, r.runtimeAllowed);
+      }
+      const proc = this.proc;
+      if (this.starting || this.attempting || (proc && !this.sessionStarted))
+        throw new RecoveryRefusedError("starting", `@${slug} is starting; try again shortly.`);
+      // `stopping` outlives the exit (a fresh start resets it), so it only counts while a process is left.
+      if (proc && (this.stopping || proc === this.deadProc || proc === this.failingProc))
+        throw new RecoveryRefusedError("stopping", `@${slug} is stopping; try again shortly.`);
+      if (this.compactInFlight)
         throw new RecoveryRefusedError(
-          "not_errored",
-          `@${this.agent.slug} isn't errored. Restart is only for an errored agent.`,
+          "compacting",
+          `@${slug} is compacting; try again when it finishes.`,
         );
-      if (this.errorKind === "resume_unrecoverable")
-        throw new RecoveryRefusedError(
-          "resume_unrecoverable",
-          "This session can't be resumed. Start a new session instead.",
-        );
-      if (!r.runtimeAllowed)
-        throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
-      this.refuseWhileStopping();
-      const by = `@${r.byHandle}`;
-      const lost = this.proc ? this.lostSnapshot() : { tasks: [], crons: [] };
-      await this.addNotice(
-        "restart",
-        notices.restart({
-          by,
+      if (!proc) return { status: "not_running" as const };
+      const lost = this.lostSnapshot();
+      const hasLost = lost.tasks.length > 0 || lost.crons.length > 0;
+      if (hasLost && !r.force) {
+        const data = {
           tasks: lost.tasks.map((t) => t.description || t.taskId),
           crons: lost.crons.map((c) => c.humanSchedule),
-        }),
+        };
+        throw new RecoveryRefusedError("lost_work", lostWorkMessage(slug, data), data);
+      }
+      const turnWork = Boolean(
+        this.openTurnId || this.awaiting.length || this.rawInFlight || this.hold,
       );
-      await this.append(null, { type: "control", cmd: "restart", by });
-      if (this.stopFailed()) await this.retryStopFailed(by);
-      else if (this.proc) {
-        await this.markAttempting("restart");
-        this.beginForceStop({ kind: "restart", by }, { graceMs: 0, termWaitMs: 3000 });
-      } else await this.beginAttempt("restart", false);
+      if (turnWork || hasLost) {
+        // Rows 9 and 10 start a process again.
+        if (!r.runtimeAllowed)
+          throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
+        // C2 replaces this with the cut restart (§9.2.1).
+        throw new RecoveryRefusedError("attempt_in_progress", "A cut restart isn't available yet.");
+      }
+      if (this.owedNotifications > 0) {
+        this.markRestartPending(r.changes ?? []);
+        this.publishStatus();
+        return {
+          status: "restart_pending" as const,
+          note: `@${slug} restarts in a moment, once a finished task's result is delivered.`,
+        };
+      }
+      // Row 12: an idle restart is a hibernate; the next start reads the latest config.
+      if (r.changes?.length)
+        await this.addNotice("config_changed", notices.configChanged(r.changes));
+      this.beginHibernate("apply_changes");
       this.publishStatus();
+      return { status: "restarted_idle" as const };
     });
+  }
+
+  /**
+   * Row 6, Restart of an errored agent (spec §9.7): the restart notice, `control{restart}`, then one attempt. A process
+   * left is force-stopped and its exit makes the wake; a `stop_failed` agent gets one more escalation try first (§9.6).
+   */
+  private async restartErrored(by: string, runtimeAllowed: boolean) {
+    this.refuseRecoveryWhileAttempting();
+    if (!runtimeAllowed) throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
+    this.refuseWhileStopping();
+    const lost = this.proc ? this.lostSnapshot() : { tasks: [], crons: [] };
+    await this.addNotice(
+      "restart",
+      notices.restart({
+        by,
+        tasks: lost.tasks.map((t) => t.description || t.taskId),
+        crons: lost.crons.map((c) => c.humanSchedule),
+      }),
+    );
+    await this.append(null, { type: "control", cmd: "restart", by });
+    if (this.stopFailed()) await this.retryStopFailed(by);
+    else if (this.proc) {
+      await this.markAttempting("restart");
+      this.beginForceStop({ kind: "restart", by }, { graceMs: 0, termWaitMs: 3000 });
+    } else await this.beginAttempt("restart", false);
+    this.publishStatus();
+    return { status: "restarting" as const };
   }
 
   /**

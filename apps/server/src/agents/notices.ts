@@ -3,6 +3,7 @@ export type NoticeType =
   | "crash"
   | "factory_restarted"
   | "restart"
+  | "restart_applied"
   | "restart_crons"
   | "config_continue"
   | "rate_limit_reset"
@@ -74,6 +75,22 @@ export const notices = {
       `Restarted by ${i.by} after an error.`,
       ...tasksSentence(i.tasks),
       ...cronsSentence(i.crons),
+    ].join(" ");
+  },
+  /** I7 §9.2.1: the waking notice of a restart that applies config; `changes` empty or null names none. */
+  restartApplied(i: {
+    by: string;
+    changes: string[] | null;
+    tasks: string[];
+    crons: string[];
+  }): string {
+    return [
+      i.changes?.length
+        ? `Restarted by ${i.by} to apply: ${i.changes.join(", ")}.`
+        : `Restarted by ${i.by}.`,
+      ...tasksSentence(i.tasks),
+      ...cronsSentence(i.crons),
+      "Continue where you left off.",
     ].join(" ");
   },
   restartCrons(i: { crons: string[] }): string {

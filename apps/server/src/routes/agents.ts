@@ -457,8 +457,10 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     const rt = await app.runtimes.bySlug(req.params.slug);
     if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
     try {
-      await rt.restart({
-        byHandle: user(req).handle,
+      await rt.restartNow({
+        by: `@${user(req).handle}`,
+        force: false,
+        changes: [],
         // A Restart certain to fail isn't offered (spec §13).
         runtimeAllowed: rt.agent.runtime !== "local" || localRuntimeAllowed(app.config),
       });

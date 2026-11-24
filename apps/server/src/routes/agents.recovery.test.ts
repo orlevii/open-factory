@@ -53,11 +53,7 @@ async function resumeErrored(message = "API Error: 500 overloaded") {
   return a;
 }
 
-test("restart: 409 unless errored; errored → restart notice first, control event, one attempt", async () => {
-  const healthy = await agent();
-  const r0 = await post(`/api/agents/${healthy.slug}/restart`);
-  expect(r0.statusCode).toBe(409);
-  expect(r0.json().error.code).toBe("not_errored");
+test("restart: an errored agent gets the restart notice first, control event, one attempt", async () => {
   expect((await post("/api/agents/nobody/restart")).statusCode).toBe(404);
 
   const { slug, rt } = await resumeErrored();
@@ -112,7 +108,7 @@ test("restart of resume_unrecoverable: 409 with the new-session hint", async () 
   expect(r.statusCode).toBe(409);
   expect(r.json().error).toEqual({
     code: "resume_unrecoverable",
-    message: "This session can't be resumed. Start a new session instead.",
+    message: `@${slug}'s session can't be resumed; a human must start a new session.`,
   });
 });
 

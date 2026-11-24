@@ -37,7 +37,7 @@ beforeEach(() => {
   store = memorySourcesStore();
   svc = new SourcesService({
     store,
-    usedBy: async () => ({ templates: [], agents: [] }),
+    usedByAny: async () => ({ templates: [], agents: [] }),
     factoryHome: fh,
     hostClaudeDir: path.join(tmp, "claude"),
     forbidden: { home: tmp, factoryHome: fh, dockerSockets: [] },
@@ -51,6 +51,7 @@ beforeEach(() => {
     factoryHome: fh,
     inUse: () => inUse,
     now: () => new Date(nowMs),
+    log: (m) => logged.push(m),
   });
 });
 afterEach(async () => {

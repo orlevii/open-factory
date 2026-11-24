@@ -22,16 +22,18 @@ import {
 import { eq } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
 import { resolveHostFolder } from "../host-path.ts";
-import { redactOutput } from "../redact.ts";
+
 import {
   CHECKOUT_CAP_BYTES,
   COMMIT_PATTERN,
+  checkErrorText,
   isDir,
   isRecord,
   META_KEEP_MS,
   SUBJECT_MAX,
   sha256,
   tagSha,
+  touchDir,
   UNDO_MS,
   usersLine,
 } from "./common.ts";
@@ -784,7 +786,10 @@ export class MarketplacesService {
   /** The staged copy of an update commit, fetched if it isn't there (or was swept). */
   private async updatePreview(row: MarketplaceRow, commit: string): Promise<string> {
     const final = path.join(this.previewRoot, `upd-mkt-${row.name}-${commit}`);
-    if (await isDir(final)) return final;
+    if (await isDir(final)) {
+      await touchDir(final);
+      return final;
+    }
     const tmp = `${final}.tmp-${randomUUID()}`;
     try {
       await fetchCommit(
@@ -855,14 +860,7 @@ export class MarketplacesService {
       }
       patch = { ...patch, checkError: null };
     } catch (e) {
-      patch = {
-        checkError: cutGraphemes(
-          e instanceof GitError || e instanceof ApiError
-            ? redactOutput(e.message)
-            : MARKETPLACE_MSG.checkFailed,
-          SUBJECT_MAX,
-        ),
-      };
+      patch = { checkError: checkErrorText(e, MARKETPLACE_MSG.checkFailed) };
     }
     const next = await libraryLock.run(LIBRARY_KEY, async () => {
       const cur = (await this.d.store.all()).find((r) => r.name === name);

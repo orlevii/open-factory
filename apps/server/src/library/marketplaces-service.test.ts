@@ -503,7 +503,7 @@ describe("boot", () => {
 function sweepFor(s: Setup, inUse: string[] = []) {
   const sources = new SourcesService({
     store: memorySourcesStore(),
-    usedBy: async () => ({ templates: [], agents: [] }),
+    usedByAny: async () => ({ templates: [], agents: [] }),
     factoryHome: fh,
     hostClaudeDir: path.join(tmp, "claude"),
     forbidden: { home: tmp, factoryHome: fh, dockerSockets: [] },
@@ -518,6 +518,7 @@ function sweepFor(s: Setup, inUse: string[] = []) {
     factoryHome: fh,
     inUse: () => inUse,
     now: () => new Date(nowMs),
+    log: () => {},
   });
 }
 

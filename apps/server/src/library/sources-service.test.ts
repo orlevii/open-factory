@@ -122,7 +122,10 @@ function setup(o: { users?: Users; fileWalkCap?: number } = {}): Setup {
   const logged: string[] = [];
   const svc = new SourcesService({
     store,
-    usedBy: async (n) => users[n] ?? { templates: [], agents: [] },
+    usedByAny: async (names) => ({
+      templates: [...new Set(names.flatMap((n) => users[n]?.templates ?? []))].sort(),
+      agents: [...new Set(names.flatMap((n) => users[n]?.agents ?? []))].sort(),
+    }),
     factoryHome: fh,
     hostClaudeDir: claude,
     home,

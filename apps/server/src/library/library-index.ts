@@ -319,6 +319,18 @@ export class LibraryIndex {
     return { templates: [...(u?.templates ?? [])].sort(), agents: [...(u?.agents ?? [])].sort() };
   }
 
+  /** Who lists any of `names` (one usage pass): sorted template names and agent slugs, each once. */
+  async usedByAny(names: string[]): Promise<{ templates: string[]; agents: string[] }> {
+    const usage = await this.usage();
+    const templates = new Set<string>();
+    const agents = new Set<string>();
+    for (const n of names) {
+      for (const t of usage.get(n)?.templates ?? []) templates.add(t);
+      for (const a of usage.get(n)?.agents ?? []) agents.add(a);
+    }
+    return { templates: [...templates].sort(), agents: [...agents].sort() };
+  }
+
   async skills(): Promise<SkillGroup[]> {
     const usage = await this.usage();
     const usedBy = (n: string) => ({

@@ -3352,12 +3352,13 @@ export class AgentRuntime {
       if (canAttempt && this.messageStartsAttempt() && this.hasDeliverable())
         await this.beginAttempt("message", false);
     } else if (intent?.kind === "hibernate") {
-      if (intent.reason !== "shutdown" && intent.reason !== "archived")
-        await this.wakeAfterExit(
-          wake || (intent.reason === "apply_changes" && intent.lost.crons.length)
-            ? "apply_changes"
-            : "queued_items",
-        );
+      if (intent.reason !== "shutdown" && intent.reason !== "archived") {
+        // Only an apply-restart (or Stop crons taking it over) restarts for config: a self-edit's wake, or crons it lost.
+        const applies = intent.reason === "apply_changes" || intent.reason === "crons_stopped";
+        const configWake =
+          applies && (wake || (intent.reason === "apply_changes" && intent.lost.crons.length > 0));
+        await this.wakeAfterExit(configWake ? "apply_changes" : "queued_items");
+      }
     } else if (intent?.kind === "restart" && this.attempting && this.attemptReason) {
       // Restart or Start a new session: the attempt's wake; if none can start now, the attempt ends.
       const reason = this.attemptReason;

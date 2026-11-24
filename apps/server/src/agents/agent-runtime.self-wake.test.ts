@@ -92,6 +92,22 @@ test("a request whose current finds no difference leaves no restart and no wake"
   expect(driver.starts).toHaveLength(1);
 });
 
+test("a pending wake is cleared by a later request whose current finds no difference", async () => {
+  await idle();
+  driver.last.emit(ev.turn()); // a turn is open, so the restart stays pending
+  await rt.settled();
+  await rt.requestRestart({ current: changed, wake: true });
+  expect(rt.live().restartPending).toBe(true);
+  await rt.requestRestart({ current: unchanged });
+  expect(rt.live().restartPending).toBe(false);
+  await rt.requestRestart(); // a plain restart: it must not inherit the cleared wake
+  driver.last.emit(ev.usage(), ev.end());
+  await rt.settled();
+  expect(driver.starts[0]?.stopped).toBe(true);
+  expect((await noticeRows()).map((r) => r.notice)).not.toContain("config_continue");
+  expect(driver.starts).toHaveLength(1); // restarted and hibernated, not woken
+});
+
 test("an in-session cron is named in config_continue, and no restart_crons notice is added", async () => {
   await idle();
   driver.last.emit(ev.cron("c1", { humanSchedule: "every 5 minutes" }));
@@ -126,7 +142,7 @@ test("Stop crons taking over the apply hibernate keeps the wake: the agent conti
 
 test.each([
   ["a crash", async () => driver.last.exit(1)],
-  ["an archive", () => rt.stop()],
+  ["a shutdown", () => rt.stop()],
 ] as const)("%s clears the wake: no config_continue is ever added", async (_n, exit) => {
   await idle();
   driver.last.emit(ev.turn());

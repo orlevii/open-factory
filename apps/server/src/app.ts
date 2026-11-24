@@ -666,14 +666,12 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       org: {
         agents,
         config: configs,
-        resolver,
         templates,
         library,
         plugins,
         credentials,
         secrets: app.secrets,
         projects: app.projects,
-        policy,
       },
       log: app.log,
     });

@@ -11,10 +11,8 @@ import {
 } from "@open-factory/shared";
 import { z } from "zod";
 import type { AgentService } from "../../agents/agent-service.ts";
-import type { ConfigResolver } from "../../agents/config-resolver.ts";
 import type { ConfigService } from "../../agents/config-service.ts";
 import { OrgRefusedError } from "../../agents/errors.ts";
-import type { PolicyInputs } from "../../agents/policy-inputs.ts";
 import type { CredentialService } from "../../credentials/credential-service.ts";
 import type { LibraryIndex } from "../../library/library-index.ts";
 import type { PluginsIndex } from "../../library/plugins-index.ts";
@@ -34,14 +32,12 @@ export type OrgToolDeps = {
   loadAgent(id: string): Promise<AgentRow | undefined>;
   agents: AgentService;
   config: ConfigService;
-  resolver: Pick<ConfigResolver, "libraryOf">;
   templates: TemplateIndex;
   library: LibraryIndex;
   plugins: PluginsIndex;
   credentials: CredentialService;
   secrets: SecretService;
   projects: ProjectService;
-  policy: PolicyInputs;
 };
 
 type AgentActor = Extract<Actor, { kind: "agent" }>;
@@ -196,7 +192,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         const r = await d.agents.updateWithOverlay(slug, patch, plan, actor);
         const same = (x: string[], y: string[]) =>
           [...x].sort().join("\0") === [...y].sort().join("\0");
-        const changed: string[] = [
+        const fields: string[] = [
           ...(r.agent.displayName !== before.displayName ? ["display_name"] : []),
           ...(r.agent.description !== before.description ? ["description"] : []),
           ...(r.agent.reportsTo !== before.reportsTo ? ["manager"] : []),
@@ -204,8 +200,8 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           ...(same(r.agent.projects, before.projects) ? [] : ["projects"]),
         ];
         const lines = r.config?.changes ?? [];
-        if (lines.length) changed.push("config", ...lines);
-        const identity = changed.some((c) => !c.includes(" ") && c !== "config");
+        const identity = fields.length > 0;
+        const changed = lines.length ? [...fields, "config", ...lines] : fields;
         const restart =
           (r.config?.restartChecked ?? false) ||
           (identity && !before.archivedAt && before.status !== "hibernated");

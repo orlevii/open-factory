@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
@@ -69,6 +69,9 @@ const configEvents = async (slug: string) =>
     await t.sql`select 1 from session_events where agent_id = ${(await row(slug)).id} and type = 'config_changed'`
   ).length;
 
+// A directory marketplace holding one plugin, `tool@mk`.
+let mk: string;
+
 beforeAll(async () => {
   t = await makeTestApp({
     env: { FACTORY_CLAUDE_BIN: createFakeClaude({ scenario: "reply" }).bin },
@@ -84,7 +87,28 @@ beforeAll(async () => {
   await t.app.secrets.put("S", SECRET);
   const repo = mkdtempSync(path.join(tmpdir(), "repo-"));
   await t.app.projects.create({ name: "site", hostPath: repo });
-  writeTemplate("dev", `secrets:\n  - S\n`);
+  mk = mkdtempSync(path.join(tmpdir(), "mk-"));
+  mkdirSync(path.join(mk, ".claude-plugin"));
+  writeFileSync(
+    path.join(mk, ".claude-plugin/marketplace.json"),
+    JSON.stringify({ name: "mk", plugins: [{ name: "tool", source: "./tool", version: "1.0.0" }] }),
+  );
+  await t.db.insert(schema.marketplaces).values({
+    name: "mk",
+    source: { source: "directory", path: mk },
+    state: "ready",
+    tags: {},
+    startedAt: new Date(),
+    addedBy: "@or",
+    addedAt: new Date(),
+  });
+  const dev = writeTemplate("dev", `secrets:\n  - S\n`);
+  writeFileSync(
+    path.join(dev, "settings.json"),
+    JSON.stringify({
+      extraKnownMarketplaces: { mk: { source: { source: "directory", path: mk } } },
+    }),
+  );
   writeTemplate("lead");
   await t.app.templates.scan();
   await t.app.agents.create(body("hr-bot"), human);
@@ -112,7 +136,7 @@ test("a flag turned off after tools/list makes the call an unknown-tool error", 
     name: "get_agent",
     arguments: { slug: "hr-bot" },
   });
-  expect(r.json.error ?? r.json.result?.isError).toBeTruthy();
+  expect(r.json.error).toMatchObject({ code: -32602, message: "Tool get_agent not found" });
   expect(JSON.stringify(r.json)).not.toContain('"slug":"hr-bot"');
 });
 
@@ -123,14 +147,12 @@ test("a handler reached with a revoked caller row refuses with the sentence", as
     loadAgent: async () => revoked,
     agents: t.app.agents,
     config: t.app.configs,
-    resolver: t.app.resolver,
     templates: t.app.templates,
     library: t.app.library,
     plugins: t.app.plugins,
     credentials: t.app.credentials,
     secrets: t.app.secrets,
     projects: t.app.projects,
-    policy: undefined as never,
   });
   let handler:
     | ((a: object, c: object) => Promise<{ isError?: boolean; content: { text: string }[] }>)
@@ -257,13 +279,20 @@ test("update_agent: identity and config together write both and list the changes
 });
 
 test("get_agent: overlay_hash is the overlay version, references stay literal, credential and projects are names", async () => {
+  await t.app.agents.update("dev-1", { projects: ["site"] }, human);
+  // An enabled plugin: the template declares the directory marketplace, which pins live.
   await t.app.configs.saveOverlay(
     "dev-1",
-    { template: { model: "opus" }, settings: { env: { GH: REF } } },
+    {
+      template: { model: "opus" },
+      settings: {
+        env: { GH: REF },
+        enabledPlugins: { "tool@mk": true },
+      },
+    },
     overlayVersion((await row("dev-1")).config as never),
     human,
   );
-  await t.app.agents.update("dev-1", { projects: ["site"] }, human);
   const r = await call("hr-bot", "get_agent", { slug: "@dev-1" });
   const stored = (await row("dev-1")).config;
   expect(r.json.overlay_hash).toBe(overlayVersion(stored as never));
@@ -275,7 +304,25 @@ test("get_agent: overlay_hash is the overlay version, references stay literal, c
     manage_org: false,
     kind: "persistent",
   });
-  expect(Array.isArray(r.json.plugins)).toBe(true);
+  expect(r.json.plugins).toEqual([{ key: "tool@mk", pin: "live" }]);
+});
+
+test("an agent editing its own description gets its restart with wake; another agent's edit does not", async () => {
+  const spy = vi.spyOn(t.app.runtimes, "requestRestart");
+  try {
+    const hrId = (await row("hr-bot")).id;
+    expect((await call("hr-bot", "update_agent", { slug: "hr-bot", description: "me" })).err).toBe(
+      false,
+    );
+    expect(spy).toHaveBeenCalledWith(hrId, { wake: true });
+    spy.mockClear();
+    expect((await call("hr-bot", "update_agent", { slug: "dev-1", description: "you" })).err).toBe(
+      false,
+    );
+    expect(spy.mock.calls.filter(([, o]) => o?.wake)).toEqual([]);
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 test("get_template returns files with hashes, and a linked file as an error", async () => {
@@ -322,21 +369,6 @@ test("archive_agent and unarchive_agent follow the human rules; self-archive is 
 });
 
 test("list_library: sources are kinds, a catalog plugin is listed, host plugins and paths are not, 201 skills set more", async () => {
-  const mk = mkdtempSync(path.join(tmpdir(), "mk-"));
-  mkdirSync(path.join(mk, ".claude-plugin"));
-  writeFileSync(
-    path.join(mk, ".claude-plugin/marketplace.json"),
-    JSON.stringify({ name: "mk", plugins: [{ name: "tool", source: "./tool", version: "1.0.0" }] }),
-  );
-  await t.db.insert(schema.marketplaces).values({
-    name: "mk",
-    source: { source: "directory", path: mk },
-    state: "ready",
-    tags: {},
-    startedAt: new Date(),
-    addedBy: "@or",
-    addedAt: new Date(),
-  });
   const r = await call("hr-bot", "list_library", { query: "tool" });
   expect(r.json.plugins).toEqual([
     expect.objectContaining({
@@ -378,11 +410,12 @@ test("list_org_resources has names only and no host paths", async () => {
 });
 
 test("no tool result holds a secret value, a credential token or a host path (AC 6)", async () => {
-  const calls: [string, object][] = [
-    ["list_templates", {}],
-    ["get_template", { name: "dev" }],
-    ["get_agent", { slug: "dev-1" }],
-    ["get_agent", { slug: "hr-bot" }],
+  // [tool, args, expectError]: only the last two calls are meant to fail; every other call must succeed.
+  const calls: [string, object, boolean][] = [
+    ["list_templates", {}, false],
+    ["get_template", { name: "dev" }, false],
+    ["get_agent", { slug: "dev-1" }, false],
+    ["get_agent", { slug: "hr-bot" }, false],
     [
       "create_agent",
       {
@@ -393,22 +426,27 @@ test("no tool result holds a secret value, a credential token or a host path (AC
         credential: "work",
         projects: ["site"],
       },
+      false,
     ],
-    ["update_agent", { slug: "scan-1", description: "changed" }],
-    ["archive_agent", { slug: "scan-1" }],
-    ["unarchive_agent", { slug: "scan-1" }],
-    ["list_library", {}],
-    ["list_org_resources", {}],
-    ["get_agent", { slug: "nobody" }],
+    ["update_agent", { slug: "scan-1", description: "changed" }, false],
+    ["archive_agent", { slug: "scan-1" }, false],
+    ["unarchive_agent", { slug: "scan-1" }, false],
+    ["list_library", {}, false],
+    ["list_org_resources", {}, false],
+    ["get_agent", { slug: "nobody" }, true],
     [
       "create_agent",
       { template: "dev", name: "scan-1", display_name: "S", description: "", credential: "work" },
+      true,
     ],
   ];
   const repo = (await t.sql`select host_path from projects`)[0]?.host_path as string;
-  for (const [name, args] of calls) {
+  for (const [name, args, expectError] of calls) {
     const r = await call("hr-bot", name, args);
-    for (const bad of [SECRET, TOKEN, t.factoryHome, t.config.hostClaudeDir, repo])
+    expect(r.err, `${name} ${expectError ? "should have failed" : `failed: ${r.text}`}`).toBe(
+      expectError,
+    );
+    for (const bad of [SECRET, TOKEN, t.factoryHome, t.config.hostClaudeDir, homedir(), repo])
       expect(r.text, `${name} leaked ${bad}`).not.toContain(bad);
   }
 });

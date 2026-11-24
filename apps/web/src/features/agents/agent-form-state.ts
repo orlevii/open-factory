@@ -33,6 +33,7 @@ export const FIELDS = [
   "reportsTo",
   "credential",
   "projects",
+  "manageOrg",
 ] as const;
 export type Field = (typeof FIELDS)[number];
 export type Touched = Partial<Record<Field, boolean>>;
@@ -47,6 +48,7 @@ export type Values = {
   reportsTo: string;
   credential: string;
   projects: string[];
+  manageOrg: boolean;
 };
 /** What a draft holds: the values and (New agent) the fields the user made theirs. */
 type Stored = Values & { touched: Touched };
@@ -61,6 +63,7 @@ export const PATCH_FIELDS = [
   "reportsTo",
   "credential",
   "projects",
+  "manageOrg",
 ] as const satisfies readonly (keyof PatchAgentBody)[];
 export type PatchField = (typeof PATCH_FIELDS)[number];
 
@@ -75,6 +78,7 @@ const storedOf = (a: AgentSummary): Stored => ({
   reportsTo: a.reportsTo ?? "",
   credential: a.credential ?? "",
   projects: a.projects,
+  manageOrg: a.manageOrg,
   touched: {},
 });
 
@@ -87,6 +91,7 @@ const blank = (prefill?: { template?: string }): Stored => ({
   reportsTo: "",
   credential: "",
   projects: [],
+  manageOrg: false,
   touched: {},
 });
 
@@ -360,6 +365,7 @@ export function useAgentFormState({
     if (reportsTo !== (b.reportsTo || null)) patch.reportsTo = reportsTo;
     if (shown.credential !== b.credential) patch.credential = shown.credential;
     if (!same(shown.projects, b.projects)) patch.projects = shown.projects;
+    if (shown.manageOrg !== b.manageOrg) patch.manageOrg = shown.manageOrg;
     return Object.keys(patch).length > 0 ? patch : null;
   }
 

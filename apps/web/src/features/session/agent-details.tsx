@@ -481,6 +481,12 @@ function Runtime({ agent }: { agent: AgentSummary }) {
             </dd>
           </>
         )}
+        {agent.manageOrg && (
+          <>
+            <dt className="text-muted-foreground">Manages the org</dt>
+            <dd className="min-w-0">Yes</dd>
+          </>
+        )}
         {agent.projects.length > 0 && (
           <>
             <dt className="text-muted-foreground">Projects</dt>

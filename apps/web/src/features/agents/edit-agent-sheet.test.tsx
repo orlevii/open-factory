@@ -853,3 +853,30 @@ test("a running agent's colour with another field still restarts", async () => {
   await rename("Boss");
   expect(screen.getByText(SELF)).toBeInTheDocument();
 });
+
+const MANAGE_HELP =
+  "Create templates and agents, edit configurations, archive. Can assign secrets and credentials to agents and read configuration values humans typed in; grant it like admin access and keep sensitive values in secrets. Can't change local-runtime agents or grant this permission.";
+
+test("Can manage the org: a switch described by the spec's help, and its change is sent", async () => {
+  const { api } = await open({
+    extra: { "PATCH /api/agents/lead": saved(lead({ manageOrg: true })) },
+  });
+  const sw = screen.getByRole("switch", { name: "Can manage the org" });
+  expect(sw).not.toBeChecked();
+  expect(sw).toHaveAccessibleDescription(MANAGE_HELP);
+  await userEvent.click(sw);
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(patches(api)).toEqual([{ manageOrg: true }]));
+});
+
+test("Can manage the org: on a running agent the change shows the restart notice", async () => {
+  await open({ agents: [lead({ status: "idle" })] });
+  await userEvent.click(screen.getByRole("switch", { name: "Can manage the org" }));
+  expect(await screen.findByText(SELF)).toBeInTheDocument();
+});
+
+test("Can manage the org: a spawned agent has no sheet form, so no switch", async () => {
+  await open({ agents: [lead({ kind: "ephemeral" })] }, { form: false });
+  await screen.findByText("Spawned agents can't be edited.");
+  expect(screen.queryByRole("switch", { name: "Can manage the org" })).not.toBeInTheDocument();
+});

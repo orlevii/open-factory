@@ -489,3 +489,16 @@ test("Edit agent is an outline button for a persistent, unarchived agent only, a
   await screen.findByRole("heading", { name: "Agent details" });
   expect(screen.queryByRole("button", { name: "Edit agent" })).toBeNull();
 });
+
+test("Runtime: 'Manages the org: Yes' shows only for an agent that manages the org", async () => {
+  setup({ agent: agentSummary({ slug: "lead", manageOrg: true }) });
+  const runtime = within(await section("Runtime"));
+  expect(runtime.getByText("Manages the org")).toBeInTheDocument();
+  expect(runtime.getByText("Yes")).toBeInTheDocument();
+});
+
+test("Runtime: no Manages the org row when the flag is off", async () => {
+  setup({ agent: agentSummary({ slug: "lead", manageOrg: false }) });
+  await section("Runtime");
+  expect(screen.queryByText("Manages the org")).not.toBeInTheDocument();
+});

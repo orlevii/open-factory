@@ -190,16 +190,26 @@ export const skillGroupsResponseSchema = z.object({
   groups: z.array(skillGroupSchema),
 });
 
+export type SkillGroupsResponse = z.infer<typeof skillGroupsResponseSchema>;
+
 const SKILL_MD_BYTES = 256 * 1024;
+
+export const skillFileEntrySchema = z.object({ path: z.string(), executable: z.boolean() });
 
 /** `GET /api/library/skills/:group/:name`: one skill, its files (executables marked) and SKILL.md. */
 export const skillDetailSchema = skillRowSchema.extend({
   group: z.string(),
-  files: z.array(z.object({ path: z.string(), executable: z.boolean() })).max(2000),
+  files: z.array(skillFileEntrySchema).max(2000),
   skillMd: z.string().refine((s) => new TextEncoder().encode(s).length <= SKILL_MD_BYTES),
 });
 
-/** `GET /api/library/sources/:id`: the source, its picked skills, update info, check error and users. */
+/** `GET /api/library/skills/:group/:name/file?path=`'s query. */
+export const skillFileQuerySchema = z.object({ path: z.string().min(1) });
+
+/** One text file of a skill. */
+export const skillFileTextSchema = z.object({ path: z.string(), text: z.string() });
+
+/** A source, its picked skills, update info, check error and users (a count each of templates and agents). */
 export const sourceDetailSchema = z.object({
   id: z.string(),
   kind: z.enum(["folder", "github"]),
@@ -218,4 +228,61 @@ export const sourceDetailSchema = z.object({
   checkedAt: z.string().nullable(),
   checkError: z.string().nullable(),
   usedBy: usedBySchema,
+});
+
+/** A skill a preview or Find more skills found, and why it can't be picked (spec §9.2). */
+export const foundSkillSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  pickable: z.boolean(),
+  reason: z.enum(["taken", "unusable", "link"]).optional(),
+  /** With reason "taken": "Host" or the source's label. */
+  takenBy: z.string().optional(),
+  /** With reason "unusable". */
+  detail: z.string().optional(),
+});
+
+/** `POST /api/library/sources/preview` and `POST …/:id/find`. */
+export const sourcePreviewSchema = z.object({
+  previewId: z.string().optional(),
+  commit: z.string().optional(),
+  committedAt: z.string().optional(),
+  subject: z.string().optional(),
+  branch: z.string().optional(),
+  found: z.array(foundSkillSchema),
+});
+
+export const skillNamesBodySchema = z.object({ skills: skillNames });
+
+/** `POST …/:id/update`: the commit the last check found. */
+export const sourceUpdateBodySchema = z.object({ commit: z.string().min(1) });
+
+/** `DELETE /api/library/sources/:id`: the Undo window's end (ISO). */
+export const sourceRemovedSchema = z.object({ undoUntil: z.string() });
+
+const hookDeclSchema = z.object({ event: z.string(), matcher: z.string(), command: z.string() });
+
+/** The update view of a source whose check found a newer commit (spec §6.3): what moving a GitHub source to the commit its check found would change. */
+export const sourceUpdateViewSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  committedAt: z.string().nullable(),
+  subject: z.string().nullable(),
+  compareUrl: z.string().optional(),
+  changed: z.array(
+    z.object({
+      name: z.string(),
+      runsCodeChanged: z.boolean(),
+      hooks: z.object({ added: z.array(hookDeclSchema), removed: z.array(hookDeclSchema) }),
+      execFiles: z.array(z.string()),
+    }),
+  ),
+  removed: z.array(z.string()),
+  added: z.array(z.string()),
+  unusable: z.array(z.object({ name: z.string(), detail: z.string() })),
+});
+
+/** `GET /api/library/sources/:id`: the detail, with the update view when a check found a newer commit. */
+export const sourceViewSchema = sourceDetailSchema.extend({
+  update: sourceUpdateViewSchema.nullable(),
 });

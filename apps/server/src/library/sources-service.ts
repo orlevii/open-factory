@@ -155,8 +155,8 @@ export interface SourcesDeps {
   undoMs?: number;
   /** The config change flow (spec §8.3, wired in A9). */
   onLibraryChanged?: (e: { skills?: string[]; by: string }) => Promise<void>;
-  /** The `library_changed` WS frame (spec §9.5). */
-  publish?: () => void;
+  /** The `library_changed` WS frame (spec §9.5); `addFailed` is the repo of a background add that failed. */
+  publish?: (e?: { addFailed?: string }) => void;
   /** Starts a one-shot purge after `ms` (the sweep's, §9.4). */
   purgeAfter?: (ms: number) => void;
   log: (message: string, err: unknown) => void;
@@ -314,8 +314,12 @@ export class SourcesService {
     this.pending.add(p);
   }
 
-  private async after(skills: string[] | undefined, by: string): Promise<void> {
-    this.d.publish?.();
+  private async after(
+    skills: string[] | undefined,
+    by: string,
+    o?: { addFailed?: string },
+  ): Promise<void> {
+    this.d.publish?.(o);
     if (skills === undefined) return;
     try {
       await this.d.onLibraryChanged?.({ skills, by });
@@ -643,6 +647,7 @@ export class SourcesService {
     if (row?.state !== "adding" || row.commit === null) return;
     const subpath = row.subpath ?? "";
     const tmp = path.join(this.previewRoot, `add-${id}`);
+    let failed = false;
     try {
       await fetchCommit(
         this.urlOf(row.repo ?? ""),
@@ -664,12 +669,13 @@ export class SourcesService {
         // Only a row still "adding" is ours to remove; it may have been removed or finished meanwhile.
         if ((await this.get(id).catch(() => undefined))?.state !== "adding") return;
         await this.d.store.delete(id);
+        failed = true;
         await removeTree(path.join(this.githubRoot, id)).catch(() => {});
       });
     } finally {
       await removeTree(tmp).catch(() => {});
     }
-    await this.after(undefined, by);
+    await this.after(undefined, by, failed ? { addFailed: row.repo ?? "" } : undefined);
   }
 
   /** Boot: finishes the GitHub adds a restart interrupted, or removes them (spec §10.4). */
@@ -837,6 +843,11 @@ export class SourcesService {
       }
     };
     await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, queue.length) }, worker));
+  }
+
+  /** `checkAll` without holding the request up; `idle()` waits for it. */
+  checkAllInBackground(): void {
+    this.background(() => this.checkAll());
   }
 
   // Update --------------------------------------------------------------------------------

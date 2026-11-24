@@ -123,3 +123,9 @@ test("library_changed is a server frame; unknown frame types are refused", () =>
   expect(serverMessageSchema.parse({ type: "library_changed" }).type).toBe("library_changed");
   expect(serverMessageSchema.safeParse({ type: "library_renamed" }).success).toBe(false);
 });
+
+test("library_changed carries the repo of a failed background add, and nothing else", () => {
+  expect(
+    serverMessageSchema.parse({ type: "library_changed", addFailed: "acme/x", extra: 1 }),
+  ).toEqual({ type: "library_changed", addFailed: "acme/x" });
+});

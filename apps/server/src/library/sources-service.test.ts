@@ -100,6 +100,8 @@ interface Setup {
   lockFreeInCallback: boolean[];
   /** How many Library lock holders were active at each `publish`. */
   publishDepth: number[];
+  /** The argument of each `publish`. */
+  frames: Array<{ addFailed?: string } | undefined>;
   logged: string[];
 }
 function setup(o: { users?: Users; fileWalkCap?: number } = {}): Setup {
@@ -108,6 +110,7 @@ function setup(o: { users?: Users; fileWalkCap?: number } = {}): Setup {
   const changed: Setup["changed"] = [];
   const lockFreeInCallback: boolean[] = [];
   const publishDepth: number[] = [];
+  const frames: Setup["frames"] = [];
   const logged: string[] = [];
   const svc = new SourcesService({
     store,
@@ -120,14 +123,17 @@ function setup(o: { users?: Users; fileWalkCap?: number } = {}): Setup {
     now: () => new Date(nowMs),
     fileWalkCap: o.fileWalkCap,
     log: (m) => logged.push(m),
-    publish: () => publishDepth.push(depth.n),
+    publish: (e) => {
+      publishDepth.push(depth.n);
+      frames.push(e);
+    },
     onLibraryChanged: async (e) => {
       changed.push(e);
       // Would never settle if the Library lock were still held.
       lockFreeInCallback.push(await libraryLock.run("library", async () => true));
     },
   });
-  return { svc, store, users, changed, lockFreeInCallback, publishDepth, logged };
+  return { svc, store, users, changed, lockFreeInCallback, publishDepth, frames, logged };
 }
 
 const repoDir = () => path.join(tmp, "gh", "acme", "x.git");
@@ -297,6 +303,8 @@ describe("add", () => {
       existsSync(path.join(fh, "state/library/github", row.id, p.commit as string, "tdd/SKILL.md")),
     ).toBe(true);
     expect(Object.keys(row.trees ?? {})).toEqual(["tdd"]);
+    expect(s.frames).toHaveLength(2);
+    expect(s.frames.some((f) => f?.addFailed !== undefined)).toBe(false);
   });
 
   test("a re-fetch that fails removes the adding row", async () => {
@@ -311,6 +319,8 @@ describe("add", () => {
     await s.svc.add(ghBody(p.previewId as string, ["tdd"]), "@or");
     await s.svc.idle();
     expect(await s.store.all()).toEqual([]);
+    // The web learns of the failure from the frame (a toast), since the row is gone.
+    expect(s.frames.at(-1)).toEqual({ addFailed: "acme/x" });
   });
 });
 

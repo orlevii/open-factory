@@ -61,7 +61,7 @@ beforeEach(() => {
         localSkills: ["notes"],
         agents: { live: 1, archived: 0, cantStart: 0 },
       }),
-    "GET /api/host-skills": () => json({ dir: "/s", skills: [] }),
+    "GET /api/library/skills": () => json({ hostDir: "/s", groups: [] }),
     "GET /api/secrets": () => json({ secrets: [] }),
     "GET /api/templates": () => json({ dir: "/t", templates: [] }),
   });

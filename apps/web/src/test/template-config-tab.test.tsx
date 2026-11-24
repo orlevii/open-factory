@@ -67,7 +67,7 @@ beforeEach(() => {
     "PUT /api/templates/dev/config": (b, u) => putConfig(b, u),
     "PUT /api/templates/dev/files/settings.json": () => json({ hash: "h-s2", issues: [] }),
     "POST /api/templates/dev/validate": () => json({ issues: [] }),
-    "GET /api/host-skills": () => json({ dir: "/s", skills: [] }),
+    "GET /api/library/skills": () => json({ hostDir: "/s", groups: [] }),
     "GET /api/secrets": () => json({ secrets: [] }),
     "GET /api/templates": () => json({ dir: "/t", templates: [] }),
   });

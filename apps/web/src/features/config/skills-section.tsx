@@ -1,8 +1,8 @@
-import { PLUGIN_REF_PATTERN } from "@open-factory/shared";
+import { PLUGIN_REF_PATTERN, type SkillGroupsResponse } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useMemo } from "react";
 import type { ComboOption } from "@/components/ui/combobox";
-import { hostSkillsQueryOptions } from "./api";
+import { libraryQueryOptions } from "@/lib/library";
 import type { AddSlot } from "./config-list";
 import { FIELD_PATHS } from "./fields";
 import { ListField } from "./list-field";
@@ -68,8 +68,13 @@ const LocalSkills = memo(function LocalSkills({ names }: { names: readonly strin
   );
 });
 
+/** Until the picker covers every group, only host skills a start can use. Module-level, so `select` is stable. */
+const selectHostSkills = (d: SkillGroupsResponse) =>
+  d.groups.find((g) => g.kind === "host")?.skills.filter((s) => s.state === "ok") ?? [];
+const NO_HOST_SKILLS: ReturnType<typeof selectHostSkills> = [];
+
 function SkillPicker({ slot, localSkills }: { slot: AddSlot; localSkills: readonly string[] }) {
-  const q = useQuery(hostSkillsQueryOptions);
+  const q = useQuery({ ...libraryQueryOptions, select: selectHostSkills });
   const { value, base } = useConfigScope();
   const own = readList(readAt(value, FIELD_PATHS.skills));
   const inherited = base ? readList(readAt(base, FIELD_PATHS.skills)) : null;
@@ -78,7 +83,7 @@ function SkillPicker({ slot, localSkills }: { slot: AddSlot; localSkills: readon
   const options = useMemo(() => {
     // Already listed, or a template skill of the same name (the server refuses that clash): not offered.
     const taken = new Set([...ownItems, ...tplItems, ...localSkills]);
-    return (q.data?.skills ?? [])
+    return (q.data ?? NO_HOST_SKILLS)
       .filter((s) => !taken.has(s.name))
       .map((s): ComboOption => ({ value: s.name, label: s.name, keywords: [s.description] }));
   }, [q.data, ownItems, tplItems, localSkills]);

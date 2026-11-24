@@ -31,6 +31,9 @@ import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
 import { ImageBuilder } from "./images/builder.ts";
+import { dbTemplatesPort, LibraryIndex } from "./library/library-index.ts";
+import { LibrarySweep } from "./library/library-sweep.ts";
+import { dbSourcesStore, SourcesService } from "./library/sources-service.ts";
 import { bridgeInfo, resolveAgentBindHosts } from "./mcp/bind-hosts.ts";
 import { startAgentListener } from "./mcp/listener.ts";
 import { createFactoryMcp } from "./mcp/server.ts";
@@ -50,9 +53,9 @@ import { authRoutes } from "./routes/auth.ts";
 import { claudeSignInRoutes } from "./routes/claude-sign-in.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
 import { hostRoutes } from "./routes/host.ts";
-import { hostSkillsRoutes } from "./routes/host-skills.ts";
 import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
+import { libraryRoutes } from "./routes/library.ts";
 import { meRoutes } from "./routes/me.ts";
 import { messagesRoutes } from "./routes/messages.ts";
 import { projectsRoutes } from "./routes/projects.ts";
@@ -90,6 +93,7 @@ import { InviteService } from "./users/invites.ts";
 import { UserAdminService } from "./users/user-admin.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
+import { dockerSocketPaths } from "./workspace/mounts.ts";
 import { Workspace } from "./workspace/workspace.ts";
 import { wsRoutes } from "./ws/route.ts";
 
@@ -134,6 +138,10 @@ declare module "fastify" {
     scheduler: Scheduler;
     agentListener: { port: number; close(): Promise<void> };
     uploads: UploadService;
+    /** I5 §5.3: the Library's skills, discovered live. */
+    library: LibraryIndex;
+    /** I5 §9.2: skill sources (preview, add, check, update, remove, Undo). */
+    skillSources: SourcesService;
   }
 }
 
@@ -457,6 +465,47 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     now: clock,
     log: app.log,
   });
+  // I5 §5.3, §9.2, §9.4: the Library's skills and their sources, and the sweep that purges them.
+  const library = new LibraryIndex({
+    db: deps.db,
+    hostClaudeDir: config.hostClaudeDir,
+    factoryHome: config.factoryHome,
+    templates: () => dbTemplatesPort(deps.db),
+  });
+  const sourcesStore = dbSourcesStore(deps.db);
+  const libraryChanged = (e?: { addFailed?: string }) =>
+    bus.publishAll({
+      type: "library_changed",
+      ...(e?.addFailed ? { addFailed: e.addFailed } : {}),
+    });
+  const skillSources: SourcesService = new SourcesService({
+    store: sourcesStore,
+    usedBy: (name) => library.usedBy(name),
+    factoryHome: config.factoryHome,
+    hostClaudeDir: config.hostClaudeDir,
+    forbidden: {
+      home: os.homedir(),
+      factoryHome: config.factoryHome,
+      dockerSockets: dockerSocketPaths(process.env, os.homedir()),
+    },
+    githubUrl: config.githubUrl,
+    publish: libraryChanged,
+    purgeAfter: (ms) => librarySweep.purgeAfter(ms),
+    // TODO(A9): `configChanges.libraryChanged` (spec §8.3); until then a Library change restarts no agent.
+    onLibraryChanged: async () => {},
+    log: (message, err) => app.log.error({ err }, message),
+  });
+  const librarySweep = new LibrarySweep({
+    sources: skillSources,
+    store: sourcesStore,
+    factoryHome: config.factoryHome,
+    // TODO(A9): the loaded runtimes' `started.library` directories (spec §9.4); until then nothing is held.
+    inUse: () => [],
+    publish: libraryChanged,
+    log: (message, err) => app.log.error({ err }, message),
+  });
+  app.decorate("library", library);
+  app.decorate("skillSources", skillSources);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
@@ -466,6 +515,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     reaper.stop();
     uploadSweep.stop();
     scheduler.stop();
+    await librarySweep.stop();
     // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
     await runtimes.close();
     // Sign-in attempts hold a host process (I3 §5.4): ended before the DB closes.
@@ -478,6 +528,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     await uploadSweep.idle();
     await expiryCheck.idle();
     await scheduler.idle();
+    await skillSources.idle();
   });
 
   if (new URL(config.agentUrl).port === String(config.port)) {
@@ -488,7 +539,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(authRoutes, { db: deps.db });
   await app.register(meRoutes);
   await app.register(hostRoutes);
-  await app.register(hostSkillsRoutes);
+  await app.register(libraryRoutes);
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);
@@ -552,6 +603,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     void expiryCheck.run();
     expiryCheck.start();
     scheduler.start();
+    // I5 §9.4: no Undo survives a restart; interrupted GitHub adds finish in the background. A failed purge is logged, not fatal.
+    await librarySweep
+      .bootPurge()
+      .catch((e: unknown) => app.log.error({ err: e }, "library boot purge failed"));
+    librarySweep.start();
     // I3 §5.2: a crashed server's sign-in temp dirs.
     void sweepStaleDirs(os.tmpdir(), clock().getTime());
   } catch (err) {

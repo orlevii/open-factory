@@ -293,3 +293,52 @@ test("usedBy lists templates and live agents by effective skills", async () => {
   expect(await idx.usedBy("x")).toEqual({ templates: ["dev"], agents: ["ann", "cy"] });
   expect(await idx.usedBy("y")).toEqual({ templates: ["ops"], agents: ["bob", "cy"] });
 });
+
+test("a host skill's detail has its row, files and SKILL.md; a link to it is followed", async () => {
+  const dir = host("tdd");
+  writeFileSync(path.join(dir, "notes.txt"), "n");
+  const idx = make();
+  const d = await idx.detail("host", "tdd");
+  expect(d).toMatchObject({ group: "host", name: "tdd", state: "ok", description: "about tdd" });
+  expect(d.files.map((f) => f.path)).toEqual(["SKILL.md", "notes.txt"]);
+  expect(d.skillMd).toContain("# x");
+  expect(await idx.fileText("host", "tdd", "notes.txt")).toBe("n");
+});
+
+test("a source skill and a template-local skill resolve in their own groups", async () => {
+  const s = source({});
+  md(githubDir(s.id, "tdd"), "name: tdd");
+  const local = md(path.join(home, "templates", "dev", "skills", "mine"), "name: mine");
+  writeFileSync(path.join(local, "a.txt"), "local");
+  const idx = make({ sources: [s], templates: { dev: { local: ["mine"] } } });
+  expect((await idx.detail(`source:${s.id}`, "tdd")).files.map((f) => f.path)).toEqual([
+    "SKILL.md",
+  ]);
+  expect(await idx.fileText("template:dev", "mine", "a.txt")).toBe("local");
+});
+
+test("a skill with no usable folder has no files, and a name the group lacks is a 404", async () => {
+  const idx = make({ templates: { dev: { skills: ["ghost"] } } });
+  expect(await idx.detail("unknown", "ghost")).toMatchObject({
+    state: "missing",
+    files: [],
+    skillMd: "",
+  });
+  await expect(idx.detail("host", "ghost")).rejects.toMatchObject({ status: 404 });
+  await expect(idx.fileText("unknown", "ghost", "SKILL.md")).rejects.toMatchObject({ status: 404 });
+});
+
+test("a link picked inside a folder source never exposes its target's files", async () => {
+  const root = path.join(tmp, "folder-src");
+  md(path.join(tmp, "elsewhere"), "name: x");
+  mkdirSync(root);
+  symlinkSync(path.join(tmp, "elsewhere"), path.join(root, "x"));
+  const idx = make({
+    sources: [source({ kind: "folder", path: root, repo: null, skills: ["x"] })],
+  });
+  const id = "11111111-1111-4111-8111-111111111111";
+  expect(await idx.detail(`source:${id}`, "x")).toMatchObject({ state: "unusable", files: [] });
+  await expect(idx.fileText(`source:${id}`, "x", "SKILL.md")).rejects.toMatchObject({
+    status: 404,
+  });
+});

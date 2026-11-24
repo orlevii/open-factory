@@ -1,10 +1,12 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import path from "node:path";
-import { cutGraphemes, HOST_SKILL_DESCRIPTION_MAX } from "@open-factory/shared";
+import { cutGraphemes } from "@open-factory/shared";
 import { parse } from "yaml";
 
 const MAX_BYTES = 64 * 1024;
+/** A description is cut to this many graphemes (spec §5.3). */
+const DESCRIPTION_MAX = 200;
 
 /** One command hook a skill declares in its frontmatter (spec §5.3, R12). */
 export interface HookDecl {
@@ -55,10 +57,7 @@ export function parseSkillMd(text: string): SkillMd {
   const out: SkillMd = { hooks: hooksOf(fm.hooks) };
   if (typeof fm.name === "string") out.name = fm.name;
   if (typeof fm.description === "string") {
-    out.description = cutGraphemes(
-      fm.description.replace(/\s+/g, " ").trim(),
-      HOST_SKILL_DESCRIPTION_MAX,
-    );
+    out.description = cutGraphemes(fm.description.replace(/\s+/g, " ").trim(), DESCRIPTION_MAX);
   }
   return out;
 }

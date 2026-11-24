@@ -15,6 +15,8 @@ const ANT = "sk-ant-api03-Zx9QkLmNoPqRsTuVwXyZ0123456789";
 const GHP = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
 const USER_URL = `https://user:${GHP}@mcp.acme.dev/v1/stream?key=${ANT}`;
 
+const NO_USE = { templates: 0, agents: 0 };
+
 let off = () => {};
 beforeEach(() => {
   off = installInputModality();
@@ -22,12 +24,41 @@ beforeEach(() => {
   mockApi({
     "GET /api/secrets": () =>
       json({ secrets: [{ name: "GH_TOKEN", updatedAt: "2026-11-01T00:00:00Z", usedBy: [] }] }),
-    "GET /api/host-skills": () =>
+    "GET /api/library/skills": () =>
       json({
-        dir: "/skills",
-        skills: [
-          { name: "release", description: "Cut a release." },
-          { name: "review", description: "Review a PR." },
+        hostDir: "/skills",
+        groups: [
+          {
+            group: "host",
+            kind: "host",
+            skills: [
+              { name: "release", description: "Cut a release.", state: "ok", usedBy: NO_USE },
+              { name: "review", description: "Review a PR.", state: "ok", usedBy: NO_USE },
+              {
+                name: "shadowed",
+                description: "Hidden by a source.",
+                state: "hidden",
+                stateDetail: "the name is used by acme/x",
+                usedBy: NO_USE,
+              },
+            ],
+          },
+          {
+            group: "source:s1",
+            kind: "source",
+            source: {
+              id: "s1",
+              kind: "github",
+              path: null,
+              repo: "acme/x",
+              subpath: "",
+              branch: "main",
+              pin: "a".repeat(40),
+              state: "ready",
+              skillCount: 1,
+            },
+            skills: [{ name: "from-github", description: "", state: "ok", usedBy: NO_USE }],
+          },
         ],
       }),
     "GET /api/templates": () => json({ dir: "/t", templates: [] }),
@@ -397,7 +428,11 @@ test("skills: host skills from a picker; template-local skills read-only", async
   await userEvent.click(screen.getByRole("combobox", { name: "Add skill" }));
   // "review" is already the template's: not offered again.
   expect(screen.queryByRole("option", { name: /review/ })).toBeNull();
-  await userEvent.click(await screen.findByRole("option", { name: /release/ }));
+  const release = await screen.findByRole("option", { name: /release/ });
+  // Until the picker covers every group, only usable host skills are offered.
+  expect(screen.queryByRole("option", { name: /shadowed/ })).toBeNull();
+  expect(screen.queryByRole("option", { name: /from-github/ })).toBeNull();
+  await userEvent.click(release);
   expect(last(onValue)).toEqual({ template: { skills: ["release"] } });
 });
 

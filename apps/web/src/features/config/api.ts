@@ -2,7 +2,6 @@ import {
   type AgentConfigResponse,
   agentConfigResponseSchema,
   apiFetch,
-  hostSkillsResponseSchema,
   type PutAgentConfigBody,
   type PutAgentConfigResponse,
   type PutTemplateConfigBody,
@@ -29,14 +28,6 @@ export const templateConfigQueryOptions = (name: string) =>
     queryFn: () => apiFetch(templatePath(name), { schema: templateConfigResponseSchema }),
     staleTime: 0,
   });
-
-/** Read live by the server (spec §12.1); feeds the skills picker until I5's Library replaces it. The folder changes
- *  rarely and nothing saves through this list, so a picker opened again within 5 minutes reuses it. */
-export const hostSkillsQueryOptions = queryOptions({
-  queryKey: ["host-skills"],
-  queryFn: () => apiFetch("/api/host-skills", { schema: hostSkillsResponseSchema }),
-  staleTime: 5 * 60_000,
-});
 
 export const putAgentConfig = (slug: string, body: PutAgentConfigBody) =>
   apiFetch(agentPath(slug), { method: "PUT", body, schema: putAgentConfigResponseSchema });

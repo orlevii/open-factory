@@ -9,13 +9,18 @@ import {
   type AgentOverlay,
   type ConfigDoc,
   HOST_SKILL_PATTERN,
+  LOCAL_SKILL_NAMES,
+  type skillDetailSchema,
   type skillGroupSchema,
 } from "@open-factory/shared";
-import { and, asc, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { z } from "zod";
+import { ApiError } from "../errors.ts";
+import { listSkillFiles, readSkillFile, readSkillMdText } from "./skill-files.ts";
 import { readSkillMd } from "./skill-md.ts";
 
 export type SkillGroup = z.infer<typeof skillGroupSchema>;
+export type SkillDetail = z.infer<typeof skillDetailSchema>;
 type SkillRow = SkillGroup["skills"][number];
 
 export type ResolveFail = "not_added" | "missing" | "unusable";
@@ -34,6 +39,29 @@ export interface TemplatesPort {
   localSkillsOf(name: string): Promise<string[]>;
   /** The last parse without errors, from the database. */
   lastValid(name: string): Promise<ConfigDoc | null>;
+}
+
+/** The template side of the Library from the `templates` rows (the last parse; names of every template on disk). */
+export function dbTemplatesPort(db: Pick<Db, "select">): TemplatesPort {
+  const lastValid = async (name: string) => {
+    const [row] = await db
+      .select({ doc: schema.templates.lastValid, valid: schema.templates.valid })
+      .from(schema.templates)
+      .where(eq(schema.templates.name, name));
+    return row ?? null;
+  };
+  return {
+    names: async () =>
+      (await db.select({ name: schema.templates.name }).from(schema.templates))
+        .map((r) => r.name)
+        .sort(),
+    localSkillsOf: async (name) => {
+      const row = await lastValid(name);
+      const local = row?.valid ? row.doc?.template[LOCAL_SKILL_NAMES] : undefined;
+      return Array.isArray(local) ? local.filter((x): x is string => typeof x === "string") : [];
+    },
+    lastValid: async (name) => (await lastValid(name))?.doc ?? null,
+  };
 }
 
 export interface AgentUse {
@@ -293,5 +321,49 @@ export class LibraryIndex {
       .map((n) => row(n, { state: "missing", dir: "", description: "" }));
     if (unknown.length > 0) groups.push({ group: "unknown", kind: "unknown", skills: unknown });
     return groups;
+  }
+
+  /**
+   * The real folder of skill `name` in `group` (`host`, `source:<id>`, `template:<name>`), only when it is
+   * usable: a missing, unusable or linked skill has none, so its files are never read.
+   */
+  private async dirOf(group: string, name: string): Promise<string | undefined> {
+    let f: Found | undefined;
+    if (group === "host") {
+      if ((await this.hostNames()).includes(name)) f = await this.host(name);
+    } else if (group.startsWith("source:")) {
+      const s = (await this.store.sources()).find((x) => `source:${x.id}` === group);
+      if (s?.state === "ready" && s.skills.includes(name)) f = await this.registered(s, name);
+    } else if (group.startsWith("template:")) {
+      const t = group.slice("template:".length);
+      const port = this.templates();
+      if ((await port.localSkillsOf(t)).includes(name)) {
+        f = await inspect(name, path.join(this.factoryHome, "templates", t, "skills", name));
+      }
+    }
+    if (f?.state !== "ok") return undefined;
+    return realpath(f.dir).catch(() => undefined);
+  }
+
+  /** One skill with its files and `SKILL.md` (spec §9.1); a 404 when the group has no such skill. */
+  async detail(group: string, name: string): Promise<SkillDetail> {
+    const row = (await this.skills())
+      .find((g) => g.group === group)
+      ?.skills.find((r) => r.name === name);
+    if (!row) throw new ApiError(404, "not_found", "Not found");
+    const dir = await this.dirOf(group, name);
+    return {
+      ...row,
+      group,
+      files: dir ? await listSkillFiles(dir) : [],
+      skillMd: dir ? await readSkillMdText(dir) : "",
+    };
+  }
+
+  /** One text file of a usable skill (spec §9.1). */
+  async fileText(group: string, name: string, rel: string): Promise<string> {
+    const dir = await this.dirOf(group, name);
+    if (!dir) throw new ApiError(404, "not_found", "Not found");
+    return readSkillFile(dir, rel);
   }
 }

@@ -546,7 +546,7 @@ The result is cached in memory by checkout path, which is immutable per commit.
 
 Templates and overlays keep I2's rules (templates are trusted operator input; overlays refuse the factory keys). The start check (§7.3) refuses **every** key in this list in agent-writable project and local settings. The plan's first PR 1 task re-reads the shipped version's settings reference and updates the list, and a test pins it.
 
-`permissions.allow` and `autoMode` in project or local settings would let an agent widen its own permissions. That is I2's and I7's territory, so it isn't added here; it is flagged in §21 for Or.
+`permissions.allow` and `autoMode` in project or local settings would let an agent widen its own permissions. That is I2's and I7's territory, so it isn't added here: Or decided to defer it (#162, §21), and I5 adds no start check for them.
 
 ## 8. Change flow integration
 
@@ -1350,5 +1350,5 @@ Certainty is on a 1–5 scale. **Bold** marks the decisions for Or's review.
 - npm-sourced plugins.
 - Revisit whether agents may add plugins from any registered marketplace (Q5), with Or.
 - Base image docs: describe the pinned Claude Code version and the plugin runtimes an agent image must carry (#160; the pin itself lands in PR 2).
-- `permissions.allow` and `autoMode` in agent-written project or local settings let an agent widen its own permissions. That belongs to I2/I7; for Or (§7.10).
+- `permissions.allow` and `autoMode` in agent-written project or local settings let an agent widen its own permissions (#162, §7.10). Or decided to defer it: no start check in I5. Or's idea for later: two settings files, one read-only and one agent-writable that the factory controls and can verify, merged at agent start by policy. Not scheduled.
 - Docker defence in depth: a read-only managed-settings mount with `strictKnownMarketplaces`, `syncClaudeAiPlugins` and the plugin keys (§11.4).

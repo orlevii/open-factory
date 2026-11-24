@@ -133,6 +133,31 @@ function FindMore({ id }: { id: string }) {
   );
 }
 
+/** A subject longer than this may need more than two lines, so it gets a Show all (CSS does the clamping). */
+const SUBJECT_CLAMP_CHARS = 80;
+
+/** A commit subject: two lines like a list row until Show all expands it in place. */
+function ClampedSubject({ text }: { text: string }) {
+  const [all, setAll] = useState(false);
+  const clamped = !all && text.length > SUBJECT_CLAMP_CHARS;
+  return (
+    <>
+      <span className={clamped ? "line-clamp-2" : undefined}>
+        <UntrustedProse text={text} />
+      </span>
+      {clamped && (
+        <button
+          type="button"
+          onClick={() => setAll(true)}
+          className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
+        >
+          Show all
+        </button>
+      )}
+    </>
+  );
+}
+
 /** The next source header after `id` in the page's list (else the one before it): where focus goes once it is gone. */
 function neighbourHeader(id: string): string | null {
   const keys = [...document.querySelectorAll<HTMLElement>('[data-peek-key^="source:"]')]
@@ -312,7 +337,7 @@ export function SourcePeekBody({
               <>
                 <dt className="text-muted-foreground">Subject</dt>
                 <dd>
-                  <UntrustedProse text={d.subject} />
+                  <ClampedSubject text={d.subject} />
                 </dd>
               </>
             )}

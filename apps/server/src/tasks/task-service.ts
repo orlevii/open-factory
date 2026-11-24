@@ -182,7 +182,7 @@ export class TaskService {
     for (const id of erroredCheck) {
       if ((await this.d.router.statusOfAgent(id)) === "errored")
         notes.push(
-          `@${await this.slugOf(id)} is errored; it will see this when a human restarts it.`,
+          `@${await this.slugOf(id)} is errored; it will see this after it is restarted (restart_agent, or a human).`,
         );
     }
     this.d.router.handOffTaskRows(out.agentRows);

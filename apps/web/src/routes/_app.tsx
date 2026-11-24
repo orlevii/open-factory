@@ -6,7 +6,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster, notify as toast } from "@/components/ui/toaster";
-import { onRestartFrame } from "@/features/agents/lifecycle";
+import { onRestartFrame, resetRestartLatch } from "@/features/agents/lifecycle";
 import { RestartConfirmHost } from "@/features/agents/restart-confirm";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { onChatChanged } from "@/features/chat/use-chat";
@@ -187,6 +187,8 @@ function AppLayout() {
       },
       onOpen: () => {
         setOpenCount((n) => n + 1);
+        // A status frame dropped while the socket was down would leave "Restarting…" until reload.
+        resetRestartLatch();
         // The first open follows the loaders' fetches; a reconnect may have missed turn ends and
         // supervisor frames while the socket was down.
         if (!opened.current) {

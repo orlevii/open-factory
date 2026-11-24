@@ -72,18 +72,33 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
 
           const rt = await d.runtimes.load(row.id);
           if (!rt) throw new Error(`No runtime for ${label}`);
+          const runtimeAllowed = restartRuntimeAllowed(row, d.localRuntimeAllowed());
+          // An errored report is restarted by starting a process at once, which would take the first batch before a
+          // note sent afterwards. So its note goes first, as a pending message: the restart notice sorts ahead of it
+          // and both reach the new process in one batch (AC 11). Only when the restart can be accepted, so a
+          // refusal never leaves a note behind.
+          const noteFirst =
+            args.note !== undefined &&
+            runtimeAllowed &&
+            rt.live().status === "errored" &&
+            rt.live().errorKind !== "resume_unrecoverable";
           try {
+            const early = noteFirst ? await sendNote(d, row.slug, args.note as string) : undefined;
             const outcome = await rt.restartNow({
               by: `@${d.caller.slug}`,
               force: args.force ?? false,
               // Computed here, outside the runtime's job: the resolver reads the disk (I7 §9.2).
               changes: await restartChanges(d, row),
               // A local runtime disabled in this factory is refused, as the human Restart is (I7 §9.2).
-              runtimeAllowed: restartRuntimeAllowed(row, d.localRuntimeAllowed()),
+              runtimeAllowed,
             });
             // `send` reports a refusal or a failed wake in `results`; it doesn't throw. A lost instruction is
             // surfaced, so the caller doesn't believe it was delivered (the restart itself has happened).
-            const lost = args.note ? await sendNote(d, row.slug, args.note) : undefined;
+            const lost = noteFirst
+              ? early
+              : args.note
+                ? await sendNote(d, row.slug, args.note)
+                : undefined;
             return textResult({
               target: `@${row.slug}`,
               status: outcome.status,
@@ -110,6 +125,6 @@ async function sendNote(d: RestartAgentDeps, slug: string, note: string) {
   const r = results[0];
   if (!r) return `Your note to @${slug} wasn't delivered.`;
   if (r.status === "refused") return `Your note wasn't delivered: ${r.reason}`;
-  if (r.status === "start_failed") return `Your note wasn't delivered: ${r.note}`;
+  if (r.status === "start_failed") return `Your note is queued, but @${slug} couldn't be started.`;
   return undefined;
 }

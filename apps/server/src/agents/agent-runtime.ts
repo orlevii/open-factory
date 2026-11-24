@@ -1470,6 +1470,9 @@ export class AgentRuntime {
       proc === this.deadProc ||
       proc === this.failingProc
     ) {
+      // Known gap (PR 3 review, minor 3): when only a provisional `terminated` latch is the reason and the
+      // termination then fails (`unmarkTerminated`), the restart the caller was told about is dropped. Rare
+      // (spawned agents, failed TTL or terminate), so accepted.
       if (!this.stopping) this.clearRestartNow();
       return;
     }

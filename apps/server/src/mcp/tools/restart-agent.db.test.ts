@@ -143,6 +143,39 @@ test("a cut restart delivers the note from the caller after the restart notice",
   ]);
 });
 
+test("an errored report with a note restarts, resumes its session, and gets the notice then the note", async () => {
+  await post("/api/messages", { to: ["dev"], body: "start", urgent: false });
+  startsOf("dev")
+    .at(-1)
+    ?.emit(...ev.fullTurn("sess-old"));
+  const rt = await h.app.runtimes.bySlug("dev");
+  await rt?.settled();
+  await rt?.hibernate("apply_changes");
+  await rt?.settled();
+  await post("/api/messages", { to: ["dev"], body: "again", urgent: false });
+  startsOf("dev")
+    .at(-1)
+    ?.emit({ type: "error", source: "resume", message: "API Error: 500 overloaded" });
+  await rt?.settled();
+  expect(rt?.live().status).toBe("errored");
+  const before = startsOf("dev").length;
+  expect(await call("lead", { target: "dev", note: "Rerun the tests." })).toMatchObject({
+    err: false,
+    json: { target: "@dev", status: "restarting" },
+  });
+  await rt?.settled();
+  expect(startsOf("dev")).toHaveLength(before + 1);
+  const next = startsOf("dev").at(-1) as (typeof drv.starts)[number];
+  expect(next.opts.resumeSessionId).toBe("sess-old");
+  // The message that was pending when it errored is delivered too, between the notice and the note.
+  expect(delivered(next)).toEqual([
+    ["@factory", "Restarted by @lead after an error."],
+    ["@or", "again"],
+    ["@lead", "Rerun the tests."],
+  ]);
+  expect(next.sent).toHaveLength(1); // one batch: the note did not arrive as a second turn
+});
+
 test("a refused restart (background work and no force) restarts nothing and sends no note", async () => {
   await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
   startsOf("dev")
@@ -232,6 +265,23 @@ test("a refused note is surfaced in the result, and the restart still happened",
   expect(startsOf("dev").at(-1)).not.toBe(p);
 });
 
+test("a note whose recipient can't be started is reported as queued, in a fixed sentence", async () => {
+  const p = await runningMidTurn("dev");
+  vi.spyOn(h.app.router, "send").mockResolvedValueOnce({
+    results: [
+      { to: "@dev", kind: "agent", status: "start_failed", id: "m1", note: "/secret/path boom" },
+    ],
+  } as never);
+  const r = await call("lead", { target: "dev", note: "Rerun the tests." });
+  expect(r.json).toMatchObject({
+    status: "restarting",
+    note_delivered: false,
+    note_error: "Your note is queued, but @dev couldn't be started.",
+  });
+  p.emit(ev.end());
+  await (await h.app.runtimes.bySlug("dev"))?.settled();
+});
+
 test("an idle report: the restart notice comes before the note on the next process", async () => {
   await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
   const p = startsOf("dev").at(-1);
@@ -249,7 +299,7 @@ test("an idle report: the restart notice comes before the note on the next proce
   ]);
 });
 
-test("restart_pending: the note is delivered after the pending restart", async () => {
+test("restart_pending: the note goes to the running process; the restart follows once idle", async () => {
   await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
   const p = startsOf("dev").at(-1);
   p?.emit(
@@ -263,7 +313,7 @@ test("restart_pending: the note is delivered after the pending restart", async (
   expect(r).toMatchObject({ json: { status: "restart_pending" } });
   expect(r.json.note).toContain("restarts in a moment");
   expect(r.json.note_delivered).toBeUndefined();
-  // The note is an ordinary message from the caller, queued for the running process.
+  // The note is an ordinary message from the caller, sent to the running process (no restart yet).
   expect(
     startsOf("dev")
       .at(-1)

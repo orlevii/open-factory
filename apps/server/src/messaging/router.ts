@@ -461,7 +461,7 @@ export class Router {
         kind: "agent",
         status: "pending",
         id: row.id,
-        note: `${to} is errored; your message will be delivered when a human restarts it.`,
+        note: `${to} is errored; your message will be delivered after it is restarted (restart_agent, or a human).`,
       };
     return { to, kind: "agent", status: "queued", recipient_status: status, id: row.id };
   }

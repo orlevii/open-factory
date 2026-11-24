@@ -46,7 +46,7 @@ export function lostWorkBody(slug: string, tasks: string[], crons: string[]) {
     ...(crons.length > 0 ? [count(crons.length, "cron")] : []),
   ];
   return {
-    text: `@${slug} has ${parts.join(" and ")}. Restarting stops ${tasks.length + crons.length > 1 ? "them" : "it"}.`,
+    text: `@${slug} has ${parts.join(" and ")}. Restarting stops them.`,
     tasks: tasks.slice(0, MAX_LISTED),
     crons: crons.slice(0, MAX_LISTED),
     moreTasks: Math.max(0, tasks.length - MAX_LISTED),

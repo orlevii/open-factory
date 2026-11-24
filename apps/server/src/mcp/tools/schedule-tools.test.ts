@@ -93,7 +93,9 @@ test("at, to and me; an errored target gets its note; identity never comes from 
   expect(me.json.to).toBe("dev");
   await h.sql`update agents set status = 'errored' where slug = 'qa'`;
   const e = await call("dev", "schedule_message", { body: "x", at: "2026-12-03T09:00", to: "qa" });
-  expect(e.json.note).toBe("@qa is errored; it will see this when a human restarts it.");
+  expect(e.json.note).toBe(
+    "@qa is errored; it will see this after it is restarted (restart_agent, or a human).",
+  );
   const rows = await h.sql`select created_by_agent_id from schedules`;
   expect(new Set(rows.map((r) => r.created_by_agent_id))).toEqual(new Set([ids.dev]));
 });

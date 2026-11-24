@@ -25,7 +25,7 @@ test.each([
     "3 updates from @dev waiting, delivered by 14:32",
   ],
   [{ waitReason: "starting" }, "3 updates from @dev waiting for this agent to start"],
-  [{ waitReason: "errored" }, "3 updates from @dev held until a human restarts this agent"],
+  [{ waitReason: "errored" }, "3 updates from @dev held until this agent is restarted"],
   [{ waitReason: "turn", count: 1 }, "1 update from @dev waiting for this turn to end"],
 ])("held line %o", (o, text) => {
   render(<QueueItems items={[held(o)]} agent={agentSummary()} />);

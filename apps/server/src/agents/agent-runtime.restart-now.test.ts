@@ -395,9 +395,15 @@ test("a cut restart that throws ends its attempt before the error is rethrown", 
   await rt.settled();
   const spy = vi.spyOn(store, "setAttempting").mockRejectedValueOnce(new Error("db down"));
   await expect(call({ force: true })).rejects.toThrow("db down");
-  expect(spy).toHaveBeenLastCalledWith(rt.agent.id, false);
   spy.mockRestore();
   await rt.settled();
+  // Not wedged: the next call isn't refused as starting, and the row isn't left attempting.
+  expect((await call({ force: true })).status).toBe("restarting");
+  await rt.settled();
+  h.driver.last.emit(...ev.fullTurn("sess-2")); // the new process runs a turn: the attempt is over
+  await rt.settled();
+  const row = await h.t.sql`select attempting from agents where id = ${h.agentId}`;
+  expect(row[0]?.attempting).toBe(false);
 });
 
 test("the stop of a cut restart does nothing once the agent is terminated", async () => {

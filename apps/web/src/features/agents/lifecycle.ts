@@ -195,7 +195,8 @@ export function onRestartFrame(m: ServerMessage): void {
 
 const lostWorkData = z.object({ tasks: z.array(z.string()), crons: z.array(z.string()) });
 
-/** Test hook: forgets every pending restart, so a failing test can't leak one into the next. */
+/** Forgets every pending restart: a reconnected socket may have dropped the frame that would end one, and a
+ *  failing test mustn't leak one into the next. */
 export function resetRestartLatch(): void {
   latch.clear();
   for (const l of latchListeners) l();

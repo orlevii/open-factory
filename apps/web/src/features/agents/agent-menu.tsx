@@ -29,6 +29,8 @@ import { CompactPopover } from "../session/compact-popover";
 import type { StopCrons } from "../session/stop-crons";
 import { TerminateButton } from "../session/terminate-button";
 
+/** Statuses with a live session to restart (an errored agent has the header's Restart). */
+const RESTARTABLE: ReadonlySet<string> = new Set(["working", "idle", "rate_limited"]);
 const newTaskIntent = sheetIntent("new-task");
 const newScheduleIntent = sheetIntent("new-schedule");
 
@@ -102,7 +104,7 @@ export function AgentMenu({
   // Archived agents too: their configuration stays editable and applies when restored (I2 §12.4).
   const canConfigure = !spawned && !terminated && !endedInList;
   // A live session to restart: not hibernated, queued or errored (an errored agent has the header's Restart).
-  const canRestart = ["working", "idle", "rate_limited"].includes(agent.status) && !archived;
+  const canRestart = RESTARTABLE.has(agent.status) && !archived;
   const canStopCrons = session && stop !== undefined && agent.crons.length > 0;
   const canTerminate = session && spawned && live;
   const canResetPersona = !spawned && !terminated;

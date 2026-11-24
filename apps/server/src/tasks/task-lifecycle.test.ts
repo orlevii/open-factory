@@ -45,7 +45,9 @@ const messageIns = async (slug: string) => {
 test("an errored assignee: the row stays pending with the note; a human comment starts an attempt, an agent's doesn't", async () => {
   await makeErrored();
   const r = await h.app.tasks.create(or, { title: "t", assignee: "dev" });
-  expect(r.note).toBe("@dev is errored; it will see this when a human restarts it.");
+  expect(r.note).toBe(
+    "@dev is errored; it will see this after it is restarted (restart_agent, or a human).",
+  );
   await settle("dev");
   expect(procs("dev")).toHaveLength(0);
   expect((await rows("dev"))[0]?.state).toBe("pending");

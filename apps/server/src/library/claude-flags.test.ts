@@ -76,3 +76,9 @@ test("an image below the floor is refused, and the refusal is not cached", async
   await expect(checkImageClaudeVersion("factory/old:1", "sha256:old")).rejects.toThrow("too old");
   expect(runsOf(count)).toHaveLength(2);
 });
+
+test("a binary whose version can't be read fails the start", async () => {
+  await expect(assertPluginFloor("/nonexistent/claude", { PATH: "/usr/bin" })).rejects.toThrow(
+    "printed no readable version",
+  );
+});

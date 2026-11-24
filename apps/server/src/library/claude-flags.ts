@@ -14,11 +14,11 @@ function belowFloor(found: string): Error {
   return new Error(`Claude Code ${found} is too old; update it to ${MIN_CLAUDE_VERSION} or later.`);
 }
 
-/** Fails closed below the floor (spec §7.9), on top of the harness check. A binary whose version can't be read
- *  is not refused here. */
+/** Fails closed (spec §7.9): below the floor, or a binary whose version can't be read. */
 export async function assertPluginFloor(bin: string, env: Record<string, string>): Promise<void> {
   const { version, tooOld } = await checkClaudeVersion(bin, env);
-  if (version && tooOld) throw belowFloor(version);
+  if (!version) throw new Error(`Claude Code (${bin}) printed no readable version.`);
+  if (tooOld) throw belowFloor(version);
 }
 
 /** Image digest to its in-flight or passed check. A failed check is dropped, so the next start asks again. */

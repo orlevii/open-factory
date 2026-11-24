@@ -21,7 +21,7 @@ import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import type { PasswordHasher } from "./auth/options.ts";
-import { type Config, hostSkillsDirOf, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
+import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { ExpiryCheck } from "./credentials/expiry-check.ts";
 import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
@@ -31,8 +31,8 @@ import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
 import { ImageBuilder } from "./images/builder.ts";
-import { dbTemplatesPort, LibraryIndex } from "./library/library-index.ts";
-import { LibrarySweep } from "./library/library-sweep.ts";
+import { LibraryIndex } from "./library/library-index.ts";
+import { LibrarySweep, skillDirsInUse } from "./library/library-sweep.ts";
 import { dbSourcesStore, SourcesService } from "./library/sources-service.ts";
 import { bridgeInfo, resolveAgentBindHosts } from "./mcp/bind-hosts.ts";
 import { startAgentListener } from "./mcp/listener.ts";
@@ -224,9 +224,17 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const bus = new EventBus();
   const vault = new Vault(config.secretKey);
   const lock = new KeyedMutex();
+  // I5 §5.3: the Library validates templates and resolves every start's skills. It reads the template side through a
+  // lazy port, because `TemplateIndex` is built with the Library.
+  const library = new LibraryIndex({
+    db: deps.db,
+    hostClaudeDir: config.hostClaudeDir,
+    factoryHome: config.factoryHome,
+    templates: () => templates,
+  });
   const workspace = new Workspace({
     factoryHome: config.factoryHome,
-    hostSkillsDir: hostSkillsDirOf(config),
+    library,
     claudeBin: config.claudeBin,
     cliBundle: config.cliBundle,
     lock,
@@ -238,8 +246,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
-  const templates = new TemplateIndex({ db: deps.db, config, log: app.log });
-  const resolver = new ConfigResolver({ templates });
+  const templates: TemplateIndex = new TemplateIndex({
+    db: deps.db,
+    config,
+    library,
+    log: app.log,
+  });
+  const resolver = new ConfigResolver({ templates, library });
   const prepareStart = createPrepareStart({
     db: deps.db,
     config,
@@ -296,6 +309,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     runtimes,
     bus,
     log: app.log,
+    resolver,
+    templates,
   });
   templates.onChange((e) => configChanges.templateChanged(e));
   // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
@@ -466,12 +481,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
   });
   // I5 §5.3, §9.2, §9.4: the Library's skills and their sources, and the sweep that purges them.
-  const library = new LibraryIndex({
-    db: deps.db,
-    hostClaudeDir: config.hostClaudeDir,
-    factoryHome: config.factoryHome,
-    templates: () => dbTemplatesPort(deps.db),
-  });
   const sourcesStore = dbSourcesStore(deps.db);
   const libraryChanged = (e?: { addFailed?: string }) =>
     bus.publishAll({
@@ -491,16 +500,15 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     githubUrl: config.githubUrl,
     publish: libraryChanged,
     purgeAfter: (ms) => librarySweep.purgeAfter(ms),
-    // TODO(A9): `configChanges.libraryChanged` (spec §8.3); until then a Library change restarts no agent.
-    onLibraryChanged: async () => {},
+    // After the Library lock is released (spec §9.6); `by` is the bare user handle.
+    onLibraryChanged: (e) => configChanges.libraryChanged(e),
     log: (message, err) => app.log.error({ err }, message),
   });
   const librarySweep = new LibrarySweep({
     sources: skillSources,
     store: sourcesStore,
     factoryHome: config.factoryHome,
-    // TODO(A9): the loaded runtimes' `started.library` directories (spec §9.4); until then nothing is held.
-    inUse: () => [],
+    inUse: () => skillDirsInUse(skillSources.githubRoot, runtimes.allStarted()),
     publish: libraryChanged,
     log: (message, err) => app.log.error({ err }, message),
   });

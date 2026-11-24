@@ -17,13 +17,15 @@ import { createFakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { FieldError } from "../errors.ts";
+import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import { KeyedMutex } from "./lock.ts";
 import { Workspace } from "./workspace.ts";
 
 function setup(fakeEnv: Record<string, string> = {}) {
   const home = mkdtempSync(path.join(tmpdir(), "of-"));
-  const hs = mkdtempSync(path.join(tmpdir(), "hs-"));
-  mkdirSync(path.join(hs, "grilling"));
+  const claude = mkdtempSync(path.join(tmpdir(), "claude-"));
+  const hs = path.join(claude, "skills");
+  writeHostSkill(claude, "grilling");
   const repo = mkdtempSync(path.join(tmpdir(), "repo-"));
   const tdir = path.join(home, "templates/lead");
   mkdirSync(path.join(tdir, "skills/local"), { recursive: true });
@@ -44,7 +46,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
   const fake = createFakeClaude({ scenario: "reply", env: fakeEnv });
   const ws = new Workspace({
     factoryHome: home,
-    hostSkillsDir: hs,
+    library: hostOnlyLibrary(claude, home),
     claudeBin: fake.bin,
     cliBundle: "/nonexistent/open-factory.js",
     lock: new KeyedMutex(),
@@ -60,6 +62,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
       doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
       config,
       templatePlugins: [],
+      library: { skills: {}, plugins: {} },
     },
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
@@ -72,7 +75,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
     spawning: null,
     secretNames: config.secrets,
   };
-  return { home, hs, repo, ws, tpl, prep };
+  return { home, hs, claude, repo, ws, tpl, prep };
 }
 
 test("materialize then prepare: the full layout", async () => {
@@ -312,4 +315,57 @@ test("prepare refuses a symlinked template skill and a symlinked skills/ folder"
   rmSync(skills, { recursive: true });
   symlinkSync(outside, skills);
   await expect(ws.prepare(prep)).rejects.toThrow("skills/ must be a folder, not a link.");
+});
+
+test("materialize refuses a skill the Library can't resolve, with the start's message", async () => {
+  const { ws, tpl, prep } = setup();
+  const missing = { ...prep, config: { ...prep.config, skills: ["nope"] } };
+  await expect(ws.materialize("lead", "lead", tpl, missing)).rejects.toMatchObject({
+    name: "WorkspaceError",
+    message: "Skill nope hasn't been added in Skills. Fix it in Configuration.",
+    fix: "config",
+  });
+});
+
+test("prepare resolves a skill through the Library, so an unresolvable one fails the start too", async () => {
+  const { ws, tpl, prep, claude } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  rmSync(path.join(claude, "skills/grilling/SKILL.md"));
+  await expect(ws.prepare(prep)).rejects.toMatchObject({
+    message: "Skill grilling hasn't been added in Skills. Fix it in Configuration.",
+  });
+});
+
+test("prepare checks and scrubs the agent's own folders after linking", async () => {
+  const { ws, tpl, prep, claude } = setup();
+  writeHostSkill(claude, "hooked", "hooks:\n  PreToolUse: []\n");
+  const withHooked = {
+    ...prep,
+    effective: {
+      ...prep.effective,
+      config: { ...prep.effective.config, skills: ["grilling", "hooked"] },
+    },
+  };
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  mkdirSync(path.join(wd, ".claude-config/skills/stale"), { recursive: true });
+  // A Library skill that declares hooks is human-registered: it starts.
+  await ws.prepare(withHooked);
+  expect(readdirSync(path.join(wd, ".claude-config/skills"))).toEqual([]);
+
+  writeFileSync(path.join(wd, ".claude/settings.local.json"), JSON.stringify({ hooks: {} }));
+  await expect(ws.prepare(withHooked)).rejects.toThrow(
+    `${path.join(wd, ".claude/settings.local.json")} sets hooks, which agents can't set; remove it.`,
+  );
+  rmSync(path.join(wd, ".claude/settings.local.json"));
+
+  mkdirSync(path.join(wd, ".claude/skills/p/.claude-plugin"), { recursive: true });
+  await expect(ws.prepare(withHooked)).rejects.toThrow(
+    "skills/p is a plugin, so it can't load as a skill; move it away.",
+  );
+  rmSync(path.join(wd, ".claude/skills/p"), { recursive: true });
+
+  mkdirSync(path.join(wd, ".claude/agents"), { recursive: true });
+  writeFileSync(path.join(wd, ".claude/agents/a.md"), "---\nmcpServers: {}\n---\n");
+  await expect(ws.prepare(withHooked)).rejects.toThrow("agents/a.md declares mcpServers");
 });

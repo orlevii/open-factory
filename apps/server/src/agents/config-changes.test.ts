@@ -1,6 +1,11 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { type ConfigDoc, describeChanges, mergeConfig } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
-import { FILE_CHANGE } from "../templates/template-index.ts";
+import { loadConfig } from "../config.ts";
+import { FILE_CHANGE, TemplateIndex } from "../templates/template-index.ts";
+import { folderSource, hostOnlyLibrary } from "../test/library.ts";
 import { ConfigChanges, dbConfigChangeAgents } from "./config-changes.ts";
 import type { ConfigResolver, Effective } from "./config-resolver.ts";
 import { AgentStartError } from "./errors.ts";
@@ -55,17 +60,19 @@ const echoResolver: Pick<ConfigResolver, "effective"> = {
   effective: async (row) => ({ ...testEffective(), doc: { ...doc(), settings: row.config } }),
 };
 
+const NO_LIBRARY = { skills: {}, plugins: {} };
+const snap = (d: ConfigDoc) => ({ doc: d, library: NO_LIBRARY });
 /** A config check that reads `d` (what the runtime's job sees when it re-reads the agent). */
-const at = (d: ConfigDoc | undefined) => ({ current: async () => d });
+const at = (d: ConfigDoc | undefined) => ({ current: async () => (d ? snap(d) : undefined) });
 
 /**
  * Runtimes whose every start runs on `startedDoc` (what `started` holds), plus the change path over them. `current`
  * is each agent's effective doc as the runtime's re-read sees it (the committed state), `reads` counts those reads.
  */
-function world(startedDoc: ConfigDoc) {
+function world(startedDoc: ConfigDoc, startedLibrary: Effective["library"] = NO_LIBRARY) {
   const driver = new FakeDriver();
   const prepareStart: PrepareStart = async (a) => {
-    const effective: Effective = { ...testEffective(), doc: startedDoc };
+    const effective: Effective = { ...testEffective(), doc: startedDoc, library: startedLibrary };
     return { ...okSpec(a), effective };
   };
   const bus = new EventBus();
@@ -82,19 +89,24 @@ function world(startedDoc: ConfigDoc) {
   });
   closers.push(() => runtimes.stopAll());
   const current = new Map<string, ConfigDoc>();
+  /** The Library's resolution now, which a re-read returns beside the doc. */
+  let libraryNow: Effective["library"] = NO_LIBRARY;
   let reads = 0;
   const changes = new ConfigChanges({
     agents: {
       ...dbConfigChangeAgents(h.t.db, echoResolver),
-      currentDoc: async (id) => {
+      currentEffective: async (id) => {
         reads += 1;
-        return current.get(id);
+        const d = current.get(id);
+        return d ? { doc: d, library: libraryNow } : undefined;
       },
     },
     store: h.store,
     runtimes,
     bus,
     log: silentLog,
+    resolver: { libraryOf: async () => NO_LIBRARY },
+    templates: { scan: async () => [] },
   });
   /** Starts the agent and leaves a turn open, so a requested restart stays pending. */
   const runBusy = async (agentId: string) => {
@@ -111,7 +123,18 @@ function world(startedDoc: ConfigDoc) {
     await rt?.settled();
     return rt;
   };
-  return { driver, runtimes, changes, frames, runBusy, current, reads: () => reads };
+  return {
+    driver,
+    runtimes,
+    changes,
+    frames,
+    runBusy,
+    current,
+    reads: () => reads,
+    setLibrary: (l: Effective["library"]) => {
+      libraryNow = l;
+    },
+  };
 }
 
 const events = (agentId: string) =>
@@ -139,19 +162,20 @@ test("the SQL reads: live agents of a template, persistent and spawned, never ar
   expect(await q.liveChildren(lead)).toEqual([kid]);
 });
 
-test("currentDoc resolves the row as it is now; undefined for a gone agent or a config that can't be resolved", async () => {
+test("currentEffective resolves the row as it is now; undefined for a gone agent or a config that can't be resolved", async () => {
   const id = await agent();
   const q = dbConfigChangeAgents(h.t.db, echoResolver);
   await h.t
     .sql`update agents set config = ${JSON.stringify({ template: { model: "opus" } })}::jsonb where id = ${id}`;
-  expect((await q.currentDoc(id))?.settings).toEqual({ template: { model: "opus" } });
-  expect(await q.currentDoc("no-such-agent")).toBeUndefined();
+  expect((await q.currentEffective(id))?.doc.settings).toEqual({ template: { model: "opus" } });
+  expect((await q.currentEffective(id))?.library).toEqual(NO_LIBRARY);
+  expect(await q.currentEffective("no-such-agent")).toBeUndefined();
   const failing = dbConfigChangeAgents(h.t.db, {
     effective: async () => {
       throw new AgentStartError("Template test has errors. Fix it in Templates.", "template");
     },
   });
-  expect(await failing.currentDoc(id)).toBeUndefined();
+  expect(await failing.currentEffective(id)).toBeUndefined();
 });
 
 test("a template change with a new skill: event and notice for each live agent; restart only where started differs", async () => {
@@ -275,7 +299,7 @@ test("a stale template dispatch arriving after an overlay save doesn't cancel th
   expect(w.reads()).toBe(2);
   expect(rt?.live()).toMatchObject({
     restartPending: true,
-    restartChanges: describeChanges(started, committed),
+    restartChanges: describeChanges(snap(started), snap(committed)),
   });
 });
 
@@ -303,7 +327,7 @@ test("an overlay save built on a stale base arriving after a template change doe
   await rt?.settled();
   expect(rt?.live()).toMatchObject({
     restartPending: true,
-    restartChanges: describeChanges(started, committed),
+    restartChanges: describeChanges(snap(started), snap(committed)),
   });
 });
 
@@ -323,4 +347,71 @@ test("an overlay save on an archived agent writes the event only; values never r
   expect(await noticeLines(id)).toEqual([]);
   const all = await h.t.sql`select payload::text as p from session_events where agent_id = ${id}`;
   expect(JSON.stringify(all)).not.toContain(SECRET);
+});
+
+const GH = (c: string) => `github:${c.repeat(40)}`;
+
+test("a GitHub update writes config_changed and requests a restart only for agents using the skill, compared against started.library", async () => {
+  const d = doc({ skills: ["tdd"] });
+  const w = world(d, { skills: { tdd: GH("a") }, plugins: {} });
+  const user = await agent();
+  const bystander = await agent();
+  const rt = await w.runBusy(user);
+  w.current.set(user, d);
+  w.current.set(bystander, d);
+  w.setLibrary({ skills: { tdd: GH("b") }, plugins: {} });
+  await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
+  await rt?.settled();
+
+  const line = "skill tdd updated aaaaaaa → bbbbbbb";
+  expect((await events(user)).map((e) => e.payload)).toEqual([{ by: "orlevi", changes: [line] }]);
+  expect(rt?.live()).toMatchObject({ restartPending: true, restartChanges: [line] });
+  // Not running: nothing to compare against, and its next start reads the new pin.
+  expect(await events(bystander)).toEqual([]);
+  expect(w.reads()).toBe(1);
+  // A name nobody started with changes nothing.
+  await w.changes.libraryChanged({ skills: ["release"], by: "orlevi" });
+  expect((await events(user)).length).toBe(1);
+});
+
+test("a template whose skill became missing shows the issue after libraryChanged, not before", async () => {
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), "of-lib-cc-")));
+  const src = path.join(home, "src");
+  mkdirSync(path.join(src, "tdd"), { recursive: true });
+  writeFileSync(path.join(src, "tdd", "SKILL.md"), "---\nname: tdd\n---\n# tdd\n");
+  const dir = path.join(home, "templates", "lib-t");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "template.yaml"), "name: lib-t\ndisplay_name: T\nskills: [tdd]\n");
+  writeFileSync(path.join(dir, "AGENTS.md"), "# T\n");
+  const cfg = loadConfig({
+    DATABASE_URL: h.t.url,
+    FACTORY_SECRET_KEY: "k".repeat(40),
+    FACTORY_HOME: home,
+  });
+  const library = hostOnlyLibrary(path.join(home, "claude"), home, [folderSource(src, ["tdd"])]);
+  const templates = new TemplateIndex({ db: h.t.db, config: cfg, library });
+  await templates.scan();
+  const problem = "Skill tdd is missing from its folder.";
+  const messages = async () =>
+    (
+      await h.t.sql<{ issues: { message: string }[] }[]>`
+        select issues from templates where name = 'lib-t'`
+    ).flatMap((r) => r.issues.map((i) => i.message));
+  expect(await messages()).not.toContain(problem);
+
+  rmSync(path.join(src, "tdd"), { recursive: true });
+  // The stored issues are as of the last scan until the change is announced.
+  expect(await messages()).not.toContain(problem);
+  const changes = new ConfigChanges({
+    agents: dbConfigChangeAgents(h.t.db, echoResolver),
+    store: h.store,
+    runtimes: { startedOf: () => undefined } as never,
+    bus: new EventBus(),
+    log: silentLog,
+    resolver: { libraryOf: async () => NO_LIBRARY },
+    templates,
+  });
+  await changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
+  expect(await messages()).toContain(problem);
+  rmSync(home, { recursive: true, force: true });
 });

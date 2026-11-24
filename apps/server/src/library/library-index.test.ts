@@ -342,3 +342,25 @@ test("a link picked inside a folder source never exposes its target's files", as
     status: 404,
   });
 });
+
+test("linkPrefixes: the host folder and each host skill's real folder, folder sources, and the GitHub cache root", async () => {
+  const real = realpathSync(mkdtempSync(path.join(tmpdir(), "of-lib-real-")));
+  writeFileSync(path.join(real, "SKILL.md"), "---\nname: linked\n---\n");
+  symlinkSync(real, path.join(claude, "skills", "linked"));
+  host("plain");
+  const folder = path.join(tmp, "src");
+  mkdirSync(folder);
+  const prefixes = await make({
+    sources: [source({ kind: "folder", path: folder, repo: null, commit: null, skills: ["a"] })],
+  }).linkPrefixes();
+  expect(prefixes).toEqual(
+    expect.arrayContaining([
+      path.join(claude, "skills"),
+      real,
+      path.join(claude, "skills", "plain"),
+      folder,
+      path.join(home, "state", "library", "github"),
+    ]),
+  );
+  expect(prefixes).not.toContain(tmp);
+});

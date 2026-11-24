@@ -5,7 +5,7 @@ import {
   type AgentSummary,
   ApiError,
   canonicalJson,
-  describeChanges,
+  describeDocChanges,
   mergeConfig,
   summarizeChanges,
   type TemplateIssue,
@@ -249,7 +249,7 @@ function AgentConfigEditor({
       return "";
     try {
       return summarizeChanges(
-        describeChanges(
+        describeDocChanges(
           mergeConfig(base, mineFrom as AgentOverlay),
           mergeConfig(base, deferred as AgentOverlay),
         ),

@@ -32,9 +32,10 @@ import {
 import { and, asc, count, eq, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { stringify } from "yaml";
-import { type Config, hostSkillsDirOf, localRuntimeAllowed } from "../config.ts";
+import { type Config, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { imageDir } from "../images/context.ts";
+import type { LibraryIndex } from "../library/library-index.ts";
 import { avatarStat } from "./avatar.ts";
 import { KeyLock } from "./key-lock.ts";
 import { parseJson, parseYaml } from "./parse.ts";
@@ -107,6 +108,7 @@ export class TemplateIndex {
   readonly dir: string;
   private readonly db: Db;
   private readonly config: Config;
+  private readonly library: Pick<LibraryIndex, "resolveSkill">;
   private readonly log: Pick<FastifyBaseLogger, "error"> | undefined;
   private readonly listeners: TemplateChangeListener[] = [];
   /**
@@ -117,8 +119,15 @@ export class TemplateIndex {
   /** Per-template serial dispatch chains (in memory: a crash loses a pending dispatch, spec §7.1). */
   private readonly queues = new Map<string, Promise<void>>();
 
-  constructor(d: { db: Db; config: Config; log?: Pick<FastifyBaseLogger, "error"> }) {
+  constructor(d: {
+    db: Db;
+    config: Config;
+    /** Skills are validated through the Library (spec §6.6). */
+    library: Pick<LibraryIndex, "resolveSkill">;
+    log?: Pick<FastifyBaseLogger, "error">;
+  }) {
     this.db = d.db;
+    this.library = d.library;
     this.config = d.config;
     this.log = d.log;
     this.dir = path.join(d.config.factoryHome, "templates");
@@ -129,7 +138,8 @@ export class TemplateIndex {
     return path.join(this.dir, name);
   }
 
-  private async names(): Promise<string[]> {
+  /** Every template on disk: a folder with a template.yaml. */
+  async names(): Promise<string[]> {
     let entries: Dirent[];
     try {
       entries = await readdir(this.dir, { withFileTypes: true });
@@ -183,7 +193,7 @@ export class TemplateIndex {
       secrets: new Set(secrets.map((s) => s.name)),
       templates: new Set(templates),
       userImages: new Set(userImages),
-      hostSkillsDir: hostSkillsDirOf(this.config),
+      library: this.library,
       localRuntimeAllowed: localRuntimeAllowed(this.config),
     };
   }
@@ -203,6 +213,16 @@ export class TemplateIndex {
       .from(schema.templates)
       .where(eq(schema.templates.name, name));
     return row?.doc ?? null;
+  }
+
+  /** The real folder names under a valid template's `skills/` (empty for an invalid or unknown template). */
+  async localSkillsOf(name: string): Promise<string[]> {
+    const [row] = await this.db
+      .select({ doc: schema.templates.lastValid, valid: schema.templates.valid })
+      .from(schema.templates)
+      .where(eq(schema.templates.name, name));
+    const local = row?.valid ? row.doc?.template[LOCAL_SKILL_NAMES] : undefined;
+    return Array.isArray(local) ? local.filter((x): x is string => typeof x === "string") : [];
   }
 
   /** Enqueues a change on the template's chain, started in a microtask and never awaited by the caller. */

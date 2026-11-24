@@ -3,6 +3,7 @@
  * window, and cache dirs nothing points at. Everything runs under `libraryLock`. A cache dir that a
  * loaded runtime's `started.library` still references is kept, and retried on the next timer.
  */
+import { readdirSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { removeTree } from "./git-fetch.ts";
@@ -26,6 +27,31 @@ export interface SweepDeps {
 }
 
 const within = (dir: string, p: string) => p === dir || p.startsWith(dir + path.sep);
+
+/**
+ * The cache directories the given running processes still use (spec §9.4): `started.library` records a GitHub skill
+ * as `github:<sha>`, so every `<githubRoot>/<source id>/<sha>` for those hashes is held. Holding a same-hash directory
+ * of another source too only delays its purge to the next timer.
+ */
+export function skillDirsInUse(
+  githubRoot: string,
+  started: { library: { skills: Record<string, string> } }[],
+): string[] {
+  const shas = new Set(
+    started
+      .flatMap((s) => Object.values(s.library.skills))
+      .filter((ref) => ref.startsWith("github:"))
+      .map((ref) => ref.slice("github:".length)),
+  );
+  if (shas.size === 0) return [];
+  let ids: string[];
+  try {
+    ids = readdirSync(githubRoot);
+  } catch {
+    return [];
+  }
+  return ids.flatMap((id) => [...shas].map((sha) => path.join(githubRoot, id, sha)));
+}
 
 export class LibrarySweep {
   private readonly now: () => Date;

@@ -22,6 +22,7 @@ import { Neighborhood } from "../messaging/neighborhood.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
 import { claimTestHandle } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { hostOnlyLibrary } from "../test/library.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import { ConfigResolver, type Effective } from "./config-resolver.ts";
@@ -129,9 +130,10 @@ async function seedStartFixture() {
   const fake = createFakeClaude({ scenario: "reply" });
   const cliBundle = path.join(mkdtempSync(path.join(tmpdir(), "cli-")), "open-factory.js");
   writeFileSync(cliBundle, "//");
+  const library = hostOnlyLibrary(hs, home);
   workspace = new Workspace({
     factoryHome: home,
-    hostSkillsDir: hs,
+    library,
     claudeBin: fake.bin,
     cliBundle,
     lock,
@@ -159,7 +161,8 @@ async function seedStartFixture() {
     LOG_LEVEL: "silent",
   });
   resolver = new ConfigResolver({
-    templates: new TemplateIndex({ db: t.db, config: factoryConfig }),
+    templates: new TemplateIndex({ db: t.db, config: factoryConfig, library }),
+    library,
   });
   const prepare = createPrepareStart({
     db: t.db,

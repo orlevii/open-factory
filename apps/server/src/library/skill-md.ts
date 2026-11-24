@@ -43,17 +43,22 @@ function hooksOf(raw: unknown): HookDecl[] {
   return out;
 }
 
+/** The YAML frontmatter of a markdown file's text; undefined when it has none or it doesn't parse to a map. */
+export function parseFrontmatter(text: string): Record<string, unknown> | undefined {
+  const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
+  if (!m) return undefined;
+  try {
+    const fm: unknown = parse(m[1] as string);
+    return isRecord(fm) ? fm : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The frontmatter of a SKILL.md's text. Malformed or missing frontmatter gives no name, description or hooks. */
 export function parseSkillMd(text: string): SkillMd {
-  const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
-  if (!m) return { hooks: [] };
-  let fm: unknown;
-  try {
-    fm = parse(m[1] as string);
-  } catch {
-    return { hooks: [] };
-  }
-  if (!isRecord(fm)) return { hooks: [] };
+  const fm = parseFrontmatter(text);
+  if (!fm) return { hooks: [] };
   const out: SkillMd = { hooks: hooksOf(fm.hooks) };
   if (typeof fm.name === "string") out.name = fm.name;
   if (typeof fm.description === "string") {

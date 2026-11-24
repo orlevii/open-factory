@@ -75,6 +75,7 @@ export const testEffective = (config: Partial<TemplateConfig> = {}): Effective =
     ...config,
   },
   templatePlugins: [],
+  library: { skills: {}, plugins: {} },
 });
 
 /**

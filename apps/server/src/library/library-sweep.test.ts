@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SkillSourceRow } from "@open-factory/db";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { LibrarySweep } from "./library-sweep.ts";
+import { LibrarySweep, skillDirsInUse } from "./library-sweep.ts";
 import { SourcesService, type SourcesStore } from "./sources-service.ts";
 import { memorySourcesStore } from "./testing/memory-sources-store.ts";
 
@@ -244,4 +244,20 @@ test("boot purge starts the repair of interrupted adds without waiting for it", 
   await svc.idle();
   // Its repo can't be fetched, so the repair removed it.
   expect(await ids()).toEqual([]);
+});
+
+test("skillDirsInUse holds every source's directory for the hashes the running processes started with", () => {
+  const root = path.join(fh, "state", "library", "github");
+  mkdirSync(path.join(root, "src1"), { recursive: true });
+  mkdirSync(path.join(root, "src2"), { recursive: true });
+  const started = [
+    { library: { skills: { tdd: `github:${"a".repeat(40)}`, mine: "host", dir: "folder" } } },
+    { library: { skills: { x: "missing" } } },
+  ];
+  expect(skillDirsInUse(root, started).sort()).toEqual([
+    path.join(root, "src1", "a".repeat(40)),
+    path.join(root, "src2", "a".repeat(40)),
+  ]);
+  expect(skillDirsInUse(root, [{ library: { skills: { x: "host" } } }])).toEqual([]);
+  expect(skillDirsInUse(path.join(fh, "nothing-here"), started)).toEqual([]);
 });

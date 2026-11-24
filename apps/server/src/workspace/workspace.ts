@@ -7,14 +7,21 @@ import type { Effective } from "../agents/config-resolver.ts";
 import { AgentStartError } from "../agents/errors.ts";
 import { FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
+import type { LibraryIndex } from "../library/library-index.ts";
 import { redactOutput } from "../redact.ts";
 import type { DenyRules } from "../spawning/inherit.ts";
+import {
+  checkAgentFrontmatter,
+  checkProjectSettings,
+  checkSkillPlugins,
+  scrubAgentFolders,
+} from "./agent-folders.ts";
 import { buildClaudeMd, type OrgEntry, type OrgHuman } from "./claude-md.ts";
 import { backupDiffering, templateTargets, utcStamp, writeAtomic, writeTargets } from "./files.ts";
 import {
   linkProjects,
   linkSkills,
-  resolveHostSkills,
+  resolveSkills,
   resolveTemplateSkills,
   WorkspaceError,
 } from "./links.ts";
@@ -102,7 +109,8 @@ export class Workspace {
   constructor(
     private readonly d: {
       factoryHome: string;
-      hostSkillsDir: string;
+      /** Every listed skill resolves through the Library at a start (spec §6.4). */
+      library: Pick<LibraryIndex, "resolveSkill" | "linkPrefixes">;
       claudeBin: string;
       /** The CLI bundle mounted read-only into Docker agents (spec §11.6). */
       cliBundle: string;
@@ -143,13 +151,13 @@ export class Workspace {
     // A new agent starts from a clean plugin dir (a failed earlier create of this slug may have left one).
     await rm(pluginsConfigDir(this.d.factoryHome, slug), { recursive: true, force: true });
     await this.ensurePlugins(slug, tpl.config.plugins, tpl.tplSettings);
-    const skills = await resolveHostSkills(this.d.hostSkillsDir, check.config.skills);
+    const skills = await resolveSkills(this.d.library, check.config.skills);
     const tplSkills = tpl.config.localSkills ? await resolveTemplateSkills(tpl.dir) : [];
     await linkSkills(
       workdir,
-      { dir: this.d.hostSkillsDir, skills },
+      skills,
       { templateDir: tpl.dir, skills: tplSkills },
-      { checkOnly: true },
+      { checkOnly: true, prefixes: await this.d.library.linkPrefixes() },
     );
     await linkProjects(workdir, check.grants, { checkOnly: true });
   }
@@ -275,14 +283,20 @@ export class Workspace {
     }
     const pluginKeys = await this.readPluginKeys(i.slug);
     await this.linkPlugins(i.slug, workdir);
-    const skills = await resolveHostSkills(this.d.hostSkillsDir, config.skills);
+    // Spec 7.3 step 3, in this order: link the skills, then check and scrub the agent's own folders.
+    const skills = await resolveSkills(this.d.library, config.skills);
     const templateDir = path.join(this.d.factoryHome, "templates", i.template);
     const tplSkills = config.localSkills ? await resolveTemplateSkills(templateDir) : [];
     await linkSkills(
       workdir,
-      { dir: this.d.hostSkillsDir, skills },
+      skills,
       { templateDir, skills: tplSkills },
+      { prefixes: await this.d.library.linkPrefixes() },
     );
+    await checkSkillPlugins(workdir);
+    await scrubAgentFolders(workdir);
+    await checkProjectSettings(workdir);
+    await checkAgentFrontmatter(workdir, new Set([...skills, ...tplSkills].map((s) => s.name)));
     await linkProjects(workdir, i.grants);
     const grantedPaths = i.grants.map((g) => g.hostPath);
     const settings = buildSettings({
@@ -325,7 +339,7 @@ export class Workspace {
     const mountInputs = {
       workdir,
       grantedPaths,
-      skillPaths: skills.map((s) => s.realDir),
+      skillPaths: skills.map((s) => s.dir),
       templateSkillPaths: tplSkills.map((s) => s.realDir),
       declaredMarketplaceDirs: declaredMarketplaceDirs(doc.settings),
       pluginsDir: path.join(pluginsConfigDir(this.d.factoryHome, i.slug), "plugins"),

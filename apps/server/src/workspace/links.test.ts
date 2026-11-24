@@ -3,6 +3,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   rmSync,
@@ -12,42 +13,105 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
+import { folderSource, hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import {
   linkProjects,
   linkSkills,
-  resolveHostSkills,
+  resolveSkills,
   resolveTemplateSkills,
   WorkspaceError,
 } from "./links.ts";
+
+const link = (
+  workdir: string,
+  library: Parameters<typeof linkSkills>[1],
+  template: Parameters<typeof linkSkills>[2],
+  opts: { checkOnly?: boolean; prefixes?: string[] } = {},
+) => linkSkills(workdir, library, template, { prefixes: [], ...opts });
 
 const noTpl = () => ({ templateDir: tmp("notpl-"), skills: [] });
 
 const tmp = (p: string) => mkdtempSync(path.join(tmpdir(), p));
 
-test("host skills: resolved, linked, stale links removed, non-links never touched", async () => {
-  const hs = tmp("hs-");
-  mkdirSync(path.join(hs, "grilling"));
-  mkdirSync(path.join(hs, "old"));
+/** A Library over `<claude>/skills` for resolving the names these tests link. */
+function hostLib() {
+  const claude = realpathSync(tmp("claude-"));
+  const factory = tmp("factory-");
+  return { claude, hs: path.join(claude, "skills"), lib: hostOnlyLibrary(claude, factory) };
+}
+const prefixesOf = (lib: ReturnType<typeof hostLib>["lib"]) => lib.linkPrefixes();
+
+test("Library skills: resolved to real folders, linked, stale links removed, non-links never touched", async () => {
+  const { claude, hs, lib } = hostLib();
+  writeHostSkill(claude, "grilling");
+  writeHostSkill(claude, "old");
   const real = realpathSync(tmp("real-"));
+  writeFileSync(path.join(real, "SKILL.md"), "---\nname: linked\n---\n");
   symlinkSync(real, path.join(hs, "linked"));
   const wd = tmp("wd-");
   mkdirSync(path.join(wd, ".claude/skills"), { recursive: true });
   symlinkSync(path.join(hs, "old"), path.join(wd, ".claude/skills/old"));
   mkdirSync(path.join(wd, ".claude/skills/local-one"));
-  const skills = await resolveHostSkills(hs, ["grilling", "linked"]);
-  expect(skills.find((s) => s.name === "linked")?.realDir).toBe(real);
-  await linkSkills(wd, { dir: hs, skills }, noTpl());
+  const skills = await resolveSkills(lib, ["grilling", "linked"]);
+  expect(skills).toEqual([
+    { name: "grilling", dir: path.join(hs, "grilling") },
+    { name: "linked", dir: real },
+  ]);
+  await link(wd, skills, noTpl(), { prefixes: await prefixesOf(lib) });
   expect(readlinkSync(path.join(wd, ".claude/skills/grilling"))).toBe(path.join(hs, "grilling"));
+  expect(readlinkSync(path.join(wd, ".claude/skills/linked"))).toBe(real);
   expect(existsSync(path.join(wd, ".claude/skills/old"))).toBe(false);
   expect(lstatSync(path.join(wd, ".claude/skills/local-one")).isDirectory()).toBe(true);
-  await expect(resolveHostSkills(hs, ["missing"])).rejects.toThrow(
-    `Host skill missing is missing from ${hs}.`,
-  );
+  writeHostSkill(claude, "grilling2");
   mkdirSync(path.join(wd, ".claude/skills/grilling2"));
-  mkdirSync(path.join(hs, "grilling2"));
   await expect(
-    linkSkills(wd, { dir: hs, skills: await resolveHostSkills(hs, ["grilling2"]) }, noTpl()),
+    link(wd, await resolveSkills(lib, ["grilling2"]), noTpl(), { prefixes: [] }),
   ).rejects.toBeInstanceOf(WorkspaceError);
+});
+
+test("resolveSkills fails with the Library's reason as the start's message, fixed in Configuration", async () => {
+  const { claude, lib } = hostLib();
+  mkdirSync(path.join(claude, "skills", "renamed"), { recursive: true });
+  writeFileSync(path.join(claude, "skills", "renamed", "SKILL.md"), "---\nname: other\n---\n");
+  await expect(resolveSkills(lib, ["nope"])).rejects.toMatchObject({
+    name: "WorkspaceError",
+    message: "Skill nope hasn't been added in Skills. Fix it in Configuration.",
+    diagnosis: "Skill nope hasn't been added in Skills.",
+    fix: "config",
+  });
+  await expect(resolveSkills(lib, ["renamed"])).rejects.toMatchObject({
+    message: "Skill renamed is unusable: SKILL.md names it other. Fix it in Configuration.",
+  });
+  const missing = {
+    resolveSkill: async () => ({ ok: false as const, reason: "missing" as const }),
+  };
+  await expect(resolveSkills(missing, ["gone"])).rejects.toMatchObject({
+    diagnosis: "Skill gone is missing from its folder.",
+  });
+});
+
+test("the drop-unlisted pass removes links under every known prefix and leaves a real folder and a foreign link", async () => {
+  const claude = realpathSync(tmp("claude-"));
+  const factory = realpathSync(tmp("factory-"));
+  const folder = realpathSync(tmp("src-"));
+  writeHostSkill(claude, "h");
+  const mine = path.join(folder, "f");
+  mkdirSync(mine);
+  writeFileSync(path.join(mine, "SKILL.md"), "---\nname: f\n---\n");
+  const gh = path.join(factory, "state/library/github/id1/abc/g");
+  mkdirSync(gh, { recursive: true });
+  const lib = hostOnlyLibrary(claude, factory, [folderSource(folder, ["f"])]);
+  const wd = tmp("wd-");
+  const sk = path.join(wd, ".claude/skills");
+  mkdirSync(sk, { recursive: true });
+  const foreign = realpathSync(tmp("foreign-"));
+  symlinkSync(path.join(claude, "skills/h"), path.join(sk, "host"));
+  symlinkSync(mine, path.join(sk, "folder"));
+  symlinkSync(gh, path.join(sk, "github"));
+  symlinkSync(foreign, path.join(sk, "foreign"));
+  mkdirSync(path.join(sk, "real"));
+  await link(wd, [], noTpl(), { prefixes: await prefixesOf(lib) });
+  expect(readdirSync(sk).sort()).toEqual(["foreign", "real"]);
 });
 
 test("projects: created, retargeted, revoked removed; missing folder fails; checkOnly writes nothing", async () => {
@@ -73,13 +137,13 @@ test("projects: created, retargeted, revoked removed; missing folder fails; chec
   );
 });
 
-test("links: unnormalized hostSkillsDir, symlinked or file parents, bad project names", async () => {
+test("links: an unnormalized prefix, symlinked or file parents, bad project names", async () => {
   const hs = tmp("hs-");
   mkdirSync(path.join(hs, "old"));
   const wd = tmp("wd-");
   mkdirSync(path.join(wd, ".claude/skills"), { recursive: true });
   symlinkSync(path.join(hs, "old"), path.join(wd, ".claude/skills/old"));
-  await linkSkills(wd, { dir: `${hs}/`, skills: [] }, noTpl());
+  await link(wd, [], noTpl(), { prefixes: [`${hs}/`] });
   expect(existsSync(path.join(wd, ".claude/skills/old"))).toBe(false);
   const outside = tmp("out-");
   const other = tmp("other-");
@@ -109,26 +173,21 @@ function tplLayout() {
 
 test("template skills: linked to realpath(tpl/skills)/<name>; a removed one's link goes, own folders stay", async () => {
   const { tplDir, wd } = tplLayout();
-  const hs = tmp("hs-");
   const skills = await resolveTemplateSkills(tplDir);
   expect(skills).toEqual([
     { name: "x", realDir: path.join(tplDir, "skills/x") },
     { name: "y", realDir: path.join(tplDir, "skills/y") },
   ]);
-  await linkSkills(wd, { dir: hs, skills: [] }, { templateDir: tplDir, skills });
+  await link(wd, [], { templateDir: tplDir, skills });
   expect(readlinkSync(path.join(wd, ".claude/skills/x"))).toBe(path.join(tplDir, "skills/x"));
   mkdirSync(path.join(wd, ".claude/skills/mine"));
   rmSync(path.join(tplDir, "skills/y"), { recursive: true });
-  await linkSkills(
-    wd,
-    { dir: hs, skills: [] },
-    { templateDir: tplDir, skills: await resolveTemplateSkills(tplDir) },
-  );
+  await link(wd, [], { templateDir: tplDir, skills: await resolveTemplateSkills(tplDir) });
   expect(existsSync(path.join(wd, ".claude/skills/y"))).toBe(false);
   expect(lstatSync(path.join(wd, ".claude/skills/x")).isSymbolicLink()).toBe(true);
   expect(lstatSync(path.join(wd, ".claude/skills/mine")).isDirectory()).toBe(true);
   // With local_skills off, every template link goes.
-  await linkSkills(wd, { dir: hs, skills: [] }, { templateDir: tplDir, skills: [] });
+  await link(wd, [], { templateDir: tplDir, skills: [] });
   expect(existsSync(path.join(wd, ".claude/skills/x"))).toBe(false);
 });
 
@@ -136,27 +195,22 @@ test("template skills: a real folder with a template skill's name fails; a templ
   const { tplDir, wd } = tplLayout();
   mkdirSync(path.join(wd, ".claude/skills/x"), { recursive: true });
   await expect(
-    linkSkills(
-      wd,
-      { dir: tmp("hs-"), skills: [] },
-      { templateDir: tplDir, skills: await resolveTemplateSkills(tplDir) },
-    ),
+    link(wd, [], { templateDir: tplDir, skills: await resolveTemplateSkills(tplDir) }),
   ).rejects.toThrow(`${wd}/.claude/skills/x isn't a link to the template skill; move it away.`);
 });
 
 test("a host skill and a template skill with the same name fail the start, naming the clash", async () => {
   const { tplDir, wd } = tplLayout();
-  const hs = tmp("hs-");
-  mkdirSync(path.join(hs, "x"));
-  const run = linkSkills(
-    wd,
-    { dir: hs, skills: await resolveHostSkills(hs, ["x"]) },
-    { templateDir: tplDir, skills: await resolveTemplateSkills(tplDir) },
-  );
+  const { claude, lib } = hostLib();
+  writeHostSkill(claude, "x");
+  const run = link(wd, await resolveSkills(lib, ["x"]), {
+    templateDir: tplDir,
+    skills: await resolveTemplateSkills(tplDir),
+  });
   await expect(run).rejects.toBeInstanceOf(WorkspaceError);
   await expect(run).rejects.toMatchObject({
-    message: "Skill x is both a host skill and a template skill. Fix it in Configuration.",
-    diagnosis: "Skill x is both a host skill and a template skill.",
+    message: "Skill x is both a Library skill and a template skill. Fix it in Configuration.",
+    diagnosis: "Skill x is both a Library skill and a template skill.",
     fix: "config",
   });
   // Nothing was linked: the clash is found before any write.
@@ -166,9 +220,10 @@ test("a host skill and a template skill with the same name fail the start, namin
 test("a template folder gone by the link step fails the start with the missing-template message", async () => {
   const { tplDir, wd } = tplLayout();
   rmSync(tplDir, { recursive: true });
-  await expect(
-    linkSkills(wd, { dir: tmp("hs-"), skills: [] }, { templateDir: tplDir, skills: [] }),
-  ).rejects.toMatchObject({ name: "WorkspaceError", message: "Template t no longer exists." });
+  await expect(link(wd, [], { templateDir: tplDir, skills: [] })).rejects.toMatchObject({
+    name: "WorkspaceError",
+    message: "Template t no longer exists.",
+  });
 });
 
 test.each([

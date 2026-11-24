@@ -3,12 +3,14 @@ import {
   type AgentOverlay,
   agentOverlaySchema,
   type ConfigDoc,
+  type Library,
   mergeConfig,
   type TemplateConfig,
   templateYamlSchema,
   yamlPart,
 } from "@open-factory/shared";
 import { ApiError } from "../errors.ts";
+import type { LibraryIndex } from "../library/library-index.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { AgentStartError } from "./errors.ts";
 
@@ -16,7 +18,13 @@ import { AgentStartError } from "./errors.ts";
  * What an agent runs with: the merged three-part document and the parsed template config (spec §6.1).
  * `templatePlugins` is what the template alone lists, so a plugin that fails to install names its fix.
  */
-export type Effective = { doc: ConfigDoc; config: TemplateConfig; templatePlugins: string[] };
+export type Effective = {
+  doc: ConfigDoc;
+  config: TemplateConfig;
+  templatePlugins: string[];
+  /** What the Library resolved the config's skills and plugins to (spec §8.1); kept as `started`. */
+  library: Library;
+};
 
 const missing = (template: string) => new AgentStartError(`Template ${template} no longer exists.`);
 const invalidTemplate = (template: string) =>
@@ -41,7 +49,27 @@ export function configOf(doc: ConfigDoc, runtime: AgentRow["runtime"]): Template
  * Messages are the spec constants; they never carry a config value.
  */
 export class ConfigResolver {
-  constructor(private readonly d: { templates: Pick<TemplateIndex, "loadValid"> }) {}
+  constructor(
+    private readonly d: {
+      templates: Pick<TemplateIndex, "loadValid">;
+      library: Pick<LibraryIndex, "resolveSkill">;
+    },
+  ) {}
+
+  /**
+   * What the Library resolves a doc's skills to (spec §8.1): the ref of each one that resolves, "missing" for one that
+   * doesn't (the start fails on it; a comparison ignores it). Plugins come with PR 2.
+   */
+  async libraryOf(doc: ConfigDoc): Promise<Library> {
+    const listed = doc.template.skills;
+    const skills: Record<string, string> = {};
+    for (const name of Array.isArray(listed) ? listed : []) {
+      if (typeof name !== "string") continue;
+      const r = await this.d.library.resolveSkill(name);
+      skills[name] = r.ok ? r.ref : "missing";
+    }
+    return { skills, plugins: {} };
+  }
 
   async effective(agent: AgentRow): Promise<Effective> {
     let base: ConfigDoc;
@@ -71,7 +99,7 @@ export class ConfigResolver {
     const templatePlugins = Array.isArray(listed)
       ? listed.filter((p): p is string => typeof p === "string")
       : [];
-    return { doc, config, templatePlugins };
+    return { doc, config, templatePlugins, library: await this.libraryOf(doc) };
   }
 
   /**

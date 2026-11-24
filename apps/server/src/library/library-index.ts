@@ -28,6 +28,13 @@ export type Resolved =
   | { ok: true; name: string; dir: string; ref: string }
   | { ok: false; reason: ResolveFail; detail?: string };
 
+/** What a skill that doesn't resolve is called in a start or validation error (spec §6.6). */
+export function skillProblem(name: string, fail: Extract<Resolved, { ok: false }>): string {
+  if (fail.reason === "not_added") return `Skill ${name} hasn't been added in Skills.`;
+  if (fail.reason === "missing") return `Skill ${name} is missing from its folder.`;
+  return `Skill ${name} is unusable: ${fail.detail ?? "it can't be used"}.`;
+}
+
 /**
  * What the Library reads from the template side. `TemplateIndex` validates through the Library, so this
  * is a lazy port wired in app.ts once both exist.
@@ -39,29 +46,6 @@ export interface TemplatesPort {
   localSkillsOf(name: string): Promise<string[]>;
   /** The last parse without errors, from the database. */
   lastValid(name: string): Promise<ConfigDoc | null>;
-}
-
-/** The template side of the Library from the `templates` rows (the last parse; names of every template on disk). */
-export function dbTemplatesPort(db: Pick<Db, "select">): TemplatesPort {
-  const lastValid = async (name: string) => {
-    const [row] = await db
-      .select({ doc: schema.templates.lastValid, valid: schema.templates.valid })
-      .from(schema.templates)
-      .where(eq(schema.templates.name, name));
-    return row ?? null;
-  };
-  return {
-    names: async () =>
-      (await db.select({ name: schema.templates.name }).from(schema.templates))
-        .map((r) => r.name)
-        .sort(),
-    localSkillsOf: async (name) => {
-      const row = await lastValid(name);
-      const local = row?.valid ? row.doc?.template[LOCAL_SKILL_NAMES] : undefined;
-      return Array.isArray(local) ? local.filter((x): x is string => typeof x === "string") : [];
-    },
-    lastValid: async (name) => (await lastValid(name))?.doc ?? null,
-  };
 }
 
 export interface AgentUse {
@@ -207,6 +191,26 @@ export class LibraryIndex {
     const f = await this.host(name);
     if (f.state !== "ok") return { ok: false, reason: f.state, detail: f.detail };
     return { ok: true, name, dir: f.dir, ref: "host" };
+  }
+
+  /**
+   * Where a factory link to a Library skill can point (spec §6.4): the host skills folder and the real folder of each
+   * host skill (a host entry may itself be a link), every folder source (as configured and as resolved), and the GitHub
+   * cache root. The drop-unlisted pass of the link sync removes only links that point at or under one of these.
+   */
+  async linkPrefixes(): Promise<string[]> {
+    const out = new Set<string>([this.hostSkillsDir]);
+    const add = async (p: string) => {
+      out.add(p);
+      const real = await realpath(p).catch(() => undefined);
+      if (real) out.add(real);
+    };
+    await add(this.hostSkillsDir);
+    for (const n of await this.hostNames()) await add(path.join(this.hostSkillsDir, n));
+    for (const s of await this.store.sources())
+      if (s.kind === "folder" && s.path) await add(s.path);
+    out.add(path.join(this.factoryHome, "state", "library", "github"));
+    return [...out];
   }
 
   /** Who lists each name: template names and agent slugs, by effective skills. */

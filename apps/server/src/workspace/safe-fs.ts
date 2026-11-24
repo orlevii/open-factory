@@ -6,6 +6,7 @@ import {
   lstat,
   mkdir,
   open,
+  readdir,
   readlink,
   rename,
   rm,
@@ -190,6 +191,28 @@ export class SafeFs {
     const abs = this.abs(rel);
     if (!st.isSymbolicLink()) throw new WorkspaceError(`${abs} isn't a link; move it away.`);
     await unlink(abs);
+  }
+
+  /**
+   * Empties the folder at `rel`: a link in its place is removed as a link, every link inside is unlinked (never followed)
+   * and every real entry is removed with its contents (`rm` never follows links). Missing is fine; a file there fails.
+   */
+  async emptyDir(rel: string): Promise<void> {
+    const st = await this.entry(rel);
+    if (!st) return;
+    const abs = this.abs(rel);
+    if (st.isSymbolicLink()) {
+      await unlink(abs);
+      return;
+    }
+    if (!st.isDirectory()) throw new WorkspaceError(`${abs} isn't a folder; move it away.`);
+    for (const name of await readdir(abs)) {
+      const child = path.join(rel, name);
+      const cst = await this.entry(child);
+      if (!cst) continue;
+      if (cst.isSymbolicLink()) await unlink(path.join(abs, name));
+      else await rm(path.join(abs, name), { recursive: true, force: true });
+    }
   }
 
   /** Copy for backups: a symlink source is copied as a symlink (never its target's bytes).

@@ -14,6 +14,7 @@ import { createFakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { AgentStartError } from "../agents/errors.ts";
+import { hostOnlyLibrary } from "../test/library.ts";
 import { KeyedMutex } from "./lock.ts";
 import { pluginsConfigDir } from "./paths.ts";
 import { installPlugins, marketplaceSourceArg, PluginInstallError } from "./plugins.ts";
@@ -123,7 +124,7 @@ test("failure message and output are redacted; timeouts say so; dash-leading arg
 // Spec §11.7: plugins live in the factory-owned plugins-config/, linked into the agent's config dir.
 async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {}) {
   const home = realpathSync(mkdtempSync(path.join(tmpdir(), "of-plug-")));
-  const hs = mkdtempSync(path.join(tmpdir(), "hs-"));
+  const claude = mkdtempSync(path.join(tmpdir(), "claude-"));
   const tdir = path.join(home, "templates/lead");
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Lead\n");
@@ -136,7 +137,7 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
   const fake = createFakeClaude({ scenario: "reply", env: fakeEnv });
   const ws = new Workspace({
     factoryHome: home,
-    hostSkillsDir: hs,
+    library: hostOnlyLibrary(claude, home),
     claudeBin: fake.bin,
     cliBundle: "/nonexistent/open-factory.js",
     lock: new KeyedMutex(),
@@ -152,6 +153,7 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
       doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
       config,
       templatePlugins: [],
+      library: { skills: {}, plugins: {} },
     },
     manager: null,
     grants: [],
@@ -186,6 +188,7 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
       ...prep.effective,
       config: { ...prep.effective.config, plugins: list },
       templatePlugins: fromTemplate,
+      library: { skills: {}, plugins: {} },
     },
   });
   return { home, ws, tpl, prep, workdir, pluginRuns, pluginLog, withPlugins };
@@ -308,6 +311,7 @@ test("a failure with no output still says why, redacted", async () => {
         },
         config: { ...prep.effective.config, plugins: ["b@mk2"] },
         templatePlugins: [],
+        library: { skills: {}, plugins: {} },
       },
     })
     .catch((e) => e);

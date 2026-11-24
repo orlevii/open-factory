@@ -31,7 +31,7 @@ export function reasonOf(f: Found): string | undefined {
 function focusAndReveal(el: HTMLElement | null) {
   if (!el) return;
   el.focus({ preventScroll: true });
-  el.scrollIntoView?.({ block: "nearest" });
+  el.scrollIntoView({ block: "nearest" });
 }
 
 /** One result: primitive props and a stable `onTick`, so a tick re-renders only its own row. */
@@ -134,10 +134,13 @@ export function AddSkillsResults({
 
   if (found.length === 0) {
     return (
-      <p key={seq} ref={focusAndReveal} tabIndex={-1} className="text-[0.8125rem] outline-none">
-        {visibleControls(`No skills in ${result.source}${commit ? ` at ${commit}` : ""}.`)} A skill
-        is a folder with a SKILL.md.
-      </p>
+      <div className="space-y-1.5 text-[0.8125rem]">
+        <p key={seq} ref={focusAndReveal} tabIndex={-1} className="outline-none">
+          {visibleControls(`No skills in ${result.source}${commit ? ` at ${commit}` : ""}.`)} A
+          skill is a folder with a SKILL.md.
+        </p>
+        {stale && <p className="text-muted-foreground">{FORM_MSG.sourceChanged}</p>}
+      </div>
     );
   }
   const noneAddable = !found.some((f) => f.pickable);

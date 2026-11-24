@@ -1,5 +1,13 @@
-import { type FormEvent, type ReactNode, type Ref, useCallback, useEffect, useRef } from "react";
-import { FormOutcome, type Outcome } from "@/components/forms/form-outcome";
+import {
+  type FormEvent,
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+} from "react";
+import { FormOutcome, type Outcome, showsNotice } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
 import { SheetBody, SheetFooter } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -7,6 +15,18 @@ import { InlineForm } from "@/features/settings/shared";
 import { isMobileNow } from "@/hooks/use-mobile";
 
 export type FormFrameKind = "inline" | "sheet";
+
+/** What only the sheet frame has. The inline variant forbids them, so a caller can't pass one and have it ignored. */
+type SheetOnly = {
+  /** The primary is `aria-disabled` (it stays focusable) and a submit does nothing (Add at 0 picks, the 300 ms after a
+   *  Find lands). */
+  submitDisabled?: boolean;
+  /** E.g. a min width and tabular numbers, so the primary doesn't change width with its label. */
+  submitClassName?: string;
+  /** Shown after the pending label (an elapsed clock). */
+  pendingExtra?: ReactNode;
+};
+type InlineOnly = { [K in keyof SheetOnly]?: never };
 
 /**
  * The one chrome the Settings add forms share: `inline` is Settings' own `InlineForm`; `sheet` is the body of a
@@ -32,20 +52,12 @@ export function FormFrame({
   ref,
   children,
 }: {
-  frame: FormFrameKind;
   label: string;
   onSubmit(): void;
   onCancel(): void;
   submitLabel: string;
   pendingLabel: string;
   pending: boolean;
-  /** Sheet frame only: the primary is `aria-disabled` (it stays focusable) and a submit does nothing (Add at 0 picks, the
-   *  300 ms after a Find lands). */
-  submitDisabled?: boolean;
-  /** Sheet frame only: e.g. a min width and tabular numbers, so the primary doesn't change width with its label. */
-  submitClassName?: string;
-  /** Sheet frame only: shown after the pending label (an elapsed clock). */
-  pendingExtra?: ReactNode;
   outcome: Outcome;
   ref?: Ref<HTMLFormElement>;
   autoFocusId?: string;
@@ -55,7 +67,8 @@ export function FormFrame({
   /** Sheet frame only: a quiet note at the footer's left ("Draft restored · Discard"). */
   left?: ReactNode;
   children: ReactNode;
-}) {
+} & (({ frame: "inline" } & InlineOnly) | ({ frame: "sheet" } & SheetOnly))) {
+  const noticeId = useId();
   // Sheet frame: focus on open is the body's job (the host prevents Radix's). Phones focus the drawer content, so the
   // keyboard doesn't rise mid-slide; desktop the field a prefilled form names, else its first field.
   // (`reveal` only scrolls an inline form into view, which a sheet doesn't need.)
@@ -120,6 +133,7 @@ export function FormFrame({
       <SheetFooter className="pt-2">
         <FormOutcome
           outcome={outcome}
+          noticeId={noticeId}
           pending={pending ? pendingLabel : undefined}
           className="basis-full -mb-1"
         />
@@ -134,6 +148,7 @@ export function FormFrame({
         <Button
           type="submit"
           aria-disabled={pending || submitDisabled || undefined}
+          aria-describedby={submitDisabled && showsNotice(outcome) ? noticeId : undefined}
           className={submitClassName}
         >
           {pending && <Spinner />}

@@ -180,7 +180,9 @@ export default function AddSkillsSheet({ sheetId, close }: BodyProps<{ kind: "ad
   const onFind = () => {
     if (!f.submit(github ? GITHUB_FIELDS : FOLDER_FIELDS)) return;
     o.clear();
-    // A newer Find supersedes the running one, here in the handler that starts it.
+    // A newer Find supersedes the running one, here in the handler that starts it (R-L3). The frame ignores a submit
+    // while pending, so today nothing reaches this with one running; the abort is what keeps that true if a second
+    // entry point is ever added.
     ctl.current?.abort();
     const c = new AbortController();
     ctl.current = c;
@@ -191,7 +193,6 @@ export default function AddSkillsSheet({ sheetId, close }: BodyProps<{ kind: "ad
       { body: previewBody(view), signal: c.signal },
       {
         onSuccess: (r: Preview) => {
-          if (c.signal.aborted) return;
           // Old ticks stay for names still found; names new to this Find start ticked when pickable.
           const before = new Set(prev);
           setTicked((old) => {
@@ -219,7 +220,6 @@ export default function AddSkillsSheet({ sheetId, close }: BodyProps<{ kind: "ad
           inertTimer.current = setTimeout(() => setInert(false), INERT_MS);
         },
         onError: (err) => {
-          if (c.signal.aborted) return;
           if (!f.server(fieldsOf(err)))
             o.fail(err instanceof ApiError ? err.message : FORM_MSG.unreachable);
         },
@@ -228,12 +228,14 @@ export default function AddSkillsSheet({ sheetId, close }: BodyProps<{ kind: "ad
   };
 
   const onAdd = () => {
-    if (!found || !fresh || picked.length === 0) return;
+    // The frame blocks a submit at 0 picks and during the inert window, so only a fresh result reaches here.
+    if (!found || !fresh) return;
+    let body: SkillSourceAddBody;
+    if (values.mode === "folder")
+      body = { kind: "folder", path: values.path.trim(), skills: picked };
+    else if (found.previewId) body = { kind: "github", previewId: found.previewId, skills: picked };
+    else return o.fail(FORM_MSG.somethingWrong);
     o.clear();
-    const body: SkillSourceAddBody =
-      values.mode === "folder"
-        ? { kind: "folder", path: values.path.trim(), skills: picked }
-        : { kind: "github", previewId: found.previewId ?? "", skills: picked };
     add.mutate(
       { body, snapshot: peekDraft("add-skills") },
       {

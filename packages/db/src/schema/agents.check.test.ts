@@ -58,9 +58,11 @@ test("kind is persistent or ephemeral; new columns default", async () => {
 });
 test("only a persistent agent can manage the org", async () => {
   await expect(sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, manage_org)
-                   values ('e3','e3-abcd','E','t','{}','local','c1','ephemeral','lead', true)`).rejects.toMatchObject({
-    code: "23514",
-  });
+                   values ('e3','e3-abcd','E','t','{}','local','c1','ephemeral','lead', true)`).rejects.toMatchObject(
+    {
+      code: "23514",
+    },
+  );
   await sql`update agents set manage_org = true where id = 'lead'`;
   const [l] = await sql`select manage_org from agents where id = 'lead'`;
   expect(l?.manage_org).toBe(true);

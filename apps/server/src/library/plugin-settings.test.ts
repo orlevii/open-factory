@@ -131,6 +131,24 @@ describe("readInstalled", () => {
     expect(got.every((e) => e.manifest === undefined)).toBe(true);
   });
 
+  test("a symlinked .claude-plugin folder or a link inside the install path is not read through", async () => {
+    const root = tmp();
+    const outside = tmp();
+    manifest(outside, { name: "evil" });
+    const viaManifestLink = path.join(root, "cache/acme/a/1");
+    mkdirSync(viaManifestLink, { recursive: true });
+    symlinkSync(path.join(outside, ".claude-plugin"), path.join(viaManifestLink, ".claude-plugin"));
+    const viaDirLink = path.join(root, "cache/acme/b");
+    symlinkSync(outside, viaDirLink);
+    installedList(root, {
+      "a@acme": [{ installPath: viaManifestLink }],
+      "b@acme": [{ installPath: viaDirLink }],
+    });
+    const got = await readInstalled(root);
+    expect(got.every((e) => e.manifest === undefined)).toBe(true);
+    expect(await readManifest(viaManifestLink)).toBeUndefined();
+  });
+
   test("a missing, linked or oversized list is empty", async () => {
     const root = tmp();
     expect(await readInstalled(root)).toEqual([]);

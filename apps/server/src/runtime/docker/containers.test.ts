@@ -63,7 +63,7 @@ beforeEach(() => {
     id: "sha256:img1",
     labels: { "io.open-factory.claude-code.version": "2.1.327" },
   });
-  mgr = new ContainerManager({ docker, log, uid: 501, gid: 20 });
+  mgr = new ContainerManager({ docker, log, uid: 501, gid: 20, checkImage: async () => {} });
 });
 
 afterEach(() => {
@@ -350,7 +350,7 @@ test("root host user is refused, even when non-root ids are injected", async () 
         mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx }),
       ).rejects.toThrow("The factory runs as root; Docker agents need a non-root host user.");
       await expect(
-        new ContainerManager({ docker, log }).ensure({
+        new ContainerManager({ docker, log, checkImage: async () => {} }).ensure({
           agentId: AGENT,
           slug: "lead",
           image: IMAGE,

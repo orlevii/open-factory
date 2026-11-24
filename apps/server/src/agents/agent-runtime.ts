@@ -2842,6 +2842,7 @@ export class AgentRuntime {
     init: { name: string; path: string; source: string; version?: string }[],
   ): Promise<void> {
     const bySource = new Map(init.map((p) => [p.source, p]));
+    const missing: string[] = [];
     for (const { key, pin } of this.expectedPlugins) {
       const found = bySource.get(key);
       if (found) {
@@ -2849,22 +2850,28 @@ export class AgentRuntime {
         this.loadedPlugins[key] = (await readManifest(found.path))?.version ?? found.version ?? "";
         continue;
       }
-      await this.append(null, { type: "plugin_not_loaded", key, pin });
+      missing.push(key);
       try {
-        const out = await this.d.store.createHumanMessage({
-          kind: "system",
-          notice: "plugin_not_loaded",
-          subjectAgentId: this.agent.id,
-          to: "all",
-          body: `${key} didn't load for @${this.agent.slug}.`,
-          urgent: false,
-          createdAt: this.d.store.clock(),
-        });
-        for (const userId of out.userIds)
-          this.d.bus.publishToUser(userId, { type: "inbox_changed" });
+        await this.append(null, { type: "plugin_not_loaded", key, pin });
       } catch (err) {
-        this.d.log.error({ err, agent: this.agent.slug, plugin: key }, "the plugin notice failed");
+        this.d.log.error({ err, agent: this.agent.slug, plugin: key }, "the plugin event failed");
       }
+    }
+    if (!missing.length) return;
+    // One notice per start for every user, however many plugins are missing (spec §7.3 step 8).
+    try {
+      const out = await this.d.store.createHumanMessage({
+        kind: "system",
+        notice: "plugin_not_loaded",
+        subjectAgentId: this.agent.id,
+        to: "all",
+        body: `${missing.join(", ")} didn't load for @${this.agent.slug}.`,
+        urgent: false,
+        createdAt: this.d.store.clock(),
+      });
+      for (const userId of out.userIds) this.d.bus.publishToUser(userId, { type: "inbox_changed" });
+    } catch (err) {
+      this.d.log.error({ err, agent: this.agent.slug }, "the plugin notice failed");
     }
   }
 
@@ -3182,6 +3189,7 @@ export class AgentRuntime {
       this.proc = undefined;
       this.procCredentialId = undefined;
       this.started = undefined;
+      this.loadedPlugins = {};
       this.procStartedAt = undefined;
     }
     this.sessionStarted = false;

@@ -320,7 +320,23 @@ test("the plugin env: the dir and no self-update always, plugin auto-update only
   expect(env({ latest: true }).FORCE_AUTOUPDATE_PLUGINS).toBe("1");
   expect(env({ remote: true }).CLAUDE_CODE_SYNC_PLUGIN_INSTALL).toBe("1");
   // A secret of the same name can't switch either on (or off).
-  const loud = env({}, { FORCE_AUTOUPDATE_PLUGINS: "1", CLAUDE_CODE_SYNC_PLUGIN_INSTALL: "1" });
-  expect(loud).not.toHaveProperty("FORCE_AUTOUPDATE_PLUGINS");
-  expect(loud).not.toHaveProperty("CLAUDE_CODE_SYNC_PLUGIN_INSTALL");
+  const loud = env(
+    {},
+    {
+      FORCE_AUTOUPDATE_PLUGINS: "1",
+      CLAUDE_CODE_SYNC_PLUGIN_INSTALL: "1",
+      CLAUDE_CODE_PLUGIN_SEED_DIR: "/x",
+      CLAUDE_CODE_PLUGIN_DIRS: "/x",
+      DISABLE_UPDATES: "1",
+    },
+  );
+  for (const k of [
+    "FORCE_AUTOUPDATE_PLUGINS",
+    "CLAUDE_CODE_SYNC_PLUGIN_INSTALL",
+    "CLAUDE_CODE_PLUGIN_SEED_DIR",
+    "CLAUDE_CODE_PLUGIN_DIRS",
+    "DISABLE_UPDATES",
+  ])
+    expect(loud).not.toHaveProperty(k);
+  expect(loud.DISABLE_AUTOUPDATER).toBe("1");
 });

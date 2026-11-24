@@ -73,5 +73,12 @@ test("an init with no plugins list means every expected plugin is missing", asyn
   h.driver.last.emit(session(), ev.turn());
   await h.rt.settled();
   expect((await events()).filter((e) => e.type === "plugin_not_loaded")).toHaveLength(2);
-  expect(await notices()).toHaveLength(2);
+  // Two plugins missing, still one notice per start, naming both.
+  expect(await notices()).toEqual([
+    {
+      body: `p@mk, q@mk didn't load for @${h.rt.agent.slug}.`,
+      notice: "plugin_not_loaded",
+      subject_agent_id: h.agentId,
+    },
+  ]);
 });

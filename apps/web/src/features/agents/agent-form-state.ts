@@ -314,8 +314,6 @@ export function useAgentFormState({
     checks: Object.fromEntries(FIELDS.map((x) => [x, () => check(x, shown)])),
   });
 
-  const clearOutcome = () => o.clear();
-
   const set = <K extends Field>(field: K, v: Values[K]) => {
     update({
       [field]: v,
@@ -325,7 +323,7 @@ export function useAgentFormState({
     });
     f.change(field);
     // The line describes the last submit; an edit makes it stale, and a notice it hid comes back.
-    clearOutcome();
+    o.clear();
   };
 
   const setProjects = (next: string[]) => {
@@ -336,7 +334,7 @@ export function useAgentFormState({
         : {}),
     });
     f.change("projects");
-    clearOutcome();
+    o.clear();
   };
 
   function body(): CreateAgentBody | PatchAgentBody | null {
@@ -385,7 +383,7 @@ export function useAgentFormState({
   ): Promise<SubmitResult> {
     // A ref, not `pending`: a second Enter can arrive before the first one's state has rendered.
     if (inFlight.current || noCredentials) return "nothing";
-    clearOutcome();
+    o.clear();
     if (!f.submit()) return "invalid";
     const b = body();
     if (!b) {
@@ -426,7 +424,7 @@ export function useAgentFormState({
     latest.current = fresh;
     setValues(fresh);
     f.reset();
-    clearOutcome();
+    o.clear();
     setRestored(false);
   }
 

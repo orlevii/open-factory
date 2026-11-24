@@ -3,7 +3,7 @@
  * plugins dir that feed them (§7.2): `installed_plugins.json` and the installed manifests. Claude Code writes that
  * dir (and so can the agent), so every read is `lstat`ed, size-capped and kept inside the dir.
  */
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { type Pin, PLUGIN_REF_PATTERN } from "@open-factory/shared";
 
@@ -22,14 +22,38 @@ export interface PluginManifest {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** The parsed JSON of a regular file of at most 256 KB; undefined for a link, another type, a big or a bad one. */
-async function readJsonFile(file: string): Promise<unknown> {
+/**
+ * The parsed JSON of a regular file of at most 256 KB, under `base` (a directory the caller vouches for): every
+ * component from `base` down is `lstat`ed, a directory (a link fails) and the file itself a regular file. Undefined for
+ * anything else, a big file or a bad one.
+ */
+async function readJsonFile(base: string, ...parts: string[]): Promise<unknown> {
   try {
+    let at = base;
+    for (const part of parts.slice(0, -1)) {
+      at = path.join(at, part);
+      if (!(await lstat(at)).isDirectory()) return undefined;
+    }
+    const file = path.join(at, parts.at(-1) ?? "");
     const st = await lstat(file);
     if (!st.isFile() || st.size > MAX_BYTES) return undefined;
     return JSON.parse(await readFile(file, "utf8"));
   } catch {
     return undefined;
+  }
+}
+
+/** Every component of `parts` below `base` is a real directory (`lstat`, so a link fails). */
+async function isPlainDir(base: string, parts: string[]): Promise<boolean> {
+  let at = base;
+  try {
+    for (const part of parts) {
+      at = path.join(at, part);
+      if (!(await lstat(at)).isDirectory()) return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -58,9 +82,12 @@ function dependenciesOf(raw: unknown): PluginManifest["dependencies"] {
   return out;
 }
 
-/** `<dir>/.claude-plugin/plugin.json`, read with the caps; undefined when it is absent or can't be read. */
+/**
+ * `<dir>/.claude-plugin/plugin.json`, read with the caps; `.claude-plugin` must be a real folder, not a link.
+ * Undefined when it is absent or can't be read. The caller vouches for `dir` itself.
+ */
 export async function readManifest(dir: string): Promise<PluginManifest | undefined> {
-  const doc = await readJsonFile(path.join(dir, ".claude-plugin", "plugin.json"));
+  const doc = await readJsonFile(dir, ".claude-plugin", "plugin.json");
   if (!isRecord(doc)) return undefined;
   return {
     ...(typeof doc.name === "string" ? { name: doc.name } : {}),
@@ -82,18 +109,20 @@ export function dependencyKeys(manifest: PluginManifest, ownMarketplace: string)
 export async function readInstalled(
   pluginsDir: string,
 ): Promise<{ key: string; manifest?: PluginManifest }[]> {
-  const doc = await readJsonFile(path.join(pluginsDir, "installed_plugins.json"));
+  const doc = await readJsonFile(pluginsDir, "installed_plugins.json");
   const plugins = isRecord(doc) && isRecord(doc.plugins) ? doc.plugins : {};
-  const root = await realpath(pluginsDir).catch(() => undefined);
   const out: { key: string; manifest?: PluginManifest }[] = [];
   for (const [key, entries] of Object.entries(plugins).slice(0, MAX_INSTALLED)) {
     if (!PLUGIN_REF_PATTERN.test(key)) continue;
     const first = Array.isArray(entries) ? entries[0] : undefined;
     const installPath = isRecord(first) ? first.installPath : undefined;
     let manifest: PluginManifest | undefined;
-    if (root && typeof installPath === "string" && path.isAbsolute(installPath)) {
-      const real = await realpath(installPath).catch(() => undefined);
-      if (real && insideOf(root, real)) manifest = await readManifest(real);
+    if (typeof installPath === "string" && path.isAbsolute(installPath)) {
+      // Lexically inside the dir and real folders all the way down: a link anywhere on the path is never followed.
+      const at = path.resolve(installPath);
+      const rel = path.relative(pluginsDir, at);
+      if (insideOf(pluginsDir, at) && (await isPlainDir(pluginsDir, rel.split(path.sep))))
+        manifest = await readManifest(at);
     }
     out.push({ key, ...(manifest ? { manifest } : {}) });
   }

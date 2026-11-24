@@ -14,6 +14,17 @@ export const ENV_ALLOWLIST = [
   "TMPDIR",
 ] as const;
 
+/** Every plugin env name the factory owns (spec §7.3 step 4); a secret of the same name never reaches the child. */
+const PLUGIN_ENV_NAMES = [
+  "CLAUDE_CODE_PLUGIN_CACHE_DIR",
+  "CLAUDE_CODE_PLUGIN_SEED_DIR",
+  "CLAUDE_CODE_PLUGIN_DIRS",
+  "CLAUDE_CODE_SYNC_PLUGIN_INSTALL",
+  "DISABLE_AUTOUPDATER",
+  "DISABLE_UPDATES",
+  "FORCE_AUTOUPDATE_PLUGINS",
+] as const;
+
 /** The complete child env: the allowlist, plus what the factory sets for this agent. */
 export function buildAgentEnv(
   serverEnv: NodeJS.ProcessEnv,
@@ -41,10 +52,9 @@ export function buildAgentEnv(
   // Plugins (spec §7.3 step 4): Claude Code keeps them in the agent's own dir and never updates itself. The plugin
   // auto-update pass needs `FORCE_AUTOUPDATE_PLUGINS` once `DISABLE_AUTOUPDATER` is set; a remote marketplace needs the
   // synchronous install, or its plugins miss the first `init` (G1 item 8).
+  for (const k of PLUGIN_ENV_NAMES) delete env[k];
   env.CLAUDE_CODE_PLUGIN_CACHE_DIR = extra.plugins.dir;
   env.DISABLE_AUTOUPDATER = "1";
-  delete env.FORCE_AUTOUPDATE_PLUGINS;
-  delete env.CLAUDE_CODE_SYNC_PLUGIN_INSTALL;
   if (extra.plugins.latest) env.FORCE_AUTOUPDATE_PLUGINS = "1";
   if (extra.plugins.remote) env.CLAUDE_CODE_SYNC_PLUGIN_INSTALL = "1";
   const [credVar, otherVar] =

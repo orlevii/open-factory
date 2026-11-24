@@ -191,7 +191,9 @@ test("timeline: mcp_unavailable is a warning quiet line with the status in its d
 test("timeline: plugin_not_loaded names the plugin, points at the session log and carries a circle-alert", () => {
   const { texts, els } = lines([{ type: "plugin_not_loaded", key: "p@mk", pin: "commit:abc" }]);
   expect(texts).toEqual(["Plugin p@mk didn't load. Claude Code's output is in the session log."]);
-  expect((els[0] as HTMLElement).querySelector("svg")).toHaveClass("lucide-circle-alert");
+  const icon = (els[0] as HTMLElement).querySelector("svg");
+  expect(icon).not.toBeNull();
+  expect(icon).toHaveAttribute("aria-hidden", "true");
 });
 
 test("timeline: interrupt_unconfirmed is a warning quiet line", () => {

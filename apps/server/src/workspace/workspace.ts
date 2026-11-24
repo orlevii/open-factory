@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath, rm } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
@@ -357,10 +357,25 @@ export class Workspace {
     return { workdir, configDir, mounts, plugins };
   }
 
-  /** The host's Claude Code against the floor (spec §7.9). A failure is the start's error, naming both versions. */
+  /** Binary path and mtime to its in-flight or passed floor check; a failed check is dropped, so the next start asks again. */
+  private readonly floorChecks = new Map<string, Promise<void>>();
+
+  /**
+   * The host's Claude Code against the floor (spec §7.9), fails closed. Checked once per binary and modification time:
+   * a replaced binary is checked again. A failure is the start's error, naming both versions.
+   */
   private async assertFloor(): Promise<void> {
+    const bin = this.d.claudeBin;
+    const mtime = (await stat(bin).catch(() => undefined))?.mtimeMs ?? 0;
+    const key = `${bin}\0${mtime}`;
+    let check = this.floorChecks.get(key);
+    if (!check) {
+      check = assertPluginFloor(bin, versionCheckEnv(this.serverEnv));
+      this.floorChecks.set(key, check);
+      check.catch(() => this.floorChecks.delete(key));
+    }
     try {
-      await assertPluginFloor(this.d.claudeBin, versionCheckEnv(this.serverEnv));
+      await check;
     } catch (err) {
       throw new AgentStartError(err instanceof Error ? err.message : String(err));
     }
@@ -413,7 +428,14 @@ export class Workspace {
       const pin = pinOf(declared[mkt]);
       declarations[mkt] = { source: row.source, pin };
       const ref = pin.kind === "commit" ? pin.sha : pin.kind === "tag" ? pin.name : undefined;
-      catalogs[mkt] = ((await this.d.library.catalogAt(row, ref)) ?? []).map((e) => e.name);
+      // Relative-path plugins load by default unless switched off, so a catalog that can't be listed would leave
+      // unknown plugins on: the start fails instead (spec §7.3 step 5).
+      const catalog = await this.d.library.catalogAt(row, ref);
+      if (!catalog)
+        throw new AgentStartError(
+          `Skills can't read ${mkt}${ref ? ` at ${ref.slice(0, 12)}` : ""}. Fetch it in Skills.`,
+        );
+      catalogs[mkt] = catalog.map((e) => e.name);
       if (row.source.source === "directory") marketplaceDirs.push(row.source.path);
     }
     const settingsJson = JSON.stringify(

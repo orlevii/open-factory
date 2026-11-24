@@ -200,6 +200,7 @@ function quietDetail(e: AnyEvent): string | undefined {
   return undefined;
 }
 
+// `plugin_not_loaded` is deliberately not here: it gets its own CircleAlert in `quietIcon` (spec §7.3 step 8).
 const WARN = new Set([
   "delivery_failed",
   "compact_failed",

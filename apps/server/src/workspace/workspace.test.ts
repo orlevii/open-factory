@@ -706,3 +706,34 @@ test("a claude that prints no version fails the local start closed", async () =>
   await ws.materialize("lead", "lead", x.tpl, x.prep);
   await expect(ws.prepare(x.prep)).rejects.toThrow(/printed no readable version/);
 });
+
+test("a declared marketplace whose catalog Skills can't read fails the start instead of leaving its plugins on", async () => {
+  const x = pluginSetup();
+  const ws = x.ws();
+  // A commit the Library never checked out: no catalog to switch the other plugins off from.
+  const unread = "b".repeat(40);
+  await ws.materialize("lead", "lead", x.tpl, x.input(x.github(unread)));
+  await expect(ws.prepare(x.input(x.github(unread)))).rejects.toThrow(
+    /Skills can't read mk at bbbbbbbbbbbb\. Fetch it in Skills\./,
+  );
+});
+
+test("the floor check runs once per binary: a second start doesn't ask claude again, and a failure is asked again", async () => {
+  const x = pluginSetup();
+  const dir = mkdtempSync(path.join(tmpdir(), "counting-"));
+  const count = path.join(dir, "runs");
+  const bin = path.join(dir, "claude");
+  writeFileSync(bin, `#!/bin/sh\necho x >> '${count}'\necho '2.1.331 (Claude Code)'\n`);
+  chmodSync(bin, 0o755);
+  const ws = new Workspace({
+    factoryHome: x.home,
+    library: hostOnlyLibrary(x.claude, x.home),
+    claudeBin: bin,
+    cliBundle: "/nonexistent/open-factory.js",
+    lock: new KeyedMutex(),
+  });
+  await ws.materialize("lead", "lead", x.tpl, x.prep);
+  await ws.prepare(x.prep);
+  await ws.prepare(x.prep);
+  expect(readFileSync(count, "utf8").trim().split("\n")).toHaveLength(1);
+});

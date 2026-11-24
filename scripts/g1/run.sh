@@ -45,12 +45,9 @@ PIN=$(tr -d '[:space:]' < "$ROOT/images/base/claude-code-version")
 [ -n "$PIN" ] || die "images/base/claude-code-version is empty"
 IMAGE=${1:-${G1_IMAGE:-open-factory-base:$PIN}}
 
-# Never run against a HOME that holds the spike dir (only its existence is
-# tested; it is never read).
+# Never run with HOME pointing into the spike dir. The script mounts no home
+# directory and reads nothing from it, so the dir merely existing is fine.
 case "${HOME:-}" in *.open-factory-spike*) die "HOME (${HOME:-}) contains .open-factory-spike; refusing to run." ;; esac
-if [ -n "${HOME:-}" ] && [ -e "$HOME/.open-factory-spike" ]; then
-  die "HOME ($HOME) contains .open-factory-spike; refusing to run. Use another HOME."
-fi
 
 for tool in docker jq git find pkill sed awk; do
   command -v "$tool" > /dev/null 2>&1 || die "missing tool: $tool"

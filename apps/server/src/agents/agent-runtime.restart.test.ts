@@ -611,7 +611,7 @@ test("restartChanges shows while the restart is pending and clears on the exit",
   driver.last.emit(ev.turn());
   await rt.settled();
   await rt.requestRestart({ changes: ["model: sonnet → opus", "added skill release"] });
-  await rt.requestRestart({ changes: ["added skill release"], wake: true }); // `wake` is I7's: ignored
+  await rt.requestRestart({ changes: ["added skill release"] });
   expect(rt.live()).toMatchObject({
     restartPending: true,
     restartChanges: ["added skill release", "model: sonnet → opus"],

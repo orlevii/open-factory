@@ -4,6 +4,7 @@ export type NoticeType =
   | "factory_restarted"
   | "restart"
   | "restart_crons"
+  | "config_continue"
   | "rate_limit_reset"
   | "crons_stopped"
   | "compact_continue"
@@ -80,6 +81,15 @@ export const notices = {
       "Your session was restarted to apply configuration changes.",
       ...cronsSentence(i.crons),
       "Recreate them if you still need them.",
+    ].join(" ");
+  },
+  /** I7 §9.5: the waking notice of a self-edit restart; `crons` empty when the crons_stopped notice already lists them. */
+  configContinue(i: { crons: string[] }): string {
+    return [
+      "Restarted to apply your config changes. Continue where you left off.",
+      ...(i.crons.length
+        ? [`These crons were stopped: ${i.crons.join("; ")}; recreate them if you still need them.`]
+        : []),
     ].join(" ");
   },
   /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). */

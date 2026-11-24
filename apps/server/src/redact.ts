@@ -11,9 +11,10 @@ export function capOutput(s: string): string {
     : bytes.subarray(bytes.length - OUTPUT_MAX_BYTES).toString();
 }
 
+/** The URL scheme is bounded and starts at a word boundary: an unbounded one backtracks quadratically on one long token. */
 export function redactOutput(s: string): string {
   return s
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/gi, "$1[redacted]@")
+    .replace(/(?<![a-z])([a-z][a-z0-9+.-]{0,31}:\/\/)[^\s/]*@/gi, "$1[redacted]@")
     .replace(/sk-ant-[A-Za-z0-9_-]+/g, "[redacted]")
     .replace(/\bgh[pousr]_[A-Za-z0-9]+/g, "[redacted]")
     .replace(/\bgithub_pat_[A-Za-z0-9_]+/g, "[redacted]")

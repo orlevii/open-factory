@@ -9,7 +9,12 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
-export type FixtureEntry = string | { symlink: string } | { gitlink: true } | { bytes: number };
+export type FixtureEntry =
+  | string
+  | { exec: string }
+  | { symlink: string }
+  | { gitlink: true }
+  | { bytes: number };
 
 export interface FixtureSpec {
   /** Each commit is the whole tree at that point: path to content. */
@@ -66,6 +71,7 @@ export async function makeFixtureRepo(
       const abs = path.join(dir, rel);
       await mkdir(path.dirname(abs), { recursive: true });
       if (typeof entry === "string") await writeFile(abs, entry);
+      else if ("exec" in entry) await writeFile(abs, entry.exec, { mode: 0o755 });
       else if ("symlink" in entry) await symlink(entry.symlink, abs);
       else if ("bytes" in entry) await writeFile(abs, Buffer.alloc(entry.bytes, 97));
       else gitlinks.push(rel);

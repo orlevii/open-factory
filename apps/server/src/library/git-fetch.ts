@@ -193,10 +193,15 @@ export async function installCheckout(co: string, subpath: string, dest: string)
     await rename(tmp, dest);
   } catch (e) {
     // A failed copy may leave 0555 dirs a plain rm can't empty.
-    await makeWritable(tmp).catch(() => {});
-    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    await removeTree(tmp).catch(() => {});
     throw e;
   }
+}
+
+/** Removes a tree `installCheckout` made read-only (0555 dirs a plain `rm` can't empty). Missing is fine. */
+export async function removeTree(dir: string): Promise<void> {
+  await makeWritable(dir).catch(() => {});
+  await rm(dir, { recursive: true, force: true });
 }
 
 async function makeWritable(dir: string): Promise<void> {

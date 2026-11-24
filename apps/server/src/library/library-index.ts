@@ -71,7 +71,7 @@ export function dbStore(db: Pick<Db, "select">): LibraryStore {
 }
 
 /** What one skill folder is, before it is placed in a group. */
-type Found = {
+export type Found = {
   state: "ok" | "missing" | "unusable";
   detail?: string;
   dir: string;
@@ -81,7 +81,7 @@ type Found = {
 const isDir = async (p: string) => (await stat(p).catch(() => undefined))?.isDirectory() ?? false;
 
 /** The rules every live skill folder meets: SKILL.md present, its name equals the folder's, no `.claude-plugin/`. */
-async function inspect(name: string, dir: string, missing = "Missing"): Promise<Found> {
+export async function inspect(name: string, dir: string, missing = "Missing"): Promise<Found> {
   const md = await readSkillMd(dir);
   if (!md) return { state: "missing", detail: missing, dir, description: "" };
   const description = md.description ?? "";

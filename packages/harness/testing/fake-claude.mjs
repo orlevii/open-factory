@@ -79,6 +79,7 @@ if (argv0[0] === "setup-token") {
   } else process.stdin.on("end", () => process.exit(1));
   await new Promise(() => {}); // never falls through to the plugin block or the scenario code
 }
+// Plugin subcommands: the factory's per-agent installs, as before ef9de2d9. deleted in B7.
 if (argv0[0] === "plugin") {
   const cfg = process.env.CLAUDE_CONFIG_DIR;
   // Like Claude, apply `env` from the config-dir and project settings (S5 R1: that is how a planted
@@ -109,21 +110,33 @@ if (argv0[0] === "plugin") {
   mkdirSync(`${cfg}/plugins`, { recursive: true });
   // A failure that prints nothing (`marketplace` or `install`): the caller only has the exit to go on.
   if (process.env.FAKE_CLAUDE_PLUGIN_SILENT_FAIL === argv0[1]) process.exit(1);
-  // The install failure knob still answers the factory's per-agent `plugin install` until B7 deletes its last callers.
-  if (
-    argv0[1] === "install" &&
-    (process.env.FAKE_CLAUDE_PLUGIN_FAIL ?? "").split(",").includes(argv0[2])
-  ) {
-    process.stderr.write(
-      `\u2718 Failed to install plugin "${argv0[2]}": Plugin not found in marketplace\n`,
-    );
-    // Extra failure output a test wants echoed (secret-shaped fixtures for the redaction tests).
-    if (process.env.FAKE_CLAUDE_PLUGIN_ECHO)
-      process.stderr.write(`${process.env.FAKE_CLAUDE_PLUGIN_ECHO}\n`);
-    process.exit(1);
+  const f = `${cfg}/settings.json`;
+  const s = existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : {};
+  if (argv0[1] === "marketplace" && argv0[2] === "add") {
+    const src = argv0[3];
+    const name = src.split("/").pop();
+    s.extraKnownMarketplaces = {
+      ...s.extraKnownMarketplaces,
+      [name]: { source: { source: "directory", path: src } },
+    };
+  } else if (argv0[1] === "install") {
+    const ref = argv0[2];
+    if ((process.env.FAKE_CLAUDE_PLUGIN_FAIL ?? "").split(",").includes(ref)) {
+      process.stderr.write(
+        `\u2718 Failed to install plugin "${ref}": Plugin not found in marketplace\n`,
+      );
+      // Extra failure output a test wants echoed (secret-shaped fixtures for the redaction tests).
+      if (process.env.FAKE_CLAUDE_PLUGIN_ECHO)
+        process.stderr.write(`${process.env.FAKE_CLAUDE_PLUGIN_ECHO}\n`);
+      process.exit(1);
+    }
+    if (process.env.FAKE_CLAUDE_PLUGIN_SLEEP_MS)
+      await new Promise((r) => setTimeout(r, Number(process.env.FAKE_CLAUDE_PLUGIN_SLEEP_MS)));
+    s.enabledPlugins = { ...s.enabledPlugins, [ref]: true };
   }
-  process.stderr.write("fake claude: plugin subcommands aren't used by Open Factory\n");
-  process.exit(1);
+  writeFileSync(f, JSON.stringify(s, null, 2));
+  process.stdout.write("\u2714 ok\n");
+  process.exit(0);
 }
 
 // Session start (spec §7.3 steps 4-8): Claude Code reads `--settings` and installs each enabled plugin of a

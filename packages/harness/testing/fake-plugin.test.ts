@@ -115,6 +115,8 @@ const installLog = (fx: Fixture) => {
   const f = path.join(fx.fake.dir, "plugin.log");
   return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean) : [];
 };
+const knownFile = (fx: Fixture) =>
+  JSON.parse(readFileSync(path.join(fx.cache, "known_marketplaces.json"), "utf8"));
 const installedFile = (fx: Fixture) =>
   JSON.parse(readFileSync(path.join(fx.cache, "installed_plugins.json"), "utf8"));
 
@@ -136,6 +138,17 @@ describe("fake claude installs declared plugins at session start", () => {
       version: "1.0.0",
     });
     expect(installLog(fx)).toHaveLength(1);
+    const entry = installedFile(fx).plugins["p@mk"][0];
+    expect(installedFile(fx).version).toBe(2);
+    expect(Date.parse(entry.installedAt)).not.toBeNaN();
+    expect(Date.parse(entry.lastUpdated)).not.toBeNaN();
+    expect(entry).not.toHaveProperty("gitCommitSha");
+    expect(knownFile(fx).mk).toMatchObject({
+      source: { source: "directory", path: fx.local },
+      installLocation: path.join(fx.cache, "marketplaces", "mk"),
+      autoUpdate: false,
+    });
+    expect(Date.parse(knownFile(fx).mk.lastUpdated)).not.toBeNaN();
   });
 
   it("a git source installs the commit at its ref", () => {
@@ -149,6 +162,10 @@ describe("fake claude installs declared plugins at session start", () => {
     });
     expect(r.init?.plugins?.[0]).toMatchObject({ source: "p@mk", version: "1.0.0" });
     expect(installedFile(fx).plugins["p@mk"][0].gitCommitSha).toBe(c1);
+    expect(knownFile(fx).mk).toMatchObject({
+      source: { source: "git", url: `file://${repo}`, ref: c1 },
+      installLocation: path.join(fx.cache, "marketplaces", "mk"),
+    });
     expect(installLog(fx)).toEqual([
       `install p@mk ${c1} ${path.join(fx.cache, "cache", "mk", "p", "1.0.0")}`,
     ]);
@@ -198,6 +215,20 @@ describe("fake claude installs declared plugins at session start", () => {
     const settings = {
       enabledPlugins: { "p@mk": true },
       extraKnownMarketplaces: { mk: dirSource(fx.local) },
+    };
+    start(fx, settings);
+    const again = start(fx, settings);
+    expect(installLog(fx)).toHaveLength(1);
+    expect(again.init?.plugins).toHaveLength(1);
+  });
+
+  it("a repeated start at the same git commit installs nothing", () => {
+    const fx = makeFixture();
+    const repo = fixtureRepo(fx);
+    const c1 = commitVersion(repo, "1.0.0");
+    const settings = {
+      enabledPlugins: { "p@mk": true },
+      extraKnownMarketplaces: { mk: gitSource(repo, c1) },
     };
     start(fx, settings);
     const again = start(fx, settings);
@@ -290,15 +321,5 @@ describe("fake claude installs declared plugins at session start", () => {
     const overridden = makeFixture({ FAKE_CLAUDE_VERSION: "9.9.9" });
     const r2 = spawnSync(overridden.fake.bin, ["--version"], { encoding: "utf8" });
     expect(r2.stdout).toBe("9.9.9 (Claude Code)\n");
-  });
-
-  it("plugin subcommands fail loudly", () => {
-    const fx = makeFixture();
-    const r = spawnSync(fx.fake.bin, ["plugin", "install", "p@mk"], {
-      encoding: "utf8",
-      env: { PATH: process.env.PATH ?? "", CLAUDE_CONFIG_DIR: path.join(fx.root, "config") },
-    });
-    expect(r.status).not.toBe(0);
-    expect(r.stderr).toContain("fake claude: plugin subcommands aren't used by Open Factory");
   });
 });

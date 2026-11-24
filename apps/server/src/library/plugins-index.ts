@@ -432,6 +432,8 @@ export class PluginsIndex {
 
   /** `POST /api/library/plugins/:key/diff`: what moving the plugin between two commits of its marketplace changes (spec §7.5). */
   async diff(key: string, from: string, to: string): Promise<PluginDiff> {
+    // Fetching an external source adds a cache the peeks read, so it publishes as `read` does.
+    let fetchedAny = false;
     const side = async (ref: string) => {
       const { name, marketplace } = splitKey(key);
       const row = await this.row(marketplace);
@@ -439,6 +441,7 @@ export class PluginsIndex {
       const entry = (await readCatalog(mdir)).plugins.find((p) => p.name === name);
       const l = entry ? await this.resolve(row, mdir, entry, sha) : undefined;
       const dir = l ? await this.fetched(l) : null;
+      if (l && !l.dir && dir) fetchedAny = true;
       const read =
         l && dir ? await this.contentsOf({ ...l, dir }) : { contents: null, note: l?.note ?? null };
       return {
@@ -452,6 +455,7 @@ export class PluginsIndex {
       };
     };
     const [a, b] = [await side(from), await side(to)];
+    if (fetchedAny) this.d.publish?.();
     const diff: ContentsDiff = diffContents(
       a.contents ?? emptyContents(),
       b.contents ?? emptyContents(),

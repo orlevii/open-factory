@@ -550,6 +550,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     hostClaudeDir: config.hostClaudeDir,
     registered: async () => (await library.marketplaces()).map((r) => r.name),
     marketplaces,
+    forbidden: {
+      home: os.homedir(),
+      factoryHome: config.factoryHome,
+      dockerSockets: dockerSocketPaths(process.env, os.homedir()),
+    },
     log: (message, err) => app.log.error({ err }, message),
   });
   const plugins = new PluginsIndex({

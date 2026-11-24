@@ -69,6 +69,7 @@ async function world() {
   await marketplaces.add(preview.previewId, "@or");
   const hostPlugins = new HostPlugins({
     hostClaudeDir: host,
+    forbidden: { home, factoryHome: fh, dockerSockets: [] },
     registered: async () => (await store.all()).map((r) => r.name),
     marketplaces,
   });
@@ -284,6 +285,10 @@ describe("detail, file, read and diff", () => {
     // Same sha at both commits: nothing changed.
     expect(d.diff.runsCode).toBe(false);
     expect(d.to.present).toBe(true);
+    // It fetched the external source into the cache, so open pages are told; a second diff fetches nothing.
+    expect(published).toBe(1);
+    await w.index.diff("ext@acme", w.shas[0] as string, w.shas[1] as string);
+    expect(published).toBe(1);
   });
 
   test("the host's copy is read with from=host, and listed when its marketplace isn't registered", async () => {

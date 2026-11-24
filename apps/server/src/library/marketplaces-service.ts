@@ -89,6 +89,8 @@ export interface PreviewPlugin {
   version?: string;
   /** Whether a marketplace pin holds this plugin (spec §7.4). */
   pinnable: boolean;
+  /** "refused" for a source Open Factory won't install, "cant_pin" for one that follows its own source (spec §10.2). */
+  state: "ok" | "refused" | "cant_pin";
   /** Why it can't be pinned, or why Open Factory won't install it (spec §7.4, §7.7). */
   refusedReason?: string;
 }
@@ -316,13 +318,19 @@ export function previewPluginOf(marketplace: string, e: CatalogEntry): PreviewPl
     return {
       ...base,
       pinnable: false,
+      state: "refused",
       refusedReason: MARKETPLACE_MSG.refusedSource(e.name, marketplace, info.label),
     };
   }
   if (info.kind === "external" && !info.pinnable) {
-    return { ...base, pinnable: false, refusedReason: MARKETPLACE_MSG.unpinnable };
+    return {
+      ...base,
+      pinnable: false,
+      state: "cant_pin",
+      refusedReason: MARKETPLACE_MSG.unpinnable,
+    };
   }
-  return { ...base, pinnable: true };
+  return { ...base, pinnable: true, state: "ok" };
 }
 
 // Service ---------------------------------------------------------------------------------
@@ -813,22 +821,30 @@ export class MarketplacesService {
           !this.checking.has(r.name),
       )
       .map((r) => r.name);
-    for (const n of queue) this.checking.add(n);
-    this.background(async () => {
-      const worker = async () => {
-        for (let n = queue.shift(); n !== undefined; n = queue.shift()) {
-          try {
-            await this.check(n);
-          } catch (e) {
-            // The row keeps its last result.
-            this.d.log(`checking marketplace ${n} failed`, e);
-          } finally {
-            this.checking.delete(n);
-          }
+    const names = [...queue];
+    for (const n of names) this.checking.add(n);
+    const worker = async () => {
+      for (let n = queue.shift(); n !== undefined; n = queue.shift()) {
+        try {
+          await this.check(n);
+        } catch (e) {
+          // The row keeps its last result.
+          this.d.log(`checking marketplace ${n} failed`, e);
         }
-      };
-      await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
-    });
+      }
+    };
+    try {
+      this.background(async () => {
+        try {
+          await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+        } finally {
+          for (const n of names) this.checking.delete(n);
+        }
+      });
+    } catch (e) {
+      for (const n of names) this.checking.delete(n);
+      throw e;
+    }
   }
 
   // Update --------------------------------------------------------------------------------

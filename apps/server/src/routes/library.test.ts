@@ -855,6 +855,11 @@ test("every marketplace write publishes library_changed", async () => {
   const writes: Array<[string, () => Promise<{ statusCode: number }>]> = [
     ["check", () => call("POST", "/api/library/marketplaces/acme/check")],
     ["fetch", () => call("POST", "/api/library/marketplaces/acme/fetch", { ref: w.shas[0] })],
+    // Fetches the external source into the cache the peeks read.
+    [
+      "diff",
+      () => call("POST", "/api/library/plugins/ext@acme/diff", { from: w.shas[0], to: w.shas[1] }),
+    ],
     ["remove", () => call("DELETE", "/api/library/marketplaces/acme")],
     ["restore", () => call("POST", "/api/library/marketplaces/acme/restore")],
   ];

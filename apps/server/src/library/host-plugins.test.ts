@@ -10,12 +10,24 @@ import {
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "../errors.ts";
 import { HOST_MSG, HostPlugins, hostSourceVerdict } from "./host-plugins.ts";
 import { MarketplacesService } from "./marketplaces-service.ts";
 import { makeFixtureRepo } from "./testing/fixture-repo.ts";
 import { memoryMarketplacesStore } from "./testing/memory-marketplaces-store.ts";
+
+const reads: string[] = [];
+vi.mock("node:fs/promises", async (orig) => {
+  const real = await orig<typeof import("node:fs/promises")>();
+  return {
+    ...real,
+    readFile: ((f: Parameters<typeof real.readFile>[0], ...rest: unknown[]) => {
+      reads.push(String(f));
+      return (real.readFile as (...a: unknown[]) => unknown)(f, ...rest);
+    }) as typeof real.readFile,
+  };
+});
 
 /** I5 §7.6: the host's installed plugins and Add its marketplace, on a temp host dir in the v2 shape. */
 let tmp: string;
@@ -83,6 +95,7 @@ function writeHost(
 function make(svc?: MarketplacesService) {
   return new HostPlugins({
     hostClaudeDir: host,
+    forbidden: { home: path.join(tmp, "home"), factoryHome: fh, dockerSockets: [] },
     registered: async () => registered,
     marketplaces: svc ?? {
       preview: async () => {
@@ -159,6 +172,48 @@ describe("list", () => {
     const [e] = await make().list();
     expect(e?.cantShow).toBeUndefined();
     expect(e?.contents?.manifest.name).toBe("foo");
+  });
+
+  test.each([
+    ["the filesystem root", () => "/"],
+    ["the home folder", () => path.join(tmp, "home")],
+    ["an ancestor of the home folder", () => tmp],
+    ["the factory's folder", () => fh],
+    ["a relative path", () => "relative/dir"],
+  ])(
+    "a host directory marketplace at %s doesn't widen where contents are read",
+    async (_, root) => {
+      mkdirSync(path.join(tmp, "home"), { recursive: true });
+      const outside = path.join(tmp, "elsewhere", "foo");
+      pluginAt(outside, "foo", "9.9.9");
+      writeHost(
+        { "foo@mine": [install(outside, "9.9.9", "2026-03-01T00:00:00Z")] },
+        { mine: { source: { source: "directory", path: root() } } },
+      );
+      const [e] = await make().list();
+      expect(e?.cantShow).toBe("Can't show: outside the host's plugin folder.");
+      expect(e?.contents).toBeNull();
+    },
+  );
+
+  test("reads each host JSON file once per list, not once per key", async () => {
+    const keys: Record<string, unknown[]> = {};
+    for (const n of ["a", "b", "c"]) {
+      const dir = cacheDir("acme", n, "1.0.0");
+      pluginAt(dir, n, "1.0.0");
+      keys[`${n}@acme`] = [install(dir, "1.0.0", "2026-03-01T00:00:00Z")];
+    }
+    writeHost(keys);
+    reads.length = 0;
+    try {
+      expect(await make().list()).toHaveLength(3);
+      const jsons = reads.filter(
+        (f) => f.endsWith("_plugins.json") || f.endsWith("_marketplaces.json"),
+      );
+      expect(jsons).toHaveLength(2);
+    } finally {
+      reads.length = 0;
+    }
   });
 
   test.each([

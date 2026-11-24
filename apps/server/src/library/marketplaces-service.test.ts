@@ -174,16 +174,24 @@ describe("preview", () => {
     });
     expect(p.committedAt).toBe("2026-01-01T00:00:00.000Z".replace(".000Z", "Z"));
     expect(p.plugins).toEqual([
-      { name: "rel", description: "A relative plugin", version: "1.0.0", pinnable: true },
-      { name: "ext", pinnable: true },
+      {
+        name: "rel",
+        description: "A relative plugin",
+        version: "1.0.0",
+        pinnable: true,
+        state: "ok",
+      },
+      { name: "ext", pinnable: true, state: "ok" },
       {
         name: "floating",
         pinnable: false,
+        state: "cant_pin",
         refusedReason: "Can't be pinned: it follows its own source.",
       },
       {
         name: "npmy",
         pinnable: false,
+        state: "refused",
         refusedReason: "Plugin npmy@acme uses a npm source, which Open Factory doesn't install.",
       },
     ]);
@@ -451,6 +459,25 @@ function sweepFor(s: Setup, inUse: string[] = []) {
     now: () => new Date(nowMs),
   });
 }
+
+describe("check all", () => {
+  test("a background run that fails to start clears its marks, so the next check-all still checks", async () => {
+    await basicRepo();
+    const s = setup();
+    await s.svc.add((await s.svc.preview(github)).previewId, "@or");
+    const bg = vi
+      .spyOn(s.svc as unknown as { background: () => void }, "background")
+      .mockImplementationOnce(() => {
+        throw new Error("boom");
+      });
+    await expect(s.svc.startCheckAll()).rejects.toThrow("boom");
+    bg.mockRestore();
+    expect((await s.store.all())[0]?.checkedAt).toBeNull();
+    await s.svc.startCheckAll();
+    await s.svc.idle();
+    expect((await s.store.all())[0]?.checkedAt).toBeInstanceOf(Date);
+  });
+});
 
 describe("check and update", () => {
   const second = {

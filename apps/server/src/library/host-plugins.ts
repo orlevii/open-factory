@@ -14,6 +14,7 @@ import {
 } from "@open-factory/shared";
 import { ApiError } from "../errors.ts";
 import { isRecord } from "./common.ts";
+import { checkSkillFolder, type ForbiddenContext } from "./forbidden.ts";
 import type {
   MarketplaceBody,
   MarketplaceDetail,
@@ -63,6 +64,8 @@ export interface HostPluginsDeps {
       by: string,
     ): Promise<{ status: 201 | 202; marketplace: MarketplaceDetail }>;
   };
+  /** Folders a host directory marketplace may not name (the §6.1 list), so its root can't widen the confined read. */
+  forbidden: ForbiddenContext;
   log?: (message: string, err: unknown) => void;
 }
 
@@ -184,9 +187,16 @@ export class HostPlugins {
     if (cache) roots.push(cache);
     const record = known[e.marketplace];
     const src = isRecord(record) && isRecord(record.source) ? record.source : undefined;
-    if (src?.source === "directory" && typeof src.path === "string") {
+    if (src?.source === "directory" && typeof src.path === "string" && isHostPathShape(src.path)) {
       const folder = await realpath(src.path).catch(() => undefined);
-      if (folder) roots.push(folder);
+      // `/`, the home and its ancestors, the factory's folders: the same refusals as a skill folder.
+      const ok =
+        folder &&
+        (await checkSkillFolder(folder, this.d.forbidden).then(
+          () => true,
+          () => false,
+        ));
+      if (folder && ok) roots.push(folder);
     }
     return roots.some((r) => insideOf(r, real)) ? { dir: real } : { cantShow: HOST_MSG.outside };
   }
@@ -194,6 +204,20 @@ export class HostPlugins {
   /** The versions of every host key, registered marketplaces included ("Also on this host (1.2.0)"). */
   async versions(): Promise<Map<string, string | null>> {
     return new Map((await this.all()).map((e) => [e.key, e.version]));
+  }
+
+  private async show(
+    entry: HostPluginEntry,
+    known: Record<string, unknown>,
+  ): Promise<{ dir: string | null; contents: PluginContents | null; note?: string }> {
+    const at = await this.confined(entry, known);
+    if ("cantShow" in at) return { dir: null, contents: null, note: at.cantShow };
+    try {
+      return { dir: at.dir, contents: await readContents(at.dir) };
+    } catch (e) {
+      this.d.log?.(`reading host plugin ${entry.key} failed`, e);
+      return { dir: at.dir, contents: null, note: HOST_MSG.unreadable };
+    }
   }
 
   /** One host entry, its confined folder or the reason there is none, and its contents; undefined when the key isn't on the host. */
@@ -205,29 +229,22 @@ export class HostPlugins {
   > {
     const entry = (await this.all()).find((e) => e.key === key);
     if (!entry) return undefined;
-    const at = await this.confined(entry, await this.known());
-    if ("cantShow" in at) return { entry, dir: null, contents: null, note: at.cantShow };
-    try {
-      return { entry, dir: at.dir, contents: await readContents(at.dir) };
-    } catch (e) {
-      this.d.log?.(`reading host plugin ${key} failed`, e);
-      return { entry, dir: at.dir, contents: null, note: HOST_MSG.unreadable };
-    }
+    return { entry, ...(await this.show(entry, await this.known())) };
   }
 
-  /** The host's plugins whose marketplace isn't registered, one per key (spec §7.6). */
+  /** The host's plugins whose marketplace isn't registered, one per key (spec §7.6). Each JSON file is read once. */
   async list(): Promise<HostPluginListing[]> {
     const registered = new Set(await this.d.registered());
     const known = await this.known();
     const out: HostPluginListing[] = [];
     for (const entry of await this.all()) {
       if (registered.has(entry.marketplace)) continue;
-      const shown = await this.entry(entry.key);
+      const shown = await this.show(entry, known);
       const verdict = hostSourceVerdict(known[entry.marketplace]);
       out.push({
         ...entry,
-        contents: shown?.contents ?? null,
-        ...(shown?.note ? { cantShow: shown.note } : {}),
+        contents: shown.contents,
+        ...(shown.note ? { cantShow: shown.note } : {}),
         ...(verdict.ok
           ? {}
           : {

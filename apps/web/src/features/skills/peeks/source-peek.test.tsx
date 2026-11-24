@@ -111,6 +111,17 @@ test("the update view is open as soon as the source has an update commit", async
   expect(await screen.findByRole("button", { name: "Update to e4f5a6b" })).toBeInTheDocument();
 });
 
+test("a source whose last check failed shows Couldn't check and the stored message", async () => {
+  await open(detail("skills", { checkError: "Couldn't reach github.com." }));
+  expect(await screen.findByText("Couldn't check")).toBeInTheDocument();
+  expect(screen.getByText("Couldn't reach github.com.")).toBeInTheDocument();
+});
+
+test("a source whose last check succeeded shows no failed-check state", async () => {
+  await open();
+  expect(screen.queryByText("Couldn't check")).not.toBeInTheDocument();
+});
+
 test("a source with no update has no update view", async () => {
   await open();
   expect(screen.queryByRole("button", { name: /^Update to/ })).not.toBeInTheDocument();

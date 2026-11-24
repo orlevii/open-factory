@@ -217,11 +217,8 @@ export function SourcePeekBody({
     check.mutate(undefined, {
       onSuccess: (r) =>
         setCheckLine(
-          r.updateCommit
-            ? undefined
-            : r.checkError
-              ? { tone: "error", node: FORM_MSG.checkFailed }
-              : { tone: "success", node: "Up to date." },
+          // A failed check is stored on the source: the state line below shows it once the detail refetches.
+          r.updateCommit || r.checkError ? undefined : { tone: "success", node: "Up to date." },
         ),
       onError: (e) => setCheckLine({ tone: "error", node: failure(e, FORM_MSG.checkFailed) }),
     });
@@ -320,6 +317,14 @@ export function SourcePeekBody({
               </>
             )}
           </dl>
+          {d?.checkError && (
+            <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[0.8125rem]">
+              <RowState state="check_failed" />
+              <span className="min-w-0 [overflow-wrap:anywhere]">
+                <UntrustedProse text={d.checkError} />
+              </span>
+            </p>
+          )}
           <Outcome line={checkLine} />
           {/* Outside the Update section: a successful update clears the update, which unmounts that section. */}
           <Outcome line={updateLine} />

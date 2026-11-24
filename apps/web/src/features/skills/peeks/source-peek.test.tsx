@@ -161,10 +161,17 @@ test("while the server builds a slow update view the section says so, then shows
   expect(screen.queryByText("Preparing update…")).not.toBeInTheDocument();
 });
 
-test("Update to e4f5a6b posts the commit the check found, and says it worked", async () => {
-  const { mocks, user } = await open(withUpdate, (m) =>
-    m.on("POST /api/library/sources/skills/update", () => json(detail("skills", { pin: NEW }))),
-  );
+test("Update to e4f5a6b posts the commit the check found, and says it worked after the update view is gone", async () => {
+  let updated = false;
+  const { mocks, user } = await open(withUpdate, (m) => {
+    m.on("GET /api/library/sources/skills", () =>
+      json(updated ? detail("skills", { pin: NEW }) : withUpdate),
+    );
+    m.on("POST /api/library/sources/skills/update", () => {
+      updated = true;
+      return json(detail("skills", { pin: NEW }));
+    });
+  });
   await user.click(await screen.findByRole("button", { name: "Update to e4f5a6b" }));
   await waitFor(() =>
     expect(mocks.calls.find((c) => c.url.endsWith("/skills/update"))?.body).toEqual({
@@ -172,6 +179,55 @@ test("Update to e4f5a6b posts the commit the check found, and says it worked", a
     }),
   );
   expect(await screen.findByText("Updated to e4f5a6b.")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: /^Update to/ })).not.toBeInTheDocument(),
+  );
+  expect(screen.getByText("Updated to e4f5a6b.")).toBeInTheDocument();
+});
+
+test("skills that run code differently come first whatever order the server sent", async () => {
+  const view = updateView();
+  await open(
+    detail("skills", {
+      updateCommit: NEW,
+      update: { ...view, changed: [...view.changed].reverse() },
+    }),
+  );
+  await screen.findByText("Runs code changed");
+  const all = screen.getAllByRole("listitem").map((li) => li.textContent ?? "");
+  expect(all.findIndex((t) => t.includes("Runs code changed"))).toBeLessThan(
+    all.findIndex((t) => t.startsWith("deploy")),
+  );
+});
+
+test("a compare link that isn't on GitHub over https is not rendered", async () => {
+  await open(
+    detail("skills", {
+      updateCommit: NEW,
+      update: updateView({ compareUrl: "https://evil.example/compare/a...b" }),
+    }),
+  );
+  await screen.findByRole("button", { name: "Update to e4f5a6b" });
+  expect(screen.queryByRole("link", { name: /Compare/ })).not.toBeInTheDocument();
+});
+
+test("a branch with a bidi override shows the token", async () => {
+  await open(detail("skills", { branch: "ma\u202Ein" }));
+  expect(await screen.findByText("ma⟨U+202E⟩in")).toBeInTheDocument();
+});
+
+test("retargeting while a removal is in flight still offers Undo", async () => {
+  let resolve: (r: Response) => void = () => {};
+  const { user } = await open(detail("skills"), (m) => {
+    m.on("DELETE /api/library/sources/skills", () => new Promise<Response>((r) => (resolve = r)));
+    m.on("POST /api/library/sources/skills/restore", () => json(detail("skills")));
+  });
+  await user.click(await screen.findByRole("button", { name: /^Remove source/ }));
+  await user.click(screen.getByRole("button", { name: /^acme\/other/ }));
+  await screen.findByRole("heading", { level: 3, name: "Source" });
+  resolve(json({ undoUntil: new Date(Date.now() + 30_000).toISOString() }));
+  await waitFor(() => expect(notify).toHaveBeenCalled());
+  expect(vi.mocked(notify).mock.calls[0]?.[0].undo).toBeTypeOf("function");
 });
 
 test("a refused update shows in the outcome line with its users as links", async () => {
@@ -241,7 +297,8 @@ test("removing a source moves focus to the next source header and offers Undo fo
   expect(n?.durationMs).toBeGreaterThan(28_000);
   expect(n?.durationMs).toBeLessThanOrEqual(30_000);
   await waitFor(() => expect(screen.getByRole("button", { name: /acme\/other/ })).toHaveFocus());
-  await user.click(await screen.findByRole("button", { name: "Undo" }));
+  // A toast shown by an earlier test may still be on screen: the newest one is last.
+  await user.click((await screen.findAllByRole("button", { name: "Undo" })).at(-1) as HTMLElement);
   await waitFor(() =>
     expect(mocks.calls.some((c) => c.url === "/api/library/sources/skills/restore")).toBe(true),
   );

@@ -32,13 +32,8 @@ function RunsCode({ hooks }: { hooks: Hook[] }) {
           <li key={`${h.event}\0${h.matcher}\0${h.command}`} className="space-y-0.5">
             <p className="font-mono text-[0.8125rem]">
               <UntrustedProse text={h.event} />
-              {h.matcher && (
-                <>
-                  {" · "}
-                  <UntrustedProse text={h.matcher} />
-                </>
-              )}
             </p>
+            {h.matcher && <UntrustedCode text={h.matcher} clampLines={200} />}
             <UntrustedCode text={h.command} clampLines={200} />
           </li>
         ))}
@@ -151,6 +146,7 @@ function FromLine({
   cameFromSource: boolean;
   onOpen(key: string): void;
 }) {
+  const id = group.startsWith("source:") ? group.slice("source:".length) : undefined;
   if (group === "host") return <p className="text-[0.8125rem] text-muted-foreground">From Host</p>;
   if (group.startsWith("template:")) {
     const template = group.slice("template:".length);
@@ -163,9 +159,12 @@ function FromLine({
       </p>
     );
   }
-  if (!source) return <p className="text-[0.8125rem] text-muted-foreground">Not in any source</p>;
-  const text = `From ${sourceLabel(source)} · ${pinLabel(source) ?? ""}`;
-  const key = sourceKey(source.id);
+  if (id === undefined)
+    return <p className="text-[0.8125rem] text-muted-foreground">Not in any source</p>;
+  // Derived from the group, so a cold cache still has the link; the label and pin join when the list arrives.
+  const pin = source ? pinLabel(source) : undefined;
+  const text = source ? `From ${sourceLabel(source)}${pin ? ` · ${pin}` : ""}` : "From source";
+  const key = sourceKey(id);
   return (
     <p className="text-[0.8125rem] text-muted-foreground">
       {cameFromSource ? (
@@ -225,7 +224,7 @@ export function SkillPeekBody({
           <FromLine
             group={group}
             source={source}
-            cameFromSource={source !== undefined && back === sourceKey(source.id)}
+            cameFromSource={group.startsWith("source:") && back === sourceKey(group.slice(7))}
             onOpen={onOpen}
           />
           {row && row.state !== "ok" && (

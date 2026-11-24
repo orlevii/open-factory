@@ -222,9 +222,22 @@ export function SourcePeekBody({
     onSuccess: refresh,
   });
   const fetchAgain = useMutation({ mutationFn: () => refetchSource(id), onSuccess: refresh });
+  // The Undo toast is announced from the mutation's own `onSuccess`, which still runs if the peek retargets while the
+  // DELETE is in flight (a `mutate(..., { onSuccess })` callback would not): the source is gone either way.
   const remove = useMutation({
-    mutationFn: () => removeSource(id),
-    onSuccess: refresh,
+    mutationFn: (_: { label: string; skills: number }) => removeSource(id),
+    onSuccess: async ({ undoUntil }, { label, skills }) => {
+      // The Undo window is the server's, read here and not by an effect (R-T1).
+      const durationMs = Math.max(0, Date.parse(undoUntil) - Date.now());
+      notify({
+        text: `Removed ${label} and its ${count(skills, "skill")}.`,
+        durationMs,
+        undo: async () => {
+          await undoRemove.current(undefined);
+        },
+      });
+      await refresh();
+    },
   });
   const restore = useMutation({ mutationFn: () => restoreSource(id), onSuccess: refresh });
   const undoRemove = useRef(restore.mutateAsync);
@@ -237,6 +250,7 @@ export function SourcePeekBody({
   const users = d ? d.usedBy.templates + d.usedBy.agents : 0;
   const inUse = users > 0;
   const rows = group?.skills ?? [];
+  const rowByName = new Map(rows.map((r) => [r.name, r]));
   const missing = rows.some((r) => r.state === "missing" && r.stateDetail === FETCH_AGAIN);
   const updateCommit = d?.updateCommit ?? null;
   const updateExpected = updateCommit !== null || (!d && summary?.update === true);
@@ -268,21 +282,13 @@ export function SourcePeekBody({
     if (inUse || remove.isPending) return;
     setRemoveLine(undefined);
     const next = neighbourHeader(id);
-    remove.mutate(undefined, {
-      onSuccess: ({ undoUntil }) => {
-        // The Undo window is the server's, read here in the handler and not by an effect (R-T1).
-        const durationMs = Math.max(0, Date.parse(undoUntil) - Date.now());
-        notify({
-          text: `Removed ${label} and its ${count(skillCount, "skill")}.`,
-          durationMs,
-          undo: async () => {
-            await undoRemove.current(undefined);
-          },
-        });
-        onRemoved(next);
+    remove.mutate(
+      { label, skills: skillCount },
+      {
+        onSuccess: () => onRemoved(next),
+        onError: (e) => setRemoveLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
       },
-      onError: (e) => setRemoveLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
-    });
+    );
   };
 
   return (
@@ -322,7 +328,9 @@ export function SourcePeekBody({
             {(d?.branch ?? summary?.branch) && (
               <>
                 <dt className="text-muted-foreground">Branch</dt>
-                <dd className="font-mono">{d?.branch ?? summary?.branch}</dd>
+                <dd className="font-mono">
+                  <UntrustedProse text={d?.branch ?? summary?.branch ?? ""} />
+                </dd>
               </>
             )}
             <dt className="text-muted-foreground">Pin</dt>
@@ -356,6 +364,8 @@ export function SourcePeekBody({
             )}
           </dl>
           <Outcome line={checkLine} />
+          {/* Outside the Update section: a successful update clears the update, which unmounts that section. */}
+          <Outcome line={updateLine} />
           {missing && (
             <p className="mt-2 flex items-center gap-2 text-[0.8125rem]">
               <RowState state="missing" />
@@ -381,7 +391,7 @@ export function SourcePeekBody({
               from={pin}
               to={updateCommit}
               view={d?.update}
-              loading={!d || (q.isFetching && d.update === null)}
+              loading={!d}
               action={
                 <Button
                   size="sm"
@@ -395,7 +405,6 @@ export function SourcePeekBody({
                   )}
                 </Button>
               }
-              outcome={<Outcome line={updateLine} />}
             />
           </Section>
         )}
@@ -404,7 +413,7 @@ export function SourcePeekBody({
           {d ? (
             <ul>
               {d.skills.map((n) => {
-                const row = rows.find((r) => r.name === n);
+                const row = rowByName.get(n);
                 return (
                   <li key={n} className="flex min-h-7 items-center gap-2 text-[0.8125rem]">
                     <button

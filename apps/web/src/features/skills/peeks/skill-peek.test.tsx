@@ -130,6 +130,15 @@ test("a hook command with a bidi override shows it as a visible token", async ()
   expect(await screen.findByText(/echo ⟨U\+202E⟩txt\.sh/)).toBeInTheDocument();
 });
 
+test("a hook matcher with a bidi override shows the token, as code", async () => {
+  await open(
+    detail("source:s1", "review", {
+      hooks: [{ event: "Stop", matcher: "Ba\u202Esh", command: "x" }],
+    }),
+  );
+  expect((await screen.findByText("Ba⟨U+202E⟩sh")).tagName).toBe("PRE");
+});
+
 test("Used by is grouped by template and collapses past 8 behind Show all", async () => {
   const { user } = await open(
     detail("source:s1", "review", {

@@ -6,6 +6,8 @@ import { UntrustedCode, UntrustedProse } from "@/components/untrusted-text";
 import { TimeAgo } from "@/features/settings/shared";
 import { SkeletonRows } from "./sections";
 
+const GITHUB = "https://github.com/";
+
 type View = z.infer<typeof sourceUpdateViewSchema>;
 type Changed = View["changed"][number];
 
@@ -52,6 +54,10 @@ function ChangedSkill({ c }: { c: Changed }) {
   );
 }
 
+/** Skills that run code differently first, whatever order the server sent (a stable sort). */
+const byRunsCode = (changed: Changed[]) =>
+  [...changed].sort((a, b) => Number(b.runsCodeChanged) - Number(a.runsCodeChanged));
+
 function NameList({ title, names }: { title: string; names: string[] }) {
   if (names.length === 0) return null;
   return (
@@ -79,14 +85,12 @@ export function UpdateView({
   view,
   loading,
   action,
-  outcome,
 }: {
   from: string | null;
   to: string | null;
   view: View | null | undefined;
   loading: boolean;
   action: ReactNode;
-  outcome: ReactNode;
 }) {
   const short = (s: string | null) => s?.slice(0, 7) ?? "";
   return (
@@ -108,7 +112,7 @@ export function UpdateView({
           </>
         )}
       </p>
-      {view?.compareUrl && (
+      {view?.compareUrl?.startsWith(GITHUB) && (
         <a
           href={view.compareUrl}
           target="_blank"
@@ -128,7 +132,7 @@ export function UpdateView({
         <div className="space-y-3">
           {view.changed.length > 0 && (
             <ul className="space-y-2">
-              {view.changed.map((c) => (
+              {byRunsCode(view.changed).map((c) => (
                 <ChangedSkill key={c.name} c={c} />
               ))}
             </ul>
@@ -145,10 +149,7 @@ export function UpdateView({
       ) : (
         <p className="text-[0.8125rem] text-muted-foreground">Can't show what changes.</p>
       )}
-      <div className="space-y-2">
-        {action}
-        {outcome}
-      </div>
+      <div>{action}</div>
     </div>
   );
 }

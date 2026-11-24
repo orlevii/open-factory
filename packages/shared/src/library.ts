@@ -281,7 +281,7 @@ export const sourceUpdateViewSchema = z.object({
   to: z.string(),
   committedAt: z.string().nullable(),
   subject: z.string().nullable(),
-  compareUrl: z.string().optional(),
+  compareUrl: z.string().url().optional(),
   changed: z.array(
     z.object({
       name: z.string(),

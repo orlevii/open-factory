@@ -247,6 +247,55 @@ test("the manager is described in CLAUDE.md", async () => {
   expect(md).toContain("@boss");
 });
 
+test("a peer's description an agent wrote is quoted with that agent's current slug; a human-written one is not", async () => {
+  for (const slug of ["ceo", "dev", "qa"]) await claimTestHandle(t.db, slug, "agent");
+  const [mgr] = await t.db
+    .insert(schema.agents)
+    .values({
+      id: "ceo-id",
+      slug: "ceo",
+      displayName: "CEO",
+      template: "lead",
+      config: {},
+      runtime: "local",
+      credentialId: "c1",
+    })
+    .returning();
+  await t.sql`update agents set reports_to = ${mgr?.id ?? ""} where id = ${agent.id}`;
+  const sibling = { template: "lead", config: {}, runtime: "local" as const, credentialId: "c1" };
+  await t.db.insert(schema.agents).values([
+    {
+      ...sibling,
+      id: "dev-id",
+      slug: "dev",
+      displayName: "Dev",
+      description: "Builds.",
+      descriptionBy: agent.id,
+      reportsTo: mgr?.id,
+    },
+    {
+      ...sibling,
+      id: "qa-id",
+      slug: "qa",
+      displayName: "QA",
+      description: "Tests.",
+      reportsTo: mgr?.id,
+    },
+  ]);
+  await prepareStart(await reload(agent.id), { agentToken: "tok" });
+  const text = md(agent.slug);
+  expect(text).toContain(`- @dev (Dev), written by @${agent.slug}: "Builds."`);
+  expect(text).toContain("- @qa (QA): Tests.");
+});
+
+test("a manage_org agent's CLAUDE.md gets the Managing the org section; before the grant it has none", async () => {
+  await prepareStart(await reload(agent.id), { agentToken: "tok" });
+  expect(md(agent.slug)).not.toContain("## Managing the org");
+  await t.sql`update agents set manage_org = true where id = ${agent.id}`;
+  await prepareStart(await reload(agent.id), { agentToken: "tok" });
+  expect(md(agent.slug)).toContain("## Managing the org\n- A human gave you manage_org.");
+});
+
 test.each([
   [
     "missing secret",
@@ -641,7 +690,7 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
   expect(lead).toContain("## Spawning");
   expect(lead).toContain("at most 3 live");
   expect(lead).toContain(`${factoryConfig.maxSpawnsPerHour} per hour`);
-  expect(lead).toContain(`- @${child.slug} (Dev · ab), spawned by @${agent.slug}: "Ship 'it' now"`);
+  expect(lead).toContain(`- @${child.slug} (Dev · ab), written by @${agent.slug}: "Ship 'it' now"`);
   await prepareStart(child, { agentToken: "tok" });
   const own = md(child.slug);
   expect(own).toContain(

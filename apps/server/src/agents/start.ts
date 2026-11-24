@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import type { AgentRuntimeSpec } from "@open-factory/harness";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import { resolveImage } from "../images/resolve.ts";
@@ -276,16 +276,34 @@ export function createPrepareStart(d: {
       // A spawned entry's manager is its spawner: this agent (a report) or this agent's manager (a peer).
       const slugs = new Map([[agent.id, agent.slug]]);
       if (agent.reportsTo && manager) slugs.set(agent.reportsTo, manager.slug);
+      // The writer of a description is `description_by` joined to its slug (I7 §10), so a rename keeps the quoting.
+      const writerIds = [
+        ...new Set(
+          [agent, ...hood.peers, ...hood.reports].flatMap((a) =>
+            a.descriptionBy ? [a.descriptionBy] : [],
+          ),
+        ),
+      ];
+      const writerSlugs = new Map<string, string>();
+      if (writerIds.length) {
+        const rows = await d.db
+          .select({ id: schema.agents.id, slug: schema.agents.slug })
+          .from(schema.agents)
+          .where(inArray(schema.agents.id, writerIds));
+        for (const r of rows) writerSlugs.set(r.id, r.slug);
+      }
+      const writtenBy = (a: AgentRow) =>
+        a.descriptionBy ? writerSlugs.get(a.descriptionBy) : undefined;
       const entry = (a: AgentRow) => {
-        // Every peer shares this agent's manager, so the lookup always resolves; the fallback still keeps the
-        // agent-written description quoted.
-        const spawnedBy =
-          a.kind === "ephemeral" ? (slugs.get(a.reportsTo ?? "") ?? "unknown") : undefined;
+        // A spawned agent's description was written by its spawner: every peer shares this agent's manager, so the
+        // lookup always resolves; the fallback still keeps the agent-written description quoted.
+        const writer =
+          a.kind === "ephemeral" ? (slugs.get(a.reportsTo ?? "") ?? "unknown") : writtenBy(a);
         return {
           slug: a.slug,
           displayName: a.displayName,
           description: a.description,
-          ...(spawnedBy ? { spawnedBy } : {}),
+          ...(writer ? { writtenBy: writer } : {}),
         };
       };
       const ownGrants = await d.db
@@ -336,6 +354,8 @@ export function createPrepareStart(d: {
                 minGapMinutes: MIN_AGENT_GAP_MINUTES,
               },
           secretNames,
+          manageOrg: agent.manageOrg,
+          descriptionWrittenBy: writtenBy(agent) ?? null,
           ...(spawned ? { inheritedDeny: spawned.inherited.deny } : {}),
           mcpUrl:
             config.runtime === "docker"

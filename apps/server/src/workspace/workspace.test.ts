@@ -76,6 +76,8 @@ function setup(fakeEnv: Record<string, string> = {}) {
     spawner: null,
     spawning: null,
     secretNames: config.secrets,
+    manageOrg: false,
+    descriptionWrittenBy: null,
   };
   return { home, hs, claude, repo, ws, tpl, prep };
 }

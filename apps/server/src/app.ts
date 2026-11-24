@@ -46,6 +46,7 @@ import { startAgentListener } from "./mcp/listener.ts";
 import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
+import { type OrgToolDeps, orgTools } from "./mcp/tools/org-tools.ts";
 import { scheduleTools } from "./mcp/tools/schedule-tools.ts";
 import { sendCommandTool } from "./mcp/tools/send-command.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
@@ -376,17 +377,15 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     policy,
     scheduling: schedules,
   });
-  app.decorate(
-    "configs",
-    new ConfigService({
-      db: deps.db,
-      templates,
-      runtimes,
-      resolver,
-      policy,
-      configChanges,
-    }),
-  );
+  const configs = new ConfigService({
+    db: deps.db,
+    templates,
+    runtimes,
+    resolver,
+    policy,
+    configChanges,
+  });
+  app.decorate("configs", configs);
   // The verifier's driver has no logger: process output can echo the credential under test.
   const verifier = new CredentialVerifier({
     driver: deps.harnessDriver ?? createClaudeDriver({ transports: { local: localTransport } }),
@@ -664,6 +663,18 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       terminator,
       tasks,
       schedules,
+      org: {
+        agents,
+        config: configs,
+        resolver,
+        templates,
+        library,
+        plugins,
+        credentials,
+        secrets: app.secrets,
+        projects: app.projects,
+        policy,
+      },
       log: app.log,
     });
   } catch (err) {
@@ -730,6 +741,8 @@ async function listenForAgents(
     terminator: TerminatePort;
     tasks: TaskService;
     schedules: ScheduleService;
+    /** The services the org tools call; the caller's own row is `store.agentById`. */
+    org: Omit<OrgToolDeps, "loadAgent">;
     log: FastifyInstance["log"];
   },
 ) {
@@ -769,6 +782,9 @@ async function listenForAgents(
             })
           : []),
         listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
+        ...(caller.manageOrg
+          ? orgTools({ ...d.org, loadAgent: (id) => d.store.agentById(id) })
+          : []),
         ...(started && maySpawn(caller, started)
           ? [
               spawnAgentTool({

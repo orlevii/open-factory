@@ -43,6 +43,7 @@ import type { MaterializeCheck, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
 import type { ConfigChanges } from "./config-changes.ts";
 import type { ConfigResolver } from "./config-resolver.ts";
+import type { OverlayPlan } from "./config-service.ts";
 import { OrgRefusedError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Exec, Tx } from "./event-store.ts";
@@ -660,6 +661,29 @@ export class AgentService {
   }
 
   /**
+   * I7 §7.5: an identity patch and an overlay save in ONE transaction, so a refusal of either writes nothing. `c` is
+   * `ConfigService.planOverlay`'s plan (validated first, the stale version already checked); the transaction locks the
+   * row once, lets the overlay re-check its version against the locked row, then writes both. The events and restart
+   * requests of both run after the commit.
+   */
+  async updateWithOverlay(
+    slug: string,
+    b: PatchAgentBody,
+    c: OverlayPlan | undefined,
+    actor: Actor,
+  ): Promise<{ agent: AgentSummary; config?: PutAgentConfigResponse }> {
+    const u = await this.planUpdate(slug, b, actor);
+    await this.d.db.transaction(async (tx) => {
+      const locked = await this.lockAgent(tx, u.row.id);
+      if (!locked) throw this.notFound(slug);
+      await c?.write(tx, locked);
+      await u.write(tx);
+    });
+    const config = await c?.after();
+    return { agent: await u.after(), ...(config ? { config } : {}) };
+  }
+
+  /**
    * Validates a PATCH outside any transaction (disk and Library reads) and returns its writes: `write(tx)` runs in
    * the caller's transaction after it locked the row (it locks nothing itself), `after()` the refresh, peer events and
    * restarts once that commits.
@@ -735,7 +759,12 @@ export class AgentService {
             { kind: "moved", to: moved.to, ...this.byOf(actor) },
             before,
           );
-        if (changed.feeds || changed.text) await runtimes.requestRestart(row.id);
+        // I7 §9.5: an agent that edits itself is woken by the restart it asked for.
+        const self = actor.kind === "agent" && actor.id === row.id;
+        if (changed.feeds || changed.text)
+          await (self
+            ? runtimes.requestRestart(row.id, { wake: true })
+            : runtimes.requestRestart(row.id));
         if (changed.text) {
           const reports = await db
             .select({ id: schema.agents.id })

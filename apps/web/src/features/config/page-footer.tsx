@@ -39,8 +39,8 @@ export function PageFooter({
   const measure = useCallback(
     (el: HTMLDivElement | null) => {
       if (!el) return;
-      // The sticky bar's height is the page's bottom scroll padding (styles.css), so a control scrolled into view or
-      // focused clears the bar (WCAG 2.4.11). The page scrolls at the document, so the property sits on the root.
+      // The sticky bar's height is the bottom scroll margin of the controls beside it (styles.css), so one scrolled into
+      // view or focused clears the bar (WCAG 2.4.11). Custom properties inherit, so the root carries it.
       const root = document.documentElement.style;
       const report = () => {
         root.setProperty("--page-footer-height", `${el.offsetHeight}px`);

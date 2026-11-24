@@ -26,6 +26,7 @@ function agent(over: Partial<AgentSummary> = {}): AgentSummary {
     restartPending: false,
     restartWaitingOn: 0,
     restartChanges: [],
+    manageOrg: false,
     ...over,
   });
 }

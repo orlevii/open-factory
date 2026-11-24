@@ -32,6 +32,7 @@ import {
 } from "@/lib/library";
 import { AddSkillsResults, type FindResult, useTicks } from "./add-skills-results";
 import { count, sourceLabel } from "./format";
+import { useInertWindow } from "./helpers";
 
 type Mode = "folder" | "github";
 type Values = { mode: Mode; path: string; repo: string; subpath: string; branch: string };
@@ -47,8 +48,6 @@ const MODES = [
 ] as const;
 
 const PICK_ONE = FORM_MSG.pickAtLeastOne;
-/** Inert primary after Find lands (spec §10.4). */
-const INERT_MS = 300;
 
 type Preview = z.infer<typeof sourcePreviewSchema>;
 
@@ -99,18 +98,11 @@ export default function AddSkillsSheet({ sheetId, close }: BodyProps<{ kind: "ad
   const [found, setFound] = useState<Found>();
   const { ticked, setTicked, onTick, onToggle } = useTicks();
   const [filter, setFilter] = useState("");
-  const [inert, setInert] = useState(false);
+  const { inert, start: startInert } = useInertWindow();
   const o = useOutcome();
   const formRef = useRef<HTMLFormElement>(null);
   const ctl = useRef<AbortController | null>(null);
-  const inertTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(
-    () => () => {
-      ctl.current?.abort();
-      clearTimeout(inertTimer.current);
-    },
-    [],
-  );
+  useEffect(() => () => ctl.current?.abort(), []);
 
   const stillOpen = () => getSheetState().parent?.id === sheetId;
   const github = values.mode === "github";
@@ -215,9 +207,7 @@ export default function AddSkillsSheet({ sheetId, close }: BodyProps<{ kind: "ad
             },
           }));
           setFilter("");
-          setInert(true);
-          clearTimeout(inertTimer.current);
-          inertTimer.current = setTimeout(() => setInert(false), INERT_MS);
+          startInert();
         },
         onError: (err) => {
           if (!f.server(fieldsOf(err)))

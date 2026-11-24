@@ -1,4 +1,5 @@
 import { type RowState, rowStateOf } from "@open-factory/shared";
+import { visibleControls } from "@/components/untrusted-text";
 
 /** "190 agents", with a non-breaking space: only a number and its noun are kept together (spec §10.2). */
 export const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -34,7 +35,7 @@ export const pinLabel = (s: Pick<SourceFields, "kind" | "pin">) =>
 
 /** A plugin version: a hex one (a marketplace that versions by commit) shows as the commit it is. */
 export const versionLabel = (v: string) =>
-  /^[0-9a-f]{7,40}$/.test(v) ? `commit ${v.slice(0, 7)}` : v;
+  visibleControls(/^[0-9a-f]{7,40}$/.test(v) ? `commit ${v.slice(0, 7)}` : v);
 
 type Summary = {
   hooks: number;

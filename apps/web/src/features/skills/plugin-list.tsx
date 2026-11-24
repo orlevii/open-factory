@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { memo, useId } from "react";
 import { ErrorLine } from "@/components/error-line";
+import { visibleControls } from "@/components/untrusted-text";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { FORM_MSG } from "@/lib/form-messages";
 import { type PluginsResponse, pluginsQueryOptions } from "@/lib/library";
@@ -121,12 +122,15 @@ function GroupHeader({
   name,
   commit,
   adding,
+  since,
 }: {
   labelId: string;
   name: string;
   /** The commit Skills read; null for a local folder, which is live. */
   commit: string | null;
   adding: boolean;
+  /** The server's start of the add, for its elapsed time. */
+  since: string | undefined;
 }) {
   return (
     <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 border-b border-border px-2 py-2 text-sm">
@@ -134,12 +138,12 @@ function GroupHeader({
         id={labelId}
         className="font-mono text-[0.8125rem] font-medium [overflow-wrap:anywhere]"
       >
-        {name}
+        {visibleControls(name)}
       </span>
       <span className="text-[0.8125rem] text-muted-foreground">
         {commit ? <span className="font-mono">{commit.slice(0, 7)}</span> : "Local folder, live"}
       </span>
-      {adding && <RowState state="adding" />}
+      {adding && <RowState state="adding" since={since} />}
     </div>
   );
 }
@@ -168,6 +172,7 @@ const MarketplaceGroup = memo(function MarketplaceGroup({
         name={m.name}
         commit={m.commit}
         adding={m.state === "adding"}
+        since={m.since ?? undefined}
       />
       {m.plugins.length > 0 && (
         <ul aria-labelledby={labelId}>

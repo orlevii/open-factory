@@ -461,3 +461,139 @@ test("a load failure shows the error line and Retry loads the detail", async () 
   await user.click(d.getByRole("button", { name: "Retry" }));
   expect(await d.findByText("./back.sh")).toBeInTheDocument();
 });
+
+test("hostile text in hooks, servers and sources is shown as tokens, never as the characters themselves", async () => {
+  const { dialog: d } = await open({
+    "GET /api/library/plugins/review%40acme": () =>
+      json(
+        detail({
+          source: { kind: "external", detail: "git: https://evil.test/‮x" },
+          contents: contents({
+            hooks: [hook("rm -rf /‮txt.sh", { matcher: "Ba‮sh", event: "Pre\u001bTool" })],
+            mcp: [
+              {
+                name: "srv",
+                kind: "stdio",
+                command: "node",
+                args: ["a‮b"],
+                env: [{ name: "TOKEN​", value: "v‮" }],
+                url: null,
+                headers: [],
+              },
+              {
+                name: "remote",
+                kind: "http",
+                command: null,
+                args: [],
+                env: [],
+                url: "https://x.test/‮",
+                headers: ["X-Key⁦"],
+              },
+            ],
+            summary: { ...NO_CONTENTS, hooks: 1, mcp: 2 },
+          }),
+        }),
+      ),
+  });
+  await d.findByText(/rm -rf/);
+  const body = document.body.textContent ?? "";
+  const hidden = new Set([0x202e, 0x2066, 0x200b, 0x1b]);
+  expect([...body].some((c) => hidden.has(c.codePointAt(0) ?? 0))).toBe(false);
+  for (const token of ["⟨U+202E⟩", "⟨ESC⟩", "⟨U+200B⟩", "⟨U+2066⟩"]) expect(body).toContain(token);
+  expect(d.getByText(/rm -rf \/⟨U\+202E⟩txt\.sh/)).toBeInTheDocument();
+  expect(d.getByText(/Ba⟨U\+202E⟩sh/)).toBeInTheDocument();
+});
+
+test("MCP servers show their kind and full command, args, env and headers or URL", async () => {
+  const { dialog: d } = await open({
+    "GET /api/library/plugins/review%40acme": () =>
+      json(
+        detail({
+          contents: contents({
+            mcp: [
+              {
+                name: "local",
+                kind: "stdio",
+                command: "uvx",
+                args: ["tool", "--flag"],
+                env: [
+                  { name: "MODE", value: "fast" },
+                  { name: "SECRET", value: null },
+                ],
+                url: null,
+                headers: [],
+              },
+              {
+                name: "remote",
+                kind: "http",
+                command: null,
+                args: [],
+                env: [],
+                url: "https://mcp.example.com/sse",
+                headers: ["Authorization"],
+              },
+            ],
+            summary: { ...NO_CONTENTS, mcp: 2 },
+          }),
+        }),
+      ),
+  });
+  const servers = within(await d.findByRole("list", { name: "MCP servers" }));
+  expect(servers.getByText(/uvx tool --flag/)).toBeInTheDocument();
+  expect(servers.getByText(/MODE=fast/)).toBeInTheDocument();
+  expect(servers.getByText(/^SECRET$|SECRET(?!=)/)).toBeInTheDocument();
+  expect(servers.getByText(/stdio/)).toBeInTheDocument();
+  expect(servers.getByText(/https:\/\/mcp\.example\.com\/sse/)).toBeInTheDocument();
+  expect(servers.getByText(/headers: Authorization/)).toBeInTheDocument();
+});
+
+test("a plugin that follows its own source says it can't be pinned, and the host copy's version shows", async () => {
+  const { dialog: d } = await open({
+    "GET /api/library/plugins/review%40acme": () =>
+      json(
+        detail({
+          pinnable: false,
+          state: "cant_pin",
+          hostVersion: "1.2.0",
+          source: { kind: "external", detail: "github: acme/review" },
+        }),
+      ),
+  });
+  expect(await d.findByText("Can't be pinned: it follows its own source.")).toBeInTheDocument();
+  expect(d.getByText("Also on this host (1.2.0)")).toBeInTheDocument();
+});
+
+test("Provides clamps a long kind past 20 and Show all reveals the rest", async () => {
+  const names = Array.from({ length: 34 }, (_, i) => `skill-${i + 1}`);
+  const { dialog: d, user } = await open({
+    "GET /api/library/plugins/review%40acme": () =>
+      json(
+        detail({
+          contents: contents({
+            provides: { skills: names, commands: [], agents: [], outputStyles: [] },
+            summary: { ...NO_CONTENTS, skills: 34 },
+          }),
+        }),
+      ),
+  });
+  const show = await d.findByRole("button", { name: "Show all 34" });
+  expect(d.queryByText(/skill-34/)).not.toBeInTheDocument();
+  expect(d.getByText(/skill-20\b/)).toBeInTheDocument();
+  await user.click(show);
+  expect(d.getByText(/skill-34/)).toBeInTheDocument();
+  expect(d.queryByRole("button", { name: "Show all 34" })).not.toBeInTheDocument();
+});
+
+test("while loading, the placeholder has one row per hook, server and code part the summary counts, at most six", async () => {
+  const gate = new Promise<void>(() => {});
+  const list = baseList(
+    plugin("review@acme", { contentsSummary: { ...NO_CONTENTS, hooks: 2, mcp: 1, codeParts: 1 } }),
+  );
+  const { dialog: d } = await open(
+    { "GET /api/library/plugins/review%40acme": async () => (await gate, json(detail())) },
+    list,
+  );
+  const status = d.getByRole("status");
+  const rows = status.querySelector("[aria-hidden='true']")?.children.length;
+  expect(rows).toBe(4);
+});

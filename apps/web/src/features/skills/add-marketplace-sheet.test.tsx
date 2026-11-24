@@ -63,15 +63,17 @@ const preview = (o: Record<string, unknown> = {}) => ({
   branch: "main",
   commitPinnable: true,
   plugins: [
-    { name: "review", version: "1.2.0", pinnable: true },
+    { name: "review", version: "1.2.0", pinnable: true, state: "ok" },
     {
       name: "tool",
       pinnable: false,
+      state: "cant_pin",
       refusedReason: "Can't be pinned: it follows its own source.",
     },
     {
       name: "cmd",
       pinnable: false,
+      state: "refused",
       refusedReason: "Plugin cmd@acme uses a command source, which Open Factory doesn't install.",
     },
   ],
@@ -143,7 +145,7 @@ test("the preview shows the commit, the plugins, and why one can't be pinned or 
   expect(within(list).getByText(/uses a command source/)).toBeInTheDocument();
 });
 
-test("the official marketplace is shown as Latest only", async () => {
+test("the official marketplace says it can only be pinned to a tag", async () => {
   const { user, dialog: d } = await open({
     "POST /api/library/marketplaces/preview": () =>
       json(preview({ name: "claude-plugins-official", commitPinnable: false })),
@@ -151,7 +153,9 @@ test("the official marketplace is shown as Latest only", async () => {
   await user.type(d.getByLabelText("Repository"), "anthropics/claude-plugins-official");
   await user.click(button(d, "Find marketplace"));
   expect(
-    await d.findByText(/claude-plugins-official can only be used at Latest/),
+    await d.findByText(
+      "claude-plugins-official can only be pinned to a tag. Fetch a tag in Skills, or use Latest.",
+    ),
   ).toBeInTheDocument();
 });
 

@@ -1,4 +1,4 @@
-import { UntrustedProse } from "@/components/untrusted-text";
+import { UntrustedInlineCode } from "@/components/untrusted-text";
 import { Section } from "./sections";
 
 /** What the agent's image (or this machine) must provide for a plugin's hooks and servers to run (spec §7.8). */
@@ -10,13 +10,8 @@ export function NeedsFromImage({ needs }: { needs: string[] }) {
   if (needs.length === 0) return null;
   return (
     <Section title="Needs from the image">
-      <p className="font-mono text-[0.8125rem]">
-        {needs.map((n, i) => (
-          <span key={n}>
-            {i > 0 && ", "}
-            <UntrustedProse text={n} />
-          </span>
-        ))}
+      <p>
+        <UntrustedInlineCode text={needs.join(", ")} />
       </p>
       <p className="mt-1 text-[0.8125rem] text-muted-foreground">{NEEDS_NOTE}</p>
     </Section>

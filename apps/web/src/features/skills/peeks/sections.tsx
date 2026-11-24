@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { LINK } from "../helpers";
 
 /** A peek section: separated from the one above by a rule and spacing, never a card. `action` sits in the label row. */
 export function Section({
@@ -79,8 +80,6 @@ export function SkeletonRows({ n }: { n: number }) {
     </div>
   );
 }
-
-const LINK = "underline underline-offset-2 hover:text-foreground";
 
 /** "template dev, @ana and 2 more": at most three named, each a link to its page (where the fix is made). */
 export function UsersLine({ templates, agents }: { templates: string[]; agents: string[] }) {

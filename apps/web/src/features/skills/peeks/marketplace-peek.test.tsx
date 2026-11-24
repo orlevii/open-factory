@@ -148,7 +148,7 @@ test("Pinned by templates marks an older pin and shows Latest with its badge", a
       "GET /api/library/marketplaces/acme": () =>
         json(view({ usedBy: { templates: 3, agents: 3 } })),
       "GET /api/library/plugins/a%40acme?": () =>
-        json({ error: { code: "not_found", message: "Not found" } }, 404),
+        json({ error: { code: "not_read", message: "Not found" } }, 404),
     },
   );
   const pinned = (await d.findByRole("heading", { name: "Pinned by templates" })).closest(
@@ -199,7 +199,7 @@ test("a pin Skills hasn't read has a Fetch that reads it", async () => {
             hostVersion: null,
             usedBy: { templates: [], overlays: [] },
           })
-        : json({ error: { code: "not_found", message: "Not found" } }, 404),
+        : json({ error: { code: "not_read", message: "Not found" } }, 404),
     "POST /api/library/marketplaces/acme/fetch": () => {
       read = true;
       return json({ sha: UNREAD });

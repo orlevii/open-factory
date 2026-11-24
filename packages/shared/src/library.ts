@@ -418,6 +418,8 @@ export const previewPluginSchema = z.object({
   description: z.string().optional(),
   version: z.string().optional(),
   pinnable: z.boolean(),
+  /** "refused" is a source Open Factory won't install ("Can't use"); "cant_pin" follows its own source (spec §10.2). */
+  state: z.enum(["ok", "refused", "cant_pin"]),
   refusedReason: z.string().optional(),
 });
 
@@ -602,6 +604,8 @@ export const pluginsResponseSchema = z.object({
       name: z.string(),
       commit: z.string().nullable(),
       state: z.enum(["adding", "ready"]),
+      /** When an add started (ISO), while the marketplace is "adding". */
+      since: z.string().nullable().optional(),
       plugins: z.array(pluginEntrySchema),
     }),
   ),

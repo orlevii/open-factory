@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ErrorLine } from "@/components/error-line";
+import { MiddleTruncate } from "@/components/middle-truncate";
 import { SheetBody, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { UntrustedCode, UntrustedProse } from "@/components/untrusted-text";
+import { UntrustedCode, UntrustedProse, visibleControls } from "@/components/untrusted-text";
 import { FORM_MSG } from "@/lib/form-messages";
 import {
   libraryQueryOptions,
@@ -12,6 +13,7 @@ import {
   skillQueryOptions,
 } from "@/lib/library";
 import { count, pinLabel, sourceLabel } from "../format";
+import { LINK } from "../helpers";
 import { RowState } from "../row-state";
 import { sourceKey } from "../use-peek";
 import { FileView } from "./file-view";
@@ -19,7 +21,6 @@ import { BackButton, Clamped, Section, SkeletonRows } from "./sections";
 
 const COLLAPSE_FILES = 20;
 const COLLAPSE_USERS = 8;
-const LINK = "underline underline-offset-2 hover:text-foreground";
 
 type Hook = { event: string; matcher: string; command: string };
 
@@ -181,7 +182,9 @@ export function SkillPeekBody({
     <>
       <SheetHeader className="items-center">
         {back !== null && <BackButton onBack={onBack} />}
-        <SheetTitle className="font-mono text-sm font-normal">{name}</SheetTitle>
+        <SheetTitle className="font-mono text-sm font-normal">
+          <MiddleTruncate text={visibleControls(name)} />
+        </SheetTitle>
       </SheetHeader>
       <SheetBody className="space-y-4">
         <div className="space-y-1">

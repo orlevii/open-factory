@@ -64,7 +64,9 @@ const MarketplaceItem = memo(function MarketplaceItem({
           {visibleControls(m.name)}
         </span>
         <span className="flex min-w-0 flex-1 font-mono text-[0.8125rem] text-muted-foreground">
-          <MiddleTruncate text={visibleControls(marketplaceSourceLabel(m.source))} />
+          <span dir="ltr" className="flex min-w-0 flex-1 [unicode-bidi:isolate]">
+            <MiddleTruncate text={visibleControls(marketplaceSourceLabel(m.source))} />
+          </span>
         </span>
         <span className="font-mono text-[0.8125rem] text-muted-foreground">
           {live ? "Live" : m.state === "adding" ? "" : (m.commit?.slice(0, 7) ?? "")}
@@ -73,7 +75,7 @@ const MarketplaceItem = memo(function MarketplaceItem({
           {count(m.plugins.length, "plugin")}
         </span>
         <span className="text-[0.8125rem] text-muted-foreground">
-          {usedByText(m.usedBy.templates, m.usedBy.agents)}
+          {usedByText(m.usedBy.templates, 0)}
         </span>
         {state && <RowState state={state} since={pendingSince(m, state)} />}
       </button>
@@ -117,7 +119,7 @@ export function MarketplaceList({
       onKeyUp={onKeyUp}
       className="@container border-y border-border [overflow-anchor:auto]"
     >
-      <ul>
+      <ul aria-label="Marketplaces">
         {data.marketplaces.map((m) => {
           const key = marketplaceKey(m.name);
           return (

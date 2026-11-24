@@ -77,3 +77,16 @@ export function UntrustedProse({ text }: { text: string }) {
     </span>
   );
 }
+
+/** Third-party code text inline (a program name, a source URL, a dependency): mono, left-to-right, isolated, wrapped
+ *  anywhere, with invisible characters shown as tokens (spec §10.6). The inline form of `UntrustedCode`. */
+export function UntrustedInlineCode({ text }: { text: string }) {
+  return (
+    <span
+      dir="ltr"
+      className={`${codeTextClass} whitespace-pre-wrap [overflow-wrap:anywhere] [unicode-bidi:isolate]`}
+    >
+      {visibleControls(text)}
+    </span>
+  );
+}

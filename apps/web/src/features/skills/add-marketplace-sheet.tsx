@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { notify } from "@/components/ui/toaster";
 import { UntrustedProse, visibleControls } from "@/components/untrusted-text";
+import { PLUGIN_COPY } from "@/features/config/messages";
 import { FormFrame } from "@/features/settings/forms/form-frame";
 import { fieldsOf } from "@/features/settings/forms/shared";
 import { TimeAgo } from "@/features/settings/shared";
@@ -30,7 +31,8 @@ import {
   previewMarketplace,
   removeMarketplace,
 } from "@/lib/library";
-import { versionLabel } from "./format";
+import { pluginRowState, versionLabel } from "./format";
+import { focusAndReveal, useInertWindow } from "./helpers";
 import { RowState } from "./row-state";
 
 type Mode = "github" | "git" | "directory";
@@ -45,9 +47,6 @@ const MODES = [
   { value: "git", label: "Git URL" },
   { value: "directory", label: "Folder" },
 ] as const;
-
-/** Inert primary after Find lands (spec §10.4). */
-const INERT_MS = 300;
 
 type Preview = z.infer<typeof marketplacePreviewSchema>;
 
@@ -68,18 +67,8 @@ const previewBody = (v: Values): MarketplacePreviewBody =>
 
 type Found = { key: string; seq: number; view: Preview };
 
-/** The results label moves focus here when it mounts (a new Find remounts it by key): the focus is the announcement. */
-function focusAndReveal(el: HTMLElement | null) {
-  if (!el) return;
-  el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: "nearest" });
-}
-
-/** A catalog entry that can't be pinned or used: "Can't use" for a refused source, "Can't be pinned" otherwise. */
-const isRefused = (p: Preview["plugins"][number]) =>
-  !p.pinnable && p.refusedReason !== undefined && !p.refusedReason.startsWith("Can't be pinned");
-
 function PreviewPlugin({ p }: { p: Preview["plugins"][number] }) {
+  const state = pluginRowState(p);
   return (
     <li className="py-1.5 text-[0.8125rem]">
       <div className="flex flex-wrap items-baseline gap-x-3">
@@ -87,14 +76,14 @@ function PreviewPlugin({ p }: { p: Preview["plugins"][number] }) {
           <UntrustedProse text={p.name} />
         </span>
         {p.version && <span className="text-muted-foreground">{versionLabel(p.version)}</span>}
-        {!p.pinnable && <RowState state={isRefused(p) ? "refused" : "cant_pin"} />}
+        {state && <RowState state={state} />}
       </div>
       {p.description && (
         <span className="line-clamp-2 block text-muted-foreground">
           <UntrustedProse text={p.description} />
         </span>
       )}
-      {isRefused(p) && p.refusedReason && (
+      {state === "refused" && p.refusedReason && (
         <span className="block text-muted-foreground">
           <UntrustedProse text={p.refusedReason} />
         </span>
@@ -146,10 +135,7 @@ function MarketplacePreviewView({ found, stale }: { found: Found; stale: boolean
         )}
       </p>
       {!stale && !v.commitPinnable && v.commit !== null && (
-        <p className="text-[0.8125rem]">
-          {visibleControls(v.name)} can only be used at Latest: Claude Code refuses a commit pin for
-          it.
-        </p>
+        <p className="text-[0.8125rem]">{PLUGIN_COPY.tagOnly(visibleControls(v.name))}</p>
       )}
       {v.plugins.length === 0 ? (
         <p className="text-[0.8125rem] text-muted-foreground">This marketplace lists no plugins.</p>
@@ -180,18 +166,11 @@ export default function AddMarketplaceSheet({
   const [values, setValues] = useState<Values>(draft.start);
   const [restored, setRestored] = useState(draft.restored);
   const [found, setFound] = useState<Found>();
-  const [inert, setInert] = useState(false);
+  const { inert, start: startInert } = useInertWindow();
   const o = useOutcome();
   const formRef = useRef<HTMLFormElement>(null);
   const ctl = useRef<AbortController | null>(null);
-  const inertTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(
-    () => () => {
-      ctl.current?.abort();
-      clearTimeout(inertTimer.current);
-    },
-    [],
-  );
+  useEffect(() => () => ctl.current?.abort(), []);
 
   const stillOpen = () => getSheetState().parent?.id === sheetId;
 
@@ -256,9 +235,7 @@ export default function AddMarketplaceSheet({
       {
         onSuccess: (r) => {
           setFound((p) => ({ key: forKey, seq: (p?.seq ?? 0) + 1, view: r }));
-          setInert(true);
-          clearTimeout(inertTimer.current);
-          inertTimer.current = setTimeout(() => setInert(false), INERT_MS);
+          startInert();
         },
         onError: (err) => {
           if (!f.server(fieldsOf(err)))

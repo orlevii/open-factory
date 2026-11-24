@@ -8,10 +8,16 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import type { z } from "zod";
 import { ErrorLine } from "@/components/error-line";
+import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import { SheetBody, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { notify } from "@/components/ui/toaster";
-import { UntrustedCode, UntrustedProse } from "@/components/untrusted-text";
+import {
+  UntrustedCode,
+  UntrustedInlineCode,
+  UntrustedProse,
+  visibleControls,
+} from "@/components/untrusted-text";
 import { LatestBadge } from "@/features/config/latest-badge";
 import { FORM_MSG } from "@/lib/form-messages";
 import {
@@ -26,7 +32,7 @@ import {
 } from "@/lib/library";
 import { ContentsLine } from "../contents-line";
 import { count, parsePluginPin, pluginRowState, versionLabel } from "../format";
-import { PluginKey } from "../plugin-key";
+import { LINK } from "../helpers";
 import { RowState } from "../row-state";
 import { arrivalState } from "../use-library-arrival";
 import { FileView } from "./file-view";
@@ -49,7 +55,6 @@ type Users = z.infer<typeof pluginUsersSchema>;
 
 const COLLAPSE_PROVIDES = 20;
 const COLLAPSE_FILES = 20;
-const LINK = "underline underline-offset-2 hover:text-foreground";
 
 const CODE_PART_LABEL = {
   lsp: "Language servers",
@@ -63,14 +68,8 @@ function HookRow({ h }: { h: Contents["hooks"][number] }) {
   // Below a 28rem container the event and matcher stack above the command (SheetBody is the container).
   return (
     <li className="flex flex-wrap gap-x-3 gap-y-0.5 @max-[28rem]:flex-col">
-      <p className="font-mono text-[0.8125rem]">
-        <UntrustedProse text={h.event} />
-        {h.matcher && (
-          <>
-            {" · "}
-            <UntrustedProse text={h.matcher} />
-          </>
-        )}
+      <p>
+        <UntrustedInlineCode text={h.matcher ? `${h.event} · ${h.matcher}` : h.event} />
       </p>
       <div className="min-w-0 flex-1 basis-60">
         <UntrustedCode text={h.command} clampLines={200} />
@@ -110,8 +109,12 @@ function RunsCode({ contents }: { contents: Contents }) {
         <div className="space-y-3">
           {hooks.length > 0 && (
             <ul className="space-y-2" aria-label="Hooks">
-              {hooks.map((h) => (
-                <HookRow key={`${h.event}\0${h.matcher}\0${h.command}`} h={h} />
+              {hooks.map((h, i) => (
+                <HookRow
+                  // biome-ignore lint/suspicious/noArrayIndexKey: two hooks can be identical, and the list is static
+                  key={`${i}\0${h.event}\0${h.matcher}\0${h.command}`}
+                  h={h}
+                />
               ))}
             </ul>
           )}
@@ -125,8 +128,8 @@ function RunsCode({ contents }: { contents: Contents }) {
           {dependencies.length > 0 && (
             <div className="text-[0.8125rem]">
               <p className="text-muted-foreground">Dependencies</p>
-              <p className="font-mono [overflow-wrap:anywhere]">
-                <UntrustedProse text={dependencies.join(", ")} />
+              <p>
+                <UntrustedInlineCode text={dependencies.join(", ")} />
               </p>
             </div>
           )}
@@ -155,8 +158,8 @@ function ProvidesKind({ title, names }: { title: string; names: string[] }) {
   return (
     <div className="text-[0.8125rem]">
       <p className="text-muted-foreground">{title}</p>
-      <p className="font-mono [overflow-wrap:anywhere]">
-        <UntrustedProse text={shown.join(", ")} />
+      <p>
+        <UntrustedInlineCode text={shown.join(", ")} />
       </p>
       {!all && names.length > COLLAPSE_PROVIDES && (
         <button
@@ -203,8 +206,8 @@ function Provenance({
           <UntrustedProse text={detail.marketplace} />
         </dd>
         <dt className="text-muted-foreground">Source</dt>
-        <dd className="[overflow-wrap:anywhere]">
-          <UntrustedProse text={detail.source.detail} />
+        <dd>
+          <UntrustedInlineCode text={detail.source.detail} />
         </dd>
         {detail.from === "library" && (
           <>
@@ -410,8 +413,8 @@ export function PluginPeekBody({
     <>
       <SheetHeader className="items-center">
         {back !== null && <BackButton onBack={onBack} />}
-        <SheetTitle className="min-w-0 text-sm font-normal">
-          <PluginKey pluginKey={pluginKey} />
+        <SheetTitle className="font-mono text-sm font-normal">
+          <MiddleTruncate text={visibleControls(pluginKey)} />
         </SheetTitle>
       </SheetHeader>
       <SheetBody className="space-y-4">
@@ -455,7 +458,7 @@ export function PluginPeekBody({
             <>
               <Section title="Contents">
                 <p className="text-[0.8125rem] text-muted-foreground">
-                  {d.contentsNote ?? "Contents not read yet"}
+                  {visibleControls(d.contentsNote ?? "Contents not read yet")}
                 </p>
                 {d.canRead && !readOnly && (
                   <div className="mt-2">
@@ -496,8 +499,9 @@ export function PluginPeekBody({
       ) : host ? (
         <SheetFooter className="flex-col items-stretch gap-2">
           <p className="text-[0.8125rem] text-muted-foreground">
-            {refused ??
-              `Registers ${hostRow?.marketplace ?? "its marketplace"} from this host's record. Nothing is installed.`}
+            {refused !== undefined
+              ? visibleControls(refused)
+              : `Registers ${visibleControls(hostRow?.marketplace ?? "its marketplace")} from this host's record. Nothing is installed.`}
           </p>
           <Outcome line={addLine} />
           <Button

@@ -1,14 +1,14 @@
-import type { marketplaceUpdateViewSchema } from "@open-factory/shared";
+import { ApiError, type marketplaceUpdateViewSchema } from "@open-factory/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import type { z } from "zod";
 import { ErrorLine } from "@/components/error-line";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import { SheetBody, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { notify } from "@/components/ui/toaster";
-import { UntrustedProse, visibleControls } from "@/components/untrusted-text";
+import { UntrustedInlineCode, UntrustedProse, visibleControls } from "@/components/untrusted-text";
 import { LatestBadge } from "@/features/config/latest-badge";
 import { TimeAgo } from "@/features/settings/shared";
 import { FORM_MSG } from "@/lib/form-messages";
@@ -25,6 +25,7 @@ import {
   updateMarketplace,
 } from "@/lib/library";
 import { count, marketplaceSourceLabel, parsePluginPin, versionLabel } from "../format";
+import { LINK, neighbourKey, useLatest } from "../helpers";
 import { RowState } from "../row-state";
 import { pluginKey } from "../use-peek";
 import {
@@ -41,7 +42,6 @@ import {
 type View = z.infer<typeof marketplaceUpdateViewSchema>;
 type Changed = View["changed"][number];
 
-const LINK = "underline underline-offset-2 hover:text-foreground";
 const KIND = { github: "GitHub", git: "Git URL", directory: "Folder" } as const;
 const WHAT = { version: "version", source: "source", tree: "files" } as const;
 
@@ -111,7 +111,7 @@ function PinnedBy({ pin, libraryCommit }: { pin: string; libraryCommit: string |
         </span>
       );
     case "tag":
-      return <span className="text-muted-foreground">tag {p.name}</span>;
+      return <span className="text-muted-foreground">tag {visibleControls(p.name)}</span>;
     case "latest":
       return <LatestBadge />;
     case "live":
@@ -136,14 +136,16 @@ function UnreadPin({ name, sha, pluginName }: { name: string; sha: string; plugi
       onError: (e) => setLine({ tone: "error", node: failure(e, FORM_MSG.unreachable) }),
     });
   };
-  if (!probe.isError && !line) return null;
+  // Only the server's "not read" answer means unread; a network failure or a 500 says nothing about the checkout.
+  const unread = probe.error instanceof ApiError && probe.error.code === "not_read";
+  if (!unread && !line) return null;
   return (
     <div className="space-y-1">
-      {probe.isError && (
+      {unread && (
         <p className="flex flex-wrap items-center gap-x-2 text-[0.8125rem]">
           <RowState state="missing" />
           <span>
-            Skills hasn't read {name} at {sha.slice(0, 7)}.
+            Skills hasn't read {visibleControls(name)} at {sha.slice(0, 7)}.
           </span>
           <Button
             variant="ghost"
@@ -173,15 +175,6 @@ function pinnedBy(plugins: MarketplaceRow["plugins"]): Pinned[] {
     for (const t of p.usedBy.templates)
       if (!out.has(t.name)) out.set(t.name, { template: t.name, pin: t.pin, plugin: p.key });
   return [...out.values()];
-}
-
-/** The next marketplace row after `name` in the page's list (else the one before it): where focus goes once it is gone. */
-function neighbourRow(name: string): string | null {
-  const keys = [...document.querySelectorAll<HTMLElement>('[data-peek-key^="marketplace:"]')]
-    .filter((el) => el.hasAttribute("data-row"))
-    .map((el) => el.dataset.peekKey ?? "");
-  const i = keys.indexOf(`marketplace:${name}`);
-  return keys[i + 1] ?? keys[i - 1] ?? null;
 }
 
 /**
@@ -236,12 +229,12 @@ export function MarketplacePeekBody({
     },
   });
   const restore = useMutation({ mutationFn: () => restoreMarketplace(name), onSuccess: refresh });
-  const undoRemove = useRef(restore.mutateAsync);
-  undoRemove.current = restore.mutateAsync;
+  const undoRemove = useLatest(restore.mutateAsync);
 
   const m = d ?? row;
   const commit = m?.commit ?? null;
-  const updateCommit = d?.updateCommit ?? null;
+  // The list row knows the commit while the detail (and its update view) is still building.
+  const updateCommit = d?.updateCommit ?? row?.updateCommit ?? null;
   const plugins = row?.plugins ?? [];
   const pinned = pinnedBy(plugins);
   const unread = new Map<string, string>();
@@ -275,9 +268,9 @@ export function MarketplacePeekBody({
     });
   };
   const onRemove = () => {
-    if (inUse || remove.isPending) return;
+    if (!d || inUse || remove.isPending) return;
     setRemoveLine(undefined);
-    const next = neighbourRow(name);
+    const next = neighbourKey("marketplace:", `marketplace:${name}`);
     remove.mutate(undefined, {
       onSuccess: () => onRemoved(next),
       onError: (e) => setRemoveLine({ tone: "error", node: failure(e, FORM_MSG.unreachable) }),
@@ -319,8 +312,8 @@ export function MarketplacePeekBody({
             <dt className="text-muted-foreground">Kind</dt>
             <dd>{m ? KIND[m.source.source] : ""}</dd>
             <dt className="text-muted-foreground">Source</dt>
-            <dd className="font-mono [overflow-wrap:anywhere]">
-              <UntrustedProse text={sourceText} />
+            <dd>
+              <UntrustedInlineCode text={sourceText} />
             </dd>
             {m?.branch && (
               <>
@@ -373,13 +366,13 @@ export function MarketplacePeekBody({
           <Outcome line={updateLine} />
         </Section>
 
-        {(updateCommit !== null || (!d && row?.updateCommit)) && (
+        {updateCommit !== null && (
           <Section title="Update">
             <div className="space-y-3 rounded-md border border-border bg-card p-3">
               <p className="text-[0.8125rem]">
                 <span className="font-mono">
                   {(d?.update?.from ?? commit ?? "").slice(0, 7)} →{" "}
-                  {(d?.update?.to ?? updateCommit ?? row?.updateCommit ?? "").slice(0, 7)}
+                  {(d?.update?.to ?? updateCommit ?? "").slice(0, 7)}
                 </span>
                 {d?.update?.committedAt && (
                   <>
@@ -398,8 +391,8 @@ export function MarketplacePeekBody({
               <div className="space-y-1.5">
                 <Button
                   size="sm"
-                  aria-disabled={update.isPending || updateCommit === null}
-                  onClick={() => !update.isPending && onUpdate()}
+                  aria-disabled={update.isPending || !d}
+                  onClick={() => d && !update.isPending && onUpdate()}
                 >
                   {update.isPending ? (
                     <Pending label="Updating…" since={update.submittedAt} />
@@ -469,7 +462,7 @@ export function MarketplacePeekBody({
       <SheetFooter className="flex-col items-stretch gap-2">
         {inUse && (
           <p id={reasonId} className="text-[0.8125rem] text-muted-foreground">
-            Templates use plugins from {name}. Remove them first.
+            Templates use plugins from {visibleControls(name)}. Remove them first.
           </p>
         )}
         <Outcome line={removeLine} />

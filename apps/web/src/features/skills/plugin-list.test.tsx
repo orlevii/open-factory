@@ -1,5 +1,5 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { closeSheet } from "@/features/sheets/sheet-store";
@@ -192,4 +192,29 @@ test("a failed load shows the error line, and Retry loads the list", async () =>
   ok = true;
   await user.click(screen.getByRole("button", { name: "Retry" }));
   expect(await row(/late/)).toBeInTheDocument();
+});
+
+test("j and k move between plugin rows, Space opens a peek and closes it on the shown row", async () => {
+  const user = await open(
+    pluginsResponse([pluginGroup("acme", COMMIT, [plugin("one@acme"), plugin("two@acme")])]),
+    {
+      "GET /api/library/plugins/one%40acme": () =>
+        json({ error: { code: "x", message: "x" } }, 500),
+      "GET /api/library/plugins/two%40acme": () =>
+        json({ error: { code: "x", message: "x" } }, 500),
+    },
+  );
+  const one = await row(/^one/);
+  one.focus();
+  await user.keyboard("j");
+  const two = screen.getByRole("button", { name: /^two/ });
+  expect(two).toHaveFocus();
+  await user.keyboard(" ");
+  expect(two).toHaveAttribute("aria-expanded", "true");
+  await user.keyboard("k");
+  expect(one).toHaveFocus();
+  expect(one).toHaveAttribute("aria-expanded", "true");
+  expect(two).toHaveAttribute("aria-expanded", "false");
+  await user.keyboard(" ");
+  await waitFor(() => expect(one).toHaveAttribute("aria-expanded", "false"));
 });

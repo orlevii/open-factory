@@ -156,7 +156,12 @@ export function AddSkillsResults({
   if (found.length === 0) {
     return (
       <div className="space-y-1.5 text-[0.8125rem]">
-        <p key={seq} ref={focusAndReveal} tabIndex={-1} className="outline-none">
+        <p
+          key={seq}
+          ref={focusAndReveal}
+          tabIndex={-1}
+          className="outline-none" // ui-contract:allow programmatic focus target, not interactive
+        >
           {visibleControls(`No skills in ${result.source}${commit ? ` at ${commit}` : ""}.`)} A
           skill is a folder with a SKILL.md.
         </p>
@@ -172,7 +177,7 @@ export function AddSkillsResults({
           key={seq}
           ref={focusAndReveal}
           tabIndex={-1}
-          className="text-[0.8125rem] font-medium outline-none"
+          className="text-[0.8125rem] font-medium outline-none" // ui-contract:allow programmatic focus target, not interactive
         >
           Found {count(found.length, "skill")}
         </p>

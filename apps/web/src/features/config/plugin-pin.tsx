@@ -153,7 +153,7 @@ const ReviewPanel = memo(function ReviewPanel({
       role="group"
       aria-label={heading}
       onKeyDown={onKeyDown}
-      className="grid gap-3 rounded-md border border-border bg-card p-3"
+      className="grid min-w-0 grid-cols-1 gap-3 rounded-md border border-border bg-card p-3 [overflow-wrap:anywhere]"
     >
       <h4
         ref={focusHeading}
@@ -328,7 +328,7 @@ export const PinControl = memo(function PinControl({
         </AdaptiveMenu>
       ) : null}
       {review ? (
-        <div className="basis-full">
+        <div className="min-w-0 basis-full">
           {review.kind === "pin" ? (
             <ReviewPanel
               heading={PLUGIN_COPY.pinHeading(marketplace, shortRef(review.to))}

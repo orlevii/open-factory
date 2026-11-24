@@ -7,12 +7,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { checkGitUrl, normalizeRepo, normalizeSubpath } from "@open-factory/shared";
+import { CHECKOUT_CAP_BYTES, COMMIT_PATTERN, isRecord } from "./common.ts";
 import { GitError } from "./git.ts";
 import { checkoutSize, fetchCommit, installCheckout, removeTree, repoUrl } from "./git-fetch.ts";
 
-const SHA = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
-const CHECKOUT_CAP_BYTES = 50 * 1024 * 1024;
 
 /** An external plugin source of a catalog entry. `sha` (`sha256` for an archive) is what holds it to one version. */
 export type ExternalSource =
@@ -21,6 +20,8 @@ export type ExternalSource =
   | { source: "git-subdir"; url: string; path: string; sha?: string }
   | { source: "archive"; url: string; sha256?: string };
 
+type GitSource = Exclude<ExternalSource, { source: "archive" }>;
+
 export type PluginSourceInfo =
   | { kind: "relative"; path: string }
   | { kind: "external"; source: ExternalSource; pinnable: boolean }
@@ -28,8 +29,6 @@ export type PluginSourceInfo =
   | { kind: "refused"; label: string };
 
 const refused = (label: string): PluginSourceInfo => ({ kind: "refused", label });
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
 /** A source value that git could read as an option, or that carries a control character, is never passed on. */
@@ -52,37 +51,19 @@ export function classifyPluginSource(entry: Record<string, unknown>): PluginSour
   if (!isRecord(src)) return refused("unknown");
   const kind = str(src.source);
   const sha = str(src.sha);
-  const held = sha !== undefined && SHA.test(sha);
+  const held = sha !== undefined && COMMIT_PATTERN.test(sha);
   switch (kind) {
-    case "github": {
-      const repo = str(src.repo);
-      if (!repo || !safeArg(repo) || !normalizeRepo(repo)) return refused("github");
-      return {
-        kind: "external",
-        source: { source: "github", repo, ...(sha ? { sha } : {}) },
-        pinnable: held,
-      };
-    }
-    case "url": {
-      const url = str(src.url);
-      if (!url || !gitUrlOk(url)) return refused("url");
-      return {
-        kind: "external",
-        source: { source: "url", url, ...(sha ? { sha } : {}) },
-        pinnable: held,
-      };
-    }
+    case "github":
+    case "url":
     case "git-subdir": {
-      const url = str(src.url);
-      const sub = normalizeSubpath(str(src.path) ?? "");
-      if (!url || !gitUrlOk(url) || sub === null || sub === "" || !safeArg(sub)) {
-        return refused("git-subdir");
-      }
-      return {
-        kind: "external",
-        source: { source: "git-subdir", url, path: sub, ...(sha ? { sha } : {}) },
-        pinnable: held,
-      };
+      const candidate = {
+        source: kind,
+        ...(kind === "github" ? { repo: str(src.repo) } : { url: str(src.url) }),
+        ...(kind === "git-subdir" ? { path: str(src.path) } : {}),
+        ...(sha ? { sha } : {}),
+      } as GitSource;
+      if (gitTarget(candidate) === null) return refused(kind);
+      return { kind: "external", source: candidate, pinnable: held };
     }
     case "archive": {
       const url = str(src.url);
@@ -96,8 +77,22 @@ export function classifyPluginSource(entry: Record<string, unknown>): PluginSour
 }
 
 /** A git URL a source may name: `owner/repo` (read from the GitHub base) or an https URL without userinfo, `?` or `#`. */
-function gitUrlOk(u: string): boolean {
-  return safeArg(u) && (normalizeRepo(u) !== null || checkGitUrl(u));
+const gitUrlOk = (u: string) => safeArg(u) && (normalizeRepo(u) !== null || checkGitUrl(u));
+
+/**
+ * The one validator of a git-backed plugin source, for the catalog view and for fetching: the repo or URL to
+ * read and the normalised subpath ("" for the root), or null when either is unusable (userinfo, `?`, `#`, a
+ * leading dash, a non-https scheme, a path that leaves the repo).
+ */
+function gitTarget(src: GitSource): { value: string; subpath: string } | null {
+  const value = src.source === "github" ? src.repo : src.url;
+  if (typeof value !== "string") return null;
+  const ok =
+    src.source === "github" ? safeArg(value) && normalizeRepo(value) !== null : gitUrlOk(value);
+  if (!ok) return null;
+  if (src.source !== "git-subdir") return { value, subpath: "" };
+  const subpath = typeof src.path === "string" ? normalizeSubpath(src.path) : null;
+  return subpath === null || subpath === "" || !safeArg(subpath) ? null : { value, subpath };
 }
 
 function gitUrlOf(value: string, githubUrl: string): string {
@@ -126,15 +121,11 @@ export async function readPluginSource(
   sha: string,
   o: PluginSourceOptions,
 ): Promise<string> {
-  if (!SHA.test(sha)) throw new GitError("git failed: invalid commit.", "");
+  if (!COMMIT_PATTERN.test(sha)) throw new GitError("git failed: invalid commit.", "");
   if (src.source === "archive") throw new Error("Open Factory doesn't fetch archives.");
-  const value = src.source === "github" ? src.repo : src.url;
-  const subpath = src.source === "git-subdir" ? src.path : "";
-  if (!gitUrlOk(value) || (subpath !== "" && !safeArg(subpath))) {
-    throw new GitError("git failed: invalid source.", "");
-  }
-  const sub = normalizeSubpath(subpath);
-  if (sub === null) throw new GitError("git failed: invalid source.", "");
+  const target = gitTarget(src);
+  if (!target) throw new GitError("git failed: invalid source.", "");
+  const { value, subpath: sub } = target;
   const url = gitUrlOf(value, o.githubUrl);
   const hash = createHash("sha256").update(`${url}\0${sub}`).digest("hex").slice(0, 32);
   const dest = path.join(pluginSourcesRoot(o.factoryHome), hash, sha);

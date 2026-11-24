@@ -5,11 +5,12 @@
  */
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { UNDO_MS } from "./common.ts";
 import { removeTree } from "./git-fetch.ts";
 import { LIBRARY_KEY, libraryLock } from "./locks.ts";
 import type { MarketplacesService } from "./marketplaces-service.ts";
 import { pluginSourcesRoot } from "./plugin-sources.ts";
-import { type SourcesService, type SourcesStore, UNDO_MS } from "./sources-service.ts";
+import type { SourcesService, SourcesStore } from "./sources-service.ts";
 
 const PREVIEW_MAX_AGE_MS = 60 * 60 * 1000;
 const HOURLY_MS = 60 * 60 * 1000;

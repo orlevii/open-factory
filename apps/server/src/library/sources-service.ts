@@ -4,7 +4,7 @@
  * change flow, §8.3) and `publish` (the `library_changed` frame, §9.5) run only after the lock is released.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rename, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 import { type Db, type SkillSourceRow, schema } from "@open-factory/db";
 import {
@@ -21,6 +21,14 @@ import { eq } from "drizzle-orm";
 import type { z } from "zod";
 import { ApiError, FieldError } from "../errors.ts";
 import { resolveHostFolder } from "../host-path.ts";
+import {
+  CHECKOUT_CAP_BYTES,
+  isDir,
+  META_KEEP_MS,
+  SUBJECT_MAX,
+  UNDO_MS,
+  usersLine,
+} from "./common.ts";
 import { checkSkillFolder, type ForbiddenContext } from "./forbidden.ts";
 import { GitError, runGit } from "./git.ts";
 import {
@@ -58,12 +66,8 @@ export const SOURCE_MSG = {
   pinMoved: "This source changed. Try again.",
 } as const;
 
-export const UNDO_MS = 30_000;
 const CHECK_CONCURRENCY = 4;
-const CHECKOUT_CAP_BYTES = 50 * 1024 * 1024;
 const FILE_WALK_CAP = 2000;
-const META_KEEP_MS = 24 * 60 * 60 * 1000;
-const SUBJECT_MAX = 200;
 const BAD_NAME = "Name has characters skills can't use.";
 
 export interface FoundSkill {
@@ -186,15 +190,6 @@ interface PreviewMeta {
 }
 
 const DEFAULT_GITHUB = "https://github.com";
-
-const isDir = async (p: string) => (await stat(p).catch(() => undefined))?.isDirectory() ?? false;
-
-/** The users line of a refusal: at most three named, then "and N more". */
-function usersLine(templates: string[], agents: string[]): string {
-  const all = [...templates.map((t) => `template ${t}`), ...agents.map((a) => `@${a}`)];
-  const named = all.slice(0, 3);
-  return all.length > 3 ? `${named.join(", ")} and ${all.length - 3} more` : named.join(", ");
-}
 
 const sourceLabel = (s: SkillSourceRow) => (s.kind === "github" ? (s.repo ?? "") : (s.path ?? ""));
 const hookKey = (h: HookDecl) => JSON.stringify([h.event, h.matcher, h.command]);

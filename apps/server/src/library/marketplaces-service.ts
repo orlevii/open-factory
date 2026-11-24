@@ -5,7 +5,7 @@
  * commit: it never calls the config change flow and restarts no agent (spec §8.3). Nothing runs Claude Code.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, readlink, rename, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, readlink, rename } from "node:fs/promises";
 import path from "node:path";
 import { type Db, type MarketplaceRow, schema } from "@open-factory/db";
 import {
@@ -22,6 +22,17 @@ import { eq } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
 import { resolveHostFolder } from "../host-path.ts";
 import { redactOutput } from "../redact.ts";
+import {
+  CHECKOUT_CAP_BYTES,
+  COMMIT_PATTERN,
+  isDir,
+  isRecord,
+  META_KEEP_MS,
+  SUBJECT_MAX,
+  sha256,
+  UNDO_MS,
+  usersLine,
+} from "./common.ts";
 import { checkSkillFolder, type ForbiddenContext } from "./forbidden.ts";
 import { GitError, runGit } from "./git.ts";
 import {
@@ -48,6 +59,7 @@ export const MARKETPLACE_MSG = {
   overSize: "Marketplace is over 50 MB.",
   otherCommit: "The repo returned another commit.",
   noUpdate: "Check for updates again.",
+  stillAdding: "This marketplace is still being added.",
   undoOver: "Undo is over.",
   addFailed: "Couldn't add this marketplace.",
   checkFailed: "Couldn't check for updates.",
@@ -60,13 +72,8 @@ export const MARKETPLACE_MSG = {
     `Plugin ${plugin}@${mkt} uses a ${kind} source, which Open Factory doesn't install.`,
 } as const;
 
-export const UNDO_MS = 30_000;
 const CATALOG_MAX_BYTES = 1024 * 1024;
-const CHECKOUT_CAP_BYTES = 50 * 1024 * 1024;
 const FILE_WALK_CAP = 2000;
-const META_KEEP_MS = 24 * 60 * 60 * 1000;
-const SUBJECT_MAX = 200;
-const HEX_COMMIT = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 
 export type MarketplaceSource = MarketplaceRow["source"];
 export type MarketplaceBody =
@@ -167,6 +174,8 @@ export interface MarketplacesDeps {
   store: MarketplacesStore;
   /** Templates and agents that declare the marketplace or enable one of its plugins. */
   usedBy(name: string): Promise<{ templates: string[]; agents: string[] }>;
+  /** Directories the loaded runtimes' `started.library` reference; a stale row's checkouts under them are kept. */
+  inUse?: () => string[] | Promise<string[]>;
   /** Every pin a declaration holds: a commit, a tag, or null for Latest. Purge keeps these checkouts. */
   declaredRefs?: () => Promise<Array<{ marketplace: string; ref: string | null }>>;
   factoryHome: string;
@@ -198,17 +207,6 @@ interface PreviewMeta {
   subject: string | null;
   tags: Record<string, string>;
   at: number;
-}
-
-const isDir = async (p: string) => (await stat(p).catch(() => undefined))?.isDirectory() ?? false;
-const sha256 = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
-
-function usersLine(templates: string[], agents: string[]): string {
-  const all = [...templates.map((t) => `template ${t}`), ...agents.map((a) => `@${a}`)];
-  const named = all.slice(0, 3);
-  return all.length > 3 ? `${named.join(", ")} and ${all.length - 3} more` : named.join(", ");
 }
 
 // Catalog ---------------------------------------------------------------------------------
@@ -421,8 +419,8 @@ export class MarketplacesService {
     if (row.source.source === "directory") return row.source.path;
     const ref = commit ?? row.commit;
     if (!ref) return null;
-    const sha = HEX_COMMIT.test(ref) ? ref : row.tags[ref];
-    if (!sha || !HEX_COMMIT.test(sha)) return null;
+    const sha = COMMIT_PATTERN.test(ref) ? ref : row.tags[ref];
+    if (!sha || !COMMIT_PATTERN.test(sha)) return null;
     const dir = this.checkoutDir(name, sha);
     return (await isDir(dir)) ? dir : null;
   }
@@ -590,7 +588,7 @@ export class MarketplacesService {
     const out = new Map<string, string>();
     for (const line of stdout.split("\n")) {
       const [sha, ref] = line.split("\t");
-      if (!sha || !ref || !HEX_COMMIT.test(sha)) continue;
+      if (!sha || !ref || !COMMIT_PATTERN.test(sha)) continue;
       // The peeled line (`^{}`) is the commit an annotated tag points at, so it wins.
       if (ref.endsWith("^{}") || !out.has(ref)) out.set(ref, sha);
     }
@@ -707,9 +705,20 @@ export class MarketplacesService {
     this.d.publish?.(failed ? { addFailed: name } : undefined);
   }
 
+  /** Removes a row past its window; its checkouts stay when a loaded runtime still references them (the sweep retries). */
   private async dropRow(row: MarketplaceRow): Promise<void> {
     await this.d.store.delete(row.name);
-    await removeTree(path.join(this.root, row.name)).catch(() => {});
+    const dir = path.join(this.root, row.name);
+    const held = (await this.d.inUse?.()) ?? [];
+    if (held.some((p) => p === dir || p.startsWith(dir + path.sep))) {
+      for (const sha of await readdir(dir).catch(() => [] as string[])) {
+        const sub = path.join(dir, sha);
+        if (held.some((p) => p === sub || p.startsWith(sub + path.sep))) continue;
+        await removeTree(sub).catch(() => {});
+      }
+      return;
+    }
+    await removeTree(dir).catch(() => {});
   }
 
   // Check ---------------------------------------------------------------------------------
@@ -854,6 +863,8 @@ export class MarketplacesService {
       throw new ApiError(409, "stale_update", MARKETPLACE_MSG.noUpdate);
     }
     const co = await this.updatePreview(first, commit);
+    // Git runs before the lock; the tags at this commit were recorded by the check that found it.
+    const log = await this.logOf(co);
     const row = await libraryLock.run(LIBRARY_KEY, async () => {
       const cur = await this.get(name);
       if (cur.updateCommit !== commit) {
@@ -861,16 +872,10 @@ export class MarketplacesService {
       }
       const dest = this.checkoutDir(name, commit);
       if (!(await isDir(dest))) await installCheckout(co, "", dest);
-      const log = await this.logOf(co);
-      const tags = {
-        ...cur.tags,
-        ...(await this.tagsAt(this.urlOf(cur.source), commit).catch(() => ({}))),
-      };
       return (await this.d.store.update(name, {
         commit,
         committedAt: new Date(log.committedAt),
         subject: cutGraphemes(log.subject, SUBJECT_MAX),
-        tags,
         updateCommit: null,
         updateAt: null,
         updateSubject: null,
@@ -893,11 +898,11 @@ export class MarketplacesService {
     if (row.source.source === "directory") {
       throw new ApiError(409, "not_git", MARKETPLACE_MSG.liveOnly);
     }
-    if (row.state !== "ready") throw new ApiError(409, "adding", MARKETPLACE_MSG.noUpdate);
+    if (row.state !== "ready") throw new ApiError(409, "adding", MARKETPLACE_MSG.stillAdding);
     const url = this.urlOf(row.source);
     let sha: string;
     let tag: string | undefined;
-    if (HEX_COMMIT.test(ref)) sha = ref;
+    if (COMMIT_PATTERN.test(ref)) sha = ref;
     else {
       if (!checkBranchName(ref)) throw new FieldError("ref", MARKETPLACE_MSG.pinBranch(name));
       const refs = await this.lsRemote(url, [
@@ -920,27 +925,36 @@ export class MarketplacesService {
       tag = ref;
     }
     const dest = this.checkoutDir(name, sha);
-    if (!(await isDir(dest))) {
-      const tmp = path.join(this.previewRoot, `fetch-${randomUUID()}`);
-      try {
-        await fetchCommit(url, sha, tmp, this.fetchOpts(this.labelOf(row.source))).catch((e) => {
-          throw this.fieldFor(e, "ref");
+    // The checkout and its tag are made under one hold of the lock, so a purge can't remove it in between.
+    const tmp = path.join(this.previewRoot, `fetch-${randomUUID()}`);
+    let fetched = false;
+    try {
+      for (;;) {
+        if (!fetched && !(await isDir(dest))) {
+          await fetchCommit(url, sha, tmp, this.fetchOpts(this.labelOf(row.source))).catch((e) => {
+            throw this.fieldFor(e, "ref");
+          });
+          await this.checkSize(tmp);
+          await readCatalog(tmp);
+          fetched = true;
+        }
+        const done = await libraryLock.run(LIBRARY_KEY, async () => {
+          if (!(await isDir(dest))) {
+            if (!fetched) return false;
+            await installCheckout(tmp, "", dest);
+          }
+          const cur = (await this.d.store.all()).find(
+            (r) => r.name === name && r.deletedAt === null,
+          );
+          if (cur && tag !== undefined) {
+            await this.d.store.update(name, { tags: { ...cur.tags, [tag]: sha } });
+          }
+          return true;
         });
-        await this.checkSize(tmp);
-        await readCatalog(tmp);
-        await libraryLock.run(LIBRARY_KEY, async () => {
-          if (!(await isDir(dest))) await installCheckout(tmp, "", dest);
-        });
-      } finally {
-        await removeTree(tmp).catch(() => {});
+        if (done) break;
       }
-    }
-    if (tag !== undefined) {
-      const recorded = tag;
-      await libraryLock.run(LIBRARY_KEY, async () => {
-        const cur = (await this.d.store.all()).find((r) => r.name === name && r.deletedAt === null);
-        if (cur) await this.d.store.update(name, { tags: { ...cur.tags, [recorded]: sha } });
-      });
+    } finally {
+      await removeTree(tmp).catch(() => {});
     }
     this.d.publish?.();
     return { sha };
@@ -1031,7 +1045,7 @@ export class MarketplacesService {
       if (row.commit) keep.add(row.commit);
       for (const d of declared ?? []) {
         if (d.marketplace !== name || d.ref === null) continue;
-        keep.add(HEX_COMMIT.test(d.ref) ? d.ref : (row.tags[d.ref] ?? d.ref));
+        keep.add(COMMIT_PATTERN.test(d.ref) ? d.ref : (row.tags[d.ref] ?? d.ref));
       }
       for (const sha of await readdir(nameDir).catch(() => [] as string[])) {
         const dir = path.join(nameDir, sha);

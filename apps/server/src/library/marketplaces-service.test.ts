@@ -66,12 +66,17 @@ interface Setup {
   store: MarketplacesStore;
   users: Users;
   declared: Array<{ marketplace: string; ref: string | null }>;
+  /** Directories the loaded runtimes reference. */
+  inUse: string[];
   frames: Array<{ addFailed?: string } | undefined>;
   publishDepth: number[];
   logged: string[];
 }
-function setup(o: { gitBin?: string; fileWalkCap?: number } = {}): Setup {
-  const store = memoryMarketplacesStore();
+function setup(
+  o: { gitBin?: string; fileWalkCap?: number; store?: MarketplacesStore } = {},
+): Setup {
+  const store = o.store ?? memoryMarketplacesStore();
+  const inUse: string[] = [];
   const users: Users = {};
   const declared: Setup["declared"] = [];
   const frames: Setup["frames"] = [];
@@ -83,6 +88,7 @@ function setup(o: { gitBin?: string; fileWalkCap?: number } = {}): Setup {
     store,
     usedBy: async (n) => users[n] ?? { templates: [], agents: [] },
     declaredRefs: async () => declared,
+    inUse: () => inUse,
     factoryHome: fh,
     home,
     forbidden: { home, factoryHome: fh, dockerSockets: [] },
@@ -96,7 +102,7 @@ function setup(o: { gitBin?: string; fileWalkCap?: number } = {}): Setup {
       frames.push(e);
     },
   });
-  return { svc, store, users, declared, frames, publishDepth, logged };
+  return { svc, store, users, declared, inUse, frames, publishDepth, logged };
 }
 
 const repoDir = () => path.join(tmp, "gh", "acme", "mk.git");
@@ -369,6 +375,38 @@ describe("add", () => {
     await expectApi(s.svc.fetchAt("local", "a".repeat(40)), 409, "not_git");
   });
 
+  test("adding over a row past its window keeps checkouts a loaded runtime references", async () => {
+    const { shas } = await basicRepo();
+    const s = setup();
+    await s.svc.add((await s.svc.preview(github)).previewId, "@or");
+    await s.svc.remove("acme");
+    nowMs += 31_000;
+    const newSha = commitMore(repoDir(), { "more.txt": "x" });
+    const root = path.join(fh, "state", "library", "marketplaces", "acme");
+    const held = path.join(root, shas[0] as string);
+    s.inUse.push(held);
+    await s.svc.add((await s.svc.preview(github)).previewId, "@or");
+    expect(readdirSync(root).sort()).toEqual([shas[0], newSha].sort());
+    // Once the runtime lets go, the next purge removes it.
+    s.inUse.length = 0;
+    await sweepFor(s).purge();
+    expect(readdirSync(root)).toEqual([newSha]);
+  });
+
+  test("adding over a row past its window with nothing in use clears the old checkouts", async () => {
+    const { shas } = await basicRepo();
+    const s = setup();
+    await s.svc.add((await s.svc.preview(github)).previewId, "@or");
+    await s.svc.remove("acme");
+    nowMs += 31_000;
+    const newSha = commitMore(repoDir(), { "more.txt": "x" });
+    await s.svc.add((await s.svc.preview(github)).previewId, "@or");
+    expect(readdirSync(path.join(fh, "state", "library", "marketplaces", "acme"))).toEqual([
+      newSha,
+    ]);
+    expect(shas[0]).not.toBe(newSha);
+  });
+
   test("a name taken between preview and add is refused", async () => {
     await basicRepo();
     const s = setup();
@@ -529,6 +567,17 @@ describe("check and update", () => {
     expect(readdirSync(path.join(fh, "state", "library", "preview"))).toEqual([]);
   });
 
+  test("update runs no ls-remote of its own: it keeps the tags the check recorded", async () => {
+    const { s } = await added();
+    const sha1 = commitMore(repoDir(), { "plugins/docs/README.md": "two" });
+    git(repoDir(), ["tag", "-a", "v9", "-m", "r"]);
+    await s.svc.check("acme");
+    // The remote can't answer any more, so an update that asked it would lose or fail on the tag.
+    git(repoDir(), ["tag", "-d", "v9"]);
+    const d = await s.svc.update("acme", sha1, "@or");
+    expect(d.tags).toEqual({ v9: sha1 });
+  });
+
   test("an update names the commit the check found, nothing else", async () => {
     const { s } = await added();
     commitMore(repoDir(), { "plugins/docs/README.md": "two" });
@@ -647,6 +696,38 @@ describe("tags and fetch", () => {
     const s = setup();
     await s.svc.add((await s.svc.preview(github)).previewId, "@or");
     await expectApi(s.svc.fetchAt("acme", ref), status, code);
+  });
+
+  test("fetchAt on a row still being added says so", async () => {
+    const [first] = await twoCommits();
+    const s = setup();
+    await s.svc.add((await s.svc.preview(github)).previewId, "@or");
+    await s.store.update("acme", { state: "adding" });
+    const e = await expectApi(s.svc.fetchAt("acme", first), 409, "adding");
+    expect(e.message).toBe("This marketplace is still being added.");
+  });
+
+  test("fetchAt records the tag while the Library lock is held and its checkout exists", async () => {
+    const [first] = await twoCommits();
+    git(repoDir(), ["tag", "-a", "old", "-m", "x", "HEAD~1"]);
+    const inner = memoryMarketplacesStore();
+    const seen: Array<{ lockHeld: boolean; checkout: boolean }> = [];
+    const store: MarketplacesStore = {
+      ...inner,
+      update: async (name, patch) => {
+        if (patch.tags?.old) {
+          seen.push({
+            lockHeld: depth.n > 0,
+            checkout: existsSync(path.join(fh, "state", "library", "marketplaces", name, first)),
+          });
+        }
+        return inner.update(name, patch);
+      },
+    };
+    const s = setup({ store });
+    await s.svc.add((await s.svc.preview(github)).previewId, "@or");
+    await s.svc.fetchAt("acme", "old");
+    expect(seen).toEqual([{ lockHeld: true, checkout: true }]);
   });
 
   test("checkout answers null for a path that isn't a commit or a recorded tag", async () => {

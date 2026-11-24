@@ -99,7 +99,14 @@ export const PLUGIN_COPY = {
   running: (version: string) => `running ${version}`,
   needs: (n: number) => `Needs ${n} from the image`,
   remove: (key: string) => `Remove ${key}`,
-  groupLabel: (mkt: string) => `Plugins from ${mkt}`,
+  cantPinFirst: (key: string, mkt: string) =>
+    `${key} can't be pinned. Add another ${mkt} plugin first, then switch ${mkt} to Latest.`,
+  noPluginsInSkills: "No plugins in Skills yet.",
+  theTemplate: "the template",
+  runsCodeChanged: "Runs code changed",
+  loadingDiff: "Loading what changes",
+  notInCatalog: (at: string) => `Not in the catalog at ${at}`,
+  newSince: (at: string) => `New since ${at}`,
 } as const;
 
 /** "Adds GH_TOKEN to this agent's secrets." (spec §12.2), shown under the value an Insert secret filled. */

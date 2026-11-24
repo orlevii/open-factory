@@ -98,12 +98,14 @@ function PluginDiff({ d }: { d: Diff }) {
         <span className="font-mono">
           <UntrustedProse text={d.key} />
         </span>
-        {d.diff.runsCode && <span className="font-medium">Runs code changed</span>}
+        {d.diff.runsCode && <span className="font-medium">{PLUGIN_COPY.runsCodeChanged}</span>}
       </div>
       {!d.to.present && (
-        <DiffLine sign="−" text={`Not in the catalog at ${shortRef(d.to.commit)}`} />
+        <DiffLine sign="−" text={PLUGIN_COPY.notInCatalog(shortRef(d.to.commit))} />
       )}
-      {!d.from.present && <DiffLine sign="+" text={`New since ${shortRef(d.from.commit)}`} />}
+      {!d.from.present && (
+        <DiffLine sign="+" text={PLUGIN_COPY.newSince(shortRef(d.from.commit))} />
+      )}
       {lines.map((l) => (
         <DiffLine key={`${l.sign}${l.text}`} sign={l.sign} text={l.text} />
       ))}
@@ -200,7 +202,7 @@ function DiffBody({
   if (status === "pending")
     return (
       <div role="status">
-        <span className="sr-only">Loading what changes</span>
+        <span className="sr-only">{PLUGIN_COPY.loadingDiff}</span>
         <SkeletonRows n={3} />
       </div>
     );
@@ -262,7 +264,6 @@ export const PinControl = memo(function PinControl({
   const menu = editable && pin.kind !== "live" && (canPin || canLatest);
 
   const startPin = (to: string) => {
-    handoff.current = true;
     setReview({ kind: "pin", to });
     if (current !== undefined)
       diff.mutate({ id: `${marketplace}\0${current}\0${to}`, keys, from: current, to });
@@ -281,7 +282,7 @@ export const PinControl = memo(function PinControl({
 
   return (
     <>
-      <PinFacts decl={decl} library={row?.commit} />
+      <PinFacts decl={decl} library={editable ? row?.commit : undefined} />
       {menu ? (
         <AdaptiveMenu title={`${CONFIG_COPY.changePin}: ${marketplace}`}>
           <AdaptiveMenuTrigger asChild>
@@ -306,7 +307,12 @@ export const PinControl = memo(function PinControl({
             }}
           >
             {pinTo !== undefined ? (
-              <AdaptiveMenuItem onSelect={() => startPin(pinTo)}>
+              <AdaptiveMenuItem
+                onSelect={() => {
+                  handoff.current = true;
+                  startPin(pinTo);
+                }}
+              >
                 {PLUGIN_COPY.pinTo(shortRef(pinTo), pin.kind !== "latest")}
               </AdaptiveMenuItem>
             ) : null}

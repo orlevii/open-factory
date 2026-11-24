@@ -404,6 +404,20 @@ describe("plugin picker", () => {
     expect(onValue).not.toHaveBeenCalled();
   });
 
+  test("a first pick that can't be pinned doesn't point at a Latest switch that doesn't exist", async () => {
+    useMarketplaces();
+    const onValue = vi.fn();
+    render(<PluginsForm onValue={onValue} />);
+    await openPlugins();
+    await userEvent.click(await screen.findByRole("option", { name: /loose@acme/ }));
+    expect(
+      screen.getAllByText(
+        "loose@acme can't be pinned. Add another acme plugin first, then switch acme to Latest.",
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(onValue).not.toHaveBeenCalled();
+  });
+
   test("it joins a Latest declaration", async () => {
     useMarketplaces();
     const onValue = vi.fn();

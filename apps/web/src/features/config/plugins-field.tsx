@@ -83,7 +83,7 @@ function refusalFor(key: string, entry: Entry | undefined, row: Row | undefined,
       : undefined;
   }
   if (!row || row.source.source === "directory") return undefined;
-  if (cantPin) return PLUGIN_COPY.cantPin(key, mkt);
+  if (cantPin) return PLUGIN_COPY.cantPinFirst(key, mkt);
   if (pinRefFor(row) === undefined)
     return row.commit === null ? PLUGIN_COPY.notRead(mkt) : PLUGIN_COPY.tagOnly(mkt);
   return undefined;
@@ -364,8 +364,8 @@ function PluginPicker({
         ? CONFIG_COPY.allPluginsAdded
         : leftOut === 0
           ? agentDecls
-            ? PLUGIN_COPY.noPlugins(template ?? "the template")
-            : "No plugins in Skills yet."
+            ? PLUGIN_COPY.noPlugins(template ?? PLUGIN_COPY.theTemplate)
+            : PLUGIN_COPY.noPluginsInSkills
           : "";
   return (
     <PickAddMany
@@ -382,7 +382,7 @@ function PluginPicker({
           {leftOut > 0 ? <p>{PLUGIN_COPY.leftOut(leftOut)}</p> : null}
           <p>
             {agentDecls
-              ? PLUGIN_COPY.onlyFrom(template ?? "the template")
+              ? PLUGIN_COPY.onlyFrom(template ?? PLUGIN_COPY.theTemplate)
               : CONFIG_COPY.addMarketplacesInSkills}
           </p>
         </div>

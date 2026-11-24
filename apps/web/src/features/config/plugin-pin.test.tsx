@@ -146,6 +146,14 @@ describe("pinned by default", () => {
     fail = false;
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Runs code changed")).toBeInTheDocument();
+    // A retry isn't a menu selection: a later Esc on the menu still returns focus to its trigger.
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await userEvent.click(screen.getByRole("button", { name: "Change pin for acme" }));
+    await screen.findByRole("menuitem", { name: /Pin to e4f5a6b/ });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Change pin for acme" })).toHaveFocus(),
+    );
   });
 });
 

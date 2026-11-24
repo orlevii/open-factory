@@ -563,6 +563,8 @@ describe("plugins, agent mode", () => {
     await waitFor(() => expect(g).toHaveTextContent(/Pinned\s*·\s*a1b2c3d/));
     expect(within(g).queryByRole("button", { name: /Change pin/ })).toBeNull();
     expect(within(g).queryByRole("button", { name: /Remove/ })).toBeNull();
+    // A read-only pin has no update to offer.
+    expect(g).not.toHaveTextContent("Newer in Skills");
     first.unmount();
 
     render(

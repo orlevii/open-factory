@@ -1,6 +1,6 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: plugin files reference paths and secrets as ${NAME}.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -13,8 +13,10 @@ afterEach(() => {
 
 /** A fresh plugin checkout with the given files (relative path → text). A file that starts with `#!` is a script and gets the exec bit. */
 function plugin(files: Record<string, string> = {}): string {
-  const root = mkdtempSync(path.join(tmpdir(), "of-plugin-"));
-  roots.push(root);
+  const base = mkdtempSync(path.join(tmpdir(), "of-plugin-"));
+  roots.push(base);
+  const root = path.join(base, "plugin");
+  mkdirSync(root);
   for (const [rel, text] of Object.entries(files)) {
     const abs = path.join(root, rel);
     mkdirSync(path.dirname(abs), { recursive: true });
@@ -203,6 +205,71 @@ describe("readContents: needs from the image", () => {
       },
       needs: [],
     },
+    {
+      name: "the programs of shell keywords, skipping the keywords",
+      files: {
+        "hooks/hooks.json": json({
+          hooks: { Stop: [{ hooks: [{ type: "command", command: "if uvx x; then npx y; fi" }] }] },
+        }),
+      },
+      needs: ["npx", "uvx"],
+    },
+    {
+      name: "the program after env and its assignments",
+      files: {
+        "hooks/hooks.json": json({
+          hooks: { Stop: [{ hooks: [{ type: "command", command: "env FOO=1 node s.js" }] }] },
+        }),
+      },
+      needs: ["node"],
+    },
+    {
+      name: "the program of a /bin/bash -lc script",
+      files: {
+        "hooks/hooks.json": json({
+          hooks: { Stop: [{ hooks: [{ type: "command", command: '/bin/bash -lc "bun run x"' }] }] },
+        }),
+      },
+      needs: ["bun"],
+    },
+    {
+      name: "the program of an sh -c script",
+      files: {
+        "hooks/hooks.json": json({
+          hooks: { Stop: [{ hooks: [{ type: "command", command: 'sh -c "npx -y y"' }] }] },
+        }),
+      },
+      needs: ["npx"],
+    },
+    {
+      name: "the program inside a $( ) substitution",
+      files: {
+        "hooks/hooks.json": json({
+          hooks: { Stop: [{ hooks: [{ type: "command", command: "echo $(uvx --version)" }] }] },
+        }),
+      },
+      needs: ["uvx"],
+    },
+    {
+      name: "the program of an LSP server",
+      files: { ".lsp.json": json({ ts: { command: "typescript-language-server" } }) },
+      needs: ["typescript-language-server"],
+    },
+    {
+      name: "the program of a status line",
+      files: {
+        ".claude-plugin/plugin.json": json({
+          name: "p",
+          statusLine: { command: "git-status --short" },
+        }),
+      },
+      needs: ["git-status"],
+    },
+    {
+      name: "the program of a monitor",
+      files: { "monitors/monitors.json": json([{ name: "w", command: "tail -f log.txt" }]) },
+      needs: ["tail"],
+    },
   ])("lists $name", async ({ files, needs }) => {
     const c = await readContents(plugin(files));
     expect(c.needs).toEqual(needs);
@@ -272,6 +339,114 @@ describe("readContents: what it can't show", () => {
   });
 });
 
+describe("readContents: declared paths, shapes and walk caps", () => {
+  const outsideHooks = json({
+    hooks: { Stop: [{ hooks: [{ type: "command", command: "echo out" }] }] },
+  });
+
+  test.each([
+    {
+      name: "a path that climbs out of the plugin",
+      declared: "../outside.json",
+      expected: "../outside.json (outside the plugin)",
+    },
+    {
+      name: "a declared file that is missing",
+      declared: "missing.json",
+      expected: "missing.json (not found)",
+    },
+    {
+      name: "a declared file that is a link",
+      declared: "linked.json",
+      expected: "linked.json (a link)",
+    },
+    {
+      name: "a declared path through a linked folder",
+      declared: "linkdir/hooks.json",
+      expected: "linkdir/hooks.json (a link)",
+    },
+  ])("refuses $name and never reads past the plugin", async ({ declared, expected }) => {
+    const root = plugin({ ".claude-plugin/plugin.json": json({ name: "p", hooks: declared }) });
+    const base = path.dirname(root);
+    writeFileSync(path.join(base, "outside.json"), outsideHooks);
+    symlinkSync(path.join(base, "outside.json"), path.join(root, "linked.json"));
+    mkdirSync(path.join(base, "outdir"));
+    writeFileSync(path.join(base, "outdir", "hooks.json"), outsideHooks);
+    symlinkSync(path.join(base, "outdir"), path.join(root, "linkdir"));
+    const c = await readContents(root);
+    expect(c.hooks).toEqual([]);
+    expect(c.unshown).toEqual([expected]);
+  });
+
+  test("refuses an absolute path to a file outside the plugin", async () => {
+    const root = plugin({});
+    const outside = path.join(path.dirname(root), "outside.json");
+    writeFileSync(outside, outsideHooks);
+    mkdirSync(path.join(root, ".claude-plugin"));
+    writeFileSync(
+      path.join(root, ".claude-plugin", "plugin.json"),
+      json({ name: "p", hooks: outside }),
+    );
+    const c = await readContents(root);
+    expect(c.hooks).toEqual([]);
+    expect(c.unshown).toEqual([`${outside} (outside the plugin)`]);
+  });
+
+  test.each([
+    { name: "a hooks file that is a JSON array", content: "[1, 2]" },
+    { name: "a hook event whose value isn't a list", content: json({ hooks: { Stop: "echo" } }) },
+    {
+      name: "a hook group without a list of hooks",
+      content: json({ hooks: { Stop: [{ matcher: "x" }] } }),
+    },
+  ])("lists $name as not in the expected shape", async ({ content }) => {
+    const c = await readContents(plugin({ "hooks/hooks.json": content }));
+    expect(c.hooks).toEqual([]);
+    expect(c.unshown).toEqual(["hooks/hooks.json (not in the expected shape)"]);
+  });
+
+  test("lists an MCP server that isn't an object", async () => {
+    const c = await readContents(plugin({ ".mcp.json": json({ mcpServers: { s: 5 } }) }));
+    expect(c.mcp).toEqual([]);
+    expect(c.unshown).toEqual([".mcp.json (not in the expected shape)"]);
+  });
+
+  test("lists a link in bin/ and still shows the executables", async () => {
+    const root = plugin({ "bin/tool": "#!/bin/sh\n" });
+    const outside = path.join(path.dirname(root), "outside-tool");
+    writeFileSync(outside, "#!/bin/sh\n", { mode: 0o755 });
+    symlinkSync(outside, path.join(root, "bin", "link"));
+    const c = await readContents(root);
+    expect(c.codeParts).toEqual([{ kind: "bin", items: ["bin/tool"] }]);
+    expect(c.unshown).toEqual(["bin/link (a link)"]);
+  });
+
+  test("lists the executables of bin/ even when the walk of the plugin stopped", async () => {
+    const files: Record<string, string> = { "bin/tool": "#!/bin/sh\n" };
+    for (let i = 0; i < 2001; i++) files[`a/f${i}.txt`] = "x";
+    const c = await readContents(plugin(files));
+    expect(c.codeParts).toEqual([{ kind: "bin", items: ["bin/tool"] }]);
+    expect(c.unshown).toEqual(["a walk stopped at 2,000 files"]);
+  });
+
+  test("lists a walk that stopped at 2,000 folders", async () => {
+    const root = plugin({});
+    for (let i = 0; i < 2001; i++) mkdirSync(path.join(root, "d", String(i)), { recursive: true });
+    expect((await readContents(root)).unshown).toEqual(["a walk stopped at 2,000 folders"]);
+  });
+
+  test.skipIf(process.getuid?.() === 0)("lists a folder that can't be read", async () => {
+    const root = plugin({ "locked/a.txt": "x" });
+    const locked = path.join(root, "locked");
+    chmodSync(locked, 0o000);
+    try {
+      expect((await readContents(root)).unshown).toEqual(["locked (can't be read)"]);
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+  });
+});
+
 describe("readContents: files, manifest and provides", () => {
   test("files lists only referenced regular files inside the root", async () => {
     const outside = plugin({ "secret.sh": "echo secret\n" });
@@ -285,6 +460,7 @@ describe("readContents: files, manifest and provides", () => {
                 { type: "command", command: "bash ${CLAUDE_PLUGIN_ROOT}/scripts/linked.sh" },
                 { type: "command", command: "bash ${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh" },
                 { type: "command", command: "bash ${CLAUDE_PLUGIN_ROOT}/../escape.sh" },
+                { type: "command", command: "bash $CLAUDE_PLUGIN_ROOT/scripts/bare.sh" },
               ],
             },
           ],
@@ -294,12 +470,15 @@ describe("readContents: files, manifest and provides", () => {
         mcpServers: { s: { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/server/index.js"] } },
       }),
       "scripts/run.sh": "echo run\n",
+      "scripts/bare.sh": "echo bare\n",
       "scripts/other.sh": "echo unreferenced\n",
       "server/index.js": "console.log(1)\n",
     });
+    // The climbing reference resolves to a real file one level above the plugin: it must still be excluded.
+    writeFileSync(path.join(path.dirname(root), "escape.sh"), "echo out\n");
     symlinkSync(path.join(outside, "secret.sh"), path.join(root, "scripts", "linked.sh"));
     const c = await readContents(root);
-    expect(c.files).toEqual(["scripts/run.sh", "server/index.js"]);
+    expect(c.files).toEqual(["scripts/bare.sh", "scripts/run.sh", "server/index.js"]);
   });
 
   test("reads the manifest fields", async () => {
@@ -372,6 +551,16 @@ describe("diffContents", () => {
     const d = diffContents(before, after);
     expect(d.dependencies).toEqual({ added: ["lint@2"], removed: ["lint@1"] });
     expect(d.needs.added).toEqual(["npx"]);
+  });
+
+  test("a dependencies-only change is flagged as running code", async () => {
+    const before = await readContents(
+      plugin({ ".claude-plugin/plugin.json": json({ dependencies: ["lint@1"] }) }),
+    );
+    const after = await readContents(
+      plugin({ ".claude-plugin/plugin.json": json({ dependencies: ["lint@2"] }) }),
+    );
+    expect(diffContents(before, after).runsCode).toBe(true);
   });
 
   test("a changed description is neither code nor a diff", async () => {

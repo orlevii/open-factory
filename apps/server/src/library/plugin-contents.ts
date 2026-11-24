@@ -30,10 +30,11 @@ export const CODE_KEYS = [
 
 /** A JSON file is read at most this far (spec §7.8). */
 const JSON_CAP = 256 * 1024;
-/** The walk lists at most this many regular files (spec §7.8). */
+/** A walk lists at most this many regular files and visits at most this many folders (spec §7.8). */
 const WALK_CAP = 2000;
 const PLUGIN_JSON = ".claude-plugin/plugin.json";
-const WALK_STOPPED = "a walk stopped at 2,000 files";
+const STOPPED_FILES = "a walk stopped at 2,000 files";
+const STOPPED_FOLDERS = "a walk stopped at 2,000 folders";
 /** Keys `plugin.json` may hold that Open Factory reads or that run nothing. Any other key is listed as unshown. */
 const KNOWN_MANIFEST_KEYS = new Set([
   "$schema",
@@ -121,7 +122,7 @@ export type PluginContents = {
   /** Program names the image must provide, sorted; `bin/` stands for the plugin's executables. */
   needs: string[];
   provides: Provides;
-  /** Parts that couldn't be read, each with its reason in parentheses. */
+  /** Parts that couldn't be read or shown, each with its reason in parentheses. */
   unshown: string[];
   /** The plugin's own files that hook and MCP commands reference, relative to the root. */
   files: string[];
@@ -137,7 +138,7 @@ export type ContentsDiff = {
   dependencies: Change<string>;
   codeParts: Change<CodePart>;
   needs: Change<string>;
-  /** True when a hook, an MCP server or a code part was added or removed. */
+  /** True when a hook, an MCP server, a code part, a dependency or a need was added or removed. */
   runsCode: boolean;
 };
 
@@ -151,7 +152,7 @@ const dedupe = <T>(xs: T[]): T[] => [...new Map(xs.map((x) => [JSON.stringify(x)
 
 /** `${CLAUDE_PLUGIN_ROOT}/…` in a command: the plugin's own file, not a program. */
 const REFERENCE = /^\$\{[^{}]*\}$/;
-const ROOT_REFERENCE = /\$\{CLAUDE_PLUGIN_ROOT\}\/([^\s"'`;&|<>()]+)/g;
+const ROOT_REFERENCE = /\$(?:\{CLAUDE_PLUGIN_ROOT\}|CLAUDE_PLUGIN_ROOT)\/([^\s"'`;&|<>()]+)/g;
 
 // Reading -----------------------------------------------------------------------------------
 
@@ -179,7 +180,7 @@ async function resolveIn(root: string, rel: string): Promise<Resolved> {
 
 const reasonOf = (r: Resolved) => (r.kind === "link" ? "a link" : "not a file");
 
-/** A JSON object or array at `rel`; absent is undefined, and what can't be read goes to `unshown`. */
+/** A JSON value at `rel` (an object or an array); absent is undefined, and what can't be read goes to `unshown`. */
 async function readJson(root: string, rel: string, unshown: Set<string>): Promise<unknown> {
   const r = await resolveIn(root, rel);
   if (r.kind === "absent") return undefined;
@@ -210,95 +211,145 @@ async function readJson(root: string, rel: string, unshown: Set<string>): Promis
   return value;
 }
 
-/** A path a manifest declares, read from the plugin only: absolute paths and `..` are refused. */
+/**
+ * A path a manifest declares, read from inside the plugin only: a path that climbs out or is absolute is refused,
+ * and a missing path, a link on the way or a link at the file is listed.
+ */
 async function readDeclared(
   root: string,
   declared: string,
   unshown: Set<string>,
-): Promise<unknown> {
+): Promise<{ label: string; value: unknown } | undefined> {
   const rel = normalizeSubpath(declared.startsWith("./") ? declared.slice(2) : declared);
   if (!rel) {
     unshown.add(`${cut(declared)} (outside the plugin)`);
     return undefined;
   }
-  return readJson(root, rel, unshown);
+  if ((await resolveIn(root, rel)).kind === "absent") {
+    unshown.add(`${rel} (not found)`);
+    return undefined;
+  }
+  return { label: rel, value: await readJson(root, rel, unshown) };
 }
 
-/** The object a config file holds under `key` (`{ "hooks": {…} }`), or the file itself when it has none. */
-const unwrap = (obj: Record<string, unknown>, key: string): Record<string, unknown> =>
-  isRecord(obj[key]) ? (obj[key] as Record<string, unknown>) : obj;
+/** A config source: the file's object under `key` (`{ "hooks": {…} }`), or the file itself when it has none. */
+type Source = { label: string; obj: Record<string, unknown> };
 
-/** The objects a default config file holds: its file contents, unwrapped, when the file exists. */
-async function fileObjects(
+const shape = (label: string, unshown: Set<string>) =>
+  unshown.add(`${label} (not in the expected shape)`);
+
+function objectSource(label: string, value: unknown, key: string, unshown: Set<string>): Source[] {
+  if (value === undefined) return [];
+  if (!isRecord(value)) {
+    shape(label, unshown);
+    return [];
+  }
+  const under = value[key];
+  return [{ label, obj: isRecord(under) ? under : value }];
+}
+
+/** A default config file (`hooks/hooks.json`, `.mcp.json`, `.lsp.json`) as sources. */
+async function fileSources(
   root: string,
   rel: string,
   key: string,
   unshown: Set<string>,
-): Promise<Record<string, unknown>[]> {
-  const v = await readJson(root, rel, unshown);
-  return isRecord(v) ? [unwrap(v, key)] : [];
+): Promise<Source[]> {
+  return objectSource(rel, await readJson(root, rel, unshown), key, unshown);
 }
 
 /**
- * The objects a manifest field holds: each declared path is read and unwrapped, each inline object is used as it
- * is (an inline hooks object is the event map itself).
+ * What a manifest field holds: each declared path is read as a config file, and each inline object is the object
+ * itself (an inline hooks object is the event map).
  */
-async function sourceObjects(
+async function manifestSources(
   root: string,
   value: unknown,
   key: string,
   unshown: Set<string>,
-): Promise<Record<string, unknown>[]> {
-  const out: Record<string, unknown>[] = [];
+): Promise<Source[]> {
+  const out: Source[] = [];
   for (const src of sources(value)) {
     if (typeof src === "string") {
-      const v = await readDeclared(root, src, unshown);
-      if (isRecord(v)) out.push(unwrap(v, key));
-    } else if (isRecord(src)) out.push(src);
+      const d = await readDeclared(root, src, unshown);
+      if (d) out.push(...objectSource(d.label, d.value, key, unshown));
+    } else if (isRecord(src)) out.push({ label: `plugin.json ${key}`, obj: src });
+    else shape(`plugin.json ${key}`, unshown);
   }
   return out;
 }
 
 type FileEntry = { path: string; executable: boolean };
+type Tree = {
+  files: FileEntry[];
+  stopped: "files" | "folders" | null;
+  /** Folders that couldn't be listed. */
+  unreadable: string[];
+  /** Links, listed by path and never followed. */
+  links: string[];
+};
 
-/** Regular files under `root`, `.git` left out, links never followed; `capped` when more than the cap exist. */
-async function walkFiles(root: string): Promise<{ files: FileEntry[]; capped: boolean }> {
-  const files: FileEntry[] = [];
-  let capped = false;
-  const walk = async (dir: string, rel: string): Promise<void> => {
-    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+/**
+ * Regular files under `dir` (named `prefix/…`), `.git` left out, links recorded and never followed. `maxDepth` is how
+ * many folder levels below `dir` are entered. Stops at 2,000 files or 2,000 folders, and says which.
+ */
+async function walkTree(dir: string, prefix: string, maxDepth: number): Promise<Tree> {
+  const out: Tree = { files: [], stopped: null, unreadable: [], links: [] };
+  let folders = 0;
+  const walk = async (d: string, rel: string, depth: number): Promise<void> => {
+    if (folders >= WALK_CAP) {
+      out.stopped ??= "folders";
+      return;
+    }
+    folders++;
+    const entries = await readdir(d, { withFileTypes: true }).catch(() => undefined);
+    if (!entries) {
+      out.unreadable.push(rel);
+      return;
+    }
     for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      if (capped) return;
+      if (out.stopped) return;
       if (e.name.toLowerCase() === ".git") continue;
-      const abs = path.join(dir, e.name);
+      const abs = path.join(d, e.name);
       const r = rel === "" ? e.name : `${rel}/${e.name}`;
-      if (e.isDirectory()) await walk(abs, r);
-      else if (e.isFile()) {
+      if (e.isSymbolicLink()) out.links.push(r);
+      else if (e.isDirectory()) {
+        if (depth < maxDepth) await walk(abs, r, depth + 1);
+      } else if (e.isFile()) {
         const st = await lstat(abs).catch(() => undefined);
         if (!st?.isFile()) continue;
-        if (files.length >= WALK_CAP) {
-          capped = true;
+        if (out.files.length >= WALK_CAP) {
+          out.stopped = "files";
           return;
         }
-        files.push({ path: r, executable: (st.mode & 0o111) !== 0 });
+        out.files.push({ path: r, executable: (st.mode & 0o111) !== 0 });
       }
     }
   };
-  await walk(root, "");
-  return { files, capped };
+  await walk(dir, prefix, 0);
+  return out;
 }
 
 // Hooks, servers and needs ---------------------------------------------------------------------
 
-function hookRows(events: Record<string, unknown>): HookRow[] {
+function hookRows(src: Source, unshown: Set<string>): HookRow[] {
   const rows: HookRow[] = [];
-  for (const [event, groups] of Object.entries(events)) {
-    if (!Array.isArray(groups)) continue;
+  for (const [event, groups] of Object.entries(src.obj)) {
+    if (!Array.isArray(groups)) {
+      shape(src.label, unshown);
+      continue;
+    }
     for (const group of groups) {
-      if (!isRecord(group) || !Array.isArray(group.hooks)) continue;
+      if (!isRecord(group) || !Array.isArray(group.hooks)) {
+        shape(src.label, unshown);
+        continue;
+      }
       const matcher = str(group.matcher) ?? "";
       for (const h of group.hooks) {
-        if (!isRecord(h)) continue;
+        if (!isRecord(h)) {
+          shape(src.label, unshown);
+          continue;
+        }
         rows.push({
           event,
           matcher,
@@ -320,10 +371,13 @@ function envRows(env: unknown): McpRow["env"] {
   }));
 }
 
-function mcpRows(servers: Record<string, unknown>): McpRow[] {
+function mcpRows(src: Source, unshown: Set<string>): McpRow[] {
   const rows: McpRow[] = [];
-  for (const [name, def] of Object.entries(servers)) {
-    if (!isRecord(def)) continue;
+  for (const [name, def] of Object.entries(src.obj)) {
+    if (!isRecord(def)) {
+      shape(src.label, unshown);
+      continue;
+    }
     const command = str(def.command) ?? null;
     const url = str(def.url) ?? null;
     rows.push({
@@ -339,20 +393,59 @@ function mcpRows(servers: Record<string, unknown>): McpRow[] {
   return rows;
 }
 
-/** The programs a shell command line runs: the first word of each command position, past `NAME=value`, not a builtin. */
+function lspRows(
+  src: Source,
+  unshown: Set<string>,
+): Array<{ name: string; command: string; args: string[] }> {
+  const rows: Array<{ name: string; command: string; args: string[] }> = [];
+  for (const [name, def] of Object.entries(src.obj)) {
+    if (!isRecord(def) || typeof def.command !== "string") {
+      shape(src.label, unshown);
+      continue;
+    }
+    rows.push({ name, command: def.command, args: strings(def.args) });
+  }
+  return rows;
+}
+
+/**
+ * The programs a shell command line runs: the first word of each command position (after `NAME=value`, `env`, and
+ * shell keywords), the program a `bash -c`-style script runs, and the commands of `$(…)` and backticks.
+ */
 const PROGRAM = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const SEPARATORS = new Set(["&&", "||", ";", "|", "&"]);
+const SHELLS = new Set(["bash", "sh", "zsh", "dash"]);
+const SHELL_C = /^-[a-zA-Z]*c[a-zA-Z]*$/;
+/** Shell words that don't run a program and keep the command position (`if x; then y; fi`). */
+const KEEP_START = new Set([
+  "if",
+  "then",
+  "else",
+  "elif",
+  "fi",
+  "while",
+  "until",
+  "do",
+  "done",
+  "!",
+  "{",
+  "}",
+]);
+/** Shell words whose next word is a name or a pattern, not a command. */
+const SKIP_NEXT = new Set(["for", "select", "function", "case"]);
 const BUILTINS = new Set([
   ".",
   "[",
   "cd",
   "echo",
+  "esac",
   "eval",
   "exec",
   "exit",
   "export",
   "false",
+  "in",
   "printf",
   "read",
   "return",
@@ -365,6 +458,7 @@ const BUILTINS = new Set([
   "unset",
   "wait",
 ]);
+const SUBSTITUTION = /\$\(([^()]*)\)|`([^`]*)`/g;
 
 /** Splits a command line into words; quotes group, and separators come out as words of their own. */
 function shellWords(text: string): string[] {
@@ -410,8 +504,11 @@ function shellWords(text: string): string[] {
 }
 
 function programsOf(command: string, depth = 0): string[] {
-  const words = shellWords(command);
+  if (depth > 2) return [];
   const out: string[] = [];
+  for (const m of command.matchAll(SUBSTITUTION))
+    out.push(...programsOf(m[1] ?? m[2] ?? "", depth + 1));
+  const words = shellWords(command);
   let atStart = true;
   for (let i = 0; i < words.length; i++) {
     const w = words[i] as string;
@@ -419,14 +516,16 @@ function programsOf(command: string, depth = 0): string[] {
       atStart = true;
       continue;
     }
-    if (!atStart || ASSIGNMENT.test(w)) continue;
+    if (!atStart || ASSIGNMENT.test(w) || w.startsWith("-") || KEEP_START.has(w)) continue;
+    if (SKIP_NEXT.has(w)) {
+      i++;
+      atStart = false;
+      continue;
+    }
+    const base = w.slice(w.lastIndexOf("/") + 1);
+    if (base === "env") continue; // `env VAR=1 prog`: the program is the next command position
     atStart = false;
-    if (
-      depth < 2 &&
-      (w === "bash" || w === "sh") &&
-      words[i + 1] === "-c" &&
-      i + 2 < words.length
-    ) {
+    if (depth < 2 && SHELLS.has(base) && SHELL_C.test(words[i + 1] ?? "") && i + 2 < words.length) {
       out.push(...programsOf(words[i + 2] as string, depth + 1));
       i += 2;
       continue;
@@ -453,11 +552,15 @@ async function referencedFiles(root: string, commands: string[]): Promise<string
 
 // Contents -----------------------------------------------------------------------------------
 
+const stoppedMessage = (kind: "files" | "folders") =>
+  kind === "files" ? STOPPED_FILES : STOPPED_FOLDERS;
+
 async function buildContents(root: string): Promise<PluginContents> {
   if (!(await isDir(root))) throw new Error("plugin root is not a directory");
   const unshown = new Set<string>();
 
   const pj = await readJson(root, PLUGIN_JSON, unshown);
+  if (pj !== undefined && !isRecord(pj)) shape(PLUGIN_JSON, unshown);
   const m: Record<string, unknown> = isRecord(pj) ? pj : {};
   for (const key of Object.keys(m))
     if (!KNOWN_MANIFEST_KEYS.has(key)) unshown.add(`plugin.json key "${cut(key)}"`);
@@ -471,42 +574,36 @@ async function buildContents(root: string): Promise<PluginContents> {
     homepage: text(m.homepage),
     repository: text(isRecord(m.repository) ? m.repository.url : m.repository),
   };
-  const dependencies = Array.isArray(m.dependencies)
-    ? m.dependencies.flatMap((d): string[] => {
-        if (typeof d === "string") return [cut(d)];
-        if (isRecord(d) && typeof d.name === "string")
-          return [cut(typeof d.version === "string" ? `${d.name}@${d.version}` : d.name)];
-        return [];
-      })
-    : [];
+
+  const dependencies: string[] = [];
+  if (m.dependencies !== undefined) {
+    if (!Array.isArray(m.dependencies)) shape("plugin.json dependencies", unshown);
+    else
+      for (const d of m.dependencies) {
+        if (typeof d === "string") dependencies.push(cut(d));
+        else if (isRecord(d) && typeof d.name === "string")
+          dependencies.push(cut(typeof d.version === "string" ? `${d.name}@${d.version}` : d.name));
+        else shape("plugin.json dependencies", unshown);
+      }
+  }
 
   const hooks = dedupe(
     [
-      ...(await fileObjects(root, "hooks/hooks.json", "hooks", unshown)),
-      ...(await sourceObjects(root, m.hooks, "hooks", unshown)),
-    ].flatMap(hookRows),
+      ...(await fileSources(root, "hooks/hooks.json", "hooks", unshown)),
+      ...(await manifestSources(root, m.hooks, "hooks", unshown)),
+    ].flatMap((s) => hookRows(s, unshown)),
   );
   const mcp = dedupe(
     [
-      ...(await fileObjects(root, ".mcp.json", "mcpServers", unshown)),
-      ...(await sourceObjects(root, m.mcpServers, "mcpServers", unshown)),
-    ].flatMap(mcpRows),
+      ...(await fileSources(root, ".mcp.json", "mcpServers", unshown)),
+      ...(await manifestSources(root, m.mcpServers, "mcpServers", unshown)),
+    ].flatMap((s) => mcpRows(s, unshown)),
   );
   const lsp = dedupe(
-    (
-      await Promise.all([
-        fileObjects(root, ".lsp.json", "lspServers", unshown),
-        sourceObjects(root, m.lspServers, "lspServers", unshown),
-      ])
-    )
-      .flat()
-      .flatMap((servers) =>
-        Object.entries(servers).flatMap(([name, def]) =>
-          isRecord(def) && typeof def.command === "string"
-            ? [{ name, command: def.command, args: strings(def.args) }]
-            : [],
-        ),
-      ),
+    [
+      ...(await fileSources(root, ".lsp.json", "lspServers", unshown)),
+      ...(await manifestSources(root, m.lspServers, "lspServers", unshown)),
+    ].flatMap((s) => lspRows(s, unshown)),
   );
 
   const codeParts: CodePart[] = [];
@@ -522,34 +619,53 @@ async function buildContents(root: string): Promise<PluginContents> {
 
   const statusLine =
     str(m.statusLine) ?? (isRecord(m.statusLine) ? str(m.statusLine.command) : undefined);
+  if (m.statusLine !== undefined && statusLine === undefined)
+    shape("plugin.json statusLine", unshown);
   if (statusLine !== undefined) {
     codeParts.push({ kind: "statusLine", items: [statusLine] });
     commands.push(statusLine);
   }
 
-  const monitorsFile = await readJson(root, "monitors/monitors.json", unshown);
-  const monitorList = Array.isArray(monitorsFile)
-    ? monitorsFile
-    : isRecord(monitorsFile) && Array.isArray(monitorsFile.monitors)
-      ? monitorsFile.monitors
-      : [];
-  const monitorItems = monitorList.map((e) =>
-    isRecord(e) ? (str(e.command) ?? str(e.name) ?? "(unnamed)") : (str(e) ?? "(unnamed)"),
-  );
+  const monitorsValue = await readJson(root, "monitors/monitors.json", unshown);
+  let monitorEntries: unknown[] = [];
+  if (Array.isArray(monitorsValue)) monitorEntries = monitorsValue;
+  else if (isRecord(monitorsValue) && Array.isArray(monitorsValue.monitors))
+    monitorEntries = monitorsValue.monitors;
+  else if (monitorsValue !== undefined) shape("monitors/monitors.json", unshown);
+  const monitorItems: string[] = [];
+  for (const e of monitorEntries) {
+    const command = isRecord(e) ? str(e.command) : str(e);
+    if (command !== undefined) {
+      monitorItems.push(command);
+      commands.push(command);
+    } else {
+      const name = isRecord(e) ? str(e.name) : undefined;
+      monitorItems.push(name ?? "(unnamed)");
+    }
+  }
   if (monitorItems.length > 0) codeParts.push({ kind: "monitors", items: monitorItems });
 
-  const walk = await walkFiles(root);
-  if (walk.capped) unshown.add(WALK_STOPPED);
-  const binFiles = walk.files.filter(
-    (f) => f.executable && f.path.startsWith("bin/") && f.path.split("/").length <= 3,
-  );
-  const bin = await resolveIn(root, "bin");
-  if (bin.kind === "link") unshown.add("bin (a link)");
+  // `bin/` is listed from its own walk, so a stopped walk of the whole plugin can't hide it.
+  const binDir = path.join(root, "bin");
+  const binStat = await lstat(binDir).catch(() => undefined);
+  let binFiles: FileEntry[] = [];
+  if (binStat?.isSymbolicLink()) unshown.add("bin (a link)");
+  else if (binStat?.isDirectory()) {
+    const bin = await walkTree(binDir, "bin", 1);
+    binFiles = bin.files.filter((f) => f.executable);
+    for (const l of bin.links) unshown.add(`${l} (a link)`);
+    for (const u of bin.unreadable) unshown.add(`${u} (can't be read)`);
+    if (bin.stopped) unshown.add(stoppedMessage(bin.stopped));
+  } else if (binStat) unshown.add("bin (not a folder)");
   if (binFiles.length > 0) codeParts.push({ kind: "bin", items: binFiles.map((f) => f.path) });
 
   const pkg = await resolveIn(root, "package.json");
   if (pkg.kind === "file") codeParts.push({ kind: "node", items: ["package.json"] });
   else if (pkg.kind !== "absent") unshown.add(`package.json (${reasonOf(pkg)})`);
+
+  const walk = await walkTree(root, "", Number.POSITIVE_INFINITY);
+  if (walk.stopped) unshown.add(stoppedMessage(walk.stopped));
+  for (const u of walk.unreadable) unshown.add(`${u || "."} (can't be read)`);
 
   const hookCommands = hooks.filter((h) => h.type === "command").map((h) => h.command);
   const mcpCommands = mcp.flatMap((s) => (s.command !== null ? [s.command] : []));
@@ -648,13 +764,16 @@ export function diffContents(a: PluginContents, b: PluginContents): ContentsDiff
   const hooks = changed(a.hooks, b.hooks, json);
   const mcp = changed(a.mcp, b.mcp, json);
   const codeParts = changed(a.codeParts, b.codeParts, json);
+  const dependencies = changed(a.dependencies, b.dependencies, same);
+  const needs = changed(a.needs, b.needs, same);
+  const moved = (c: Change<unknown>) => c.added.length > 0 || c.removed.length > 0;
   return {
     hooks,
     mcp,
     commands: changed(a.provides.commands, b.provides.commands, same),
-    dependencies: changed(a.dependencies, b.dependencies, same),
+    dependencies,
     codeParts,
-    needs: changed(a.needs, b.needs, same),
-    runsCode: [hooks, mcp, codeParts].some((c) => c.added.length > 0 || c.removed.length > 0),
+    needs,
+    runsCode: [hooks, mcp, codeParts, dependencies, needs].some(moved),
   };
 }

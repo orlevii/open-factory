@@ -192,7 +192,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     "/api/agents/:slug/config",
     { schema: { params: slugParams, response: { 200: agentConfigResponseSchema } } },
-    async (req) => app.agents.getConfig(req.params.slug),
+    async (req) => app.configs.getConfig(req.params.slug),
   );
 
   app.put(
@@ -204,7 +204,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         response: { 200: putAgentConfigResponseSchema },
       },
     },
-    async (req) => app.agents.putConfig(req.params.slug, req.body, `@${user(req).handle}`),
+    async (req) =>
+      app.configs.saveOverlay(req.params.slug, req.body.overlay, req.body.baseVersion, human(req)),
   );
 
   app.post(

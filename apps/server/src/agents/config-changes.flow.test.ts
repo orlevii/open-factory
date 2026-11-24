@@ -74,7 +74,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
   const appendedToStore: { agentId: string; event: AnyEvent }[] = [];
   const notices: { id: string; lines: string[] }[] = [];
   /** `current` is what the request's re-read returned (absent for a restart with no config check). */
-  const restarts: { id: string; current?: ConfigSnapshot | undefined }[] = [];
+  const restarts: { id: string; current?: ConfigSnapshot | undefined; wake?: boolean }[] = [];
   /** What `currentEffective` reads for an agent now (its fresh row through the resolver). */
   const fresh = new Map<string, ConfigSnapshot>();
   /** What a running agent's process started with (`startedOf`). */
@@ -124,10 +124,14 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
       },
       requestRestart: async (
         id: string,
-        opts?: { current?: () => Promise<ConfigSnapshot | undefined> },
+        opts?: { current?: () => Promise<ConfigSnapshot | undefined>; wake?: boolean },
       ) => {
         if (stuckOf(id)) return never;
-        restarts.push(opts?.current ? { id, current: await opts.current() } : { id });
+        restarts.push({
+          id,
+          ...(opts?.current ? { current: await opts.current() } : {}),
+          ...(opts?.wake !== undefined ? { wake: opts.wake } : {}),
+        });
       },
       setNextImage: (id: string, ref: string | undefined) => void nextImage.set(id, ref),
       imageRef: (c: { runtime: string; image?: string }) =>
@@ -290,7 +294,7 @@ test("a spawner whose secrets or deny rules changed restarts its live children; 
   w.restarts.length = 0;
   await w.changes.overlaySaved(
     lead,
-    "@orlevi",
+    { kind: "human", handle: "orlevi" },
     tpl({}),
     tpl({}, { permissions: { deny: ["Bash(rm:*)"] } }),
   );
@@ -298,7 +302,12 @@ test("a spawner whose secrets or deny rules changed restarts its live children; 
   expect(w.restarts.map((r) => r.id).sort()).toEqual(["kid-1", "kid-2"]);
 
   w.restarts.length = 0;
-  await w.changes.overlaySaved(lead, "@orlevi", tpl({ skills: [] }), tpl({ skills: ["x"] }));
+  await w.changes.overlaySaved(
+    lead,
+    { kind: "human", handle: "orlevi" },
+    tpl({ skills: [] }),
+    tpl({ skills: ["x"] }),
+  );
   await new Promise((r) => setImmediate(r));
   expect(w.restarts).toEqual([]);
 });
@@ -306,7 +315,12 @@ test("a spawner whose secrets or deny rules changed restarts its live children; 
 test("an overlay save on an archived agent writes the event only", async () => {
   const a = row({ archivedAt: new Date(), runtime: "docker" });
   const w = world();
-  const out = await w.changes.overlaySaved(a, "@orlevi", doc(), doc({ model: "opus" }));
+  const out = await w.changes.overlaySaved(
+    a,
+    { kind: "human", handle: "orlevi" },
+    doc(),
+    doc({ model: "opus" }),
+  );
   expect(out).toEqual({ changes: ["model: default → opus"], restartChecked: false });
   expect(w.appendedToStore).toEqual([
     {
@@ -336,8 +350,26 @@ test("overlaySaved never waits on the runtime's queue (a start installing a plug
   const a = row();
   const w = world();
   w.load(a, true, true);
-  const out = await w.changes.overlaySaved(a, "@orlevi", doc(), doc({ model: "opus" }));
+  const out = await w.changes.overlaySaved(
+    a,
+    { kind: "human", handle: "orlevi" },
+    doc(),
+    doc({ model: "opus" }),
+  );
   expect(out).toEqual({ changes: ["model: default → opus"], restartChecked: true });
+});
+
+test("an overlay save asks for a wake only when the agent edited its own configuration", async () => {
+  const a = row();
+  const w = world({ agents: [a] });
+  w.load(a, true);
+  const save = (actor: Parameters<typeof w.changes.overlaySaved>[1]) =>
+    w.changes.overlaySaved(a, actor, doc(), doc({ model: "opus" }));
+  await save({ kind: "agent", id: a.id, slug: a.slug });
+  await save({ kind: "agent", id: "someone-else", slug: "hr-bot" });
+  await save({ kind: "human", handle: "or" });
+  await new Promise((r) => setImmediate(r));
+  expect(w.restarts.map((r) => r.wake)).toEqual([true, undefined, undefined]);
 });
 
 test("secret safety: no env value, MCP URL or command reaches an event, a notice, a frame or a log", async () => {
@@ -355,7 +387,7 @@ test("secret safety: no env value, MCP URL or command reaches an event, a notice
   );
   // The fixture does carry the value, so the checks below can fail.
   expect(JSON.stringify(after)).toContain(SECRET);
-  const out = await w.changes.overlaySaved(a, "@orlevi", before, after);
+  const out = await w.changes.overlaySaved(a, { kind: "human", handle: "orlevi" }, before, after);
   await new Promise((r) => setImmediate(r));
   const seen = JSON.stringify([out, rt.appended, w.appendedToStore, w.notices, w.frames, w.logged]);
   expect(seen).not.toContain(SECRET);

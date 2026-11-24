@@ -15,6 +15,7 @@ import { AgentService } from "./agents/agent-service.ts";
 import { ChatStore } from "./agents/chat-store.ts";
 import { ConfigChanges, dbConfigChangeAgents } from "./agents/config-changes.ts";
 import { ConfigResolver } from "./agents/config-resolver.ts";
+import { ConfigService } from "./agents/config-service.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
 import { PolicyInputs } from "./agents/policy-inputs.ts";
@@ -121,6 +122,7 @@ declare module "fastify" {
     /** I2 §7.2: the one change path for template changes and overlay saves. */
     configChanges: ConfigChanges;
     agents: AgentService;
+    configs: ConfigService;
     credentials: CredentialService;
     /** I3 §5.4: the in-memory "Sign in with Claude" attempts, one per user. */
     signIn: SignInAttempts;
@@ -357,6 +359,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("schedules", schedules);
   app.decorate("scheduler", scheduler);
+  const policy = new PolicyInputs({ db: deps.db, library });
   const agents = new AgentService({
     db: deps.db,
     templates,
@@ -370,9 +373,20 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     store,
     bus,
     configChanges,
-    policy: new PolicyInputs({ db: deps.db, library }),
+    policy,
     scheduling: schedules,
   });
+  app.decorate(
+    "configs",
+    new ConfigService({
+      db: deps.db,
+      templates,
+      runtimes,
+      resolver,
+      policy,
+      configChanges,
+    }),
+  );
   // The verifier's driver has no logger: process output can echo the credential under test.
   const verifier = new CredentialVerifier({
     driver: deps.harnessDriver ?? createClaudeDriver({ transports: { local: localTransport } }),

@@ -1,6 +1,8 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
+  type Actor,
   type AgentOverlay,
+  actorBy,
   agentOverlaySchema,
   type ConfigDoc,
   type ConfigSnapshot,
@@ -188,15 +190,17 @@ export class ConfigChanges {
    */
   async overlaySaved(
     agent: AgentRow,
-    by: string,
+    actor: Actor,
     before: ConfigDoc,
     after: ConfigDoc,
   ): Promise<{ changes: string[]; restartChecked: boolean }> {
     const { changes, restartChecked } = await this.apply(
       agent,
-      by,
+      actorBy(actor),
       await this.snapshot(before),
       await this.snapshot(after),
+      // An agent that edits its own configuration is woken by the restart it asked for (spec §9.5).
+      actor.kind === "agent" && actor.id === agent.id,
     );
     return { changes, restartChecked };
   }
@@ -267,6 +271,7 @@ export class ConfigChanges {
     by: string,
     before: ConfigSnapshot | null,
     after: ConfigSnapshot,
+    wake = false,
   ): Promise<Applied> {
     const { runtimes } = this.d;
     const changes = before ? describeChanges(before, after) : [];
@@ -297,6 +302,7 @@ export class ConfigChanges {
       work.push(
         runtimes.requestRestart(agent.id, {
           current: () => this.d.agents.currentEffective(agent.id),
+          ...(wake ? { wake } : {}),
         }),
       );
     if (agent.kind === "persistent") {

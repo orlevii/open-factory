@@ -14,6 +14,7 @@ import {
 } from "@open-factory/shared";
 import { and, asc, isNull } from "drizzle-orm";
 import type { z } from "zod";
+import { hostSkillsDirOf } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { listSkillFiles, readSkillFile, readSkillMdText } from "./skill-files.ts";
 import { readSkillMd } from "./skill-md.ts";
@@ -130,7 +131,7 @@ export class LibraryIndex {
     checkingSince?: (id: string) => string | undefined;
   }) {
     this.store = d.store ?? dbStore(d.db);
-    this.hostSkillsDir = path.join(d.hostClaudeDir, "skills");
+    this.hostSkillsDir = hostSkillsDirOf(d);
     this.factoryHome = d.factoryHome;
     this.templates = d.templates;
     this.checkingSince = d.checkingSince ?? (() => undefined);
@@ -250,7 +251,11 @@ export class LibraryIndex {
     };
     for (const [t, skills] of listed) for (const n of skills) of(n).templates.add(t);
     for (const a of await this.store.agents()) {
-      const effective = a.config.template?.skills ?? listed.get(a.template) ?? [];
+      // Overlay arrays union with the template's (config-merge), so an own skill never hides a template one.
+      const effective = new Set([
+        ...(listed.get(a.template) ?? []),
+        ...(a.config.template?.skills ?? []),
+      ]);
       for (const n of effective) {
         const u = of(n);
         u.agents.add(a.slug);
@@ -283,10 +288,12 @@ export class LibraryIndex {
 
     const sources = await this.store.sources();
     const registeredBy = new Map<string, SkillSourceRow>();
+    const known = new Set<string>();
     for (const s of sources)
-      for (const n of s.skills) if (!registeredBy.has(n)) registeredBy.set(n, s);
-
-    const known = new Set<string>(registeredBy.keys());
+      for (const n of s.skills) {
+        known.add(n);
+        if (s.state === "ready" && !registeredBy.has(n)) registeredBy.set(n, s);
+      }
     const groups: SkillGroup[] = [];
 
     const hostRows: SkillRow[] = [];

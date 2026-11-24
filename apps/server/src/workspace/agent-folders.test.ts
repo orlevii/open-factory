@@ -8,6 +8,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,6 +90,19 @@ describe("checkProjectSettings", () => {
       writeFileSync(target, "{}");
       symlinkSync(target, path.join(wd, ".claude", file));
       await expect(checkProjectSettings(wd)).rejects.toThrow(`${file} is a link`);
+    },
+  );
+
+  test.each(["settings.json", "settings.local.json"])(
+    "a %s over 256 KB is refused without being read",
+    async (file) => {
+      const abs = path.join(wd, ".claude", file);
+      // Sparse: 300 KB of apparent size, no data blocks; the refusal must come from the size, not from parsing.
+      writeFileSync(abs, "");
+      truncateSync(abs, 300 * 1024);
+      await expect(checkProjectSettings(wd)).rejects.toThrow(
+        `${abs} is larger than 256 KB, so it can't be checked; shrink it.`,
+      );
     },
   );
 

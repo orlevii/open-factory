@@ -30,7 +30,7 @@ export async function listSkillFiles(
     const entries = await readdir(d, { withFileTypes: true }).catch(() => []);
     for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
       if (out.length >= FILE_LIST_CAP) return;
-      if (e.name === ".git") continue;
+      if (e.name.toLowerCase() === ".git") continue;
       const p = path.join(d, e.name);
       const r = rel === "" ? e.name : `${rel}/${e.name}`;
       if (e.isDirectory()) await walk(p, r);
@@ -77,6 +77,9 @@ export async function readSkillMdText(dir: string): Promise<string> {
 export async function readSkillFile(dir: string, rel: string): Promise<string> {
   const clean = normalizeSubpath(rel);
   if (clean === null || clean === "") throw refuse(FILE_MSG.notInSkill);
+  // The listing hides `.git` (a clone's config may hold remote credentials), so the file route does too.
+  if (clean.split("/").some((part) => part.toLowerCase() === ".git"))
+    throw refuse(FILE_MSG.notInSkill);
   let cur = dir;
   for (const part of clean.split("/")) {
     cur = path.join(cur, part);

@@ -248,8 +248,14 @@ export class SafeFs {
     await rename(abs, dest);
   }
 
-  /** undefined for missing, a symlink, or anything that isn't a regular file. */
-  async readIfRegular(rel: string): Promise<Buffer | undefined> {
+  /**
+   * undefined for missing, a symlink, or anything that isn't a regular file. With `maxBytes`, a file over it is not
+   * read at all: `onTooLarge` is called (its throw propagates) before any byte is read.
+   */
+  async readIfRegular(
+    rel: string,
+    limit?: { maxBytes: number; onTooLarge: () => never },
+  ): Promise<Buffer | undefined> {
     const abs = this.abs(rel);
     if (!(await this.walk(abs))) return undefined;
     let fh: FileHandle;
@@ -262,7 +268,9 @@ export class SafeFs {
       throw err;
     }
     try {
-      if (!(await fh.stat()).isFile()) return undefined;
+      const st = await fh.stat();
+      if (!st.isFile()) return undefined;
+      if (limit && st.size > limit.maxBytes) limit.onTooLarge();
       return await fh.readFile();
     } finally {
       await fh.close();

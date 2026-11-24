@@ -15,7 +15,6 @@ import {
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
-import { hostSkillsDirOf } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { GitError } from "../library/git.ts";
 
@@ -40,7 +39,7 @@ export const libraryRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get(
     "/api/library/skills",
     { schema: { response: { 200: skillGroupsResponseSchema } } },
-    async () => ({ hostDir: hostSkillsDirOf(app.config), groups: await app.library.skills() }),
+    async () => ({ hostDir: app.config.hostClaudeDir, groups: await app.library.skills() }),
   );
 
   app.get(

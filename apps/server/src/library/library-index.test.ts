@@ -277,7 +277,7 @@ test("a name a template lists that resolves nowhere is in the unknown group with
   expect(groups.map((g) => g.group)).toEqual(["host", "unknown"]);
   const unknown = groups[1];
   expect(unknown?.skills).toEqual([
-    { name: "gone", description: "", state: "missing", usedBy: { templates: 2, agents: 2 } },
+    { name: "gone", description: "", state: "missing", usedBy: { templates: 2, agents: 3 } },
     { name: "other", description: "", state: "missing", usedBy: { templates: 0, agents: 1 } },
   ]);
   expect(groups[0]?.skills[0]).toMatchObject({ name: "here", usedBy: { templates: 1, agents: 1 } });
@@ -292,8 +292,30 @@ test("usedBy lists templates and live agents by effective skills", async () => {
       { slug: "cy", template: "ops", config: { template: { skills: ["x", "y"] } } },
     ],
   });
-  expect(await idx.usedBy("x")).toEqual({ templates: ["dev"], agents: ["ann", "cy"] });
+  // Bob's own "y" adds to dev's "x".
+  expect(await idx.usedBy("x")).toEqual({ templates: ["dev"], agents: ["ann", "bob", "cy"] });
   expect(await idx.usedBy("y")).toEqual({ templates: ["ops"], agents: ["bob", "cy"] });
+});
+
+test("an agent's own skill adds to its template's skills; it doesn't replace them", async () => {
+  const idx = make({
+    templates: { dev: { skills: ["tdd"] } },
+    agents: [
+      { slug: "ann", template: "dev", config: { template: { skills: ["own"] } } },
+      { slug: "bob", template: "dev", config: {} },
+    ],
+  });
+  expect(await idx.usedBy("tdd")).toEqual({ templates: ["dev"], agents: ["ann", "bob"] });
+  expect(await idx.usedBy("own")).toEqual({ templates: [], agents: ["ann"] });
+});
+
+test("a host skill is Hidden only by a ready source, the same rule the resolver uses", async () => {
+  host("tdd");
+  const idx = make({ sources: [source({ state: "adding", skills: ["tdd"] })] });
+  expect((await idx.skills())[0]?.skills[0]).toMatchObject({ name: "tdd", state: "ok" });
+  expect(await idx.resolveSkill("tdd")).toMatchObject({ ok: true, ref: "host" });
+  const ready = make({ sources: [source({ skills: ["tdd"] })] });
+  expect((await ready.skills())[0]?.skills[0]).toMatchObject({ name: "tdd", state: "hidden" });
 });
 
 test("a host skill's detail has its row, files and SKILL.md; a link to it is followed", async () => {

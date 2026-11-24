@@ -222,6 +222,19 @@ test.each(["-p", "--no-pager", "--bare", "--git-dir=/x", "--exec-path=/x", "-q",
   },
 );
 
+test("a failure whose stderr outgrew the window with no newline says only that git failed", async () => {
+  fakeGit(`process.stderr.write("A".repeat(40000));\nprocess.exit(128);`);
+  const err = await runGit(["ls-remote", url], { cwd: bin, allowFile: false }).catch((e) => e);
+  expect(err).toBeInstanceOf(GitError);
+  expect(err.message).toBe("git failed.");
+});
+
+test("a failure with empty stderr names the exit code, not the command line", async () => {
+  fakeGit(`process.exit(3);`);
+  const err = await runGit(["ls-remote", url], { cwd: bin, allowFile: false }).catch((e) => e);
+  expect(err.message).toBe("git failed: exit 3.");
+});
+
 test("a failure whose stderr outgrew the window names its last whole line, not the cut one", async () => {
   fakeGit(
     `console.error("A".repeat(50000));\nconsole.error("fatal: the real one");\nprocess.exit(128);`,

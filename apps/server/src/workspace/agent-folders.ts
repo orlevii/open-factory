@@ -76,10 +76,12 @@ export async function checkProjectSettings(workdir: string): Promise<void> {
     if (!st) continue;
     if (st.isSymbolicLink())
       throw new WorkspaceError(`${abs} is a link, which agents can't use; remove it.`);
-    const raw = await safe.readIfRegular(rel);
-    if (raw === undefined) continue;
-    if (raw.length > MAX_BYTES)
+    const tooLarge = (): never => {
       throw new WorkspaceError(`${abs} is larger than 256 KB, so it can't be checked; shrink it.`);
+    };
+    const raw = await safe.readIfRegular(rel, { maxBytes: MAX_BYTES, onTooLarge: tooLarge });
+    if (raw === undefined) continue;
+    if (raw.length > MAX_BYTES) tooLarge();
     const text = raw.toString("utf8");
     if (!text.trim()) continue;
     let parsed: unknown;

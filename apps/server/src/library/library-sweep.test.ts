@@ -246,7 +246,7 @@ test("boot purge starts the repair of interrupted adds without waiting for it", 
   expect(await ids()).toEqual([]);
 });
 
-test("skillDirsInUse holds every source's directory for the hashes the running processes started with", () => {
+test("skillDirsInUse holds every source's directory for the hashes the running processes started with", async () => {
   const root = path.join(fh, "state", "library", "github");
   mkdirSync(path.join(root, "src1"), { recursive: true });
   mkdirSync(path.join(root, "src2"), { recursive: true });
@@ -254,10 +254,10 @@ test("skillDirsInUse holds every source's directory for the hashes the running p
     { library: { skills: { tdd: `github:${"a".repeat(40)}`, mine: "host", dir: "folder" } } },
     { library: { skills: { x: "missing" } } },
   ];
-  expect(skillDirsInUse(root, started).sort()).toEqual([
+  expect((await skillDirsInUse(root, started)).sort()).toEqual([
     path.join(root, "src1", "a".repeat(40)),
     path.join(root, "src2", "a".repeat(40)),
   ]);
-  expect(skillDirsInUse(root, [{ library: { skills: { x: "host" } } }])).toEqual([]);
-  expect(skillDirsInUse(path.join(fh, "nothing-here"), started)).toEqual([]);
+  expect(await skillDirsInUse(root, [{ library: { skills: { x: "host" } } }])).toEqual([]);
+  expect(await skillDirsInUse(path.join(fh, "nothing-here"), started)).toEqual([]);
 });

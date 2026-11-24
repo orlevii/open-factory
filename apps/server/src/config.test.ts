@@ -141,7 +141,6 @@ describe("loadConfig", () => {
       }).hostClaudeDir,
     ).toBe(path.join(os.homedir(), "c"));
     expect("claudeToken" in c).toBe(false);
-    expect("hostSkillsDir" in c).toBe(false);
   });
   test("GitHub base URL defaults to github.com; a file:// fixture is accepted", () => {
     expect(loadConfig(ok).githubUrl).toBe("https://github.com");
@@ -152,6 +151,14 @@ describe("loadConfig", () => {
       /FACTORY_GITHUB_URL/,
     );
   });
+  test.each(["https://u:tok@github.com", "https://tok@github.com"])(
+    "a GitHub base URL with credentials (%s) is refused at boot",
+    (url) => {
+      expect(() => loadConfig({ ...ok, FACTORY_GITHUB_URL: url })).toThrow(
+        /FACTORY_GITHUB_URL.*username or password/s,
+      );
+    },
+  );
 });
 
 describe("removedEnvWarnings", () => {

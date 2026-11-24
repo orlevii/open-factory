@@ -16,6 +16,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { GitError, runGit } from "./git.ts";
 import {
+  CommitMismatchError,
   checkoutSize,
   fetchCommit,
   installCheckout,
@@ -103,13 +104,13 @@ test("fetchCommit fails closed when git returns another commit", async () => {
     `#!/bin/sh\nfor a in "$@"; do if [ "$a" = rev-parse ]; then echo ${"b".repeat(40)}; exit 0; fi; done\nexec git "$@"\n`,
   );
   chmodSync(bin, 0o755);
-  await expect(
-    fetchCommit(f.url, f.shas[0] as string, path.join(tmp, "co"), {
-      ...o,
-      gitBin: bin,
-      label: "acme/x",
-    }),
-  ).rejects.toThrow(`acme/x didn't return commit ${(f.shas[0] as string).slice(0, 7)}.`);
+  const err = await fetchCommit(f.url, f.shas[0] as string, path.join(tmp, "co"), {
+    ...o,
+    gitBin: bin,
+    label: "acme/x",
+  }).catch((e) => e);
+  expect(err).toBeInstanceOf(CommitMismatchError);
+  expect(err.message).toBe(`acme/x didn't return commit ${(f.shas[0] as string).slice(0, 7)}.`);
 });
 
 test("fetchCommit and resolveRef stop at the operation budget", async () => {

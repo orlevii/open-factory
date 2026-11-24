@@ -89,6 +89,14 @@ export async function resolveRef(
   });
 }
 
+/** The fetched HEAD is not the commit asked for (spec §10.4's form-level "another commit"). */
+export class CommitMismatchError extends GitError {
+  constructor(message: string) {
+    super(message, "");
+    this.name = "CommitMismatchError";
+  }
+}
+
 /** Fetches one commit into `into` (made if missing) and checks it out, failing closed on a mismatch. */
 export async function fetchCommit(
   url: string,
@@ -104,7 +112,7 @@ export async function fetchCommit(
     await git(["checkout", "-q", "--detach", "FETCH_HEAD"], into);
     const head = (await git(["rev-parse", "HEAD"], into)).stdout.trim();
     if (head !== sha) {
-      throw new GitError(`${o.label ?? url} didn't return commit ${sha.slice(0, 7)}.`, "");
+      throw new CommitMismatchError(`${o.label ?? url} didn't return commit ${sha.slice(0, 7)}.`);
     }
     const [committedAt = "", subject = ""] = (
       await git(["log", "-1", "--format=%cI%x00%s"], into)

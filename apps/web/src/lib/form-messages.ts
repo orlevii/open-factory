@@ -48,8 +48,6 @@ export const FORM_MSG = {
   loadSkills: "Couldn't load skills.",
   pickAtLeastOne: "Pick at least one skill.",
   sourceChanged: "The source changed. Find skills again.",
-  folderOverSize: "Folder is over 50 MB.",
   checkFailed: "Couldn't check for updates.",
   noSourcesToCheck: "No sources to check.",
-  repoOtherCommit: "The repo returned another commit.",
 } as const;

@@ -104,7 +104,8 @@ test("GET /api/library/skills lists the host group with descriptions and the hos
   const r = await call("GET", "/api/library/skills");
   expect(r.statusCode).toBe(200);
   const body = r.json();
-  expect(body.hostDir).toBe(h.hostSkillsDir);
+  expect(body.hostDir).toBe(h.config.hostClaudeDir);
+  expect(path.join(body.hostDir, "skills")).toBe(h.hostSkillsDir);
   expect(body.groups[0]).toMatchObject({
     group: "host",
     kind: "host",

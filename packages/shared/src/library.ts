@@ -194,6 +194,7 @@ export const skillGroupSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const skillGroupsResponseSchema = z.object({
+  /** The host Claude folder (`FACTORY_HOST_CLAUDE_DIR`), not its `skills` folder: the page appends `/skills`. */
   hostDir: z.string(),
   groups: z.array(skillGroupSchema),
 });

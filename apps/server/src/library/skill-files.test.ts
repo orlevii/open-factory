@@ -43,6 +43,19 @@ test("the file list is sorted, marks executables and leaves out links and .git",
   ]);
 });
 
+test.each([".git/config", ".GIT/config", "scripts/.Git/HEAD", ".git"])(
+  "the file route refuses %s, which the list hides",
+  async (rel) => {
+    mkdirSync(path.join(skill, ".git"), { recursive: true });
+    writeFileSync(path.join(skill, ".git", "config"), "url = https://u:tok@host/x\n");
+    mkdirSync(path.join(skill, "scripts", ".Git"), { recursive: true });
+    writeFileSync(path.join(skill, "scripts", ".Git", "HEAD"), "ref");
+    const e = await refusal(readSkillFile(skill, rel));
+    expect(e?.status).toBe(400);
+    expect(e?.extra.fields?.path).toBe(FILE_MSG.notInSkill);
+  },
+);
+
 test("the file list stops at 2,000 entries", async () => {
   mkdirSync(path.join(skill, "many"));
   for (let i = 0; i < FILE_LIST_CAP + 5; i++) writeFileSync(path.join(skill, "many", `f${i}`), "");

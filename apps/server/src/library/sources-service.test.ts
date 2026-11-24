@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -237,6 +238,37 @@ describe("preview", () => {
     const s = setup();
     const e = await s.svc.preview({ kind: "folder", path: "~" }, "@or").catch((x) => x);
     expect(e).toMatchObject({ extra: { fields: { path: MSG.folderHome } } });
+  });
+
+  test("a repo over 50 MB is a form-level too_large error, with no field", async () => {
+    await makeFixtureRepo(repoDir(), {
+      commits: [{ "tdd/SKILL.md": md("tdd"), big: { bytes: 51 * 1024 * 1024 } }],
+    });
+    const e = await expectApi(preview(setup()), 400, "too_large");
+    expect(e.message).toBe("Folder is over 50 MB.");
+    expect(e.extra).toEqual({});
+  });
+
+  test("a repo that returns another commit is a form-level commit_mismatch error, with no field", async () => {
+    await makeFixtureRepo(repoDir(), { commits: [{ "tdd/SKILL.md": md("tdd") }] });
+    // runGit spawns "git" from PATH: a wrapper named git, first on PATH, lies about HEAD.
+    const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    const real = process.env.PATH;
+    const binDir = path.join(tmp, "bin");
+    mkdirSync(binDir);
+    writeFileSync(
+      path.join(binDir, "git"),
+      `#!/bin/sh\nfor a in "$@"; do if [ "$a" = rev-parse ]; then echo ${"b".repeat(40)}; exit 0; fi; done\nexec "${realGit}" "$@"\n`,
+    );
+    chmodSync(path.join(binDir, "git"), 0o755);
+    process.env.PATH = `${binDir}:${real}`;
+    try {
+      const e = await expectApi(preview(setup()), 400, "commit_mismatch");
+      expect(e.message).toBe("The repo returned another commit.");
+      expect(e.extra).toEqual({});
+    } finally {
+      process.env.PATH = real;
+    }
   });
 
   test("a missing branch is a branch field error", async () => {

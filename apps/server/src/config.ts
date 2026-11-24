@@ -83,6 +83,10 @@ const envSchema = z.object({
   FACTORY_HOST_CLAUDE_DIR: z.string().min(1).default("~/.claude"),
   FACTORY_GITHUB_URL: z
     .url({ protocol: /^(https?|file)$/, message: "must be an http(s) or file URL" })
+    .refine((u) => {
+      const { username, password } = new URL(u);
+      return !username && !password;
+    }, "must not contain a username or password")
     .default("https://github.com"),
   FACTORY_ALLOW_LOCAL_RUNTIME: z.enum(["true", "false"]).default("false"),
   FACTORY_DEFAULT_IMAGE: z.string().min(1).default("ghcr.io/orlevii/open-factory/base:latest"),

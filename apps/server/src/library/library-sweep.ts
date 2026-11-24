@@ -3,7 +3,6 @@
  * window, and cache dirs nothing points at. Everything runs under `libraryLock`. A cache dir that a
  * loaded runtime's `started.library` still references is kept, and retried on the next timer.
  */
-import { readdirSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { removeTree } from "./git-fetch.ts";
@@ -18,7 +17,7 @@ export interface SweepDeps {
   store: SourcesStore;
   factoryHome: string;
   /** Directories the loaded runtimes' `started.library` reference. */
-  inUse: () => string[];
+  inUse: () => string[] | Promise<string[]>;
   now?: () => Date;
   undoMs?: number;
   /** Called after rows were purged (the `library_changed` frame). */
@@ -33,10 +32,10 @@ const within = (dir: string, p: string) => p === dir || p.startsWith(dir + path.
  * as `github:<sha>`, so every `<githubRoot>/<source id>/<sha>` for those hashes is held. Holding a same-hash directory
  * of another source too only delays its purge to the next timer.
  */
-export function skillDirsInUse(
+export async function skillDirsInUse(
   githubRoot: string,
   started: { library: { skills: Record<string, string> } }[],
-): string[] {
+): Promise<string[]> {
   const shas = new Set(
     started
       .flatMap((s) => Object.values(s.library.skills))
@@ -44,12 +43,7 @@ export function skillDirsInUse(
       .map((ref) => ref.slice("github:".length)),
   );
   if (shas.size === 0) return [];
-  let ids: string[];
-  try {
-    ids = readdirSync(githubRoot);
-  } catch {
-    return [];
-  }
+  const ids = await readdir(githubRoot).catch(() => [] as string[]);
   return ids.flatMap((id) => [...shas].map((sha) => path.join(githubRoot, id, sha)));
 }
 
@@ -116,7 +110,7 @@ export class LibrarySweep {
         if (s.deletedAt === null) continue;
         if (!o.boot && s.deletedAt.getTime() + this.undoMs > now) continue;
         const dir = path.join(this.d.sources.githubRoot, s.id);
-        if (this.referenced(dir)) continue;
+        if (await this.referenced(dir)) continue;
         // One row that can't be removed doesn't stop the rest; the next timer retries it.
         try {
           await removeTree(dir);
@@ -133,8 +127,8 @@ export class LibrarySweep {
     this.d.sources.dropOldPreviewMeta();
   }
 
-  private referenced(dir: string): boolean {
-    return this.d.inUse().some((p) => within(dir, p));
+  private async referenced(dir: string): Promise<boolean> {
+    return (await this.d.inUse()).some((p) => within(dir, p));
   }
 
   private async purgePreviews(all: boolean): Promise<void> {
@@ -156,14 +150,14 @@ export class LibrarySweep {
       const row = rows.get(id);
       const idDir = path.join(root, id);
       if (!row) {
-        if (!this.referenced(idDir)) {
+        if (!(await this.referenced(idDir))) {
           await removeTree(idDir).catch((e) => this.d.log?.(`removing cache ${id} failed`, e));
         }
         continue;
       }
       for (const sha of await readdir(idDir).catch(() => [] as string[])) {
         const dir = path.join(idDir, sha);
-        if (sha === row.commit || this.referenced(dir)) continue;
+        if (sha === row.commit || (await this.referenced(dir))) continue;
         await removeTree(dir).catch((e) => this.d.log?.(`removing cache ${id}/${sha} failed`, e));
       }
     }

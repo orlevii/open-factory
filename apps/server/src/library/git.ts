@@ -22,17 +22,7 @@ export const ALLOWED_GIT_OPTIONS: ReadonlySet<string> = new Set([
   "--no-tags",
   "--detach",
   "-q",
-  "--porcelain",
-  "--ignored",
-  "--untracked-files=all",
   "--format=%cI%x00%s",
-  "--heads",
-  "--verify",
-  "--",
-  "-p",
-  "-t",
-  "-e",
-  "--quiet",
   "-1",
 ]);
 
@@ -116,12 +106,18 @@ export async function runGit(
         (err, stdout, stderr) => {
           if (!err) return resolve({ stdout });
           const output = capOutput(redactOutput(`${tail(stdout)}\n${tail(stderr)}`));
-          const e = err as { killed?: boolean; name?: string; code?: string };
+          const e = err as { killed?: boolean; name?: string; code?: string | number };
           // A window cut from a longer stream starts mid-line: that partial first line is not a message.
           const kept = tail(stderr);
           const nl = kept.indexOf("\n");
           const whole = stderr.length > REDACT_WINDOW ? (nl >= 0 ? kept.slice(nl + 1) : "") : kept;
           const first = whole.split("\n").find((l) => l.trim());
+          // Never `err.message`: Node's is the whole argv (with the url) plus the cut stderr.
+          const failed = first
+            ? `git failed: ${capOutput(redactOutput(first))}`
+            : stderr.length > REDACT_WINDOW
+              ? "git failed."
+              : `git failed: exit ${e.code ?? "unknown"}.`;
           const reason =
             e.name === "AbortError"
               ? "git was cancelled."
@@ -129,7 +125,7 @@ export async function runGit(
                 ? "git produced too much output."
                 : e.killed === true
                   ? `git timed out after ${timeoutMs / 1000} s.`
-                  : `git failed: ${capOutput(redactOutput(first ?? err.message))}`;
+                  : failed;
           reject(new GitError(reason, output));
         },
       );

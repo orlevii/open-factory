@@ -24,6 +24,7 @@ import { resolveHostFolder } from "../host-path.ts";
 import { checkSkillFolder, type ForbiddenContext } from "./forbidden.ts";
 import { GitError, runGit } from "./git.ts";
 import {
+  CommitMismatchError,
   checkoutSize,
   fetchCommit,
   type GitFetchOptions,
@@ -46,7 +47,8 @@ export const SOURCE_MSG = {
   previewExpired: "Preview expired. Find skills again.",
   pickNotAllowed: "A chosen skill can't be added.",
   nameTaken: "A chosen skill's name was taken.",
-  tooLarge: "This repo is over 50 MB.",
+  folderOverSize: "Folder is over 50 MB.",
+  repoOtherCommit: "The repo returned another commit.",
   noCache: "Fetch this source again first.",
   noUpdate: "Check for updates again.",
   emptiesSource: "This update removes every skill you picked. Remove the source instead.",
@@ -497,8 +499,13 @@ export class SourcesService {
     }
   }
 
-  /** Git failures reach the human as the one repo field message; the rest pass through. */
+  /**
+   * Git failures reach the human as the one repo field message, except the two form-level outcomes of spec §10.4
+   * (a commit mismatch; the size cap is `checkCheckout`'s); the rest pass through.
+   */
   private fieldFor(e: unknown): unknown {
+    if (e instanceof CommitMismatchError)
+      return new ApiError(400, "commit_mismatch", SOURCE_MSG.repoOtherCommit);
     return e instanceof GitError ? new FieldError("repo", MSG.repoUnreachable) : e;
   }
 
@@ -508,7 +515,7 @@ export class SourcesService {
       await checkoutSize(dir, CHECKOUT_CAP_BYTES);
     } catch (e) {
       if (e instanceof Error && e.message === "over_cap") {
-        throw new FieldError("repo", SOURCE_MSG.tooLarge);
+        throw new ApiError(400, "too_large", SOURCE_MSG.folderOverSize);
       }
       throw e;
     }

@@ -17,6 +17,7 @@ import type { ConfigResolver, Effective } from "./config-resolver.ts";
 import { AgentStartError } from "./errors.ts";
 import { EventBus } from "./event-bus.ts";
 import { parseConfigNotice } from "./notices.ts";
+import { PolicyInputs } from "./policy-inputs.ts";
 import { AgentRuntimes } from "./runtimes.ts";
 import type { PrepareStart } from "./start.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
@@ -473,7 +474,12 @@ test("a template whose skill became missing shows the issue after libraryChanged
     FACTORY_HOME: home,
   });
   const library = hostOnlyLibrary(path.join(home, "claude"), home, [folderSource(src, ["tdd"])]);
-  const templates = new TemplateIndex({ db: h.t.db, config: cfg, library });
+  const templates = new TemplateIndex({
+    db: h.t.db,
+    config: cfg,
+    library,
+    policy: new PolicyInputs({ db: h.t.db, library }),
+  });
   await templates.scan();
   const problem = "Skill tdd is missing from its folder.";
   const messages = async () =>

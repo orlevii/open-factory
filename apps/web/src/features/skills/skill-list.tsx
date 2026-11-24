@@ -6,6 +6,7 @@ import { ErrorLine } from "@/components/error-line";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UntrustedProse, visibleControls } from "@/components/untrusted-text";
+import { FORM_MSG } from "@/lib/form-messages";
 import { libraryQueryOptions } from "@/lib/library";
 import { onRowKeyDown } from "@/lib/row-nav";
 import { runInstantOn } from "@/lib/run-instant";
@@ -103,10 +104,23 @@ type SourceGroup = Extract<Group, { kind: "source" }>;
 function sourceState(s: SourceGroup["source"]): RowStateName | undefined {
   return rowStateOf([
     ...(s.state === "adding" ? (["adding"] as const) : []),
+    ...(s.checking ? (["checking"] as const) : []),
     ...(s.checkFailed ? (["check_failed"] as const) : []),
     ...(s.update ? (["update"] as const) : []),
   ]);
 }
+
+/** The server's `since` for a pending state, which a row shows as elapsed time after 10 s. */
+const pendingSince = (s: SourceGroup["source"], state: RowStateName | undefined) =>
+  state === "adding"
+    ? (s.since ?? undefined)
+    : state === "checking"
+      ? s.checking?.since
+      : undefined;
+
+/** A GitHub source shows its pin as a short sha (none while it is still being added); a folder is always live. */
+const pinLabel = (s: SourceGroup["source"]) =>
+  s.kind === "folder" ? "Live" : s.pin ? s.pin.slice(0, 7) : undefined;
 
 const sourceLabel = (s: SourceGroup["source"]) =>
   s.kind === "github"
@@ -123,6 +137,7 @@ const SourceHeader = memo(function SourceHeader({
   pin,
   skillCount,
   state,
+  since,
   selected,
   arrival,
   onArrivedEnd,
@@ -131,9 +146,10 @@ const SourceHeader = memo(function SourceHeader({
   labelId: string;
   id: string;
   label: string;
-  pin: string | null;
+  pin: string | undefined;
   skillCount: number;
   state: RowStateName | undefined;
+  since: string | undefined;
 }) {
   const key = sourceKey(id);
   return (
@@ -152,11 +168,11 @@ const SourceHeader = memo(function SourceHeader({
       <span id={labelId} className="flex min-w-0 flex-1 font-mono text-[0.8125rem]">
         <MiddleTruncate text={visibleControls(label)} />
       </span>
-      <span className="font-mono text-[0.8125rem] font-normal text-muted-foreground">
-        {pin ? pin.slice(0, 7) : "Live"}
-      </span>
+      {pin && (
+        <span className="font-mono text-[0.8125rem] font-normal text-muted-foreground">{pin}</span>
+      )}
       <span className="font-normal text-muted-foreground">{count(skillCount, "skill")}</span>
-      {state && <RowState state={state} />}
+      {state && <RowState state={state} since={since} />}
     </button>
   );
 });
@@ -218,14 +234,16 @@ const GroupSection = memo(function GroupSection({
       break;
     case "source": {
       const s = g.source;
+      const state = sourceState(s);
       header = (
         <SourceHeader
           labelId={labelId}
           id={s.id}
           label={sourceLabel(s)}
-          pin={s.pin}
+          pin={pinLabel(s)}
           skillCount={s.skillCount}
-          state={sourceState(s)}
+          state={state}
+          since={pendingSince(s, state)}
           {...tint(sourceKey(s.id))}
         />
       );
@@ -331,7 +349,7 @@ export function SkillList({
 
   if (!data)
     return q.isError ? (
-      <ErrorLine text="Couldn't load skills." onRetry={() => void q.refetch()} />
+      <ErrorLine text={FORM_MSG.loadSkills} onRetry={() => void q.refetch()} />
     ) : (
       SKELETON
     );
@@ -358,7 +376,7 @@ export function SkillList({
           hostDir={data.hostDir}
           shownKey={inGroup(g, peek.key) ? peek.key : null}
           arrivedKey={inGroup(g, arrivedKey) ? arrivedKey : undefined}
-          arrival={arrival}
+          arrival={inGroup(g, arrivedKey) ? arrival : undefined}
           onArrivedEnd={onArrivedEnd}
           onOpen={peek.show}
         />

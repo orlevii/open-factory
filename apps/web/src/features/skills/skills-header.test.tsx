@@ -19,20 +19,31 @@ vi.mock("@/lib/ws", () => ({
 beforeEach(() => fakeMatchMedia.install(false));
 afterEach(() => vi.restoreAllMocks());
 
-/** Twelve GitHub sources; once checked, `updates` of them have an update and `failed` couldn't be reached. */
-function twelve(checkedAt: string | null, updates = 0, failed = 0) {
+type Run = { checking?: boolean; updates?: number; failed?: number; adding?: boolean };
+
+/** Twelve ready GitHub sources (plus one still being added): `checking` marks them all as the server does while a
+ *  check runs; otherwise `updates` of them have an update and `failed` couldn't be reached. */
+function twelve({ checking = false, updates = 0, failed = 0, adding = false }: Run = {}) {
   return library([
     hostGroup(),
     ...Array.from({ length: 12 }, (_, i) =>
       sourceGroup(
         source(`s${i}`, {
-          checkedAt,
+          checking: checking ? { since: "2026-11-24T10:00:00.000Z" } : null,
           update: i < updates,
           checkFailed: i >= updates && i < updates + failed,
         }),
         [skill(`k${i}`)],
       ),
     ),
+    ...(adding
+      ? [
+          sourceGroup(
+            source("new", { state: "adding", pin: null, since: "2026-11-24T10:00:00.000Z" }),
+            [],
+          ),
+        ]
+      : []),
   ]);
 }
 
@@ -56,28 +67,38 @@ async function open(state: { data: unknown }) {
 }
 
 test("there is no view switch in this release", async () => {
-  await open({ data: twelve(null) });
+  await open({ data: twelve() });
   expect(screen.queryByRole("navigation", { name: /views/i })).toBeNull();
 });
 
 test("the actions have accessible names", async () => {
-  await open({ data: twelve(null) });
+  await open({ data: twelve() });
   expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Add skills" })).toBeEnabled();
 });
 
-test("Check for updates posts the check, then the outcome line is read from the sources' results", async () => {
-  const state = { data: twelve("2026-11-24T10:00:00.000Z") };
+/** The server marks every source as checking before the POST answers, and a frame follows each result. */
+function checkingServer(state: { data: unknown }, done: Run, mocks: ReturnType<typeof serve>) {
+  mocks.on("POST /api/library/check", () => {
+    state.data = twelve({ checking: true, adding: done.adding });
+    return json({}, 202);
+  });
+}
+
+test("Check for updates posts the check; the line follows the sources' state from the server and ends with the outcome", async () => {
+  const state = { data: twelve() as unknown };
   const mocks = await open(state);
+  checkingServer(state, {}, mocks);
   await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
-  await waitFor(() =>
-    expect(
-      mocks.calls.filter((c) => c.method === "POST" && c.url === "/api/library/check"),
-    ).toHaveLength(1),
-  );
   await waitFor(() => expect(line()).toHaveTextContent("Checking…"));
-  // The server finishes: each source's check result changed, and a frame says so.
-  state.data = twelve("2026-11-24T10:05:00.000Z", 2, 1);
+  expect(
+    mocks.calls.filter((c) => c.method === "POST" && c.url === "/api/library/check"),
+  ).toHaveLength(1);
+  // Still checking after a frame: the line stays.
+  act(() => ws.push({ type: "library_changed" }));
+  await new Promise((r) => setTimeout(r, 300));
+  expect(line()).toHaveTextContent("Checking…");
+  state.data = twelve({ updates: 2, failed: 1 });
   act(() => ws.push({ type: "library_changed" }));
   await waitFor(() =>
     expect(line()).toHaveTextContent("Checked 12 sources · 2 updates · 1 couldn't be reached"),
@@ -85,16 +106,34 @@ test("Check for updates posts the check, then the outcome line is read from the 
 });
 
 test("when nothing has an update or failed, the line says all is up to date", async () => {
-  const state = { data: twelve("2026-11-24T10:00:00.000Z") };
-  await open(state);
+  const state = { data: twelve() as unknown };
+  const mocks = await open(state);
+  checkingServer(state, {}, mocks);
   await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
-  state.data = twelve("2026-11-24T10:05:00.000Z");
+  await waitFor(() => expect(line()).toHaveTextContent("Checking…"));
+  state.data = twelve();
   act(() => ws.push({ type: "library_changed" }));
   await waitFor(() => expect(line()).toHaveTextContent("All up to date · checked just now"));
 });
 
-test("a failed check request says so in the line, never as a toast", async () => {
-  const state = { data: twelve(null) };
+test("a source still being added neither blocks the outcome nor counts as checked", async () => {
+  const state = { data: twelve({ adding: true }) as unknown };
+  const mocks = await open(state);
+  checkingServer(state, { adding: true }, mocks);
+  await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+  await waitFor(() => expect(line()).toHaveTextContent("Checking…"));
+  state.data = twelve({ updates: 1, adding: true });
+  act(() => ws.push({ type: "library_changed" }));
+  await waitFor(() => expect(line()).toHaveTextContent("Checked 12 sources · 1 update"));
+});
+
+test("a check already running when the page loads shows its line, with nothing started here", async () => {
+  await open({ data: twelve({ checking: true }) });
+  expect(line()).toHaveTextContent("Checking…");
+});
+
+test("a failed check request says so in the line", async () => {
+  const state = { data: twelve() as unknown };
   const mocks = await open(state);
   mocks.on("POST /api/library/check", () => json({ error: { code: "x", message: "boom" } }, 500));
   await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
@@ -102,10 +141,12 @@ test("a failed check request says so in the line, never as a toast", async () =>
 });
 
 test("'2 updates' moves focus to the first source with an update", async () => {
-  const state = { data: twelve("2026-11-24T10:00:00.000Z") };
-  await open(state);
+  const state = { data: twelve() as unknown };
+  const mocks = await open(state);
+  checkingServer(state, {}, mocks);
   await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
-  state.data = twelve("2026-11-24T10:05:00.000Z", 2, 0);
+  await waitFor(() => expect(line()).toHaveTextContent("Checking…"));
+  state.data = twelve({ updates: 2 });
   act(() => ws.push({ type: "library_changed" }));
   await userEvent.click(await screen.findByRole("button", { name: /^2\s+updates$/ }));
   expect(screen.getByRole("button", { name: /acme\/s0/ })).toHaveFocus();

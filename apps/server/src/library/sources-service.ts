@@ -274,6 +274,8 @@ async function candidates(root: string, oneName: string): Promise<Candidate[]> {
 export class SourcesService {
   private readonly previews = new Map<string, PreviewMeta>();
   private readonly pending = new Set<Promise<unknown>>();
+  /** Sources a check is queued or running for, and when it was queued (in memory: a restart ends every check). */
+  private readonly checking = new Map<string, Date>();
   private readonly now: () => Date;
   private readonly undoMs: number;
 
@@ -802,7 +804,24 @@ export class SourcesService {
     return final;
   }
 
+  /** When a check was queued for the source (ISO), while one is queued or running; the list shows it as "Checking…". */
+  checkingSince(id: string): string | undefined {
+    return this.checking.get(id)?.toISOString();
+  }
+
+  /** One source's check. The `library_changed` frame goes out after the checking mark is cleared, so the web's refetch sees the result. */
   async check(id: string): Promise<SourceDetail> {
+    const owns = !this.checking.has(id);
+    if (owns) this.checking.set(id, this.now());
+    try {
+      return await this.runCheck(id);
+    } finally {
+      if (owns) this.checking.delete(id);
+      this.d.publish?.();
+    }
+  }
+
+  private async runCheck(id: string): Promise<SourceDetail> {
     const row = await this.get(id);
     if (row.kind !== "github" || row.state !== "ready") return this.detail(row);
     let patch: Partial<SkillSourceRow>;
@@ -838,7 +857,6 @@ export class SourcesService {
       if (!cur || cur.deletedAt !== null || cur.commit !== row.commit) return cur;
       return this.d.store.update(id, { ...patch, checkedAt: this.now() });
     });
-    this.d.publish?.();
     return this.detail(next ?? row);
   }
 
@@ -852,21 +870,41 @@ export class SourcesService {
     return { committedAt, subject };
   }
 
-  async checkAll(): Promise<void> {
+  /** Marks every GitHub source that is ready as checking, at once (so the list shows the whole queue, not four at a time). */
+  private async markChecking(): Promise<string[]> {
     const queue = (await this.live())
       .filter((s) => s.kind === "github" && s.state === "ready")
       .map((s) => s.id);
+    const since = this.now();
+    for (const id of queue) this.checking.set(id, since);
+    if (queue.length > 0) this.d.publish?.();
+    return queue;
+  }
+
+  private async drainChecks(queue: string[]): Promise<void> {
     const worker = async () => {
       for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
-        await this.check(id).catch(() => {});
+        try {
+          await this.runCheck(id);
+        } catch {
+          // The source keeps its last result; the mark below is cleared either way.
+        } finally {
+          this.checking.delete(id);
+          this.d.publish?.();
+        }
       }
     };
     await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, queue.length) }, worker));
   }
 
-  /** `checkAll` without holding the request up; `idle()` waits for it. */
-  checkAllInBackground(): void {
-    this.background(() => this.checkAll());
+  async checkAll(): Promise<void> {
+    await this.drainChecks(await this.markChecking());
+  }
+
+  /** Check for updates: the sources are marked before this returns, the checks run in the background (`idle()` waits for them). */
+  async startCheckAll(): Promise<void> {
+    const queue = await this.markChecking();
+    this.background(() => this.drainChecks(queue));
   }
 
   // Update --------------------------------------------------------------------------------

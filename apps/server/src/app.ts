@@ -231,6 +231,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     hostClaudeDir: config.hostClaudeDir,
     factoryHome: config.factoryHome,
     templates: () => templates,
+    checkingSince: (id) => skillSources.checkingSince(id),
   });
   const workspace = new Workspace({
     factoryHome: config.factoryHome,

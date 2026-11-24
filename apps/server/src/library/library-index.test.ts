@@ -61,6 +61,7 @@ function make(
     sources?: SkillSourceRow[];
     templates?: Record<string, TemplateFixture>;
     agents?: { slug: string; template: string; config: unknown }[];
+    checkingSince?: (id: string) => string | undefined;
   } = {},
 ) {
   const templates = o.templates ?? {};
@@ -86,6 +87,7 @@ function make(
     hostClaudeDir: claude,
     factoryHome: home,
     templates: () => port,
+    checkingSince: o.checkingSince,
   });
 }
 
@@ -363,4 +365,45 @@ test("linkPrefixes: the host folder and each host skill's real folder, folder so
     ]),
   );
   expect(prefixes).not.toContain(tmp);
+});
+
+test("a source summary carries what the list needs for its state: the update, a failed check, when an add started, and a running check", async () => {
+  const ids = [
+    "11111111-1111-4111-8111-111111111111",
+    "22222222-2222-4222-8222-222222222222",
+    "33333333-3333-4333-8333-333333333333",
+    "44444444-4444-4444-8444-444444444444",
+  ] as const;
+  const [plain, upd, failed, adding] = ids;
+  const idx = make({
+    sources: [
+      source({ id: plain, addedAt: new Date(1) }),
+      source({ id: upd, updateCommit: "b".repeat(40), addedAt: new Date(2) }),
+      source({ id: failed, checkError: "git failed", addedAt: new Date(3) }),
+      source({
+        id: adding,
+        state: "adding",
+        skills: ["tdd"],
+        startedAt: new Date("2026-11-24T10:00:00.000Z"),
+        addedAt: new Date(4),
+      }),
+    ],
+    checkingSince: (id) => (id === upd ? "2026-11-24T10:05:00.000Z" : undefined),
+  });
+  const summaries = (await idx.skills())
+    .filter((g) => g.kind === "source")
+    .map((g) => (g.kind === "source" ? g.source : undefined));
+  expect(
+    summaries.map((s) => ({
+      update: s?.update,
+      failed: s?.checkFailed,
+      since: s?.since,
+      checking: s?.checking,
+    })),
+  ).toEqual([
+    { update: false, failed: false, since: null, checking: null },
+    { update: true, failed: false, since: null, checking: { since: "2026-11-24T10:05:00.000Z" } },
+    { update: false, failed: true, since: null, checking: null },
+    { update: false, failed: false, since: "2026-11-24T10:00:00.000Z", checking: null },
+  ]);
 });

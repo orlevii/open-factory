@@ -85,6 +85,7 @@ export function ScheduleRow({
             aria-label={accessibleName(s, now)}
             aria-describedby={`first-line-${s.key}`}
             data-schedule-key={s.key}
+            data-row=""
             className="w-14 shrink-0 cursor-pointer text-left font-mono text-[0.8125rem] leading-5 text-foreground after:absolute after:inset-0 focus-visible:outline-transparent focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
             onPointerEnter={() => preloadSheet("edit-schedule", spec)}
             onFocus={() => preloadSheet("edit-schedule", spec)}

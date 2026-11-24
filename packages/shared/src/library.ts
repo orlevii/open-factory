@@ -165,12 +165,14 @@ export const sourceSummarySchema = z.object({
   pin: z.string().nullable(),
   state: z.enum(["adding", "ready"]),
   skillCount: z.number().int().nonnegative(),
+  /** When a GitHub add started (ISO), while the source is "adding"; null otherwise. */
+  since: z.string().nullable(),
+  /** A check is queued or running; `since` is when it was queued (ISO). In memory on the server. */
+  checking: z.object({ since: z.string() }).nullable(),
   /** The last check found a newer commit. */
   update: z.boolean(),
   /** The last check couldn't reach the source. */
   checkFailed: z.boolean(),
-  /** When the last check ran (ISO), or null before the first. */
-  checkedAt: z.string().nullable(),
 });
 
 /** One group of `GET /api/library/skills`. `group` is the URL form: `host`, `source:<id>`, `template:<name>`, `unknown`. */

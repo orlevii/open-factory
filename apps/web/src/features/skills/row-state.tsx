@@ -54,7 +54,7 @@ export const RowState = memo(function RowState({
       <StateIcon icon={icon} />
       {word}
       {pending && since !== undefined && (
-        <span className="text-muted-foreground">
+        <span aria-hidden="true" className="text-muted-foreground">
           <Elapsed since={since} hideUnderMs={10_000} />
         </span>
       )}

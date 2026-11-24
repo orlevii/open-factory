@@ -217,7 +217,7 @@ test("a failed load says so with Retry, and Retry loads the list", async () => {
 
 test("arriving with a peek opens it and scrolls its row once; a library_changed afterwards does not scroll again", async () => {
   const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
-  const { router, mocks } = await open();
+  const { router, mocks, queryClient } = await open();
   await screen.findByRole("button", { name: /^review/ });
   expect(scroll).not.toHaveBeenCalled();
   await act(() =>
@@ -265,4 +265,25 @@ test("a second arrival on the mounted page opens its peek", async () => {
     expect(screen.getByRole("button", { name: /^lint/ })).toHaveAttribute("aria-expanded", "true"),
   );
   expect(screen.getByRole("button", { name: /^review/ })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("a GitHub source shows what it is doing: Adding with no pin yet, Checking with the server's elapsed time", async () => {
+  const minuteAgo = new Date(Date.now() - 65_000).toISOString();
+  await open(
+    library([
+      hostGroup(),
+      sourceGroup(
+        source("new", { state: "adding", pin: null, since: minuteAgo, skillCount: 2 }),
+        [],
+      ),
+      sourceGroup(source("busy", { checking: { since: minuteAgo } }), [skill("a")]),
+    ]),
+  );
+  const adding = await screen.findByRole("button", { name: /acme\/new/ });
+  expect(within(adding).getByText("Adding…")).toBeInTheDocument();
+  expect(within(adding).getByText(/^1m 0\ds$/)).toBeInTheDocument();
+  expect(within(adding).queryByText("Live")).toBeNull();
+  const busy = screen.getByRole("button", { name: /acme\/busy/ });
+  expect(within(busy).getByText("Checking…")).toBeInTheDocument();
+  expect(within(busy).getByText(/^1m 0\ds$/)).toBeInTheDocument();
 });

@@ -812,4 +812,94 @@ describe("boot repair", () => {
     expect(await s.store.all()).toEqual([]);
     expect(s.logged.length).toBeGreaterThan(0);
   });
+
+  describe("the checking mark", () => {
+    async function sources(s: Setup, n: number) {
+      await twoCommitRepo(A, { ...A, "tdd/SKILL.md": md("tdd", "x: 1\n") });
+      const sha0 = (
+        await runGit(["rev-parse", "old"], { cwd: repoDir(), allowFile: true })
+      ).stdout.trim();
+      const ids: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const id = `00000000-0000-4000-8000-00000000000${i}`;
+        ids.push(id);
+        await s.store.insert({
+          id,
+          kind: "github",
+          path: null,
+          repo: "acme/x",
+          subpath: "",
+          branch: "main",
+          commit: sha0,
+          committedAt: null,
+          subject: null,
+          trees: null,
+          updateCommit: null,
+          updateAt: null,
+          updateSubject: null,
+          checkedAt: null,
+          checkError: null,
+          skills: [`s${i}`],
+          state: "ready",
+          startedAt: new Date(nowMs),
+          addedBy: "@or",
+          addedAt: new Date(nowMs + i),
+          deletedAt: null,
+        });
+      }
+      return ids;
+    }
+
+    test("a check marks its source from when it starts, and the frame goes out after the mark is cleared", async () => {
+      const s = setup();
+      const [id = ""] = await sources(s, 1);
+      const seen: (string | undefined)[] = [];
+      const push = s.frames.push.bind(s.frames);
+      s.frames.push = (e) => {
+        seen.push(s.svc.checkingSince(id));
+        return push(e);
+      };
+      expect(s.svc.checkingSince(id)).toBeUndefined();
+      const p = s.svc.check(id);
+      expect(s.svc.checkingSince(id)).toBe(new Date(nowMs).toISOString());
+      await p;
+      expect(s.svc.checkingSince(id)).toBeUndefined();
+      expect(seen).toEqual([undefined]);
+    });
+
+    test("a check that throws still clears the mark and publishes", async () => {
+      const s = setup();
+      await expect(s.svc.check("00000000-0000-4000-8000-0000000000ff")).rejects.toBeInstanceOf(
+        ApiError,
+      );
+      expect(s.svc.checkingSince("00000000-0000-4000-8000-0000000000ff")).toBeUndefined();
+      expect(s.frames).toHaveLength(1);
+    });
+
+    test("checking every source marks the whole queue at once, not four at a time, and publishes at the start and after each", async () => {
+      const s = setup();
+      const ids = await sources(s, 6);
+      gate.delayMs = 15;
+      await s.svc.startCheckAll();
+      // Six queued, four run at a time: all six are marked before the request that started them returns.
+      expect(ids.map((id) => s.svc.checkingSince(id))).toEqual(
+        ids.map(() => new Date(nowMs).toISOString()),
+      );
+      expect(s.frames).toHaveLength(1);
+      await s.svc.idle();
+      expect(ids.map((id) => s.svc.checkingSince(id))).toEqual(ids.map(() => undefined));
+      expect(s.frames).toHaveLength(1 + 6);
+    });
+
+    test("a source that is still adding is not marked and does not hold the check back", async () => {
+      const s = setup();
+      const ids = await sources(s, 2);
+      await s.store.update(ids[1] as string, { state: "adding" });
+      await s.svc.startCheckAll();
+      expect(s.svc.checkingSince(ids[0] as string)).toBeDefined();
+      expect(s.svc.checkingSince(ids[1] as string)).toBeUndefined();
+      await s.svc.idle();
+      expect(s.svc.checkingSince(ids[0] as string)).toBeUndefined();
+    });
+  });
 });

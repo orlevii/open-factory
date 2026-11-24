@@ -117,6 +117,7 @@ export class LibraryIndex {
   private readonly hostSkillsDir: string;
   private readonly factoryHome: string;
   private readonly templates: () => TemplatesPort;
+  private readonly checkingSince: (id: string) => string | undefined;
 
   constructor(d: {
     db: Db;
@@ -125,11 +126,14 @@ export class LibraryIndex {
     hostClaudeDir: string;
     factoryHome: string;
     templates: () => TemplatesPort;
+    /** When a check was queued for a source, while one is queued or running (the sources service's). */
+    checkingSince?: (id: string) => string | undefined;
   }) {
     this.store = d.store ?? dbStore(d.db);
     this.hostSkillsDir = path.join(d.hostClaudeDir, "skills");
     this.factoryHome = d.factoryHome;
     this.templates = d.templates;
+    this.checkingSince = d.checkingSince ?? (() => undefined);
   }
 
   /** The host skills: directories (links followed) with a SKILL.md and a valid name, sorted. */
@@ -279,6 +283,7 @@ export class LibraryIndex {
 
     for (const s of sources) {
       const rows: SkillRow[] = [];
+      const checkingSince = this.checkingSince(s.id);
       if (s.state === "ready") {
         for (const n of s.skills) rows.push(row(n, await this.registered(s, n)));
       }
@@ -295,9 +300,10 @@ export class LibraryIndex {
           pin: s.commit,
           state: s.state,
           skillCount: s.skills.length,
+          since: s.state === "adding" ? s.startedAt.toISOString() : null,
+          checking: checkingSince ? { since: checkingSince } : null,
           update: s.updateCommit !== null,
           checkFailed: s.checkError !== null,
-          checkedAt: s.checkedAt ? s.checkedAt.toISOString() : null,
         },
         skills: rows,
       });

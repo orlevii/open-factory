@@ -22,9 +22,10 @@ export const source = (id: string, o: Partial<SourceSummary> = {}): SourceSummar
   pin: "0123456789abcdef0123456789abcdef01234567",
   state: "ready",
   skillCount: 1,
+  since: null,
+  checking: null,
   update: false,
   checkFailed: false,
-  checkedAt: null,
   ...o,
 });
 

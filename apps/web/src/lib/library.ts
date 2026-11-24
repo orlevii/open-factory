@@ -43,6 +43,12 @@ export type LibraryChanged = Extract<ServerMessage, { type: "library_changed" }>
 const COALESCE_MS = 250;
 let timer: ReturnType<typeof setTimeout> | undefined;
 
+/** Drops a pending window (tests: a window must not leak into the next one). */
+export function resetLibraryChanged() {
+  clearTimeout(timer);
+  timer = undefined;
+}
+
 /**
  * Handles a `library_changed` frame (spec §9.5, R-Q3): the whole `["library"]` prefix refetches once per 250 ms
  * trailing window, however many frames land in it (a check-all sends one per source). The timer is module-level, never per

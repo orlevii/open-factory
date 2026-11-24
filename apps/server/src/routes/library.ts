@@ -146,7 +146,7 @@ export const libraryRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { response: { 202: z.object({}) } } },
     async (_req, reply) => {
       // Progress arrives as `library_changed` frames, one per checked source (§9.2).
-      app.skillSources.checkAllInBackground();
+      await app.skillSources.startCheckAll();
       return reply.code(202).send({});
     },
   );

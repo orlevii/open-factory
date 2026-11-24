@@ -39,6 +39,7 @@ function hasRow(data: SkillGroupsResponse, key: string | undefined): boolean {
 export function useLibraryArrival(setPeek: (key: string) => void) {
   const peekKey = useLocation({ select: (l) => peekKeyFromState(l.state) });
   const arrivalKey = useLocation({ select: (l) => l.state.__TSR_key });
+  // The router gives every history entry a key; without one (a bare test router) no arrival is detected.
   const [arrivedKey, setArrivedKey] = useState<string>();
   if (peekKey !== undefined && arrivalKey !== arrivedKey) {
     setArrivedKey(arrivalKey);

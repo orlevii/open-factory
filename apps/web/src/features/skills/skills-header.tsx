@@ -1,40 +1,42 @@
 import { apiFetch, type SkillGroupsResponse } from "@open-factory/shared";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { z } from "zod";
 import { Elapsed } from "@/components/elapsed";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { FORM_MSG } from "@/lib/form-messages";
 import { libraryQueryOptions } from "@/lib/library";
 import { arrive } from "@/lib/use-arrival";
 import { count } from "./format";
 
-type Checked = { id: string; checkedAt: string | null; update: boolean; failed: boolean };
+/** What the line needs, from the sources a check runs over (the GitHub sources that are ready; one still being added
+ *  isn't checked). A module-level `select`: the header re-renders only when these change, not on every list refetch. */
+type Summary = {
+  checkingSince: string | undefined;
+  sources: number;
+  updates: number;
+  failed: number;
+};
 
-/** The GitHub sources, which are what a check runs over (a folder has nothing to check). A module-level `select`:
- *  the header re-renders only when a source's check result changes, not on every list refetch. */
-const selectChecked = (data: SkillGroupsResponse): Checked[] =>
-  data.groups.flatMap((g) =>
-    g.kind === "source" && g.source.kind === "github"
-      ? [
-          {
-            id: g.source.id,
-            checkedAt: g.source.checkedAt,
-            update: g.source.update,
-            failed: g.source.checkFailed,
-          },
-        ]
-      : [],
-  );
+const selectSummary = (data: SkillGroupsResponse): Summary => {
+  const out: Summary = { checkingSince: undefined, sources: 0, updates: 0, failed: 0 };
+  for (const g of data.groups) {
+    if (g.kind !== "source" || g.source.kind !== "github" || g.source.state !== "ready") continue;
+    out.sources++;
+    if (g.source.update) out.updates++;
+    if (g.source.checkFailed) out.failed++;
+    const since = g.source.checking?.since;
+    if (since !== undefined && (out.checkingSince === undefined || since < out.checkingSince))
+      out.checkingSince = since;
+  }
+  return out;
+};
 
 const checkAll = () =>
   apiFetch("/api/library/check", { method: "POST", body: {}, schema: z.object({}) });
-
-/** A check in this page's session: when it was started, and what each source's `checkedAt` was then. A source is
- *  done when its `checkedAt` has changed, so a skewed clock between browser and server doesn't matter. */
-type Run = { startedAt: string; before: Record<string, string | null> };
 
 /** "2 updates" jumps to the first source with an update on this view. */
 function showFirstUpdate() {
@@ -44,20 +46,14 @@ function showFirstUpdate() {
   arrive(row);
 }
 
-function Outcome({ checked, run }: { checked: Checked[]; run: Run }) {
-  if (checked.length === 0) return <>No sources to check.</>;
-  if (checked.some((c) => c.checkedAt === run.before[c.id]))
-    return (
-      <>
-        Checking… <Elapsed since={run.startedAt} hideUnderMs={10_000} />
-      </>
-    );
-  const updates = checked.filter((c) => c.update).length;
-  const failed = checked.filter((c) => c.failed).length;
+/** The finished line, from the sources' results. */
+function Outcome({ summary }: { summary: Summary }) {
+  const { sources, updates, failed } = summary;
+  if (sources === 0) return <>{FORM_MSG.noSourcesToCheck}</>;
   if (updates === 0 && failed === 0) return <>All up to date · checked just now</>;
   return (
     <>
-      Checked {count(checked.length, "source")}
+      Checked {count(sources, "source")}
       {updates > 0 && (
         <>
           {" · "}
@@ -78,16 +74,38 @@ function Outcome({ checked, run }: { checked: Checked[]; run: Run }) {
 /** The h1, Check for updates and Add skills (spec §10.1). PR 1 has one view, so no view switch. The outcome line is
  *  derived from the sources' check results; it sits beside the buttons, and on its own line below `sm`. */
 export function SkillsHeader({ onAddSkills }: { onAddSkills(): void }) {
-  const { data: checked = [] } = useQuery({ ...libraryQueryOptions, select: selectChecked });
-  const [run, setRun] = useState<Run>();
-  const check = useMutation({ mutationFn: checkAll });
+  const qc = useQueryClient();
+  const { data: summary } = useQuery({ ...libraryQueryOptions, select: selectSummary });
+  // The line shows once a check was started here or seen running (a reload mid-check keeps showing it: the running
+  // state is the server's). Adjusting state while rendering, never in an effect.
+  const [shown, setShown] = useState(false);
+  if (!shown && summary?.checkingSince !== undefined) setShown(true);
+  // The mutation stays pending until the refetch that follows has landed, so the line never reads a result that
+  // predates the check.
+  const check = useMutation({
+    mutationFn: checkAll,
+    onSuccess: () => qc.invalidateQueries({ queryKey: libraryQueryOptions.queryKey }),
+  });
   const onCheck = () => {
-    setRun({
-      startedAt: new Date().toISOString(),
-      before: Object.fromEntries(checked.map((c) => [c.id, c.checkedAt])),
-    });
+    setShown(true);
     check.mutate();
   };
+  const running = check.isPending || summary?.checkingSince !== undefined;
+  let line: ReactNode = null;
+  if (check.isError) line = FORM_MSG.checkFailed;
+  else if (shown && summary)
+    line = running ? (
+      <>
+        Checking…{" "}
+        {summary.checkingSince !== undefined && (
+          <span aria-hidden="true">
+            <Elapsed since={summary.checkingSince} hideUnderMs={10_000} />
+          </span>
+        )}
+      </>
+    ) : (
+      <Outcome summary={summary} />
+    );
   return (
     <PageHeader
       title="Skills"
@@ -96,13 +114,9 @@ export function SkillsHeader({ onAddSkills }: { onAddSkills(): void }) {
         <div
           role="status"
           aria-live="polite"
-          className="min-w-0 flex-1 text-right text-[0.8125rem] text-muted-foreground empty:hidden @max-[40rem]:order-last @max-[40rem]:basis-full @max-[40rem]:text-left"
+          className="min-w-0 flex-1 text-right text-[0.8125rem] text-muted-foreground @max-[40rem]:order-last @max-[40rem]:basis-full @max-[40rem]:text-left"
         >
-          {check.isError ? (
-            "Couldn't check for updates."
-          ) : run ? (
-            <Outcome checked={checked} run={run} />
-          ) : null}
+          {line}
         </div>
       }
       actions={

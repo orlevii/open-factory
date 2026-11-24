@@ -1,5 +1,5 @@
 import type { SkillGroupsResponse } from "@open-factory/shared";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -316,6 +316,33 @@ test("the picker does not fetch on mount: the Library list is already cached", a
   await open();
   expect(screen.getByRole("option", { name: /tdd/ })).toBeInTheDocument();
   expect(api.calls.filter((c) => c.url === "/api/library/skills")).toHaveLength(0);
+});
+
+test("a window focus refetches the Library list, so a skill added on disk shows in the picker", async () => {
+  const state = { library: LIBRARY as unknown };
+  const api = useLibrary();
+  api.on("GET /api/library/skills", () => json(state.library));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(libraryQueryOptions.queryKey, LIBRARY);
+  render(<Form client={client} />);
+  state.library = {
+    ...LIBRARY,
+    groups: [
+      {
+        ...LIBRARY.groups[0],
+        skills: [
+          ...(LIBRARY.groups[0] as { skills: unknown[] }).skills,
+          ok("fresh", "New on disk."),
+        ],
+      },
+      ...LIBRARY.groups.slice(1),
+    ],
+  };
+  focusManager.setFocused(false);
+  focusManager.setFocused(true);
+  await open();
+  expect(await screen.findByRole("option", { name: /fresh/ })).toBeInTheDocument();
+  expect(api.calls.filter((c) => c.url === "/api/library/skills")).toHaveLength(1);
 });
 
 // Plugins (spec §10.5, §7.4).

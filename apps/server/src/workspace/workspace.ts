@@ -7,6 +7,7 @@ import type { Effective } from "../agents/config-resolver.ts";
 import { AgentStartError } from "../agents/errors.ts";
 import { FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
+import { redactOutput } from "../redact.ts";
 import type { DenyRules } from "../spawning/inherit.ts";
 import { buildClaudeMd, type OrgEntry, type OrgHuman } from "./claude-md.ts";
 import { backupDiffering, templateTargets, utcStamp, writeAtomic, writeTargets } from "./files.ts";
@@ -34,7 +35,7 @@ import {
   personaRoot,
   pluginsConfigDir,
 } from "./paths.ts";
-import { installPlugins, PluginInstallError, redactOutput } from "./plugins.ts";
+import { installPlugins, PluginInstallError } from "./plugins.ts";
 import { SafeFs } from "./safe-fs.ts";
 import { buildSettings } from "./settings.ts";
 

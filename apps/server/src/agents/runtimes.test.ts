@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
-import { versionCheckEnv } from "./runtimes.ts";
 import { FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { sendAs } from "./testing/runtime-harness.ts";
@@ -127,17 +126,4 @@ test("stopAll still stops healthy runtimes when another init fails", async () =>
   } finally {
     spy.mockRestore();
   }
-});
-
-test("the host version check gets only PATH and HOME, never the agent's config dir", () => {
-  expect(
-    versionCheckEnv({
-      PATH: "/bin",
-      HOME: "/home/me",
-      CLAUDE_CONFIG_DIR: "/agents/x/.claude-config",
-      DATABASE_URL: "postgres://x",
-      FACTORY_SECRET_KEY: "k",
-      ANTHROPIC_API_KEY: "a",
-    }),
-  ).toEqual({ PATH: "/bin", HOME: "/home/me" });
 });

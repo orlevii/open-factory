@@ -8,6 +8,7 @@ import {
 } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { resolveImage, USER_TAG_PREFIX, userNameOfTag } from "../images/resolve.ts";
+import { versionCheckEnv } from "../library/claude-flags.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -106,15 +107,6 @@ export function dockerCleanup(
       ? { container: "stopped" }
       : undefined;
   };
-}
-
-/** `claude --version` runs on the host, so it gets the plugin CLI's rule (spec §11.7): never the
- *  agent's env or its agent-writable `CLAUDE_CONFIG_DIR`, only `PATH` and the host `HOME`. */
-export function versionCheckEnv(serverEnv: NodeJS.ProcessEnv): Record<string, string> {
-  const env: Record<string, string> = {};
-  if (serverEnv.PATH) env.PATH = serverEnv.PATH;
-  if (serverEnv.HOME) env.HOME = serverEnv.HOME;
-  return env;
 }
 
 /** The sender as prose writes it (the urgent interrupt's `by`): `@handle` for a human, `@slug` for an agent. */

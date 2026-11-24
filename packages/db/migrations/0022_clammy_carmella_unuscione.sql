@@ -1,0 +1,20 @@
+CREATE TABLE "marketplaces" (
+	"name" text PRIMARY KEY NOT NULL,
+	"source" jsonb NOT NULL,
+	"branch" text,
+	"commit" text,
+	"committed_at" timestamp with time zone,
+	"subject" text,
+	"update_commit" text,
+	"update_at" timestamp with time zone,
+	"update_subject" text,
+	"checked_at" timestamp with time zone,
+	"check_error" text,
+	"tags" jsonb NOT NULL,
+	"state" text NOT NULL,
+	"started_at" timestamp with time zone NOT NULL,
+	"added_by" text NOT NULL,
+	"added_at" timestamp with time zone NOT NULL,
+	"deleted_at" timestamp with time zone,
+	CONSTRAINT "marketplaces_state_check" CHECK ("marketplaces"."state" IN ('adding','ready'))
+);

@@ -86,3 +86,14 @@ test("dispose before the window ends cancels the pending toast", () => {
   expect(notify).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test("several templates toast with the count and Open goes to the templates list", () => {
+  const t = toasts();
+  for (const subject of ["a", "b"])
+    t.onOrgAction({ type: "org_action", action: "template_created", by: "@hr", subject });
+  vi.advanceTimersByTime(2000);
+  const n = notify.mock.calls[0]?.[0];
+  expect(n.text).toBe("@hr created 2 templates");
+  n.action.run();
+  expect(navigate).toHaveBeenCalledWith("/templates");
+});

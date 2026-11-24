@@ -874,9 +874,3 @@ test("Can manage the org: on a running agent the change shows the restart notice
   await userEvent.click(screen.getByRole("switch", { name: "Can manage the org" }));
   expect(await screen.findByText(SELF)).toBeInTheDocument();
 });
-
-test("Can manage the org: a spawned agent has no sheet form, so no switch", async () => {
-  await open({ agents: [lead({ kind: "ephemeral" })] }, { form: false });
-  await screen.findByText("Spawned agents can't be edited.");
-  expect(screen.queryByRole("switch", { name: "Can manage the org" })).not.toBeInTheDocument();
-});

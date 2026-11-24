@@ -492,24 +492,17 @@ function EditAgentForm({
             onChange={s.setProjects}
             onAddProject={onAddProject}
           />
-          {agent.kind === "persistent" && (
-            <FieldShell
-              name="manageOrg"
-              label="Can manage the org"
-              help={MANAGE_ORG_HELP}
-              error={errors.manageOrg}
-            >
-              {(a) => (
-                <Switch
-                  id={a.id}
-                  className="justify-self-start"
-                  checked={shown.manageOrg}
-                  aria-describedby={a.describedBy}
-                  onCheckedChange={(v) => set("manageOrg", v)}
-                />
-              )}
-            </FieldShell>
-          )}
+          <FieldShell name="manageOrg" label="Can manage the org" help={MANAGE_ORG_HELP}>
+            {(a) => (
+              <Switch
+                id={a.id}
+                className="justify-self-start"
+                checked={shown.manageOrg}
+                aria-describedby={a.describedBy}
+                onCheckedChange={(v) => set("manageOrg", v)}
+              />
+            )}
+          </FieldShell>
         </fieldset>
         {restartHelp && (
           <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">{restartHelp}</p>

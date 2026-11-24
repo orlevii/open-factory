@@ -21,6 +21,9 @@ export function FormFrame({
   submitLabel,
   pendingLabel,
   pending,
+  submitDisabled = false,
+  submitClassName,
+  pendingExtra,
   outcome,
   autoFocusId,
   autoFocus = true,
@@ -36,6 +39,13 @@ export function FormFrame({
   submitLabel: string;
   pendingLabel: string;
   pending: boolean;
+  /** Sheet frame only: the primary is `aria-disabled` (it stays focusable) and a submit does nothing (Add at 0 picks, the
+   *  300 ms after a Find lands). */
+  submitDisabled?: boolean;
+  /** Sheet frame only: e.g. a min width and tabular numbers, so the primary doesn't change width with its label. */
+  submitClassName?: string;
+  /** Sheet frame only: shown after the pending label (an elapsed clock). */
+  pendingExtra?: ReactNode;
   outcome: Outcome;
   ref?: Ref<HTMLFormElement>;
   autoFocusId?: string;
@@ -102,7 +112,7 @@ export function FormFrame({
       noValidate
       onSubmit={(e: FormEvent) => {
         e.preventDefault();
-        if (!pending) onSubmit();
+        if (!pending && !submitDisabled) onSubmit();
       }}
       className="flex min-h-0 flex-1 flex-col"
     >
@@ -121,9 +131,14 @@ export function FormFrame({
         <Button type="button" variant="ghost" data-skip-validate onClick={onCancel}>
           Close
         </Button>
-        <Button type="submit" aria-disabled={pending || undefined}>
+        <Button
+          type="submit"
+          aria-disabled={pending || submitDisabled || undefined}
+          className={submitClassName}
+        >
           {pending && <Spinner />}
           {pending ? pendingLabel : submitLabel}
+          {pending && pendingExtra}
         </Button>
       </SheetFooter>
     </form>

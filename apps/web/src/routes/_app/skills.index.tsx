@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef } from "react";
 import { PageBody } from "@/components/page-header";
 import { closeInstantly } from "@/components/ui/sheet";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { PeekSheet } from "@/features/skills/peeks/peek-sheet";
 import { SkillList } from "@/features/skills/skill-list";
 import { SkillsHeader } from "@/features/skills/skills-header";
@@ -27,8 +28,7 @@ function SkillsPage() {
   };
   return (
     <>
-      {/* STUB (A11): the Add skills sheet is A13's. */}
-      <SkillsHeader onAddSkills={() => {}} />
+      <SkillsHeader onAddSkills={() => openSheet({ kind: "add-skills" })} />
       <PageBody>
         {/* At 54rem of container the list keeps 30rem clear of an open peek. */}
         <div className="@container">

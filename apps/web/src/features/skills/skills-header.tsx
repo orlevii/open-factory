@@ -7,6 +7,7 @@ import { Elapsed } from "@/components/elapsed";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { FORM_MSG } from "@/lib/form-messages";
 import { libraryQueryOptions } from "@/lib/library";
 import { arrive } from "@/lib/use-arrival";
@@ -34,6 +35,8 @@ const selectSummary = (data: SkillGroupsResponse): Summary => {
   }
   return out;
 };
+
+const ADD_INTENT = sheetIntent("add-skills");
 
 const checkAll = () =>
   apiFetch("/api/library/check", { method: "POST", body: {}, schema: z.object({}) });
@@ -137,7 +140,7 @@ export function SkillsHeader({ onAddSkills }: { onAddSkills(): void }) {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" aria-label="Add skills" onClick={onAddSkills}>
+              <Button variant="ghost" aria-label="Add skills" onClick={onAddSkills} {...ADD_INTENT}>
                 <Plus aria-hidden="true" data-icon="inline-start" />
                 <span className="max-sm:sr-only">Add skills</span>
               </Button>

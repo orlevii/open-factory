@@ -5,6 +5,8 @@ import {
   skillDetailSchema,
   skillFileTextSchema,
   skillGroupsResponseSchema,
+  type skillSourceAddBodySchema,
+  type skillSourcePreviewBodySchema,
   sourceDetailSchema,
   sourcePreviewSchema,
   sourceRemovedSchema,
@@ -103,11 +105,21 @@ export function selectSourceGroup(id: string) {
   return select;
 }
 
+export type SkillSourcePreviewBody = z.infer<typeof skillSourcePreviewBodySchema>;
+export type SkillSourceAddBody = z.infer<typeof skillSourceAddBodySchema>;
+
 // Source actions (spec §9.2). POSTs are mutations, started from handlers (R-Q1), never queries.
 const sourceUrl = (id: string, action?: string) =>
   `/api/library/sources/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
-const post = <T>(url: string, schema: z.ZodType<T>, body: unknown = {}) =>
-  apiFetch(url, { method: "POST", body, schema });
+const post = <T>(url: string, schema: z.ZodType<T>, body: unknown = {}, signal?: AbortSignal) =>
+  apiFetch(url, { method: "POST", body, schema, ...(signal ? { signal } : {}) });
+
+/** Step 1 of Add skills: what a folder or GitHub source holds. `signal` cancels it (Close, a newer Find). */
+export const previewSkillSource = (body: SkillSourcePreviewBody, signal?: AbortSignal) =>
+  post("/api/library/sources/preview", sourcePreviewSchema, body, signal);
+/** Step 2: adds the source with the picked skills (201, or 202 while a GitHub add re-fetches). */
+export const addSkillSource = (body: SkillSourceAddBody) =>
+  post("/api/library/sources", sourceDetailSchema, body);
 
 export const checkSource = (id: string) => post(sourceUrl(id, "check"), sourceDetailSchema);
 export const updateSource = (id: string, commit: string) =>

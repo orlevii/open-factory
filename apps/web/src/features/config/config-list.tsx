@@ -54,7 +54,7 @@ type Props = {
   renderAdd?: (a: AddSlot) => ReactNode;
   /**
    * A ghost action in the label row instead of the add input (agent mode: the "This agent" row; template mode: the
-   * list's own row): rows append below it, so it never moves. Takes the slot because the picker needs the field's wiring.
+   * list's own label row, beside the legend): rows append below it, so it never moves. Takes the slot because the picker needs the field's wiring.
    */
   labelAction?: (a: AddSlot) => ReactNode;
   /** Read-only rows above the groups (a template's own skills). */
@@ -276,10 +276,22 @@ export function ConfigList({
   );
 
   return (
-    <FieldShell name={name} label={label} legend help={help} error={error} warning={warning}>
+    <FieldShell
+      name={name}
+      label={label}
+      legend
+      help={help}
+      error={error}
+      warning={warning}
+      legendAction={
+        !readOnly && labelAction && !inherited
+          ? (a) => labelAction({ ...a, add: commit, reveal })
+          : undefined
+      }
+    >
       {({ id, describedBy, invalid }) => {
         const slot: AddSlot = { id, describedBy, invalid, add: commit, reveal };
-        const action = readOnly ? null : labelAction?.(slot);
+        const action = readOnly || !inherited ? null : labelAction?.(slot);
         return (
           <div className="grid gap-2">
             {lead}
@@ -327,12 +339,7 @@ export function ConfigList({
                 {ownList}
               </div>
             ) : (
-              <>
-                {action ? (
-                  <div className="flex min-h-7 items-center justify-end">{action}</div>
-                ) : null}
-                {ownList}
-              </>
+              ownList
             )}
             {readOnly || labelAction ? null : renderAdd ? (
               renderAdd(slot)

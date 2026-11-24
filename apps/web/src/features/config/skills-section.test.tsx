@@ -131,11 +131,15 @@ test("agent mode: the ghost Add skill sits in the This agent label row", () => {
   expect(within(row).getByRole("button", { name: "Add skill" })).toBeInTheDocument();
 });
 
-test("template mode: the ghost Add skill sits above the rows, inside the Skills list", () => {
+test("template mode: the ghost Add skill sits in the Skills label row, above the rows", () => {
   useLibrary();
   render(<Form mode="template" start={{ template: { skills: ["tdd"] } }} />);
-  const trigger = within(skillsGroup()).getByRole("button", { name: "Add skill" });
-  const rows = within(skillsGroup()).getByRole("button", { name: "Remove skill 1" });
+  const group = skillsGroup();
+  const trigger = within(group).getByRole("button", { name: "Add skill" });
+  // The label and the trigger share one row.
+  const row = within(group).getByText("Skills").parentElement as HTMLElement;
+  expect(row).toContainElement(trigger);
+  const rows = within(group).getByRole("button", { name: "Remove skill 1" });
   expect(trigger.compareDocumentPosition(rows) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 

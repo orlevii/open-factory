@@ -56,3 +56,15 @@ test("UntrustedCode shows CRLF file text without a token at every line end", () 
   expect(container.textContent).not.toContain("U+000D");
   expect(container.querySelector("pre")?.textContent).toBe("first\nsecond\n");
 });
+
+test.each([
+  ["a tag character", "a\u{E0041}b", "a⟨U+E0041⟩b"],
+  ["a variation selector", "a\uFE0Fb", "a⟨U+FE0F⟩b"],
+  ["a line separator", "a\u2028b", "a⟨U+2028⟩b"],
+  ["a paragraph separator", "a\u2029b", "a⟨U+2029⟩b"],
+  ["a Hangul choseong filler", "a\u115Fb", "a⟨U+115F⟩b"],
+  ["a Hangul jungseong filler", "a\u1160b", "a⟨U+1160⟩b"],
+  ["a Hangul filler", "a\u3164b", "a⟨U+3164⟩b"],
+])("visibleControls shows %s as a token", (_, text, shown) => {
+  expect(visibleControls(text)).toBe(shown);
+});

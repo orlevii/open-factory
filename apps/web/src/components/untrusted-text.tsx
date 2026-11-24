@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { codeTextClass } from "@/components/code-text";
 
-/** Bidi embeddings and isolates, zero-width and direction marks, soft hyphen, and C0/C1 controls other than tab and newline. */
+/** Bidi embeddings and isolates, zero-width and direction marks, tag characters, variation selectors, line and paragraph separators, Hangul fillers, soft hyphen, and C0/C1 controls other than tab and newline. */
 function isInvisible(code: number): boolean {
   return (
     (code >= 0x202a && code <= 0x202e) ||
@@ -16,6 +16,13 @@ function isInvisible(code: number): boolean {
     code === 0x180e ||
     (code >= 0x80 && code <= 0x9f) ||
     code === 0xfeff ||
+    (code >= 0xe0000 && code <= 0xe007f) ||
+    (code >= 0xfe00 && code <= 0xfe0f) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x115f ||
+    code === 0x1160 ||
+    code === 0x3164 ||
     code === 0x7f ||
     (code < 0x20 && code !== 0x09 && code !== 0x0a)
   );

@@ -557,6 +557,17 @@ describe("plugins, agent mode", () => {
     expect(lastOf(onValue)).toEqual({ settings: { enabledPlugins: { "lint@acme": true } } });
   });
 
+  test("the template's group and the agent's own group of one marketplace are each named by it", async () => {
+    render(
+      <PluginsForm
+        mode="agent"
+        base={template(pinned(PIN))}
+        start={{ settings: { enabledPlugins: { "lint@acme": true } } }}
+      />,
+    );
+    expect(await screen.findAllByRole("group", { name: "acme" })).toHaveLength(2);
+  });
+
   test("the template's pin is shown read-only, with the Latest badge when it follows upstream", async () => {
     const first = render(<PluginsForm mode="agent" base={template(pinned(PIN))} />);
     const g = await screen.findByRole("group", { name: "acme" });

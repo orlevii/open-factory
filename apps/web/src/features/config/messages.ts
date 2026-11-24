@@ -94,6 +94,7 @@ export const PLUGIN_COPY = {
   pinHeading: (mkt: string, ref: string) => `Pin ${mkt} to ${ref}`,
   pinPrimary: (ref: string) => `Pin to ${ref}`,
   latestHeading: (mkt: string) => `Use Latest for ${mkt}`,
+  latestAdd: "Use Latest and add",
   latestRisk: (mkt: string) =>
     `Latest runs ${mkt}'s newest code at each restart, without review, with each agent's workspace and credentials in reach.`,
   running: (version: string) => `running ${version}`,

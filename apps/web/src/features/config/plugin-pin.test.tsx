@@ -66,6 +66,16 @@ const serveDiff = () =>
   });
 
 describe("pinned by default", () => {
+  test("a tag's hidden characters show as tokens", async () => {
+    useMarketplaces();
+    render(
+      <PluginsForm
+        start={withPlugins({ source: { source: "github", repo: "acme/acme", ref: "v1\u202E" } })}
+      />,
+    );
+    expect(await group()).toHaveTextContent("v1⟨U+202E⟩");
+  });
+
   test("shows the short commit as a copy button and the newer commit Skills read", async () => {
     useMarketplaces();
     render(<PluginsForm start={withPlugins(pinned(PIN))} />);

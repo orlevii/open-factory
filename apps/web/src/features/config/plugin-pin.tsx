@@ -9,6 +9,7 @@ import {
   AdaptiveMenuTrigger,
 } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
+import { visibleControls } from "@/components/untrusted-text";
 import { PinButton, SkeletonRows } from "@/features/skills/peeks/sections";
 import { ChangedHeader, DiffLine, hookText } from "@/features/skills/peeks/update-view";
 import { diffPlugin, type MarketplaceRow } from "@/lib/library";
@@ -46,7 +47,7 @@ function PinFacts({ decl, library }: { decl: unknown; library: string | null | u
   if (pin.kind === "tag")
     return (
       <span>
-        {CONFIG_COPY.pinned} · tag <span className="font-mono">{pin.name}</span>
+        {CONFIG_COPY.pinned} · tag <span className="font-mono">{visibleControls(pin.name)}</span>
       </span>
     );
   return (

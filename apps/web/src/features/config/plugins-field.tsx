@@ -223,6 +223,7 @@ function commitOf(decl: unknown, row: Row | undefined): string | undefined {
 
 /** One marketplace's plugins, headed by its name and its pin (spec §10.5). */
 const PluginGroup = memo(function PluginGroup({
+  scope,
   mkt,
   keys,
   decl,
@@ -236,6 +237,8 @@ const PluginGroup = memo(function PluginGroup({
   onRemove,
   onView,
 }: {
+  /** Names the group's list in the form (the template's or this agent's), so two groups of one marketplace differ. */
+  scope: string;
   mkt: string;
   keys: readonly string[];
   /** The marketplace's declaration, absent when the settings don't declare it (the server says so on the row). */
@@ -250,7 +253,7 @@ const PluginGroup = memo(function PluginGroup({
   onRemove: ((key: string) => void) | undefined;
   onView: (key: string, commit: string | undefined) => void;
 }) {
-  const labelId = `plugins-${mkt}`;
+  const labelId = `plugins-${scope}-${mkt}`;
   const pinCommit = decl === undefined ? undefined : commitOf(decl, row);
   return (
     // biome-ignore lint/a11y/useSemanticElements: a group named by its marketplace, with its own list inside
@@ -340,6 +343,45 @@ function pickable(data: MarketplacesResponse | undefined, allowed: Rec | undefin
   return { options, leftOut };
 }
 
+/** Under a pin refusal for an undeclared marketplace: declare it as Latest after the same risk review as Change pin. */
+function LatestOffer({ mkt, onConfirm }: { mkt: string; onConfirm: () => void }) {
+  const [review, setReview] = useState(false);
+  return (
+    <div className="grid gap-2 border-t border-border px-3 py-2 text-xs">
+      {review ? (
+        <>
+          <p className="font-medium text-foreground">{PLUGIN_COPY.latestHeading(mkt)}</p>
+          <p className="text-foreground">{PLUGIN_COPY.latestRisk(mkt)}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={onConfirm}
+            >
+              {PLUGIN_COPY.latestAdd}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setReview(false)}>
+              {CONFIG_COPY.cancel}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="justify-self-start"
+          onClick={() => setReview(true)}
+        >
+          {`${PLUGIN_COPY.latestHeading(mkt)}…`}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function PluginPicker({
   slot,
   data,
@@ -349,6 +391,8 @@ function PluginPicker({
   template,
   picked,
   onPick,
+  onAddLatest,
+  canLatest,
 }: {
   slot: AddSlot;
   data: MarketplacesResponse | undefined;
@@ -359,6 +403,10 @@ function PluginPicker({
   template: string | undefined;
   picked: readonly string[];
   onPick: (key: string) => string | undefined;
+  /** Declares the pick's marketplace as Latest and adds the plugin; absent where a marketplace can't be declared. */
+  onAddLatest: ((key: string) => void) | undefined;
+  /** Whether a refused pick's marketplace is undeclared and so can be declared as Latest. */
+  canLatest: ((key: string) => boolean) | undefined;
 }) {
   const { options, leftOut } = useMemo(() => pickable(data, agentDecls), [data, agentDecls]);
   const emptyText =
@@ -381,6 +429,21 @@ function PluginPicker({
       renderGroup={renderGroup}
       picked={picked}
       onPick={onPick}
+      refusalExtra={
+        onAddLatest
+          ? (key, accept) =>
+              canLatest?.(key) ? (
+                <LatestOffer
+                  key={key}
+                  mkt={marketplaceOf(key)}
+                  onConfirm={() => {
+                    onAddLatest(key);
+                    accept();
+                  }}
+                />
+              ) : null
+          : undefined
+      }
       footer={
         <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
           {leftOut > 0 ? <p>{PLUGIN_COPY.leftOut(leftOut)}</p> : null}
@@ -516,6 +579,17 @@ export function PluginsField() {
     const decl = agent || !row || Object.hasOwn(decls, mkt) ? undefined : declarationFor(row);
     update(["settings"], (prev) => withPlugin(prev, key, mkt, decl));
   };
+  const canLatest = (key: string) => {
+    const mkt = marketplaceOf(key);
+    const row = rows.get(mkt);
+    return !!row && row.source.source !== "directory" && !Object.hasOwn(decls, mkt);
+  };
+  const addLatest = (key: string) => {
+    const mkt = marketplaceOf(key);
+    const row = rows.get(mkt);
+    if (!row) return;
+    update(["settings"], (prev) => withPlugin(prev, key, mkt, { source: row.source }));
+  };
   const reveal = (key: string) =>
     [...(root.current?.querySelectorAll<HTMLElement>("[data-plugin]") ?? [])]
       .find((el) => el.dataset.plugin === key)
@@ -524,10 +598,15 @@ export function PluginsField() {
   if (wrongType) return <WrongType field="plugins" label="Plugins" />;
 
   const editable = !readOnly;
-  const groups = (list: [string, string[]][], opts: { editPin: boolean; removable: boolean }) =>
+  const groups = (
+    scope: string,
+    list: [string, string[]][],
+    opts: { editPin: boolean; removable: boolean },
+  ) =>
     list.map(([mkt, keys]) => (
       <PluginGroup
         key={mkt}
+        scope={scope}
         mkt={mkt}
         keys={keys}
         decl={decls[mkt]}
@@ -552,6 +631,8 @@ export function PluginsField() {
       template={s.templateName}
       picked={picked}
       onPick={onPick}
+      onAddLatest={agent ? undefined : addLatest}
+      canLatest={agent ? undefined : canLatest}
     />
   );
 
@@ -571,7 +652,7 @@ export function PluginsField() {
               <p className="text-[0.8125rem] text-muted-foreground">
                 {s.inheritedLabel} · {tplKeys.length}
               </p>
-              {groups(tplGroups, { editPin: false, removable: false })}
+              {groups("template", tplGroups, { editPin: false, removable: false })}
             </div>
           ) : null}
           {agent ? (
@@ -582,10 +663,10 @@ export function PluginsField() {
                 </p>
                 {editable ? picker(slot) : null}
               </div>
-              {groups(ownGroups, { editPin: false, removable: true })}
+              {groups("own", ownGroups, { editPin: false, removable: true })}
             </div>
           ) : (
-            groups(ownGroups, { editPin: true, removable: true })
+            groups("own", ownGroups, { editPin: true, removable: true })
           )}
           <PluginView view={view} open={viewOpen} onOpenChange={setViewOpen} />
         </div>

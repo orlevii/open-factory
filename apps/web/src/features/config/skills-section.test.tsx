@@ -504,7 +504,7 @@ describe("plugin picker", () => {
     });
   });
 
-  test("an official marketplace with no tag at its commit refuses the pick", async () => {
+  test("an official marketplace with no tag at its commit refuses the pick and offers Latest", async () => {
     useMarketplaces(
       MARKETPLACES.map((m) => (m.name === "claude-plugins-official" ? { ...m, tags: {} } : m)),
     );
@@ -519,6 +519,43 @@ describe("plugin picker", () => {
         "claude-plugins-official can only be pinned to a tag. Fetch a tag in Skills, or use Latest.",
       ).length,
     ).toBeGreaterThan(0);
+    expect(onValue).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Use Latest for claude-plugins-official…" }),
+    );
+    expect(
+      screen.getByText(/runs claude-plugins-official's newest code at each restart/),
+    ).toBeInTheDocument();
+    expect(onValue).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Use Latest and add" }));
+    expect(lastOf(onValue).settings).toEqual({
+      enabledPlugins: { "docs@claude-plugins-official": true },
+      extraKnownMarketplaces: {
+        "claude-plugins-official": {
+          source: { source: "github", repo: "anthropics/claude-plugins-official" },
+        },
+      },
+    });
+  });
+
+  test("the Latest offer can be cancelled without changing the draft", async () => {
+    useMarketplaces(
+      MARKETPLACES.map((m) => (m.name === "claude-plugins-official" ? { ...m, tags: {} } : m)),
+    );
+    const onValue = vi.fn();
+    render(<PluginsForm onValue={onValue} />);
+    await openPlugins();
+    await userEvent.click(
+      await screen.findByRole("option", { name: /docs@claude-plugins-official/ }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Use Latest for claude-plugins-official…" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.getByRole("button", { name: "Use Latest for claude-plugins-official…" }),
+    ).toBeInTheDocument();
     expect(onValue).not.toHaveBeenCalled();
   });
 

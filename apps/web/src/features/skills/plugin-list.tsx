@@ -67,7 +67,12 @@ const PluginRow = memo(function PluginRow({
         <span className="text-[0.8125rem] text-muted-foreground">
           {usedByText(u.templates, u.agents)}
         </span>
-        {u.latest > 0 && <LatestBadge />}
+        {u.latest > 0 && (
+          <span className="inline-flex items-center gap-1.5">
+            <LatestBadge />
+            <span className="text-[0.8125rem] text-muted-foreground">{u.latest} use Latest</span>
+          </span>
+        )}
         {state && <RowState state={state} />}
       </button>
     </li>

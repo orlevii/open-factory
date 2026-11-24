@@ -1,4 +1,4 @@
-import { acceptedPins, pinOf, type pluginDiffSchema } from "@open-factory/shared";
+import { pinOf, pinRefFor, type pluginDiffSchema } from "@open-factory/shared";
 import { useMutation } from "@tanstack/react-query";
 import { type KeyboardEvent, memo, useRef, useState } from "react";
 import type { z } from "zod";
@@ -21,23 +21,6 @@ const COMMIT = /^[0-9a-f]{40}$/;
 
 /** A pin as it is shown: a commit's seven characters, a tag's name. */
 export const shortRef = (ref: string) => (COMMIT.test(ref) ? ref.slice(0, 7) : ref);
-
-/**
- * The ref a new or moved pin writes for a marketplace: the Library's commit, or, where Claude Code refuses commit pins,
- * the newest recorded tag that points at that commit. Undefined when there is nothing to pin to (a marketplace Skills
- * hasn't read, or an official one with no tag at its commit).
- */
-export function pinRefFor(
-  row: Pick<MarketplaceRow, "name" | "commit" | "tags">,
-): string | undefined {
-  if (row.commit === null) return undefined;
-  if (acceptedPins(row.name).includes("commit")) return row.commit;
-  const tags = Object.entries(row.tags)
-    .filter(([, sha]) => sha === row.commit)
-    .map(([name]) => name)
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return tags.at(-1);
-}
 
 /** What the pin says, as items: "Pinned · a1b2c3d", the Latest badge or "Local folder, live". */
 function PinFacts({ decl, library }: { decl: unknown; library: string | null | undefined }) {

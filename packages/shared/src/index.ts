@@ -1,3 +1,5 @@
+export * from "./actor.ts";
+export * from "./agent-policy.ts";
 export * from "./agents.ts";
 export * from "./api-fetch.ts";
 export * from "./avatar.ts";

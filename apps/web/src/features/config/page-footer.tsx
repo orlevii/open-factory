@@ -7,7 +7,7 @@ import { CONFIG_PAGE_COPY } from "./messages";
 
 /**
  * The footer of a page with one save (DESIGN.md → Page forms; spec §12.4 R6): the I4 outcome line above Discard (ghost)
- * and Save changes (primary), side by side while they fit (at 200% text Save wraps under Discard, never sideways). It is sticky at the bottom of the page column only while
+ * and Save changes (primary), side by side at every width. It is sticky at the bottom of the page column only while
  * `sticky` (the form is dirty, or an outcome shows), and otherwise sits in the flow at the end of the form. A plate
  * with a top rule, no blur. Save keeps its shape while it can't run: `aria-disabled`, described by the outcome's notice.
  * `onHeight` hears the footer's height, for an editor's bottom scroll margin; it must be stable.
@@ -38,11 +38,21 @@ export function PageFooter({
   // A ref callback with a cleanup (React 19): the observer lives exactly as long as the element.
   const measure = useCallback(
     (el: HTMLDivElement | null) => {
-      if (!el || !onHeight) return;
-      onHeight(el.offsetHeight);
-      const ro = new ResizeObserver(() => onHeight(el.offsetHeight));
+      if (!el) return;
+      // The sticky bar's height is the page's bottom scroll padding (styles.css), so a control scrolled into view or
+      // focused clears the bar (WCAG 2.4.11). The page scrolls at the document, so the property sits on the root.
+      const root = document.documentElement.style;
+      const report = () => {
+        root.setProperty("--page-footer-height", `${el.offsetHeight}px`);
+        onHeight?.(el.offsetHeight);
+      };
+      report();
+      const ro = new ResizeObserver(report);
       ro.observe(el);
-      return () => ro.disconnect();
+      return () => {
+        ro.disconnect();
+        root.removeProperty("--page-footer-height");
+      };
     },
     [onHeight],
   );

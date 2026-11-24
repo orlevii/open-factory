@@ -992,3 +992,9 @@
     opacity: 0;
   }
 }
+
+/* The sticky page footer (features/config/page-footer.tsx) must not cover a control scrolled into view or focused:
+   the page scrolls at the document, and the footer reports its height on the root. */
+:root:has([data-slot="page-footer"][data-sticky]) {
+  scroll-padding-bottom: var(--page-footer-height, 0px);
+}

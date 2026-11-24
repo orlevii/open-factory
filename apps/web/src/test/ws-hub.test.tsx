@@ -214,16 +214,19 @@ test("config_changed invalidates the agent's and the template's configuration, a
   expect(stale(["template-config", "ops"])).toBe(false);
 });
 
-test("config_changed refreshes the Skills lists, sharing one window with library_changed", async () => {
+test("a config_changed frame alone refreshes the Skills lists once, 250 ms after the first", async () => {
   const { spy } = await mounted();
   const library = () => spy.mock.calls.filter(([f]) => f?.queryKey?.[0] === "library").length;
   resetLibraryChanged(); // an earlier test's real-timer window must not swallow this one
   vi.useFakeTimers();
   try {
     act(() => h.opts?.onMessage?.({ type: "config_changed", template: "dev" }));
-    act(() => h.opts?.onMessage?.({ type: "library_changed" }));
+    act(() => h.opts?.onMessage?.({ type: "config_changed", agent: "bo" }));
+    vi.advanceTimersByTime(249);
     expect(library()).toBe(0);
-    vi.advanceTimersByTime(250);
+    vi.advanceTimersByTime(1);
+    expect(library()).toBe(1);
+    vi.advanceTimersByTime(1000);
     expect(library()).toBe(1);
   } finally {
     vi.useRealTimers();

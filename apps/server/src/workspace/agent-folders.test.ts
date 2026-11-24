@@ -106,6 +106,24 @@ describe("checkProjectSettings", () => {
     },
   );
 
+  // Past Node's readFile limit (2 GiB): if the size were checked only after reading, the read would fail with
+  // ERR_FS_FILE_TOO_LARGE instead of the size message. Sparse, so it costs no disk.
+  test.skipIf(process.platform === "win32")(
+    "a settings file over Node's read limit is refused by size, before any read",
+    async () => {
+      const abs = path.join(wd, ".claude", "settings.json");
+      writeFileSync(abs, "");
+      truncateSync(abs, 3 * 1024 ** 3);
+      try {
+        await expect(checkProjectSettings(wd)).rejects.toThrow(
+          `${abs} is larger than 256 KB, so it can't be checked; shrink it.`,
+        );
+      } finally {
+        rmSync(abs, { force: true });
+      }
+    },
+  );
+
   test("a file that doesn't parse as a JSON object fails closed", async () => {
     put(".claude/settings.json", "{ nope");
     await expect(checkProjectSettings(wd)).rejects.toThrow(/isn't valid JSON/);

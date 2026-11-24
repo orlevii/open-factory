@@ -108,15 +108,12 @@ test("the caller can't restart itself, even with manage_org", async () => {
   });
 });
 
-test.each([
-  [
-    "archived",
-    "update agents set archived_at = now() where slug = 'dev'",
-    "@dev is archived and can't receive messages.",
-  ],
-])("an %s report gets the messaging sentence and is not restarted", async (_, sql, sentence) => {
-  await h.sql.unsafe(sql);
-  expect(await call("lead", { target: "dev" })).toMatchObject({ err: true, text: sentence });
+test("an archived report gets the messaging sentence and is not restarted", async () => {
+  await h.sql`update agents set archived_at = now() where slug = 'dev'`;
+  expect(await call("lead", { target: "dev" })).toMatchObject({
+    err: true,
+    text: "@dev is archived and can't receive messages.",
+  });
   expect(startsOf("dev")).toHaveLength(0);
 });
 
@@ -207,4 +204,70 @@ test("a note over 64 KB is refused by the input schema and the report is not res
   const r = await call("lead", { target: "dev", note: "x".repeat(64 * 1024 + 1) });
   expect(r.err).toBe(true);
   expect(startsOf("dev")).toHaveLength(0);
+});
+
+test("a refused note is surfaced in the result, and the restart still happened", async () => {
+  const p = await runningMidTurn("dev");
+  vi.spyOn(h.app.router, "send").mockResolvedValueOnce({
+    results: [
+      {
+        to: "@dev",
+        status: "refused",
+        reason: "@dev is archived and can't receive messages.",
+        code: "agent_archived",
+      },
+    ],
+  } as never);
+  const r = await call("lead", { target: "dev", note: "Rerun the tests." });
+  expect(r).toMatchObject({
+    err: false,
+    json: {
+      status: "restarting",
+      note_delivered: false,
+      note_error: "Your note wasn't delivered: @dev is archived and can't receive messages.",
+    },
+  });
+  p.emit(ev.end());
+  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  expect(startsOf("dev").at(-1)).not.toBe(p);
+});
+
+test("an idle report: the restart notice comes before the note on the next process", async () => {
+  await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
+  const p = startsOf("dev").at(-1);
+  p?.emit(...ev.fullTurn());
+  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await h.sql`update agents set config = ${JSON.stringify({ template: { model: "opus" } })}::jsonb where slug = 'dev'`;
+  const r = await call("lead", { target: "dev", note: "Pick up the new model." });
+  expect(r.json).toMatchObject({ status: "restarted_idle" });
+  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  const next = startsOf("dev").at(-1);
+  expect(next).not.toBe(p);
+  expect(delivered(next as (typeof drv.starts)[number])).toEqual([
+    ["@factory", expect.stringContaining("model")],
+    ["@lead", "Pick up the new model."],
+  ]);
+});
+
+test("restart_pending: the note is delivered after the pending restart", async () => {
+  await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
+  const p = startsOf("dev").at(-1);
+  p?.emit(
+    ...ev.fullTurn(),
+    ev.background([{ taskId: "t1" }]),
+    ev.background([]),
+    ev.taskFinished("t1"),
+  );
+  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  const r = await call("lead", { target: "dev", note: "After the task." });
+  expect(r).toMatchObject({ json: { status: "restart_pending" } });
+  expect(r.json.note).toContain("restarts in a moment");
+  expect(r.json.note_delivered).toBeUndefined();
+  // The note is an ordinary message from the caller, queued for the running process.
+  expect(
+    startsOf("dev")
+      .at(-1)
+      ?.sent.flat()
+      .map((m) => m.from),
+  ).toContain("@lead");
 });

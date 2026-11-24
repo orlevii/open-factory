@@ -784,6 +784,7 @@ async function listenForAgents(
                 runtimes: d.runtimes,
                 resolver: d.resolver,
                 router: d.router,
+                localRuntimeAllowed: () => localRuntimeAllowed(config),
               }),
               ...scheduleTools({
                 schedules: d.schedules,

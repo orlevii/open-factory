@@ -20,3 +20,7 @@ export async function restartChanges(
     return null;
   }
 }
+
+/** Whether a restart's start can go ahead (I7 §9.2): a local-runtime agent needs the local runtime enabled. The row is the fresh one. */
+export const restartRuntimeAllowed = (row: Pick<AgentRow, "runtime">, localAllowed: boolean) =>
+  row.runtime !== "local" || localAllowed;

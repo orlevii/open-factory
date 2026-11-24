@@ -7,7 +7,7 @@ import {
   RecoveryRefusedError,
 } from "../../agents/errors.ts";
 import type { EventStore } from "../../agents/event-store.ts";
-import { restartChanges } from "../../agents/restart-changes.ts";
+import { restartChanges, restartRuntimeAllowed } from "../../agents/restart-changes.ts";
 import type { AgentRuntimes } from "../../agents/runtimes.ts";
 import type { Router } from "../../messaging/router.ts";
 import {
@@ -29,6 +29,8 @@ type RestartAgentDeps = {
   runtimes: AgentRuntimes;
   resolver: Pick<ConfigResolver, "effective">;
   router: Pick<Router, "send">;
+  /** The local gate, read live (`() => localRuntimeAllowed(config)`). */
+  localRuntimeAllowed(): boolean;
 };
 
 /**
@@ -77,14 +79,16 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
               // Computed here, outside the runtime's job: the resolver reads the disk (I7 §9.2).
               changes: await restartChanges(d, row),
               // A local runtime disabled in this factory is refused, as the human Restart is (I7 §9.2).
-              runtimeAllowed: rt.live().runtimeDisabled === undefined,
+              runtimeAllowed: restartRuntimeAllowed(row, d.localRuntimeAllowed()),
             });
-            if (args.note)
-              await d.router.send({ agentId: d.caller.id }, [row.slug], args.note, false);
+            // `send` reports a refusal or a failed wake in `results`; it doesn't throw. A lost instruction is
+            // surfaced, so the caller doesn't believe it was delivered (the restart itself has happened).
+            const lost = args.note ? await sendNote(d, row.slug, args.note) : undefined;
             return textResult({
               target: `@${row.slug}`,
               status: outcome.status,
               ...(outcome.note ? { note: outcome.note } : {}),
+              ...(lost ? { note_delivered: false, note_error: lost } : {}),
             });
           } catch (e) {
             if (e instanceof RecoveryRefusedError) return toolError(e.message);
@@ -98,4 +102,14 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
       );
     },
   };
+}
+
+/** Sends the caller's note; returns a path-free sentence when it wasn't accepted, else undefined. */
+async function sendNote(d: RestartAgentDeps, slug: string, note: string) {
+  const { results } = await d.router.send({ agentId: d.caller.id }, [slug], note, false);
+  const r = results[0];
+  if (!r) return `Your note to @${slug} wasn't delivered.`;
+  if (r.status === "refused") return `Your note wasn't delivered: ${r.reason}`;
+  if (r.status === "start_failed") return `Your note wasn't delivered: ${r.note}`;
+  return undefined;
 }

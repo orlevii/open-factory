@@ -48,7 +48,7 @@ import {
   AlreadyDeliveredError,
   NotSenderError,
 } from "../agents/message-cancel.ts";
-import { restartChanges } from "../agents/restart-changes.ts";
+import { restartChanges, restartRuntimeAllowed } from "../agents/restart-changes.ts";
 import { requireUser } from "../auth/require-user.ts";
 import { localRuntimeAllowed } from "../config.ts";
 import { FieldError } from "../errors.ts";
@@ -473,13 +473,14 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
       try {
         // The row is read fresh, not the runtime's (it can be stale), so the config is the one a start would use.
-        const row = (await app.store.agentBySlug(req.params.slug)) ?? rt.agent;
+        const row = await app.store.agentBySlug(req.params.slug);
+        if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
         const outcome = await rt.restartNow({
           by: `@${user(req).handle}`,
           force: req.body?.force ?? false,
           changes: await restartChanges(app, row),
           // A Restart certain to fail isn't offered (spec §13).
-          runtimeAllowed: rt.agent.runtime !== "local" || localRuntimeAllowed(app.config),
+          runtimeAllowed: restartRuntimeAllowed(row, localRuntimeAllowed(app.config)),
         });
         return reply.code(202).send({ status: outcome.status });
       } catch (e) {

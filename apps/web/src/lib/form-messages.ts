@@ -59,6 +59,6 @@ export const FORM_MSG = {
   noMoreSkills: "No more skills to add.",
   selectAll: "Select all",
   selectNone: "Select none",
-  // The label of the row action, which is also the server's `stateDetail` for a cache that needs a fetch (no code yet).
+  // The label of the row action for a cache that needs a fetch (no code yet).
   fetchAgain: "Fetch again",
 } as const;

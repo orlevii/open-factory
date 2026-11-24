@@ -210,7 +210,7 @@ export function SourcePeekBody({
   const inUse = users > 0;
   const rows = group?.skills ?? [];
   const rowByName = new Map(rows.map((r) => [r.name, r]));
-  const missing = rows.some((r) => r.state === "missing" && r.stateDetail === FORM_MSG.fetchAgain);
+  const missing = rows.some((r) => r.fetchAgain === true);
   const updateCommit = d?.updateCommit ?? null;
   const updateExpected = updateCommit !== null || (!d && summary?.update === true);
 

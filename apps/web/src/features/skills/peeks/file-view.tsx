@@ -8,10 +8,6 @@ import type { skillFileQueryOptions } from "@/lib/library";
 /** One file's text query: a skill's or a plugin's (the same `{ path, text }` shape). */
 export type FileQuery = ReturnType<typeof skillFileQueryOptions>;
 
-const CUT_BYTES = 256 * 1024;
-/** The server cuts SKILL.md to 256 KB on a character boundary, so a text within 3 bytes of the cap was cut. */
-const wasCut = (text: string) => new TextEncoder().encode(text).length > CUT_BYTES - 4;
-
 /**
  * One file of a skill: its path, a "Runs code" mark for an executable, and one View file toggle. The toggle's label
  * flips to Hide file, so focus never moves. The text opens from its first line, in a plate with a rule, clamped at 40
@@ -23,6 +19,7 @@ export function FileView({
   executable,
   options,
   inlineText,
+  inlineCut = false,
 }: {
   path: string;
   executable: boolean;
@@ -30,6 +27,8 @@ export function FileView({
   options: FileQuery;
   /** Text already in hand (`SKILL.md` is in the skill's detail), so the file never fetches. */
   inlineText?: string;
+  /** The server cut `inlineText` at 256 KB. */
+  inlineCut?: boolean;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -71,7 +70,7 @@ export function FileView({
           {text !== undefined ? (
             <>
               <UntrustedCode text={text} fromTop />
-              {wasCut(text) && <p className="mt-1 text-xs text-muted-foreground">Cut at 256 KB.</p>}
+              {inlineCut && <p className="mt-1 text-xs text-muted-foreground">Cut at 256 KB.</p>}
             </>
           ) : q.isError ? (
             <p role="alert" className="text-[0.8125rem] text-destructive">

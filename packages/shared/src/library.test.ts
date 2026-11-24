@@ -227,6 +227,7 @@ describe("skill source bodies", () => {
       usedByTemplates: [],
       files: [],
       skillMd: "x".repeat(256 * 1024 + 1),
+      skillMdCut: true,
     });
     expect(bad.error?.issues[0]?.message).toBe(MSG.skillMdSize);
   });
@@ -241,6 +242,7 @@ describe("skill source bodies", () => {
       hooks: [],
       usedByTemplates: [],
       files: [],
+      skillMdCut: false,
     };
     expect(
       skillDetailSchema.safeParse({ ...detail, skillMd: "x".repeat(256 * 1024 + 1) }).success,

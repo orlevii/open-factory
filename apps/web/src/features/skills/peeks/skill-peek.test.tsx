@@ -31,6 +31,7 @@ const detail = (group: string, name: string, o: Record<string, unknown> = {}) =>
   usedByTemplates: [],
   files: [{ path: "SKILL.md", executable: false }],
   skillMd: "# review\nfirst line",
+  skillMdCut: false,
   ...o,
 });
 
@@ -198,6 +199,21 @@ test("View file is one toggle that opens from line 1, and only then fetches", as
   expect(screen.queryByText(/line 41/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Show all · 100 lines" })).toBeInTheDocument();
   expect(mocks.calls.find((c) => c.url.includes("/file"))?.url).toContain("path=notes.txt");
+});
+
+test("SKILL.md says Cut at 256 KB only when the server says it cut it", async () => {
+  const one = await open(detail("source:s1", "review", { skillMdCut: true }));
+  await one.user.click(await screen.findByRole("button", { name: "View file" }));
+  expect(await screen.findByText("Cut at 256 KB.")).toBeInTheDocument();
+});
+
+test("a SKILL.md near the cap is not called cut unless the server says so", async () => {
+  const { user } = await open(
+    detail("source:s1", "review", { skillMd: "x".repeat(256 * 1024 - 1), skillMdCut: false }),
+  );
+  await user.click(await screen.findByRole("button", { name: "View file" }));
+  await screen.findByText(/^x+/);
+  expect(screen.queryByText("Cut at 256 KB.")).not.toBeInTheDocument();
 });
 
 test("a file's text is fetched once for a pinned source: closing and reopening reuses it", async () => {

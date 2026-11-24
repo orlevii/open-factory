@@ -122,6 +122,25 @@ test("a source whose last check succeeded shows no failed-check state", async ()
   expect(screen.queryByText("Couldn't check")).not.toBeInTheDocument();
 });
 
+test("a missing GitHub cache offers Fetch again by the row's fetchAgain flag, not its text", async () => {
+  const group = (row: ReturnType<typeof skill>) =>
+    library([hostGroup(), sourceGroup(source("skills", { skillCount: 1 }), [row])]);
+  const cache = skill("review", { state: "missing", stateDetail: "Fetch again", fetchAgain: true });
+  await open(detail("skills"), () => {}, group(cache));
+  expect(await screen.findByRole("button", { name: "Fetch again" })).toBeInTheDocument();
+});
+
+test("a missing skill without the fetchAgain flag offers no Fetch again, whatever its text says", async () => {
+  const row = skill("review", { state: "missing", stateDetail: "Fetch again" });
+  await open(
+    detail("skills"),
+    () => {},
+    library([hostGroup(), sourceGroup(source("skills", { skillCount: 1 }), [row])]),
+  );
+  await screen.findByRole("heading", { level: 3, name: "Source" });
+  expect(screen.queryByRole("button", { name: "Fetch again" })).not.toBeInTheDocument();
+});
+
 test("a source with no update has no update view", async () => {
   await open();
   expect(screen.queryByRole("button", { name: /^Update to/ })).not.toBeInTheDocument();

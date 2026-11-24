@@ -217,6 +217,8 @@ export const skillRowSchema = z.object({
   description: z.string(),
   state: skillStateSchema,
   stateDetail: z.string().optional(),
+  /** A GitHub skill whose cache holds no code yet: the page offers Fetch again. */
+  fetchAgain: z.boolean().optional(),
   usedBy: usedBySchema,
 });
 
@@ -285,6 +287,8 @@ export const skillDetailSchema = skillRowSchema.extend({
   skillMd: z
     .string()
     .refine((s) => new TextEncoder().encode(s).length <= SKILL_MD_BYTES, MSG.skillMdSize),
+  /** `skillMd` was cut at 256 KB. */
+  skillMdCut: z.boolean(),
 });
 
 /** `GET /api/library/skills/:group/:name/file?path=`'s query. */

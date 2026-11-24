@@ -74,12 +74,14 @@ function FilesSection({
   files,
   pin,
   skillMd,
+  skillMdCut,
 }: {
   group: string;
   name: string;
   files: File[];
   pin: string | null;
   skillMd: string;
+  skillMdCut: boolean;
 }) {
   if (files.length === 0) return null;
   return (
@@ -95,6 +97,7 @@ function FilesSection({
               executable={f.executable}
               options={skillFileQueryOptions(group, name, f.path, pin)}
               inlineText={f.path === "SKILL.md" ? skillMd : undefined}
+              inlineCut={f.path === "SKILL.md" && skillMdCut}
             />
           )}
         />
@@ -216,6 +219,7 @@ export function SkillPeekBody({
               files={detail.files}
               pin={pin}
               skillMd={detail.skillMd}
+              skillMdCut={detail.skillMdCut}
             />
           </>
         ) : q.isError ? (

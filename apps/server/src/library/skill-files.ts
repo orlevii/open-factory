@@ -61,13 +61,13 @@ export async function readCapped(file: string, cap: number): Promise<Buffer | nu
   }
 }
 
-/** `SKILL.md`'s text cut to 256 KB (on a character boundary); empty when it can't be read. */
-export async function readSkillMdText(dir: string): Promise<string> {
+/** `SKILL.md`'s text cut to 256 KB (on a character boundary, `cut` says it was); empty when it can't be read. */
+export async function readSkillMdText(dir: string): Promise<{ text: string; cut: boolean }> {
   const buf = await readCapped(path.join(dir, "SKILL.md"), TEXT_CAP);
-  if (!buf) return "";
+  if (!buf) return { text: "", cut: false };
   let text = new TextDecoder().decode(buf.subarray(0, TEXT_CAP));
   while (Buffer.byteLength(text) > TEXT_CAP) text = text.slice(0, -1);
-  return text;
+  return { text, cut: buf.length > TEXT_CAP };
 }
 
 /**

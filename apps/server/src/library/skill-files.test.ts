@@ -63,9 +63,13 @@ test("the file list stops at 2,000 entries", async () => {
 });
 
 test("SKILL.md comes back whole when small and cut to 256 KB when large", async () => {
-  expect(await readSkillMdText(skill)).toBe("---\nname: skill\n---\n# Skill\n");
+  expect(await readSkillMdText(skill)).toEqual({
+    text: "---\nname: skill\n---\n# Skill\n",
+    cut: false,
+  });
   writeFileSync(path.join(skill, "SKILL.md"), "é".repeat(TEXT_CAP));
-  const cut = await readSkillMdText(skill);
+  const { text: cut, cut: wasCut } = await readSkillMdText(skill);
+  expect(wasCut).toBe(true);
   expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(TEXT_CAP);
   expect(Buffer.byteLength(cut)).toBeGreaterThan(TEXT_CAP - 4);
 });
@@ -73,7 +77,7 @@ test("SKILL.md comes back whole when small and cut to 256 KB when large", async 
 test("a SKILL.md that is a link reads as empty", async () => {
   rmSync(path.join(skill, "SKILL.md"));
   symlinkSync(path.join(tmp, "secret.txt"), path.join(skill, "SKILL.md"));
-  expect(await readSkillMdText(skill)).toBe("");
+  expect(await readSkillMdText(skill)).toEqual({ text: "", cut: false });
 });
 
 test("reads a text file inside the skill", async () => {
@@ -126,7 +130,7 @@ const within = <T>(p: Promise<T>, ms = 3000) =>
 posix("a SKILL.md that is a FIFO reads as empty without blocking", async () => {
   rmSync(path.join(skill, "SKILL.md"));
   execFileSync("mkfifo", [path.join(skill, "SKILL.md")]);
-  expect(await within(readSkillMdText(skill))).toBe("");
+  expect(await within(readSkillMdText(skill))).toEqual({ text: "", cut: false });
 });
 
 posix(

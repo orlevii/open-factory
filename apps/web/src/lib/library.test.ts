@@ -87,6 +87,7 @@ test("the queries fetch their endpoints, with group and name encoded", async () 
         hooks: [],
         usedByTemplates: [],
         skillMd: "",
+        skillMdCut: false,
       }),
   });
   const qc = new QueryClient();
@@ -112,6 +113,7 @@ test("one invalidation of the library prefix reaches the list, a skill and a sou
         hooks: [],
         usedByTemplates: [],
         skillMd: "",
+        skillMdCut: false,
       }),
     "GET /api/library/sources/s1": () =>
       json({

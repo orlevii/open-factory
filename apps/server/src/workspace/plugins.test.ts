@@ -132,8 +132,11 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
     name: "lead",
     display_name: "Lead",
     runtime: "local",
-    plugins,
   });
+  const enabled = {
+    ...tplSettings,
+    enabledPlugins: Object.fromEntries(plugins.map((k) => [k, true as const])),
+  };
   const fake = createFakeClaude({ scenario: "reply", env: fakeEnv });
   const ws = new Workspace({
     factoryHome: home,
@@ -142,7 +145,7 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
     cliBundle: "/nonexistent/open-factory.js",
     lock: new KeyedMutex(),
   });
-  const tpl = { dir: tdir, config, tplSettings, tplMcp: { mcpServers: {} } };
+  const tpl = { dir: tdir, config, tplSettings: enabled, tplMcp: { mcpServers: {} } };
   const prep = {
     slug: "lead",
     displayName: "Lead",
@@ -150,9 +153,8 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
     template: "lead",
     config,
     effective: {
-      doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
+      doc: { template: {}, settings: enabled, mcp: tpl.tplMcp },
       config,
-      templatePlugins: [],
       templateSkills: [],
       library: { skills: {}, plugins: {} },
     },
@@ -182,13 +184,18 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
           .map((l) => JSON.parse(l))
       : [];
   };
-  /** The agent as it is after a template or overlay adds plugins: the effective list, and who lists them. */
-  const withPlugins = (list: string[], fromTemplate: string[]) => ({
+  /** The agent as it is after a template or overlay adds plugins: the effective list. */
+  const withPlugins = (list: string[]) => ({
     ...prep,
     effective: {
       ...prep.effective,
-      config: { ...prep.effective.config, plugins: list },
-      templatePlugins: fromTemplate,
+      doc: {
+        ...prep.effective.doc,
+        settings: {
+          ...prep.effective.doc.settings,
+          enabledPlugins: Object.fromEntries(list.map((k) => [k, true as const])),
+        },
+      },
       templateSkills: [],
       library: { skills: {}, plugins: {} },
     },
@@ -212,7 +219,7 @@ test("materialize installs into plugins-config; prepare links .claude-config/plu
 test("start installs only the listed plugins that are missing, through the hardened env and an empty cwd", async () => {
   const { ws, prep, workdir, pluginLog, withPlugins } = await setupAgent(["a@mk"]);
   const before = pluginLog().length;
-  await ws.prepare(withPlugins(["a@mk", "b@mk"], ["a@mk", "b@mk"]));
+  await ws.prepare(withPlugins(["a@mk", "b@mk"]));
   const runs = pluginLog().slice(before);
   expect(runs.map((r) => r.argv.slice(1, 3))).toEqual([
     ["marketplace", "add"],
@@ -228,7 +235,7 @@ test("start installs only the listed plugins that are missing, through the harde
   expect(s.enabledPlugins).toEqual({ "a@mk": true, "b@mk": true });
   // Nothing is missing now: the next start installs nothing.
   const after = pluginLog().length;
-  await ws.prepare(withPlugins(["a@mk", "b@mk"], ["a@mk", "b@mk"]));
+  await ws.prepare(withPlugins(["a@mk", "b@mk"]));
   expect(pluginLog().length).toBe(after);
   await ws.prepare(prep); // dropping a plugin from the list uninstalls nothing and installs nothing
   expect(pluginLog().length).toBe(after);
@@ -255,7 +262,7 @@ test("marketplace sources come from the effective settings, never from the workd
       extraKnownMarketplaces: { mk2: { source: { source: "directory", path: "/evil" } } },
     }),
   );
-  const p = withPlugins(["a@mk", "b@mk2"], []);
+  const p = withPlugins(["a@mk", "b@mk2"]);
   await expect(ws.prepare(p)).rejects.toMatchObject({
     message: "Plugin b@mk2 didn't install.",
     fix: "config",
@@ -263,14 +270,12 @@ test("marketplace sources come from the effective settings, never from the workd
   expect(pluginLog().flatMap((r) => r.argv)).not.toContain("/evil");
 });
 
-test("a failed install fails the start closed; the fix names who lists the plugin", async () => {
+test("a failed install fails the start closed", async () => {
   const { ws, withPlugins } = await setupAgent(["a@mk"], { FAKE_CLAUDE_PLUGIN_FAIL: "b@mk" });
-  const fromTemplate = await ws.prepare(withPlugins(["a@mk", "b@mk"], ["b@mk"])).catch((e) => e);
-  expect(fromTemplate).toBeInstanceOf(AgentStartError);
-  expect(fromTemplate).toMatchObject({ message: "Plugin b@mk didn't install.", fix: "template" });
-  const fromOverlay = await ws.prepare(withPlugins(["a@mk", "b@mk"], ["a@mk"])).catch((e) => e);
-  expect(fromOverlay).toMatchObject({ message: "Plugin b@mk didn't install.", fix: "config" });
-  expect(fromOverlay.detail).toContain("Failed to install plugin");
+  const err = await ws.prepare(withPlugins(["a@mk", "b@mk"])).catch((e) => e);
+  expect(err).toBeInstanceOf(AgentStartError);
+  expect(err).toMatchObject({ message: "Plugin b@mk didn't install.", fix: "config" });
+  expect(err.detail).toContain("Failed to install plugin");
 });
 
 // Secret-shaped values only: redaction recognises shapes, not arbitrary env values.
@@ -291,7 +296,7 @@ test("a failed install's output reaches the error through redactOutput", async (
     FAKE_CLAUDE_PLUGIN_FAIL: "b@mk",
     FAKE_CLAUDE_PLUGIN_ECHO: ECHO,
   });
-  const err = await ws.prepare(withPlugins(["a@mk", "b@mk"], ["b@mk"])).catch((e) => e);
+  const err = await ws.prepare(withPlugins(["a@mk", "b@mk"])).catch((e) => e);
   expect(err).toBeInstanceOf(AgentStartError);
   const text = `${err.message}\n${err.detail}`;
   for (const secret of SECRETS) expect(text).not.toContain(secret);
@@ -309,10 +314,11 @@ test("a failure with no output still says why, redacted", async () => {
         ...prep.effective,
         doc: {
           ...prep.effective.doc,
-          settings: { extraKnownMarketplaces: { mk2: { source: { source: "git", url } } } },
+          settings: {
+            extraKnownMarketplaces: { mk2: { source: { source: "git", url } } },
+            enabledPlugins: { "b@mk2": true },
+          },
         },
-        config: { ...prep.effective.config, plugins: ["b@mk2"] },
-        templatePlugins: [],
         templateSkills: [],
         library: { skills: {}, plugins: {} },
       },
@@ -330,7 +336,7 @@ test("a failed install's output is the last 20 lines, at most 4 KB", async () =>
     FAKE_CLAUDE_PLUGIN_FAIL: "b@mk",
     FAKE_CLAUDE_PLUGIN_ECHO: noisy,
   });
-  const err = await ws.prepare(withPlugins(["a@mk", "b@mk"], ["b@mk"])).catch((e) => e);
+  const err = await ws.prepare(withPlugins(["a@mk", "b@mk"])).catch((e) => e);
   expect(Buffer.byteLength(err.detail)).toBeLessThanOrEqual(4096);
   expect(err.detail).toContain("line 59 ");
   expect(err.detail).not.toContain("line 10 ");

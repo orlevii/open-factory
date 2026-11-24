@@ -2,13 +2,17 @@ import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   type AgentOverlay,
+  acceptedPins,
   agentOverlaySchema,
   CONFIG_MSG,
   type ConfigDoc,
   canonicalJson,
+  checkPinRef,
   ENV_NAME,
   isFactoryEnvName,
   mergeConfig,
+  PLUGIN_REF_PATTERN,
+  pinOf,
   type TemplateConfig,
   type TemplateFile,
   type TemplateIssue,
@@ -19,6 +23,8 @@ import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { resolveImage } from "../images/resolve.ts";
 import { type LibraryIndex, skillProblem } from "../library/library-index.ts";
+import { MARKETPLACE_MSG } from "../library/marketplaces-service.ts";
+import { classifyPluginSource } from "../library/plugin-sources.ts";
 import { parseJson, parseYaml } from "./parse.ts";
 
 export interface ValidationContext {
@@ -28,7 +34,7 @@ export interface ValidationContext {
   /** Names whose `images/<name>/Dockerfile` exists. */
   userImages: Set<string>;
   /** Where every listed skill is resolved (spec §6.6). */
-  library: Pick<LibraryIndex, "resolveSkill">;
+  library: Pick<LibraryIndex, "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt">;
   /** `localRuntimeAllowed(config)`: the one gate rule. */
   localRuntimeAllowed: boolean;
 }
@@ -38,6 +44,8 @@ export interface EffectiveContext extends ValidationContext {
   templateDir?: string;
   /** Runtimes of the template's live and archived agents. */
   agentRuntimes?: ("local" | "docker")[];
+  /** Set when the doc is a template merged with an overlay: a plugin from a marketplace the template doesn't declare names it. */
+  declaredBy?: string;
 }
 
 const RESERVED_FILES = [
@@ -103,6 +111,133 @@ async function localSkillNames(dir: string | undefined, issues: TemplateIssue[])
   return names;
 }
 
+type Report = (
+  message: string,
+  at: (string | number)[],
+  severity: TemplateIssue["severity"],
+  extra?: Partial<TemplateIssue>,
+) => void;
+
+const HEX40 = /^[0-9a-f]{40}$/;
+
+/** A pin as a message shows it: a short commit, or the tag's name. */
+const pinShown = (ref: string) => (HEX40.test(ref) ? ref.slice(0, 7) : ref);
+
+/**
+ * The marketplace declarations and `enabledPlugins` of a config doc (spec §7.4): every declaration is registered in
+ * Skills with the same source (a `ref` aside), its `ref` is a pin Claude Code accepts, and every enabled plugin comes
+ * from a declared marketplace whose catalog entry at that pin the factory installs. Messages never carry a value.
+ */
+async function validatePlugins(doc: ConfigDoc, ctx: EffectiveContext, s: Report): Promise<void> {
+  const declared = isObj(doc.settings.extraKnownMarketplaces)
+    ? doc.settings.extraKnownMarketplaces
+    : {};
+  const rows = new Map((await ctx.library.marketplaces()).map((r) => [r.name, r]));
+  if (Object.hasOwn(doc.settings, "syncClaudeAiPlugins"))
+    s("The factory sets syncClaudeAiPlugins.", ["syncClaudeAiPlugins"], "error");
+
+  for (const [m, def] of Object.entries(declared)) {
+    const src = isObj(def) && isObj(def.source) ? def.source : undefined;
+    if (!src) continue;
+    const kind = src.source;
+    const at = ["extraKnownMarketplaces", m];
+    if (kind !== "directory" && kind !== "git" && kind !== "github") {
+      s(
+        `Marketplace ${m}: source type ${String(kind)} isn't supported; use directory, git or github.`,
+        at,
+        "error",
+      );
+      continue;
+    }
+    if (Object.hasOwn(src, "path") && kind !== "directory")
+      s(`Marketplace ${m}: path isn't supported.`, at, "error");
+    const ref = src.ref;
+    if (Object.hasOwn(src, "ref")) {
+      if (kind === "directory")
+        s(`Marketplace ${m}: a folder is read live; remove ref.`, at, "error");
+      else if (typeof ref !== "string" || !checkPinRef(ref))
+        s(`Pin ${m} to a commit or a tag.`, at, "error");
+      else if (!acceptedPins(m).includes(HEX40.test(ref) ? "commit" : "tag"))
+        s(
+          `Claude Code can't pin ${m} to a ${HEX40.test(ref) ? "commit" : "tag"}; use ${HEX40.test(ref) ? "a tag" : "a commit"} or Latest.`,
+          at,
+          "error",
+        );
+    }
+    const row = rows.get(m);
+    const { ref: _ref, ...bare } = src;
+    if (!row)
+      s(`Marketplace ${m} hasn't been added. Add it in Skills.`, at, "error", {
+        action: "add_from_template",
+      });
+    else if (canonicalJson(bare) !== canonicalJson(row.source))
+      s(`Marketplace ${m}'s source differs from the one in Skills.`, at, "error");
+    else if (
+      typeof ref === "string" &&
+      checkPinRef(ref) &&
+      !(await ctx.library.marketplaceDir(row, ref))
+    )
+      s(`Skills hasn't read ${m} at ${pinShown(ref)}; fetch it in Skills.`, at, "warning");
+  }
+
+  const enabled = doc.settings.enabledPlugins;
+  if (enabled === undefined) return;
+  if (!isObj(enabled)) {
+    s("enabledPlugins must be an object.", ["enabledPlugins"], "error");
+    return;
+  }
+  for (const [key, on] of Object.entries(enabled)) {
+    // A key that fails the pattern may be a pasted value: never echo it.
+    if (!PLUGIN_REF_PATTERN.test(key)) {
+      s("Use name@marketplace.", ["enabledPlugins"], "error");
+      continue;
+    }
+    const at = ["enabledPlugins", key];
+    if (on !== true) {
+      s(
+        on === false
+          ? "Remove the plugin instead of turning it off."
+          : "Use true, or remove the plugin.",
+        at,
+        "error",
+      );
+      continue;
+    }
+    const m = key.slice(key.indexOf("@") + 1);
+    const name = key.slice(0, key.indexOf("@"));
+    if (!Object.hasOwn(declared, m)) {
+      s(
+        ctx.declaredBy !== undefined
+          ? `Marketplace ${m} isn't declared by template ${ctx.declaredBy}.`
+          : `Marketplace ${m} isn't declared in settings.json.`,
+        at,
+        "error",
+      );
+      continue;
+    }
+    const pin = pinOf(declared[m]);
+    if (pin.kind === "latest")
+      s(
+        `Plugin ${key} follows the latest ${m}: new code runs at each restart without review.`,
+        at,
+        "warning",
+      );
+    const row = rows.get(m);
+    if (!row) continue;
+    const at7 = pin.kind === "commit" ? pin.sha : pin.kind === "tag" ? pin.name : undefined;
+    const entry = (await ctx.library.catalogAt(row, at7))?.find((e) => e.name === name);
+    if (!entry) continue;
+    const info = classifyPluginSource(entry.raw);
+    if (info.kind === "refused") s(MARKETPLACE_MSG.refusedSource(name, m, info.label), at, "error");
+    else if (
+      info.kind === "external" &&
+      !info.pinnable &&
+      (pin.kind === "commit" || pin.kind === "tag")
+    )
+      s(`${key} can't be pinned. Switch ${m} to Latest to add it.`, at, "error");
+  }
+}
+
 /**
  * The semantic rules for any config document: a template's own files, or a template merged with an
  * overlay. Paths are rooted at `template.`, `settings.` or `mcp.`. Messages never carry a value.
@@ -119,12 +254,14 @@ export async function validateEffective(
     root: Root,
     at: (string | number)[],
     message: string,
+    extra: Partial<TemplateIssue> = {},
   ) =>
     issues.push({
       severity,
       file: FILE_OF[root],
       message,
       path: [root, ...at].join("."),
+      ...extra,
     });
 
   // The derived `local_skill_names` isn't a template.yaml key (it can't be written there: the file parse refuses it).
@@ -165,14 +302,6 @@ export async function validateEffective(
     if (ctx.agentRuntimes?.some((r) => r !== config.runtime))
       t("warning", ["runtime"], "Existing agents keep their runtime.");
 
-    const markets = isObj(doc.settings.extraKnownMarketplaces)
-      ? doc.settings.extraKnownMarketplaces
-      : {};
-    for (const [i, plugin] of config.plugins.entries()) {
-      const m = plugin.slice(plugin.indexOf("@") + 1);
-      if (!Object.hasOwn(markets, m))
-        t("error", ["plugins", i], `Marketplace ${m} isn't declared by template ${config.name}.`);
-    }
     // Factory-owned secret names never get here: secretNameSchema rejects them at the parse above.
     for (const [i, s] of config.secrets.entries())
       if (!ctx.secrets.has(s))
@@ -182,28 +311,15 @@ export async function validateEffective(
         t("warning", ["can_spawn", i], `can_spawn lists ${name}, which isn't a template.`);
   }
 
-  const s = (message: string, at: (string | number)[], severity: TemplateIssue["severity"]) =>
-    add(severity, "settings", at, message);
-  for (const [m, def] of Object.entries(
-    isObj(doc.settings.extraKnownMarketplaces) ? doc.settings.extraKnownMarketplaces : {},
-  )) {
-    const src = isObj(def) && isObj(def.source) ? def.source : undefined;
-    if (!src) continue;
-    const kind = src.source;
-    const at = ["extraKnownMarketplaces", m];
-    if (kind !== "directory" && kind !== "git" && kind !== "github")
-      s(
-        `Marketplace ${m}: source type ${String(kind)} isn't supported; use directory, git or github.`,
-        at,
-        "error",
-      );
-    if (Object.hasOwn(src, "ref") || (Object.hasOwn(src, "path") && kind !== "directory"))
-      s(`Marketplace ${m}: ref and path aren't supported.`, at, "error");
-  }
+  const s = (
+    message: string,
+    at: (string | number)[],
+    severity: TemplateIssue["severity"],
+    extra: Partial<TemplateIssue> = {},
+  ) => add(severity, "settings", at, message, extra);
+  await validatePlugins(doc, ctx, s);
   if (isObj(doc.settings.permissions) && doc.settings.permissions.defaultMode !== undefined)
     s("permissions.defaultMode is set by the factory.", ["permissions", "defaultMode"], "error");
-  if (doc.settings.enabledPlugins !== undefined)
-    s("enabledPlugins is ignored: list plugins in template.yaml.", ["enabledPlugins"], "warning");
   const env = isObj(doc.settings.env) ? doc.settings.env : {};
   for (const name of Object.keys(env)) {
     // A name that fails the name rule may be a pasted value: never echo it.
@@ -282,9 +398,14 @@ export async function overlayIssues(
 ): Promise<TemplateIssue[]> {
   const out = overlaySchemaIssues(overlay);
   const merged = mergeConfig(base, overlay);
-  const before = new Set((await validateEffective(base, ctx, "human")).map(issueKey));
+  // A plugin the overlay enables must come from a marketplace the template declares (spec §7.4).
+  const octx = {
+    ...ctx,
+    ...(typeof base.template.name === "string" ? { declaredBy: base.template.name } : {}),
+  };
+  const before = new Set((await validateEffective(base, octx, "human")).map(issueKey));
   const reported = new Set(out.map((i) => i.path));
-  for (const i of await validateEffective(merged, ctx, "human")) {
+  for (const i of await validateEffective(merged, octx, "human")) {
     if (before.has(issueKey(i)) || reported.has(i.path)) continue;
     out.push({ ...i, ...(i.path ? { path: rebase(i.path, merged, overlay) } : {}) });
   }

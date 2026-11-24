@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { SkillSourceRow } from "@open-factory/db";
+import type { MarketplaceRow, SkillSourceRow } from "@open-factory/db";
 import { LibraryIndex } from "../library/library-index.ts";
 
 /** A ready folder source row holding the given picked skills. */
@@ -38,10 +38,15 @@ export function hostOnlyLibrary(
   hostClaudeDir: string,
   factoryHome: string,
   sources: SkillSourceRow[] = [],
+  marketplaces: MarketplaceRow[] = [],
 ): LibraryIndex {
   return new LibraryIndex({
     db: undefined as never,
-    store: { sources: async () => sources, agents: async () => [] },
+    store: {
+      sources: async () => sources,
+      agents: async () => [],
+      marketplaces: async () => marketplaces,
+    },
     hostClaudeDir,
     factoryHome,
     templates: () => ({

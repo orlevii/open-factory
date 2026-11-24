@@ -13,7 +13,6 @@ describe("agentOverlaySchema", () => {
     "warm_window_minutes",
     "max_live_spawns",
     "skills",
-    "plugins",
     "can_spawn",
     "secrets",
   ])("accepts template.%s", (k) => {
@@ -23,7 +22,6 @@ describe("agentOverlaySchema", () => {
       warm_window_minutes: 30,
       max_live_spawns: 2,
       skills: ["release"],
-      plugins: ["x@y"],
       can_spawn: ["dev"],
       secrets: ["GH_TOKEN"],
     } as Record<string, unknown>;
@@ -38,6 +36,7 @@ describe("agentOverlaySchema", () => {
     "permission_mode",
     "projects",
     "local_skills",
+    "plugins",
     "bogus",
   ])("refuses template.%s", (k) => {
     expect(agentOverlaySchema.safeParse({ template: { [k]: "x" } }).success).toBe(false);

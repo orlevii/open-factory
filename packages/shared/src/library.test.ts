@@ -1,12 +1,16 @@
 import { describe, expect, test } from "vitest";
 import {
+  acceptedPins,
   checkBranchName,
   checkGitUrl,
+  checkPinRef,
   cutGraphemes,
+  effectivePlugins,
   MARKETPLACE_PATTERN,
   normalizeRepo,
   normalizeSubpath,
   PLUGIN_REF_PATTERN,
+  pinOf,
   RESERVED_MARKETPLACES,
   rowStateOf,
   skillDetailSchema,
@@ -95,25 +99,61 @@ describe("cutGraphemes", () => {
 
 describe("rowStateOf follows the §10.2 precedence", () => {
   test.each([
-    ["adding", "installing"],
-    ["installing", "checking"],
-    ["checking", "add_failed"],
-    ["add_failed", "install_failed"],
-    ["install_failed", "missing"],
+    ["adding", "checking"],
+    ["checking", "missing"],
     ["missing", "unusable"],
-    ["unusable", "check_failed"],
+    ["unusable", "refused"],
+    ["refused", "check_failed"],
     ["check_failed", "update"],
     ["update", "hidden"],
-    ["hidden", "not_pinned"],
-    ["not_pinned", "not_installed"],
+    ["hidden", "cant_pin"],
   ] as const)("%s beats %s", (winner, loser) => {
     expect(rowStateOf([loser, winner])).toBe(winner);
   });
 
   test("picks the winner from unsorted input holding several states", () =>
-    expect(rowStateOf(["not_installed", "update", "adding", "hidden"])).toBe("adding"));
+    expect(rowStateOf(["cant_pin", "update", "adding", "hidden"])).toBe("adding"));
 
   test("a row with no states has none to show", () => expect(rowStateOf([])).toBeUndefined());
+});
+
+describe("pins", () => {
+  const sha = "a".repeat(40);
+
+  test.each([sha, "v1", "release/2.0"])("%s is a pin shape", (ref) =>
+    expect(checkPinRef(ref)).toBe(true),
+  );
+
+  test.each(["refs/heads/main", "refs/tags/v1", "a..b", "", "-x", "a b"])(
+    "%j is not a pin shape",
+    (ref) => expect(checkPinRef(ref)).toBe(false),
+  );
+
+  test.each([
+    [{ source: { source: "github", repo: "a/b", ref: sha } }, { kind: "commit", sha }],
+    [
+      { source: { source: "git", url: "https://x.test/r", ref: "v1" } },
+      { kind: "tag", name: "v1" },
+    ],
+    [{ source: { source: "github", repo: "a/b" } }, { kind: "latest" }],
+    [{ source: { source: "directory", path: "/mk" } }, { kind: "live" }],
+    ["not a declaration", { kind: "latest" }],
+  ])("pinOf reads %j", (declaration, pin) => expect(pinOf(declaration)).toEqual(pin));
+
+  test("the official marketplace takes no commit pin", () => {
+    expect(acceptedPins("claude-plugins-official")).not.toContain("commit");
+    expect(acceptedPins("acme")).toEqual(["commit", "tag", "latest"]);
+  });
+
+  test("effectivePlugins lists the keys set to true", () =>
+    expect(
+      effectivePlugins({
+        settings: { enabledPlugins: { "a@m": true, "b@m": false, "c@m": true } },
+      }),
+    ).toEqual(["a@m", "c@m"]));
+
+  test("effectivePlugins of a doc with no plugins is empty", () =>
+    expect(effectivePlugins({ settings: {} })).toEqual([]));
 });
 
 describe("skill source bodies", () => {

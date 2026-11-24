@@ -159,11 +159,14 @@ export function TemplateField({
  *  when the form can stack that sheet. */
 export function TemplateSummary({
   config,
+  pluginCount,
   issues,
   missingSecrets,
   onAddSecret,
 }: {
   config: TemplateConfig;
+  /** The plugins the template enables: its list row's `pluginCount`, since the config has none. */
+  pluginCount: number;
   issues: TemplateIssue[];
   missingSecrets: string[];
   onAddSecret?(name: string): void;
@@ -175,7 +178,7 @@ export function TemplateSummary({
     config.runtime === "docker" ? "Docker" : "Unsandboxed",
     config.model && `model ${config.model}`,
     config.skills.length > 0 && `skills: ${config.skills.join(", ")}`,
-    config.plugins.length > 0 && `plugins: ${config.plugins.length}`,
+    pluginCount > 0 && `plugins: ${pluginCount}`,
     config.secrets.length > 0 && `secrets: ${config.secrets.join(", ")}`,
   ].filter(Boolean);
   return (

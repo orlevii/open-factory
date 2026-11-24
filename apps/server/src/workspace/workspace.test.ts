@@ -36,11 +36,11 @@ function setup(fakeEnv: Record<string, string> = {}) {
     display_name: "Lead",
     runtime: "local",
     skills: ["grilling"],
-    plugins: ["p@mk"],
     projects: ["app"],
   });
   const tplSettings = {
     extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/mk" } } },
+    enabledPlugins: { "p@mk": true },
     permissions: { deny: ["Bash(curl:*)"] },
   };
   const fake = createFakeClaude({ scenario: "reply", env: fakeEnv });
@@ -61,7 +61,6 @@ function setup(fakeEnv: Record<string, string> = {}) {
     effective: {
       doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
       config,
-      templatePlugins: [],
       templateSkills: [],
       library: { skills: {}, plugins: {} },
     },

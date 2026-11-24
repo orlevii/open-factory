@@ -1,4 +1,4 @@
-import { CONFIG_MSG, MODEL_MSG, PLUGIN_REF_MSG } from "@open-factory/shared";
+import { CONFIG_MSG, MODEL_MSG } from "@open-factory/shared";
 
 /** Field notes of the Configuration form (I4 rules: at most 40 characters, no interpolated value). */
 export const CONFIG_FIELD_MSG = {
@@ -10,7 +10,6 @@ export const CONFIG_FIELD_MSG = {
   enterModel: "Enter a model.",
   warmWindowRange: "Use 1 to 1,440 minutes.",
   maxLiveSpawnsRange: "Use 0 to 50.",
-  pluginRef: PLUGIN_REF_MSG,
   envName: CONFIG_MSG.envName,
   factoryEnv: CONFIG_MSG.factoryEnv,
   factoryServer: CONFIG_MSG.factoryServer,
@@ -40,9 +39,6 @@ export const CONFIG_COPY = {
   showInRaw: "Show in Raw JSON",
   showFewer: "Show fewer",
   issuesHeading: "Issues the form can't show",
-  pluginsHelpAgent:
-    "Like formatter@acme. The marketplace must be declared in the template's settings.json.",
-  pluginsHelpTemplate: "Like formatter@acme. The marketplace must be declared in settings.json.",
   rulesHelp: "Like Bash(git push:*).",
   notesHelp: "Facts that help auto mode decide, like 'deploys go through CI'.",
   templateSkill: "Template skill",

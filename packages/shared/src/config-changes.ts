@@ -1,5 +1,6 @@
 import type { ConfigDoc } from "./config.ts";
 import { canonicalJson } from "./config-merge.ts";
+import { effectivePlugins } from "./library.ts";
 
 /**
  * Secret-safe change lines (spec §7.2). Values appear only for model, effort, image, permission mode,
@@ -74,7 +75,7 @@ const AUTO_LISTS = ["environment", "soft_deny", "hard_deny"] as const;
 export interface Library {
   /** name → "host" | "folder" | "template" | "github:<sha>" | "missing" */
   skills: Record<string, string>;
-  /** key → "<version>/<gitCommitSha7>" | "missing" */
+  /** key → its pin: "commit:<full sha>" | "tag:<name>" | "latest" | "live" (a folder) | "missing" */
   plugins: Record<string, string>;
 }
 
@@ -115,8 +116,12 @@ function skillLines(a: Record<string, string>, b: Record<string, string>): strin
   return out;
 }
 
-const HEX_VERSION = /^[0-9a-f]{7,40}$/;
-const versionOf = (ref: string): string => ref.split("/", 1)[0] ?? ref;
+/** A pin as a change line shows it: a short commit sha, or the tag's name. */
+function pinShown(pin: string): string {
+  return pin.startsWith("commit:") ? short(pin.slice(7)) : oneLine(pin.slice(4));
+}
+
+const isPinned = (pin: string): boolean => pin.startsWith("commit:") || pin.startsWith("tag:");
 
 function pluginLines(a: Record<string, string>, b: Record<string, string>): string[] {
   const out: string[] = [];
@@ -124,14 +129,16 @@ function pluginLines(a: Record<string, string>, b: Record<string, string>): stri
     const after = b[key];
     if (after === undefined || after === before || before === MISSING || after === MISSING)
       continue;
-    const [from, to] = [versionOf(before), versionOf(after)];
-    // A version that is a commit hash shows as "commit 0120fb8 → 9a8b7c6".
-    const hex = HEX_VERSION.test(from) && HEX_VERSION.test(to);
-    out.push(
-      hex
-        ? `plugin ${oneLine(key)} updated commit ${short(from)} → ${short(to)}`
-        : `plugin ${oneLine(key)} updated ${oneLine(from)} → ${oneLine(to)}`,
-    );
+    const name = oneLine(key);
+    if (isPinned(before) && isPinned(after)) {
+      out.push(`plugin ${name} repinned ${pinShown(before)} → ${pinShown(after)}`);
+    } else if (after === "latest") {
+      out.push(
+        `plugin ${name} now follows the latest ${oneLine(key.slice(key.lastIndexOf("@") + 1))}`,
+      );
+    } else if (before === "latest" && isPinned(after)) {
+      out.push(`plugin ${name} pinned to ${pinShown(after)}`);
+    }
   }
   return out;
 }
@@ -152,7 +159,7 @@ export function describeDocChanges(a: ConfigDoc, b: ConfigDoc): string[] {
   if (skillsOn(ta) !== skillsOn(tb)) out.push(`template skills ${skillsOn(tb) ? "on" : "off"}`);
 
   out.push(...listLines(ta.skills, tb.skills, "skill"));
-  out.push(...listLines(ta.plugins, tb.plugins, "plugin"));
+  out.push(...listLines(effectivePlugins(a), effectivePlugins(b), "plugin"));
   out.push(...listLines(ta.secrets, tb.secrets, "secret"));
   out.push(...listLines(ta.can_spawn, tb.can_spawn, "can spawn", { prefix: true }));
   out.push(...listLines(ta.local_skill_names, tb.local_skill_names, "template skill"));
@@ -172,9 +179,16 @@ export function describeDocChanges(a: ConfigDoc, b: ConfigDoc): string[] {
   out.push(...namedLines(rec(sa.env), rec(sb.env), "env"));
   out.push(...namedLines(rec(a.mcp?.mcpServers), rec(b.mcp?.mcpServers), "MCP server"));
 
-  // Every other settings key, and what is left of `permissions` and `autoMode` after their lists above.
+  // Every other settings key, and what is left of `permissions` and `autoMode` after their lists above. The plugin
+  // keys have their own lines: the enabled ones above, and a pin through the Library's (`pluginLines`).
   const rest = (s: Rec, p: Rec, m: Rec): Rec => ({
-    ...withoutKeys(s, ["permissions", "autoMode", "env"]),
+    ...withoutKeys(s, [
+      "permissions",
+      "autoMode",
+      "env",
+      "enabledPlugins",
+      "extraKnownMarketplaces",
+    ]),
     permissions: withoutKeys(p, PERMISSION_LISTS),
     autoMode: withoutKeys(m, AUTO_LISTS),
   });
@@ -209,7 +223,7 @@ const KINDS: readonly Kind[] = [
   { test: /^(added|removed) skill /, label: "skill", plural: "skills" },
   { test: /^(added|removed) plugin /, label: "plugin", plural: "plugins" },
   { test: /^skill \S+ (updated|now from) /, label: "skill", plural: "skills" },
-  { test: /^plugin \S+ updated /, label: "plugin", plural: "plugins" },
+  { test: /^plugin \S+ (repinned|now follows|pinned to) /, label: "plugin", plural: "plugins" },
   { test: /^(added|removed) secret /, label: "secret", plural: "secrets" },
   { test: /^(added|removed) (allow|deny) rule/, label: "rule", plural: "rules" },
   { test: /^(added|removed) trust note/, label: "trust note", plural: "trust notes" },

@@ -19,17 +19,14 @@ afterEach(() => vi.useRealTimers());
 
 test.each([
   ["adding", "Adding…"],
-  ["installing", "Installing…"],
   ["checking", "Checking…"],
-  ["add_failed", "Couldn't add"],
-  ["install_failed", "Install failed"],
   ["missing", "Missing"],
   ["unusable", "Unusable"],
+  ["refused", "Can't use"],
   ["check_failed", "Couldn't check"],
   ["update", "Update available"],
   ["hidden", "Hidden"],
-  ["not_pinned", "Not pinned"],
-  ["not_installed", "Not installed"],
+  ["cant_pin", "Can't be pinned"],
 ] as const)("%s reads %s", (state, word) => {
   render(<RowState state={state} />);
   expect(screen.getByText(word)).toBeInTheDocument();

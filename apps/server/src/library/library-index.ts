@@ -4,7 +4,7 @@
  */
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { type Db, type SkillSourceRow, schema } from "@open-factory/db";
+import { type Db, type MarketplaceRow, type SkillSourceRow, schema } from "@open-factory/db";
 import {
   type AgentOverlay,
   type ConfigDoc,
@@ -16,6 +16,8 @@ import { and, asc, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import { hostSkillsDirOf } from "../config.ts";
 import { ApiError } from "../errors.ts";
+import { COMMIT_PATTERN } from "./common.ts";
+import { type CatalogEntry, readCatalog } from "./marketplaces-service.ts";
 import { listSkillFiles, readSkillFile, readSkillMdText } from "./skill-files.ts";
 import { readSkillMd } from "./skill-md.ts";
 
@@ -60,6 +62,8 @@ export interface LibraryStore {
   sources(): Promise<SkillSourceRow[]>;
   /** Non-archived, non-terminated agents. */
   agents(): Promise<AgentUse[]>;
+  /** Live (not soft-deleted) marketplaces, oldest first. */
+  marketplaces(): Promise<MarketplaceRow[]>;
 }
 
 export function dbStore(db: Pick<Db, "select">): LibraryStore {
@@ -79,6 +83,12 @@ export function dbStore(db: Pick<Db, "select">): LibraryStore {
         })
         .from(schema.agents)
         .where(and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt))),
+    marketplaces: () =>
+      db
+        .select()
+        .from(schema.marketplaces)
+        .where(isNull(schema.marketplaces.deletedAt))
+        .orderBy(asc(schema.marketplaces.addedAt)),
   };
 }
 
@@ -176,6 +186,33 @@ export class LibraryIndex {
     }
     const dir = (await readSkillMd(root)) ? root : path.join(root, name);
     return { ...(await inspect(name, dir, "Fetch again")), ref };
+  }
+
+  /** The registered marketplaces (spec §5.1): what a template's declarations are checked against. */
+  marketplaces(): Promise<MarketplaceRow[]> {
+    return this.store.marketplaces();
+  }
+
+  /**
+   * The read-only checkout of a registered marketplace at `ref` (a commit, or a tag recorded on its row; default
+   * the Library's commit), or the folder itself for a directory marketplace. Null when Skills hasn't read it.
+   */
+  async marketplaceDir(row: MarketplaceRow, ref?: string): Promise<string | null> {
+    if (row.state !== "ready") return null;
+    if (row.source.source === "directory") return row.source.path;
+    const want = ref ?? row.commit;
+    if (!want) return null;
+    const sha = COMMIT_PATTERN.test(want) ? want : row.tags[want];
+    if (!sha || !COMMIT_PATTERN.test(sha)) return null;
+    const dir = path.join(this.factoryHome, "state", "library", "marketplaces", row.name, sha);
+    return (await isDir(dir)) ? dir : null;
+  }
+
+  /** The catalog entries of a registered marketplace at `ref`; null when Skills hasn't read it or can't parse it. */
+  async catalogAt(row: MarketplaceRow, ref?: string): Promise<CatalogEntry[] | null> {
+    const dir = await this.marketplaceDir(row, ref);
+    if (!dir) return null;
+    return (await readCatalog(dir).catch(() => undefined))?.plugins ?? null;
   }
 
   async resolveSkill(name: string): Promise<Resolved> {

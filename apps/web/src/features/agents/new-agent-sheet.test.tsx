@@ -377,7 +377,8 @@ test("on a phone, focus goes to the drawer content", async () => {
 
 test("while creating, Installing plugins… appears beside the button after 3 s", async () => {
   await openLead({
-    details: { lead: templateDetail(templateConfig({ plugins: ["superpowers@market"] })) },
+    templates: [templateSummary("lead", 0, 1), templateSummary("writer")],
+    details: { lead: templateDetail(templateConfig()) },
     extra: { "POST /api/agents": () => new Promise<Response>(() => {}) },
   });
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -883,13 +884,13 @@ test("the palette's New agent opens the sheet", async () => {
 test("a docker template shows the summary; a local one says Unsandboxed and the validator's warning", async () => {
   const { unmount } = await open(
     {
+      templates: [templateSummary("lead", 0, 1), templateSummary("writer")],
       details: {
         lead: templateDetail(
           templateConfig({
             runtime: "docker",
             model: "opus",
             skills: ["grilling"],
-            plugins: ["a@b"],
           }),
         ),
       },
@@ -924,7 +925,8 @@ test("the slow line is per attempt: a resubmit after a slow failure starts witho
   let n = 0;
   const failNext: { current: () => void } = { current: () => {} };
   await openLead({
-    details: { lead: templateDetail(templateConfig({ plugins: ["superpowers@market"] })) },
+    templates: [templateSummary("lead", 0, 1), templateSummary("writer")],
+    details: { lead: templateDetail(templateConfig()) },
     extra: {
       "POST /api/agents": () => {
         n++;

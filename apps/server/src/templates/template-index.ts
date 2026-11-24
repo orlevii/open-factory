@@ -108,7 +108,10 @@ export class TemplateIndex {
   readonly dir: string;
   private readonly db: Db;
   private readonly config: Config;
-  private readonly library: Pick<LibraryIndex, "resolveSkill">;
+  private readonly library: Pick<
+    LibraryIndex,
+    "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt"
+  >;
   private readonly log: Pick<FastifyBaseLogger, "error"> | undefined;
   private readonly listeners: TemplateChangeListener[] = [];
   /**
@@ -123,7 +126,7 @@ export class TemplateIndex {
     db: Db;
     config: Config;
     /** Skills are validated through the Library (spec §6.6). */
-    library: Pick<LibraryIndex, "resolveSkill">;
+    library: Pick<LibraryIndex, "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt">;
     log?: Pick<FastifyBaseLogger, "error">;
   }) {
     this.db = d.db;

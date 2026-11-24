@@ -2,7 +2,7 @@ import { mkdir, readFile, readlink, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
-import type { TemplateConfig } from "@open-factory/shared";
+import { effectivePlugins, type TemplateConfig } from "@open-factory/shared";
 import type { Effective } from "../agents/config-resolver.ts";
 import { AgentStartError } from "../agents/errors.ts";
 import { FieldError } from "../errors.ts";
@@ -150,7 +150,11 @@ export class Workspace {
     await new SafeFs(workdir).mkdirp(path.relative(workdir, configDir));
     // A new agent starts from a clean plugin dir (a failed earlier create of this slug may have left one).
     await rm(pluginsConfigDir(this.d.factoryHome, slug), { recursive: true, force: true });
-    await this.ensurePlugins(slug, tpl.config.plugins, tpl.tplSettings);
+    await this.ensurePlugins(
+      slug,
+      effectivePlugins({ settings: tpl.tplSettings }),
+      tpl.tplSettings,
+    );
     const skills = await resolveSkills(this.d.library, check.config.skills, tpl.config.skills);
     const tplSkills = tpl.config.localSkills ? await resolveTemplateSkills(tpl.dir) : [];
     await linkSkills(
@@ -267,15 +271,16 @@ export class Workspace {
     await this.applyPendingPersona(i.slug);
     // A listed plugin that isn't installed yet is installed now, under the workspace lock (spec §6.5).
     // A failed install fails the start closed: a process never starts without its plugins.
+    const plugins = effectivePlugins(doc);
     try {
-      await this.ensurePlugins(i.slug, config.plugins, doc.settings);
+      await this.ensurePlugins(i.slug, plugins, doc.settings);
     } catch (err) {
       if (!(err instanceof PluginInstallError)) throw err;
       // The error names the plugin redacted; the template's list is matched in the same form.
-      const plugin = err.plugin ?? redactOutput(config.plugins[0] ?? "");
+      const plugin = err.plugin ?? redactOutput(plugins[0] ?? "");
       throw new AgentStartError(
         `Plugin ${plugin} didn't install.`,
-        i.effective.templatePlugins.some((p) => redactOutput(p) === plugin) ? "template" : "config",
+        "config",
         undefined,
         // No output (a silent exit, a timeout): the error's own line, already redacted, says why.
         err.output || err.message,
@@ -305,7 +310,7 @@ export class Workspace {
       slug: i.slug,
       workdir,
       permissionMode: config.permissionMode,
-      plugins: config.plugins,
+      plugins,
       grantedPaths,
       mcpUrl: i.mcpUrl,
       ...(i.inheritedDeny ? { inherited: i.inheritedDeny } : {}),

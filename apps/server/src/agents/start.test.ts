@@ -85,7 +85,6 @@ async function seedStartFixture() {
     runtime: "local",
     secrets: ["GH_TOKEN"],
     skills: [],
-    plugins: [],
   });
   const tdir = path.join(home, "templates/lead");
   mkdirSync(tdir, { recursive: true });
@@ -96,7 +95,6 @@ async function seedStartFixture() {
     runtime: "local",
     secrets: ["GH_TOKEN"],
     skills: [],
-    plugins: [],
   });
   await t.db.insert(schema.credentials).values({
     id: "c1",
@@ -433,7 +431,6 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
     secrets: ["GH_TOKEN", "NPM_TOKEN"],
     projects: ["app"],
     skills: [],
-    plugins: [],
     ...over,
   });
   const tdir = path.join(home, "templates/dev");
@@ -446,7 +443,6 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
     secrets: ["GH_TOKEN", "NPM_TOKEN"],
     projects: ["app"],
     skills: [],
-    plugins: [],
     ...over,
   });
   writeTemplateFile(

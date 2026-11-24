@@ -80,6 +80,7 @@ function make(
   const store: LibraryStore = {
     sources: async () => o.sources ?? [],
     agents: async () => (o.agents ?? []) as Awaited<ReturnType<LibraryStore["agents"]>>,
+    marketplaces: async () => [],
   };
   return new LibraryIndex({
     db: undefined as never,

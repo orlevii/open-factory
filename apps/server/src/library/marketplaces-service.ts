@@ -9,6 +9,7 @@ import { lstat, mkdir, readdir, readFile, readlink, rename } from "node:fs/promi
 import path from "node:path";
 import { type Db, type MarketplaceRow, schema } from "@open-factory/db";
 import {
+  acceptedPins,
   checkBranchName,
   checkGitUrl,
   cutGraphemes,
@@ -472,7 +473,7 @@ export class MarketplacesService {
   }
 
   private commitPinnable(name: string): boolean {
-    return OFFICIAL_MARKETPLACES[name]?.commitPin ?? true;
+    return acceptedPins(name).includes("commit");
   }
 
   private async previewDirectory(input: string): Promise<MarketplacePreview> {

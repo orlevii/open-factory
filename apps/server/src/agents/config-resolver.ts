@@ -1,32 +1,41 @@
+import path from "node:path";
 import type { AgentRow } from "@open-factory/db";
 import {
   type AgentOverlay,
   agentOverlaySchema,
   type ConfigDoc,
+  effectivePlugins,
   type Library,
   mergeConfig,
+  type Pin,
+  pinOf,
   type TemplateConfig,
   templateYamlSchema,
   yamlPart,
 } from "@open-factory/shared";
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
+import { readContents } from "../library/plugin-contents.ts";
+import { classifyPluginSource } from "../library/plugin-sources.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { AgentStartError } from "./errors.ts";
 
 /**
  * What an agent runs with: the merged three-part document and the parsed template config (spec §6.1).
- * `templatePlugins` and `templateSkills` are what the template alone lists, so a failure names its fix.
+ * `templateSkills` is what the template alone lists, so a failure names its fix.
  */
 export type Effective = {
   doc: ConfigDoc;
   config: TemplateConfig;
-  templatePlugins: string[];
   /** The skills the template alone lists, so a skill that doesn't resolve names its fix. */
   templateSkills: string[];
   /** What the Library resolved the config's skills and plugins to (spec §8.1); kept as `started`. */
   library: Library;
 };
+
+/** A pin as the library map carries it (spec §8.1). */
+const pinString = (pin: Pin): string =>
+  pin.kind === "commit" ? `commit:${pin.sha}` : pin.kind === "tag" ? `tag:${pin.name}` : pin.kind;
 
 const missing = (template: string) => new AgentStartError(`Template ${template} no longer exists.`);
 const invalidTemplate = (template: string) =>
@@ -54,13 +63,15 @@ export class ConfigResolver {
   constructor(
     private readonly d: {
       templates: Pick<TemplateIndex, "loadValid">;
-      library: Pick<LibraryIndex, "resolveSkill">;
+      library: Pick<LibraryIndex, "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt">;
     },
   ) {}
 
   /**
-   * What the Library resolves a doc's skills to (spec §8.1): the ref of each one that resolves, "missing" for one that
-   * doesn't (the start fails on it; a comparison ignores it). Plugins come with PR 2.
+   * What the Library resolves a doc to (spec §8.1). Skills: the ref of each one that resolves, "missing" for one that
+   * doesn't (the start fails on it; a comparison ignores it). Plugins: each enabled key's pin (`commit:<sha>`,
+   * `tag:<name>`, `latest`, `live`), plus the dependencies read from the Library's checkout at that pin; "missing"
+   * for a key whose marketplace the doc doesn't declare.
    */
   async libraryOf(doc: ConfigDoc): Promise<Library> {
     const listed = doc.template.skills;
@@ -70,7 +81,49 @@ export class ConfigResolver {
       const r = await this.d.library.resolveSkill(name);
       skills[name] = r.ok ? r.ref : "missing";
     }
-    return { skills, plugins: {} };
+    return { skills, plugins: await this.pluginsOf(doc) };
+  }
+
+  private async pluginsOf(doc: ConfigDoc): Promise<Record<string, string>> {
+    const declared = doc.settings.extraKnownMarketplaces;
+    const markets: Record<string, unknown> =
+      typeof declared === "object" && declared !== null && !Array.isArray(declared)
+        ? (declared as Record<string, unknown>)
+        : {};
+    const rows = new Map((await this.d.library.marketplaces()).map((r) => [r.name, r]));
+    const plugins: Record<string, string> = {};
+    const todo = effectivePlugins(doc);
+    for (let key = todo.shift(); key !== undefined; key = todo.shift()) {
+      if (key in plugins) continue;
+      const at = key.lastIndexOf("@");
+      const [name, mkt = ""] = [key.slice(0, at), key.slice(at + 1)];
+      if (!Object.hasOwn(markets, mkt)) {
+        plugins[key] = "missing";
+        continue;
+      }
+      const pin = pinOf(markets[mkt]);
+      plugins[key] = pinString(pin);
+      const row = rows.get(mkt);
+      if (!row) continue;
+      for (const dep of await this.dependenciesOf(row, name, pin)) todo.push(`${dep}@${mkt}`);
+    }
+    return plugins;
+  }
+
+  /** The dependencies a relative-path plugin names at the Library's checkout of its marketplace at `pin`. */
+  private async dependenciesOf(
+    row: Parameters<LibraryIndex["catalogAt"]>[0],
+    plugin: string,
+    pin: Pin,
+  ): Promise<string[]> {
+    const ref = pin.kind === "commit" ? pin.sha : pin.kind === "tag" ? pin.name : undefined;
+    const dir = await this.d.library.marketplaceDir(row, ref);
+    const entry = (await this.d.library.catalogAt(row, ref))?.find((e) => e.name === plugin);
+    if (!dir || !entry) return [];
+    const info = classifyPluginSource(entry.raw);
+    if (info.kind !== "relative") return [];
+    const contents = await readContents(path.join(dir, info.path)).catch(() => undefined);
+    return (contents?.dependencies ?? []).map((d) => d.split("@", 1)[0] ?? d).filter(Boolean);
   }
 
   async effective(agent: AgentRow): Promise<Effective> {
@@ -97,15 +150,11 @@ export class ConfigResolver {
     const config = configOf(doc, agent.runtime);
     // The template parsed on its own, so a failure here is the overlay's.
     if (!config) throw invalidOverlay(agent.slug);
-    const listed = base.template.plugins;
-    const templatePlugins = Array.isArray(listed)
-      ? listed.filter((p): p is string => typeof p === "string")
-      : [];
     const listedSkills = base.template.skills;
     const templateSkills = Array.isArray(listedSkills)
       ? listedSkills.filter((p): p is string => typeof p === "string")
       : [];
-    return { doc, config, templatePlugins, templateSkills, library: await this.libraryOf(doc) };
+    return { doc, config, templateSkills, library: await this.libraryOf(doc) };
   }
 
   /**

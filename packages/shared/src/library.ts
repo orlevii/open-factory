@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ConfigDoc } from "./config.ts";
 import { isHostPathShape } from "./host.ts";
 import { MSG } from "./messages.ts";
 import { hostSkillSchema } from "./names.ts";
@@ -15,22 +16,29 @@ export const RESERVED_MARKETPLACES: readonly string[] = [
   "claude-plugin-test",
 ];
 
+/** How a marketplace declaration pins it (spec §7.4): a commit, a tag, no `ref` (Latest), or a live folder. */
+export type PinKind = "commit" | "tag" | "latest";
+
 /**
  * Official names Claude reserves for Anthropic's own sources. Each is allowed only with its matching
- * source; any other source is refused (spec §5.1). `commitPin: false` records that Claude Code refuses a
- * commit `ref` for the name (G1, Claude Code 2.1.331: "follow a branch or tag", and the repo has no tags),
- * so the marketplace is Latest only (spec §7.4).
+ * source; any other source is refused (spec §5.1). `pins` records the pin kinds Claude Code accepts for the
+ * name (G1, Claude Code 2.1.331: a commit `ref` is refused ("follow a branch or tag"), and the repo has no
+ * tags), so the marketplace is Latest only in practice (spec §7.4).
  */
 export const OFFICIAL_MARKETPLACES: Record<
   string,
-  { source: "github"; repo: string; commitPin: boolean }
+  { source: "github"; repo: string; pins: readonly PinKind[] }
 > = {
   "claude-plugins-official": {
     source: "github",
     repo: "anthropics/claude-plugins-official",
-    commitPin: false,
+    pins: ["tag", "latest"],
   },
 };
+
+/** The pin kinds Claude Code accepts for a marketplace name. */
+export const acceptedPins = (name: string): readonly PinKind[] =>
+  OFFICIAL_MARKETPLACES[name]?.pins ?? ["commit", "tag", "latest"];
 
 /** `name@marketplace`: a plugin name of at most 64 characters, then a marketplace name. The one plugin-ref pattern. */
 export const PLUGIN_REF_PATTERN = /^[A-Za-z0-9._-]{1,64}@[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -72,6 +80,47 @@ export function checkBranchName(b: string): boolean {
   return b.split("/").every((part) => !part.startsWith(".") && !part.endsWith(".lock"));
 }
 
+const COMMIT_SHA = /^[0-9a-f]{40}$/;
+
+/**
+ * Whether a declaration's `ref` has the shape of a pin (spec §7.4): a 40-hex commit, or a tag name by the §6.2
+ * ref-format rules. A `refs/…` ref is refused. Whether a name is a recorded tag is the "Skills hasn't read"
+ * warning, which needs the registry.
+ */
+export function checkPinRef(ref: string): boolean {
+  return COMMIT_SHA.test(ref) || (!ref.startsWith("refs/") && checkBranchName(ref));
+}
+
+/** A marketplace's pin: what its declaration (`extraKnownMarketplaces[name]`) holds it at (spec §8.1). */
+export type Pin =
+  | { kind: "commit"; sha: string }
+  | { kind: "tag"; name: string }
+  | { kind: "latest" }
+  | { kind: "live" };
+
+/** The pin of a marketplace declaration: a folder is live; a 40-hex `ref` is a commit, another one a tag; none is Latest. */
+export function pinOf(declaration: unknown): Pin {
+  const source =
+    typeof declaration === "object" && declaration !== null
+      ? (declaration as { source?: unknown }).source
+      : undefined;
+  const src =
+    typeof source === "object" && source !== null ? (source as Record<string, unknown>) : {};
+  if (src.source === "directory") return { kind: "live" };
+  const ref = src.ref;
+  if (typeof ref !== "string") return { kind: "latest" };
+  return COMMIT_SHA.test(ref) ? { kind: "commit", sha: ref } : { kind: "tag", name: ref };
+}
+
+/** The enabled plugin keys of a config doc: the `enabledPlugins` entries set to `true` (spec §7.4). */
+export function effectivePlugins(doc: Pick<ConfigDoc, "settings">): string[] {
+  const enabled = doc.settings.enabledPlugins;
+  if (typeof enabled !== "object" || enabled === null || Array.isArray(enabled)) return [];
+  return Object.entries(enabled)
+    .filter(([, v]) => v === true)
+    .map(([k]) => k);
+}
+
 /** A git URL the factory stores: https only, with no userinfo (even empty), `?` or `#` (spec §7.1). */
 export function checkGitUrl(u: string): boolean {
   if (!u.startsWith("https://") || /[\s?#]/.test(u) || hasControl(u)) return false;
@@ -101,17 +150,14 @@ export function cutGraphemes(s: string, max: number): string {
 /** A row's state, by the spec §10.2 precedence (the first one is the winner). Each has a word and an icon. */
 export const ROW_STATE_ORDER = [
   "adding",
-  "installing",
   "checking",
-  "add_failed",
-  "install_failed",
   "missing",
   "unusable",
+  "refused",
   "check_failed",
   "update",
   "hidden",
-  "not_pinned",
-  "not_installed",
+  "cant_pin",
 ] as const;
 
 export type RowState = (typeof ROW_STATE_ORDER)[number];

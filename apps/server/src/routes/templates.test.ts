@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { schema } from "@open-factory/db";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
 
@@ -39,6 +40,44 @@ test("list rescans; summaries carry counts and optional fields for unparseable t
     warnings: 0,
     agentCount: 0,
   });
+});
+
+test("a summary counts the plugins the template enables, and a template with none counts 0", async () => {
+  await h.db.insert(schema.marketplaces).values({
+    name: "local",
+    source: { source: "directory", path: "/mk" },
+    tags: {},
+    state: "ready",
+    startedAt: new Date(),
+    addedBy: "@or",
+    addedAt: new Date(),
+  });
+  const dir = path.join(h.factoryHome, "templates/plugs");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "template.yaml"), "name: plugs\ndisplay_name: Plugs\n");
+  writeFileSync(path.join(dir, "AGENTS.md"), "# P\n");
+  writeFileSync(
+    path.join(dir, "settings.json"),
+    JSON.stringify({
+      extraKnownMarketplaces: { local: { source: { source: "directory", path: "/mk" } } },
+      enabledPlugins: { "a@local": true, "b@local": true, "c@local": false },
+    }),
+  );
+  const templates = (await get("/api/templates")).json().templates as {
+    name: string;
+    pluginCount: number;
+  }[];
+  // `c` is turned off, which is an error: the count is of the last valid parse, so fix the file.
+  expect(templates.find((t) => t.name === "plugs")?.pluginCount).toBe(0);
+  writeFileSync(
+    path.join(dir, "settings.json"),
+    JSON.stringify({
+      extraKnownMarketplaces: { local: { source: { source: "directory", path: "/mk" } } },
+      enabledPlugins: { "a@local": true, "b@local": true },
+    }),
+  );
+  const fixed = (await get("/api/templates")).json().templates as typeof templates;
+  expect(fixed.find((t) => t.name === "plugs")?.pluginCount).toBe(2);
 });
 
 test("traversal and bad names never reach the filesystem", async () => {

@@ -112,7 +112,6 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     runtime: "docker",
     ...(image ? { image } : {}),
     skills: [],
-    plugins: [],
   });
   const tdir = path.join(home, "templates/dock");
   mkdirSync(tdir, { recursive: true });
@@ -130,7 +129,6 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
       runtime: "docker",
       ...(image ? { image } : {}),
       skills: [],
-      plugins: [],
     }),
   );
   await t.db.insert(schema.credentials).values({

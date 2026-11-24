@@ -416,20 +416,6 @@ test("from secrets: rows read 'Available as $NAME'; a picked secret is added", a
   expect(last(onValue)).toEqual({ template: { secrets: ["NPM_TOKEN", "GH_TOKEN"] } });
 });
 
-test("plugins are checked as name@marketplace; the help names settings.json per mode", async () => {
-  const onValue = vi.fn();
-  const { unmount } = render(<Form start={{}} onValue={onValue} />);
-  expect(screen.getByText(CONFIG_COPY.pluginsHelpAgent)).toBeInTheDocument();
-  await userEvent.type(screen.getByRole("textbox", { name: "Add plugin" }), "formatter{Enter}");
-  expect(document.getElementById("field-plugins-error")).toHaveTextContent(
-    CONFIG_FIELD_MSG.pluginRef,
-  );
-  expect(onValue).not.toHaveBeenCalled();
-  unmount();
-  render(<Form start={doc()} mode="template" />);
-  expect(screen.getByText(CONFIG_COPY.pluginsHelpTemplate)).toBeInTheDocument();
-});
-
 test("template mode: one group per list and no Override", () => {
   render(<Form mode="template" start={withServers({ gh: { command: "npx" } })} />);
   expect(screen.queryByText(/From template/)).toBeNull();

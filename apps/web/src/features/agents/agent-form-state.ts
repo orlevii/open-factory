@@ -279,7 +279,9 @@ export function useAgentFormState({
   };
 
   // "Installing plugins…" after 3 s of creating, only when the template installs any.
-  const pluginCount = create ? (config?.plugins.length ?? 0) : 0;
+  const pluginCount = create
+    ? (templates.data?.templates.find((x) => x.name === values.template)?.pluginCount ?? 0)
+    : 0;
   useEffect(() => {
     if (!pending || pluginCount === 0) return;
     const t = setTimeout(() => setFiredFor(sends), 3000);
@@ -462,6 +464,7 @@ export function useAgentFormState({
     slow,
     outcome: o.outcome,
     pluginOutput,
+    pluginCount,
     config,
     missingSecrets,
     noCredentials,

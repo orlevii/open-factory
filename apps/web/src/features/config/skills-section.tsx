@@ -1,8 +1,4 @@
-import {
-  PLUGIN_REF_PATTERN,
-  type RowState as RowStateName,
-  type SkillGroupsResponse,
-} from "@open-factory/shared";
+import type { RowState as RowStateName, SkillGroupsResponse } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { memo, useCallback, useMemo } from "react";
@@ -16,14 +12,11 @@ import { libraryQueryOptions } from "@/lib/library";
 import type { AddSlot } from "./config-list";
 import { FIELD_PATHS } from "./fields";
 import { ListField } from "./list-field";
-import { CONFIG_COPY, CONFIG_FIELD_MSG } from "./messages";
+import { CONFIG_COPY } from "./messages";
 import { PickAddMany, pickEmpty } from "./pick-add";
 import { useConfigScope } from "./scope";
 import { Section } from "./section";
 import { readAt, readList } from "./tolerant";
-
-const checkPlugin = (v: string) =>
-  PLUGIN_REF_PATTERN.test(v) ? undefined : CONFIG_FIELD_MSG.pluginRef;
 
 /** Two lines (spec §10.5): the name (mono, wraps), then the description, muted, one line. */
 const renderSkill = (o: ComboOption) => (
@@ -75,9 +68,8 @@ const pickerQuery = { ...libraryQueryOptions, refetchOnMount: false } as const;
 
 const NO_LIST: ReadonlyMap<string, Where> = new Map();
 
-/** Spec §12.2 section 2: host skills from a picker, the template's own skills read-only, and plugins. */
+/** Spec §12.2 section 2: host skills from a picker and the template's own skills read-only (plugins come with the plugin picker, B10). */
 export function SkillsSection({ localSkills = NO_SKILLS }: { localSkills?: readonly string[] }) {
-  const { mode } = useConfigScope();
   const q = useQuery(pickerQuery);
   const where = useMemo(() => (q.data ? whereByName(q.data) : NO_LIST), [q.data]);
   // Stable while the Library list is: the rows are memoised.
@@ -103,15 +95,6 @@ export function SkillsSection({ localSkills = NO_SKILLS }: { localSkills?: reado
             isError={q.isError}
           />
         )}
-      />
-      <ListField
-        field="plugins"
-        label="Plugins"
-        noun="plugin"
-        mono
-        placeholder="formatter@acme"
-        help={mode === "agent" ? CONFIG_COPY.pluginsHelpAgent : CONFIG_COPY.pluginsHelpTemplate}
-        check={checkPlugin}
       />
     </Section>
   );

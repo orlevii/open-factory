@@ -72,7 +72,6 @@ beforeEach(async () => {
     effective: {
       doc: { template: {}, settings: {}, mcp: { mcpServers: {} } },
       config,
-      templatePlugins: [],
       templateSkills: [],
       library: { skills: {}, plugins: {} },
     },
@@ -156,12 +155,13 @@ test("create's rollback never follows a link inside the workdir", async () => {
 // Spec §11.7 (blocker R1): the reviewer's repro. A planted settings env reached git during
 // `claude plugin marketplace add`; with a credential helper that is host code execution.
 function withPlugins() {
-  const config = { ...tpl.config, plugins: ["p@mk"] };
+  const config = tpl.config;
   tpl = {
     ...tpl,
     config,
     tplSettings: {
       extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/mk" } } },
+      enabledPlugins: { "p@mk": true },
     },
   };
   prep = {
@@ -169,7 +169,6 @@ function withPlugins() {
     effective: {
       doc: { ...prep.effective.doc, settings: tpl.tplSettings },
       config,
-      templatePlugins: [],
       templateSkills: [],
       library: { skills: {}, plugins: {} },
     },

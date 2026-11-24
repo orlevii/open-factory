@@ -256,12 +256,6 @@ test("template-local skills are read-only rows", () => {
   expect(within(list).queryByRole("button")).toBeNull();
 });
 
-test("the plugins field is still a typed input", () => {
-  useLibrary();
-  render(<Form />);
-  expect(screen.getByRole("textbox", { name: "Add plugin" })).toBeInTheDocument();
-});
-
 test("an untrusted description shows its bidi controls as tokens", async () => {
   useLibrary({
     hostDir: "/s",

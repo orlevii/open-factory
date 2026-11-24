@@ -108,6 +108,7 @@ export function isRefusedEnv(name: string): boolean {
   );
 }
 
+// A nested default (`${X:-${PATH}}`) is cut at the first `}` on purpose: Claude Code's expander doesn't expand nested defaults either.
 const REFERENCE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}/g;
 
 type Rec = Record<string, unknown>;
@@ -159,14 +160,15 @@ export type PolicyPlugins = {
 };
 
 export type AgentPolicyInput = {
-  target: "template" | "overlay";
   before: ConfigDoc | AgentOverlay;
   after: ConfigDoc | AgentOverlay;
   frozen?: { runtime: string; image: string | null; permission_mode: string };
   plugins: PolicyPlugins;
-  /** Overlays: the template doc whose declarations the overlay's plugins run at. */
-  declaredBy?: ConfigDoc;
-};
+} & (
+  | { target: "template"; declaredBy?: undefined }
+  /** An overlay's plugins run at the declarations of the template doc it sits on, so the caller must pass it. */
+  | { target: "overlay"; declaredBy: ConfigDoc }
+);
 
 type Parts = { template: Rec; settings: Rec; servers: Rec; mcp: Rec };
 
@@ -207,12 +209,17 @@ const holdsPattern = (patterns: readonly string[], path: readonly string[]): boo
 const same = (a: unknown, b: unknown): boolean =>
   a === undefined || b === undefined ? a === b : canonicalJson(a) === canonicalJson(b);
 
-const at = (root: unknown, path: readonly string[]): unknown =>
-  path.reduce<unknown>((cur, k) => (isRec(cur) ? cur[k] : undefined), root);
+/** A child by own property only: `constructor`, `toString` and `__proto__` of a missing key read as absent. */
+const own = (o: unknown, k: string): unknown =>
+  isRec(o) && Object.hasOwn(o, k) ? o[k] : undefined;
+
+const at = (root: unknown, path: readonly string[]): unknown => path.reduce<unknown>(own, root);
 
 const short = (ref: string) => (/^[0-9a-f]{40}$/.test(ref) ? ref.slice(0, 7) : ref);
-const marketplaceOf = (key: string) => key.slice(key.lastIndexOf("@") + 1);
-const pluginOf = (key: string) => key.slice(0, key.lastIndexOf("@"));
+const splitPlugin = (key: string) => {
+  const i = key.lastIndexOf("@");
+  return { plugin: key.slice(0, i), marketplace: key.slice(i + 1) };
+};
 
 /**
  * Judges what an agent wants to write against what is there (spec §6.2). Pure: the caller loads `plugins`. Any issue
@@ -251,11 +258,7 @@ export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
     const objects = (b === undefined || isRec(b)) && (a === undefined || isRec(a));
     if (objects && ((b !== undefined && a !== undefined) || holdsPattern(patterns, path))) {
       const keys = new Set([...Object.keys((b as Rec) ?? {}), ...Object.keys((a as Rec) ?? {})]);
-      for (const k of keys)
-        walk(part, patterns, (b as Rec | undefined)?.[k], (a as Rec | undefined)?.[k], [
-          ...path,
-          k,
-        ]);
+      for (const k of keys) walk(part, patterns, own(b, k), own(a, k), [...path, k]);
       return;
     }
     add(part, [part, ...path], `${[part, ...path].join(".")} can only be changed by a human.`);
@@ -305,14 +308,14 @@ export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
         refuseName("template", ["template", "secrets", String(n)], name);
   const envOf = (s: Rec) => (isRec(s.env) ? s.env : {});
   for (const [name, v] of Object.entries(envOf(after.settings)))
-    if (isRefusedEnv(name) && !same(envOf(before.settings)[name], v))
+    if (isRefusedEnv(name) && !same(own(envOf(before.settings), name), v))
       refuseName("settings", ["settings", "env", name], name);
   for (const [server, entry] of Object.entries(after.servers)) {
-    const prior = before.servers[server];
+    const prior = own(before.servers, server);
     const env = isRec(entry) && isRec(entry.env) ? entry.env : {};
     const priorEnv = isRec(prior) && isRec(prior.env) ? prior.env : {};
     for (const [name, v] of Object.entries(env))
-      if (isRefusedEnv(name) && !same(priorEnv[name], v))
+      if (isRefusedEnv(name) && !same(own(priorEnv, name), v))
         refuseName("mcp", ["mcp", "mcpServers", server, "env", name], name);
     if (same(prior, entry)) continue;
     const seen = new Set<string>();
@@ -324,7 +327,10 @@ export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
   }
 
   // Rule 6: the factory's own server.
-  if ("factory" in after.servers && !same(before.servers.factory, after.servers.factory))
+  if (
+    Object.hasOwn(after.servers, "factory") &&
+    !same(own(before.servers, "factory"), own(after.servers, "factory"))
+  )
     add("mcp", ["mcp", "mcpServers", "factory"], CONFIG_MSG.factoryServer);
 
   // Rule 5: plugins only at a human-set pin.
@@ -334,7 +340,7 @@ export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
   };
   if (isTemplate)
     for (const [mkt, decl] of Object.entries(declarations(after))) {
-      if (same(declarations(before)[mkt], decl)) continue;
+      if (same(own(declarations(before), mkt), decl)) continue;
       const row = i.plugins.marketplaces.get(mkt);
       const path = ["settings", "extraKnownMarketplaces", mkt];
       const ref = row && pinRefFor(row);
@@ -347,12 +353,12 @@ export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
           `Marketplace ${mkt} must match Skills: its source, pinned to ${short(ref ?? "")}.`,
         );
     }
-  const declaring = isTemplate ? after : i.declaredBy ? partsOf(i.declaredBy) : undefined;
+  const declaring = i.target === "template" ? after : partsOf(i.declaredBy);
   const wasEnabled = new Set(effectivePlugins({ settings: before.settings }));
   for (const key of effectivePlugins({ settings: after.settings })) {
     if (wasEnabled.has(key)) continue;
-    const mkt = marketplaceOf(key);
-    const decl = declarations(declaring)[mkt];
+    const { plugin, marketplace: mkt } = splitPlugin(key);
+    const decl = own(declarations(declaring), mkt);
     if (decl === undefined) continue; // an undeclared marketplace is the human rule's to report
     const path = ["settings", "enabledPlugins", key];
     const pin = pinOf(decl);
@@ -361,7 +367,7 @@ export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
       continue;
     }
     const ref = pin.kind === "commit" ? pin.sha : pin.kind === "tag" ? pin.name : "";
-    if (!i.plugins.catalogs.get(`${mkt}@${ref}`)?.has(pluginOf(key)))
+    if (!i.plugins.catalogs.get(`${mkt}@${ref}`)?.has(plugin))
       add(
         "settings",
         path,

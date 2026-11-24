@@ -53,9 +53,12 @@ const base: ConfigDoc = {
 const clone = (d: ConfigDoc): ConfigDoc => structuredClone(d);
 const frozen = { runtime: "docker", image: null, permission_mode: "auto" };
 
+type Over = Partial<Omit<AgentPolicyInput, "target" | "declaredBy">> &
+  ({ target?: "template" } | { target: "overlay"; declaredBy: ConfigDoc });
+
 const issues = (
   after: ConfigDoc | AgentOverlay,
-  over: Partial<AgentPolicyInput> = {},
+  over: Over = {},
   before: ConfigDoc | AgentOverlay = base,
 ) =>
   agentPolicyIssues({
@@ -110,6 +113,23 @@ describe("rule 1: everything off the allowlist is byte-equal", () => {
   test("the derived local_skill_names key is not judged", () =>
     expect(messages(edited((d) => (d.template.local_skill_names = ["a"])))).toEqual([]));
 
+  test.each(["constructor", "toString", "valueOf", "hasOwnProperty"])(
+    "an added %s key is not read as an inherited property",
+    (key) =>
+      expect(
+        messages(edited((d) => ((d.settings as Record<string, unknown>)[key] = null))),
+      ).toEqual([`settings.${key} can only be changed by a human.`]),
+  );
+
+  test("an own __proto__ key (from JSON) is refused too", () => {
+    const after = clone(base);
+    after.settings = JSON.parse(
+      JSON.stringify({ ...base.settings, x: 1 }).replace('"x":1', '"__proto__":{}'),
+    );
+    expect(Object.hasOwn(after.settings, "__proto__")).toBe(true);
+    expect(messages(after)).toEqual(["settings.__proto__ can only be changed by a human."]);
+  });
+
   test("an agent can add a deny rule to a settings file that had no permissions", () =>
     expect(
       messages(
@@ -154,6 +174,30 @@ describe("rule 2: restrictions are add-only", () => {
   ])("removing a %s entry is refused", (_n, edit, message) =>
     expect(messages(edited(edit))).toEqual([message]),
   );
+
+  test("an overlay's deny and ask lists are add-only too", () => {
+    const run = (after: AgentOverlay, before: AgentOverlay) =>
+      messages(after, { target: "overlay", frozen: undefined, declaredBy: base }, before);
+    const was: AgentOverlay = { settings: { permissions: { deny: ["a", "b"], ask: ["c"] } } };
+    expect(run({ settings: { permissions: { deny: ["a", "b", "z"], ask: ["c"] } } }, was)).toEqual(
+      [],
+    );
+    expect(run({ settings: { permissions: { deny: ["a"], ask: ["c"] } } }, was)).toEqual([
+      "Deny rules can only be removed by a human.",
+    ]);
+    expect(run({ settings: { permissions: { deny: ["a", "b"], ask: [] } } }, was)).toEqual([
+      "Ask rules can only be removed by a human.",
+    ]);
+  });
+
+  test("removing a soft_deny entry is refused", () =>
+    expect(
+      messages(
+        edited((d) => (settingsOf(d).autoMode.soft_deny = [])),
+        {},
+        edited((d) => (settingsOf(d).autoMode.soft_deny = ["x"])),
+      ),
+    ).toEqual(["Restrictions can only be removed by a human."]));
 
   test("the issue points at the removed item", () =>
     expect(issues(edited((d) => (settingsOf(d).permissions.deny = [])))[0]?.path).toBe(
@@ -235,7 +279,7 @@ describe("rule 4: env names and references", () => {
     expect(
       messages(
         { settings: { env: { NODE_OPTIONS: "x" } }, template: { secrets: ["PATH"] } },
-        { target: "overlay", frozen: undefined },
+        { target: "overlay", frozen: undefined, declaredBy: base },
         {},
       ),
     ).toEqual(["PATH can only be set by a human.", "NODE_OPTIONS can only be set by a human."]));
@@ -252,6 +296,11 @@ describe("rule 4: env names and references", () => {
     expect(got).toHaveLength(1);
     expect(got[0]).toMatch(/^MCP server gh can't reference [A-Z_]+\.$/);
   });
+
+  test("a reference to a refused name is matched case-insensitively", () =>
+    expect(messages(edited((d) => (d.mcp.mcpServers.gh = { command: "${path}/x" })))).toEqual([
+      "MCP server gh can't reference path.",
+    ]));
 
   test("the refusal names the variable and points at the string", () => {
     const got = issues(
@@ -335,6 +384,41 @@ describe("rule 5: plugins only at a human-set pin", () => {
   ])("a declaration with %s is refused", (_n, decl) =>
     expect(rule5(edited((d) => declare(d, decl)))).toEqual([pinned]),
   );
+
+  describe("a tag-pinned declaration", () => {
+    const tagged: RegistryPin = { ...official, commit: C, tags: { v1: C } };
+    const withTag: PolicyPlugins = {
+      marketplaces: new Map([[tagged.name, tagged]]),
+      catalogs: new Map([[`${tagged.name}@v1`, new Set(["fmt"])]]),
+    };
+    const decl = (ref: string | undefined) => ({
+      source: { source: "github", repo: "anthropics/claude-plugins-official", ...(ref && { ref }) },
+    });
+    const run = (ref: string | undefined, key?: string) =>
+      messages(
+        edited((d) => {
+          declare(d, decl(ref), tagged.name);
+          if (key) enable(d, key);
+        }),
+        { plugins: withTag },
+      );
+
+    test("with the tag ref it passes, and its plugin is judged at the tag", () => {
+      expect(run("v1", "fmt@claude-plugins-official")).toEqual([]);
+      expect(run("v1", "nope@claude-plugins-official")).toEqual([
+        "Plugin nope@claude-plugins-official isn't in claude-plugins-official at v1.",
+      ]);
+    });
+
+    test.each([
+      ["the commit", C],
+      ["Latest", undefined],
+    ])("%s is refused", (_n, ref) =>
+      expect(run(ref)).toEqual([
+        "Marketplace claude-plugins-official must match Skills: its source, pinned to v1.",
+      ]),
+    );
+  });
 
   test("a marketplace with no pin Skills has read is refused", () =>
     expect(
@@ -448,7 +532,7 @@ describe("rule 5: plugins only at a human-set pin", () => {
       expect(
         messages(
           { settings: { extraKnownMarketplaces: { acme: declarationFor(acme) } } },
-          { target: "overlay", frozen: undefined, plugins },
+          { target: "overlay", frozen: undefined, plugins, declaredBy: base },
           {},
         ),
       ).toEqual(["settings.extraKnownMarketplaces can only be changed by a human."]));
@@ -460,6 +544,11 @@ describe("rule 6: MCP servers", () => {
     expect(messages(edited((d) => (d.mcp.mcpServers.factory = { command: "x" })))).toEqual([
       "That server name is reserved.",
     ]));
+
+  test("a factory server a human already set is not re-flagged", () => {
+    const withFactory = edited((d) => (d.mcp.mcpServers.factory = { command: "x" }));
+    expect(messages(withFactory, {}, withFactory)).toEqual([]);
+  });
 
   test("adding, changing and removing another server passes", () => {
     expect(messages(edited((d) => (d.mcp.mcpServers.new = { url: "https://h" })))).toEqual([]);
@@ -493,7 +582,7 @@ describe("rule 8: no local runtime", () => {
     { templateRuntime: "local" as const },
     { templateHasLocalAgents: true },
     { agentRuntime: "local" as const },
-    { canSpawnRuntimes: ["docker", "local"] as ("docker" | "local")[] },
+    { canSpawnRuntimes: ["docker", "local"] },
   ])("%j touches the local runtime", (input) => expect(touchesLocalRuntime(input)).toBe(true));
 
   test("an all-docker input does not", () =>

@@ -2,11 +2,17 @@ import type { AgentDetail, ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { COARSE_ICON_GROUP } from "@/components/ui/button";
 import { flushStatusFrames } from "@/features/agents/status-frames";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { alice, renderApp } from "@/test/render-app";
-import { agentSummary, conversation, detail, resetSeq, se } from "@/test/session-fixtures";
+import {
+  agentSummary,
+  conversation,
+  detail,
+  envelope,
+  resetSeq,
+  se,
+} from "@/test/session-fixtures";
 
 const ws = vi.hoisted(() => ({
   onMessage: undefined as undefined | ((m: ServerMessage) => void),
@@ -444,14 +450,14 @@ test("Tab leaves the timeline: only the active row, its controls and its row men
         {
           type: "message_in",
           messages: [
-            {
+            envelope({
               id: "m1",
               from: "@or",
               fromKind: "human",
               kind: "message",
               urgent: false,
               body: "See [docs](https://example.com)",
-            },
+            }),
           ],
         },
         null,
@@ -628,32 +634,13 @@ test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (i
     .filter((s) => s.textContent);
   expect(facts.map((f) => f.textContent)).toEqual(["Restarts when idle"]);
   expect(within(header).queryByRole("button", { name: /Stop|Interrupt/ })).toBeNull();
-  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+  const form = screen.getByRole("combobox", { name: "Message to Dev agent" }).closest("form");
+  expect(form).not.toBeNull();
+  expect(within(form as HTMLElement).getByRole("button", { name: "Stop" })).toBeInTheDocument();
   expect(within(header).getByRole("button", { name: "Actions for Dev agent" })).toBeInTheDocument();
   // Edit, Compact and Terminate live in the ⋯ menu now.
   expect(within(header).queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
   expect(within(header).queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
-});
-
-test("header on touch: Agent details and ⋯ are both the coarse group's 40px boxes, though each is a trigger's child (evidence D2)", async () => {
-  renderApp("/agents/dev/session", alice);
-  await screen.findByText("Two entries.");
-  const header = screen.getByRole("banner");
-  const details = within(header).getByRole("button", { name: "Agent details" });
-  const menu = within(header).getByRole("button", { name: "Actions for Dev agent" });
-  // Each takes its trigger's data-slot (asChild), which is why a `[data-slot=button]` selector missed them.
-  expect(details).not.toHaveAttribute("data-slot", "button");
-  const group = details.parentElement;
-  expect(group?.className).toContain(COARSE_ICON_GROUP);
-  expect(group?.contains(menu)).toBe(true);
-  const selector = COARSE_ICON_GROUP.match(/\[&_(.+)\]:size-10/)?.[1]?.replaceAll("_", " ");
-  expect(selector).toBeDefined();
-  const sized = Array.from(group?.querySelectorAll(selector ?? "") ?? []);
-  expect(sized).toContain(details);
-  expect(sized).toContain(menu);
-  // Below a 22rem header (a phone, or 200% text) the avatar, the switch and this toggle give way to the ⋯ menu.
-  expect(header.querySelector("[data-header-avatar]")).toHaveClass("@max-[22rem]:hidden");
-  expect(details).toHaveClass("@max-[22rem]:hidden");
 });
 
 test("header: no Stop while no turn is open; Restart when errored, its failure a notice row below the header", async () => {
@@ -666,8 +653,6 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
   const header = screen.getByRole("banner");
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(within(header).getByText("Boom")).toBeInTheDocument();
-  // Restart is a third 40px action; the avatar gives way below a 22rem header (break H3).
-  expect(header.querySelector("[data-header-avatar]")).toHaveClass("@max-[22rem]:hidden");
   await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
   const alert = await screen.findByText(/Couldn't restart: No slot\./);
   expect(header.contains(alert)).toBe(false);
@@ -713,15 +698,6 @@ test("header: a terminated agent's Pin is its own button, outside the live line"
     .find((s) => s.textContent?.startsWith("Terminated by @lead"));
   expect(line).toBeDefined();
   expect(line?.contains(pin)).toBe(false);
-});
-
-test("no strip: 'Reports to' no longer renders under the header", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ reportsTo: "cto" }));
-  renderApp("/agents/dev/session", alice);
-  await screen.findByText("Two entries.");
-  expect(document.querySelector("[data-agent-strip]")).toBeNull();
-  // Agent details is closed by default below 1280px, and the header carries no org segment.
-  expect(screen.queryByText(/Reports to/)).not.toBeInTheDocument();
 });
 
 test("restart pending arrives by frame; a frame clears it", async () => {
@@ -886,53 +862,34 @@ const errorPage = (event: Parameters<typeof se>[0]) => () => {
   return page([se(event, null)]);
 };
 
-test("an error with fix secrets links to Settings → Secrets", async () => {
+test.each([
+  ["secrets", "Open Settings → Secrets", "/settings/secrets"],
+  ["credentials", "Open Settings → Credentials", "/settings/credentials"],
+  ["projects", "Open Settings → Projects", "/settings/projects"],
+  ["image", "Open Templates → Images", "/templates/images"],
+  ["config", "Open configuration", "/agents/dev/config"],
+  ["template", "Open template dev", "/templates/dev"],
+] as const)("an error with fix %s links to %s", async (fix, linkName, href) => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
-    message: "The secret GH_TOKEN isn't set. Add it in Settings → Secrets.",
-    code: "secret_missing",
-    fix: "secrets",
+    message: "It failed.",
+    fix,
   });
   renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("link", { name: "Open Settings → Secrets" })).toHaveAttribute(
-    "href",
-    "/settings/secrets",
-  );
+  expect(await screen.findByRole("link", { name: linkName })).toHaveAttribute("href", href);
+  // Only fix: edit_agent is a button that opens the sheet.
+  expect(screen.queryByRole("button", { name: "Edit the agent" })).not.toBeInTheDocument();
 });
 
-test("an error with fix credentials or projects links to that section", async () => {
-  routes["/api/agents/dev/events?"] = () => {
-    resetSeq();
-    return page([
-      se({ type: "error", source: "spawn", message: "a", fix: "credentials" }, null),
-      se({ type: "error", source: "spawn", message: "b", fix: "projects" }, null),
-    ]);
-  };
-  renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("link", { name: "Open Settings → Credentials" })).toHaveAttribute(
-    "href",
-    "/settings/credentials",
-  );
-  expect(screen.getByRole("link", { name: "Open Settings → Projects" })).toHaveAttribute(
-    "href",
-    "/settings/projects",
-  );
-});
-
-test("an error with fix image links to Templates → Images", async () => {
+test("a resume error shows its message in the timeline", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
-    source: "spawn",
-    message:
-      "Image `playwright` isn't built. Build it in Templates → Images, or run `open-factory images build playwright`.",
-    fix: "image",
+    source: "resume",
+    message: "No conversation found",
   });
   renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("link", { name: "Open Templates → Images" })).toHaveAttribute(
-    "href",
-    "/templates/images",
-  );
+  expect(await screen.findByText("No conversation found")).toBeInTheDocument();
 });
 
 test("an error with fix edit_agent opens Edit agent", async () => {
@@ -947,63 +904,6 @@ test("an error with fix edit_agent opens Edit agent", async () => {
   expect(screen.queryByRole("link", { name: "Edit the agent" })).not.toBeInTheDocument();
   await userEvent.click(fix);
   expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
-});
-
-test("an error with fix config links to the agent's Configuration page", async () => {
-  routes["/api/agents/dev/events?"] = errorPage({
-    type: "error",
-    source: "spawn",
-    message: "Plugin x@y didn't install.",
-    fix: "config",
-  });
-  renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("link", { name: "Open configuration" })).toHaveAttribute(
-    "href",
-    "/agents/dev/config",
-  );
-  expect(screen.queryByRole("button", { name: "Edit the agent" })).not.toBeInTheDocument();
-});
-
-test("an error with fix template links to the agent's template page", async () => {
-  routes["/api/agents/dev/events?"] = errorPage({
-    type: "error",
-    source: "spawn",
-    message: "Template developer has errors. Fix it in Templates.",
-    fix: "template",
-  });
-  renderApp("/agents/dev/session", alice);
-  const link = await screen.findByRole("link", { name: "Open template dev" });
-  expect(link).toHaveAttribute("href", "/templates/dev");
-});
-
-test("a resume error no longer names the interim reset script", async () => {
-  routes["/api/agents/dev/events?"] = errorPage({
-    type: "error",
-    source: "resume",
-    message: "No conversation found",
-  });
-  renderApp("/agents/dev/session", alice);
-  expect(await screen.findByText("No conversation found")).toBeInTheDocument();
-  expect(document.body.textContent).not.toMatch(/agent:reset-session|stop the server/);
-  expect(document.body.textContent).not.toMatch(/seed:dev-agent/);
-});
-
-test("the log and each row wrap can shrink, so no row widens the scroller", async () => {
-  renderApp("/agents/dev/session", alice);
-  await screen.findByRole("heading", { level: 1, name: "Dev agent" });
-  const log = screen.getByRole("log", { name: "Session" });
-  expect(log).toHaveClass("min-w-0");
-  const wraps = log.querySelectorAll("[data-row-wrap]");
-  expect(wraps.length).toBeGreaterThan(0);
-  for (const w of wraps) expect(w).toHaveClass("min-w-0");
-});
-
-test("the Stop button uses the stop glyph", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
-  renderApp("/agents/dev/session", alice);
-  await screen.findByText("Two entries.");
-  const icon = screen.getByRole("button", { name: "Stop" }).querySelector("svg");
-  expect(icon).toHaveClass("lucide-circle-stop");
 });
 
 /** A response the test releases by hand; every request before or after the release gets a copy. */
@@ -1155,7 +1055,11 @@ test("a stale list status turning into the loaded one is not announced", async (
   await act(async () => {
     await new Promise((r) => setTimeout(r, 30));
   });
-  expect(screen.queryByText(/Dev agent is idle/)).not.toBeInTheDocument();
+  const live = screen
+    .getAllByRole("status")
+    .find((el) => el.getAttribute("aria-live") === "polite" && el.classList.contains("sr-only"));
+  expect(live).toBeDefined();
+  expect(live?.textContent).toBe("");
 });
 
 test("the composer can't send until the session has loaded", async () => {

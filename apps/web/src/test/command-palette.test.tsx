@@ -87,12 +87,11 @@ const options = (dialog: HTMLElement) =>
 const highlighted = (dialog: HTMLElement) =>
   dialog.querySelector('[role="option"][aria-selected="true"]');
 
-test("⌘K opens from inside an input; overlay and content carry data-instant; sr-only title 'Search'", async () => {
+test("⌘K opens from inside an input; overlay and content carry data-instant", async () => {
   const { dialog, input } = await openFromInput();
   expect(dialog).toHaveAttribute("data-instant");
   const overlay = document.querySelector("[data-slot='palette-overlay']");
   expect(overlay).toHaveAttribute("data-instant");
-  expect(screen.getByText("Search", { selector: "h2" })).toHaveClass("sr-only");
   expect(input).toHaveFocus();
   // A modal is open: a single-key shortcut doesn't fire behind it.
   const fired = vi.fn();
@@ -192,7 +191,7 @@ test("the recent agents are read once per opening, not on each keystroke", async
   }
 });
 
-test("Actions: no 'Mark all read'; 'Agent details' only on session pages", async () => {
+test("Actions: no 'Mark all read'; 'Agent details' and the view actions only on agent pages", async () => {
   const { dialog } = await openFromInput();
   const actions = within(dialog).getByRole("group", { name: "Actions" });
   const names = within(actions)
@@ -201,6 +200,9 @@ test("Actions: no 'Mark all read'; 'Agent details' only on session pages", async
   expect(names).toEqual(expect.arrayContaining(["New agent", "New task", "New schedule"]));
   expect(names).not.toContain("Mark all read");
   expect(names).not.toContain("Agent details");
+  // Off an agent page neither view action is offered.
+  expect(names).not.toContain("Open session");
+  expect(names).not.toContain("Open chat");
 });
 
 test("'Agent details' is offered on a session page", async () => {
@@ -239,13 +241,6 @@ test("in the Session the palette offers 'Open chat' and not 'Open session'; it g
   await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
 });
 
-test("off an agent page neither view action is offered", async () => {
-  const { dialog } = await openFromInput();
-  const actions = within(dialog).getByRole("group", { name: "Actions" });
-  expect(within(actions).queryByRole("option", { name: "Open session" })).toBeNull();
-  expect(within(actions).queryByRole("option", { name: "Open chat" })).toBeNull();
-});
-
 test("Go to includes Usage and each Settings page; Images links /templates/images", async () => {
   const { dialog, router } = await openFromInput();
   const goTo = within(dialog).getByRole("group", { name: "Go to" });
@@ -254,6 +249,11 @@ test("Go to includes Usage and each Settings page; Images links /templates/image
     .map((o) => o.textContent);
   expect(names).toEqual(
     expect.arrayContaining([
+      "Inbox",
+      "Agents",
+      "Tasks",
+      "Templates",
+      "Schedules",
       "Usage",
       "Settings: Credentials",
       "Settings: Secrets",
@@ -262,6 +262,7 @@ test("Go to includes Usage and each Settings page; Images links /templates/image
       "Settings: Factory",
     ]),
   );
+  expect(new Set(names).size).toBe(names.length);
   await userEvent.click(within(goTo).getByRole("option", { name: "Images" }));
   await waitFor(() => expect(router.state.location.pathname).toBe("/templates/images"));
   expect(router.state.location.hash).toBe("");

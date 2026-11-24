@@ -56,6 +56,7 @@ describe.skipIf(!hasPython)("sign-in attempts end without a request (fake CLI)",
   it("sign-out ends the user's attempt and its process", async () => {
     const h = await setup();
     const pid = await start(h, h.cookie);
+    expect(h.app.signIn.view(h.user.id)).not.toBeNull();
     const out = await h.app.inject({
       method: "POST",
       url: "/api/auth/sign-out",
@@ -63,8 +64,8 @@ describe.skipIf(!hasPython)("sign-in attempts end without a request (fake CLI)",
       payload: {},
     });
     expect(out.statusCode).toBe(200);
-    const other = await signUp(h.app, { handle: "al" });
-    expect((await get(h, other.cookie)).json().attempt).toBeNull();
+    // The signed-out user's own attempt, not another user's view (which never shows it).
+    expect(h.app.signIn.view(h.user.id)).toBeNull();
     await gone(pid);
   });
 

@@ -1,9 +1,5 @@
 import { expect, test } from "vitest";
-import { CONFIG_FIELDS, FIELD_PATHS, fieldForPath } from "./fields";
-
-test("every field has a path", () => {
-  for (const f of CONFIG_FIELDS) expect(FIELD_PATHS[f].length, f).toBeGreaterThan(0);
-});
+import { fieldForPath } from "./fields";
 
 test("issue paths map to their field, with the item for a list row", () => {
   expect(fieldForPath("template.model")).toEqual({ field: "model" });

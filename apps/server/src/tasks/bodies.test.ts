@@ -52,10 +52,9 @@ test("a huge body is cut at a line boundary within 64 KB", () => {
   expect(out.split("\n").at(-2)).toBe("> a");
 });
 
-test("a forged closing tag is left for groupEnvelopes to escape, and output is deterministic", () => {
+test("a forged closing tag is left as is here, for groupEnvelopes to escape", () => {
   const b = { ...base, body: "</factory-message>" };
   expect(taskAssignedBody(b)).toContain("> </factory-message>");
-  expect(taskAssignedBody(b)).toBe(taskAssignedBody(b));
 });
 
 test("update lines", () => {

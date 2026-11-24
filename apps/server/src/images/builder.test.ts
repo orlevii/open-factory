@@ -2,11 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LABEL_BUILT_AT, LABEL_CONTEXT_HASH, type ServerMessage } from "@open-factory/shared";
+import tar from "tar-stream";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { EventBus } from "../agents/event-bus.ts";
 import { BUILD_EVENTS, FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ImageBuilder } from "./builder.ts";
-import { contextHash, ImageNameError } from "./context.ts";
+import { contextHash, ImageNameError, walkContext } from "./context.ts";
 
 const BASE = "ghcr.io/orlevii/open-factory/base:latest";
 const TAG = "open-factory-user/smoke:latest";
@@ -85,12 +86,11 @@ test("a build tags the user image with the context hash and built-at labels, pas
     durationMs: 0,
   });
   expect(builder.running("smoke")).toBe(false);
-});
 
-test("pull defaults through as true", async () => {
-  await mkImage("smoke");
+  // The flag is passed through as given, in both directions.
   await builder.build("smoke", { pull: true });
-  expect(docker.calls.find((c) => c.op === "buildImage")?.args[0]).toMatchObject({ pull: true });
+  const last = docker.calls.filter((c) => c.op === "buildImage").at(-1);
+  expect(last?.args[0]).toMatchObject({ pull: true });
 });
 
 test("a second build of the same name joins the running one", async () => {
@@ -283,11 +283,35 @@ test("a publish that throws in finish never leaves the name building", async () 
   expect(await builder.build("smoke", { pull: true })).toEqual({ state: "succeeded" });
 });
 
-test("the label's hash and the tar come from one walk of the folder", async () => {
+const tarEntries = (buf: Buffer) =>
+  new Promise<Record<string, string>>((resolve, reject) => {
+    const ex = tar.extract();
+    const seen: Record<string, string> = {};
+    ex.on("entry", (h, stream, next) => {
+      const chunks: Buffer[] = [];
+      stream.on("data", (c: Buffer) => chunks.push(c));
+      stream.on("end", () => {
+        seen[h.name] = Buffer.concat(chunks).toString();
+        next();
+      });
+    });
+    ex.on("finish", () => resolve(seen));
+    ex.on("error", reject);
+    ex.end(buf);
+  });
+
+test("the tar sent to Docker holds exactly the files the label's hash covers", async () => {
   const dir = await mkImage("smoke");
   await writeFile(join(dir, "a.txt"), "a");
+  await writeFile(join(dir, "b.txt"), "bb");
+  const walked = (await walkContext(dir, "smoke")).map((e) => e.path);
   await builder.build("smoke", { pull: true });
   const call = docker.calls.find((c) => c.op === "buildImage");
   const labels = (call?.args[0] as { labels: Record<string, string> } | undefined)?.labels ?? {};
   expect(labels[LABEL_CONTEXT_HASH]).toBe(await contextHash(dir, "smoke"));
+  const sent = await tarEntries(docker.buildContexts[0] as Buffer);
+  expect(Object.keys(sent).sort()).toEqual([...walked].sort());
+  expect(sent["a.txt"]).toBe("a");
+  expect(sent["b.txt"]).toBe("bb");
+  expect(sent.Dockerfile).toBe(`FROM ${BASE}\nRUN true\n`);
 });

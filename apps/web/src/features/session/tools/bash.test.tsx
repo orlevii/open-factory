@@ -46,13 +46,10 @@ function Harness({ row, open = false }: { row: ToolRow; open?: boolean }) {
 
 const toggle = () => screen.getByRole("button", { expanded: false });
 
-test("collapsed: the description, then the command muted on the same line; a one-word chip", () => {
+test("collapsed: the description, then the command on the same line; a one-word chip", () => {
   render(<Harness row={bashRow({ command: "pnpm test --run", description: "Run the tests" })} />);
   const row = toggle();
   expect(row).toHaveTextContent(/^Run the testspnpm test --runRunning$/);
-  expect(within(row).getByText("pnpm test --run")).toHaveClass("truncate", "text-muted-foreground");
-  expect(within(row).getByText("Running")).toHaveClass("shrink-0");
-  expect(row).toHaveClass("min-h-8");
 });
 
 test("collapsed without a description: $ command", () => {
@@ -85,7 +82,6 @@ test("failed: an icon and the first error line on a detail line under the collap
   const detail = screen.getByText("Error: cannot find module 'x'");
   expect(toggle()).not.toContainElement(detail);
   expect(detail.closest("p")?.querySelector("svg")).not.toBeNull();
-  expect(detail.closest("p")).toHaveClass("pl-7");
   expect(container).not.toHaveTextContent("at y");
 });
 
@@ -129,7 +125,7 @@ test("expanded: stderr that ends the content gets its own plate with a label", (
   expect(out.textContent).toBe("built a\nbuilt b");
   const err = screen.getByText("warning: deprecated");
   expect(err).not.toBe(out);
-  expect(screen.getByText("stderr")).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "stderr" })).toHaveTextContent("warning: deprecated");
 });
 
 test("expanded: stderr that does not end the content stays in the output", () => {
@@ -187,11 +183,14 @@ test("a failed call with a 64 KB single-line error renders its detail line witho
   expect(screen.getByText(/^Error: y+$/)).toBeInTheDocument();
 });
 
-test("Show input anchors itself through the timeline's toggle rule (aria-expanded)", () => {
+test("Show input is a disclosure button: aria-expanded flips when it is clicked", async () => {
   render(<Harness open row={bashRow({ command: "a\nb" }, { content: "x" })} />);
-  expect(screen.getByRole("button", { name: "Show input" })).toHaveAttribute(
+  const button = screen.getByRole("button", { name: "Show input" });
+  expect(button).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(button);
+  expect(screen.getByRole("button", { name: /Show input|Hide input/ })).toHaveAttribute(
     "aria-expanded",
-    "false",
+    "true",
   );
 });
 
@@ -210,10 +209,9 @@ test("a finished or failed background task: the chip, and the summary on the det
   const { unmount } = render(
     <Harness row={withTask({ taskId: "b", state: "finished", summary: "Build ok" })} />,
   );
-  expect(within(toggle()).getByText("Finished")).toHaveClass("shrink-0");
+  expect(within(toggle()).getByText("Finished")).toBeInTheDocument();
   const detail = screen.getByText("Build ok");
   expect(toggle()).not.toContainElement(detail);
-  expect(detail).toHaveClass("line-clamp-2");
   unmount();
   render(<Harness row={withTask({ taskId: "b", state: "failed", summary: "Exit 2" })} />);
   expect(within(toggle()).getByText("Failed")).toBeInTheDocument();
@@ -242,22 +240,6 @@ test("a one-line command short enough to read on the row needs no Show input, wi
     <Harness open row={bashRow({ command, description: "Run the tests" }, { content: "ok" })} />,
   );
   expect(screen.queryByRole("button", { name: "Show input" })).not.toBeInTheDocument();
-});
-
-test("the stderr plate is named by its label", () => {
-  render(
-    <Harness
-      open
-      row={bashRow(
-        { command: "make" },
-        {
-          content: "built\nwarning: deprecated",
-          meta: { tool: "Bash", interrupted: false, stderr: "warning: deprecated" },
-        },
-      )}
-    />,
-  );
-  expect(screen.getByRole("group", { name: "stderr" })).toHaveTextContent("warning: deprecated");
 });
 
 test("a call cut by Stop reads 'Interrupted', not 'Failed', with no error detail line", () => {

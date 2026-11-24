@@ -139,10 +139,9 @@ test("a live spawned agent: Terminate… in the ⋯ menu, no Edit; 'Spawned by @
 test("the header keeps a spawned agent's ' · ab12' tail; the title says Terminated", async () => {
   await open(terminated());
   const h1 = screen.getByRole("heading", { level: 1 });
-  expect(within(h1).getByText("Tech Lead · ab12")).toHaveClass("sr-only");
+  expect(within(h1).getByText("Tech Lead · ab12")).toBeInTheDocument();
   const tail = within(h1).getByText("· ab12");
   expect(tail).toHaveAttribute("aria-hidden", "true");
-  expect(tail).toHaveClass("shrink-0");
   expect(document.title).toBe("Terminated · Tech Lead · ab12 · Session · Open Factory");
 });
 
@@ -284,10 +283,9 @@ test.each([
     within(header).queryByRole("button", { name: /^(Pin|Unpin) workspace$/ })?.textContent ??
       undefined,
   ).toBe(button);
-  // A human ends it in plain mono; an agent is a link (the grace-period test).
+  // A human ends it in plain text; an agent is a link (the grace-period test).
   if ("terminatedBy" in over && over.terminatedBy === "@or") {
     const or = within(panel).getByText("@or");
-    expect(or).toHaveClass("font-mono");
     expect(or.closest("a")).toBeNull();
   }
 });

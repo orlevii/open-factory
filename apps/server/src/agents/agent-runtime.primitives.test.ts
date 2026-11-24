@@ -69,6 +69,9 @@ test("a message sent during a hibernate's stop grace is not written to the closi
   expect(h.driver.starts).toHaveLength(2);
   expect(h.driver.starts[1]?.sent.flat().map((m) => m.body)).toEqual(["during"]);
   expect((await startReasons()).at(-1)).toBe("queued_items");
+  const types = (await h.store.after(h.agentId, 0, 1000)).map((e) => e.event.type);
+  expect(types).not.toContain("delivery_failed");
+  expect(types).toContain("hibernated");
 });
 
 test("a grant for an agent with nothing to deliver releases the slot once and starts nothing", async () => {

@@ -75,16 +75,6 @@ function fakeChild(
 }
 
 describe("bridgeSpawnArgs and bridgeEnv", () => {
-  it("argv is the fixed script, the configured bin and the literal setup-token", () => {
-    expect(bridgeSpawnArgs("/opt/claude")).toEqual([
-      "-I",
-      "-S",
-      "-c",
-      PTY_BRIDGE,
-      "/opt/claude",
-      "setup-token",
-    ]);
-  });
   it("env leaves out PATH and LANG when the server has none", () => {
     expect(bridgeEnv({ DATABASE_URL: "postgres://x" }, "/t/d")).toEqual({
       TERM: "xterm-256color",

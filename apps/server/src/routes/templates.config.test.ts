@@ -4,7 +4,7 @@ import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
-import type { TemplateChange } from "../templates/template-index.ts";
+import { fileHash, type TemplateChange } from "../templates/template-index.ts";
 import { makeTestApp } from "../test/helpers.ts";
 
 const SECRET = "sk-ant-oat01-SECRETSHAPED0123456789";
@@ -263,6 +263,9 @@ test("a failed write leaves no temp files and still re-indexes", async () => {
   });
   expect(r.statusCode).toBeGreaterThanOrEqual(500);
   expect(readdirSync(dir()).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  // The re-index follows the disk: the hashes GET reports are those of the files as they are now.
+  const after = await get();
+  expect(after.hashes["template.yaml"]).toBe(fileHash(readFileSync(file("template.yaml"))));
   await rmIf(file("settings.json"));
 });
 
@@ -336,11 +339,4 @@ test("PUT on a missing template is 404; a body with a bad shape is 400", async (
   });
   expect(r.statusCode).toBe(404);
   expect((await call("PUT", { doc: {}, baseHashes: c.hashes })).statusCode).toBe(400);
-});
-
-test("both routes need a signed-in user", async () => {
-  for (const method of ["GET", "PUT"] as const)
-    expect(
-      (await h.app.inject({ method, url: "/api/templates/dev/config", payload: {} })).statusCode,
-    ).toBe(401);
 });

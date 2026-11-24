@@ -1,13 +1,20 @@
 import type { AgentSummary, QueueItem, SessionEvent } from "@open-factory/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, type ReactNode, useCallback, useReducer, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { readDraft, sessionDraftKey } from "@/lib/drafts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
-import { agentSummary } from "@/test/session-fixtures";
+import { agentSummary, envelope } from "@/test/session-fixtures";
 import { Composer, type ComposerHandle } from "./composer";
 import { QueueItems } from "./queue-items";
 import {
@@ -254,30 +261,6 @@ test("a failed Stop says why and allows a retry", async () => {
   expect(screen.getByRole("button", { name: "Stop" })).toHaveAttribute("aria-disabled", "false");
 });
 
-test("Stop's label hides below a ~24rem composer (its stand-in too), keeping its name", () => {
-  setup(working());
-  const label = screen.getByText("Stop");
-  // §13.1: below ~24rem only the icon (a 390px phone's ~358px composer included), so the hint keeps room.
-  expect(label).toHaveClass("@max-[24rem]:sr-only");
-  expect(label.closest(".\\@container")).not.toBeNull();
-  const standIn = document.querySelector("[data-stop-stand-in] [data-stop-label]")?.parentElement;
-  expect(standIn).toHaveClass("@max-[24rem]:hidden");
-});
-
-test("the toolbar wraps Stop and Send together onto a line of their own when they don't fit (200% text)", () => {
-  setup(working());
-  const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
-  expect(toolbar).toHaveClass("flex-wrap", "min-h-8");
-  expect(toolbar).not.toHaveClass("flex-nowrap", "h-8");
-  const actions = toolbar.lastElementChild as HTMLElement;
-  expect(actions).toHaveAttribute("data-composer-actions");
-  expect(actions.querySelector("[data-stop-slot]")).not.toBeNull();
-  expect(within(actions).getByRole("button", { name: "Send" })).toBeInTheDocument();
-  expect(actions).toHaveClass("ml-auto", "shrink-0");
-  // The hint takes only what is left: it never pushes anything to another line.
-  expect(document.querySelector("[data-composer-hint]")).toHaveClass("basis-0", "flex-1");
-});
-
 test("focus moves to the textarea when Stop unmounts while focused", async () => {
   const { box, update } = setup(working());
   screen.getByRole("button", { name: "Stop" }).focus();
@@ -392,7 +375,7 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
   event: {
     type: "message_in",
     messages: [
-      {
+      envelope({
         id: "m1",
         from: "@alice",
         fromKind: "human",
@@ -400,7 +383,7 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
         urgent: false,
         body: "hello",
         clientMessageId,
-      },
+      }),
     ],
   },
 });
@@ -418,6 +401,8 @@ test("the draft is in localStorage under a versioned key and survives a remount"
   box.blur();
   expect(readDraft(sessionDraftKey("dev"))).toBe("half a thought");
   expect(localStorage.getItem("of-draft:v1:session:dev")).not.toBeNull();
+  cleanup();
+  expect(renderSession()).toHaveValue("half a thought");
 });
 
 test("a message_in echoing the id removes the block in one step", async () => {
@@ -791,10 +776,14 @@ test("a known command over several lines is refused in the slot and held", async
 
 test("on a phone the session composer reserves the note line", () => {
   const real = window.matchMedia;
-  fakeMatchMedia.install(true);
   try {
+    fakeMatchMedia.install(true);
     raw();
     expect(document.querySelector("[data-composer-note-line]")).not.toBeNull();
+    cleanup();
+    fakeMatchMedia.install(false);
+    raw();
+    expect(document.querySelector("[data-composer-note-line]")).toBeNull();
   } finally {
     window.matchMedia = real;
   }

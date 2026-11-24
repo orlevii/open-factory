@@ -186,7 +186,7 @@ test("past times: today, yesterday, this year, another year", () => {
   expect(formatInboxTime(new Date(2025, 10, 27, 9, 10), now)).toBe("27 Nov 2025 09:10");
 });
 
-test("a row shows the preview as plain text, the context on its own line and an unclipped time", async () => {
+test("a row shows the preview as plain text, the context on its own line and the time", async () => {
   mockApi({
     "GET /api/inbox?": () =>
       json({
@@ -210,21 +210,22 @@ test("a row shows the preview as plain text, the context on its own line and an 
   const row = within(link);
   expect(row.getByText("T-6")).toBeInTheDocument();
   expect(row.getByText("Ship it")).toBeInTheDocument();
-  const time = row.getByText("14:32");
-  expect(time.className).toContain("shrink-0");
-  expect(time.className).toContain("tabular-nums");
-  expect(row.getByText("see the PR now").className).toContain("truncate");
+  expect(row.getByText("14:32")).toBeInTheDocument();
 });
 
-test("a message row's context line names the recipient; the sender is an agent chip", async () => {
-  mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [item(1)], nextCursor: null }) });
+test("a message row's context line names the recipient unless it is the viewer; the sender is an agent chip", async () => {
+  mockApi({
+    "GET /api/inbox?": () =>
+      json({ chats: [], items: [item(1), item(2, { to: "@alice" })], nextCursor: null }),
+  });
   renderApp("/inbox", alice);
-  const link = await screen.findByRole("link", { name: /From @dev/ });
-  expect(within(link).getByText("→ @bob")).toBeInTheDocument();
-  expect(link.querySelector("[data-agent-avatar], img, svg")).not.toBeNull();
+  const [link, mine] = await screen.findAllByRole("link", { name: /From @dev/ });
+  expect(within(link as HTMLElement).getByText("→ @bob")).toBeInTheDocument();
+  expect(within(mine as HTMLElement).queryByText("→ @alice")).toBeNull();
+  expect((link as HTMLElement).querySelector("[data-agent-avatar]")).not.toBeNull();
 });
 
-test("read rows are muted, unread rows are not", async () => {
+test("unread rows have an 'Unread, ' name; read rows have none", async () => {
   mockApi({
     "GET /api/inbox?": () =>
       json({
@@ -235,11 +236,10 @@ test("read rows are muted, unread rows are not", async () => {
   });
   renderApp("/inbox", alice);
   const read = await screen.findByRole("link", { name: /^From @dev/, description: "preview 1" });
-  const unread = screen.getByRole("link", { name: /^Unread, From @dev/ });
-  expect(within(read).getByText("preview 1").className).toContain("text-muted-foreground");
-  expect(within(read).getByText("→ @bob").className).toContain("text-muted-foreground");
-  expect(unread.className).toContain("");
-  expect(within(unread).getByText("→ @bob").className).not.toContain("text-muted-foreground");
+  expect(read).not.toHaveAccessibleName(/Unread/);
+  expect(screen.getByRole("link", { name: /^Unread, From @dev/ })).toHaveAccessibleDescription(
+    "preview 2",
+  );
 });
 
 const at = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();

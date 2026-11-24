@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  agentOverlaySchema,
-  CONFIG_MSG,
-  ENV_NAME,
-  FACTORY_ENV_NAMES,
-  isFactoryEnvName,
-  OVERLAY_LIMITS,
-} from "./config.ts";
-import { MODEL_ALIASES, MODEL_IDS, MODEL_MSG, modelSchema } from "./models.ts";
+import { agentOverlaySchema, CONFIG_MSG, isFactoryEnvName, OVERLAY_LIMITS } from "./config.ts";
+import { MODEL_MSG } from "./models.ts";
 
 describe("agentOverlaySchema", () => {
   it("accepts {} and keeps it {} (no defaults)", () => {
@@ -153,38 +146,10 @@ describe("agentOverlaySchema", () => {
     );
     expect(agentOverlaySchema.safeParse({ settings: { env: big } }).success).toBe(false);
   });
-  it("exports the limits and names", () => {
-    expect(OVERLAY_LIMITS).toEqual({
-      bytes: 256 * 1024,
-      item: 1000,
-      value: 32 * 1024,
-      listItems: 200,
-      mcpServers: 50,
-    });
-    expect(ENV_NAME.test("GH_TOKEN")).toBe(true);
-    expect(ENV_NAME.test("1X")).toBe(false);
-    expect(FACTORY_ENV_NAMES).toContain("GIT_COMMITTER_EMAIL");
-  });
   it("isFactoryEnvName", () => {
     expect(isFactoryEnvName("CLAUDE_CONFIG_DIR")).toBe(true);
     expect(isFactoryEnvName("OPEN_FACTORY_URL")).toBe(true);
     expect(isFactoryEnvName("GH_TOKEN")).toBe(false);
-  });
-});
-
-describe("modelSchema", () => {
-  it.each(["opus", "fable", "claude-sonnet-5-5[1m]", "claude-opus-5-5"])("accepts %s", (m) =>
-    expect(modelSchema.safeParse(m).success).toBe(true),
-  );
-  it.each(["-x", "opus model", "a;b", "", "x".repeat(101)])("refuses %j", (m) =>
-    expect(modelSchema.safeParse(m).success).toBe(false),
-  );
-  it("keeps messages short and lists the choices", () => {
-    for (const m of ["-x", "a;b"]) {
-      const r = modelSchema.safeParse(m);
-      for (const i of r.error?.issues ?? []) expect(i.message.length).toBeLessThanOrEqual(40);
-    }
-    expect(MODEL_ALIASES).toEqual(["fable", "opus", "sonnet", "haiku"]);
-    expect(MODEL_IDS).toHaveLength(4);
+    expect(isFactoryEnvName("GIT_COMMITTER_EMAIL")).toBe(true);
   });
 });

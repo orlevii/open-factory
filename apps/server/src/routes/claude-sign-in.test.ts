@@ -136,6 +136,15 @@ describe.skipIf(!hasPython)("claude sign-in routes (fake CLI)", () => {
       (await other("POST", "/api/claude-sign-in/code", { attemptId: ok, code: " ", name: "work" }))
         .statusCode,
     ).toBe(400);
+    // A bad name is a field error that keeps the attempt; the full sign-in below succeeds with the same code.
+    const badName = await other("POST", "/api/claude-sign-in/code", {
+      attemptId: ok,
+      code: SYNTHETIC_CODE,
+      name: "Bad Name",
+    });
+    expect(badName.statusCode).toBe(400);
+    expect(badName.json().error.code).toBe("validation_error");
+    expect(Object.keys(badName.json().error.fields)).toEqual(["name"]);
     expect(
       (
         await other("POST", "/api/claude-sign-in/code", {
@@ -307,23 +316,21 @@ describe.skipIf(!hasPython)("claude sign-in routes (fake CLI)", () => {
       code: "credential_not_found",
       message: MSG.credentialDeleted,
     });
-  });
 
-  it("replace of an api_key credential is 400 signInOAuthOnly", async () => {
-    const h = await setup();
+    // An api_key credential can't be replaced by a sign-in, and no attempt is left behind.
     expect(
       (
-        await call(h, h.cookie, "POST", "/api/credentials", {
+        await call(h, cookie, "POST", "/api/credentials", {
           name: "key",
           kind: "api_key",
           value: "synthetic-key",
         })
       ).statusCode,
     ).toBe(201);
-    const r = await call(h, h.cookie, "POST", "/api/claude-sign-in", { replace: "key" });
-    expect(r.statusCode).toBe(400);
-    expect(r.json().error).toEqual({ code: "validation_error", message: MSG.signInOAuthOnly });
-    expect((await call(h, h.cookie, "GET", "/api/claude-sign-in")).json().attempt).toBeNull();
+    const apiKey = await call(h, cookie, "POST", "/api/claude-sign-in", { replace: "key" });
+    expect(apiKey.statusCode).toBe(400);
+    expect(apiKey.json().error).toEqual({ code: "validation_error", message: MSG.signInOAuthOnly });
+    expect((await call(h, cookie, "GET", "/api/claude-sign-in")).json().attempt).toBeNull();
   });
 
   it("a paste add ends the user's awaiting_code attempt", async () => {
@@ -347,24 +354,6 @@ describe.skipIf(!hasPython)("claude sign-in routes (fake CLI)", () => {
     });
     expect(r.statusCode).toBe(404);
     expect(r.json().error.code).toBe("sign_in_not_found");
-  });
-
-  it("name errors keep the attempt and the code unspent", async () => {
-    const h = await setup();
-    const id = (await call(h, h.cookie, "POST", "/api/claude-sign-in", {})).json().attempt
-      .attemptId;
-    const bad = await call(h, h.cookie, "POST", "/api/claude-sign-in/code", {
-      attemptId: id,
-      code: SYNTHETIC_CODE,
-      name: "Bad Name",
-    });
-    expect(bad.statusCode).toBe(400);
-    expect(bad.json().error.code).toBe("validation_error");
-    expect(Object.keys(bad.json().error.fields)).toEqual(["name"]);
-    expect((await call(h, h.cookie, "GET", "/api/claude-sign-in")).json().attempt.state).toBe(
-      "awaiting_code",
-    );
-    expect((await call(h, h.cookie, "DELETE", `/api/claude-sign-in/${id}`)).statusCode).toBe(204);
   });
 });
 

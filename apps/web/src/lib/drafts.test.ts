@@ -6,7 +6,6 @@ import {
   readRecipients,
   readUnconfirmed,
   sessionDraftKey,
-  taskDraftKey,
   useDraft,
   writeDraft,
   writeRecipients,
@@ -46,11 +45,6 @@ function storageEvent(oldText: string | null, newText: string | null) {
     );
   });
 }
-
-test("keys are versioned per agent and per task", () => {
-  expect(sessionDraftKey("dev")).toBe("session:dev");
-  expect(taskDraftKey("OF-12")).toBe("task:OF-12");
-});
 
 test("a draft survives a remount, stored as { text, at }", () => {
   const a = tab();

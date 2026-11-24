@@ -20,7 +20,6 @@ import { Route as AppAgentsIndexRouteImport } from './routes/_app/agents.index'
 import { Route as AppAgentsSlugRouteImport } from './routes/_app/agents.$slug'
 import { Route as AppAgentsNewRouteImport } from './routes/_app/agents.new'
 import { Route as AppSchedulesIndexRouteImport } from './routes/_app/schedules.index'
-import { Route as AppSchedulesKeyRouteImport } from './routes/_app/schedules.$key'
 import { Route as AppSchedulesNewRouteImport } from './routes/_app/schedules.new'
 import { Route as AppSettingsIndexRouteImport } from './routes/_app/settings.index'
 import { Route as AppSettingsCredentialsRouteImport } from './routes/_app/settings.credentials'
@@ -94,11 +93,6 @@ const AppAgentsNewRoute = AppAgentsNewRouteImport.update({
 const AppSchedulesIndexRoute = AppSchedulesIndexRouteImport.update({
   id: '/schedules/',
   path: '/schedules/',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppSchedulesKeyRoute = AppSchedulesKeyRouteImport.update({
-  id: '/schedules/$key',
-  path: '/schedules/$key',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSchedulesNewRoute = AppSchedulesNewRouteImport.update({
@@ -211,7 +205,6 @@ export interface FileRoutesByFullPath {
   '/usage': typeof AppUsageRoute
   '/agents/$slug': typeof AppAgentsSlugRouteWithChildren
   '/agents/new': typeof AppAgentsNewRoute
-  '/schedules/$key': typeof AppSchedulesKeyRoute
   '/schedules/new': typeof AppSchedulesNewRoute
   '/settings/credentials': typeof AppSettingsCredentialsRoute
   '/settings/factory': typeof AppSettingsFactoryRoute
@@ -242,7 +235,6 @@ export interface FileRoutesByTo {
   '/usage': typeof AppUsageRoute
   '/': typeof AppIndexRoute
   '/agents/new': typeof AppAgentsNewRoute
-  '/schedules/$key': typeof AppSchedulesKeyRoute
   '/schedules/new': typeof AppSchedulesNewRoute
   '/settings/credentials': typeof AppSettingsCredentialsRoute
   '/settings/factory': typeof AppSettingsFactoryRoute
@@ -277,7 +269,6 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/_app/agents/$slug': typeof AppAgentsSlugRouteWithChildren
   '/_app/agents/new': typeof AppAgentsNewRoute
-  '/_app/schedules/$key': typeof AppSchedulesKeyRoute
   '/_app/schedules/new': typeof AppSchedulesNewRoute
   '/_app/settings/credentials': typeof AppSettingsCredentialsRoute
   '/_app/settings/factory': typeof AppSettingsFactoryRoute
@@ -312,7 +303,6 @@ export interface FileRouteTypes {
     | '/usage'
     | '/agents/$slug'
     | '/agents/new'
-    | '/schedules/$key'
     | '/schedules/new'
     | '/settings/credentials'
     | '/settings/factory'
@@ -343,7 +333,6 @@ export interface FileRouteTypes {
     | '/usage'
     | '/'
     | '/agents/new'
-    | '/schedules/$key'
     | '/schedules/new'
     | '/settings/credentials'
     | '/settings/factory'
@@ -377,7 +366,6 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/_app/agents/$slug'
     | '/_app/agents/new'
-    | '/_app/schedules/$key'
     | '/_app/schedules/new'
     | '/_app/settings/credentials'
     | '/_app/settings/factory'
@@ -485,13 +473,6 @@ declare module '@tanstack/react-router' {
       path: '/schedules'
       fullPath: '/schedules/'
       preLoaderRoute: typeof AppSchedulesIndexRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/schedules/$key': {
-      id: '/_app/schedules/$key'
-      path: '/schedules/$key'
-      fullPath: '/schedules/$key'
-      preLoaderRoute: typeof AppSchedulesKeyRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/schedules/new': {
@@ -682,7 +663,6 @@ interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
   AppAgentsSlugRoute: typeof AppAgentsSlugRouteWithChildren
   AppAgentsNewRoute: typeof AppAgentsNewRoute
-  AppSchedulesKeyRoute: typeof AppSchedulesKeyRoute
   AppSchedulesNewRoute: typeof AppSchedulesNewRoute
   AppTasksKeyRoute: typeof AppTasksKeyRoute
   AppTasksNewRoute: typeof AppTasksNewRoute
@@ -705,7 +685,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
   AppAgentsSlugRoute: AppAgentsSlugRouteWithChildren,
   AppAgentsNewRoute: AppAgentsNewRoute,
-  AppSchedulesKeyRoute: AppSchedulesKeyRoute,
   AppSchedulesNewRoute: AppSchedulesNewRoute,
   AppTasksKeyRoute: AppTasksKeyRoute,
   AppTasksNewRoute: AppTasksNewRoute,

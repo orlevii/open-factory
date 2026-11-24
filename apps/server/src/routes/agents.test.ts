@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
+import { MAX_FOCUS_CHARS } from "@open-factory/shared";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { AgentService, endedAgentsQuery } from "../agents/agent-service.ts";
@@ -127,44 +128,20 @@ test("history query edge cases", async () => {
   );
 });
 
-test("compact is accepted and queued; validation errors are 400", async () => {
+test("compact is accepted and queued; a focus over the limit is 400 and queues nothing", async () => {
   const c = await req("POST", "/api/agents/dev/compact", { focus: "keep the API" });
   expect(c.statusCode).toBe(202);
   expect(c.json().item).toMatchObject({ kind: "compact", focus: "keep the API" });
   expect((await req("POST", "/api/agents/dev/compact", {})).statusCode).toBe(202);
-  expect(
-    (await req("POST", "/api/messages", { to: ["dev"], body: "  ", urgent: false })).statusCode,
-  ).toBe(400);
-  expect(
-    (await req("POST", "/api/messages", { to: ["dev"], body: "x".repeat(65_537), urgent: false }))
-      .statusCode,
-  ).toBe(400);
-});
-
-test("start failure is that recipient's result with the fix text and the message stays queued", async () => {
-  const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
-  try {
-    await t2.seedAgent({ config: { template: { secrets: ["GH_TOKEN"] } } });
-    const c2 = (await t2.signUpUser({ handle: "or2" })).cookie;
-    const res = await t2.app.inject({
-      method: "POST",
-      url: "/api/messages",
-      headers: { cookie: c2 },
-      payload: { to: ["dev"], body: "hi", urgent: false },
-    });
-    const message = "Secret GH_TOKEN isn't set. Add it in Settings → Secrets.";
-    expect(res.statusCode).toBe(202);
-    expect(res.json().results).toEqual([
-      { to: "@dev", status: "start_failed", id: expect.any(String), reason: message },
-    ]);
-    const detail = (
-      await t2.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c2 } })
-    ).json();
-    expect(detail.queue.map((q: { body: string }) => q.body)).toEqual(["hi"]);
-    expect(detail.agent).toMatchObject({ status: "errored", lastError: message });
-  } finally {
-    await t2.close();
-  }
+  const queued = async () =>
+    ((await req("GET", "/api/agents/dev")).json().queue as unknown[]).length;
+  const before = await queued();
+  const tooLong = await req("POST", "/api/agents/dev/compact", {
+    focus: "x".repeat(MAX_FOCUS_CHARS + 1),
+  });
+  expect(tooLong.statusCode).toBe(400);
+  expect(tooLong.json().error.code).toBe("validation_error");
+  expect(await queued()).toBe(before);
 });
 
 test("an archived agent refuses messages (as a result), compact and interrupt (409 agent_archived)", async () => {
@@ -285,30 +262,6 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
       expect(res.statusCode, `${m} ${url}`).toBe(400);
       expect(res.json().error.code).toBe("validation_error");
     }
-  } finally {
-    await t2.close();
-  }
-});
-
-test("a human message to a terminated agent is refused and writes nothing", async () => {
-  const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
-  try {
-    await t2.seedAgent();
-    const boss = await t2.seedAgent({ slug: "boss" });
-    await t2.sql`update agents set reports_to = ${boss.id} where slug = 'dev'`;
-    await t2.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'dev'`;
-    const c2 = (await t2.signUpUser({ handle: "or4" })).cookie;
-    const res = await t2.app.inject({
-      method: "POST",
-      url: "/api/messages",
-      headers: { cookie: c2 },
-      payload: { to: ["dev"], body: "hi", urgent: false },
-    });
-    expect(res.statusCode).toBe(202);
-    expect(res.json().results).toEqual([
-      expect.objectContaining({ to: "@dev", status: "refused" }),
-    ]);
-    expect((await t2.sql`select count(*)::int as n from messages`)[0]?.n).toBe(0);
   } finally {
     await t2.close();
   }
@@ -727,7 +680,7 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
   const sends = () => drv.starts.flatMap((p) => p.writes.filter((w) => w.kind === "send"));
   const settled = async () => (await s.app.runtimes.bySlug("dev"))?.settled();
 
-  test("the same id twice: one row, the same 202 body, echoed on the item", async () => {
+  test("the same id twice: one row per recipient, the same 202 body, echoed on the item", async () => {
     const cid = randomUUID();
     const first = await post(or, { body: "once", clientMessageId: cid });
     expect(first.statusCode).toBe(202);
@@ -738,6 +691,34 @@ describe("U3 §13.2: clientMessageId dedupe on POST /messages", () => {
     expect(second.json()).toEqual(first.json());
     expect(await rows(cid)).toHaveLength(1);
     expect(sends()).toHaveLength(before); // nothing queued or delivered again
+  });
+
+  test("the same id twice to two recipients: one row each, the same 202 body, nothing written twice", async () => {
+    // Its own app: a second agent's process would become the driver's last one.
+    const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
+    try {
+      await t2.seedAgent();
+      await t2.seedAgent({ slug: "ops" });
+      const c2 = (await t2.signUpUser({ handle: "or9" })).cookie;
+      const send = () =>
+        t2.app.inject({
+          method: "POST",
+          url: "/api/messages",
+          headers: { cookie: c2 },
+          payload: { to: ["dev", "ops"], body: "twice", clientMessageId: cid },
+        });
+      const cid = randomUUID();
+      const first = await send();
+      expect(first.json().results).toHaveLength(2);
+      const again = await send();
+      expect(again.statusCode).toBe(202);
+      expect(again.json()).toEqual(first.json());
+      expect(
+        await t2.sql`select to_agent_id from messages where client_message_id = ${cid}`,
+      ).toHaveLength(2);
+    } finally {
+      await t2.close();
+    }
   });
 
   test("the same id much later (written, its turn over) still answers the original 202, no new row", async () => {
@@ -1087,22 +1068,5 @@ describe("U3 §13.5: attachments on POST /messages", () => {
       attachments: Array.from({ length: 11 }, (_, i) => `u${i}`),
     });
     expect(res.statusCode).toBe(400);
-  });
-
-  test("a sent upload previews for any signed-in human; its delete is refused", async () => {
-    const a = await upload("dev", png(4, 4), "p.png");
-    expect((await post({ body: "pic", attachments: [a] })).statusCode).toBe(202);
-    const get = await s.app.inject({
-      method: "GET",
-      url: `/api/agents/dev/uploads/${a}`,
-      headers: { cookie: sam },
-    });
-    expect(get.statusCode).toBe(200);
-    const del = await s.app.inject({
-      method: "DELETE",
-      url: `/api/agents/dev/uploads/${a}`,
-      headers: { cookie: or },
-    });
-    expect(del.statusCode).toBe(409);
   });
 });

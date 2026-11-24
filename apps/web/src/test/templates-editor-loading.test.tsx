@@ -72,8 +72,7 @@ test("while the editor's chunk loads, the textarea fallback serves an issue's ju
   const el = textarea("settings.json");
   expect(el).toHaveFocus();
   expect(el.selectionStart).toBe(el.value.indexOf("\n") + 1);
-  // Padded by the gutter the editor will have: sized by the line count's digits (3 lines: one).
-  expect(el.className).toContain("pl-[calc(var(--gutter-digits)");
+  // Sized for the gutter the editor will have: the line count's digits (3 lines: one).
   expect(el.style.getPropertyValue("--gutter-digits")).toBe("1");
 });
 

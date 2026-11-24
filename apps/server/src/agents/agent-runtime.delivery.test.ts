@@ -180,24 +180,6 @@ test("urgent while a turn is open: interrupt first, hold, then the message on th
   ]);
 });
 
-test("the hold is released after 10 s if no result arrives", async () => {
-  await makeRuntime({ realHold: true });
-  await startedIdle();
-  await send("long task");
-  driver.last.emit(ev.turn());
-  await rt.settled();
-  fakeHoldTimer();
-  await send("STOP", true);
-  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
-  await vi.advanceTimersByTimeAsync(9_999);
-  await rt.settled();
-  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
-  await vi.advanceTimersByTimeAsync(1);
-  await rt.settled();
-  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("STOP");
-  expect(await types()).toContain("interrupt_unconfirmed");
-});
-
 test("a DB failure in the hold-timeout flush stops the process and marks errored", async () => {
   await makeRuntime({ realHold: true });
   await startedIdle();
@@ -250,23 +232,35 @@ test("a second interrupt during the hold writes nothing", async () => {
   ]);
 });
 
-test("the 10 s fallback appends interrupt_unconfirmed, then sends the held messages", async () => {
-  await makeRuntime({ realHold: true });
-  await startedWithOpenTurn();
-  fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
-  await send("steer");
-  await vi.advanceTimersByTimeAsync(9_999);
-  await rt.settled();
-  expect(await types()).not.toContain("interrupt_unconfirmed");
-  expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
-  await vi.advanceTimersByTimeAsync(1);
-  await rt.settled();
-  const after = (await types()).slice(-2);
-  expect(after).toEqual(["interrupt_unconfirmed", "message_in"]); // the line lands before the held message
-  expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["steer"]);
-  expect(rt.queueItems()).toEqual([]);
-});
+test.each([
+  [
+    "a plain interrupt",
+    "steer",
+    async () => {
+      await rt.interrupt({ byHandle: "or" });
+      await send("steer");
+    },
+  ],
+  ["an urgent send", "STOP", () => send("STOP", true)],
+])(
+  "the 10 s fallback after %s appends interrupt_unconfirmed, then sends the held messages",
+  async (_name, held, trigger) => {
+    await makeRuntime({ realHold: true });
+    await startedWithOpenTurn();
+    fakeHoldTimer();
+    await trigger();
+    await vi.advanceTimersByTimeAsync(9_999);
+    await rt.settled();
+    expect(await types()).not.toContain("interrupt_unconfirmed");
+    expect(driver.last.sent.at(-1)?.[0]?.body).toBe("long task");
+    await vi.advanceTimersByTimeAsync(1);
+    await rt.settled();
+    const after = (await types()).slice(-2);
+    expect(after).toEqual(["interrupt_unconfirmed", "message_in"]); // the line lands before the held message
+    expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual([held]);
+    expect(rt.queueItems()).toEqual([]);
+  },
+);
 
 test("a hold ended by the turn's result never appends interrupt_unconfirmed afterwards", async () => {
   await makeRuntime({ realHold: true });

@@ -104,7 +104,6 @@ function setup(props: Props = {}) {
       stub("/tasks"),
       stub("/tasks/$key"),
       stub("/schedules"),
-      stub("/schedules/$key"),
       stub("/templates/$name"),
       stub("/agents/"),
       stub("/agents/$slug"),
@@ -209,10 +208,7 @@ test("Now: restart pending explains itself with Why", async () => {
   expect(await screen.findByText(/finishes its current turn/)).toBeInTheDocument();
 });
 
-test("Now: the queued and rate-limited details", async () => {
-  const first = setup({ agent: agentSummary({ status: "rate_limited", credential: "work" }) });
-  expect(within(await section("Now")).getByText(/credential/)).toBeInTheDocument();
-  first.unmount();
+test("Now: an agent pulling its image says so", async () => {
   setup({ agent: agentSummary({ pulling: true }) });
   expect(within(await section("Now")).getByText("Pulling the image…")).toBeInTheDocument();
 });
@@ -233,7 +229,7 @@ test("Now: the queued detail waits for the cap, and reads in the singular for on
   ).toBeInTheDocument();
 });
 
-test("Now: the rate-limited detail names the credential in mono and its reset time", async () => {
+test("Now: the rate-limited detail names the credential and its reset time", async () => {
   const until = new Date(NOW.getTime() + 3_600_000);
   setup({
     agent: agentSummary({
@@ -247,7 +243,6 @@ test("Now: the rate-limited detail names the credential in mono and its reset ti
   expect(paused.textContent).toMatch(
     /^Paused: credential work is rate-limited, retrying at .+\. Messages wait until then\.$/,
   );
-  expect(within(paused).getByText("work")).toHaveClass("font-mono");
 });
 
 test("Now: an errored agent shows its last error in full", async () => {
@@ -271,45 +266,6 @@ test("Now: a terminated agent shows no queued, paused or restart row (an end sta
   });
   const now = await section("Now");
   expect(now.textContent).not.toMatch(/Queued|Paused|Restarts when idle|Pulling/);
-});
-
-test("Now: a terminated agent shows when it ended and offers Pin", async () => {
-  mockApi({});
-  setup({
-    agent: agentSummary({
-      status: "terminated",
-      kind: "ephemeral",
-      terminatedAt: minutesAgo(10),
-      terminatedBy: "lead",
-      workspaceGraceEndsAt: new Date(NOW.getTime() + 86_400_000).toISOString(),
-    }),
-  });
-  const now = within(await section("Now"));
-  expect(now.getByText(/Terminated/)).toBeInTheDocument();
-  expect(now.getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
-});
-
-test("Now: the terminated row's actions each start a line, pulled back to the sentence's edge", async () => {
-  // jsdom has no layout: this checks the structure; the browser pass checks the alignment.
-  mockApi({});
-  setup({
-    agent: agentSummary({
-      status: "terminated",
-      kind: "ephemeral",
-      terminatedAt: minutesAgo(10),
-      workspaceGraceEndsAt: new Date(NOW.getTime() + 86_400_000).toISOString(),
-    }),
-  });
-  const now = within(await section("Now"));
-  const sentence = now.getByText(/^Terminated/);
-  // The sentence fills its line, so no action sits beside it.
-  expect(sentence).toHaveClass("basis-full");
-  for (const name of ["Pin workspace", "What's kept?"]) {
-    const button = now.getByRole("button", { name });
-    // Every action is a direct item of the row the ghost-padding pull-back applies to.
-    expect(button.parentElement).toBe(sentence.parentElement);
-  }
-  expect(sentence.parentElement?.className).toMatch(/\[&>button\]:-ml-2/);
 });
 
 test("Org: the manager, up to 8 reports, and All N reports to the Agents page", async () => {
@@ -428,10 +384,21 @@ test("Usage: the 7-day estimate with a link to the usage page", async () => {
   expect(usage.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
 });
 
-test("Usage: still links while loading or with no turns", async () => {
-  setup({ usage: undefined });
-  const usage = within(await section("Usage"));
-  expect(usage.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
+test("Usage: still links while loading or with no turns, and shows no estimate", async () => {
+  const loading = setup({ usage: undefined });
+  const whileLoading = within(await section("Usage"));
+  expect(whileLoading.getByRole("link", { name: /Usage/ })).toHaveAttribute(
+    "href",
+    "/agents/dev/usage",
+  );
+  expect(whileLoading.queryByText(/est\./)).toBeNull();
+  loading.unmount();
+  const idleTotals = { ...totals, costUsd: 0, turns: 0 };
+  setup({ usage: usageRow({ own: idleTotals, total: idleTotals }) });
+  const noTurns = within(await section("Usage"));
+  expect(noTurns.getByText("No turns in the last 7 days")).toBeInTheDocument();
+  expect(noTurns.queryByText(/est\./)).toBeNull();
+  expect(noTurns.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
 });
 
 test("Runtime: template, credential and projects; Unsandboxed only for a local agent", async () => {
@@ -493,7 +460,6 @@ test("Runtime: a disabled local runtime explains itself in a Why popover (distin
   expect(pop.textContent).toBe(
     "An operator has to allow unsandboxed agents by setting FACTORY_ALLOW_LOCAL_RUNTIME=true. Until then this agent can't start.",
   );
-  expect(within(pop).getByText("FACTORY_ALLOW_LOCAL_RUNTIME=true")).toHaveClass("font-mono");
   expect(pop.tagName).toBe("P");
   expect(pop.parentElement?.children).toHaveLength(1);
   // The restart Why has its own name.

@@ -61,15 +61,6 @@ describe("loadConfig", () => {
     expect(o.agentHosts).toEqual(["127.0.0.1", "10.0.0.5"]);
     expect(o.agentUrl).toBe("http://factory:9000");
   });
-  test("the cap and the debounce are no longer config (S10 Q6): set values are not read", () => {
-    const c = loadConfig({
-      ...ok,
-      FACTORY_MAX_RUNNING_AGENTS: "0",
-      FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "-1",
-    });
-    expect("maxRunningAgents" in c).toBe(false);
-    expect("memberUpdateDebounceMs" in c).toBe(false);
-  });
   test("FACTORY_MAX_SPAWNS_PER_HOUR defaults to 20 and is at least 1", () => {
     expect(loadConfig(ok).maxSpawnsPerHour).toBe(20);
     expect(loadConfig({ ...ok, FACTORY_MAX_SPAWNS_PER_HOUR: "3" }).maxSpawnsPerHour).toBe(3);
@@ -191,6 +182,8 @@ describe("FACTORY_TIMEZONE", () => {
     );
   });
   test("empty means not set", () => {
-    expect(loadConfig({ ...ok, FACTORY_TIMEZONE: "" }).factoryTimezone).toBeTruthy();
+    expect(loadConfig({ ...ok, FACTORY_TIMEZONE: "" }).factoryTimezone).toBe(
+      loadConfig(ok).factoryTimezone,
+    );
   });
 });

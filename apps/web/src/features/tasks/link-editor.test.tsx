@@ -51,9 +51,17 @@ test("a row error is in its note and described by the target; no loose error par
 
 test("tab order in a row is kind, target, title, then remove", () => {
   renderRows({});
-  const title = screen.getByLabelText("Link 1 title");
-  const remove = screen.getByRole("button", { name: "Remove link 1" });
-  expect(title.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const order = [
+    screen.getByRole("combobox", { name: "Link 1 kind" }),
+    screen.getByLabelText("Link 1 target"),
+    screen.getByLabelText("Link 1 title"),
+    screen.getByRole("button", { name: "Remove link 1" }),
+  ];
+  for (let i = 0; i < order.length - 1; i++)
+    expect(
+      (order[i] as HTMLElement).compareDocumentPosition(order[i + 1] as HTMLElement) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 });
 
 test("the whole row is the field, so focusing its target brings the note into view too", () => {

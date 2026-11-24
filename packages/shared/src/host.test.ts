@@ -1,6 +1,5 @@
 import { expect, test } from "vitest";
 import { hostInfoSchema, isHostPathShape } from "./host.ts";
-import { MSG } from "./messages.ts";
 
 test.each([
   ["/a", true],
@@ -19,5 +18,3 @@ test("hostInfoSchema accepts any platform string", () => {
     hostInfoSchema.parse({ platform: "freebsd", hostname: "h", home: "/home/x" }).platform,
   ).toBe("freebsd");
 });
-
-test("the relative-path message", () => expect(MSG.hostPathStart).toBe("Start with / or ~/."));

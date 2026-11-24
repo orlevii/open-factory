@@ -12,7 +12,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentMenu } from "@/features/agents/agent-menu";
 import { restoreAgent } from "@/features/agents/lifecycle";
-import { OutputDialogHost } from "@/features/agents/show-output";
 import { CronsStopLayer, useStopCrons } from "@/features/session/stop-crons";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -164,7 +163,7 @@ test.each([
   );
 });
 
-test("Edit and Compact are left out for a spawned agent; Stop crons… only with live crons", async () => {
+test("Edit is left out for a spawned agent; Stop crons… is offered with live crons", async () => {
   setup({
     agent: agentSummary({ kind: "ephemeral", crons: [cron] }),
     context: "session",
@@ -173,6 +172,12 @@ test("Edit and Compact are left out for a spawned agent; Stop crons… only with
   const names = itemNames(menu);
   expect(names).not.toContain("Edit");
   expect(names).toContain("Stop crons…");
+});
+
+test("Stop crons… is left out when the agent has no live crons", async () => {
+  setup({ agent: agentSummary({ kind: "ephemeral", crons: [] }), context: "session" });
+  const menu = await openMenu(userEvent.setup());
+  expect(itemNames(menu)).not.toContain("Stop crons…");
 });
 
 test("a terminated agent offers no Compact or Terminate", async () => {
@@ -245,7 +250,8 @@ test("Compact… moves focus into the compact popover", async () => {
   await vi.waitFor(() => expect(input).toHaveFocus());
 });
 
-test("Escape from the compact popover returns focus to the ⋯ button", async () => {
+test("Escape from the compact popover closes it and returns focus to the ⋯ button, posting nothing", async () => {
+  const api = mockApi({});
   setup({ agent: agentSummary(), context: "session" });
   const u = userEvent.setup();
   await openMenu(u);
@@ -254,8 +260,12 @@ test("Escape from the compact popover returns focus to the ⋯ button", async ()
   await vi.waitFor(() => expect(input).toHaveFocus());
   await u.keyboard("{Escape}");
   await vi.waitFor(() =>
+    expect(screen.queryByRole("textbox", { name: "Focus (optional)" })).not.toBeInTheDocument(),
+  );
+  await vi.waitFor(() =>
     expect(screen.getByRole("button", { name: "Actions for Dev agent" })).toHaveFocus(),
   );
+  expect(api.calls.filter((c) => c.method === "POST")).toEqual([]);
 });
 
 test("a successful Compact returns focus to the ⋯ button", async () => {
@@ -394,30 +404,29 @@ test("Archive… archives at once (no confirmation, as before) and toasts with a
   expect(api.calls.some((c) => c.url === "/api/agents/dev/unarchive")).toBe(true);
 });
 
-test("a failed archive toasts the server's message, naming the agent", async () => {
-  mockApi({
-    "POST /api/agents/dev/archive": () =>
-      json(
-        {
-          error: {
-            code: "has_reports",
-            message: "@a and @b report to this agent. Change their manager first.",
-            reports: ["a", "b"],
-          },
-        },
-        409,
-      ),
-  });
-  setup({ agent: agentSummary(), context: "list" });
-  const u = userEvent.setup();
-  await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
-  await vi.waitFor(() =>
-    expect(notify).toHaveBeenCalledWith({
-      text: "Couldn't archive @dev: @a and @b report to this agent. Change their manager first.",
-    }),
-  );
-});
+test.each([
+  ["a manager", "@a and @b report to this agent. Change their manager first.", ["a", "b"]],
+  [
+    "live spawned agents",
+    "@dev has live spawned agents: @dev-ab12. Terminate them first.",
+    ["dev-ab12"],
+  ],
+])(
+  "a failed archive (%s) toasts the server's message, naming the agent",
+  async (_name, message, reports) => {
+    mockApi({
+      "POST /api/agents/dev/archive": () =>
+        json({ error: { code: "has_reports", message, reports } }, 409),
+    });
+    setup({ agent: agentSummary(), context: "list" });
+    const u = userEvent.setup();
+    await openMenu(u);
+    await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
+    await vi.waitFor(() =>
+      expect(notify).toHaveBeenCalledWith({ text: `Couldn't archive @dev: ${message}` }),
+    );
+  },
+);
 
 test("a network failure on archive says the server can't be reached", async () => {
   vi.stubGlobal(
@@ -520,31 +529,6 @@ test.each([
   await vi.waitFor(() =>
     expect(notify).toHaveBeenCalledWith({
       text: `Couldn't reset the persona of @dev: ${message}`,
-    }),
-  );
-});
-
-test("archive blocked by live spawned agents toasts the server's advice to terminate them", async () => {
-  mockApi({
-    "POST /api/agents/dev/archive": () =>
-      json(
-        {
-          error: {
-            code: "has_reports",
-            message: "@dev has live spawned agents: @dev-ab12. Terminate them first.",
-            reports: ["dev-ab12"],
-          },
-        },
-        409,
-      ),
-  });
-  setup({ agent: agentSummary(), context: "list" });
-  const u = userEvent.setup();
-  await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
-  await vi.waitFor(() =>
-    expect(notify).toHaveBeenCalledWith({
-      text: "Couldn't archive @dev: @dev has live spawned agents: @dev-ab12. Terminate them first.",
     }),
   );
 });

@@ -80,19 +80,16 @@ test("one element from Sending to the queued item to the operator_input row", ()
   expect(screen.getByRole("group", { name: "Sending" })).toBeInTheDocument();
   rerender(view({ pending: rawTailRows([queueItem], [], none, "alice", () => {}) }));
   observe();
-  expect(document.querySelector("[data-message-block]")).toHaveClass("border-dashed");
   rerender(view({ rows: operatorInput }));
   observe();
-  expect(document.querySelector("[data-message-block]")).not.toHaveClass("border-dashed");
   expect(screen.getByText("@alice")).toBeInTheDocument();
   expect(mount).toHaveBeenCalledTimes(1);
 });
 
-test("the block says raw, keeps the text as typed and is mono for a command", () => {
+test("the block says raw and keeps the text as typed", () => {
   render(view({ pending: rawTailRows([queueItem], [], new Map(), "alice", undefined) }));
   expect(screen.getByText("· raw")).toBeInTheDocument();
-  const body = screen.getByText("/context");
-  expect(body).toHaveClass("font-mono", "whitespace-pre-wrap");
+  expect(screen.getByText("/context")).toBeInTheDocument();
 });
 
 test("Sending… and Runs after… stay hidden on a fast path", () => {

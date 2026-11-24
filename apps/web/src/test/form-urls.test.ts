@@ -11,7 +11,6 @@ const FORM_URLS = [
   "/schedules/new",
   "/templates/new",
   "/agents/$slug/edit",
-  "/schedules/$key",
 ];
 const REDIRECTS = new Set([
   "routes/_app/agents.new.tsx",
@@ -19,7 +18,6 @@ const REDIRECTS = new Set([
   "routes/_app/schedules.new.tsx",
   "routes/_app/templates.new.tsx",
   "routes/_app/agents.$slug_.edit.tsx",
-  "routes/_app/schedules.$key.tsx",
 ]);
 
 test("no in-app link, navigate or palette action points at a form URL", () => {

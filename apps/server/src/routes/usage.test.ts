@@ -214,15 +214,13 @@ test("GET /api/tasks/:key has usage: null without turns, the closed turns' sum w
   expect(t.usage).toEqual({ costUsd: 1.5, turns: 1 });
 });
 
-test("GET /api/credentials carries rateLimit, null with no data", async () => {
-  const r = await get("/api/credentials");
-  expect(r.statusCode).toBe(200);
-  const [c] = r.json().credentials;
-  expect(c.rateLimit).toBeNull();
-  expect(c.pausedUntil).toBeUndefined();
-});
-
 test("GET /api/credentials carries the observed rate limit and a live pause only while in the future", async () => {
+  // Before any rate-limit data: no rateLimit and no pause.
+  const none = await get("/api/credentials");
+  expect(none.statusCode).toBe(200);
+  const [fresh] = none.json().credentials;
+  expect(fresh.rateLimit).toBeNull();
+  expect(fresh.pausedUntil).toBeUndefined();
   const [cred] = await h.db.select().from(schema.credentials);
   await h.db
     .update(schema.credentials)

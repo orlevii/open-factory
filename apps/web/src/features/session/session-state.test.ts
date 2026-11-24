@@ -6,7 +6,7 @@ import {
   type SessionEvent,
 } from "@open-factory/shared";
 import { expect, test, vi } from "vitest";
-import { agentSummary } from "@/test/session-fixtures";
+import { agentSummary, envelope } from "@/test/session-fixtures";
 import {
   eventsInOrder,
   highestSeq,
@@ -67,6 +67,7 @@ test("window mode counts live events instead of appending them", () => {
     message: { type: "session_event", agent: "dev", event: ev(10) },
   });
   expect(eventsInOrder(s).map((e) => e.seq)).toEqual([3, 4, 5]);
+  expect(s.maxSeenSeq).toBe(10);
 });
 
 test("earlier pages prepend; status, queue and resync frames", () => {
@@ -164,7 +165,11 @@ test("window mode ignores an already-present live event without counting it", ()
     detail,
     mode: "window",
   });
+  const before = s;
   s = sessionReducer(s, frame({ type: "session_event", agent: "dev", event: ev(4) }));
+  expect(s).toBe(before);
+  expect(s.maxSeenSeq).toBe(9);
+  expect(s.newSpeech).toBe(0);
 });
 
 test("an agent_status frame without lastError clears the previous one", () => {
@@ -405,14 +410,9 @@ const sessionEvent = (seq: number, event: SessionEvent["event"]): SessionEvent =
 });
 const messageIn = (...ids: string[]): SessionEvent["event"] => ({
   type: "message_in",
-  messages: ids.map((id) => ({
-    id,
-    from: "@or",
-    fromKind: "human",
-    kind: "message",
-    urgent: false,
-    body: id,
-  })),
+  messages: ids.map((id) =>
+    envelope({ id, from: "@or", fromKind: "human", kind: "message", urgent: false, body: id }),
+  ),
 });
 const turnEnd = (): SessionEvent["event"] => ({ type: "turn_end", isError: false, numTurns: 1 });
 const loaded = (
@@ -456,7 +456,7 @@ test("a merged envelope's ids hand off every matching queue item", () => {
   const ev10 = sessionEvent(10, {
     type: "message_in",
     messages: [
-      {
+      envelope({
         id: "m1",
         ids: ["m1", "m2"],
         from: "@or",
@@ -464,7 +464,7 @@ test("a merged envelope's ids hand off every matching queue item", () => {
         kind: "message",
         urgent: false,
         body: "x",
-      },
+      }),
     ],
   });
   const s = sessionReducer(loaded({ queue: [qItem("m1"), qItem("m2")] }), frames([ev10]));
@@ -765,7 +765,7 @@ test("a message_in echoing the id removes the block and its row is handed off", 
   const ev10 = sessionEvent(10, {
     type: "message_in",
     messages: [
-      {
+      envelope({
         id: "m1",
         from: "@or",
         fromKind: "human",
@@ -773,7 +773,7 @@ test("a message_in echoing the id removes the block and its row is handed off", 
         urgent: false,
         body: "hello",
         clientMessageId: CID,
-      },
+      }),
     ],
   });
   const s = sessionReducer(sendingState(), frames([ev10]));
@@ -793,7 +793,7 @@ test("an unconfirmed send (15s abort) is remembered, and a late echo marks it la
   const ev10 = sessionEvent(10, {
     type: "message_in",
     messages: [
-      {
+      envelope({
         id: "m1",
         from: "@or",
         fromKind: "human",
@@ -801,7 +801,7 @@ test("an unconfirmed send (15s abort) is remembered, and a late echo marks it la
         urgent: false,
         body: "hello",
         clientMessageId: CID,
-      },
+      }),
     ],
   });
   s = sessionReducer(s, frames([ev10]));

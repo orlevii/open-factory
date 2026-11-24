@@ -122,21 +122,6 @@ test("AlertDialog content and overlay are stamped per opening, not per mount", a
   expect(document.querySelector("[data-slot=alert-dialog-overlay]")).toHaveAttribute("data-instant");
 });
 
-test("AlertDialog timing: 150ms in, a 100ms fade out with no zoom", () => {
-  render(
-    <AlertDialog open>
-      <AlertDialogContent>
-        <AlertDialogTitle>Delete?</AlertDialogTitle>
-      </AlertDialogContent>
-    </AlertDialog>,
-  );
-  const content = document.querySelector("[data-slot=alert-dialog-content]");
-  expect(content).toHaveClass("duration-150", "data-closed:duration-100", "motion-safe:data-open:zoom-in-[0.96]", "rounded-lg", "border-float-edge");
-  expect(content?.className).not.toMatch(/zoom-out|ring-|rounded-xl/);
-  const overlay = document.querySelector("[data-slot=alert-dialog-overlay]");
-  expect(overlay).toHaveClass("bg-black/20", "dark:bg-black/40", "duration-150", "data-closed:duration-100");
-});
-
 test("TooltipProvider opens after 400ms", () => {
   vi.useFakeTimers();
   try {

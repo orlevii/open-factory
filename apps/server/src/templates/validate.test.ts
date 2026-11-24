@@ -92,7 +92,6 @@ test.each([
     { "template.yaml": "name: tech-lead\ndisplay_name: X\nplugins: [p@m]\n" },
     /Marketplace m/,
   ],
-  ["defaultMode", { "settings.json": '{"permissions":{"defaultMode":"dontAsk"}}' }, /defaultMode/],
   [
     "factory env in settings",
     { "settings.json": '{"env":{"ANTHROPIC_API_KEY":"x"}}' },

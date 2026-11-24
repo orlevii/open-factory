@@ -218,24 +218,6 @@ test("remove: only-active and only-archived wording", async () => {
   });
 });
 
-test("remove: an FK violation from a racing grant maps to 409 credential_in_use", async () => {
-  await svc.create({ name: "racy", kind: "api_key", value: "k", expiresAt: null });
-  await agentUsing("f", "racy");
-  const spy = vi
-    .spyOn(svc as unknown as { users: (id: string) => Promise<unknown> }, "users")
-    .mockResolvedValueOnce({ active: [], archived: [] });
-  try {
-    await expect(svc.remove("racy")).rejects.toMatchObject({
-      status: 409,
-      code: "credential_in_use",
-      message: "Used by @f. Change their credential first.",
-      extra: { usedBy: ["f"], archivedUsedBy: [] },
-    });
-  } finally {
-    spy.mockRestore();
-  }
-});
-
 async function spawnedUsing(
   slug: string,
   spawnerId: string,
@@ -303,7 +285,8 @@ test("#30: a live user inserted between the check and the delete is a 409 (the 2
     await expect(svc.remove("race30")).rejects.toMatchObject({
       status: 409,
       code: "credential_in_use",
-      extra: { usedBy: ["racer30"] },
+      message: "Used by @racer30. Change their credential first.",
+      extra: { usedBy: ["racer30"], archivedUsedBy: [] },
     });
   } finally {
     spy.mockRestore();
@@ -373,9 +356,21 @@ test("create stores expiresAt; paste passes null", async () => {
   expect(pasted.expiresAt).toBeNull();
 });
 
-test("insertVerified never calls the verifier", async () => {
+test("insertVerified never calls the verifier, seals the value and rejects a duplicate name", async () => {
   const before = seen.length;
-  await svc.insertVerified({ name: "w-iv", kind: "oauth_token", value: "v", expiresAt: null });
+  const summary = await svc.insertVerified({
+    name: "w-iv",
+    kind: "oauth_token",
+    value: "v",
+    expiresAt: null,
+  });
+  expect(seen.length).toBe(before);
+  const row = await rowOf("w-iv");
+  expect(t.app.vault.open(row.valueEnc, `credentials:${row.id}`)).toBe("v");
+  expect(JSON.stringify(summary)).not.toContain('"v"');
+  await expect(
+    svc.insertVerified({ name: "w-iv", kind: "oauth_token", value: "v2", expiresAt: null }),
+  ).rejects.toMatchObject({ status: 409, code: "credential_exists" });
   expect(seen.length).toBe(before);
 });
 

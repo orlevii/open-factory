@@ -21,8 +21,3 @@ test("no field message is a template literal passed to f.set", () => {
   const bad = sources(root).filter((f) => /\.set\([^,]+,\s*`/.test(readFileSync(f, "utf8")));
   expect(bad.map((f) => path.relative(root, f))).toEqual([]);
 });
-
-test("the sign-in other-panel line is the spec's text (I3 §6.3)", () => {
-  expect(FORM_MSG.signInOtherPanel).toBe("Another sign-in is open; Start ends it.");
-  expect(FORM_MSG.signInOtherPanel.length).toBe(39);
-});

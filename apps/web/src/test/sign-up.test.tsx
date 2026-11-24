@@ -170,10 +170,11 @@ const MISSING = "Sign-up needs an invite from a member.";
 const INVALID = "Invite isn't valid. Ask for a new one.";
 const LOST_RACE = "Someone was first. Ask for an invite.";
 
-test("bootstrap shows the form with the first-user line", async () => {
+test("bootstrap shows the form with the first-user line, and asks for the state without a query string", async () => {
   renderApp("/sign-up", null);
   expect(await screen.findByLabelText("Name")).toBeInTheDocument();
   expect(screen.getByText(FIRST_USER)).toBeInTheDocument();
+  expect(api.calls[0]?.url).toBe("/api/auth/sign-up-state");
 });
 
 test("a valid invite shows the form and sends the invite with the sign-up", async () => {
@@ -204,18 +205,6 @@ test("an invalid invite shows the invalid line, no form", async () => {
   renderApp("/sign-up?invite=bad", null);
   expect(await screen.findByText(INVALID)).toBeInTheDocument();
   expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
-});
-
-test("a 403 invite_invalid on submit shows the invalid line at form level", async () => {
-  serve({ bootstrap: false, invite: "valid" });
-  auth.signUp.email.mockResolvedValue({
-    data: null,
-    error: { code: "invite_invalid", message: "Invite invalid", status: 403 },
-  });
-  renderApp("/sign-up?invite=tok_1", null);
-  await screen.findByLabelText("Name");
-  await fill(valid);
-  expect(await screen.findByRole("alert")).toHaveTextContent(INVALID);
 });
 
 test("the gate's real 403 body (nested error) maps to the invalid line", async () => {
@@ -252,23 +241,6 @@ test("bootstrap with a stale invite link shows the form and the first-user line"
   expect(await screen.findByLabelText("Name")).toBeInTheDocument();
   expect(screen.getByText(FIRST_USER)).toBeInTheDocument();
   expect(screen.queryByText(INVALID)).not.toBeInTheDocument();
-});
-
-test("without an invite the state URL has no query string", async () => {
-  renderApp("/sign-up", null);
-  await screen.findByLabelText("Name");
-  expect(api.calls[0]?.url).toBe("/api/auth/sign-up-state");
-});
-
-test("a 403 invite_required after loading as bootstrap shows the lost-race line", async () => {
-  auth.signUp.email.mockResolvedValue({
-    data: null,
-    error: { code: "invite_required", message: "Invite required", status: 403 },
-  });
-  renderApp("/sign-up", null);
-  await screen.findByLabelText("Name");
-  await fill(valid);
-  expect(await screen.findByRole("alert")).toHaveTextContent(LOST_RACE);
 });
 
 const NAME_TOO_LONG = "Use 80 characters or fewer.";

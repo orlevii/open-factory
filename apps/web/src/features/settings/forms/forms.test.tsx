@@ -121,6 +121,7 @@ test("secret: uppercases, validates, submits once on Enter, maps a reserved name
   await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
   expect(describedText(name)).toBe("That name is reserved.");
   expect(name).toHaveFocus();
+  expect(within(dialog).queryByRole("alert", { name: /reserved/ })).not.toBeInTheDocument();
   expect(puts).toBe(1);
 });
 
@@ -211,8 +212,8 @@ test("project: a relative path shows the start message on blur; a server hostPat
         {
           error: {
             code: "validation_error",
-            message: MSG.hostPathStart,
-            fields: { hostPath: MSG.hostPathStart },
+            message: "Not here.",
+            fields: { hostPath: "Not here." },
           },
         },
         400,
@@ -231,7 +232,7 @@ test("project: a relative path shows the start message on blur; a server hostPat
   await userEvent.type(within(dialog).getByLabelText("Name"), "web");
   await userEvent.type(path, "/code/web{Enter}");
   await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));
-  expect(describedText(path)).toContain(MSG.hostPathStart);
+  expect(describedText(path)).toContain("Not here.");
   expect(path).toHaveFocus();
 });
 
@@ -382,26 +383,6 @@ test("every add form: empty submit focuses the first field, and an untouched blu
   }
 });
 
-test("project: a server fields.hostPath lands under Path and focuses it", async () => {
-  mockApi({
-    "POST /api/projects": () =>
-      json(
-        { error: { code: "validation_error", message: "Bad", fields: { hostPath: "Not here." } } },
-        400,
-      ),
-  });
-  inSheet(
-    "Add project",
-    <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
-  );
-  const dialog = screen.getByRole("dialog", { name: "Add project" });
-  await userEvent.type(within(dialog).getByLabelText("Name"), "app");
-  await userEvent.type(within(dialog).getByLabelText("Path"), "/code/app{Enter}");
-  const path = within(dialog).getByLabelText("Path");
-  await waitFor(() => expect(path).toHaveFocus());
-  expect(describedText(path)).toContain("Not here.");
-});
-
 test("secret and credential: a server fields.* lands under its field and focuses it", async () => {
   mockApi({
     "PUT /api/secrets/MY_VAR": () =>
@@ -461,36 +442,26 @@ test("credential: unverifiable is a warning in the token note plus a form line; 
   expect(alert.closest("[role=alert]")).toBeTruthy();
   expect(describedText(token)).toBe("Couldn't reach Claude to check.");
   expect(token).not.toHaveAttribute("aria-invalid");
+  expect(token).toHaveValue("t");
   await userEvent.type(token, "x");
   expect(describedText(token)).toBe(
     "Create one with claude setup-token. You won't be warned before it expires.",
   );
 });
 
-test("credential and project: a duplicate-name code shows the short copy under Name with focus", async () => {
+test("credential: a duplicate-name code shows the short copy under Name with focus", async () => {
   mockApi({
     "POST /api/credentials": () =>
       err("credential_exists", "A credential named work already exists."),
-    "POST /api/projects": () => err("project_exists", "A project named app already exists."),
   });
-  const c = inSheet(
+  inSheet(
     "Add credential",
     <AddCredentialForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
   );
-  let dialog = screen.getByRole("dialog", { name: "Add credential" });
+  const dialog = screen.getByRole("dialog", { name: "Add credential" });
   await userEvent.type(within(dialog).getByLabelText("Name"), "work");
   await pasteToken(dialog);
   await userEvent.type(within(dialog).getByLabelText("Token"), "t{Enter}");
-  await waitFor(() => expect(within(dialog).getByLabelText("Name")).toHaveFocus());
-  expect(describedText(within(dialog).getByLabelText("Name"))).toBe("That name is taken.");
-  c.unmount();
-  inSheet(
-    "Add project",
-    <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
-  );
-  dialog = screen.getByRole("dialog", { name: "Add project" });
-  await userEvent.type(within(dialog).getByLabelText("Name"), "app");
-  await userEvent.type(within(dialog).getByLabelText("Path"), "/code/app{Enter}");
   await waitFor(() => expect(within(dialog).getByLabelText("Name")).toHaveFocus());
   expect(describedText(within(dialog).getByLabelText("Name"))).toBe("That name is taken.");
 });

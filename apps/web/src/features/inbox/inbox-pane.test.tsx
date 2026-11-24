@@ -114,7 +114,6 @@ test("the pane shows the Chat under a compact strip, with no ⋯, Agent details 
   expect(await within(p).findByText("dev says 2")).toBeInTheDocument();
   expect(await within(p).findByRole("combobox", { name: "Message to Dev agent" })).toBeVisible();
   const strip = p.querySelector("[data-chat-strip]") as HTMLElement;
-  expect(strip).toHaveClass("min-h-10", "flex-wrap");
   expect(within(strip).getByText("Dev agent")).toBeInTheDocument();
   expect(within(strip).getByRole("link", { name: "Open chat" })).toHaveAttribute(
     "href",
@@ -155,7 +154,6 @@ test("retargeting swaps the thread at once: nothing of the old one stays, nothin
   expect(
     within(pane().querySelector("[data-chat-strip]") as HTMLElement).getByText("Ops agent"),
   ).toBeInTheDocument();
-  expect(pane().querySelector("[data-live]")).toBeNull();
 });
 
 test("retargeting never puts a fading row (data-live) on screen, not even for a frame", async () => {
@@ -176,21 +174,6 @@ test("retargeting never puts a fading row (data-live) on screen, not even for a 
   await within(pane()).findByText("ops says 3");
   watch.disconnect();
   expect(seen).toEqual([]);
-});
-
-test("the strip keeps its controls whole, lets the name shrink and wraps (a second line) rather than scrolling at 200% text", async () => {
-  // jsdom has no layout, so the fit itself is asserted by the classes that decide it: the name is the
-  // one shrinkable child (`min-w-0`), the link and the icon-only switch never shrink, and the row wraps before the page scrolls sideways.
-  await visit("/inbox?item=chat:dev");
-  const strip = (await waitFor(() => {
-    const el = pane().querySelector<HTMLElement>("[data-chat-strip]");
-    expect(el).not.toBeNull();
-    return el;
-  })) as HTMLElement;
-  expect(strip).toHaveClass("min-h-10", "flex-wrap", "items-center");
-  expect(within(strip).getByRole("link", { name: "Open chat" })).toHaveClass("shrink-0");
-  const name = await within(strip).findByText("Dev agent");
-  expect(name.closest(".min-w-0")).not.toBeNull();
 });
 
 test("a thread cached before the row's newest message puts the divider on the right message", async () => {

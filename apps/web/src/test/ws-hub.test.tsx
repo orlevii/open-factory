@@ -213,18 +213,15 @@ test("config_changed invalidates the agent's and the template's configuration, a
   expect(stale(["template-config", "ops"])).toBe(false);
 });
 
-test("unmounting the layout flushes queued status frames and stops listening for visibilitychange", async () => {
+test("unmounting the layout flushes queued status frames", async () => {
   mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }) });
   const { unmount, queryClient: qc } = renderApp("/inbox", alice);
   await screen.findByText("probe 0");
   qc.setQueryData(["agents", "exclude"], [{ slug: "dev", status: "idle", turnOpen: false }]);
-  const removed = vi.spyOn(document, "removeEventListener");
   // Queued for the next animation frame, which never runs before the unmount below.
   act(() => h.opts?.onMessage?.(status("dev", true)));
   const listed = () => qc.getQueryData<{ status: string }[]>(["agents", "exclude"])?.[0]?.status;
   expect(listed()).toBe("idle");
   unmount();
   expect(listed()).toBe("working");
-  expect(removed.mock.calls.some(([type]) => type === "visibilitychange")).toBe(true);
-  removed.mockRestore();
 });

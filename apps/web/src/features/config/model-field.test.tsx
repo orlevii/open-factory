@@ -1,4 +1,4 @@
-import { MODEL_MSG } from "@open-factory/shared";
+import { MODEL_ALIASES, MODEL_IDS, MODEL_MSG } from "@open-factory/shared";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -35,18 +35,7 @@ test("agent mode: inherit first, the inherited value in the help line, then the 
     within(box)
       .getAllByRole("option")
       .map((o) => o.textContent),
-  ).toEqual([
-    "Inherit from template",
-    "fable",
-    "opus",
-    "sonnet",
-    "haiku",
-    "claude-fable-5-1",
-    "claude-opus-5-5",
-    "claude-sonnet-5-5",
-    "claude-haiku-5-5",
-    "Custom…",
-  ]);
+  ).toEqual(["Inherit from template", ...MODEL_ALIASES, ...MODEL_IDS, "Custom…"]);
   expect(within(box).getByText("Aliases")).toBeInTheDocument();
   expect(within(box).getByText("Model ids")).toBeInTheDocument();
 });
@@ -78,7 +67,7 @@ test("picking a model overrides it: 'This agent' and 'Use template's' clear the 
   expect(trigger()).toHaveFocus();
 });
 
-test("Custom reveals a focused mono input checked by the model schema", async () => {
+test("Custom reveals a focused input checked by the model schema", async () => {
   const onValue = vi.fn();
   render(
     <ScopeHarness start={{}} base={doc()} onValue={onValue}>
@@ -88,7 +77,6 @@ test("Custom reveals a focused mono input checked by the model schema", async ()
   await pick("Custom…");
   const input = screen.getByRole("textbox", { name: "Custom model" });
   expect(input).toHaveFocus();
-  expect(input.className).toMatch(/font-mono/);
   expect(screen.getByText(MODEL_MSG.chars)).toBeInTheDocument();
   await userEvent.type(input, "my model");
   expect(onValue).toHaveBeenLastCalledWith({ template: { model: "my model" } });
@@ -121,12 +109,29 @@ test("a wrongly typed model reads 'Edit this in Raw JSON.' and jumps there", asy
 });
 
 test("a server issue on the model path lands on the field; a conflict reads 'Also changed elsewhere.'", () => {
+  const { unmount } = render(
+    <ScopeHarness
+      start={{ template: { model: "opus" } }}
+      base={doc()}
+      issues={[
+        {
+          severity: "error",
+          file: "settings.json",
+          path: "template.model",
+          message: "Not a model here.",
+        },
+      ]}
+    >
+      <ModelField />
+    </ScopeHarness>,
+  );
+  expect(document.getElementById("field-model-error")).toHaveTextContent("Not a model here.");
+  unmount();
   render(
     <ScopeHarness
       start={{ template: { model: "opus" } }}
       base={doc()}
       conflicts={["template.model"]}
-      issues={[]}
     >
       <ModelField />
     </ScopeHarness>,

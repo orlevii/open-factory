@@ -32,14 +32,6 @@ test("on close with no session it calls onUnauthenticated and stops reconnecting
   expect(FakeWs.instances).toHaveLength(1);
 });
 
-test("on close with a session it reconnects with backoff", async () => {
-  const conn = connectWs({ ...base, onUnauthenticated: vi.fn(), hasSession: async () => true });
-  FakeWs.instances[0]?.onclose?.();
-  await vi.advanceTimersByTimeAsync(31_000);
-  expect(FakeWs.instances.length).toBe(2);
-  conn.close();
-});
-
 test("backoff grows exponentially with 0.5-1x jitter and is capped at 30s", async () => {
   const conn = connectWs({ ...base, onUnauthenticated: vi.fn(), hasSession: async () => true });
   // Fail repeatedly without ever opening. Attempt n waits between 0.5x and 1x of min(30s, 500ms * 2^n).
@@ -118,7 +110,7 @@ test("onStatus reports every transition once, in order", async () => {
   ]);
 });
 
-test("send() writes JSON only while open; onOpen fires on every open", async () => {
+test("send() writes JSON only while open; onOpen fires on every open, a reconnect included; send after close() is false", async () => {
   const onOpen = vi.fn();
   const conn = connectWs({
     ...base,
@@ -133,19 +125,6 @@ test("send() writes JSON only while open; onOpen fires on every open", async () 
   expect(FakeWs.instances[0]?.send).toHaveBeenCalledWith('{"type":"ping"}');
   FakeWs.instances[0]?.onclose?.();
   expect(conn.send({ type: "ping" })).toBe(false);
-  conn.close();
-});
-
-test("onOpen fires again on reconnect; send after close() is false", async () => {
-  const onOpen = vi.fn();
-  const conn = connectWs({
-    ...base,
-    onUnauthenticated: vi.fn(),
-    hasSession: async () => true,
-    onOpen,
-  });
-  FakeWs.instances[0]?.onopen?.();
-  FakeWs.instances[0]?.onclose?.();
   await vi.advanceTimersByTimeAsync(31_000);
   FakeWs.instances[1]?.onopen?.();
   expect(onOpen).toHaveBeenCalledTimes(2);

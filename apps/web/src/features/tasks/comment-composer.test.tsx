@@ -77,20 +77,13 @@ test("prefill only into an empty box, without focus, and not kept as a draft", a
   expect(box()).toHaveValue("@dev ");
 });
 
-test("the Write/Preview toggle sits in the composer's toolbar", async () => {
+test("Enter posts (U1 rule) once and Shift+Enter adds a line; Send is the labelled primary", async () => {
   const { box } = setup();
-  await userEvent.type(box(), "**hi**");
-  const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
-  expect(toolbar).not.toBeNull();
-  expect(toolbar.contains(screen.getByRole("button", { name: "Write" }))).toBe(true);
-  await userEvent.click(screen.getByRole("button", { name: "Preview" }));
-  expect(document.querySelector("[data-composer-frame] strong")).toHaveTextContent("hi");
-});
-
-test("Enter posts (U1 rule); Send is the labelled primary", async () => {
-  const { box } = setup();
-  await userEvent.type(box(), "looks good{Enter}");
-  await waitFor(() => expect(posts).toEqual([{ body: "looks good" }]));
+  await userEvent.type(box(), "looks{Shift>}{Enter}{/Shift}good");
+  expect(box()).toHaveValue("looks\ngood");
+  expect(posts).toEqual([]);
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(posts).toEqual([{ body: "looks\ngood" }]));
   await waitFor(() => expect(box()).toHaveValue(""));
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
 });
@@ -111,7 +104,6 @@ test("the draft lives in localStorage under of-draft:v1:task:<key>", async () =>
   expect(JSON.parse(localStorage.getItem("of-draft:v1:task:T-1") ?? "{}")).toMatchObject({
     text: "half a thought",
   });
-  expect(sessionStorage.getItem("of-comment-draft:T-1")).toBeNull();
 });
 
 test("`@` completes a handle as `@slug ` from the cached agents and users lists", async () => {

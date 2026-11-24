@@ -7,7 +7,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { resetSignIn } from "@/features/settings/sign-in/use-sign-in";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { AddCredentialForm } from "./add-credential-form";
-import { OAUTH_TOKEN_HELP } from "./shared";
 
 // Synthetic values only: no real sign-in URL, code or token ever appears in a test.
 const SYN_URL = "https://claude.com/cai/oauth/authorize?code=true&state=SYNTHETIC";
@@ -194,7 +193,6 @@ it("Paste a token shows the token field with the never-warned help; Verify and a
   expect(describedText(token)).toBe(
     "Create one with claude setup-token. You won't be warned before it expires.",
   );
-  expect(OAUTH_TOKEN_HELP).toContain("You won't be warned before it expires.");
   expect(primary(dialog)).toHaveTextContent("Verify and add");
   expect(within(dialog).queryByRole("link", { name: "Open sign-in page" })).toBeNull();
   await userEvent.type(token, "sk-ant-oat01-SYNTHETIC{Enter}");

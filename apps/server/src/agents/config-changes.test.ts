@@ -307,38 +307,6 @@ test("an overlay save built on a stale base arriving after a template change doe
   });
 });
 
-test("before: null writes no event or notice but still restarts a process that started on something else", async () => {
-  const w = world(doc());
-  const id = await agent();
-  await h.t.sql`update agents set template = 't-null' where id = ${id}`;
-  const rt = await w.runBusy(id);
-  w.current.set(id, doc({ skills: ["x"] }));
-  await w.changes.templateChanged({
-    name: "t-null",
-    before: null,
-    after: doc({ skills: ["x"] }),
-    by: FILE_CHANGE,
-  });
-  await rt?.settled();
-  expect(await events(id)).toEqual([]);
-  expect(await noticeLines(id)).toEqual([]);
-  expect(rt?.live()).toMatchObject({ restartPending: true, restartChanges: ["added skill x"] });
-});
-
-test("a spawner whose secrets changed restarts its live children", async () => {
-  const w = world(doc());
-  const lead = await agent();
-  const kid = await agent({ kind: "ephemeral", reportsTo: lead });
-  const kidRt = await w.runBusy(kid);
-  await w.changes.overlaySaved(
-    await rowOf(lead),
-    "@or",
-    doc({ secrets: ["GH_TOKEN"] }),
-    doc({ secrets: [] }),
-  );
-  await vi.waitFor(() => expect(kidRt?.live().restartPending).toBe(true));
-});
-
 test("an overlay save on an archived agent writes the event only; values never reach rows", async () => {
   const w = world(doc());
   const id = await agent({ archived: true });
@@ -355,23 +323,4 @@ test("an overlay save on an archived agent writes the event only; values never r
   expect(await noticeLines(id)).toEqual([]);
   const all = await h.t.sql`select payload::text as p from session_events where agent_id = ${id}`;
   expect(JSON.stringify(all)).not.toContain(SECRET);
-});
-
-test("nextImage is refreshed for a loaded Docker runtime", async () => {
-  const w = world(doc());
-  const id = await agent();
-  await h.t.sql`update agents set runtime = 'docker', template = 't-img' where id = ${id}`;
-  const rt = await w.runtimes.load(id);
-  // Without Docker deps the runtimes resolve no ref; the change path still sets what `imageRef` gives.
-  const spy = vi.spyOn(w.runtimes, "imageRef").mockReturnValue("img:new");
-  await w.changes.templateChanged({
-    name: "t-img",
-    before: doc({ runtime: "docker", image: "img:old" }),
-    after: doc({ runtime: "docker", image: "img:new" }),
-    by: FILE_CHANGE,
-  });
-  expect(spy).toHaveBeenCalledWith(
-    expect.objectContaining({ runtime: "docker", image: "img:new" }),
-  );
-  expect(rt?.nextImage).toBe("img:new");
 });

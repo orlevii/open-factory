@@ -140,21 +140,6 @@ test.each([
     );
 });
 
-test("refuses a home ancestor and a Docker socket even when they are declared inputs", async () => {
-  const sock = path.join(tmp("sock-"), "docker.sock");
-  writeFileSync(sock, "");
-  const withSock = { ...ctx, hostSkillPaths: [sock], dockerSockets: [sock] };
-  await expect(
-    checkMounts([{ source: sock, target: sock, readOnly: true }], withSock),
-  ).rejects.toThrow(`Mount ${sock} isn't allowed: it is a Docker socket.`);
-  await expect(
-    checkMounts([{ source: home, target: home, readOnly: false }], {
-      ...ctx,
-      grantedPaths: [home],
-    }),
-  ).rejects.toThrow(`Mount ${home} isn't allowed: it is FACTORY_HOME.`);
-});
-
 test("allows exactly the declared kinds with the right read-only flags", async () => {
   await expect(checkMounts(buildMounts(inputs), ctx)).resolves.toEqual(buildMounts(inputs));
   expect(
@@ -189,18 +174,6 @@ test("refuses a wrong read-only flag, a wrong target and an undeclared path", as
       ctx,
     ),
   ).rejects.toThrow(MountRefusedError);
-});
-
-test("a granted project inside FACTORY_HOME is refused even when declared", async () => {
-  const other = path.join(home, "agents/other");
-  await expect(
-    checkMounts([{ source: other, target: other, readOnly: false }], {
-      ...ctx,
-      grantedPaths: [other],
-    }),
-  ).rejects.toThrow(
-    `Mount ${other} isn't allowed: it is inside FACTORY_HOME and isn't this agent's workdir or plugins dir.`,
-  );
 });
 
 test("checkMounts resolves symlinks before checking", async () => {

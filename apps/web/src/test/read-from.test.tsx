@@ -242,9 +242,11 @@ test("the trailing call is cancelled when the session changes", async () => {
   expect(posts.filter((p) => p.url.endsWith("/dev"))).toHaveLength(1);
 });
 
-test("a hover preload of /agents/ada never calls read-from", async () => {
-  const { router } = renderApp("/", alice);
-  await router.preloadRoute({ to: "/agents/$slug/session", params: { slug: "ada" } });
+test("a hover preload of a session with unread messages never calls read-from", async () => {
+  const { router } = renderApp("/inbox", alice);
+  // dev has unread messages (UNREAD.byAgent): opening it would post, a preload must not.
+  await waitFor(() => expect(unreadFetches).toBeGreaterThan(0));
+  await router.preloadRoute({ to: "/agents/$slug/session", params: { slug: "dev" } });
   await new Promise((r) => setTimeout(r, 50));
   expect(posts).toHaveLength(0);
 });

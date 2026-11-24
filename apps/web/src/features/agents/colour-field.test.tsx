@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { COLOUR_MSG, ColourField, colourName } from "@/features/agents/colour-field";
+import { ColourField, colourName } from "@/features/agents/colour-field";
 
 function Harness({
   start = null,
@@ -32,15 +32,11 @@ test("thirteen radios, Auto first, one tab stop on the selected one", () => {
   expect(radios.filter((r) => r.tabIndex === 0).map((r) => r.getAttribute("aria-label"))).toEqual([
     "Teal",
   ]);
-  expect(screen.getByRole("radio", { name: "Teal" }).className).toContain(
-    "ring-2 ring-foreground ring-offset-2",
-  );
 });
 
-test("the group is named once, by the legend, and the ring offset takes the sheet colour", () => {
+test("the group is named once, by the legend", () => {
   render(<Harness start={4} />);
   expect(screen.getByRole("radiogroup", { name: "Colour · Teal" })).toBeInTheDocument();
-  expect(screen.getByRole("radio", { name: "Teal" }).className).toContain("ring-offset-popover");
 });
 
 test("arrow keys with Alt, Ctrl or Meta are left to the browser", async () => {
@@ -62,10 +58,4 @@ test("a hue's name shows as a tooltip on focus", async () => {
 test("colourName names Auto's seeded hue and a chosen one", () => {
   expect(colourName(4, "lead")).toBe("Teal");
   expect(colourName(null, "lead")).toMatch(/^Auto \(\w+\)$/);
-});
-
-test("an avatar version replaces the group with the line", () => {
-  render(<Harness avatarVersion="v1" />);
-  expect(screen.getByText(COLOUR_MSG.templateAvatar)).toBeInTheDocument();
-  expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
 });

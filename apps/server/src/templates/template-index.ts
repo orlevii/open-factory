@@ -483,8 +483,8 @@ export class TemplateIndex {
     actor: Actor,
   ): Promise<{ hash: string; issues: TemplateIssue[] }> {
     const dir = this.folder(name);
-    const ctx = await this.context();
     return this.locks.run(name, async () => {
+      const ctx = await this.context();
       if (!(await isDir(dir))) throw notFound(name);
       const target = path.join(dir, file);
       if (actor.kind === "agent") await this.refuseLinks(dir, name, target, file);
@@ -545,27 +545,32 @@ export class TemplateIndex {
   }
 
   /**
-   * The agent rules over a change from `before` to `after` of template `name`: a local runtime anywhere in it is
-   * refused outright (`OrgRefusedError`), anything else the policy objects to is returned. Reads only.
+   * The agent rules over a change from `before` to `after` of template `name`. A local runtime is refused outright
+   * (`OrgRefusedError`) when `before` is local or has local agents, or when the change adds a `can_spawn` entry that
+   * is local or missing (rule 8): entries `before` already had don't count, so an agent can still repair a broken
+   * template (spec §7.3a). A copy (`copying`) adds every entry to a new template. Anything else the policy objects
+   * to is returned. Reads only.
    */
-  private async agentPolicy(name: string, before: ConfigDoc, after: ConfigDoc) {
-    const runtimeOf = (d: ConfigDoc) => yamlPart(d.template).runtime;
+  private async agentPolicy(
+    name: string,
+    before: ConfigDoc,
+    after: ConfigDoc,
+    copying = false,
+  ) {
     const spawns = (d: ConfigDoc) => {
       const raw = yamlPart(d.template).can_spawn;
       return Array.isArray(raw) ? raw.filter((n): n is string => typeof n === "string") : [];
     };
-    const canSpawnRuntimes = await this.policy.templateRuntimes([
-      ...new Set([...spawns(before), ...spawns(after)]),
-    ]);
-    const hasLocalAgents = await this.policy.templateHasLocalAgents(name);
+    const had = new Set(copying ? [] : spawns(before));
+    const runtime = yamlPart(before.template).runtime;
     if (
-      [before, after].some((d) =>
-        touchesLocalRuntime({
-          templateRuntime: typeof runtimeOf(d) === "string" ? (runtimeOf(d) as string) : undefined,
-          templateHasLocalAgents: hasLocalAgents,
-          canSpawnRuntimes,
-        }),
-      )
+      touchesLocalRuntime({
+        templateRuntime: typeof runtime === "string" ? runtime : undefined,
+        templateHasLocalAgents: await this.policy.templateHasLocalAgents(name),
+        canSpawnRuntimes: await this.policy.templateRuntimes(
+          [...new Set(spawns(after))].filter((n) => !had.has(n)),
+        ),
+      })
     )
       throw new OrgRefusedError(LOCAL_RUNTIME_REFUSAL);
     const y = yamlPart(before.template);
@@ -808,7 +813,7 @@ export class TemplateIndex {
         issues: src.row.issues,
       });
     if (actor.kind === "agent") {
-      const issues = await this.agentPolicy(from, src.doc, src.doc);
+      const issues = await this.agentPolicy(from, src.doc, src.doc, true);
       if (issues.length)
         throw new ApiError(400, "invalid_config", "The configuration has errors.", { issues });
     }
@@ -883,8 +888,7 @@ export class TemplateIndex {
     }
   }
 
-  /** `_actor` is for B2's policy; deleting a template is a human's call today and nothing is attributed. */
-  async remove(name: string, _actor: Actor): Promise<void> {
+  async remove(name: string): Promise<void> {
     const dir = this.folder(name);
     return this.locks.run(name, async () => {
       let st: Awaited<ReturnType<typeof lstat>>;

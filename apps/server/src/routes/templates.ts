@@ -178,7 +178,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
   );
 
   app.delete("/api/templates/:name", { schema: { params } }, async (req, reply) => {
-    await app.templates.remove(req.params.name, humanOf(req));
+    await app.templates.remove(req.params.name);
     return reply.code(204).send();
   });
 };

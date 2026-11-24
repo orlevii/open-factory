@@ -222,6 +222,23 @@ test("an agent write adding a plugin under a Latest declaration is refused (rule
   });
 });
 
+test("an agent can drop a can_spawn entry that names a missing template, but not add a local one", async () => {
+  writeTemplate("fix", { "template.yaml": yamlOf("fix", "can_spawn: [ghost]\n") });
+  writeTemplate("loc", { "template.yaml": yamlOf("loc", "runtime: local\n") });
+  await idx.scan();
+  await idx.writeFile("fix", "template.yaml", yamlOf("fix"), hashOf("fix", "template.yaml"), hr);
+  expect(readFileSync(fileOf("fix", "template.yaml"), "utf8")).toBe(yamlOf("fix"));
+  await expect(
+    idx.writeFile(
+      "fix",
+      "template.yaml",
+      yamlOf("fix", "can_spawn: [loc]\n"),
+      hashOf("fix", "template.yaml"),
+      hr,
+    ),
+  ).rejects.toThrow(new OrgRefusedError(LOCAL_RUNTIME_REFUSAL));
+});
+
 test("the lock carries the author: a loadValid started mid-write waits, and the one dispatch names the writer", async () => {
   writeTemplate("dev");
   await idx.scan();
@@ -274,7 +291,7 @@ test("create and remove hold the lock and both return; a readConfig started duri
   const read = idx.readConfig("fresh").catch((e) => e);
   await created;
   expect(await read).toMatchObject({ doc: expect.anything() });
-  await idx.remove("fresh", human);
+  await idx.remove("fresh");
   expect(existsSync(dirOf("fresh"))).toBe(false);
   const [row] = await t.db
     .select()

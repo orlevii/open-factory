@@ -113,14 +113,14 @@ test("validate substitutes content without writing", async () => {
 
 test("remove deletes a folder, and only the link for a symlinked folder; 404 for gone templates", async () => {
   await idx.create({ name: "r1", displayName: "R" }, human);
-  await idx.remove("r1", human);
+  await idx.remove("r1");
   expect(existsSync(path.join(home, "templates/r1"))).toBe(false);
   const outside = mkdtempSync(path.join(tmpdir(), "ext-"));
   writeFileSync(path.join(outside, "template.yaml"), "name: linked\ndisplay_name: L\n");
   writeFileSync(path.join(outside, "AGENTS.md"), "# L\n");
   symlinkSync(outside, path.join(home, "templates/linked"));
   expect((await idx.scan()).map((r) => r.name)).toContain("linked");
-  await idx.remove("linked", human);
+  await idx.remove("linked");
   expect(existsSync(outside)).toBe(true);
   await expect(idx.detail("linked")).rejects.toBeInstanceOf(ApiError);
 });
@@ -173,7 +173,7 @@ test("names that fail the pattern are 404 everywhere", async () => {
       status: 404,
     });
     await expect(idx.validate(n, "AGENTS.md", "x")).rejects.toMatchObject({ status: 404 });
-    await expect(idx.remove(n, human)).rejects.toMatchObject({ status: 404 });
+    await expect(idx.remove(n)).rejects.toMatchObject({ status: 404 });
   }
 });
 
@@ -187,7 +187,7 @@ test("scan prunes a row whose folder vanished; remove of a gone folder drops the
   expect(await hasRow("gone1")).toBe(false);
   await rm(path.join(home, "templates/gone2"), { recursive: true });
   expect(await hasRow("gone2")).toBe(true);
-  await expect(idx.remove("gone2", human)).rejects.toMatchObject({ status: 404 });
+  await expect(idx.remove("gone2")).rejects.toMatchObject({ status: 404 });
   expect(await hasRow("gone2")).toBe(false);
 });
 
@@ -468,7 +468,7 @@ test("remove refuses with template_in_use while an agent, archived included, use
   await seedUser("ana", { template: "use1" });
   await seedUser("bo", { template: "use1", archived: true });
   await seedUser("cy", { template: "use1" });
-  await expect(idx.remove("use1", human)).rejects.toMatchObject({
+  await expect(idx.remove("use1")).rejects.toMatchObject({
     status: 409,
     code: "template_in_use",
     message: "@ana and 2 more (1 archived) use this template. Archive and recreate them first.",
@@ -479,7 +479,7 @@ test("remove refuses with template_in_use while an agent, archived included, use
 test("terminated spawned agents don't block deletion", async () => {
   await idx.create({ name: "use2", displayName: "U" }, human);
   await seedUser("dee", { template: "use2", terminated: true });
-  await idx.remove("use2", human);
+  await idx.remove("use2");
   expect(existsSync(path.join(home, "templates/use2"))).toBe(false);
 });
 

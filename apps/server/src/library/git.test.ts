@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { GIT_FLAGS, GitError, gitEnv, runGit } from "./git.ts";
+import { ALLOWED_GIT_OPTIONS, GIT_FLAGS, GitError, gitEnv, runGit } from "./git.ts";
 
 const SPEC_FLAGS = [
   "-c",
@@ -84,16 +84,29 @@ test("argv starts with exactly the spec flags; file protocol only when allowed",
   expect(argv.filter((a) => a === "protocol.file.allow=always")).toHaveLength(1);
 });
 
-test("env is exactly the six keys and host git variables do not pass", async () => {
+test("env is exactly the six keys: no other host variable passes", async () => {
   recordingGit();
-  process.env.GIT_DIR = "/evil";
-  process.env.GIT_CONFIG_COUNT = "1";
-  process.env.GIT_SSH_COMMAND = "evil";
-  await runGit(["ls-remote", url], { cwd: bin, allowFile: false });
+  const hostVars = {
+    GIT_DIR: "/evil",
+    GIT_CONFIG_COUNT: "1",
+    GIT_SSH_COMMAND: "evil",
+    GIT_CONFIG_GLOBAL: "/evil",
+    GH_TOKEN: "ghp_x",
+    GITHUB_TOKEN: "ghp_y",
+    SSH_AUTH_SOCK: "/s",
+    UNRELATED_HOST_VAR: "1",
+  };
+  Object.assign(process.env, hostVars);
+  try {
+    await runGit(["ls-remote", url], { cwd: bin, allowFile: false });
+  } finally {
+    for (const k of Object.keys(hostVars)) delete process.env[k];
+  }
   const { env } = recorded();
-  expect(env.GIT_DIR).toBeUndefined();
-  expect(env.GIT_CONFIG_COUNT).toBeUndefined();
-  expect(env.GIT_SSH_COMMAND).toBeUndefined();
+  for (const k of Object.keys(hostVars)) expect(env[k]).toBeUndefined();
+  // macOS injects __CF_USER_TEXT_ENCODING into every exec'd process; the runner does not set it.
+  const { __CF_USER_TEXT_ENCODING: _os, ...ours } = env;
+  expect(Object.keys(ours).sort()).toEqual(Object.keys(gitEnv(process.env)).sort());
   expect(env).toMatchObject(gitEnv(process.env));
   expect(gitEnv({ PATH: "/p", HOME: "/h", GIT_DIR: "/x" })).toEqual({
     PATH: "/p",
@@ -105,13 +118,41 @@ test("env is exactly the six keys and host git variables do not pass", async () 
   });
 });
 
-test("a dash-leading argument is refused before spawn", async () => {
+test.each([...ALLOWED_GIT_OPTIONS])("the option %s is passed through", async (opt) => {
   recordingGit();
-  for (const bad of ["--upload-pack=evil", "-c", "-C"]) {
-    const err = await runGit(["fetch", bad], { cwd: bin, allowFile: false }).catch((e) => e);
-    expect(err).toBeInstanceOf(GitError);
-  }
+  await runGit(["ls-remote", opt, "x"], { cwd: bin, allowFile: false });
+  expect(recorded().argv.slice(-3)).toEqual(["ls-remote", opt, "x"]);
+});
+
+test.each([
+  "--upload-pack=x",
+  "-c",
+  "-C",
+  "--exec=x",
+  "--foo",
+  "--depth=1",
+  "-q ",
+  "--format=%H",
+  "--end-of-options",
+  "-",
+])("the option %j is refused before spawn", async (bad) => {
+  recordingGit();
+  const err = await runGit(["fetch", bad], { cwd: bin, allowFile: false }).catch((e) => e);
+  expect(err).toBeInstanceOf(GitError);
   expect(existsSync(record)).toBe(false);
+});
+
+test("too much output is reported as such, not as a timeout", async () => {
+  fakeGit(`process.stdout.write("x".repeat(11 * 1024 * 1024));`);
+  const err = await runGit(["ls-remote", url], { cwd: bin, allowFile: false }).catch((e) => e);
+  expect(err).toBeInstanceOf(GitError);
+  expect(err.message).toBe("git produced too much output.");
+});
+
+test("a huge one-line failure keeps the message short", async () => {
+  fakeGit(`console.error("e".repeat(100000));\nprocess.exit(1);`);
+  const err = await runGit(["ls-remote", url], { cwd: bin, allowFile: false }).catch((e) => e);
+  expect(Buffer.byteLength(err.message)).toBeLessThan(5000);
 });
 
 test("a failure rejects with GitError whose message and output are redacted", async () => {

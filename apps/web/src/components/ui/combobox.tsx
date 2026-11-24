@@ -174,7 +174,7 @@ function ComboList({
       onKeyDown={(e) => {
         if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") moved.current = true
       }}
-      className="flex flex-col"
+      className="flex min-h-0 flex-col"
     >
       <div className="flex h-9 items-center gap-2 border-b border-border px-2.5">
         <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -189,7 +189,7 @@ function ComboList({
         />
       </div>
       {/* A fixed height: the popover doesn't resize as the filter narrows, and nothing animates it. */}
-      <CommandPrimitive.List label={label} onPointerMove={() => (moved.current = true)} className="h-72 overflow-y-auto overscroll-contain scroll-py-1 p-1">
+      <CommandPrimitive.List label={label} onPointerMove={() => (moved.current = true)} className="h-72 min-h-0 overflow-y-auto overscroll-contain scroll-py-1 p-1">
         <CommandPrimitive.Empty className="py-6 text-center text-sm text-muted-foreground">
           {emptyText}
         </CommandPrimitive.Empty>
@@ -369,7 +369,7 @@ function Combobox({
         avoidCollisions={!lock}
         onEscapeKeyDown={stampInstant}
         aria-label={ariaLabel}
-        className="w-[max(var(--radix-popover-trigger-width),min(24rem,calc(100vw-2rem)))] gap-0 p-0"
+        className="max-h-(--radix-popover-content-available-height) w-[max(var(--radix-popover-trigger-width),min(24rem,calc(100vw-2rem)))] gap-0 p-0"
       >
         <ComboList
           label={ariaLabel}

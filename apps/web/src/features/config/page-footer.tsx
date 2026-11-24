@@ -7,7 +7,7 @@ import { CONFIG_PAGE_COPY } from "./messages";
 
 /**
  * The footer of a page with one save (DESIGN.md → Page forms; spec §12.4 R6): the I4 outcome line above Discard (ghost)
- * and Save changes (primary), side by side at every width. It is sticky at the bottom of the page column only while
+ * and Save changes (primary), side by side while they fit (at 200% text Save wraps under Discard, never sideways). It is sticky at the bottom of the page column only while
  * `sticky` (the form is dirty, or an outcome shows), and otherwise sits in the flow at the end of the form. A plate
  * with a top rule, no blur. Save keeps its shape while it can't run: `aria-disabled`, described by the outcome's notice.
  * `onHeight` hears the footer's height, for an editor's bottom scroll margin; it must be stable.
@@ -53,7 +53,7 @@ export function PageFooter({
       data-slot="page-footer"
       data-sticky={sticky ? "" : undefined}
       className={cn(
-        "z-10 grid gap-2 border-t border-border bg-card py-3",
+        "z-10 grid grid-cols-[minmax(0,1fr)] gap-2 border-t border-border bg-card py-3",
         sticky && "sticky bottom-0",
       )}
     >
@@ -62,7 +62,7 @@ export function PageFooter({
         pending={pending ? CONFIG_PAGE_COPY.saving : undefined}
         noticeId={noticeId}
       />
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <Button
           type="button"
           variant="ghost"

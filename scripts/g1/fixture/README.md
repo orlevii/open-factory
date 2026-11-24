@@ -1,68 +1,80 @@
 # Gate G1 fixture
 
-`scripts/g1/run.sh` needs a real git marketplace on GitHub, because a plain path
-makes a directory marketplace and tests no clone at all (spec section 13,
-"Setup"). `make-fixture.sh` builds it; you push it once.
+`scripts/g1/run.sh` needs no GitHub account in the normal case. `make-fixture.sh`
+builds everything from git alone, and `run.sh` mounts it read-only into the
+throwaway containers (spec section 13, "Setup"). Nothing is pushed anywhere and
+nothing is installed on your machine.
+
+```sh
+scripts/g1/fixture/make-fixture.sh <outdir>   # run.sh does this itself
+```
 
 ## What it builds
 
-| Directory | What it is |
+| Path | What it is |
 |---|---|
-| `of-g1-fixture/` | Marketplace `fixture` with `marker`, `dep`, `ranged` and `shaext`. Two commits: the second changes `marker` (1.0.0 to 1.1.0). Tag `dep--v1.0.0` sits on the first commit. |
-| `of-g1-other/` | Marketplace `evil` with the plugin `x`, and at its root the plugin `shaext`. One commit. Used as "another repo" (items 6, 12, 15) and as an external source with a `sha`. |
-| `localdir/` | A directory marketplace `localdir` with the relative plugin `rel` (`defaultEnabled: true`). Not pushed. |
-| `extras/` | `skill-foo`, `sneaky`, `skill-h`, `agent-a.md`. Not pushed. |
+| `dir/` | The directory marketplace `fixdir`: `marker`, `dep`, `ranged`, `rel` (`defaultEnabled: true`) and `shaext-ext`, an external `git-subdir` entry with a `sha` that points into `src-fixture.git` (`file:///fixture/acme.git`). Mounted as `/fixture/dir`. |
+| `src-fixture.git` | A bare git repo of the same tree, as the marketplace `fixture`. Two commits (the second changes `marker`, 1.0.0 to 1.1.0), `main` at the second, tag `v1` and tag `dep--v1.0.0` on the first. |
+| `src-latest.git` | The same, as the marketplace `fixlatest`: the "Latest" marketplace of items 5 and 7. |
+| `evil/` | A directory marketplace `evil` with the plugin `x` (item 15). |
+| `extras/` | `skill-foo` (item 11), `sneaky` (item 14), `skill-h` and `agent-a.md` (item 18). Copied into workdirs by `run.sh`. |
+| `SHAS` | The deterministic commit SHAs, read by `run.sh`. |
+
+`run.sh` does not mount `src-*.git` directly. It serves a copy that holds only
+the first commit (plus tag `v1` and branch `stable`) as `/fixture/acme.git`
+and `/fixture/acme-latest.git`, and "pushes" the second commit between runs
+(`git push` of `main`), so items 5 to 7 see a real update arrive.
 
 `marker` has every code path write a file into `$MARK`: a SessionStart hook, an
 MCP server (which also writes `${CLAUDE_PLUGIN_DATA}/x`), `bin/x`, a monitors
 entry, and `preinstall`/`postinstall` scripts in `package.json`. A file in
-`$MARK` means plugin code ran.
+`$MARK` means plugin code ran. The marks a session writes (`hook-sessionstart`,
+`mcp-start`, `bin-x`, `monitor`) are told apart from the install-time ones
+(`npm-preinstall`, `npm-postinstall`).
 
-The npm dependency is **`ms` 2.1.3**: exact-pinned (no range), tiny (one file,
-no dependencies of its own) and one of the best-known packages on the registry.
-`make-fixture.sh` uses it only to write a real `package-lock.json`
-(`npm install --package-lock-only --ignore-scripts`); nothing is installed.
+The npm dependency is **`ms` 2.1.3**: exact-pinned, tiny (one file, no
+dependencies of its own) and one of the best-known packages on the registry. The
+`package-lock.json` is written by hand (lockfile v3, no integrity hash, which npm
+fills in), so building the fixture needs no npm and no network.
 
-## Push steps (once)
+## When item 0 says GitHub is needed
 
-1. Create two **public**, empty GitHub repos under your account (no README, no
-   licence): `<or>/of-g1-fixture` and `<or>/of-g1-other`. They are throwaway;
+Item 0 tries `{"source":"git","url":"file:///fixture/acme.git"}` in `--settings`.
+If Claude Code refuses it, items 4 to 7 need real GitHub repos:
+
+1. Create two **public**, empty repos under your account (no README, no licence):
+   `<you>/of-g1-fixture` and `<you>/of-g1-fixture-latest`. They are throwaway;
    delete them after G1.
-2. Build the fixture (needs the network once, for the lockfile):
+2. Rerun with `G1_GITHUB_REPO=<you>/of-g1-fixture scripts/g1/run.sh`.
 
-   ```sh
-   scripts/g1/fixture/make-fixture.sh /tmp/of-g1-out <or>
-   ```
+`run.sh` then pushes the fixture itself with your own git credentials
+(`git push --force` of `main`, `stable` and the tags, and of the second commit
+between runs), so the repos must be ones you may force-push to. The commit SHAs
+are deterministic. Items 8 and 9 never use these repos; they use the real
+`obra/superpowers-marketplace` and `anthropics/claude-plugins-official`, because
+a `file://` repo would still clone with the network down.
 
-3. Push both repos, with tags:
+## Running it
 
-   ```sh
-   cd /tmp/of-g1-out/of-g1-fixture
-   git remote add origin https://github.com/<or>/of-g1-fixture.git
-   git push -u origin main --tags
+```sh
+export CLAUDE_CODE_OAUTH_TOKEN=...      # for the items that start a session
+scripts/g1/run.sh                       # image open-factory-base:<pin>
+scripts/g1/run.sh open-factory-base:dev # or the tag you built
+```
 
-   cd /tmp/of-g1-out/of-g1-other
-   git remote add origin https://github.com/<or>/of-g1-other.git
-   git push -u origin main
-   ```
-
-   The commit SHAs are deterministic, so rebuilding and pushing again is a
-   no-op.
-4. Run the gate with the exact Claude Code version in
-   `images/base/claude-code-version`, and a credential in the environment
-   (`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`):
-
-   ```sh
-   scripts/g1/run.sh <or>
-   ```
-
-`run.sh` rebuilds the fixture into its own temp dir and refuses to run unless
-`origin/main` of both GitHub repos matches the SHAs it built.
+Prerequisites: Docker running, the image present locally with Claude Code
+exactly as `images/base/claude-code-version` says (the script stops otherwise),
+`git`, `jq`, and the network. Items 5 and 7 each hold one session open for more
+than ten minutes, so the run takes about an hour.
 
 ## What `run.sh` touches on your machine
 
-Only its temp dir (`${TMPDIR:-/tmp}/of-g1.XXXXXX`). It uses a throwaway `HOME`
-and a throwaway npm cache inside it, so `~/.claude` and `~/.npm` are never read
-or written, and it never reads `~/.open-factory-spike`. Delete the dir when you
-are done (`chmod -R u+w <dir> && rm -rf <dir>`, since the seed is read-only). Do delete it: the agent config dirs under it may hold partial credential state (Claude writes an API-key approval and sign-in files there). `run.sh` also prints a quoted delete command at the end.
-It clones from GitHub and Claude Code talks to the network.
+Only its temp dir (`${TMPDIR:-/tmp}/of-g1.XXXXXX`), `docker run --rm` of the image,
+and (only with `G1_GITHUB_REPO`, only if item 0 fails) pushes to your two repos.
+Every container gets its own host-temp plugins dir, config dir, workdir and home
+under that temp dir; `~/.claude`, `~/.open-factory-spike` and your keychain are
+never read or mounted, and the script refuses to run if `HOME` holds the spike
+dir. The credential goes in by name (`docker run -e CLAUDE_CODE_OAUTH_TOKEN`)
+only for session items, and the script scans its temp dir for it before it
+prints the report. Delete the temp dir when you are done; `run.sh` prints the
+command.

@@ -1,19 +1,35 @@
 #!/usr/bin/env bash
-# Gate G1 (spec section 13): real Claude Code checks for I5's plugin design.
+# Gate G1 (spec section 13): real Claude Code checks for I5's per-agent plugin
+# installs, run only inside throwaway containers of the pinned agent image.
 #
-# Usage: scripts/g1/run.sh <github-owner>
+# Usage: scripts/g1/run.sh [image]
 #
-# Run it with the exact Claude Code version in images/base/claude-code-version,
-# with ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN set, after pushing the
-# fixture (scripts/g1/fixture/README.md). It writes report.md in its temp dir.
+#   image  the agent image to test, default open-factory-base:<pin>, where <pin>
+#          is images/base/claude-code-version. G1_IMAGE does the same.
 #
-# Everything lives in one temp dir with a throwaway HOME and npm cache. The
-# script runs real `claude` and uses the network (GitHub, the npm registry,
-# Anthropic). It is written for macOS bash 3.2 and newer.
+# Prerequisites:
+#   - Docker running, and the image present locally (build it first, or pull it).
+#   - `claude --version` inside the image equals images/base/claude-code-version
+#     (the script stops otherwise; G1_FLOOR_PROBE=1 allows another version for
+#     item 21 only).
+#   - CLAUDE_CODE_OAUTH_TOKEN exported in your shell, for the items that start a
+#     session. It is handed to those containers by name (docker -e NAME), never
+#     written to disk, never printed, never put in the report.
+#   - git, jq and the usual tools on the host. Nothing else is installed.
+#   - the network (GitHub, the npm registry, Anthropic).
+#   - optional: G1_GITHUB_REPO=<you>/of-g1-fixture, used only when item 0 finds
+#     that Claude Code refuses a file:// git marketplace (the README has the
+#     steps; a second repo <you>/of-g1-fixture-latest is needed too).
 #
-# Exit status is 0 when the script ran to the end (read report.md for FAILs),
-# non-zero when it could not run.
+# It writes report.md in its temp dir and prints the path. Items 5 and 7 hold
+# one session for more than ten minutes each, so the whole run takes about an
+# hour. Exit status is 0 when the script ran to the end (read report.md for
+# FAILs), non-zero when it could not run.
+#
+# Written for macOS bash 3.2 and newer. No `set -x` anywhere: it would print the
+# credential.
 set -eu
+case $- in *x*) echo "g1: refusing to run with xtrace on (it would print the credential)" >&2; exit 1 ;; esac
 
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 ROOT=$(cd "$HERE/../.." && pwd -P)
@@ -24,79 +40,66 @@ die() {
 }
 
 # ------------------------------------------------------------------ preflight
-[ "$#" -eq 1 ] || die "usage: scripts/g1/run.sh <github-owner>"
-OWNER=$1
-case "$OWNER" in
-  '' | *[!A-Za-z0-9-]*) die "github owner must be letters, digits and dashes: $OWNER" ;;
-esac
+[ "$#" -le 1 ] || die "usage: scripts/g1/run.sh [image]"
+PIN=$(tr -d '[:space:]' < "$ROOT/images/base/claude-code-version")
+[ -n "$PIN" ] || die "images/base/claude-code-version is empty"
+IMAGE=${1:-${G1_IMAGE:-open-factory-base:$PIN}}
 
-# Never run against a HOME that holds the spike dir. Only its existence is
-# tested; it is never read.
+# Never run against a HOME that holds the spike dir (only its existence is
+# tested; it is never read).
+case "${HOME:-}" in *.open-factory-spike*) die "HOME (${HOME:-}) contains .open-factory-spike; refusing to run." ;; esac
 if [ -n "${HOME:-}" ] && [ -e "$HOME/.open-factory-spike" ]; then
   die "HOME ($HOME) contains .open-factory-spike; refusing to run. Use another HOME."
 fi
 
-for tool in claude jq git node npm find pkill sed awk; do
-  command -v "$tool" >/dev/null 2>&1 || die "missing tool: $tool"
+for tool in docker jq git find pkill sed awk; do
+  command -v "$tool" > /dev/null 2>&1 || die "missing tool: $tool"
 done
-if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-  die "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (item 18 needs a token-signed-in agent)"
-fi
+docker info > /dev/null 2>&1 || die "Docker is not running"
+docker image inspect "$IMAGE" > /dev/null 2>&1 || die "image $IMAGE is not present locally"
+[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || die "export CLAUDE_CODE_OAUTH_TOKEN (the session items need it; it is passed to containers by name only)"
+export CLAUDE_CODE_OAUTH_TOKEN # docker -e CLAUDE_CODE_OAUTH_TOKEN reads it from this environment
 
-# Keep the credential out of every child process of this script (claude
-# --version, git, npm, node, jq, make-fixture.sh): copy it into non-exported
-# variables and unset the exported names. Only agent_cmd hands it to the agent.
-G1_KEY_API=${ANTHROPIC_API_KEY:-}
-G1_KEY_OAUTH=${CLAUDE_CODE_OAUTH_TOKEN:-}
-unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
-
-PINNED=$(tr -d '[:space:]' < "$ROOT/images/base/claude-code-version")
-[ -n "$PINNED" ] || die "images/base/claude-code-version is empty"
-
-# From here on nothing touches the real HOME or the real npm cache.
-T=$(mktemp -d "${TMPDIR:-/tmp}/of-g1.XXXXXX")
-T=$(cd "$T" && pwd -P)
-REAL_HOME=${HOME:-}   # item 20 runs docker, which needs the real HOME for its config
-export HOME=$T/home
-export npm_config_cache=$T/npm-cache
-export GIT_TERMINAL_PROMPT=0
-export DISABLE_AUTOUPDATER=1 # so even `claude --version` can't replace a binary
-mkdir -p "$HOME" "$npm_config_cache"
-
-CLAUDE_VERSION=$(claude --version | awk '{print $1}')
+CLAUDE_VERSION=$(docker run --rm "$IMAGE" claude --version 2> /dev/null | awk '{print $1}')
 PROBE_NOTE=""
-if [ "$CLAUDE_VERSION" != "$PINNED" ]; then
+if [ "$CLAUDE_VERSION" != "$PIN" ]; then
   if [ -n "${G1_FLOOR_PROBE:-}" ]; then
-    # Item 19 only: an older version, to find the floor. Not an authoritative run.
     PROBE_NOTE="
-**FLOOR PROBE** (G1_FLOOR_PROBE set): run on $CLAUDE_VERSION, not the pinned $PINNED. This is item 19 evidence only; it is not the Gate G1 run.
+**FLOOR PROBE** (G1_FLOOR_PROBE set): run on ${CLAUDE_VERSION:-an unknown version}, not the pinned $PIN. This is item 21 evidence only; it is not the Gate G1 run.
 "
   else
-    die "claude is $CLAUDE_VERSION but images/base/claude-code-version pins $PINNED; install that exact version. (For item 19 only, G1_FLOOR_PROBE=1 allows another version.)"
+    die "claude in $IMAGE is '${CLAUDE_VERSION:-unknown}' but images/base/claude-code-version pins $PIN. (For item 21 only, G1_FLOOR_PROBE=1 allows another version.)"
   fi
 fi
+IMAGE_ID=$(docker image inspect -f '{{.Id}} {{join .RepoDigests ","}}' "$IMAGE")
 
 # ------------------------------------------------------------------- layout
-S=$T/s                       # one dir per item
-RES=$T/results               # one file per item, assembled into report.md
-FX=$T/fx                     # the fixture, built by make-fixture.sh
-MARK=$T/mark                 # plugin code writes a file here when it runs
-SEED=$T/store                # the plugin store, a Claude Code seed (read-only)
-PRISTINE=$T/store-pristine   # copy of the store as built; restored between items
-RUNNER=$T/runner-config      # CLAUDE_CONFIG_DIR of the store runner
-EMPTY=$T/empty               # cwd of the store runner
+T=$(mktemp -d "${TMPDIR:-/tmp}/of-g1.XXXXXX")
+T=$(cd "$T" && pwd -P)
+S=$T/s                # one dir per item
+RES=$T/results        # one file per item, assembled into report.md
+FX=$T/fx              # the fixture, built by make-fixture.sh
+R=$T/served           # the bare git repos the containers see (read-only)
+MARK=$T/mark          # plugin code writes a file here when it runs
 EV=$T/evidence.tmp
+HUID=$(id -u)
+HGID=$(id -g)
 PROMPT='Reply with the single word ok.'
-mkdir -p "$S" "$RES" "$MARK" "$RUNNER" "$EMPTY"   # MARK up front: set -eu safe
+mkdir -p "$S" "$RES" "$R" "$MARK"   # MARK up front: set -eu safe
 : > "$EV"
 : > "$T/summary.tsv"
 : > "$T/constants.txt"
-AG=""
-W=""
+P="" AG="" W="" HM=""        # the current agent: plugins dir, config dir, workdir, home
+XENV=""                      # extra docker -e args (no spaces in any value)
+CNET=""                      # docker network args
+SYNC_ENV=""                  # set by item 2: -e CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1 if needed
+USE_GITHUB=0                 # set by item 0 when the file:// git marketplace is refused
+GIT_OK=yes                   # no when items 4-7 cannot run
+FILE_URL_NOTE="not decided"
 
-cd "$T" # never leave the owner's cwd (maybe a git repo) as the cwd of git -C ""
+cd "$T" # never leave the owner's cwd (maybe a git repo) as the cwd of anything
 echo "g1: work dir $T"
-echo "g1: claude $CLAUDE_VERSION (pinned $PINNED)"
+echo "g1: claude $CLAUDE_VERSION (pinned $PIN), image $IMAGE"
 
 # ------------------------------------------------------------- small helpers
 ev() { printf '%s\n' "$*" >> "$EV"; }
@@ -104,19 +107,19 @@ ev() { printf '%s\n' "$*" >> "$EV"; }
 evf() { # <label> <file>: indented, capped excerpt of a file
   ev "$1:"
   if [ -s "$2" ]; then
-    head -n 40 "$2" | cut -c1-300 | sed 's/^/    /' >> "$EV"
+    sed -n '1,40p' "$2" | cut -c1-300 | sed 's/^/    /' >> "$EV"
   else
     ev "    (empty)"
   fi
 }
 
-record() { # <id> <PASS|FAIL|RECORDED|MANUAL> <title>: file the evidence gathered so far
+record() { # <id> <PASS|FAIL|RECORDED|MANUAL|NOT RUN> <title>: file the evidence gathered so far
   printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$T/summary.tsv"
   {
     printf '### %s. %s\n\nStatus: **%s**\n\n```\n' "$1" "$3" "$2"
     cat "$EV"
     printf '```\n\n'
-  } > "$RES/$1.md"
+  } > "$RES/$(printf '%02d' "$1").md"
   : > "$EV"
   printf '[%s] %s: %s\n' "$2" "$1" "$3"
 }
@@ -127,180 +130,197 @@ mark_clear() {
   mkdir -p "$MARK"
   find "$MARK" -mindepth 1 -delete
 }
-
 mark_list() { ls -A "$MARK" | paste -s -d, -; }
-
-stamp() { # <file>: an mtime that every later write is newer than
-  sleep 1
-  touch "$1"
-  sleep 1
-}
+# The marks that only a session writes (hook, MCP server, bin/x, monitor). Any
+# other mark was written by code that ran at install time.
+install_marks() { ls -A "$MARK" | grep -v -E '^(hook-sessionstart|mcp-start|bin-x|monitor)$' | paste -s -d, - || true; }
 
 # run_limited <seconds> <command...>: a timeout that works without GNU timeout.
+# The command keeps the caller's stdin (the <&0).
 run_limited() {
   local secs=$1 pid watcher rc=0
   shift
-  "$@" &
+  "$@" <&0 &
   pid=$!
-  ( sleep "$secs"; pkill -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+  ( sleep "$secs"; pkill -P "$pid" 2> /dev/null; kill "$pid" 2> /dev/null ) > /dev/null 2>&1 &
   watcher=$!
   wait "$pid" || rc=$?
-  kill "$watcher" 2>/dev/null || true
-  wait "$watcher" 2>/dev/null || true
+  kill "$watcher" 2> /dev/null || true
+  wait "$watcher" 2> /dev/null || true
   return "$rc"
 }
 
-seed_rw() { chmod -R u+w "$SEED"; }
-seed_ro() { chmod -R a-w "$SEED"; }
-
-reset_seed() { # back to the store as built, read-only
-  chmod -R u+w "$SEED" 2>/dev/null || true
-  rm -rf "$SEED"
-  cp -a "$PRISTINE" "$SEED"
-  seed_ro
-}
-
-clone_dir() { # <marketplace>: its installLocation, or die if unregistered
-  local p
-  p=$(jq -r --arg n "$1" '.[$n].installLocation // empty' "$SEED/known_marketplaces.json")
-  [ -n "$p" ] || die "marketplace $1 is not registered in the store"
-  printf '%s\n' "$p"
-}
-clone_head() { git -C "$(clone_dir "$1")" rev-parse HEAD; }
-
-fresh_ws() { # <name>: new workdir W (no .claude settings) and agent config dir AG
-  W=$T/w/$1
+fresh_ws() { # <name>: a new agent: plugins dir P, config dir AG, workdir W, home HM
+  P=$T/p/$1
   AG=$T/ag/$1
-  chmod -R u+w "$W" "$AG" 2>/dev/null || true
-  rm -rf "$W" "$AG"
-  mkdir -p "$W" "$AG/plugins" "$AG/skills"
+  W=$T/w/$1
+  HM=$T/hm/$1
+  rm -rf "$P" "$AG" "$W" "$HM"
+  mkdir -p "$P" "$AG/skills" "$W" "$HM"
+  XENV=$SYNC_ENV
+  CNET=""
   mark_clear
 }
 
-# What spec 7.3 step 3 does at every start: the agent's plugins folder is
-# emptied except data/, and its skills, agents and commands folders are emptied.
-scrub_agent() { # <ag>
-  mkdir -p "$1/plugins" "$1/skills" "$1/agents" "$1/commands"
-  find "$1/plugins" -mindepth 1 -maxdepth 1 ! -name data -exec rm -rf {} +
-  find "$1/skills" "$1/agents" "$1/commands" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+# ----------------------------------------------------------------- the fixture
+first_of() { case $1 in acme) echo "$FIX_FIRST" ;; acme-latest) echo "$LAT_FIRST" ;; esac; }
+second_of() { case $1 in acme) echo "$FIX_SECOND" ;; acme-latest) echo "$LAT_SECOND" ;; esac; }
+src_of() { case $1 in acme) echo "$FX/src-fixture.git" ;; acme-latest) echo "$FX/src-latest.git" ;; esac; }
+mkt_of() { case $1 in acme) echo fixture ;; acme-latest) echo fixlatest ;; esac; }
+gh_repo() { case $1 in acme) echo "$G1_GITHUB_REPO" ;; acme-latest) echo "${G1_GITHUB_REPO}-latest" ;; esac; }
+
+served_dest() { # <acme|acme-latest>: where the containers' copy lives
+  if [ "$USE_GITHUB" = 1 ]; then echo "https://github.com/$(gh_repo "$1").git"; else echo "$R/$1.git"; fi
 }
 
-# --------------------------------------------------------------- claude runs
-# The store runner, as spec 7.2 runs it: CLAUDE_CODE_PLUGIN_CACHE_DIR is the
-# store, its own CLAUDE_CONFIG_DIR, an empty cwd, an env of exactly PATH, HOME
-# and DISABLE_AUTOUPDATER (plus MARK and the npm cache, so a leak of plugin
-# code is visible and nothing writes to the real npm cache), and
-# CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 for install and update.
-# STORE and RCFG may be set per call to point at a preview copy.
-runner_cmd() { # <traffic-off|traffic-on> <claude args...>
-  local mode=$1
-  shift
-  local -a e=(
-    PATH="$PATH" HOME="$HOME" MARK="$MARK" npm_config_cache="$npm_config_cache"
-    CLAUDE_CODE_PLUGIN_CACHE_DIR="${STORE:-$SEED}"
-    CLAUDE_CONFIG_DIR="${RCFG:-$RUNNER}"
-    DISABLE_AUTOUPDATER=1
-  )
-  if [ "$mode" = traffic-off ]; then
-    e+=(CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1)
+# The source JSON of a served repo: the file URL, or GitHub when item 0 said so.
+src_git() { # <acme|acme-latest>
+  if [ "$USE_GITHUB" = 1 ]; then
+    jq -n -c --arg r "$(gh_repo "$1")" '{source: "github", repo: $r}'
+  else
+    jq -n -c --arg u "file:///fixture/$1.git" '{source: "git", url: $u}'
   fi
-  env -i "${e[@]}" sh -c 'cd "$0" && exec claude "$@"' "$EMPTY" "$@"
+}
+SRC_DIR='{"source":"directory","path":"/fixture/dir"}'
+SRC_OFFICIAL='{"source":"github","repo":"anthropics/claude-plugins-official"}'
+SRC_SUPER='{"source":"github","repo":"obra/superpowers-marketplace"}'
+
+serve_reset() { # <repo>: only the first commit, tags v1 and dep--v1.0.0, branch stable
+  local d first src
+  d=$(served_dest "$1")
+  first=$(first_of "$1")
+  src=$(src_of "$1")
+  if [ "$USE_GITHUB" != 1 ]; then
+    rm -rf "$d"
+    git init -q --bare -b main "$d"
+  fi
+  git -C "$src" push -q --force "$d" "$first:refs/heads/main" "$first:refs/heads/stable" \
+    refs/tags/v1:refs/tags/v1 refs/tags/dep--v1.0.0:refs/tags/dep--v1.0.0 > /dev/null 2>&1 \
+    || die "could not serve $1 at $d"
 }
 
-# The factory writes the runner's settings.json before each run (spec 7.2):
-# extraKnownMarketplaces matching exactly the store's known_marketplaces.json,
-# each with autoUpdate: false, and nothing else. Enabled after the seed is
-# built; the build-time runs stay bare because the marketplaces don't exist yet.
-RUNNER_READY=""
-write_runner_settings() {
-  jq -c '{extraKnownMarketplaces: map_values({source: .source, autoUpdate: false})}' \
-    "${STORE:-$SEED}/known_marketplaces.json" > "$RUNNER/settings.json"
+serve_push2() { # <repo>: "push" the second commit to main
+  git -C "$(src_of "$1")" push -q --force "$(served_dest "$1")" "$(second_of "$1"):refs/heads/main" > /dev/null 2>&1 \
+    || die "could not push the second commit of $1"
 }
 
-rr() { # <outfile> <mode> <claude args...>: run, log, never fail; last line is exit=N
+# --------------------------------------------------------------- the container
+# ctr <command...>: one fresh `docker run --rm` of the image, the agent as spec
+# 7.3 builds it: CLAUDE_CONFIG_DIR=$AG (an empty skills/), the plugins dir $P
+# mounted read-write at the same path as CLAUDE_CODE_PLUGIN_CACHE_DIR,
+# DISABLE_AUTOUPDATER=1, and the fixtures mounted read-only. The credential is
+# handed over by name (-e NAME) and only when CRED=1.
+ctr() {
+  local cred="" i=""
+  if [ "${CRED:-0}" = 1 ]; then cred="-e CLAUDE_CODE_OAUTH_TOKEN"; fi
+  if [ "${CTR_I:-0}" = 1 ]; then i="-i"; fi
+  # shellcheck disable=SC2086
+  docker run --rm $i $CNET \
+    -e HOST_UID="$HUID" -e HOST_GID="$HGID" \
+    -e CLAUDE_CONFIG_DIR="$AG" -e CLAUDE_CODE_PLUGIN_CACHE_DIR="$P" -e DISABLE_AUTOUPDATER=1 \
+    -e MARK="$MARK" -e GIT_TERMINAL_PROMPT=0 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e 'GIT_CONFIG_VALUE_0=*' \
+    $cred $XENV \
+    -v "$P:$P" -v "$AG:$AG" -v "$W:$W" -v "$MARK:$MARK" -v "$HM:/home/agent" \
+    -v "$FX/dir:/fixture/dir:ro" -v "$FX/evil:/fixture/evil:ro" \
+    -v "$R/acme.git:/fixture/acme.git:ro" -v "$R/acme-latest.git:/fixture/acme-latest.git:ro" \
+    -w "$W" "$IMAGE" "$@"
+}
+
+# pc <outfile> <claude plugin args...>: a plugin command, no credential; never
+# fails; the last line is exit=N.
+pc() {
   local out=$1 rc=0
   shift
-  if [ -n "$RUNNER_READY" ] && [ -z "${RCFG:-}" ]; then write_runner_settings; fi
-  run_limited 240 runner_cmd "$@" > "$out" 2>&1 || rc=$?
+  run_limited 240 ctr claude plugin "$@" > "$out" 2>&1 || rc=$?
   printf 'exit=%s\n' "$rc" >> "$out"
 }
+pc_rc() { tail -n 1 "$1" | sed 's/^exit=//'; }
 
-rr_rc() { tail -n 1 "$1" | sed 's/^exit=//'; }
-
-# The agent, as spec 7.3 builds it: CLAUDE_CONFIG_DIR=$AG (read from AG),
-# CLAUDE_CODE_PLUGIN_SEED_DIR, DISABLE_AUTOUPDATER=1, an env of PATH and HOME
-# plus MARK, TERM (the interactive items need it) and the caller's credential. G1_EXTRA ("A=1 B=2") adds variables.
-# This function is copied into $T/agent.sh for the manual items.
-agent_cmd() { # <workdir> <claude args...>
-  local w=$1
-  shift
-  local -a e=(
-    PATH="$PATH" HOME="$HOME" MARK="$MARK" TERM="${TERM:-xterm-256color}"
-    CLAUDE_CONFIG_DIR="${AG:?AG is not set}"
-    CLAUDE_CODE_PLUGIN_SEED_DIR="$SEED"
-    DISABLE_AUTOUPDATER=1
-  )
-  local v api oauth
-  # Inside run.sh the credential is in G1_KEY_API / G1_KEY_OAUTH (not exported).
-  # In a manual agent.sh run it is the exported ANTHROPIC_API_KEY or
-  # CLAUDE_CODE_OAUTH_TOKEN of that terminal.
-  api=${G1_KEY_API:-${ANTHROPIC_API_KEY:-}}
-  oauth=${G1_KEY_OAUTH:-${CLAUDE_CODE_OAUTH_TOKEN:-}}
-  if [ -n "$api" ]; then e+=("ANTHROPIC_API_KEY=$api"); fi
-  if [ -n "$oauth" ]; then e+=("CLAUDE_CODE_OAUTH_TOKEN=$oauth"); fi
-  set -f # G1_EXTRA is split on spaces only, never globbed
-  # shellcheck disable=SC2086
-  for v in ${G1_EXTRA:-}; do
-    e+=("$v")
-  done
-  set +f
-  env -i "${e[@]}" sh -c 'cd "$0" && exec claude "$@"' "$w" "$@"
-}
-
-{
-  printf '#!/usr/bin/env bash\n# usage: export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN, then\n#   AG=<agent config dir> agent.sh <workdir> <claude args...>\nset -eu\n'
-  declare -p HOME SEED MARK
-  declare -f agent_cmd
-  printf 'agent_cmd "$@"\n'
-} > "$T/agent.sh"
-chmod +x "$T/agent.sh"
-
-# agent_run <dir> <workdir> <settings.json> <prompt> [claude args...]
-# Captures the whole stream (never `head`, which can kill the run before hooks
-# and MCP write) and selects init from it with jq.
-agent_run() {
-  local dir=$1 w=$2 settings=$3 prompt=$4 rc=0
-  shift 4
+# session <dir> <settings-file> <prompt> [claude args...]: a headless session.
+# The whole stream is captured (never `head`, which can kill the run before
+# hooks and MCP write) and init is selected from it with jq.
+session() {
+  local dir=$1 sf=$2 prompt=$3 rc=0 CRED=1 t0
+  shift 3
   mkdir -p "$dir"
-  rm -f "$dir/exit.txt"
-  run_limited "${AGENT_LIMIT:-300}" agent_cmd "$w" -p "$prompt" \
-    --output-format stream-json --verbose --settings "$(cat "$settings")" "$@" \
+  t0=$(date +%s)
+  run_limited "${SESSION_LIMIT:-300}" ctr claude -p "$prompt" \
+    --output-format stream-json --verbose --settings "$(cat "$sf")" "$@" \
     > "$dir/out.jsonl" 2> "$dir/stderr.txt" || rc=$?
   echo "$rc" > "$dir/exit.txt"
-  jq -c 'select(.type=="system" and .subtype=="init")' "$dir/out.jsonl" > "$dir/init.json" 2>/dev/null || true
+  echo $(($(date +%s) - t0)) > "$dir/seconds.txt"
+  jq -c 'select(.type=="system" and .subtype=="init")' "$dir/out.jsonl" > "$dir/init.json" 2> /dev/null || true
+}
+
+umsg() { jq -n -c --arg t "$1" '{type: "user", message: {role: "user", content: $t}}'; }
+
+# fifo_session <dir> <settings-file> <driver> [claude args...]: a stream-json
+# session whose stdin is whatever the shell function <driver> writes, so that
+# one session can stay open for a long time or take several messages.
+fifo_session() {
+  local dir=$1 sf=$2 driver=$3 rc=0 CRED=1 CTR_I=1 dpid t0
+  shift 3
+  mkdir -p "$dir"
+  rm -f "$dir/in"
+  mkfifo "$dir/in"
+  "$driver" > "$dir/in" &
+  dpid=$!
+  t0=$(date +%s)
+  run_limited "${SESSION_LIMIT:-300}" ctr claude -p --input-format stream-json \
+    --output-format stream-json --verbose --settings "$(cat "$sf")" "$@" \
+    < "$dir/in" > "$dir/out.jsonl" 2> "$dir/stderr.txt" || rc=$?
+  kill "$dpid" 2> /dev/null || true
+  wait "$dpid" 2> /dev/null || true
+  echo "$rc" > "$dir/exit.txt"
+  echo $(($(date +%s) - t0)) > "$dir/seconds.txt"
+  jq -c 'select(.type=="system" and .subtype=="init")' "$dir/out.jsonl" > "$dir/init.json" 2> /dev/null || true
 }
 
 # --------------------------------------------------------------- init helpers
 plugin_names() { # <init.json> -> sorted comma list, marketplace suffix dropped
-  jq -r '.plugins[]? | (if type=="object" then .name else . end) | sub("@.*$";"")' "$1" 2>/dev/null \
+  jq -r '.plugins[]? | (if type=="object" then .name else . end) | sub("@.*$";"")' "$1" 2> /dev/null \
     | sort -u | paste -s -d, -
 }
-
 plugin_paths() { # <init.json>
-  jq -r '.plugins[]? | (if type=="object" then (.path // "") else "" end)' "$1" 2>/dev/null
+  jq -r '.plugins[]? | (if type=="object" then (.path // "") else "" end)' "$1" 2> /dev/null
 }
-
 has_plugin() { # <init.json> <name>
-  case ",$(plugin_names "$1")," in
-    *",$2,"*) return 0 ;;
-  esac
+  case ",$(plugin_names "$1")," in *",$2,"*) return 0 ;; esac
   return 1
 }
-
+loaded_versions() { # <init.json>: name=version for each loaded plugin, read from its manifest
+  local p v n out=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$p" in /fixture/dir*) p=$FX/dir${p#/fixture/dir} ;; esac
+    n=$(jq -r '.name // "?"' "$p/.claude-plugin/plugin.json" 2> /dev/null || echo '?')
+    v=$(jq -r '.version // "?"' "$p/.claude-plugin/plugin.json" 2> /dev/null || echo '?')
+    out="$out$n=$v,"
+  done < <(plugin_paths "$1")
+  printf '%s' "${out%,}"
+}
+loaded_version() { # <init.json> <plugin>: its version, or none
+  local v
+  v=$(loaded_versions "$1" | tr ',' '\n' | sed -n "s/^$2=//p" | head -n 1)
+  printf '%s' "${v:-none}"
+}
+under_p() { # <init.json>: count of plugin paths under $P, and outside it
+  local in=0 out=0 p
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$p" in "$P"/*) in=$((in + 1)) ;; *) out=$((out + 1)) ;; esac
+  done < <(plugin_paths "$1")
+  printf '%s under P, %s elsewhere' "$in" "$out"
+}
+order() { # <out.jsonl>: the first stream events, in order
+  jq -r 'select(.type != null) | .type + (if .subtype then "/" + .subtype else "" end)' "$1" 2> /dev/null | sed -n '1,8p' | paste -s -d' ' -
+}
 evi() { # <label> <init.json>: what an init event says about plugins and servers
   ev "$1:"
   if [ -s "$2" ]; then
     ev "    plugins: $(jq -c '.plugins' "$2")"
+    ev "    loaded versions: $(loaded_versions "$2")"
     ev "    mcp_servers: $(jq -c '.mcp_servers' "$2")"
     ev "    agents: $(jq -c '.agents' "$2")"
     ev "    slash_commands: $(jq -c '.slash_commands' "$2" | cut -c1-400)"
@@ -308,411 +328,608 @@ evi() { # <label> <init.json>: what an init event says about plugins and servers
     ev "    NO init event in the stream (see out.jsonl and stderr.txt under $(dirname "$2"))"
   fi
 }
+evrun() { # <label> <run dir>: init, event order, time and the head of stderr
+  evi "$1" "$2/init.json"
+  ev "    events: $(order "$2/out.jsonl"); took $(cat "$2/seconds.txt")s; exit $(cat "$2/exit.txt")"
+  evf "    stderr" "$2/stderr.txt"
+}
+
+# The agent's plugins dir.
+cache_versions() { ls "$P/cache/$1/$2" 2> /dev/null | paste -s -d, - || true; } # <mkt> <plugin>
+clone_head() { git -C "$P/marketplaces/$1" rev-parse HEAD 2> /dev/null || echo none; }
+p_listing() { (cd "$P" && find . -maxdepth 3 | sort | sed -n '1,70p'); }
+p_sum() { (cd "$P" && find cache -maxdepth 3 -type d 2> /dev/null | sort | cksum | awk '{print $1}'); }
+inst_sum() { if [ -f "$P/installed_plugins.json" ]; then cksum < "$P/installed_plugins.json" | awk '{print $1}'; else echo none; fi; }
+orphans() { find "$P/cache" -name .orphaned_at 2> /dev/null | sed "s#^$P/##" | paste -s -d, - || true; }
 
 # --------------------------------------------------------------- settings
-# enabled_json <true-key...>: the enabledPlugins object of spec 7.3 step 7:
-# true for the keys given, an explicit false for every other plugin of every
-# marketplace in the store (from each catalog and from what is installed).
-enabled_json() {
-  local trues all
-  trues=$(printf '%s\n' "$@" | jq -R . | jq -s -c .)
-  all=$(
-    jq -r 'to_entries[] | "\(.key)\t\(.value.installLocation)"' "$SEED/known_marketplaces.json" |
-      while IFS="$(printf '\t')" read -r mkt loc; do
-        jq -r --arg m "$mkt" '.plugins[]?.name | "\(.)@\($m)"' "$loc/.claude-plugin/marketplace.json"
-      done
-    jq -r '.plugins | keys[]' "$SEED/installed_plugins.json"
-  )
-  printf '%s\n%s\n' "$all" "$(printf '%s\n' "$@")" |
-    jq -R -s -c --argjson t "$trues" '
-      split("\n") | map(select(length > 0)) | unique
-      | map(. as $k | {($k): ($t | index($k) != null)}) | add'
+# decl <name> <source-json> [<ref> [<autoUpdate>]]: one extraKnownMarketplaces entry
+decl() {
+  jq -n -c --arg n "$1" --argjson s "$2" --arg r "${3:-}" --argjson a "${4:-false}" \
+    '{($n): {source: ($s + (if $r == "" then {} else {ref: $r} end)), autoUpdate: $a}}'
 }
-
-# make_settings <outfile> <enabledPlugins json> <marketplace name...>: the inline
-# --settings JSON of spec 7.3 step 7. extraKnownMarketplaces holds, for each
-# marketplace named, the exact source the seed recorded plus autoUpdate: false.
-make_settings() {
-  local out=$1 enabled=$2 mk='{}' name
+# enabled <key=true|false>...: an enabledPlugins object
+enabled() {
+  printf '%s\n' "$@" | jq -R -s -c 'split("\n") | map(select(length > 0) | split("=") | {(.[0]): (.[1] == "true")}) | add // {}'
+}
+# settings <out> <enabled-json> [<decl-json>...]: the inline --settings JSON of spec 7.3 step 5
+settings() {
+  local out=$1 e=$2 m='{}'
   shift 2
-  for name in "$@"; do
-    mk=$(jq -c --arg n "$name" --slurpfile k "$SEED/known_marketplaces.json" \
-      '. + {($n): {source: $k[0][$n].source, autoUpdate: false}}' <<< "$mk")
-  done
-  jq -n -c --argjson e "$enabled" --argjson m "$mk" \
+  if [ "$#" -gt 0 ]; then m=$(printf '%s\n' "$@" | jq -s -c 'add'); fi
+  jq -n -c --argjson e "$e" --argjson m "$m" \
     '{enabledPlugins: $e, extraKnownMarketplaces: $m, syncClaudeAiPlugins: false}' > "$out"
 }
+DECL_DIR=""
+std_settings() { settings "$1" "$(enabled marker@fixdir=true dep@fixdir=true)" "$DECL_DIR"; } # marker and dep on, directory marketplace
+bare_settings() { printf '%s' '{"syncClaudeAiPlugins":false}' > "$1"; }                         # no plugins at all
 
-# marker and dep true, everything else false, the fixture marketplace declared.
-base_settings() { make_settings "$1" "$(enabled_json marker@fixture dep@fixture)" fixture; }
-
-# ---------------------------------------------------------------- the seed
-detach_behind() { # <clone>: as the factory pins it, one commit behind origin
-  local d=$1
-  if ! git -C "$d" rev-parse -q --verify 'HEAD~1' > /dev/null 2>&1; then
-    git -C "$d" fetch -q --deepen=2 # a shallow clone has no parent yet
-  fi
-  git -C "$d" checkout -q --detach 'HEAD~1'
+# A public sha and tag, read with plain git in a throwaway container (no credential).
+net_git() {
+  local rc=0
+  fresh_ws net
+  ctr git "$@" 2> /dev/null || rc=$?
+  return "$rc"
 }
-
-verify_remote() { # <owner/repo> <sha>
-  local got
-  got=$(git ls-remote "https://github.com/$1.git" refs/heads/main | awk '{print $1}')
-  [ "$got" = "$2" ] || die "origin/main of $1 is '${got:-missing}', expected $2. Push the fixture (scripts/g1/fixture/README.md)."
-}
-
-build_seed() {
-  local d=$S/00
-  mkdir -p "$d"
-  chmod -R u+w "$SEED" 2>/dev/null || true
-  rm -rf "$SEED" "$PRISTINE"
-  mkdir -p "$SEED"
-  mark_clear
-  rr "$d/add-fixture.txt" traffic-on plugin marketplace add "$OWNER/of-g1-fixture"
-  rr "$d/add-localdir.txt" traffic-on plugin marketplace add "$FX/localdir"
-  rr "$d/add-official.txt" traffic-on plugin marketplace add anthropics/claude-plugins-official
-  [ -s "$SEED/known_marketplaces.json" ] || die "no $SEED/known_marketplaces.json after marketplace add; see $d"
-  for m in fixture localdir claude-plugins-official; do
-    jq -e --arg m "$m" 'has($m)' "$SEED/known_marketplaces.json" > /dev/null || die "marketplace $m was not registered; see $d"
-  done
-  # Pin every clone one commit behind origin, so "doesn't pull" can fail.
-  detach_behind "$(clone_dir fixture)"
-  detach_behind "$(clone_dir claude-plugins-official)"
-  rr "$d/install-marker.txt" traffic-off plugin install marker@fixture
-  rr "$d/install-dep.txt" traffic-off plugin install dep@fixture
-  rr "$d/install-skill-creator.txt" traffic-off plugin install skill-creator@claude-plugins-official
-  for k in marker@fixture dep@fixture skill-creator@claude-plugins-official; do
-    jq -e --arg k "$k" '.plugins | has($k)' "$SEED/installed_plugins.json" > /dev/null || die "$k did not install; see $d"
-  done
-  mark_list > "$d/mark-after-build.txt"
-  cp -a "$SEED" "$PRISTINE"
-  seed_ro
-  RUNNER_READY=1
-}
+remote_head() { net_git ls-remote "$1" HEAD | awk '{print $1}' | head -n 1; } # <url>
+remote_tag() { net_git ls-remote --tags --refs "$1" | awk '{print $2}' | sed 's#^refs/tags/##' | tail -n 1; }
 
 # --------------------------------------------------------------- the items
-# Control (not a spec item): proves the markers can fire, so an empty $MARK
-# elsewhere means something.
+# 0: a file-URL git marketplace. Decides whether items 4-9 need GitHub.
 item00() {
-  local d=$S/00/control
-  fresh_ws c00
-  reset_seed
-  base_settings "$d.json"
-  agent_run "$d" "$W" "$d.json" 'Run the shell command x with the Bash tool, then reply ok.' --allowedTools Bash
-  evi "init" "$d/init.json"
-  ev "markers written: $(mark_list)"
-  ev "expected when everything works: hook-sessionstart, mcp-start, bin-x, monitor"
-  evf "stderr" "$d/stderr.txt"
-  case ",$(mark_list)," in
-    *,hook-sessionstart,*) record 00 RECORDED "Control: marker plugin code can write to MARK (not a spec item)" ;;
-    *) record 00 FAIL "Control: the SessionStart hook wrote nothing, so empty-MARK checks prove nothing" ;;
-  esac
+  local d=$S/00 ok=no add_rc inst_rc
+  fresh_ws z0
+  mkdir -p "$d"
+  pc "$d/add.txt" marketplace add file:///fixture/acme.git
+  add_rc=$(pc_rc "$d/add.txt")
+  evf "claude plugin marketplace add file:///fixture/acme.git (exit $add_rc)" "$d/add.txt"
+  pc "$d/add-git.txt" marketplace add git+file:///fixture/acme.git
+  evf "claude plugin marketplace add git+file:///fixture/acme.git (exit $(pc_rc "$d/add-git.txt"))" "$d/add-git.txt"
+
+  # The way the factory declares it: --settings with a git source.
+  fresh_ws z0b
+  settings "$d/settings.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)")"
+  ev "declaration: $(jq -c '.extraKnownMarketplaces' "$d/settings.json")"
+  session "$d/run" "$d/settings.json" "$PROMPT"
+  evrun "session with the file:// git marketplace declared" "$d/run"
+  ev "known_marketplaces.json: $(jq -c . "$P/known_marketplaces.json" 2> /dev/null || echo absent)"
+  ev "marketplace clone HEAD: $(clone_head fixture) (first commit $FIX_FIRST)"
+  if has_plugin "$d/run/init.json" marker; then ok=yes; fi
+
+  inst_rc=""
+  if [ "$ok" = no ]; then
+    fresh_ws z0c
+    pc "$d/install.txt" marketplace add /fixture/dir
+    inst_rc=$(pc_rc "$d/install.txt")
+    ev "control: the directory marketplace adds with exit $inst_rc (so a failure above is about the file:// URL, not the container)"
+  fi
+  if [ "$ok" = yes ]; then
+    FILE_URL_NOTE="Item 0: Claude Code accepts file:///fixture/acme.git as a git marketplace in --settings; no GitHub repo is needed."
+    ev "RECORDED: accepted in --settings; no GitHub needed. CLI marketplace add of the same URL exits $add_rc."
+  elif [ -n "${G1_GITHUB_REPO:-}" ]; then
+    USE_GITHUB=1
+    FILE_URL_NOTE="Item 0: the file:// git marketplace was refused; items 4-9 use GitHub ($G1_GITHUB_REPO and ${G1_GITHUB_REPO}-latest)."
+    jq -c --arg u "https://github.com/$G1_GITHUB_REPO.git" \
+      '.plugins |= map(if .name == "shaext-ext" then .source.url = $u else . end)' \
+      "$FX/dir/.claude-plugin/marketplace.json" > "$d/catalog.json"
+    cp "$d/catalog.json" "$FX/dir/.claude-plugin/marketplace.json"
+    serve_reset acme
+    serve_reset acme-latest
+    ev "RECORDED: refused. Falling back to GitHub: $G1_GITHUB_REPO (pushed with your git credentials)."
+  else
+    GIT_OK=no
+    FILE_URL_NOTE="Item 0: the file:// git marketplace was refused and G1_GITHUB_REPO is not set; items 4-7 did not run."
+    ev "RECORDED: refused, and G1_GITHUB_REPO is not set: items 4-7 are NOT RUN. Set G1_GITHUB_REPO=<you>/of-g1-fixture (README) and rerun."
+  fi
+  record 0 RECORDED "A file-URL git marketplace: accepted in --settings: $ok"
 }
 
+# 1: only enabled plugins load; init.plugins entry shape; init before the first message.
 item01() {
-  local d=$S/01 bad=0 n=0 p names status=PASS
-  fresh_ws s01
-  reset_seed
+  local d=$S/01 status=PASS n bad names
   mkdir -p "$d"
 
-  # a. marker and dep true, skill-creator explicitly false.
-  base_settings "$d/a.json"
-  agent_run "$d/a" "$W" "$d/a.json" "$PROMPT"
-  names=$(plugin_names "$d/a/init.json")
-  while IFS= read -r p; do
-    n=$((n + 1))
-    case "$p" in "$SEED"/*) ;; *) bad=$((bad + 1)) ;; esac
-  done < <(plugin_paths "$d/a/init.json")
-  evi "(a) marker+dep true, skill-creator false" "$d/a/init.json"
-  ev "(a) plugin names: [$names]; plugin paths: $n, outside \$SEED: $bad"
-  if [ "$names" != "dep,marker" ] || [ "$n" -ne 2 ] || [ "$bad" -ne 0 ]; then
-    status=FAIL
+  # a. marker and dep true, rel absent from enabledPlugins: does the defaultEnabled plugin load?
+  fresh_ws s01a
+  std_settings "$d/a.json"
+  session "$d/a" "$d/a.json" "$PROMPT"
+  evrun "(a) marker and dep true, rel absent" "$d/a"
+  if has_plugin "$d/a/init.json" rel; then
+    ev "(a) RECORDED: rel LOADS with no enabledPlugins entry (defaultEnabled applies, R14)"
+  else
+    ev "(a) RECORDED: rel does NOT load without an entry"
   fi
 
-  # b. skill-creator's entry removed (no explicit false): does it load?
+  # b. rel false: it must not load; the loaded set is exactly the true plugins, each under $P.
   fresh_ws s01b
-  enabled_json marker@fixture dep@fixture | jq -c 'del(.["skill-creator@claude-plugins-official"])' > "$d/b-enabled.json"
-  make_settings "$d/b.json" "$(cat "$d/b-enabled.json")" fixture
-  agent_run "$d/b" "$W" "$d/b.json" "$PROMPT"
-  evi "(b) skill-creator entry removed" "$d/b/init.json"
-  if has_plugin "$d/b/init.json" skill-creator; then
-    ev "(b) RECORDED: skill-creator LOADS without an enabledPlugins entry (defaultEnabled applies)"
-  else
-    ev "(b) RECORDED: skill-creator does NOT load without an entry"
-  fi
+  settings "$d/b.json" "$(enabled marker@fixdir=true dep@fixdir=true rel@fixdir=false)" "$DECL_DIR"
+  session "$d/b" "$d/b.json" "$PROMPT"
+  evrun "(b) marker and dep true, rel false" "$d/b"
+  names=$(plugin_names "$d/b/init.json")
+  ev "(b) init.plugins names: [$names]; paths: $(under_p "$d/b/init.json")"
+  bad=$(plugin_paths "$d/b/init.json" | grep -c -v "^$P/" || true)
+  n=$(plugin_paths "$d/b/init.json" | grep -c . || true)
+  if [ "$names" != "dep,marker" ] || [ "$bad" -ne 0 ] || [ "$n" -ne 2 ]; then status=FAIL; fi
 
-  # c. dep false: marker should fail to load (dependencies must be enabled, R13).
+  # c. dep absent, then dep false: does marker still load? is an auto-installed dependency enabled without an entry?
   fresh_ws s01c
-  make_settings "$d/c.json" "$(enabled_json marker@fixture)" fixture
-  agent_run "$d/c" "$W" "$d/c.json" "$PROMPT"
-  evi "(c) dep false" "$d/c/init.json"
-  if has_plugin "$d/c/init.json" marker; then
-    ev "(c) RECORDED: marker LOADS with dep false (dependencies are NOT required to be enabled)"
+  settings "$d/c.json" "$(enabled marker@fixdir=true)" "$DECL_DIR"
+  session "$d/c" "$d/c.json" "$PROMPT"
+  evrun "(c) marker true, dep has NO entry" "$d/c"
+  ev "(c) RECORDED: dep loads without an entry (an auto-installed dependency): $(has_plugin "$d/c/init.json" dep && echo yes || echo no); installed_plugins.json: $(jq -c 'map_values(map({version, auto}))' "$P/installed_plugins.json" 2> /dev/null || echo absent)"
+  fresh_ws s01d
+  settings "$d/d.json" "$(enabled marker@fixdir=true dep@fixdir=false)" "$DECL_DIR"
+  session "$d/d" "$d/d.json" "$PROMPT"
+  evrun "(d) marker true, dep false" "$d/d"
+  if has_plugin "$d/d/init.json" marker; then
+    ev "(d) RECORDED: marker LOADS with dep false (dependencies are NOT required to be enabled)"
   else
-    ev "(c) RECORDED: marker does NOT load with dep false (dependencies must be enabled)"
+    ev "(d) RECORDED: marker does NOT load with dep false (dependencies must be enabled, R13)"
   fi
-  grep -i -h -m3 'dependenc' "$d/c/stderr.txt" "$d/c/out.jsonl" 2>/dev/null | cut -c1-300 | sed 's/^/    /' >> "$EV" || true
-  record 01 "$status" "Only enabled plugins load (a asserts; b and c are recorded)"
+  grep -i -h -m3 'dependenc' "$d/d/stderr.txt" "$d/d/out.jsonl" 2> /dev/null | cut -c1-300 | sed 's/^/    /' >> "$EV" || true
+
+  # e. the init.plugins entry shape: a cached git plugin and an in-place directory plugin.
+  fresh_ws s01e
+  if [ "$GIT_OK" = yes ]; then serve_reset acme; fi
+  if [ "$GIT_OK" = yes ]; then
+    settings "$d/e.json" "$(enabled marker@fixture=true dep@fixture=true rel@fixdir=true)" "$DECL_DIR" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
+  else
+    settings "$d/e.json" "$(enabled marker@fixdir=true dep@fixdir=true rel@fixdir=true)" "$DECL_DIR"
+  fi
+  session "$d/e" "$d/e.json" "$PROMPT"
+  evrun "(e) entry shape: marker (cached, git) and rel (in place, directory)" "$d/e"
+  ev "(e) first entry keys: $(jq -c '[.plugins[]? | if type=="object" then keys else "string" end]' "$d/e/init.json" 2> /dev/null | cut -c1-300)"
+  ev "(e) RECORDED: init comes before the first message: events are [$(order "$d/e/out.jsonl")]"
+  const "init.plugins entry shape (item 1): $(jq -c '.plugins' "$d/e/init.json" 2> /dev/null | cut -c1-400); events [$(order "$d/e/out.jsonl")]. Fills B3's init matching."
+  record 1 "$status" "Only enabled plugins load (b asserts; a, c, d and e are recorded)"
 }
 
+# 2: install at start, with and without CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1.
 item02() {
-  local d=$S/02 mode newer status=PASS
-  fresh_ws s02
+  local d=$S/02 mode plain=no sync=no
   mkdir -p "$d"
-  base_settings "$d/settings.json"
-  for mode in readonly writable; do
-    reset_seed
-    if [ "$mode" = writable ]; then seed_rw; fi # as during a store operation
-    stamp "$d/t0-$mode"
-    agent_run "$d/$mode" "$W" "$d/settings.json" "$PROMPT"
-    newer=$(find "$SEED" -newer "$d/t0-$mode" 2>/dev/null || true)
-    evi "seed $mode" "$d/$mode/init.json"
-    if [ -n "$newer" ]; then
-      status=FAIL
-      ev "seed $mode: FILES NEWER THAN t0:"
-      printf '%s\n' "$newer" | head -n 20 | sed 's/^/    /' >> "$EV"
-    else
-      ev "seed $mode: find \$SEED -newer t0 is empty"
+  std_settings "$d/settings.json"
+  for mode in plain sync; do
+    fresh_ws "s02$mode"
+    if [ "$mode" = sync ]; then XENV="-e CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1"; else XENV=""; fi
+    ev "$mode: \$P is empty: $(ls -A "$P" | wc -l | tr -d ' ') entries; marketplace and plugins declared only in --settings"
+    session "$d/$mode" "$d/settings.json" "$PROMPT"
+    evrun "$mode (CLAUDE_CODE_SYNC_PLUGIN_INSTALL=$([ "$mode" = sync ] && echo 1 || echo unset))" "$d/$mode"
+    ev "$mode: marker listed in init (installed before init): $(has_plugin "$d/$mode/init.json" marker && echo yes || echo no); \$P after: $(p_listing | sed -n '1,14p' | paste -s -d' ' -)"
+    if has_plugin "$d/$mode/init.json" marker; then
+      if [ "$mode" = plain ]; then plain=yes; else sync=yes; fi
     fi
   done
-  reset_seed
-  record 02 "$status" "The seed is never written (read-only and writable)"
-}
-
-item03() {
-  local d=$S/03 clone h0 h1 h2 shaext_rc status=PASS
-  reset_seed
-  seed_rw
-  mkdir -p "$d"
-  clone=$(clone_dir fixture)
-  h0=$(git -C "$clone" rev-parse HEAD)
-  ev "fixture clone starts detached at $h0 (first commit is $FIXTURE_FIRST, tip is $FIXTURE_HEAD)"
-
-  # With CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 (as the factory runs install).
-  stamp "$d/t0-off"
-  rr "$d/off-1.txt" traffic-off plugin install ranged@fixture
-  rr "$d/off-2.txt" traffic-off plugin install marker@fixture
-  rr "$d/off-3.txt" traffic-off plugin uninstall ranged@fixture
-  rr "$d/off-4.txt" traffic-off plugin install ranged@fixture
-  h1=$(git -C "$clone" rev-parse HEAD)
-  ev "with the variable: HEAD after four install/uninstall runs = $h1"
-  ev "with the variable: .git files newer than t0: $(find "$clone/.git" -newer "$d/t0-off" -type f 2>/dev/null | wc -l | tr -d ' ')"
-  evf "install ranged (variable set)" "$d/off-1.txt"
-  if [ "$h1" != "$h0" ]; then status=FAIL; fi
-
-  # Without the variable: record whether it moves.
-  stamp "$d/t0-on"
-  rr "$d/on-1.txt" traffic-on plugin uninstall ranged@fixture
-  rr "$d/on-2.txt" traffic-on plugin install ranged@fixture
-  h2=$(git -C "$clone" rev-parse HEAD)
-  if [ "$h2" = "$h0" ]; then
-    ev "without the variable: RECORDED HEAD did NOT move ($h2)"
+  if [ "$plain" = yes ]; then
+    SYNC_ENV=""
+    const "CLAUDE_CODE_SYNC_PLUGIN_INSTALL (item 2): NOT needed; a plain start installs before init. Fills §7.3 step 4."
+    record 2 PASS "Install at start: a plain headless start installs declared plugins before init (sync variable: $sync)"
+  elif [ "$sync" = yes ]; then
+    SYNC_ENV="-e CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1"
+    const "CLAUDE_CODE_SYNC_PLUGIN_INSTALL (item 2): NEEDED; only CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1 installs before init. §7.3 step 4 adds it."
+    record 2 PASS "Install at start: installs before init with CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1 only"
   else
-    ev "without the variable: RECORDED HEAD MOVED to $h2"
+    const "CLAUDE_CODE_SYNC_PLUGIN_INSTALL (item 2): neither variant installs before init. Goes back to Or before PR 2 (fallback: a pre-session claude plugin install)."
+    record 2 FAIL "Install at start: neither variant lists the plugins in init (goes to Or, spec P6)"
   fi
-  ev "without the variable: .git files newer than t0: $(find "$clone/.git" -newer "$d/t0-on" -type f 2>/dev/null | wc -l | tr -d ' ')"
-  evf "install ranged (variable unset)" "$d/on-2.txt"
-
-  # An external source with a sha, with the variable set.
-  rr "$d/shaext.txt" traffic-off plugin install shaext@fixture
-  shaext_rc=$(rr_rc "$d/shaext.txt")
-  ev "external source with sha (shaext@fixture), variable set: exit=$shaext_rc, installed=$(jq -r '.plugins | has("shaext@fixture")' "$SEED/installed_plugins.json")"
-  evf "install shaext" "$d/shaext.txt"
-  reset_seed
-  record 03 "$status" "Install doesn't pull (variable set asserts; the rest is recorded)"
 }
 
-# Files a fetch or pull would touch (not index refreshes from a status-style read).
-fetch_artifacts() { # <clone> <t0>: count
-  find "$1/.git/FETCH_HEAD" "$1/.git/ORIG_HEAD" "$1/.git/packed-refs" "$1/.git/refs" "$1/.git/objects" \
-    -newer "$2" -type f 2>/dev/null | wc -l | tr -d ' '
-}
-
-item04() {
-  local d=$S/04 fh fo fh2 fo2 fnew onew status=PASS
-  reset_seed
-  seed_rw # worst case: a pull could succeed
-  fresh_ws s04
+# 3: the per-agent plugins dir and persistence.
+item03() {
+  local d=$S/03 status=PASS f stray a1 b1 a2 b2 n1 n2
   mkdir -p "$d"
-  fh=$(clone_head fixture)
-  fo=$(clone_head claude-plugins-official)
-  make_settings "$d/settings.json" "$(enabled_json marker@fixture dep@fixture)" fixture claude-plugins-official
-  ev "declaration without ref: $(jq -c '.extraKnownMarketplaces' "$d/settings.json" | cut -c1-300)"
-  stamp "$d/t0"
-  agent_run "$d/net" "$W" "$d/settings.json" "$PROMPT"
-  fh2=$(clone_head fixture)
-  fo2=$(clone_head claude-plugins-official)
-  fnew=$(fetch_artifacts "$(clone_dir fixture)" "$d/t0")
-  onew=$(fetch_artifacts "$(clone_dir claude-plugins-official)" "$d/t0")
-  ev "network on: fixture HEAD $fh -> $fh2; official HEAD $fo -> $fo2"
-  ev "fetch artifacts newer than t0 (FETCH_HEAD, ORIG_HEAD, packed-refs, refs, objects): fixture $fnew, official $onew"
-  ev "RECORDED: all .git files newer than t0: fixture $(find "$(clone_dir fixture)/.git" -newer "$d/t0" -type f 2>/dev/null | wc -l | tr -d ' '), official $(find "$(clone_dir claude-plugins-official)/.git" -newer "$d/t0" -type f 2>/dev/null | wc -l | tr -d ' ') (index refreshes are harmless)"
-  grep -i -h -m10 -E 'clon|fetch|pull|refresh|updat' "$d/net/stderr.txt" 2>/dev/null | cut -c1-300 | sed 's/^/    stderr: /' >> "$EV" || true
-  if [ "$fh" != "$fh2" ] || [ "$fo" != "$fo2" ] || [ "$fnew" != 0 ] || [ "$onew" != 0 ]; then status=FAIL; fi
-
-  # The official marketplace again with the network blocked (a dead proxy).
-  stamp "$d/t0-blocked"
-  AGENT_LIMIT=120 G1_EXTRA="HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9 NO_PROXY=" \
-    agent_run "$d/blocked" "$W" "$d/settings.json" "$PROMPT"
-  fo2=$(clone_head claude-plugins-official)
-  onew=$(fetch_artifacts "$(clone_dir claude-plugins-official)" "$d/t0-blocked")
-  ev "network blocked (dead proxy): official HEAD -> $fo2 (fetch artifacts newer: $onew); init event present: $([ -s "$d/blocked/init.json" ] && echo yes || echo no)"
-  grep -i -h -m10 -E 'clon|fetch|pull|refresh|updat|network|ECONN' "$d/blocked/stderr.txt" 2>/dev/null | cut -c1-300 | sed 's/^/    stderr: /' >> "$EV" || true
-  if [ "$fo" != "$fo2" ] || [ "$onew" != 0 ]; then status=FAIL; fi
-  reset_seed
-  record 04 "$status" "A ref-less declaration doesn't refetch (fixture and official, network on and blocked)"
+  fresh_ws s03
+  std_settings "$d/settings.json"
+  session "$d/first" "$d/settings.json" "$PROMPT"
+  evrun "first start, empty \$P" "$d/first"
+  ev "\$P after the first start:"
+  p_listing | sed 's/^/    /' >> "$EV"
+  for f in installed_plugins.json known_marketplaces.json marketplaces cache data; do
+    if [ -e "$P/$f" ]; then ev "    present: $f"; else ev "    MISSING: $f"; status=FAIL; fi
+  done
+  stray=$(find "$AG" "$HM" \( -name installed_plugins.json -o -name known_marketplaces.json -o -name marketplaces -o -path '*/plugins/cache' \) 2> /dev/null | sed "s#^$T/##" | paste -s -d, - || true)
+  ev "plugin-related files under \$AG or \$HOME: [${stray:-none}]"
+  if [ -n "$stray" ]; then status=FAIL; fi
+  a1=$(p_sum)
+  b1=$(inst_sum)
+  n1=$(plugin_names "$d/first/init.json")
+  mark_clear
+  session "$d/second" "$d/settings.json" "$PROMPT"
+  evrun "restart, same \$P (fresh \$AG)" "$d/second"
+  a2=$(p_sum)
+  b2=$(inst_sum)
+  n2=$(plugin_names "$d/second/init.json")
+  ev "cache dirs cksum: $a1 -> $a2; installed_plugins.json cksum: $b1 -> $b2; plugins loaded: [$n1] -> [$n2]"
+  if [ "$a1" != "$a2" ] || [ "$b1" != "$b2" ] || [ "$n1" != "$n2" ] || [ -z "$n2" ]; then status=FAIL; fi
+  record 3 "$status" "The per-agent plugins dir holds everything, and a restart installs nothing"
 }
 
+# One pin case for item 4: declare <mkt> with <ref>, start, report what Claude Code did.
+PIN_OK=no
+pin_case() { # <id> <mkt> <source-json> <ref> <plugin-key> <expected-clone-head or ''>
+  local id=$1 mkt=$2 src=$3 ref=$4 key=$5 want=$6 d=$S/04/$1 head loaded=no
+  mkdir -p "$d"
+  fresh_ws "s04$id"
+  settings "$d/settings.json" "$(enabled "$key=true")" "$(decl "$mkt" "$src" "$ref" false)"
+  session "$d/run" "$d/settings.json" "$PROMPT"
+  head=$(clone_head "$mkt")
+  if has_plugin "$d/run/init.json" "${key%@*}"; then loaded=yes; fi
+  evrun "($id) $mkt with ref $ref" "$d/run"
+  ev "($id) accepted (the plugin loads): $loaded; marketplace clone HEAD: $head (expected ${want:-n/a}); cache versions: [$(cache_versions "$mkt" "${key%@*}")]"
+  ev "($id) installed: $(jq -c 'map_values(map({version, gitCommitSha}))' "$P/installed_plugins.json" 2> /dev/null || echo absent)"
+  PIN_OK=no
+  if [ "$loaded" = yes ] && { [ -z "$want" ] || [ "$head" = "$want" ]; }; then PIN_OK=yes; fi
+}
+
+# 4: pins Claude Code accepts.
+item04() {
+  local d=$S/04 status=PASS sha tag
+  mkdir -p "$d"
+  if [ "$GIT_OK" = no ]; then
+    ev "NOT RUN: item 0 refused the file:// git marketplace and G1_GITHUB_REPO is not set. (d), (e) and (f) need only the network: rerun with G1_GITHUB_REPO set to run all of them."
+    record 4 "NOT RUN" "Pins Claude Code accepts (needs the git fixture)"
+    return 0
+  fi
+  serve_reset acme
+  pin_case a fixture "$(src_git acme)" "$FIX_FIRST" marker@fixture "$FIX_FIRST"
+  ev "(a) PASS needs the clone at the pinned commit: $PIN_OK"
+  [ "$PIN_OK" = yes ] || status=FAIL
+  pin_case b fixture "$(src_git acme)" v1 marker@fixture "$FIX_FIRST"
+  ev "(b) PASS needs the tag v1 to resolve to the first commit: $PIN_OK"
+  [ "$PIN_OK" = yes ] || status=FAIL
+  pin_case c fixture "$(src_git acme)" stable marker@fixture ""
+  ev "(c) RECORDED: a branch name is accepted as a ref: $PIN_OK"
+
+  # Reserved-name marketplace: commit and tag pins (fills OFFICIAL_MARKETPLACES).
+  sha=$(remote_head https://github.com/anthropics/claude-plugins-official.git || true)
+  tag=$(remote_tag https://github.com/anthropics/claude-plugins-official.git || true)
+  if [ -n "$sha" ]; then
+    pin_case d claude-plugins-official "$SRC_OFFICIAL" "$sha" skill-creator@claude-plugins-official "$sha"
+    ev "(d) RECORDED: the official marketplace accepts a commit ref: $PIN_OK"
+    const "OFFICIAL_MARKETPLACES pin rules (item 4d): a commit ref for claude-plugins-official is accepted and honoured: $PIN_OK (ref $sha). Fills §7.4."
+  else
+    ev "(d) could not read the official marketplace's HEAD (network?)"
+  fi
+  if [ -n "$tag" ]; then
+    pin_case e claude-plugins-official "$SRC_OFFICIAL" "$tag" skill-creator@claude-plugins-official ""
+    ev "(e) RECORDED: the official marketplace accepts the tag $tag: $PIN_OK"
+    const "OFFICIAL_MARKETPLACES pin rules (item 4e): tag $tag for claude-plugins-official accepted: $PIN_OK. Fills §7.4."
+  else
+    ev "(e) the official marketplace has no tags: nothing to pin (RECORDED)"
+    const "OFFICIAL_MARKETPLACES pin rules (item 4e): claude-plugins-official has no tags."
+  fi
+
+  # A catalog entry's own sha: shaext-ext in the directory marketplace.
+  fresh_ws s04sha
+  settings "$d/sha.json" "$(enabled shaext-ext@fixdir=true)" "$DECL_DIR"
+  session "$d/sha" "$d/sha.json" "$PROMPT"
+  evrun "(sha) shaext-ext@fixdir: an external git-subdir entry with sha $FIX_FIRST" "$d/sha"
+  ev "(sha) RECORDED: installed at the entry's sha: $(jq -r '.["shaext-ext@fixdir"][0].gitCommitSha // "none"' "$P/installed_plugins.json" 2> /dev/null) (want $FIX_FIRST)"
+
+  # (f) a non-reserved github source with a commit ref.
+  sha=$(remote_head https://github.com/obra/superpowers-marketplace.git || true)
+  if [ -n "$sha" ]; then
+    SUPER_SHA=$sha
+    pin_case f superpowers-marketplace "$SRC_SUPER" "$sha" superpowers@superpowers-marketplace "$sha"
+    ev "(f) PASS needs the pinned commit: $PIN_OK"
+    [ "$PIN_OK" = yes ] || status=FAIL
+  else
+    ev "(f) could not read obra/superpowers-marketplace's HEAD (network?)"
+    status=FAIL
+  fi
+  record 4 "$status" "Pins Claude Code accepts (a, b, f assert; c, d, e and the entry sha are recorded)"
+}
+
+SUPER_SHA=""
+ensure_super_sha() { # in the main shell, so the value is kept
+  if [ -z "$SUPER_SHA" ]; then SUPER_SHA=$(remote_head https://github.com/obra/superpowers-marketplace.git || true); fi
+}
+
+# 5: a pinned plugin stays, without and with FORCE_AUTOUPDATE_PLUGINS=1.
+drv_long() { umsg "$PROMPT"; sleep 660; }
+item05_variant() { # <label> <0|1>: sets V5=PASS|FAIL
+  local label=$1 force=$2 d=$S/05/$1 en decls v1 v2 want=1.0.0 n
+  mkdir -p "$d"
+  V5=PASS
+  serve_reset acme
+  serve_reset acme-latest
+  fresh_ws "s05$label"
+  decls=$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)
+  en=$(enabled marker@fixture=true dep@fixture=true)
+  if [ "$force" = 1 ]; then
+    XENV="$XENV -e FORCE_AUTOUPDATE_PLUGINS=1"
+    en=$(enabled marker@fixture=true dep@fixture=true marker@fixlatest=true dep@fixlatest=true)
+    settings "$d/settings.json" "$en" "$decls" "$(decl fixlatest "$(src_git acme-latest)" "" true)"
+  else
+    settings "$d/settings.json" "$en" "$decls"
+  fi
+  ev "$label: declarations: $(jq -c '.extraKnownMarketplaces' "$d/settings.json" | cut -c1-400)"
+  session "$d/s1" "$d/settings.json" "$PROMPT"
+  evrun "$label: first start" "$d/s1"
+  v1=$(cache_versions fixture marker)
+  ev "$label: marker versions in \$P after the first start: [$v1]"
+  serve_push2 acme
+  if [ "$force" = 1 ]; then serve_push2 acme-latest; fi
+  ev "$label: pushed the second commit ($FIX_SECOND)"
+  session "$d/s2" "$d/settings.json" "$PROMPT"
+  evrun "$label: restart 1" "$d/s2"
+  session "$d/s3" "$d/settings.json" "$PROMPT"
+  evrun "$label: restart 2" "$d/s3"
+  ev "$label: now a session open for more than ten minutes with one message (about 11 minutes)..."
+  SESSION_LIMIT=900 fifo_session "$d/long" "$d/settings.json" drv_long
+  evrun "$label: ten-minute session" "$d/long"
+  v2=$(cache_versions fixture marker)
+  ev "$label: marker versions in \$P at the end: [$v2]; clone HEAD $(clone_head fixture) (pinned $FIX_FIRST); orphaned: [$(orphans)]"
+  for n in s2 s3 long; do ev "$label: marker loaded at $n: $(loaded_version "$d/$n/init.json" marker)"; done
+  if [ "$force" = 1 ]; then
+    ev "$label: RECORDED the Latest marketplace's marker versions: [$(cache_versions fixlatest marker)]; loaded at the end: $(loaded_version "$d/long/init.json" marker)"
+  fi
+  [ "$v1" = "$want" ] && [ "$v2" = "$want" ] || V5=FAIL
+  [ "$(clone_head fixture)" = "$FIX_FIRST" ] || V5=FAIL
+  [ "$(cat "$d/long/seconds.txt")" -ge 600 ] || { V5=FAIL; ev "$label: the long session lasted under 600 s, the check is invalid"; }
+}
 item05() {
-  local d=$S/05 cmds
-  fresh_ws s05
-  reset_seed
+  local d=$S/05 status
+  mkdir -p "$d"
+  if [ "$GIT_OK" = no ]; then
+    ev "NOT RUN: needs the git fixture (see item 0)."
+    record 5 "NOT RUN" "A pinned plugin stays (needs the git fixture)"
+    return 0
+  fi
+  item05_variant noforce 0
+  status=$V5
+  ev "noforce: $V5"
+  item05_variant force 1
+  ev "force: $V5"
+  [ "$V5" = PASS ] || status=FAIL
+  record 5 "$status" "A pinned plugin stays, over restarts and a ten-minute session (without and with FORCE_AUTOUPDATE_PLUGINS=1)"
+}
+
+# 6: repin.
+item06() {
+  local d=$S/06 status=PASS v
+  mkdir -p "$d"
+  if [ "$GIT_OK" = no ]; then
+    ev "NOT RUN: needs the git fixture (see item 0)."
+    record 6 "NOT RUN" "Repin (needs the git fixture)"
+    return 0
+  fi
+  serve_reset acme
+  fresh_ws s06
+  settings "$d/pin1.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
+  settings "$d/pin2.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_SECOND" false)"
+  session "$d/s1" "$d/pin1.json" "$PROMPT"
+  evrun "pinned at the first commit" "$d/s1"
+  serve_push2 acme
+  mark_clear
+  session "$d/s2" "$d/pin2.json" "$PROMPT"
+  evrun "repinned to the second commit $FIX_SECOND" "$d/s2"
+  v=$(loaded_version "$d/s2/init.json" marker)
+  ev "marker loaded at the repin start: $v (want 1.1.0); versions in \$P: [$(cache_versions fixture marker)]; .orphaned_at: [$(orphans)]; clone HEAD $(clone_head fixture)"
+  [ "$v" = 1.1.0 ] || status=FAIL
+  const "repin (item 6): the new version loads at the repin start: $([ "$status" = PASS ] && echo yes || echo no); old version orphaned: $([ -n "$(orphans)" ] && echo yes || echo no). Fills B6."
+  if [ "$status" = FAIL ]; then
+    # The fallback: the same restart with autoUpdate true for that one start.
+    fresh_ws s06fb
+    serve_reset acme
+    session "$d/fb1" "$d/pin1.json" "$PROMPT"
+    serve_push2 acme
+    settings "$d/pin2au.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_SECOND" true)"
+    session "$d/fb2" "$d/pin2au.json" "$PROMPT"
+    evrun "FALLBACK: repin to the second commit with autoUpdate true for that start" "$d/fb2"
+    ev "fallback: marker loaded: $(loaded_version "$d/fb2/init.json" marker); versions [$(cache_versions fixture marker)]; orphaned [$(orphans)]"
+    const "repin fallback (item 6): with autoUpdate true for that one start the new version loads: $([ "$(loaded_version "$d/fb2/init.json" marker)" = 1.1.0 ] && echo yes || echo no)."
+  fi
+  record 6 "$status" "Repin: the new pin loads at that start"
+}
+
+# 7: Latest updates on restart, without and with FORCE_AUTOUPDATE_PLUGINS=1.
+item07_variant() { # <label> <0|1>
+  local label=$1 force=$2 d=$S/07/$1 vb va v2 v3 cv1 cv2
+  mkdir -p "$d"
+  serve_reset acme
+  fresh_ws "s07$label"
+  if [ "$force" = 1 ]; then XENV="$XENV -e FORCE_AUTOUPDATE_PLUGINS=1"; fi
+  settings "$d/settings.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "" true)"
+  cv1=$(run_limited 60 ctr claude --version 2> /dev/null | awk '{print $1}' || true)
+  session "$d/s1" "$d/settings.json" "$PROMPT"
+  evrun "$label: first start (Latest, autoUpdate true, DISABLE_AUTOUPDATER=1)" "$d/s1"
+  vb=$(cache_versions fixture marker)
+  serve_push2 acme
+  session "$d/s2" "$d/settings.json" "$PROMPT"
+  evrun "$label: restart 1, after the push" "$d/s2"
+  v2=$(loaded_version "$d/s2/init.json" marker)
+  va=$(cache_versions fixture marker)
+  session "$d/s3" "$d/settings.json" "$PROMPT"
+  evrun "$label: restart 2" "$d/s3"
+  v3=$(loaded_version "$d/s3/init.json" marker)
+  cv2=$(run_limited 60 ctr claude --version 2> /dev/null | awk '{print $1}' || true)
+  ev "$label: versions in \$P: [$vb] after the first start, [$va] after restart 1, [$(cache_versions fixture marker)] after restart 2"
+  ev "$label: loaded: restart 1 = $v2, restart 2 = $v3; clone HEAD $(clone_head fixture) (second commit $FIX_SECOND); orphaned [$(orphans)]"
+  ev "$label: claude --version in the container: $cv1 -> $cv2 (unchanged: $([ "$cv1" = "$cv2" ] && echo yes || echo NO))"
+  if [ "$v2" = 1.1.0 ]; then
+    ev "$label: RECORDED: the update happens BEFORE init, at the restart"
+    const "Latest env rule (item 7, FORCE_AUTOUPDATE_PLUGINS=$force): update at restart 1, before init (loaded 1.1.0)."
+  elif [ "$v3" = 1.1.0 ]; then
+    ev "$label: RECORDED: the update happens at the NEXT start after the restart that fetched it (restart 1 loaded $v2)"
+    const "Latest env rule (item 7, FORCE_AUTOUPDATE_PLUGINS=$force): update lands one start later (restart 1 loaded $v2, restart 2 loaded $v3)."
+  else
+    ev "$label: RECORDED: no update within two restarts (loaded $v2, then $v3)"
+    const "Latest env rule (item 7, FORCE_AUTOUPDATE_PLUGINS=$force): NO update within two restarts."
+  fi
+}
+item07() {
+  mkdir -p "$S/07"
+  if [ "$GIT_OK" = no ]; then
+    ev "NOT RUN: needs the git fixture (see item 0)."
+    record 7 "NOT RUN" "Latest updates on restart (needs the git fixture)"
+    return 0
+  fi
+  item07_variant noforce 0
+  item07_variant force 1
+  ev "Compare the two variants: the env rule for Latest is FORCE_AUTOUPDATE_PLUGINS=1 when only the force variant updates."
+  record 7 RECORDED "Latest updates on restart, without and with FORCE_AUTOUPDATE_PLUGINS=1"
+}
+
+# 8 and 9: the network down. Real remote marketplaces, so the network matters
+# (a file:// repo would still clone offline).
+settings_net() { # <out>: a pinned plugin (superpowers at a commit) and a Latest one (skill-creator)
+  settings "$1" "$(enabled superpowers@superpowers-marketplace=true skill-creator@claude-plugins-official=true)" \
+    "$(decl superpowers-marketplace "$SRC_SUPER" "$SUPER_SHA" false)" \
+    "$(decl claude-plugins-official "$SRC_OFFICIAL" "" true)"
+}
+item08() {
+  local d=$S/08 status=PASS
+  mkdir -p "$d"
+  ensure_super_sha
+  [ -n "$SUPER_SHA" ] || { ev "could not read superpowers-marketplace's HEAD (network?)"; record 8 FAIL "Network down, plugin installed"; return 0; }
+  fresh_ws s08
+  XENV="$XENV -e FORCE_AUTOUPDATE_PLUGINS=1"
+  settings_net "$d/settings.json"
+  session "$d/online" "$d/settings.json" "$PROMPT"
+  evrun "online start (installs a pinned superpowers and a Latest skill-creator)" "$d/online"
+  ev "\$P: $(p_listing | paste -s -d' ' - | cut -c1-300)"
+  CNET="--network none"
+  session "$d/offline" "$d/settings.json" "$PROMPT"
+  evrun "restart with --network none, same \$P" "$d/offline"
+  ev "RECORDED: pinned superpowers loads offline: $(has_plugin "$d/offline/init.json" superpowers && echo yes || echo no); Latest skill-creator loads offline: $(has_plugin "$d/offline/init.json" skill-creator && echo yes || echo no); time to init (whole run) $(cat "$d/offline/seconds.txt")s"
+  has_plugin "$d/offline/init.json" superpowers || status=FAIL
+  const "plugin_not_loaded copy (item 8): offline with the plugin installed, init lists it: $([ "$status" = PASS ] && echo yes || echo no), printed: $(tr '\n' ' ' < "$d/offline/stderr.txt" | cut -c1-200)"
+  record 8 "$status" "Network down, plugin installed: the pinned plugin still loads from \$P"
+}
+item09() {
+  local d=$S/09
+  mkdir -p "$d"
+  ensure_super_sha
+  [ -n "$SUPER_SHA" ] || { ev "could not read superpowers-marketplace's HEAD (network?)"; record 9 RECORDED "Network down, plugin missing (not run)"; return 0; }
+  fresh_ws s09
+  CNET="--network none"
+  settings "$d/settings.json" "$(enabled superpowers@superpowers-marketplace=true skill-creator@claude-plugins-official=true marker@fixdir=true dep@fixdir=true)" \
+    "$(decl superpowers-marketplace "$SRC_SUPER" "$SUPER_SHA" false)" \
+    "$(decl claude-plugins-official "$SRC_OFFICIAL" "" true)" "$DECL_DIR"
+  session "$d/run" "$d/settings.json" "$PROMPT"
+  evrun "empty \$P, --network none, two remote plugins and one directory plugin declared" "$d/run"
+  ev "RECORDED: the session starts: $([ -s "$d/run/init.json" ] && echo yes || echo 'NO init (a failed start)'); loaded: [$(plugin_names "$d/run/init.json")]; exit $(cat "$d/run/exit.txt")"
+  const "plugin_not_loaded copy (item 9): with an empty \$P and no network the session $([ -s "$d/run/init.json" ] && echo "starts, loaded [$(plugin_names "$d/run/init.json")]" || echo "does not start (no init)"); printed: $(tr '\n' ' ' < "$d/run/stderr.txt" | cut -c1-200). §7.3 step 8 must match."
+  record 9 RECORDED "Network down, plugin missing: what Claude Code does and prints"
+}
+
+# 10: the agent's own install is disabled by an explicit false at the next start.
+item10() {
+  local d=$S/10 mk0 mk1
+  mkdir -p "$d"
+  fresh_ws s10
+  bare_settings "$d/s1.json"
+  session "$d/s1" "$d/s1.json" 'Run these two shell commands with the Bash tool, one after the other: claude plugin marketplace add /fixture/dir   and then   claude plugin install marker@fixdir   . Then reply done.' --allowedTools Bash
+  evrun "the agent installs marker@fixdir itself" "$d/s1"
+  ev "after: installed_plugins.json keys: $(jq -c 'keys' "$P/installed_plugins.json" 2> /dev/null || echo absent); known_marketplaces keys: $(jq -c 'keys' "$P/known_marketplaces.json" 2> /dev/null || echo absent)"
+  mk0=$(jq -c '.fixdir' "$P/known_marketplaces.json" 2> /dev/null || echo absent)
+  mark_clear
+  settings "$d/s2.json" "$(enabled marker@fixdir=false)"
+  session "$d/s2" "$d/s2.json" "$PROMPT"
+  evrun "restart with --settings marker@fixdir: false" "$d/s2"
+  mk1=$(jq -c '.fixdir' "$P/known_marketplaces.json" 2> /dev/null || echo absent)
+  ev "marketplace fixdir in known_marketplaces.json: before restart $mk0; after $mk1 (stays: $([ "$mk1" != absent ] && echo yes || echo no); refreshed: $([ "$mk0" != "$mk1" ] && echo 'entry changed' || echo 'entry identical'))"
+  ev "hook-sessionstart mark written at the restart: $([ -e "$MARK/hook-sessionstart" ] && echo YES || echo no)"
+  if [ -n "$(jq -r '.["marker@fixdir"] // empty' "$P/installed_plugins.json" 2> /dev/null)" ] && ! has_plugin "$d/s2/init.json" marker; then
+    record 10 PASS "The agent's own install is disabled by an explicit false at the next start"
+  elif [ -z "$(jq -r '.["marker@fixdir"] // empty' "$P/installed_plugins.json" 2> /dev/null)" ]; then
+    record 10 RECORDED "The agent's own install did not happen in the session (see the first run's stream); the check is vacuous"
+  else
+    record 10 FAIL "marker@fixdir loaded after the agent installed it and --settings said false"
+  fi
+}
+
+# 11: skill naming.
+item11() {
+  local d=$S/11 cmds
+  fresh_ws s11
   mkdir -p "$d" "$W/.claude/skills"
   cp -a "$FX/extras/skill-foo" "$W/.claude/skills/foo"
-  base_settings "$d/settings.json"
-  agent_run "$d/run" "$W" "$d/settings.json" "$PROMPT"
-  cmds=$(jq -r '.slash_commands[]?' "$d/run/init.json" 2>/dev/null || true)
+  bare_settings "$d/settings.json"
+  session "$d/run" "$d/settings.json" "$PROMPT"
+  cmds=$(jq -r '.slash_commands[]?' "$d/run/init.json" 2> /dev/null || true)
   evi ".claude/skills/foo/SKILL.md with name: bar" "$d/run/init.json"
   if printf '%s\n' "$cmds" | grep -q -x -E '/?foo'; then ev "slash_commands has foo"; else ev "slash_commands has no foo"; fi
   if printf '%s\n' "$cmds" | grep -q -x -E '/?bar'; then ev "slash_commands has bar"; else ev "slash_commands has no bar"; fi
-  record 05 RECORDED "Skill naming: directory name (foo) or frontmatter name (bar) in slash_commands"
+  record 11 RECORDED "Skill naming: directory name (foo) or frontmatter name (bar) in slash_commands"
 }
 
-item06() {
-  local d=$S/06 pre_visible=no post_dirty=no
-  fresh_ws s06
-  reset_seed # read-only, as an agent sees it
+# 12: data/ and mcpb/ land under $P.
+item12() {
+  local d=$S/12 data status=PASS existed=no
   mkdir -p "$d"
-  base_settings "$d/settings.json"
-
-  # The agent installs and adds a marketplace itself, in its own config dir.
-  AG=$AG agent_cmd "$W" plugin install skill-creator@claude-plugins-official > "$d/agent-install.txt" 2>&1 || echo "exit=$?" >> "$d/agent-install.txt"
-  AG=$AG agent_cmd "$W" plugin marketplace add "$OWNER/of-g1-other" > "$d/agent-mkt-add.txt" 2>&1 || echo "exit=$?" >> "$d/agent-mkt-add.txt"
-  AG=$AG agent_cmd "$W" plugin list > "$d/pre-list.txt" 2>&1 || true
-  AG=$AG agent_cmd "$W" plugin marketplace list > "$d/pre-mkt.txt" 2>&1 || true
-  find "$AG/plugins" -maxdepth 3 | sed "s#^$AG/##" | sort > "$d/pre-find.txt"
-  evf "agent: plugin install skill-creator" "$d/agent-install.txt"
-  evf "agent: marketplace add other repo" "$d/agent-mkt-add.txt"
-  evf "before scrub: marketplace list" "$d/pre-mkt.txt"
-  evf "before scrub: files under AG/plugins" "$d/pre-find.txt"
-  if grep -q 'evil' "$d/pre-mkt.txt" || [ -n "$(find "$AG/plugins/cache" -type f 2>/dev/null | head -n 1)" ]; then pre_visible=yes; fi
-
-  # Scrub as 7.3 does, then run again.
-  scrub_agent "$AG"
-  agent_run "$d/run" "$W" "$d/settings.json" "$PROMPT"
-  AG=$AG agent_cmd "$W" plugin list > "$d/post-list.txt" 2>&1 || true
-  AG=$AG agent_cmd "$W" plugin marketplace list > "$d/post-mkt.txt" 2>&1 || true
-  find "$AG/plugins" -maxdepth 3 | sed "s#^$AG/##" | sort > "$d/post-find.txt"
-  evf "after scrub: plugin list" "$d/post-list.txt"
-  evf "after scrub: marketplace list" "$d/post-mkt.txt"
-  evf "after scrub: files under AG/plugins" "$d/post-find.txt"
-  evi "after scrub: init" "$d/run/init.json"
-  if grep -q 'evil' "$d/post-mkt.txt" || grep -q "$AG/plugins/cache" "$d/post-list.txt" \
-    || [ -n "$(find "$AG/plugins/cache" -type f 2>/dev/null | head -n 1)" ]; then
-    post_dirty=yes
-  fi
-  ev "agent's own install visible before the scrub: $pre_visible; anything of it after: $post_dirty"
-  if [ "$post_dirty" = yes ]; then
-    record 06 FAIL "An agent's own install and marketplace add persisted past the scrub"
-  elif [ "$pre_visible" = no ]; then
-    record 06 RECORDED "An agent's own install: nothing was visible even before the scrub (check is vacuous; see evidence)"
-  else
-    record 06 PASS "An agent's own install doesn't persist (neither shows after the scrub)"
-  fi
-}
-
-# Used by items 7 and 8's evidence.
-item07() {
-  local d=$S/07 data existed=no status=PASS
-  fresh_ws s07
-  reset_seed
-  mkdir -p "$d"
-  base_settings "$d/settings.json"
-  agent_run "$d/first" "$W" "$d/settings.json" "$PROMPT"
-  evi "first run" "$d/first/init.json"
-  set -- "$AG"/plugins/data/marker*/x
+  fresh_ws s12
+  std_settings "$d/settings.json"
+  session "$d/first" "$d/settings.json" "$PROMPT"
+  evrun "first run" "$d/first"
+  set -- "$P"/data/marker*/x
   data=$1
   if [ -e "$data" ]; then
-    ev "marker's MCP server wrote $data (content: $(tr -d '\n' < "$data")); the data dir is per-agent and writable"
+    ev "marker's MCP server wrote $data under \$P (content: $(tr -d '\n' < "$data"))"
   else
-    ev "NO \$AG/plugins/data/marker*/x after the run: find output:"
-    find "$AG/plugins" -maxdepth 4 | sed "s#^$AG/##" | head -n 20 | sed 's/^/    /' >> "$EV"
+    ev "NO \$P/data/marker*/x after the run; \$P listing:"
+    p_listing | sed 's/^/    /' >> "$EV"
     status=FAIL
   fi
-  # Delete mcpb/ and run again: does the MCP server still start?
-  if [ -d "$AG/plugins/mcpb" ]; then existed=yes; fi
-  ev "AG/plugins/mcpb existed after the first run: $existed (marker's server is a plain .mcp.json server, so Claude may never create it; see the report's note)"
-  rm -rf "$AG/plugins/mcpb"
+  ev "plugin data or MCP bundles under \$AG or \$HOME: [$(find "$AG" "$HM" \( -name data -o -name mcpb \) 2> /dev/null | sed "s#^$T/##" | paste -s -d, - || true)]"
+  if [ -d "$P/mcpb" ]; then existed=yes; fi
+  ev "\$P/mcpb existed after the first run: $existed (marker's server is a plain .mcp.json server, so Claude may never create it)"
   mark_clear
-  agent_run "$d/second" "$W" "$d/settings.json" "$PROMPT"
-  evi "second run, after deleting AG/plugins/mcpb" "$d/second/init.json"
-  ev "RECORDED: mcp-start marker after the second run: $([ -e "$MARK/mcp-start" ] && echo yes || echo no); AG/plugins/mcpb exists again: $([ -d "$AG/plugins/mcpb" ] && echo yes || echo no)"
-  const "mcpb/ (item 7): existed=$existed; marker's MCP server started again after deleting mcpb/: $([ -e "$MARK/mcp-start" ] && echo yes || echo no); mcpb/ recreated: $([ -d "$AG/plugins/mcpb" ] && echo yes || echo no). Decides whether R1's scrub of mcpb/ is safe (B7)."
-  record 07 "$status" "data/ is per-agent and writable (asserts); mcpb/ deletion recorded"
+  session "$d/second" "$d/settings.json" "$PROMPT"
+  evrun "restart, same \$P" "$d/second"
+  [ -e "$data" ] || { status=FAIL; ev "data/ did not survive the restart"; }
+  ev "data survived the restart: $([ -e "$data" ] && echo yes || echo no); mcp-start mark at the restart: $([ -e "$MARK/mcp-start" ] && echo yes || echo no)"
+  record 12 "$status" "data/ and mcpb/ land under \$P and survive a restart"
 }
 
-item10() {
-  local d=$S/10 clone before_ver after_ver
-  reset_seed
-  seed_rw
+# 13: install and update run no plugin code.
+item13() {
+  local d=$S/13 status=PASS m
   mkdir -p "$d"
-  clone=$(clone_dir fixture)
-  git -C "$clone" checkout -q --detach "$FIXTURE_HEAD" # the second commit, pinned
-  ev "clone pinned to the second commit $FIXTURE_HEAD (was $FIXTURE_FIRST)"
-  before_ver=$(ls "$SEED/cache/fixture/marker" 2>/dev/null | paste -s -d, -)
-  ev "before: cache/fixture/marker versions: [$before_ver]"
-  ev "before: installed marker: $(jq -c '.plugins["marker@fixture"]' "$SEED/installed_plugins.json")"
-  mark_clear
-  stamp "$d/t0"
-  rr "$d/update.txt" traffic-off plugin update marker@fixture
-  mark_list > "$d/mark-after-update.txt"
-  after_ver=$(ls "$SEED/cache/fixture/marker" 2>/dev/null | paste -s -d, -)
-  ev "after: clone HEAD $(git -C "$clone" rev-parse HEAD) (pinned $FIXTURE_HEAD; pulls: $([ "$(git -C "$clone" rev-parse HEAD)" = "$FIXTURE_HEAD" ] && echo no || echo YES))"
-  ev "after: cache/fixture/marker versions: [$after_ver]"
-  ev "after: installed marker: $(jq -c '.plugins["marker@fixture"]' "$SEED/installed_plugins.json")"
-  ev ".orphaned_at markers: $(find "$SEED/cache" -name .orphaned_at 2>/dev/null | sed "s#^$SEED/##" | paste -s -d, -)"
-  ev "new files since t0 (cache): $(find "$SEED/cache" -newer "$d/t0" -maxdepth 4 2>/dev/null | sed "s#^$SEED/##" | head -n 12 | paste -s -d, -)"
-  evf "claude plugin update output" "$d/update.txt"
-  const "update path (item 10): versions before [$before_ver] after [$after_ver]; orphaned: $(find "$SEED/cache" -name .orphaned_at 2>/dev/null | wc -l | tr -d ' ') marker(s); update with the second commit pinned and the traffic variable set: see item 10. Decides update vs uninstall plus install (B6)."
-  reset_seed
-  record 10 RECORDED "The plugin update path (pull, where the new version lands, .orphaned_at)"
+  # (a) the CLI install of marker (with its dependency dep and its npm dependency) and of ranged (a dependency by range).
+  fresh_ws s13a
+  pc "$d/add.txt" marketplace add /fixture/dir
+  pc "$d/i1.txt" install marker@fixdir
+  m=$(mark_list)
+  ev "after plugin install marker@fixdir (npm dependency, plugin dependency dep): MARK=[$m] (exit $(pc_rc "$d/i1.txt"))"
+  test -z "$(ls -A "$MARK")" || status=FAIL
+  pc "$d/i2.txt" install ranged@fixdir
+  ev "after plugin install ranged@fixdir (a dependency by range): MARK=[$(mark_list)] (exit $(pc_rc "$d/i2.txt"))"
+  test -z "$(ls -A "$MARK")" || status=FAIL
+  ev "node_modules in the installed marker: $(find "$P/cache/fixdir/marker" -maxdepth 3 -name node_modules 2> /dev/null | head -n 1 | grep -c . || true)"
+  # (b) the install Claude Code does at start (the marks a session writes are excluded; install-time ones are not).
+  fresh_ws s13b
+  settings "$d/b.json" "$(enabled marker@fixdir=true dep@fixdir=true ranged@fixdir=true)" "$DECL_DIR"
+  session "$d/b" "$d/b.json" "$PROMPT"
+  evrun "(b) install at start" "$d/b"
+  ev "(b) marks: [$(mark_list)]; install-time marks (anything but hook-sessionstart, mcp-start, bin-x, monitor): [$(install_marks)]"
+  [ -z "$(install_marks)" ] || status=FAIL
+  # (c) a repin.
+  if [ "$GIT_OK" = yes ]; then
+    serve_reset acme
+    fresh_ws s13c
+    settings "$d/c1.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
+    settings "$d/c2.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_SECOND" false)"
+    session "$d/c1" "$d/c1.json" "$PROMPT"
+    serve_push2 acme
+    mark_clear
+    session "$d/c2" "$d/c2.json" "$PROMPT"
+    ev "(c) after the repin start: marks [$(mark_list)]; install-time marks [$(install_marks)]; loaded $(loaded_version "$d/c2/init.json" marker)"
+    [ -z "$(install_marks)" ] || status=FAIL
+  else
+    ev "(c) the repin check did not run (no git fixture, item 0)."
+  fi
+  record 13 "$status" "Install and update run no plugin code (MARK empty after the CLI installs; no install-time marks at start or repin)"
 }
 
-item08() {
-  local d=$S/08 status=PASS list
-  reset_seed
-  seed_rw
-  mkdir -p "$d"
-  list=$(cat "$S/00/mark-after-build.txt")
-  ev "after the seed build (marketplace adds, installs of marker with its dependency dep, and skill-creator): MARK=[$list]"
-  [ -z "$list" ] || status=FAIL
-
-  rr "$d/u1.txt" traffic-off plugin uninstall ranged@fixture
-  rr "$d/u2.txt" traffic-off plugin uninstall marker@fixture
-  rr "$d/u3.txt" traffic-off plugin uninstall dep@fixture
-  mark_clear
-  rr "$d/i1.txt" traffic-off plugin install marker@fixture # installs dep as a dependency
-  test -z "$(ls -A "$MARK")" || status=FAIL
-  ev "after install marker@fixture (and its dependency dep): MARK=[$(mark_list)] (exit $(rr_rc "$d/i1.txt"))"
-  rr "$d/i2.txt" traffic-off plugin install ranged@fixture # a dependency install by range
-  test -z "$(ls -A "$MARK")" || status=FAIL
-  ev "after install ranged@fixture (dependency by range): MARK=[$(mark_list)] (exit $(rr_rc "$d/i2.txt"))"
-  ev "installed: $(jq -c '.plugins | keys' "$SEED/installed_plugins.json")"
-  list=$(cat "$S/10/mark-after-update.txt" 2>/dev/null || echo "item 10 did not run")
-  ev "after update marker@fixture (item 10): MARK=[$list]"
-  [ -z "$list" ] || status=FAIL
-  ev "(if FAIL: T7 changes; the markers show which code path ran)"
-  reset_seed
-  record 08 "$status" "Install and update run no plugin code (MARK empty)"
-}
-
-item09() {
-  local d=$S/09 where flag loaded
-  reset_seed
+# 14: skills-directory plugins.
+item14() {
+  local d=$S/14 where flag loaded
   mkdir -p "$d"
   for where in a b c; do
     for flag in default false; do
-      fresh_ws "s09$where$flag"
+      fresh_ws "s14$where$flag"
       case "$where" in
         a) mkdir -p "$W/.claude/skills"; cp -a "$FX/extras/sneaky" "$W/.claude/skills/sneaky" ;;
         b) mkdir -p "$AG/skills"; cp -a "$FX/extras/sneaky" "$AG/skills/sneaky" ;;
@@ -722,111 +939,64 @@ item09() {
           ln -s "$d/outside-$flag/sneaky" "$W/.claude/skills/sneaky"
           ;;
       esac
-      base_settings "$d/$where-$flag-settings.json"
+      std_settings "$d/$where-$flag.json"
       if [ "$flag" = false ]; then
-        jq -c '.enabledPlugins["sneaky@skills-dir"] = false' "$d/$where-$flag-settings.json" > "$d/tmp.json"
-        mv "$d/tmp.json" "$d/$where-$flag-settings.json"
+        jq -c '.enabledPlugins["sneaky@skills-dir"] = false' "$d/$where-$flag.json" > "$d/tmp.json"
+        mv "$d/tmp.json" "$d/$where-$flag.json"
       fi
-      agent_run "$d/$where-$flag" "$W" "$d/$where-$flag-settings.json" "$PROMPT"
+      session "$d/$where-$flag" "$d/$where-$flag.json" "$PROMPT"
       loaded=no
       if has_plugin "$d/$where-$flag/init.json" sneaky || [ -e "$MARK/sneaky" ]; then loaded=yes; fi
-      case "$where" in
-        a) ev "(a) \$W/.claude/skills/sneaky, settings $flag: loaded=$loaded (init lists: [$(plugin_names "$d/$where-$flag/init.json")], hook marker: $([ -e "$MARK/sneaky" ] && echo yes || echo no))" ;;
-        b) ev "(b) \$AG/skills/sneaky (user level), settings $flag: loaded=$loaded (init lists: [$(plugin_names "$d/$where-$flag/init.json")], hook marker: $([ -e "$MARK/sneaky" ] && echo yes || echo no))" ;;
-        c) ev "(c) link in \$W/.claude/skills, settings $flag: loaded=$loaded (init lists: [$(plugin_names "$d/$where-$flag/init.json")], hook marker: $([ -e "$MARK/sneaky" ] && echo yes || echo no))" ;;
-      esac
+      ev "($where) settings $flag: loaded=$loaded (init lists: [$(plugin_names "$d/$where-$flag/init.json")], hook marker: $([ -e "$MARK/sneaky" ] && echo yes || echo no))  [a = \$W/.claude/skills, b = \$AG/skills (user level), c = a link in \$W/.claude/skills]"
     done
   done
-  ev "read: for each of a, b, c, 'loaded' under default settings answers whether it loads; 'false' stops it when loaded=no there."
-  record 09 RECORDED "Skills-directory plugins: where they load, and whether sneaky@skills-dir:false stops them"
+  ev "read: 'loaded' under default settings answers whether each location loads; 'false' stops it when loaded=no there."
+  record 14 RECORDED "Skills-directory plugins: where they load, and whether sneaky@skills-dir:false stops them"
 }
 
-item11() {
-  local d=$S/11 start end dur=0 newer clones_ok=yes new_versions
-  fresh_ws s11
-  reset_seed
+# 15: project and local settings.
+item15() {
+  local d=$S/15 winner
   mkdir -p "$d"
-  base_settings "$d/settings.json"
-  # Item 16's project-level hooks and statusLine live in this workdir too, so
-  # the one interactive session also covers item 16b.
+  # A. settings.local.json enables marker; --settings says false for the same key.
+  fresh_ws s15a
   mkdir -p "$W/.claude"
-  write_project_settings "$W/.claude/settings.json"
-  cat > "$d/session.sh" <<EOF
-#!/usr/bin/env bash
-# The interactive agent session for items 11 and 16b. Run it in a real terminal.
-date +%s > "$d/times.txt"
-AG="$AG" "$T/agent.sh" "$W" --settings "\$(cat "$d/settings.json")" || true
-date +%s >> "$d/times.txt"
-EOF
-  chmod +x "$d/session.sh"
-
-  cat > "$d/instructions.txt" <<EOF
-ITEMS 11 and 16b (manual, interactive): in a second terminal first export the
-credential (it is not passed on the command line):
-
-    export ANTHROPIC_API_KEY=...        # or CLAUDE_CODE_OAUTH_TOKEN=...
-    bash $d/session.sh
-
-The throwaway HOME is fresh, so expect first-run prompts (theme, folder trust,
-approval of the API key). Answer them; they are part of the run.
-
-It starts Claude Code interactively in the agent env (seed read-only,
---settings from plugin-settings, workdir $W with project-level hooks and a
-statusLine).
-
- 1. Send one message (for example "hi") and keep the session open for MORE than 10
-    minutes (item 11: auto-update must stay off for the official marketplace).
- 2. Item 16b, while it is open:
-    a. Check that the project statusLine ran: ls $MARK  (expect project-statusline).
-    b. Create $W/.claude/settings.local.json containing
-       {"enabledPlugins":{"skill-creator@claude-plugins-official":true}}
-       (the --settings value for that key is false). Without restarting, run
-       /reload-plugins (note whether the command exists) and /plugin (or ask
-       "list your skills"), and note whether skill-creator now loads.
- 3. Exit with /exit. Write down the answers to 2a and 2b in the report.
-EOF
-  cat "$d/instructions.txt"
-
-  stamp "$d/t0"
-  if [ -t 0 ] && [ -z "${G1_NO_PROMPT:-}" ]; then
-    printf '\nPress Enter here after the session has ended (or type skip to leave items 11 and 16b MANUAL): '
-    read -r answer || answer=skip
+  printf '%s\n' '{"enabledPlugins":{"marker@fixdir":true}}' > "$W/.claude/settings.local.json"
+  settings "$d/a.json" "$(enabled marker@fixdir=false dep@fixdir=true)" "$DECL_DIR"
+  session "$d/a" "$d/a.json" "$PROMPT"
+  evrun "(A) settings.local.json true vs --settings false" "$d/a"
+  if has_plugin "$d/a/init.json" marker; then
+    winner="settings.local.json wins: --settings is only a carrier, the 7.3 start check is what enforces the rule"
   else
-    answer=skip
+    winner="--settings wins: it is a second layer behind the 7.3 start check"
   fi
-  if [ "${answer:-}" = skip ] || [ ! -s "$d/times.txt" ] || [ "$(wc -l < "$d/times.txt" | tr -d ' ')" -lt 2 ]; then
-    ev "Not run by run.sh (no interactive session finished). Instructions for Or:"
-    sed 's/^/    /' "$d/instructions.txt" >> "$EV"
-    ev "Then compare (the session start time is in $d/times.txt):"
-    ev "    find $SEED -newer $d/t0   (empty)"
-    ev "    ls $SEED/cache/*/*/ $AG/plugins/cache/*/*/   (no new versions)"
-    record 11 MANUAL "Auto-update stays off for the official marketplace (a >10 minute interactive session)"
-    ev "See the instructions under item 11, step 2: answer 2a (statusLine ran?) and 2b (mid-session enabledPlugins change effective? /reload-plugins interactively?)."
-    record 16b MANUAL "Live reload: statusLine runs, enabledPlugins change mid-session, /reload-plugins interactive (Or fills in)"
-    return 0
-  fi
-  start=$(sed -n 1p "$d/times.txt")
-  end=$(sed -n 2p "$d/times.txt")
-  dur=$((end - start))
-  newer=$(find "$SEED" -newer "$d/t0" 2>/dev/null || true)
-  new_versions=$(find "$SEED/cache" "$AG/plugins/cache" -mindepth 3 -maxdepth 3 -type d -newer "$d/t0" 2>/dev/null || true)
-  [ "$(clone_head claude-plugins-official)" = "$(git -C "$PRISTINE/marketplaces/claude-plugins-official" rev-parse HEAD)" ] || clones_ok=no
-  ev "session length: ${dur}s (needs at least 600)"
-  ev "seed files newer than t0: $(printf '%s\n' "$newer" | grep -c . || true)"
-  ev "new version dirs in the seed or AG/plugins/cache: [$(printf '%s\n' "$new_versions" | paste -s -d, -)]"
-  ev "official clone HEAD unchanged: $clones_ok"
-  if [ "$dur" -lt 600 ]; then
-    record 11 RECORDED "Auto-update off for the official marketplace: session was ${dur}s, shorter than ten minutes, so the check is invalid"
-  elif [ -z "$newer" ] && [ -z "$new_versions" ] && [ "$clones_ok" = yes ]; then
-    record 11 PASS "Auto-update stays off for the official marketplace (interactive session over ten minutes)"
-  else
-    record 11 FAIL "Auto-update ran for the official marketplace (new files or versions after the session)"
-  fi
-  ev "Or: write down the answers to 2a and 2b of item 11's instructions here (statusLine ran? mid-session enabledPlugins change effective? /reload-plugins exists interactively?). MARK now: [$(mark_list)]"
-  record 16b MANUAL "Live reload: statusLine runs, enabledPlugins change mid-session, /reload-plugins interactive (Or fills in)"
+  ev "(A) RECORDED: $winner"
+  # B. settings.local.json declares another marketplace and enables x@evil.
+  fresh_ws s15b
+  mkdir -p "$W/.claude"
+  printf '%s\n' '{"extraKnownMarketplaces":{"evil":{"source":{"source":"directory","path":"/fixture/evil"}}},"enabledPlugins":{"x@evil":true}}' > "$W/.claude/settings.local.json"
+  std_settings "$d/b.json"
+  session "$d/b" "$d/b.json" "$PROMPT"
+  evrun "(B) settings.local.json declares marketplace evil and enables x@evil" "$d/b"
+  ev "(B) RECORDED: x loaded: $(has_plugin "$d/b/init.json" x && echo yes || echo no); x-hook mark: $([ -e "$MARK/x-hook" ] && echo yes || echo no); evil in known_marketplaces.json: $(jq -c 'has("evil")' "$P/known_marketplaces.json" 2> /dev/null || echo absent); installed: $(jq -c 'keys' "$P/installed_plugins.json" 2> /dev/null || echo absent)"
+  record 15 RECORDED "Project and local settings: which wins for enabledPlugins, and whether an unregistered marketplace is fetched"
 }
 
-write_project_settings() { # <file>: item 16's project-level hooks and statusLine
+# 16: a directory marketplace's catalog.
+item16() {
+  local d=$S/16
+  mkdir -p "$d"
+  fresh_ws s16
+  settings "$d/settings.json" "$(enabled marker@fixdir=true dep@fixdir=true)" "$DECL_DIR"
+  ev "rel@fixdir: not installed, not in enabledPlugins; fixdir declared in extraKnownMarketplaces"
+  session "$d/run" "$d/settings.json" "$PROMPT"
+  evrun "init" "$d/run"
+  ev "RECORDED: rel loads: $(has_plugin "$d/run/init.json" rel && echo yes || echo no); rel-hook mark: $([ -e "$MARK/rel-hook" ] && echo yes || echo no)"
+  record 16 RECORDED "A directory marketplace's relative defaultEnabled plugin, not installed and not in enabledPlugins"
+}
+
+# 17: project hooks and live reload.
+write_project_settings() { # <file>
   cat > "$1" <<'EOF'
 {
   "hooks": {
@@ -838,220 +1008,132 @@ write_project_settings() { # <file>: item 16's project-level hooks and statusLin
 }
 EOF
 }
-
-item12() {
-  local d=$S/12 winner fetched
-  reset_seed
+drv_reload() {
+  umsg "$PROMPT"
+  sleep 25
+  printf '%s' '{"enabledPlugins":{"marker@fixdir":true}}' > "$W/.claude/settings.local.json"
+  umsg '/reload-plugins'
+  sleep 25
+  umsg 'List the names of the plugins and skills available to you, then stop.'
+  sleep 30
+}
+item17() {
+  local d=$S/17 reload
   mkdir -p "$d"
-
-  # A. settings.local.json enables skill-creator; --settings says false.
-  fresh_ws s12a
+  fresh_ws s17
   mkdir -p "$W/.claude"
-  printf '%s\n' '{"enabledPlugins":{"skill-creator@claude-plugins-official":true}}' > "$W/.claude/settings.local.json"
-  base_settings "$d/a.json"
-  agent_run "$d/a" "$W" "$d/a.json" "$PROMPT"
-  evi "(A) settings.local.json true vs --settings false" "$d/a/init.json"
-  if has_plugin "$d/a/init.json" skill-creator; then
-    winner="settings.local.json wins: --settings is only a carrier, the 7.3 start check is what enforces the rule"
-  else
-    winner="--settings wins: it is a second layer behind the 7.3 start check"
-  fi
-  ev "(A) RECORDED: $winner"
-
-  # B. settings.local.json declares a marketplace and enables x@evil.
-  fresh_ws s12b
-  mkdir -p "$W/.claude"
-  jq -n -c --arg repo "$OWNER/of-g1-other" \
-    '{extraKnownMarketplaces: {evil: {source: {source: "github", repo: $repo}}}, enabledPlugins: {"x@evil": true}}' \
-    > "$W/.claude/settings.local.json"
-  base_settings "$d/b.json"
-  agent_run "$d/b" "$W" "$d/b.json" "$PROMPT"
-  evi "(B) settings.local.json declares marketplace evil and enables x@evil" "$d/b/init.json"
-  fetched=$(find "$AG" "$SEED" -iname '*evil*' 2>/dev/null | sed "s#^$T/##" | head -n 5 | paste -s -d, -)
-  ev "(B) RECORDED: x loaded: $(has_plugin "$d/b/init.json" x && echo yes || echo no); x-hook marker: $([ -e "$MARK/x-hook" ] && echo yes || echo no); evil paths on disk (fetched?): [${fetched:-none}]"
-  grep -i -h -m5 -E 'evil|marketplace|clon' "$d/b/stderr.txt" 2>/dev/null | cut -c1-300 | sed 's/^/    stderr: /' >> "$EV" || true
-  record 12 RECORDED "Project and local settings: which wins for enabledPlugins, and whether an unregistered marketplace is fetched"
-}
-
-item13() {
-  local d=$S/13
-  fresh_ws s13
-  reset_seed
-  mkdir -p "$d"
-  enabled_json marker@fixture dep@fixture | jq -c 'del(.["rel@localdir"])' > "$d/enabled.json"
-  make_settings "$d/settings.json" "$(cat "$d/enabled.json")" fixture localdir
-  ev "rel@localdir: not installed, not in enabledPlugins; localdir declared in extraKnownMarketplaces"
-  agent_run "$d/run" "$W" "$d/settings.json" "$PROMPT"
-  evi "init" "$d/run/init.json"
-  ev "RECORDED: rel loads: $(has_plugin "$d/run/init.json" rel && echo yes || echo no); rel-hook marker: $([ -e "$MARK/rel-hook" ] && echo yes || echo no)"
-  record 13 RECORDED "A directory marketplace's relative defaultEnabled plugin, not installed and not in enabledPlugins"
-}
-
-item14() {
-  local d=$S/14 preview=$S/14/preview status=PASS diffs
-  reset_seed
-  mkdir -p "$d"
-  cp -a "$SEED" "$preview"
-  chmod -R u+w "$preview"
-  for f in known_marketplaces.json installed_plugins.json; do
-    sed "s#$SEED#$preview#g" "$preview/$f" > "$preview/$f.new"
-    mv "$preview/$f.new" "$preview/$f"
-  done
-  ev "preview copy with installLocations rewritten: $(jq -c 'map_values(.installLocation)' "$preview/known_marketplaces.json" | cut -c1-300)"
-  stamp "$d/t0"
-  STORE=$preview rr "$d/install.txt" traffic-off plugin install ranged@fixture
-  evf "install into the preview" "$d/install.txt"
-  ev "preview installed keys: $(jq -c '.plugins | keys' "$preview/installed_plugins.json")"
-  ev "preview paths outside the preview: $(jq -r '.plugins[][]?.installPath' "$preview/installed_plugins.json" | grep -c -v "^$preview" || true)"
-  if ! jq -e '.plugins | has("ranged@fixture")' "$preview/installed_plugins.json" > /dev/null; then
-    status=FAIL
-    ev "ranged was not installed into the preview"
-  fi
-  diffs=$(diff -rq "$PRISTINE" "$SEED" 2>&1 | head -n 10 || true)
-  ev "original store: files newer than t0: $(find "$SEED" -newer "$d/t0" 2>/dev/null | wc -l | tr -d ' '); diff -r against the pristine copy: [${diffs:-identical}]"
-  if [ -n "$(find "$SEED" -newer "$d/t0" 2>/dev/null)" ] || [ -n "$diffs" ]; then status=FAIL; fi
-  chmod -R u+w "$preview"
-  rm -rf "$preview"
-  record 14 "$status" "The preview copy installs into a copied plugins root and the original store gets no writes"
-}
-
-item15() {
-  local d=$S/15 cfg=$S/15/cfg cache=$S/15/cache auto=no
-  mkdir -p "$d" "$cfg" "$cache"
-  jq -n -c --arg repo "$OWNER/of-g1-other" \
-    '{extraKnownMarketplaces: {evil: {source: {source: "github", repo: $repo}, autoUpdate: false}}}' > "$cfg/settings.json"
-  ev "runner settings.json declares marketplace evil; the runner's known_marketplaces.json starts absent"
-  STORE=$cache RCFG=$cfg rr "$d/mkt-list.txt" traffic-on plugin marketplace list
-  STORE=$cache RCFG=$cfg rr "$d/list.txt" traffic-on plugin list
-  evf "claude plugin marketplace list" "$d/mkt-list.txt"
-  evf "claude plugin list" "$d/list.txt"
-  if [ -s "$cache/known_marketplaces.json" ] && jq -e 'has("evil")' "$cache/known_marketplaces.json" > /dev/null 2>&1; then auto=yes; fi
-  if [ -d "$cache/marketplaces/evil" ]; then auto=yes; fi
-  ev "RECORDED: files in the runner's cache dir: $(find "$cache" -maxdepth 2 | sed "s#^$cache/##" | head -n 10 | paste -s -d, -)"
-  ev "RECORDED: the declared-but-missing marketplace was auto-added: $auto"
-  record 15 RECORDED "The runner auto-add: does claude plugin ... add a declared marketplace absent from known_marketplaces.json"
-}
-
-item16() {
-  local d=$S/16 reload
-  fresh_ws s16
-  reset_seed
-  mkdir -p "$d" "$W/.claude"
   write_project_settings "$W/.claude/settings.json"
-  base_settings "$d/settings.json"
-  agent_run "$d/run" "$W" "$d/settings.json" "$PROMPT"
-  evi "project hooks and statusLine, -p mode" "$d/run/init.json"
+  settings "$d/settings.json" "$(enabled marker@fixdir=false dep@fixdir=true)" "$DECL_DIR"
+  session "$d/run" "$d/settings.json" "$PROMPT"
+  evrun "project hooks and statusLine, -p mode" "$d/run"
   ev "RECORDED: project-level SessionStart hook ran: $([ -e "$MARK/project-hook" ] && echo yes || echo no)"
-  ev "RECORDED: project-level statusLine ran in -p mode: $([ -e "$MARK/project-statusline" ] && echo yes || echo no) (a statusLine usually needs an interactive session; item 16b asks Or to check it there)"
-  # /reload-plugins in -p mode.
+  ev "RECORDED: project-level statusLine ran in -p mode: $([ -e "$MARK/project-statusline" ] && echo yes || echo no) (a statusLine usually needs an interactive session, which this script does not drive)"
   mark_clear
-  agent_run "$d/reload" "$W" "$d/settings.json" '/reload-plugins'
+  session "$d/reload" "$d/settings.json" '/reload-plugins'
   reload=no
   if jq -e '.slash_commands[]? | select(. == "reload-plugins" or . == "/reload-plugins")' "$d/reload/init.json" > /dev/null 2>&1; then reload=yes; fi
-  ev "RECORDED: reload-plugins in -p slash_commands: $reload"
-  ev "RECORDED: result of running /reload-plugins with -p: $(jq -r 'select(.type=="result") | .result' "$d/reload/out.jsonl" 2>/dev/null | head -n 3 | cut -c1-300 | paste -s -d' ' -)"
-  record 16a RECORDED "Project hooks and statusLine run (the 7.3 check is needed); /reload-plugins in -p mode"
+  ev "RECORDED: reload-plugins in -p slash_commands: $reload; result of /reload-plugins with -p: $(jq -r 'select(.type=="result") | .result' "$d/reload/out.jsonl" 2> /dev/null | sed -n '1,3p' | cut -c1-300 | paste -s -d' ' -)"
+  # An enabledPlugins change in settings.local.json mid-session, in one stream-json session.
+  fresh_ws s17b
+  mkdir -p "$W/.claude"
+  SESSION_LIMIT=240 fifo_session "$d/live" "$d/settings.json" drv_reload
+  evrun "mid-session: settings.local.json sets marker@fixdir true while the session runs (--settings says false)" "$d/live"
+  ev "RECORDED: marker's hook or MCP server ran after the mid-session change: hook-sessionstart $([ -e "$MARK/hook-sessionstart" ] && echo yes || echo no), mcp-start $([ -e "$MARK/mcp-start" ] && echo yes || echo no)"
+  ev "RECORDED: results of the three messages: $(jq -r 'select(.type=="result") | .result' "$d/live/out.jsonl" 2> /dev/null | cut -c1-200 | paste -s -d'|' -)"
+  record 17 RECORDED "Project hooks and statusLine run (the 7.3 check is needed); /reload-plugins; a mid-session enabledPlugins change"
 }
 
-item17() {
-  local d=$S/17 cmds
-  reset_seed
+# 18: frontmatter hooks.
+item18() {
+  local d=$S/18 cmds n tools='Bash,Task,Agent,Skill'
   mkdir -p "$d"
-  base_settings "$d/settings.json"
-  local tools='Bash,Task,Agent,Skill'
-
-  # (a) skill with frontmatter hooks in $W/.claude/skills/h.
-  fresh_ws s17a
+  std_settings "$d/settings.json"
+  # (a) a skill with frontmatter hooks in $W/.claude/skills/h.
+  fresh_ws s18a
   mkdir -p "$W/.claude/skills"
   cp -a "$FX/extras/skill-h" "$W/.claude/skills/h"
-  agent_run "$d/a" "$W" "$d/settings.json" '/h' --allowedTools "$tools"
+  session "$d/a" "$d/settings.json" '/h' --allowedTools "$tools"
   evi "(a) skill h with frontmatter hooks, invoked as /h" "$d/a/init.json"
   ev "(a) RECORDED: skill frontmatter SessionStart hook ran: $([ -e "$MARK/skill-h-sessionstart" ] && echo yes || echo no); PreToolUse hook ran: $([ -e "$MARK/skill-h-pretooluse" ] && echo yes || echo no)"
-
-  # (b) subagent with hooks and mcpServers in $W/.claude/agents/a.md.
-  fresh_ws s17b
+  # (b) a subagent with hooks and mcpServers in $W/.claude/agents/a.md.
+  fresh_ws s18b
   mkdir -p "$W/.claude/agents"
   cp "$FX/extras/agent-a.md" "$W/.claude/agents/a.md"
-  agent_run "$d/b" "$W" "$d/settings.json" 'Delegate to the subagent named a and have it run echo hi. Then reply done.' --allowedTools "$tools"
+  session "$d/b" "$d/settings.json" 'Delegate to the subagent named a and have it run echo hi. Then reply done.' --allowedTools "$tools"
   evi "(b) subagent a in \$W/.claude/agents" "$d/b/init.json"
   ev "(b) RECORDED: subagent PreToolUse hook ran: $([ -e "$MARK/agent-a-pretooluse" ] && echo yes || echo no); subagent mcpServers entry started: $([ -e "$MARK/agent-a-mcp" ] && echo yes || echo no)"
-
   # (c) the same subagent in $AG/agents, plus skills in $AG/commands and $AG/agents.
-  fresh_ws s17c
+  fresh_ws s18c
   mkdir -p "$AG/agents" "$AG/commands/cskill" "$AG/agents/askill"
   cp "$FX/extras/agent-a.md" "$AG/agents/a.md"
   printf -- '---\nname: cskill\ndescription: G1 probe skill under commands\n---\nSay hello.\n' > "$AG/commands/cskill/SKILL.md"
   printf -- '---\nname: askill\ndescription: G1 probe skill under agents\n---\nSay hello.\n' > "$AG/agents/askill/SKILL.md"
   printf -- '---\ndescription: G1 probe command\n---\nSay hello.\n' > "$AG/commands/cmd.md"
-  agent_run "$d/c" "$W" "$d/settings.json" 'Delegate to the subagent named a and have it run echo hi. Then reply done.' --allowedTools "$tools"
+  session "$d/c" "$d/settings.json" 'Delegate to the subagent named a and have it run echo hi. Then reply done.' --allowedTools "$tools"
   evi "(c) subagent a in \$AG/agents; skills in \$AG/commands and \$AG/agents" "$d/c/init.json"
   ev "(c) RECORDED: subagent PreToolUse hook ran: $([ -e "$MARK/agent-a-pretooluse" ] && echo yes || echo no); subagent mcpServers entry started: $([ -e "$MARK/agent-a-mcp" ] && echo yes || echo no)"
-  cmds=$(jq -r '.slash_commands[]?' "$d/c/init.json" 2>/dev/null || true)
+  cmds=$(jq -r '.slash_commands[]?' "$d/c/init.json" 2> /dev/null || true)
   for n in cmd cskill askill; do
     if printf '%s\n' "$cmds" | grep -q -x -E "/?$n"; then ev "(c) RECORDED: $n is in slash_commands"; else ev "(c) RECORDED: $n is NOT in slash_commands"; fi
   done
-  ev "(c) RECORDED: agents in init: $(jq -c '.agents' "$d/c/init.json" 2>/dev/null)"
-  record 17 RECORDED "Frontmatter hooks of skills and subagents; skills in AG/commands and AG/agents"
+  ev "(c) RECORDED: agents in init: $(jq -c '.agents' "$d/c/init.json" 2> /dev/null)"
+  record 18 RECORDED "Frontmatter hooks of skills and subagents; skills in AG/commands and AG/agents"
 }
 
-item18() {
-  ev "Needs a claude.ai organisation that can mark a plugin required, and an agent signed in with a token."
-  ev "Steps for Or:"
-  ev "  1. In the claude.ai organisation settings, mark one plugin as required (if the organisation can)."
-  ev "  2. Create a throwaway agent dir: mkdir -p $T/ag/s18/plugins $T/ag/s18/skills $T/w/s18"
-  ev "  3. In a terminal, export the token (never put it on a command line) and make sure no API key is set:"
-  ev "       read -rs CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN; unset ANTHROPIC_API_KEY"
-  ev "     then run with syncClaudeAiPlugins false (the same --settings as the other items):"
-  ev "       AG=$T/ag/s18 $T/agent.sh $T/w/s18 -p ok --output-format stream-json --verbose --settings '{\"syncClaudeAiPlugins\":false}' > $T/s/18-out.jsonl"
-  ev "  4. jq 'select(.type==\"system\" and .subtype==\"init\") | .plugins' $T/s/18-out.jsonl"
-  ev "  5. Write down in the report: does the required plugin load with syncClaudeAiPlugins false? If the organisation cannot mark a plugin required, write UNTESTED."
-  record 18 MANUAL "Required synced plugins with syncClaudeAiPlugins: false (token-signed-in agent)"
-}
-
+# 19: required synced plugins (manual: it needs a claude.ai organisation).
 item19() {
-  ev "The shipped version ($CLAUDE_VERSION) is the floor unless an older version passes."
-  ev "To test an older version, if you can: install it, then run"
-  ev "    G1_FLOOR_PROBE=1 scripts/g1/run.sh $OWNER"
-  ev "and read items 1, 2, 3, 4, 7, 12 and (if testable) 18 in that report. The lowest version where they all hold is the floor."
-  ev "A probe report is not the Gate G1 report (it says so at the top)."
-  const "floor (item 19): $CLAUDE_VERSION (the shipped version), unless Or probes an older version with G1_FLOOR_PROBE=1 and records it here. Fills B3's MIN_CLAUDE_VERSION."
-  record 19 MANUAL "The version floor (lowest version where items 1-4, 7, 12 and 18 hold)"
+  ev "Needs a claude.ai organisation that can mark a plugin required, and an agent signed in with a token from it."
+  ev "Steps for Or:"
+  ev "  1. In the organisation's settings, mark one plugin as required (if the organisation can)."
+  ev "  2. With CLAUDE_CODE_OAUTH_TOKEN exported (never on a command line), run in a throwaway container:"
+  ev "       docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN -e CLAUDE_CONFIG_DIR=/tmp/ag -e CLAUDE_CODE_PLUGIN_CACHE_DIR=/tmp/p $IMAGE \\"
+  ev "         claude -p ok --output-format stream-json --verbose --settings '{\"syncClaudeAiPlugins\":false}' > $T/19-out.jsonl"
+  ev "  3. jq 'select(.type==\"system\" and .subtype==\"init\") | .plugins' $T/19-out.jsonl"
+  ev "  4. Write down in the report: does the required plugin load with syncClaudeAiPlugins false? If the organisation cannot mark a plugin required, write UNTESTED."
+  record 19 MANUAL "Required synced plugins with syncClaudeAiPlugins: false (token-signed-in agent)"
 }
 
+# 20: install and start timing (timing.sh, RECORDED).
 item20() {
   local out=$T/timing.md rc=0
-  ev "Runs scripts/g1/timing.sh in a throwaway container (docker run --rm --entrypoint bash), no credentials, no host installs."
-  ev "Fixture marketplace: $OWNER/of-g1-fixture (GitHub, a git clone), so marker and ranged use the pushed repo."
-  ev "Session-start init timing (extra time to init with a plugin, cold start) is not measured: it needs a credential. Record it by hand if wanted."
-  if ! command -v docker >/dev/null 2>&1; then
-    ev "docker is not installed: item 20 not run. Run scripts/g1/timing.sh on a machine with Docker."
-    record 20 RECORDED "Install timing (not run: no docker)"
-    return 0
-  fi
-  HOME=$REAL_HOME bash "$HERE/timing.sh" --github-owner "$OWNER" --image "${G1_IMAGE:-open-factory-base:dev}" > "$out" 2> "$T/timing.err" || rc=$?
+  ev "Runs scripts/g1/timing.sh in throwaway containers of $IMAGE. The credential is passed by name for the session-start timings (e)."
+  ev "Fixture: the directory marketplace built for this run (marker and ranged); superpowers and the official plugins from GitHub."
+  bash "$HERE/timing.sh" --image "$IMAGE" --fixture "$FX" > "$out" 2> "$T/timing.err" || rc=$?
   if [ "$rc" -ne 0 ]; then
     ev "timing.sh exited $rc: $(tail -n 3 "$T/timing.err" | tr '\n' ' ')"
     : > "$out"
   fi
   evf "timing.sh stderr" "$T/timing.err"
-  record 20 RECORDED "Install timing (table under 'Install and start timing' below)"
+  record 20 RECORDED "Install and start timing (table under 'Install and start timing' below)"
+}
+
+# 21: the floor.
+item21() {
+  ev "The pin ($PIN) is the floor unless an older version passes."
+  ev "To test an older one, if you can: build or pull an image with it, then run"
+  ev "    G1_FLOOR_PROBE=1 scripts/g1/run.sh <older-image>"
+  ev "and read items 1-9, 12, 15 and (if testable) 19 in that report. The lowest version where they all hold is the floor."
+  ev "A probe report is not the Gate G1 report (it says so at the top)."
+  const "floor (item 21): $PIN (the pin), unless Or probes an older image with G1_FLOOR_PROBE=1 and records it here. Fills B3's MIN_CLAUDE_VERSION."
+  record 21 MANUAL "The version floor (lowest version where items 1-9, 12, 15 and 19 hold)"
 }
 
 # -------------------------------------------------------------------- report
 build_report() {
-  local tmpl=$HERE/report-template.md out=$T/report.md line summary details f
+  local tmpl=$HERE/report-template.md out=$T/report.md line summary details f tab
   [ -s "$T/summary.tsv" ] || return 0
+  tab=$(printf '\t')
   summary=$T/summary.md
   {
     printf '| Item | Status | What |\n|---|---|---|\n'
-    sort "$T/summary.tsv" | while IFS="$(printf '\t')" read -r id st title; do
+    sort -n -t "$tab" -k1,1 "$T/summary.tsv" | while IFS="$tab" read -r id st title; do
       printf '| %s | %s | %s |\n' "$id" "$st" "$title"
     done
   } > "$summary"
   details=$T/details.md
   : > "$details"
   for f in "$RES"/*.md; do
-    cat "$f" >> "$details"
+    [ -e "$f" ] && cat "$f" >> "$details"
   done
   : > "$out"
   while IFS= read -r line || [ -n "$line" ]; do
@@ -1060,8 +1142,6 @@ build_report() {
       @@DETAILS@@) cat "$details" >> "$out" ;;
       @@CONSTANTS@@)
         if [ -s "$T/constants.txt" ]; then sed 's/^/- /' "$T/constants.txt" >> "$out"; else echo "(none recorded)" >> "$out"; fi
-        echo "- update against fresh install (B6): read item 10." >> "$out"
-        echo "- whether mcpb/ is scrubbed (B7): read item 7 and the mcpb constant above." >> "$out"
         ;;
       @@TIMING@@)
         if [ -s "$T/timing.md" ]; then cat "$T/timing.md" >> "$out"; else echo "(item 20 did not produce a table; see its details)" >> "$out"; fi
@@ -1070,10 +1150,12 @@ build_report() {
       *)
         line=${line//@@DATE@@/$(date -u +%Y-%m-%dT%H:%M:%SZ)}
         line=${line//@@CLAUDE_VERSION@@/$CLAUDE_VERSION}
-        line=${line//@@PINNED_VERSION@@/$PINNED}
-        line=${line//@@HOST@@/$(uname -sm)}
-        line=${line//@@FIXTURE_REPO@@/$OWNER/of-g1-fixture and $OWNER/of-g1-other}
-        line=${line//@@SHAS@@/first ${FIXTURE_FIRST:-?}, tip ${FIXTURE_HEAD:-?}, other ${OTHER_HEAD:-?}}
+        line=${line//@@PINNED_VERSION@@/$PIN}
+        line=${line//@@IMAGE@@/$IMAGE}
+        line=${line//@@IMAGE_ID@@/$IMAGE_ID}
+        line=${line//@@HOST@@/$(uname -sm), docker $(docker version -f '{{.Server.Version}} {{.Server.Arch}}' 2> /dev/null || echo '?')}
+        line=${line//@@FILE_URL@@/$FILE_URL_NOTE}
+        line=${line//@@SHAS@@/fixture first ${FIX_FIRST:-?}, second ${FIX_SECOND:-?}; latest first ${LAT_FIRST:-?}, second ${LAT_SECOND:-?}}
         line=${line//@@WORKDIR@@/$T}
         printf '%s\n' "$line" >> "$out"
         ;;
@@ -1081,18 +1163,30 @@ build_report() {
   done < "$tmpl"
 }
 
+# The credential must be nowhere under the work dir. grep reads the token from
+# a process substitution, so it never appears in a process list.
+credential_scan() {
+  if grep -r -l -F -f <(printf '%s\n' "$CLAUDE_CODE_OAUTH_TOKEN") "$T" > "$T/leaks.txt" 2> /dev/null; then
+    echo "g1: THE CREDENTIAL APPEARS IN THESE FILES; the report is withheld. Delete the work dir:" >&2
+    sed 's/^/  /' "$T/leaks.txt" >&2
+    rm -f "$T/report.md"
+    return 1
+  fi
+  rm -f "$T/leaks.txt"
+}
+
 finish() {
   local rc=$?
   trap - EXIT
   build_report || true
-  if [ -s "$T/report.md" ]; then
+  if [ -s "$T/report.md" ] && credential_scan; then
     echo
     echo "g1: report: $T/report.md"
-    if grep -q $'\tFAIL\t' "$T/summary.tsv" 2>/dev/null; then
-      echo "g1: FAIL items present: send them to owner-i5 before the design adapts"
+    if grep -q $'\tFAIL\t' "$T/summary.tsv" 2> /dev/null; then
+      echo "g1: FAIL items present: send them to owner-i5 before the design adapts (item 2 goes to Or, spec P6)"
     fi
     echo "g1: post report.md on #153."
-    printf 'g1: delete the work dir when done (it may hold partial credential state): chmod -R u+w %q && rm -rf %q\n' "$T" "$T"
+    printf 'g1: delete the work dir when done: rm -rf %q\n' "$T"
   fi
   if [ "$rc" -ne 0 ]; then echo "g1: stopped early (exit $rc); the report holds what finished" >&2; fi
   exit "$rc"
@@ -1100,14 +1194,12 @@ finish() {
 trap finish EXIT
 
 # ----------------------------------------------------------------------- main
-bash "$HERE/fixture/make-fixture.sh" "$FX" "$OWNER" > "$T/make-fixture.log" 2>&1 || die "make-fixture.sh failed; see $T/make-fixture.log"
+bash "$HERE/fixture/make-fixture.sh" "$FX" > "$T/make-fixture.log" 2>&1 || die "make-fixture.sh failed; see $T/make-fixture.log"
 # shellcheck source=/dev/null
 . "$FX/SHAS"
-verify_remote "$OWNER/of-g1-fixture" "$FIXTURE_HEAD"
-verify_remote "$OWNER/of-g1-other" "$OTHER_HEAD"
-
-build_seed
-test -z "$(ls -A "$MARK")" || echo "g1: note: MARK is not empty after the seed build (item 8 will say FAIL)"
+DECL_DIR=$(decl fixdir "$SRC_DIR")
+serve_reset acme
+serve_reset acme-latest
 
 item00
 item01
@@ -1117,9 +1209,10 @@ item04
 item05
 item06
 item07
-item10   # before 8: item 8 reads item 10's MARK listing
 item08
 item09
+item10
+item11
 item12
 item13
 item14
@@ -1128,8 +1221,8 @@ item16
 item17
 item18
 item19
-item20   # needs docker; no credentials; Linux container
-item11   # last: it waits for Or's interactive session; also records 16b
+item20
+item21
 
 echo
-echo "g1: manual steps: item 11 and 16b (an interactive session), item 18 (an organisation), item 19 (an older version). See report.md."
+echo "g1: manual steps: item 19 (an organisation) and item 21 (an older image). See report.md."

@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# Gate G1 item 20 (spec section 13): install timing, RECORDED, never PASS or FAIL.
+# Gate G1 item 20 (spec section 13): install and start timing, RECORDED, never
+# PASS or FAIL.
 #
 # Usage (from the repo root, with Docker running):
-#   scripts/g1/timing.sh [--image open-factory-base:dev] [--runs 3] [--out timing-report.md]
-#   scripts/g1/timing.sh --github-owner <owner> [--image ...] [--runs 3] [--out ...]
+#   scripts/g1/timing.sh [--image open-factory-base:<pin>] [--runs 3] [--fixture DIR] [--out timing-report.md]
 #
-# Standalone: no GitHub account, no credentials, nothing installed on the host.
-# The host part only runs `docker run --rm --entrypoint bash <image>` with this
-# script mounted read-only and the fixture dir (scripts/g1/fixture) mounted
-# read-only, and with exactly two env vars (DISABLE_AUTOUPDATER=1 and a
-# CLAUDE_CONFIG_DIR). No host env is forwarded. Inside the container each case
-# gets a fresh CLAUDE_CONFIG_DIR and runs plain `claude plugin ...` commands
-# only: no agent session, no auth, no credentials.
+# The host part only runs `docker run --rm` of the agent image, with this script
+# mounted read-only and the fixture mounted read-only. The version is read from
+# images/base/claude-code-version and compared with `claude --version` in the
+# image. Inside the container each case gets a fresh CLAUDE_CONFIG_DIR and a fresh
+# plugins dir ($P, CLAUDE_CODE_PLUGIN_CACHE_DIR).
 #
-# Default mode: the container builds the fixture itself (make-fixture.sh, which
-# needs git, npm, jq and the network once for the lockfile) and adds it as a
-# DIRECTORY marketplace from a local path (a git working tree on disk, added
-# by path, so it is not a git clone). With --github-owner the fixture
-# marketplace is added from <owner>/of-g1-fixture instead (a git clone); that
-# is the mode run.sh item 20 uses.
+# Without a credential it runs plain `claude plugin ...` commands only: (a) the
+# marketplace add, (b) the install, (c) a second install, (d) the plugins dir.
+# With CLAUDE_CODE_OAUTH_TOKEN exported it also measures, per case, the session
+# start: (e) the time from spawn to the `initialize` control response and to
+# the `init` event, with no plugin, with the plugin already in $P (warm) and
+# from an empty $P with the plugin declared (cold), with 1 and 3 plugins. The
+# token is passed to the container by name (docker -e NAME), never written
+# anywhere and never printed.
 #
-# Not measured here: session-start `init` timing (extra time to init with the
-# plugin installed, cold start). It needs a credential.
+# --fixture DIR is a directory built by scripts/g1/fixture/make-fixture.sh (run.sh
+# passes its own); without it the script builds one in a temp dir (needs git only).
 #
 # Written for bash 3.2 and newer on the host; the container part is Linux
 # (GNU date, awk).
@@ -39,13 +39,11 @@ die() {
 
 # ============================================================ inside container
 inside() {
-  PINNED="" MODE=dir OWNER="" RUNS=3 IMAGE_NAME=unknown
+  PINNED="" RUNS=3 IMAGE_NAME=unknown
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --image) IMAGE_NAME=$2; shift 2 ;;
       --pinned) PINNED=$2; shift 2 ;;
-      --mode) MODE=$2; shift 2 ;;
-      --owner) OWNER=$2; shift 2 ;;
       --runs) RUNS=$2; shift 2 ;;
       *) die "inside: unknown argument $1" ;;
     esac
@@ -87,7 +85,8 @@ inside() {
     cfg=$RD/config
     mk=$RD/mark
     mkdir -p "$cfg" "$mk"
-    export CLAUDE_CONFIG_DIR=$cfg MARK=$mk
+    mkdir -p "$cfg/skills" "$RD/p"
+    export CLAUDE_CONFIG_DIR=$cfg CLAUDE_CODE_PLUGIN_CACHE_DIR=$RD/p MARK=$mk
 
     step add claude plugin marketplace add "$src"
     add=$S_T
@@ -105,10 +104,10 @@ inside() {
     if [ "$status" = FAILED ]; then
       printf 'FAILED %s run %s at %s: %s\n' "$label" "$n" "$stage" "$(tail_err "$RD/$S_NAME.err")" >> "$FAILS"
     fi
-    if [ -d "$cfg/plugins" ]; then
-      kb=$(du -sk "$cfg/plugins" | awk '{print $1}')
-      files=$(find "$cfg/plugins" -type f | wc -l | tr -d ' ')
-      if [ -n "$(find "$cfg/plugins" -type d -name node_modules -print -quit)" ]; then nm=yes; fi
+    if [ -d "$RD/p" ]; then
+      kb=$(du -sk "$RD/p" | awk '{print $1}')
+      files=$(find "$RD/p" -type f | wc -l | tr -d ' ')
+      if [ -n "$(find "$RD/p" -type d -name node_modules -print -quit)" ]; then nm=yes; fi
     fi
     [ -e "$mk/npm-preinstall" ] && pre=yes
     [ -e "$mk/npm-postinstall" ] && post=yes
@@ -130,6 +129,105 @@ inside() {
   }
   runs_ok() { awk -F'\t' -v l="$1" '$1 == l { t++; if ($3 == "OK") o++ } END { printf "%d/%d", o, t }' "$ROWS"; }
 
+  # ---- session-start timings (e)
+  # A throwaway node clock: spawn claude headless, report the ms until the
+  # `initialize` control response (stream-json input) or the `init` event.
+  cat > "$W/startclock.js" <<'JSEOF'
+const { spawn } = require('child_process');
+const [mode, settings] = process.argv.slice(2);
+const args = mode === 'init'
+  ? ['-p', 'ok', '--output-format', 'stream-json', '--verbose', '--settings', settings]
+  : ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--settings', settings];
+const t0 = process.hrtime.bigint();
+const child = spawn('claude', args, { stdio: ['pipe', 'pipe', 'ignore'] });
+const finish = (text) => { console.log(text); child.kill('SIGKILL'); process.exit(0); };
+if (mode === 'initialize') {
+  child.stdin.write(`${JSON.stringify({ type: 'control_request', request_id: 'g1-init', request: { subtype: 'initialize' } })}\n`);
+}
+let buf = '';
+child.stdout.on('data', (d) => {
+  buf += d;
+  let i;
+  while ((i = buf.indexOf('\n')) >= 0) {
+    const line = buf.slice(0, i);
+    buf = buf.slice(i + 1);
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    const ms = Number((process.hrtime.bigint() - t0) / 1000000n);
+    if (mode === 'init' && o.type === 'system' && o.subtype === 'init') finish(`ms ${ms}`);
+    if (mode === 'initialize' && o.type === 'control_response') finish(`ms ${ms}`);
+  }
+});
+child.on('exit', () => { console.log('ms FAILED'); process.exit(0); });
+setTimeout(() => finish('ms TIMEOUT'), 120000);
+JSEOF
+
+  OFFICIAL='{"claude-plugins-official":{"source":{"source":"github","repo":"anthropics/claude-plugins-official"}}}'
+  SUPER='{"superpowers-marketplace":{"source":{"source":"github","repo":"obra/superpowers-marketplace"}}}'
+  SET0='{"syncClaudeAiPlugins":false}'
+  SET1="{\"enabledPlugins\":{\"skill-creator@claude-plugins-official\":true},\"extraKnownMarketplaces\":$OFFICIAL,\"syncClaudeAiPlugins\":false}"
+  SET3="{\"enabledPlugins\":{\"skill-creator@claude-plugins-official\":true,\"frontend-design@claude-plugins-official\":true,\"superpowers@superpowers-marketplace\":true},\"extraKnownMarketplaces\":{\"claude-plugins-official\":{\"source\":{\"source\":\"github\",\"repo\":\"anthropics/claude-plugins-official\"}},\"superpowers-marketplace\":{\"source\":{\"source\":\"github\",\"repo\":\"obra/superpowers-marketplace\"}}},\"syncClaudeAiPlugins\":false}"
+
+  clock() { # <mode> <settings-json> <plugins dir>: ms, or "-"
+    local cfg out
+    cfg=$(mktemp -d "$W/cfg.XXXXXX")
+    mkdir -p "$cfg/skills" "$3"
+    out=$(CLAUDE_CONFIG_DIR=$cfg CLAUDE_CODE_PLUGIN_CACHE_DIR=$3 node "$W/startclock.js" "$1" "$2" 2> /dev/null | tail -n 1 || true)
+    case "$out" in 'ms '[0-9]*) echo "${out#ms }" ;; *) echo "-" ;; esac
+  }
+  mm() { # <ms>...: "min-max ms (n)"
+    printf '%s\n' "$@" | grep -E '^[0-9]+$' | sort -n | awk 'NR == 1 { lo = $1 } { hi = $1 } END { if (NR == 0) print "n/a"; else if (lo == hi) printf "%s ms (n=%d)", lo, NR; else printf "%s-%s ms (n=%d)", lo, hi, NR }' || true
+  }
+  prime() { # <plugins dir> <1|3>: install the plugins with the CLI, no session
+    local pd=$1 cfg
+    cfg=$(mktemp -d "$W/cfg.XXXXXX")
+    mkdir -p "$cfg/skills"
+    export CLAUDE_CONFIG_DIR=$cfg CLAUDE_CODE_PLUGIN_CACHE_DIR=$pd
+    claude plugin marketplace add anthropics/claude-plugins-official > /dev/null 2>&1 || true
+    claude plugin install skill-creator@claude-plugins-official > /dev/null 2>&1 || true
+    if [ "$2" = 3 ]; then
+      claude plugin install frontend-design@claude-plugins-official > /dev/null 2>&1 || true
+      claude plugin marketplace add obra/superpowers-marketplace > /dev/null 2>&1 || true
+      claude plugin install superpowers@superpowers-marketplace > /dev/null 2>&1 || true
+    fi
+  }
+
+  session_timing() {
+    local label settings n mode i v cold_init cold_initialize warm_init warm_initialize pd
+    {
+      echo "### (e) Session start, spawn to \`initialize\` response and to \`init\` ($RUNS runs each, min-max)"
+      echo
+      echo "The harness waits 5 s (COMMANDS_TIMEOUT_MS) for the \`initialize\` response. Cold: an empty plugins dir with the plugins declared in --settings (the cold start). Warm: the plugins already in the plugins dir. Each run kills the session once the event arrives."
+      echo
+      echo "| Plugins | cold: to initialize | cold: to init | warm: to initialize | warm: to init |"
+      echo "|---|---|---|---|---|"
+    } > "$SESS_TABLE"
+    for label in none 1plugin 3plugins; do
+      case "$label" in none) settings=$SET0 n=0 ;; 1plugin) settings=$SET1 n=1 ;; 3plugins) settings=$SET3 n=3 ;; esac
+      cold_init="" cold_initialize="" warm_init="" warm_initialize=""
+      i=1
+      while [ "$i" -le "$RUNS" ]; do
+        cold_initialize="$cold_initialize $(clock initialize "$settings" "$W/pc-$label-$i-a")"
+        cold_init="$cold_init $(clock init "$settings" "$W/pc-$label-$i-b")"
+        i=$((i + 1))
+      done
+      pd=$W/pw-$label
+      if [ "$n" -gt 0 ]; then prime "$pd" "$n"; fi
+      i=1
+      while [ "$i" -le "$RUNS" ]; do
+        warm_initialize="$warm_initialize $(clock initialize "$settings" "$pd")"
+        warm_init="$warm_init $(clock init "$settings" "$pd")"
+        i=$((i + 1))
+      done
+      # shellcheck disable=SC2086
+      printf '| %s | %s | %s | %s | %s |\n' "$label" "$(mm $cold_initialize)" "$(mm $cold_init)" "$(mm $warm_initialize)" "$(mm $warm_init)" >> "$SESS_TABLE"
+    done
+    {
+      echo
+      echo "The extra time to \`init\` with the plugin already in the plugins dir is the warm cell against the \`none\` row; the cold start is the cold \`init\` cell."
+    } >> "$SESS_TABLE"
+  }
+
   # ---- environment facts
   CLAUDE_VERSION=$(claude --version 2> /dev/null | awk '{print $1}' || true)
   [ -n "$CLAUDE_VERSION" ] || { echo "timing: claude is not runnable in this image" >&2; exit 1; }
@@ -138,31 +236,11 @@ inside() {
     VERSION_NOTE="DIFFERS from the pin $PINNED (images/base/claude-code-version); not refused, recorded"
   fi
 
-  # ---- the fixture marketplace
-  FIXTURE_NOTE=""
+  # ---- the fixture marketplace: the directory marketplace fixdir, mounted read-only
+  FIXTURE_SRC=/g1/fx/dir
+  FIXTURE_NOTE="the DIRECTORY marketplace fixdir at $FIXTURE_SRC (read-only mount; its plugins are copied into the cache on install)"
   FIXTURE_OK=yes
-  if [ "$MODE" = github ]; then
-    FIXTURE_SRC=$OWNER/of-g1-fixture
-    FIXTURE_NOTE="GitHub marketplace $FIXTURE_SRC (a git clone made by claude plugin marketplace add)"
-  else
-    FIXTURE_SRC=$W/fx/of-g1-fixture
-    FIXTURE_NOTE="DIRECTORY marketplace at $FIXTURE_SRC (a local git working tree added by path; NOT a git clone, nothing pushed to GitHub)"
-    for tool in git npm jq; do
-      if ! command -v "$tool" > /dev/null 2>&1; then
-        FIXTURE_OK=no
-        echo "FAILED fixture cases: the image has no $tool (make-fixture.sh needs git, npm and jq); marker and ranged are not measured" >> "$FAILS"
-        break
-      fi
-    done
-    if [ "$FIXTURE_OK" = yes ]; then
-      if bash /g1/fixture/make-fixture.sh "$W/fx" local-owner > "$W/make-fixture.log" 2>&1; then
-        :
-      else
-        FIXTURE_OK=no
-        echo "FAILED fixture build: make-fixture.sh exited non-zero: $(tail_err "$W/make-fixture.log")" >> "$FAILS"
-      fi
-    fi
-  fi
+  [ -d "$FIXTURE_SRC/.claude-plugin" ] || { FIXTURE_OK=no; echo "FAILED fixture: $FIXTURE_SRC is not mounted" >> "$FAILS"; }
 
   # ---- the cases (a failure is recorded and never stops the others)
   LABELS="superpowers skill-creator frontend-design"
@@ -173,11 +251,16 @@ inside() {
       case "$label" in
         superpowers) run_case "$label" obra/superpowers-marketplace superpowers-marketplace superpowers "$n" ;;
         skill-creator | frontend-design) run_case "$label" anthropics/claude-plugins-official claude-plugins-official "$label" "$n" ;;
-        marker | ranged) run_case "$label" "$FIXTURE_SRC" fixture "$label" "$n" ;;
+        marker | ranged) run_case "$label" "$FIXTURE_SRC" fixdir "$label" "$n" ;;
       esac
       n=$((n + 1))
     done
   done
+
+  # ---- (e) session-start timings (only with a credential, passed in by name)
+  SESS_TABLE=$W/session-table.md
+  : > "$SESS_TABLE"
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then session_timing; fi
 
   # ---- the report
   ref_add() {
@@ -213,8 +296,10 @@ inside() {
     echo "- Claude Code: $CLAUDE_VERSION ($VERSION_NOTE)"
     echo "- Image: $IMAGE_NAME; arch $(uname -m); $(nproc 2> /dev/null || echo '?') CPUs"
     echo "- Fixture marketplace: $FIXTURE_NOTE"
-    echo "- Cold cases: $RUNS runs each, fresh CLAUDE_CONFIG_DIR each run, DISABLE_AUTOUPDATER=1, no credentials. Times are min-max wall seconds over the runs that succeeded."
-    echo "- Session-start init timing (extra time to init with the plugin installed, cold start): not measured here, it needs a credential."
+    echo "- Cold cases: $RUNS runs each, fresh CLAUDE_CONFIG_DIR each run, DISABLE_AUTOUPDATER=1, no credential for these plugin commands. Times are min-max wall seconds over the runs that succeeded. The plugins dir is a fresh CLAUDE_CODE_PLUGIN_CACHE_DIR per run."
+    if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+      echo "- (e) session-start timings: not measured, no credential (export CLAUDE_CODE_OAUTH_TOKEN)."
+    fi
     echo "- Network and host: <fill in>"
     echo
     echo "| Plugin | OK runs | (a) marketplace add | (b) install | (c) second install | (d) plugins dir, last run | node_modules | marker preinstall / postinstall ran |"
@@ -236,6 +321,10 @@ inside() {
     echo
     echo "Reference notes: no node_modules after install for any official plugin; plain installs do not cost the tens of seconds #56 reports. This item finds whether a real dependency install (marker: package.json with a registry dependency and preinstall/postinstall) does."
     echo
+    if [ -s "$SESS_TABLE" ]; then
+      cat "$SESS_TABLE"
+      echo
+    fi
     if [ -s "$FAILS" ]; then
       echo "Failures (recorded, the other cases ran on):"
       echo
@@ -251,39 +340,46 @@ inside() {
 
 # ================================================================= host side
 host() {
-  IMAGE=open-factory-base:dev RUNS=3 OWNER="" OUT=""
+  IMAGE="" RUNS=3 FIXTURE="" OUT=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --image) [ "$#" -ge 2 ] || die "--image needs a value"; IMAGE=$2; shift 2 ;;
       --runs) [ "$#" -ge 2 ] || die "--runs needs a value"; RUNS=$2; shift 2 ;;
-      --github-owner) [ "$#" -ge 2 ] || die "--github-owner needs a value"; OWNER=$2; shift 2 ;;
+      --fixture) [ "$#" -ge 2 ] || die "--fixture needs a value"; FIXTURE=$2; shift 2 ;;
       --out) [ "$#" -ge 2 ] || die "--out needs a value"; OUT=$2; shift 2 ;;
-      -h | --help) sed -n '2,25p' "$SELF"; exit 0 ;;
-      *) die "unknown argument: $1 (usage: scripts/g1/timing.sh [--image IMG] [--runs N] [--github-owner OWNER] [--out FILE])" ;;
+      -h | --help) sed -n '2,24p' "$SELF"; exit 0 ;;
+      *) die "unknown argument: $1 (usage: scripts/g1/timing.sh [--image IMG] [--runs N] [--fixture DIR] [--out FILE])" ;;
     esac
   done
   case "$RUNS" in '' | *[!0-9]* | 0) die "--runs must be a positive integer" ;; esac
-  case "$OWNER" in *[!A-Za-z0-9-]*) die "github owner must be letters, digits and dashes: $OWNER" ;; esac
 
   command -v docker > /dev/null 2>&1 || die "docker is not installed or not on PATH"
   PINNED=$(tr -d '[:space:]' < "$ROOT/images/base/claude-code-version")
   [ -n "$PINNED" ] || die "images/base/claude-code-version is empty"
+  [ -n "$IMAGE" ] || IMAGE=open-factory-base:$PINNED
 
-  MODE=dir
-  [ -n "$OWNER" ] && MODE=github
+  if [ -z "$FIXTURE" ]; then
+    FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/of-g1-timing.XXXXXX")
+    bash "$SELF_DIR/fixture/make-fixture.sh" "$FIXTURE" > /dev/null || die "make-fixture.sh failed"
+  fi
+  [ -d "$FIXTURE/dir" ] || die "$FIXTURE is not a fixture dir (no dir/)"
 
-  # Exactly two env vars, nothing from the host; two read-only mounts.
+  # Read-only mounts of this script and the fixture. The credential, when
+  # exported, goes in by name only.
+  CRED=""
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then CRED="-e CLAUDE_CODE_OAUTH_TOKEN"; fi
   run() {
-    docker run --rm --entrypoint bash \
-      --env DISABLE_AUTOUPDATER=1 \
-      --env CLAUDE_CONFIG_DIR=/tmp/g1-config \
+    # shellcheck disable=SC2086
+    docker run --rm $CRED \
+      -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+      -e DISABLE_AUTOUPDATER=1 -e CLAUDE_CONFIG_DIR=/tmp/g1-config \
       -v "$SELF:/g1/timing.sh:ro" \
-      -v "$SELF_DIR/fixture:/g1/fixture:ro" \
-      "$IMAGE" /g1/timing.sh --inside --image "$IMAGE" --pinned "$PINNED" --mode "$MODE" --owner "$OWNER" --runs "$RUNS"
+      -v "$FIXTURE:/g1/fx:ro" \
+      "$IMAGE" bash /g1/timing.sh --inside --image "$IMAGE" --pinned "$PINNED" --runs "$RUNS"
   }
   if [ -n "$OUT" ]; then
     run | tee "$OUT"
-    echo "timing: copy written to $OUT"
+    echo "timing: copy written to $OUT" >&2
   else
     run
   fi

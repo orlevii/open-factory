@@ -501,6 +501,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     publish: libraryChanged,
     purgeAfter: (ms) => librarySweep.purgeAfter(ms),
     // After the Library lock is released (spec §9.6); `by` is the bare user handle.
+    captureLibrary: (skills) => configChanges.captureLibrary(skills),
     onLibraryChanged: (e) => configChanges.libraryChanged(e),
     log: (message, err) => app.log.error({ err }, message),
   });

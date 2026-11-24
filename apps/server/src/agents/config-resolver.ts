@@ -16,12 +16,14 @@ import { AgentStartError } from "./errors.ts";
 
 /**
  * What an agent runs with: the merged three-part document and the parsed template config (spec §6.1).
- * `templatePlugins` is what the template alone lists, so a plugin that fails to install names its fix.
+ * `templatePlugins` and `templateSkills` are what the template alone lists, so a failure names its fix.
  */
 export type Effective = {
   doc: ConfigDoc;
   config: TemplateConfig;
   templatePlugins: string[];
+  /** The skills the template alone lists, so a skill that doesn't resolve names its fix. */
+  templateSkills: string[];
   /** What the Library resolved the config's skills and plugins to (spec §8.1); kept as `started`. */
   library: Library;
 };
@@ -99,7 +101,11 @@ export class ConfigResolver {
     const templatePlugins = Array.isArray(listed)
       ? listed.filter((p): p is string => typeof p === "string")
       : [];
-    return { doc, config, templatePlugins, library: await this.libraryOf(doc) };
+    const listedSkills = base.template.skills;
+    const templateSkills = Array.isArray(listedSkills)
+      ? listedSkills.filter((p): p is string => typeof p === "string")
+      : [];
+    return { doc, config, templatePlugins, templateSkills, library: await this.libraryOf(doc) };
   }
 
   /**

@@ -62,6 +62,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
       doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
       config,
       templatePlugins: [],
+      templateSkills: [],
       library: { skills: {}, plugins: {} },
     },
     manager: null,
@@ -368,4 +369,39 @@ test("prepare checks and scrubs the agent's own folders after linking", async ()
   mkdirSync(path.join(wd, ".claude/agents"), { recursive: true });
   writeFileSync(path.join(wd, ".claude/agents/a.md"), "---\nmcpServers: {}\n---\n");
   await expect(ws.prepare(withHooked)).rejects.toThrow("agents/a.md declares mcpServers");
+});
+
+test("prepare names the template as the fix for a skill the template lists, the agent for one it added", async () => {
+  const { ws, tpl, prep, claude } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  rmSync(path.join(claude, "skills/grilling/SKILL.md"));
+  const listed = { ...prep, effective: { ...prep.effective, templateSkills: ["grilling"] } };
+  await expect(ws.prepare(listed)).rejects.toMatchObject({ fix: "template" });
+  await expect(ws.prepare(prep)).rejects.toMatchObject({ fix: "config" });
+  await expect(
+    ws.materialize(
+      "lead2",
+      "lead2",
+      { ...tpl, config: { ...tpl.config, skills: ["grilling"] } },
+      {
+        ...prep,
+        slug: "lead2",
+      },
+    ),
+  ).rejects.toMatchObject({ fix: "template" });
+});
+
+test("prepare reports the first failing step when two coexist: the plugin check, then the settings check", async () => {
+  const { ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const wd = ws.workdir("lead");
+  mkdirSync(path.join(wd, ".claude/skills/p/.claude-plugin"), { recursive: true });
+  writeFileSync(path.join(wd, ".claude/settings.local.json"), JSON.stringify({ hooks: {} }));
+  mkdirSync(path.join(wd, ".claude/agents"), { recursive: true });
+  writeFileSync(path.join(wd, ".claude/agents/a.md"), "---\nhooks: {}\n---\n");
+  await expect(ws.prepare(prep)).rejects.toThrow("skills/p is a plugin");
+  rmSync(path.join(wd, ".claude/skills/p"), { recursive: true });
+  await expect(ws.prepare(prep)).rejects.toThrow("sets hooks");
+  rmSync(path.join(wd, ".claude/settings.local.json"));
+  await expect(ws.prepare(prep)).rejects.toThrow("agents/a.md declares hooks");
 });

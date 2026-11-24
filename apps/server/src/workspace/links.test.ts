@@ -82,6 +82,13 @@ test("resolveSkills fails with the Library's reason as the start's message, fixe
   await expect(resolveSkills(lib, ["renamed"])).rejects.toMatchObject({
     message: "Skill renamed is unusable: SKILL.md names it other. Fix it in Configuration.",
   });
+  // A name the template itself lists is the template's to fix.
+  await expect(resolveSkills(lib, ["nope"], ["nope"])).rejects.toMatchObject({
+    message: "Skill nope hasn't been added in Skills. Fix it in Templates.",
+    diagnosis: "Skill nope hasn't been added in Skills.",
+    fix: "template",
+  });
+  await expect(resolveSkills(lib, ["nope"], ["other"])).rejects.toMatchObject({ fix: "config" });
   const missing = {
     resolveSkill: async () => ({ ok: false as const, reason: "missing" as const }),
   };

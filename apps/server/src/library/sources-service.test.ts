@@ -96,7 +96,13 @@ interface Setup {
   svc: SourcesService;
   store: SourcesStore;
   users: Users;
-  changed: Array<{ skills?: string[]; by: string }>;
+  changed: Array<{
+    skills?: string[];
+    by: string;
+    before?: { skills: Record<string, string>; plugins: Record<string, string> };
+  }>;
+  /** The row's pin at each `captureLibrary` call. */
+  captured: (string | null | undefined)[];
   lockFreeInCallback: boolean[];
   /** How many Library lock holders were active at each `publish`. */
   publishDepth: number[];
@@ -108,6 +114,7 @@ function setup(o: { users?: Users; fileWalkCap?: number } = {}): Setup {
   const store = memorySourcesStore();
   const users: Users = o.users ?? {};
   const changed: Setup["changed"] = [];
+  const captured: Setup["captured"] = [];
   const lockFreeInCallback: boolean[] = [];
   const publishDepth: number[] = [];
   const frames: Setup["frames"] = [];
@@ -127,13 +134,18 @@ function setup(o: { users?: Users; fileWalkCap?: number } = {}): Setup {
       publishDepth.push(depth.n);
       frames.push(e);
     },
+    captureLibrary: async (skills) => {
+      // The pin the row has when the Library is captured: it must still be the old one.
+      captured.push((await store.all())[0]?.commit);
+      return { skills: Object.fromEntries(skills.map((n) => [n, "captured"])), plugins: {} };
+    },
     onLibraryChanged: async (e) => {
       changed.push(e);
       // Would never settle if the Library lock were still held.
       lockFreeInCallback.push(await libraryLock.run("library", async () => true));
     },
   });
-  return { svc, store, users, changed, lockFreeInCallback, publishDepth, frames, logged };
+  return { svc, store, users, changed, captured, lockFreeInCallback, publishDepth, frames, logged };
 }
 
 const repoDir = () => path.join(tmp, "gh", "acme", "x.git");
@@ -407,7 +419,17 @@ describe("check and update", () => {
         path.join(fh, "state/library/github", row.id, r.shas[1] as string, "tdd/SKILL.md"),
       ),
     ).toBe(true);
-    expect(s.changed).toEqual([{ skills: ["gone", "lint", "tdd"], by: "@ana" }]);
+    expect(s.changed).toEqual([
+      {
+        skills: ["gone", "lint", "tdd"],
+        by: "@ana",
+        before: {
+          skills: { gone: "captured", lint: "captured", tdd: "captured" },
+          plugins: {},
+        },
+      },
+    ]);
+    expect(s.captured).toEqual([src.pin]);
     expect(s.lockFreeInCallback).toEqual([true]);
     expect(s.publishDepth.at(-1)).toBe(0);
   });
@@ -559,7 +581,9 @@ describe("remove and restore", () => {
     nowMs += 29_999;
     expect(await s.svc.restore(src.id, "@ana")).toMatchObject({ id: src.id, skills: ["a"] });
     expect((await s.store.all())[0]?.deletedAt).toBeNull();
-    expect(s.changed).toEqual([{ skills: ["a"], by: "@ana" }]);
+    expect(s.changed).toEqual([
+      { skills: ["a"], by: "@ana", before: { skills: { a: "captured" }, plugins: {} } },
+    ]);
     expect(s.lockFreeInCallback).toEqual([true]);
     expect(s.publishDepth).toEqual([0, 0, 0]);
   });

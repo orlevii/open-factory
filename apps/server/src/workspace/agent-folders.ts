@@ -4,7 +4,7 @@
  * rather than rewrite the agent's files. Every read of a file the agent may have planted is bounded and never blocks.
  */
 import { constants } from "node:fs";
-import { open, readdir, stat } from "node:fs/promises";
+import { open, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { reservedKeysIn } from "@open-factory/shared";
 import { parseFrontmatter } from "../library/skill-md.ts";
@@ -99,28 +99,74 @@ export async function checkProjectSettings(workdir: string): Promise<void> {
   }
 }
 
-/** A frontmatter key that makes the file run code or add servers, by the kinds of file that can't declare it. */
+const OPENING = /^---[ \t]*\r?\n/;
+const EMPTY_BLOCK = /^---[ \t]*\r?\n---[ \t]*(?:\r?\n|$)/;
+
+/**
+ * The top-level frontmatter keys of a markdown file. A file with no frontmatter has none. A file that opens a `---` block
+ * that doesn't parse to a map fails the start: Claude Code may read what this parser can't, so the file can't be vouched
+ * for. A BOM and leading blank lines are tolerated, as they may be by Claude Code.
+ */
 async function frontmatterKeys(abs: string, label: string): Promise<Set<string>> {
-  const text = await readText(abs, label);
-  return new Set(text === undefined ? [] : Object.keys(parseFrontmatter(text) ?? {}));
+  const raw = await readText(abs, label);
+  if (raw === undefined) return new Set();
+  const text = raw.replace(/^\uFEFF/, "").replace(/^(?:[ \t]*\r?\n)+/, "");
+  if (!OPENING.test(text) || EMPTY_BLOCK.test(text)) return new Set();
+  const fm = parseFrontmatter(text);
+  if (!fm)
+    throw new WorkspaceError(
+      `${label} has frontmatter that can't be read, so it can't be checked; fix or remove it.`,
+    );
+  return new Set(Object.keys(fm));
 }
 
+const isErr = (err: unknown, ...codes: string[]) =>
+  codes.includes((err as NodeJS.ErrnoException).code ?? "");
+
+/**
+ * Every `.md` under `.claude/<sub>`, directories and links to them followed (each real folder once), at most MAX_DEPTH
+ * levels deep: deeper fails rather than skips. A missing folder is fine; any other read error fails.
+ */
 async function checkMarkdownTree(
   workdir: string,
   sub: "agents" | "commands",
   banned: string[],
 ): Promise<void> {
+  const root = path.join(CLAUDE, sub);
+  await entriesOf(workdir, root);
+  const seen = new Set<string>();
   const walk = async (rel: string, depth: number): Promise<void> => {
     const abs = path.join(workdir, rel);
-    for (const name of await readdir(abs).catch(() => [] as string[])) {
+    const real = await realpath(abs).catch((err) => {
+      if (isErr(err, "ENOENT", "ENOTDIR")) return undefined;
+      throw err;
+    });
+    if (!real || seen.has(real)) return;
+    seen.add(real);
+    if (depth > MAX_DEPTH)
+      throw new WorkspaceError(
+        `${path.relative(CLAUDE, rel)} is nested too deep to be checked; move it up.`,
+      );
+    let names: string[];
+    try {
+      names = await readdir(abs);
+    } catch (err) {
+      if (isErr(err, "ENOENT")) return;
+      throw err;
+    }
+    for (const name of names.sort()) {
       const childRel = path.join(rel, name);
-      const st = await new SafeFs(workdir).entry(childRel);
+      const st = await stat(path.join(workdir, childRel)).catch((err) => {
+        // A dangling link loads nothing.
+        if (isErr(err, "ENOENT", "ENOTDIR")) return undefined;
+        throw err;
+      });
       if (!st) continue;
       if (st.isDirectory()) {
-        if (depth < MAX_DEPTH) await walk(childRel, depth + 1);
+        await walk(childRel, depth + 1);
         continue;
       }
-      if (!name.endsWith(".md")) continue;
+      if (!/\.md$/i.test(name)) continue;
       const label = path.relative(CLAUDE, childRel);
       const keys = await frontmatterKeys(path.join(workdir, childRel), label);
       for (const key of banned)
@@ -130,8 +176,7 @@ async function checkMarkdownTree(
           );
     }
   };
-  await entriesOf(workdir, path.join(CLAUDE, sub));
-  await walk(path.join(CLAUDE, sub), 0);
+  await walk(root, 0);
 }
 
 /**
@@ -166,7 +211,11 @@ export async function checkSkillPlugins(workdir: string): Promise<void> {
   for (const name of await entriesOf(workdir, path.join(CLAUDE, "skills"))) {
     const found = await stat(path.join(workdir, CLAUDE, "skills", name, ".claude-plugin")).then(
       () => true,
-      () => false,
+      (err) => {
+        // Only "nothing there" clears an entry; an unreadable one can't be vouched for.
+        if (isErr(err, "ENOENT", "ENOTDIR")) return false;
+        throw err;
+      },
     );
     if (found)
       throw new WorkspaceError(

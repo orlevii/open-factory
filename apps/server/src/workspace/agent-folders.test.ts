@@ -1,10 +1,12 @@
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   realpathSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -80,12 +82,15 @@ describe("checkProjectSettings", () => {
     await checkProjectSettings(wd);
   });
 
-  test("a link at either path fails, whatever it points at", async () => {
-    const target = path.join(outside(), "s.json");
-    writeFileSync(target, "{}");
-    symlinkSync(target, path.join(wd, ".claude/settings.json"));
-    await expect(checkProjectSettings(wd)).rejects.toThrow(/settings\.json is a link/);
-  });
+  test.each(["settings.json", "settings.local.json"])(
+    "a link at %s fails, whatever it points at",
+    async (file) => {
+      const target = path.join(outside(), "s.json");
+      writeFileSync(target, "{}");
+      symlinkSync(target, path.join(wd, ".claude", file));
+      await expect(checkProjectSettings(wd)).rejects.toThrow(`${file} is a link`);
+    },
+  );
 
   test("a file that doesn't parse as a JSON object fails closed", async () => {
     put(".claude/settings.json", "{ nope");
@@ -154,6 +159,82 @@ describe("checkAgentFrontmatter", () => {
     );
   });
 
+  test.each([
+    ["a BOM", "\uFEFF---\nhooks: {}\n---\n"],
+    ["leading blank lines", "\n\n---\nhooks: {}\n---\n"],
+    ["CRLF line ends", "---\r\nhooks: {}\r\n---\r\n"],
+  ])("frontmatter after %s is still read", async (_n, text) => {
+    put(".claude/commands/c.md", text);
+    await expect(checkAgentFrontmatter(wd, new Set())).rejects.toThrow(
+      "commands/c.md declares hooks",
+    );
+  });
+
+  test.each([
+    ["a YAML error", "---\ndescription: a: b\nhooks: {}\n---\n"],
+    ["a frontmatter that isn't a map", "---\n- hooks\n---\n"],
+    ["a block that never closes", "---\nhooks: {}\n"],
+  ])("a leading --- block with %s fails the start", async (_n, text) => {
+    for (const rel of [
+      ".claude/agents/a.md",
+      ".claude/commands/c.md",
+      ".claude/skills/s/SKILL.md",
+    ]) {
+      put(rel, text);
+      await expect(checkAgentFrontmatter(wd, new Set())).rejects.toThrow(
+        /has frontmatter that can't be read, so it can't be checked/,
+      );
+      rmSync(path.join(wd, rel));
+    }
+  });
+
+  test("an empty frontmatter block, a horizontal rule later on and no frontmatter pass", async () => {
+    put(".claude/commands/a.md", "---\n---\nbody\n");
+    put(".claude/commands/b.md", "text\n---\nhooks: {}\n---\n");
+    put(".claude/commands/c.md", "just text hooks: {}\n");
+    await checkAgentFrontmatter(wd, new Set());
+  });
+
+  test("a directory link under .claude/agents is followed, and a link loop is walked once", async () => {
+    const team = outside();
+    writeFileSync(path.join(team, "b.md"), "---\nhooks: {}\n---\n");
+    mkdirSync(path.join(wd, ".claude/agents"), { recursive: true });
+    symlinkSync(team, path.join(wd, ".claude/agents/team"));
+    await expect(checkAgentFrontmatter(wd, new Set())).rejects.toThrow(
+      "agents/team/b.md declares hooks",
+    );
+    rmSync(path.join(team, "b.md"));
+    symlinkSync(path.join(wd, ".claude/agents"), path.join(team, "loop"));
+    await checkAgentFrontmatter(wd, new Set());
+  });
+
+  test("a tree nested deeper than the limit fails instead of being skipped", async () => {
+    put(".claude/commands/a/b/c/d/e/f/g/deep.md", "---\nhooks: {}\n---\n");
+    await expect(checkAgentFrontmatter(wd, new Set())).rejects.toThrow(/nested too deep/);
+  });
+
+  test("a folder that can't be read fails rather than being treated as empty", async () => {
+    if (process.getuid?.() === 0) return;
+    put(".claude/commands/locked/c.md", "---\nhooks: {}\n---\n");
+    chmodSync(path.join(wd, ".claude/commands/locked"), 0o000);
+    try {
+      await expect(checkAgentFrontmatter(wd, new Set())).rejects.toThrow(/EACCES/);
+    } finally {
+      chmodSync(path.join(wd, ".claude/commands/locked"), 0o700);
+    }
+  });
+
+  test("a dangling link and a non-markdown file load nothing and pass; .MD counts as markdown", async () => {
+    mkdirSync(path.join(wd, ".claude/commands"), { recursive: true });
+    symlinkSync(path.join(wd, "nowhere"), path.join(wd, ".claude/commands/dangling.md"));
+    put(".claude/commands/notes.txt", "---\nhooks: {}\n---\n");
+    await checkAgentFrontmatter(wd, new Set());
+    put(".claude/commands/UP.MD", "---\nhooks: {}\n---\n");
+    await expect(checkAgentFrontmatter(wd, new Set())).rejects.toThrow(
+      "commands/UP.MD declares hooks",
+    );
+  });
+
   test("a file too large to check fails closed", async () => {
     put(".claude/agents/big.md", `---\nname: a\n---\n${"x".repeat(300 * 1024)}`);
     await expect(checkAgentFrontmatter(wd, new Set())).rejects.toThrow(/larger than 256 KB/);
@@ -177,6 +258,17 @@ describe("checkSkillPlugins", () => {
     await checkSkillPlugins(wd);
     put(".claude/skills/p/.claude-plugin/plugin.json", "{}");
     await expect(checkSkillPlugins(wd)).rejects.toThrow("skills/p is a plugin");
+  });
+
+  test("an entry that can't be inspected fails rather than counting as no plugin", async () => {
+    if (process.getuid?.() === 0) return;
+    put(".claude/skills/locked/SKILL.md", "x");
+    chmodSync(path.join(wd, ".claude/skills/locked"), 0o000);
+    try {
+      await expect(checkSkillPlugins(wd)).rejects.toThrow(/EACCES/);
+    } finally {
+      chmodSync(path.join(wd, ".claude/skills/locked"), 0o700);
+    }
   });
 
   test("no skills folder is fine", async () => {

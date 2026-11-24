@@ -153,6 +153,7 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
       doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
       config,
       templatePlugins: [],
+      templateSkills: [],
       library: { skills: {}, plugins: {} },
     },
     manager: null,
@@ -188,6 +189,7 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
       ...prep.effective,
       config: { ...prep.effective.config, plugins: list },
       templatePlugins: fromTemplate,
+      templateSkills: [],
       library: { skills: {}, plugins: {} },
     },
   });
@@ -311,6 +313,7 @@ test("a failure with no output still says why, redacted", async () => {
         },
         config: { ...prep.effective.config, plugins: ["b@mk2"] },
         templatePlugins: [],
+        templateSkills: [],
         library: { skills: {}, plugins: {} },
       },
     })

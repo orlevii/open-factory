@@ -154,7 +154,15 @@ export interface SourcesDeps {
   gitBin?: string;
   undoMs?: number;
   /** The config change flow (spec §8.3, wired in A9). */
-  onLibraryChanged?: (e: { skills?: string[]; by: string }) => Promise<void>;
+  onLibraryChanged?: (e: {
+    skills?: string[];
+    by: string;
+    before?: { skills: Record<string, string>; plugins: Record<string, string> };
+  }) => Promise<void>;
+  /** What the Library resolves these names to now; taken before a mutation and handed back as `before`. */
+  captureLibrary?: (
+    skills: string[],
+  ) => Promise<{ skills: Record<string, string>; plugins: Record<string, string> }>;
   /** The `library_changed` WS frame (spec §9.5); `addFailed` is the repo of a background add that failed. */
   publish?: (e?: { addFailed?: string }) => void;
   /** Starts a one-shot purge after `ms` (the sweep's, §9.4). */
@@ -314,15 +322,26 @@ export class SourcesService {
     this.pending.add(p);
   }
 
+  /** The Library's resolution of `skills` before a mutation (spec §8.3); undefined when nothing listens. */
+  private async capture(skills: string[]) {
+    try {
+      return await this.d.captureLibrary?.(skills);
+    } catch (e) {
+      this.d.log("capturing the library failed", e);
+      return undefined;
+    }
+  }
+
   private async after(
     skills: string[] | undefined,
     by: string,
     o?: { addFailed?: string },
+    before?: { skills: Record<string, string>; plugins: Record<string, string> },
   ): Promise<void> {
     this.d.publish?.(o);
     if (skills === undefined) return;
     try {
-      await this.d.onLibraryChanged?.({ skills, by });
+      await this.d.onLibraryChanged?.({ skills, by, ...(before ? { before } : {}) });
     } catch (e) {
       this.d.log("libraryChanged failed", e);
     }
@@ -962,6 +981,7 @@ export class SourcesService {
       }
       if (keep.length === 0) throw new ApiError(409, "empties_source", SOURCE_MSG.emptiesSource);
       const trees = await this.treesOf(co, commit, subpath, keep);
+      const before = await this.capture(row.skills);
       const dest = this.cacheDir(id, commit);
       if (!(await isDir(dest))) await installCheckout(co, subpath, dest);
       const log = await this.logOf(co);
@@ -976,10 +996,10 @@ export class SourcesService {
         updateSubject: null,
         checkError: null,
       });
-      return { row: next as SkillSourceRow, skills: row.skills };
+      return { row: next as SkillSourceRow, skills: row.skills, before };
     });
     await removeTree(co).catch(() => {});
-    await this.after(result.skills, by);
+    await this.after(result.skills, by, undefined, result.before);
     return this.detail(result.row);
   }
 
@@ -1041,10 +1061,14 @@ export class SourcesService {
           throw new ApiError(409, "name_taken", SOURCE_MSG.nameTaken);
         }
       }
-      return (await this.d.store.update(id, { deletedAt: null })) as SkillSourceRow;
+      const before = await this.capture(cur.skills);
+      return {
+        row: (await this.d.store.update(id, { deletedAt: null })) as SkillSourceRow,
+        before,
+      };
     });
-    await this.after(row.skills, by);
-    return this.detail(row);
+    await this.after(row.row.skills, by, undefined, row.before);
+    return this.detail(row.row);
   }
 
   // Previews ------------------------------------------------------------------------------

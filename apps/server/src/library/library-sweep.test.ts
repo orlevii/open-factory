@@ -250,7 +250,7 @@ test("skillDirsInUse holds every source's directory for the hashes the running p
   const root = path.join(fh, "state", "library", "github");
   mkdirSync(path.join(root, "src1"), { recursive: true });
   mkdirSync(path.join(root, "src2"), { recursive: true });
-  const started = [
+  const started: { library: { skills: Record<string, string> } }[] = [
     { library: { skills: { tdd: `github:${"a".repeat(40)}`, mine: "host", dir: "folder" } } },
     { library: { skills: { x: "missing" } } },
   ];

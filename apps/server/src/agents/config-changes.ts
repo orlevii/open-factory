@@ -5,6 +5,7 @@ import {
   type ConfigDoc,
   type ConfigSnapshot,
   describeChanges,
+  type Library,
   mergeConfig,
 } from "@open-factory/shared";
 import { and, asc, eq, isNull } from "drizzle-orm";
@@ -49,7 +50,7 @@ export interface ConfigChangeAgents {
   liveOfTemplate(template: string): Promise<AgentRow[]>;
   /** A spawner's live spawned children's ids. */
   liveChildren(spawnerId: string): Promise<string[]>;
-  /** Every agent that is neither archived nor terminated, persistent and spawned, by slug (what a library change checks). */
+  /** Every agent that is neither archived nor terminated (persistent or spawned), by slug: what a library change checks. */
   allLive(): Promise<AgentRow[]>;
   /**
    * The agent's effective doc and Library now: its row read fresh, then the resolver. Undefined when it can't be
@@ -201,13 +202,31 @@ export class ConfigChanges {
   }
 
   /**
-   * The Library moved (spec §8.3): a GitHub update, an Undo that restored a name, a marketplace or plugin update. Called
-   * after the Library and store locks are released. The templates are rescanned first, so a skill that went missing
-   * shows as an issue. Then each running agent whose process started with one of these names gets
-   * `apply(agent, by, started, now)`: the `config_changed` event and the restart check, compared against
-   * `started.library`. An agent with no process has no "before" to describe; its next start reads everything fresh.
+   * What the Library resolves these skill names to right now. The caller of `libraryChanged` takes it before it mutates
+   * the Library and passes it back as `before`, so an agent with no running process can still say what changed.
    */
-  async libraryChanged(e: { skills?: string[]; plugins?: string[]; by: string }): Promise<void> {
+  async captureLibrary(skills: string[]): Promise<Library> {
+    return this.d.resolver.libraryOf({
+      template: { skills },
+      settings: {},
+      mcp: { mcpServers: {} },
+    });
+  }
+
+  /**
+   * The Library moved (spec §8.3): a GitHub update, an Undo that restores a name, a marketplace or plugin update. Called
+   * after the Library and store locks are released. The templates are rescanned first, so a skill that went missing
+   * shows as an issue. Then every non-archived, non-terminated agent that uses one of the names gets
+   * `apply(agent, by, before, now)`: `before` is what its process started with when it runs, else its effective config
+   * now with the changed names' refs replaced by `e.before` (captured by the caller before the mutation); `now` is a
+   * fresh resolve. The event, the passive notice and, for a running agent, the restart check follow I2 §7.3.
+   */
+  async libraryChanged(e: {
+    skills?: string[];
+    plugins?: string[];
+    by: string;
+    before?: Library;
+  }): Promise<void> {
     try {
       await this.d.templates.scan();
     } catch (err) {
@@ -215,23 +234,34 @@ export class ConfigChanges {
     }
     const skills = new Set(e.skills);
     const plugins = new Set(e.plugins);
+    const uses = (l: Library) =>
+      Object.keys(l.skills).some((n) => skills.has(n)) ||
+      Object.keys(l.plugins).some((k) => plugins.has(k));
+    const pick = (
+      now: Record<string, string>,
+      was: Record<string, string> | undefined,
+      names: Set<string>,
+    ) =>
+      Object.fromEntries(
+        Object.entries(now).map(([n, ref]) => [n, names.has(n) ? (was?.[n] ?? ref) : ref]),
+      );
     const done: Promise<void>[] = [];
     for (const agent of await this.d.agents.allLive()) {
-      const started = this.d.runtimes.startedOf(agent.id);
-      if (!started) continue;
-      const uses =
-        Object.keys(started.library.skills).some((n) => skills.has(n)) ||
-        Object.keys(started.library.plugins).some((k) => plugins.has(k));
-      if (!uses) continue;
       try {
+        const started = this.d.runtimes.startedOf(agent.id);
         const now = await this.d.agents.currentEffective(agent.id);
         if (!now) continue;
-        const r = await this.apply(
-          agent,
-          e.by,
-          { doc: started.doc, library: started.library },
-          now,
-        );
+        if (!uses(started ? started.library : now.library)) continue;
+        const before: ConfigSnapshot = started
+          ? { doc: started.doc, library: started.library }
+          : {
+              doc: now.doc,
+              library: {
+                skills: pick(now.library.skills, e.before?.skills, skills),
+                plugins: pick(now.library.plugins, e.before?.plugins, plugins),
+              },
+            };
+        const r = await this.apply(agent, e.by, before, now);
         done.push(r.done);
       } catch (err) {
         this.d.log.error({ err, agent: agent.slug }, "applying a library change failed");

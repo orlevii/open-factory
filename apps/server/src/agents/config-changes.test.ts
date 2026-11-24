@@ -351,7 +351,7 @@ test("an overlay save on an archived agent writes the event only; values never r
 
 const GH = (c: string) => `github:${c.repeat(40)}`;
 
-test("a GitHub update writes config_changed and requests a restart only for agents using the skill, compared against started.library", async () => {
+test("a GitHub update writes config_changed for every agent using the skill and requests a restart only for the running one, compared against started.library", async () => {
   const d = doc({ skills: ["tdd"] });
   const w = world(d, { skills: { tdd: GH("a") }, plugins: {} });
   const user = await agent();
@@ -360,18 +360,24 @@ test("a GitHub update writes config_changed and requests a restart only for agen
   w.current.set(user, d);
   w.current.set(bystander, d);
   w.setLibrary({ skills: { tdd: GH("b") }, plugins: {} });
-  await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
+  await w.changes.libraryChanged({
+    skills: ["tdd"],
+    by: "orlevi",
+    before: { skills: { tdd: GH("a") }, plugins: {} },
+  });
   await rt?.settled();
 
   const line = "skill tdd updated aaaaaaa → bbbbbbb";
   expect((await events(user)).map((e) => e.payload)).toEqual([{ by: "orlevi", changes: [line] }]);
   expect(rt?.live()).toMatchObject({ restartPending: true, restartChanges: [line] });
-  // Not running: nothing to compare against, and its next start reads the new pin.
-  expect(await events(bystander)).toEqual([]);
-  expect(w.reads()).toBe(1);
-  // A name nobody started with changes nothing.
+  // Not running: it gets the event too, from the Library captured before the change, and no restart.
+  expect((await events(bystander)).map((e) => e.payload)).toEqual([
+    { by: "orlevi", changes: [line] },
+  ]);
+  // A name nobody uses changes nothing.
   await w.changes.libraryChanged({ skills: ["release"], by: "orlevi" });
   expect((await events(user)).length).toBe(1);
+  expect((await events(bystander)).length).toBe(1);
 });
 
 test("a template whose skill became missing shows the issue after libraryChanged, not before", async () => {

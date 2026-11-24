@@ -16,19 +16,25 @@ async function isDir(p: string): Promise<boolean> {
 
 /**
  * Resolves the listed Library skills to their recorded real folders (spec §6.4). A name that doesn't resolve fails the
- * start with §6.6's message for the reason; the fix is `config`, which the caller re-points at the template when the
- * template lists it.
+ * start with §6.6's message for the reason. The fix is `template` when the template itself lists the name
+ * (`templateListed`), else `config` (I2 §6.5).
  */
 export async function resolveSkills(
   lib: Pick<LibraryIndex, "resolveSkill">,
   names: string[],
+  templateListed: string[] = [],
 ): Promise<{ name: string; dir: string }[]> {
   const out: { name: string; dir: string }[] = [];
   for (const name of names) {
     const r = await lib.resolveSkill(name);
     if (!r.ok) {
       const diagnosis = skillProblem(name, r);
-      throw new WorkspaceError(`${diagnosis} Fix it in Configuration.`, "config", diagnosis);
+      const inTemplate = templateListed.includes(name);
+      throw new WorkspaceError(
+        `${diagnosis} Fix it in ${inTemplate ? "Templates" : "Configuration"}.`,
+        inTemplate ? "template" : "config",
+        diagnosis,
+      );
     }
     out.push({ name, dir: r.dir });
   }

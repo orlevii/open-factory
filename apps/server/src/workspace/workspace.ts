@@ -151,7 +151,7 @@ export class Workspace {
     // A new agent starts from a clean plugin dir (a failed earlier create of this slug may have left one).
     await rm(pluginsConfigDir(this.d.factoryHome, slug), { recursive: true, force: true });
     await this.ensurePlugins(slug, tpl.config.plugins, tpl.tplSettings);
-    const skills = await resolveSkills(this.d.library, check.config.skills);
+    const skills = await resolveSkills(this.d.library, check.config.skills, tpl.config.skills);
     const tplSkills = tpl.config.localSkills ? await resolveTemplateSkills(tpl.dir) : [];
     await linkSkills(
       workdir,
@@ -284,7 +284,7 @@ export class Workspace {
     const pluginKeys = await this.readPluginKeys(i.slug);
     await this.linkPlugins(i.slug, workdir);
     // Spec 7.3 step 3, in this order: link the skills, then check and scrub the agent's own folders.
-    const skills = await resolveSkills(this.d.library, config.skills);
+    const skills = await resolveSkills(this.d.library, config.skills, i.effective.templateSkills);
     const templateDir = path.join(this.d.factoryHome, "templates", i.template);
     const tplSkills = config.localSkills ? await resolveTemplateSkills(templateDir) : [];
     await linkSkills(

@@ -369,7 +369,13 @@ test("secret safety: no env value, MCP URL or command reaches an event, a notice
 });
 
 const startedWith = (d: ConfigDoc, skills: Record<string, string>): Effective =>
-  ({ doc: d, config: {}, templatePlugins: [], library: { skills, plugins: {} } }) as never;
+  ({
+    doc: d,
+    config: {},
+    templatePlugins: [],
+    templateSkills: [],
+    library: { skills, plugins: {} },
+  }) as never;
 const GH = (c: string) => `github:${c.repeat(40)}`;
 
 test("a library change rescans the templates, then restarts only a running agent that uses the skill, against started.library", async () => {
@@ -382,9 +388,10 @@ test("a library change rescans the templates, then restarts only a running agent
   const rtOther = w.load(other, true);
   w.load(idle, false);
   w.started.set(user.id, startedWith(d, { tdd: GH("a") }));
-  w.started.set(other.id, startedWith(doc({ skills: ["release"] }), { release: "host" }));
+  w.started.set(other.id, startedWith(doc({ skills: ["release"] }), { release: GH("d") }));
   w.fresh.set(user.id, { doc: d, library: { skills: { tdd: GH("b") }, plugins: {} } });
-  w.fresh.set(other.id, { doc: d, library: { skills: { release: "host" }, plugins: {} } });
+  // The bystander's own skill changed too, but it isn't among the names this change is about.
+  w.fresh.set(other.id, { doc: d, library: { skills: { release: GH("c") }, plugins: {} } });
   await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
 
   expect(w.scans()).toBe(1);
@@ -408,7 +415,32 @@ test("a library change that resolves to what the process started with writes not
   expect([rt.appended, w.notices, w.restarts]).toEqual([[], [], []]);
 });
 
-test("a library change with no running process for the agent leaves it to its next start", async () => {
+test("an agent with no running process still gets the event, from the Library captured before the change", async () => {
+  const d = doc({ skills: ["tdd", "release"] });
+  const idle = row();
+  const unrelated = row();
+  const w = world({ agents: [idle, unrelated] });
+  const rt = w.load(idle, false);
+  w.load(unrelated, false);
+  w.fresh.set(idle.id, {
+    doc: d,
+    library: { skills: { tdd: GH("b"), release: GH("r") }, plugins: {} },
+  });
+  w.fresh.set(unrelated.id, {
+    doc: doc({ skills: ["release"] }),
+    library: { skills: { release: GH("r") }, plugins: {} },
+  });
+  const before = { skills: { tdd: GH("a") }, plugins: {} };
+  await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi", before });
+  const line = "skill tdd updated aaaaaaa → bbbbbbb";
+  expect(rt.appended).toEqual([{ by: "orlevi", changes: [line] }]);
+  expect(w.notices).toEqual([{ id: idle.id, lines: [line] }]);
+  // Nothing is running, so there is no restart check; the next start reads the new pin.
+  expect(w.restarts).toEqual([]);
+  expect(w.scans()).toBe(1);
+});
+
+test("without a captured before, an agent with no process has nothing to compare and gets no event", async () => {
   const a = row();
   const w = world({ agents: [a] });
   const rt = w.load(a, false);
@@ -418,5 +450,13 @@ test("a library change with no running process for the agent leaves it to its ne
   });
   await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
   expect([rt.appended, w.notices, w.restarts, w.appendedToStore]).toEqual([[], [], [], []]);
-  expect(w.scans()).toBe(1);
+});
+
+test("captureLibrary asks the Library for exactly the given names", async () => {
+  const w = world();
+  w.refs.tdd = GH("e");
+  expect(await w.changes.captureLibrary(["tdd", "x"])).toEqual({
+    skills: { tdd: GH("e"), x: "host" },
+    plugins: {},
+  });
 });

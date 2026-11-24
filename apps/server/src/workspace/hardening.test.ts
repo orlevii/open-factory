@@ -73,6 +73,7 @@ beforeEach(async () => {
       doc: { template: {}, settings: {}, mcp: { mcpServers: {} } },
       config,
       templatePlugins: [],
+      templateSkills: [],
       library: { skills: {}, plugins: {} },
     },
     manager: null,
@@ -169,6 +170,7 @@ function withPlugins() {
       doc: { ...prep.effective.doc, settings: tpl.tplSettings },
       config,
       templatePlugins: [],
+      templateSkills: [],
       library: { skills: {}, plugins: {} },
     },
   };

@@ -9,11 +9,10 @@ import {
   type AgentOverlay,
   type ConfigDoc,
   HOST_SKILL_PATTERN,
-  LOCAL_SKILL_NAMES,
   type skillDetailSchema,
   type skillGroupSchema,
 } from "@open-factory/shared";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import { ApiError } from "../errors.ts";
 import { listSkillFiles, readSkillFile, readSkillMdText } from "./skill-files.ts";

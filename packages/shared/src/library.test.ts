@@ -9,6 +9,7 @@ import {
   MARKETPLACE_PATTERN,
   normalizeRepo,
   normalizeSubpath,
+  PLUGIN_NAME_PATTERN,
   PLUGIN_REF_PATTERN,
   pinOf,
   RESERVED_MARKETPLACES,
@@ -83,6 +84,16 @@ describe("marketplace names", () => {
     expect(PLUGIN_REF_PATTERN.test("skill-creator@claude-plugins-official")).toBe(true);
     expect(PLUGIN_REF_PATTERN.test("no-marketplace")).toBe(false);
     expect(PLUGIN_REF_PATTERN.test(`${"a".repeat(65)}@acme`)).toBe(false);
+    expect(PLUGIN_REF_PATTERN.test("a.b_c-1@acme")).toBe(true);
+    expect(PLUGIN_REF_PATTERN.test("a b@acme")).toBe(false);
+    expect(PLUGIN_REF_PATTERN.test("a@-acme")).toBe(false);
+  });
+
+  test("a plugin name is the part of a reference before the @, and nothing else", () => {
+    expect(PLUGIN_NAME_PATTERN.test("skill-creator")).toBe(true);
+    expect(PLUGIN_NAME_PATTERN.test("a@b")).toBe(false);
+    expect(PLUGIN_NAME_PATTERN.test("../x")).toBe(false);
+    expect(PLUGIN_NAME_PATTERN.test("a".repeat(65))).toBe(false);
   });
 });
 

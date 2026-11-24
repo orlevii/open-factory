@@ -17,6 +17,7 @@ import {
   MSG,
   normalizeRepo,
   OFFICIAL_MARKETPLACES,
+  PLUGIN_NAME_PATTERN,
   RESERVED_MARKETPLACES,
 } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
@@ -230,9 +231,6 @@ export interface CatalogEntry {
   raw: Record<string, unknown>;
 }
 
-/** A catalog plugin name is a segment of a plugin key and of `--settings`, so only the key's own characters pass. */
-const CATALOG_PLUGIN_NAME = /^[A-Za-z0-9._-]{1,64}$/;
-
 /**
  * Reads `.claude-plugin/marketplace.json` from a directory: `lstat`, a regular file, at most 1 MB. An entry whose name
  * isn't a valid plugin name is left out: third-party text never reaches a key, a route or a `--settings` entry.
@@ -255,7 +253,7 @@ export async function readCatalog(dir: string): Promise<{ name: string; plugins:
   }
   const plugins: CatalogEntry[] = [];
   for (const p of doc.plugins) {
-    if (isRecord(p) && typeof p.name === "string" && CATALOG_PLUGIN_NAME.test(p.name))
+    if (isRecord(p) && typeof p.name === "string" && PLUGIN_NAME_PATTERN.test(p.name))
       plugins.push({ name: p.name, raw: p });
   }
   return { name: doc.name, plugins };

@@ -40,8 +40,13 @@ export const OFFICIAL_MARKETPLACES: Record<
 export const acceptedPins = (name: string): readonly PinKind[] =>
   OFFICIAL_MARKETPLACES[name]?.pins ?? ["commit", "tag", "latest"];
 
-/** `name@marketplace`: a plugin name of at most 64 characters, then a marketplace name. The one plugin-ref pattern. */
-export const PLUGIN_REF_PATTERN = /^[A-Za-z0-9._-]{1,64}@[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+/** A plugin name: one segment of a plugin key and of `--settings`, so only the key's own characters. The one validator. */
+export const PLUGIN_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** `name@marketplace`: a plugin name (`PLUGIN_NAME_PATTERN`), then a marketplace name (`MARKETPLACE_PATTERN`). */
+export const PLUGIN_REF_PATTERN = new RegExp(
+  `^${PLUGIN_NAME_PATTERN.source.slice(1, -1)}@${MARKETPLACE_PATTERN.source.slice(1, -1)}$`,
+);
 
 const hasControl = (s: string): boolean =>
   [...s].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f);

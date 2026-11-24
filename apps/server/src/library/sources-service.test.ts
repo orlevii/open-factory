@@ -43,6 +43,19 @@ vi.mock("./git.ts", async (orig) => {
   };
 });
 
+// Counts the Library lock holders that are inside the lock right now (the lock's own boundary).
+const depth = { n: 0 };
+const realRun = libraryLock.run.bind(libraryLock);
+vi.spyOn(libraryLock, "run").mockImplementation(((key: string, fn: () => Promise<unknown>) =>
+  realRun(key, async () => {
+    depth.n++;
+    try {
+      return await fn();
+    } finally {
+      depth.n--;
+    }
+  })) as typeof libraryLock.run);
+
 let tmp: string;
 let fh: string;
 let claude: string;
@@ -85,12 +98,17 @@ interface Setup {
   users: Users;
   changed: Array<{ skills?: string[]; by: string }>;
   lockFreeInCallback: boolean[];
+  /** How many Library lock holders were active at each `publish`. */
+  publishDepth: number[];
+  logged: string[];
 }
-function setup(o: { users?: Users } = {}): Setup {
+function setup(o: { users?: Users; fileWalkCap?: number } = {}): Setup {
   const store = memorySourcesStore();
   const users: Users = o.users ?? {};
   const changed: Setup["changed"] = [];
   const lockFreeInCallback: boolean[] = [];
+  const publishDepth: number[] = [];
+  const logged: string[] = [];
   const svc = new SourcesService({
     store,
     usedBy: async (n) => users[n] ?? { templates: [], agents: [] },
@@ -100,13 +118,16 @@ function setup(o: { users?: Users } = {}): Setup {
     forbidden: { home, factoryHome: fh, dockerSockets: [] },
     githubUrl: `file://${tmp}/gh`,
     now: () => new Date(nowMs),
+    fileWalkCap: o.fileWalkCap,
+    log: (m) => logged.push(m),
+    publish: () => publishDepth.push(depth.n),
     onLibraryChanged: async (e) => {
       changed.push(e);
       // Would never settle if the Library lock were still held.
       lockFreeInCallback.push(await libraryLock.run("library", async () => true));
     },
   });
-  return { svc, store, users, changed, lockFreeInCallback };
+  return { svc, store, users, changed, lockFreeInCallback, publishDepth, logged };
 }
 
 const repoDir = () => path.join(tmp, "gh", "acme", "x.git");
@@ -378,6 +399,7 @@ describe("check and update", () => {
     ).toBe(true);
     expect(s.changed).toEqual([{ skills: ["gone", "lint", "tdd"], by: "@ana" }]);
     expect(s.lockFreeInCallback).toEqual([true]);
+    expect(s.publishDepth.at(-1)).toBe(0);
   });
 
   test("an update that would remove a used skill names at most three users", async () => {
@@ -529,6 +551,7 @@ describe("remove and restore", () => {
     expect((await s.store.all())[0]?.deletedAt).toBeNull();
     expect(s.changed).toEqual([{ skills: ["a"], by: "@ana" }]);
     expect(s.lockFreeInCallback).toEqual([true]);
+    expect(s.publishDepth).toEqual([0, 0, 0]);
   });
 
   test("restore is refused after 30 s", async () => {
@@ -549,5 +572,210 @@ describe("remove and restore", () => {
     writeFileSync(path.join(dir, "a", "SKILL.md"), md("a"));
     await s.svc.add({ kind: "folder", path: dir, skills: ["a"] }, "@or");
     await expectApi(s.svc.restore(first.id, "@ana"), 409, "name_taken");
+  });
+});
+
+describe("races", () => {
+  const A = { "tdd/SKILL.md": md("tdd"), "lint/SKILL.md": md("lint") };
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test("a check that finishes after the pin moved doesn't write its result", async () => {
+    await twoCommitRepo(A, { ...A, "tdd/SKILL.md": md("tdd", "x: 1\n") });
+    const s = setup();
+    const src = await addedAtOld(s, ["tdd"]);
+    gate.delayMs = 40;
+    const running = s.svc.check(src.id);
+    await sleep(15);
+    await s.store.update(src.id, { commit: "f".repeat(40) });
+    await running;
+    const row = (await s.store.all())[0] as SkillSourceRow;
+    expect([row.updateCommit, row.checkedAt]).toEqual([null, null]);
+  });
+
+  test("adding skills after the pin moved is refused as stale", async () => {
+    await makeFixtureRepo(repoDir(), { commits: [A] });
+    const s = setup();
+    const { source } = await s.svc.add(
+      ghBody((await preview(s)).previewId as string, ["tdd"]),
+      "@or",
+    );
+    gate.delayMs = 40;
+    const running = expectApi(s.svc.addSkills(source.id, ["lint"], "@or"), 409, "pin_moved");
+    await sleep(15);
+    await s.store.update(source.id, { commit: "f".repeat(40) });
+    await running;
+    expect((await s.store.all())[0]?.skills).toEqual(["tdd"]);
+  });
+
+  test("adding a skill the pin doesn't have is a 400, not a git failure", async () => {
+    await makeFixtureRepo(repoDir(), { commits: [A] });
+    const s = setup();
+    const { source } = await s.svc.add(
+      ghBody((await preview(s)).previewId as string, ["tdd"]),
+      "@or",
+    );
+    await expectApi(s.svc.addSkills(source.id, ["nope"], "@or"), 400, "validation_error");
+  });
+
+  test("a failed re-fetch leaves a row that was meanwhile made ready", async () => {
+    await makeFixtureRepo(repoDir(), { commits: [A] });
+    const s = setup();
+    const p = await preview(s);
+    rmSync(path.join(fh, "state/library/preview", p.previewId as string), {
+      recursive: true,
+      force: true,
+    });
+    gate.delayMs = 40;
+    await s.svc.add(ghBody(p.previewId as string, ["tdd"]), "@or");
+    await sleep(15);
+    const id = (await s.store.all())[0]?.id as string;
+    rmSync(repoDir(), { recursive: true, force: true });
+    await s.store.update(id, { state: "ready" });
+    await s.svc.idle();
+    expect((await s.store.all()).map((r) => r.id)).toEqual([id]);
+  });
+});
+
+describe("update view and update edge cases", () => {
+  const base = {
+    "tdd/SKILL.md": md("tdd"),
+    "lint/SKILL.md": md("lint"),
+    "gone/SKILL.md": md("gone"),
+  };
+
+  test("lists removed and unusable skills at the new commit", async () => {
+    await twoCommitRepo(base, {
+      "tdd/SKILL.md": md("tdd", "x: 1\n"),
+      "lint/SKILL.md": md("elsewhere"),
+    });
+    const s = setup();
+    const src = await addedAtOld(s, ["gone", "lint", "tdd"]);
+    await s.svc.check(src.id);
+    const v = await s.svc.updateView(src.id);
+    expect(v.removed).toEqual(["gone"]);
+    expect(v.unusable).toEqual([{ name: "lint", detail: "SKILL.md names it elsewhere" }]);
+    expect(v.changed.map((c) => c.name)).toEqual(["tdd"]);
+  });
+
+  test("an update is refused when a used skill becomes unusable", async () => {
+    const r = await twoCommitRepo(base, {
+      "tdd/SKILL.md": md("tdd"),
+      "lint/SKILL.md": md("elsewhere"),
+      "gone/SKILL.md": md("gone"),
+    });
+    const s = setup({ users: { lint: { templates: ["dev"], agents: [] } } });
+    const src = await addedAtOld(s, ["lint", "tdd"]);
+    await s.svc.check(src.id);
+    const e = await expectApi(
+      s.svc.update(src.id, r.shas[1] as string, "@or"),
+      409,
+      "update_drops_used",
+    );
+    expect(e.message).toBe("Update would remove skill lint, used by template dev.");
+  });
+
+  test("an executable whose bit flips with the same content is flagged", async () => {
+    await twoCommitRepo(
+      { ...base, "lint/run.sh": "echo 1" },
+      { ...base, "lint/run.sh": { exec: "echo 1" } },
+    );
+    const s = setup();
+    const src = await addedAtOld(s, ["lint"]);
+    await s.svc.check(src.id);
+    const c = (await s.svc.updateView(src.id)).changed;
+    expect(c.map((x) => [x.name, x.runsCodeChanged, x.execFiles])).toEqual([
+      ["lint", true, ["run.sh"]],
+    ]);
+  });
+
+  test("with the old cache gone, every hook and executable counts as new", async () => {
+    const files = (n: number) => ({
+      ...base,
+      "lint/SKILL.md": md("lint", `x: ${n}\n`),
+      "lint/run.sh": { exec: "echo 1" },
+    });
+    await twoCommitRepo(files(0), files(1));
+    const s = setup();
+    const src = await addedAtOld(s, ["lint"]);
+    await s.svc.check(src.id);
+    expect((await s.svc.updateView(src.id)).changed[0]).toMatchObject({ runsCodeChanged: false });
+    const row = (await s.store.all())[0] as SkillSourceRow;
+    await removeTree(path.join(fh, "state/library/github", row.id, row.commit as string));
+    expect((await s.svc.updateView(src.id)).changed[0]).toMatchObject({
+      runsCodeChanged: true,
+      execFiles: ["run.sh"],
+    });
+  });
+
+  test("a skill with more files than the walk reads is flagged, since the rest is unread", async () => {
+    const files = (n: number) => ({
+      ...base,
+      "lint/SKILL.md": md("lint", `x: ${n}\n`),
+      "lint/a.txt": "a",
+      "lint/b.txt": "b",
+      "lint/c.txt": "c",
+      "lint/z.txt": "z",
+    });
+    await twoCommitRepo(files(0), files(1));
+    const walked = async (cap: number | undefined) => {
+      const s = setup({ fileWalkCap: cap });
+      const src = await addedAtOld(s, ["lint"]);
+      await s.svc.check(src.id);
+      return (await s.svc.updateView(src.id)).changed[0]?.runsCodeChanged;
+    };
+    expect(await walked(undefined)).toBe(false);
+    expect(await walked(3)).toBe(true);
+  });
+});
+
+describe("boot repair", () => {
+  const A = { "tdd/SKILL.md": md("tdd") };
+  const adding = (o: Partial<SkillSourceRow>): SkillSourceRow => ({
+    id: "00000000-0000-4000-8000-0000000000aa",
+    kind: "github",
+    path: null,
+    repo: "acme/x",
+    subpath: "",
+    branch: "main",
+    commit: "0".repeat(40),
+    committedAt: null,
+    subject: null,
+    trees: null,
+    updateCommit: null,
+    updateAt: null,
+    updateSubject: null,
+    checkedAt: null,
+    checkError: null,
+    skills: ["tdd"],
+    state: "adding",
+    startedAt: new Date(nowMs),
+    addedBy: "@or",
+    addedAt: new Date(nowMs),
+    deletedAt: null,
+    ...o,
+  });
+
+  test("finishes an interrupted add", async () => {
+    const r = await makeFixtureRepo(repoDir(), { commits: [A] });
+    const s = setup();
+    await s.store.insert(adding({ commit: r.shas[0] }));
+    s.svc.repairInBackground();
+    await s.svc.idle();
+    const row = (await s.store.all())[0] as SkillSourceRow;
+    expect([row.state, Object.keys(row.trees ?? {})]).toEqual(["ready", ["tdd"]]);
+    expect(
+      existsSync(
+        path.join(fh, "state/library/github", row.id, r.shas[0] as string, "tdd/SKILL.md"),
+      ),
+    ).toBe(true);
+  });
+
+  test("removes an add that can't finish", async () => {
+    await makeFixtureRepo(repoDir(), { commits: [A] });
+    const s = setup();
+    await s.store.insert(adding({ commit: "0".repeat(40) }));
+    await s.svc.bootRepair();
+    expect(await s.store.all()).toEqual([]);
+    expect(s.logged.length).toBeGreaterThan(0);
   });
 });

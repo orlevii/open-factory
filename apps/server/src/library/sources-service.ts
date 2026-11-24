@@ -53,6 +53,7 @@ export const SOURCE_MSG = {
   undoOver: "Undo is over.",
   checkFailed: "Couldn't check for updates.",
   addFailed: "Couldn't add this source.",
+  pinMoved: "This source changed. Try again.",
 } as const;
 
 export const UNDO_MS = 30_000;
@@ -158,7 +159,9 @@ export interface SourcesDeps {
   publish?: () => void;
   /** Starts a one-shot purge after `ms` (the sweep's, §9.4). */
   purgeAfter?: (ms: number) => void;
-  log?: (message: string, err: unknown) => void;
+  log: (message: string, err: unknown) => void;
+  /** Files `updateView` reads per skill before it fails closed; defaults to 2000. */
+  fileWalkCap?: number;
 }
 
 interface PreviewMeta {
@@ -187,13 +190,23 @@ const sourceLabel = (s: SkillSourceRow) => (s.kind === "github" ? (s.repo ?? "")
 const hookKey = (h: HookDecl) => JSON.stringify([h.event, h.matcher, h.command]);
 
 /** Hooks and executable files (by content hash) of a skill folder: what makes an update run different code. */
-async function codeSurface(dir: string): Promise<{ hooks: HookDecl[]; exec: Map<string, string> }> {
+async function codeSurface(
+  dir: string,
+  cap: number,
+): Promise<{ hooks: HookDecl[]; exec: Map<string, string>; capped: boolean }> {
   const hooks = (await readSkillMd(dir))?.hooks ?? [];
   const exec = new Map<string, string>();
   let walked = 0;
+  let capped = false;
   const walk = async (d: string): Promise<void> => {
-    for (const e of await readdir(d, { withFileTypes: true }).catch(() => [])) {
-      if (e.name === ".git" || walked >= FILE_WALK_CAP) continue;
+    const entries = await readdir(d, { withFileTypes: true }).catch(() => []);
+    // Sorted, so what a capped walk misses doesn't depend on the file system's order.
+    for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      if (e.name === ".git") continue;
+      if (walked >= cap) {
+        capped = true;
+        return;
+      }
       const p = path.join(d, e.name);
       if (e.isDirectory()) await walk(p);
       else if (e.isFile()) {
@@ -210,7 +223,7 @@ async function codeSurface(dir: string): Promise<{ hooks: HookDecl[]; exec: Map<
     }
   };
   await walk(dir);
-  return { hooks, exec };
+  return { hooks, exec, capped };
 }
 
 interface Candidate {
@@ -296,7 +309,7 @@ export class SourcesService {
 
   private background(fn: () => Promise<void>): void {
     const p = fn()
-      .catch((e) => this.d.log?.("skill source background work failed", e))
+      .catch((e) => this.d.log("skill source background work failed", e))
       .finally(() => this.pending.delete(p));
     this.pending.add(p);
   }
@@ -307,7 +320,7 @@ export class SourcesService {
     try {
       await this.d.onLibraryChanged?.({ skills, by });
     } catch (e) {
-      this.d.log?.("libraryChanged failed", e);
+      this.d.log("libraryChanged failed", e);
     }
   }
 
@@ -330,14 +343,20 @@ export class SourcesService {
     return row;
   }
 
-  private async detail(row: SkillSourceRow): Promise<SourceDetail> {
+  /** Who lists any of `names`: sorted template names and agent slugs, each once. */
+  private async usersOf(names: string[]): Promise<{ templates: string[]; agents: string[] }> {
     const templates = new Set<string>();
     const agents = new Set<string>();
-    for (const n of row.skills) {
+    for (const n of names) {
       const u = await this.d.usedBy(n);
       for (const t of u.templates) templates.add(t);
       for (const a of u.agents) agents.add(a);
     }
+    return { templates: [...templates].sort(), agents: [...agents].sort() };
+  }
+
+  private async detail(row: SkillSourceRow): Promise<SourceDetail> {
+    const users = await this.usersOf(row.skills);
     const iso = (v: Date | null) => (v ? v.toISOString() : null);
     return {
       id: row.id,
@@ -356,7 +375,7 @@ export class SourcesService {
       updateSubject: row.updateSubject,
       checkedAt: iso(row.checkedAt),
       checkError: row.checkError,
-      usedBy: { templates: templates.size, agents: agents.size },
+      usedBy: { templates: users.templates.length, agents: users.agents.length },
     };
   }
 
@@ -548,13 +567,26 @@ export class SourcesService {
     };
   }
 
-  /** `{ [skill]: tree sha }` for the picked skills of a checkout at `commit`. */
-  private async treesOf(co: string, commit: string, subpath: string, skills: string[]) {
+  /**
+   * `{ [skill]: tree sha }` for the picked skills of a checkout at `commit`. A skill git can't find fails
+   * the call, or with `tolerateMissing` is left out (it isn't at this commit).
+   */
+  private async treesOf(
+    co: string,
+    commit: string,
+    subpath: string,
+    skills: string[],
+    o: { tolerateMissing?: boolean } = {},
+  ) {
     const one = (await readSkillMd(path.join(co, subpath))) !== null;
     const out: Record<string, string> = {};
     for (const n of skills) {
       const p = one ? subpath : joinRepoPath(subpath, n);
-      out[n] = (await treeShas(co, commit, [p]))[p] as string;
+      try {
+        out[n] = (await treeShas(co, commit, [p]))[p] as string;
+      } catch (e) {
+        if (!o.tolerateMissing) throw e;
+      }
     }
     return out;
   }
@@ -627,8 +659,10 @@ export class SourcesService {
         await this.d.store.update(id, { state: "ready", trees });
       });
     } catch (e) {
-      this.d.log?.(`adding ${row.repo} failed`, e);
+      this.d.log(`adding ${row.repo} failed`, e);
       await libraryLock.run(LIBRARY_KEY, async () => {
+        // Only a row still "adding" is ours to remove; it may have been removed or finished meanwhile.
+        if ((await this.get(id).catch(() => undefined))?.state !== "adding") return;
         await this.d.store.delete(id);
         await removeTree(path.join(this.githubRoot, id)).catch(() => {});
       });
@@ -643,6 +677,11 @@ export class SourcesService {
     for (const s of await this.live()) {
       if (s.state === "adding") await this.finishAdding(s.id, s.addedBy);
     }
+  }
+
+  /** `bootRepair` without holding up boot (a fetch may take minutes); `idle()` waits for it. */
+  repairInBackground(): void {
+    this.background(() => this.bootRepair());
   }
 
   // Find more skills ----------------------------------------------------------------------
@@ -671,6 +710,16 @@ export class SourcesService {
     const first = await this.get(id);
     const { root, one } = await this.rootOf(first);
     const fresh = skills.filter((n) => !first.skills.includes(n));
+    const notPickable = async (rows: SkillSourceRow[]) => {
+      const found = await this.found(await candidates(root, one), rows, id);
+      if (fresh.some((n) => !found.find((x) => x.name === n)?.pickable)) {
+        throw new ApiError(400, "validation_error", SOURCE_MSG.pickNotAllowed, {
+          fields: { skills: SOURCE_MSG.pickNotAllowed },
+        });
+      }
+    };
+    // Names are checked before the fetch, so an absent one is a 400 and not a git failure.
+    await notPickable(await this.live());
     // The tree shas of new skills need git, which the installed cache (no .git) can't answer.
     let trees: Record<string, string> = {};
     let tmp: string | undefined;
@@ -691,16 +740,9 @@ export class SourcesService {
       }
       const row = await libraryLock.run(LIBRARY_KEY, async () => {
         const cur = await this.get(id);
-        const rows = await this.live();
-        const found = await this.found(await candidates(root, one), rows, id);
-        for (const n of fresh) {
-          const f = found.find((x) => x.name === n);
-          if (!f?.pickable) {
-            throw new ApiError(400, "validation_error", SOURCE_MSG.pickNotAllowed, {
-              fields: { skills: SOURCE_MSG.pickNotAllowed },
-            });
-          }
-        }
+        // An update or refetch that moved the pin since the read makes the trees and the picks stale.
+        if (cur.commit !== first.commit) throw new ApiError(409, "pin_moved", SOURCE_MSG.pinMoved);
+        await notPickable(await this.live());
         const merged = [...new Set([...cur.skills, ...fresh])].sort();
         const next = await this.d.store.update(id, {
           skills: merged,
@@ -765,9 +807,12 @@ export class SourcesService {
         ),
       };
     }
-    const next = await libraryLock.run(LIBRARY_KEY, async () =>
-      this.d.store.update(id, { ...patch, checkedAt: this.now() }),
-    );
+    const next = await libraryLock.run(LIBRARY_KEY, async () => {
+      const cur = (await this.d.store.all()).find((r) => r.id === id);
+      // The row went away, or an update moved its pin while we fetched: the result is for another pin.
+      if (!cur || cur.deletedAt !== null || cur.commit !== row.commit) return cur;
+      return this.d.store.update(id, { ...patch, checkedAt: this.now() });
+    });
     this.d.publish?.();
     return this.detail(next ?? row);
   }
@@ -824,7 +869,9 @@ export class SourcesService {
     if (this.d.githubUrl === DEFAULT_GITHUB) {
       view.compareUrl = `${DEFAULT_GITHUB}/${row.repo}/compare/${row.commit}...${row.updateCommit}`;
     }
-    const nowTrees = await this.treesAt(co, row.updateCommit, subpath, newRoot, row.skills);
+    const nowTrees = await this.treesOf(co, row.updateCommit, subpath, row.skills, {
+      tolerateMissing: true,
+    });
     for (const n of row.skills) {
       const dir = await this.skillDirIn(newRoot, n);
       const tree = nowTrees[n];
@@ -838,10 +885,11 @@ export class SourcesService {
         continue;
       }
       if (row.trees?.[n] === tree) continue;
-      const after = await codeSurface(dir);
+      const cap = this.d.fileWalkCap ?? FILE_WALK_CAP;
+      const after = await codeSurface(dir, cap);
       const before = oldKnown
-        ? await codeSurface(await this.skillDirIn(oldRoot, n))
-        : { hooks: [], exec: new Map<string, string>() };
+        ? await codeSurface(await this.skillDirIn(oldRoot, n), cap)
+        : { hooks: [], exec: new Map<string, string>(), capped: false };
       const had = new Set(before.hooks.map(hookKey));
       const has = new Set(after.hooks.map(hookKey));
       const hooks = {
@@ -854,7 +902,8 @@ export class SourcesService {
         .sort();
       view.changed.push({
         name: n,
-        runsCodeChanged: hooks.added.length > 0 || execFiles.length > 0,
+        // Past the cap some files weren't read, so "nothing new runs" can't be claimed.
+        runsCodeChanged: hooks.added.length > 0 || execFiles.length > 0 || after.capped,
         hooks,
         execFiles,
       });
@@ -865,27 +914,6 @@ export class SourcesService {
       .map((c) => c.name)
       .filter((n) => !picked.has(n) && n !== "");
     return view;
-  }
-
-  /** Tree shas of the picked skills at the new commit; a skill that isn't there is left out. */
-  private async treesAt(
-    co: string,
-    commit: string,
-    subpath: string,
-    root: string,
-    skills: string[],
-  ) {
-    const one = (await readSkillMd(root)) !== null;
-    const out: Record<string, string> = {};
-    for (const n of skills) {
-      const p = one ? subpath : joinRepoPath(subpath, n);
-      try {
-        out[n] = (await treeShas(co, commit, [p]))[p] as string;
-      } catch {
-        // Gone at this commit.
-      }
-    }
-    return out;
   }
 
   async update(id: string, commit: string, by: string): Promise<SourceDetail> {
@@ -908,21 +936,17 @@ export class SourcesService {
         const f = (await readSkillMd(dir)) ? await inspect(n, dir) : undefined;
         (f?.state === "ok" ? keep : dropped).push(n);
       }
-      const templates = new Set<string>();
-      const agents = new Set<string>();
       const usedDropped: string[] = [];
       for (const n of dropped) {
-        const u = await this.d.usedBy(n);
-        if (u.templates.length + u.agents.length === 0) continue;
-        usedDropped.push(n);
-        for (const t of u.templates) templates.add(t);
-        for (const a of u.agents) agents.add(a);
+        const u = await this.usersOf([n]);
+        if (u.templates.length + u.agents.length > 0) usedDropped.push(n);
       }
       if (usedDropped.length > 0) {
+        const users = await this.usersOf(usedDropped);
         throw new ApiError(
           409,
           "update_drops_used",
-          `Update would remove ${usedDropped.length === 1 ? "skill" : "skills"} ${usedDropped.join(", ")}, used by ${usersLine([...templates].sort(), [...agents].sort())}.`,
+          `Update would remove ${usedDropped.length === 1 ? "skill" : "skills"} ${usedDropped.join(", ")}, used by ${usersLine(users.templates, users.agents)}.`,
         );
       }
       if (keep.length === 0) throw new ApiError(409, "empties_source", SOURCE_MSG.emptiesSource);
@@ -982,19 +1006,9 @@ export class SourcesService {
   async remove(id: string): Promise<{ undoUntil: string }> {
     const undoUntil = await libraryLock.run(LIBRARY_KEY, async () => {
       const row = await this.get(id);
-      const templates = new Set<string>();
-      const agents = new Set<string>();
-      for (const n of row.skills) {
-        const u = await this.d.usedBy(n);
-        for (const t of u.templates) templates.add(t);
-        for (const a of u.agents) agents.add(a);
-      }
-      if (templates.size + agents.size > 0) {
-        throw new ApiError(
-          409,
-          "in_use",
-          `Used by ${usersLine([...templates].sort(), [...agents].sort())}.`,
-        );
+      const users = await this.usersOf(row.skills);
+      if (users.templates.length + users.agents.length > 0) {
+        throw new ApiError(409, "in_use", `Used by ${usersLine(users.templates, users.agents)}.`);
       }
       const now = this.now();
       await this.d.store.update(id, { deletedAt: now });

@@ -23,6 +23,7 @@ let nowMs: number;
 let store: SourcesStore;
 let inUse: string[];
 let sweep: LibrarySweep;
+let logged: string[];
 let svc: SourcesService;
 const T0 = Date.UTC(2026, 0, 1, 12);
 
@@ -32,6 +33,7 @@ beforeEach(() => {
   mkdirSync(fh);
   nowMs = T0;
   inUse = [];
+  logged = [];
   store = memorySourcesStore();
   svc = new SourcesService({
     store,
@@ -41,6 +43,7 @@ beforeEach(() => {
     forbidden: { home: tmp, factoryHome: fh, dockerSockets: [] },
     githubUrl: `file://${tmp}/gh`,
     now: () => new Date(nowMs),
+    log: (m) => logged.push(m),
   });
   sweep = new LibrarySweep({
     sources: svc,
@@ -195,5 +198,50 @@ test("the hourly timer purges", async () => {
   sweep.start();
   await vi.advanceTimersByTimeAsync(60 * 60_000);
   await sweep.stop();
+  expect(await ids()).toEqual([]);
+});
+
+test("a purge removes a read-only cache tree like an installed pin", async () => {
+  await store.insert(row("ro", { deletedAt: new Date(T0 - 60_000) }));
+  const dir = cache("ro");
+  chmodSync(path.join(dir, "tdd/SKILL.md"), 0o444);
+  chmodSync(path.join(dir, "tdd"), 0o555);
+  chmodSync(dir, 0o555);
+  await sweep.purge();
+  expect(existsSync(dir)).toBe(false);
+  expect(await ids()).toEqual([]);
+});
+
+test("one source that can't be purged doesn't stop the others, and the rest are announced", async () => {
+  const published: number[] = [];
+  await store.insert(row("bad", { deletedAt: new Date(T0 - 60_000) }));
+  await store.insert(row("good", { deletedAt: new Date(T0 - 60_000), addedAt: new Date(T0 + 1) }));
+  const failing: SourcesStore = {
+    ...store,
+    delete: async (id) => {
+      if (id === "bad") throw new Error("disk says no");
+      await store.delete(id);
+    },
+  };
+  const s = new LibrarySweep({
+    sources: svc,
+    store: failing,
+    factoryHome: fh,
+    inUse: () => [],
+    now: () => new Date(nowMs),
+    publish: () => published.push(1),
+    log: (m) => logged.push(m),
+  });
+  await s.purge();
+  expect(await ids()).toEqual(["bad"]);
+  expect(logged).toEqual(["purging source bad failed"]);
+  expect(published).toEqual([1]);
+});
+
+test("boot purge starts the repair of interrupted adds without waiting for it", async () => {
+  await store.insert(row("stuck", { state: "adding" }));
+  await sweep.bootPurge();
+  await svc.idle();
+  // Its repo can't be fetched, so the repair removed it.
   expect(await ids()).toEqual([]);
 });

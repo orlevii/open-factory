@@ -77,7 +77,7 @@ export class LibrarySweep {
   /** Boot: no Undo survives a restart and no preview's metadata does, so everything of both goes. */
   async bootPurge(): Promise<void> {
     await this.purge({ boot: true });
-    await this.d.sources.bootRepair();
+    this.d.sources.repairInBackground();
   }
 
   async purge(o: { boot?: boolean } = {}): Promise<void> {
@@ -91,9 +91,14 @@ export class LibrarySweep {
         if (!o.boot && s.deletedAt.getTime() + this.undoMs > now) continue;
         const dir = path.join(this.d.sources.githubRoot, s.id);
         if (this.referenced(dir)) continue;
-        await removeTree(dir);
-        await this.d.store.delete(s.id);
-        any = true;
+        // One row that can't be removed doesn't stop the rest; the next timer retries it.
+        try {
+          await removeTree(dir);
+          await this.d.store.delete(s.id);
+          any = true;
+        } catch (e) {
+          this.d.log?.(`purging source ${s.id} failed`, e);
+        }
       }
       await this.purgeCaches();
       return any;
@@ -112,7 +117,8 @@ export class LibrarySweep {
     for (const name of await readdir(root).catch(() => [] as string[])) {
       const p = path.join(root, name);
       const st = await stat(p).catch(() => undefined);
-      if (st && (all || st.mtimeMs < cutoff)) await removeTree(p);
+      if (!st || !(all || st.mtimeMs < cutoff)) continue;
+      await removeTree(p).catch((e) => this.d.log?.(`removing preview ${name} failed`, e));
     }
   }
 
@@ -124,13 +130,15 @@ export class LibrarySweep {
       const row = rows.get(id);
       const idDir = path.join(root, id);
       if (!row) {
-        if (!this.referenced(idDir)) await removeTree(idDir);
+        if (!this.referenced(idDir)) {
+          await removeTree(idDir).catch((e) => this.d.log?.(`removing cache ${id} failed`, e));
+        }
         continue;
       }
       for (const sha of await readdir(idDir).catch(() => [] as string[])) {
         const dir = path.join(idDir, sha);
         if (sha === row.commit || this.referenced(dir)) continue;
-        await removeTree(dir);
+        await removeTree(dir).catch((e) => this.d.log?.(`removing cache ${id}/${sha} failed`, e));
       }
     }
   }

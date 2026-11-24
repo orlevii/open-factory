@@ -52,6 +52,7 @@ import {
 } from "./git-fetch.ts";
 import { LIBRARY_KEY, libraryLock } from "./locks.ts";
 import { CODE_KEYS, CODE_PATHS } from "./plugin-contents.ts";
+import { unheldDependency } from "./plugin-pinnable.ts";
 import { hasRangedDependency, readManifestUnder } from "./plugin-settings.ts";
 import { classifyPluginSource } from "./plugin-sources.ts";
 
@@ -77,6 +78,8 @@ export const MARKETPLACE_MSG = {
   unpinnable: "Can't be pinned: it follows its own source.",
   rangedDependency:
     "Can't be pinned: a dependency names a version range, which Claude Code resolves to the newest matching tag.",
+  unheldDependency: (dep: string) =>
+    `Can't be pinned: it depends on ${dep}, which a pin can't hold.`,
   refusedSource: (plugin: string, mkt: string, kind: string) =>
     `Plugin ${plugin}@${mkt} uses a ${kind} source, which Open Factory doesn't install.`,
 } as const;
@@ -321,12 +324,14 @@ async function codeDigest(
 
 /**
  * One catalog entry as the preview and the Plugins view show it (spec §7.4, §7.7): pinnable, or why not.
- * `ranged` is whether the plugin's manifest has a dependency with a version range (false when it isn't readable).
+ * `ranged` is whether the plugin's manifest has a dependency with a version range (false when it isn't readable);
+ * `unheldDep` names a dependency in the same catalog that a pin can't hold (see `unheldDependency`).
  */
 export function previewPluginOf(
   marketplace: string,
   e: CatalogEntry,
   ranged = false,
+  unheldDep?: string,
 ): PreviewPlugin {
   const info = classifyPluginSource(e.raw);
   const base = {
@@ -358,6 +363,14 @@ export function previewPluginOf(
       pinnable: false,
       state: "cant_pin",
       refusedReason: MARKETPLACE_MSG.rangedDependency,
+    };
+  }
+  if (unheldDep !== undefined) {
+    return {
+      ...base,
+      pinnable: false,
+      state: "cant_pin",
+      refusedReason: MARKETPLACE_MSG.unheldDependency(unheldDep),
     };
   }
   return { ...base, pinnable: true, state: "ok" };
@@ -526,7 +539,11 @@ export class MarketplacesService {
         const info = classifyPluginSource(e.raw);
         const manifest =
           info.kind === "relative" ? await readManifestUnder(dir, info.path) : undefined;
-        return previewPluginOf(name, e, hasRangedDependency(manifest));
+        const unheld =
+          info.kind === "relative" && !hasRangedDependency(manifest)
+            ? await unheldDependency(e.name, name, manifest, { entries, dir })
+            : undefined;
+        return previewPluginOf(name, e, hasRangedDependency(manifest), unheld);
       }),
     );
   }

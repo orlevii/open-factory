@@ -24,6 +24,8 @@ import { FIELD_MSG } from "../field-messages.ts";
 import { resolveImage } from "../images/resolve.ts";
 import { type LibraryIndex, skillProblem } from "../library/library-index.ts";
 import { MARKETPLACE_MSG } from "../library/marketplaces-service.ts";
+import { unheldDependency } from "../library/plugin-pinnable.ts";
+import { hasRangedDependency, readManifestUnder } from "../library/plugin-settings.ts";
 import { classifyPluginSource } from "../library/plugin-sources.ts";
 import { redactOutput } from "../redact.ts";
 import { parseJson, parseYaml } from "./parse.ts";
@@ -226,16 +228,23 @@ async function validatePlugins(doc: ConfigDoc, ctx: EffectiveContext, s: Report)
     const row = rows.get(m);
     if (!row) continue;
     const at7 = pin.kind === "commit" ? pin.sha : pin.kind === "tag" ? pin.name : undefined;
-    const entry = (await ctx.library.catalogAt(row, at7))?.find((e) => e.name === name);
-    if (!entry) continue;
+    const entries = await ctx.library.catalogAt(row, at7);
+    const entry = entries?.find((e) => e.name === name);
+    if (!entries || !entry) continue;
     const info = classifyPluginSource(entry.raw);
     if (info.kind === "refused") s(MARKETPLACE_MSG.refusedSource(name, m, info.label), at, "error");
-    else if (
-      info.kind === "external" &&
-      !info.pinnable &&
-      (pin.kind === "commit" || pin.kind === "tag")
-    )
-      s(`${key} can't be pinned. Switch ${m} to Latest to add it.`, at, "error");
+    else if (pin.kind === "commit" || pin.kind === "tag") {
+      // A pin holds a plugin only when its own source, and every dependency in the catalog, is held and unranged.
+      const dir = await ctx.library.marketplaceDir(row, at7);
+      const manifest =
+        info.kind === "relative" && dir ? await readManifestUnder(dir, info.path) : undefined;
+      const unpinnable =
+        (info.kind === "external" && !info.pinnable) ||
+        hasRangedDependency(manifest) ||
+        (dir !== null &&
+          (await unheldDependency(name, m, manifest, { entries, dir })) !== undefined);
+      if (unpinnable) s(`${key} can't be pinned. Switch ${m} to Latest to add it.`, at, "error");
+    }
   }
 }
 

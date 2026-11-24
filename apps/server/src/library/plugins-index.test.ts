@@ -186,7 +186,7 @@ describe("ranged dependencies (spec §7.4)", () => {
             "plugins/ranged/.claude-plugin/plugin.json": manifest("ranged", [
               { name: "exact", version: "^1.0.0" },
             ]),
-            "plugins/exact/.claude-plugin/plugin.json": manifest("exact", ["ranged"]),
+            "plugins/exact/.claude-plugin/plugin.json": manifest("exact", []),
           },
         ],
       });

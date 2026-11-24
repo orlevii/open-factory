@@ -64,7 +64,7 @@ test("the image check runs docker once per digest, offline, and caches the pass"
   await checkImageClaudeVersion("factory/agent:1", "sha256:one");
   await checkImageClaudeVersion("factory/agent:1", "sha256:one");
   expect(runsOf(count)).toEqual([
-    "run --rm --network none --security-opt no-new-privileges:true --entrypoint claude factory/agent:1 --version",
+    "run --rm --network none --security-opt no-new-privileges:true --entrypoint claude sha256:one --version",
   ]);
 
   await checkImageClaudeVersion("factory/agent:2", "sha256:two");

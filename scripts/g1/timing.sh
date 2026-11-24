@@ -27,6 +27,7 @@
 # Written for bash 3.2 and newer on the host; the container part is Linux
 # (GNU date, awk).
 set -eu
+set -o pipefail
 
 SELF_DIR=$(cd "$(dirname "$0")" && pwd -P)
 SELF=$SELF_DIR/$(basename "$0")
@@ -344,7 +345,7 @@ JSEOF
 
 # ================================================================= host side
 host() {
-  IMAGE="" RUNS=3 FIXTURE="" OUT=""
+  IMAGE="" RUNS=3 FIXTURE="" OUT="" OWN_FIXTURE=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --image) [ "$#" -ge 2 ] || die "--image needs a value"; IMAGE=$2; shift 2 ;;
@@ -364,6 +365,8 @@ host() {
 
   if [ -z "$FIXTURE" ]; then
     FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/of-g1-timing.XXXXXX")
+    OWN_FIXTURE=$FIXTURE
+    trap 'rm -rf -- "$OWN_FIXTURE"' EXIT
     bash "$SELF_DIR/fixture/make-fixture.sh" "$FIXTURE" > /dev/null || die "make-fixture.sh failed"
   fi
   [ -d "$FIXTURE/dir" ] || die "$FIXTURE is not a fixture dir (no dir/)"
@@ -371,7 +374,7 @@ host() {
   # Read-only mounts of this script and the fixture. The credential, when
   # exported, goes in by name only.
   CRED=""
-  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then CRED="-e CLAUDE_CODE_OAUTH_TOKEN"; fi
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then CRED="-e CLAUDE_CODE_OAUTH_TOKEN -e CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"; fi
   run() {
     # shellcheck disable=SC2086
     docker run --rm $CRED \
@@ -383,6 +386,12 @@ host() {
   }
   if [ -n "$OUT" ]; then
     run | tee "$OUT"
+    # The report must not hold the credential; grep reads it from a process substitution.
+    if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] \
+      && grep -q -F -f <(printf '%s\n' "$CLAUDE_CODE_OAUTH_TOKEN") "$OUT"; then
+      rm -f -- "$OUT"
+      die "the credential appeared in the report; $OUT was deleted"
+    fi
     echo "timing: copy written to $OUT" >&2
   else
     run

@@ -30,6 +30,7 @@
 # Written for macOS bash 3.2 and newer. No `set -x` anywhere: it would print the
 # credential.
 set -eu
+set -o pipefail
 case $- in *x*) echo "g1: refusing to run with xtrace on (it would print the credential)" >&2; exit 1 ;; esac
 
 HERE=$(cd "$(dirname "$0")" && pwd -P)
@@ -188,6 +189,8 @@ SYNC1="-e CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1"
 # the host with plain git (a blobless bare clone, no credential) and set
 # <p>_OLD (a commit 30-60 behind HEAD that still lists <plugin>), <p>_NEW (HEAD),
 # <p>_BRANCH, <p>_TAG and <p>_TAGSHA (its newest tag, if any).
+ref_ok() { printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._/-]+$'; }
+sha_ok() { printf '%s' "$1" | grep -Eq '^[0-9a-f]{40}$'; }
 pick_commits() {
   local pre=$1 url=$2 plug=$3 bare=$T/bare-$1.git i c new old="" tag tsha="" br
   git clone -q --bare --filter=blob:none "$url" "$bare" > "$T/clone-$1.log" 2>&1 \
@@ -203,15 +206,25 @@ pick_commits() {
     fi
   done
   [ -n "$old" ] || die "no old commit of $url lists the plugin $plug"
-  tag=$(git -C "$bare" tag --sort=-creatordate | sed -n 1p)
+  # Tags are optional: tags with odd names are skipped, not trusted.
+  tag=$(git -C "$bare" tag --sort=-creatordate | grep -E '^[A-Za-z0-9._/-]+$' | sed -n 1p || true)
   if [ -n "$tag" ]; then tsha=$(git -C "$bare" rev-parse "$tag^{commit}"); fi
-  eval "${pre}_OLD=$old ${pre}_NEW=$new ${pre}_BRANCH=$br ${pre}_TAG=$tag ${pre}_TAGSHA=$tsha"
+  ref_ok "$br" || die "refusing the branch name of $url (unexpected characters)"
+  sha_ok "$new" || die "refusing HEAD of $url (not a 40-hex sha)"
+  sha_ok "$old" || die "refusing an old commit of $url (not a 40-hex sha)"
+  if [ -n "$tsha" ]; then sha_ok "$tsha" || die "refusing a tag commit of $url (not a 40-hex sha)"; fi
+  # Ref names and shas come from a third party: validated above, assigned without eval.
+  printf -v "${pre}_OLD" '%s' "$old"
+  printf -v "${pre}_NEW" '%s' "$new"
+  printf -v "${pre}_BRANCH" '%s' "$br"
+  printf -v "${pre}_TAG" '%s' "$tag"
+  printf -v "${pre}_TAGSHA" '%s' "$tsha"
 }
 
 mk_name() { case $1 in OFF) echo claude-plugins-official ;; SUP) echo superpowers-marketplace ;; esac; }
 mk_src() { case $1 in OFF) echo "$SRC_OFFICIAL" ;; SUP) echo "$SRC_SUPER" ;; esac; }
 mk_key() { case $1 in OFF) echo skill-creator@claude-plugins-official ;; SUP) echo superpowers@superpowers-marketplace ;; esac; }
-mk_var() { eval "echo \${$1_$2}"; } # mk_var OFF OLD
+mk_var() { local n=$1_$2; printf '%s' "${!n}"; } # mk_var OFF OLD (indirect, no eval)
 
 # set_pm <OFF|SUP>: the marketplace items 5-9 pin (PM_*); the other one is their
 # Latest marketplace (OM_*).
@@ -237,7 +250,8 @@ fresh_remote() { fresh_ws "$1"; XENV=$SYNC1; }
 # handed over by name (-e NAME) and only when CRED=1.
 ctr() {
   local cred="" i=""
-  if [ "${CRED:-0}" = 1 ]; then cred="-e CLAUDE_CODE_OAUTH_TOKEN"; fi
+  # The scrub keeps the token out of the env of third-party plugin hooks and MCP servers.
+  if [ "${CRED:-0}" = 1 ]; then cred="-e CLAUDE_CODE_OAUTH_TOKEN -e CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"; fi
   if [ "${CTR_I:-0}" = 1 ]; then i="-i"; fi
   # shellcheck disable=SC2086
   docker run --rm $i $CNET \
@@ -1137,6 +1151,7 @@ credential_scan() {
     echo "g1: THE CREDENTIAL APPEARS IN THESE FILES; the report is withheld. Delete the work dir:" >&2
     sed 's/^/  /' "$T/leaks.txt" >&2
     rm -f "$T/report.md"
+    while IFS= read -r f; do rm -f -- "$f"; done < "$T/leaks.txt"
     return 1
   fi
   rm -f "$T/leaks.txt"

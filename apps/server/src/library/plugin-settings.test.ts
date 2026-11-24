@@ -1,13 +1,22 @@
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   buildPluginSettings,
   dependencyKeys,
+  hasRangedDependency,
   type MarketplaceSource,
   readInstalled,
   readManifest,
+  readManifestUnder,
 } from "./plugin-settings.ts";
 
 const github: MarketplaceSource = { source: "github", repo: "o/acme" };
@@ -171,6 +180,54 @@ describe("readInstalled", () => {
       path.join(dir, ".claude-plugin", "plugin.json"),
       `{"name":"p","pad":"${"x".repeat(300 * 1024)}"}`,
     );
+    expect(await readManifest(dir)).toBeUndefined();
+  });
+});
+
+describe("version ranges and bounded reads", () => {
+  const plugin = (manifest: unknown) => {
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "of-pm-")));
+    mkdirSync(path.join(dir, ".claude-plugin"));
+    writeFileSync(path.join(dir, ".claude-plugin", "plugin.json"), JSON.stringify(manifest));
+    return dir;
+  };
+
+  test("readManifest keeps a dependency's version constraint, and only a constraint makes it ranged", async () => {
+    const m = await readManifest(
+      plugin({ name: "p", dependencies: ["a", { name: "b" }, { name: "c", version: "~2.1" }] }),
+    );
+    expect(m?.dependencies).toEqual([{ name: "a" }, { name: "b" }, { name: "c", version: "~2.1" }]);
+    expect(hasRangedDependency(m)).toBe(true);
+    expect(
+      hasRangedDependency(await readManifest(plugin({ dependencies: ["a", { name: "b" }] }))),
+    ).toBe(false);
+    expect(hasRangedDependency(undefined)).toBe(false);
+  });
+
+  test("readManifestUnder doesn't follow a link below the base", async () => {
+    const base = realpathSync(mkdtempSync(path.join(tmpdir(), "of-pm-")));
+    const outside = plugin({ name: "out", version: "9.9.9" });
+    mkdirSync(path.join(base, "plugins"));
+    symlinkSync(outside, path.join(base, "plugins", "p"));
+    expect(await readManifestUnder(base, "plugins/p")).toBeUndefined();
+    mkdirSync(path.join(base, "plugins", "real", ".claude-plugin"), { recursive: true });
+    writeFileSync(
+      path.join(base, "plugins", "real", ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "real" }),
+    );
+    expect((await readManifestUnder(base, "plugins/real"))?.name).toBe("real");
+    expect((await readManifestUnder(path.join(base, "plugins", "real"), ""))?.name).toBe("real");
+  });
+
+  test("a manifest over 256 KB, or a file that is a link, is not read", async () => {
+    const big = plugin({ name: "big", pad: "x".repeat(300 * 1024) });
+    expect(await readManifest(big)).toBeUndefined();
+    const dir = plugin({ name: "t" });
+    const real = path.join(dir, ".claude-plugin", "plugin.json");
+    const other = realpathSync(mkdtempSync(path.join(tmpdir(), "of-pm-")));
+    writeFileSync(path.join(other, "m.json"), JSON.stringify({ name: "linked" }));
+    unlinkSync(real);
+    symlinkSync(path.join(other, "m.json"), real);
     expect(await readManifest(dir)).toBeUndefined();
   });
 });

@@ -5,7 +5,7 @@
  */
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { UNDO_MS } from "./common.ts";
+import { tagSha, UNDO_MS } from "./common.ts";
 import { removeTree } from "./git-fetch.ts";
 import { LIBRARY_KEY, libraryLock } from "./locks.ts";
 import type { MarketplacesService } from "./marketplaces-service.ts";
@@ -71,7 +71,7 @@ export function marketplaceDirsInUse(
       const sha = pin.startsWith("commit:")
         ? pin.slice("commit:".length)
         : pin.startsWith("tag:")
-          ? rows.find((r) => r.name === name)?.tags[pin.slice("tag:".length)]
+          ? tagSha(rows.find((r) => r.name === name)?.tags ?? {}, pin.slice("tag:".length))
           : undefined;
       if (sha) out.add(path.join(marketplacesRoot, name, sha));
     }

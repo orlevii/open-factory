@@ -1,5 +1,5 @@
 import type { AgentRuntimeSpec, Mount } from "@open-factory/harness";
-import { isFactoryEnvName, type TemplateConfig } from "@open-factory/shared";
+import { isFactoryEnvName, PLUGIN_ENV_NAMES, type TemplateConfig } from "@open-factory/shared";
 
 /** Copied from the server env when set. Everything else is withheld from agents (fail closed). */
 export const ENV_ALLOWLIST = [
@@ -12,17 +12,6 @@ export const ENV_ALLOWLIST = [
   "LC_CTYPE",
   "TERM",
   "TMPDIR",
-] as const;
-
-/** Every plugin env name the factory owns (spec §7.3 step 4); a secret of the same name never reaches the child. */
-const PLUGIN_ENV_NAMES = [
-  "CLAUDE_CODE_PLUGIN_CACHE_DIR",
-  "CLAUDE_CODE_PLUGIN_SEED_DIR",
-  "CLAUDE_CODE_PLUGIN_DIRS",
-  "CLAUDE_CODE_SYNC_PLUGIN_INSTALL",
-  "DISABLE_AUTOUPDATER",
-  "DISABLE_UPDATES",
-  "FORCE_AUTOUPDATE_PLUGINS",
 ] as const;
 
 /** The complete child env: the allowlist, plus what the factory sets for this agent. */

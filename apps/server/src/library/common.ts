@@ -11,6 +11,10 @@ export const META_KEEP_MS = 24 * 60 * 60 * 1000;
 /** Subjects and descriptions are cut to 200 graphemes. */
 export const SUBJECT_MAX = 200;
 /** A full git commit id (sha-1 or sha-256). */
+/** The commit a recorded tag names; undefined for a name that isn't one of the row's own keys (`constructor`, …). */
+export const tagSha = (tags: Record<string, string>, name: string): string | undefined =>
+  Object.hasOwn(tags, name) ? tags[name] : undefined;
+
 export const COMMIT_PATTERN = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 
 export const isDir = async (p: string) =>

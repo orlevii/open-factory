@@ -18,6 +18,7 @@ import { MarketplacesService } from "./marketplaces-service.ts";
 import type { Declarations } from "./plugin-usage.ts";
 import { PluginsIndex } from "./plugins-index.ts";
 import { makeAcmeMarketplace } from "./testing/acme-marketplace.ts";
+import { makeFixtureRepo } from "./testing/fixture-repo.ts";
 import { memoryMarketplacesStore } from "./testing/memory-marketplaces-store.ts";
 
 /** I5 §9.1, §9.3: the Plugins view over real checkouts of fixture repos served over file://. */
@@ -51,8 +52,8 @@ afterEach(async () => {
 });
 
 /** The acme marketplace (see `makeAcmeMarketplace`), added to a registry over file://. */
-async function world() {
-  const made = await makeAcmeMarketplace(tmp);
+async function world(make: typeof makeAcmeMarketplace = makeAcmeMarketplace) {
+  const made = await make(tmp);
   const home = path.join(tmp, "home");
   mkdirSync(home, { recursive: true });
   const store = memoryMarketplacesStore();
@@ -164,6 +165,45 @@ describe("list", () => {
     );
     expect((await w.index.list()).host).toEqual([]);
     expect((await w.index.detail("rel@acme")).hostVersion).toBe("1.0.0");
+  });
+});
+
+describe("ranged dependencies (spec §7.4)", () => {
+  test("a relative plugin with a ranged dependency is Can't be pinned in the list and the detail; an exact one is pinnable", async () => {
+    const w = await world(async (dir) => {
+      const manifest = (name: string, dependencies: unknown[]) =>
+        JSON.stringify({ name, version: "1.0.0", dependencies });
+      const repo = await makeFixtureRepo(path.join(dir, "gh", "acme", "mk.git"), {
+        commits: [
+          {
+            ".claude-plugin/marketplace.json": JSON.stringify({
+              name: "acme",
+              plugins: [
+                { name: "ranged", source: "./plugins/ranged" },
+                { name: "exact", source: "./plugins/exact" },
+              ],
+            }),
+            "plugins/ranged/.claude-plugin/plugin.json": manifest("ranged", [
+              { name: "exact", version: "^1.0.0" },
+            ]),
+            "plugins/exact/.claude-plugin/plugin.json": manifest("exact", ["ranged"]),
+          },
+        ],
+      });
+      return { repoShas: repo.shas, extSha: "" };
+    });
+    const m = (await w.index.list()).marketplaces[0];
+    const by = Object.fromEntries((m?.plugins ?? []).map((p) => [p.name, p]));
+    expect(by.ranged).toMatchObject({
+      pinnable: false,
+      state: "cant_pin",
+      refusedReason: expect.stringContaining("Can't be pinned"),
+    });
+    expect(by.exact).toMatchObject({ pinnable: true, state: "ok" });
+    expect(await w.index.detail("ranged@acme")).toMatchObject({
+      pinnable: false,
+      state: "cant_pin",
+    });
   });
 });
 

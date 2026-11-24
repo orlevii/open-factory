@@ -145,11 +145,19 @@ test("materialize: an existing folder is folder_exists and left alone; the calle
   expect(existsSync(path.join(home, "agents/lead"))).toBe(false);
 });
 
-test("materialize installs nothing and creates no plugins dir (spec §7.2)", async () => {
+test("materialize creates no plugins dir; a start creates it and nothing else for plugins (spec §7.2)", async () => {
   const { ws, tpl, prep, home } = setup();
   await ws.materialize("lead", "lead", tpl, prep);
-  expect(existsSync(path.join(home, "state/agents/lead/plugins"))).toBe(false);
-  expect(existsSync(path.join(home, "state/agents/lead/plugins-config"))).toBe(false);
+  const state = path.join(home, "state/agents/lead");
+  expect(existsSync(path.join(state, "plugins"))).toBe(false);
+  const before = new Set(existsSync(state) ? readdirSync(state) : []);
+  const out = await ws.prepare(prep);
+  expect(out.plugins.dir).toBe(realpathSync(path.join(state, "plugins")));
+  expect(readdirSync(path.join(state, "plugins"))).toEqual([]);
+  // The only additions are the dir and the `--settings` file; no installer state and no second plugins tree.
+  const added = readdirSync(state).filter((n) => !before.has(n));
+  expect(added).toContain("plugins");
+  expect(added.filter((n) => !["plugin-settings.json", "plugins"].includes(n))).toEqual([]);
 });
 
 const STAMP = /^state\/agents\/lead\/persona\/\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$/;

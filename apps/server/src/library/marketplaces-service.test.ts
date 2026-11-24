@@ -197,6 +197,52 @@ describe("preview", () => {
     ]);
   });
 
+  test("a plugin with a ranged dependency can't be pinned; an exact one can", async () => {
+    await makeFixtureRepo(repoDir(), {
+      commits: [
+        {
+          ...catalog([
+            { name: "ranged", source: "./plugins/ranged" },
+            { name: "exact", source: "./plugins/exact" },
+          ]),
+          "plugins/ranged/.claude-plugin/plugin.json": JSON.stringify({
+            name: "ranged",
+            dependencies: [{ name: "dep", version: "^1.0.0" }],
+          }),
+          "plugins/exact/.claude-plugin/plugin.json": JSON.stringify({
+            name: "exact",
+            dependencies: ["dep"],
+          }),
+        },
+      ],
+    });
+    const p = await setup().svc.preview(github);
+    expect(p.plugins).toEqual([
+      {
+        name: "ranged",
+        pinnable: false,
+        state: "cant_pin",
+        refusedReason: expect.stringMatching(/^Can't be pinned: .*version range/),
+      },
+      { name: "exact", pinnable: true, state: "ok" },
+    ]);
+  });
+
+  test("a catalog entry whose name isn't a plugin name is left out", async () => {
+    await makeFixtureRepo(repoDir(), {
+      commits: [
+        catalog([
+          { name: "ok.plugin_1", source: "./a" },
+          { name: "bad name\u202e", source: "./b" },
+          { name: "x".repeat(65), source: "./c" },
+          { name: "a@b", source: "./d" },
+        ]),
+      ],
+    });
+    const p = await setup().svc.preview(github);
+    expect(p.plugins.map((x) => x.name)).toEqual(["ok.plugin_1"]);
+  });
+
   test("the official name is refused with a source that isn't Anthropic's", async () => {
     await makeFixtureRepo(repoDir(), { commits: [catalog([], "claude-plugins-official")] });
     await expectApi(setup().svc.preview(github), 400, "reserved_name");

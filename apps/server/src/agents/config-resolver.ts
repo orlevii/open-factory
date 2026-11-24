@@ -1,4 +1,3 @@
-import path from "node:path";
 import type { AgentRow } from "@open-factory/db";
 import {
   type AgentOverlay,
@@ -16,7 +15,7 @@ import {
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
 import type { CatalogEntry } from "../library/marketplaces-service.ts";
-import { dependencyKeys, readManifest } from "../library/plugin-settings.ts";
+import { dependencyKeys, readManifestUnder } from "../library/plugin-settings.ts";
 import { classifyPluginSource } from "../library/plugin-sources.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { AgentStartError } from "./errors.ts";
@@ -151,7 +150,7 @@ export class ConfigResolver {
     if (catalog.dir && entry) {
       const info = classifyPluginSource(entry.raw);
       if (info.kind === "relative") {
-        const manifest = await readManifest(path.join(catalog.dir, info.path));
+        const manifest = await readManifestUnder(catalog.dir, info.path);
         deps = manifest ? dependencyKeys(manifest, row.name) : [];
       }
     }

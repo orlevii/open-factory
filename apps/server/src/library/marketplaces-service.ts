@@ -31,6 +31,7 @@ import {
   META_KEEP_MS,
   SUBJECT_MAX,
   sha256,
+  tagSha,
   UNDO_MS,
   usersLine,
 } from "./common.ts";
@@ -48,6 +49,7 @@ import {
 } from "./git-fetch.ts";
 import { LIBRARY_KEY, libraryLock } from "./locks.ts";
 import { CODE_KEYS, CODE_PATHS } from "./plugin-contents.ts";
+import { hasRangedDependency, readManifestUnder } from "./plugin-settings.ts";
 import { classifyPluginSource } from "./plugin-sources.ts";
 
 export const MARKETPLACE_MSG = {
@@ -70,6 +72,8 @@ export const MARKETPLACE_MSG = {
   noTag: (name: string, ref: string) => `${name} has no commit or tag ${ref}.`,
   liveOnly: "A local folder is read live.",
   unpinnable: "Can't be pinned: it follows its own source.",
+  rangedDependency:
+    "Can't be pinned: a dependency names a version range, which Claude Code resolves to the newest matching tag.",
   refusedSource: (plugin: string, mkt: string, kind: string) =>
     `Plugin ${plugin}@${mkt} uses a ${kind} source, which Open Factory doesn't install.`,
 } as const;
@@ -224,7 +228,13 @@ export interface CatalogEntry {
   raw: Record<string, unknown>;
 }
 
-/** Reads `.claude-plugin/marketplace.json` from a directory: `lstat`, a regular file, at most 1 MB. */
+/** A catalog plugin name is a segment of a plugin key and of `--settings`, so only the key's own characters pass. */
+const CATALOG_PLUGIN_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+
+/**
+ * Reads `.claude-plugin/marketplace.json` from a directory: `lstat`, a regular file, at most 1 MB. An entry whose name
+ * isn't a valid plugin name is left out: third-party text never reaches a key, a route or a `--settings` entry.
+ */
 export async function readCatalog(dir: string): Promise<{ name: string; plugins: CatalogEntry[] }> {
   const file = path.join(dir, ".claude-plugin", "marketplace.json");
   const st = await lstat(file).catch(() => undefined);
@@ -243,7 +253,8 @@ export async function readCatalog(dir: string): Promise<{ name: string; plugins:
   }
   const plugins: CatalogEntry[] = [];
   for (const p of doc.plugins) {
-    if (isRecord(p) && typeof p.name === "string") plugins.push({ name: p.name, raw: p });
+    if (isRecord(p) && typeof p.name === "string" && CATALOG_PLUGIN_NAME.test(p.name))
+      plugins.push({ name: p.name, raw: p });
   }
   return { name: doc.name, plugins };
 }
@@ -308,8 +319,15 @@ async function codeDigest(
   return { digest: h.digest("hex"), capped };
 }
 
-/** One catalog entry as the preview and the Plugins view show it (spec §7.4, §7.7): pinnable, or why not. */
-export function previewPluginOf(marketplace: string, e: CatalogEntry): PreviewPlugin {
+/**
+ * One catalog entry as the preview and the Plugins view show it (spec §7.4, §7.7): pinnable, or why not.
+ * `ranged` is whether the plugin's manifest has a dependency with a version range (false when it isn't readable).
+ */
+export function previewPluginOf(
+  marketplace: string,
+  e: CatalogEntry,
+  ranged = false,
+): PreviewPlugin {
   const info = classifyPluginSource(e.raw);
   const base = {
     name: e.name,
@@ -332,6 +350,14 @@ export function previewPluginOf(marketplace: string, e: CatalogEntry): PreviewPl
       pinnable: false,
       state: "cant_pin",
       refusedReason: MARKETPLACE_MSG.unpinnable,
+    };
+  }
+  if (ranged) {
+    return {
+      ...base,
+      pinnable: false,
+      state: "cant_pin",
+      refusedReason: MARKETPLACE_MSG.rangedDependency,
     };
   }
   return { ...base, pinnable: true, state: "ok" };
@@ -463,7 +489,7 @@ export class MarketplacesService {
     if (row.source.source === "directory") return row.source.path;
     const ref = commit ?? row.commit;
     if (!ref) return null;
-    const sha = COMMIT_PATTERN.test(ref) ? ref : row.tags[ref];
+    const sha = COMMIT_PATTERN.test(ref) ? ref : tagSha(row.tags, ref);
     if (!sha || !COMMIT_PATTERN.test(sha)) return null;
     const dir = this.checkoutDir(name, sha);
     return (await isDir(dir)) ? dir : null;
@@ -493,8 +519,16 @@ export class MarketplacesService {
     if (taken) throw new ApiError(409, "name_taken", MARKETPLACE_MSG.nameTaken);
   }
 
-  private pluginsOf(name: string, entries: CatalogEntry[]): PreviewPlugin[] {
-    return entries.map((e) => previewPluginOf(name, e));
+  /** The preview rows of a checkout at `dir`; a relative plugin with a ranged dependency can't be pinned. */
+  private pluginsOf(name: string, entries: CatalogEntry[], dir: string): Promise<PreviewPlugin[]> {
+    return Promise.all(
+      entries.map(async (e) => {
+        const info = classifyPluginSource(e.raw);
+        const manifest =
+          info.kind === "relative" ? await readManifestUnder(dir, info.path) : undefined;
+        return previewPluginOf(name, e, hasRangedDependency(manifest));
+      }),
+    );
   }
 
   private commitPinnable(name: string): boolean {
@@ -527,7 +561,7 @@ export class MarketplacesService {
       subject: null,
       branch: null,
       commitPinnable: this.commitPinnable(catalog.name),
-      plugins: this.pluginsOf(catalog.name, catalog.plugins),
+      plugins: await this.pluginsOf(catalog.name, catalog.plugins, real),
     };
   }
 
@@ -575,7 +609,7 @@ export class MarketplacesService {
         subject,
         branch: ref.branch,
         commitPinnable: this.commitPinnable(catalog.name),
-        plugins: this.pluginsOf(catalog.name, catalog.plugins),
+        plugins: await this.pluginsOf(catalog.name, catalog.plugins, dir),
       };
     } catch (e) {
       await removeTree(dir).catch(() => {});
@@ -1123,7 +1157,7 @@ export class MarketplacesService {
       if (row.commit) keep.add(row.commit);
       for (const d of declared ?? []) {
         if (d.marketplace !== name || d.ref === null) continue;
-        keep.add(COMMIT_PATTERN.test(d.ref) ? d.ref : (row.tags[d.ref] ?? d.ref));
+        keep.add(COMMIT_PATTERN.test(d.ref) ? d.ref : (tagSha(row.tags, d.ref) ?? d.ref));
       }
       for (const sha of await readdir(nameDir).catch(() => [] as string[])) {
         const dir = path.join(nameDir, sha);

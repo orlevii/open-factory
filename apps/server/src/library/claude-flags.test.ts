@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { assertPluginFloor, checkImageClaudeVersion, versionCheckEnv } from "./claude-flags.ts";
+import {
+  assertPluginFloor,
+  checkImageClaudeVersion,
+  dockerCheckEnv,
+  versionCheckEnv,
+} from "./claude-flags.ts";
 
 test("the host version check gets only PATH and HOME, never the agent's config dir", () => {
   expect(
@@ -59,7 +64,7 @@ test("the image check runs docker once per digest, offline, and caches the pass"
   await checkImageClaudeVersion("factory/agent:1", "sha256:one");
   await checkImageClaudeVersion("factory/agent:1", "sha256:one");
   expect(runsOf(count)).toEqual([
-    "run --rm --network none --entrypoint claude factory/agent:1 --version",
+    "run --rm --network none --security-opt no-new-privileges:true --entrypoint claude factory/agent:1 --version",
   ]);
 
   await checkImageClaudeVersion("factory/agent:2", "sha256:two");
@@ -81,4 +86,54 @@ test("a binary whose version can't be read fails the start", async () => {
   await expect(assertPluginFloor("/nonexistent/claude", { PATH: "/usr/bin" })).rejects.toThrow(
     "printed no readable version",
   );
+});
+
+test("the docker probe keeps the daemon variables and nothing else of the server's env", () => {
+  expect(
+    dockerCheckEnv({
+      PATH: "/bin",
+      HOME: "/home/me",
+      DOCKER_HOST: "unix:///colima.sock",
+      DOCKER_CONTEXT: "colima",
+      DOCKER_CONFIG: "/cfg",
+      ANTHROPIC_API_KEY: "a",
+      DATABASE_URL: "postgres://x",
+    }),
+  ).toEqual({
+    PATH: "/bin",
+    HOME: "/home/me",
+    DOCKER_HOST: "unix:///colima.sock",
+    DOCKER_CONTEXT: "colima",
+    DOCKER_CONFIG: "/cfg",
+  });
+});
+
+test("DOCKER_HOST reaches the image probe, and a failure's stderr is redacted", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "fake-docker-"));
+  writeFileSync(
+    path.join(dir, "docker"),
+    '#!/bin/sh\necho "host=$DOCKER_HOST key=$ANTHROPIC_API_KEY" >&2\necho "pull from https://user:pw@reg.example/x sk-ant-SECRET123" >&2\nexit 1\n',
+  );
+  chmodSync(path.join(dir, "docker"), 0o755);
+  process.env.PATH = `${dir}${path.delimiter}${savedPath ?? ""}`;
+  const savedHost = process.env.DOCKER_HOST;
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  process.env.DOCKER_HOST = "unix:///colima.sock";
+  process.env.ANTHROPIC_API_KEY = "leak";
+  try {
+    const err = await checkImageClaudeVersion("factory/x:1", "sha256:host").catch(
+      (e) => e as Error,
+    );
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+    expect(msg).toContain("host=unix:///colima.sock");
+    expect(msg).toContain("key=\n");
+    expect(msg).not.toContain("pw@");
+    expect(msg).not.toContain("SECRET123");
+  } finally {
+    if (savedHost === undefined) delete process.env.DOCKER_HOST;
+    else process.env.DOCKER_HOST = savedHost;
+    if (savedKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = savedKey;
+  }
 });

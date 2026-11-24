@@ -1,4 +1,5 @@
 import path from "node:path";
+import { PLUGIN_SETTINGS_KEYS } from "@open-factory/shared";
 import type { DenyRules } from "../spawning/inherit.ts";
 
 const LISTS = ["environment", "allow", "soft_deny", "hard_deny"] as const;
@@ -18,8 +19,6 @@ export interface SettingsInput {
   /** Deny rules inherited from the spawner (spec §6); appended after the template's own. */
   inherited?: DenyRules;
 }
-
-const PLUGIN_KEYS = ["enabledPlugins", "extraKnownMarketplaces", "syncClaudeAiPlugins"] as const;
 
 /** Claude Code's built-in agent-team tools would bypass the factory's messaging (spec §10.4). */
 const BUILT_IN_TEAM_TOOLS = ["SendMessage", "ListAgents"];
@@ -55,7 +54,7 @@ export function claudeMdExcludes(workdir: string): string[] {
 export function buildSettings(i: SettingsInput): Record<string, unknown> {
   const tpl = structuredClone(i.tpl);
   // The plugin keys never reach the workdir: the factory passes its own with `--settings` (spec §7.3 step 5).
-  for (const key of PLUGIN_KEYS) delete tpl[key];
+  for (const key of PLUGIN_SETTINGS_KEYS) delete tpl[key];
   const perms = obj(tpl.permissions);
   const permissions = {
     ...perms,

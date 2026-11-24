@@ -286,3 +286,10 @@ test("a runtime's commit and tag pins hold their marketplace checkouts; Latest a
     [`/mk/acme/${sha}`, `/mk/acme/${tagSha}`].sort(),
   );
 });
+
+test("a tag pin named like an Object.prototype member holds nothing", () => {
+  const started = [
+    { library: { plugins: { "foo@acme": "tag:constructor", "bar@acme": "tag:toString" } } },
+  ];
+  expect(marketplaceDirsInUse("/mk", started, [{ name: "acme", tags: {} }])).toEqual([]);
+});

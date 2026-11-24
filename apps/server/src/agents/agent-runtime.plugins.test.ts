@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { HarnessEvent, ServerMessage } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { ev } from "./testing/fake-driver.ts";
@@ -81,4 +84,48 @@ test("an init with no plugins list means every expected plugin is missing", asyn
       subject_agent_id: h.agentId,
     },
   ]);
+});
+
+/** A plugin dir under `base` whose own manifest says `version`. */
+function pluginAt(base: string, name: string, version: string): string {
+  const dir = path.join(base, name);
+  mkdirSync(path.join(dir, ".claude-plugin"), { recursive: true });
+  writeFileSync(path.join(dir, ".claude-plugin", "plugin.json"), JSON.stringify({ name, version }));
+  return dir;
+}
+
+test("init's path is read for the version only inside the plugins dir or a registered directory marketplace", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-rt-plugins-")));
+  const pluginsDir = path.join(root, "plugins");
+  const outside = path.join(root, "elsewhere");
+  const inside = pluginAt(pluginsDir, "p", "9.0.0");
+  const away = pluginAt(outside, "q", "9.0.0");
+  const linked = path.join(pluginsDir, "linked");
+  symlinkSync(away, linked);
+  await h.makeRuntime({
+    spec: (a) => ({ ...withPlugins(a), pluginRoots: [pluginsDir] }),
+  });
+  await h.send("hi");
+  h.driver.last.emit(
+    session([
+      { name: "p", path: inside, source: "p@mk", version: "1.0.0" },
+      { name: "q", path: linked, source: "q@mk", version: "2.0.0" },
+    ]),
+    ev.turn(),
+  );
+  await h.rt.settled();
+  // p's own manifest wins; q's path leads outside through a link, so its manifest is never read.
+  expect(h.rt.loadedPlugins).toEqual({ "p@mk": "9.0.0", "q@mk": "2.0.0" });
+
+  await h.makeRuntime({ spec: (a) => ({ ...withPlugins(a), pluginRoots: [pluginsDir] }) });
+  await h.send("again");
+  h.driver.last.emit(
+    session([
+      { name: "p", path: away, source: "p@mk", version: "1.0.0" },
+      { name: "q", path: away, source: "q@mk", version: "2.0.0" },
+    ]),
+    ev.turn(),
+  );
+  await h.rt.settled();
+  expect(h.rt.loadedPlugins).toEqual({ "p@mk": "1.0.0", "q@mk": "2.0.0" });
 });

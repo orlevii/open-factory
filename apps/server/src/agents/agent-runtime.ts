@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import type { AgentRow, MessageRow, RuntimeJournal } from "@open-factory/db";
 import {
   type AgentRuntimeSpec,
@@ -549,6 +551,8 @@ export class AgentRuntime {
   started: Effective | undefined;
   /** The plugins the running process was started to load, each with its pin (spec §7.3 step 8); checked at its first `init`. */
   private expectedPlugins: { key: string; pin: string }[] = [];
+  /** Where a plugin `init` reports may live (the agent's plugins dir, the registered directory marketplaces). */
+  private pluginRoots: string[] = [];
   /**
    * The version of each plugin the process's first `init` listed (spec §7.3 step 8). Deliberately not in
    * `started.library`: a loaded version never counts as a config change.
@@ -2443,7 +2447,14 @@ export class AgentRuntime {
       return this.failStart(err, "prepareStart failed");
     }
     // `effective` holds env values: it is kept out of the spec the driver sees, and kept as `started` at the launch.
-    const { launch: dockerLaunch, credentialId, effective, plugins, ...prepSpec } = prepared;
+    const {
+      launch: dockerLaunch,
+      credentialId,
+      effective,
+      plugins,
+      pluginRoots,
+      ...prepSpec
+    } = prepared;
     // I2 §6.2: the Supervisor checked (and pulled) `nextImage` before the grant. A start that resolved another image (a
     // disk edit no scan has seen yet) updates it and goes back through the pull, as an image found missing does.
     if (dockerLaunch && dockerLaunch.image !== this.nextImage) {
@@ -2482,6 +2493,7 @@ export class AgentRuntime {
     this.proc = proc;
     this.started = effective;
     this.expectedPlugins = plugins;
+    this.pluginRoots = pluginRoots ?? [];
     this.loadedPlugins = {};
     this.procStartedAt = procStartedAt;
     // This process runs on the config the changes describe.
@@ -2832,6 +2844,19 @@ export class AgentRuntime {
     this.publishStatus();
   }
 
+  /** `p` (by its real path) is inside the plugins dir or a registered directory marketplace; `init` is not trusted for it. */
+  private async insideRoots(p: string): Promise<boolean> {
+    try {
+      const real = await realpath(p);
+      return this.pluginRoots.some((root) => {
+        const rel = path.relative(root, real);
+        return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+      });
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Spec §7.3 step 8: the first `init`'s plugins against the closure this process was started with, matched on
    * `source` (`name@marketplace`). Each plugin that didn't load leaves the agent running without it, adds the
@@ -2847,7 +2872,10 @@ export class AgentRuntime {
       const found = bySource.get(key);
       if (found) {
         // The plugin's own manifest is the evidence for its version: the catalog's (`init`'s) can differ (spec §7.4).
-        this.loadedPlugins[key] = (await readManifest(found.path))?.version ?? found.version ?? "";
+        const manifest = (await this.insideRoots(found.path))
+          ? await readManifest(found.path)
+          : undefined;
+        this.loadedPlugins[key] = manifest?.version ?? found.version ?? "";
         continue;
       }
       missing.push(key);

@@ -40,6 +40,8 @@ export type PreparedSpec = AgentRuntimeSpec & {
   effective: Effective;
   /** The plugins this start expects Claude Code to load, each with its pin; the runtime checks the first `init` (spec §7.3 step 8). */
   plugins: { key: string; pin: string }[];
+  /** Where a plugin Claude Code reports may live: the agent's plugins dir and the registered directory marketplaces. */
+  pluginRoots?: string[];
 };
 
 /** I2 §6.2: a loaded runtime's `started` config (what its running process started with); undefined when none runs. */
@@ -374,17 +376,19 @@ export function createPrepareStart(d: {
         settingsJson: prepared.plugins.settingsJson,
       });
       const plugins = prepared.plugins.expected;
+      const pluginRoots = [prepared.plugins.dir, ...prepared.plugins.marketplaceDirs];
       return docker && prepared.mountCheck
         ? {
             ...spec,
             credentialId,
             effective,
             plugins,
+            pluginRoots,
             launch: {
               image: resolveImage(config.image, d.config.defaultImage).tag,
               mountCheck: prepared.mountCheck,
             },
           }
-        : { ...spec, credentialId, effective, plugins };
+        : { ...spec, credentialId, effective, plugins, pluginRoots };
     });
 }

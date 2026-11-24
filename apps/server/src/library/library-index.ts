@@ -16,7 +16,7 @@ import { and, asc, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import { hostSkillsDirOf } from "../config.ts";
 import { ApiError } from "../errors.ts";
-import { COMMIT_PATTERN } from "./common.ts";
+import { COMMIT_PATTERN, tagSha } from "./common.ts";
 import { type CatalogEntry, readCatalog } from "./marketplaces-service.ts";
 import type { Declarations } from "./plugin-usage.ts";
 import { listSkillFiles, readSkillFile, readSkillMdText } from "./skill-files.ts";
@@ -203,7 +203,7 @@ export class LibraryIndex {
     if (row.source.source === "directory") return row.source.path;
     const want = ref ?? row.commit;
     if (!want) return null;
-    const sha = COMMIT_PATTERN.test(want) ? want : row.tags[want];
+    const sha = COMMIT_PATTERN.test(want) ? want : tagSha(row.tags, want);
     if (!sha || !COMMIT_PATTERN.test(sha)) return null;
     const dir = path.join(this.factoryHome, "state", "library", "marketplaces", row.name, sha);
     return (await isDir(dir)) ? dir : null;

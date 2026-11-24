@@ -3,7 +3,8 @@
  * plugins dir that feed them (§7.2): `installed_plugins.json` and the installed manifests. Claude Code writes that
  * dir (and so can the agent), so every read is `lstat`ed, size-capped and kept inside the dir.
  */
-import { lstat, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import path from "node:path";
 import { type Pin, PLUGIN_REF_PATTERN } from "@open-factory/shared";
 
@@ -16,7 +17,7 @@ export interface PluginManifest {
   name?: string;
   version?: string;
   /** A dependency's own marketplace when the manifest names one; the dependent's own otherwise. */
-  dependencies: { name: string; marketplace?: string }[];
+  dependencies: { name: string; marketplace?: string; version?: string }[];
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -24,8 +25,9 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 /**
  * The parsed JSON of a regular file of at most 256 KB, under `base` (a directory the caller vouches for): every
- * component from `base` down is `lstat`ed, a directory (a link fails) and the file itself a regular file. Undefined for
- * anything else, a big file or a bad one.
+ * component from `base` down is `lstat`ed, a directory (a link fails). The file is opened with `O_NOFOLLOW` (and
+ * `O_NONBLOCK`, so a FIFO swapped in can't hang the open), `fstat`ed on the handle and read for at most 256 KB, so
+ * a swap after the check can't change what is read. Undefined for anything else, a big file or a bad one.
  */
 async function readJsonFile(base: string, ...parts: string[]): Promise<unknown> {
   try {
@@ -35,9 +37,17 @@ async function readJsonFile(base: string, ...parts: string[]): Promise<unknown> 
       if (!(await lstat(at)).isDirectory()) return undefined;
     }
     const file = path.join(at, parts.at(-1) ?? "");
-    const st = await lstat(file);
-    if (!st.isFile() || st.size > MAX_BYTES) return undefined;
-    return JSON.parse(await readFile(file, "utf8"));
+    const fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const st = await fh.stat();
+      if (!st.isFile() || st.size > MAX_BYTES) return undefined;
+      const buf = Buffer.alloc(MAX_BYTES + 1);
+      const { bytesRead } = await fh.read(buf, 0, MAX_BYTES + 1, 0);
+      if (bytesRead > MAX_BYTES) return undefined;
+      return JSON.parse(buf.toString("utf8", 0, bytesRead));
+    } finally {
+      await fh.close();
+    }
   } catch {
     return undefined;
   }
@@ -76,6 +86,7 @@ function dependenciesOf(raw: unknown): PluginManifest["dependencies"] {
         ...(typeof d.marketplace === "string" && d.marketplace
           ? { marketplace: d.marketplace }
           : {}),
+        ...(typeof d.version === "string" && d.version ? { version: d.version } : {}),
       });
     }
   }
@@ -95,6 +106,23 @@ export async function readManifest(dir: string): Promise<PluginManifest | undefi
     dependencies: dependenciesOf(doc.dependencies),
   };
 }
+
+/**
+ * `readManifest` of `<base>/<rel>`, with every component of `rel` below `base` `lstat`ed as a real folder (a link in a
+ * live local marketplace is never followed). `base` itself is the caller's.
+ */
+export async function readManifestUnder(
+  base: string,
+  rel: string,
+): Promise<PluginManifest | undefined> {
+  const parts = rel.split("/").filter((p) => p !== "" && p !== ".");
+  if (!(await isPlainDir(base, parts))) return undefined;
+  return readManifest(path.join(base, ...parts));
+}
+
+/** True when a dependency names a version range (spec §7.4: Claude Code resolves it to the highest matching tag). */
+export const hasRangedDependency = (manifest: PluginManifest | undefined): boolean =>
+  manifest?.dependencies.some((d) => d.version !== undefined) ?? false;
 
 /** The plugin keys a manifest depends on: a dependency with no marketplace lives in the dependent's own. */
 export function dependencyKeys(manifest: PluginManifest, ownMarketplace: string): string[] {

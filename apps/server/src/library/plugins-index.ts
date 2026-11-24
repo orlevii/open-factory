@@ -16,7 +16,7 @@ import type {
 import type { z } from "zod";
 import { ApiError, FieldError } from "../errors.ts";
 import { redactOutput } from "../redact.ts";
-import { COMMIT_PATTERN } from "./common.ts";
+import { COMMIT_PATTERN, tagSha } from "./common.ts";
 import type { HostPlugins } from "./host-plugins.ts";
 import type { LibraryIndex } from "./library-index.ts";
 import {
@@ -32,6 +32,7 @@ import {
   type PluginContents,
   readContents,
 } from "./plugin-contents.ts";
+import { hasRangedDependency, readManifest } from "./plugin-settings.ts";
 import {
   cachedPluginSource,
   classifyPluginSource,
@@ -86,6 +87,8 @@ interface Located {
   sha: string | null;
   ext?: { source: ExternalSource; sha: string };
   state: PluginEntryView["state"];
+  /** A dependency names a version range, so the plugin can't be held by a pin (spec §7.4). */
+  ranged: boolean;
   source: PluginDetail["source"];
   /** The readable root of the plugin's code. */
   dir: string | null;
@@ -153,7 +156,17 @@ export class PluginsIndex {
   ): Promise<Located> {
     const key = `${entry.name}@${row.name}`;
     const info = classifyPluginSource(entry.raw);
-    const base = { row, entry, key, mdir, sha, dir: null, note: null, canRead: false };
+    const base = {
+      row,
+      entry,
+      key,
+      mdir,
+      sha,
+      dir: null,
+      note: null,
+      canRead: false,
+      ranged: false,
+    };
     if (info.kind === "refused") {
       return {
         ...base,
@@ -175,7 +188,8 @@ export class PluginsIndex {
       if (!insideOrSame(root, real)) {
         return { ...base, state: "missing", source, note: PLUGIN_MSG.outside };
       }
-      return { ...base, state: "ok", source, dir: real };
+      const ranged = hasRangedDependency(await readManifest(real));
+      return { ...base, state: ranged ? "cant_pin" : "ok", ranged, source, dir: real };
     }
     const ext = info.source;
     const detail = ext.source === "github" ? ext.repo : ext.url;
@@ -186,9 +200,11 @@ export class PluginsIndex {
       return { ...base, state, source, note: PLUGIN_MSG.followsSource };
     }
     const cached = await cachedPluginSource(ext, ext.sha, this.opts);
+    const ranged = cached !== null && hasRangedDependency(await readManifest(cached));
     return {
       ...base,
-      state,
+      state: ranged ? ("cant_pin" as const) : state,
+      ranged,
       source,
       ext: { source: ext, sha: ext.sha },
       dir: cached,
@@ -214,7 +230,7 @@ export class PluginsIndex {
       );
     }
     const want = commit ?? row.commit;
-    const sha = want && (COMMIT_PATTERN.test(want) ? want : (row.tags[want] ?? null));
+    const sha = want && (COMMIT_PATTERN.test(want) ? want : (tagSha(row.tags, want) ?? null));
     return { mdir, sha: row.source.source === "directory" ? null : sha };
   }
 
@@ -266,7 +282,7 @@ export class PluginsIndex {
   // Reads ---------------------------------------------------------------------------------
 
   private async entryView(l: Located, decl: Declarations): Promise<PluginEntryView> {
-    const p = previewPluginOf(l.row.name, l.entry);
+    const p = previewPluginOf(l.row.name, l.entry, l.ranged);
     const { contents } = await this.contentsOf(l);
     return {
       key: l.key,
@@ -374,7 +390,7 @@ export class PluginsIndex {
   }
 
   private async detailOf(l: Located, hostVersion: string | null): Promise<PluginDetail> {
-    const p = previewPluginOf(l.row.name, l.entry);
+    const p = previewPluginOf(l.row.name, l.entry, l.ranged);
     const { contents, note } = await this.contentsOf(l);
     return {
       key: l.key,
@@ -449,7 +465,9 @@ export class PluginsIndex {
         commit: sha ?? ref,
         present: l !== undefined,
         version: l
-          ? (previewPluginOf(row.name, l.entry).version ?? read.contents?.manifest.version ?? null)
+          ? (previewPluginOf(row.name, l.entry, l.ranged).version ??
+            read.contents?.manifest.version ??
+            null)
           : null,
         contents: read.contents,
         note: read.note,

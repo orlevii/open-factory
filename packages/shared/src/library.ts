@@ -114,7 +114,7 @@ export function rowStateOf(states: readonly RowState[]): RowState | undefined {
 
 // Request bodies (spec §9.2). Field messages are the server's short forms (spec §10.4).
 
-const folderPath = z.string().min(1).refine(isHostPathShape, MSG.hostPathStart);
+const folderPath = z.string().refine(isHostPathShape, MSG.hostPathStart);
 const repoField = z.string().refine((r) => normalizeRepo(r) !== null, MSG.repoFormat);
 const subpathField = z.string().refine((p) => normalizeSubpath(p) !== null, MSG.subpathNotFolder);
 const branchField = z.string().refine(checkBranchName, MSG.branchMissing);
@@ -216,7 +216,9 @@ export const skillDetailSchema = skillRowSchema.extend({
   hooks: z.array(hookDeclSchema),
   /** Who uses it, by template: the template, and how many of its agents list the skill ("dev · 190 agents"). */
   usedByTemplates: z.array(z.object({ name: z.string(), agents: z.number().int().nonnegative() })),
-  skillMd: z.string().refine((s) => new TextEncoder().encode(s).length <= SKILL_MD_BYTES),
+  skillMd: z
+    .string()
+    .refine((s) => new TextEncoder().encode(s).length <= SKILL_MD_BYTES, MSG.skillMdSize),
 });
 
 /** `GET /api/library/skills/:group/:name/file?path=`'s query. */

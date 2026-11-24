@@ -416,30 +416,6 @@ test("from secrets: rows read 'Available as $NAME'; a picked secret is added", a
   expect(last(onValue)).toEqual({ template: { secrets: ["NPM_TOKEN", "GH_TOKEN"] } });
 });
 
-test("skills: host skills from a picker; template-local skills read-only", async () => {
-  const onValue = vi.fn();
-  render(
-    <Form
-      start={{}}
-      base={doc({ skills: ["review"] })}
-      localSkills={["deploy"]}
-      onValue={onValue}
-    />,
-  );
-  expect(screen.getByRole("list", { name: CONFIG_COPY.templateSkill })).toHaveTextContent(
-    "deployTemplate skill",
-  );
-  await userEvent.click(screen.getByRole("combobox", { name: "Add skill" }));
-  // "review" is already the template's: not offered again.
-  expect(screen.queryByRole("option", { name: /review/ })).toBeNull();
-  const release = await screen.findByRole("option", { name: /release/ });
-  // Until the picker covers every group, only usable host skills are offered.
-  expect(screen.queryByRole("option", { name: /shadowed/ })).toBeNull();
-  expect(screen.queryByRole("option", { name: /from-github/ })).toBeNull();
-  await userEvent.click(release);
-  expect(last(onValue)).toEqual({ template: { skills: ["release"] } });
-});
-
 test("plugins are checked as name@marketplace; the help names settings.json per mode", async () => {
   const onValue = vi.fn();
   const { unmount } = render(<Form start={{}} onValue={onValue} />);

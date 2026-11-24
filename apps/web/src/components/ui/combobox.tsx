@@ -100,6 +100,8 @@ function ComboList({
   onCommit,
   onSearch,
   renderOption,
+  renderGroup,
+  footer,
 }: {
   /** The combobox's name, given to the listbox. */
   label: string
@@ -111,6 +113,8 @@ function ComboList({
   onCommit: (value: string) => void
   onSearch: () => void
   renderOption?: ((option: ComboOption) => React.ReactNode) | undefined
+  renderGroup?: ((group: string) => React.ReactNode) | undefined
+  footer?: React.ReactNode
 }) {
   const { loose, groups } = React.useMemo(() => arrange(options, value), [options, value])
   const current = options.find((o) => o.value === value)
@@ -192,11 +196,16 @@ function ComboList({
             every group, which would push fixed options below a group while filtering. */}
         <CommandPrimitive.Group>{loose.map(item)}</CommandPrimitive.Group>
         {groups.map(([group, members]) => (
-          <CommandPrimitive.Group key={group} heading={group} className={groupClass}>
+          <CommandPrimitive.Group
+            key={group}
+            heading={renderGroup ? renderGroup(group) : group}
+            className={groupClass}
+          >
             {members.map(item)}
           </CommandPrimitive.Group>
         ))}
       </CommandPrimitive.List>
+      {footer}
     </CommandPrimitive>
   )
 }
@@ -219,9 +228,12 @@ function Combobox({
   renderValue,
   triggerClassName,
   onOpen,
+  onClose,
   onBlur,
   multiple,
   trigger,
+  renderGroup,
+  footer,
 }: {
   value: string
   onValueChange: (value: string) => void
@@ -242,6 +254,8 @@ function Combobox({
   triggerClassName?: string
   /** Called each time the popover opens (for work that should wait for the first look). */
   onOpen?: () => void
+  /** Called each time the popover closes (after a pick in single mode, or Escape, outside click). */
+  onClose?: () => void
   onBlur?: (e: React.FocusEvent<HTMLButtonElement>) => void
   /** Multi-pick: a pick calls `onValueChange` and `announce("Added <label>")` and keeps the popover open;
    *  picked options stay listed, disabled and marked "Added" until it closes, and are left out the next
@@ -249,6 +263,10 @@ function Combobox({
   multiple?: { added: Set<string>; announce: (label: string) => void }
   /** A caller-supplied trigger (one element) in place of the default Select-shaped button. */
   trigger?: React.ReactElement
+  /** A heading per group, in place of its name (a stable function): a long path that truncates in the middle. */
+  renderGroup?: (group: string) => React.ReactNode
+  /** A muted line under the list (what was left out and why). */
+  footer?: React.ReactNode
 }) {
   const [open, setOpen] = React.useState(false)
   // Multi-pick: what was already added when the popover opened, left out of its options.
@@ -272,6 +290,8 @@ function Combobox({
       setLock(undefined)
       if (multiple) setLeftOut(new Set(multiple.added))
       onOpen?.()
+    } else {
+      onClose?.()
     }
   }
   const lockPlacement = () => {
@@ -285,9 +305,12 @@ function Combobox({
   }
   // A key that closes an overlay closes it at once (DESIGN.md → Motion).
   const stampInstant = () => contentRef.current?.setAttribute("data-instant", "")
+  // Primitives, not the inline `multiple` object, so the list is only filtered again when the options or
+  // the opening's snapshot change.
+  const isMulti = !!multiple
   const listed = React.useMemo(
-    () => (multiple && leftOut ? options.filter((o) => !leftOut.has(o.value)) : options),
-    [options, multiple, leftOut],
+    () => (isMulti && leftOut ? options.filter((o) => !leftOut.has(o.value)) : options),
+    [options, isMulti, leftOut],
   )
   const commit = (next: string) => {
     if (multiple) {
@@ -303,7 +326,7 @@ function Combobox({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
+      <PopoverTrigger asChild ref={triggerRef}>
         {trigger ?? (
         <button
           type="button"
@@ -326,7 +349,6 @@ function Combobox({
               onOpenChange(true)
             }
           }}
-          ref={triggerRef}
         >
           {/* A flex item that shrinks below its content and clips it: text gets its own ellipsis and a
               rendered value (an agent chip) shrinks with the slot, so its parts truncate. `relative`
@@ -352,11 +374,14 @@ function Combobox({
           label={ariaLabel}
           options={listed}
           value={value}
-          emptyText={emptyText}
+          // Multi: once something is listed, an empty result is the filter's, not an empty list.
+          emptyText={isMulti && listed.length > 0 ? "No matches." : emptyText}
           added={multiple?.added}
           onCommit={commit}
           onSearch={lockPlacement}
           renderOption={renderOption}
+          renderGroup={renderGroup}
+          footer={footer}
         />
       </PopoverContent>
     </Popover>

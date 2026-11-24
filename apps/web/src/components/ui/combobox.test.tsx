@@ -315,3 +315,26 @@ test("multi: options added before the popover opens are left out", async () => {
   await screen.findByRole("listbox");
   expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["review", "debug"]);
 });
+
+test("multi with a caller trigger: the first pick keeps the popover's horizontal place", async () => {
+  multi();
+  const trigger = screen.getByRole("button", { name: "Add skill" });
+  vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(rect(300, 0, 100, 32));
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  const c = content() as HTMLElement;
+  const wrapper = c.parentElement as HTMLElement;
+  await vi.waitFor(() => expect(translateX(wrapper)).toBe("300"));
+  // Collision shift had moved the open popover 60px left; the first pick locks it where it is.
+  vi.spyOn(c, "getBoundingClientRect").mockReturnValue(rect(240, 36, 384, 330));
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(translateX(wrapper)).toBe("240"));
+});
+
+test("multi: a filter with no match says so, instead of the empty-list text", async () => {
+  multi();
+  await userEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("zzz");
+  expect(screen.getByText("No matches.")).toBeInTheDocument();
+});

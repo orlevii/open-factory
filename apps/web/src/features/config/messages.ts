@@ -46,6 +46,8 @@ export const CONFIG_COPY = {
   rulesHelp: "Like Bash(git push:*).",
   notesHelp: "Facts that help auto mode decide, like 'deploys go through CI'.",
   templateSkill: "Template skill",
+  allSkillsAdded: "Every skill is already added.",
+  noSkills: "No skills in Skills yet.",
   insertSecret: "Insert secret",
   secretsLoading: "Loading…",
   secretsLoadError: "Couldn't load secrets.",

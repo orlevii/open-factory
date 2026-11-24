@@ -5,6 +5,7 @@ import path from "node:path";
 import { type AgentRow, createDb, type Db, schema } from "@open-factory/db";
 import { createMigratedTestDatabase } from "@open-factory/db/testing";
 import type { HarnessDriver } from "@open-factory/harness";
+import { createFakeClaude } from "@open-factory/harness/testing";
 import {
   type AgentOverlay,
   agentOverlaySchema,
@@ -23,6 +24,14 @@ import type { Workspace } from "../workspace/workspace.ts";
 import { claimTestHandle } from "./handles.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
+
+/** The version floor runs `claude --version` before a local start, so a test app never relies on a `claude` on PATH
+ *  (CI has none): `FACTORY_CLAUDE_BIN` is the fake's wrapper unless a test sets its own. One per process. */
+let versionClaudeBin: string | undefined;
+const versionOnlyClaude = () => {
+  versionClaudeBin ??= createFakeClaude({ scenario: "reply" }).bin;
+  return versionClaudeBin;
+};
 
 /** Each test app's database, so `signUp(app)` can mint an invite without changing its call sites. */
 const appDbs = new WeakMap<FastifyInstance, Db>();
@@ -80,6 +89,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       FACTORY_ALLOW_LOCAL_RUNTIME: "true",
       // Every app binds a real agent listener: let the OS pick the port so test files can run in parallel.
       FACTORY_AGENT_PORT: "0",
+      FACTORY_CLAUDE_BIN: versionOnlyClaude(),
       ...o.env,
     });
     const { db, sql, close: closeDb } = createDb(tdb.url);

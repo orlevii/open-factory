@@ -17,10 +17,19 @@ export const RESERVED_MARKETPLACES: readonly string[] = [
 
 /**
  * Official names Claude reserves for Anthropic's own sources. Each is allowed only with its matching
- * source; any other source is refused (spec §5.1).
+ * source; any other source is refused (spec §5.1). `commitPin: false` records that Claude Code refuses a
+ * commit `ref` for the name (G1, Claude Code 2.1.331: "follow a branch or tag", and the repo has no tags),
+ * so the marketplace is Latest only (spec §7.4).
  */
-export const OFFICIAL_MARKETPLACES: Record<string, { source: "github"; repo: string }> = {
-  "claude-plugins-official": { source: "github", repo: "anthropics/claude-plugins-official" },
+export const OFFICIAL_MARKETPLACES: Record<
+  string,
+  { source: "github"; repo: string; commitPin: boolean }
+> = {
+  "claude-plugins-official": {
+    source: "github",
+    repo: "anthropics/claude-plugins-official",
+    commitPin: false,
+  },
 };
 
 /** `name@marketplace`: a plugin name of at most 64 characters, then a marketplace name. The one plugin-ref pattern. */

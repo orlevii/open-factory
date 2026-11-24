@@ -162,6 +162,32 @@ test("hidden, unusable, missing and template-named skills are left out, and the 
   expect(screen.getByText("3 skills can't be used here: hidden or unusable.")).toBeInTheDocument();
 });
 
+test("a name counts once as left out, and not at all when another group offers it as usable", async () => {
+  const shared: SkillGroupsResponse = {
+    hostDir: "/skills",
+    groups: [
+      {
+        group: "host",
+        kind: "host",
+        skills: [
+          ok("tdd"),
+          bad("dup", "hidden"),
+          bad("only-bad", "hidden"),
+          bad("broken", "hidden"),
+        ],
+      },
+      {
+        ...LIBRARY.groups[1],
+        skills: [ok("dup", "Usable in a source."), bad("broken", "unusable")],
+      },
+    ],
+  } as SkillGroupsResponse;
+  useLibrary(shared);
+  render(<Form start={{ template: { skills: ["dup"] } }} />);
+  await open();
+  expect(screen.getByText("2 skills can't be used here: hidden or unusable.")).toBeInTheDocument();
+});
+
 test("picking keeps the popover open, marks Added, writes the draft and announces outside the popover", async () => {
   useLibrary();
   const onValue = vi.fn();

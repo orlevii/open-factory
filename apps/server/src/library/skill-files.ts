@@ -48,7 +48,8 @@ export async function listSkillFiles(
 async function readCapped(file: string, cap: number): Promise<Buffer | null> {
   let fh: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    // O_NONBLOCK: opening a FIFO without a writer would otherwise hang; the isFile check below refuses it.
+    fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     if (!(await fh.stat()).isFile()) return null;
     const buf = Buffer.alloc(cap + 1);
     const { bytesRead } = await fh.read(buf, 0, cap + 1, 0);
@@ -83,6 +84,8 @@ export async function readSkillFile(dir: string, rel: string): Promise<string> {
     if (!st) throw new ApiError(404, "not_found", "Not found");
     if (st.isSymbolicLink()) throw refuse(FILE_MSG.link);
   }
+  const last = await lstat(cur).catch(() => undefined);
+  if (!last?.isFile()) throw refuse(FILE_MSG.notInSkill);
   const buf = await readCapped(cur, TEXT_CAP);
   if (!buf) throw refuse(FILE_MSG.notInSkill);
   if (buf.length > TEXT_CAP) throw refuse(FILE_MSG.tooLarge);

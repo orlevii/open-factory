@@ -156,19 +156,27 @@ const SkillRowText = memo(function SkillRowText({
 
 const NO_OPTIONS: ComboOption[] = [];
 
-/** The skills a start can use and this template doesn't already own: hidden, unusable and missing ones are left out. */
+/**
+ * The skills a start can use and this template doesn't already own: hidden, unusable and missing ones are left out.
+ * `leftOut` counts names, not entries: a name offered as usable from any group (the `whereByName` rule) isn't left out.
+ */
 function pickable(data: SkillGroupsResponse | undefined, local: ReadonlySet<string>) {
   const options: ComboOption[] = [];
-  let leftOut = 0;
+  const usable = new Set<string>();
+  const unusable = new Set<string>();
   for (const g of data?.groups ?? []) {
     if (g.kind === "template" || g.kind === "unknown") continue;
     const group = g.kind === "host" ? "Host" : sourceLabel(g.source);
     for (const s of g.skills) {
       if (local.has(s.name)) continue;
-      if (s.state !== "ok") leftOut += 1;
-      else options.push({ value: s.name, label: s.name, keywords: [s.description], group });
+      if (s.state !== "ok") unusable.add(s.name);
+      else {
+        usable.add(s.name);
+        options.push({ value: s.name, label: s.name, keywords: [s.description], group });
+      }
     }
   }
+  const leftOut = [...unusable].filter((n) => !usable.has(n)).length;
   return { options, leftOut };
 }
 

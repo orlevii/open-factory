@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -100,3 +101,30 @@ test("refuses a binary file and one over 256 KB", async () => {
 test("a missing file is a 404", async () => {
   expect((await refusal(readSkillFile(skill, "nope.txt")))?.status).toBe(404);
 });
+
+// A FIFO with no writer blocks a plain open forever; these tests fail by timing out, not by hanging.
+const posix = process.platform === "win32" ? test.skip : test;
+const within = <T>(p: Promise<T>, ms = 3000) =>
+  Promise.race([
+    p,
+    new Promise<"timed out">((resolve) => setTimeout(() => resolve("timed out"), ms)),
+  ]);
+
+posix("a SKILL.md that is a FIFO reads as empty without blocking", async () => {
+  rmSync(path.join(skill, "SKILL.md"));
+  execFileSync("mkfifo", [path.join(skill, "SKILL.md")]);
+  expect(await within(readSkillMdText(skill))).toBe("");
+});
+
+posix(
+  "a text file that is a FIFO is refused as not a file in the skill, without blocking",
+  async () => {
+    execFileSync("mkfifo", [path.join(skill, "pipe")]);
+    const e = await within(refusal(readSkillFile(skill, "pipe")));
+    expect(e).not.toBe("timed out");
+    expect((e as { status: number }).status).toBe(400);
+    expect((e as { extra: { fields: { path: string } } }).extra.fields.path).toBe(
+      FILE_MSG.notInSkill,
+    );
+  },
+);

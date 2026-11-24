@@ -16,6 +16,8 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
 import { hostSkillsDirOf } from "../config.ts";
+import { ApiError } from "../errors.ts";
+import { GitError } from "../library/git.ts";
 
 const skillParams = z.object({ group: z.string().min(1), name: z.string().min(1) });
 const idParams = z.object({ id: z.string().min(1) });
@@ -68,8 +70,10 @@ export const libraryRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const detail = await app.skillSources.detailOf(req.params.id);
       if (!detail.updateCommit) return { ...detail, update: null };
-      // A view that can't be built (the new commit can't be fetched) leaves the peek without its changes, not without the source.
+      // A view that can't be built (the new commit can't be fetched or checked out) leaves the peek without its
+      // changes, not without the source. Anything else is a bug and surfaces as a 500.
       const update = await app.skillSources.updateView(req.params.id).catch((e: unknown) => {
+        if (!(e instanceof GitError || e instanceof ApiError)) throw e;
         req.log.warn({ err: e }, "building the update view failed");
         return null;
       });

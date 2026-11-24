@@ -263,6 +263,87 @@ test("a GitHub source: add, check finds a newer commit with its update view, upd
   expect(updated.json()).toMatchObject({ pin: shas[1], updateCommit: null });
 });
 
+/** A GitHub source of one skill with a newer commit on `main`; the add and any check happen here, not in the test. */
+async function githubSourceWithNewer(repoName: string, skill: string) {
+  const repo = path.join(tmp, "gh", "acme", `${repoName}.git`);
+  const first = { [`${skill}/SKILL.md`]: md(skill) };
+  const { shas } = await makeFixtureRepo(repo, {
+    commits: [first, { ...first, [`${skill}/SKILL.md`]: md(skill, "x: 1\n") }],
+    branches: { old: 0 },
+  });
+  const p = await call("POST", "/api/library/sources/preview", {
+    kind: "github",
+    repo: `acme/${repoName}`,
+    branch: "old",
+  });
+  const added = await call("POST", "/api/library/sources", {
+    kind: "github",
+    previewId: p.json().previewId,
+    skills: [skill],
+  });
+  const id = added.json().id as string;
+  await h.db
+    .update(schema.skillSources)
+    .set({ branch: "main" })
+    .where(eq(schema.skillSources.id, id));
+  return { id, shas };
+}
+
+// Each case sets up its state, then returns the one call under test: that call must publish library_changed.
+test.each([
+  [
+    "add",
+    async () => {
+      const root = folderOfSkills();
+      return () =>
+        call("POST", "/api/library/sources", { kind: "folder", path: root, skills: ["alpha"] });
+    },
+    201,
+  ],
+  [
+    "update",
+    async () => {
+      const { id, shas } = await githubSourceWithNewer("upd", "gh-update");
+      await call("POST", "/api/library/check");
+      await h.app.skillSources.idle();
+      return () => call("POST", `/api/library/sources/${id}/update`, { commit: shas[1] });
+    },
+    200,
+  ],
+  [
+    "fetch",
+    async () => {
+      const { id } = await githubSourceWithNewer("fch", "gh-fetch");
+      return () => call("POST", `/api/library/sources/${id}/fetch`);
+    },
+    200,
+  ],
+  [
+    "restore",
+    async () => {
+      const root = folderOfSkills();
+      const id = (
+        await call("POST", "/api/library/sources", {
+          kind: "folder",
+          path: root,
+          skills: ["alpha"],
+        })
+      ).json().id as string;
+      await call("DELETE", `/api/library/sources/${id}`);
+      return () => call("POST", `/api/library/sources/${id}/restore`);
+    },
+    200,
+  ],
+] as const)("%s publishes library_changed", async (_name, setup, status) => {
+  const act = await setup();
+  await h.app.skillSources.idle();
+  const before = libraryChanges();
+  const r = await act();
+  await h.app.skillSources.idle();
+  expect(r.statusCode).toBe(status);
+  expect(libraryChanges()).toBeGreaterThan(before);
+});
+
 test("a failed background GitHub add removes the row and the frame names the repo", async () => {
   const repo = path.join(tmp, "gh", "acme", "y.git");
   await makeFixtureRepo(repo, { commits: [{ "s/SKILL.md": md("s") }] });

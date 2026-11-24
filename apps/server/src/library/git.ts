@@ -91,6 +91,8 @@ export async function runGit(
     gitBin?: string;
   },
 ): Promise<{ stdout: string }> {
+  // The first argument is the git subcommand: a dash there would be a top-level option (`-p`, `--no-pager`, `--git-dir`).
+  if (args[0]?.startsWith("-")) throw new GitError("git failed: invalid argument.", "");
   for (const a of args) {
     if (a.startsWith("-") && !ALLOWED_GIT_OPTIONS.has(a))
       throw new GitError("git failed: invalid argument.", "");
@@ -115,9 +117,11 @@ export async function runGit(
           if (!err) return resolve({ stdout });
           const output = capOutput(redactOutput(`${tail(stdout)}\n${tail(stderr)}`));
           const e = err as { killed?: boolean; name?: string; code?: string };
-          const first = tail(stderr)
-            .split("\n")
-            .find((l) => l.trim());
+          // A window cut from a longer stream starts mid-line: that partial first line is not a message.
+          const kept = tail(stderr);
+          const nl = kept.indexOf("\n");
+          const whole = stderr.length > REDACT_WINDOW ? (nl >= 0 ? kept.slice(nl + 1) : "") : kept;
+          const first = whole.split("\n").find((l) => l.trim());
           const reason =
             e.name === "AbortError"
               ? "git was cancelled."

@@ -17,7 +17,8 @@ function isInvisible(code: number): boolean {
 /** Shows invisible, bidi and control characters as visible tokens, so text can't hide or reorder itself. */
 export function visibleControls(s: string): string {
   let out = "";
-  for (const c of s) {
+  // CRLF is a line break, not a control character; a lone CR still shows as a token.
+  for (const c of s.replace(/\r\n/g, "\n")) {
     const code = c.codePointAt(0) ?? 0;
     if (!isInvisible(code)) out += c;
     else out += code === 0x1b ? "⟨ESC⟩" : `⟨U+${code.toString(16).toUpperCase().padStart(4, "0")}⟩`;

@@ -10,6 +10,12 @@ test("visibleControls shows bidi, zero-width and control characters as tokens", 
   expect(visibleControls("a\tb\nc")).toBe("a\tb\nc");
 });
 
+test("visibleControls reads CRLF as a line break and still shows a lone CR as a token", () => {
+  expect(visibleControls("one\r\ntwo\r\n")).toBe("one\ntwo\n");
+  expect(visibleControls("a\rb")).toBe("a⟨U+000D⟩b");
+  expect(visibleControls("a\r\r\nb")).toBe("a⟨U+000D⟩\nb");
+});
+
 test("UntrustedCode clamps at 40 lines from the top and Show all reveals the rest", async () => {
   const text = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join("\n");
   const { container } = render(<UntrustedCode text={text} fromTop />);
@@ -30,4 +36,10 @@ test("UntrustedProse shows control tokens and no markdown or links", () => {
   const { container } = render(<UntrustedProse text={"[x](https://e.example) ‮"} />);
   expect(container.querySelector("a")).toBeNull();
   expect(container.textContent).toBe("[x](https://e.example) ⟨U+202E⟩");
+});
+
+test("UntrustedCode shows CRLF file text without a token at every line end", () => {
+  const { container } = render(<UntrustedCode text={"first\r\nsecond\r\n"} />);
+  expect(container.textContent).not.toContain("U+000D");
+  expect(container.querySelector("pre")?.textContent).toBe("first\nsecond\n");
 });

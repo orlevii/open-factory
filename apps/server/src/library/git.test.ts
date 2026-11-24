@@ -208,3 +208,25 @@ test("without a cwd it runs in an empty temp dir that is removed afterwards", as
   expect(path.basename(cwd)).toMatch(/^of-git-/);
   expect(existsSync(cwd)).toBe(false);
 });
+
+test.each(["-p", "--no-pager", "--bare", "--git-dir=/x", "--exec-path=/x", "-q", "--"])(
+  "a dash-leading first argument %j is a top-level option and is refused before spawn",
+  async (first) => {
+    recordingGit();
+    const err = await runGit([first, "ls-remote", url], { cwd: bin, allowFile: false }).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(GitError);
+    expect(err.message).toBe("git failed: invalid argument.");
+    expect(existsSync(record)).toBe(false);
+  },
+);
+
+test("a failure whose stderr outgrew the window names its last whole line, not the cut one", async () => {
+  fakeGit(
+    `console.error("A".repeat(50000));\nconsole.error("fatal: the real one");\nprocess.exit(128);`,
+  );
+  const err = await runGit(["ls-remote", url], { cwd: bin, allowFile: false }).catch((e) => e);
+  expect(err).toBeInstanceOf(GitError);
+  expect(err.message).toBe("git failed: fatal: the real one");
+});

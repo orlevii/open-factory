@@ -33,6 +33,7 @@ export const ALLOWED_GIT_OPTIONS: ReadonlySet<string> = new Set([
   "-t",
   "-e",
   "--quiet",
+  "-1",
 ]);
 
 /**

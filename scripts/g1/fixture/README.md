@@ -73,8 +73,8 @@ Only its temp dir (`${TMPDIR:-/tmp}/of-g1.XXXXXX`), `docker run --rm` of the ima
 and (only with `G1_GITHUB_REPO`, only if item 0 fails) pushes to your two repos.
 Every container gets its own host-temp plugins dir, config dir, workdir and home
 under that temp dir; `~/.claude`, `~/.open-factory-spike` and your keychain are
-never read or mounted, and the script refuses to run if `HOME` holds the spike
-dir. The credential goes in by name (`docker run -e CLAUDE_CODE_OAUTH_TOKEN`)
+never read or mounted, and the script refuses to run if `HOME` points into the
+spike dir (it mounts no home directory, so the dir merely existing is fine). The credential goes in by name (`docker run -e CLAUDE_CODE_OAUTH_TOKEN`)
 only for session items, and the script scans its temp dir for it before it
 prints the report. Delete the temp dir when you are done; `run.sh` prints the
 command.

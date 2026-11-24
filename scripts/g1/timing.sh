@@ -11,7 +11,8 @@
 # image. Inside the container each case gets a fresh CLAUDE_CONFIG_DIR and a fresh
 # plugins dir ($P, CLAUDE_CODE_PLUGIN_CACHE_DIR).
 #
-# Without a credential it runs plain `claude plugin ...` commands only: (a) the
+# Plugin commands (add, install, the warm-cache priming) never see the credential
+# (`env -u`). Without a credential it runs plain `claude plugin ...` commands only: (a) the
 # marketplace add, (b) the install, (c) a second install, (d) the plugins dir.
 # With CLAUDE_CODE_OAUTH_TOKEN exported it also measures, per case, the session
 # start: (e) the time from spawn to the `initialize` control response and to
@@ -57,6 +58,8 @@ inside() {
   export DISABLE_AUTOUPDATER=1 GIT_TERMINAL_PROMPT=0 NPM_CONFIG_CACHE=$W/npm-cache
 
   now() { date +%s.%N; }
+  # Plugin commands never see the credential (`env -u CLAUDE_CODE_OAUTH_TOKEN`);
+  # only the session clocks below do.
 
   TMO=""
   if command -v timeout >/dev/null 2>&1; then TMO="timeout 300"; fi
@@ -88,16 +91,16 @@ inside() {
     mkdir -p "$cfg/skills" "$RD/p"
     export CLAUDE_CONFIG_DIR=$cfg CLAUDE_CODE_PLUGIN_CACHE_DIR=$RD/p MARK=$mk
 
-    step add claude plugin marketplace add "$src"
+    step add env -u CLAUDE_CODE_OAUTH_TOKEN claude plugin marketplace add "$src"
     add=$S_T
     if [ "$S_RC" -ne 0 ]; then status=FAILED stage="marketplace add (exit $S_RC)"; fi
     if [ "$status" = OK ]; then
-      step install claude plugin install "$plugin@$mname"
+      step install env -u CLAUDE_CODE_OAUTH_TOKEN claude plugin install "$plugin@$mname"
       inst=$S_T
       if [ "$S_RC" -ne 0 ]; then status=FAILED stage="install (exit $S_RC)"; fi
     fi
     if [ "$status" = OK ]; then
-      step reinstall claude plugin install "$plugin@$mname"
+      step reinstall env -u CLAUDE_CODE_OAUTH_TOKEN claude plugin install "$plugin@$mname"
       re=$S_T
       if [ "$S_RC" -ne 0 ]; then status=FAILED stage="second install (exit $S_RC)"; fi
     fi
@@ -183,12 +186,12 @@ JSEOF
     cfg=$(mktemp -d "$W/cfg.XXXXXX")
     mkdir -p "$cfg/skills"
     export CLAUDE_CONFIG_DIR=$cfg CLAUDE_CODE_PLUGIN_CACHE_DIR=$pd
-    claude plugin marketplace add anthropics/claude-plugins-official > /dev/null 2>&1 || true
-    claude plugin install skill-creator@claude-plugins-official > /dev/null 2>&1 || true
+    env -u CLAUDE_CODE_OAUTH_TOKEN claude plugin marketplace add anthropics/claude-plugins-official > /dev/null 2>&1 || true
+    env -u CLAUDE_CODE_OAUTH_TOKEN claude plugin install skill-creator@claude-plugins-official > /dev/null 2>&1 || true
     if [ "$2" = 3 ]; then
-      claude plugin install frontend-design@claude-plugins-official > /dev/null 2>&1 || true
-      claude plugin marketplace add obra/superpowers-marketplace > /dev/null 2>&1 || true
-      claude plugin install superpowers@superpowers-marketplace > /dev/null 2>&1 || true
+      env -u CLAUDE_CODE_OAUTH_TOKEN claude plugin install frontend-design@claude-plugins-official > /dev/null 2>&1 || true
+      env -u CLAUDE_CODE_OAUTH_TOKEN claude plugin marketplace add obra/superpowers-marketplace > /dev/null 2>&1 || true
+      env -u CLAUDE_CODE_OAUTH_TOKEN claude plugin install superpowers@superpowers-marketplace > /dev/null 2>&1 || true
     fi
   }
 
@@ -229,7 +232,7 @@ JSEOF
   }
 
   # ---- environment facts
-  CLAUDE_VERSION=$(claude --version 2> /dev/null | awk '{print $1}' || true)
+  CLAUDE_VERSION=$(env -u CLAUDE_CODE_OAUTH_TOKEN claude --version 2> /dev/null | awk '{print $1}' || true)
   [ -n "$CLAUDE_VERSION" ] || { echo "timing: claude is not runnable in this image" >&2; exit 1; }
   VERSION_NOTE="matches the pin"
   if [ "$CLAUDE_VERSION" != "$PINNED" ]; then
@@ -296,6 +299,7 @@ JSEOF
     echo "- Claude Code: $CLAUDE_VERSION ($VERSION_NOTE)"
     echo "- Image: $IMAGE_NAME; arch $(uname -m); $(nproc 2> /dev/null || echo '?') CPUs"
     echo "- Fixture marketplace: $FIXTURE_NOTE"
+    echo "- The plugins dir is container-local /tmp (the container's overlay filesystem), not a host bind mount, so timings are faster than a bind-mounted \$P on macOS Docker Desktop."
     echo "- Cold cases: $RUNS runs each, fresh CLAUDE_CONFIG_DIR each run, DISABLE_AUTOUPDATER=1, no credential for these plugin commands. Times are min-max wall seconds over the runs that succeeded. The plugins dir is a fresh CLAUDE_CODE_PLUGIN_CACHE_DIR per run."
     if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
       echo "- (e) session-start timings: not measured, no credential (export CLAUDE_CODE_OAUTH_TOKEN)."

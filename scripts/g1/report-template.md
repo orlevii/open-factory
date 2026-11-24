@@ -44,7 +44,7 @@ The RECORDED items fill these. Values the script derived are listed under
 
 ## Install and start timing (item 20)
 
-RECORDED only, never PASS or FAIL. Fill in the network and host line.
+RECORDED only, never PASS or FAIL. The network and host are in the header above.
 
 @@TIMING@@
 

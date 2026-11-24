@@ -86,6 +86,7 @@ mkdir -p "$S" "$RES" "$R" "$MARK"   # MARK up front: set -eu safe
 : > "$EV"
 : > "$T/summary.tsv"
 : > "$T/constants.txt"
+AG_KEEP=0                    # 1: reset_ag leaves $AG alone (the item placed files in it)
 P="" AG="" W="" HM=""        # the current agent: plugins dir, config dir, workdir, home
 XENV=""                      # extra docker -e args (no spaces in any value)
 CNET=""                      # docker network args
@@ -128,9 +129,10 @@ mark_clear() {
   find "$MARK" -mindepth 1 -delete
 }
 mark_list() { ls -A "$MARK" | paste -s -d, -; }
-# The marks that only a session writes (hook, MCP server, bin/x, monitor). Any
-# other mark was written by code that ran at install time.
-install_marks() { ls -A "$MARK" | grep -v -E '^(hook-sessionstart|mcp-start|bin-x|monitor)$' | paste -s -d, - || true; }
+# The marks only install-time code writes (marker's npm preinstall/postinstall).
+# Session-time marks (hook-sessionstart, mcp-start, bin-x, monitor, and rel-hook
+# of the defaultEnabled plugin) don't count.
+install_marks() { ls -A "$MARK" | grep -E '^npm-(pre|post)install$' | paste -s -d, - || true; }
 
 # run_limited <seconds> <command...>: a timeout that works without GNU timeout.
 # The command keeps the caller's stdin (the <&0).
@@ -156,7 +158,17 @@ fresh_ws() { # <name>: a new agent: plugins dir P, config dir AG, workdir W, hom
   mkdir -p "$P" "$AG/skills" "$W" "$HM"
   XENV=$SYNC_ENV
   CNET=""
+  AG_KEEP=0
   mark_clear
+}
+
+# Every session gets a fresh config dir $AG (spec 7.3); only the plugins dir $P
+# persists across restarts. An item that places files in $AG sets AG_KEEP=1.
+reset_ag() {
+  if [ "${AG_KEEP:-0}" != 1 ]; then
+    rm -rf "$AG"
+    mkdir -p "$AG/skills"
+  fi
 }
 
 # ----------------------------------------------------------------- the fixture
@@ -241,6 +253,7 @@ session() {
   local dir=$1 sf=$2 prompt=$3 rc=0 CRED=1 t0
   shift 3
   mkdir -p "$dir"
+  reset_ag
   t0=$(date +%s)
   run_limited "${SESSION_LIMIT:-300}" ctr claude -p "$prompt" \
     --output-format stream-json --verbose --settings "$(cat "$sf")" "$@" \
@@ -260,6 +273,7 @@ fifo_session() {
   shift 3
   mkdir -p "$dir"
   rm -f "$dir/in"
+  reset_ag
   mkfifo "$dir/in"
   "$driver" > "$dir/in" &
   dpid=$!
@@ -438,8 +452,15 @@ item01() {
   fi
 
   # b. rel false: it must not load; the loaded set is exactly the true plugins, each under $P.
+  # A directory marketplace's plugins may load in place, so the path assertion
+  # uses the git fixture; without it (item 0) this part is only recorded.
   fresh_ws s01b
-  settings "$d/b.json" "$(enabled marker@fixdir=true dep@fixdir=true rel@fixdir=false)" "$DECL_DIR"
+  if [ "$GIT_OK" = yes ]; then
+    serve_reset acme
+    settings "$d/b.json" "$(enabled marker@fixture=true dep@fixture=true rel@fixture=false)" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
+  else
+    settings "$d/b.json" "$(enabled marker@fixdir=true dep@fixdir=true rel@fixdir=false)" "$DECL_DIR"
+  fi
   session "$d/b" "$d/b.json" "$PROMPT"
   evrun "(b) marker and dep true, rel false" "$d/b"
   names=$(plugin_names "$d/b/init.json")
@@ -447,6 +468,7 @@ item01() {
   bad=$(plugin_paths "$d/b/init.json" | grep -c -v "^$P/" || true)
   n=$(plugin_paths "$d/b/init.json" | grep -c . || true)
   if [ "$names" != "dep,marker" ] || [ "$bad" -ne 0 ] || [ "$n" -ne 2 ]; then status=FAIL; fi
+  if [ "$GIT_OK" = no ]; then status=RECORDED; ev "(b) the git fixture is unavailable (item 0): recorded with the directory marketplace, not asserted"; fi
 
   # c. dep absent, then dep false: does marker still load? is an auto-installed dependency enabled without an entry?
   fresh_ws s01c
@@ -516,7 +538,13 @@ item03() {
   local d=$S/03 status=PASS f stray a1 b1 a2 b2 n1 n2
   mkdir -p "$d"
   fresh_ws s03
-  std_settings "$d/settings.json"
+  # The git fixture, because a directory marketplace's plugins may load in place.
+  if [ "$GIT_OK" = yes ]; then
+    serve_reset acme
+    settings "$d/settings.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
+  else
+    std_settings "$d/settings.json"
+  fi
   session "$d/first" "$d/settings.json" "$PROMPT"
   evrun "first start, empty \$P" "$d/first"
   ev "\$P after the first start:"
@@ -532,12 +560,13 @@ item03() {
   n1=$(plugin_names "$d/first/init.json")
   mark_clear
   session "$d/second" "$d/settings.json" "$PROMPT"
-  evrun "restart, same \$P (fresh \$AG)" "$d/second"
+  evrun "restart, same \$P, fresh \$AG" "$d/second"
   a2=$(p_sum)
   b2=$(inst_sum)
   n2=$(plugin_names "$d/second/init.json")
   ev "cache dirs cksum: $a1 -> $a2; installed_plugins.json cksum: $b1 -> $b2; plugins loaded: [$n1] -> [$n2]"
   if [ "$a1" != "$a2" ] || [ "$b1" != "$b2" ] || [ "$n1" != "$n2" ] || [ -z "$n2" ]; then status=FAIL; fi
+  if [ "$GIT_OK" = no ] && [ "$status" = PASS ]; then status=RECORDED; ev "recorded with the directory marketplace (no git fixture, item 0), not asserted"; fi
   record 3 "$status" "The per-agent plugins dir holds everything, and a restart installs nothing"
 }
 
@@ -816,6 +845,7 @@ item10() {
   local d=$S/10 mk0 mk1
   mkdir -p "$d"
   fresh_ws s10
+  XENV="$XENV -e CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"
   bare_settings "$d/s1.json"
   session "$d/s1" "$d/s1.json" 'Run these two shell commands with the Bash tool, one after the other: claude plugin marketplace add /fixture/dir   and then   claude plugin install marker@fixdir   . Then reply done.' --allowedTools Bash
   evrun "the agent installs marker@fixdir itself" "$d/s1"
@@ -900,7 +930,7 @@ item13() {
   settings "$d/b.json" "$(enabled marker@fixdir=true dep@fixdir=true ranged@fixdir=true)" "$DECL_DIR"
   session "$d/b" "$d/b.json" "$PROMPT"
   evrun "(b) install at start" "$d/b"
-  ev "(b) marks: [$(mark_list)]; install-time marks (anything but hook-sessionstart, mcp-start, bin-x, monitor): [$(install_marks)]"
+  ev "(b) marks: [$(mark_list)]; install-time marks (npm-preinstall, npm-postinstall): [$(install_marks)]"
   [ -z "$(install_marks)" ] || status=FAIL
   # (c) a repin.
   if [ "$GIT_OK" = yes ]; then
@@ -917,7 +947,7 @@ item13() {
   else
     ev "(c) the repin check did not run (no git fixture, item 0)."
   fi
-  record 13 "$status" "Install and update run no plugin code (MARK empty after the CLI installs; no install-time marks at start or repin)"
+  record 13 "$status" "Install and update run no plugin code (MARK empty after the CLI installs; no npm preinstall/postinstall mark at start or repin)"
 }
 
 # 14: skills-directory plugins.
@@ -931,11 +961,13 @@ item14() {
         a) mkdir -p "$W/.claude/skills"; cp -a "$FX/extras/sneaky" "$W/.claude/skills/sneaky" ;;
         b) mkdir -p "$AG/skills"; cp -a "$FX/extras/sneaky" "$AG/skills/sneaky" ;;
         c)
-          mkdir -p "$W/.claude/skills" "$d/outside-$flag"
-          cp -a "$FX/extras/sneaky" "$d/outside-$flag/sneaky"
-          ln -s "$d/outside-$flag/sneaky" "$W/.claude/skills/sneaky"
+          # the target sits under $AG, which is mounted at the same path, so the link resolves
+          mkdir -p "$W/.claude/skills" "$AG/outside-$flag"
+          cp -a "$FX/extras/sneaky" "$AG/outside-$flag/sneaky"
+          ln -s "$AG/outside-$flag/sneaky" "$W/.claude/skills/sneaky"
           ;;
       esac
+      AG_KEEP=1
       std_settings "$d/$where-$flag.json"
       if [ "$flag" = false ]; then
         jq -c '.enabledPlugins["sneaky@skills-dir"] = false' "$d/$where-$flag.json" > "$d/tmp.json"
@@ -1018,6 +1050,7 @@ item17() {
   local d=$S/17 reload
   mkdir -p "$d"
   fresh_ws s17
+  XENV="$XENV -e CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"
   mkdir -p "$W/.claude"
   write_project_settings "$W/.claude/settings.json"
   settings "$d/settings.json" "$(enabled marker@fixdir=false dep@fixdir=true)" "$DECL_DIR"
@@ -1032,6 +1065,7 @@ item17() {
   ev "RECORDED: reload-plugins in -p slash_commands: $reload; result of /reload-plugins with -p: $(jq -r 'select(.type=="result") | .result' "$d/reload/out.jsonl" 2> /dev/null | sed -n '1,3p' | cut -c1-300 | paste -s -d' ' -)"
   # An enabledPlugins change in settings.local.json mid-session, in one stream-json session.
   fresh_ws s17b
+  XENV="$XENV -e CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"
   mkdir -p "$W/.claude"
   SESSION_LIMIT=240 fifo_session "$d/live" "$d/settings.json" drv_reload
   evrun "mid-session: settings.local.json sets marker@fixdir true while the session runs (--settings says false)" "$d/live"
@@ -1047,6 +1081,7 @@ item18() {
   std_settings "$d/settings.json"
   # (a) a skill with frontmatter hooks in $W/.claude/skills/h.
   fresh_ws s18a
+  XENV="$XENV -e CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"
   mkdir -p "$W/.claude/skills"
   cp -a "$FX/extras/skill-h" "$W/.claude/skills/h"
   session "$d/a" "$d/settings.json" '/h' --allowedTools "$tools"
@@ -1054,6 +1089,7 @@ item18() {
   ev "(a) RECORDED: skill frontmatter SessionStart hook ran: $([ -e "$MARK/skill-h-sessionstart" ] && echo yes || echo no); PreToolUse hook ran: $([ -e "$MARK/skill-h-pretooluse" ] && echo yes || echo no)"
   # (b) a subagent with hooks and mcpServers in $W/.claude/agents/a.md.
   fresh_ws s18b
+  XENV="$XENV -e CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"
   mkdir -p "$W/.claude/agents"
   cp "$FX/extras/agent-a.md" "$W/.claude/agents/a.md"
   session "$d/b" "$d/settings.json" 'Delegate to the subagent named a and have it run echo hi. Then reply done.' --allowedTools "$tools"
@@ -1061,6 +1097,8 @@ item18() {
   ev "(b) RECORDED: subagent PreToolUse hook ran: $([ -e "$MARK/agent-a-pretooluse" ] && echo yes || echo no); subagent mcpServers entry started: $([ -e "$MARK/agent-a-mcp" ] && echo yes || echo no)"
   # (c) the same subagent in $AG/agents, plus skills in $AG/commands and $AG/agents.
   fresh_ws s18c
+  XENV="$XENV -e CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"
+  AG_KEEP=1
   mkdir -p "$AG/agents" "$AG/commands/cskill" "$AG/agents/askill"
   cp "$FX/extras/agent-a.md" "$AG/agents/a.md"
   printf -- '---\nname: cskill\ndescription: G1 probe skill under commands\n---\nSay hello.\n' > "$AG/commands/cskill/SKILL.md"
@@ -1176,7 +1214,8 @@ finish() {
   local rc=$?
   trap - EXIT
   build_report || true
-  if [ -s "$T/report.md" ] && credential_scan; then
+  if [ -s "$T/report.md" ] && ! credential_scan; then rc=1; fi
+  if [ -s "$T/report.md" ]; then
     echo
     echo "g1: report: $T/report.md"
     if grep -q $'\tFAIL\t' "$T/summary.tsv" 2> /dev/null; then

@@ -14,6 +14,7 @@ import {
   skillSourcePreviewBodySchema,
   sourcePreviewSchema,
 } from "./library.ts";
+import { MSG } from "./messages.ts";
 
 const refusesMarketplace = (name: string) =>
   !MARKETPLACE_PATTERN.test(name) || RESERVED_MARKETPLACES.includes(name);
@@ -83,7 +84,7 @@ describe("marketplace names", () => {
 
 describe("cutGraphemes", () => {
   test("never splits a family emoji", () => {
-    expect(cutGraphemes("a👩‍👩‍👧b", 2)).toBe("a…");
+    expect(cutGraphemes("a👩‍👩‍👧bc", 3)).toBe("a👩‍👩‍👧…");
   });
 
   test("leaves a string that fits unchanged", () => expect(cutGraphemes("abc", 3)).toBe("abc"));
@@ -136,6 +137,41 @@ describe("skill source bodies", () => {
     expect(
       skillSourceAddBodySchema.safeParse({ kind: "github", previewId: "p1", skills: [] }).success,
     ).toBe(false));
+
+  test("an add of a folder picks at least one skill", () =>
+    expect(
+      skillSourceAddBodySchema.safeParse({ kind: "folder", path: "/code/skills", skills: [] })
+        .success,
+    ).toBe(false));
+
+  test("an add refuses a skill name that isn't a folder name", () => {
+    const bad = skillSourceAddBodySchema.safeParse({
+      kind: "folder",
+      path: "/code/skills",
+      skills: ["../evil"],
+    });
+    expect(bad.error?.issues[0]?.message).toBe("Not a valid skill folder name.");
+  });
+
+  test("an empty folder path says where a path starts", () => {
+    const bad = skillSourcePreviewBodySchema.safeParse({ kind: "folder", path: "" });
+    expect(bad.error?.issues.map((i) => i.message)).toEqual([MSG.hostPathStart]);
+  });
+
+  test("an oversized SKILL.md says so", () => {
+    const bad = skillDetailSchema.safeParse({
+      group: "host",
+      name: "review",
+      description: "",
+      state: "ok",
+      usedBy: { templates: 0, agents: 0 },
+      hooks: [],
+      usedByTemplates: [],
+      files: [],
+      skillMd: "x".repeat(256 * 1024 + 1),
+    });
+    expect(bad.error?.issues[0]?.message).toBe(MSG.skillMdSize);
+  });
 
   test("a skill file's SKILL.md is at most 256 KB", () => {
     const detail = {

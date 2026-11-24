@@ -39,3 +39,11 @@ test("capOutput keeps at most 4 KB, the tail", () => {
   expect(out).toContain("line 59 ");
   expect(out).not.toContain("line 10 ");
 });
+
+test("redactOutput on 10 MB of one token finishes quickly", () => {
+  const started = performance.now();
+  for (const token of ["a".repeat(10_000_000), `${"a".repeat(10_000_000)}://`]) {
+    expect(redactOutput(token)).toBe(token);
+  }
+  expect(performance.now() - started).toBeLessThan(1000);
+});

@@ -18,6 +18,7 @@ export const MSG = {
   titleLength: "Use 200 characters or fewer.",
   bodyTooLong: "Shorten this to 64 KB or less.",
   hostPathStart: "Start with / or ~/.",
+  skillMdSize: "SKILL.md is over 256 KB.",
   nameRequired: "Enter your name.",
   email: "Enter a valid email.",
   passwordRequired: "Enter your password.",

@@ -222,6 +222,21 @@ test("a compare link that isn't on GitHub over https is not rendered", async () 
   expect(screen.queryByRole("link", { name: /Compare/ })).not.toBeInTheDocument();
 });
 
+test("a long commit subject is behind Show all, which expands it in place; a short one has none", async () => {
+  const long = `Rework ${"the reviewer ".repeat(16)}end`;
+  const { user } = await open(detail("skills", { subject: long }));
+  expect(screen.getByText(long)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Show all" }));
+  expect(screen.queryByRole("button", { name: "Show all" })).not.toBeInTheDocument();
+  expect(screen.getByText(long)).toBeInTheDocument();
+});
+
+test("a short commit subject has no Show all", async () => {
+  await open();
+  expect(await screen.findByText("Fix the reviewer")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Show all" })).not.toBeInTheDocument();
+});
+
 test("a branch with a bidi override shows the token", async () => {
   await open(detail("skills", { branch: "ma\u202Ein" }));
   expect(await screen.findByText("ma⟨U+202E⟩in")).toBeInTheDocument();

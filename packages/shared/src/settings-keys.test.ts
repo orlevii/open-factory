@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { reservedKeysIn } from "./settings-keys.ts";
+import { RESERVED_SETTINGS_KEYS, reservedKeysIn } from "./settings-keys.ts";
 
 /** The spec §7.10 keys, as written in the spec. Each must be reported when a settings file sets it. */
 const SPEC_KEYS = [
@@ -26,6 +26,10 @@ const nest = (dotted: string): Record<string, unknown> =>
     string,
     unknown
   >;
+
+test("RESERVED_SETTINGS_KEYS is exactly the spec §7.10 list", () => {
+  expect([...RESERVED_SETTINGS_KEYS].sort()).toEqual([...SPEC_KEYS].sort());
+});
 
 describe("reservedKeysIn", () => {
   test.each(SPEC_KEYS)("reports %s when a settings file sets it", (key) => {

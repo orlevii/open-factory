@@ -25,6 +25,7 @@ import { resolveImage } from "../images/resolve.ts";
 import { type LibraryIndex, skillProblem } from "../library/library-index.ts";
 import { MARKETPLACE_MSG } from "../library/marketplaces-service.ts";
 import { classifyPluginSource } from "../library/plugin-sources.ts";
+import { redactOutput } from "../redact.ts";
 import { parseJson, parseYaml } from "./parse.ts";
 
 export interface ValidationContext {
@@ -256,11 +257,13 @@ export async function validateEffective(
     message: string,
     extra: Partial<TemplateIssue> = {},
   ) =>
+    // Some messages and paths carry a key the user wrote (a marketplace or plugin name) that matched its name
+    // rule, so a pasted token can pass as one: redact token shapes rather than echo them.
     issues.push({
       severity,
       file: FILE_OF[root],
-      message,
-      path: [root, ...at].join("."),
+      message: redactOutput(message),
+      path: redactOutput([root, ...at].join(".")),
       ...extra,
     });
 

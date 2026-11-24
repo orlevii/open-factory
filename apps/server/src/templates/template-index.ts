@@ -324,8 +324,9 @@ export class TemplateIndex {
         .set({ valid: true })
         .where(eq(schema.templates.name, name));
     }
+    // `row` came from the upsert, which never touches last_valid*: it still holds the previous doc.
     return {
-      row: { ...row, valid: true },
+      row: { ...row, valid: true, lastValid: doc, lastValidHash: hash },
       doc,
       tplYaml: v.tplYaml,
       tplSettings: v.tplSettings,

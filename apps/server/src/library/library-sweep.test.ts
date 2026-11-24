@@ -117,6 +117,19 @@ test("previews older than an hour are removed and newer ones kept", async () => 
   expect([existsSync(old), existsSync(fresh)]).toEqual([false, true]);
 });
 
+test("a crashed install's temp copy beside the current pin is swept, the pin itself kept", async () => {
+  await store.insert(row("live"));
+  const pin = cache("live");
+  const leftover = cache("live", `${SHA}.tmp-1234`);
+  const stagedUpdate = preview(`upd-live-${NEW}.tmp-1234`, 61 * 60_000);
+  await sweep.purge();
+  expect([existsSync(pin), existsSync(leftover), existsSync(stagedUpdate)]).toEqual([
+    true,
+    false,
+    false,
+  ]);
+});
+
 test("a source past its Undo window is purged with its cache, one inside it is kept", async () => {
   await store.insert(row("gone", { deletedAt: new Date(T0 - 31_000) }));
   await store.insert(row("undoable", { deletedAt: new Date(T0 - 29_000) }));

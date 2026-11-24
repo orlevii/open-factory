@@ -10,6 +10,8 @@ import { GitError } from "./git.ts";
 export const UNDO_MS = 30_000;
 /** GitHub and marketplace checkouts are at most 50 MB (spec §6.2). */
 export const CHECKOUT_CAP_BYTES = 50 * 1024 * 1024;
+/** A checkout holds at most this many files and folders: a bound on the walks over it (size, copy, listing). */
+export const CHECKOUT_MAX_ENTRIES = 50_000;
 /** Preview metadata is forgotten after a day; the sweep removes the directories sooner. */
 export const META_KEEP_MS = 24 * 60 * 60 * 1000;
 /** Subjects and descriptions are cut to 200 graphemes. */

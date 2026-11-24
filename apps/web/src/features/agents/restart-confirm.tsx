@@ -1,8 +1,6 @@
 import type { RestartStatus } from "@open-factory/shared";
 import { useSyncExternalStore } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { notify } from "@/components/ui/toaster";
-import { postRestart } from "@/features/session/api";
 
 /**
  * The lost-work confirm of Restart now (I7 §9.4). Its state is a module store read with
@@ -10,7 +8,13 @@ import { postRestart } from "@/features/session/api";
  * menu that asked has closed, unmounted or moved to another agent still opens it for the original agent.
  */
 
-type Open = { slug: string; tasks: string[]; crons: string[] };
+type Open = {
+  slug: string;
+  tasks: string[];
+  crons: string[];
+  /** "Restart anyway": the forced restart, run by the lifecycle (which holds the query client). */
+  force: () => Promise<void>;
+};
 type State = { open: boolean; shown: Open | undefined; returnTo: HTMLElement | null };
 
 let state: State = { open: false, shown: undefined, returnTo: null };
@@ -92,11 +96,7 @@ export function RestartConfirmHost() {
       }
       confirmLabel="Restart anyway"
       pendingLabel="Restarting…"
-      onConfirm={() =>
-        postRestart(slug, { force: true }).then((status) =>
-          notify({ text: restartOutcomeText(slug, status) }),
-        )
-      }
+      onConfirm={shown.force}
       onCloseAutoFocus={(e) => {
         if (!returnTo?.isConnected) return;
         e.preventDefault();

@@ -3,7 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
-import { onRestartFrame, restartAgentNow, useRestartPending } from "@/features/agents/lifecycle";
+import {
+  onRestartFrame,
+  resetRestartLatch,
+  restartAgentNow,
+  useRestartPending,
+} from "@/features/agents/lifecycle";
 import { lostWorkBody, RestartConfirmHost } from "@/features/agents/restart-confirm";
 import { RestartNowButton } from "@/features/session/restart-now-button";
 import { json, mockApi } from "@/test/mock-api";
@@ -13,6 +18,7 @@ vi.mock("@/components/ui/toaster", () => ({ notify }));
 
 afterEach(() => {
   cleanup();
+  resetRestartLatch();
   notify.mockReset();
   document.body.style.pointerEvents = "";
   document.body.removeAttribute("data-scroll-locked");
@@ -157,4 +163,34 @@ test("an error event ends the latch", async () => {
     } as unknown as ServerMessage),
   );
   expect(screen.getByRole("button", { name: "Restart now" })).toBeInTheDocument();
+});
+
+test("Restart anyway holds the pending latch until the response and the status frame are in", async () => {
+  let release: (r: Response) => void = () => {};
+  mockApi({
+    "POST /api/agents/dev/restart": (body) =>
+      (body as { force?: boolean })?.force
+        ? new Promise<Response>((r) => (release = r))
+        : lostWork(["pnpm test"], []),
+  });
+  render(
+    <>
+      <Pending slug="dev" />
+      <RestartConfirmHost />
+    </>,
+  );
+  await restartAgentNow("dev", qc());
+  expect(screen.getByText("dev idle")).toBeInTheDocument();
+  await userEvent.click(await screen.findByRole("button", { name: "Restart anyway" }));
+  expect(await screen.findByText("dev pending")).toBeInTheDocument();
+  await act(async () => release(json({ status: "restarting" }, 202)));
+  expect(screen.getByText("dev pending")).toBeInTheDocument();
+  act(() =>
+    onRestartFrame({
+      type: "agent_status",
+      agent: "dev",
+      status: "queued",
+    } as unknown as ServerMessage),
+  );
+  await vi.waitFor(() => expect(screen.getByText("dev idle")).toBeInTheDocument());
 });

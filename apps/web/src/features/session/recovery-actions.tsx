@@ -67,7 +67,10 @@ function RestartButton({ slug }: { slug: string }) {
           variant="ghost"
           aria-disabled={pending || undefined}
           onClick={() => {
-            if (!pending) void restartAgentNow(slug, qc).then(focusComposer);
+            if (!pending)
+              void restartAgentNow(slug, qc).then((ok) => {
+                if (ok) focusComposer();
+              });
           }}
         >
           <RefreshCcw aria-hidden="true" />

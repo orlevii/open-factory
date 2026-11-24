@@ -1,4 +1,9 @@
-import { type AgentSummary, ApiError, type ServerMessage } from "@open-factory/shared";
+import {
+  type AgentSummary,
+  ApiError,
+  type RestartStatus,
+  type ServerMessage,
+} from "@open-factory/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import { useSyncExternalStore } from "react";
 import { z } from "zod";
@@ -190,29 +195,57 @@ export function onRestartFrame(m: ServerMessage): void {
 
 const lostWorkData = z.object({ tasks: z.array(z.string()), crons: z.array(z.string()) });
 
-/**
- * Restarts the agent now (no force) and toasts the outcome. A 409 `lost_work` opens the confirm; any other
- * failure toasts. The result lands on the agent it was asked for, wherever the asking menu has gone.
- */
-export function restartAgentNow(slug: string, qc: QueryClient): Promise<void> {
+/** Test hook: forgets every pending restart, so a failing test can't leak one into the next. */
+export function resetRestartLatch(): void {
+  latch.clear();
+  for (const l of latchListeners) l();
+}
+
+/** The request is in: toast the outcome, end the latch unless a status frame is still due, refresh. */
+function settleRestart(slug: string, qc: QueryClient, status: RestartStatus): void {
+  notify({ text: restartOutcomeText(slug, status) });
+  const l = latch.get(slug);
+  // Only a restart that is starting is followed by a status frame.
+  if (status !== "restarting" || l?.framed) setLatch(slug, undefined);
+  else if (l) l.responded = true;
+  void refresh(qc, slug);
+}
+
+/** The confirm's "Restart anyway": the same latch, dedupe and refresh as Restart now. A failure throws
+ *  to the dialog, which shows it and stays open. */
+function forceRestart(slug: string, qc: QueryClient): Promise<void> {
   return once(`restart:${slug}`, async () => {
     setLatch(slug, { responded: false, framed: false });
     try {
-      const status = await postRestart(slug);
-      notify({ text: restartOutcomeText(slug, status) });
-      const l = latch.get(slug);
-      // Only a restart that is starting is followed by a status frame.
-      if (status !== "restarting" || l?.framed) setLatch(slug, undefined);
-      else if (l) l.responded = true;
-      void refresh(qc, slug);
+      settleRestart(slug, qc, await postRestart(slug, { force: true }));
+    } catch (err) {
+      setLatch(slug, undefined);
+      throw err;
+    }
+  });
+}
+
+/**
+ * Restarts the agent now (no force) and toasts the outcome. A 409 `lost_work` opens the confirm; any other
+ * failure toasts. The result lands on the agent it was asked for, wherever the asking menu has gone.
+ * Resolves whether the restart request succeeded.
+ */
+export function restartAgentNow(slug: string, qc: QueryClient): Promise<boolean> {
+  return once(`restart:${slug}`, async () => {
+    setLatch(slug, { responded: false, framed: false });
+    try {
+      settleRestart(slug, qc, await postRestart(slug));
+      return true;
     } catch (err) {
       setLatch(slug, undefined);
       const data =
         err instanceof ApiError && err.code === "lost_work"
           ? lostWorkData.safeParse(err.body.data)
           : undefined;
-      if (data?.success) showRestartConfirm({ slug, ...data.data });
+      if (data?.success)
+        showRestartConfirm({ slug, ...data.data, force: () => forceRestart(slug, qc) });
       else notify({ text: `Couldn't restart @${slug}: ${reason(err)}` });
+      return false;
     }
   });
 }

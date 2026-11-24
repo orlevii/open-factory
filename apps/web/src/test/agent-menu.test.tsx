@@ -11,7 +11,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentMenu } from "@/features/agents/agent-menu";
-import { restoreAgent } from "@/features/agents/lifecycle";
+import { resetRestartLatch, restoreAgent } from "@/features/agents/lifecycle";
 import { RestartConfirmHost } from "@/features/agents/restart-confirm";
 import { CronsStopLayer, useStopCrons } from "@/features/session/stop-crons";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
@@ -24,6 +24,7 @@ vi.mock("@/components/ui/toaster", () => ({ notify }));
 
 const originalMatchMedia = window.matchMedia;
 afterEach(() => {
+  resetRestartLatch();
   window.matchMedia = originalMatchMedia;
   notify.mockReset();
   resetSheets();
@@ -736,7 +737,7 @@ test.each([
   ["a spawned running agent", { kind: "ephemeral" as const, status: "idle" as const }, true],
   ["hibernated", { status: "hibernated" as const }, false],
   ["errored", { status: "errored" as const, errorKind: "crash" as const }, false],
-])("Restart now is offered for %s: %s", async (_name, over, offered) => {
+])("Restart now is offered for %s", async (_name, over, offered) => {
   setup({ agent: agentSummary(over), context: "session" });
   const menu = await openMenu(userEvent.setup());
   expect(within(menu).queryByRole("menuitem", { name: "Restart now" }) !== null).toBe(offered);
@@ -778,4 +779,43 @@ test("a 409 lost_work that arrives after the menu unmounted still opens the conf
     ),
   );
   expect(await screen.findByRole("alertdialog", { name: "Restart @dev now?" })).toBeInTheDocument();
+});
+
+test("a 409 lost_work that arrives after the menu moved to another agent still targets the original slug", async () => {
+  let release: (r: Response) => void = () => {};
+  const api = mockApi({
+    "POST /api/agents/dev/restart": (body) =>
+      (body as { force?: boolean })?.force
+        ? json({ status: "restarting" }, 202)
+        : new Promise<Response>((r) => (release = r)),
+  });
+  const view = setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Restart now" }));
+  // The menu's agent changes while the request is out.
+  view.unmount();
+  setup({ agent: agentSummary({ slug: "ops", displayName: "Ops agent" }), context: "session" });
+  render(<RestartConfirmHost />);
+  await act(async () =>
+    release(
+      json(
+        { error: { code: "lost_work", message: "x", data: { tasks: ["pnpm test"], crons: [] } } },
+        409,
+      ),
+    ),
+  );
+  expect(await screen.findByRole("alertdialog", { name: "Restart @dev now?" })).toBeInTheDocument();
+  await u.click(screen.getByRole("button", { name: "Restart anyway" }));
+  await vi.waitFor(() =>
+    expect(
+      api.calls.some(
+        (c) =>
+          c.method === "POST" &&
+          c.url === "/api/agents/dev/restart" &&
+          (c.body as { force?: boolean })?.force,
+      ),
+    ).toBe(true),
+  );
+  expect(api.calls.some((c) => c.url === "/api/agents/ops/restart")).toBe(false);
 });

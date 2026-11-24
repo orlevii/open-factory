@@ -140,6 +140,8 @@ test("Restart: a failure toasts naming the agent, and the button comes back", as
     await screen.findByText("Couldn't restart @dev: A restart is already running."),
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Restart" })).not.toHaveAttribute("aria-disabled");
+  // A failed restart doesn't pull focus to the composer.
+  expect(composer()).not.toHaveFocus();
 });
 
 test("dialog copy names the agent and the loss; Cancel focused; confirm moves focus to the composer", async () => {

@@ -36,7 +36,7 @@ Environment variables (`npm start` loads `.env` if present):
 | `LOG_LEVEL`          | no       | `info`                     | pino level                                                                                                                                   |
 | `NODE_ENV`           | no       | none                       | `production` disables pretty logs and the dev origin allowance                                                                               |
 | `FACTORY_CLAUDE_BIN` | no       | `claude`                   | path to the `claude` executable agents run                                                                                                   |
-| `FACTORY_HOST_SKILLS_DIR` | no | `~/.claude/skills` | where host skills named in a template's `skills:` list are read from; a leading `~` is expanded |
+| `FACTORY_HOST_CLAUDE_DIR` | no | `~/.claude` | the Claude folder on this machine; host skills are read from its `skills/` subfolder (named in a template's `skills:` list), and a leading `~` is expanded |
 | `FACTORY_ALLOW_LOCAL_RUNTIME` | no | `false` | `true` lets agents with `runtime: local` start; see "Local runtime" |
 | `FACTORY_DEFAULT_IMAGE` | no | `ghcr.io/orlevii/open-factory/base:latest` | container image for Docker agents whose template names none |
 | `FACTORY_DOCKER_CLAUDE_BIN` | no | `claude` | path to Claude Code inside the container image |

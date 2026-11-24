@@ -8,6 +8,7 @@ import {
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { parse } from "yaml";
 import { requireUser } from "../auth/require-user.ts";
+import { hostSkillsDirOf } from "../config.ts";
 
 /** The `description` of a SKILL.md's frontmatter on one line, cut to the limit; empty when there is none. */
 export function skillDescription(text: string): string {
@@ -33,7 +34,7 @@ export const hostSkillsRoutes: FastifyPluginAsyncZod = async (app) => {
     "/api/host-skills",
     { schema: { response: { 200: hostSkillsResponseSchema } } },
     async () => {
-      const dir = app.config.hostSkillsDir;
+      const dir = hostSkillsDirOf(app.config);
       const skills: { name: string; description: string }[] = [];
       for (const name of (await readdir(dir).catch(() => [] as string[])).sort()) {
         if (!HOST_SKILL_PATTERN.test(name)) continue;

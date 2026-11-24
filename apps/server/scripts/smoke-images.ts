@@ -83,7 +83,8 @@ async function step<T>(name: string, fn: () => Promise<T>): Promise<T> {
 // realpath: macOS tmpdir is a /var symlink; the factory works with canonical paths.
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-images-")));
 const factoryHome = path.join(root, "home");
-const hostSkillsDir = path.join(root, "host-skills");
+const hostClaudeDir = path.join(root, "host-claude");
+const hostSkillsDir = path.join(hostClaudeDir, "skills");
 const cliHome = path.join(root, "cli-home");
 const WORD = randomBytes(3).toString("hex");
 
@@ -332,7 +333,7 @@ try {
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
     FACTORY_HOME: factoryHome,
-    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+    FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
     FACTORY_DEFAULT_IMAGE: LOCAL_BASE,
     FACTORY_ALLOW_LOCAL_RUNTIME: "false",
     HOST: "127.0.0.1",

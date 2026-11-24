@@ -782,7 +782,7 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
   beforeAll(async () => {
     s = await makeTestApp({ harnessDriver: drv });
     // A template skill is a host skill folder, which a start links into the workdir.
-    const skill = path.join(s.config.hostSkillsDir, "research");
+    const skill = path.join(s.hostSkillsDir, "research");
     mkdirSync(skill, { recursive: true });
     writeFileSync(path.join(skill, "SKILL.md"), "---\nname: research\ndescription: x\n---\n");
     await s.seedAgent({ config: { template: { skills: ["research"] } } });

@@ -59,7 +59,8 @@ class StopRun extends Error {}
 // realpath: macOS tmpdir is a /var symlink and Claude reports the resolved cwd.
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-ws-")));
 const factoryHome = path.join(root, "home");
-const hostSkillsDir = path.join(root, "host-skills");
+const hostClaudeDir = path.join(root, "host-claude");
+const hostSkillsDir = path.join(hostClaudeDir, "skills");
 const repoDir = path.join(root, "smoke-repo");
 // The real host skills, by name only, to prove none of them leak into an agent's session.
 const realHostSkills = (() => {
@@ -225,7 +226,7 @@ try {
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
     FACTORY_HOME: factoryHome,
-    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+    FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
   });
   app = await buildApp(config, {
     db: conn.db,

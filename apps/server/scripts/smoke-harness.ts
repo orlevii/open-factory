@@ -15,7 +15,7 @@ import { EventBus } from "../src/agents/event-bus.ts";
 import { EventStore } from "../src/agents/event-store.ts";
 import { createPrepareStart } from "../src/agents/start.ts";
 import { unlimitedSlots } from "../src/agents/testing/unlimited-slots.ts";
-import { loadConfig } from "../src/config.ts";
+import { hostSkillsDirOf, loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
 import { AgentTokens } from "../src/mcp/tokens.ts";
 import { Neighborhood } from "../src/messaging/neighborhood.ts";
@@ -44,7 +44,7 @@ const vault = new Vault(config.secretKey);
 const lock = new KeyedMutex();
 const workspace = new Workspace({
   factoryHome: config.factoryHome,
-  hostSkillsDir: config.hostSkillsDir,
+  hostSkillsDir: hostSkillsDirOf(config),
   claudeBin: config.claudeBin,
   cliBundle: config.cliBundle,
   lock,

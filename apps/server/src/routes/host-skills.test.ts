@@ -5,7 +5,9 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
 import { skillDescription } from "./host-skills.ts";
 
-const skills = mkdtempSync(path.join(tmpdir(), "hostskills-"));
+const claude = mkdtempSync(path.join(tmpdir(), "hostclaude-"));
+const skills = path.join(claude, "skills");
+mkdirSync(skills);
 const skill = (name: string, body?: string) => {
   mkdirSync(path.join(skills, name), { recursive: true });
   if (body !== undefined) writeFileSync(path.join(skills, name, "SKILL.md"), body);
@@ -24,7 +26,7 @@ beforeAll(async () => {
   mkdirSync(path.join(skills, "elsewhere"));
   writeFileSync(path.join(skills, "elsewhere", "SKILL.md"), "---\ndescription: linked\n---\n");
   symlinkSync(path.join(skills, "elsewhere"), path.join(skills, "link"));
-  h = await makeTestApp({ env: { FACTORY_HOST_SKILLS_DIR: skills } });
+  h = await makeTestApp({ env: { FACTORY_HOST_CLAUDE_DIR: claude } });
   cookie = (await h.signUpUser()).cookie;
 });
 afterAll(() => h.close());
@@ -57,7 +59,7 @@ test("requires a signed-in user", async () => {
 });
 
 test("a missing dir gives an empty list", async () => {
-  const other = await makeTestApp({ env: { FACTORY_HOST_SKILLS_DIR: path.join(skills, "nope") } });
+  const other = await makeTestApp({ env: { FACTORY_HOST_CLAUDE_DIR: path.join(claude, "nope") } });
   try {
     const c = (await other.signUpUser()).cookie;
     const r = await other.app.inject({

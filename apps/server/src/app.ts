@@ -21,7 +21,7 @@ import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import type { PasswordHasher } from "./auth/options.ts";
-import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
+import { type Config, hostSkillsDirOf, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { ExpiryCheck } from "./credentials/expiry-check.ts";
 import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
@@ -218,7 +218,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const lock = new KeyedMutex();
   const workspace = new Workspace({
     factoryHome: config.factoryHome,
-    hostSkillsDir: config.hostSkillsDir,
+    hostSkillsDir: hostSkillsDirOf(config),
     claudeBin: config.claudeBin,
     cliBundle: config.cliBundle,
     lock,

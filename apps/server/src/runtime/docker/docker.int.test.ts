@@ -717,7 +717,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
         ...process.env,
         DATABASE_URL: w.t.config.databaseUrl,
         FACTORY_SECRET_KEY: SECRET_KEY,
-        FACTORY_HOST_SKILLS_DIR: w.t.config.hostSkillsDir,
+        FACTORY_HOST_CLAUDE_DIR: w.t.config.hostClaudeDir,
         FACTORY_ALLOW_LOCAL_RUNTIME: "true",
         ...w.env,
         PORT: String(port),

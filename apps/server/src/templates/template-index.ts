@@ -32,7 +32,7 @@ import {
 import { and, asc, count, eq, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { stringify } from "yaml";
-import { type Config, localRuntimeAllowed } from "../config.ts";
+import { type Config, hostSkillsDirOf, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { imageDir } from "../images/context.ts";
 import { avatarStat } from "./avatar.ts";
@@ -183,7 +183,7 @@ export class TemplateIndex {
       secrets: new Set(secrets.map((s) => s.name)),
       templates: new Set(templates),
       userImages: new Set(userImages),
-      hostSkillsDir: this.config.hostSkillsDir,
+      hostSkillsDir: hostSkillsDirOf(this.config),
       localRuntimeAllowed: localRuntimeAllowed(this.config),
     };
   }

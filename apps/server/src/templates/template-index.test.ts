@@ -24,7 +24,9 @@ let t: Awaited<ReturnType<typeof createTestDb>>;
 let idx: TemplateIndex;
 let home: string;
 let cfg: ReturnType<typeof loadConfig>;
-const hostSkills = mkdtempSync(path.join(tmpdir(), "hs-"));
+const hostClaude = mkdtempSync(path.join(tmpdir(), "hs-"));
+const hostSkills = path.join(hostClaude, "skills");
+mkdirSync(hostSkills);
 for (const n of ["tdd", "release"]) mkdirSync(path.join(hostSkills, n));
 const SECRET = "sk-ant-oat01-SECRETSHAPED0123456789";
 const events: TemplateChange[] = [];
@@ -40,7 +42,7 @@ beforeAll(async () => {
     DATABASE_URL: t.url,
     FACTORY_SECRET_KEY: "k".repeat(40),
     FACTORY_HOME: home,
-    FACTORY_HOST_SKILLS_DIR: hostSkills,
+    FACTORY_HOST_CLAUDE_DIR: hostClaude,
   });
   idx = new TemplateIndex({ db: t.db, config: cfg });
   idx.onChange((e) => {

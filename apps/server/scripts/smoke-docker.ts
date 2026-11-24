@@ -84,7 +84,8 @@ const must = (name: string, cond: boolean, detail?: string) => {
 // realpath: macOS tmpdir is a /var symlink; the factory works with canonical paths (spec §10).
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-docker-")));
 const factoryHome = path.join(root, "home");
-const hostSkillsDir = path.join(root, "host-skills");
+const hostClaudeDir = path.join(root, "host-claude");
+const hostSkillsDir = path.join(hostClaudeDir, "skills");
 const repoDir = path.join(root, "smoke-repo");
 const marketDir = path.join(root, "smoke-market");
 const WORD = `OSPREY-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -306,7 +307,7 @@ try {
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
     FACTORY_HOME: factoryHome,
-    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+    FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
     FACTORY_DEFAULT_IMAGE: IMAGE,
     HOST: process.env.HOST ?? "127.0.0.1",
     PORT: String(port),

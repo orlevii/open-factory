@@ -218,3 +218,158 @@ test("row 12: no changes means no notice, and the local runtime being disabled d
   expect(bodies()).toEqual([]);
   expect(await call({ changes: null })).toEqual({ status: "not_running" });
 });
+
+// Rows 9 and 10: the cut restart (§9.2.1). Everything is asserted on what the fake process received.
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** The bodies of the first batch the process in `n` was sent. */
+const firstBatch = (n: number) => h.driver.starts[n]?.sent[0]?.map((m) => m.body);
+const writeCount = () => h.driver.last.writes.length;
+/** A turn that is open on the current process (the message that started it was written). */
+async function midTurn() {
+  await idle();
+  await h.send("work");
+  h.driver.last.emit(ev.turn());
+  await rt.settled();
+}
+const finishTurn = async () => {
+  h.driver.last.emit(ev.usage(), ev.end({ terminalReason: "aborted_streaming" }));
+  await rt.settled();
+};
+const control = async (cmd: string) =>
+  (await store.after(h.agentId, 0, 1000))
+    .map((e) => e.event)
+    .filter((e) => e.type === "control" && e.cmd === cmd);
+
+test("row 9, mid-turn: interrupts, writes nothing to the old process, then resumes with the notice first", async () => {
+  await midTurn();
+  const old = h.driver.last;
+  expect(await call({ changes: ["model"] })).toEqual({ status: "restarting" });
+  expect(old.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
+  expect(old.stopped).toBe(false); // waits for the turn's end
+  await h.send("later"); // queued meanwhile
+  const written = writeCount();
+  await finishTurn();
+  expect(old.writes).toHaveLength(written); // not even after turn_end
+  expect(old.stopped).toBe(true);
+  expect(h.driver.starts).toHaveLength(2);
+  expect(h.driver.last.opts.resumeSessionId).toBe("sess-1");
+  expect(firstBatch(1)).toEqual([
+    "Restarted by @lead to apply: model. Continue where you left off.",
+    "later",
+  ]);
+  expect(await control("restart")).toEqual([{ type: "control", cmd: "restart", by: "@lead" }]);
+});
+
+test("row 9: an existing Stop hold is reused: one interrupt control is written", async () => {
+  await midTurn();
+  await rt.interrupt({ byHandle: "or" });
+  await call();
+  expect(h.driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
+  await finishTurn();
+  expect(h.driver.starts[0]?.stopped).toBe(true);
+});
+
+test("row 9: a batch written whose turn starts later is interrupted at turn_started", async () => {
+  await idle();
+  await h.send("x"); // written, awaiting its turn
+  await call();
+  expect(h.driver.last.controls).toEqual([]);
+  expect(h.driver.last.stopped).toBe(false);
+  h.driver.last.emit(ev.turn());
+  await rt.settled();
+  expect(h.driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
+  await finishTurn();
+  expect(h.driver.starts[0]?.stopped).toBe(true);
+});
+
+test("row 9: a batch whose turn never starts: the fallback stops, and its rows are redelivered", async () => {
+  await idle();
+  await h.send("lost?");
+  const old = h.driver.last;
+  await call();
+  expect(old.stopped).toBe(false);
+  await wait(350); // holdTimeoutMs is 200 in the harness
+  await rt.settled();
+  expect(old.stopped).toBe(true);
+  expect(old.controls).toEqual([]);
+  expect(h.driver.starts).toHaveLength(2);
+  expect(firstBatch(1)?.at(0)).toMatch(/^Restarted by @lead\./);
+  expect(firstBatch(1)).toContain("lost?");
+});
+
+test("row 9: a raw command written with no turn open is stopped at once, with no interrupt", async () => {
+  await idle();
+  await rt.rawInput({ text: "/context", by: "@or", userId: "u1" });
+  expect(h.driver.last.writes.some((w) => w.kind === "raw")).toBe(true);
+  const old = h.driver.last;
+  await call();
+  await rt.settled();
+  expect(old.controls).toEqual([]);
+  expect(old.stopped).toBe(true);
+  expect(h.driver.starts).toHaveLength(2);
+});
+
+test("row 10: an idle target with a live task and force stops without an interrupt, naming the task", async () => {
+  await idle();
+  h.driver.last.emit(ev.background([{ taskId: "t1", description: "pnpm test" }]));
+  await rt.settled();
+  const old = h.driver.last;
+  expect(await call({ force: true })).toEqual({ status: "restarting" });
+  await rt.settled();
+  expect(old.controls).toEqual([]);
+  expect(old.stopped).toBe(true);
+  expect(firstBatch(1)?.[0]).toContain("pnpm test");
+  const lost = (await store.after(h.agentId, 0, 1000))
+    .map((e) => e.event)
+    .find((e) => e.type === "background_work_lost");
+  expect(lost).toMatchObject({ reason: "restart", tasks: [{ taskId: "t1" }] });
+});
+
+test("row 9: a task started during the interrupt window is killed and reported", async () => {
+  await midTurn();
+  await call();
+  h.driver.last.emit(ev.background([{ taskId: "t9", description: "vite dev" }]));
+  await rt.settled();
+  await finishTurn();
+  expect(firstBatch(1)?.[0]).toContain("vite dev");
+  const lost = (await store.after(h.agentId, 0, 1000))
+    .map((e) => e.event)
+    .find((e) => e.type === "background_work_lost");
+  expect(lost).toMatchObject({ tasks: [{ taskId: "t9" }] });
+});
+
+test("stop() for an archive during the interrupt wins: no restart attempt is made", async () => {
+  await midTurn();
+  await call();
+  rt.markArchived();
+  await rt.stop();
+  expect(h.driver.starts).toHaveLength(1);
+  expect(h.driver.starts[0]?.stopped).toBe(true);
+  const events = (await store.after(h.agentId, 0, 1000)).map((e) => e.event);
+  expect(events.find((e) => e.type === "hibernated")).toMatchObject({ reason: "archived" });
+  expect(events.some((e) => e.type === "control" && e.cmd === "restart")).toBe(false);
+});
+
+test("a second restartNow while pending returns restarting, replaces by, and interrupts once", async () => {
+  await midTurn();
+  await call({ by: "@lead", changes: ["model"] });
+  expect(await call({ by: "@boss", changes: ["skill"] })).toEqual({ status: "restarting" });
+  expect(h.driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
+  await finishTurn();
+  expect(firstBatch(1)?.[0]).toBe(
+    "Restarted by @boss to apply: skill. Continue where you left off.",
+  );
+});
+
+test("no delivery or notice writes to the old process while a cut restart is pending", async () => {
+  await midTurn();
+  await call();
+  const written = writeCount();
+  await h.send("one");
+  await h.send("two", true); // urgent: no second interrupt either
+  await rt.addNotice("compact_continue", "n");
+  await rt.settled();
+  expect(h.driver.last.writes).toHaveLength(written);
+  await finishTurn();
+  expect(firstBatch(1)).toEqual(expect.arrayContaining(["one", "two"]));
+});

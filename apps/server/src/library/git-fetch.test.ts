@@ -7,13 +7,14 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, test } from "vitest";
-import { GitError } from "./git.ts";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { GitError, runGit } from "./git.ts";
 import {
   checkoutSize,
   fetchCommit,
@@ -24,6 +25,11 @@ import {
   treeShas,
 } from "./git-fetch.ts";
 import { makeFixtureRepo } from "./testing/fixture-repo.ts";
+
+vi.mock("./git.ts", async (orig) => {
+  const m = await orig<typeof import("./git.ts")>();
+  return { ...m, runGit: vi.fn(m.runGit) };
+});
 
 let tmp: string;
 beforeEach(() => {
@@ -190,3 +196,57 @@ test("treeShas joins an empty subpath without a leading slash", async () => {
   expect(shas.skill).toMatch(/^[0-9a-f]{40}$/);
   expect(shas.skill).not.toBe(shas["pre/skill"]);
 });
+
+test("each git command is bounded by the remaining operation budget, not the 60 s default", async () => {
+  const f = await makeFixtureRepo(path.join(tmp, "r"), { commits: [{ a: "1" }] });
+  vi.mocked(runGit).mockClear();
+  await resolveRef(f.url, "main", { ...o, budgetMs: 180_000 });
+  const t = vi.mocked(runGit).mock.calls[0]?.[1].timeoutMs as number;
+  expect(t).toBeGreaterThan(170_000);
+  expect(t).toBeLessThanOrEqual(180_000);
+});
+
+test.each(["..", "-x", "a.lock", "a b"])(
+  "resolveRef refuses a remote default branch named %s",
+  async (name) => {
+    vi.mocked(runGit).mockResolvedValueOnce({
+      stdout: `ref: refs/heads/${name}\tHEAD\n${"a".repeat(40)}\tHEAD\n`,
+    });
+    await expect(resolveRef("file:///x", null, { ...o, label: "acme/x" })).rejects.toThrow(
+      "acme/x has no default branch.",
+    );
+  },
+);
+
+test("installCheckout rejects a symlink in the subtree and leaves nothing behind", async () => {
+  const co = path.join(tmp, "co");
+  mkdirSync(path.join(co, "skills/d"), { recursive: true });
+  writeFileSync(path.join(co, "skills/d/ok"), "x");
+  symlinkSync("ok", path.join(co, "skills/d/link"));
+  const dest = path.join(tmp, "cache/dest");
+  await expect(installCheckout(co, "skills", dest)).rejects.toThrow(/not a file or folder/);
+  expect(readdirSync(path.join(tmp, "cache"))).toEqual([]);
+});
+
+test("installCheckout leaves no temp dir after success and fails on an existing dest", async () => {
+  const co = path.join(tmp, "co");
+  mkdirSync(path.join(co, "s"), { recursive: true });
+  writeFileSync(path.join(co, "s/a"), "x");
+  const dest = path.join(tmp, "cache/dest");
+  await installCheckout(co, "s", dest);
+  expect(readdirSync(path.join(tmp, "cache"))).toEqual(["dest"]);
+  await expect(installCheckout(co, "s", dest)).rejects.toThrow();
+  expect(readdirSync(path.join(tmp, "cache"))).toEqual(["dest"]);
+  expect(readFileSync(path.join(dest, "a"), "utf8")).toBe("x");
+});
+
+test.each([".git", "x/.GIT", "a/../.Git/objects"])(
+  "installCheckout refuses subpath %s",
+  async (sub) => {
+    const co = path.join(tmp, "co");
+    mkdirSync(path.join(co, ".git"), { recursive: true });
+    mkdirSync(path.join(co, "x/.GIT"), { recursive: true });
+    await expect(installCheckout(co, sub, path.join(tmp, "dest"))).rejects.toThrow(/inside/);
+    expect(existsSync(path.join(tmp, "dest"))).toBe(false);
+  },
+);

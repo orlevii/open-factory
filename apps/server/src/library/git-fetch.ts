@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
+import { checkBranchName } from "@open-factory/shared";
 import { GitError, runGit } from "./git.ts";
 
 const OPERATION_BUDGET_MS = 180_000;
@@ -34,8 +35,16 @@ async function withBudget<T>(o: GitFetchOptions, fn: (git: GitCall) => Promise<T
   const budgetMs = o.budgetMs ?? OPERATION_BUDGET_MS;
   const budget = AbortSignal.timeout(budgetMs);
   const signal = o.signal ? AbortSignal.any([budget, o.signal]) : budget;
+  const start = Date.now();
+  // The per-command default (60 s) must not cut a legal download short: the budget is the bound.
   const git: GitCall = (args, cwd) =>
-    runGit(args, { cwd, allowFile: o.allowFile, gitBin: o.gitBin, signal });
+    runGit(args, {
+      cwd,
+      allowFile: o.allowFile,
+      gitBin: o.gitBin,
+      signal,
+      timeoutMs: Math.max(1, budgetMs - (Date.now() - start)),
+    });
   try {
     return await fn(git);
   } catch (e) {
@@ -66,7 +75,7 @@ export async function resolveRef(
         const m = /^([0-9a-f]+)\tHEAD$/.exec(line);
         if (m) sha = m[1];
       }
-      if (!name || !sha || !SHA.test(sha))
+      if (!name || !checkBranchName(name) || !sha || !SHA.test(sha))
         throw new GitError(`${label} has no default branch.`, "");
       return { sha, branch: name };
     }
@@ -143,9 +152,14 @@ const inside = (root: string, p: string) => p === root || p.startsWith(root + pa
 
 /**
  * Copies the subtree at `subpath` (no `.git`) to `dest` through a temp name and a rename, read-only:
- * dirs 0555, files 0444, executables 0555. The subpath must stay inside `co`, lexically and by realpath.
+ * dirs 0555, files 0444, executables 0555. The subpath must stay inside `co`, lexically and by realpath,
+ * and may not name `.git`. Not idempotent: an existing non-empty `dest` fails, so callers check for a
+ * cache hit first.
  */
 export async function installCheckout(co: string, subpath: string, dest: string): Promise<void> {
+  if (subpath.split(/[\\/]/).some((seg) => seg.toLowerCase() === ".git")) {
+    throw new Error("The path must stay inside the repository.");
+  }
   const root = path.resolve(co);
   const src = path.resolve(root, subpath);
   if (path.isAbsolute(subpath) || !inside(root, src)) {
@@ -157,6 +171,7 @@ export async function installCheckout(co: string, subpath: string, dest: string)
   if (!(await lstat(realSrc)).isDirectory()) throw new Error("The path must be a folder.");
 
   await mkdir(path.dirname(dest), { recursive: true });
+  // Shares dest's parent, which is what lets a 0555 dir be renamed (only a parent change needs write).
   const tmp = `${dest}.tmp-${randomUUID()}`;
   const copy = async (from: string, to: string): Promise<void> => {
     await mkdir(to);
@@ -177,8 +192,7 @@ export async function installCheckout(co: string, subpath: string, dest: string)
     await copy(realSrc, tmp);
     await rename(tmp, dest);
   } catch (e) {
-    await rm(tmp, { recursive: true, force: true }).catch(() => {});
-    // A failed copy may leave 0555 dirs the plain rm can't empty.
+    // A failed copy may leave 0555 dirs a plain rm can't empty.
     await makeWritable(tmp).catch(() => {});
     await rm(tmp, { recursive: true, force: true }).catch(() => {});
     throw e;

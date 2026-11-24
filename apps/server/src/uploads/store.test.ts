@@ -240,7 +240,7 @@ test("Docker: the stored file is under the workdir mount the container sees and 
   const mounts = buildMounts({
     workdir: wd,
     grantedPaths: [],
-    hostSkillPaths: [],
+    skillPaths: [],
     templateSkillPaths: [],
     declaredMarketplaceDirs: [],
     pluginsDir: "/host/plugins",

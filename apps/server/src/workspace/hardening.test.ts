@@ -297,7 +297,7 @@ test("a granted project inside FACTORY_HOME fails the Docker start", async () =>
   asDocker();
   await expect(prepareAgent()).rejects.toBeInstanceOf(MountRefusedError);
   await expect(prepareAgent()).rejects.toThrow(
-    `Mount ${other} isn't allowed: it is inside FACTORY_HOME and isn't this agent's workdir or plugins dir.`,
+    `Mount ${other} isn't allowed: it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or the plugin store.`,
   );
 });
 

@@ -325,7 +325,7 @@ export class Workspace {
     const mountInputs = {
       workdir,
       grantedPaths,
-      hostSkillPaths: skills.map((s) => s.realDir),
+      skillPaths: skills.map((s) => s.realDir),
       templateSkillPaths: tplSkills.map((s) => s.realDir),
       declaredMarketplaceDirs: declaredMarketplaceDirs(doc.settings),
       pluginsDir: path.join(pluginsConfigDir(this.d.factoryHome, i.slug), "plugins"),

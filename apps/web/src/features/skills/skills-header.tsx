@@ -113,6 +113,7 @@ export function SkillsHeader({ onAddSkills }: { onAddSkills(): void }) {
     <PageHeader
       title="Skills"
       wrap
+      wrapActions
       meta={
         <div
           role="status"

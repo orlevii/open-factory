@@ -15,6 +15,7 @@ export function PageHeader({
   actions,
   titleFromData = false,
   wrap = false,
+  wrapActions = false,
 }: {
   title: string;
   /** The h1's content when it needs more than the plain title (a spawned agent's kept " · ab12"). */
@@ -31,6 +32,9 @@ export function PageHeader({
   /** The header may take a second line: an item that can't fit (a view switch at 200% text on a phone) moves
    *  under the title with an `@max-` container variant (order-last, basis-full) instead of painting over its neighbours. */
   wrap?: boolean;
+  /** The actions may wrap onto their own line and break between themselves, so labelled actions beside a wide sidebar
+   *  (200% text at tablet widths) never push the page sideways. Only meaningful with `wrap`. */
+  wrapActions?: boolean;
 }) {
   const shell = useShell();
   useEffect(() => {
@@ -71,7 +75,13 @@ export function PageHeader({
         {/* On coarse pointers neighbouring icon actions are 40px boxes 4px apart, not overlapping expanders
             (U4 §11.3). */}
         {actions && (
-          <div className={`ml-auto flex shrink-0 items-center gap-2 ${COARSE_ICON_GROUP}`}>
+          <div
+            className={cn(
+              "ml-auto flex items-center gap-2",
+              wrapActions ? "min-w-0 flex-wrap justify-end" : "shrink-0",
+              COARSE_ICON_GROUP,
+            )}
+          >
             {actions}
           </div>
         )}

@@ -411,7 +411,8 @@ export function SourcePeekBody({
           aria-disabled={inUse || remove.isPending || !d}
           aria-describedby={inUse ? reasonId : undefined}
           onClick={onRemove}
-          className="self-end text-destructive hover:text-destructive"
+          // The label carries the source's skill count and may wrap to two lines rather than outgrow a narrow sheet.
+          className="h-auto min-h-8 max-w-full self-end py-1.5 text-right whitespace-normal text-destructive hover:text-destructive pointer-coarse:h-auto pointer-coarse:min-h-10"
         >
           {remove.isPending ? (
             <Pending label="Removing…" since={remove.submittedAt} />

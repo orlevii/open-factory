@@ -9,20 +9,17 @@
 #
 # Output:
 #   <outdir>/dir/                directory marketplace "fixdir": marker, dep,
-#                                ranged, rel (defaultEnabled) and shaext-ext, an
-#                                external git-subdir entry with a sha that points
-#                                into src-fixture.git (file:///fixture/acme.git).
-#   <outdir>/src-fixture.git     bare repo, marketplace "fixture": the same tree
-#   <outdir>/src-latest.git      bare repo, marketplace "fixlatest": the same tree
-#                                (Both have two commits, main at the second, tag
-#                                v1 and tag dep--v1.0.0 on the first. run.sh serves
-#                                them read-only as /fixture/acme.git and
-#                                /fixture/acme-latest.git, first commit only, and
-#                                "pushes" the second commit between runs.)
+#                                ranged and rel (defaultEnabled)
+#   <outdir>/src-fixture.git     bare repo, marketplace "fixture": the same tree.
+#                                Two commits, main at the second, tag v1 and tag
+#                                dep--v1.0.0 on the first. Only item 0 uses it
+#                                (run.sh serves it read-only as
+#                                /fixture/acme.git): 2.1.331 refuses a file://
+#                                git marketplace, so nothing else needs it.
 #   <outdir>/evil/               directory marketplace "evil" with the plugin x
 #   <outdir>/extras/             skill-foo (item 11), sneaky (item 14), skill-h and
 #                                agent-a.md (item 18), copied into workdirs by run.sh
-#   <outdir>/SHAS                shell-sourceable commit SHAs, read by run.sh
+#   <outdir>/SHAS                shell-sourceable commit SHAs of src-fixture.git
 set -eu
 
 if [ "$#" -ne 1 ]; then
@@ -33,8 +30,8 @@ command -v git >/dev/null 2>&1 || { echo "missing tool: git" >&2; exit 2; }
 
 mkdir -p "$1"
 OUT=$(cd "$1" && pwd -P)
-rm -rf "$OUT/dir" "$OUT/evil" "$OUT/extras" "$OUT/work-fixture" "$OUT/work-latest" \
-  "$OUT/src-fixture.git" "$OUT/src-latest.git" "$OUT/SHAS"
+rm -rf "$OUT/dir" "$OUT/evil" "$OUT/extras" "$OUT/work-fixture" \
+  "$OUT/src-fixture.git" "$OUT/SHAS"
 
 # Fixed identity and dates make the commit SHAs reproducible.
 export GIT_AUTHOR_NAME="G1 fixture" GIT_AUTHOR_EMAIL="g1@example.invalid"
@@ -65,7 +62,7 @@ EOF
 # The plugins of the fixture, under <root>/plugins. marker's manifest carries
 # <marker-version>, which is how the second commit differs from the first.
 write_plugins() { # <root> <marker-version>
-  local root=$1 D R M X P
+  local root=$1 D R M P
   # dep: an exact dependency of marker.
   D=$root/plugins/dep
   mkdir -p "$D/.claude-plugin" "$D/skills/dep-hello"
@@ -95,20 +92,6 @@ EOF
 ---
 name: ranged-hello
 description: G1 ranged plugin skill. Never needed.
----
-Say hello.
-EOF
-
-  # shaext: the target of the external git-subdir entry with a sha.
-  X=$root/plugins/shaext
-  mkdir -p "$X/.claude-plugin" "$X/skills/shaext-hello"
-  cat > "$X/.claude-plugin/plugin.json" <<'EOF'
-{ "name": "shaext", "version": "1.0.0", "description": "G1: external plugin pinned by sha" }
-EOF
-  cat > "$X/skills/shaext-hello/SKILL.md" <<'EOF'
----
-name: shaext-hello
-description: G1 external plugin skill. Never needed.
 ---
 Say hello.
 EOF
@@ -258,14 +241,9 @@ EOF
 EOF
 }
 
-# The catalog. $3 (optional) is the sha of src-fixture.git's first commit and
-# adds the external git-subdir entry (the directory marketplace only).
-write_catalog() { # <root> <name> [<ext-sha>]
-  local ext=""
+# The catalog.
+write_catalog() { # <root> <name>
   mkdir -p "$1/.claude-plugin"
-  if [ -n "${3:-}" ]; then
-    ext=$(printf ',\n    { "name": "shaext-ext", "source": { "source": "git-subdir", "url": "file:///fixture/acme.git", "path": "plugins/shaext", "sha": "%s" }, "description": "G1: external source with a sha" }' "$3")
-  fi
   cat > "$1/.claude-plugin/marketplace.json" <<EOF
 {
   "name": "$2",
@@ -274,7 +252,7 @@ write_catalog() { # <root> <name> [<ext-sha>]
     { "name": "marker", "source": "./plugins/marker", "description": "G1: every code path writes a marker" },
     { "name": "dep", "source": "./plugins/dep", "description": "G1: exact dependency of marker" },
     { "name": "ranged", "source": "./plugins/ranged", "description": "G1: depends on dep with a version range" },
-    { "name": "rel", "source": "./plugins/rel", "description": "G1: relative plugin, defaultEnabled" }$ext
+    { "name": "rel", "source": "./plugins/rel", "description": "G1: relative plugin, defaultEnabled" }
   ]
 }
 EOF
@@ -306,11 +284,9 @@ build_repo() { # <name> <marketplace> <prefix>
 }
 
 build_repo fixture fixture FIX
-build_repo latest fixlatest LAT
 
-# The directory marketplace: the same plugins at the first commit's content,
-# plus the external entry whose sha is the fixture repo's first commit.
-write_catalog "$OUT/dir" fixdir "$FIX_FIRST"
+# The directory marketplace: the same plugins at the first commit's content.
+write_catalog "$OUT/dir" fixdir
 write_plugins "$OUT/dir" 1.0.0
 
 # A directory marketplace of another name (item 15): plugin x writes a marker
@@ -410,10 +386,7 @@ EOF
 cat > "$OUT/SHAS" <<EOF
 FIX_FIRST=$FIX_FIRST
 FIX_SECOND=$FIX_SECOND
-LAT_FIRST=$LAT_FIRST
-LAT_SECOND=$LAT_SECOND
 EOF
 
 echo "fixture built in $OUT"
 echo "  src-fixture.git: $FIX_FIRST (first), $FIX_SECOND (second)"
-echo "  src-latest.git:  $LAT_FIRST (first), $LAT_SECOND (second)"

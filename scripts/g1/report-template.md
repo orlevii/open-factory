@@ -7,16 +7,16 @@
 - Image digest: @@IMAGE_ID@@
 - Network: <fill in: where you ran it and on what connection>
 - Host: @@HOST@@
-- GitHub needed? @@FILE_URL@@
-- Fixture SHAs: @@SHAS@@
+- @@FILE_URL@@
+- Commits: @@SHAS@@
 - Work dir: @@WORKDIR@@
 @@PROBE_NOTE@@
 Post this file on #153. Any FAIL goes back to owner-i5 before the design adapts;
 item 2 failing goes to Or (spec P6).
 
 Statuses: PASS and FAIL are assertions the spec states; RECORDED is an
-observation the design needs; MANUAL needs a human (instructions in the
-details); NOT RUN means the item could not run (the reason is in the details).
+observation the design needs (item 19 is RECORDED as UNTESTED, a known gap);
+MANUAL needs a human (item 21, instructions in the details); NOT RUN means the item could not run (the reason is in the details).
 
 ## Summary
 

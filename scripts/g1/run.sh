@@ -17,9 +17,9 @@
 #     written to disk, never printed, never put in the report.
 #   - git, jq and the usual tools on the host. Nothing else is installed.
 #   - the network (GitHub, the npm registry, Anthropic).
-#   - optional: G1_GITHUB_REPO=<you>/of-g1-fixture, used only when item 0 finds
-#     that Claude Code refuses a file:// git marketplace (the README has the
-#     steps; a second repo <you>/of-g1-fixture-latest is needed too).
+#   - no GitHub account or repo of yours is needed: items 4-9 use the public
+#     anthropics/claude-plugins-official and obra/superpowers-marketplace, and
+#     the host reads their history with plain git (no credential).
 #
 # It writes report.md in its temp dir and prints the path. Items 5 and 7 hold
 # one session for more than ten minutes each, so the whole run takes about an
@@ -90,9 +90,7 @@ AG_KEEP=0                    # 1: reset_ag leaves $AG alone (the item placed fil
 P="" AG="" W="" HM=""        # the current agent: plugins dir, config dir, workdir, home
 XENV=""                      # extra docker -e args (no spaces in any value)
 CNET=""                      # docker network args
-SYNC_ENV=""                  # set by item 2: -e CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1 if needed
-USE_GITHUB=0                 # set by item 0 when the file:// git marketplace is refused
-GIT_OK=yes                   # no when items 4-7 cannot run
+SYNC_ENV=""                  # set by item 2 for directory marketplaces: -e CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1 if needed
 FILE_URL_NOTE="not decided"
 
 cd "$T" # never leave the owner's cwd (maybe a git repo) as the cwd of anything
@@ -172,46 +170,63 @@ reset_ag() {
 }
 
 # ----------------------------------------------------------------- the fixture
-first_of() { case $1 in acme) echo "$FIX_FIRST" ;; acme-latest) echo "$LAT_FIRST" ;; esac; }
-second_of() { case $1 in acme) echo "$FIX_SECOND" ;; acme-latest) echo "$LAT_SECOND" ;; esac; }
-src_of() { case $1 in acme) echo "$FX/src-fixture.git" ;; acme-latest) echo "$FX/src-latest.git" ;; esac; }
-mkt_of() { case $1 in acme) echo fixture ;; acme-latest) echo fixlatest ;; esac; }
-gh_repo() { case $1 in acme) echo "$G1_GITHUB_REPO" ;; acme-latest) echo "${G1_GITHUB_REPO}-latest" ;; esac; }
-
-served_dest() { # <acme|acme-latest>: where the containers' copy lives
-  if [ "$USE_GITHUB" = 1 ]; then echo "https://github.com/$(gh_repo "$1").git"; else echo "$R/$1.git"; fi
-}
-
-# The source JSON of a served repo: the file URL, or GitHub when item 0 said so.
-src_git() { # <acme|acme-latest>
-  if [ "$USE_GITHUB" = 1 ]; then
-    jq -n -c --arg r "$(gh_repo "$1")" '{source: "github", repo: $r}'
-  else
-    jq -n -c --arg u "file:///fixture/$1.git" '{source: "git", url: $u}'
-  fi
-}
+# Only item 0 uses a git fixture: the bare repo, served read-only as
+# /fixture/acme.git. Items 4-9 use two public marketplaces and need no account
+# or repo of ours.
+SRC_FILE='{"source":"git","url":"file:///fixture/acme.git"}'
 SRC_DIR='{"source":"directory","path":"/fixture/dir"}'
 SRC_OFFICIAL='{"source":"github","repo":"anthropics/claude-plugins-official"}'
 SRC_SUPER='{"source":"github","repo":"obra/superpowers-marketplace"}'
+OFF_URL=https://github.com/anthropics/claude-plugins-official.git
+SUP_URL=https://github.com/obra/superpowers-marketplace.git
+# Remote marketplaces need CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1 to have their plugins
+# in the first init (a G1 finding); items 4-9 always set it.
+SYNC1="-e CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1"
 
-serve_reset() { # <repo>: only the first commit, tags v1 and dep--v1.0.0, branch stable
-  local d first src
-  d=$(served_dest "$1")
-  first=$(first_of "$1")
-  src=$(src_of "$1")
-  if [ "$USE_GITHUB" != 1 ]; then
-    rm -rf "$d"
-    git init -q --bare -b main "$d"
-  fi
-  git -C "$src" push -q --force "$d" "$first:refs/heads/main" "$first:refs/heads/stable" \
-    refs/tags/v1:refs/tags/v1 refs/tags/dep--v1.0.0:refs/tags/dep--v1.0.0 > /dev/null 2>&1 \
-    || die "could not serve $1 at $d"
+# pick_commits <OFF|SUP> <url> <plugin>: read a public marketplace's history on
+# the host with plain git (a blobless bare clone, no credential) and set
+# <p>_OLD (a commit 30-60 behind HEAD that still lists <plugin>), <p>_NEW (HEAD),
+# <p>_BRANCH, <p>_TAG and <p>_TAGSHA (its newest tag, if any).
+pick_commits() {
+  local pre=$1 url=$2 plug=$3 bare=$T/bare-$1.git i c new old="" tag tsha="" br
+  git clone -q --bare --filter=blob:none "$url" "$bare" > "$T/clone-$1.log" 2>&1 \
+    || die "could not clone $url (network?); see $T/clone-$1.log"
+  new=$(git -C "$bare" rev-parse HEAD)
+  br=$(git -C "$bare" symbolic-ref --short HEAD 2> /dev/null || echo main)
+  for i in $(seq 30 60) $(seq 29 -1 1); do
+    c=$(git -C "$bare" rev-parse -q --verify "HEAD~$i" 2> /dev/null) || continue
+    if git -C "$bare" show "$c:.claude-plugin/marketplace.json" 2> /dev/null \
+      | jq -e --arg p "$plug" '.plugins[]? | select(.name == $p)' > /dev/null 2>&1; then
+      old=$c
+      break
+    fi
+  done
+  [ -n "$old" ] || die "no old commit of $url lists the plugin $plug"
+  tag=$(git -C "$bare" tag --sort=-creatordate | sed -n 1p)
+  if [ -n "$tag" ]; then tsha=$(git -C "$bare" rev-parse "$tag^{commit}"); fi
+  eval "${pre}_OLD=$old ${pre}_NEW=$new ${pre}_BRANCH=$br ${pre}_TAG=$tag ${pre}_TAGSHA=$tsha"
 }
 
-serve_push2() { # <repo>: "push" the second commit to main
-  git -C "$(src_of "$1")" push -q --force "$(served_dest "$1")" "$(second_of "$1"):refs/heads/main" > /dev/null 2>&1 \
-    || die "could not push the second commit of $1"
+mk_name() { case $1 in OFF) echo claude-plugins-official ;; SUP) echo superpowers-marketplace ;; esac; }
+mk_src() { case $1 in OFF) echo "$SRC_OFFICIAL" ;; SUP) echo "$SRC_SUPER" ;; esac; }
+mk_key() { case $1 in OFF) echo skill-creator@claude-plugins-official ;; SUP) echo superpowers@superpowers-marketplace ;; esac; }
+mk_var() { eval "echo \${$1_$2}"; } # mk_var OFF OLD
+
+# set_pm <OFF|SUP>: the marketplace items 5-9 pin (PM_*); the other one is their
+# Latest marketplace (OM_*).
+set_pm() {
+  local o=SUP
+  [ "$1" = OFF ] || o=OFF
+  PM=$1
+  PM_NAME=$(mk_name "$1"); PM_SRC=$(mk_src "$1"); PM_KEY=$(mk_key "$1")
+  PM_OLD=$(mk_var "$1" OLD); PM_NEW=$(mk_var "$1" NEW)
+  OM_NAME=$(mk_name "$o"); OM_SRC=$(mk_src "$o"); OM_KEY=$(mk_key "$o")
 }
+pm_decl() { decl "$PM_NAME" "$PM_SRC" "${1:-}" "${2:-false}"; } # <ref> [autoUpdate]
+om_decl() { decl "$OM_NAME" "$OM_SRC" "" true; }                 # the Latest one
+pm_plugin() { printf '%s' "${PM_KEY%@*}"; }
+installed_sha() { jq -r --arg k "$1" '.plugins[$k][0].gitCommitSha // "none"' "$P/installed_plugins.json" 2> /dev/null || echo none; }
+fresh_remote() { fresh_ws "$1"; XENV=$SYNC1; }
 
 # --------------------------------------------------------------- the container
 # ctr <command...>: one fresh `docker run --rm` of the image, the agent as spec
@@ -232,7 +247,7 @@ ctr() {
     $cred $XENV \
     -v "$P:$P" -v "$AG:$AG" -v "$W:$W" -v "$MARK:$MARK" -v "$HM:/home/agent" \
     -v "$FX/dir:/fixture/dir:ro" -v "$FX/evil:/fixture/evil:ro" \
-    -v "$R/acme.git:/fixture/acme.git:ro" -v "$R/acme-latest.git:/fixture/acme-latest.git:ro" \
+    -v "$R/acme.git:/fixture/acme.git:ro" \
     -w "$W" "$IMAGE" "$@"
 }
 
@@ -375,20 +390,10 @@ DECL_DIR=""
 std_settings() { settings "$1" "$(enabled marker@fixdir=true dep@fixdir=true)" "$DECL_DIR"; } # marker and dep on, directory marketplace
 bare_settings() { printf '%s' '{"syncClaudeAiPlugins":false}' > "$1"; }                         # no plugins at all
 
-# A public sha and tag, read with plain git in a throwaway container (no credential).
-net_git() {
-  local rc=0
-  fresh_ws net
-  ctr git "$@" 2> /dev/null || rc=$?
-  return "$rc"
-}
-remote_head() { net_git ls-remote "$1" HEAD | awk '{print $1}' | head -n 1; } # <url>
-remote_tag() { net_git ls-remote --tags --refs "$1" | awk '{print $2}' | sed 's#^refs/tags/##' | tail -n 1; }
-
 # --------------------------------------------------------------- the items
-# 0: a file-URL git marketplace. Decides whether items 4-9 need GitHub.
+# 0: a file-URL git marketplace: RECORDED (2.1.331 refuses it, so nothing else uses it).
 item00() {
-  local d=$S/00 ok=no add_rc inst_rc
+  local d=$S/00 ok=no add_rc
   fresh_ws z0
   mkdir -p "$d"
   pc "$d/add.txt" marketplace add file:///fixture/acme.git
@@ -399,45 +404,26 @@ item00() {
 
   # The way the factory declares it: --settings with a git source.
   fresh_ws z0b
-  settings "$d/settings.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)")"
+  settings "$d/settings.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$SRC_FILE")"
   ev "declaration: $(jq -c '.extraKnownMarketplaces' "$d/settings.json")"
   session "$d/run" "$d/settings.json" "$PROMPT"
   evrun "session with the file:// git marketplace declared" "$d/run"
   ev "known_marketplaces.json: $(jq -c . "$P/known_marketplaces.json" 2> /dev/null || echo absent)"
   ev "marketplace clone HEAD: $(clone_head fixture) (first commit $FIX_FIRST)"
   if has_plugin "$d/run/init.json" marker; then ok=yes; fi
-
-  inst_rc=""
   if [ "$ok" = no ]; then
     fresh_ws z0c
-    pc "$d/install.txt" marketplace add /fixture/dir
-    inst_rc=$(pc_rc "$d/install.txt")
-    ev "control: the directory marketplace adds with exit $inst_rc (so a failure above is about the file:// URL, not the container)"
+    pc "$d/control.txt" marketplace add /fixture/dir
+    ev "control: the directory marketplace adds with exit $(pc_rc "$d/control.txt") (so a failure above is about the file:// URL, not the container)"
   fi
-  if [ "$ok" = yes ]; then
-    FILE_URL_NOTE="Item 0: Claude Code accepts file:///fixture/acme.git as a git marketplace in --settings; no GitHub repo is needed."
-    ev "RECORDED: accepted in --settings; no GitHub needed. CLI marketplace add of the same URL exits $add_rc."
-  elif [ -n "${G1_GITHUB_REPO:-}" ]; then
-    USE_GITHUB=1
-    FILE_URL_NOTE="Item 0: the file:// git marketplace was refused; items 4-9 use GitHub ($G1_GITHUB_REPO and ${G1_GITHUB_REPO}-latest)."
-    jq -c --arg u "https://github.com/$G1_GITHUB_REPO.git" \
-      '.plugins |= map(if .name == "shaext-ext" then .source.url = $u else . end)' \
-      "$FX/dir/.claude-plugin/marketplace.json" > "$d/catalog.json"
-    cp "$d/catalog.json" "$FX/dir/.claude-plugin/marketplace.json"
-    serve_reset acme
-    serve_reset acme-latest
-    ev "RECORDED: refused. Falling back to GitHub: $G1_GITHUB_REPO (pushed with your git credentials)."
-  else
-    GIT_OK=no
-    FILE_URL_NOTE="Item 0: the file:// git marketplace was refused and G1_GITHUB_REPO is not set; items 4-7 did not run."
-    ev "RECORDED: refused, and G1_GITHUB_REPO is not set: items 4-7 are NOT RUN. Set G1_GITHUB_REPO=<you>/of-g1-fixture (README) and rerun."
-  fi
+  FILE_URL_NOTE="item 0: a file:// git marketplace is $([ "$ok" = yes ] && echo accepted || echo refused) in --settings (CLI add exits $add_rc). Items 4-9 use public marketplaces either way."
+  const "file:// git marketplace (item 0): $([ "$ok" = yes ] && echo accepted || echo refused) in --settings; CLI marketplace add of the same URL exits $add_rc."
   record 0 RECORDED "A file-URL git marketplace: accepted in --settings: $ok"
 }
 
 # 1: only enabled plugins load; init.plugins entry shape; init before the first message.
 item01() {
-  local d=$S/01 status=PASS n bad names
+  local d=$S/01 status=PASS names
   mkdir -p "$d"
 
   # a. marker and dep true, rel absent from enabledPlugins: does the defaultEnabled plugin load?
@@ -451,31 +437,23 @@ item01() {
     ev "(a) RECORDED: rel does NOT load without an entry"
   fi
 
-  # b. rel false: it must not load; the loaded set is exactly the true plugins, each under $P.
-  # A directory marketplace's plugins may load in place, so the path assertion
-  # uses the git fixture; without it (item 0) this part is only recorded.
+  # b. rel false: it must not load; the loaded set is exactly the true plugins.
+  # A directory marketplace's plugins may load in place, so their paths are
+  # recorded, not asserted (item 3 asserts the layout on a remote marketplace).
   fresh_ws s01b
-  if [ "$GIT_OK" = yes ]; then
-    serve_reset acme
-    settings "$d/b.json" "$(enabled marker@fixture=true dep@fixture=true rel@fixture=false)" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
-  else
-    settings "$d/b.json" "$(enabled marker@fixdir=true dep@fixdir=true rel@fixdir=false)" "$DECL_DIR"
-  fi
+  settings "$d/b.json" "$(enabled marker@fixdir=true dep@fixdir=true rel@fixdir=false)" "$DECL_DIR"
   session "$d/b" "$d/b.json" "$PROMPT"
   evrun "(b) marker and dep true, rel false" "$d/b"
   names=$(plugin_names "$d/b/init.json")
-  ev "(b) init.plugins names: [$names]; paths: $(under_p "$d/b/init.json")"
-  bad=$(plugin_paths "$d/b/init.json" | grep -c -v "^$P/" || true)
-  n=$(plugin_paths "$d/b/init.json" | grep -c . || true)
-  if [ "$names" != "dep,marker" ] || [ "$bad" -ne 0 ] || [ "$n" -ne 2 ]; then status=FAIL; fi
-  if [ "$GIT_OK" = no ]; then status=RECORDED; ev "(b) the git fixture is unavailable (item 0): recorded with the directory marketplace, not asserted"; fi
+  ev "(b) init.plugins names: [$names]; paths: $(under_p "$d/b/init.json") (recorded: directory-marketplace plugins may load in place)"
+  if [ "$names" != "dep,marker" ]; then status=FAIL; fi
 
   # c. dep absent, then dep false: does marker still load? is an auto-installed dependency enabled without an entry?
   fresh_ws s01c
   settings "$d/c.json" "$(enabled marker@fixdir=true)" "$DECL_DIR"
   session "$d/c" "$d/c.json" "$PROMPT"
   evrun "(c) marker true, dep has NO entry" "$d/c"
-  ev "(c) RECORDED: dep loads without an entry (an auto-installed dependency): $(has_plugin "$d/c/init.json" dep && echo yes || echo no); installed_plugins.json: $(jq -c 'map_values(map({version, auto}))' "$P/installed_plugins.json" 2> /dev/null || echo absent)"
+  ev "(c) RECORDED: dep loads without an entry (an auto-installed dependency): $(has_plugin "$d/c/init.json" dep && echo yes || echo no); installed_plugins.json: $(jq -c '.plugins | map_values(map({version, auto}))' "$P/installed_plugins.json" 2> /dev/null || echo absent)"
   fresh_ws s01d
   settings "$d/d.json" "$(enabled marker@fixdir=true dep@fixdir=false)" "$DECL_DIR"
   session "$d/d" "$d/d.json" "$PROMPT"
@@ -487,16 +465,11 @@ item01() {
   fi
   grep -i -h -m3 'dependenc' "$d/d/stderr.txt" "$d/d/out.jsonl" 2> /dev/null | cut -c1-300 | sed 's/^/    /' >> "$EV" || true
 
-  # e. the init.plugins entry shape: a cached git plugin and an in-place directory plugin.
-  fresh_ws s01e
-  if [ "$GIT_OK" = yes ]; then serve_reset acme; fi
-  if [ "$GIT_OK" = yes ]; then
-    settings "$d/e.json" "$(enabled marker@fixture=true dep@fixture=true rel@fixdir=true)" "$DECL_DIR" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
-  else
-    settings "$d/e.json" "$(enabled marker@fixdir=true dep@fixdir=true rel@fixdir=true)" "$DECL_DIR"
-  fi
+  # e. the init.plugins entry shape: a cached remote plugin and an in-place directory plugin.
+  fresh_remote s01e
+  settings "$d/e.json" "$(enabled "$(mk_key SUP)=true" rel@fixdir=true)" "$DECL_DIR" "$(decl "$(mk_name SUP)" "$SRC_SUPER" "$SUP_OLD" false)"
   session "$d/e" "$d/e.json" "$PROMPT"
-  evrun "(e) entry shape: marker (cached, git) and rel (in place, directory)" "$d/e"
+  evrun "(e) entry shape: superpowers (cached, remote) and rel (in place, directory)" "$d/e"
   ev "(e) first entry keys: $(jq -c '[.plugins[]? | if type=="object" then keys else "string" end]' "$d/e/init.json" 2> /dev/null | cut -c1-300)"
   ev "(e) RECORDED: init comes before the first message: events are [$(order "$d/e/out.jsonl")]"
   const "init.plugins entry shape (item 1): $(jq -c '.plugins' "$d/e/init.json" 2> /dev/null | cut -c1-400); events [$(order "$d/e/out.jsonl")]. Fills B3's init matching."
@@ -533,175 +506,157 @@ item02() {
   fi
 }
 
-# 3: the per-agent plugins dir and persistence.
-item03() {
-  local d=$S/03 status=PASS f stray a1 b1 a2 b2 n1 n2
-  mkdir -p "$d"
-  fresh_ws s03
-  # The git fixture, because a directory marketplace's plugins may load in place.
-  if [ "$GIT_OK" = yes ]; then
-    serve_reset acme
-    settings "$d/settings.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
-  else
-    std_settings "$d/settings.json"
-  fi
-  session "$d/first" "$d/settings.json" "$PROMPT"
-  evrun "first start, empty \$P" "$d/first"
-  ev "\$P after the first start:"
+# Persistence check on the current agent: first start, listing, nothing under $AG
+# or $HOME, then a restart with the same $P and a fresh $AG installs nothing.
+# Sets PS to PASS or FAIL.
+persist_run() { # <label> <settings-file> <dir> [<required file under $P>...]
+  local label=$1 sf=$2 dd=$3 f stray a1 b1 n1 a2 b2 n2
+  shift 3
+  PS=PASS
+  session "$dd/first" "$sf" "$PROMPT"
+  evrun "$label: first start, empty \$P" "$dd/first"
+  ev "$label: \$P after the first start:"
   p_listing | sed 's/^/    /' >> "$EV"
-  for f in installed_plugins.json known_marketplaces.json marketplaces cache data; do
-    if [ -e "$P/$f" ]; then ev "    present: $f"; else ev "    MISSING: $f"; status=FAIL; fi
+  ev "$label: plugin paths in init: $(under_p "$dd/first/init.json")"
+  for f in "$@"; do
+    if [ -e "$P/$f" ]; then ev "    present: $f"; else ev "    MISSING: $f"; PS=FAIL; fi
   done
   stray=$(find "$AG" "$HM" \( -name installed_plugins.json -o -name known_marketplaces.json -o -name marketplaces -o -path '*/plugins/cache' \) 2> /dev/null | sed "s#^$T/##" | paste -s -d, - || true)
-  ev "plugin-related files under \$AG or \$HOME: [${stray:-none}]"
-  if [ -n "$stray" ]; then status=FAIL; fi
+  ev "$label: plugin-related files under \$AG or \$HOME: [${stray:-none}]"
+  if [ -n "$stray" ]; then PS=FAIL; fi
   a1=$(p_sum)
   b1=$(inst_sum)
-  n1=$(plugin_names "$d/first/init.json")
+  n1=$(plugin_names "$dd/first/init.json")
   mark_clear
-  session "$d/second" "$d/settings.json" "$PROMPT"
-  evrun "restart, same \$P, fresh \$AG" "$d/second"
+  session "$dd/second" "$sf" "$PROMPT"
+  evrun "$label: restart, same \$P, fresh \$AG" "$dd/second"
   a2=$(p_sum)
   b2=$(inst_sum)
-  n2=$(plugin_names "$d/second/init.json")
-  ev "cache dirs cksum: $a1 -> $a2; installed_plugins.json cksum: $b1 -> $b2; plugins loaded: [$n1] -> [$n2]"
-  if [ "$a1" != "$a2" ] || [ "$b1" != "$b2" ] || [ "$n1" != "$n2" ] || [ -z "$n2" ]; then status=FAIL; fi
-  if [ "$GIT_OK" = no ] && [ "$status" = PASS ]; then status=RECORDED; ev "recorded with the directory marketplace (no git fixture, item 0), not asserted"; fi
+  n2=$(plugin_names "$dd/second/init.json")
+  ev "$label: cache dirs cksum: $a1 -> $a2; installed_plugins.json cksum: $b1 -> $b2; plugins loaded: [$n1] -> [$n2]"
+  if [ "$a1" != "$a2" ] || [ "$b1" != "$b2" ] || [ "$n1" != "$n2" ] || [ -z "$n2" ]; then PS=FAIL; fi
+}
+
+# 3: the per-agent plugins dir and persistence.
+item03() {
+  local d=$S/03 status=PASS
+  mkdir -p "$d"
+  # (a) The directory marketplace: its plugins may load in place (outside $P), so
+  # only persistence is asserted; the layout is recorded.
+  fresh_ws s03a
+  std_settings "$d/a.json"
+  persist_run "(a) directory marketplace" "$d/a.json" "$d/a"
+  [ "$PS" = PASS ] || status=FAIL
+  # (b) A remote marketplace, pinned: everything lands under $P.
+  fresh_remote s03b
+  settings "$d/b.json" "$(enabled "$PM_KEY=true")" "$(pm_decl "$PM_OLD")"
+  persist_run "(b) remote marketplace $PM_NAME at $PM_OLD" "$d/b.json" "$d/b" installed_plugins.json known_marketplaces.json marketplaces cache
+  [ "$PS" = PASS ] || status=FAIL
   record 3 "$status" "The per-agent plugins dir holds everything, and a restart installs nothing"
 }
 
 # One pin case for item 4: declare <mkt> with <ref>, start, report what Claude Code did.
 PIN_OK=no
-pin_case() { # <id> <mkt> <source-json> <ref> <plugin-key> <expected-clone-head or ''>
+pin_case() { # <id> <mkt> <source-json> <ref> <plugin-key> <expected clone HEAD or ''>
   local id=$1 mkt=$2 src=$3 ref=$4 key=$5 want=$6 d=$S/04/$1 head loaded=no
   mkdir -p "$d"
-  fresh_ws "s04$id"
+  fresh_remote "s04$id"
   settings "$d/settings.json" "$(enabled "$key=true")" "$(decl "$mkt" "$src" "$ref" false)"
   session "$d/run" "$d/settings.json" "$PROMPT"
   head=$(clone_head "$mkt")
   if has_plugin "$d/run/init.json" "${key%@*}"; then loaded=yes; fi
   evrun "($id) $mkt with ref $ref" "$d/run"
-  ev "($id) accepted (the plugin loads): $loaded; marketplace clone HEAD: $head (expected ${want:-n/a}); cache versions: [$(cache_versions "$mkt" "${key%@*}")]"
-  ev "($id) installed: $(jq -c 'map_values(map({version, gitCommitSha}))' "$P/installed_plugins.json" 2> /dev/null || echo absent)"
+  ev "($id) accepted (the plugin loads): $loaded; marketplace clone HEAD: $head (expected ${want:-n/a}); installed sha: $(installed_sha "$key")"
   PIN_OK=no
   if [ "$loaded" = yes ] && { [ -z "$want" ] || [ "$head" = "$want" ]; }; then PIN_OK=yes; fi
 }
 
-# 4: pins Claude Code accepts.
+# 4: pins Claude Code accepts (public marketplaces, commits picked on the host).
 item04() {
-  local d=$S/04 status=PASS sha tag
+  local d=$S/04 status=PASS official_ok=no
   mkdir -p "$d"
-  if [ "$GIT_OK" = no ]; then
-    ev "NOT RUN: item 0 refused the file:// git marketplace and G1_GITHUB_REPO is not set. (d), (e) and (f) need only the network: rerun with G1_GITHUB_REPO set to run all of them."
-    record 4 "NOT RUN" "Pins Claude Code accepts (needs the git fixture)"
-    return 0
-  fi
-  serve_reset acme
-  pin_case a fixture "$(src_git acme)" "$FIX_FIRST" marker@fixture "$FIX_FIRST"
-  ev "(a) PASS needs the clone at the pinned commit: $PIN_OK"
+  ev "commits read on the host (plain git): official OLD $OFF_OLD, NEW $OFF_NEW, tag ${OFF_TAG:-none}; superpowers OLD $SUP_OLD, NEW $SUP_NEW, tag ${SUP_TAG:-none}"
+  # (a, f) a non-reserved github source at a commit.
+  pin_case a "$(mk_name SUP)" "$SRC_SUPER" "$SUP_OLD" "$(mk_key SUP)" "$SUP_OLD"
+  ev "(a, f) PASS needs superpowers-marketplace's clone at the pinned commit: $PIN_OK"
   [ "$PIN_OK" = yes ] || status=FAIL
-  pin_case b fixture "$(src_git acme)" v1 marker@fixture "$FIX_FIRST"
-  ev "(b) PASS needs the tag v1 to resolve to the first commit: $PIN_OK"
-  [ "$PIN_OK" = yes ] || status=FAIL
-  pin_case c fixture "$(src_git acme)" stable marker@fixture ""
-  ev "(c) RECORDED: a branch name is accepted as a ref: $PIN_OK"
-
-  # Reserved-name marketplace: commit and tag pins (fills OFFICIAL_MARKETPLACES).
-  sha=$(remote_head https://github.com/anthropics/claude-plugins-official.git || true)
-  tag=$(remote_tag https://github.com/anthropics/claude-plugins-official.git || true)
-  if [ -n "$sha" ]; then
-    pin_case d claude-plugins-official "$SRC_OFFICIAL" "$sha" skill-creator@claude-plugins-official "$sha"
-    ev "(d) RECORDED: the official marketplace accepts a commit ref: $PIN_OK"
-    const "OFFICIAL_MARKETPLACES pin rules (item 4d): a commit ref for claude-plugins-official is accepted and honoured: $PIN_OK (ref $sha). Fills §7.4."
-  else
-    ev "(d) could not read the official marketplace's HEAD (network?)"
-  fi
-  if [ -n "$tag" ]; then
-    pin_case e claude-plugins-official "$SRC_OFFICIAL" "$tag" skill-creator@claude-plugins-official ""
-    ev "(e) RECORDED: the official marketplace accepts the tag $tag: $PIN_OK"
-    const "OFFICIAL_MARKETPLACES pin rules (item 4e): tag $tag for claude-plugins-official accepted: $PIN_OK. Fills §7.4."
-  else
-    ev "(e) the official marketplace has no tags: nothing to pin (RECORDED)"
-    const "OFFICIAL_MARKETPLACES pin rules (item 4e): claude-plugins-official has no tags."
-  fi
-
-  # A catalog entry's own sha: shaext-ext in the directory marketplace.
-  fresh_ws s04sha
-  settings "$d/sha.json" "$(enabled shaext-ext@fixdir=true)" "$DECL_DIR"
-  session "$d/sha" "$d/sha.json" "$PROMPT"
-  evrun "(sha) shaext-ext@fixdir: an external git-subdir entry with sha $FIX_FIRST" "$d/sha"
-  ev "(sha) RECORDED: installed at the entry's sha: $(jq -r '.["shaext-ext@fixdir"][0].gitCommitSha // "none"' "$P/installed_plugins.json" 2> /dev/null) (want $FIX_FIRST)"
-
-  # (f) a non-reserved github source with a commit ref.
-  sha=$(remote_head https://github.com/obra/superpowers-marketplace.git || true)
-  if [ -n "$sha" ]; then
-    SUPER_SHA=$sha
-    pin_case f superpowers-marketplace "$SRC_SUPER" "$sha" superpowers@superpowers-marketplace "$sha"
-    ev "(f) PASS needs the pinned commit: $PIN_OK"
+  # (b) a tag.
+  if [ -n "$SUP_TAG" ]; then
+    pin_case b "$(mk_name SUP)" "$SRC_SUPER" "$SUP_TAG" "$(mk_key SUP)" "$SUP_TAGSHA"
+    ev "(b) PASS needs the tag $SUP_TAG to resolve to $SUP_TAGSHA: $PIN_OK"
     [ "$PIN_OK" = yes ] || status=FAIL
   else
-    ev "(f) could not read obra/superpowers-marketplace's HEAD (network?)"
-    status=FAIL
+    ev "(b) superpowers-marketplace has no tags: RECORDED, nothing to pin"
   fi
-  record 4 "$status" "Pins Claude Code accepts (a, b, f assert; c, d, e and the entry sha are recorded)"
+  # (c) a branch name.
+  pin_case c "$(mk_name SUP)" "$SRC_SUPER" "$SUP_BRANCH" "$(mk_key SUP)" ""
+  ev "(c) RECORDED: the branch $SUP_BRANCH is accepted as a ref: $PIN_OK"
+  # (d, e) the reserved-name marketplace: fills OFFICIAL_MARKETPLACES' pin rules.
+  pin_case d "$(mk_name OFF)" "$SRC_OFFICIAL" "$OFF_OLD" "$(mk_key OFF)" "$OFF_OLD"
+  official_ok=$PIN_OK
+  ev "(d) RECORDED: claude-plugins-official accepts and honours a commit ref: $official_ok"
+  const "OFFICIAL_MARKETPLACES pin rules (item 4d): a commit ref for claude-plugins-official is accepted and honoured: $official_ok (ref $OFF_OLD). Fills §7.4."
+  if [ -n "$OFF_TAG" ]; then
+    pin_case e "$(mk_name OFF)" "$SRC_OFFICIAL" "$OFF_TAG" "$(mk_key OFF)" "$OFF_TAGSHA"
+    ev "(e) RECORDED: the official marketplace accepts the tag $OFF_TAG: $PIN_OK"
+    const "OFFICIAL_MARKETPLACES pin rules (item 4e): tag $OFF_TAG for claude-plugins-official accepted and honoured: $PIN_OK. Fills §7.4."
+  else
+    ev "(e) the official marketplace has no tags: RECORDED"
+    const "OFFICIAL_MARKETPLACES pin rules (item 4e): claude-plugins-official has no tags."
+  fi
+  # Items 5-9 pin the official marketplace when it honours commit pins, else superpowers.
+  if [ "$official_ok" = yes ]; then set_pm OFF; else set_pm SUP; fi
+  ev "items 5-9 pin $PM_NAME at $PM_OLD (upstream HEAD $PM_NEW), with $OM_NAME as the Latest marketplace"
+  record 4 "$status" "Pins Claude Code accepts (a, f and b assert; c, d and e are recorded)"
 }
 
-SUPER_SHA=""
-ensure_super_sha() { # in the main shell, so the value is kept
-  if [ -z "$SUPER_SHA" ]; then SUPER_SHA=$(remote_head https://github.com/obra/superpowers-marketplace.git || true); fi
+# stays <label> <run dir>: the pinned marketplace is still at the pin and its plugin loads. Sets V5.
+stays() {
+  local head
+  head=$(clone_head "$PM_NAME")
+  ev "$1: $PM_NAME clone HEAD $head (pin $PM_OLD); installed sha $(installed_sha "$PM_KEY"); plugin loaded: $(has_plugin "$2/init.json" "$(pm_plugin)" && echo yes || echo no)"
+  [ "$head" = "$PM_OLD" ] || V5=FAIL
+  has_plugin "$2/init.json" "$(pm_plugin)" || V5=FAIL
 }
 
 # 5: a pinned plugin stays, without and with FORCE_AUTOUPDATE_PLUGINS=1.
 drv_long() { umsg "$PROMPT"; sleep 660; }
 item05_variant() { # <label> <0|1>: sets V5=PASS|FAIL
-  local label=$1 force=$2 d=$S/05/$1 en decls v1 v2 want=1.0.0 n
+  local label=$1 force=$2 d=$S/05/$1 en
   mkdir -p "$d"
   V5=PASS
-  serve_reset acme
-  serve_reset acme-latest
-  fresh_ws "s05$label"
-  decls=$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)
-  en=$(enabled marker@fixture=true dep@fixture=true)
+  fresh_remote "s05$label"
   if [ "$force" = 1 ]; then
     XENV="$XENV -e FORCE_AUTOUPDATE_PLUGINS=1"
-    en=$(enabled marker@fixture=true dep@fixture=true marker@fixlatest=true dep@fixlatest=true)
-    settings "$d/settings.json" "$en" "$decls" "$(decl fixlatest "$(src_git acme-latest)" "" true)"
+    en=$(enabled "$PM_KEY=true" "$OM_KEY=true")
+    settings "$d/settings.json" "$en" "$(pm_decl "$PM_OLD")" "$(om_decl)"
   else
-    settings "$d/settings.json" "$en" "$decls"
+    settings "$d/settings.json" "$(enabled "$PM_KEY=true")" "$(pm_decl "$PM_OLD")"
   fi
-  ev "$label: declarations: $(jq -c '.extraKnownMarketplaces' "$d/settings.json" | cut -c1-400)"
+  [ "$PM_OLD" != "$PM_NEW" ] || { V5=FAIL; ev "$label: the pin equals upstream HEAD, so staying proves nothing"; }
+  ev "$label: declarations: $(jq -c '.extraKnownMarketplaces' "$d/settings.json" | cut -c1-400); upstream HEAD is $PM_NEW, ahead of the pin"
   session "$d/s1" "$d/settings.json" "$PROMPT"
   evrun "$label: first start" "$d/s1"
-  v1=$(cache_versions fixture marker)
-  ev "$label: marker versions in \$P after the first start: [$v1]"
-  serve_push2 acme
-  if [ "$force" = 1 ]; then serve_push2 acme-latest; fi
-  ev "$label: pushed the second commit ($FIX_SECOND)"
+  stays "$label: after the first start" "$d/s1"
   session "$d/s2" "$d/settings.json" "$PROMPT"
   evrun "$label: restart 1" "$d/s2"
+  stays "$label: after restart 1" "$d/s2"
   session "$d/s3" "$d/settings.json" "$PROMPT"
   evrun "$label: restart 2" "$d/s3"
+  stays "$label: after restart 2" "$d/s3"
   ev "$label: now a session open for more than ten minutes with one message (about 11 minutes)..."
   SESSION_LIMIT=900 fifo_session "$d/long" "$d/settings.json" drv_long
   evrun "$label: ten-minute session" "$d/long"
-  v2=$(cache_versions fixture marker)
-  ev "$label: marker versions in \$P at the end: [$v2]; clone HEAD $(clone_head fixture) (pinned $FIX_FIRST); orphaned: [$(orphans)]"
-  for n in s2 s3 long; do ev "$label: marker loaded at $n: $(loaded_version "$d/$n/init.json" marker)"; done
+  stays "$label: after the ten-minute session" "$d/long"
+  ev "$label: orphaned: [$(orphans)]"
   if [ "$force" = 1 ]; then
-    ev "$label: RECORDED the Latest marketplace's marker versions: [$(cache_versions fixlatest marker)]; loaded at the end: $(loaded_version "$d/long/init.json" marker)"
+    ev "$label: RECORDED the Latest marketplace $OM_NAME: clone HEAD $(clone_head "$OM_NAME"); its plugin loaded at the end: $(has_plugin "$d/long/init.json" "${OM_KEY%@*}" && echo yes || echo no)"
   fi
-  [ "$v1" = "$want" ] && [ "$v2" = "$want" ] || V5=FAIL
-  [ "$(clone_head fixture)" = "$FIX_FIRST" ] || V5=FAIL
   [ "$(cat "$d/long/seconds.txt")" -ge 600 ] || { V5=FAIL; ev "$label: the long session lasted under 600 s, the check is invalid"; }
 }
 item05() {
   local d=$S/05 status
   mkdir -p "$d"
-  if [ "$GIT_OK" = no ]; then
-    ev "NOT RUN: needs the git fixture (see item 0)."
-    record 5 "NOT RUN" "A pinned plugin stays (needs the git fixture)"
-    return 0
-  fi
   item05_variant noforce 0
   status=$V5
   ev "noforce: $V5"
@@ -713,128 +668,117 @@ item05() {
 
 # 6: repin.
 item06() {
-  local d=$S/06 status=PASS v
+  local d=$S/06 status=PASS head
   mkdir -p "$d"
-  if [ "$GIT_OK" = no ]; then
-    ev "NOT RUN: needs the git fixture (see item 0)."
-    record 6 "NOT RUN" "Repin (needs the git fixture)"
-    return 0
-  fi
-  serve_reset acme
-  fresh_ws s06
-  settings "$d/pin1.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
-  settings "$d/pin2.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_SECOND" false)"
+  fresh_remote s06
+  settings "$d/pin1.json" "$(enabled "$PM_KEY=true")" "$(pm_decl "$PM_OLD")"
+  settings "$d/pin2.json" "$(enabled "$PM_KEY=true")" "$(pm_decl "$PM_NEW")"
   session "$d/s1" "$d/pin1.json" "$PROMPT"
-  evrun "pinned at the first commit" "$d/s1"
-  serve_push2 acme
+  evrun "pinned at OLD $PM_OLD" "$d/s1"
+  ev "clone HEAD after the first start: $(clone_head "$PM_NAME"); installed sha $(installed_sha "$PM_KEY")"
   mark_clear
   session "$d/s2" "$d/pin2.json" "$PROMPT"
-  evrun "repinned to the second commit $FIX_SECOND" "$d/s2"
-  v=$(loaded_version "$d/s2/init.json" marker)
-  ev "marker loaded at the repin start: $v (want 1.1.0); versions in \$P: [$(cache_versions fixture marker)]; .orphaned_at: [$(orphans)]; clone HEAD $(clone_head fixture)"
-  [ "$v" = 1.1.0 ] || status=FAIL
-  const "repin (item 6): the new version loads at the repin start: $([ "$status" = PASS ] && echo yes || echo no); old version orphaned: $([ -n "$(orphans)" ] && echo yes || echo no). Fills B6."
+  evrun "repinned to NEW $PM_NEW" "$d/s2"
+  head=$(clone_head "$PM_NAME")
+  ev "clone HEAD at the repin start: $head (want $PM_NEW); installed sha $(installed_sha "$PM_KEY"); plugin loaded: $(has_plugin "$d/s2/init.json" "$(pm_plugin)" && echo yes || echo no); .orphaned_at: [$(orphans)]; marks: [$(mark_list)]"
+  [ "$head" = "$PM_NEW" ] && has_plugin "$d/s2/init.json" "$(pm_plugin)" || status=FAIL
+  const "repin (item 6): the new commit is fetched and loaded at the repin start: $([ "$status" = PASS ] && echo yes || echo no); old version orphaned: $([ -n "$(orphans)" ] && echo yes || echo no). Fills B6."
   if [ "$status" = FAIL ]; then
     # The fallback: the same restart with autoUpdate true for that one start.
-    fresh_ws s06fb
-    serve_reset acme
+    fresh_remote s06fb
     session "$d/fb1" "$d/pin1.json" "$PROMPT"
-    serve_push2 acme
-    settings "$d/pin2au.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_SECOND" true)"
+    settings "$d/pin2au.json" "$(enabled "$PM_KEY=true")" "$(pm_decl "$PM_NEW" true)"
     session "$d/fb2" "$d/pin2au.json" "$PROMPT"
-    evrun "FALLBACK: repin to the second commit with autoUpdate true for that start" "$d/fb2"
-    ev "fallback: marker loaded: $(loaded_version "$d/fb2/init.json" marker); versions [$(cache_versions fixture marker)]; orphaned [$(orphans)]"
-    const "repin fallback (item 6): with autoUpdate true for that one start the new version loads: $([ "$(loaded_version "$d/fb2/init.json" marker)" = 1.1.0 ] && echo yes || echo no)."
+    evrun "FALLBACK: repin to NEW with autoUpdate true for that start" "$d/fb2"
+    ev "fallback: clone HEAD $(clone_head "$PM_NAME") (want $PM_NEW); plugin loaded: $(has_plugin "$d/fb2/init.json" "$(pm_plugin)" && echo yes || echo no); orphaned [$(orphans)]"
+    const "repin fallback (item 6): with autoUpdate true for that one start the clone reaches NEW: $([ "$(clone_head "$PM_NAME")" = "$PM_NEW" ] && echo yes || echo no)."
   fi
-  record 6 "$status" "Repin: the new pin loads at that start"
+  record 6 "$status" "Repin: the new pin is fetched and loads at that start"
 }
 
-# 7: Latest updates on restart, without and with FORCE_AUTOUPDATE_PLUGINS=1.
+# 7: pinned at OLD, then switched to Latest: when does it move? No upstream push
+# is possible, so this does NOT test an upstream push during a Latest agent's
+# life, nor a Latest plugin's autoUpdate across a version bump.
 item07_variant() { # <label> <0|1>
-  local label=$1 force=$2 d=$S/07/$1 vb va v2 v3 cv1 cv2
+  local label=$1 force=$2 d=$S/07/$1 h1 h2 h3 cv1 cv2
   mkdir -p "$d"
-  serve_reset acme
-  fresh_ws "s07$label"
+  fresh_remote "s07$label"
   if [ "$force" = 1 ]; then XENV="$XENV -e FORCE_AUTOUPDATE_PLUGINS=1"; fi
-  settings "$d/settings.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "" true)"
+  settings "$d/pinned.json" "$(enabled "$PM_KEY=true")" "$(pm_decl "$PM_OLD")"
+  settings "$d/latest.json" "$(enabled "$PM_KEY=true")" "$(pm_decl "" true)"
   cv1=$(run_limited 60 ctr claude --version 2> /dev/null | awk '{print $1}' || true)
-  session "$d/s1" "$d/settings.json" "$PROMPT"
-  evrun "$label: first start (Latest, autoUpdate true, DISABLE_AUTOUPDATER=1)" "$d/s1"
-  vb=$(cache_versions fixture marker)
-  serve_push2 acme
-  session "$d/s2" "$d/settings.json" "$PROMPT"
-  evrun "$label: restart 1, after the push" "$d/s2"
-  v2=$(loaded_version "$d/s2/init.json" marker)
-  va=$(cache_versions fixture marker)
-  session "$d/s3" "$d/settings.json" "$PROMPT"
+  session "$d/s1" "$d/pinned.json" "$PROMPT"
+  evrun "$label: first start, pinned at OLD $PM_OLD" "$d/s1"
+  h1=$(clone_head "$PM_NAME")
+  session "$d/s2" "$d/latest.json" "$PROMPT"
+  evrun "$label: restart 1, declaration switched to Latest (no ref, autoUpdate true)" "$d/s2"
+  h2=$(clone_head "$PM_NAME")
+  session "$d/s3" "$d/latest.json" "$PROMPT"
   evrun "$label: restart 2" "$d/s3"
-  v3=$(loaded_version "$d/s3/init.json" marker)
+  h3=$(clone_head "$PM_NAME")
   cv2=$(run_limited 60 ctr claude --version 2> /dev/null | awk '{print $1}' || true)
-  ev "$label: versions in \$P: [$vb] after the first start, [$va] after restart 1, [$(cache_versions fixture marker)] after restart 2"
-  ev "$label: loaded: restart 1 = $v2, restart 2 = $v3; clone HEAD $(clone_head fixture) (second commit $FIX_SECOND); orphaned [$(orphans)]"
+  ev "$label: clone HEAD: $h1 (first start) -> $h2 (restart 1) -> $h3 (restart 2); remote HEAD when read $PM_NEW; installed sha $(installed_sha "$PM_KEY"); orphaned [$(orphans)]"
   ev "$label: claude --version in the container: $cv1 -> $cv2 (unchanged: $([ "$cv1" = "$cv2" ] && echo yes || echo NO))"
-  if [ "$v2" = 1.1.0 ]; then
-    ev "$label: RECORDED: the update happens BEFORE init, at the restart"
-    const "Latest env rule (item 7, FORCE_AUTOUPDATE_PLUGINS=$force): update at restart 1, before init (loaded 1.1.0)."
-  elif [ "$v3" = 1.1.0 ]; then
-    ev "$label: RECORDED: the update happens at the NEXT start after the restart that fetched it (restart 1 loaded $v2)"
-    const "Latest env rule (item 7, FORCE_AUTOUPDATE_PLUGINS=$force): update lands one start later (restart 1 loaded $v2, restart 2 loaded $v3)."
+  if [ "$h2" = "$PM_NEW" ]; then
+    ev "$label: RECORDED: the clone moves to the remote HEAD at restart 1, before init"
+    const "Latest env rule (item 7, FORCE_AUTOUPDATE_PLUGINS=$force): clone reaches the remote HEAD at restart 1."
+  elif [ "$h3" = "$PM_NEW" ]; then
+    ev "$label: RECORDED: the clone moves to the remote HEAD at restart 2 (one start later)"
+    const "Latest env rule (item 7, FORCE_AUTOUPDATE_PLUGINS=$force): clone reaches the remote HEAD at restart 2."
   else
-    ev "$label: RECORDED: no update within two restarts (loaded $v2, then $v3)"
-    const "Latest env rule (item 7, FORCE_AUTOUPDATE_PLUGINS=$force): NO update within two restarts."
+    ev "$label: RECORDED: the clone did not reach the remote HEAD within two restarts"
+    const "Latest env rule (item 7, FORCE_AUTOUPDATE_PLUGINS=$force): clone did NOT reach the remote HEAD within two restarts."
   fi
+  ev "$label: NOT TESTED here: an upstream push during a Latest agent's life, and a Latest plugin's autoUpdate across a version bump (no upstream we may push to)."
 }
 item07() {
   mkdir -p "$S/07"
-  if [ "$GIT_OK" = no ]; then
-    ev "NOT RUN: needs the git fixture (see item 0)."
-    record 7 "NOT RUN" "Latest updates on restart (needs the git fixture)"
-    return 0
-  fi
   item07_variant noforce 0
   item07_variant force 1
-  ev "Compare the two variants: the env rule for Latest is FORCE_AUTOUPDATE_PLUGINS=1 when only the force variant updates."
-  record 7 RECORDED "Latest updates on restart, without and with FORCE_AUTOUPDATE_PLUGINS=1"
+  ev "Compare the two variants: the env rule for Latest is FORCE_AUTOUPDATE_PLUGINS=1 when only the force variant moves."
+  record 7 RECORDED "Pinned, then Latest, on restart, without and with FORCE_AUTOUPDATE_PLUGINS=1 (no upstream push)"
 }
 
-# 8 and 9: the network down. Real remote marketplaces, so the network matters
-# (a file:// repo would still clone offline).
-settings_net() { # <out>: a pinned plugin (superpowers at a commit) and a Latest one (skill-creator)
-  settings "$1" "$(enabled superpowers@superpowers-marketplace=true skill-creator@claude-plugins-official=true)" \
-    "$(decl superpowers-marketplace "$SRC_SUPER" "$SUPER_SHA" false)" \
-    "$(decl claude-plugins-official "$SRC_OFFICIAL" "" true)"
-}
+# 8 and 9: the network down. Public remote marketplaces, run with
+# CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1. The offline session ends in API retries
+# (exit status 1 or 124 is expected), so it is capped at 60 s and judged on
+# init.plugins only.
 item08() {
   local d=$S/08 status=PASS
   mkdir -p "$d"
-  ensure_super_sha
-  [ -n "$SUPER_SHA" ] || { ev "could not read superpowers-marketplace's HEAD (network?)"; record 8 FAIL "Network down, plugin installed"; return 0; }
-  fresh_ws s08
+  # RECORDED: the online start without SYNC.
+  fresh_ws s08n
+  XENV=""
+  settings "$d/nosync.json" "$(enabled "$PM_KEY=true")" "$(pm_decl "$PM_OLD")"
+  session "$d/nosync" "$d/nosync.json" "$PROMPT"
+  evrun "online start WITHOUT CLAUDE_CODE_SYNC_PLUGIN_INSTALL" "$d/nosync"
+  ev "RECORDED: without SYNC the plugin is in the first init: $(has_plugin "$d/nosync/init.json" "$(pm_plugin)" && echo yes || echo no); installed_plugins.json: $(jq -c '.plugins | keys' "$P/installed_plugins.json" 2> /dev/null || echo absent); cache: [$(ls "$P/cache" 2> /dev/null | paste -s -d, -)]"
+  const "remote marketplaces and CLAUDE_CODE_SYNC_PLUGIN_INSTALL (item 8): without SYNC the plugin in the first init: $(has_plugin "$d/nosync/init.json" "$(pm_plugin)" && echo yes || echo no). Remote marketplaces need SYNC=1 for plugins in the first init; without it they install later in a long session or never in a short one."
+  # The online start with SYNC=1, then the offline restart.
+  fresh_remote s08
   XENV="$XENV -e FORCE_AUTOUPDATE_PLUGINS=1"
-  settings_net "$d/settings.json"
+  settings "$d/settings.json" "$(enabled "$PM_KEY=true" "$OM_KEY=true")" "$(pm_decl "$PM_OLD")" "$(om_decl)"
   session "$d/online" "$d/settings.json" "$PROMPT"
-  evrun "online start (installs a pinned superpowers and a Latest skill-creator)" "$d/online"
+  evrun "online start with SYNC=1 (installs the pinned plugin and a Latest one)" "$d/online"
+  has_plugin "$d/online/init.json" "$(pm_plugin)" || { status=FAIL; ev "the pinned plugin is not in the online init, so the offline check is vacuous"; }
   ev "\$P: $(p_listing | paste -s -d' ' - | cut -c1-300)"
   CNET="--network none"
-  session "$d/offline" "$d/settings.json" "$PROMPT"
-  evrun "restart with --network none, same \$P" "$d/offline"
-  ev "RECORDED: pinned superpowers loads offline: $(has_plugin "$d/offline/init.json" superpowers && echo yes || echo no); Latest skill-creator loads offline: $(has_plugin "$d/offline/init.json" skill-creator && echo yes || echo no); time to init (whole run) $(cat "$d/offline/seconds.txt")s"
-  has_plugin "$d/offline/init.json" superpowers || status=FAIL
-  const "plugin_not_loaded copy (item 8): offline with the plugin installed, init lists it: $([ "$status" = PASS ] && echo yes || echo no), printed: $(tr '\n' ' ' < "$d/offline/stderr.txt" | cut -c1-200)"
+  SESSION_LIMIT=60 session "$d/offline" "$d/settings.json" "$PROMPT"
+  evrun "restart with --network none, same \$P (capped at 60 s; exit 1 or 124 from API retries is expected)" "$d/offline"
+  ev "RECORDED: pinned $(pm_plugin) loads offline: $(has_plugin "$d/offline/init.json" "$(pm_plugin)" && echo yes || echo no); Latest ${OM_KEY%@*} loads offline: $(has_plugin "$d/offline/init.json" "${OM_KEY%@*}" && echo yes || echo no)"
+  has_plugin "$d/offline/init.json" "$(pm_plugin)" || status=FAIL
+  const "plugin_not_loaded copy (item 8): offline with the plugin installed, init lists the pinned plugin: $(has_plugin "$d/offline/init.json" "$(pm_plugin)" && echo yes || echo no); printed: $(tr '\n' ' ' < "$d/offline/stderr.txt" | cut -c1-200)"
   record 8 "$status" "Network down, plugin installed: the pinned plugin still loads from \$P"
 }
 item09() {
   local d=$S/09
   mkdir -p "$d"
-  ensure_super_sha
-  [ -n "$SUPER_SHA" ] || { ev "could not read superpowers-marketplace's HEAD (network?)"; record 9 RECORDED "Network down, plugin missing (not run)"; return 0; }
-  fresh_ws s09
+  fresh_remote s09
   CNET="--network none"
-  settings "$d/settings.json" "$(enabled superpowers@superpowers-marketplace=true skill-creator@claude-plugins-official=true marker@fixdir=true dep@fixdir=true)" \
-    "$(decl superpowers-marketplace "$SRC_SUPER" "$SUPER_SHA" false)" \
-    "$(decl claude-plugins-official "$SRC_OFFICIAL" "" true)" "$DECL_DIR"
-  session "$d/run" "$d/settings.json" "$PROMPT"
-  evrun "empty \$P, --network none, two remote plugins and one directory plugin declared" "$d/run"
+  settings "$d/settings.json" "$(enabled "$PM_KEY=true" "$OM_KEY=true" marker@fixdir=true dep@fixdir=true)" \
+    "$(pm_decl "$PM_OLD")" "$(om_decl)" "$DECL_DIR"
+  SESSION_LIMIT=60 session "$d/run" "$d/settings.json" "$PROMPT"
+  evrun "empty \$P, --network none (capped at 60 s; exit 1 or 124 is expected), two remote plugins and one directory plugin declared" "$d/run"
   ev "RECORDED: the session starts: $([ -s "$d/run/init.json" ] && echo yes || echo 'NO init (a failed start)'); loaded: [$(plugin_names "$d/run/init.json")]; exit $(cat "$d/run/exit.txt")"
   const "plugin_not_loaded copy (item 9): with an empty \$P and no network the session $([ -s "$d/run/init.json" ] && echo "starts, loaded [$(plugin_names "$d/run/init.json")]" || echo "does not start (no init)"); printed: $(tr '\n' ' ' < "$d/run/stderr.txt" | cut -c1-200). §7.3 step 8 must match."
   record 9 RECORDED "Network down, plugin missing: what Claude Code does and prints"
@@ -849,7 +793,7 @@ item10() {
   bare_settings "$d/s1.json"
   session "$d/s1" "$d/s1.json" 'Run these two shell commands with the Bash tool, one after the other: claude plugin marketplace add /fixture/dir   and then   claude plugin install marker@fixdir   . Then reply done.' --allowedTools Bash
   evrun "the agent installs marker@fixdir itself" "$d/s1"
-  ev "after: installed_plugins.json keys: $(jq -c 'keys' "$P/installed_plugins.json" 2> /dev/null || echo absent); known_marketplaces keys: $(jq -c 'keys' "$P/known_marketplaces.json" 2> /dev/null || echo absent)"
+  ev "after: installed_plugins.json keys: $(jq -c '.plugins | keys' "$P/installed_plugins.json" 2> /dev/null || echo absent); known_marketplaces keys: $(jq -c 'keys' "$P/known_marketplaces.json" 2> /dev/null || echo absent)"
   mk0=$(jq -c '.fixdir' "$P/known_marketplaces.json" 2> /dev/null || echo absent)
   mark_clear
   settings "$d/s2.json" "$(enabled marker@fixdir=false)"
@@ -858,9 +802,9 @@ item10() {
   mk1=$(jq -c '.fixdir' "$P/known_marketplaces.json" 2> /dev/null || echo absent)
   ev "marketplace fixdir in known_marketplaces.json: before restart $mk0; after $mk1 (stays: $([ "$mk1" != absent ] && echo yes || echo no); refreshed: $([ "$mk0" != "$mk1" ] && echo 'entry changed' || echo 'entry identical'))"
   ev "hook-sessionstart mark written at the restart: $([ -e "$MARK/hook-sessionstart" ] && echo YES || echo no)"
-  if [ -n "$(jq -r '.["marker@fixdir"] // empty' "$P/installed_plugins.json" 2> /dev/null)" ] && ! has_plugin "$d/s2/init.json" marker; then
+  if [ -n "$(jq -r '.plugins["marker@fixdir"] // empty' "$P/installed_plugins.json" 2> /dev/null)" ] && ! has_plugin "$d/s2/init.json" marker; then
     record 10 PASS "The agent's own install is disabled by an explicit false at the next start"
-  elif [ -z "$(jq -r '.["marker@fixdir"] // empty' "$P/installed_plugins.json" 2> /dev/null)" ]; then
+  elif [ -z "$(jq -r '.plugins["marker@fixdir"] // empty' "$P/installed_plugins.json" 2> /dev/null)" ]; then
     record 10 RECORDED "The agent's own install did not happen in the session (see the first run's stream); the check is vacuous"
   else
     record 10 FAIL "marker@fixdir loaded after the agent installed it and --settings said false"
@@ -932,22 +876,9 @@ item13() {
   evrun "(b) install at start" "$d/b"
   ev "(b) marks: [$(mark_list)]; install-time marks (npm-preinstall, npm-postinstall): [$(install_marks)]"
   [ -z "$(install_marks)" ] || status=FAIL
-  # (c) a repin.
-  if [ "$GIT_OK" = yes ]; then
-    serve_reset acme
-    fresh_ws s13c
-    settings "$d/c1.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_FIRST" false)"
-    settings "$d/c2.json" "$(enabled marker@fixture=true dep@fixture=true)" "$(decl fixture "$(src_git acme)" "$FIX_SECOND" false)"
-    session "$d/c1" "$d/c1.json" "$PROMPT"
-    serve_push2 acme
-    mark_clear
-    session "$d/c2" "$d/c2.json" "$PROMPT"
-    ev "(c) after the repin start: marks [$(mark_list)]; install-time marks [$(install_marks)]; loaded $(loaded_version "$d/c2/init.json" marker)"
-    [ -z "$(install_marks)" ] || status=FAIL
-  else
-    ev "(c) the repin check did not run (no git fixture, item 0)."
-  fi
-  record 13 "$status" "Install and update run no plugin code (MARK empty after the CLI installs; no npm preinstall/postinstall mark at start or repin)"
+  # (c) a repin: the remote plugins carry no code of ours, so item 6 lists the marks after its repin.
+  ev "(c) repin: covered by item 6's marks line (no fixture code runs at a repin of a public marketplace)."
+  record 13 "$status" "Install and update run no plugin code (MARK empty after the CLI installs; no npm preinstall/postinstall mark at start)"
 }
 
 # 14: skills-directory plugins.
@@ -1007,7 +938,7 @@ item15() {
   std_settings "$d/b.json"
   session "$d/b" "$d/b.json" "$PROMPT"
   evrun "(B) settings.local.json declares marketplace evil and enables x@evil" "$d/b"
-  ev "(B) RECORDED: x loaded: $(has_plugin "$d/b/init.json" x && echo yes || echo no); x-hook mark: $([ -e "$MARK/x-hook" ] && echo yes || echo no); evil in known_marketplaces.json: $(jq -c 'has("evil")' "$P/known_marketplaces.json" 2> /dev/null || echo absent); installed: $(jq -c 'keys' "$P/installed_plugins.json" 2> /dev/null || echo absent)"
+  ev "(B) RECORDED: x loaded: $(has_plugin "$d/b/init.json" x && echo yes || echo no); x-hook mark: $([ -e "$MARK/x-hook" ] && echo yes || echo no); evil in known_marketplaces.json: $(jq -c 'has("evil")' "$P/known_marketplaces.json" 2> /dev/null || echo absent); installed: $(jq -c '.plugins | keys' "$P/installed_plugins.json" 2> /dev/null || echo absent)"
   record 15 RECORDED "Project and local settings: which wins for enabledPlugins, and whether an unregistered marketplace is fetched"
 }
 
@@ -1115,17 +1046,10 @@ item18() {
   record 18 RECORDED "Frontmatter hooks of skills and subagents; skills in AG/commands and AG/agents"
 }
 
-# 19: required synced plugins (manual: it needs a claude.ai organisation).
+# 19: required synced plugins: not testable by Or.
 item19() {
-  ev "Needs a claude.ai organisation that can mark a plugin required, and an agent signed in with a token from it."
-  ev "Steps for Or:"
-  ev "  1. In the organisation's settings, mark one plugin as required (if the organisation can)."
-  ev "  2. With CLAUDE_CODE_OAUTH_TOKEN exported (never on a command line), run in a throwaway container:"
-  ev "       docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN -e CLAUDE_CONFIG_DIR=/tmp/ag -e CLAUDE_CODE_PLUGIN_CACHE_DIR=/tmp/p $IMAGE \\"
-  ev "         claude -p ok --output-format stream-json --verbose --settings '{\"syncClaudeAiPlugins\":false}' > $T/19-out.jsonl"
-  ev "  3. jq 'select(.type==\"system\" and .subtype==\"init\") | .plugins' $T/19-out.jsonl"
-  ev "  4. Write down in the report: does the required plugin load with syncClaudeAiPlugins false? If the organisation cannot mark a plugin required, write UNTESTED."
-  record 19 MANUAL "Required synced plugins with syncClaudeAiPlugins: false (token-signed-in agent)"
+  ev "UNTESTED, a known gap: no organisation setting marks a plugin as required, so there is nothing to sign an agent into. To be handled if a real case appears."
+  record 19 RECORDED "Required synced plugins with syncClaudeAiPlugins: false: UNTESTED, a known gap (handle if a real case appears)"
 }
 
 # 20: install and start timing (timing.sh, RECORDED).
@@ -1147,10 +1071,10 @@ item21() {
   ev "The pin ($PIN) is the floor unless an older version passes."
   ev "To test an older one, if you can: build or pull an image with it, then run"
   ev "    G1_FLOOR_PROBE=1 scripts/g1/run.sh <older-image>"
-  ev "and read items 1-9, 12, 15 and (if testable) 19 in that report. The lowest version where they all hold is the floor."
+  ev "and read items 1-9, 12 and 15 in that report. The lowest version where they all hold is the floor."
   ev "A probe report is not the Gate G1 report (it says so at the top)."
   const "floor (item 21): $PIN (the pin), unless Or probes an older image with G1_FLOOR_PROBE=1 and records it here. Fills B3's MIN_CLAUDE_VERSION."
-  record 21 MANUAL "The version floor (lowest version where items 1-9, 12, 15 and 19 hold)"
+  record 21 MANUAL "The version floor (lowest version where items 1-9, 12 and 15 hold)"
 }
 
 # -------------------------------------------------------------------- report
@@ -1190,7 +1114,7 @@ build_report() {
         line=${line//@@IMAGE_ID@@/$IMAGE_ID}
         line=${line//@@HOST@@/$(uname -sm), docker $(docker version -f '{{.Server.Version}} {{.Server.Arch}}' 2> /dev/null || echo '?')}
         line=${line//@@FILE_URL@@/$FILE_URL_NOTE}
-        line=${line//@@SHAS@@/fixture first ${FIX_FIRST:-?}, second ${FIX_SECOND:-?}; latest first ${LAT_FIRST:-?}, second ${LAT_SECOND:-?}}
+        line=${line//@@SHAS@@/official OLD ${OFF_OLD:-?} NEW ${OFF_NEW:-?}; superpowers OLD ${SUP_OLD:-?} NEW ${SUP_NEW:-?}; item 0 fixture first ${FIX_FIRST:-?}, second ${FIX_SECOND:-?}}
         line=${line//@@WORKDIR@@/$T}
         printf '%s\n' "$line" >> "$out"
         ;;
@@ -1234,8 +1158,10 @@ bash "$HERE/fixture/make-fixture.sh" "$FX" > "$T/make-fixture.log" 2>&1 || die "
 # shellcheck source=/dev/null
 . "$FX/SHAS"
 DECL_DIR=$(decl fixdir "$SRC_DIR")
-serve_reset acme
-serve_reset acme-latest
+cp -a "$FX/src-fixture.git" "$R/acme.git"   # item 0's bare repo, mounted read-only
+pick_commits OFF "$OFF_URL" skill-creator
+pick_commits SUP "$SUP_URL" superpowers
+set_pm OFF                                   # item 4 may switch it to SUP
 
 item00
 item01

@@ -111,6 +111,31 @@ export interface PluginSourceOptions {
 export const pluginSourcesRoot = (factoryHome: string) =>
   path.join(factoryHome, "state", "library", "plugin-sources");
 
+/** Where the checkout of an external `git` source at `sha` lives, or null when the source or sha is unusable. */
+function sourceDest(
+  src: ExternalSource,
+  sha: string,
+  o: Pick<PluginSourceOptions, "factoryHome" | "githubUrl">,
+): { dest: string; url: string; value: string; sub: string } | null {
+  if (!COMMIT_PATTERN.test(sha) || src.source === "archive") return null;
+  const target = gitTarget(src);
+  if (!target) return null;
+  const { value, subpath: sub } = target;
+  const url = gitUrlOf(value, o.githubUrl);
+  const hash = createHash("sha256").update(`${url}\0${sub}`).digest("hex").slice(0, 32);
+  return { dest: path.join(pluginSourcesRoot(o.factoryHome), hash, sha), url, value, sub };
+}
+
+/** The checkout of an external source at `sha` when it was already read; null otherwise. Never fetches. */
+export async function cachedPluginSource(
+  src: ExternalSource,
+  sha: string,
+  o: Pick<PluginSourceOptions, "factoryHome" | "githubUrl">,
+): Promise<string | null> {
+  const at = sourceDest(src, sha, o);
+  return at && (await stat(at.dest).catch(() => undefined))?.isDirectory() ? at.dest : null;
+}
+
 /**
  * The read-only checkout of an external `git` source at `sha`, `state/library/plugin-sources/<hash>/<sha>/`
  * (spec §7.5). Fetched once; a second call returns the same directory. Refuses userinfo, `?`, `#` and any
@@ -123,12 +148,9 @@ export async function readPluginSource(
 ): Promise<string> {
   if (!COMMIT_PATTERN.test(sha)) throw new GitError("git failed: invalid commit.", "");
   if (src.source === "archive") throw new Error("Open Factory doesn't fetch archives.");
-  const target = gitTarget(src);
-  if (!target) throw new GitError("git failed: invalid source.", "");
-  const { value, subpath: sub } = target;
-  const url = gitUrlOf(value, o.githubUrl);
-  const hash = createHash("sha256").update(`${url}\0${sub}`).digest("hex").slice(0, 32);
-  const dest = path.join(pluginSourcesRoot(o.factoryHome), hash, sha);
+  const at = sourceDest(src, sha, o);
+  if (!at) throw new GitError("git failed: invalid source.", "");
+  const { dest, url, value, sub } = at;
   if ((await stat(dest).catch(() => undefined))?.isDirectory()) return dest;
 
   const tmp = path.join(o.factoryHome, "state", "library", "preview", `plugin-${randomUUID()}`);

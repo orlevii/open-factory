@@ -363,3 +363,299 @@ export const sourceUpdateViewSchema = z.object({
 export const sourceViewSchema = sourceDetailSchema.extend({
   update: sourceUpdateViewSchema.nullable(),
 });
+
+// Marketplaces and plugins (spec §9.1, §9.3).
+
+const gitUrlField = z.string().refine(checkGitUrl, "Use an https git URL.");
+const pinRefField = z.string().refine(checkPinRef, "Use a commit or a tag.");
+
+/** `POST /api/library/marketplaces/preview`: a GitHub repo, a git URL or a host folder. */
+export const marketplacePreviewBodySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("github"), repo: repoField }),
+  z.object({ kind: z.literal("git"), url: gitUrlField }),
+  z.object({ kind: z.literal("directory"), path: folderPath }),
+]);
+
+/** `POST /api/library/marketplaces`: an earlier preview. */
+export const marketplaceAddBodySchema = z.object({ previewId: z.string().min(1) });
+
+/** `POST …/marketplaces/:name/update`: the commit the last check found. */
+export const marketplaceUpdateBodySchema = z.object({ commit: z.string().min(1) });
+
+/** `POST …/marketplaces/:name/fetch`: a 40-hex commit or a tag Skills hasn't read. */
+export const marketplaceFetchBodySchema = z.object({ ref: pinRefField });
+
+/** `POST /api/library/plugins/:key/diff`: two commits (or recorded tags) of the plugin's marketplace. */
+export const pluginDiffBodySchema = z.object({ from: pinRefField, to: pinRefField });
+
+/** `POST /api/library/plugins/:key/read`: the commit whose external source is fetched. */
+export const pluginReadBodySchema = z.object({ commit: pinRefField.optional() });
+
+/** `GET /api/library/plugins/:key` and `…/file`: a commit (default the Library's), or the host's copy. */
+export const pluginReadQuerySchema = z.object({
+  commit: pinRefField.optional(),
+  from: z.literal("host").optional(),
+});
+
+export const pluginFileQuerySchema = pluginReadQuerySchema.extend({ path: z.string().min(1) });
+
+export const pluginKeyParamsSchema = z.object({
+  key: z.string().regex(PLUGIN_REF_PATTERN, "Not a plugin key."),
+});
+
+export const marketplaceNameParamsSchema = z.object({
+  name: z.string().regex(MARKETPLACE_PATTERN, "Not a marketplace name."),
+});
+
+export const marketplaceSourceSchema = z.discriminatedUnion("source", [
+  z.object({ source: z.literal("github"), repo: z.string() }),
+  z.object({ source: z.literal("git"), url: z.string() }),
+  z.object({ source: z.literal("directory"), path: z.string() }),
+]);
+
+export const previewPluginSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  version: z.string().optional(),
+  pinnable: z.boolean(),
+  refusedReason: z.string().optional(),
+});
+
+/** `POST /api/library/marketplaces/preview`. */
+export const marketplacePreviewSchema = z.object({
+  previewId: z.string(),
+  name: z.string(),
+  source: marketplaceSourceSchema,
+  commit: z.string().nullable(),
+  committedAt: z.string().nullable(),
+  subject: z.string().nullable(),
+  branch: z.string().nullable(),
+  commitPinnable: z.boolean(),
+  plugins: z.array(previewPluginSchema),
+});
+
+/** A registry row (spec §7.1) with its update info and users (counts). */
+export const marketplaceDetailSchema = z.object({
+  name: z.string(),
+  source: marketplaceSourceSchema,
+  branch: z.string().nullable(),
+  commit: z.string().nullable(),
+  committedAt: z.string().nullable(),
+  subject: z.string().nullable(),
+  tags: z.record(z.string(), z.string()),
+  state: z.enum(["adding", "ready"]),
+  updateCommit: z.string().nullable(),
+  updateAt: z.string().nullable(),
+  updateSubject: z.string().nullable(),
+  checkedAt: z.string().nullable(),
+  checkError: z.string().nullable(),
+  usedBy: usedBySchema,
+});
+
+/** What moving a marketplace's Library commit would change (spec §7.1). */
+export const marketplaceUpdateViewSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  committedAt: z.string().nullable(),
+  subject: z.string().nullable(),
+  changed: z.array(
+    z.object({
+      name: z.string(),
+      what: z.array(z.enum(["version", "source", "tree"])),
+      runsCodeChanged: z.boolean(),
+    }),
+  ),
+  removed: z.array(z.string()),
+  added: z.array(z.string()),
+});
+
+/** `GET /api/library/marketplaces/:name`: the row, and the update view once a check found a newer commit. */
+export const marketplaceViewSchema = marketplaceDetailSchema.extend({
+  update: marketplaceUpdateViewSchema.nullable(),
+});
+
+export const marketplaceFetchedSchema = z.object({ sha: z.string() });
+
+// Plugin contents (spec §7.8). Mirrors `readContents` in the server.
+
+export const pluginHookRowSchema = z.object({
+  event: z.string(),
+  matcher: z.string(),
+  type: z.string(),
+  command: z.string(),
+  timeout: z.number().nullable(),
+});
+
+export const pluginMcpRowSchema = z.object({
+  name: z.string(),
+  kind: z.string(),
+  command: z.string().nullable(),
+  args: z.array(z.string()),
+  env: z.array(z.object({ name: z.string(), value: z.string().nullable() })),
+  url: z.string().nullable(),
+  headers: z.array(z.string()),
+});
+
+export const pluginCodePartSchema = z.object({
+  kind: z.enum(["lsp", "statusLine", "monitors", "bin", "node"]),
+  items: z.array(z.string()),
+});
+
+export const contentsSummarySchema = z.object({
+  hooks: z.number().int().nonnegative(),
+  mcp: z.number().int().nonnegative(),
+  codeParts: z.number().int().nonnegative(),
+  dependencies: z.number().int().nonnegative(),
+  skills: z.number().int().nonnegative(),
+  commands: z.number().int().nonnegative(),
+  agents: z.number().int().nonnegative(),
+  outputStyles: z.number().int().nonnegative(),
+  needs: z.number().int().nonnegative(),
+  unshown: z.number().int().nonnegative(),
+});
+
+export const pluginContentsSchema = z.object({
+  manifest: z.object({
+    name: z.string().nullable(),
+    version: z.string().nullable(),
+    description: z.string().nullable(),
+    author: z.string().nullable(),
+    homepage: z.string().nullable(),
+    repository: z.string().nullable(),
+  }),
+  hooks: z.array(pluginHookRowSchema),
+  mcp: z.array(pluginMcpRowSchema),
+  dependencies: z.array(z.string()),
+  codeParts: z.array(pluginCodePartSchema),
+  needs: z.array(z.string()),
+  provides: z.object({
+    skills: z.array(z.string()),
+    commands: z.array(z.string()),
+    agents: z.array(z.string()),
+    outputStyles: z.array(z.string()),
+  }),
+  unshown: z.array(z.string()),
+  files: z.array(z.string()),
+  summary: contentsSummarySchema,
+});
+
+const change = <T extends z.ZodType>(t: T) => z.object({ added: z.array(t), removed: z.array(t) });
+
+export const contentsDiffSchema = z.object({
+  hooks: change(pluginHookRowSchema),
+  mcp: change(pluginMcpRowSchema),
+  commands: change(z.string()),
+  dependencies: change(z.string()),
+  codeParts: change(pluginCodePartSchema),
+  needs: change(z.string()),
+  runsCode: z.boolean(),
+});
+
+/** A plugin's row state, a subset of the spec §10.2 states that apply to a catalog entry. */
+export const pluginStateSchema = z.enum(["ok", "missing", "refused", "cant_pin"]);
+
+/** Who uses a plugin and at which pin (`commit:<sha>`, `tag:<name>`, `latest` or `live`). */
+export const pluginUsersSchema = z.object({
+  templates: z.array(z.object({ name: z.string(), pin: z.string(), agents: z.number().int() })),
+  /** Agents that enable it through their own overlay; it runs at their template's pin. */
+  overlays: z.array(z.object({ agent: z.string(), template: z.string(), pin: z.string() })),
+});
+
+/** One catalog entry at the Library's commit (spec §9.1). */
+export const pluginEntrySchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  version: z.string().optional(),
+  pinnable: z.boolean(),
+  refusedReason: z.string().optional(),
+  state: pluginStateSchema,
+  /** Null when the contents aren't readable here: an external source not fetched yet, or an unusable one. */
+  contentsSummary: contentsSummarySchema.nullable(),
+  /** An external `sha` source whose contents aren't read yet: the peek offers Read contents. */
+  canRead: z.boolean(),
+  usedBy: pluginUsersSchema,
+});
+
+/** A plugin installed on the host whose marketplace isn't registered (spec §7.6). */
+export const hostPluginEntrySchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  marketplace: z.string(),
+  version: z.string().nullable(),
+  lastUpdated: z.string().nullable(),
+  contentsSummary: contentsSummarySchema.nullable(),
+  /** "Can't show: outside the host's plugin folder." and the like. */
+  cantShow: z.string().optional(),
+  /** "The host's record for acme can't be used: …": Add its marketplace is refused. */
+  addRefusedReason: z.string().optional(),
+});
+
+/** `GET /api/library/plugins`. */
+export const pluginsResponseSchema = z.object({
+  marketplaces: z.array(
+    z.object({
+      name: z.string(),
+      commit: z.string().nullable(),
+      state: z.enum(["adding", "ready"]),
+      plugins: z.array(pluginEntrySchema),
+    }),
+  ),
+  host: z.array(hostPluginEntrySchema),
+});
+
+/** `GET /api/library/marketplaces`: each row with its plugins and users. */
+export const marketplacesResponseSchema = z.object({
+  marketplaces: z.array(
+    marketplaceDetailSchema.extend({
+      plugins: z.array(pluginEntrySchema),
+      users: z.object({ templates: z.array(z.string()), agents: z.array(z.string()) }),
+    }),
+  ),
+});
+
+/** `GET /api/library/plugins/:key`: the full contents and provenance at one commit, or the host's copy. */
+export const pluginDetailSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  marketplace: z.string(),
+  from: z.enum(["library", "host"]),
+  /** The commit read; null for a live folder and for the host's copy. */
+  commit: z.string().nullable(),
+  version: z.string().nullable(),
+  description: z.string().nullable(),
+  pinnable: z.boolean(),
+  refusedReason: z.string().optional(),
+  state: pluginStateSchema,
+  /** Where the code comes from: a path in the marketplace, or an external source (secrets-free). */
+  source: z.object({
+    kind: z.enum(["relative", "external", "refused", "host"]),
+    detail: z.string(),
+  }),
+  contents: pluginContentsSchema.nullable(),
+  /** Why there are no contents: "Contents not read yet", "Can't show: …". */
+  contentsNote: z.string().nullable(),
+  canRead: z.boolean(),
+  /** "Also on this host (1.2.0)": the host's installed version of the same key. */
+  hostVersion: z.string().nullable(),
+  usedBy: pluginUsersSchema,
+});
+
+const diffSide = z.object({
+  commit: z.string(),
+  present: z.boolean(),
+  version: z.string().nullable(),
+  /** Parts that couldn't be read, which the diff can't show. */
+  unshown: z.array(z.string()),
+});
+
+/** `POST /api/library/plugins/:key/diff`. */
+export const pluginDiffSchema = z.object({
+  key: z.string(),
+  from: diffSide,
+  to: diffSide,
+  diff: contentsDiffSchema,
+});
+
+/** `GET /api/library/plugins/:key/file`. */
+export const pluginFileTextSchema = z.object({ path: z.string(), text: z.string() });

@@ -18,6 +18,7 @@ import { hostSkillsDirOf } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { COMMIT_PATTERN } from "./common.ts";
 import { type CatalogEntry, readCatalog } from "./marketplaces-service.ts";
+import type { Declarations } from "./plugin-usage.ts";
 import { listSkillFiles, readSkillFile, readSkillMdText } from "./skill-files.ts";
 import { readSkillMd } from "./skill-md.ts";
 
@@ -300,6 +301,17 @@ export class LibraryIndex {
       }
     }
     return out;
+  }
+
+  /** Each valid template's last good config and each live agent's overlay: what plugin usage is read from. */
+  async declarations(): Promise<Declarations> {
+    const port = this.templates();
+    const templates = new Map<string, ConfigDoc>();
+    for (const t of await port.names()) {
+      const doc = await port.lastValid(t);
+      if (doc) templates.set(t, doc);
+    }
+    return { templates, agents: await this.store.agents() };
   }
 
   async usedBy(name: string): Promise<{ templates: string[]; agents: string[] }> {

@@ -302,11 +302,35 @@ async function codeDigest(
   return { digest: h.digest("hex"), capped };
 }
 
+/** One catalog entry as the preview and the Plugins view show it (spec §7.4, §7.7): pinnable, or why not. */
+export function previewPluginOf(marketplace: string, e: CatalogEntry): PreviewPlugin {
+  const info = classifyPluginSource(e.raw);
+  const base = {
+    name: e.name,
+    ...(typeof e.raw.description === "string"
+      ? { description: cutGraphemes(e.raw.description, SUBJECT_MAX) }
+      : {}),
+    ...(typeof e.raw.version === "string" ? { version: e.raw.version } : {}),
+  };
+  if (info.kind === "refused") {
+    return {
+      ...base,
+      pinnable: false,
+      refusedReason: MARKETPLACE_MSG.refusedSource(e.name, marketplace, info.label),
+    };
+  }
+  if (info.kind === "external" && !info.pinnable) {
+    return { ...base, pinnable: false, refusedReason: MARKETPLACE_MSG.unpinnable };
+  }
+  return { ...base, pinnable: true };
+}
+
 // Service ---------------------------------------------------------------------------------
 
 export class MarketplacesService {
   private readonly previews = new Map<string, PreviewMeta>();
   private readonly pending = new Set<Promise<unknown>>();
+  private readonly checking = new Set<string>();
   private readonly now: () => Date;
   private readonly undoMs: number;
 
@@ -449,27 +473,7 @@ export class MarketplacesService {
   }
 
   private pluginsOf(name: string, entries: CatalogEntry[]): PreviewPlugin[] {
-    return entries.map((e) => {
-      const info = classifyPluginSource(e.raw);
-      const base = {
-        name: e.name,
-        ...(typeof e.raw.description === "string"
-          ? { description: cutGraphemes(e.raw.description, SUBJECT_MAX) }
-          : {}),
-        ...(typeof e.raw.version === "string" ? { version: e.raw.version } : {}),
-      };
-      if (info.kind === "refused") {
-        return {
-          ...base,
-          pinnable: false,
-          refusedReason: MARKETPLACE_MSG.refusedSource(e.name, name, info.label),
-        };
-      }
-      if (info.kind === "external" && !info.pinnable) {
-        return { ...base, pinnable: false, refusedReason: MARKETPLACE_MSG.unpinnable };
-      }
-      return { ...base, pinnable: true };
-    });
+    return entries.map((e) => previewPluginOf(name, e));
   }
 
   private commitPinnable(name: string): boolean {
@@ -796,6 +800,35 @@ export class MarketplacesService {
     });
     this.d.publish?.();
     return this.detail(next ?? row);
+  }
+
+  /** Check for updates over every git or GitHub marketplace, 4 at a time, in the background (`idle()` waits). */
+  async startCheckAll(): Promise<void> {
+    const queue = (await this.d.store.all())
+      .filter(
+        (r) =>
+          r.deletedAt === null &&
+          r.state === "ready" &&
+          r.source.source !== "directory" &&
+          !this.checking.has(r.name),
+      )
+      .map((r) => r.name);
+    for (const n of queue) this.checking.add(n);
+    this.background(async () => {
+      const worker = async () => {
+        for (let n = queue.shift(); n !== undefined; n = queue.shift()) {
+          try {
+            await this.check(n);
+          } catch (e) {
+            // The row keeps its last result.
+            this.d.log(`checking marketplace ${n} failed`, e);
+          } finally {
+            this.checking.delete(n);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+    });
   }
 
   // Update --------------------------------------------------------------------------------

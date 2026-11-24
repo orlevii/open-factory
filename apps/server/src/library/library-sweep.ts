@@ -54,6 +54,31 @@ export async function skillDirsInUse(
   return ids.flatMap((id) => [...shas].map((sha) => path.join(githubRoot, id, sha)));
 }
 
+/**
+ * The marketplace checkouts the given running processes still use (spec §9.4): `started.library.plugins` records each
+ * plugin's pin as `commit:<sha>`, `tag:<name>` or `latest`/`live`. A commit or tag pin holds
+ * `<marketplacesRoot>/<marketplace>/<sha>` (a tag through the row's recorded tags); Latest and live hold none.
+ */
+export function marketplaceDirsInUse(
+  marketplacesRoot: string,
+  started: { library: { plugins: Record<string, string> } }[],
+  rows: { name: string; tags: Record<string, string> }[],
+): string[] {
+  const out = new Set<string>();
+  for (const s of started) {
+    for (const [key, pin] of Object.entries(s.library.plugins)) {
+      const name = key.slice(key.lastIndexOf("@") + 1);
+      const sha = pin.startsWith("commit:")
+        ? pin.slice("commit:".length)
+        : pin.startsWith("tag:")
+          ? rows.find((r) => r.name === name)?.tags[pin.slice("tag:".length)]
+          : undefined;
+      if (sha) out.add(path.join(marketplacesRoot, name, sha));
+    }
+  }
+  return [...out];
+}
+
 export class LibrarySweep {
   private readonly now: () => Date;
   private readonly undoMs: number;

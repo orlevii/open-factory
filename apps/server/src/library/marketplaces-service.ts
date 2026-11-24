@@ -46,6 +46,7 @@ import {
   resolveRef,
 } from "./git-fetch.ts";
 import { LIBRARY_KEY, libraryLock } from "./locks.ts";
+import { CODE_KEYS, CODE_PATHS } from "./plugin-contents.ts";
 import { classifyPluginSource } from "./plugin-sources.ts";
 
 export const MARKETPLACE_MSG = {
@@ -271,9 +272,6 @@ async function treeDigest(dir: string, cap: number): Promise<{ digest: string; c
   else h.update("missing");
   return { digest: h.digest("hex"), capped };
 }
-
-const CODE_PATHS = ["hooks", "monitors", "bin", ".mcp.json", ".lsp.json", "package.json"] as const;
-const CODE_KEYS = ["hooks", "mcpServers", "lspServers", "statusLine", "monitors", "dependencies"];
 
 /** What makes a plugin run code (spec §7.1): its hooks, servers, monitors, `bin/` and Node dependencies. */
 async function codeDigest(

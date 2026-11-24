@@ -71,7 +71,7 @@ function HookRow({ h }: { h: Contents["hooks"][number] }) {
       <p>
         <UntrustedInlineCode text={h.matcher ? `${h.event} · ${h.matcher}` : h.event} />
       </p>
-      <div className="min-w-0 flex-1 basis-60">
+      <div className="min-w-0 flex-1 basis-60 @max-[28rem]:basis-auto">
         <UntrustedCode text={h.command} clampLines={200} />
       </div>
     </li>

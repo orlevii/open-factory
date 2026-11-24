@@ -58,7 +58,7 @@ const PluginRow = memo(function PluginRow({
             {versionLabel(entry.version)}
           </span>
         )}
-        <span className="min-w-0 flex-1 text-[0.8125rem]">
+        <span className="min-w-0 flex-auto text-[0.8125rem]">
           <ContentsLine
             summary={entry.contentsSummary}
             unreadable={entry.canRead ? "Contents not read yet" : "Contents not shown"}
@@ -103,7 +103,7 @@ const HostRow = memo(function HostRow({
             {versionLabel(entry.version)}
           </span>
         )}
-        <span className="min-w-0 flex-1 text-[0.8125rem]">
+        <span className="min-w-0 flex-auto text-[0.8125rem]">
           <ContentsLine
             summary={entry.contentsSummary}
             unreadable={entry.cantShow ?? "Contents not shown"}

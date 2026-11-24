@@ -63,7 +63,7 @@ const MarketplaceItem = memo(function MarketplaceItem({
         <span className="font-mono text-[0.8125rem] [overflow-wrap:anywhere]">
           {visibleControls(m.name)}
         </span>
-        <span className="flex min-w-0 flex-1 font-mono text-[0.8125rem] text-muted-foreground">
+        <span className="flex min-w-20 flex-auto font-mono text-[0.8125rem] text-muted-foreground">
           <span dir="ltr" className="flex min-w-0 flex-1 [unicode-bidi:isolate]">
             <MiddleTruncate text={visibleControls(marketplaceSourceLabel(m.source))} />
           </span>

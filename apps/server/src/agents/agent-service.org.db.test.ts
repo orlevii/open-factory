@@ -215,3 +215,103 @@ test("description_by names the agent that last wrote the description; a human ed
   await svc.update("target", { description: "by human" }, human);
   expect((await rowOf("target"))?.descriptionBy).toBeNull();
 });
+
+const frames = () => vi.spyOn(t.app.bus, "publishAll");
+const orgFrames = (spy: ReturnType<typeof frames>) =>
+  spy.mock.calls.map(([m]) => m).filter((m) => m.type === "org_action");
+
+test("an agent's create, archive and unarchive publish one org_action each, after the commit", async () => {
+  const spy = frames();
+  try {
+    await svc.create(body("frame-1"), hr);
+    expect(await rowOf("frame-1")).toBeDefined();
+    await svc.archive("frame-1", hr);
+    await svc.unarchive("frame-1", hr);
+    expect(orgFrames(spy)).toEqual([
+      { type: "org_action", action: "agent_created", by: "@hr-bot", subject: "frame-1" },
+      { type: "org_action", action: "agent_archived", by: "@hr-bot", subject: "frame-1" },
+      { type: "org_action", action: "agent_unarchived", by: "@hr-bot", subject: "frame-1" },
+    ]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("a human's own create, archive and unarchive publish no org_action", async () => {
+  const spy = frames();
+  try {
+    await svc.create(body("frame-h"), human);
+    await svc.archive("frame-h", human);
+    await svc.unarchive("frame-h", human);
+    expect(orgFrames(spy)).toEqual([]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("an archive that changes nothing and a refused create publish no org_action", async () => {
+  await svc.create(body("frame-n"), human);
+  await svc.archive("frame-n", human);
+  const spy = frames();
+  try {
+    await svc.archive("frame-n", hr); // already archived
+    await expect(svc.create(body("loc-3", "localtpl"), hr)).rejects.toBeInstanceOf(OrgRefusedError);
+    expect(orgFrames(spy)).toEqual([]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+const heldBy = async (slug: string) =>
+  (
+    await t.sql`select m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_agent_id
+                where a.slug = ${slug} and m.kind in ('peer_joined','peer_left') order by m.created_at`
+  ).map((r) => ({ ...r }));
+const clearPeerRows = () => t.sql`delete from messages where kind in ('peer_joined','peer_left')`;
+
+test("an agent actor's create, move and archive name it in the peer events; the recipient who is the actor isn't told", async () => {
+  await svc.create({ ...body("pe-lead"), reportsTo: null }, human);
+  await svc.create({ ...body("pe-dev"), reportsTo: "pe-lead" }, human);
+  await svc.create({ ...body("pe-boss"), reportsTo: null }, human);
+  await clearPeerRows();
+  await svc.create({ ...body("pe-pmo"), reportsTo: "pe-lead" }, hr);
+  expect(await heldBy("pe-dev")).toEqual([
+    {
+      kind: "peer_joined",
+      notice: "peer",
+      body: "@pe-pmo (pe-pmo) joined as your peer, by @hr-bot.",
+    },
+  ]);
+  expect(await heldBy("pe-lead")).toEqual([
+    {
+      kind: "peer_joined",
+      notice: "report",
+      body: "@pe-pmo (pe-pmo) joined as your report, by @hr-bot.",
+    },
+  ]);
+  await clearPeerRows();
+  await svc.update("pe-dev", { reportsTo: "pe-boss" }, hr);
+  expect(await heldBy("pe-lead")).toEqual([
+    {
+      kind: "peer_left",
+      notice: "report",
+      body: "@pe-dev (pe-dev) left: now reports to @pe-boss, by @hr-bot.",
+    },
+  ]);
+  await clearPeerRows();
+  await svc.archive("pe-pmo", await asAgent("pe-lead"));
+  // The manager did it itself, so it isn't told; a peer is.
+  expect(await heldBy("pe-lead")).toEqual([
+    { kind: "peer_left", notice: "report", body: "@pe-pmo (pe-pmo) left: archived." },
+  ]);
+  expect(await heldBy("pe-dev")).toEqual([]);
+});
+
+test("a human's create names no actor in the peer events", async () => {
+  await svc.create({ ...body("hm-lead"), reportsTo: null }, human);
+  await clearPeerRows();
+  await svc.create({ ...body("hm-dev"), reportsTo: "hm-lead" }, human);
+  expect(await heldBy("hm-lead")).toEqual([
+    { kind: "peer_joined", notice: "report", body: "@hm-dev (hm-dev) joined as your report." },
+  ]);
+});

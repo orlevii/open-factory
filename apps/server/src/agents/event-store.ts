@@ -410,7 +410,7 @@ export class EventStore {
   }
   private deliverableWhere(debounceMs: number) {
     const cutoff = new Date(Date.now() - debounceMs);
-    return sql`((${messages.kind} in ('message', 'task_assigned', 'task_comment', 'task_update', 'scheduled') or (${messages.kind} = 'system' and ${messages.notice} not in ('crons_stopped', 'config_changed'))) or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
+    return sql`((${messages.kind} in ('message', 'task_assigned', 'task_comment', 'task_update', 'scheduled') or (${messages.kind} = 'system' and ${messages.notice} not in ('crons_stopped', 'config_changed', 'report_config_changed'))) or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
   }
   /** Live (not archived, not terminated), non-errored agents with at least one pending member update still inside the debounce window. */
   async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {
@@ -1126,13 +1126,14 @@ export class EventStore {
    * A system notice from `@factory`. One pending notice of each type per agent: a second one replaces the pending
    * one's body (same row); a written (delivered) one, or one in `inFlightIds`, is never touched.
    *
-   * `config_changed` (I2 §7.3) merges instead: the pending body's lines and the new body's are united, sorted, instead
+   * `config_changed` (I2 §7.3) and `report_config_changed` (I7 §8.2) merge instead: the pending body's lines and the new body's are united, sorted, instead
    * of replaced (no other type's body has lines to unite), and the row's `createdAt` moves to now, because it now holds a change newer than any process already
-   * running (the runtime holds such rows for the next process). Serialised per agent and type, so two concurrent
-   * merges never create two rows.
+   * running (the runtime holds such rows for the next process). Serialised per agent and type (and subject, for
+   * `report_config_changed`: one row per manager and report), so two concurrent merges never create two rows. The
+   * merged body keeps the newest header.
    */
   async createNotice(
-    m: { toAgentId: string; notice: NoticeType; body: string },
+    m: { toAgentId: string; notice: NoticeType; body: string; subjectAgentId?: string },
     o: {
       /** Ids written to a process but not yet marked delivered: never replaced or merged into. */
       inFlightIds?: string[];
@@ -1144,12 +1145,15 @@ export class EventStore {
       eq(messages.kind, "system"),
       eq(messages.notice, m.notice),
       eq(messages.state, "pending"),
+      m.subjectAgentId
+        ? eq(messages.subjectAgentId, m.subjectAgentId)
+        : isNull(messages.subjectAgentId),
       ...(inFlightIds.length ? [notInArray(messages.id, inFlightIds)] : []),
     );
-    if (m.notice === "config_changed")
+    if (m.notice === "config_changed" || m.notice === "report_config_changed")
       return this.db.transaction(async (tx) => {
         await tx.execute(
-          sql`select pg_advisory_xact_lock(hashtext(${`notice:${m.notice}:${m.toAgentId}`}))`,
+          sql`select pg_advisory_xact_lock(hashtext(${`notice:${m.notice}:${m.toAgentId}:${m.subjectAgentId ?? ""}`}))`,
         );
         const [pending] = await tx
           .select()
@@ -1159,10 +1163,10 @@ export class EventStore {
           .limit(1)
           .for("update");
         if (pending) {
-          const body = renderConfigNotice([
-            ...parseConfigNotice(pending.body),
-            ...parseConfigNotice(m.body),
-          ]);
+          const body = renderConfigNotice(
+            [...parseConfigNotice(pending.body), ...parseConfigNotice(m.body)],
+            m.body.split("\n", 1)[0],
+          );
           const [row] = await tx
             .update(messages)
             .set({ body, createdAt: this.clock() })
@@ -1182,7 +1186,7 @@ export class EventStore {
     return this.insertNotice(m, this.db);
   }
   private async insertNotice(
-    m: { toAgentId: string; notice: NoticeType; body: string },
+    m: { toAgentId: string; notice: NoticeType; body: string; subjectAgentId?: string },
     tx: Exec,
   ): Promise<MessageRow> {
     const [row] = await tx
@@ -1192,6 +1196,7 @@ export class EventStore {
         kind: "system",
         notice: m.notice,
         toAgentId: m.toAgentId,
+        subjectAgentId: m.subjectAgentId ?? null,
         body: m.body,
         createdAt: this.clock(),
       })

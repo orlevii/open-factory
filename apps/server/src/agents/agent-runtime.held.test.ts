@@ -168,10 +168,12 @@ test("held rows ride along with a batch written while idle; peer events are neve
 
 test("a peer_left envelope carries its subject, with the move target read back from the body", async () => {
   await idle();
-  const body = peerBody({ slug: "devrep", displayName: "Dev agent" }, "report", {
-    kind: "peer_left",
-    left: { reason: "moved", to: "leadx" },
-  });
+  const body = peerBody(
+    { slug: "devrep", displayName: "Dev agent" },
+    "report",
+    { kind: "peer_left", left: { reason: "moved", to: "leadx" } },
+    "leadx",
+  );
   await h.receive(
     await h.store.createHeld({
       kind: "peer_left",

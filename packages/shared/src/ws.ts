@@ -119,6 +119,16 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
     agent: z.string().optional(),
     template: z.string().optional(),
   }),
+  /**
+   * I7 §8.3: an agent created, archived or unarchived an agent, or created a template. Published only for agent
+   * actors (a human's own action already toasts in their browser); `by` is the actor's `@slug`.
+   */
+  z.object({
+    type: z.literal("org_action"),
+    action: z.enum(["agent_created", "agent_archived", "agent_unarchived", "template_created"]),
+    by: z.string(),
+    subject: z.string(),
+  }),
   z.object({
     type: z.literal("image_build"),
     name: z.string(),

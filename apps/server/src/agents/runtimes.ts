@@ -452,6 +452,33 @@ export class AgentRuntimes {
   }
 
   /**
+   * I7 §8.2: records an agent actor's change to `reportId`'s configuration in its manager's one pending
+   * `report_config_changed` notice for that report (merged), through the manager's runtime when one exists, as
+   * `recordConfigNotice` does. Nothing for an archived or terminated manager. The lines are `describeChanges` output.
+   */
+  async recordReportNotice(
+    managerId: string,
+    reportId: string,
+    by: string,
+    lines: string[],
+  ): Promise<void> {
+    if (!lines.length) return;
+    const manager = await this.d.store.agentById(managerId);
+    if (!manager || manager.archivedAt || manager.terminatedAt) return;
+    const rt = await this.get(managerId);
+    if (rt) return rt.recordReportNotice(reportId, by, lines);
+    const report = await this.d.store.agentById(reportId);
+    if (!report) return;
+    const row = await this.d.store.createNotice({
+      toAgentId: managerId,
+      notice: "report_config_changed",
+      body: notices.reportConfigChanged({ by, report: report.slug, lines }),
+      subjectAgentId: reportId,
+    });
+    await (await this.get(managerId))?.adoptNotice(row.id);
+  }
+
+  /**
    * Runtime-only fields; defaults for an agent that has no runtime yet. `runtimeDisabled` comes from the row and the
    * config, not the runtime: spec §8.2 sends it for every local agent while the gate is off, loaded or not (after a
    * boot nothing is loaded until it is touched).

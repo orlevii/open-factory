@@ -118,6 +118,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
           },
         } as never;
       },
+      recordReportNotice: async () => {},
       recordConfigNotice: async (id: string, lines: string[]) => {
         if (stuckOf(id)) return never;
         notices.push({ id, lines });

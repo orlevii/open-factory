@@ -43,13 +43,16 @@ export type RecipientResult =
   | { to: string; kind: "agent"; status: "start_failed"; id: string; note: string }
   | { to: string; status: "refused"; reason: string; code: RefusalCode };
 
-/** What happened to the subject of a peer event (S6 spec §10.2, S7 §9.1). `spawned` is a join. */
+/**
+ * What happened to the subject of a peer event (S6 spec §10.2, S7 §9.1). `spawned` is a join. `by` (I7 §8.2) is the
+ * `@slug` of an agent actor, set only when one caused the change; a terminator's `by` is its own field.
+ */
 export type PeerChange =
-  | { kind: "joined" }
+  | { kind: "joined"; by?: string }
   | { kind: "spawned" }
-  | { kind: "left"; reason: "archived" }
+  | { kind: "left"; reason: "archived"; by?: string }
   | { kind: "left"; reason: "terminated"; by: string }
-  | { kind: "moved"; to: string | null };
+  | { kind: "moved"; to: string | null; by?: string };
 
 /** The subject's manager and peers before a change; recipients of `left`/`moved` come from it. */
 export type NeighborhoodSnapshot = { managerId: string | null; peerIds: string[] };
@@ -598,6 +601,7 @@ export class Router {
           before.peerIds,
           o.excludeManager ? null : before.managerId,
           left,
+          change.kind === "left" && change.reason === "terminated" ? undefined : change.by,
         )),
       );
     }
@@ -610,6 +614,8 @@ export class Router {
           "peer_joined",
           now.peers.map((p) => p.id),
           o.excludeManager ? null : (now.manager?.id ?? null),
+          undefined,
+          change.kind === "spawned" ? undefined : change.by,
         )),
       );
     }
@@ -651,6 +657,7 @@ export class Router {
     peerIds: string[],
     managerId: string | null,
     left?: PeerLeft,
+    by?: string,
   ): Promise<PendingRow[]> {
     const targets: { id: string; relation: "peer" | "report" }[] = peerIds.map((id) => ({
       id,
@@ -668,7 +675,14 @@ export class Router {
             toAgentId: to.id,
             subjectAgentId: subject.id,
             notice: t.relation,
-            body: peerBody(subject, t.relation, left ? { kind, left } : { kind: "peer_joined" }),
+            body: peerBody(
+              subject,
+              t.relation,
+              left
+                ? { kind, left, ...(by ? { by } : {}) }
+                : { kind: "peer_joined", ...(by ? { by } : {}) },
+              to.slug,
+            ),
           },
           tx,
         ),

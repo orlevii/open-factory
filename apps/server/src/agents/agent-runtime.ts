@@ -277,13 +277,16 @@ type Subject = NonNullable<Envelope["subject"]>;
 const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
 /**
  * S9 §10.3, I2 §7.3: a notice that never makes an agent wake, stay up or be kept alive by itself (`crons_stopped`: the
- * agent was stopped on purpose; `config_changed`: the change applies at the next start). It rides at the head of the
+ * agent was stopped on purpose; `config_changed`: the change applies at the next start; `report_config_changed`
+ * (I7 §8.2): a report's config change is information for a manager, never work). It rides at the head of the
  * next batch that has something else. The one predicate every place that counts a queued item as a reason to act uses.
  */
 const isPassive = (e: Entry): boolean =>
   e.kind === "message" &&
   e.row.kind === "system" &&
-  (e.row.notice === "crons_stopped" || e.row.notice === "config_changed");
+  (e.row.notice === "crons_stopped" ||
+    e.row.notice === "config_changed" ||
+    e.row.notice === "report_config_changed");
 const kindOf = (row: MessageRow): MessageKind => row.kind as MessageKind;
 /** Member updates and peer events: never written mid-turn, written with any batch written while no turn is open. */
 const isHeld = (e: Entry): e is MessageEntry =>
@@ -844,9 +847,14 @@ export class AgentRuntime {
    * Adds (or refreshes) a `@factory` notice. Call inside a job. A new notice goes ahead of every non-notice entry
    * (older pending messages, rolled-back batches); a replaced pending one only changes its body. Starts nothing.
    */
-  async addNotice(type: NoticeType, body: string) {
+  async addNotice(type: NoticeType, body: string, subjectAgentId?: string) {
     const row = await this.d.store.createNotice(
-      { toAgentId: this.agent.id, notice: type, body },
+      {
+        toAgentId: this.agent.id,
+        notice: type,
+        body,
+        ...(subjectAgentId ? { subjectAgentId } : {}),
+      },
       { inFlightIds: this.inFlight.flat().map((e) => e.row.id) },
     );
     this.placeNotice(row);
@@ -880,6 +888,24 @@ export class AgentRuntime {
     return this.run(async () => {
       if (this.terminationCommitted || !lines.length) return;
       await this.addNotice("config_changed", notices.configChanged(lines));
+    });
+  }
+
+  /**
+   * I7 §8.2: records an agent actor's change to one of this agent's reports in the one pending
+   * `report_config_changed` notice for that report (merged, sorted). Passive like `recordConfigNotice`. Never throws
+   * for a terminated agent.
+   */
+  recordReportNotice(reportId: string, by: string, lines: string[]): Promise<void> {
+    return this.run(async () => {
+      if (this.terminationCommitted || !lines.length) return;
+      const report = await this.d.store.agentById(reportId);
+      if (!report) return;
+      await this.addNotice(
+        "report_config_changed",
+        notices.reportConfigChanged({ by, report: report.slug, lines }),
+        reportId,
+      );
     });
   }
 

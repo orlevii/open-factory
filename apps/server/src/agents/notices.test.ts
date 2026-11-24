@@ -66,3 +66,15 @@ test("the config_changed notice: a fixed header, one sorted line per change, par
   expect(parseConfigNotice(renderConfigNotice(["a\n- b", "  "]))).toEqual(["a - b"]);
   expect(renderConfigNotice([])).toBe("Your configuration changed:");
 });
+
+test("reportConfigChanged names the actor and the report, then one sorted line each, and reads back", () => {
+  const body = notices.reportConfigChanged({
+    by: "@hr",
+    report: "dev",
+    lines: ["added skill tdd", "model: sonnet → haiku", "added skill tdd"],
+  });
+  expect(body).toBe(
+    "@hr changed @dev's configuration:\n- added skill tdd\n- model: sonnet → haiku",
+  );
+  expect(parseConfigNotice(body)).toEqual(["added skill tdd", "model: sonnet → haiku"]);
+});

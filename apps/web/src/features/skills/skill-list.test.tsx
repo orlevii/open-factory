@@ -94,6 +94,20 @@ test("with a peek open, j retargets it to the next row", async () => {
   expect(review).toHaveAttribute("aria-expanded", "false");
 });
 
+test("F6 moves focus from the list into the peek, and a second F6 returns it to the shown row", async () => {
+  const user = userEvent.setup();
+  await open();
+  const review = await screen.findByRole("button", { name: /^review/ });
+  await user.click(review);
+  review.focus();
+  await user.keyboard("{F6}");
+  const peek = await screen.findByRole("dialog");
+  expect(peek).toContainElement(document.activeElement as HTMLElement);
+  await user.keyboard("{F6}");
+  expect(review).toHaveFocus();
+  expect(review).toHaveAttribute("aria-expanded", "true");
+});
+
 test("Space opens a row's peek and, on the row already shown, closes it", async () => {
   const user = userEvent.setup();
   await open();

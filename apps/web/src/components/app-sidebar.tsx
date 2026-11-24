@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
+  Blocks,
   Bot,
   CalendarClock,
   ChartColumn,
@@ -76,6 +77,7 @@ const nav = [
   { to: "/inbox", label: "Inbox", icon: Inbox },
   { to: "/tasks", label: "Tasks", icon: ListTodo },
   { to: "/templates", label: "Templates", icon: LayoutTemplate },
+  { to: "/skills", label: "Skills", icon: Blocks },
   { to: "/schedules", label: "Schedules", icon: CalendarClock },
   { to: "/usage", label: "Usage", icon: ChartColumn },
   { to: "/settings", label: "Settings", icon: Settings },

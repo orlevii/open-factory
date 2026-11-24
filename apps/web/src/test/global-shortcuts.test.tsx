@@ -43,6 +43,7 @@ const sheet = () => screen.queryByRole("dialog", { name: "Keyboard shortcuts" })
 test.each([
   ["i", "/inbox"],
   ["t", "/tasks"],
+  ["k", "/skills"],
   ["s", "/schedules"],
   ["u", "/usage"],
   ["a", "/agents"],

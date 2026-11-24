@@ -59,6 +59,7 @@ export const ChatInboxRow = memo(function ChatInboxRow({
         params={{ slug: agent.slug }}
         data-inbox-id={chatRowId(agent.slug)}
         data-chat-row=""
+        data-row=""
         aria-label={label}
         aria-describedby={previewId}
         aria-current={selected ? "true" : undefined}

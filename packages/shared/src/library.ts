@@ -165,6 +165,12 @@ export const sourceSummarySchema = z.object({
   pin: z.string().nullable(),
   state: z.enum(["adding", "ready"]),
   skillCount: z.number().int().nonnegative(),
+  /** The last check found a newer commit. */
+  update: z.boolean(),
+  /** The last check couldn't reach the source. */
+  checkFailed: z.boolean(),
+  /** When the last check ran (ISO), or null before the first. */
+  checkedAt: z.string().nullable(),
 });
 
 /** One group of `GET /api/library/skills`. `group` is the URL form: `host`, `source:<id>`, `template:<name>`, `unknown`. */

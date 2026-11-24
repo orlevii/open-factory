@@ -118,6 +118,7 @@ export const GO_TO: readonly GoToItem[] = [
   { id: "tasks", label: "Tasks", to: "/tasks" },
   { id: "templates", label: "Templates", to: "/templates" },
   { id: "images", label: "Images", to: "/templates/images" },
+  { id: "skills", label: "Skills", to: "/skills" },
   { id: "schedules", label: "Schedules", to: "/schedules" },
   { id: "usage", label: "Usage", to: "/usage" },
   { id: "settings-credentials", label: "Settings: Credentials", to: "/settings/credentials" },

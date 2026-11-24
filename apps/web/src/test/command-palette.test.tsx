@@ -241,7 +241,7 @@ test("in the Session the palette offers 'Open chat' and not 'Open session'; it g
   await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
 });
 
-test("Go to includes Usage and each Settings page; Images links /templates/images", async () => {
+test("Go to includes Skills, Usage and each Settings page; Images links /templates/images", async () => {
   const { dialog, router } = await openFromInput();
   const goTo = within(dialog).getByRole("group", { name: "Go to" });
   const names = within(goTo)
@@ -253,6 +253,7 @@ test("Go to includes Usage and each Settings page; Images links /templates/image
       "Agents",
       "Tasks",
       "Templates",
+      "Skills",
       "Schedules",
       "Usage",
       "Settings: Credentials",

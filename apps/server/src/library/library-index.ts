@@ -295,6 +295,9 @@ export class LibraryIndex {
           pin: s.commit,
           state: s.state,
           skillCount: s.skills.length,
+          update: s.updateCommit !== null,
+          checkFailed: s.checkError !== null,
+          checkedAt: s.checkedAt ? s.checkedAt.toISOString() : null,
         },
         skills: rows,
       });

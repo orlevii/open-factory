@@ -93,7 +93,7 @@ Each criterion names the PR that makes it true (§15).
     - waits for its background tasks to end;
     - restarts.
     
-    The waking "Restarted to apply your config changes (model). Continue where you left off." then starts its next turn with no human message. Any in-session crons are stopped and named in that notice.
+    The waking "Restarted to apply your config changes. Continue where you left off." then starts its next turn with no human message. Any in-session crons are stopped and named in that notice.
 
 ## 3. Scope
 
@@ -341,7 +341,7 @@ Registered together by `orgTools(d)` (`mcp/tools/org-tools.ts`, one file per gro
 - `name` follows `createTemplateBodySchema` (reserved names refused). `display_name` and `description` are as for humans.
 - **Without `from`:** `TemplateIndex.create`, today's scaffold (`runtime: docker`).
 - **With `from`:** a new `TemplateIndex.copyFrom(from, b, actor)`:
-  1. `from` must exist, be valid, and not be local ("Template dev has errors; fix it first.", or the rule 8 refusal).
+  1. `from` must exist, be valid, and not be local ("Template dev has errors; fix it first.", or the rule 8 refusal). This check (`loadValid(from)`, which takes `from`'s lock) runs **before** the new name's lock is taken, and `from === name` is refused up front ("A template named x already exists."). **Rule for every template write: never take a second template lock while holding one** (two crossed copies would otherwise deadlock, and a stuck `KeyLock` blocks every start on that template).
   2. Make the new folder with `mkdir`, which refuses an existing folder (EEXIST → 409 `template_exists`, "A template named x already exists."), as `create` does today.
   3. Copy these files, refusing any that is a symlink:
      - `template.yaml`, through the `yaml` Document API with `name`, `display_name` and `description` rewritten, so comments survive;
@@ -408,7 +408,7 @@ The policy's `can_spawn` runtime lookups read other templates' last valid parse 
   
   When the template is invalid, I2 does a schema-only save. Agents get the same, and the result notes "Checked fully once dev is fixed."
 - **Self.** When the target is the caller, the overlay save and any identity change that restarts it pass `wake: true` (§9.5).
-- **Spawned targets** are refused ("Spawned agents use their template's configuration."), as I2's PUT is.
+- **Spawned targets** are refused with today's sentence, "Spawned agents can't be edited; terminate it instead." (`AgentService.assertPersistent`, the same for humans and agents).
 - **Archived targets** may be edited (I2 allows it). Their changes apply on unarchive.
 - **`changed`** lists the field names. When `config` changed, `describeChanges` lines are appended.
 
@@ -463,7 +463,7 @@ The policy's `can_spawn` runtime lookups read other templates' last valid parse 
   - archived or terminated targets, with the messaging refusal sentences;
   - "@x isn't one of your direct reports." (no `manage_org`).
 - **`note`:** at most 64 KB, the `send_message` body limit.
-- **The call returns at once.** The result is `{target: "@dev", status: "restarting" | "restart_pending" | "not_running" | "restarted_idle", note}`. It never waits for the start.
+- **The call returns at once.** The result is `{target: "@dev", status: "restarting" | "restart_pending" | "not_running" | "restarted_idle", note?}`; `restartNow` returns `RestartOutcome = {status, note?}` (row 11 sets `note`). It never waits for the start.
 
 ### 9.2 Runtime: `restartNow`
 
@@ -473,7 +473,7 @@ The policy's `can_spawn` runtime lookups read other templates' last valid parse 
 - **Refusals** are `RecoveryRefusedError(code, message, data?)`. The error gains an optional `data` (`{tasks, crons}` for `lost_work`). `RecoveryRefusal` gains `starting`, `stopping`, `compacting` and `lost_work`, and loses `not_errored`. `apiJob` already passes this error through, so a refused restart never stops or errors its target; a test asserts it for `lost_work`. The route forwards `data` (§9.4).
 - **Idempotent while pending.** A second `restartNow` while `restartNowPending` is set returns `restarting` and replaces `by` and `changes`.
 
-**Checks, in order.** The first that matches decides. "Lost work" is `lostSnapshot()`: live non-ambient background tasks and in-session crons, the lists `background_work_lost` reports.
+**Checks, in order: 1, 5, 6, then 2–4 and 7–12** (the rows keep their numbers). The first that matches decides. Errored targets are decided before the starting/stopping rows because a `stop_failed` or internal-errored agent keeps `deadProc` set and `stopping` true (`markStopFailed`, `onJobFailure`): with rows 2–3 first it could never be restarted. Rows 2–4 apply to non-errored targets only. "Lost work" is `lostSnapshot()`: live non-ambient background tasks and in-session crons, the lists `background_work_lost` reports.
 
 | # | State | Outcome |
 |---|---|---|
@@ -482,7 +482,7 @@ The policy's `can_spawn` runtime lookups read other templates' last valid parse 
 | 3 | A stop under way (`stopping`, or the process is `deadProc`/`failingProc`): a hibernate, Stop crons, archive, or an earlier forced stop | Refused, `stopping`: "@dev is stopping; try again shortly." |
 | 4 | Compacting (`compactInFlight`) | Refused, `compacting`: "@dev is compacting; try again when it finishes." |
 | 5 | Errored, `resume_unrecoverable` | Refused, `resume_unrecoverable`: "@dev's session can't be resumed; a human must start a new session." |
-| 6 | Errored (other kinds) | Today's Restart, unchanged: the waking `restart` notice "Restarted by @lead after an error." (`by` may now be an agent), `control{restart}`, then force-stop any leftover process and make one attempt that resumes the session |
+| 6 | Errored (other kinds) | Today's Restart, unchanged, with its guards verbatim (`refuseRecoveryWhileAttempting`, `refuseWhileStopping`, then `stopFailed()` → `retryStopFailed`): the waking `restart` notice "Restarted by @lead after an error." (`by` may now be an agent), `control{restart}`, then force-stop any leftover process and make one attempt that resumes the session |
 | 7 | No process (hibernated or not loaded) | Nothing stopped. `{status: "not_running"}` |
 | 8 | Lost work and `force` not set | Refused, `lost_work`: "@dev has 2 background tasks (`pnpm test`, `vite dev`) and 1 cron; pass force: true to restart anyway." |
 | 9 | Running with **turn work** (§9.2.1) | A cut restart with an interrupt (§9.2.1). `{status: "restarting"}` |
@@ -546,7 +546,7 @@ When the call isn't refused, `note` is sent as an ordinary message from the call
   - 409 with the refusal codes above (`starting`, `stopping`, `compacting`, `resume_unrecoverable`, `runtime_disabled`, `agent_archived`, `agent_terminated`).
   
   The errored-only refusal `not_errored` is deleted.
-- **AgentMenu** (`features/agents/agent-menu.tsx`): "Restart now" on running, non-errored persistent and spawned agents. Errored agents keep "Restart", which calls the same route. Hibernated agents have neither.
+- **AgentMenu** (`features/agents/agent-menu.tsx`): "Restart now" on running, non-errored persistent and spawned agents. Errored agents keep the header's "Restart" (`RecoveryActions`), which calls the same route. Hibernated agents have neither.
 - **The status line** "Restarts when idle to apply: …" (I2) gains a ghost "Restart now" action.
 - **Flow** (`features/agents/lifecycle.ts`, `restartAgentNow`; the dialog is a module-store host mounted once, so a 409 that arrives after the menu closed still opens it for the right agent):
   1. POST without `force`.
@@ -569,7 +569,7 @@ When the call isn't refused, `note` is sent as an ordinary message from the call
 
 When an agent's own config changes because of its own act, the restart must still happen without a human message. "Its own act" means its overlay through `update_agent`, a template it is built from through `write_template_file`, or an identity field that restarts it.
 - `ConfigChanges.overlaySaved` (through its private `apply`, which today passes `{current}`), the template dispatch and `AgentService.update` add `wake: true` to their `requestRestart` call when `actor.kind === "agent" && actor.id === agent.id`. The runtime's `wake` slot does this.
-- The runtime keeps `pendingWake` beside `restartPending`, cleared on any exit that isn't this restart. When Stop crons takes over the apply hibernate (`stopCrons`, which rewrites the apply hibernate's `afterExit` to `crons_stopped`), `pendingWake` is kept and honoured by that exit, so the agent still continues; its notice then also says the crons were stopped by the human.
+- The runtime keeps `pendingWake` beside `restartPending`, cleared on any exit that isn't this restart. When Stop crons takes over the apply hibernate (`stopCrons`, which rewrites the apply hibernate's `afterExit` to `crons_stopped`), `pendingWake` is kept and honoured by that exit, so the agent still continues. Its `config_continue` then omits the crons sentence, because the human's `crons_stopped` notice already lists them.
 - **Timing (Q9, R2):** the existing `maybeRestart` path. The restart happens once the agent isn't `busy()`: its turn has ended and its background tasks have finished. Crons don't hold it back: an apply-restart stops them, as today (`beginHibernate`). Until the restart, the status line shows "Restarts when idle", and a human or its manager can Restart now.
 - **After the hibernate's exit,** when `pendingWake` is set, the exit job:
   1. adds a **waking** `config_continue` notice: "Restarted to apply your config changes. Continue where you left off." When crons were stopped it continues: "These crons were stopped: …; recreate them if you still need them." This replaces `restart_crons` for this exit, so there is one notice, not two;

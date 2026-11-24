@@ -41,6 +41,7 @@ This plan was written before I1, I2 and I5 existed in code. It was re-checked ag
 14. **Web.** There is no `show-output.tsx`/`OutputDialogHost`: the dialog host follows `features/sheets/sheet-store.ts` (`useSyncExternalStore`) and mounts beside `<SheetHost />` in `routes/_app.tsx`. The restart error row lives in `features/agents/agent-layout.tsx` (`restartError`), fed by `agent-header.tsx` (`onRestartError`) and `RecoveryActions`' `onError`; `LiveLine`'s parent is `agent-header.tsx`. The errored Restart is `RecoveryActions`' `RestartButton`, not an AgentMenu item. There is no `APPLIES`: the Edit agent sheet's restart notice follows `isRunning(agent)` and any PATCH change, so `manageOrg` only joins `PATCH_FIELDS`. `notify` is in `components/ui/toaster.tsx`; `ConfirmDialog` in `components/confirm-dialog.tsx` (A9, C4).
 15. **Process.** Per Or's v0.0.2 rules: no heavy lock; targeted tests per task, full suite once per Part; one reviewer per task plus the Part's final review; PRs ready for review (not draft) once green; AGENTS.md testing standards; per-task implementer model (below).
 16. **I5's start path** needs no new task: a restart's start runs the version floor check and plugin installs like any start (spec §9.2, "The I5 start path").
+17. **Plan review fixes (2026-11-24).** `restartNow` checks errored rows (1, 5, 6) before starting/stopping so a `stop_failed` agent can be restarted; no public runtime method is called inside its job; `update_agent`'s transaction lives in `AgentService.updateWithOverlay`; `copyFrom` never holds two template locks; `readConfig`'s existence check moves under the lock; tool error field names are mapped; implementation-detail tests became review checks.
 
 ## Global Constraints
 
@@ -115,7 +116,7 @@ git checkout -b i7/1-manage-org
 | `agents/agent-service.ts` | `Actor` on create, update, archive and unarchive; policy and never checks; `description_by`; `create` with `config` | A |
 | `agents/config-service.ts` (new) | `ConfigService.saveOverlay(slug, overlay, baseVersion, actor)`, extracted from `AgentService.putConfig` with `templateBase`, `configIssues`, `configView`, `pluginsOf` | A |
 | `agents/config-changes.ts` | `overlaySaved(agent, actor, …)` and `TemplateChange.actor`; `report_config_changed`; self `wake` beside `current` | A |
-| `agents/policy-inputs.ts` (new) | `PolicyInputs`: `plugins(after, declaredBy?)` (registry rows and catalogs from `LibraryIndex`), `templateRuntimes(names)`, `templateHasLocalAgents(name)` | A |
+| `agents/policy-inputs.ts` (new) | `PolicyInputs`: `plugins(docs)` (registry rows and catalogs from `LibraryIndex`), `templateRuntimes(names)`, `templateHasLocalAgents(name)` | A |
 | `agents/event-store.ts` | `createNotice` gains `subjectAgentId`; `report_config_changed` joins the `config_changed` merge branch | A |
 | `templates/validate.ts` | `validateEffective` loses its unused `_policy` parameter | A |
 | `agents/notices.ts` | `report_config_changed`, `config_continue` (A); `restart_applied` (C) | A, C |
@@ -198,7 +199,7 @@ export function agentPolicyIssues(i: {
   plugins: PolicyPlugins;
   declaredBy?: ConfigDoc; // overlays: the template doc whose declarations the overlay's plugins run at
 }): TemplateIssue[];
-// library.ts (moved from the web, unchanged behaviour)
+// library.ts (moved from the web, unchanged behaviour); touchesLocalRuntime and LOCAL_RUNTIME_REFUSAL above stay in agent-policy.ts
 export type RegistryPin = { name: string; source: z.infer<typeof marketplaceSourceSchema>; commit: string | null; tags: Record<string, string> };
 // structural: the DB's MarketplaceRow and the web's MarketplacesResponse row both fit
 export function pinRefFor(row: Pick<RegistryPin, "name" | "commit" | "tags">): string | undefined;
@@ -236,7 +237,7 @@ export const LOCAL_RUNTIME_REFUSAL = "Local-runtime agents and templates can onl
     - overlay: `settings.enabledPlugins["fmt@acme"]` with `declaredBy` declaring `acme` at `C` passes; with `declaredBy` declaring it Latest it is refused; a key whose marketplace `declaredBy` doesn't declare gives no rule-5 issue (I5's human rule reports it).
   - **`pinRefFor`** (`library.test.ts`): the Library's commit for a commit-pinnable row; the newest tag at the commit for `claude-plugins-official`; undefined when `commit` is null or no tag points at it.
   - **Rule 6:** a server named `factory` is refused, while adding, changing or removing `gh` passes.
-  - **Rule 7:** every entry of `RESERVED_SETTINGS_KEYS` except `enabledPlugins` and `extraKnownMarketplaces` is absent from `AGENT_EDITABLE.settings`.
+  - **Rule 7** (`test.each` over `RESERVED_SETTINGS_KEYS` minus the two plugin keys): an agent adding that key to settings is refused with the rule 1 sentence.
   - **Rule 8:** `touchesLocalRuntime` is true for each of these, false for an all-docker input:
     - `{templateRuntime: "local"}`;
     - `{templateHasLocalAgents: true}`;
@@ -296,7 +297,7 @@ export class PolicyInputs {
   constructor(d: { db: Db; library: Pick<LibraryIndex, "marketplaces" | "catalogAt"> });
   // The ready registry rows, plus the catalog at every pin the given docs declare (`after`, and `declaredBy` for overlays).
   plugins(docs: ConfigDoc[]): Promise<PolicyPlugins>;
-  templateRuntimes(names: string[]): Promise<string[]>;   // from the `templates` rows (`config.runtime`, default docker); never takes template locks
+  templateRuntimes(names: string[]): Promise<string[]>;   // from `templates.last_valid` (`template.runtime`, default docker); a name with no valid parse counts as "local" (fail closed); never takes template locks
   templateHasLocalAgents(name: string): Promise<boolean>; // any non-terminated agent row on it with runtime 'local' (archived included)
 }
 // agent-service.ts (every write takes a required actor; no default)
@@ -328,7 +329,7 @@ export class OrgRefusedError extends Error { constructor(message: string) }  // 
 - [ ] **Step 3: Implement.**
   - Add the `actor` parameter and thread it from `routes/agents.ts` (`{kind: "human", handle: user(req).handle}`). There is no default.
   - The agent-only checks run at the top of each method, before any write.
-  - `create` validates `config` before `materialize`: `agentOverlaySchema`, `overlayIssues(tpl.doc, config, ctx)` (ctx as `configIssues` builds it), then `agentPolicyIssues({target: "overlay", before: {}, after: config, declaredBy: tpl.doc, plugins: await policy.plugins([tpl.doc])})`. Store it in the insert's `config` (today `{}`).
+  - `create` validates `config` before `materialize`: `agentOverlaySchema`, `overlayIssues(tpl.doc, config, ctx)` (ctx as `configIssues` builds it, with `agentRuntimes: [tpl.config.runtime]`, since there is no row yet), then `agentPolicyIssues({target: "overlay", before: {}, after: config, declaredBy: tpl.doc, plugins: await policy.plugins([tpl.doc])})`. Store it in the insert's `config` (today `{}`).
   - `manageOrg` in `update` is applied only for human actors, and requests a restart when it changes (spec §5.1).
   - Wire `PolicyInputs` in `app.ts` (`new PolicyInputs({db, library})`).
 - [ ] **Step 4: Run** `pnpm vitest run apps/server/src/agents/agent-service.test.ts apps/server/src/agents/agent-service.org.db.test.ts apps/server/src/agents/policy-inputs.db.test.ts` (or read CI). Expected: PASS.
@@ -351,7 +352,7 @@ export class ConfigService {
   getConfig(slug: string): Promise<AgentConfigResponse>;          // moved from AgentService, unchanged
   // Validation (disk, Library) outside any transaction; the version check runs early and again under the row lock.
   planOverlay(slug: string, overlay: unknown, baseVersion: string, actor: Actor): Promise<OverlayPlan>;
-  // OverlayPlan = { row; overlay; write(tx): Promise<void>; after(): Promise<PutAgentConfigResponse> }
+  // OverlayPlan = { row; overlay; write(tx, locked: AgentRow): Promise<void>; after(): Promise<PutAgentConfigResponse> }
   // `write` re-checks overlayVersion(locked.config) === baseVersion and updates `config`; `after` runs overlaySaved.
   saveOverlay(slug: string, overlay: unknown, baseVersion: string, actor: Actor): Promise<PutAgentConfigResponse>;
   // = planOverlay, one transaction (lockAgent + write), then after(): the body of today's putConfig
@@ -365,10 +366,10 @@ overlaySaved(agent: AgentRow, actor: Actor, before: ConfigDoc, after: ConfigDoc)
   - a stale `baseVersion` from an agent actor → `OrgRefusedError("@dev's configuration changed since you read it; call get_agent again.")`; a human actor still gets 409 `config_changed` "Changed since you opened it.";
   - an agent actor removing an overlay deny rule is refused with the rule 2 sentence, and nothing is written;
   - an agent actor adding `settings.enabledPlugins["x@acme"]` where template `dev` declares `acme` Latest is refused with the rule 5 sentence;
-  - a spawned target → "Spawned agents use their template's configuration.";
+  - a spawned target → 409 `ephemeral_agent`, "Spawned agents can't be edited; terminate it instead." (today's sentence, spec §7.5);
   - a local target → `LOCAL_RUNTIME_REFUSAL`;
   - a valid agent save writes `config_changed {by: "@hr"}`;
-  - a save whose actor is the target passes `wake: true` with `current` to `requestRestart`, and a save by another passes no `wake` (a fake `runtimes` port, as `config-changes.test.ts` does);
+  - (the self-wake's observable behaviour is A6's test; the reviewer checks that `wake` is passed only for self-edits);
   - the route `PUT /api/agents/:slug/config` behaves as before (the existing route tests still pass).
 - [ ] **Step 2: Run** `pnpm typecheck`. Expected: FAIL (module missing).
 - [ ] **Step 3: Implement.** Move `putConfig`'s body into `planOverlay` + `saveOverlay`, adding the policy for agent actors (`before` = the stored overlay, `declaredBy` = the template doc, `plugins` from `PolicyInputs`; with no valid template, rule 5 refuses any added plugin, since there is no declaration), and make the route call it. `overlaySaved` takes the `Actor`, writes `by: actorBy(actor)`, and its private `apply` adds `wake: actor.kind === "agent" && actor.id === agent.id` to the `requestRestart(id, {current})` call it already makes.
@@ -381,7 +382,7 @@ overlaySaved(agent: AgentRow, actor: Actor, before: ConfigDoc, after: ConfigDoc)
 Spec §8. **Implementer model:** Sonnet (notice merge under concurrency).
 
 **Files:**
-- Modify: `apps/server/src/messaging/router.ts`, `apps/server/src/messaging/peer-body.ts`, `apps/server/src/agents/notices.ts`, `apps/server/src/agents/event-store.ts`, `apps/server/src/agents/agent-runtime.ts` (`isPassive`), `apps/server/src/agents/config-changes.ts`, `apps/server/src/agents/agent-service.ts`, `packages/shared/src/ws.ts`
+- Modify: `apps/server/src/messaging/router.ts`, `apps/server/src/messaging/peer-body.ts`, `apps/server/src/agents/notices.ts`, `apps/server/src/agents/event-store.ts`, `apps/server/src/agents/agent-runtime.ts` (`isPassive`; a `recordReportNotice(reportId, by, lines)` beside `recordConfigNotice`, since `addNotice` has no `subjectAgentId`), `apps/server/src/agents/runtimes.ts` (its wrapper; skip when the manager is archived or terminated), `apps/server/src/agents/config-changes.ts`, `apps/server/src/agents/agent-service.ts`, `packages/shared/src/ws.ts`
 - Test: `apps/server/src/messaging/peer-body.test.ts`, `apps/server/src/agents/event-store.notice-merge.db.test.ts` (DB), `apps/server/src/agents/config-changes.org.test.ts` (the fake ports of `config-changes.test.ts`), `apps/server/src/agents/notices.test.ts`, `packages/shared/src/ws.test.ts`
 
 **Interfaces (produces):**
@@ -457,7 +458,8 @@ export function orgTools(d: {
   policy: PolicyInputs;
 }): ToolRegistration[];
 // org-errors.ts
-export function toolErrorOf(err: unknown): ReturnType<typeof toolError>; // FieldError → "field: message"; ApiError/OrgRefusedError → message; issues → "path: message" lines
+export function toolErrorOf(err: unknown): ReturnType<typeof toolError>; // FieldError → "<tool field>: message" (slug→name, reportsTo→manager, displayName→display_name); ApiError/OrgRefusedError → message; issues → "path: message" lines
+// B3 adds: 409 changed_on_disk from write_template_file → "<file> changed since you read it; call get_template again."
 ```
 
 The tools are `get_agent`, `create_agent`, `update_agent`, `archive_agent`, `unarchive_agent`, `list_templates`, `get_template`, `list_library` and `list_org_resources`, with the shapes in spec §7.1.
@@ -485,7 +487,7 @@ The tools are `get_agent`, `create_agent`, `update_agent`, `archive_agent`, `una
 - [ ] **Step 3: Implement.**
   - Each handler starts with the call-time check (`loadAgent(callerOf(tctx))`).
   - Slugs accept a leading `@`.
-  - `update_agent`: `const c = config ? await config.planOverlay(…) : undefined; const u = await agents.planUpdate(…);` (all validation, no writes), then `db.transaction(async tx => { lockAgent(tx, id); await c?.write(tx); await u.write(tx); })`, then `await c?.after(); await u.after();` (spec §7.5: all or nothing; events after the commit). `c.write` re-checks the version under the lock.
+  - `update_agent`: `const c = config ? await configService.planOverlay(…) : undefined;` then `agents.updateWithOverlay(slug, patch, c, actor)`, a new `AgentService` method that owns the transaction (`lockAgent` is private there): it runs `planUpdate`, then `db.transaction(async tx => { const locked = await this.lockAgent(tx, id); await c?.write(tx, locked); await u.write(tx); /* syncChildren inside, as today */ })`, then `c?.after()` and `u.after()` (spec §7.5: all or nothing; events after the commit). `c.write(tx, locked)` re-checks `overlayVersion(locked.config)` and keeps `locked.config` as `overlaySaved`'s `before`. The human `PUT …/config` uses `saveOverlay`, which does the same with no identity patch.
   - In `app.ts`: `...(caller.manageOrg ? orgTools(...) : [])`.
 - [ ] **Step 4: Run** `pnpm vitest run apps/server/src/mcp/tools/org-tools.db.test.ts packages/shared/src/org-tools.test.ts` (or read CI) and `pnpm typecheck`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(mcp): org tools for manage_org agents`.
@@ -546,7 +548,7 @@ There is no `id` on `Notification` and no `now` parameter; tests use fake timers
 - [ ] **Step 1: Write the failing tests.**
   - **Edit agent:**
     - the "Can manage the org" `Switch` shows only for persistent agents;
-    - its help text is spec §5.4's, verbatim, held as a module constant and passed through `FieldShell`'s `help` prop;
+    - its help text is spec §5.4's, verbatim, and is the switch's accessible description;
     - toggling it sends `manageOrg` in the PATCH (`agent-form-state.test.ts`: `changes` includes it), and on a running agent the sheet shows the "Saving restarts @x when idle" notice.
   - **Shortcuts sheet:** its behaviour is unchanged with the shared `Switch` (its toggle still flips the setting; add one test if none covers it).
   - **Details:** "Manages the org: Yes" shows only when `manageOrg`.
@@ -563,7 +565,8 @@ There is no `id` on `Notification` and no `now` parameter; tests use fake timers
     - for `agent_*` frames, invalidate `["agents"]` and `["agent", m.subject]`;
     - for `template_created`, invalidate `{queryKey: ["templates"], exact: true}` with `{cancelRefetch: false}`.
   - **The switch** is a `FieldShell` whose `help` prop carries the note, placed after the Projects field and before `<ModelSummary>`.
-  - `notify` comes from `components/ui/toaster.tsx`; `navigate` is `_app.tsx`'s existing `useNavigate()`; the frame is added to `packages/shared/src/ws.ts` (A5).
+  - `notify` comes from `components/ui/toaster.tsx`, imported under an alias (`_app.tsx` already has `const notify = useInboxNotifier()`); `navigate` wraps `_app.tsx`'s `useNavigate()` as `(to) => navigate({ to })`; the frame is added to `packages/shared/src/ws.ts` (A5).
+  - `agent-form-state.ts`: `manageOrg` also goes into `body()` and `blank()`.
   - **No component** is defined inside another.
 - [ ] **Step 4: Run** the tests. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(web): manage_org switch and org toasts`.
@@ -620,7 +623,7 @@ Implements spec §2 AC 9–10, §6.2 rule 8 for templates, §7.1 (`create_templa
 Spec §7.3a, §8.1 (template attribution), §8.2 (template changes reach managers), §9.5 (template self-edits), AC 9 (the last clause). **Implementer model:** Sonnet (locking, a non-re-entrant lock).
 
 **Files:**
-- Modify: `apps/server/src/templates/template-index.ts` (`writeFile`, `create`, `remove`; `TemplateChange` gains `actor?: Actor`, passed to `dispatch` through `indexLocked`; `writeConfig` takes an `Actor` instead of `by`), `apps/server/src/agents/config-changes.ts` (`templateChanged` uses `e.actor`: an agent actor gives `by: "@hr in template dev"`, the `report_config_changed` notice and the self `wake`; a human or a file change keeps `templateBy(e)`), `apps/server/src/routes/templates.ts` (pass `{kind: "human", handle}`)
+- Modify: `apps/server/src/app.ts` (`TemplateIndex` gets a `PolicyInputs` dependency; construct `PolicyInputs` before it); `apps/server/src/templates/template-index.ts` (constructor takes `policy: PolicyInputs`; `writeFile`, `create`, `remove`; `readConfig`'s existence check moves under the lock; `TemplateChange` gains `actor?: Actor`, passed to `dispatch` through `indexLocked`; `writeConfig` takes an `Actor` instead of `by`), `apps/server/src/agents/config-changes.ts` (`templateChanged` uses `e.actor`: an agent actor gives `by: "@hr in template dev"`, the `report_config_changed` notice and the self `wake`; a human or a file change keeps `templateBy(e)`), `apps/server/src/routes/templates.ts` (pass `{kind: "human", handle}`)
 - Test: `apps/server/src/templates/template-index.write.db.test.ts` (DB: `TemplateIndex` writes the `templates` rows)
 
 **Interfaces (produces):**
@@ -644,11 +647,11 @@ remove(name: string, actor: Actor): Promise<void>;
   - an agent write adding a plugin under a Latest declaration is refused (rule 5, through the same `PolicyInputs` as A3);
   - a human write keeps today's behaviour (saves with errors);
   - **the lock carries the author:** an agent write changing `can_spawn`, with a concurrent `loadValid` of the same template started mid-write, makes `loadValid` wait for the writer. The single dispatch carries the writer (assert `config_changed {by: "@hr in template dev"}` on an agent of the template). A scan of another template doesn't wait;
-  - `create` and `remove` hold the lock (a `readConfig` started during `create` sees the finished template), and neither deadlocks (both return).
+  - `create` and `remove` hold the lock and neither deadlocks (both return); `readConfig` moves its folder/`template.yaml` existence check inside the lock, so one started during `create` sees the finished template, not a 404.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/templates/template-index.write.db.test.ts` (or read CI). Expected: FAIL.
 - [ ] **Step 3: Implement.**
   - `writeFile`, `create` and `remove` run inside `this.locks.run(name, …)`, as `writeConfig` already does (B2's `copyFrom` too).
-  - Inside the lock: check the hash, then `validateTemplate(dir, name, ctx, {[file]: content})`, then, for agent actors, the link checks (`lstat` of the folder and the target), `touchesLocalRuntime` (with `policy.templateHasLocalAgents(name)` and `policy.templateRuntimes(canSpawn)`) and `agentPolicyIssues` (`before` = the current parse, `frozen` = its values after defaults, `plugins` from `policy.plugins([after])`).
+  - Take `ctx = await this.context()` before the lock. Inside it: check the hash; the current parse is `validateTemplate(dir, name, ctx)` and the new one `validateTemplate(dir, name, ctx, {[file]: content})` (never `scanOne` or `loadValid` inside the lock, and never a second template's lock); then then, for agent actors, the link checks (`lstat` of the folder and the target), `touchesLocalRuntime` (with `policy.templateHasLocalAgents(name)` and `policy.templateRuntimes(canSpawn)`) and `agentPolicyIssues` (`before` = the current parse, `frozen` = its values after defaults, `plugins` from `policy.plugins([after])`).
   - Refuse on caused errors (an agent: errors absent from the current issues by `message` and `path`) or on none (a human).
   - Temp + rename, then `indexLocked(name, ctx, actorBy(actor), actor)`, which passes the actor to `dispatch`.
   - `create` and `copyFrom` index with `indexLocked`; `remove` deletes the row directly. `scanOne`, `loadValid` and `scan` already take the lock, so a start just waits briefly for a write under way.
@@ -677,7 +680,7 @@ Spec §7.3. **Implementer model:** Sonnet (symlink refusal, cleanup).
   - a local source, or a docker source with a local agent on it (an agent actor) → `LOCAL_RUNTIME_REFUSAL`;
   - the agent policy runs with `before` = the source's docs and returns no issues for a source holding `hooks`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/templates/template-index.copy.db.test.ts` (or read CI). Expected: FAIL.
-- [ ] **Step 3: Implement** per spec §7.3 steps 1–6, under the lock, with `mkdir` refusing an existing folder. Rewrite the YAML with the `yaml` Document API (as `templates/yaml-write.ts` `applyConfigToYaml`, which `writeConfig` uses, does). Use `lstat` on every entry. Index the new folder with `indexLocked` under the **new** name's lock (the source is only read; its folder can't be renamed under it, and a concurrent write to the source is harmless to a byte copy).
+- [ ] **Step 3: Implement** per spec §7.3 steps 1–6, under the lock, with `mkdir` refusing an existing folder. Rewrite the YAML with the `yaml` Document API (as `templates/yaml-write.ts` `applyConfigToYaml`, which `writeConfig` uses, does). Use `lstat` on every entry. Check the source (`loadValid(from)`, which takes `from`'s lock) and refuse `from === name` **before** taking the new name's lock; then copy and index the new folder with `indexLocked` under the new name's lock only. Never take a second template lock while holding one. Test: two crossed copies (A→B and B→A, both existing) both return (409), and `copyFrom(x, {name: x})` is refused at once.
 - [ ] **Step 4: Run** the test. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(server): copy a template, refusing links`.
 
@@ -738,7 +741,7 @@ export class RecoveryRefusedError extends Error { constructor(code: RecoveryRefu
 // notices.ts
 notices.restartApplied({ by, changes: string[] | null, tasks: string[], crons: string[] }): string;
 // agent-runtime.ts
-export type RestartOutcome = { status: "restarting" | "restart_pending" | "not_running" | "restarted_idle" };
+export type RestartOutcome = { status: "restarting" | "restart_pending" | "not_running" | "restarted_idle"; note?: string };
 restartNow(r: { by: string; force: boolean; changes: string[] | null; runtimeAllowed: boolean }): Promise<RestartOutcome>;
 // `restart()` is deleted.
 ```
@@ -748,14 +751,14 @@ restartNow(r: { by: string; force: boolean; changes: string[] | null; runtimeAll
   - row 3: `stopping`, for a warm hibernate under way and for Stop crons under way;
   - row 4: `compacting`;
   - row 5: `resume_unrecoverable`;
-  - row 6: an errored target restarts as today, and its notice reads "Restarted by @lead after an error.";
+  - row 6: an errored target restarts as today, and its notice reads "Restarted by @lead after an error."; a `stop_failed` target retries the stop (not refused as `stopping`);
   - row 7: `not_running`;
   - row 8: `lost_work` with `data` carrying the task descriptions and cron schedules, after which the target is **still running and not errored** (`apiJob` passes it through);
   - row 11: owed notifications only → `restart_pending`, with `restartPending` set;
   - row 12: an idle target hibernates and gets a passive `config_changed` with the lines, and with `changes: []` no notice;
   - `runtime_disabled` for a local target on rows 6, 9 and 10, but row 12 is allowed. `runtimeAllowed` means only "the local runtime is disabled in this factory". It is not the R1 refusal: an agent restarting a local-runtime report is allowed (test it), and `touchesLocalRuntime` is never called from `restartNow` or `restart_agent`.
 - [ ] **Step 2: Run** `pnpm typecheck`. Expected: FAIL (`restartNow` missing).
-- [ ] **Step 3: Implement** the table in an `apiJob`. Row 6 reuses the old `restart({byHandle, runtimeAllowed})` body (its `refuseRecoveryWhileAttempting`, `markAttempting("restart")` and `beginForceStop({kind: "restart", by}, …)`), which is then deleted, and `not_errored` leaves `RecoveryRefusal`. Rows 9 and 10 call into C2 (stub them to refuse until C2, then remove the stub in C2's commit).
+- [ ] **Step 3: Implement** the table in an `apiJob`, **in the order 1, 5, 6, then 2–4, 7–12** (spec §9.2: a `stop_failed` agent has `deadProc` set and `stopping` true, so the errored rows must come first; row 6 keeps `refuseRecoveryWhileAttempting`, `refuseWhileStopping` and `stopFailed()` → `retryStopFailed` verbatim). **Never call a public runtime method from inside the job** (`requestRestart`, `recordConfigNotice` and the rest each `await this.run()`, and jobs are serial, so they would wait on themselves): extract a private `markRestartPending(changes)` (`otherRestartCause`, `pendingChanges`, `restartPending = true`, `maybeRestart()`) for row 11, and call `this.addNotice("config_changed", …)` directly for row 12. Row 6 reuses the old `restart({byHandle, runtimeAllowed})` body (its `refuseRecoveryWhileAttempting`, `markAttempting("restart")` and `beginForceStop({kind: "restart", by}, …)`), which is then deleted, and `not_errored` leaves `RecoveryRefusal`. Rows 9 and 10 call into C2 (stub them to refuse until C2, then remove the stub in C2's commit).
 - [ ] **Step 4: Run** `pnpm vitest run apps/server/src/agents/agent-runtime.restart-now.test.ts`. Expected: PASS for rows 1–8, 11 and 12.
 - [ ] **Step 5: Commit** `feat(server): restartNow check table replaces errored-only restart`.
 
@@ -811,7 +814,7 @@ Spec §9.1, §9.3, §9.4 (route), §10 ("Restarting reports", the PR 3 line, the
     - with `manage_org`, any live agent is accepted;
     - self → "Your config changes apply when you're idle; you can't restart yourself.";
     - archived and terminated targets get the messaging sentences;
-  - **`changes`** is computed before the runtime call (a spy shows `resolver.effective` isn't called inside the job), and a resolver failure passes `null`;
+  - **`changes`**: a resolver failure (a broken template) still restarts, and the start then fails closed with I2's error (the reviewer checks the resolver runs outside the job);
   - **the note** is delivered as a message `from="@lead" from_kind="agent"` after the notice, for `restarting`, `restart_pending`, `restarted_idle` and `not_running`;
   - **REST:**
     - `lost_work` gives 409 with `data`;
@@ -876,7 +879,7 @@ export function RestartNowButton({ slug }: { slug: string }): JSX.Element; // ca
   - **A 202** shows no dialog. Each of the four statuses toasts its text above.
   - **A 409 `lost_work`:**
     - `RestartConfirmHost` opens with the title "Restart @dev now?" and spec §9.4's body;
-    - the lists are mono and wrap, keyed by index plus kind, never by their text;
+    - the lists show every task and cron (at most 5 each, then "and N more"); keys by index plus kind are a review check, not a test;
     - "Restart anyway" calls `onConfirm`, which **returns** `postRestart(slug, {force: true})` (`pendingLabel="Restarting…"`, `onCloseAutoFocus` back to the trigger).
   - **Slug binding:**
     - a 409 that arrives after the anchored menu switched to another agent still targets the original slug;

@@ -56,6 +56,7 @@ PINNED=$(tr -d '[:space:]' < "$ROOT/images/base/claude-code-version")
 # From here on nothing touches the real HOME or the real npm cache.
 T=$(mktemp -d "${TMPDIR:-/tmp}/of-g1.XXXXXX")
 T=$(cd "$T" && pwd -P)
+REAL_HOME=${HOME:-}   # item 20 runs docker, which needs the real HOME for its config
 export HOME=$T/home
 export npm_config_cache=$T/npm-cache
 export GIT_TERMINAL_PROMPT=0
@@ -1017,6 +1018,25 @@ item19() {
   record 19 MANUAL "The version floor (lowest version where items 1-4, 7, 12 and 18 hold)"
 }
 
+item20() {
+  local out=$T/timing.md rc=0
+  ev "Runs scripts/g1/timing.sh in a throwaway container (docker run --rm --entrypoint bash), no credentials, no host installs."
+  ev "Fixture marketplace: $OWNER/of-g1-fixture (GitHub, a git clone), so marker and ranged use the pushed repo."
+  ev "Session-start init timing (extra time to init with a plugin, cold start) is not measured: it needs a credential. Record it by hand if wanted."
+  if ! command -v docker >/dev/null 2>&1; then
+    ev "docker is not installed: item 20 not run. Run scripts/g1/timing.sh on a machine with Docker."
+    record 20 RECORDED "Install timing (not run: no docker)"
+    return 0
+  fi
+  HOME=$REAL_HOME bash "$HERE/timing.sh" --github-owner "$OWNER" --image "${G1_IMAGE:-open-factory-base:dev}" > "$out" 2> "$T/timing.err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    ev "timing.sh exited $rc: $(tail -n 3 "$T/timing.err" | tr '\n' ' ')"
+    : > "$out"
+  fi
+  evf "timing.sh stderr" "$T/timing.err"
+  record 20 RECORDED "Install timing (table under 'Install and start timing' below)"
+}
+
 # -------------------------------------------------------------------- report
 build_report() {
   local tmpl=$HERE/report-template.md out=$T/report.md line summary details f
@@ -1042,6 +1062,9 @@ build_report() {
         if [ -s "$T/constants.txt" ]; then sed 's/^/- /' "$T/constants.txt" >> "$out"; else echo "(none recorded)" >> "$out"; fi
         echo "- update against fresh install (B6): read item 10." >> "$out"
         echo "- whether mcpb/ is scrubbed (B7): read item 7 and the mcpb constant above." >> "$out"
+        ;;
+      @@TIMING@@)
+        if [ -s "$T/timing.md" ]; then cat "$T/timing.md" >> "$out"; else echo "(item 20 did not produce a table; see its details)" >> "$out"; fi
         ;;
       @@PROBE_NOTE@@) printf '%s\n' "$PROBE_NOTE" >> "$out" ;;
       *)
@@ -1105,6 +1128,7 @@ item16
 item17
 item18
 item19
+item20   # needs docker; no credentials; Linux container
 item11   # last: it waits for Or's interactive session; also records 16b
 
 echo

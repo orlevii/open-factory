@@ -22,6 +22,12 @@ details).
 
 @@CONSTANTS@@
 
+## Install and start timing (item 20)
+
+RECORDED only, never PASS or FAIL. Fill in the network and host line.
+
+@@TIMING@@
+
 ## Details
 
 @@DETAILS@@

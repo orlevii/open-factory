@@ -137,6 +137,13 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     },
     title: "Add skills",
   },
+  "add-marketplace": {
+    load: () => import("@/features/skills/add-marketplace-sheet"),
+    prefetch(qc) {
+      warm(qc, hostQueryOptions);
+    },
+    title: "Add marketplace",
+  },
   "edit-schedule": {
     load: () => import("@/features/schedules/edit-schedule-sheet"),
     prefetch(qc, spec: { key: string }) {

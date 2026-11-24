@@ -6,6 +6,7 @@ export type DraftKey =
   | "new-schedule"
   | "new-template"
   | "add-skills"
+  | "add-marketplace"
   | `edit-agent:${string}`
   | `edit-schedule:${string}`;
 

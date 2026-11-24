@@ -450,6 +450,10 @@ export const marketplaceDetailSchema = z.object({
   checkedAt: z.string().nullable(),
   checkError: z.string().nullable(),
   usedBy: usedBySchema,
+  /** When an add started (ISO), while the row is "adding" (spec §10.2); the web shows the elapsed time from it. */
+  since: z.string().nullable().optional(),
+  /** A check is queued or running; `since` is when it was queued (ISO), as for a skill source. */
+  checking: z.object({ since: z.string() }).nullable().optional(),
 });
 
 /** What moving a marketplace's Library commit would change (spec §7.1). */

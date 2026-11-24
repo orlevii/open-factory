@@ -3,7 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { UntrustedCode, UntrustedProse } from "@/components/untrusted-text";
-import { skillFileQueryOptions } from "@/lib/library";
+import type { skillFileQueryOptions } from "@/lib/library";
+
+/** One file's text query: a skill's or a plugin's (the same `{ path, text }` shape). */
+export type FileQuery = ReturnType<typeof skillFileQueryOptions>;
 
 const CUT_BYTES = 256 * 1024;
 /** The server cuts SKILL.md to 256 KB on a character boundary, so a text within 3 bytes of the cap was cut. */
@@ -16,26 +19,22 @@ const wasCut = (text: string) => new TextEncoder().encode(text).length > CUT_BYT
  * `UntrustedCode`, never an editor. `SKILL.md` is already in the detail (`inlineText`), so it never fetches.
  */
 export function FileView({
-  group,
-  name,
   path,
   executable,
-  pin,
+  options,
   inlineText,
 }: {
-  group: string;
-  name: string;
   path: string;
   executable: boolean;
-  /** The source's pin: a pinned file never changes, so its text is never refetched. */
-  pin: string | null;
+  /** The file's query: a pinned file's never refetches (its `staleTime`). */
+  options: FileQuery;
+  /** Text already in hand (`SKILL.md` is in the skill's detail), so the file never fetches. */
   inlineText?: string;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const bodyId = useId();
   const pathId = useId();
-  const options = skillFileQueryOptions(group, name, path, pin);
   const q = useQuery({ ...options, enabled: open && inlineText === undefined });
   const text = inlineText ?? q.data?.text;
   const warm = () => {
@@ -69,9 +68,7 @@ export function FileView({
           {text !== undefined ? (
             <>
               <UntrustedCode text={text} fromTop />
-              {inlineText !== undefined && wasCut(text) && (
-                <p className="mt-1 text-xs text-muted-foreground">Cut at 256 KB.</p>
-              )}
+              {wasCut(text) && <p className="mt-1 text-xs text-muted-foreground">Cut at 256 KB.</p>}
             </>
           ) : q.isError ? (
             <p role="alert" className="text-[0.8125rem] text-destructive">

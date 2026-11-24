@@ -6,7 +6,7 @@ import { openSheet } from "@/features/sheets/sheet-store";
 import { PeekSheet } from "@/features/skills/peeks/peek-sheet";
 import { SkillList } from "@/features/skills/skill-list";
 import { SkillsHeader } from "@/features/skills/skills-header";
-import { useLibraryArrival } from "@/features/skills/use-library-arrival";
+import { SKILLS_ARRIVAL, useLibraryArrival } from "@/features/skills/use-library-arrival";
 import { type PeekControl, usePeek } from "@/features/skills/use-peek";
 
 export const Route = createFileRoute("/_app/skills/")({ component: SkillsPage });
@@ -19,7 +19,7 @@ function SkillsPage() {
   const { key, show, close } = usePeek();
   const content = useRef<HTMLDivElement>(null);
   // The arrival's peek is set while this component renders, so `show` must be this component's own state setter.
-  const { arrivedKey, arrival, onArrivedEnd } = useLibraryArrival(show);
+  const { arrivedKey, arrival, onArrivedEnd } = useLibraryArrival(show, SKILLS_ARRIVAL);
   const peek: PeekControl = {
     key,
     show,
@@ -28,7 +28,7 @@ function SkillsPage() {
   };
   return (
     <>
-      <SkillsHeader onAddSkills={() => openSheet({ kind: "add-skills" })} />
+      <SkillsHeader view="skills" onAdd={() => openSheet({ kind: "add-skills" })} />
       <PageBody>
         {/* At 54rem of container the list keeps 30rem clear of an open peek. */}
         <div className="@container">

@@ -1,12 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useRef, useState } from "react";
-import { Elapsed } from "@/components/elapsed";
 import { ErrorLine } from "@/components/error-line";
-import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import { SheetBody, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Spinner } from "@/components/ui/spinner";
 import { notify } from "@/components/ui/toaster";
 import { UntrustedProse, visibleControls } from "@/components/untrusted-text";
 import { TimeAgo } from "@/features/settings/shared";
@@ -27,28 +24,17 @@ import { AddSkillsResults, type Found, useTicks } from "../add-skills-results";
 import { count, pinLabel, sourceLabel, usedByText } from "../format";
 import { RowState } from "../row-state";
 import { skillKey } from "../use-peek";
-import { BackButton, failure, PinButton, Section, SkeletonRows } from "./sections";
+import {
+  BackButton,
+  failure,
+  type Line,
+  Outcome,
+  Pending,
+  PinButton,
+  Section,
+  SkeletonRows,
+} from "./sections";
 import { UpdateView } from "./update-view";
-
-type Line = { tone: "success" | "error"; node: React.ReactNode } | undefined;
-
-/** One inline outcome line (both live regions stay mounted so it is announced when it appears). */
-function Outcome({ line }: { line: Line }) {
-  return <InlineOutcome tone={line?.tone}>{line?.node}</InlineOutcome>;
-}
-
-/** The pending label of a running action: a spinner, and the elapsed time after 10 s. */
-function Pending({ label, since }: { label: string; since: number }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <Spinner size="text" />
-      {label}
-      <span aria-hidden="true">
-        <Elapsed since={new Date(since).toISOString()} hideUnderMs={10_000} />
-      </span>
-    </span>
-  );
-}
 
 /**
  * Find more skills (spec §10.3): the Add skills results step inline, with the source fixed. Its outcome is inline

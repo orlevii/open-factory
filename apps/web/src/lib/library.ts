@@ -1,5 +1,14 @@
 import {
   apiFetch,
+  marketplaceDetailSchema,
+  marketplaceFetchedSchema,
+  type marketplacePreviewBodySchema,
+  marketplacePreviewSchema,
+  marketplacesResponseSchema,
+  marketplaceViewSchema,
+  pluginDetailSchema,
+  pluginFileTextSchema,
+  pluginsResponseSchema,
   type ServerMessage,
   type SkillGroupsResponse,
   skillDetailSchema,
@@ -131,6 +140,145 @@ export const addSkillsTo = (id: string, skills: string[]) =>
 export const removeSource = (id: string) =>
   apiFetch(sourceUrl(id), { method: "DELETE", schema: sourceRemovedSchema });
 export const restoreSource = (id: string) => post(sourceUrl(id, "restore"), sourceDetailSchema);
+
+// Plugins and marketplaces (spec §9.1, §9.3).
+
+export type PluginsResponse = z.infer<typeof pluginsResponseSchema>;
+export type MarketplacesResponse = z.infer<typeof marketplacesResponseSchema>;
+
+/** Every registered marketplace's catalog at the Library's commit, and the host's plugins of unregistered ones. */
+export const pluginsQueryOptions = queryOptions({
+  queryKey: ["library", "plugins"],
+  queryFn: () => apiFetch("/api/library/plugins", { schema: pluginsResponseSchema }),
+  staleTime: 0,
+});
+
+/** The registry rows, each with its plugins and users. */
+export const marketplacesQueryOptions = queryOptions({
+  queryKey: ["library", "marketplaces"],
+  queryFn: () => apiFetch("/api/library/marketplaces", { schema: marketplacesResponseSchema }),
+  staleTime: 0,
+});
+
+export type PluginFrom = "library" | "host";
+
+const commitQuery = (from: PluginFrom, commit: string | undefined) =>
+  from === "host" ? "?from=host" : commit ? `?commit=${encodeURIComponent(commit)}` : "";
+
+/**
+ * One plugin's contents and provenance. The key carries the commit and where it is read from, so the same plugin at two
+ * commits (a pinned row and the Library's) is two cache entries.
+ */
+export const pluginQueryOptions = (key: string, from: PluginFrom, commit?: string) =>
+  queryOptions({
+    queryKey: ["library", "plugin", key, from, commit ?? ""],
+    queryFn: () =>
+      apiFetch(`/api/library/plugins/${encodeURIComponent(key)}${commitQuery(from, commit)}`, {
+        schema: pluginDetailSchema,
+      }),
+  });
+
+export const marketplaceQueryOptions = (name: string) =>
+  queryOptions({
+    queryKey: ["library", "marketplace", name],
+    queryFn: () =>
+      apiFetch(`/api/library/marketplaces/${encodeURIComponent(name)}`, {
+        schema: marketplaceViewSchema,
+      }),
+  });
+
+/** One file of a plugin (View file). Outside the `["library"]` prefix, like a skill's file: a commit's text can't change. */
+export const pluginFileQueryOptions = (
+  key: string,
+  path: string,
+  from: PluginFrom,
+  commit: string | undefined,
+) =>
+  queryOptions({
+    queryKey: ["library-file", "plugin", key, path, from, commit ?? ""],
+    queryFn: () =>
+      apiFetch(
+        `/api/library/plugins/${encodeURIComponent(key)}/file?path=${encodeURIComponent(path)}${commitQuery(from, commit).replace("?", "&")}`,
+        { schema: pluginFileTextSchema },
+      ),
+    staleTime: commit ? Number.POSITIVE_INFINITY : 0,
+  });
+
+type PluginEntry = PluginsResponse["marketplaces"][number]["plugins"][number];
+type HostEntry = PluginsResponse["host"][number];
+export type PluginRowView =
+  | { from: "library"; entry: PluginEntry; marketplace: string; commit: string | null }
+  | { from: "host"; entry: HostEntry };
+
+const pluginSelectors = new Map<string, (data: PluginsResponse) => PluginRowView | undefined>();
+
+/** `select` for a peek reading one plugin's row (module-level and memoised per `(key, from)`, R-L2). */
+export function selectPluginRow(key: string, from: PluginFrom) {
+  const id = `${from} ${key}`;
+  let select = pluginSelectors.get(id);
+  if (!select) {
+    select = (data) => {
+      if (from === "host") {
+        const entry = data.host.find((h) => h.key === key);
+        return entry ? { from: "host", entry } : undefined;
+      }
+      for (const m of data.marketplaces) {
+        const entry = m.plugins.find((p) => p.key === key);
+        if (entry) return { from: "library", entry, marketplace: m.name, commit: m.commit };
+      }
+      return undefined;
+    };
+    pluginSelectors.set(id, select);
+  }
+  return select;
+}
+
+export type MarketplaceRow = MarketplacesResponse["marketplaces"][number];
+const marketplaceSelectors = new Map<
+  string,
+  (data: MarketplacesResponse) => MarketplaceRow | undefined
+>();
+
+/** `select` for a Marketplace peek: its row (with its plugins and users) from the cached list. */
+export function selectMarketplaceRow(name: string) {
+  let select = marketplaceSelectors.get(name);
+  if (!select) {
+    select = (data) => data.marketplaces.find((m) => m.name === name);
+    marketplaceSelectors.set(name, select);
+  }
+  return select;
+}
+
+export type MarketplacePreviewBody = z.infer<typeof marketplacePreviewBodySchema>;
+const marketUrl = (name: string, action?: string) =>
+  `/api/library/marketplaces/${encodeURIComponent(name)}${action ? `/${action}` : ""}`;
+
+/** Step 1 of Add marketplace. `signal` cancels it (Close, a newer Find). */
+export const previewMarketplace = (body: MarketplacePreviewBody, signal?: AbortSignal) =>
+  post("/api/library/marketplaces/preview", marketplacePreviewSchema, body, signal);
+/** Step 2: adds the previewed marketplace (201, or 202 with an `adding` row while it re-fetches). */
+export const addMarketplace = (previewId: string) =>
+  post("/api/library/marketplaces", marketplaceDetailSchema, { previewId });
+export const checkMarketplace = (name: string) =>
+  post(marketUrl(name, "check"), marketplaceDetailSchema);
+export const updateMarketplace = (name: string, commit: string) =>
+  post(marketUrl(name, "update"), marketplaceDetailSchema, { commit });
+export const fetchMarketplaceRef = (name: string, ref: string) =>
+  post(marketUrl(name, "fetch"), marketplaceFetchedSchema, { ref });
+export const removeMarketplace = (name: string) =>
+  apiFetch(marketUrl(name), { method: "DELETE", schema: sourceRemovedSchema });
+export const restoreMarketplace = (name: string) =>
+  post(marketUrl(name, "restore"), marketplaceDetailSchema);
+/** Fetches an external `sha` source so its contents can be shown (Read contents). */
+export const readPlugin = (key: string, commit?: string) =>
+  post(`/api/library/plugins/${encodeURIComponent(key)}/read`, pluginDetailSchema, {
+    ...(commit ? { commit } : {}),
+  });
+export const addHostMarketplace = (key: string) =>
+  post(
+    `/api/library/host-plugins/${encodeURIComponent(key)}/add-marketplace`,
+    marketplaceDetailSchema,
+  );
 
 /** A `library_changed` frame (spec §9.5). */
 export type LibraryChanged = Extract<ServerMessage, { type: "library_changed" }>;

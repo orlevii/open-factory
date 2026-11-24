@@ -1,11 +1,17 @@
 import {
   apiFetch,
   type ServerMessage,
+  type SkillGroupsResponse,
   skillDetailSchema,
+  skillFileTextSchema,
   skillGroupsResponseSchema,
+  sourceDetailSchema,
+  sourcePreviewSchema,
+  sourceRemovedSchema,
   sourceViewSchema,
 } from "@open-factory/shared";
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
+import type { z } from "zod";
 import { notify } from "@/components/ui/toaster";
 
 // Keys are arrays of primitives under the `["library"]` prefix, which a `library_changed` frame invalidates.
@@ -36,6 +42,83 @@ export const sourceQueryOptions = (id: string) =>
     queryFn: () =>
       apiFetch(`/api/library/sources/${encodeURIComponent(id)}`, { schema: sourceViewSchema }),
   });
+
+/**
+ * One text file of a skill. Outside the `["library"]` prefix on purpose: a `library_changed` frame never refetches file
+ * text. A pinned source's file can't change, so it never goes stale; a live one (`pin` null) refetches as usual.
+ */
+export const skillFileQueryOptions = (
+  group: string,
+  name: string,
+  path: string,
+  pin: string | null,
+) =>
+  queryOptions({
+    queryKey: ["library-file", group, name, path, pin ?? ""],
+    queryFn: () =>
+      apiFetch(
+        `/api/library/skills/${encodeURIComponent(group)}/${encodeURIComponent(name)}/file?path=${encodeURIComponent(path)}`,
+        { schema: skillFileTextSchema },
+      ),
+    staleTime: pin ? Number.POSITIVE_INFINITY : 0,
+  });
+
+type Group = SkillGroupsResponse["groups"][number];
+type SourceGroup = Extract<Group, { kind: "source" }>;
+export type SkillRowView = {
+  row: Group["skills"][number];
+  source: SourceGroup["source"] | undefined;
+};
+
+const rowSelectors = new Map<string, (data: SkillGroupsResponse) => SkillRowView | undefined>();
+
+/**
+ * `select` for a peek reading one skill's row from the cached list (R-L2). Memoised per `(group, name)` at module level,
+ * so a render hands `useQuery` the same function and it doesn't re-select on every render.
+ */
+export function selectSkillRow(group: string, name: string) {
+  const key = `${group}\0${name}`;
+  let select = rowSelectors.get(key);
+  if (!select) {
+    select = (data) => {
+      const g = data.groups.find((x) => x.group === group);
+      const row = g?.skills.find((r) => r.name === name);
+      return g && row ? { row, source: g.kind === "source" ? g.source : undefined } : undefined;
+    };
+    rowSelectors.set(key, select);
+  }
+  return select;
+}
+
+const sourceSelectors = new Map<string, (data: SkillGroupsResponse) => SourceGroup | undefined>();
+
+/** `select` for a Source peek: the source's group (its summary and its skills' rows) from the cached list. */
+export function selectSourceGroup(id: string) {
+  let select = sourceSelectors.get(id);
+  if (!select) {
+    select = (data) =>
+      data.groups.find((g): g is SourceGroup => g.kind === "source" && g.source.id === id);
+    sourceSelectors.set(id, select);
+  }
+  return select;
+}
+
+// Source actions (spec §9.2). POSTs are mutations, started from handlers (R-Q1), never queries.
+const sourceUrl = (id: string, action?: string) =>
+  `/api/library/sources/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
+const post = <T>(url: string, schema: z.ZodType<T>, body: unknown = {}) =>
+  apiFetch(url, { method: "POST", body, schema });
+
+export const checkSource = (id: string) => post(sourceUrl(id, "check"), sourceDetailSchema);
+export const updateSource = (id: string, commit: string) =>
+  post(sourceUrl(id, "update"), sourceDetailSchema, { commit });
+export const refetchSource = (id: string) => post(sourceUrl(id, "fetch"), sourceDetailSchema);
+export const findSkills = (id: string) => post(sourceUrl(id, "find"), sourcePreviewSchema);
+export const addSkillsTo = (id: string, skills: string[]) =>
+  post(sourceUrl(id, "add"), sourceDetailSchema, { skills });
+export const removeSource = (id: string) =>
+  apiFetch(sourceUrl(id), { method: "DELETE", schema: sourceRemovedSchema });
+export const restoreSource = (id: string) => post(sourceUrl(id, "restore"), sourceDetailSchema);
 
 /** A `library_changed` frame (spec §9.5). */
 export type LibraryChanged = Extract<ServerMessage, { type: "library_changed" }>;

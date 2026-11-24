@@ -71,6 +71,8 @@ test("the queries fetch their endpoints, with group and name encoded", async () 
         state: "ok",
         usedBy: { templates: 0, agents: 0 },
         files: [],
+        hooks: [],
+        usedByTemplates: [],
         skillMd: "",
       }),
   });
@@ -94,6 +96,8 @@ test("one invalidation of the library prefix reaches the list, a skill and a sou
         state: "ok",
         usedBy: { templates: 0, agents: 0 },
         files: [],
+        hooks: [],
+        usedByTemplates: [],
         skillMd: "",
       }),
     "GET /api/library/sources/s1": () =>

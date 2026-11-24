@@ -307,6 +307,28 @@ test("a host skill's detail has its row, files and SKILL.md; a link to it is fol
   expect(await idx.fileText("host", "tdd", "notes.txt")).toBe("n");
 });
 
+test("a skill's detail carries its frontmatter hooks and its users grouped by template", async () => {
+  host(
+    "x",
+    "name: x\ndescription: d\nhooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command\n          command: ./guard.sh",
+  );
+  const idx = make({
+    templates: { dev: { skills: ["x"] }, ops: { skills: [] } },
+    agents: [
+      { slug: "ann", template: "dev", config: {} },
+      { slug: "cy", template: "ops", config: { template: { skills: ["x"] } } },
+      { slug: "di", template: "ops", config: { template: { skills: ["x"] } } },
+    ],
+  });
+  expect(await idx.detail("host", "x")).toMatchObject({
+    hooks: [{ event: "PreToolUse", matcher: "Bash", command: "./guard.sh" }],
+    usedByTemplates: [
+      { name: "dev", agents: 1 },
+      { name: "ops", agents: 2 },
+    ],
+  });
+});
+
 test("a source skill and a template-local skill resolve in their own groups", async () => {
   const s = source({});
   md(githubDir(s.id, "tdd"), "name: tdd");

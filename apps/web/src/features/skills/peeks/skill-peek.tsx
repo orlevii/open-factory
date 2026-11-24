@@ -1,0 +1,258 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { useState } from "react";
+import { ErrorLine } from "@/components/error-line";
+import { SheetBody, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { UntrustedCode, UntrustedProse } from "@/components/untrusted-text";
+import { FORM_MSG } from "@/lib/form-messages";
+import {
+  libraryQueryOptions,
+  type SkillRowView,
+  selectSkillRow,
+  skillQueryOptions,
+} from "@/lib/library";
+import { count, pinLabel, sourceLabel } from "../format";
+import { RowState } from "../row-state";
+import { sourceKey } from "../use-peek";
+import { FileView } from "./file-view";
+import { BackButton, Section, SkeletonRows } from "./sections";
+
+const COLLAPSE_FILES = 20;
+const COLLAPSE_USERS = 8;
+const LINK = "underline underline-offset-2 hover:text-foreground";
+
+type Hook = { event: string; matcher: string; command: string };
+
+/** Frontmatter hooks, each with its event, matcher and full command (spec §10.3 "Runs code"). */
+function RunsCode({ hooks }: { hooks: Hook[] }) {
+  return (
+    <Section title="Runs code">
+      <ul className="space-y-2">
+        {hooks.map((h) => (
+          <li key={`${h.event}\0${h.matcher}\0${h.command}`} className="space-y-0.5">
+            <p className="font-mono text-[0.8125rem]">
+              <UntrustedProse text={h.event} />
+              {h.matcher && (
+                <>
+                  {" · "}
+                  <UntrustedProse text={h.matcher} />
+                </>
+              )}
+            </p>
+            <UntrustedCode text={h.command} clampLines={200} />
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+/** A "Show all N" control that clamps a list past `limit`. */
+function Clamped<T>({
+  items,
+  limit,
+  render,
+}: {
+  items: T[];
+  limit: number;
+  render(item: T): React.ReactNode;
+}) {
+  const [all, setAll] = useState(false);
+  const shown = all ? items : items.slice(0, limit);
+  return (
+    <>
+      {shown.map(render)}
+      {!all && items.length > limit && (
+        <li>
+          <button
+            type="button"
+            onClick={() => setAll(true)}
+            className="py-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            Show all {items.length}
+          </button>
+        </li>
+      )}
+    </>
+  );
+}
+
+type UsedBy = { name: string; agents: number }[];
+
+const renderUser = (u: UsedBy[number]) => (
+  <li key={u.name} className="text-[0.8125rem]">
+    <Link to="/templates/$name" params={{ name: u.name }} className={LINK}>
+      {u.name}
+    </Link>
+    {" · "}
+    <span className="text-muted-foreground">{count(u.agents, "agent")}</span>
+  </li>
+);
+
+function UsedBySection({ users }: { users: UsedBy }) {
+  if (users.length === 0) return null;
+  return (
+    <Section title="Used by">
+      <ul>
+        <Clamped items={users} limit={COLLAPSE_USERS} render={renderUser} />
+      </ul>
+    </Section>
+  );
+}
+
+type File = { path: string; executable: boolean };
+
+function FilesSection({
+  group,
+  name,
+  files,
+  pin,
+  skillMd,
+}: {
+  group: string;
+  name: string;
+  files: File[];
+  pin: string | null;
+  skillMd: string;
+}) {
+  if (files.length === 0) return null;
+  return (
+    <Section title="Files">
+      <ul>
+        <Clamped
+          items={files}
+          limit={COLLAPSE_FILES}
+          render={(f) => (
+            <FileView
+              key={f.path}
+              group={group}
+              name={name}
+              path={f.path}
+              executable={f.executable}
+              pin={pin}
+              inlineText={f.path === "SKILL.md" ? skillMd : undefined}
+            />
+          )}
+        />
+      </ul>
+    </Section>
+  );
+}
+
+/** The "From …" line: a link to the Source peek, or plain text when the reader came from it. */
+function FromLine({
+  group,
+  source,
+  cameFromSource,
+  onOpen,
+}: {
+  group: string;
+  source: SkillRowView["source"];
+  cameFromSource: boolean;
+  onOpen(key: string): void;
+}) {
+  if (group === "host") return <p className="text-[0.8125rem] text-muted-foreground">From Host</p>;
+  if (group.startsWith("template:")) {
+    const template = group.slice("template:".length);
+    return (
+      <p className="text-[0.8125rem] text-muted-foreground">
+        From template{" "}
+        <Link to="/templates/$name" params={{ name: template }} className={LINK}>
+          {template}
+        </Link>
+      </p>
+    );
+  }
+  if (!source) return <p className="text-[0.8125rem] text-muted-foreground">Not in any source</p>;
+  const text = `From ${sourceLabel(source)} · ${pinLabel(source) ?? ""}`;
+  const key = sourceKey(source.id);
+  return (
+    <p className="text-[0.8125rem] text-muted-foreground">
+      {cameFromSource ? (
+        <UntrustedProse text={text} />
+      ) : (
+        <button
+          type="button"
+          data-peek-key={key}
+          onClick={() => onOpen(key)}
+          className={`${LINK} text-left`}
+        >
+          <UntrustedProse text={text} />
+        </button>
+      )}
+    </p>
+  );
+}
+
+/**
+ * The Skill peek (spec §10.3). It renders from the cached list row at once (`select` from the module-level factory,
+ * R-L2) and refines from the detail query: `detail ?? row`, skeletons for what the detail holds, never `initialData`,
+ * `placeholderData` or an effect.
+ */
+export function SkillPeekBody({
+  group,
+  name,
+  back,
+  onBack,
+  onOpen,
+}: {
+  group: string;
+  name: string;
+  back: string | null;
+  onBack(): void;
+  onOpen(key: string): void;
+}) {
+  const select = selectSkillRow(group, name); // memoised per (group, name) at module level
+  const { data: cached } = useQuery({ ...libraryQueryOptions, select });
+  const q = useQuery(skillQueryOptions(group, name));
+  const detail = q.data;
+  const row = detail ?? cached?.row;
+  const source = cached?.source;
+  const pin = source?.pin ?? null;
+  return (
+    <>
+      <SheetHeader className="items-center">
+        {back !== null && <BackButton onBack={onBack} />}
+        <SheetTitle className="font-mono text-sm font-normal">{name}</SheetTitle>
+      </SheetHeader>
+      <SheetBody className="space-y-4">
+        <div className="space-y-1">
+          {row?.description && (
+            <p className="text-sm">
+              <UntrustedProse text={row.description} />
+            </p>
+          )}
+          <FromLine
+            group={group}
+            source={source}
+            cameFromSource={source !== undefined && back === sourceKey(source.id)}
+            onOpen={onOpen}
+          />
+          {row && row.state !== "ok" && (
+            <p className="flex items-center gap-2 text-[0.8125rem]">
+              <RowState state={row.state} />
+              {row.stateDetail && <UntrustedProse text={row.stateDetail} />}
+            </p>
+          )}
+        </div>
+        {detail ? (
+          <>
+            {detail.hooks.length > 0 && <RunsCode hooks={detail.hooks} />}
+            <UsedBySection users={detail.usedByTemplates} />
+            <FilesSection
+              group={group}
+              name={name}
+              files={detail.files}
+              pin={pin}
+              skillMd={detail.skillMd}
+            />
+          </>
+        ) : q.isError ? (
+          <ErrorLine text={FORM_MSG.loadSkills} onRetry={() => void q.refetch()} />
+        ) : (
+          <SkeletonRows n={4} />
+        )}
+      </SheetBody>
+    </>
+  );
+}

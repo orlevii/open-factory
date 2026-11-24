@@ -60,7 +60,7 @@ test("rows and source headers are buttons that open a dialog peek, and say wheth
   await userEvent.click(row);
   expect(row).toHaveAttribute("aria-expanded", "true");
   expect(row).toHaveAttribute("aria-current", "true");
-  const header = screen.getByRole("button", { name: /acme\/skills/ });
+  const header = screen.getByRole("button", { name: /^acme\/skills/ });
   expect(header).toHaveAttribute("aria-haspopup", "dialog");
   await userEvent.click(header);
   expect(header).toHaveAttribute("aria-expanded", "true");

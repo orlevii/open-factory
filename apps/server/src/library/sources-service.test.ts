@@ -449,6 +449,11 @@ describe("check and update", () => {
     expect(e.message).toBe(
       "Update would remove skill gone, used by template dev, @ana, @bob and 2 more.",
     );
+    expect(e.extra).toEqual({
+      skills: ["gone"],
+      templates: ["dev"],
+      agents: ["ana", "bob", "cy", "di"],
+    });
     expect((await s.store.all())[0]?.commit).toBe(r.shas[0]);
     expect(s.changed).toEqual([]);
   });
@@ -562,6 +567,7 @@ describe("remove and restore", () => {
     const src = await folderSource(s);
     const e = await expectApi(s.svc.remove(src.id), 409, "in_use");
     expect(e.message).toBe("Used by template dev, template ops, @ana and 1 more.");
+    expect(e.extra).toEqual({ templates: ["dev", "ops"], agents: ["ana", "bob"] });
     expect((await s.store.all())[0]?.deletedAt).toBeNull();
   });
 

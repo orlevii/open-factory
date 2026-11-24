@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef } from "react";
 import { PageBody } from "@/components/page-header";
 import { closeInstantly } from "@/components/ui/sheet";
+import { PeekSheet } from "@/features/skills/peeks/peek-sheet";
 import { SkillList } from "@/features/skills/skill-list";
-import { SkillPeek } from "@/features/skills/skill-peek";
 import { SkillsHeader } from "@/features/skills/skills-header";
 import { useLibraryArrival } from "@/features/skills/use-library-arrival";
 import { type PeekControl, usePeek } from "@/features/skills/use-peek";
@@ -45,7 +45,13 @@ function SkillsPage() {
           </div>
         </div>
       </PageBody>
-      <SkillPeek peekKey={key} onClose={close} contentRef={content} returnFocus={findRow} />
+      <PeekSheet
+        peekKey={key}
+        show={show}
+        onClose={close}
+        contentRef={content}
+        returnFocus={findRow}
+      />
     </>
   );
 }

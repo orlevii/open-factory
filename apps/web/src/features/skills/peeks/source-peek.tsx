@@ -1,0 +1,454 @@
+import type { foundSkillSchema } from "@open-factory/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useId, useRef, useState } from "react";
+import type { z } from "zod";
+import { Elapsed } from "@/components/elapsed";
+import { ErrorLine } from "@/components/error-line";
+import { InlineOutcome } from "@/components/inline-outcome";
+import { MiddleTruncate } from "@/components/middle-truncate";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { SheetBody, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Spinner } from "@/components/ui/spinner";
+import { notify } from "@/components/ui/toaster";
+import { UntrustedProse, visibleControls } from "@/components/untrusted-text";
+import { TimeAgo } from "@/features/settings/shared";
+import { FORM_MSG } from "@/lib/form-messages";
+import {
+  addSkillsTo,
+  checkSource,
+  findSkills,
+  libraryQueryOptions,
+  refetchSource,
+  removeSource,
+  restoreSource,
+  selectSourceGroup,
+  sourceQueryOptions,
+  updateSource,
+} from "@/lib/library";
+import { count, pinLabel, sourceLabel, usedByText } from "../format";
+import { RowState } from "../row-state";
+import { skillKey } from "../use-peek";
+import { BackButton, failure, PinButton, Section, SkeletonRows } from "./sections";
+import { UpdateView } from "./update-view";
+
+type Found = z.infer<typeof foundSkillSchema>;
+type Line = { tone: "success" | "error"; node: React.ReactNode } | undefined;
+
+const FETCH_AGAIN = "Fetch again";
+const SERVER_DOWN = "Can't reach the server.";
+
+/** One inline outcome line (both live regions stay mounted so it is announced when it appears). */
+function Outcome({ line }: { line: Line }) {
+  return <InlineOutcome tone={line?.tone}>{line?.node}</InlineOutcome>;
+}
+
+/** The pending label of a running action: a spinner, and the elapsed time after 10 s. */
+function Pending({ label, since }: { label: string; since: number }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Spinner size="text" />
+      {label}
+      <span aria-hidden="true">
+        <Elapsed since={new Date(since).toISOString()} hideUnderMs={10_000} />
+      </span>
+    </span>
+  );
+}
+
+const reasonText = (f: Found) =>
+  f.reason === "taken"
+    ? `The name is used by ${f.takenBy ?? "another source"}.`
+    : f.reason === "link"
+      ? "It's a link."
+      : f.detail;
+
+/** One result of Find more skills: a checkbox, or the reason it can't be picked. */
+function FoundRow({
+  f,
+  ticked,
+  onTick,
+}: {
+  f: Found;
+  ticked: boolean;
+  onTick(name: string, on: boolean): void;
+}) {
+  return (
+    <li className="flex items-start gap-2 py-1 text-[0.8125rem]">
+      <Checkbox
+        aria-label={f.name}
+        checked={f.pickable && ticked}
+        disabled={!f.pickable}
+        onCheckedChange={(c) => onTick(f.name, c === true)}
+        className="mt-0.5"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block font-mono">
+          <UntrustedProse text={f.name} />
+        </span>
+        <span className="block text-muted-foreground">
+          <UntrustedProse text={f.pickable ? f.description : (reasonText(f) ?? f.description)} />
+        </span>
+      </span>
+    </li>
+  );
+}
+
+/**
+ * Find more skills (spec §10.3): the Add skills results step inline, with the source fixed. Its outcome is inline
+ * because the control is still on screen, and there is no toast and no Undo. Find and Add are mutations from handlers
+ * (R-Q1); ticks are a `Set` updated functionally, and the filtered state is derived during render (R-F1).
+ */
+function FindMore({ id }: { id: string }) {
+  const qc = useQueryClient();
+  const [found, setFound] = useState<Found[]>();
+  const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
+  const [line, setLine] = useState<Line>();
+  const find = useMutation({ mutationFn: () => findSkills(id) });
+  const add = useMutation({
+    mutationFn: (names: string[]) => addSkillsTo(id, names),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["library"] }),
+  });
+  const onFind = () => {
+    setLine(undefined);
+    find.mutate(undefined, {
+      onSuccess: (r) => {
+        setFound(r.found);
+        setTicked(new Set(r.found.filter((f) => f.pickable).map((f) => f.name)));
+        if (!r.found.some((f) => f.pickable))
+          setLine({ tone: "success", node: "No more skills to add." });
+      },
+      onError: (e) => setLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
+    });
+  };
+  const onTick = (name: string, on: boolean) =>
+    setTicked((s) => {
+      const next = new Set(s);
+      if (on) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+  const picked = [...ticked].filter((n) => found?.some((f) => f.name === n && f.pickable));
+  const onAdd = () => {
+    setLine(undefined);
+    add.mutate(picked, {
+      onSuccess: () => {
+        setFound(undefined);
+        setLine({ tone: "success", node: `Added ${count(picked.length, "skill")}.` });
+      },
+      onError: (e) => setLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
+    });
+  };
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-disabled={find.isPending}
+          onClick={() => !find.isPending && onFind()}
+        >
+          {find.isPending ? (
+            <Pending label="Finding skills…" since={find.submittedAt} />
+          ) : (
+            "Find more skills"
+          )}
+        </Button>
+      </div>
+      {found && found.length > 0 && (
+        <>
+          <ul>
+            {found.map((f) => (
+              <FoundRow key={f.name} f={f} ticked={ticked.has(f.name)} onTick={onTick} />
+            ))}
+          </ul>
+          <Button size="sm" disabled={picked.length === 0 || add.isPending} onClick={onAdd}>
+            {add.isPending ? (
+              <Pending label="Adding…" since={add.submittedAt} />
+            ) : (
+              `Add ${count(picked.length, "skill")} to this source`
+            )}
+          </Button>
+        </>
+      )}
+      <Outcome line={line} />
+    </div>
+  );
+}
+
+/** The next source header after `id` in the page's list (else the one before it): where focus goes once it is gone. */
+function neighbourHeader(id: string): string | null {
+  const keys = [...document.querySelectorAll<HTMLElement>('[data-peek-key^="source:"]')]
+    .filter((el) => el.hasAttribute("data-row"))
+    .map((el) => el.dataset.peekKey ?? "");
+  const i = keys.indexOf(`source:${id}`);
+  return keys[i + 1] ?? keys[i - 1] ?? null;
+}
+
+/**
+ * The Source peek (spec §10.3). The summary comes from the cached list row at once; the detail query refines it (its
+ * GET can be slow when it must rebuild the update view, so that section has its own loading state). Check, Update,
+ * Fetch again, Find and Remove are mutations started from handlers; this body is keyed by the peek's key, so every
+ * result is dropped when the peek retargets.
+ */
+export function SourcePeekBody({
+  id,
+  back,
+  onBack,
+  onOpen,
+  onRemoved,
+}: {
+  id: string;
+  back: string | null;
+  onBack(): void;
+  onOpen(key: string): void;
+  /** The source was removed: close the peek and put focus on `nextKey`'s header. */
+  onRemoved(nextKey: string | null): void;
+}) {
+  const qc = useQueryClient();
+  const select = selectSourceGroup(id);
+  const { data: group } = useQuery({ ...libraryQueryOptions, select });
+  const q = useQuery(sourceQueryOptions(id));
+  const d = q.data;
+  const summary = group?.source;
+  const reasonId = useId();
+  const [checkLine, setCheckLine] = useState<Line>();
+  const [updateLine, setUpdateLine] = useState<Line>();
+  const [removeLine, setRemoveLine] = useState<Line>();
+  const refresh = () => qc.invalidateQueries({ queryKey: ["library"] });
+  const check = useMutation({ mutationFn: () => checkSource(id), onSuccess: refresh });
+  const update = useMutation({
+    mutationFn: (commit: string) => updateSource(id, commit),
+    onSuccess: refresh,
+  });
+  const fetchAgain = useMutation({ mutationFn: () => refetchSource(id), onSuccess: refresh });
+  const remove = useMutation({
+    mutationFn: () => removeSource(id),
+    onSuccess: refresh,
+  });
+  const restore = useMutation({ mutationFn: () => restoreSource(id), onSuccess: refresh });
+  const undoRemove = useRef(restore.mutateAsync);
+  undoRemove.current = restore.mutateAsync;
+
+  const kind = d?.kind ?? summary?.kind;
+  const label = d || summary ? sourceLabel(d ?? (summary as NonNullable<typeof summary>)) : "";
+  const pin = d?.pin ?? summary?.pin ?? null;
+  const skillCount = d?.skills.length ?? summary?.skillCount ?? 0;
+  const users = d ? d.usedBy.templates + d.usedBy.agents : 0;
+  const inUse = users > 0;
+  const rows = group?.skills ?? [];
+  const missing = rows.some((r) => r.state === "missing" && r.stateDetail === FETCH_AGAIN);
+  const updateCommit = d?.updateCommit ?? null;
+  const updateExpected = updateCommit !== null || (!d && summary?.update === true);
+
+  const onCheck = () => {
+    setCheckLine(undefined);
+    check.mutate(undefined, {
+      onSuccess: (r) =>
+        setCheckLine(
+          r.updateCommit
+            ? undefined
+            : r.checkError
+              ? { tone: "error", node: FORM_MSG.checkFailed }
+              : { tone: "success", node: "Up to date." },
+        ),
+      onError: (e) => setCheckLine({ tone: "error", node: failure(e, FORM_MSG.checkFailed) }),
+    });
+  };
+  const onUpdate = () => {
+    if (updateCommit === null) return;
+    setUpdateLine(undefined);
+    update.mutate(updateCommit, {
+      onSuccess: () =>
+        setUpdateLine({ tone: "success", node: `Updated to ${updateCommit.slice(0, 7)}.` }),
+      onError: (e) => setUpdateLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
+    });
+  };
+  const onRemove = () => {
+    if (inUse || remove.isPending) return;
+    setRemoveLine(undefined);
+    const next = neighbourHeader(id);
+    remove.mutate(undefined, {
+      onSuccess: ({ undoUntil }) => {
+        // The Undo window is the server's, read here in the handler and not by an effect (R-T1).
+        const durationMs = Math.max(0, Date.parse(undoUntil) - Date.now());
+        notify({
+          text: `Removed ${label} and its ${count(skillCount, "skill")}.`,
+          durationMs,
+          undo: async () => {
+            await undoRemove.current(undefined);
+          },
+        });
+        onRemoved(next);
+      },
+      onError: (e) => setRemoveLine({ tone: "error", node: failure(e, SERVER_DOWN) }),
+    });
+  };
+
+  return (
+    <>
+      <SheetHeader className="items-center">
+        {back !== null && <BackButton onBack={onBack} />}
+        <SheetTitle className="font-mono text-sm font-normal">
+          <MiddleTruncate text={visibleControls(label)} />
+        </SheetTitle>
+      </SheetHeader>
+      <SheetBody className="space-y-4">
+        {!d && q.isError && (
+          <ErrorLine text={FORM_MSG.loadSkills} onRetry={() => void q.refetch()} />
+        )}
+        <Section
+          title="Source"
+          action={
+            kind === "github" ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                aria-disabled={check.isPending}
+                onClick={() => !check.isPending && onCheck()}
+              >
+                {check.isPending ? (
+                  <Pending label="Checking…" since={check.submittedAt} />
+                ) : (
+                  "Check for updates"
+                )}
+              </Button>
+            ) : undefined
+          }
+        >
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[0.8125rem]">
+            <dt className="text-muted-foreground">Kind</dt>
+            <dd>{kind === "folder" ? "Folder" : kind === "github" ? "GitHub" : ""}</dd>
+            {(d?.branch ?? summary?.branch) && (
+              <>
+                <dt className="text-muted-foreground">Branch</dt>
+                <dd className="font-mono">{d?.branch ?? summary?.branch}</dd>
+              </>
+            )}
+            <dt className="text-muted-foreground">Pin</dt>
+            <dd>
+              {kind === "folder" ? (
+                "Live"
+              ) : pin ? (
+                <>
+                  <PinButton sha={pin} />
+                  <span className="mt-1 block font-mono text-xs break-all select-text">{pin}</span>
+                </>
+              ) : (
+                pinLabel({ kind: kind ?? "github", pin })
+              )}
+            </dd>
+            {d?.committedAt && (
+              <>
+                <dt className="text-muted-foreground">Date</dt>
+                <dd>
+                  <TimeAgo iso={d.committedAt} />
+                </dd>
+              </>
+            )}
+            {d?.subject && (
+              <>
+                <dt className="text-muted-foreground">Subject</dt>
+                <dd>
+                  <UntrustedProse text={d.subject} />
+                </dd>
+              </>
+            )}
+          </dl>
+          <Outcome line={checkLine} />
+          {missing && (
+            <p className="mt-2 flex items-center gap-2 text-[0.8125rem]">
+              <RowState state="missing" />
+              <Button
+                variant="ghost"
+                size="xs"
+                aria-disabled={fetchAgain.isPending}
+                onClick={() => !fetchAgain.isPending && fetchAgain.mutate()}
+              >
+                {fetchAgain.isPending ? (
+                  <Pending label="Fetching…" since={fetchAgain.submittedAt} />
+                ) : (
+                  FETCH_AGAIN
+                )}
+              </Button>
+            </p>
+          )}
+        </Section>
+
+        {updateExpected && (
+          <Section title="Update">
+            <UpdateView
+              from={pin}
+              to={updateCommit}
+              view={d?.update}
+              loading={!d || (q.isFetching && d.update === null)}
+              action={
+                <Button
+                  size="sm"
+                  aria-disabled={update.isPending || updateCommit === null}
+                  onClick={() => !update.isPending && onUpdate()}
+                >
+                  {update.isPending ? (
+                    <Pending label="Updating…" since={update.submittedAt} />
+                  ) : (
+                    `Update to ${(updateCommit ?? "").slice(0, 7)}`
+                  )}
+                </Button>
+              }
+              outcome={<Outcome line={updateLine} />}
+            />
+          </Section>
+        )}
+
+        <Section title="Skills">
+          {d ? (
+            <ul>
+              {d.skills.map((n) => {
+                const row = rows.find((r) => r.name === n);
+                return (
+                  <li key={n} className="flex min-h-7 items-center gap-2 text-[0.8125rem]">
+                    <button
+                      type="button"
+                      data-peek-key={skillKey(`source:${id}`, n)}
+                      aria-haspopup="dialog"
+                      onClick={() => onOpen(skillKey(`source:${id}`, n))}
+                      className="min-w-0 truncate text-left font-mono underline-offset-2 hover:underline"
+                    >
+                      <UntrustedProse text={n} />
+                    </button>
+                    {row && row.state !== "ok" && <RowState state={row.state} />}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <SkeletonRows n={Math.min(skillCount, 6)} />
+          )}
+          {d && <FindMore id={id} />}
+        </Section>
+      </SheetBody>
+      <SheetFooter className="flex-col items-stretch gap-2">
+        {inUse && (
+          <p id={reasonId} className="text-[0.8125rem] text-muted-foreground">
+            {usedByText(d?.usedBy.templates ?? 0, d?.usedBy.agents ?? 0)}. Remove it from them
+            first.
+          </p>
+        )}
+        <Outcome line={removeLine} />
+        <Button
+          variant="ghost"
+          aria-disabled={inUse || remove.isPending || !d}
+          aria-describedby={inUse ? reasonId : undefined}
+          onClick={onRemove}
+          className="self-end text-destructive hover:text-destructive"
+        >
+          {remove.isPending ? (
+            <Pending label="Removing…" since={remove.submittedAt} />
+          ) : (
+            `Remove source (${count(skillCount, "skill")})`
+          )}
+        </Button>
+      </SheetFooter>
+    </>
+  );
+}

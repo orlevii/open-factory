@@ -217,7 +217,12 @@ export class LibraryIndex {
   }
 
   /** Who lists each name: template names and agent slugs, by effective skills. */
-  private async usage(): Promise<Map<string, { templates: Set<string>; agents: Set<string> }>> {
+  private async usage(): Promise<
+    Map<
+      string,
+      { templates: Set<string>; agents: Set<string>; agentsByTemplate: Map<string, number> }
+    >
+  > {
     const port = this.templates();
     const listed = new Map<string, string[]>();
     for (const t of await port.names()) {
@@ -228,18 +233,29 @@ export class LibraryIndex {
           skills.filter((x): x is string => typeof x === "string"),
         );
     }
-    const out = new Map<string, { templates: Set<string>; agents: Set<string> }>();
+    const out = new Map<
+      string,
+      { templates: Set<string>; agents: Set<string>; agentsByTemplate: Map<string, number> }
+    >();
     const of = (n: string) => {
       const have = out.get(n);
       if (have) return have;
-      const fresh = { templates: new Set<string>(), agents: new Set<string>() };
+      const fresh = {
+        templates: new Set<string>(),
+        agents: new Set<string>(),
+        agentsByTemplate: new Map<string, number>(),
+      };
       out.set(n, fresh);
       return fresh;
     };
     for (const [t, skills] of listed) for (const n of skills) of(n).templates.add(t);
     for (const a of await this.store.agents()) {
       const effective = a.config.template?.skills ?? listed.get(a.template) ?? [];
-      for (const n of effective) of(n).agents.add(a.slug);
+      for (const n of effective) {
+        const u = of(n);
+        u.agents.add(a.slug);
+        u.agentsByTemplate.set(a.template, (u.agentsByTemplate.get(a.template) ?? 0) + 1);
+      }
     }
     return out;
   }
@@ -364,9 +380,16 @@ export class LibraryIndex {
       ?.skills.find((r) => r.name === name);
     if (!row) throw new ApiError(404, "not_found", "Not found");
     const dir = await this.dirOf(group, name);
+    // A template-local skill is outside the Library namespace: nobody "uses" it by name.
+    const use = group.startsWith("template:") ? undefined : (await this.usage()).get(name);
+    const templates = new Set([...(use?.templates ?? []), ...(use?.agentsByTemplate.keys() ?? [])]);
     return {
       ...row,
       group,
+      hooks: dir ? ((await readSkillMd(dir))?.hooks ?? []) : [],
+      usedByTemplates: [...templates]
+        .sort()
+        .map((t) => ({ name: t, agents: use?.agentsByTemplate.get(t) ?? 0 })),
       files: dir ? await listSkillFiles(dir) : [],
       skillMd: dir ? await readSkillMdText(dir) : "",
     };

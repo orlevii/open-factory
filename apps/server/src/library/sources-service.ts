@@ -1022,6 +1022,7 @@ export class SourcesService {
           409,
           "update_drops_used",
           `Update would remove ${usedDropped.length === 1 ? "skill" : "skills"} ${usedDropped.join(", ")}, used by ${usersLine(users.templates, users.agents)}.`,
+          { skills: usedDropped, templates: users.templates, agents: users.agents },
         );
       }
       if (keep.length === 0) throw new ApiError(409, "empties_source", SOURCE_MSG.emptiesSource);
@@ -1084,7 +1085,10 @@ export class SourcesService {
       const row = await this.get(id);
       const users = await this.usersOf(row.skills);
       if (users.templates.length + users.agents.length > 0) {
-        throw new ApiError(409, "in_use", `Used by ${usersLine(users.templates, users.agents)}.`);
+        throw new ApiError(409, "in_use", `Used by ${usersLine(users.templates, users.agents)}.`, {
+          templates: users.templates,
+          agents: users.agents,
+        });
       }
       const now = this.now();
       await this.d.store.update(id, { deletedAt: now });

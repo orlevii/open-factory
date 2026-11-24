@@ -145,6 +145,8 @@ describe("skill source bodies", () => {
       description: "",
       state: "ok",
       usedBy: { templates: 0, agents: 0 },
+      hooks: [],
+      usedByTemplates: [],
       files: [],
     };
     expect(

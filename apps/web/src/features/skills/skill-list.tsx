@@ -12,7 +12,7 @@ import { onRowKeyDown } from "@/lib/row-nav";
 import { runInstantOn } from "@/lib/run-instant";
 import { shouldIgnore } from "@/lib/shortcuts";
 import type { Arrival } from "@/lib/use-arrival";
-import { count, usedByText } from "./format";
+import { count, pinLabel, sourceLabel, usedByText } from "./format";
 import { RowState } from "./row-state";
 import { type PeekControl, skillKey, sourceKey } from "./use-peek";
 
@@ -117,17 +117,6 @@ const pendingSince = (s: SourceGroup["source"], state: RowStateName | undefined)
     : state === "checking"
       ? s.checking?.since
       : undefined;
-
-/** A GitHub source shows its pin as a short sha (none while it is still being added); a folder is always live. */
-const pinLabel = (s: SourceGroup["source"]) =>
-  s.kind === "folder" ? "Live" : s.pin ? s.pin.slice(0, 7) : undefined;
-
-const sourceLabel = (s: SourceGroup["source"]) =>
-  s.kind === "github"
-    ? s.subpath
-      ? `${s.repo ?? ""}/${s.subpath}`
-      : (s.repo ?? "")
-    : (s.path ?? "");
 
 /** The source header: a button that opens the Source peek. Its name span labels the group's `ul`. */
 const SourceHeader = memo(function SourceHeader({

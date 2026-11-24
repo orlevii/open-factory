@@ -200,6 +200,9 @@ export const skillGroupsResponseSchema = z.object({
 
 export type SkillGroupsResponse = z.infer<typeof skillGroupsResponseSchema>;
 
+/** One command hook a skill's frontmatter declares: `matcher` is "" when it has none. */
+const hookDeclSchema = z.object({ event: z.string(), matcher: z.string(), command: z.string() });
+
 const SKILL_MD_BYTES = 256 * 1024;
 
 export const skillFileEntrySchema = z.object({ path: z.string(), executable: z.boolean() });
@@ -208,6 +211,10 @@ export const skillFileEntrySchema = z.object({ path: z.string(), executable: z.b
 export const skillDetailSchema = skillRowSchema.extend({
   group: z.string(),
   files: z.array(skillFileEntrySchema).max(2000),
+  /** The command hooks its frontmatter declares (spec R12). */
+  hooks: z.array(hookDeclSchema),
+  /** Who uses it, by template: the template, and how many of its agents list the skill ("dev · 190 agents"). */
+  usedByTemplates: z.array(z.object({ name: z.string(), agents: z.number().int().nonnegative() })),
   skillMd: z.string().refine((s) => new TextEncoder().encode(s).length <= SKILL_MD_BYTES),
 });
 
@@ -267,8 +274,6 @@ export const sourceUpdateBodySchema = z.object({ commit: z.string().min(1) });
 
 /** `DELETE /api/library/sources/:id`: the Undo window's end (ISO). */
 export const sourceRemovedSchema = z.object({ undoUntil: z.string() });
-
-const hookDeclSchema = z.object({ event: z.string(), matcher: z.string(), command: z.string() });
 
 /** The update view of a source whose check found a newer commit (spec §6.3): what moving a GitHub source to the commit its check found would change. */
 export const sourceUpdateViewSchema = z.object({

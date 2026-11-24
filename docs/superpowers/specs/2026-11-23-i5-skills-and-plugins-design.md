@@ -1188,7 +1188,7 @@ The plan's first PR 2 task turns this into a script (`scripts/g1/run.sh`) plus a
 - the precedence of row states;
 - grapheme-safe cuts.
 
-**Server.** DB tests run in CI only, because the local Postgres role is unavailable.
+**Server.** DB tests get their database through `makeTestApp`/`createTestDb` (a copy of a template migrated once, `createMigratedTestDatabase`) and run in CI (a `checks` job plus four test shards); where the local Postgres role is unavailable they run only there. All tests follow AGENTS.md "Testing standards": behaviour, not CSS classes or existence; look and layout are checked in the browser evidence.
 
 - **`git-fetch`,** against a fixture repo built in the test (`git init`, commits, a symlink, a gitlink, a 51 MB blob, a `.claude-plugin/` skill, a mismatched frontmatter) and served through `file://` with `FACTORY_GITHUB_URL`:
   - resolve: exact-match ls-remote (a decoy `refs/heads/x/refs/heads/main` is ignored) and the default branch's name;

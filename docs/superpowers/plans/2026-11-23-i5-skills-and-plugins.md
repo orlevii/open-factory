@@ -47,8 +47,9 @@
   - Messages: field messages the server returns go in shared `MSG` (`packages/shared/src/messages.ts`, tested by `messages.test.ts`); server-only field messages in `FIELD_MSG` (`apps/server/src/field-messages.ts`); web form-level, outcome and load lines in `FORM_MSG` (`apps/web/src/lib/form-messages.ts`, tested by `form-messages.test.ts`); config-form copy in `apps/web/src/features/config/messages.ts` (`CONFIG_FIELD_MSG`, `CONFIG_FORM_MSG`, `CONFIG_PAGE_MSG`, `CONFIG_COPY`). Reuse `MSG.hostPathStart`, `FIELD_MSG.noFolder` and `FORM_MSG.enterPath` for the folder path.
   - Sheets: kinds are declared in `features/sheets/sheet-store.ts` (`SheetSpec`, `ChildSpec`); bodies in `features/sheets/sheet-bodies.ts` (with the `warm()` prefetch helper); drafts that survive close in `features/sheets/drafts.ts`.
 - **I2 config form (where I5's pickers live).** The section is `apps/web/src/features/config/skills-section.tsx` (`SkillsSection`, titled "Skills and plugins", with `SkillPicker` via `PickAdd` and the plugins `ListField`), placed by `config-form.tsx`. Lists: `list-field.tsx` → `config-list.tsx`; the add control is `pick-add.tsx`; field paths are in `fields.ts`; `PageFooter` is `features/config/page-footer.tsx`. The agent page is `features/config/config-page.tsx` (route `routes/_app/agents.$slug_.config.tsx`); the template tab is `features/templates/template-config-tab.tsx` (route `routes/_app/templates.$name.tsx`). There is no `features/config/sections/` directory.
-- **Database tests run only in CI.** Tests that use `makeTestApp` (`apps/server/src/test/helpers.ts`, which uses `createTestDatabase` from `@open-factory/db/testing`) need Postgres, and the local Postgres role is unavailable. Locally, run the pure unit tests and the web tests you touched; read CI for the DB suites.
-- **Tests per task, full suite per Part.** Each implementer and each reviewer runs **only the test files it created or changed** (`pnpm vitest run <files>`). The full suite, `pnpm typecheck`, `pnpm lint` and `pnpm build` run **once at the end of each Part** (A16, B12, C3); CI is the full-suite check, because local full runs are slow and flaky on this machine. A task may run `pnpm typecheck` when it deletes or renames an exported symbol, to find the callers.
+- **Database tests.** Server tests need Postgres (`DATABASE_URL`). Get a database only through `makeTestApp` or `createTestDb` (`apps/server/src/test/helpers.ts`); both copy a template migrated once per migration set (`createMigratedTestDatabase` in `packages/db/src/testing.ts`), and test apps get a cheap `AppDeps.passwordHasher`. Never migrate your own database in a test. Where the local Postgres role is unavailable, run the pure unit tests and the web tests you touched and read CI for the DB suites.
+- **Testing standards (AGENTS.md).** Every new or changed test follows AGENTS.md "Testing standards": test observable behaviour; cover the failure cases and security boundaries; no existence-only tests (no asserting that a key, export, constant or element exists, and no comparing a constant to its own literal); no implementation details; **no assertions on CSS classes or styling** (no `toHaveClass`, class strings, inline styles or tokens; layout and look are checked in the browser evidence); every test can fail; mock only boundaries; one behaviour per test, `test.each` for inputs; no tombstones for deleted routes or fields. The per-task reviewer checks the tests against these too.
+- **Tests per task, full suite per Part.** Each implementer and each reviewer runs **only the test files it created or changed** (`pnpm vitest run <files>`), or `pnpm test:related <changed source files>` to run the tests that import them. The full suite, `pnpm typecheck`, `pnpm lint` and `pnpm build` run **once at the end of each Part** (A16, B12, C3); CI is the full-suite check (a `checks` job plus test shards 1–4), because local full runs are slow and flaky on this machine. A task may run `pnpm typecheck` when it deletes or renames an exported symbol, to find the callers.
 - **One reviewer per task.** After each task, one fresh reviewer checks that task's diff against the spec sections it cites and this plan; for React tasks it also checks the diff against `vercel-react-best-practices`.
 - **React.** The React parts of this plan were checked against `vercel-react-best-practices` when it was re-validated (React + Vite + TanStack Router/Query; Next-only rules don't apply). Whoever edits a React task of this plan MUST invoke the `vercel-react-best-practices` skill first and keep the task compliant. Every task that touches `apps/web` says: "The plan is already React-compliant; follow it as written and report any deviation." The implementer follows it; the per-task reviewer and the Part's final review check the React diff against the skill.
 - **React rules from the plan review** (binding for every web task; the branch reviews check each one):
@@ -86,27 +87,27 @@
   - **R-P1. `content-visibility`.** Not used, because it can break `scrollIntoView({block:"center"})` on arrival. Add it only if the A16 evidence shows slow renders, and say so.
 - **No shared heavy-job lock.** There is no `/tmp/of-v002-heavy.lock`. Browser evidence still goes through the evidence harness's own `run.sh` lock. Never write sleep or wait loops on other agents' processes.
 - **Git.** Merge, never rebase. Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never merge a PR; Or merges the stack.
-- **PRs.** Each of the three PRs opens **ready for review, not draft**, only after its final review's findings are fixed and CI is green. Base is the previous branch of the stack: `i5/1-library-skills` → `i3/claude-sign-in`, `i5/2-plugins` → `i5/1-library-skills`, `i5/3-polish-docs` → `i5/2-plugins`.
+- **PRs.** Each of the three PRs opens **ready for review, not draft**, only after its final review's findings are fixed and CI is green. Base is the previous branch of the stack: `i5/1-library-skills` → `chore/faster-tests`, `i5/2-plugins` → `i5/1-library-skills`, `i5/3-polish-docs` → `i5/2-plugins`.
 
 ## Branches
 
-All work happens in the worktree `/Users/orlevi/projects/open-factory/.worktrees/spec-i5`. `spec/i5-skills-and-plugins` already merges `origin/i3/claude-sign-in` (I4, I6, I1, I2 and I3 implemented; I3 is PR #185).
+All work happens in the worktree `/Users/orlevi/projects/open-factory/.worktrees/spec-i5`. `spec/i5-skills-and-plugins` already merges `origin/chore/faster-tests`, which includes `chore/test-review` and `i3/claude-sign-in` (I4, I6, I1, I2 and I3 implemented; I3 is PR #185).
 
-- **Part A, `i5/1-library-skills`:** cut from `spec/i5-skills-and-plugins`, after merging the latest `origin/i3/claude-sign-in` again.
+- **Part A, `i5/1-library-skills`:** cut from `spec/i5-skills-and-plugins`, after merging the latest `origin/chore/faster-tests` again.
 - **Part B, `i5/2-plugins`:** cut from `i5/1-library-skills`. Its implementation (B2 onwards) **waits for Or's Gate G1 result** (Task B1, a manual step for Or).
 - **Part C, `i5/3-polish-docs`:** cut from `i5/2-plugins`. Fold it into Part B if it is small.
 
 ```bash
 cd /Users/orlevi/projects/open-factory/.worktrees/spec-i5
 git fetch origin
-git merge --no-edit origin/i3/claude-sign-in
+git merge --no-edit origin/chore/faster-tests
 git checkout -b i5/1-library-skills
 ```
 
 Before each push, and before `pnpm db:generate` (A2, B3), merge the latest lower branch again (never rebase): a later I3 migration would take I5's number.
 
 **Commands:**
-- the files you touched: `pnpm vitest run <paths>`;
+- the files you touched: `pnpm vitest run <paths>`, or `pnpm test:related <source files>`; `pnpm test:fast` runs the tests related to everything changed since `origin/main`;
 - the whole suite, once per Part: `pnpm test`;
 - `pnpm typecheck`, `pnpm lint`, `pnpm build`;
 - migrations: `pnpm db:generate` (migrations live in `packages/db/migrations/`; the last on the branch is `0020_superb_lyja.sql`, so A2 generates `0021_*` and B3 `0022_*` unless a later lower-branch merge added one).
@@ -242,13 +243,13 @@ export function reservedKeysIn(settings: unknown): string[];  // the dotted keys
   - `checkGitUrl` refuses `http://` and URLs with userinfo, `?` or `#`;
   - `MARKETPLACE_PATTERN` plus the reserved list refuse `inline`, `skills-dir`, `synced`, `builtin` and `claude-plugin-test`;
   - `cutGraphemes("a👩‍👩‍👧b", 2)` never splits the family emoji;
-  - `ROW_STATE_ORDER` equals the spec's order.
+  - a row holding several states resolves to the spec §10.2 winner (`test.each` over the precedence pairs).
 
   In `settings-keys.test.ts`:
-  - every key listed in spec §7.10 is present;
+  - `test.each` over the spec §7.10 keys: a settings object setting that key is reported by `reservedKeysIn`, and a harmless sibling key (`permissions.allow`) is not;
   - `reservedKeysIn({ hooks: {}, permissions: { defaultMode: "x" }, env: { OPEN_FACTORY_URL: "/x", FOO: "1" } })` returns `["env.OPEN_FACTORY_URL", "hooks", "permissions.defaultMode"]` (sorted), and an `env` name from `FACTORY_ENV_NAMES` is reported too. (The seed names join `FACTORY_ENV_NAMES` in B7.)
 
-  In `ws.test.ts`: `library_changed` parses.
+  In `ws.test.ts`: `serverMessageSchema` accepts `{ type: "library_changed" }` and refuses an unknown frame type.
 - [ ] **Step 2: Run** `pnpm vitest run packages/shared/src/library.test.ts packages/shared/src/settings-keys.test.ts packages/shared/src/ws.test.ts`. Expected: FAIL (modules missing).
 - [ ] **Step 3: Implement.**
   - `RESERVED_SETTINGS_KEYS` holds the spec §7.10 list verbatim: `enabledPlugins`, `extraKnownMarketplaces`, `syncClaudeAiPlugins`, `strictKnownMarketplaces`, `permissions.defaultMode`, `permissions.additionalDirectories`, `claudeMdExcludes`, `hooks`, `statusLine`, `fileSuggestion`, `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh` and `otelHeadersHelper`.
@@ -262,7 +263,7 @@ export function reservedKeysIn(settings: unknown): string[];  // the dotted keys
 ### Task A2: `skill_sources` table and config rename
 
 **Files:**
-- Create: `packages/db/src/schema/library.ts`, the generated migration (`packages/db/migrations/0021_*.sql` on today's branch; merge the latest `origin/i3/claude-sign-in` first)
+- Create: `packages/db/src/schema/library.ts`, the generated migration (`packages/db/migrations/0021_*.sql` on today's branch; merge the latest `origin/chore/faster-tests` first)
 - Modify: `packages/db/src/schema/index.ts`, `apps/server/src/config.ts`, `apps/server/src/config.test.ts`, `README.md`, `.env.example`, `apps/server/scripts/smoke-*.ts` (8 files; e.g. `smoke-workspace.ts` creates `host-skills/<name>`), `apps/server/src/test/helpers.ts`, and every `hostSkillsDir` use, including the tests that write skills under it: `routes/agents.test.ts`, `routes/host-skills.test.ts` (deleted in A8), `templates/validate.test.ts`, `templates/template-index.test.ts`, `runtime/docker/docker.int.test.ts`, `workspace/workspace.test.ts`, `workspace/hardening.test.ts`, `workspace/plugins.test.ts`, `agents/start.test.ts`, `agents/start.docker.test.ts`, and `scripts/smoke-harness.ts`
 - Test: `apps/server/src/config.test.ts`, `packages/db/src/schema/library.test.ts`
 
@@ -272,7 +273,7 @@ export function reservedKeysIn(settings: unknown): string[];  // the dotted keys
 - the `skillSources` Drizzle table with exactly the spec §5.1 columns, plus `state: "ready" | "adding"` and `startedAt`, so a GitHub add that must re-fetch can show a pending header (spec §10.4).
 
 - [ ] **Step 1: Write failing tests.**
-  - `config.test.ts`: `FACTORY_HOST_CLAUDE_DIR: "~/c"` gives `hostClaudeDir === join(home, "c")`; `FACTORY_HOST_SKILLS_DIR` is no longer read (an env holding only it leaves the default), and `removedEnvWarnings` returns "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder." for it.
+  - `config.test.ts`: `FACTORY_HOST_CLAUDE_DIR: "~/c"` gives `hostClaudeDir === join(home, "c")`, and `removedEnvWarnings` returns "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder." for it.
   - `library.test.ts` (schema, CI only): insert, then read back, a GitHub row with `skills: ["a"]` and `trees`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/config.test.ts`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
@@ -495,7 +496,6 @@ All of them are `requireUser` only. Every write publishes `{ type: "library_chan
   - the MCP tool list contains no Library tool;
   - the file route refuses a link, a binary file and a path outside the skill;
   - a write publishes `library_changed`;
-  - `/api/host-skills` is 404.
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/config/sections.test.tsx apps/web/src/test/agent-config-page.test.tsx`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Responses are parsed with the shared schemas. Field errors use I4's `fields` shape.
 - [ ] **Step 4: Run** the same files and `pnpm typecheck` (deleted exports; finds the callers). Expected: PASS. CI covers the route tests.
@@ -609,7 +609,7 @@ The plan is already React-compliant; follow it as written and report any deviati
     - the highlight is on the next option;
     - the listbox has no `aria-multiselectable`;
     - `announce` is called with "Added tdd".
-  - Checkbox (new file `components/ui/checkbox.test.tsx`): disabled + checked has no `opacity-50` class (today's `disabled:opacity-50` goes).
+  - Checkbox (new file `components/ui/checkbox.test.tsx`): a disabled checkbox exposes `disabled` and `data-state`, and a click doesn't change it. The disabled shapes themselves (no opacity) are checked in the A16 browser evidence, not in jsdom.
   - `UntrustedCode` builds on `components/code-text.tsx`'s mono styling if it fits, rather than duplicating its classes.
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/components/untrusted-text.test.tsx apps/web/src/components/ui/checkbox.test.tsx apps/web/src/components/ui/combobox.test.tsx`. Expected: FAIL.
 - [ ] **Step 3: Implement.** The single-value Combobox behaves exactly as before (run its existing test file). The live region is rendered by the caller, outside the popover. `renderOption` stays a module-level function at every call site (R-H1).
@@ -656,7 +656,7 @@ Implements spec §10.1, §10.2, §10.7 and §10.8 (skills). The plan is already 
   - `skills-header.test.tsx`:
     - in PR 1 there is no view switch;
     - "Check for updates" calls `POST /api/library/check`, and the outcome line reads "Checked 12 sources · 2 updates · 1 couldn't be reached" from mocked server state;
-    - below `sm` the actions are icon-only, with aria-labels.
+    - the actions have accessible names when shown icon-only (the icon-only switch below `sm` is checked in the browser evidence).
   - `shell.test.tsx`: the nav order string becomes "Inbox, Tasks, Templates, Skills, Schedules, Usage, Settings"; `global-shortcuts.test.tsx`: `g k` navigates and `g s` still opens Schedules; the palette Go to lists Skills.
   - `row-nav.test.tsx`: `j`/`k` move across `data-row` anchors and buttons alike.
   - Arrival (R-L4): a second arrival on the mounted page opens its peek; a `library_changed` after arrival doesn't scroll again.
@@ -729,7 +729,7 @@ Implements spec §10.4 (Add skills). The plan is already React-compliant; follow
   - "None of these can be added." shows when every row is unpickable.
   - Add shows "Added 3 skills." with Undo; a 202 shows a pending source header.
   - Close during Find aborts the request (the `AbortSignal` is asserted) and keeps the draft.
-  - On phones there is a single scroller (no nested `overflow-auto` in the list).
+  - (Browser evidence, A16: on phones there is a single scroller, with no nested scrolling list.)
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/skills/add-skills-sheet.test.tsx`. Expected: FAIL.
 - [ ] **Step 3: Implement** with `FormFrame` (kind `"sheet"`), `useFieldErrors`, `FormOutcome` and `PathField`. The draft that survives close uses `features/sheets/drafts.ts`. Find is a `useMutation` (R-Q1) with the `AbortController` in a ref (R-L3): a new Find aborts the previous one in its click handler, Close aborts in its handler, and the unmount cleanup is the only effect. Ticks follow R-F1. The 300 ms inert primary is set in Find's `onSuccess` (R-T1), not in an effect.
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -783,12 +783,13 @@ Implements spec §10.5 (skills). The plan is already React-compliant; follow it 
 - [ ] **Real-browser evidence.** Use the harness at `/Users/orlevi/projects/open-factory/docs/product/ui-review/u4-evidence/harness` through its own `run.sh` lock. Fake Claude only, and the fixture repo through `FACTORY_GITHUB_URL=file://…` (built with `makeFixtureRepo`), never the network. Chromium and WebKit headless.
   - Add `i5a_*.py` checks for AC 1–7.
   - Widths: 1440, 1024, 390 and 375px, plus 390px at 200% text, in light and dark.
+  - Look and layout that jsdom tests don't assert: the disabled checkbox shapes (no opacity), icon-only header actions below `sm`, and a single scroller in Add skills on phones.
   - Worst-case data from spec §14: a 40-skill source, a 64-character name, 190 users, zero-found and all-unpickable repos, a failing check, a 200-character subject ending in an emoji, a 120-character path.
   - Measure and record the §10.1 header thresholds.
   - Screenshots and a results table go to `docs/product/ui-review/i5-evidence/` in the main checkout (gitignored).
 - [ ] **Push and PR.**
-  - `git fetch origin`, merge the latest `origin/i3/claude-sign-in`, push `i5/1-library-skills`, and get CI green on the branch (fix failures as commits).
-  - Then open the PR **ready for review (not draft)** with base `i3/claude-sign-in`.
+  - `git fetch origin`, merge the latest `origin/chore/faster-tests`, push `i5/1-library-skills`, and get CI green on the branch (fix failures as commits).
+  - Then open the PR **ready for review (not draft)** with base `chore/faster-tests`.
   - Title: `feat: skills Library with host, folder and pinned GitHub sources`.
   - Body per `.github/pull_request_template.md`, linking the spec, this plan and #153. State the reset step, the env rename, the deletion of `/api/host-skills`, and that DB tests run only in CI. End with the attribution line.
   - Confirm `gh pr checks` is green. Never merge; Or merges the stack.
@@ -1183,7 +1184,6 @@ React notes (already applied; follow them): `update-preview`, Install and Instal
   - The plugin peek:
     - "Runs code" comes first and never collapses;
     - skeleton rows render from `contentsSummary`;
-    - the hooks stack below `@max-[28rem]`;
     - View file opens from the top;
     - "Update…" is a disclosure: it hides itself, focuses the view heading and shows "Preparing update…", then a `+`/`−` diff and "Update to 1.3.0";
     - a mismatch error shows;
@@ -1237,7 +1237,7 @@ Implements spec §10.5 (plugins) and AC 9 and 13. The plan is already React-comp
   Fix the findings.
 - [ ] **Full verification, once for the Part**, as in A16, with a fixture marketplace through `file://` for fake Claude.
 - [ ] **Real-browser evidence**, as in A16:
-  - add `i5b_*.py` checks for AC 8–13;
+  - add `i5b_*.py` checks for AC 8–13, plus the plugin peek's hooks stacking below `@max-[28rem]`;
   - worst-case data: a plugin with 12 hooks, a U+202E command and a multi-line `bash -c`; a `hooks.json` link; more than 2,000 files; `rust-analyzer-lsp@claude-plugins-official` with a 12-hex version; two git-URL marketplaces on one host; an empty Plugins view.
 - [ ] **Push and PR.**
   - Merge `i5/1-library-skills`, then push and get CI green on the branch.

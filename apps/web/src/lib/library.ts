@@ -7,6 +7,7 @@ import {
   marketplacesResponseSchema,
   marketplaceViewSchema,
   pluginDetailSchema,
+  pluginDiffSchema,
   pluginFileTextSchema,
   pluginsResponseSchema,
   type ServerMessage,
@@ -274,6 +275,9 @@ export const readPlugin = (key: string, commit?: string) =>
   post(`/api/library/plugins/${encodeURIComponent(key)}/read`, pluginDetailSchema, {
     ...(commit ? { commit } : {}),
   });
+/** What a plugin changes between two commits (or recorded tags) of its marketplace: the review of a repin. */
+export const diffPlugin = (key: string, from: string, to: string) =>
+  post(`/api/library/plugins/${encodeURIComponent(key)}/diff`, pluginDiffSchema, { from, to });
 export const addHostMarketplace = (key: string) =>
   post(
     `/api/library/host-plugins/${encodeURIComponent(key)}/add-marketplace`,

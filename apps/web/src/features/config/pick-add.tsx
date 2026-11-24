@@ -65,6 +65,7 @@ export function PickAddMany({
   footer,
   picked,
   trigger,
+  onPick,
 }: {
   slot: AddSlot;
   label: string;
@@ -76,12 +77,15 @@ export function PickAddMany({
   /** Every name already in the list (this agent's and the template's). */
   picked: readonly string[];
   trigger: ReactElement;
+  /** A rule a pick must pass: a refusal message (shown in the footer and announced) stops the add. Stable. */
+  onPick?: (value: string) => string | undefined;
 }) {
   // `picked` may be a fresh array each render (the draft is read tolerantly): its joined names are the key.
   const key = picked.join("\0");
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the primitive form of `picked`
   const added = useMemo(() => new Set(picked), [key]);
   const [said, setSaid] = useState("");
+  const [refused, setRefused] = useState("");
   const multiple = useMemo(() => ({ added, announce: setSaid }), [added]);
   const last = useRef<string>(undefined);
   return (
@@ -89,6 +93,12 @@ export function PickAddMany({
       <Combobox
         value=""
         onValueChange={(v) => {
+          const why = onPick?.(v);
+          setRefused(why ?? "");
+          if (why) {
+            setSaid(why);
+            return;
+          }
           last.current = v;
           slot.add(v, { scroll: false });
         }}
@@ -97,10 +107,22 @@ export function PickAddMany({
         aria-label={label}
         renderOption={renderOption}
         renderGroup={renderGroup}
-        footer={footer}
+        footer={
+          refused ? (
+            <>
+              {footer}
+              <p className="border-t border-border px-3 py-2 text-xs text-foreground">{refused}</p>
+            </>
+          ) : (
+            footer
+          )
+        }
         multiple={multiple}
         trigger={trigger}
-        onOpen={() => setSaid("")}
+        onOpen={() => {
+          setSaid("");
+          setRefused("");
+        }}
         onClose={() => {
           if (last.current !== undefined) slot.reveal(last.current);
           last.current = undefined;

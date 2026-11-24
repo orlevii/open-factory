@@ -96,8 +96,8 @@ test("an unknown settings key survives a form edit", async () => {
 
 test("wrong types anywhere never throw: each field reads 'Edit this in Raw JSON.'", () => {
   render(<Form start={{ template: { model: 5, effort: "turbo" }, settings: "x" }} />);
-  // model, effort, then the four settings fields: allow, deny, trust notes, plain env.
-  expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(6);
+  // model, effort, then the five settings fields: plugins, allow, deny, trust notes, plain env.
+  expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(7);
 });
 
 test("a non-object draft (valid JSON, wrong schema) renders tolerantly", () => {

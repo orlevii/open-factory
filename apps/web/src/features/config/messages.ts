@@ -44,6 +44,22 @@ export const CONFIG_COPY = {
   templateSkill: "Template skill",
   allSkillsAdded: "Every skill is already added.",
   noSkills: "No skills in Skills yet.",
+  addPlugin: "Add plugin",
+  allPluginsAdded: "Every plugin is already added.",
+  addMarketplacesInSkills: "Add marketplaces in Skills",
+  pinned: "Pinned",
+  changePin: "Change pin",
+  newerInSkills: "Newer in Skills:",
+  localLive: "Local folder, live",
+  useLatestItem: "Use Latest, auto-update…",
+  useLatest: "Use Latest",
+  view: "View",
+  notReadYet: "Contents not read yet",
+  couldntLoadDiff: "Couldn't load what changes.",
+  retry: "Retry",
+  noChangesShown: "Nothing in what Skills can read changes.",
+  pinningFromLatest:
+    "Latest follows whatever the marketplace holds now, so there is nothing to compare.",
   insertSecret: "Insert secret",
   secretsLoading: "Loading…",
   secretsLoadError: "Couldn't load secrets.",
@@ -59,6 +75,31 @@ export const CONFIG_COPY = {
   envHelp: "Saved as text in settings.json. Not for secrets.",
   done: "Done",
   cancel: "Cancel",
+} as const;
+
+/** The Plugins picker's lines (spec §10.5). */
+export const PLUGIN_COPY = {
+  noPlugins: (template: string) => `No plugins in ${template}'s marketplaces.`,
+  onlyFrom: (template: string) =>
+    `Only plugins from ${template}'s marketplaces. Add more in the template.`,
+  leftOut: (n: number) =>
+    `${n} ${n === 1 ? "plugin" : "plugins"} can't be used here: refused source.`,
+  cantPin: (key: string, mkt: string) =>
+    `${key} can't be pinned. Switch ${mkt} to Latest to add it.`,
+  tagOnly: (mkt: string) =>
+    `${mkt} can only be pinned to a tag. Fetch a tag in Skills, or use Latest.`,
+  notRead: (mkt: string) => `Skills hasn't read ${mkt} yet.`,
+  cantPinOption: "Can't be pinned",
+  pinTo: (ref: string, newest: boolean) => `Pin to ${ref}${newest ? " (newest in Skills)" : ""}…`,
+  pinHeading: (mkt: string, ref: string) => `Pin ${mkt} to ${ref}`,
+  pinPrimary: (ref: string) => `Pin to ${ref}`,
+  latestHeading: (mkt: string) => `Use Latest for ${mkt}`,
+  latestRisk: (mkt: string) =>
+    `Latest runs ${mkt}'s newest code at each restart, without review, with each agent's workspace and credentials in reach.`,
+  running: (version: string) => `running ${version}`,
+  needs: (n: number) => `Needs ${n} from the image`,
+  remove: (key: string) => `Remove ${key}`,
+  groupLabel: (mkt: string) => `Plugins from ${mkt}`,
 } as const;
 
 /** "Adds GH_TOKEN to this agent's secrets." (spec §12.2), shown under the value an Insert secret filled. */

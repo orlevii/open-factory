@@ -14,6 +14,7 @@ import { FIELD_PATHS } from "./fields";
 import { ListField } from "./list-field";
 import { CONFIG_COPY } from "./messages";
 import { PickAddMany, pickEmpty } from "./pick-add";
+import { PluginsField } from "./plugins-field";
 import { useConfigScope } from "./scope";
 import { Section } from "./section";
 import { readAt, readList } from "./tolerant";
@@ -68,7 +69,7 @@ const pickerQuery = { ...libraryQueryOptions, refetchOnMount: false } as const;
 
 const NO_LIST: ReadonlyMap<string, Where> = new Map();
 
-/** Spec §12.2 section 2: host skills from a picker and the template's own skills read-only (plugins come with the plugin picker, B10). */
+/** Spec §12.2 section 2: skills from the Library picker, the template's own skills read-only, and the plugins by marketplace. */
 export function SkillsSection({ localSkills = NO_SKILLS }: { localSkills?: readonly string[] }) {
   const q = useQuery(pickerQuery);
   const where = useMemo(() => (q.data ? whereByName(q.data) : NO_LIST), [q.data]);
@@ -96,6 +97,7 @@ export function SkillsSection({ localSkills = NO_SKILLS }: { localSkills?: reado
           />
         )}
       />
+      <PluginsField />
     </Section>
   );
 }

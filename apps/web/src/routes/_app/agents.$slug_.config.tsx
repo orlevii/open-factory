@@ -7,7 +7,7 @@ import { noAgentLine } from "@/features/config/messages";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { secretsQueryOptions } from "@/features/settings/api";
 import { templatesQueryOptions } from "@/features/templates/api";
-import { libraryQueryOptions } from "@/lib/library";
+import { libraryQueryOptions, marketplacesQueryOptions } from "@/lib/library";
 
 // `$slug_` keeps this page out of the session view's layout: it's a sibling of Usage, not a child.
 export const Route = createFileRoute("/_app/agents/$slug_/config")({
@@ -29,6 +29,7 @@ export const Route = createFileRoute("/_app/agents/$slug_/config")({
     }
     // The pickers' lists: started now, never waited on.
     void qc.prefetchQuery(libraryQueryOptions);
+    void qc.prefetchQuery(marketplacesQueryOptions);
     void qc.prefetchQuery(secretsQueryOptions);
     void qc.prefetchQuery(templatesQueryOptions);
   },

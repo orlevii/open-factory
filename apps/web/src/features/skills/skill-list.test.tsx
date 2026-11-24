@@ -230,13 +230,21 @@ test("arriving with a peek opens it and scrolls its row once; a library_changed 
   await waitFor(() => expect(row).toHaveAttribute("aria-expanded", "true"));
   await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1));
   expect(row).toHaveFocus();
-  const before = mocks.calls.filter((c) => c.url === "/api/library/skills").length;
-  act(() => ws.push({ type: "library_changed" }));
-  await waitFor(() =>
-    expect(mocks.calls.filter((c) => c.url === "/api/library/skills").length).toBeGreaterThan(
-      before,
+  // The refetch returns changed data, so a component that depends on the data re-renders once it lands.
+  mocks.on("GET /api/library/skills", () =>
+    json(
+      library([
+        hostGroup([skill("lint")]),
+        sourceGroup(source("skills"), [
+          skill("review", { description: "now reads differently" }),
+          skill("deploy"),
+        ]),
+      ]),
     ),
   );
+  act(() => ws.push({ type: "library_changed" }));
+  expect(await screen.findByText("now reads differently")).toBeInTheDocument();
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
   expect(scroll).toHaveBeenCalledTimes(1);
 });
 

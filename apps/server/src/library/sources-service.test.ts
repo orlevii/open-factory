@@ -862,9 +862,12 @@ describe("boot repair", () => {
       expect(s.svc.checkingSince(id)).toBeUndefined();
       const p = s.svc.check(id);
       expect(s.svc.checkingSince(id)).toBe(new Date(nowMs).toISOString());
+      // A frame went out at the start, so the list shows the row as checking.
+      expect(seen).toEqual([new Date(nowMs).toISOString()]);
       await p;
       expect(s.svc.checkingSince(id)).toBeUndefined();
-      expect(seen).toEqual([undefined]);
+      // And one after the mark was cleared, so a refetch sees the result.
+      expect(seen).toEqual([new Date(nowMs).toISOString(), undefined]);
     });
 
     test("a check that throws still clears the mark and publishes", async () => {
@@ -873,7 +876,7 @@ describe("boot repair", () => {
         ApiError,
       );
       expect(s.svc.checkingSince("00000000-0000-4000-8000-0000000000ff")).toBeUndefined();
-      expect(s.frames).toHaveLength(1);
+      expect(s.frames).toHaveLength(2);
     });
 
     test("checking every source marks the whole queue at once, not four at a time, and publishes at the start and after each", async () => {
@@ -888,6 +891,23 @@ describe("boot repair", () => {
       expect(s.frames).toHaveLength(1);
       await s.svc.idle();
       expect(ids.map((id) => s.svc.checkingSince(id))).toEqual(ids.map(() => undefined));
+      expect(s.frames).toHaveLength(1 + 6);
+    });
+
+    test("a second Check for updates while one runs leaves the running one's marks alone and checks nothing twice", async () => {
+      const s = setup();
+      const ids = await sources(s, 6);
+      gate.delayMs = 15;
+      await s.svc.startCheckAll();
+      const first = ids.map((id) => s.svc.checkingSince(id));
+      nowMs += 60_000;
+      await s.svc.startCheckAll();
+      // The first run's marks are untouched (not re-stamped), and the second run queued nothing.
+      expect(ids.map((id) => s.svc.checkingSince(id))).toEqual(first);
+      expect(s.frames).toHaveLength(1);
+      await s.svc.idle();
+      expect(ids.map((id) => s.svc.checkingSince(id))).toEqual(ids.map(() => undefined));
+      // One start frame, then one per source: six checks, not twelve.
       expect(s.frames).toHaveLength(1 + 6);
     });
 

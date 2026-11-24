@@ -812,7 +812,10 @@ export class SourcesService {
   /** One source's check. The `library_changed` frame goes out after the checking mark is cleared, so the web's refetch sees the result. */
   async check(id: string): Promise<SourceDetail> {
     const owns = !this.checking.has(id);
-    if (owns) this.checking.set(id, this.now());
+    if (owns) {
+      this.checking.set(id, this.now());
+      this.d.publish?.();
+    }
     try {
       return await this.runCheck(id);
     } finally {
@@ -870,10 +873,14 @@ export class SourcesService {
     return { committedAt, subject };
   }
 
-  /** Marks every GitHub source that is ready as checking, at once (so the list shows the whole queue, not four at a time). */
+  /**
+   * Marks every GitHub source that is ready as checking, at once (so the list shows the whole queue, not four at a time).
+   * Returns only the ones this call marked: a source a running check already owns stays with that check, so a second
+   * Check for updates neither re-marks it nor checks it twice.
+   */
   private async markChecking(): Promise<string[]> {
     const queue = (await this.live())
-      .filter((s) => s.kind === "github" && s.state === "ready")
+      .filter((s) => s.kind === "github" && s.state === "ready" && !this.checking.has(s.id))
       .map((s) => s.id);
     const since = this.now();
     for (const id of queue) this.checking.set(id, since);

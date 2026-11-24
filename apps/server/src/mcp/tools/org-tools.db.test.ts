@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
@@ -271,7 +271,7 @@ test("update_agent: identity and config together write both and list the changes
   expect(r.json.slug).toBe("dev-1");
   expect(r.json.changed.slice(0, 2)).toEqual(["display_name", "config"]);
   expect(r.json.changed.length).toBeGreaterThan(2);
-  expect(typeof r.json.restart).toBe("boolean");
+  expect(r.json.restart).toBe(false);
   const after = await row("dev-1");
   expect(after.displayName).toBe("Developer One");
   expect(after.config).toEqual({ template: { model: "opus" } });
@@ -449,6 +449,19 @@ test("no tool result holds a secret value, a credential token or a host path (AC
     for (const bad of [SECRET, TOKEN, t.factoryHome, t.config.hostClaudeDir, homedir(), repo])
       expect(r.text, `${name} leaked ${bad}`).not.toContain(bad);
   }
+  // A project whose folder is gone: the materialize failure names no host path to the agent.
+  rmSync(repo, { recursive: true, force: true });
+  const gone = await call("hr-bot", "create_agent", {
+    template: "dev",
+    name: "scan-2",
+    display_name: "S",
+    description: "",
+    credential: "work",
+    projects: ["site"],
+  });
+  expect(gone.err).toBe(true);
+  for (const bad of [t.factoryHome, homedir(), repo, tmpdir()])
+    expect(gone.text, `missing folder leaked ${bad}`).not.toContain(bad);
 });
 
 test("updateWithOverlay: an overlay changed after validation rolls the identity patch back and emits nothing", async () => {

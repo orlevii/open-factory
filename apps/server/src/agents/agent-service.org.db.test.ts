@@ -316,3 +316,36 @@ test("a human's create names no actor in the peer events", async () => {
     { kind: "peer_joined", notice: "report", body: "@hm-dev (hm-dev) joined as your report." },
   ]);
 });
+
+test("an agent's create stores its id as description_by; a human's create stores null", async () => {
+  if (hr.kind !== "agent") throw new Error("hr is an agent");
+  await svc.create({ ...body("by-agent"), description: "written" }, hr);
+  await svc.create({ ...body("by-human"), description: "written" }, human);
+  expect((await rowOf("by-agent"))?.descriptionBy).toBe(hr.id);
+  expect((await rowOf("by-human"))?.descriptionBy).toBeNull();
+});
+
+test("an agent's create from a missing template gets the human's refusal, and nothing is created", async () => {
+  const human_ = await svc.create(body("ghost-h", "nosuchtpl"), human).catch((e: unknown) => e);
+  const agent_ = await svc.create(body("ghost-a", "nosuchtpl"), hr).catch((e: unknown) => e);
+  expect(human_).toBeInstanceOf(Error);
+  expect((agent_ as Error).message).toBe((human_ as Error).message);
+  expect((agent_ as Error).message).not.toContain("Local-runtime");
+  expect(await rowOf("ghost-a")).toBeUndefined();
+});
+
+test("recordReportNotice: an archived manager gets no notice; an unloaded one gets one pending row for the report", async () => {
+  await svc.create(body("mgr-live"), human);
+  await svc.create({ ...body("mgr-gone"), reportsTo: null }, human);
+  await svc.create({ ...body("rep-n"), reportsTo: "mgr-live" }, human);
+  const [live, gone, rep] = await Promise.all(["mgr-live", "mgr-gone", "rep-n"].map(rowOf));
+  await svc.archive("mgr-gone", human);
+  const pending = (id?: string) =>
+    t.sql`select subject_agent_id from messages where to_agent_id = ${id ?? ""} and notice = 'report_config_changed' and state = 'pending'`;
+  await runtimes.recordReportNotice(gone?.id ?? "", rep?.id ?? "", "@hr", ["added skill tdd"]);
+  expect(await pending(gone?.id)).toHaveLength(0);
+  await runtimes.recordReportNotice(live?.id ?? "", rep?.id ?? "", "@hr", ["added skill tdd"]);
+  const rows = await pending(live?.id);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.subject_agent_id).toBe(rep?.id);
+});

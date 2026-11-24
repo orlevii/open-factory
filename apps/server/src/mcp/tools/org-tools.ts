@@ -60,7 +60,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
   const actorOf = async (tctx: ToolContext): Promise<AgentActor> => {
     const row = await d.loadAgent(callerOf(tctx));
     if (!row || row.archivedAt || row.terminatedAt || !row.manageOrg)
-      throw new OrgRefusedError(`@${row?.slug ?? "you"} can't manage the org any more.`);
+      throw new OrgRefusedError(row ? `@${row.slug} can't manage the org any more.` : "You can't manage the org any more.");
     return { kind: "agent", id: row.id, slug: row.slug };
   };
   const handler =
@@ -173,7 +173,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     ),
     tool(
       "update_agent",
-      "Change an agent. A field you leave out is unchanged. config is the WHOLE new overlay and needs base_hash (the overlay_hash from get_agent). Everything is validated first and written together, or nothing is.",
+      "Change an agent. A field you leave out is unchanged. config is the WHOLE new overlay and needs base_hash (the overlay_hash from get_agent). Everything is validated first and written together, or nothing is. The result's restart is a hint that a restart was requested, not a guarantee (an errored or hibernated agent does not restart).",
       updateAgentToolSchema,
       async (a, actor) => {
         const slug = bare(a.slug);

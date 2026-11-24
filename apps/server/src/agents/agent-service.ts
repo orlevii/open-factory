@@ -63,8 +63,16 @@ const noPeers = { managerId: null, peerIds: [] };
 const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
 
 /** A materialize failure as the API's: the template's folders didn't pass the workspace checks. */
-function materializeFailure(err: unknown): unknown {
-  return err instanceof WorkspaceError ? new ApiError(409, "template_invalid", err.message) : err;
+function materializeFailure(err: unknown, actor: Actor): unknown {
+  if (!(err instanceof WorkspaceError)) return err;
+  // The workspace messages name host paths; no org tool result may (spec AC 6), so an agent gets a path-free sentence.
+  return new ApiError(
+    409,
+    "template_invalid",
+    actor.kind === "agent"
+      ? "The template's or a project's folder can't be used to set up this agent; ask a human."
+      : err.message,
+  );
 }
 
 /** S7 §9.3: a spawner's live spawned agents block its archive; terminate them, don't move them. */
@@ -532,13 +540,11 @@ export class AgentService {
   ) {
     const raw: unknown = b.config?.template?.can_spawn;
     const spawns = Array.isArray(raw) ? raw.filter((n): n is string => typeof n === "string") : [];
-    const [templateRuntime, ...canSpawnRuntimes] = await this.d.policy.templateRuntimes([
-      b.template,
-      ...spawns,
-    ]);
+    // The template's own runtime comes from the parse (`loadValid`, then this re-check under the lock): a missing or
+    // invalid template gets the human's refusal there, not the local-runtime sentence.
     this.assertNotLocal(actor, {
-      templateRuntime: parsedTemplateRuntime ?? templateRuntime,
-      canSpawnRuntimes,
+      templateRuntime: parsedTemplateRuntime,
+      canSpawnRuntimes: await this.d.policy.templateRuntimes(spawns),
     });
   }
 
@@ -583,7 +589,7 @@ export class AgentService {
       // folder_exists means the folder isn't ours: leave it alone.
       if (!(err instanceof FieldError && err.code === "folder_exists"))
         await workspace.discard(b.slug).catch(() => {});
-      throw materializeFailure(err);
+      throw materializeFailure(err, actor);
     }
 
     const id = randomUUID();
@@ -595,6 +601,7 @@ export class AgentService {
           slug: b.slug,
           displayName: b.displayName,
           description: b.description,
+          descriptionBy: actor.kind === "agent" ? actor.id : null,
           template: b.template,
           // I2 §5.1: the overlay starts empty (the agent runs the live template) unless the creator gave one.
           config,
@@ -679,6 +686,9 @@ export class AgentService {
       await c?.write(tx, locked);
       await u.write(tx);
     });
+    // The manager notice goes to the manager as committed, which the identity half may have just changed.
+    // (`after` closes over this same row object.)
+    if (c) c.row.reportsTo = (await this.rowBySlug(slug)).reportsTo;
     const config = await c?.after();
     return { agent: await u.after(), ...(config ? { config } : {}) };
   }
@@ -992,11 +1002,18 @@ export class AgentService {
     // check is inside the lock too, and a concurrent unarchive that lost the race changes nothing and emits nothing.
     const changed = await db.transaction(async (tx) => {
       const [locked] = await tx
-        .select({ archivedAt: schema.agents.archivedAt, reportsTo: schema.agents.reportsTo })
+        .select({
+          archivedAt: schema.agents.archivedAt,
+          reportsTo: schema.agents.reportsTo,
+          manageOrg: schema.agents.manageOrg,
+        })
         .from(schema.agents)
         .where(eq(schema.agents.id, row.id))
         .for("no key update");
       if (!locked?.archivedAt) return false;
+      // A human may have granted manage_org since the read above.
+      if (actor.kind === "agent" && locked.manageOrg)
+        throw new OrgRefusedError(`Only a human can unarchive @${slug}: it can manage the org.`);
       if (locked.reportsTo) {
         const [m] = await tx
           .select()

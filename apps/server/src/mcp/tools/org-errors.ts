@@ -10,7 +10,10 @@ const TOOL_FIELD: Record<string, string> = {
 };
 
 /** `path: message`, or the file when the issue has no path. */
-const issueLine = (i: TemplateIssue) => `${i.path ?? i.file}: ${i.message}`;
+const issueLine = (i: TemplateIssue) => {
+  const where = i.path ?? i.file;
+  return i.message.startsWith(where) ? i.message : `${where}: ${i.message}`;
+};
 
 /**
  * An org service's refusal as a tool error (spec §7.2): a `FieldError` becomes "name: That slug is taken.", an

@@ -129,7 +129,7 @@ No new layout or content-heavy view, so the design-lens UI reviews are skipped. 
 | Service callers | Human routes call `AgentService` (`create`, `update`, `archive`, `unarchive`, `putConfig(slug, body, by)`) and `TemplateIndex` (`writeFile(…, by)`, `writeConfig(…, by)`, `create`, `remove`) with a `by` string or nothing | Each write method takes an `Actor` (`{kind:"human", handle}` or `{kind:"agent", id, slug}`), which the tools pass in (§5.3) |
 | `validateEffective` policy | `validateEffective(doc, ctx, _policy: "human")` (`templates/validate.ts`) | The `"agent"` rules live in `agentPolicyIssues` in `packages/shared/src/agent-policy.ts`, run after the human validation (§6) |
 | Human Restart | `POST /api/agents/:slug/restart` is errored-only (`AgentRuntime.restart({byHandle, runtimeAllowed})`, refusing `not_errored`) | Also running agents, with `{force?}`; one runtime method for humans and agents (§9) |
-| `requestRestart` | `requestRestart(opts: {changes?, wake?, current?})`; `wake` is accepted and ignored; `ConfigChanges` passes `current` | `wake` delivers the self-edit continue notice (§9.5) |
+| `requestRestart` | `requestRestart(opts: {changes?, wake?, current?})`; `ConfigChanges` passes `current`; a self-edit passes `wake` (PR 1) | `wake` delivers the self-edit continue notice (§9.5) |
 | Template file writes | `writeFile` checks the hash and renames **outside** the lock, then `scanOne` (under the per-template `KeyLock`, `templates/key-lock.ts`) dispatches with the writer's `by`. `writeConfig` (I2's three-file PUT) is already validate-first under that lock | `writeFile`, `create`, `copyFrom` and `remove` run under the same lock, validate-first; agents refused on errors they caused (§7.3a) |
 | Peer event and notice merge | `createNotice` merges only `config_changed`, on (agent, type), under an advisory lock and `FOR UPDATE` | Also `report_config_changed`, keyed on `subjectAgentId` too (§8.2) |
 | Plugins | Declared in `settings.json` `enabledPlugins` and `extraKnownMarketplaces` (registry source + `ref` pin); Claude Code installs them per agent at start (I5 §7) | Agents may enable plugins only at a human-set pin, and may declare a marketplace only as the form's first pick would (§6.2 rule 5) |
@@ -171,7 +171,7 @@ Two layers, both required.
 - the new `TemplateIndex.copyFrom` (§7.3);
 - the runtime's `restartNow` (§9).
 
-The restart call is `AgentRuntimes.requestRestart(id, opts?: { changes?: string[]; wake?: boolean; current?: () => Promise<ConfigSnapshot | undefined> })`. `ConfigChanges` passes `current`, so the runtime decides in its job whether `started` differs; I7 adds `wake: true` beside it for self-edits. `wake` is already accepted and ignored.
+The restart call is `AgentRuntimes.requestRestart(id, opts?: { changes?: string[]; wake?: boolean; current?: () => Promise<ConfigSnapshot | undefined> })`. `ConfigChanges` passes `current`, so the runtime decides in its job whether `started` differs; I7 adds `wake: true` beside it for self-edits. `wake` is accepted by `requestRestart` and passed by a self-edit.
 
 `Actor` is used for three things:
 - **attribution:** `by` in events and notices is `@handle` or `@slug`;
@@ -267,6 +267,8 @@ touchesLocalRuntime(i: { templateRuntime?: Runtime; templateHasLocalAgents?: boo
    - write or copy from a template that any non-terminated agent row (persistent or spawned, archived included) runs on with `runtime = 'local'` (R9). `agents.runtime` is fixed at creation (I2 §6.6), so a template a human switched from local to docker can still drive host agents. This is derived from existing rows (`templateHasLocalAgents`), and nothing new is stored;
    - add a template whose runtime is `local` to any `can_spawn`, in a template or an overlay.
    
+   Rule 1's issue line reads "settings.hooks can only be changed by a human." (the tool drops the `path:` prefix when the message already starts with it).
+
    An agent's template can't be changed after creation (`patchAgentBodySchema` has no `template`), so there is no indirect route through re-templating. `restart_agent` and the read tools stay allowed for local agents.
 
 ### 6.3 The allowlist
@@ -317,7 +319,7 @@ Registered together by `orgTools(d)` (`mcp/tools/org-tools.ts`, one file per gro
 | `archive_agent(slug)` | | The human archive rules (has reports → refused with their slugs). Self: "Ask a human to archive you." Toast |
 | `unarchive_agent(slug)` | | The human unarchive rules (archived manager → refused). Toast |
 | `list_library(query?)` | Case-insensitive substring on name and description | `{skills: [{name, description, source, pin?, state}], plugins: [{key, version, marketplace, pinnable, state, contents}], marketplaces: [{name, kind, pin}]}`. `source` is a kind (`host`, `folder`, `github`, `template:<name>`), never a path, and `pin` is a 7-character commit. `plugins` are the catalog entries of the registered marketplaces at the Library's commit (`PluginsIndex.list().marketplaces`), with `pinnable` and `state` as the Plugins view shows them and `contents` the `contentsSummary` counts; host plugins (`PluginsIndex.list().host`) aren't listed (Q17). A marketplace's `kind` is `github`, `git` or `directory`, and `pin` is the Library's short commit (null for a folder); never a URL's credentials or a folder path. At most 200 per list, with `more: true` and a note to narrow `query` |
-| `list_org_resources()` | — | `{credentials: [{name, kind}], secrets: [{name, used_by: number}], projects: [{name, description}]}`. **No values, no host paths** (Q17) |
+| `list_org_resources()` | — | `{credentials: [{name, kind}], secrets: [{name, used_by: number}], projects: [{name}]}`. **No values, no host paths** (Q17) |
 
 `restart_agent` is in §9.
 
@@ -407,6 +409,7 @@ The policy's `can_spawn` runtime lookups read other templates' last valid parse 
   - `ConfigChanges.overlaySaved(agent, actor, before, after)`, which writes `by: "@hr"`.
   
   When the template is invalid, I2 does a schema-only save. Agents get the same, and the result notes "Checked fully once dev is fixed."
+- **Two more refusals.** "base_hash is required with config; read it from get_agent." (the tool's input schema, when `config` comes without `base_hash`), and, from the policy (§6.2), "Plugin x has no valid template to declare it; ask a human." (a plugin no valid template declares; it fails closed).
 - **Self.** When the target is the caller, the overlay save and any identity change that restarts it pass `wake: true` (§9.5).
 - **Spawned targets** are refused with today's sentence, "Spawned agents can't be edited; terminate it instead." (`AgentService.assertPersistent`, the same for humans and agents).
 - **Archived targets** may be edited (I2 allows it). Their changes apply on unarchive.

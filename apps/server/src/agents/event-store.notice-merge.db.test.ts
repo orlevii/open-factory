@@ -67,6 +67,20 @@ test("concurrent merges lose no line and make no second row", async () => {
   expect(parseConfigNotice(rows[0]?.body ?? "")).toEqual(lines);
 });
 
+test("concurrent merges for two reports of one manager keep one row each with all lines", async () => {
+  const lines = ["l1", "l2", "l3", "l4"];
+  await Promise.all(
+    lines.flatMap((l) => [
+      report("x1", "r1", "@hr", [l], "dev"),
+      report("x1", "r2", "@hr", [l], "qa"),
+    ]),
+  );
+  const rows = await pendingReports("x1");
+  expect(rows).toHaveLength(2);
+  for (const r of rows) expect(parseConfigNotice(r.body)).toEqual(lines);
+  expect(rows.map((r) => r.subject_agent_id).sort()).toEqual(["r1", "r2"]);
+});
+
 test("a delivered notice is never merged into: the next one is a new row", async () => {
   const first = await report("x1", "r1", "@hr", ["one"]);
   await t.sql`update messages set state = 'delivered' where id = ${first.id}`;

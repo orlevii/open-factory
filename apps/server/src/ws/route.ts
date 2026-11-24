@@ -40,7 +40,8 @@ export async function wsRoutes(app: FastifyInstance) {
     // generation was superseded (by a later subscribe or an unsubscribe) and must not register anything.
     const generations = new Map<string, number>();
     let closed = false;
-    const offAll = app.bus.subscribeAll(send); // agent_status and supervisor frames go to every socket
+    // agent_status, supervisor and the global `*_changed` frames (I2: `config_changed`) go to every socket.
+    const offAll = app.bus.subscribeAll(send);
     const offUser = app.bus.subscribeUser(userId, send); // S8: a user's read changes go to their own sockets only
     // S10 §9.4: disabling the user closes this socket; close() moves readyState off OPEN, so `send` stops at once.
     const offClose = app.bus.onUserClose(userId, () => socket.close(1008, "user disabled"));

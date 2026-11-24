@@ -13,6 +13,13 @@ vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
 }));
 
+/** A valid template opens on Configuration (I2 §12.5): these tests are about the file tabs, so open template.yaml. */
+async function openTemplate(path = "/templates/lead") {
+  const utils = renderApp(path, alice);
+  await userEvent.click(await screen.findByRole("tab", { name: /template\.yaml/ }));
+  return utils;
+}
+
 test("a failed editor chunk leaves the files editable as text, jumps included", async () => {
   mockApi({
     "POST /api/templates/lead/validate": () =>
@@ -36,7 +43,7 @@ test("a failed editor chunk leaves the files editable as text, jumps included", 
         },
       }),
   });
-  renderApp("/templates/lead", alice);
+  await openTemplate();
   // The stand-in is named by the tab's label, as the editor would be.
   const el = await waitFor(() => {
     const t = screen.getByRole("textbox", { name: "template.yaml" });

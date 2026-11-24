@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -19,28 +20,22 @@ import { SafeFs, UnsafePathError, WorkspaceError } from "./safe-fs.ts";
 
 const tmp = (p: string) => realpathSync(mkdtempSync(path.join(tmpdir(), p)));
 
-test("writeFile refuses a symlinked parent", async () => {
-  const wd = tmp("wd-");
-  const hostDir = tmp("host-");
-  symlinkSync(hostDir, `${wd}/.claude-config`);
-  await expect(new SafeFs(wd).writeFile(".claude-config/settings.json", "{}")).rejects.toThrow(
-    /is a symlink/,
-  );
-  await expect(
-    new SafeFs(wd).writeFile(".claude-config/settings.json", "{}"),
-  ).rejects.toBeInstanceOf(UnsafePathError);
-  expect(existsSync(`${hostDir}/settings.json`)).toBe(false);
-});
-
-test("the refusal names the path and is a WorkspaceError", async () => {
+test("writeFile refuses a symlinked parent: the refusal names the path and is a WorkspaceError", async () => {
   const wd = tmp("wd-");
   const hostDir = tmp("host-");
   mkdirSync(`${wd}/a`);
   symlinkSync(hostDir, `${wd}/a/b`);
   const err = await new SafeFs(wd).writeFile("a/b/c/x.md", "x").catch((e) => e);
   expect(err).toBeInstanceOf(WorkspaceError);
+  expect(err).toBeInstanceOf(UnsafePathError);
   expect(err.message).toBe(`${wd}/a/b is a symlink; the factory won't write through it.`);
   expect(readdirSync(hostDir)).toEqual([]);
+  // A symlink directly under the root is refused the same way.
+  symlinkSync(hostDir, `${wd}/.claude-config`);
+  await expect(new SafeFs(wd).writeFile(".claude-config/settings.json", "{}")).rejects.toThrow(
+    /is a symlink/,
+  );
+  expect(existsSync(`${hostDir}/settings.json`)).toBe(false);
 });
 
 test("writeFile creates parents, writes atomically, applies the mode, replaces a link without following it", async () => {
@@ -183,3 +178,21 @@ test("removeAll removes the root tree without following links; a symlinked root 
   expect(existsSync(`${host}/keep`)).toBe(true);
   await new SafeFs(`${outer}/missing`).removeAll();
 });
+
+test.skipIf(process.getuid?.() === 0)(
+  "emptyDir removes everything it can when one entry won't go, then reports the failure",
+  async () => {
+    const wd = tmp("wd-");
+    mkdirSync(`${wd}/box/locked`, { recursive: true });
+    writeFileSync(`${wd}/box/locked/stuck`, "x");
+    writeFileSync(`${wd}/box/a`, "a");
+    writeFileSync(`${wd}/box/z`, "z");
+    chmodSync(`${wd}/box/locked`, 0o555);
+    try {
+      await expect(new SafeFs(wd).emptyDir("box")).rejects.toThrow();
+      expect(readdirSync(`${wd}/box`)).toEqual(["locked"]);
+    } finally {
+      chmodSync(`${wd}/box/locked`, 0o755);
+    }
+  },
+);

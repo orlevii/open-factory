@@ -1,11 +1,11 @@
 import type { AgentStatus } from "@open-factory/shared";
 import { CircleAlert } from "lucide-react";
-import { type CSSProperties, memo, useMemo, useState } from "react";
+import { type CSSProperties, memo, useState } from "react";
 import { type BotParts, botParts } from "../lib/factory-bot";
 
 /** Parts are a pure function of the slug, so one result serves every avatar of that agent. */
 const PARTS = new Map<string, BotParts>();
-function partsFor(slug: string): BotParts {
+export function partsFor(slug: string): BotParts {
   let p = PARTS.get(slug);
   if (!p) {
     p = botParts(slug);
@@ -67,8 +67,16 @@ const ACCESSORIES = [
   </g>,
 ];
 
-const BotSvg = memo(function BotSvg({ slug, size }: { slug: string; size: number }) {
-  const p = useMemo(() => partsFor(slug), [slug]);
+const BotSvg = memo(function BotSvg({
+  slug,
+  color,
+  size,
+}: {
+  slug: string;
+  color: number | null;
+  size: number;
+}) {
+  const p = partsFor(slug);
   return (
     <svg
       viewBox="0 0 24 24"
@@ -77,7 +85,7 @@ const BotSvg = memo(function BotSvg({ slug, size }: { slug: string; size: number
       aria-hidden="true"
       className="absolute inset-0 overflow-visible"
     >
-      <g fill={`var(--avatar-${p.fill})`} stroke="var(--border)" strokeWidth="1">
+      <g fill={`var(--avatar-${color ?? p.fill})`} stroke="var(--border)" strokeWidth="1">
         {HEADS[p.head]}
       </g>
       <g fill="var(--avatar-ink)">
@@ -164,12 +172,15 @@ export const AgentAvatar = memo(function AgentAvatar({
   slug,
   template,
   avatarVersion,
+  color,
   size,
   status,
 }: {
   slug: string;
   template?: string;
   avatarVersion?: string | null;
+  /** The chosen identity colour 1..12, null for Auto (seeded from the slug). Required so no call site forgets it. */
+  color: number | null;
   size: 16 | 20 | 24;
   status?: AgentStatus;
 }) {
@@ -193,7 +204,7 @@ export const AgentAvatar = memo(function AgentAvatar({
             : undefined
         }
       >
-        <BotSvg slug={slug} size={size} />
+        <BotSvg slug={slug} color={color} size={size} />
         {src ? <OverrideImg key={src} src={src} /> : null}
       </span>
       {status && badge ? (

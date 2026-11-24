@@ -71,13 +71,11 @@ test("defaults to 30 days, with back link, title, totals, estimate line and tabl
   expect(screen.getByRole("group", { name: "Range" })).toBeInTheDocument();
 
   const back = screen.getByRole("link", { name: "← @lead" });
-  expect(back).toHaveAttribute("href", "/agents/lead");
+  expect(back).toHaveAttribute("href", "/agents/lead/chat");
   await waitFor(() => expect(document.title).toBe("Usage · Lead · Open Factory"));
 
   const dl = document.querySelector("dl") as HTMLElement;
-  expect(dl).toBeInTheDocument();
-  const cost = within(dl).getByText("$4.60");
-  expect(cost).toHaveClass("text-base", "font-semibold");
+  expect(within(dl).getByText("$4.60")).toBeInTheDocument();
   expect(within(dl).getByText("Own $1.20 · spawned $3.40")).toBeInTheDocument();
   expect(within(dl).getByText("41")).toBeInTheDocument();
   const tokensLine = within(dl).getAllByText(

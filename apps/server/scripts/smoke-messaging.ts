@@ -92,7 +92,8 @@ async function soft<T>(name: string, fn: () => Promise<T>): Promise<T | undefine
 // realpath: macOS tmpdir is a /var symlink; the factory works with canonical paths.
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-msg-")));
 const factoryHome = path.join(root, "home");
-const hostSkillsDir = path.join(root, "host-skills");
+const hostClaudeDir = path.join(root, "host-claude");
+const hostSkillsDir = path.join(hostClaudeDir, "skills");
 const WORD = `KESTREL-${randomBytes(3).toString("hex").toUpperCase()}`;
 
 // ---------- server log capture (pino JSON lines, never printed raw) ----------
@@ -286,8 +287,11 @@ let orUser = { userId: "", handle: "or" };
 /** Sends a human message (as @or) and returns its row id and the recipient's seq before it. */
 async function send(slug: Slug, body: string) {
   const from = await lastSeq(slug);
-  const sent = await app.router.send(orUser, slug, body, false);
-  if (!sent.ok) throw new Error(`send to ${slug} failed: ${sent.message}`);
+  const [sent] = (await app.router.send(orUser, [slug], body, false)).results;
+  if (!sent || sent.status === "refused" || sent.status === "start_failed")
+    throw new Error(
+      `send to ${slug} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+    );
   return { id: sent.id, from };
 }
 /** The events of the turn that read message `id`: from its message_in to the first origin-less turn_end after it. */
@@ -509,7 +513,7 @@ try {
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
     FACTORY_HOME: factoryHome,
-    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+    FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
     FACTORY_DEFAULT_IMAGE: IMAGE,
     FACTORY_ALLOW_LOCAL_RUNTIME: LOCAL ? "true" : "false",
     HOST: "127.0.0.1",
@@ -552,7 +556,7 @@ try {
     patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 180 }),
   );
   await step("1. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step(`1. template msg (${LOCAL ? "local" : "docker"}, haiku) is valid`, async () => {
     writeTemplate("msg", {
@@ -607,8 +611,8 @@ try {
       "ada",
       [
         "Use mcp__factory__send_message to ask bob for a random word.",
-        'Call the tool mcp__factory__send_message with to: "bob" and body: "Please reply with one random word." Then stop.',
-        'You must call mcp__factory__send_message now, exactly once, with to: "bob" and body: "Please reply with one random word.". Do not use any other tool.',
+        'Call the tool mcp__factory__send_message with to: ["bob"] and body: "Please reply with one random word." Then stop.',
+        'You must call mcp__factory__send_message now, exactly once, with to: ["bob"] and body: "Please reply with one random word.". Do not use any other tool.',
       ],
       (es) =>
         okCalls(es, "mcp__factory__send_message").find((c) =>
@@ -779,8 +783,8 @@ try {
     ask(
       "ada",
       [
-        'Send an urgent message to lead: call mcp__factory__send_message with to: "lead", urgent: true and body: "Urgent: please stop and reply."',
-        'Call mcp__factory__send_message exactly once with to: "lead", body: "Urgent: please stop and reply." and urgent: true. Then stop.',
+        'Send an urgent message to lead: call mcp__factory__send_message with to: ["lead"], urgent: true and body: "Urgent: please stop and reply."',
+        'Call mcp__factory__send_message exactly once with to: ["lead"], body: "Urgent: please stop and reply." and urgent: true. Then stop.',
         'You must call mcp__factory__send_message now with the arguments {"to": "lead", "body": "Urgent: please stop and reply.", "urgent": true}. No other tool.',
       ],
       (es) =>
@@ -844,12 +848,15 @@ try {
     ),
   );
   const peersRaw = resultOf(t5.turn, t5.got.event.toolUseId)?.content ?? "";
-  let peers: { agents?: { slug: string; relation: string }[]; humans?: { handle: string }[] } = {};
+  let peers: { peers?: { handle: string; kind: string; relation?: string }[] } = {};
   try {
     peers = JSON.parse(peersRaw);
   } catch {}
-  const rel = (slug: string) => peers.agents?.find((a) => a.slug === slug)?.relation;
-  const handles = (peers.humans ?? []).map((h) => h.handle);
+  const rel = (slug: string) =>
+    peers.peers?.find((a) => a.kind === "agent" && a.handle === `@${slug}`)?.relation;
+  const handles = (peers.peers ?? [])
+    .filter((p) => p.kind === "human")
+    .map((h) => h.handle.slice(1));
   check(
     "5. AC4: list_peers names lead as manager, bob as peer, humans or and sam",
     rel("lead") === "manager" &&
@@ -860,19 +867,21 @@ try {
     `result: ${brief(peersRaw, 400)}`,
   );
 
-  // 6. AC5: ada messages @humans; both users have the inbox item.
-  const t6 = await step("6. ada messages @humans", () =>
+  // 6. AC5: ada messages both people by handle; each has the inbox item.
+  const t6 = await step("6. ada messages @or and @sam", () =>
     ask(
       "ada",
       [
-        `Use mcp__factory__send_message to tell @humans: "Hello humans, ${WORD}".`,
-        `Call mcp__factory__send_message with to: "@humans" and body: "Hello humans, ${WORD}". Then stop.`,
-        `You must call mcp__factory__send_message now with {"to": "@humans", "body": "Hello humans, ${WORD}"}. No other tool.`,
+        `Use mcp__factory__send_message to tell @or and @sam: "Hello people, ${WORD}".`,
+        `Call mcp__factory__send_message with to: ["@or", "@sam"] and body: "Hello people, ${WORD}". Then stop.`,
+        `You must call mcp__factory__send_message now with {"to": ["@or", "@sam"], "body": "Hello people, ${WORD}"}. No other tool.`,
       ],
       (es) =>
         okCalls(es, "mcp__factory__send_message").find((c) => {
           const i = c.event.input as { to?: unknown; body?: unknown };
-          return /humans/.test(String(i.to)) && String(i.body).includes(WORD);
+          return (
+            /or/.test(String(i.to)) && /sam/.test(String(i.to)) && String(i.body).includes(WORD)
+          );
         }) ?? undefined,
     ),
   );
@@ -895,10 +904,10 @@ try {
       ).items ?? [];
     const item = items.find((i) => i.preview.includes(WORD));
     check(
-      `6. AC5: GET /api/inbox for @${handle} has ada's @humans message, linked to the send_message call`,
+      `6. AC5: GET /api/inbox for @${handle} has ada's message, linked to the send_message call`,
       res.statusCode === 200 &&
         item?.from.name === "ada" &&
-        item.to === "@humans" &&
+        item.to === `@${handle}` &&
         item.link.agentSlug === "ada" &&
         item.link.seq === t6.got.seq,
       `${res.statusCode}: ${brief(JSON.stringify(item ?? items), 300)}; call seq ${t6.got.seq}`,

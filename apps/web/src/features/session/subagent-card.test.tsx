@@ -83,15 +83,6 @@ test("header: Subagent · type · description and a Running chip with the tooth;
   expect(card("2").querySelector("img, [data-avatar]")).toBeNull();
 });
 
-test("the body is indented with a neutral rule guide, no fill and no box", () => {
-  const rows = rowsOf([e({ type: "turn_started" }), call("ag", "x", "Explore")]);
-  show(rows, [progress()]);
-  const guide = card("2").querySelector("[data-subagent-body]") as HTMLElement;
-  expect(guide).toHaveClass("border-l", "border-border");
-  expect(guide.className).not.toMatch(/\bbg-|\brounded|\bborder-(t|r|b)\b|signal|destructive/);
-  expect(card("2").className).not.toMatch(/\bbg-|\bborder\b/);
-});
-
 test("running: one live line from progress, counters first, updated at most twice a second", () => {
   vi.useFakeTimers();
   const events = [
@@ -287,7 +278,7 @@ test("a deep link into an overflowed card's transcript opens the overflow row an
   expect(header("7")?.textContent).toContain("deep inside");
 });
 
-test("the overflow header reads like the cards: named as in this session, its chevron turning as theirs does", () => {
+test("the overflow header reads like the cards: named as in this session", () => {
   show(
     rowsOf([
       e({ type: "turn_started" }),
@@ -300,9 +291,4 @@ test("the overflow header reads like the cards: named as in this session, its ch
   );
   const over = header("5") as HTMLElement;
   expect(over).toHaveAccessibleName("+2 more subagents in this session · 2 running");
-  expect(over.querySelector("svg")).toHaveClass(
-    "transition-transform",
-    "motion-reduce:transition-none",
-  );
-  expect(header("2")?.querySelector("svg")).toHaveClass("transition-transform");
 });

@@ -431,8 +431,8 @@ The outcome toasts, because the menu has closed: "Persona reset. Previous file s
   - Parses `agentOverlaySchema`. Zod issues become `issues` with paths, and a 400.
   - Writes in one transaction: `SELECT config … FOR NO KEY UPDATE`, compare its JS-computed version with `baseVersion`, then `UPDATE`. A Postgres `jsonb::text` doesn't sort keys the way the JS canonical form does, so the version is never computed in SQL. A miss is 409 `config_changed`, "Changed since you opened it."
   - If the template is valid, runs `validateEffective`; any error gives a 400 with `issues` and nothing is written. If the template is invalid or missing, it does schema-only validation and returns `checked: "schema"` (R5).
-  - On success it runs §7.2 and returns the GET shape plus `changes: string[]`, `restart: boolean` and `checked: "full" | "schema"`.
-- **`GET /api/templates/:name/config`** → `{ doc: ConfigDoc | null, hashes: Record<"template.yaml" | "settings.json" | "mcp.json", string | null>, issues, agents: { live: number; archived: number; cantStart: number } }`.
+  - On success it runs §7.2 and returns the GET shape plus `changes: string[]`, `restartChecked: boolean` (a restart check was scheduled; the process restarts when idle only if what it started with differs) and `checked: "full" | "schema"`.
+- **`GET /api/templates/:name/config`** → `{ doc: ConfigDoc | null, hashes: Record<"template.yaml" | "settings.json" | "mcp.json", string | null>, issues, localSkills: string[], agents: { live: number; archived: number; cantStart: number } }`. `localSkills` is the template's own `skills/` folder names (the agent page lists them read-only); `cantStart` is every live agent while the template has errors and 0 otherwise.
 - **`PUT /api/templates/:name/config { doc, baseHashes }`.**
   - Checks all three base hashes (409 `changed_on_disk`, today's copy).
   - Builds the three new texts:

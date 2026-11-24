@@ -18,6 +18,8 @@ export const commandSchema = z.object({
   argumentHint: z.string().max(500),
   builtin: z.boolean().optional(),
   aliases: z.array(commandName).max(20).optional(),
+  /** Why the factory won't run it (the denylist's reason); the menu shows it instead of offering the command. */
+  denied: z.string().max(MAX_COMMAND_DESCRIPTION).optional(),
 });
 export type Command = z.infer<typeof commandSchema>;
 
@@ -53,36 +55,74 @@ export const agentCommandsResponseSchema = z.object({
 });
 export type AgentCommandsResponse = z.infer<typeof agentCommandsResponseSchema>;
 
-/**
- * A character that could end the line or hide in it: C0 controls but tab, DEL, NEL and the Unicode line and paragraph
- * separators. Args stay one line of data, so `"/" + name + " " + args` is always one command and never reads as a
- * second message or a second command.
- */
-const breaksLine = (s: string): boolean => {
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if ((c < 0x20 && c !== 0x09) || c === 0x7f || c === 0x85 || c === 0x2028 || c === 0x2029)
-      return true;
-  }
-  return false;
+/** Commands the factory never forwards to Claude, by the group their reason belongs to. Keys are lowercase. */
+export const DENIED_COMMANDS: Readonly<
+  Record<string, "session" | "model" | "credentials" | "process">
+> = {
+  clear: "session",
+  new: "session",
+  reset: "session",
+  model: "model",
+  effort: "model",
+  login: "credentials",
+  logout: "credentials",
+  exit: "process",
+  quit: "process",
+  resume: "process",
+  continue: "process",
 };
 
-/**
- * `POST /api/agents/:slug/commands` (U3 §13.3). `name` is the typed token: the server resolves it against the allowed
- * set and sends the allowed entry's own name, never this string. The 64 KB bound on `/name args` is checked by the
- * route (413), after the name resolves.
- */
-export const runCommandBodySchema = z.object({
-  name: z.string().min(1).max(MAX_COMMAND_NAME),
-  args: z
-    .string()
-    .trim()
-    .refine((s) => !breaksLine(s), "Command arguments must be one line")
-    .default(""),
-  clientMessageId: z.string().uuid().optional(),
-});
-export type RunCommandBody = z.infer<typeof runCommandBodySchema>;
+const DENIED_WHY = {
+  session: "each agent keeps one session.",
+  model: "the model and effort come from the agent's template.",
+  credentials: "credentials are managed in Settings \u2192 Credentials.",
+  process: "the factory runs this agent's process.",
+} as const;
 
-/** The raw line a command is written as (U3 §13.3): `/name`, then one space and the args when there are any. */
-export const commandText = (name: string, args: string): string =>
-  args ? `/${name} ${args}` : `/${name}`;
+/** Why `/typed` is refused, naming it as typed, or undefined when it isn't on the denylist. */
+export function deniedReason(typed: string): string | undefined {
+  const key = typed.toLowerCase();
+  if (!Object.hasOwn(DENIED_COMMANDS, key)) return undefined;
+  return `/${typed} isn't available: ${DENIED_WHY[DENIED_COMMANDS[key] as keyof typeof DENIED_WHY]}`;
+}
+
+export type InputClass =
+  | { kind: "text" }
+  | { kind: "command"; name: string; args: string; denied?: string; multiline: boolean };
+
+/** Any line break: LF, CR, NEL, U+2028, U+2029. One command is one line. */
+const LINE_BREAK = /[\n\r\u0085\u2028\u2029]/;
+export const hasLineBreak = (s: string): boolean => LINE_BREAK.test(s);
+
+/** `/name rest`: the typed name (as typed, maybe empty) and the rest of the line. */
+const SLASH_INPUT = /^\/([^\s\u0085]*)[\s\u0085]*([\s\S]*)$/;
+/** The name typed after the leading `/` of a line, as typed; empty when there is none. */
+export const typedCommandName = (text: string): string =>
+  SLASH_INPUT.exec(text.trimStart())?.[1] ?? "";
+
+/**
+ * What a line of session input is. A command when its first token (after `/`, lowercased) is a known name or alias or
+ * is on the denylist; anything else, a path included, is text. `text` is already trimEnd'ed; `known` holds lowercase
+ * names and aliases (the list, the snapshot and the template's skills).
+ */
+export function classifyInput(text: string, known: ReadonlySet<string>): InputClass {
+  const t = text.trimStart();
+  if (!t.startsWith("/")) return { kind: "text" };
+  const m = SLASH_INPUT.exec(t);
+  const typed = m?.[1] ?? "";
+  const name = typed.toLowerCase();
+  if (!name || !(known.has(name) || Object.hasOwn(DENIED_COMMANDS, name))) return { kind: "text" };
+  return {
+    kind: "command",
+    name,
+    args: m?.[2] ?? "",
+    denied: deniedReason(typed),
+    multiline: LINE_BREAK.test(t),
+  };
+}
+
+/** `POST /api/agents/:slug/input`: the raw text a human types into the session, and the sender's optimistic-row id. */
+export const inputBodySchema = z.object({
+  text: z.string().min(1),
+  clientMessageId: z.string().uuid(),
+});

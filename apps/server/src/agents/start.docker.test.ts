@@ -23,10 +23,14 @@ import {
   dockerTransport,
 } from "../runtime/docker/exec-transport.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
+import { TemplateIndex } from "../templates/template-index.ts";
+import { claimTestHandle, claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { hostOnlyLibrary } from "../test/library.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
+import { ConfigResolver } from "./config-resolver.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
@@ -50,6 +54,7 @@ let seq = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -94,6 +99,7 @@ afterEach(async () => {
 async function setup(scenario: string | FakeScenario = "reply", image?: string): Promise<World> {
   seq += 1;
   await t.sql`delete from agents`;
+  await t.sql`delete from templates`;
   await t.sql`delete from credentials`;
   const home = realpathSync(mkdtempSync(path.join(tmpdir(), "of-dstart-")));
   const hs = realpathSync(mkdtempSync(path.join(tmpdir(), "hs-")));
@@ -106,17 +112,32 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     runtime: "docker",
     ...(image ? { image } : {}),
     skills: [],
-    plugins: [],
   });
   const tdir = path.join(home, "templates/dock");
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Dock\n");
+  // A user image the template names has its Dockerfile (or the template doesn't validate); built or not is per test.
+  if (image) {
+    mkdirSync(path.join(home, "images", image), { recursive: true });
+    writeFileSync(path.join(home, "images", image, "Dockerfile"), "FROM scratch\n");
+  }
+  writeFileSync(
+    path.join(tdir, "template.yaml"),
+    JSON.stringify({
+      name: "dock",
+      display_name: "Dock",
+      runtime: "docker",
+      ...(image ? { image } : {}),
+      skills: [],
+    }),
+  );
   await t.db.insert(schema.credentials).values({
     id: "c1",
     name: "work",
     kind: "oauth_token",
     valueEnc: vault.seal("tok-1", "credentials:c1"),
   });
+  await claimTestHandle(t.db, slug, "agent");
   const [agent] = await t.db
     .insert(schema.agents)
     .values({
@@ -124,7 +145,7 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
       slug,
       displayName: "Dock",
       template: "dock",
-      config,
+      config: {},
       runtime: "docker",
       credentialId: "c1",
     })
@@ -132,9 +153,10 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
   if (!agent) throw new Error("seed failed");
   const lock = new KeyedMutex();
   const fake = createFakeClaude({ scenario });
+  const library = hostOnlyLibrary(hs, home);
   const workspace = new Workspace({
     factoryHome: home,
-    hostSkillsDir: hs,
+    library,
     claudeBin: fake.bin,
     cliBundle,
     lock,
@@ -169,7 +191,13 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     labels: { [LABEL_CLAUDE_CODE_VERSION]: "2.1.327" },
   });
   // A non-root host user whatever runs the tests.
-  const containers = new ContainerManager({ docker, log: silentLog, uid: 501, gid: 20 });
+  const containers = new ContainerManager({
+    docker,
+    log: silentLog,
+    uid: 501,
+    gid: 20,
+    checkImage: async () => {},
+  });
   const realPrepare = workspace.prepare.bind(workspace);
   vi.spyOn(workspace, "prepare").mockImplementation(async (i) => {
     docker.mark("prepare");
@@ -180,6 +208,10 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     config: factoryConfig,
     vault,
     workspace,
+    resolver: new ConfigResolver({
+      templates: new TemplateIndex({ db: t.db, config: factoryConfig, library }),
+      library,
+    }),
     lock,
     containers,
     neighborhood: new Neighborhood(t.db),
@@ -194,7 +226,15 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     }),
     prepareStart,
     log: silentLog,
-    docker: { containers, claudeBin: factoryConfig.dockerClaudeBin, defaultImage: IMAGE },
+    docker: {
+      containers,
+      claudeBin: factoryConfig.dockerClaudeBin,
+      defaultImage: IMAGE,
+      resolver: new ConfigResolver({
+        templates: new TemplateIndex({ db: t.db, config: factoryConfig, library }),
+        library,
+      }),
+    },
   });
   const rt = await runtimes.bySlug(slug);
   if (!rt) throw new Error("no runtime");
@@ -629,7 +669,9 @@ test("Docker unreachable: start fails with the DOCKER_HOST message", async () =>
   const message =
     "Can't reach Docker at unix:///tmp/of-test-docker.sock: connect ECONNREFUSED /tmp/of-test-docker.sock.";
   // The prepare path (the image is known): stopIfRunning can't reach the daemon.
-  await expect(w.prepareStart(w.agent, { agentToken: "tok" })).rejects.toMatchObject({
+  await expect(
+    w.prepareStart(w.agent, { agentToken: "tok", loaded: () => undefined }),
+  ).rejects.toMatchObject({
     name: "AgentStartError",
     message,
   });
@@ -643,7 +685,9 @@ test("Docker unreachable: start fails with the DOCKER_HOST message", async () =>
 test("missing CLI bundle: 'Build the CLI first (pnpm build).'", async () => {
   const w = await setup();
   rmSync(w.cliBundle);
-  await expect(w.prepareStart(w.agent, { agentToken: "tok" })).rejects.toMatchObject({
+  await expect(
+    w.prepareStart(w.agent, { agentToken: "tok", loaded: () => undefined }),
+  ).rejects.toMatchObject({
     name: "AgentStartError",
     message: "Build the CLI first (pnpm build).",
   });

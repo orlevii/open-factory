@@ -23,6 +23,7 @@ import {
   Usage,
   useFocusLater,
 } from "@/features/settings/shared";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { AddSecretForm } from "./forms/add-secret-form";
 import { ValueField } from "./forms/shared";
 
@@ -49,7 +50,7 @@ function UpdateForm({
   const f = useFieldErrors({
     form: formRef,
     fields: FIELDS,
-    checks: { value: () => (value === "" ? "Enter a value." : undefined) },
+    checks: { value: () => (value === "" ? FORM_MSG.enterValue : undefined) },
   });
 
   async function submit() {

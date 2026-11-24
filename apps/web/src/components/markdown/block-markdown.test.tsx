@@ -50,7 +50,6 @@ function stream(text: string, steps = 8) {
 test("one container holds every block, with no prose wrapper per block", () => {
   const { container } = render(<BlockMarkdown text={"# Title\n\nOne\n\nTwo"} />);
   expect(container.querySelectorAll(".prose-of")).toHaveLength(1);
-  expect(container.querySelector(".prose-of")).toHaveClass("prose-of-detail");
   expect(container.querySelectorAll(".prose-of > h1, .prose-of > p")).toHaveLength(3);
   // One shared new-tab note.
   expect(container.querySelectorAll("[hidden]")).toHaveLength(1);

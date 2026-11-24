@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { isMobileNow, MOBILE_QUERY, useIsMobile } from "@/hooks/use-mobile";
+import { isMobileNow, useIsMobile } from "@/hooks/use-mobile";
 
 const original = window.matchMedia;
 afterEach(() => {
@@ -46,13 +46,6 @@ test("follows media query changes", () => {
   expect(result.current).toBe(false);
   act(() => mq.set(true));
   expect(result.current).toBe(true);
-});
-
-test("queries the rem-based breakpoint", () => {
-  fakeMatchMedia(false);
-  renderHook(() => useIsMobile());
-  expect(window.matchMedia).toHaveBeenCalledWith("(width < 48rem)");
-  expect(MOBILE_QUERY).toBe("(width < 48rem)");
 });
 
 test("a newly installed matchMedia is read on the next render", () => {

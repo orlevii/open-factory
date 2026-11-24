@@ -16,7 +16,14 @@ import {
   previousDiagnostic,
   setDiagnosticsEffect,
 } from "@codemirror/lint";
-import { Compartment, type Extension, RangeSet, StateField, type Text } from "@codemirror/state";
+import {
+  Compartment,
+  EditorState,
+  type Extension,
+  RangeSet,
+  StateField,
+  type Text,
+} from "@codemirror/state";
 import {
   drawSelection,
   EditorView,
@@ -53,6 +60,21 @@ export function toDiagnostics(doc: Text, diags: readonly Diag[]): Diagnostic[] {
 export const languageSlot = new Compartment();
 export const markerSlot = new Compartment();
 export const attrsSlot = new Compartment();
+export const readOnlySlot = new Compartment();
+export const marginSlot = new Compartment();
+
+/** A read-only view (the Configuration page's Combined JSON): no edits, still focusable, selectable and announced as
+ *  read-only. Reconfigured in place, never a remount, so the view keeps its scroll and selection. */
+export function readOnlyFor(readOnly: boolean): Extension {
+  return readOnly
+    ? [EditorState.readOnly.of(true), EditorView.contentAttributes.of({ "aria-readonly": "true" })]
+    : [];
+}
+
+/** Keeps the cursor clear of a sticky footer over the editor's bottom edge (`scrollMargins.bottom`). */
+export function marginsFor(bottom: number): Extension {
+  return bottom > 0 ? EditorView.scrollMargins.of(() => ({ bottom })) : [];
+}
 
 type EditorIds = { id: string; labelledBy: string; describedBy: string };
 
@@ -259,6 +281,8 @@ type Options = {
   onBlur(): void;
   ids: EditorIds;
   mobile: boolean;
+  readOnly: boolean;
+  scrollMarginBottom: number;
 };
 
 /** The whole editor configuration. The handlers are called as given, so callers pass stable functions
@@ -289,6 +313,8 @@ export function extensionsFor(lang: Lang, o: Options): Extension[] {
     ]),
     markerSlot.of(markersFor(o.mobile)),
     attrsSlot.of(attrsFor(o.ids)),
+    readOnlySlot.of(readOnlyFor(o.readOnly)),
+    marginSlot.of(marginsFor(o.scrollMarginBottom)),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) o.onChange(u.state.doc.toString());
     }),

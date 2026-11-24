@@ -118,6 +118,7 @@ export const GO_TO: readonly GoToItem[] = [
   { id: "tasks", label: "Tasks", to: "/tasks" },
   { id: "templates", label: "Templates", to: "/templates" },
   { id: "images", label: "Images", to: "/templates/images" },
+  { id: "skills", label: "Skills", to: "/skills" },
   { id: "schedules", label: "Schedules", to: "/schedules" },
   { id: "usage", label: "Usage", to: "/usage" },
   { id: "settings-credentials", label: "Settings: Credentials", to: "/settings/credentials" },
@@ -131,6 +132,7 @@ export type ActionKind =
   | "navigate"
   | "open-sheet"
   | "agent-details"
+  | "switch-view"
   | "theme-system"
   | "theme-light"
   | "theme-dark"
@@ -144,8 +146,8 @@ export interface ActionItem {
   to?: string;
   /** The sheet an `open-sheet` action opens. */
   sheet?: SheetSpec["kind"];
-  /** Only offered on session pages. */
-  sessionOnly?: boolean;
+  /** Only offered on this agent page: `agent` is either view, `chat` and `session` that one. */
+  on?: "agent" | "chat" | "session";
 }
 
 /** §10.2 "Actions". There is deliberately no "Mark all read" (Q28). */
@@ -153,7 +155,9 @@ export const ACTIONS: readonly ActionItem[] = [
   { id: "new-agent", label: "New agent", kind: "open-sheet", sheet: "new-agent" },
   { id: "new-task", label: "New task", kind: "open-sheet", sheet: "new-task" },
   { id: "new-schedule", label: "New schedule", kind: "open-sheet", sheet: "new-schedule" },
-  { id: "agent-details", label: "Agent details", kind: "agent-details", sessionOnly: true },
+  { id: "agent-details", label: "Agent details", kind: "agent-details", on: "agent" },
+  { id: "open-session", label: "Open session", kind: "switch-view", on: "chat" },
+  { id: "open-chat", label: "Open chat", kind: "switch-view", on: "session" },
   { id: "theme-system", label: "Theme: System", kind: "theme-system" },
   { id: "theme-light", label: "Theme: Light", kind: "theme-light" },
   { id: "theme-dark", label: "Theme: Dark", kind: "theme-dark" },

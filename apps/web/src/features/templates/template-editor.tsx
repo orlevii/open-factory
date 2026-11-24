@@ -1,6 +1,7 @@
 import type { EditorState } from "@codemirror/state";
 import {
   ApiError,
+  CONFIG_FILES,
   TEMPLATE_FILES,
   type TemplateDetail,
   type TemplateFile,
@@ -10,29 +11,34 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { Trash2, TriangleAlert, UserPlus } from "lucide-react";
 import {
-  type ComponentPropsWithoutRef,
-  type CSSProperties,
-  forwardRef,
-  lazy,
   memo,
-  Suspense,
   useCallback,
   useEffect,
   useId,
-  useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { InlineOutcome } from "@/components/inline-outcome";
+import type { Outcome as FormOutcomeValue } from "@/components/forms/form-outcome";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { HeaderSlug, PageBody, PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { templateConfigQueryOptions } from "@/features/config/api";
+import { agentsPhrase, CONFIG_PAGE_COPY, TEMPLATE_TAB_COPY } from "@/features/config/messages";
+import { PageFooter } from "@/features/config/page-footer";
+import { useConfigDraft } from "@/features/config/use-config-draft";
 import { factorySettingsQueryOptions } from "@/features/settings/api";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
@@ -44,11 +50,21 @@ import {
   templateQueryOptions,
   validateTemplateFile,
 } from "./api";
-import type { default as CodeEditorComponent, CodeEditorHandle } from "./code-editor";
+import type { CodeEditorHandle } from "./code-editor";
 import type { Diag, Lang } from "./code-editor-setup";
-import { CodeTextarea } from "./code-textarea";
+import {
+  CodeSurface,
+  type CodeSurfaceProps,
+  focusTextareaLine,
+  isEditorSettled,
+} from "./code-surface";
 import { ImageStatusLabel } from "./image-status";
 import { IssueIcon, IssueList, sortIssues } from "./issue-list";
+import { EMPTY_DOC, hashesVersion, TemplateConfigTab } from "./template-config-tab";
+
+/** The Configuration tab, then one tab per file. */
+type Tab = "config" | TemplateFile;
+const isConfigFile = (f: TemplateFile) => (CONFIG_FILES as readonly string[]).includes(f);
 
 type FileState = {
   content: string;
@@ -88,83 +104,10 @@ const initial = (t: TemplateDetail): Record<TemplateFile, FileState> =>
 
 const isDirty = (s: FileState) => s.started && (s.content !== s.saved || s.baseHash === null);
 
-function lineOffset(content: string, line: number) {
-  const lines = content.split("\n");
-  const n = Math.min(Math.max(line, 1), lines.length);
-  return lines.slice(0, n - 1).reduce((sum, l) => sum + l.length + 1, 0);
-}
-
 /** A save or reload in flight blocks another; a blur validate never does (Save supersedes it). */
 const isBusy = (o?: Outcome) => o?.tone === "pending" && o.kind !== "checking";
 
 const goneMessage = "This template no longer exists on disk.";
-
-/** Focus a textarea at a line's start and scroll it to the middle (the jump, without CodeMirror). */
-function focusTextareaLine(el: HTMLTextAreaElement, line: number) {
-  const at = lineOffset(el.value, line);
-  el.focus({ preventScroll: true });
-  el.setSelectionRange(at, at);
-  const lh = Number.parseFloat(getComputedStyle(el).lineHeight) || 20;
-  el.scrollTop = Math.max(0, (line - 1) * lh - el.clientHeight / 2);
-  el.scrollIntoView?.({ block: "nearest" });
-}
-
-type EditorProps = ComponentPropsWithoutRef<typeof CodeEditorComponent>;
-
-/** Stands in for the editor when its chunk can't load (offline, a stale deploy's chunk): the file
- *  stays editable as text, with the same handle. */
-const TextareaEditor = forwardRef<CodeEditorHandle, EditorProps>(function TextareaEditor(p, ref) {
-  const el = useRef<HTMLTextAreaElement>(null);
-  useImperativeHandle(
-    ref,
-    () => ({
-      focusLine(line) {
-        if (el.current) focusTextareaLine(el.current, line);
-      },
-      restore({ anchor, head, focus }) {
-        const t = el.current;
-        if (!t) return;
-        t.setSelectionRange(
-          Math.min(anchor, head),
-          Math.max(anchor, head),
-          anchor > head ? "backward" : "forward",
-        );
-        if (focus) t.focus();
-      },
-    }),
-    [],
-  );
-  return (
-    <CodeTextarea
-      id={p.id}
-      aria-labelledby={p.labelledBy}
-      describedBy={p.describedBy}
-      value={p.value}
-      onChange={p.onChange}
-      onBlur={p.onBlur}
-      onSave={p.onSave}
-      textareaRef={el}
-    />
-  );
-});
-
-// Set once the chunk has settled: from then on a fallback textarea is only ever detached by the
-// swap itself, so that's the only detach whose selection is carried over.
-let editorSettled = false;
-// Its own chunk (CodeMirror), preloaded by the route's loader on a real visit (spec §12.2). A failed
-// load falls back to the textarea rather than taking the page down.
-const CodeEditor = lazy(() =>
-  import("./code-editor").then(
-    (m) => {
-      editorSettled = true;
-      return m;
-    },
-    () => {
-      editorSettled = true;
-      return { default: TextareaEditor };
-    },
-  ),
-);
 
 const LANGUAGE: Record<TemplateFile, Lang> = {
   "template.yaml": "yaml",
@@ -186,7 +129,27 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   const navigate = useNavigate();
   const [files, setFiles] = useState(() => initial(template));
   const [issues, setIssues] = useState<TemplateIssue[]>(template.issues);
-  const [tab, setTab] = useState<TemplateFile>("template.yaml");
+  // Configuration first when the template is valid; a broken one opens on template.yaml, the way to fix it.
+  const [tab, setTab] = useState<Tab>(() =>
+    template.issues.some((i) => i.severity === "error") ? "template.yaml" : "config",
+  );
+  // The Configuration tab's data and draft live here (H4), so the locks below are derived in render.
+  const configQ = useQuery(templateConfigQueryOptions(name));
+  const cfg = configQ.data;
+  const cfgDoc = cfg?.doc;
+  const cfgHashes = cfg?.hashes;
+  const loaded = useMemo(
+    () => ({
+      value: (cfgDoc ?? EMPTY_DOC) as unknown,
+      version: cfgHashes ? hashesVersion(cfgHashes) : "",
+    }),
+    [cfgDoc, cfgHashes],
+  );
+  const d = useConfigDraft<unknown>(loaded);
+  const latestDraft = useRef(d);
+  useLayoutEffect(() => {
+    latestDraft.current = d;
+  });
   const [mdView, setMdView] = useState<"write" | "preview">("write");
   const [outcomes, setOutcomes] = useState<Partial<Record<TemplateFile, Outcome>>>({});
   const [gone, setGone] = useState(false);
@@ -209,11 +172,14 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   // Stable, so it runs only when a conflict block mounts: keyboard users land on its Reload.
   const focusOnMount = useCallback((el: HTMLButtonElement | null) => el?.focus(), []);
 
-  const dirty = TEMPLATE_FILES.some((f) => isDirty(files[f]));
+  // R2, one draft per file: a dirty config file locks the form, and a dirty form locks the config files.
+  const lockedBy = CONFIG_FILES.find((f) => isDirty(files[f]));
+  const formDirty = d.dirty;
+  const dirty = TEMPLATE_FILES.some((f) => isDirty(files[f])) || formDirty;
   useBlocker({
     shouldBlockFn: () => {
       if (leaving.current || !dirty) return false;
-      return !window.confirm("You have unsaved changes. Leave this page and discard them?");
+      return !window.confirm(CONFIG_PAGE_COPY.leaveConfirm);
     },
     enableBeforeUnload: () => dirty && !leaving.current,
   });
@@ -225,6 +191,23 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   const patch = (f: TemplateFile, p: Partial<FileState>) =>
     setFiles((s) => ({ ...s, [f]: { ...s[f], ...p } }));
   const setOutcome = (f: TemplateFile, o?: Outcome) => setOutcomes((s) => ({ ...s, [f]: o }));
+  // Each outcome's key for the footer's line, so the same text set again is announced again.
+  const outcomeKeys = useRef(new WeakMap<Outcome, number>());
+  const outcomeSeq = useRef(0);
+  const keyOf = (o: Outcome | undefined) => {
+    if (!o) return 0;
+    let k = outcomeKeys.current.get(o);
+    if (k === undefined) {
+      k = ++outcomeSeq.current;
+      outcomeKeys.current.set(o, k);
+    }
+    return k;
+  };
+  // The files as last committed, for handlers that run after a request.
+  const latestFiles = useRef(files);
+  useLayoutEffect(() => {
+    latestFiles.current = files;
+  });
 
   // A jump to another tab can only land once that tab's editor (or its textarea fallback) has
   // mounted, which is after this component's own commit. So the request waits in a ref and is
@@ -258,7 +241,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
         // The swap detaches it while it's still in the DOM: note where the user was, for the editor
         // replacing it. Any other detach (a tab switch, Discard) leaves nothing to carry.
         if (!el) carried.current[f] = undefined;
-        if (!el && prev && editorSettled)
+        if (!el && prev && isEditorSettled())
           carried.current[f] = {
             anchor:
               prev.selectionDirection === "backward" ? prev.selectionEnd : prev.selectionStart,
@@ -298,6 +281,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   useEffect(serveJump, [jumpN]);
 
   // Stable (setters and a ref only), so the memoized issues block skips keystroke renders.
+  const refetchConfig = useCallback(() => void configQ.refetch(), [configQ.refetch]);
   const jumpTo = useCallback((file: TemplateIssue["file"], line: number) => {
     if (!(TEMPLATE_FILES as readonly string[]).includes(file)) return;
     const f = file as TemplateFile;
@@ -306,6 +290,35 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     wanted.current = { file: f, line };
     setJumpN((n) => n + 1);
   }, []);
+
+  // A Configuration save or reload rewrote the config files: their (clean) tabs read them again, history and all.
+  // Only files whose hash moved are replaced; an unchanged one keeps its text, undo history and outcome.
+  const onFilesChanged = useCallback(async () => {
+    const fresh = await qc.fetchQuery({ ...templateQueryOptions(name), staleTime: 0 });
+    const next = initial(fresh);
+    const now = latestFiles.current;
+    const moved = CONFIG_FILES.filter(
+      (f) => !isDirty(now[f]) && next[f].baseHash !== now[f].baseHash,
+    );
+    for (const f of moved) {
+      states.delete(`${name}:${f}`);
+      checked.current[f] = next[f].content;
+    }
+    if (moved.length) {
+      setFiles((all) => {
+        const out = { ...all };
+        for (const f of moved) if (!isDirty(all[f])) out[f] = next[f];
+        return out;
+      });
+      setOutcomes((all) => {
+        const out = { ...all };
+        for (const f of moved) out[f] = undefined;
+        return out;
+      });
+    }
+    seq.current++;
+    setIssues(fresh.issues);
+  }, [qc, name, states]);
 
   function failed(f: TemplateFile, e: unknown, fallback: string) {
     if (e instanceof ApiError && e.status === 404) return setGone(true);
@@ -342,6 +355,20 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
     }
   }
 
+  function discard(f: TemplateFile) {
+    const s = files[f];
+    if (!isDirty(s)) return;
+    setOutcome(f, undefined);
+    if (isOptional(f) && s.baseHash === null) {
+      // Never written: back to "Not created".
+      patch(f, { started: false, content: "", saved: "", conflict: undefined });
+      requestAnimationFrame(() => document.getElementById(`create-${f}`)?.focus());
+      return;
+    }
+    patch(f, { content: s.saved, conflict: undefined });
+    focusEditor(f);
+  }
+
   async function save(f: TemplateFile, baseHash = files[f].baseHash) {
     const s = files[f];
     if (!isDirty(s) || isBusy(outcomes[f])) return;
@@ -365,6 +392,12 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
       // The header (display name, runtime, description) and the list read the saved config;
       // the editor itself was seeded once and keeps its own state.
       void qc.invalidateQueries({ queryKey: ["templates"] });
+      // The form reads these files: it reloads silently (it is clean, since this tab was editable).
+      if (isConfigFile(f))
+        void qc.invalidateQueries({
+          queryKey: templateConfigQueryOptions(name).queryKey,
+          exact: true,
+        });
     } catch (e) {
       if (e instanceof ApiError && e.code === "changed_on_disk") {
         const h = e.body.currentHash;
@@ -460,13 +493,36 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
           )}
           <Tabs
             value={tab}
-            onValueChange={(v) => setTab(v as TemplateFile)}
-            className="min-w-0 gap-3"
+            onValueChange={(v) => setTab(v as Tab)}
+            // A container: the strip turns into the Select by its own width, so 200% text gets it too.
+            className="@container min-w-0 gap-3"
           >
+            {/* Below 40rem of its own width (a container query) the strip is the same tabs as a Select. Both render; CSS hides one. */}
+            <TabSelect
+              tab={tab}
+              onTab={setTab}
+              formDirty={formDirty}
+              isDirty={(f) => isDirty(files[f])}
+              hasErrors={(f) => filesWithErrors.has(f)}
+            />
             <TabsList
               variant="line"
-              className="h-9! w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0"
+              className="h-9! w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0 @max-[40rem]:hidden"
             >
+              <TabsTrigger
+                value="config"
+                className="h-full flex-none rounded-none px-2 text-[0.8125rem] font-normal text-muted-foreground data-[state=active]:text-foreground group-data-horizontal/tabs:after:bottom-0"
+              >
+                {TEMPLATE_TAB_COPY.tab}
+                {formDirty && (
+                  <>
+                    <span aria-hidden="true" className="size-1.5 rounded-full bg-foreground" />
+                    <span className="sr-only">(unsaved)</span>
+                  </>
+                )}
+              </TabsTrigger>
+              {/* The form's label is Geist; the file tabs are filenames, mono. A 1px rule sets them apart. */}
+              <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 self-center bg-border" />
               {TEMPLATE_FILES.map((f) => (
                 <TabsTrigger
                   key={f}
@@ -489,6 +545,25 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                 </TabsTrigger>
               ))}
             </TabsList>
+            {/* Always mounted, hidden while a file tab shows (as on the agent page): an open MCP editor, a 400's issues
+                and the outcome line survive a visit to mcp.json. */}
+            <TabsContent value="config" forceMount hidden={tab !== "config"} className="min-w-0">
+              <TemplateConfigTab
+                name={name}
+                data={cfg}
+                loadError={configQ.isError}
+                onRetry={refetchConfig}
+                value={d.draft}
+                dirty={formDirty}
+                drift={d.drift}
+                conflicts={d.conflicts}
+                baseVersion={d.baseVersion}
+                draft={latestDraft}
+                lockedBy={lockedBy}
+                onJump={jumpTo}
+                onFilesChanged={onFilesChanged}
+              />
+            </TabsContent>
             {TEMPLATE_FILES.map((f) => {
               const s = files[f];
               const mine = issuesByFile.get(f) ?? [];
@@ -497,8 +572,11 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               const canSave = isDirty(s) && !busy;
               const save$ = () => void save(f);
               const warmHint = f === "template.yaml" && s.started && warmDefault !== undefined;
+              // The form holds a draft of this file: read-only until it is saved or discarded (R2).
+              const locked = formDirty && isConfigFile(f);
               const surface = {
                 file: f,
+                readOnly: locked,
                 onBlur: () => void validate(f),
                 onSave: save$,
                 labelledBy: labelId(f),
@@ -514,13 +592,20 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                   value={f}
                   className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3"
                 >
+                  {locked && (
+                    <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+                      {TEMPLATE_TAB_COPY.formHasEdits}
+                    </p>
+                  )}
                   {!s.started ? (
                     <div className="grid justify-items-start gap-2 rounded-lg border border-dashed border-border p-4">
                       <p className="text-sm text-muted-foreground">Not created</p>
                       <Button
                         id={`create-${f}`}
                         variant="ghost"
+                        aria-disabled={locked || undefined}
                         onClick={() => {
+                          if (locked) return;
                           patch(f, { started: true, content: OPTIONAL_SEED[f] ?? "" });
                           wanted.current = { file: f, line: 1 };
                         }}
@@ -592,45 +677,16 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
                     </div>
                   )}
                   {s.started && (
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <Status outcome={outcome} />
-                      <div className="ml-auto flex gap-2">
-                        <Button
-                          variant="ghost"
-                          aria-disabled={!isDirty(s) || undefined}
-                          onClick={() => {
-                            if (!isDirty(s)) return;
-                            setOutcome(f, undefined);
-                            if (isOptional(f) && s.baseHash === null) {
-                              // Never written: back to "Not created".
-                              patch(f, {
-                                started: false,
-                                content: "",
-                                saved: "",
-                                conflict: undefined,
-                              });
-                              requestAnimationFrame(() =>
-                                document.getElementById(`create-${f}`)?.focus(),
-                              );
-                              return;
-                            }
-                            patch(f, { content: s.saved, conflict: undefined });
-                            focusEditor(f);
-                          }}
-                        >
-                          Discard
-                        </Button>
-                        <Button
-                          aria-disabled={!canSave || undefined}
-                          onClick={() => canSave && save$()}
-                        >
-                          {outcome?.tone === "pending" && outcome.kind === "saving" && <Spinner />}
-                          {outcome?.tone === "pending" && outcome.kind === "saving"
-                            ? "Saving…"
-                            : "Save"}
-                        </Button>
-                      </div>
-                    </div>
+                    // The page-footer rule (DESIGN.md → Page forms), the same footer as Configuration's.
+                    <PageFooter
+                      outcome={fileOutcome(outcome, keyOf(outcome))}
+                      sticky={isDirty(s) || (outcome !== undefined && outcome.tone !== "pending")}
+                      pending={outcome?.tone === "pending" && outcome.kind === "saving"}
+                      canSave={canSave}
+                      canDiscard={isDirty(s)}
+                      onSave={() => canSave && save$()}
+                      onDiscard={() => discard(f)}
+                    />
                   )}
                 </TabsContent>
               );
@@ -644,8 +700,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
         title={`Delete template ${name}?`}
         body={
           <>
-            This deletes the folder <span className="font-mono">{template.path}</span>. Agents
-            created from it keep their own copies, but they can't be re-synced.
+            This deletes the folder <span className="font-mono">{template.path}</span>.
           </>
         }
         confirmLabel={`Delete ${name}`}
@@ -668,20 +723,6 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
 
 const NO_DIAGS: Diag[] = [];
 
-// The fallback's text starts where the editor's will, so the swap doesn't move it: the line-number
-// gutter (16px padding plus one 14px-mono digit, 8.4px, per digit of the line count, CodeMirror's own
-// sizing), its 1px border, the lint gutter (19.6px, from md) and the line's 8px inset. On touch the
-// editor's lines are 24px, so the fallback's are too. Measured in Chromium and WebKit (Task 42).
-const GUTTER_PAD =
-  "pl-[calc(var(--gutter-digits)_*_8.4px_+_44.6px)] max-md:pl-[calc(var(--gutter-digits)_*_8.4px_+_25px)] pointer-coarse:leading-6";
-
-/** The digits of the line count: CodeMirror's line-number gutter is as wide as the widest number. */
-function gutterDigits(value: string) {
-  let lines = 1;
-  for (let i = value.indexOf("\n"); i !== -1; i = value.indexOf("\n", i + 1)) lines++;
-  return String(lines).length;
-}
-
 // Inside MarkdownEditor's frame the surface drops its own frame (border, radius, focus ring).
 const EMBEDDED =
   "[&>div>div:first-child]:rounded-none [&>div>div:first-child]:border-0 [&>div>div:first-child]:ring-0! [&>div>p]:px-3 [&>div>p]:pb-2";
@@ -699,58 +740,11 @@ function keepInPlace(el: HTMLElement | null, by: number) {
   window.scrollBy(0, by);
 }
 
-type SurfaceProps = {
-  file: TemplateFile;
-  value: string;
-  onChange(v: string): void;
-  onBlur(): void;
-  onSave(): void;
-  describedBy?: string;
-  labelledBy: string;
-  fileKey: string;
-  states: Map<string, EditorState>;
-  diagnostics: readonly Diag[];
-  textareaRef(el: HTMLTextAreaElement | null): void;
-  editorRef(h: CodeEditorHandle | null): void;
-};
+type SurfaceProps = Omit<CodeSurfaceProps, "id" | "label" | "language"> & { file: TemplateFile };
 
-/** One file in CodeMirror. Until its chunk arrives, the textarea, with its text where the editor's
- *  will be; on the swap the selection, scroll and focus carry over (the template editor's refs). */
-function FileSurface(p: SurfaceProps) {
-  const id = `editor-${p.file}`;
-  return (
-    <Suspense
-      fallback={
-        <CodeTextarea
-          id={id}
-          aria-label={p.file}
-          describedBy={p.describedBy}
-          value={p.value}
-          onChange={p.onChange}
-          onBlur={p.onBlur}
-          onSave={p.onSave}
-          textareaRef={p.textareaRef}
-          className={GUTTER_PAD}
-          style={{ "--gutter-digits": gutterDigits(p.value) } as CSSProperties}
-        />
-      }
-    >
-      <CodeEditor
-        ref={p.editorRef}
-        id={id}
-        labelledBy={p.labelledBy}
-        describedBy={p.describedBy}
-        value={p.value}
-        onChange={p.onChange}
-        onBlur={p.onBlur}
-        onSave={p.onSave}
-        language={LANGUAGE[p.file]}
-        fileKey={p.fileKey}
-        states={p.states}
-        diagnostics={p.diagnostics}
-      />
-    </Suspense>
-  );
+/** One template file in the shared code surface, named and typed by its file. */
+function FileSurface({ file, ...p }: SurfaceProps) {
+  return <CodeSurface {...p} id={`editor-${file}`} label={file} language={LANGUAGE[file]} />;
 }
 
 /** The page header and the config line under it. Memoized: neither reads the files being edited,
@@ -845,11 +839,11 @@ const TemplateHeader = memo(function TemplateHeader({
           <span>No agents</span>
         ) : (
           <span className="flex flex-wrap gap-x-1.5">
-            {template.agents.length === 1 ? "1 agent:" : `${template.agents.length} agents:`}
+            {`${agentsPhrase(template.agents.length)}:`}
             {template.agents.map((slug, i) => (
               <Link
                 key={slug}
-                to="/agents/$slug"
+                to="/agents/$slug/chat"
                 params={{ slug }}
                 className="rounded-sm font-mono text-foreground underline-offset-2 hover:underline"
               >
@@ -898,21 +892,13 @@ const IssuesBlock = memo(function IssuesBlock({
   );
 });
 
-/** One live region that is always mounted, so changes are announced. */
-function Status({ outcome }: { outcome?: Outcome }) {
-  return (
-    <div aria-live="polite" className="min-h-[1.125rem]">
-      {outcome?.tone === "pending" && (
-        <p className="flex items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-          <Spinner size="text" />
-          {outcome.text}
-        </p>
-      )}
-      {outcome && outcome.tone !== "pending" && (
-        <InlineOutcome tone={outcome.tone}>{outcome.text}</InlineOutcome>
-      )}
-    </div>
-  );
+/** A file tab's outcome as the page footer's line: "Checking…" and "Reloading…" are its muted notice, "Saving…" is
+ *  the footer's own pending label. */
+function fileOutcome(o: Outcome | undefined, outcomeKey: number): FormOutcomeValue {
+  if (!o) return { outcomeKey };
+  if (o.tone !== "pending")
+    return o.tone === "success" ? { outcomeKey, success: o.text } : { outcomeKey, error: o.text };
+  return { outcomeKey, notice: o.kind === "saving" ? undefined : o.text };
 }
 
 /** `image:` with its status (spec §12.8), and Build for a user image that isn't built. */
@@ -961,5 +947,45 @@ function ImageLine({ image }: { image: NonNullable<TemplateDetail["imageStatus"]
         </span>
       )}
     </span>
+  );
+}
+
+/** Below 40rem the tab strip is this Select: every tab, with its unsaved and error marks in the item's text. */
+function TabSelect({
+  tab,
+  onTab,
+  formDirty,
+  isDirty,
+  hasErrors,
+}: {
+  tab: Tab;
+  onTab(t: Tab): void;
+  formDirty: boolean;
+  isDirty(f: TemplateFile): boolean;
+  hasErrors(f: TemplateFile): boolean;
+}) {
+  const marks = (dirty: boolean, errors: boolean) =>
+    [errors && TEMPLATE_TAB_COPY.hasErrors, dirty && TEMPLATE_TAB_COPY.unsaved]
+      .filter(Boolean)
+      .join(", ");
+  const label = (name: string, m: string) => (m ? `${name} (${m})` : name);
+  return (
+    <div className="@min-[40rem]:hidden">
+      <Select value={tab} onValueChange={(v) => onTab(v as Tab)}>
+        <SelectTrigger aria-label={TEMPLATE_TAB_COPY.tabPicker} className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="config">
+            {label(TEMPLATE_TAB_COPY.tab, marks(formDirty, false))}
+          </SelectItem>
+          {TEMPLATE_FILES.map((f) => (
+            <SelectItem key={f} value={f} className="font-mono">
+              {label(f, marks(isDirty(f), hasErrors(f)))}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }

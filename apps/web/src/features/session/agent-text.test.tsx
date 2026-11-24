@@ -1,5 +1,6 @@
 import { act, render } from "@testing-library/react";
 import { expect, test } from "vitest";
+import { envelope } from "@/test/session-fixtures";
 import { CAP_LINE } from "./agent-text";
 import type { Row } from "./rows";
 import type { LiveText } from "./session-state";
@@ -11,7 +12,14 @@ const base: Row[] = [
     kind: "message",
     seq: 1,
     at,
-    message: { id: "e1", from: "@or", kind: "message", urgent: false, body: "Hi" },
+    message: envelope({
+      id: "e1",
+      from: "@or",
+      fromKind: "human",
+      kind: "message",
+      urgent: false,
+      body: "Hi",
+    }),
     key: "1:0",
   },
 ];
@@ -149,7 +157,7 @@ test("a capped block shows the cap line live and persisted", () => {
   expect(node.textContent).not.toContain(CAP_LINE);
 });
 
-test("live rows sit after every persisted row, keep the gutter, and only the first opens a speaker line", () => {
+test("live rows sit after every persisted row, and only the first opens a speaker line", () => {
   renderTimeline({
     rows: base,
     live: [liveText("m1", 1, "One"), liveText("m1", 3, "Two")],
@@ -158,7 +166,6 @@ test("live rows sit after every persisted row, keep the gutter, and only the fir
   expect(keys).toEqual(["1:0", "t:m1:1", "t:m1:3"]);
   expect(rowEl("t:m1:1")?.querySelectorAll("[data-speaker-line]")).toHaveLength(1);
   expect(rowEl("t:m1:3")?.querySelectorAll("[data-speaker-line]")).toHaveLength(0);
-  expect(wrapOf("t:m1:3")?.className).toContain("pr-8");
 });
 
 test("a windowed view renders no live rows", () => {

@@ -1,4 +1,4 @@
-import type { Command, MessageAttachment, TemplateConfig } from "@open-factory/shared";
+import type { AgentOverlay, Command, MessageAttachment } from "@open-factory/shared";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -10,12 +10,14 @@ import {
   jsonb,
   numeric,
   pgTable,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { users } from "./auth.ts";
 import { credentials } from "./factory.ts";
+import { handles } from "./handles.ts";
 import { schedules } from "./schedules.ts";
 import { tasks } from "./tasks.ts";
 
@@ -33,7 +35,10 @@ export const agents = pgTable(
   "agents",
   {
     id: text("id").primaryKey(),
-    slug: text("slug").notNull().unique(),
+    slug: text("slug")
+      .notNull()
+      .unique()
+      .references(() => handles.handle),
     displayName: text("display_name").notNull(),
     description: text("description").notNull().default(""),
     sessionId: text("session_id"),
@@ -41,13 +46,14 @@ export const agents = pgTable(
     status: text("status").notNull().default("hibernated"),
     kind: text("kind").notNull().default("persistent"),
     template: text("template").notNull(),
-    config: jsonb("config").$type<TemplateConfig>().notNull(),
+    config: jsonb("config").$type<AgentOverlay>().notNull().default({}),
     runtime: text("runtime").notNull().$type<"local" | "docker">(),
     reportsTo: text("reports_to").references((): AnyPgColumn => agents.id, {
       onDelete: "restrict",
     }),
     credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
-    grantsOverridden: boolean("grants_overridden").notNull().default(false),
+    /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto (seeded from the slug). Identity, not overlay. */
+    color: smallint("color"),
     lastError: text("last_error"),
     errorKind: text("error_kind"),
     attempting: boolean("attempting").notNull().default(false),
@@ -77,6 +83,8 @@ export const agents = pgTable(
       "agents_live_credential",
       sql`${t.credentialId} IS NOT NULL OR ${t.terminatedAt} IS NOT NULL`,
     ),
+    // The literal 1..12 mirrors AVATAR_COUNT (packages/shared/src/avatar.ts); a SQL CHECK can't import it.
+    check("agents_color", sql`${t.color} IS NULL OR ${t.color} BETWEEN 1 AND 12`),
     check("agents_kind", sql`${t.kind} IN ('persistent','ephemeral')`),
     check(
       "agents_terminated_ephemeral",
@@ -122,6 +130,8 @@ export const turns = pgTable(
     costUsd: numeric("cost_usd", { precision: 12, scale: 6, mode: "number" }),
     isError: boolean("is_error"),
     terminalReason: text("terminal_reason"),
+    // I1 §6.3: the seq of the turn's last event (its `turn_end` for a normal close); null when it has none.
+    endEventSeq: integer("end_event_seq"),
     taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
     credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
   },
@@ -163,11 +173,20 @@ export const messages = pgTable(
     notice: text("notice"),
     fromAgentId: text("from_agent_id").references((): AnyPgColumn => agents.id),
     subjectAgentId: text("subject_agent_id").references((): AnyPgColumn => agents.id),
+    // I3: the credential a `system` notice is about; deleting the credential deletes its notices.
+    subjectCredentialId: text("subject_credential_id").references(
+      (): AnyPgColumn => credentials.id,
+      {
+        onDelete: "cascade",
+      },
+    ),
     toAgentId: text("to_agent_id").references(() => agents.id, { onDelete: "cascade" }),
     toUserId: text("to_user_id").references(() => users.id),
     toAllHumans: boolean("to_all_humans").notNull().default(false),
     fromToolUseId: text("from_tool_use_id"),
     deliveredEventSeq: integer("delivered_event_seq"),
+    // I1: the full recipient list of a `kind='message'` row, as `@handle`s (a fan-out writes one row per agent).
+    recipients: text("recipients").array(),
     body: text("body").notNull(),
     urgent: boolean("urgent").notNull().default(false),
     state: text("state").notNull().default("pending"),
@@ -197,8 +216,16 @@ export const messages = pgTable(
       .on(t.deliveredTurnId)
       .where(sql`${t.deliveredTurnId} is not null`),
     uniqueIndex("messages_client_id_unique")
-      .on(t.fromUserId, t.clientMessageId)
+      .on(t.fromUserId, t.clientMessageId, t.toAgentId)
       .where(sql`${t.clientMessageId} is not null`),
+    // I1 §6.3: the chat thread, both directions, newest first by (created_at, id).
+    index("messages_chat_in_idx")
+      .on(t.toAgentId, t.fromUserId, t.createdAt)
+      .where(sql`${t.kind} = 'message'`),
+    index("messages_chat_out_idx")
+      .on(t.toUserId, t.fromAgentId, t.createdAt)
+      .where(sql`${t.kind} = 'message'`),
+    check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipients} IS NOT NULL`),
   ],
 );
 
@@ -209,7 +236,7 @@ export const inboxItems = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    kind: text("kind").notNull().$type<"message" | "mention" | "task_event">(),
+    kind: text("kind").notNull().$type<"message" | "mention" | "task_event" | "credential">(),
     messageId: text("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),

@@ -193,6 +193,8 @@ test("success closes, clears the draft and toasts Created with Open for the Edit
     cron: "0 9 * * *",
     body: "Review",
   });
+  // The list shows no inline Created line; the toast carries it.
+  expect(screen.queryByText("Created S-8.")).toBeNull();
   const n = vi.mocked(notify).mock.calls[0]?.[0];
   expect(n).toEqual({ text: "Created S-8.", action: { label: "Open", run: expect.any(Function) } });
   act(() => n?.action?.run());
@@ -200,15 +202,6 @@ test("success closes, clears the draft and toasts Created with Open for the Edit
   // The draft is gone: a new sheet starts blank.
   act(() => openSheet({ kind: "new-schedule" }));
   expect(screen.queryByText(/Draft restored/)).toBeNull();
-});
-
-test("the list shows no inline Created line", async () => {
-  mockApi({ ...base(), "POST /api/schedules": () => json({ schedule: item }, 201) });
-  renderApp("/schedules", alice);
-  await userEvent.click(await screen.findByRole("button", { name: "New schedule" }));
-  await fillAndSubmit();
-  await waitFor(() => expect(notify).toHaveBeenCalled());
-  expect(screen.queryByText("Created S-8.")).toBeNull();
 });
 
 test("dismissing never asks, and keeps the draft", async () => {

@@ -1,3 +1,4 @@
+import { MSG } from "@open-factory/shared";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -21,7 +22,13 @@ const list =
   () =>
     json({
       dir: "/d",
-      templates: names.map((name) => ({ name, errors: 0, warnings: 0, agentCount: 0 })),
+      templates: names.map((name) => ({
+        name,
+        errors: 0,
+        warnings: 0,
+        agentCount: 0,
+        pluginCount: 0,
+      })),
     });
 const created = (name: string) => () =>
   json(
@@ -147,7 +154,8 @@ test("server template_exists opens Name with the error", async () => {
   await userEvent.type(within(d).getByLabelText("Display name"), "Lead");
   await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
   const name = await within(d).findByLabelText("Name");
-  expect(name).toHaveAccessibleDescription("A template named lead already exists.");
+  // The server's message names the value; the note uses the short constant (spec §8).
+  expect(name).toHaveAccessibleDescription(FORM_MSG.nameTaken);
   expect(name).toHaveFocus();
   expect(onDone).not.toHaveBeenCalled();
 });
@@ -162,9 +170,23 @@ test("a hand-typed reserved name is refused with the reserved message, nothing s
   const name = within(d).getByLabelText("Name");
   await userEvent.clear(name);
   await userEvent.type(name, "images");
-  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
+  await userEvent.tab();
+  // On blur, before any submit.
   expect(await within(d).findByText("That name is reserved.")).toBeInTheDocument();
+  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
   expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+});
+
+test("blur validates a typed name, not while typing", async () => {
+  mockApi({ "GET /api/templates": list() });
+  mount();
+  const d = await dialog();
+  await userEvent.click(within(d).getByRole("button", { name: "Change" }));
+  const name = within(d).getByLabelText("Name");
+  await userEvent.type(name, "Bad Name");
+  expect(within(d).queryByText(MSG.startLetter)).not.toBeInTheDocument();
+  await userEvent.tab();
+  expect(await within(d).findByText(MSG.startLetter)).toBeInTheDocument();
 });
 
 test("a late failure goes to onLateError instead of the form", async () => {
@@ -200,14 +222,14 @@ test("a draft is kept for the editor sheet and announced with Discard, never for
   expect(within(d).queryByText(/Draft restored/)).toBeNull();
 });
 
-test("a display name with no usable letters opens Name with the format error", async () => {
+test("a display name with no usable letters opens Name with the length rule", async () => {
   mockApi({ "GET /api/templates": list() });
   mount();
   const d = await dialog();
   await userEvent.type(within(d).getByLabelText("Display name"), "!!!");
   await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
   const name = await within(d).findByLabelText("Name");
-  expect(name).toHaveAccessibleDescription(FORM_MSG.templateNameChars);
+  expect(name).toHaveAccessibleDescription(MSG.nameLength);
   expect(name).toHaveFocus();
 });
 
@@ -290,3 +312,55 @@ test("a name error from the server reveals Name once, with the value kept", asyn
   expect(name).toHaveAccessibleDescription("That name is taken.");
   expect(name).toHaveFocus();
 });
+
+test.each([
+  ["Bad", MSG.startLetter],
+  ["a", MSG.nameLength],
+  ["ab_c", MSG.nameChars],
+  ["abc-", MSG.noTrailingHyphen],
+])("a typed name %s shows one rule: %s", async (typed, message) => {
+  mockApi({ "GET /api/templates": list() });
+  mount();
+  const d = await dialog();
+  await userEvent.click(within(d).getByRole("button", { name: "Change" }));
+  const name = within(d).getByLabelText("Name");
+  await userEvent.type(name, typed);
+  await userEvent.tab();
+  expect(name).toHaveAccessibleDescription(message);
+});
+
+test("Discard clears a failure line along with the draft", async () => {
+  mockApi({
+    "GET /api/templates": list(),
+    "POST /api/templates": () => json({ error: { code: "boom", message: "Disk full." } }, 500),
+  });
+  const first = mount();
+  let d = await dialog();
+  await userEvent.type(within(d).getByLabelText("Display name"), "Lead");
+  first.unmount();
+  mount();
+  d = await dialog();
+  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
+  expect(await within(d).findByText("Disk full.")).toBeInTheDocument();
+  await userEvent.click(within(d).getByRole("button", { name: "Discard" }));
+  expect(within(d).queryByText("Disk full.")).toBeNull();
+});
+
+test.each(["Discard", "Change"])(
+  "pressing %s doesn't count as leaving a changed, emptied Display name",
+  async (button) => {
+    mockApi({ "GET /api/templates": list() });
+    const first = mount();
+    let d = await dialog();
+    await userEvent.type(within(d).getByLabelText("Display name"), "x");
+    first.unmount();
+    mount();
+    d = await dialog();
+    const display = within(d).getByLabelText("Display name");
+    await userEvent.type(display, "y");
+    await userEvent.clear(display);
+    await userEvent.click(within(d).getByRole("button", { name: button }));
+    expect(display).not.toHaveAttribute("aria-invalid");
+    expect(within(d).queryByText(FORM_MSG.enterDisplayName)).toBeNull();
+  },
+);

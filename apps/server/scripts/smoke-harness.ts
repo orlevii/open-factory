@@ -10,14 +10,18 @@ import { createTestDatabase } from "@open-factory/db/testing";
 import { createClaudeDriver, localTransport } from "@open-factory/harness";
 import type { AnyEvent } from "@open-factory/shared";
 import { AgentRuntime } from "../src/agents/agent-runtime.ts";
+import { ConfigResolver } from "../src/agents/config-resolver.ts";
 import { EventBus } from "../src/agents/event-bus.ts";
 import { EventStore } from "../src/agents/event-store.ts";
 import { createPrepareStart } from "../src/agents/start.ts";
 import { unlimitedSlots } from "../src/agents/testing/unlimited-slots.ts";
 import { loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
+import { LibraryIndex } from "../src/library/library-index.ts";
 import { AgentTokens } from "../src/mcp/tokens.ts";
 import { Neighborhood } from "../src/messaging/neighborhood.ts";
+import { TemplateIndex } from "../src/templates/template-index.ts";
+import { claimTestHandle } from "../src/test/handles.ts";
 import { seedTestAgent } from "../src/test/helpers.ts";
 import { KeyedMutex } from "../src/workspace/lock.ts";
 import { Workspace } from "../src/workspace/workspace.ts";
@@ -35,12 +39,20 @@ const config = loadConfig({
   FACTORY_SECRET_KEY: "s".repeat(40),
   FACTORY_HOME: mkdtempSync(path.join(tmpdir(), "of-smoke-")),
 });
+await claimTestHandle(db, "smoke", "user");
 await sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
 const vault = new Vault(config.secretKey);
 const lock = new KeyedMutex();
+const library = new LibraryIndex({
+  db,
+  hostClaudeDir: config.hostClaudeDir,
+  factoryHome: config.factoryHome,
+  templates: () => templates,
+});
+const templates: TemplateIndex = new TemplateIndex({ db, config, library });
 const workspace = new Workspace({
   factoryHome: config.factoryHome,
-  hostSkillsDir: config.hostSkillsDir,
+  library,
   claudeBin: config.claudeBin,
   cliBundle: config.cliBundle,
   lock,
@@ -48,7 +60,7 @@ const workspace = new Workspace({
 const agent = await seedTestAgent(
   { db, config, vault, workspace },
   {
-    config: { model: "haiku" },
+    config: { template: { model: "haiku" } },
     ...(process.env.CLAUDE_CODE_OAUTH_TOKEN
       ? { credentialValue: process.env.CLAUDE_CODE_OAUTH_TOKEN }
       : {}),
@@ -59,6 +71,7 @@ const prepareStart = createPrepareStart({
   config,
   vault,
   workspace,
+  resolver: new ConfigResolver({ templates, library }),
   lock,
   neighborhood: new Neighborhood(db),
 });
@@ -87,7 +100,8 @@ const make = () =>
     store,
     bus,
     driver: createClaudeDriver({ log, transports: { local: localTransport } }),
-    prepareStart,
+    // A lone agent: no spawner, so no running config to read (I2 §6.2).
+    prepareStart: (a, extra) => prepareStart(a, { ...extra, loaded: () => undefined }),
     tokens: new AgentTokens(),
     log,
     slots: unlimitedSlots,
@@ -99,6 +113,7 @@ const send = async (body: string, urgent = false) => {
   const row = await store.createMessage({
     from: { userId: "smoke" },
     toAgentId: rt.agent.id,
+    recipients: [`@${rt.agent.slug}`],
     body,
     urgent,
   });

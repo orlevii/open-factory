@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,23 +12,40 @@ import {
 } from "fastify-type-provider-zod";
 import type postgres from "postgres";
 import { AgentService } from "./agents/agent-service.ts";
+import { ChatStore } from "./agents/chat-store.ts";
+import { ConfigChanges, dbConfigChangeAgents } from "./agents/config-changes.ts";
+import { ConfigResolver } from "./agents/config-resolver.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
+import type { PasswordHasher } from "./auth/options.ts";
 import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
+import { ExpiryCheck } from "./credentials/expiry-check.ts";
+import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
+import { probePython, startHostPty, sweepStaleDirs } from "./credentials/sign-in/host-pty.ts";
+import { runSetupToken } from "./credentials/sign-in/setup-token.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
 import { ImageBuilder } from "./images/builder.ts";
+import { checkImageClaudeVersion } from "./library/claude-flags.ts";
+import { HostPlugins } from "./library/host-plugins.ts";
+import { LibraryIndex } from "./library/library-index.ts";
+import { LibrarySweep, marketplaceDirsInUse, skillDirsInUse } from "./library/library-sweep.ts";
+import { dbMarketplacesStore, MarketplacesService } from "./library/marketplaces-service.ts";
+import { declaredRefs, marketplaceUsers } from "./library/plugin-usage.ts";
+import { PluginsIndex } from "./library/plugins-index.ts";
+import { dbSourcesStore, SourcesService } from "./library/sources-service.ts";
 import { bridgeInfo, resolveAgentBindHosts } from "./mcp/bind-hosts.ts";
 import { startAgentListener } from "./mcp/listener.ts";
 import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { scheduleTools } from "./mcp/tools/schedule-tools.ts";
+import { sendCommandTool } from "./mcp/tools/send-command.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
 import { taskTools } from "./mcp/tools/task-tools.ts";
@@ -37,10 +55,12 @@ import { Router } from "./messaging/router.ts";
 import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
+import { claudeSignInRoutes } from "./routes/claude-sign-in.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
 import { hostRoutes } from "./routes/host.ts";
 import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
+import { libraryRoutes } from "./routes/library.ts";
 import { meRoutes } from "./routes/me.ts";
 import { messagesRoutes } from "./routes/messages.ts";
 import { projectsRoutes } from "./routes/projects.ts";
@@ -78,7 +98,7 @@ import { InviteService } from "./users/invites.ts";
 import { UserAdminService } from "./users/user-admin.ts";
 import { FACTORY_VERSION } from "./version.ts";
 import { KeyedMutex } from "./workspace/lock.ts";
-import { migrateWorkdirState } from "./workspace/state-migration.ts";
+import { dockerSocketPaths } from "./workspace/mounts.ts";
 import { Workspace } from "./workspace/workspace.ts";
 import { wsRoutes } from "./ws/route.ts";
 
@@ -89,13 +109,22 @@ declare module "fastify" {
     runtimes: AgentRuntimes;
     bus: EventBus;
     store: EventStore;
+    chat: ChatStore;
     vault: Vault;
     workspace: Workspace;
     /** Named workspaceLock because `lock` is a Fastify (websocket plugin) route method. */
     workspaceLock: KeyedMutex;
     templates: TemplateIndex;
+    /** I2 §6.1: an agent's effective config (the current template plus its overlay). */
+    resolver: ConfigResolver;
+    /** I2 §7.2: the one change path for template changes and overlay saves. */
+    configChanges: ConfigChanges;
     agents: AgentService;
     credentials: CredentialService;
+    /** I3 §5.4: the in-memory "Sign in with Claude" attempts, one per user. */
+    signIn: SignInAttempts;
+    /** I3 §5.5: whether a working python3 (with `pty`) is on the host; probed once, then cached. */
+    signInAvailable(): Promise<boolean>;
     secrets: SecretService;
     projects: ProjectService;
     router: Router;
@@ -114,6 +143,16 @@ declare module "fastify" {
     scheduler: Scheduler;
     agentListener: { port: number; close(): Promise<void> };
     uploads: UploadService;
+    /** I5 §5.3: the Library's skills, discovered live. */
+    library: LibraryIndex;
+    /** I5 §9.2: skill sources (preview, add, check, update, remove, Undo). */
+    skillSources: SourcesService;
+    /** I5 §7.1, §9.3: the marketplace registry (preview, add, check, update, fetch, remove, Undo). */
+    marketplaces: MarketplacesService;
+    /** I5 §9.1: the Plugins view (catalogs, contents, diffs, external reads). */
+    plugins: PluginsIndex;
+    /** I5 §7.6: plugins installed on the host, and Add its marketplace. */
+    hostPlugins: HostPlugins;
   }
 }
 
@@ -136,8 +175,12 @@ export interface AppDeps {
     setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
     clearTimer: (t: ReturnType<typeof setTimeout>) => void;
   };
+  /** Spawns the sign-in PTY bridge and the python3 probe (I3); the real `spawn` unless a test injects one. */
+  signInSpawn?: typeof spawn;
   /** Checked for the removed env vars (S10 Q6) to warn at boot; `process.env` when absent. */
   env?: NodeJS.ProcessEnv;
+  /** better-auth's scrypt when absent; tests inject a cheap one. */
+  passwordHasher?: PasswordHasher;
 }
 
 export function loggerOptions(config: Config) {
@@ -174,7 +217,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorate("config", config);
-  app.decorate("auth", createAuth(config, deps.db));
+  app.decorate("auth", createAuth(config, deps.db, deps.passwordHasher));
   registerErrorHandlers(app);
 
   await mkdir(config.factoryHome, { recursive: true });
@@ -183,11 +226,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
   await mkdir(path.join(config.factoryHome, "images"), { recursive: true });
 
-  await migrateWorkdirState(
-    config.factoryHome,
-    (await deps.db.select({ slug: schema.agents.slug }).from(schema.agents)).map((r) => r.slug),
-    app.log,
-  );
   // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
   const settings = await FactorySettings.load(deps.db, app.log);
   app.decorate("factorySettings", settings);
@@ -197,9 +235,18 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const bus = new EventBus();
   const vault = new Vault(config.secretKey);
   const lock = new KeyedMutex();
+  // I5 §5.3: the Library validates templates and resolves every start's skills. It reads the template side through a
+  // lazy port, because `TemplateIndex` is built with the Library.
+  const library = new LibraryIndex({
+    db: deps.db,
+    hostClaudeDir: config.hostClaudeDir,
+    factoryHome: config.factoryHome,
+    templates: () => templates,
+    checkingSince: (id) => skillSources.checkingSince(id),
+  });
   const workspace = new Workspace({
     factoryHome: config.factoryHome,
-    hostSkillsDir: config.hostSkillsDir,
+    library,
     claudeBin: config.claudeBin,
     cliBundle: config.cliBundle,
     lock,
@@ -207,15 +254,27 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   // dockerode connects lazily: constructing these makes no Docker call.
   const docker = deps.docker ?? dockerodeClient();
-  const containers = new ContainerManager({ docker, log: app.log });
+  const containers = new ContainerManager({
+    docker,
+    log: app.log,
+    checkImage: checkImageClaudeVersion,
+  });
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
+  const templates: TemplateIndex = new TemplateIndex({
+    db: deps.db,
+    config,
+    library,
+    log: app.log,
+  });
+  const resolver = new ConfigResolver({ templates, library });
   const prepareStart = createPrepareStart({
     db: deps.db,
     config,
     vault,
     workspace,
+    resolver,
     lock,
     containers,
     neighborhood,
@@ -235,7 +294,12 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     maxRunningAgents: settings.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
-    docker: { containers, claudeBin: config.dockerClaudeBin, defaultImage: config.defaultImage },
+    docker: {
+      containers,
+      claudeBin: config.dockerClaudeBin,
+      defaultImage: config.defaultImage,
+      resolver,
+    },
     // Only the real driver's processes are ours to journal and reap (spec §12).
     ...(deps.harnessDriver ? {} : { journal }),
     driver:
@@ -253,8 +317,18 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     )
       void runtimes.settingsChanged();
   });
-  const templates = new TemplateIndex({ db: deps.db, config });
   const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
+  // I2 §7.1: a template change is dispatched off the scan's path, on a per-template serial queue (never awaited there).
+  const configChanges = new ConfigChanges({
+    agents: dbConfigChangeAgents(deps.db, resolver),
+    store,
+    runtimes,
+    bus,
+    log: app.log,
+    resolver,
+    templates,
+  });
+  templates.onChange((e) => configChanges.templateChanged(e));
   // S9: schedules (a `next_run_at` column and one in-process timer), started after boot reconciliation, stopped first.
   const clock = deps.clock ?? (() => new Date());
   const scheduleStore = new ScheduleStore();
@@ -288,9 +362,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     workspace,
     lock,
     runtimes,
+    resolver,
     log: app.log,
     containers,
     router,
+    store,
+    bus,
+    configChanges,
     scheduling: schedules,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.
@@ -303,10 +381,29 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     vault,
     verifier,
     runtimes,
+    bus,
     now: clock,
     log: app.log,
   });
   app.decorate("credentials", credentials);
+  // I3 §5.4: before UserAdminService, which ends a disabled user's attempt.
+  const signInSpawn = deps.signInSpawn ?? spawn;
+  app.decorate(
+    "signIn",
+    new SignInAttempts({
+      startPty: () => startHostPty({ claudeBin: config.claudeBin, spawnFn: signInSpawn }),
+      run: (pty) => runSetupToken(pty),
+      verify: (value) => verifier.verify("oauth_token", value),
+      credentials,
+      now: () => clock().getTime(),
+      log: app.log,
+    }),
+  );
+  let pythonProbe: Promise<boolean> | undefined;
+  app.decorate("signInAvailable", () => {
+    pythonProbe ??= probePython(signInSpawn);
+    return pythonProbe;
+  });
   app.decorate(
     "usage",
     new UsageService({ db: deps.db, now: clock, timezone: () => config.factoryTimezone }),
@@ -325,15 +422,21 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     "invites",
     new InviteService({ db: deps.db, now: clock, publicUrl: config.publicUrl, bus }),
   );
-  app.decorate("userAdmin", new UserAdminService({ db: deps.db, now: clock, bus }));
+  app.decorate(
+    "userAdmin",
+    new UserAdminService({ db: deps.db, now: clock, bus, signIn: app.signIn }),
+  );
   app.decorate("secrets", new SecretService({ db: deps.db, vault, runtimes, log: app.log }));
   app.decorate("projects", new ProjectService({ db: deps.db, runtimes, templates, log: app.log }));
   app.decorate("vault", vault);
   app.decorate("templates", templates);
+  app.decorate("resolver", resolver);
+  app.decorate("configChanges", configChanges);
   app.decorate("agents", agents);
   app.decorate("workspaceLock", lock);
   app.decorate("workspace", workspace);
   app.decorate("store", store);
+  app.decorate("chat", new ChatStore(deps.db));
   app.decorate("bus", bus);
   app.decorate("runtimes", runtimes);
   app.decorate("neighborhood", neighborhood);
@@ -346,6 +449,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     workspace,
     router,
     runtimes,
+    resolver,
     config,
     log: app.log,
     closing: () => runtimes.supervisor.closing(),
@@ -385,23 +489,121 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("uploads", uploads);
   const uploadSweep = new UploadSweep({ uploads, log: app.log, now: clock });
+  const expiryCheck = new ExpiryCheck({
+    db: deps.db,
+    store,
+    bus,
+    zone: config.factoryTimezone,
+    now: clock,
+    log: app.log,
+  });
+  // I5 §5.3, §9.2, §9.4: the Library's skills and their sources, and the sweep that purges them.
+  const sourcesStore = dbSourcesStore(deps.db);
+  const libraryChanged = (e?: { addFailed?: string }) =>
+    bus.publishAll({
+      type: "library_changed",
+      ...(e?.addFailed ? { addFailed: e.addFailed } : {}),
+    });
+  const skillSources: SourcesService = new SourcesService({
+    store: sourcesStore,
+    usedByAny: (names) => library.usedByAny(names),
+    factoryHome: config.factoryHome,
+    hostClaudeDir: config.hostClaudeDir,
+    forbidden: {
+      home: os.homedir(),
+      factoryHome: config.factoryHome,
+      dockerSockets: dockerSocketPaths(process.env, os.homedir()),
+    },
+    githubUrl: config.githubUrl,
+    publish: libraryChanged,
+    purgeAfter: (ms) => librarySweep.purgeAfter(ms),
+    // After the Library lock is released (spec §9.6); `by` is the bare user handle.
+    captureLibrary: (skills) => configChanges.captureLibrary(skills),
+    onLibraryChanged: (e) => configChanges.libraryChanged(e),
+    log: (message, err) => app.log.error({ err }, message),
+  });
+  // The directories a loaded runtime's `started.library` still references: GitHub skill caches and marketplace
+  // checkouts at a pinned commit or tag (spec §9.4). Purge keeps them and retries on the next timer.
+  const libraryDirsInUse = async (): Promise<string[]> => [
+    ...(await skillDirsInUse(skillSources.githubRoot, runtimes.allStarted())),
+    ...marketplaceDirsInUse(marketplaces.root, runtimes.allStarted(), await marketplaces.rows()),
+  ];
+  // A marketplace write moves only the Library's commit: it never calls the config change flow and restarts no
+  // agent (spec §8.3), so its only hook is the `library_changed` frame.
+  const marketplaces: MarketplacesService = new MarketplacesService({
+    store: dbMarketplacesStore(deps.db),
+    usedBy: async (name) => marketplaceUsers(await library.declarations(), name),
+    inUse: libraryDirsInUse,
+    declaredRefs: async () => declaredRefs(await library.declarations()),
+    factoryHome: config.factoryHome,
+    forbidden: {
+      home: os.homedir(),
+      factoryHome: config.factoryHome,
+      dockerSockets: dockerSocketPaths(process.env, os.homedir()),
+    },
+    githubUrl: config.githubUrl,
+    publish: libraryChanged,
+    purgeAfter: (ms) => librarySweep.purgeAfter(ms),
+    log: (message, err) => app.log.error({ err }, message),
+  });
+  const hostPlugins = new HostPlugins({
+    hostClaudeDir: config.hostClaudeDir,
+    registered: async () => (await library.marketplaces()).map((r) => r.name),
+    marketplaces,
+    forbidden: {
+      home: os.homedir(),
+      factoryHome: config.factoryHome,
+      dockerSockets: dockerSocketPaths(process.env, os.homedir()),
+    },
+    log: (message, err) => app.log.error({ err }, message),
+  });
+  const plugins = new PluginsIndex({
+    library,
+    marketplaces,
+    host: hostPlugins,
+    factoryHome: config.factoryHome,
+    githubUrl: config.githubUrl,
+    publish: libraryChanged,
+    log: (message, err) => app.log.error({ err }, message),
+  });
+  const librarySweep = new LibrarySweep({
+    sources: skillSources,
+    store: sourcesStore,
+    marketplaces,
+    factoryHome: config.factoryHome,
+    inUse: libraryDirsInUse,
+    publish: libraryChanged,
+    log: (message, err) => app.log.error({ err }, message),
+  });
+  app.decorate("library", library);
+  app.decorate("skillSources", skillSources);
+  app.decorate("marketplaces", marketplaces);
+  app.decorate("hostPlugins", hostPlugins);
+  app.decorate("plugins", plugins);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
     // A send still waiting for a boot that failed must not hold the agent listener open.
     router.close();
+    expiryCheck.stop();
     reaper.stop();
     uploadSweep.stop();
     scheduler.stop();
+    await librarySweep.stop();
     // The closing latch first (spec §5.6): nothing may start once shutdown has begun. Then hibernate("shutdown").
     await runtimes.close();
+    // Sign-in attempts hold a host process (I3 §5.4): ended before the DB closes.
+    await app.signIn.closeAll();
     // Every process has exited: no token may outlive it (spec §5.2). Then the agent listener (§5.3).
     tokens.revokeAll();
     await agentListener?.close();
     // A sweep that was under way finishes against a closing factory (nothing starts); the DB closes after this hook.
     await reaper.idle();
     await uploadSweep.idle();
+    await expiryCheck.idle();
     await scheduler.idle();
+    await skillSources.idle();
+    await marketplaces.idle();
   });
 
   if (new URL(config.agentUrl).port === String(config.port)) {
@@ -412,9 +614,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(authRoutes, { db: deps.db });
   await app.register(meRoutes);
   await app.register(hostRoutes);
+  await app.register(libraryRoutes);
   await app.register(wsRoutes);
   await app.register(agentsRoutes);
   await app.register(credentialsRoutes);
+  await app.register(claudeSignInRoutes);
   await app.register(usageRoutes);
   await app.register(signUpStateRoutes, { db: deps.db });
   await app.register(usersRoutes);
@@ -439,6 +643,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       router,
       neighborhood,
       runtimes,
+      resolver,
       spawner,
       terminator,
       tasks,
@@ -470,7 +675,16 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     reaper.start();
     void uploadSweep.run();
     uploadSweep.start();
+    void expiryCheck.run();
+    expiryCheck.start();
     scheduler.start();
+    // I5 §9.4: no Undo survives a restart; interrupted GitHub adds finish in the background. A failed purge is logged, not fatal.
+    await librarySweep
+      .bootPurge()
+      .catch((e: unknown) => app.log.error({ err: e }, "library boot purge failed"));
+    librarySweep.start();
+    // I3 §5.2: a crashed server's sign-in temp dirs.
+    void sweepStaleDirs(os.tmpdir(), clock().getTime());
   } catch (err) {
     // A wake may already have started a process. The onClose hook closes the agent listener after the runtimes. A
     // failing close is logged and never masks the boot's error.
@@ -495,6 +709,7 @@ async function listenForAgents(
     router: Router;
     neighborhood: Neighborhood;
     runtimes: AgentRuntimes;
+    resolver: ConfigResolver;
     spawner: SpawnPort;
     terminator: TerminatePort;
     tasks: TaskService;
@@ -516,28 +731,39 @@ async function listenForAgents(
     version: FACTORY_VERSION,
     onerror: (err) => d.log.error({ err }, "factory MCP request failed"),
     loadCaller: (id) => d.store.agentById(id),
-    tools: (caller) => [
-      sendMessageTool(d.router),
-      ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
-      // Q12: persistent agents only; a spawned agent never sees the schedule tools.
-      ...(caller.kind === "persistent"
-        ? scheduleTools({
-            schedules: d.schedules,
-            factoryZone: config.factoryTimezone,
-            loadAgent: (id) => d.store.agentById(id),
-          })
-        : []),
-      listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
-      ...(maySpawn(caller)
-        ? [
-            spawnAgentTool({
-              spawn: d.spawner,
-              templates: caller.config.canSpawn as [string, ...string[]],
-            }),
-            terminateAgentTool({ terminate: d.terminator }),
-          ]
-        : []),
-    ],
+    tools: (caller) => {
+      // I2 §6.2: the spawn tools describe the running process, so they follow the config it started with.
+      const started = d.runtimes.startedOf(caller.id)?.config;
+      return [
+        sendMessageTool(d.router),
+        sendCommandTool({
+          caller,
+          runtimes: d.runtimes,
+          store: d.store,
+          resolver: d.resolver,
+          spawned: caller.kind === "ephemeral",
+        }),
+        ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
+        // Q12: persistent agents only; a spawned agent never sees the schedule tools.
+        ...(caller.kind === "persistent"
+          ? scheduleTools({
+              schedules: d.schedules,
+              factoryZone: config.factoryTimezone,
+              loadAgent: (id) => d.store.agentById(id),
+            })
+          : []),
+        listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
+        ...(started && maySpawn(caller, started)
+          ? [
+              spawnAgentTool({
+                spawn: d.spawner,
+                templates: started.canSpawn as [string, ...string[]],
+              }),
+              terminateAgentTool({ terminate: d.terminator }),
+            ]
+          : []),
+      ];
+    },
   });
   const listener = await startAgentListener({
     hosts: bind.hosts,

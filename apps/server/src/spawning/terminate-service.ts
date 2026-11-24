@@ -67,6 +67,7 @@ export class TerminateService implements TerminatePort {
       throw new ApiError(409, "not_ephemeral", "Only spawned agents can be terminated.");
     if (!o.latched) rt.markTerminated({ committed: false });
     let peerRows: PendingRow[] = [];
+    let rejectedFor: string[] = [];
     let already: boolean;
     try {
       already = await this.d.db.transaction(async (tx) => {
@@ -89,7 +90,7 @@ export class TerminateService implements TerminatePort {
         if (row.terminatedAt) return true;
         // The neighborhood before the change, read in the transaction (a stale pool read could miss a sibling).
         const before = await this.d.router.snapshot(tx, agentId);
-        await this.d.store.terminateRows(tx, agentId, by);
+        rejectedFor = await this.d.store.terminateRows(tx, agentId, by);
         // The spawner gets no row about its own act (§9.1): it has the tool result.
         peerRows = await this.d.router.persistPeerEvents(
           tx,
@@ -106,18 +107,20 @@ export class TerminateService implements TerminatePort {
       throw err;
     }
     rt.markTerminated({ committed: true });
+    rt.chatChanged(rejectedFor);
     if (already) return { status: "terminated" };
     // A row whose insert committed after the transaction's reject-pending update (its sender read the agent live, and
     // READ COMMITTED doesn't show the transaction that row) is pending still: reject it now. Any later hand-off finds
     // the committed latch, which rejects it.
-    await this.d.store
-      .rejectPending(agentId)
-      .catch((err: unknown) =>
+    rt.chatChanged(
+      await this.d.store.rejectPending(agentId).catch((err: unknown) => {
         this.d.log.error(
           { err, agent: rt.agent.slug },
           "rejecting late rows to a terminated agent failed",
-        ),
-      );
+        );
+        return [];
+      }),
+    );
     this.d.router.handOffHeldRows(peerRows);
     // §8 step 3: the stop and the container removal continue in the background; the status frame reports their end.
     void rt

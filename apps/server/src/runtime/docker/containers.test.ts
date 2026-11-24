@@ -34,15 +34,18 @@ let mgr: ContainerManager;
 beforeEach(() => {
   const factoryHome = tmp("of-t23-home-");
   const workdir = path.join(factoryHome, "agents", "lead");
-  const pluginsDir = path.join(factoryHome, "state", "agents", "lead", "plugins-config", "plugins");
+  const pluginsDir = path.join(factoryHome, "state", "agents", "lead", "plugins");
   mkdirSync(workdir, { recursive: true });
   mkdirSync(pluginsDir, { recursive: true });
   const cliBundle = path.join(tmp("of-t23-cli-"), "open-factory.js");
   writeFileSync(cliBundle, "");
   ctx = {
+    slug: "lead",
     workdir,
     grantedPaths: [],
-    hostSkillPaths: [],
+    skillPaths: [],
+    templateSkillPaths: [],
+    templateDir: path.join(factoryHome, "templates/t"),
     declaredMarketplaceDirs: [],
     pluginsDir,
     cliBundle,
@@ -52,7 +55,7 @@ beforeEach(() => {
   };
   mounts = [
     { source: workdir, target: workdir, readOnly: false },
-    { source: pluginsDir, target: pluginsDir, readOnly: true },
+    { source: pluginsDir, target: pluginsDir, readOnly: false },
     { source: cliBundle, target: CLI_BUNDLE_TARGET, readOnly: true },
   ];
   docker = new FakeDockerClient();
@@ -60,7 +63,7 @@ beforeEach(() => {
     id: "sha256:img1",
     labels: { "io.open-factory.claude-code.version": "2.1.327" },
   });
-  mgr = new ContainerManager({ docker, log, uid: 501, gid: 20 });
+  mgr = new ContainerManager({ docker, log, uid: 501, gid: 20, checkImage: async () => {} });
 });
 
 afterEach(() => {
@@ -92,55 +95,24 @@ test("container name: open-factory-<slug>-<first 8 of the agent id>", () => {
   expect(containerName("lead", AGENT)).toBe("open-factory-lead-01234567");
 });
 
-test("hardened create options", () => {
-  const o = createOptions(inputs);
-  expect(o.HostConfig?.SecurityOpt).toEqual(["no-new-privileges:true"]);
-  expect(o.HostConfig?.Privileged).toBeFalsy();
-  expect(o.HostConfig?.CapAdd).toBeUndefined();
-  expect(o.HostConfig?.NetworkMode ?? "default").not.toBe("host");
-  expect(o.HostConfig?.PidMode).toBeUndefined();
-  expect(o.HostConfig?.Tmpfs).toEqual({ "/run/open-factory": "" });
-  expect(o.HostConfig?.ExtraHosts).toEqual(["host.docker.internal:host-gateway"]);
-  expect(o.Env).toEqual([`HOST_UID=${inputs.uid}`, `HOST_GID=${inputs.gid}`]);
-  expect(o.Labels).toMatchObject({
-    "io.open-factory.agent-id": inputs.agentId,
-    "io.open-factory.spec-hash": inputs.specHash,
+test("an image below the Claude Code floor fails the start before any container is created", async () => {
+  const checkImage = vi.fn(async () => {
+    throw new Error("Claude Code 2.1.1 is too old; update it to 2.1.331 or later.");
   });
-});
-
-test("create options: labels, image, bind mounts only from the input, nothing else that widens the box", () => {
-  const o = createOptions(inputs);
-  expect(o.name).toBe(inputs.name);
-  expect(o.Image).toBe("sha256:img1"); // the hashed id, never the (retaggable) ref
-  expect(o.Cmd).toBeUndefined(); // the image default (`sleep infinity`)
-  expect(o.User).toBeUndefined();
-  expect(o.Labels).toEqual({
-    "io.open-factory.agent-id": AGENT,
-    "io.open-factory.slug": "lead",
-    "io.open-factory.spec-hash": "abc123",
-    "io.open-factory.image-id": "sha256:img1",
-    "io.open-factory.image": IMAGE,
-  });
-  expect(o.HostConfig?.Mounts).toEqual([
-    { Type: "bind", Source: "/b", Target: CLI_BUNDLE_TARGET, ReadOnly: true },
-    { Type: "bind", Source: "/w", Target: "/w", ReadOnly: false },
-  ]);
-  expect(o.HostConfig?.Binds).toBeUndefined();
-  expect(o.HostConfig?.Init).toBeUndefined();
-  expect(o.HostConfig?.Devices).toBeUndefined();
-  expect(o.HostConfig?.IpcMode).toBeUndefined();
-  expect(o.HostConfig?.UsernsMode).toBeUndefined();
-  expect(o.HostConfig?.VolumesFrom).toBeUndefined();
-  expect(Object.keys(o.HostConfig ?? {}).sort()).toEqual(
-    ["ExtraHosts", "Mounts", "SecurityOpt", "Tmpfs"].sort(),
-  );
-  expect(Object.keys(o).sort()).toEqual(["Env", "HostConfig", "Image", "Labels", "name"].sort());
+  const strict = new ContainerManager({ docker, log, uid: 501, gid: 20, checkImage });
+  const err = await strict
+    .ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx })
+    .catch((e) => e);
+  expect(err).toBeInstanceOf(AgentStartError);
+  expect(err.message).toBe("Claude Code 2.1.1 is too old; update it to 2.1.331 or later.");
+  expect(checkImage).toHaveBeenCalledWith(IMAGE, "sha256:img1");
+  expect(docker.containers.size).toBe(0);
 });
 
 test("pinned create options and spec hash (changed? check the hardening, then update the pins)", () => {
   expect(createOptions(inputs)).toEqual({
     name: "open-factory-lead-01234567",
-    Image: "sha256:img1",
+    Image: "sha256:img1", // the hashed id, never the (retaggable) ref
     Env: ["HOST_UID=501", "HOST_GID=20"],
     Labels: {
       "io.open-factory.agent-id": AGENT,
@@ -330,6 +302,7 @@ test("a running container with the same spec is reused without a start", async (
   });
   expect(r).toMatchObject({ containerId: first.containerId, action: "started" });
   expect(docker.ops()).not.toContain("create");
+  expect(docker.ops()).not.toContain("start");
 });
 
 test("ready timeout surfaces the container logs", async () => {
@@ -377,7 +350,7 @@ test("root host user is refused, even when non-root ids are injected", async () 
         mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx }),
       ).rejects.toThrow("The factory runs as root; Docker agents need a non-root host user.");
       await expect(
-        new ContainerManager({ docker, log }).ensure({
+        new ContainerManager({ docker, log, checkImage: async () => {} }).ensure({
           agentId: AGENT,
           slug: "lead",
           image: IMAGE,

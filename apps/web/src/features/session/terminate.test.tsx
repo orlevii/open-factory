@@ -61,7 +61,13 @@ const terminated = (over: Partial<AgentSummary> = {}): AgentSummary =>
 async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
   const state = { agent: first };
   const api = mockApi({
-    [`GET /api/agents/${SLUG}`]: () => json({ agent: state.agent, queue: [], lastSeq: 1 }),
+    [`GET /api/agents/${SLUG}`]: () =>
+      json({
+        agent: state.agent,
+        model: { value: null, source: "default" },
+        queue: [],
+        lastSeq: 1,
+      }),
     [`GET /api/agents/${SLUG}/events?`]: () =>
       json({
         hasMore: { before: false, after: false },
@@ -76,7 +82,7 @@ async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
       json({ agents: [], more: false, running: { count: 1, max: 8 } }),
     ...extra,
   });
-  const app = renderApp(`/agents/${SLUG}`, alice);
+  const app = renderApp(`/agents/${SLUG}/session`, alice);
   await screen.findByText("history");
   return { api, state, app };
 }
@@ -133,11 +139,10 @@ test("a live spawned agent: Terminate… in the ⋯ menu, no Edit; 'Spawned by @
 test("the header keeps a spawned agent's ' · ab12' tail; the title says Terminated", async () => {
   await open(terminated());
   const h1 = screen.getByRole("heading", { level: 1 });
-  expect(within(h1).getByText("Tech Lead · ab12")).toHaveClass("sr-only");
+  expect(within(h1).getByText("Tech Lead · ab12")).toBeInTheDocument();
   const tail = within(h1).getByText("· ab12");
   expect(tail).toHaveAttribute("aria-hidden", "true");
-  expect(tail).toHaveClass("shrink-0");
-  expect(document.title).toBe("Terminated · Tech Lead · ab12 · Open Factory");
+  expect(document.title).toBe("Terminated · Tech Lead · ab12 · Session · Open Factory");
 });
 
 test("the Terminate dialog: exact copy, Cancel focused; a failure stays open; success focuses Pin workspace", async () => {
@@ -197,7 +202,7 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
 
 test("a send that races the termination says so", async () => {
   const { state } = await open(spawned(), {
-    [`POST /api/agents/${SLUG}/messages`]: () => {
+    [`POST /api/agents/${SLUG}/input`]: () => {
       state.agent = terminated();
       return json(
         { error: { code: "agent_terminated", message: `@${SLUG} was terminated.` } },
@@ -223,7 +228,7 @@ test("Agent details: in the grace period, with Pin workspace; credential omitted
   expect(sentence()).toBe(
     "Terminated by @lead today at 14:32. Workspace will be deleted on Sun at 14:32 unless you pin it.",
   );
-  expect(within(panel).getByRole("link", { name: "Open @lead's session" })).toBeInTheDocument();
+  expect(within(panel).getByRole("link", { name: "Open @lead's chat" })).toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
   expect(panel.textContent).not.toContain("Credential");
   expect(panel.textContent).toContain("Spawned by");
@@ -278,10 +283,9 @@ test.each([
     within(header).queryByRole("button", { name: /^(Pin|Unpin) workspace$/ })?.textContent ??
       undefined,
   ).toBe(button);
-  // A human ends it in plain mono; an agent is a link (the grace-period test).
+  // A human ends it in plain text; an agent is a link (the grace-period test).
   if ("terminatedBy" in over && over.terminatedBy === "@or") {
     const or = within(panel).getByText("@or");
-    expect(or).toHaveClass("font-mono");
     expect(or.closest("a")).toBeNull();
   }
 });
@@ -433,15 +437,16 @@ test("an errored spawned agent: the recovery actions in the header, Terminate…
 
 test("a spawned agent's old edit URL lands on its session, with Edit agent saying it can't be edited", async () => {
   mockApi({
-    [`GET /api/agents/${SLUG}`]: () => json({ agent: spawned(), queue: [], lastSeq: 1 }),
+    [`GET /api/agents/${SLUG}`]: () =>
+      json({ agent: spawned(), model: { value: null, source: "default" }, queue: [], lastSeq: 1 }),
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [spawned()], running: { count: 1, max: 8 } }),
     "GET /api/templates": () => json({ templates: [] }),
   });
   const { router } = renderApp(`/agents/${SLUG}/edit`, alice);
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  expect(router.state.location.pathname).toBe(`/agents/${SLUG}`);
+  expect(router.state.location.pathname).toBe(`/agents/${SLUG}/chat`);
   expect(await within(dialog).findByText("Spawned agents can't be edited.")).toBeInTheDocument();
-  expect(within(dialog).queryByRole("button", { name: /Save|Re-sync|Archive/ })).toBeNull();
+  expect(within(dialog).queryByRole("button", { name: /Save|Archive/ })).toBeNull();
   expect(within(dialog).queryByRole("textbox")).toBeNull();
 });

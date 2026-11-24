@@ -61,14 +61,3 @@ test("Tab moves between the links (no roving focus), and clicking one makes it c
   await screen.findByRole("link", { name: "Images", current: "page" });
   expect(router.state.location.pathname).toBe("/templates/images");
 });
-
-test("the SegmentedControl look: a track holding the segments; the current one marked by aria-current", async () => {
-  renderAt("/templates");
-  const nav = await screen.findByRole("navigation", { name: "Templates views" });
-  const track = nav.querySelector("[data-slot=segmented-track]");
-  expect(track).not.toBeNull();
-  for (const l of within(nav).getAllByRole("link")) {
-    expect(l).toHaveClass("h-full", "border");
-    expect(l.className).toMatch(/aria-\[current=page\]:/);
-  }
-});

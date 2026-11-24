@@ -1,47 +1,52 @@
 import { randomUUID } from "node:crypto";
+import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
+  type AgentConfigResponse,
+  type AgentModel,
+  type AgentOverlay,
   type AgentSummary,
+  agentOverlaySchema,
+  type ConfigDoc,
   type CreateAgentBody,
+  mergeConfig,
   nameSchema,
+  overlayVersion,
   type PatchAgentBody,
+  type PutAgentConfigBody,
+  type PutAgentConfigResponse,
   slugSchema,
   treeOrder,
+  yamlPart,
 } from "@open-factory/shared";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { isSlugUnique } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
-import { isNameTaken } from "../messaging/principals.ts";
+import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { avatarStat } from "../templates/avatar.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
+import { overlayIssues, overlaySchemaIssues } from "../templates/validate.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
-import { PluginInstallError } from "../workspace/plugins.ts";
 import type { MaterializeCheck, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
-import type { Exec, Tx } from "./event-store.ts";
+import type { ConfigChanges } from "./config-changes.ts";
+import type { ConfigResolver } from "./config-resolver.ts";
+import type { EventBus } from "./event-bus.ts";
+import type { EventStore, Exec, Tx } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 
 const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
 
-function isSlugUnique(e: unknown): boolean {
-  for (let x = e as { code?: string; constraint_name?: string; cause?: unknown } | undefined; x; ) {
-    if (x.code === "23505" && (x.constraint_name ?? "").includes("slug")) return true;
-    x = x.cause as typeof x;
-  }
-  return false;
-}
-
-function pluginFailure(err: unknown): unknown {
-  if (err instanceof PluginInstallError)
-    return new ApiError(502, "plugin_install_failed", err.message, { output: err.output });
-  if (err instanceof WorkspaceError) return new ApiError(409, "template_invalid", err.message);
-  return err;
+/** A materialize failure as the API's: the template's folders didn't pass the workspace checks. */
+function materializeFailure(err: unknown): unknown {
+  return err instanceof WorkspaceError ? new ApiError(409, "template_invalid", err.message) : err;
 }
 
 /** S7 §9.3: a spawner's live spawned agents block its archive; terminate them, don't move them. */
@@ -98,11 +103,18 @@ export class AgentService {
       workspace: Workspace;
       lock: KeyedMutex;
       runtimes: AgentRuntimes;
+      /** `GET …/config` reads each plugin's pin through the Library resolve (spec §8.1). */
+      resolver: Pick<ConfigResolver, "libraryOf">;
       log: RuntimeLog;
-      /** The one ContainerManager: a running container counts as a process for the re-sync gate (spec §11.4). */
+      /** The one ContainerManager: a running container counts as a process for the persona-reset gate (spec §11.4). */
       containers?: Pick<ContainerManager, "isRunning">;
       /** Peer events (spec §10.2): the router snapshots the neighborhood and writes the rows. */
       router: Pick<Router, "peerEvents" | "snapshot">;
+      /** Reset persona writes its `config_changed` event here when the agent has no loaded runtime. */
+      store: Pick<EventStore, "append">;
+      bus: Pick<EventBus, "publishAll">;
+      /** I2 §7.2: an overlay save writes its event and notice and schedules the restart check here. */
+      configChanges: Pick<ConfigChanges, "overlaySaved">;
       /** S9 §10.1: unarchive recomputes every schedule targeting the agent in its transaction (no catch-up). */
       scheduling?: {
         recomputeForTarget(tx: Tx, agentId: string): Promise<void>;
@@ -278,9 +290,9 @@ export class AgentService {
         openTasks: openTasks.get(r.id) ?? 0,
         scheduleCount: scheduleCount.get(r.id) ?? 0,
         avatarVersion: avatarOf.get(r.template) ?? null,
+        color: r.color,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
-        grantsOverridden: r.grantsOverridden,
         depth,
         archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
         ...terminationFields(r),
@@ -324,7 +336,9 @@ export class AgentService {
   /**
    * S7 §6.3: the one owner of live children's credential and grants. Call inside every transaction that changes a
    * spawner's credential or grants, after the spawner's row is written: it rewrites each live child's `credential_id`
-   * to the spawner's and its grants to the spawner's ∩ the child's template `projects`. Locks the spawner's row, then
+   * to the spawner's and its grants to the spawner's ∩ the child's template `projects`. The projects come from the
+   * template's last valid parse in the DB (I2 §6.2), never from disk: a disk read here would start change detection
+   * inside this transaction. A template with no valid parse yet grants nothing. Locks the spawner's row, then
    * the children's (§5.7). Returns the changed children's ids; the caller refreshes and restarts them after the commit.
    */
   async syncChildren(tx: Tx, spawnerId: string): Promise<string[]> {
@@ -347,9 +361,18 @@ export class AgentService {
       )
       .orderBy(asc(schema.agents.id))
       .for("no key update");
+    const projectsOf = new Map<string, string[]>();
+    for (const name of new Set(kids.map((k) => k.template))) {
+      const listed = (await this.d.templates.lastValid(name, tx))?.template.projects;
+      projectsOf.set(
+        name,
+        Array.isArray(listed) ? listed.filter((p): p is string => typeof p === "string") : [],
+      );
+    }
     const changed: string[] = [];
     for (const k of kids) {
-      const want = held.filter((p) => k.config.projects.includes(p.name));
+      const projects = projectsOf.get(k.template) ?? [];
+      const want = held.filter((p) => projects.includes(p.name));
       const have = (
         await tx
           .select({ id: schema.agentProjectGrants.projectId })
@@ -468,9 +491,8 @@ export class AgentService {
 
   private async createLocked(b: CreateAgentBody): Promise<AgentSummary> {
     const { db, workspace } = this.d;
-    // One rule (spec §7.1). A simultaneous sign-up and agent create with the same name is an accepted race; sends then fail with 'matches both'.
-    const taken = await isNameTaken(db, b.slug);
-    if (taken === "agent" || taken === "user") throw slugTaken();
+    // The cheap pre-read before materialising; the claim in the insert transaction is the guarantee (spec §4.1).
+    if (await handleKind(db, b.slug)) throw slugTaken();
     const tpl = await this.d.templates.loadValid(b.template);
     const credentialId = await this.credentialId(b.credential);
     const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
@@ -491,23 +513,24 @@ export class AgentService {
       // folder_exists means the folder isn't ours: leave it alone.
       if (!(err instanceof FieldError && err.code === "folder_exists"))
         await workspace.discard(b.slug).catch(() => {});
-      throw pluginFailure(err);
+      throw materializeFailure(err);
     }
 
     const id = randomUUID();
     try {
       await db.transaction(async (tx) => {
+        if (!(await claimHandle(tx, b.slug, "agent"))) throw slugTaken();
         await tx.insert(schema.agents).values({
           id,
           slug: b.slug,
           displayName: b.displayName,
           description: b.description,
           template: b.template,
-          config: tpl.config,
+          // I2 §5.1: the overlay starts empty; the agent runs the live template until someone configures it.
+          config: {},
           runtime: tpl.config.runtime,
           reportsTo: manager?.id ?? null,
           credentialId,
-          grantsOverridden: b.projects !== undefined,
         });
         if (projects.length)
           await tx
@@ -540,6 +563,8 @@ export class AgentService {
       set.description = b.description;
       changed.text = true;
     }
+    // Identity only: it never feeds the process, so it sets no `changed` flag and never restarts.
+    if (b.color !== undefined && b.color !== row.color) set.color = b.color;
     if (b.credential !== undefined) {
       const id = await this.credentialId(b.credential);
       if (id !== row.credentialId) {
@@ -559,9 +584,7 @@ export class AgentService {
     const before = moved ? await this.snapshot(row.id) : undefined;
     let newGrants: { id: string; name: string }[] | undefined;
     if (b.projects !== undefined) {
-      const names = b.projects === null ? row.config.projects : b.projects;
-      newGrants = await this.projectRows(names);
-      set.grantsOverridden = b.projects !== null;
+      newGrants = await this.projectRows(b.projects);
       const same =
         [...newGrants.map((p) => p.name)].sort().join("\0") ===
         [...currentGrants].sort().join("\0");
@@ -634,66 +657,240 @@ export class AgentService {
     } catch (err) {
       this.d.log.warn(
         { err, agent: row.slug },
-        "couldn't check the container; staging the re-sync",
+        "couldn't check the container; staging the persona reset",
       );
       return true;
     }
   }
 
-  async resync(
+  /**
+   * Reset persona (spec §9): the agent's AGENTS.md is replaced with the template's. Written at once when no process
+   * (and for Docker no container) is running, else staged for the next start. Archived agents are allowed. The notice
+   * line, the event and the restart are scheduled, never awaited: they queue behind the runtime's jobs, and a start
+   * waiting in `prepare` holds none of the locks taken here.
+   */
+  async resetPersona(
     slug: string,
-  ): Promise<{ agent: AgentSummary; backupDir?: string; applied: "now" | "on_restart" }> {
-    const { db, runtimes, workspace } = this.d;
+    by: string,
+  ): Promise<{ applied: "now" | "on_restart"; backupDir?: string }> {
+    const { runtimes, workspace } = this.d;
     const row = await this.rowBySlug(slug);
     this.assertPersistent(row);
-    if (row.archivedAt)
-      throw new ApiError(409, "agent_archived", `@${slug} is archived. Restore it first.`);
     const tpl = await this.d.templates.loadValid(row.template);
-    let backupDir: string | undefined;
-    let applied: "now" | "on_restart" = "now";
-    let children: string[] = [];
+    const agentsMd = path.join(tpl.dir, "AGENTS.md");
+    // A regular file only: a link would copy its target's bytes into the agent's workdir.
+    const templateFileOk = () =>
+      lstat(agentsMd).then(
+        (s) => s.isFile(),
+        () => false,
+      );
+    const badTemplate = () =>
+      new ApiError(
+        409,
+        "template_invalid",
+        `Template ${row.template} needs an AGENTS.md that is a regular file.`,
+      );
+    if (!(await templateFileOk())) throw badTemplate();
+    let r: Awaited<ReturnType<Workspace["resetPersona"]>>;
     try {
-      await workspace.lock.run(slug, async () => {
-        // Checked before any disk change, so a stale template project leaves everything as it was.
-        const projects = row.grantsOverridden
-          ? undefined
-          : await this.templateProjects(tpl.config.projects, row.template);
+      r = await workspace.lock.run(slug, async () => {
         // Decided under the lock every start also takes, so a start can't slip in between. Docker: the container
         // must not be running either (spec §11.4 part 4).
         const rt = await runtimes.get(row.id);
         const canWriteNow = !rt?.hasProcess() && !(await this.containerRunning(row));
-        const r = await workspace.resync(slug, tpl, { canWriteNow });
-        backupDir = r.backupDir;
-        applied = r.applied;
-        children = await db.transaction(async (tx) => {
-          await this.lockAgent(tx, row.id);
-          await tx
-            .update(schema.agents)
-            .set({ config: tpl.config, runtime: tpl.config.runtime })
-            .where(eq(schema.agents.id, row.id));
-          if (projects) await this.replaceGrants(tx, row.id, projects);
-          return this.syncChildren(tx, row.id);
-        });
+        return workspace.resetPersona(slug, agentsMd, { canWriteNow });
       });
     } catch (err) {
-      throw pluginFailure(err);
-    }
-    await runtimes.refresh(row.id);
-    await runtimes.requestRestart(row.id);
-    // A re-sync can change the spawner's secrets and deny rules, which each child derives at its start (§6.3): every
-    // live child restarts, not only those whose credential or grants changed (a child never holds more than its spawner).
-    await this.applyToChildren([...new Set([...children, ...(await this.liveChildren(row.id))])]);
-    return { agent: await this.summary(slug), applied, ...(backupDir ? { backupDir } : {}) };
-  }
-
-  private async templateProjects(names: string[], template: string) {
-    try {
-      return await this.projectRows(names);
-    } catch (err) {
-      if (err instanceof FieldError)
-        throw new ApiError(409, "template_invalid", `Template ${template}: ${err.message}`);
+      // The template file went away after the check above: the template's fault, not the workdir's.
+      if (!(await templateFileOk())) throw badTemplate();
+      // Anything else here is the agent's workdir (a link planted in it, AGENTS.md not a file): never the template.
+      if (err instanceof WorkspaceError) throw new ApiError(409, "workdir_unusable", err.message);
       throw err;
     }
+    // Applied now with nothing differing changes nothing: no notice, no event.
+    if (r.changed) this.scheduleResetEffects(row, by, r);
+    return { applied: r.applied, ...(r.backupDir ? { backupDir: r.backupDir } : {}) };
+  }
+
+  private scheduleResetEffects(
+    row: AgentRow,
+    by: string,
+    r: { applied: "now" | "on_restart"; backupDir?: string },
+  ): void {
+    const { runtimes, log, store, bus } = this.d;
+    const staged = r.applied === "on_restart";
+    const what = `AGENTS.md reset from template ${row.template}`;
+    // Staged: the old file is saved when the next start applies it. Now: only when one existed to save.
+    const saved = staged || r.backupDir ? "; the previous file is saved." : ".";
+    const work = (async () => {
+      const rt = await runtimes.get(row.id);
+      const jobs: Promise<unknown>[] = [];
+      // Through the runtime when loaded (published in seq order), else straight to the store, as ConfigChanges does.
+      if (rt) jobs.push(rt.appendConfigChanged(by, [what]));
+      else await store.append(row.id, null, { type: "config_changed", by, changes: [what] });
+      bus.publishAll({ type: "config_changed", agent: row.slug });
+      if (!row.archivedAt) {
+        jobs.push(runtimes.recordConfigNotice(row.id, [`${what}${saved}`]));
+        if (staged)
+          jobs.push(runtimes.requestRestart(row.id, { changes: ["persona reset from template"] }));
+      }
+      for (const j of await Promise.allSettled(jobs))
+        if (j.status === "rejected")
+          log.error({ err: j.reason, agent: row.slug }, "applying a persona reset failed");
+    })();
+    work.catch((err) => log.error({ err, agent: row.slug }, "applying a persona reset failed"));
+  }
+
+  /** The overlay as stored; one that fails its schema (an agent made before I2) is kept as is for the editor to fix. */
+  private overlayOf(row: AgentRow): Record<string, unknown> {
+    return row.config as Record<string, unknown>;
+  }
+
+  /**
+   * The template's current valid doc and folder, or null while it is invalid or missing (an agent's config is then
+   * checked against the schema alone, spec §12.1). Never a template's issues: those are fixed in Templates.
+   */
+  private async templateBase(name: string): Promise<{ doc: ConfigDoc; dir: string } | null> {
+    try {
+      const { doc, dir } = await this.d.templates.loadValid(name);
+      return { doc, dir };
+    } catch (err) {
+      if (err instanceof ApiError && ["template_missing", "template_invalid"].includes(err.code))
+        return null;
+      throw err;
+    }
+  }
+
+  /** What an editor may see of a doc: `local_skill_names` is derived and internal, never offered for editing. */
+  private forEditing(doc: ConfigDoc): ConfigDoc {
+    return { ...doc, template: yamlPart(doc.template) };
+  }
+
+  /** The issues of an overlay against the template (warnings and errors); the schema alone when there is no base. */
+  private async configIssues(
+    row: AgentRow,
+    overlay: unknown,
+    base: { doc: ConfigDoc; dir: string } | null,
+  ) {
+    const parsed = agentOverlaySchema.safeParse(overlay);
+    if (!parsed.success || !base) return overlaySchemaIssues(overlay);
+    const ctx = {
+      ...(await this.d.templates.context()),
+      templateDir: base.dir,
+      agentRuntimes: [row.runtime],
+    };
+    return overlayIssues(base.doc, parsed.data, ctx);
+  }
+
+  /** I2 §12.1 `GET /api/agents/:slug/config`. */
+  async getConfig(slug: string): Promise<AgentConfigResponse> {
+    const row = await this.rowBySlug(slug);
+    const overlay = this.overlayOf(row);
+    const base = await this.templateBase(row.template);
+    return this.configView(row, overlay, base, await this.configIssues(row, overlay, base));
+  }
+
+  private async configView(
+    row: AgentRow,
+    overlay: Record<string, unknown>,
+    base: { doc: ConfigDoc } | null,
+    issues: AgentConfigResponse["issues"],
+  ): Promise<AgentConfigResponse> {
+    const parsed = agentOverlaySchema.safeParse(overlay);
+    const merged = base && parsed.success ? mergeConfig(base.doc, parsed.data) : null;
+    return {
+      overlay,
+      version: overlayVersion(overlay as AgentOverlay),
+      template: {
+        name: row.template,
+        doc: base ? this.forEditing(base.doc) : null,
+        valid: base !== null,
+      },
+      merged: merged ? this.forEditing(merged) : null,
+      plugins: merged ? await this.pluginsOf(row.id, merged) : [],
+      issues,
+    };
+  }
+
+  /**
+   * Each plugin the config would run (enabled keys and the dependencies the Library read) with its pin, and the
+   * version it loaded at when the running process's first `init` listed it (spec §7.3 step 8, §8.1).
+   */
+  private async pluginsOf(
+    agentId: string,
+    merged: ConfigDoc,
+  ): Promise<AgentConfigResponse["plugins"]> {
+    const loaded = this.d.runtimes.loadedPluginsOf(agentId) ?? {};
+    const { plugins } = await this.d.resolver.libraryOf(merged);
+    return Object.entries(plugins).map(([key, pin]) => ({
+      key,
+      pin,
+      ...(Object.hasOwn(loaded, key) ? { loaded: loaded[key] as string } : {}),
+    }));
+  }
+
+  /**
+   * I2 §12.1 `PUT /api/agents/:slug/config`. Validation (disk reads included) runs before the transaction, which only
+   * locks the row, compares the JS-computed versions and writes: Postgres' `jsonb::text` doesn't sort keys the way the
+   * canonical form does, so the version is never computed in SQL. The restart check is scheduled, never awaited
+   * (spec §7.2). Issues carry paths and constant messages, never a value.
+   */
+  async putConfig(
+    slug: string,
+    b: PutAgentConfigBody,
+    by: string,
+  ): Promise<PutAgentConfigResponse> {
+    const { db } = this.d;
+    const row = await this.rowBySlug(slug);
+    this.assertPersistent(row);
+    const parsed = agentOverlaySchema.safeParse(b.overlay);
+    const base = await this.templateBase(row.template);
+    const issues = await this.configIssues(row, b.overlay, base);
+    if (!parsed.success || issues.some((i) => i.severity === "error"))
+      throw new ApiError(400, "invalid_config", "The configuration has errors.", { issues });
+    const overlay = parsed.data;
+
+    const before = await db.transaction(async (tx) => {
+      const locked = await this.lockAgent(tx, row.id);
+      if (!locked) throw this.notFound(slug);
+      const current = this.overlayOf(locked);
+      if (overlayVersion(current as AgentOverlay) !== b.baseVersion)
+        throw new ApiError(409, "config_changed", "Changed since you opened it.");
+      await tx.update(schema.agents).set({ config: overlay }).where(eq(schema.agents.id, row.id));
+      return current;
+    });
+
+    let applied: { changes: string[]; restartChecked: boolean } = {
+      changes: [],
+      restartChecked: false,
+    };
+    // A broken template has no effective config to diff or restart into; the next start reads everything fresh.
+    if (base) {
+      const was = agentOverlaySchema.safeParse(before);
+      applied = await this.d.configChanges.overlaySaved(
+        { ...row, config: overlay },
+        by,
+        mergeConfig(base.doc, was.success ? was.data : {}),
+        mergeConfig(base.doc, overlay),
+      );
+    }
+    return {
+      ...(await this.configView({ ...row, config: overlay }, overlay, base, issues)),
+      ...applied,
+      checked: base ? "full" : "schema",
+    };
+  }
+
+  /** I2 §12.3: the model the agent runs with and where it comes from, read from the rows (no disk, no scan). */
+  async modelOf(slug: string): Promise<AgentModel> {
+    const row = await this.rowBySlug(slug);
+    const own = agentOverlaySchema.safeParse(this.overlayOf(row));
+    const mine = own.success ? own.data.template?.model : undefined;
+    if (mine) return { value: mine, source: "agent" };
+    const doc = await this.d.templates.lastValid(row.template);
+    const theirs = doc?.template.model;
+    if (typeof theirs === "string" && theirs) return { value: theirs, source: "template" };
+    return { value: null, source: "default" };
   }
 
   async archive(slug: string): Promise<AgentSummary> {

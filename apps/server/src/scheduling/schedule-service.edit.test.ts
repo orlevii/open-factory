@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent, insertScheduledMessage } from "../agents/testing/rows.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { MAX_AGENT_SCHEDULES } from "./limits.ts";
 import { type Actor, ScheduleService } from "./schedule-service.ts";
@@ -18,6 +19,8 @@ const weekday = { cron: "0 9 * * 1-5", timezone: "Europe/Berlin", body: "Review"
 
 beforeAll(async () => {
   t = await createTestDb();
+  await claimTestHandleSql(t.sql, "or", "user");
+  await claimTestHandleSql(t.sql, "jo", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or'), ('u2', 'Jo', 'jo@x.io', 'jo')`;
 });
 afterAll(() => t.close());
@@ -180,7 +183,7 @@ test("delete is soft: excluded from lists, counts and the agent limit; its pendi
   await rejects(svc.remove(or, s.key), { code: "schedule_not_found" });
 });
 
-test("restore recomputes from now, brings a passed one-shot back done, and ignores the agent limit", async () => {
+test("restore recomputes from now and brings a passed one-shot back done", async () => {
   const s = await mk({}, agent("dev"));
   await svc.remove(or, s.key);
   clock = new Date("2026-11-24T12:00:00Z");
@@ -192,11 +195,19 @@ test("restore recomputes from now, brings a passed one-shot back done, and ignor
   clock = new Date("2026-12-02T00:00:00Z");
   const done = await svc.restore(or, once.key);
   expect(done).toMatchObject({ state: "done", done: true, ran: false, nextRunAt: null });
-  for (let i = 0; i < MAX_AGENT_SCHEDULES; i++)
-    await svc.create(agent("dev"), { target: "ceo", ...weekday }).catch(() => {});
+});
+
+test("a human-created schedule's restore isn't bound by an agent's limit", async () => {
+  // dev's one active schedule, plus 19 more, puts it at its 20; the human's restore doesn't count against dev.
+  await mk({}, agent("dev"));
+  for (let i = 1; i < MAX_AGENT_SCHEDULES; i++)
+    await svc.create(agent("dev"), { target: "ceo", ...weekday });
+  await rejects(svc.create(agent("dev"), { target: "ceo", ...weekday }), {
+    code: "schedule_limit",
+  });
   const extra = await svc.create(or, { target: "ceo", ...weekday });
   await svc.remove(or, extra.item.key);
-  await svc.restore(or, extra.item.key);
+  expect(await svc.restore(or, extra.item.key)).toMatchObject({ state: "active" });
 });
 
 test("restore is refused when the target ended", async () => {

@@ -1,33 +1,37 @@
-import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
-  type AgentRow,
-  createDb,
-  type Db,
-  MIGRATIONS_DIR,
-  migrate,
-  schema,
-} from "@open-factory/db";
-import { createTestDatabase } from "@open-factory/db/testing";
+import { type AgentRow, createDb, type Db, schema } from "@open-factory/db";
+import { createMigratedTestDatabase } from "@open-factory/db/testing";
 import type { HarnessDriver } from "@open-factory/harness";
+import { createFakeClaude } from "@open-factory/harness/testing";
 import {
+  type AgentOverlay,
+  agentOverlaySchema,
   type Me,
   type SignUpInput,
-  type TemplateConfig,
-  templateConfigSchema,
 } from "@open-factory/shared";
 import type { FastifyInstance } from "fastify";
 import { type AppDeps, buildApp, loggerOptions } from "../app.ts";
-import { type Config, loadConfig } from "../config.ts";
+import type { PasswordHasher } from "../auth/options.ts";
+import { type Config, hostSkillsDirOf, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
 import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { hashToken } from "../users/invites.ts";
-import { agentConfigDir, agentWorkdir, templateCopyDir } from "../workspace/paths.ts";
+import { agentConfigDir, agentWorkdir } from "../workspace/paths.ts";
 import type { Workspace } from "../workspace/workspace.ts";
+import { claimTestHandle } from "./handles.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
+
+/** The version floor runs `claude --version` before a local start, so a test app never relies on a `claude` on PATH
+ *  (CI has none): `FACTORY_CLAUDE_BIN` is the fake's wrapper unless a test sets its own. One per process. */
+let versionClaudeBin: string | undefined;
+const versionOnlyClaude = () => {
+  versionClaudeBin ??= createFakeClaude({ scenario: "reply" }).bin;
+  return versionClaudeBin;
+};
 
 /** Each test app's database, so `signUp(app)` can mint an invite without changing its call sites. */
 const appDbs = new WeakMap<FastifyInstance, Db>();
@@ -41,17 +45,39 @@ export interface TestAppOptions {
   /** The scheduling clock and timer functions (S9); real ones when absent. */
   clock?: AppDeps["clock"];
   schedulerTimers?: AppDeps["schedulerTimers"];
-  /** Capture the app's real log output (production redact config, no transport) at info level. */
+  /** Capture the app's real log output (production redact config, no transport) at `logLevel`. */
   logStream?: { write(s: string): void };
+  /** The capture's level; `"info"` when absent. */
+  logLevel?: string;
+  /** Spawns the sign-in bridge and python3 probe (I3); the real `spawn` when absent. */
+  signInSpawn?: AppDeps["signInSpawn"];
   /** Written to the `factory_settings` row before the first boot only, not on `reopen()` (S10 §8.1: no longer env vars). */
   factorySettings?: Partial<FactorySettingsValues>;
 }
 
+/**
+ * Salted scrypt like production, at a tiny cost factor: better-auth's default (N=16384, r=16) costs ~100 ms of CPU
+ * per sign-up and sign-in, which dominated the suite under parallel load. Same hash/verify contract.
+ */
+export const testPasswordHasher: PasswordHasher = {
+  async hash(password) {
+    const salt = randomBytes(16);
+    return `${salt.toString("hex")}:${scryptSync(password.normalize("NFKC"), salt, 32, { N: 16 }).toString("hex")}`;
+  },
+  async verify({ hash, password }) {
+    const [salt, key] = hash.split(":");
+    if (!salt || !key) return false;
+    const expected = Buffer.from(key, "hex");
+    const actual = scryptSync(password.normalize("NFKC"), Buffer.from(salt, "hex"), 32, { N: 16 });
+    return expected.length === actual.length && timingSafeEqual(actual, expected);
+  },
+};
+
 export async function makeTestApp(opts: TestAppOptions = {}) {
-  const tdb = await createTestDatabase();
-  await migrate(tdb.url, MIGRATIONS_DIR);
+  const tdb = await createMigratedTestDatabase();
   const factoryHome = realpathSync(mkdtempSync(path.join(tmpdir(), "of-home-")));
-  const hostSkillsDir = mkdtempSync(path.join(tmpdir(), "of-skills-"));
+  const hostClaudeDir = mkdtempSync(path.join(tmpdir(), "of-claude-"));
+  mkdirSync(path.join(hostClaudeDir, "skills"));
   const build = async (o: TestAppOptions) => {
     const config = loadConfig({
       DATABASE_URL: tdb.url,
@@ -59,10 +85,11 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       PORT: "3000",
       LOG_LEVEL: "silent",
       FACTORY_HOME: factoryHome,
-      FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+      FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
       FACTORY_ALLOW_LOCAL_RUNTIME: "true",
       // Every app binds a real agent listener: let the OS pick the port so test files can run in parallel.
       FACTORY_AGENT_PORT: "0",
+      FACTORY_CLAUDE_BIN: versionOnlyClaude(),
       ...o.env,
     });
     const { db, sql, close: closeDb } = createDb(tdb.url);
@@ -78,11 +105,13 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
             const { transport: _t, ...rest } = loggerOptions(config) as ReturnType<
               typeof loggerOptions
             > & { transport?: unknown };
-            return { ...rest, level: "info", stream: o.logStream };
+            return { ...rest, level: o.logLevel ?? "info", stream: o.logStream };
           })()
         : false,
       harnessDriver: o.harnessDriver,
+      passwordHasher: testPasswordHasher,
       ...(o.docker ? { docker: o.docker } : {}),
+      ...(o.signInSpawn ? { signInSpawn: o.signInSpawn } : {}),
       ...(o.clock ? { clock: o.clock } : {}),
       ...(o.schedulerTimers ? { schedulerTimers: o.schedulerTimers } : {}),
     });
@@ -94,6 +123,8 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
   return {
     ...first,
     factoryHome,
+    /** Where host skills are read from: `<config.hostClaudeDir>/skills`. */
+    hostSkillsDir: hostSkillsDirOf(first.config),
     seedAgent: (o?: SeedAgentOptions) =>
       seedTestAgent(
         {
@@ -125,11 +156,15 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
 
 export interface SeedAgentOptions {
   slug?: string;
-  config?: Partial<TemplateConfig>;
+  /** The agent's overlay (`agents.config`, I2 §5.1); `{}` runs exactly the `test` template. */
+  config?: AgentOverlay;
   credentialValue?: string;
 }
 
-/** A persistent agent with a credential and a minimal workdir, as if created from a template. */
+/** The `test` template every seeded agent is created from: local, nothing listed (I2: config comes from it live). */
+export const TEST_TEMPLATE_YAML = "name: test\ndisplay_name: Test agent\nruntime: local\n";
+
+/** A persistent agent with a credential and a minimal workdir, as if created from the `test` template. */
 export async function seedTestAgent(
   app: { db: Db; config: Config; vault: Vault; workspace: Workspace },
   opts: SeedAgentOptions = {},
@@ -142,21 +177,13 @@ export async function seedTestAgent(
     kind: "oauth_token",
     valueEnc: app.vault.seal(opts.credentialValue ?? "test-token", `credentials:${credentialId}`),
   });
-  const config = templateConfigSchema.parse({
-    name: "test",
-    displayName: "Test agent",
-    description: "",
-    runtime: "local",
-    permissionMode: "auto",
-    projects: [],
-    skills: [],
-    localSkills: true,
-    plugins: [],
-    secrets: [],
-    canSpawn: [],
-    maxLiveSpawns: 5,
-    ...opts.config,
-  });
+  const tplDir = path.join(app.config.factoryHome, "templates", "test");
+  if (!existsSync(path.join(tplDir, "template.yaml"))) {
+    mkdirSync(tplDir, { recursive: true });
+    writeFileSync(path.join(tplDir, "template.yaml"), TEST_TEMPLATE_YAML);
+    writeFileSync(path.join(tplDir, "AGENTS.md"), "# Test agent\n");
+  }
+  await claimTestHandle(app.db, slug, "agent");
   const [row] = await app.db
     .insert(schema.agents)
     .values({
@@ -165,7 +192,7 @@ export async function seedTestAgent(
       displayName: "Test agent",
       description: "",
       template: "test",
-      config,
+      config: agentOverlaySchema.parse(opts.config ?? {}),
       runtime: "local",
       credentialId,
     })
@@ -173,13 +200,7 @@ export async function seedTestAgent(
   if (!row) throw new Error("seed failed");
   const workdir = agentWorkdir(app.config.factoryHome, slug);
   mkdirSync(agentConfigDir(workdir), { recursive: true });
-  mkdirSync(templateCopyDir(app.config.factoryHome, slug), { recursive: true });
   writeFileSync(path.join(workdir, "AGENTS.md"), "# Test agent\n");
-  writeFileSync(path.join(templateCopyDir(app.config.factoryHome, slug), "settings.json"), "{}");
-  writeFileSync(
-    path.join(templateCopyDir(app.config.factoryHome, slug), "mcp.json"),
-    '{"mcpServers":{}}',
-  );
   return row;
 }
 
@@ -231,8 +252,7 @@ export async function signUp(app: FastifyInstance, input: Partial<SignUpInput> =
 
 /** A migrated throwaway database for unit tests that don't need the app. */
 export async function createTestDb() {
-  const tdb = await createTestDatabase();
-  await migrate(tdb.url, MIGRATIONS_DIR);
+  const tdb = await createMigratedTestDatabase();
   const h = createDb(tdb.url);
   return {
     ...h,

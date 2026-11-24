@@ -43,13 +43,15 @@ export const cappedList = (items: string[], max = 3) => {
   return `${items.slice(0, max).join(", ")}${rest > 0 ? ` +${rest} more` : ""}`;
 };
 
-/** "@lead restarts when idle to use it. Its crons from this session stop." */
+const list = (slugs: string[]) => cappedList(slugs.map((s) => `@${s}`));
+
+/** "@lead restarts when idle; past three agents: "@a, @b, @c +1 more restart ..." to use it. Its crons from this session stop." */
 export const restartNote = (slugs: string[]) =>
   slugs.length === 0
     ? ""
     : slugs.length === 1
-      ? `${tags(slugs)} restarts when idle to use it. Its crons from this session stop.`
-      : `${tags(slugs)} restart when idle to use it. Their crons from this session stop.`;
+      ? `${list(slugs)} restarts when idle to use it. Its crons from this session stop.`
+      : `${list(slugs)} restart when idle to use it. Their crons from this session stop.`;
 
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
@@ -96,7 +98,11 @@ export function AgentLinks({ slugs, edit }: { slugs: string[]; edit?: boolean })
               @{s}
             </button>
           ) : (
-            <Link to="/agents/$slug" params={{ slug: s }} className={`${monoClass} ${linkClass}`}>
+            <Link
+              to="/agents/$slug/chat"
+              params={{ slug: s }}
+              className={`${monoClass} ${linkClass}`}
+            >
               @{s}
             </Link>
           )}
@@ -179,7 +185,9 @@ export function RowLine({ children, actions }: { children: ReactNode; actions: R
   return (
     <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
       {children}
-      <div className="ml-auto flex shrink-0 items-center gap-1">{actions}</div>
+      <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
+        {actions}
+      </div>
     </div>
   );
 }
@@ -272,6 +280,7 @@ export function InlineForm({
   pending,
   outcome,
   autoFocusId,
+  autoFocus = true,
   reveal = false,
   ref,
 }: {
@@ -286,6 +295,8 @@ export function InlineForm({
   ref?: Ref<HTMLFormElement>;
   /** The field to focus on open, when it isn't the first one (a prefilled name). */
   autoFocusId?: string;
+  /** False: no focus on mount (a restored sign-in moves focus itself). */
+  autoFocus?: boolean;
   /** Opened by a link (?addSecret): bring the whole form into view, wherever it sits on the page. */
   reveal?: boolean;
 }) {
@@ -301,9 +312,11 @@ export function InlineForm({
   const router = useRouter();
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
   useEffect(() => {
-    const first = autoFocusId
-      ? document.getElementById(autoFocusId)
-      : form.current?.querySelector<HTMLElement>("input:not([type=hidden]), textarea");
+    const first = !autoFocus
+      ? null
+      : autoFocusId
+        ? document.getElementById(autoFocusId)
+        : form.current?.querySelector<HTMLElement>("input:not([type=hidden]), textarea");
     first?.focus({ preventScroll: reveal });
     if (!reveal) return;
     const show = () => form.current?.scrollIntoView?.({ block: "nearest" });

@@ -100,14 +100,23 @@ export class ContainerManager {
   private readonly log: RuntimeLog;
   private readonly uid: number | undefined;
   private readonly gid: number | undefined;
+  private readonly checkImage: (image: string, digest: string) => Promise<void>;
 
   /**
    * `uid`/`gid` override the host ids written into the container (tests run on hosts with different ids). They can't
    * bypass the root refusal: `ensure` refuses when either the server's own ids or the given ones are root.
    */
-  constructor(d: { docker: DockerClient; log: RuntimeLog; uid?: number; gid?: number }) {
+  constructor(d: {
+    docker: DockerClient;
+    log: RuntimeLog;
+    uid?: number;
+    gid?: number;
+    /** Run before a container is created: the image's Claude Code against the floor (spec §7.9); a throw fails the start. */
+    checkImage: (image: string, digest: string) => Promise<void>;
+  }) {
     this.docker = d.docker;
     this.log = d.log;
+    this.checkImage = d.checkImage;
     this.uid = d.uid ?? process.getuid?.();
     this.gid = d.gid ?? process.getgid?.();
   }
@@ -152,6 +161,11 @@ export class ContainerManager {
 
     const imageId = await this.docker.imageId(i.image);
     if (imageId === undefined) throw new ImageMissingError(i.image);
+    try {
+      await this.checkImage(i.image, imageId);
+    } catch (err) {
+      throw new AgentStartError(err instanceof Error ? err.message : String(err));
+    }
 
     const checked = await checkMounts(i.mounts, i.mountCheck);
     const hash = specHash({ imageId, mounts: checked, uid, gid });

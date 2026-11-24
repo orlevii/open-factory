@@ -22,7 +22,10 @@ export interface Config {
   logLevel: string;
   isProduction: boolean;
   claudeBin: string;
-  hostSkillsDir: string;
+  /** `FACTORY_HOST_CLAUDE_DIR` resolved: the Claude folder; skills are read from `<dir>/skills` (see `hostSkillsDirOf`). */
+  hostClaudeDir: string;
+  /** `FACTORY_GITHUB_URL`: the GitHub base for Library adds; tests and the evidence pass point it at a fixture. */
+  githubUrl: string;
   allowLocalRuntime: boolean;
   defaultImage: string;
   dockerClaudeBin: string;
@@ -77,7 +80,14 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   NODE_ENV: z.string().optional(),
   FACTORY_CLAUDE_BIN: z.string().min(1).default("claude"),
-  FACTORY_HOST_SKILLS_DIR: z.string().min(1).default("~/.claude/skills"),
+  FACTORY_HOST_CLAUDE_DIR: z.string().min(1).default("~/.claude"),
+  FACTORY_GITHUB_URL: z
+    .url({ protocol: /^(https?|file)$/, message: "must be an http(s) or file URL" })
+    .refine((u) => {
+      const { username, password } = new URL(u);
+      return !username && !password;
+    }, "must not contain a username or password")
+    .default("https://github.com"),
   FACTORY_ALLOW_LOCAL_RUNTIME: z.enum(["true", "false"]).default("false"),
   FACTORY_DEFAULT_IMAGE: z.string().min(1).default("ghcr.io/orlevii/open-factory/base:latest"),
   FACTORY_DOCKER_CLAUDE_BIN: z.string().min(1).default("claude"),
@@ -98,17 +108,28 @@ const envSchema = z.object({
   FACTORY_TIMEZONE: zoneSchema.optional(),
 });
 
-/** Env vars S10 moved to `factory_settings` (Q6): no shim, nothing reads them; boot only warns when one is set. */
-const REMOVED_ENV = [
-  "FACTORY_MAX_RUNNING_AGENTS",
-  "FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS",
-] as const;
+/**
+ * Env vars that were removed, with the boot warning each gets (S10 Q6, I5 Q11): nothing reads them, no shim (ADR 0028).
+ * Boot only warns when one is still set; empty counts as unset, as in `loadConfig`.
+ */
+const REMOVED_ENV: Record<string, string> = {
+  FACTORY_MAX_RUNNING_AGENTS:
+    "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
+  FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS:
+    "FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS is no longer read; set it in Settings → Factory.",
+  FACTORY_HOST_SKILLS_DIR:
+    "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder.",
+};
 
-/** One boot warning per removed variable that is still set (empty counts as unset, as in `loadConfig`). */
 export function removedEnvWarnings(env: NodeJS.ProcessEnv): string[] {
-  return REMOVED_ENV.filter((k) => env[k] !== undefined && env[k] !== "").map(
-    (k) => `${k} is no longer read; set it in Settings → Factory.`,
-  );
+  return Object.entries(REMOVED_ENV)
+    .filter(([k]) => env[k] !== undefined && env[k] !== "")
+    .map(([, warning]) => warning);
+}
+
+/** Where host skills are read from: `<FACTORY_HOST_CLAUDE_DIR>/skills` (I5 §5.2). */
+export function hostSkillsDirOf(c: Pick<Config, "hostClaudeDir">): string {
+  return path.join(c.hostClaudeDir, "skills");
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -155,7 +176,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     logLevel: e.LOG_LEVEL,
     isProduction: e.NODE_ENV === "production",
     claudeBin: e.FACTORY_CLAUDE_BIN,
-    hostSkillsDir: path.resolve(expandHome(e.FACTORY_HOST_SKILLS_DIR)),
+    hostClaudeDir: path.resolve(expandHome(e.FACTORY_HOST_CLAUDE_DIR)),
+    githubUrl: e.FACTORY_GITHUB_URL.replace(/\/$/, ""),
     allowLocalRuntime: e.FACTORY_ALLOW_LOCAL_RUNTIME === "true",
     defaultImage: e.FACTORY_DEFAULT_IMAGE,
     dockerClaudeBin: e.FACTORY_DOCKER_CLAUDE_BIN,

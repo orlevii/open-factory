@@ -56,7 +56,7 @@ beforeEach(() => {
       if (url.startsWith("/api/agents/ada/events?"))
         return json({ events: [], hasMore: { before: false, after: false } });
       if (url.startsWith("/api/agents/dev/events?")) return json(conversation());
-      if (url.startsWith("/api/inbox")) return json({ items: [], nextCursor: null });
+      if (url.startsWith("/api/inbox")) return json({ chats: [], items: [], nextCursor: null });
       return json({ error: { code: "not_found", message: url } }, 404);
     }),
   );
@@ -86,7 +86,7 @@ const liveEvent = (at: string) =>
   );
 
 test("visible session with unread messages calls read-from once with upTo = newest event time", async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0]?.url).toBe("/api/inbox/read-from/dev");
   expect(posts[0]?.body.upTo).toBe(NEWEST);
@@ -96,7 +96,7 @@ test("visible session with unread messages calls read-from once with upTo = newe
 
 test("hidden document: no call until visible", async () => {
   setVisibility("hidden");
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await waitFor(() => expect(unreadFetches).toBeGreaterThan(0));
   await new Promise((r) => setTimeout(r, 50));
   expect(posts).toHaveLength(0);
@@ -110,7 +110,7 @@ test("re-runs when the newest event advances while the count stays > 0; at most 
   postGate = new Promise<void>((r) => {
     release = r;
   });
-  const { queryClient } = renderApp("/agents/dev", alice);
+  const { queryClient } = renderApp("/agents/dev/session", alice);
   await waitFor(() => expect(posts).toHaveLength(1));
   // The count is still > 0 (the server hasn't confirmed); newer events arrive while one is in flight.
   vi.useFakeTimers(FAKE);
@@ -136,7 +136,7 @@ test("re-runs when the newest event advances while the count stays > 0; at most 
 
 test("a failed call refetches the unread count and the inbox instead of leaving the optimistic state", async () => {
   postStatus = 500;
-  const { queryClient } = renderApp("/agents/dev", alice);
+  const { queryClient } = renderApp("/agents/dev/session", alice);
   await waitFor(() => expect(posts).toHaveLength(1));
   await waitFor(() => expect(unreadFetches).toBeGreaterThanOrEqual(2));
   await waitFor(() =>
@@ -152,7 +152,7 @@ const advance = (ms: number) =>
 test("a persistent failure is not retried until a newer event arrives", async () => {
   postStatus = 500;
   postGate = new Promise((r) => setTimeout(r, 100)); // the optimistic zero renders before the failure lands
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await waitFor(() => expect(posts).toHaveLength(1));
   await waitFor(() => expect(unreadFetches).toBeGreaterThanOrEqual(2)); // the refetch restored the count
   await new Promise((r) => setTimeout(r, 2300)); // past two throttle windows
@@ -167,7 +167,7 @@ test("a persistent failure is not retried until a newer event arrives", async ()
 test("a failure is retried once the tab becomes visible again", async () => {
   postStatus = 500;
   postGate = new Promise((r) => setTimeout(r, 100));
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await waitFor(() => expect(posts).toHaveLength(1));
   await waitFor(() => expect(unreadFetches).toBeGreaterThanOrEqual(2));
   postStatus = 200;
@@ -182,7 +182,7 @@ test("while a call is in flight no second call goes out, however long it takes",
   postGate = new Promise<void>((r) => {
     release = r;
   });
-  const { queryClient } = renderApp("/agents/dev", alice);
+  const { queryClient } = renderApp("/agents/dev/session", alice);
   await waitFor(() => expect(posts).toHaveLength(1));
   vi.useFakeTimers(FAKE);
   queryClient.setQueryData(["inbox-unread"], UNREAD); // still unread: the effect wants another call
@@ -200,7 +200,7 @@ test("while a call is in flight no second call goes out, however long it takes",
 
 /** A trailing call waiting on the throttle: the first call is done, the count is > 0 again. */
 async function withTrailingCall() {
-  const r = renderApp("/agents/dev", alice);
+  const r = renderApp("/agents/dev/session", alice);
   await waitFor(() => expect(posts).toHaveLength(1));
   // The optimistic zero has rendered (the effect saw no unread) before the count comes back.
   await waitFor(() =>
@@ -208,8 +208,10 @@ async function withTrailingCall() {
   );
   await act(async () => {});
   vi.useFakeTimers(FAKE);
+  // A message newer than the last call arrives: the count is > 0 again and there is something to read.
+  liveEvent("2026-11-18T10:00:30.000Z");
   act(() => r.queryClient.setQueryData(["inbox-unread"], UNREAD));
-  await advance(50);
+  await advance(150);
   expect(posts).toHaveLength(1); // waiting on the throttle
   return r;
 }
@@ -234,15 +236,28 @@ test("the trailing call is cancelled on unmount", async () => {
 test("the trailing call is cancelled when the session changes", async () => {
   const { router } = await withTrailingCall();
   await act(async () => {
-    await router.navigate({ to: "/agents/$slug", params: { slug: "ada" } });
+    await router.navigate({ to: "/agents/$slug/session", params: { slug: "ada" } });
   });
   await advance(3000);
   expect(posts.filter((p) => p.url.endsWith("/dev"))).toHaveLength(1);
 });
 
-test("a hover preload of /agents/ada never calls read-from", async () => {
-  const { router } = renderApp("/", alice);
-  await router.preloadRoute({ to: "/agents/$slug", params: { slug: "ada" } });
+test("a hover preload of a session with unread messages never calls read-from", async () => {
+  const { router } = renderApp("/inbox", alice);
+  // dev has unread messages (UNREAD.byAgent): opening it would post, a preload must not.
+  await waitFor(() => expect(unreadFetches).toBeGreaterThan(0));
+  await router.preloadRoute({ to: "/agents/$slug/session", params: { slug: "dev" } });
   await new Promise((r) => setTimeout(r, 50));
   expect(posts).toHaveLength(0);
+});
+
+test("the count rising again with nothing newer is no reason to post (an Undo of Mark all read sticks)", async () => {
+  const r = renderApp("/agents/dev/session", alice);
+  await waitFor(() => expect(posts).toHaveLength(1));
+  await waitFor(() =>
+    expect(r.queryClient.getQueryData(["inbox-unread"])).toMatchObject({ count: 0 }),
+  );
+  act(() => r.queryClient.setQueryData(["inbox-unread"], UNREAD));
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  expect(posts).toHaveLength(1);
 });

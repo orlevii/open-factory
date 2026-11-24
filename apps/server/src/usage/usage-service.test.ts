@@ -1,6 +1,7 @@
 import type { Totals, UsageDays } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { insertAgent, insertTurn } from "../agents/testing/rows.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { UsageService } from "./usage-service.ts";
 
@@ -200,6 +201,7 @@ const scopeOf = (id: string) =>
 
 beforeAll(async () => {
   t = await createTestDb();
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
   for (const a of AGENTS)
     await insertAgent(t.sql, {

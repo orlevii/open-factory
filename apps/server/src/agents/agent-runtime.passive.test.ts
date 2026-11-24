@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
@@ -6,7 +7,7 @@ import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
-import { noForward, noopTokens, sendAs } from "./testing/runtime-harness.ts";
+import { noForward, noopTokens, sendAs, testEffective } from "./testing/runtime-harness.ts";
 import { unlimitedSlots } from "./testing/unlimited-slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -15,6 +16,7 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -52,6 +54,8 @@ async function make(o: { spawned?: boolean } = {}) {
       runtime: "local",
       permissionMode: "auto",
       mounts: [],
+      effective: testEffective(),
+      plugins: [],
     }),
     log: { debug() {}, info() {}, warn() {}, error() {} },
     slots: unlimitedSlots,

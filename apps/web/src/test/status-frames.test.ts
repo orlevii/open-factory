@@ -19,6 +19,7 @@ const frame = (agent: string, status: Frame["status"], over: Partial<Frame> = {}
   turnOpen: status === "working",
   restartPending: false,
   restartWaitingOn: 0,
+  restartChanges: [],
   ...over,
 });
 
@@ -167,6 +168,7 @@ test("restartPending and restartWaitingOn fold into the list and the detail", ()
   expect(qc.getQueryData<{ agent: AgentSummary }>(["agent", "ada"])?.agent).toMatchObject({
     restartPending: true,
     restartWaitingOn: 2,
+    restartChanges: [],
   });
 });
 

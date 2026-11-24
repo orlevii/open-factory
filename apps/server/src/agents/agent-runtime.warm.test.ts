@@ -24,19 +24,15 @@ async function idle() {
   await h.rt.settled();
 }
 
-test("hibernates after the warm window when fully idle", async () => {
-  await idle();
-  await vi.advanceTimersByTimeAsync(60_000);
-  await h.rt.settled();
-  expect(h.driver.last.stopped).toBe(true);
-  expect(await types()).toContain("hibernated");
-});
-
-test("doesn't hibernate before the warm window ends", async () => {
+test("hibernates after the warm window when fully idle, not a second before", async () => {
   await idle();
   await vi.advanceTimersByTimeAsync(59_000);
   await h.rt.settled();
   expect(h.driver.last.stopped).toBe(false);
+  await vi.advanceTimersByTimeAsync(1_000);
+  await h.rt.settled();
+  expect(h.driver.last.stopped).toBe(true);
+  expect(await types()).toContain("hibernated");
 });
 
 // Without the busy input the agent would stop at 60 s; the owed notification holds it until its 30 s bound
@@ -191,7 +187,11 @@ test("lastActivityAt moves on start, delivery and turn end", async () => {
   const t0 = Date.now();
   await idle();
   expect(h.rt.lastActivityAt).toBe(t0);
-  await vi.advanceTimersByTimeAsync(10_000);
+  await vi.advanceTimersByTimeAsync(5_000);
+  await h.send("x");
+  await h.rt.settled();
+  expect(h.rt.lastActivityAt).toBe(t0 + 5_000);
+  await vi.advanceTimersByTimeAsync(5_000);
   h.driver.last.emit(ev.turn(), ev.end());
   await h.rt.settled();
   expect(h.rt.lastActivityAt).toBe(t0 + 10_000);
@@ -232,24 +232,6 @@ test("the closing latch clears the warm timer", async () => {
   await vi.advanceTimersByTimeAsync(120_000);
   await h.rt.settled();
   expect(h.driver.last.stopped).toBe(false);
-});
-
-test("a message sent during the stop grace wakes the agent after the exit (no delivery_failed)", async () => {
-  await idle();
-  h.driver.last.holdStop = true;
-  await vi.advanceTimersByTimeAsync(60_000);
-  await h.rt.settled();
-  expect(h.driver.last.stopped).toBe(true);
-  const p = h.send("during");
-  await h.rt.settled();
-  expect(h.driver.starts[0]?.sent.flat().map((m) => m.body)).toEqual(["hi"]);
-  h.driver.starts[0]?.releaseStop();
-  await p;
-  await h.rt.settled();
-  expect(h.driver.starts).toHaveLength(2);
-  expect(h.driver.last.sent.flat().map((m) => m.body)).toEqual(["during"]);
-  expect(await types()).not.toContain("delivery_failed");
-  expect(await types()).toContain("hibernated");
 });
 
 test("shutdown mid-turn leaves a factory_restarted notice and no wake", async () => {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../../agents/testing/fake-driver.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import { makeTestApp, signUp } from "../../test/helpers.ts";
+import { asRunning } from "../../test/running.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
@@ -41,22 +42,14 @@ const names = async (who: string) =>
     .map((t) => t.name)
     .sort();
 
-test("every agent lists the five task tools; a spawner has two more", async () => {
-  // S9: persistent agents also list the three schedule tools.
-  const base = [
-    "cancel_schedule",
-    "comment_task",
-    "create_task",
-    "get_task",
-    "list_peers",
-    "list_schedules",
-    "list_tasks",
-    "schedule_message",
-    "send_message",
-    "update_task",
-  ];
-  expect(await names("qa")).toEqual(base);
-  await h.sql`update agents set config = jsonb_set(jsonb_set(config, '{canSpawn}', '["x"]'), '{maxLiveSpawns}', '3') where slug = 'lead'`;
+test("a spawner lists the spawn tools only while its process runs with them", async () => {
+  const base = await names("qa"); // the full base list is asserted in app.test.ts
+  // I2 §6.2: the spawn tools follow the config the running process started with.
+  await h.sql`update agents set config = '{"template":{"can_spawn":["test"],"max_live_spawns":3}}'::jsonb where slug = 'lead'`;
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!lead) throw new Error("no lead");
+  expect(await names("lead")).toEqual(base);
+  await asRunning(h.app, lead);
   expect(await names("lead")).toEqual([...base, "spawn_agent", "terminate_agent"].sort());
 });
 
@@ -102,6 +95,29 @@ test("update_task: null unassigns, a no-op reports changed [], an unrelated agen
   );
 });
 
+test("comment_task: @humans is not reached, with the reason said in a sentence", async () => {
+  await call("lead", "create_task", { title: "Plan", assignee: "dev" });
+  const r = await call("dev", "comment_task", { id: "T-1", body: "@humans please look" });
+  expect(r.err).toBe(false);
+  expect(r.json).toMatchObject({ mentioned_humans: [], delivered_to: [] });
+  expect(r.json.not_reached).toEqual([
+    {
+      name: "humans",
+      reason: "reserved",
+      detail: "`@humans` isn't a handle. Mention people by handle; list_peers lists them.",
+    },
+  ]);
+  const g = await call("dev", "comment_task", { id: "T-1", body: "@ghost look" });
+  expect(g.json.not_reached).toEqual([
+    { name: "ghost", reason: "unknown", detail: "No agent or user named '@ghost'." },
+  ]);
+  const d = await mcpCall(url, tok.dev as string, "tools/list", {});
+  const tool = (d.json.result.tools as { name: string; description: string }[]).find(
+    (x) => x.name === "comment_task",
+  );
+  expect(tool?.description).not.toContain("@humans");
+});
+
 test("list_tasks: defaults, filters and the more note", async () => {
   await call("lead", "create_task", { title: "A", assignee: "dev" });
   await call("lead", "create_task", { title: "B" });
@@ -118,6 +134,9 @@ test("list_tasks: defaults, filters and the more note", async () => {
   expect(await keys("qa", { created_by: "lead" })).toEqual(["T-1"]);
   const cut = await call("qa", "list_tasks", { limit: 1 });
   expect(cut.json.more).toBe(true);
+  expect(cut.json.note).toBe(
+    "Showing the 1 most recently updated; pass a larger limit (max 200) or narrow the filter.",
+  );
   expect((await call("qa", "list_tasks", {})).json).toMatchObject({ more: false });
 });
 
@@ -169,13 +188,4 @@ test("dependencies and links come back through get_task", async () => {
   expect((await call("qa", "get_task", { id: "1" })).json.blocks).toEqual([
     { key: "T-2", title: "Two", status: "open" },
   ]);
-});
-
-test("list_tasks carries the more note whenever it is cut, naming the limit", async () => {
-  for (const t of ["a", "b", "c"]) await call("lead", "create_task", { title: t });
-  const cut = await call("qa", "list_tasks", { limit: 2 });
-  expect(cut.json.more).toBe(true);
-  expect(cut.json.note).toBe(
-    "Showing the 2 most recently updated; pass a larger limit (max 200) or narrow the filter.",
-  );
 });

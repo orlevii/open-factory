@@ -78,7 +78,6 @@ test("SVG, HTML, HEIC, UTF-16, PDF, binary and invalid UTF-8 are refused with 41
 
 test("over 8000 px a side or 50 MP is 422, read from the header only", () => {
   expect(sniffType(png(30000, 30000))).toEqual({ status: 422, reason: IMAGE_TOO_LARGE });
-  expect(IMAGE_TOO_LARGE).toBe("Image is too large (max 8000 px a side).");
   expect(sniffType(png(8001, 10))).toMatchObject({ status: 422 });
   expect(sniffType(png(8000, 8000))).toMatchObject({ status: 422 }); // 64 MP
   expect(sniffType(png(8000, 6000))).toMatchObject({ kind: "image" }); // 48 MP

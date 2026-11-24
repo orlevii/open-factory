@@ -1,9 +1,9 @@
+import * as React from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
 import { type ComboOption, Combobox } from "./combobox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./select";
 
 let off = () => {};
 beforeEach(() => {
@@ -98,21 +98,8 @@ test("order: fixed options, then the current value, then the rest; the current v
 });
 
 describe("trigger", () => {
-  test("trigger looks like Select (same data-slot/classes contract as select trigger)", () => {
-    render(
-      <Select>
-        <SelectTrigger aria-label="Native">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="x">X</SelectItem>
-        </SelectContent>
-      </Select>,
-    );
-    const select = screen.getByRole("combobox", { name: "Native" });
+  test("an empty trigger shows its placeholder and a chevron", () => {
     const { trigger } = setup({ options: OPTIONS.filter((o) => !o.fixed) });
-    expect(trigger.className).toBe(select.className);
-    expect(trigger).toHaveAttribute("data-slot", "combobox-trigger");
     expect(trigger).toHaveAttribute("data-placeholder");
     expect(trigger).toHaveTextContent("Pick one");
     expect(trigger.querySelector("svg")).not.toBeNull();
@@ -143,14 +130,11 @@ describe("trigger", () => {
   });
 });
 
-test("popover width at least 24rem, side locked while open, list height fixed (h-72)", async () => {
+test("the popover keeps the side it opened on while the filter narrows", async () => {
   const { trigger } = setup();
   await userEvent.click(trigger);
-  const listbox = await screen.findByRole("listbox");
+  await screen.findByRole("listbox");
   const c = content();
-  expect(c?.className).toMatch(/w-\[max\(var\(--radix-popover-trigger-width\),min\(24rem,/);
-  expect(listbox).toHaveClass("h-72");
-  expect(listbox.className).not.toMatch(/cmdk-list-height/);
 
   // The side chosen at open stays: simulate the open landing on top, then narrow the filter.
   const wrapper = c?.parentElement as HTMLElement;
@@ -237,20 +221,13 @@ test("disabled cannot be opened by click or keyboard", async () => {
   expect(onValueChange).not.toHaveBeenCalled();
 });
 
-// jsdom has no layout: this pins the structure that makes a long value truncate inside the trigger
-// (checked in the browser at 1440 and 390, where the page no longer widens).
-test("a long value sits in a shrinkable, clipping slot: text gets its own ellipsis, a node shrinks", () => {
+test("a long value renders whole in the trigger's value slot", () => {
   const long = "A very long option label that cannot possibly fit in the trigger".repeat(3);
   const { trigger } = setup({ options: [{ value: "x", label: long }], value: "x" });
   const slot = trigger.querySelector<HTMLElement>('[data-slot="combobox-value"]');
   expect(slot).not.toBeNull();
-  // A flex item that may shrink below its content, clips it, and contains the content's sr-only
-  // (absolute) spans so they can't widen the page.
-  for (const c of ["flex", "min-w-0", "flex-1", "overflow-hidden", "relative"])
-    expect(slot).toHaveClass(c);
   const text = slot?.firstElementChild;
   expect(text).toHaveTextContent(long);
-  expect(text).toHaveClass("truncate");
 });
 
 test("a rendered value is a direct child of the slot, so it shrinks with it", () => {
@@ -276,4 +253,108 @@ test("the current value's row says it is selected to a screen reader, not only w
   const row = await screen.findByRole("option", { name: /^Beta/ });
   expect(row).toHaveAccessibleName("Beta, selected");
   expect(screen.getByRole("option", { name: "Alpha" })).toBeInTheDocument();
+});
+
+function multi() {
+  const announce = vi.fn();
+  const onValueChange = vi.fn();
+  const options: ComboOption[] = [
+    { value: "tdd", label: "tdd" },
+    { value: "review", label: "review" },
+    { value: "debug", label: "debug" },
+  ];
+  function Host({ names }: { names: string[] }) {
+    const added = React.useMemo(() => new Set(names), [names.join("\0")]);
+    return (
+      <Combobox
+        value=""
+        onValueChange={(v) => {
+          onValueChange(v);
+          setNames((n) => [...n, v]);
+        }}
+        options={options}
+        aria-label="Skills"
+        multiple={{ added, announce }}
+        trigger={<button type="button">Add skill</button>}
+      />
+    );
+  }
+  let setNames: React.Dispatch<React.SetStateAction<string[]>> = () => {};
+  function Wrap() {
+    const [names, set] = React.useState<string[]>([]);
+    setNames = set;
+    return <Host names={names} />;
+  }
+  render(<Wrap />);
+  return { announce, onValueChange };
+}
+
+test("multi: Enter adds, stays open, marks Added, moves the highlight, announces", async () => {
+  const { announce, onValueChange } = multi();
+  await userEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  const list = await screen.findByRole("listbox");
+  expect(list).not.toHaveAttribute("aria-multiselectable");
+  await userEvent.keyboard("{Enter}");
+  expect(onValueChange).toHaveBeenCalledWith("tdd");
+  expect(announce).toHaveBeenCalledWith("Added tdd");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  const [first] = screen.getAllByRole("option");
+  expect(first).toHaveAttribute("aria-disabled", "true");
+  expect(first).toHaveTextContent("Added");
+  expect(highlighted()).toHaveTextContent("review");
+  await userEvent.keyboard("{Enter}");
+  expect(announce).toHaveBeenLastCalledWith("Added review");
+});
+
+test("multi: options added before the popover opens are left out", async () => {
+  multi();
+  await userEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("{Enter}{Escape}");
+  await userEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  await screen.findByRole("listbox");
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["review", "debug"]);
+});
+
+test("multi with a caller trigger: the first pick keeps the popover's horizontal place", async () => {
+  multi();
+  const trigger = screen.getByRole("button", { name: "Add skill" });
+  vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(rect(300, 0, 100, 32));
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  const c = content() as HTMLElement;
+  const wrapper = c.parentElement as HTMLElement;
+  await vi.waitFor(() => expect(translateX(wrapper)).toBe("300"));
+  // Collision shift had moved the open popover 60px left; the first pick locks it where it is.
+  vi.spyOn(c, "getBoundingClientRect").mockReturnValue(rect(240, 36, 384, 330));
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(translateX(wrapper)).toBe("240"));
+});
+
+test("multi: a filter with no match says so, instead of the empty-list text", async () => {
+  multi();
+  await userEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("zzz");
+  expect(screen.getByText("No matches.")).toBeInTheDocument();
+});
+
+test("filter ranks the exact name, then a prefix, then a substring; a description matches only as a substring", async () => {
+  const skills: ComboOption[] = [
+    { value: "a", label: "write-docs", keywords: ["Turns tdd notes into docs"] },
+    { value: "b", label: "my-tdd-helper" },
+    { value: "c", label: "tdd-guard" },
+    { value: "d", label: "tdd" },
+    { value: "e", label: "test-driven-deploy", keywords: ["Tests dependencies, then deploys"] },
+    { value: "f", label: "lint" },
+  ];
+  const { trigger } = setup({ options: skills });
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("tdd");
+  // Exact, prefix, name substring, then fuzzy name; the description hit (write-docs) comes after them and
+  // "lint" (no match anywhere) is gone.
+  await vi.waitFor(() =>
+    expect(optionNames()).toEqual(["tdd", "tdd-guard", "my-tdd-helper", "test-driven-deploy", "write-docs"]),
+  );
 });

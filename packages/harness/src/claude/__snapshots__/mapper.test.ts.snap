@@ -1,99 +1,99 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`persisted events stay the same > ancestor-agents-md-loads 1`] = `"6 b462ea956d4f08570194db77428176d5299949a171e10c9cdf9b4a9ea14ae733"`;
+exports[`persisted events stay the same > ancestor-agents-md-loads 1`] = `"6 8049a4792542f7090c01f6ad2f3cfebb8fe57735233bb3f72e2f14b8263af7d6"`;
 
-exports[`persisted events stay the same > ancestor-claude-md-suppresses-agents-md 1`] = `"6 5054107fb65fbbb650ad21f65b4108d9ceaf1f3d266156e883b25a73ab69438c"`;
+exports[`persisted events stay the same > ancestor-claude-md-suppresses-agents-md 1`] = `"6 e39311a4b12ad4d8f947701ff92744d3b1f7a96049b35ec235f3b1e62c415e04"`;
 
-exports[`persisted events stay the same > auto-compaction 1`] = `"32 03edf4e291ff72eefbb42f99c534b8bfbfc2040b10b3f57e7ca2a8e709771895"`;
+exports[`persisted events stay the same > auto-compaction 1`] = `"32 a3603d7ad39aaa407a3cd1f2008b514d4f57792241be834564be9bbd15d5ffe8"`;
 
-exports[`persisted events stay the same > auto-mode-hard-deny-custom 1`] = `"9 5640aa513cd539036dd6cacf3053913a54b29f9be55df28a59084d53214f5933"`;
+exports[`persisted events stay the same > auto-mode-hard-deny-custom 1`] = `"9 9ca01a3e4172c79702931899c4cf0a61f58a1c1c638b82834cfc14bf8cad356a"`;
 
-exports[`persisted events stay the same > background-bash-start-finish 1`] = `"16 d47ed62448b50790f8b1ca1de468c9778fc9114026545b4a2af003b920491a8c"`;
+exports[`persisted events stay the same > background-bash-start-finish 1`] = `"16 79e818a2055e5cae1242cfe060fe32da9f908fc8d47b613d58b120b60ddedc46"`;
 
-exports[`persisted events stay the same > background-monitor-keeps-process-alive 1`] = `"36 5aa1773562148a1e72322572f6aa2de78f906c95b8080394455822379154e9ab"`;
+exports[`persisted events stay the same > background-monitor-keeps-process-alive 1`] = `"36 7be954351884f109e69342a966964ec43b1b8339cc1e473cc67bcfd0afd3865a"`;
 
-exports[`persisted events stay the same > background-sigkill 1`] = `"20 27627f7679564e3572194ebbe7b3c41db68265ec0f6b6978c626cea5a96e44d2"`;
+exports[`persisted events stay the same > background-sigkill 1`] = `"20 e2f57c8089a1cd4f7e002763582ff3b8ae112ea5c12a87191b3b6cfac56fcb25"`;
 
-exports[`persisted events stay the same > background-sigterm 1`] = `"24 0dc6e50899636d83aca569ca1fec85fdb6fc93f6b0329ee7b1e4557d582c53cf"`;
+exports[`persisted events stay the same > background-sigterm 1`] = `"24 035db5fc91c59a8e88dd4717f754ae2e791ef5a4d1d15ec5623244ce48b6db1f"`;
 
-exports[`persisted events stay the same > background-stdin-closed-drains 1`] = `"16 71349191d2efef03bc585924d65d396b08974e04c0e9c61e50ec86fd46e21bdd"`;
+exports[`persisted events stay the same > background-stdin-closed-drains 1`] = `"16 45669f271a6c4ed2a1a98c3a45fb4601f737e29e213f2fe37c00bb468a5752c1"`;
 
-exports[`persisted events stay the same > background-subagent-stdin-closed 1`] = `"31 99f376a3731efafe0796f756980bd6d4bfeaed98ad979cb91cdce03a47bcc1f7"`;
+exports[`persisted events stay the same > background-subagent-stdin-closed 1`] = `"31 3469d2f81be4b1c33404c5dff4a6c96ee87eb40c6ce0766c9e7c0f46c5496955"`;
 
-exports[`persisted events stay the same > claude-md-excludes-ancestors 1`] = `"8 c35676630a17b5d8dfbcbb3e013339a46d3ea36a81fb38f6488ece6120fef39c"`;
+exports[`persisted events stay the same > claude-md-excludes-ancestors 1`] = `"8 d92f605ccb2d67d7d6e49f0730ed53c89c56d7f8a373151e50a7e7ac9ade0380"`;
 
-exports[`persisted events stay the same > config-dir-pickup 1`] = `"17 68d0516d34cede511082f8e3b6c6fea8072afed6fd19c278f1c8892cffa95f92"`;
+exports[`persisted events stay the same > config-dir-pickup 1`] = `"17 9d9913ae051e98334ee112fd67a19fa4e92179200f94506b5fe36113fd6edcfc"`;
 
-exports[`persisted events stay the same > cron-create-fire-delete 1`] = `"24 20f4367faa8461cce44518f8615cdb520474ce0c01de7fc9099d8bce121fa32e"`;
+exports[`persisted events stay the same > cron-create-fire-delete 1`] = `"24 a1cb3027534cc04d5153ab44b92ea9aa7ae725f1c0b5466f81a13c0a7312658d"`;
 
-exports[`persisted events stay the same > cron-oneshot 1`] = `"23 fc7a28fa4de949d7e38e969a55a0b04a216040bc39edaca8ebbb0e84e3884c38"`;
+exports[`persisted events stay the same > cron-oneshot 1`] = `"23 25335c401539510522aea86bad86ae921dfe424853229031839066f3d9cf63f1"`;
 
-exports[`persisted events stay the same > docker-config-dir-pickup-marketplace-unmounted 1`] = `"15 e9ce52f040fc5a13c88b2f466a3552b43f0e18d4eb6e18716b554666fa26e3d3"`;
+exports[`persisted events stay the same > docker-config-dir-pickup-marketplace-unmounted 1`] = `"15 754283fcc4b42b110fd040e2b2f22d45aa216181880940aeb3ea11f9acb0ff57"`;
 
-exports[`persisted events stay the same > docker-exec-resume-orphans 1`] = `"13 2b1a4669e82cbb157b7d5122e5e6695125eeda07c68dd7bf68f6fc6bdc1c944d"`;
+exports[`persisted events stay the same > docker-exec-resume-orphans 1`] = `"13 3845ea8e1a2efaffebf72a47dfdafe30651e7cf4b39020b0c87d5b689b51d972"`;
 
-exports[`persisted events stay the same > docker-exec-sigkill 1`] = `"20 cc5b5441b66d6fcd2b78228d7fbc09894d6d548f27dcd0a2d798b2aaebb23367"`;
+exports[`persisted events stay the same > docker-exec-sigkill 1`] = `"20 63de0a81816f672a9f82c703083e1bfad5a695b1055216cce8b737ee26778a8d"`;
 
-exports[`persisted events stay the same > docker-stop-sigterm 1`] = `"24 50b44b2b8e354f8026ebe5a727e4fa598533f44541d8fd2aaf4685c0e121dca5"`;
+exports[`persisted events stay the same > docker-stop-sigterm 1`] = `"24 1d7a1ba78944839bf70e528b8218058ba178ef8975284621b3e5fc5bd8fd217b"`;
 
-exports[`persisted events stay the same > error-invalid-oauth-token 1`] = `"5 7829a9c59205a78827088f53763aa0342eab60519d6974983af320161fe45872"`;
+exports[`persisted events stay the same > error-invalid-oauth-token 1`] = `"5 4f6983a97d2ee2a051913257f4406e11b887ebe1a5466a497cd7fca95f99ffad"`;
 
-exports[`persisted events stay the same > error-model-not-found 1`] = `"5 e91c5d7b1644c8483e552dc4890d7c903a3733f89f09d3b7a0e3bfc675688401"`;
+exports[`persisted events stay the same > error-model-not-found 1`] = `"5 12a08fbdbb6327e0e873b145aae844b0cf8cf13a885ccfa38a2095fe4d5ee43f"`;
 
-exports[`persisted events stay the same > error-refusal-and-failed-compaction 1`] = `"26 543dc4f8f501b376833230006834239be931aca7216e5d4e0240eed265f1acd5"`;
+exports[`persisted events stay the same > error-refusal-and-failed-compaction 1`] = `"26 04c2943e3c8cc5ac8ca03de1c6d3b536f16e72b9b7933c92d09fae40080cd3fa"`;
 
 exports[`persisted events stay the same > error-resume-missing-session 1`] = `"1 72e5481c2d5a82d059e252d7918e6a13c53eff50e8572b8c1c13f348de6c605a"`;
 
-exports[`persisted events stay the same > factory-mcp-and-project-symlink-edits 1`] = `"27 238e78faede11cc73eb5b48cc44477f63045f2a475f861c438e2706a42d25e58"`;
+exports[`persisted events stay the same > factory-mcp-and-project-symlink-edits 1`] = `"27 2752f94d812829efdad1eef51dcf74f5a144184a718963235bae84671c4b4b1f"`;
 
-exports[`persisted events stay the same > interrupt-then-message 1`] = `"11 460cf852d9cd100de5f1b83fef4a644f0fff048fa6af720a6f22e8b56ba0b25d"`;
+exports[`persisted events stay the same > interrupt-then-message 1`] = `"11 6fc64ca5d976cdcc386f53b143e227fa294f5244b2ebe47efaecdd8957098b3c"`;
 
-exports[`persisted events stay the same > interrupt-while-idle 1`] = `"10 2ba633a0e6fdefaca4946c73ec8ee313025dacc36f9e7156e12d908e2e35c7b0"`;
+exports[`persisted events stay the same > interrupt-while-idle 1`] = `"10 4b62de568ecdde72b1dffe48910604dcdbf8675db6f881ffe5d5c07bc0c8a7b6"`;
 
-exports[`persisted events stay the same > interrupt-with-queued-message 1`] = `"11 a2ebb3c80b351ad9bc8f6d51caf0f21e643a6343c4a0c0e7f5715f429e27cba2"`;
+exports[`persisted events stay the same > interrupt-with-queued-message 1`] = `"11 bd7268d9be227ad3a743ebb1de295e1e34137119c7137b0dae53340765dc710c"`;
 
-exports[`persisted events stay the same > manual-compact 1`] = `"14 07c8b8008417fb7c305fe4a791c30ed97f463b7286e7116e3ef7d785a59e644a"`;
+exports[`persisted events stay the same > manual-compact 1`] = `"14 3be75bae6467d0cbfa2e2d670fdc9fd1f7054d9ab2a532b60e38401f4f4dc48e"`;
 
-exports[`persisted events stay the same > mcp-http-env-header 1`] = `"10 e81c639e5cd3115e35f551d18bbd2894d42bf638c7ede1fc7aedf7665b3f602e"`;
+exports[`persisted events stay the same > mcp-http-env-header 1`] = `"10 563a2a91db9d99593c321285cb10ef4b357dbfe50d17bf021f6a58613bf947e8"`;
 
-exports[`persisted events stay the same > mcp-plugin-and-project 1`] = `"6 ebc9ffc761bf51c78484dc832be9acf84da6a84af9e38b76184a471eca876300"`;
+exports[`persisted events stay the same > mcp-plugin-and-project 1`] = `"6 67b921a15c7fc931e138e6f5cf28fc5d95e62dc6de3798e4cb547d03ecdbf518"`;
 
-exports[`persisted events stay the same > mcp-project-without-enable-all 1`] = `"10 18734f62bd5ef68aed22e75ecc2a0e5b3ac1cc2484690eef627e5a304dba9c55"`;
+exports[`persisted events stay the same > mcp-project-without-enable-all 1`] = `"10 c70fdaeb4c2990417b675658d2c3fd15d6a6ee9c438e6b1126c05aa6877710a3"`;
 
-exports[`persisted events stay the same > mcp-strict-drops-plugin-servers 1`] = `"6 556996f5ae2e8f3126071962223372f1eab32869a4481f3486d0a5e7426b9501"`;
+exports[`persisted events stay the same > mcp-strict-drops-plugin-servers 1`] = `"6 34436222b829ed989fe2816621ddb9b1fc44a893044b8dfac37666844fd2489d"`;
 
-exports[`persisted events stay the same > midturn-messages-absorbed 1`] = `"8 aa65b4ecc66bdb70e325f2e4ee527c6d71c09c45c16b86a1290031f766ced9fa"`;
+exports[`persisted events stay the same > midturn-messages-absorbed 1`] = `"8 b5dd3943b0af6913612ed5ec99218c96baf2175a1ce097060d33ef9186dcd9bd"`;
 
-exports[`persisted events stay the same > permission-denied 1`] = `"9 194b4f380918b0e4c9a1e338ad25949e0f058b6971b63b7759a5ff322bacc69f"`;
+exports[`persisted events stay the same > permission-denied 1`] = `"9 f3d3eb1a622b3eaffd0b8830be89ed2845656084ed19d330fbb5523353f405d0"`;
 
-exports[`persisted events stay the same > permission-denied-oauth-token 1`] = `"9 b6ceb3321f4fee08001c79c0b3bc23e9a7fa5f30a77236f3a0bebd9d86d1b848"`;
+exports[`persisted events stay the same > permission-denied-oauth-token 1`] = `"9 3a801bc5a8c83a9a5ac673f1368452625f1fa1b7bc74c55bb1f26653586c5d12"`;
 
-exports[`persisted events stay the same > permission-deny-rules 1`] = `"12 90580b28b6551fa003671a262bdbd6c96e0d9fbb8e471539281ad2309ecb3311"`;
+exports[`persisted events stay the same > permission-deny-rules 1`] = `"12 09161626622ba9a467bfe631e6229aa20d53356ca563b2819eba2fd29cf6b06e"`;
 
-exports[`persisted events stay the same > permission-mode-flag-overrides-dontask 1`] = `"8 42b3275eb5f7f99fcabad3227d21365371f4fb6f92c8c962aebd3b430dfd26c6"`;
+exports[`persisted events stay the same > permission-mode-flag-overrides-dontask 1`] = `"8 1ee2a829441567c5c39ddadb23e3ba17e0b2b3a35e088a40c1f5191245e1ed3b"`;
 
-exports[`persisted events stay the same > project-edits-with-additional-directories 1`] = `"12 aae7e513fba9e173ab54111a1322d2757e81d97ea56d5d4daa2b0367e21ad17e"`;
+exports[`persisted events stay the same > project-edits-with-additional-directories 1`] = `"12 1bee5001fc7bff821fbd7ca3b9904de0f5ab3978df1d9287ce258efde379a1dc"`;
 
-exports[`persisted events stay the same > rate-limit-event-allowed 1`] = `"6 4617e8057ecaaccd6b480e5d1820a49bad24e5059c833447271ccf57d11a9e18"`;
+exports[`persisted events stay the same > rate-limit-event-allowed 1`] = `"6 ec3e18c5143a7220f80eebd9d4aa20bb1d83eb75d9f25fbaea12f69fce76bc85"`;
 
-exports[`persisted events stay the same > rate-limit-event-rejected 1`] = `"8 bf8899fdb83fc40192a871d11f7794fdb33406d867f3bee123459a4dd1ae247c"`;
+exports[`persisted events stay the same > rate-limit-event-rejected 1`] = `"8 a13a6766bb5c8c9c860ea6097262d68815d6f136b8a762afea4caaa2b882978c"`;
 
-exports[`persisted events stay the same > resume-after-sigkill-orphans 1`] = `"13 63b04fe73b8a306ac4054be23e5a3c4ccd329cc08f43d3a350273bb6cd00fcfb"`;
+exports[`persisted events stay the same > resume-after-sigkill-orphans 1`] = `"13 540b5cfc3bb4bee4619d4afad865a49172cfab541f78bddd5ce2bb29e84f85a4"`;
 
-exports[`persisted events stay the same > session-state-changed-background 1`] = `"16 fe6939e3b83271ed34f301284ceab984a72871c2a5d222ca8c43a5eb174f5c1f"`;
+exports[`persisted events stay the same > session-state-changed-background 1`] = `"16 1ad153e72bac5f96c989ef7c8537059d465d0ed200f2e488b689ece8e964e1c3"`;
 
-exports[`persisted events stay the same > u3/attach-file-path 1`] = `"14 53b71ade3f302eb8fdfe67ee057c5e5c14cab85536ab02de38fe6dac05fe836c"`;
+exports[`persisted events stay the same > u3/attach-file-path 1`] = `"14 eae5e0d35c6f20ee6601004737fac3b0eb4a424891cb9b78eb20f4e0f105cfe9"`;
 
 exports[`persisted events stay the same > u3/control-initialize-commands 1`] = `"0 4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"`;
 
-exports[`persisted events stay the same > u3/partial-interrupt-mid-text 1`] = `"10 8be8ec2237448a450361ce23806f85c7401befefa46692ecdee807219952168a"`;
+exports[`persisted events stay the same > u3/partial-interrupt-mid-text 1`] = `"10 ee5090af80ac53f79edc732fa05f6d32ef2299d882e40329a72096894e57dd7c"`;
 
-exports[`persisted events stay the same > u3/partial-subagent 1`] = `"17 9455666c308d4d644fc4b4e5674e85d3e5b5f926fe86c20861c50f70ef67a101"`;
+exports[`persisted events stay the same > u3/partial-subagent 1`] = `"17 36f17a78fe81a23864f85a95b984c4030688156a67ee89056db477bf1091ffe3"`;
 
-exports[`persisted events stay the same > u3/partial-text-and-write 1`] = `"10 267278cd17bf3bd7a94032774e00bcf7a1a7c12dad67be6badb97a5120e03787"`;
+exports[`persisted events stay the same > u3/partial-text-and-write 1`] = `"10 c240c4c20c38bfb4d4851e3402d9be585932d8833c3095ae0032636ab140033f"`;
 
-exports[`persisted events stay the same > u3/partial-thinking-summaries-forward-subagent 1`] = `"13 8f27e80d6c59a28d91bce6930a74bd8af8fe16a3552107b6e5953c94a310ebc4"`;
+exports[`persisted events stay the same > u3/partial-thinking-summaries-forward-subagent 1`] = `"13 f49328f210b8e2ad5c93128b31afcec79c4179a8aa563191e77899eae6bf3359"`;
 
-exports[`persisted events stay the same > u3/slash-local-commands 1`] = `"13 4cec90f5fbf183f3b90bf0d8eb29e1c76ffa9dcd3aca95d7351082750eb6117b"`;
+exports[`persisted events stay the same > u3/slash-local-commands 1`] = `"13 ebae2bb253162a81813a0fa7c6885c5ac468c5765de852a05dc18bb4942ca145"`;
 
-exports[`persisted events stay the same > user-message-priority-now 1`] = `"11 10472a94fc2c4f3766ec6b963fc752d1f5be6f416dc74a0645ad33f76f793d2e"`;
+exports[`persisted events stay the same > user-message-priority-now 1`] = `"11 7604ac68532160b9f75c656ffc959baf1efaf005b01b9bab35e0506d84ac52f1"`;

@@ -42,8 +42,8 @@ export const messageAttachmentSchema = z.object({
   uploadId: z.string(),
   name: z.string(),
   kind: z.enum(["image", "text"]),
-  /** The file's size: the UI previews an image automatically only when it is small (absent on older rows). */
-  bytes: z.number().int().nonnegative().optional(),
+  /** The file's size: the UI previews an image automatically only when it is small. */
+  bytes: z.number().int().nonnegative(),
   width: z.number().int().positive().optional(),
   height: z.number().int().positive().optional(),
 });
@@ -52,7 +52,9 @@ export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
 export const envelopeSchema = z.object({
   id: z.string(),
   from: z.string(),
+  fromKind: z.enum(["human", "agent", "factory"]),
   kind: z.enum(MESSAGE_KINDS),
+  to: z.array(z.string()).optional(),
   urgent: z.boolean(),
   body: z.string(),
   taskKey: z.string().optional(),
@@ -61,12 +63,14 @@ export const envelopeSchema = z.object({
   /** S9 `scheduled` rows: the schedule's key, its author, when it was due (zone offset), runs covered, delayed. */
   scheduleKey: z.string().optional(),
   by: z.string().optional(),
+  /** UI-only: what `by` is (a human or an agent). Never rendered into the model's text. */
+  byKind: z.enum(["human", "agent"]).optional(),
   due: z.string().optional(),
   firings: z.number().int().positive().optional(),
   late: z.boolean().optional(),
   ids: z.array(z.string()).optional(),
   about: z.string().optional(),
-  parts: z.array(z.object({ id: z.string(), body: z.string(), createdAt: z.string() })).optional(),
+  parts: z.array(z.object({ id: z.string(), body: z.string(), createdAt: z.string() })),
   fact: z.string().optional(),
   subject: subjectSchema.optional(),
   /** UI-only: the sender's optimistic-row id. Never rendered into the model's text. */
@@ -76,7 +80,8 @@ export const envelopeSchema = z.object({
 });
 export type Envelope = z.infer<typeof envelopeSchema>;
 
-export const INBOX_KINDS = ["message", "mention", "task_event"] as const;
+/** `notice` is a factory notice (an agent errored, ...); `credential` is a factory fact about a credential; a chat message is the Chat's, never an item (I1 §6.7). */
+export const INBOX_KINDS = ["notice", "mention", "task_event", "credential"] as const;
 export const inboxItemSchema = z.object({
   id: z.string(),
   messageId: z.string(),
@@ -92,6 +97,10 @@ export const inboxItemSchema = z.object({
   task: z.object({ key: z.string(), title: z.string() }).optional(),
   /** A task event's notice, so the UI never parses the preview. */
   fact: z.enum(["done", "cancelled"]).optional(),
+  /** The credential a `credential` item is about. */
+  credential: z
+    .object({ name: z.string(), expiresAt: z.string().nullable(), current: z.boolean() })
+    .optional(),
   link: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("session"),
@@ -99,13 +108,10 @@ export const inboxItemSchema = z.object({
       seq: z.number().int().optional(),
     }),
     z.object({ kind: z.literal("task"), key: z.string(), commentId: z.string().optional() }),
+    z.object({ kind: z.literal("credential"), name: z.string() }),
   ]),
 });
 export type InboxItem = z.infer<typeof inboxItemSchema>;
-export const inboxPageSchema = z.object({
-  items: z.array(inboxItemSchema),
-  nextCursor: z.string().nullable(),
-});
 export const inboxItemResponseSchema = z.object({ item: inboxItemSchema });
 export const readAllBodySchema = z.object({ upTo: z.string().min(1) });
 export const undoReadAllBodySchema = z.object({ readAt: z.string().min(1) });
@@ -122,6 +128,7 @@ export const messageLookupSchema = z.object({
   id: z.string(),
   kind: z.enum(MESSAGE_KINDS),
   from: z.string(),
+  fromKind: z.enum(["human", "agent", "factory"]),
   to: z.string(),
   state: z.enum(["pending", "delivered", "rejected", "cancelled"]),
   recipientEvent: eventRefSchema.optional(),

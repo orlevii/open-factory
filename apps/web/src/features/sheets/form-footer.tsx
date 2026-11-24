@@ -1,5 +1,5 @@
 import { type ReactNode, useId } from "react";
-import { FormOutcome, type Outcome } from "@/components/forms/form-outcome";
+import { FormOutcome, type Outcome, showsNotice } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
 import { SheetClose, SheetFooter, useSheetMobile } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -15,6 +15,7 @@ export function SheetFormFooter({
   left,
   submitClassName,
   outcome,
+  hideSubmit,
 }: {
   submitLabel: string;
   pendingLabel: string;
@@ -26,6 +27,8 @@ export function SheetFormFooter({
   submitClassName?: string;
   /** The reserved line above the buttons: errors, success and a muted notice that describes the submit button. */
   outcome: Outcome;
+  /** No primary at all, for a step the user can't take (DESIGN.md: never a dead primary). */
+  hideSubmit?: boolean;
 }) {
   const noticeId = useId();
   const mobile = useSheetMobile();
@@ -60,17 +63,17 @@ export function SheetFormFooter({
   );
   const close = (
     <SheetClose asChild>
-      <Button type="button" variant="ghost">
+      {/* Closing doesn't count as leaving a field (DESIGN.md Validation). */}
+      <Button type="button" variant="ghost" data-skip-validate>
         Close
       </Button>
     </SheetClose>
   );
-  const showsNotice = Boolean(outcome.notice) && !outcome.error && !outcome.success;
-  const submit = (
+  const submit = hideSubmit ? null : (
     <Button
       type="submit"
       aria-disabled={pending || undefined}
-      aria-describedby={showsNotice ? noticeId : undefined}
+      aria-describedby={showsNotice(outcome) ? noticeId : undefined}
       className={submitClassName}
     >
       {pending && <Spinner />}

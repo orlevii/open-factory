@@ -1,0 +1,203 @@
+/**
+ * The factory-owned plugin settings of one start (spec §7.3 steps 2 and 5), and the two bounded reads of the agent's
+ * plugins dir that feed them (§7.2): `installed_plugins.json` and the installed manifests. Claude Code writes that
+ * dir (and so can the agent), so every read is `lstat`ed, size-capped and kept inside the dir.
+ */
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
+import path from "node:path";
+import { type Pin, PLUGIN_REF_PATTERN } from "@open-factory/shared";
+
+/** Larger than any real manifest or installed list; a bigger file is ignored, not read. */
+const MAX_BYTES = 256 * 1024;
+const MAX_INSTALLED = 500;
+
+/** What a plugin's `plugin.json` says that the factory reads: its name, version and dependencies. */
+export interface PluginManifest {
+  name?: string;
+  version?: string;
+  /** A dependency's own marketplace when the manifest names one; the dependent's own otherwise. */
+  dependencies: { name: string; marketplace?: string; version?: string }[];
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * The parsed JSON of a regular file of at most 256 KB, under `base` (a directory the caller vouches for): every
+ * component from `base` down is `lstat`ed, a directory (a link fails). The file is opened with `O_NOFOLLOW` (and
+ * `O_NONBLOCK`, so a FIFO swapped in can't hang the open), `fstat`ed on the handle and read for at most 256 KB, so
+ * a swap after the check can't change what is read. Undefined for anything else, a big file or a bad one.
+ */
+async function readJsonFile(base: string, ...parts: string[]): Promise<unknown> {
+  try {
+    let at = base;
+    for (const part of parts.slice(0, -1)) {
+      at = path.join(at, part);
+      if (!(await lstat(at)).isDirectory()) return undefined;
+    }
+    const file = path.join(at, parts.at(-1) ?? "");
+    const fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const st = await fh.stat();
+      if (!st.isFile() || st.size > MAX_BYTES) return undefined;
+      const buf = Buffer.alloc(MAX_BYTES + 1);
+      const { bytesRead } = await fh.read(buf, 0, MAX_BYTES + 1, 0);
+      if (bytesRead > MAX_BYTES) return undefined;
+      return JSON.parse(buf.toString("utf8", 0, bytesRead));
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every component of `parts` below `base` is a real directory (`lstat`, so a link fails). */
+async function isPlainDir(base: string, parts: string[]): Promise<boolean> {
+  let at = base;
+  try {
+    for (const part of parts) {
+      at = path.join(at, part);
+      if (!(await lstat(at)).isDirectory()) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const insideOf = (root: string, p: string): boolean => {
+  const rel = path.relative(root, p);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+};
+
+function dependenciesOf(raw: unknown): PluginManifest["dependencies"] {
+  if (!Array.isArray(raw)) return [];
+  const out: PluginManifest["dependencies"] = [];
+  for (const d of raw) {
+    if (typeof d === "string") {
+      const at = d.lastIndexOf("@");
+      if (at > 0) out.push({ name: d.slice(0, at), marketplace: d.slice(at + 1) });
+      else if (d) out.push({ name: d });
+    } else if (isRecord(d) && typeof d.name === "string" && d.name) {
+      out.push({
+        name: d.name,
+        ...(typeof d.marketplace === "string" && d.marketplace
+          ? { marketplace: d.marketplace }
+          : {}),
+        ...(typeof d.version === "string" && d.version ? { version: d.version } : {}),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * `<dir>/.claude-plugin/plugin.json`, read with the caps; `.claude-plugin` must be a real folder, not a link.
+ * Undefined when it is absent or can't be read. The caller vouches for `dir` itself.
+ */
+export async function readManifest(dir: string): Promise<PluginManifest | undefined> {
+  const doc = await readJsonFile(dir, ".claude-plugin", "plugin.json");
+  if (!isRecord(doc)) return undefined;
+  return {
+    ...(typeof doc.name === "string" ? { name: doc.name } : {}),
+    ...(typeof doc.version === "string" ? { version: doc.version } : {}),
+    dependencies: dependenciesOf(doc.dependencies),
+  };
+}
+
+/**
+ * `readManifest` of `<base>/<rel>`, with every component of `rel` below `base` `lstat`ed as a real folder (a link in a
+ * live local marketplace is never followed). `base` itself is the caller's.
+ */
+export async function readManifestUnder(
+  base: string,
+  rel: string,
+): Promise<PluginManifest | undefined> {
+  const parts = rel.split("/").filter((p) => p !== "" && p !== ".");
+  if (!(await isPlainDir(base, parts))) return undefined;
+  return readManifest(path.join(base, ...parts));
+}
+
+/** True when a dependency names a version range (spec §7.4: Claude Code resolves it to the highest matching tag). */
+export const hasRangedDependency = (manifest: PluginManifest | undefined): boolean =>
+  manifest?.dependencies.some((d) => d.version !== undefined) ?? false;
+
+/** The plugin keys a manifest depends on: a dependency with no marketplace lives in the dependent's own. */
+export function dependencyKeys(manifest: PluginManifest, ownMarketplace: string): string[] {
+  return manifest.dependencies.map((d) => `${d.name}@${d.marketplace ?? ownMarketplace}`);
+}
+
+/**
+ * Every plugin the agent's `installed_plugins.json` lists (`{ version: 2, plugins: { "name@mkt": [{ installPath }] } }`),
+ * with its manifest when `installPath` resolves, through real folders only, to a location inside `pluginsDir`.
+ * A missing, linked, oversized or unreadable list is empty; a key that isn't a plugin ref is dropped.
+ */
+export async function readInstalled(
+  pluginsDir: string,
+): Promise<{ key: string; manifest?: PluginManifest }[]> {
+  const doc = await readJsonFile(pluginsDir, "installed_plugins.json");
+  const plugins = isRecord(doc) && isRecord(doc.plugins) ? doc.plugins : {};
+  const out: { key: string; manifest?: PluginManifest }[] = [];
+  for (const [key, entries] of Object.entries(plugins).slice(0, MAX_INSTALLED)) {
+    if (!PLUGIN_REF_PATTERN.test(key)) continue;
+    const first = Array.isArray(entries) ? entries[0] : undefined;
+    const installPath = isRecord(first) ? first.installPath : undefined;
+    let manifest: PluginManifest | undefined;
+    if (typeof installPath === "string" && path.isAbsolute(installPath)) {
+      // Lexically inside the dir and real folders all the way down: a link anywhere on the path is never followed.
+      const at = path.resolve(installPath);
+      const rel = path.relative(pluginsDir, at);
+      if (insideOf(pluginsDir, at) && (await isPlainDir(pluginsDir, rel.split(path.sep))))
+        manifest = await readManifest(at);
+    }
+    out.push({ key, ...(manifest ? { manifest } : {}) });
+  }
+  return out;
+}
+
+export type MarketplaceSource =
+  | { source: "github"; repo: string }
+  | { source: "git"; url: string }
+  | { source: "directory"; path: string };
+
+export interface PluginSettings {
+  enabledPlugins: Record<string, boolean>;
+  extraKnownMarketplaces: Record<string, { source: Record<string, unknown>; autoUpdate: boolean }>;
+  syncClaudeAiPlugins: false;
+}
+
+/**
+ * The keys the factory sets on every start, passed as `--settings` (spec §7.3 step 5). Generated, so an explicit
+ * `false` is fine here. `declarations` holds only the marketplaces of plugins in `closure`; the template's own
+ * declarations are never carried over.
+ * - `enabledPlugins`: `true` for the closure; `false` for every other plugin of a declared marketplace's catalog at
+ *   its pin (relative-path plugins load by default otherwise), for every installed key outside the closure, and for
+ *   each skills-directory plugin name the factory knows of.
+ * - `extraKnownMarketplaces`: the registry source, plus `ref` and `autoUpdate: false` when pinned, or no `ref` and
+ *   `autoUpdate: true` for Latest. A live directory has neither a `ref` nor auto-update.
+ */
+export function buildPluginSettings(i: {
+  closure: string[];
+  declarations: Record<string, { source: MarketplaceSource; pin: Pin }>;
+  catalogs: Record<string, string[]>;
+  installed: string[];
+  skillsDirNames: string[];
+}): PluginSettings {
+  const enabledPlugins: Record<string, boolean> = {};
+  for (const [mkt, names] of Object.entries(i.catalogs))
+    for (const name of names) enabledPlugins[`${name}@${mkt}`] = false;
+  for (const key of i.installed) enabledPlugins[key] = false;
+  for (const name of i.skillsDirNames) enabledPlugins[`${name}@skills-dir`] = false;
+  for (const key of i.closure) enabledPlugins[key] = true;
+  const extraKnownMarketplaces: PluginSettings["extraKnownMarketplaces"] = {};
+  for (const [mkt, { source, pin }] of Object.entries(i.declarations)) {
+    const ref = pin.kind === "commit" ? pin.sha : pin.kind === "tag" ? pin.name : undefined;
+    extraKnownMarketplaces[mkt] = {
+      source: { ...source, ...(ref ? { ref } : {}) },
+      autoUpdate: pin.kind === "latest",
+    };
+  }
+  return { enabledPlugins, extraKnownMarketplaces, syncClaudeAiPlugins: false };
+}

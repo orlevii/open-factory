@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 
-export const MIN_CLAUDE_VERSION = "2.1.327";
+export const MIN_CLAUDE_VERSION = "2.1.331";
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split(".").map(Number);

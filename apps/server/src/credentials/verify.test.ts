@@ -77,7 +77,7 @@ test("401 → rejected; api_key wording", async () => {
   });
 });
 
-test("no session / timeout → unreachable", async () => {
+test("a missing claude binary → unreachable", async () => {
   const v = new CredentialVerifier({
     driver: createClaudeDriver({ transports: { local: localTransport } }),
     claudeBin: "/nonexistent/claude",
@@ -96,7 +96,14 @@ test("a process that never answers times out as unreachable", async () => {
     claudeBin: fake.bin,
     timeoutMs: 300,
   });
-  expect((await v.verify("oauth_token", "x")).ok).toBe(false);
+  const started = Date.now();
+  expect(await v.verify("oauth_token", "x")).toEqual({
+    ok: false,
+    kind: "unreachable",
+    message: FIELD_MSG.claudeUnreachable,
+  });
+  // timeoutMs (300 ms) took effect rather than the 60 s default.
+  expect(Date.now() - started).toBeLessThan(5000);
 });
 
 test("the verification process's live queue is drained", async () => {

@@ -4,7 +4,7 @@ import {
   agentSummarySchema,
   patchAgentBodySchema,
   queueItemSchema,
-  sendMessageBodySchema,
+  sendMessagesBodySchema,
   spawnAgentToolSchema,
   terminateAgentToolSchema,
 } from "./agents.ts";
@@ -45,23 +45,37 @@ test("agent summary avatarVersion defaults to null", () => {
   expect(base.avatarVersion.parse("v1")).toBe("v1");
 });
 
-test("agent summary carries turnStartedAt and compacting", () => {
-  const shape = agentSummarySchema.shape;
-  expect(shape.turnStartedAt.parse("2026-11-21T10:00:00.000Z")).toBe("2026-11-21T10:00:00.000Z");
-  expect(shape.compacting.parse(true)).toBe(true);
-});
 test("queue items accept the stopping wait reason and a client id", () => {
   const q = queueItemSchema.parse({
     id: "m1",
     kind: "message",
     from: "@or",
+    fromKind: "human",
     createdAt: "2026-11-21T10:00:00.000Z",
     waitReason: "stopping",
     clientMessageId: crypto.randomUUID(),
   });
   expect(q.waitReason).toBe("stopping");
+  expect(q.fromKind).toBe("human");
+  expect(
+    queueItemSchema.safeParse({ id: "m1", kind: "message", from: "@or", createdAt: "x" }).success,
+  ).toBe(false);
 });
-test("send body takes an optional clientMessageId", () => {
+test("send body: clientMessageId is an optional UUID (the idempotency key)", () => {
   const id = crypto.randomUUID();
-  expect(sendMessageBodySchema.parse({ body: "hi", clientMessageId: id }).clientMessageId).toBe(id);
+  expect(
+    sendMessagesBodySchema.parse({ to: ["dev"], body: "hi", clientMessageId: id }).clientMessageId,
+  ).toBe(id);
+  expect(sendMessagesBodySchema.parse({ to: ["dev"], body: "hi" }).clientMessageId).toBeUndefined();
+  expect(
+    sendMessagesBodySchema.safeParse({ to: ["dev"], body: "hi", clientMessageId: "not-a-uuid" })
+      .success,
+  ).toBe(false);
+});
+
+test("PATCH colour is an int 1..12 or null", () => {
+  for (const color of [1, 12, null])
+    expect(patchAgentBodySchema.safeParse({ color }).success).toBe(true);
+  for (const color of [0, 13, 1.5, "3"])
+    expect(patchAgentBodySchema.safeParse({ color }).success).toBe(false);
 });

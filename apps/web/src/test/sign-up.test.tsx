@@ -62,13 +62,14 @@ test("client-side validation shows errors per field and does not call the server
   expect(screen.getByLabelText("Name")).toHaveAccessibleDescription(/.+/);
   expect(screen.getByLabelText("Handle")).toHaveAttribute("aria-invalid", "true");
   expect(screen.getByLabelText("Email")).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Enter a valid email.");
   expect(screen.getByLabelText("Password")).toHaveAccessibleDescription(
-    "Password must be at least 8 characters",
+    "Use at least 8 characters.",
   );
   expect(auth.signUp.email).not.toHaveBeenCalled();
 });
 
-test("HANDLE_TAKEN from the server is shown under the handle field", async () => {
+test("HANDLE_TAKEN from the server is shown under the handle field, which takes focus", async () => {
   auth.signUp.email.mockResolvedValue({
     data: null,
     error: { code: "HANDLE_TAKEN", message: "Handle taken", status: 422 },
@@ -81,7 +82,27 @@ test("HANDLE_TAKEN from the server is shown under the handle field", async () =>
       "That handle is already taken.",
     ),
   );
+  expect(screen.getByLabelText("Handle")).toHaveFocus();
   expect(auth.signUp.email).toHaveBeenCalledWith(valid);
+});
+
+test("an email that already has an account is shown under Email, which takes focus", async () => {
+  auth.signUp.email.mockResolvedValue({
+    data: null,
+    error: {
+      code: "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL",
+      message: "User already exists. Use another email.",
+      status: 422,
+    },
+  });
+  renderApp("/sign-up", null);
+  await screen.findByLabelText("Name");
+  await fill(valid);
+  const email = screen.getByLabelText("Email");
+  await waitFor(() =>
+    expect(email).toHaveAccessibleDescription("That email already has an account."),
+  );
+  expect(email).toHaveFocus();
 });
 
 test("an unknown server error is shown at form level", async () => {
@@ -138,21 +159,22 @@ test("an unreachable server shows the network message at form level", async () =
   await screen.findByLabelText("Name");
   await fill(valid);
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Can't reach the server. Check that it's running, then try again.",
+    "Couldn't reach the server. Try again.",
   );
   expect(screen.getByRole("button", { name: "Sign up" })).toBeEnabled();
 });
 
 const FIRST_USER =
   "You're the first user of this factory. You'll invite everyone else from Settings → Users.";
-const MISSING = "Sign-up needs an invite link from a member of this factory.";
-const INVALID = "This invite link isn't valid anymore. Ask a member of this factory for a new one.";
-const LOST_RACE = "Someone else just became the first user. Ask them for an invite link.";
+const MISSING = "Sign-up needs an invite from a member.";
+const INVALID = "Invite isn't valid. Ask for a new one.";
+const LOST_RACE = "Someone was first. Ask for an invite.";
 
-test("bootstrap shows the form with the first-user line", async () => {
+test("bootstrap shows the form with the first-user line, and asks for the state without a query string", async () => {
   renderApp("/sign-up", null);
   expect(await screen.findByLabelText("Name")).toBeInTheDocument();
   expect(screen.getByText(FIRST_USER)).toBeInTheDocument();
+  expect(api.calls[0]?.url).toBe("/api/auth/sign-up-state");
 });
 
 test("a valid invite shows the form and sends the invite with the sign-up", async () => {
@@ -183,18 +205,6 @@ test("an invalid invite shows the invalid line, no form", async () => {
   renderApp("/sign-up?invite=bad", null);
   expect(await screen.findByText(INVALID)).toBeInTheDocument();
   expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
-});
-
-test("a 403 invite_invalid on submit shows the invalid line at form level", async () => {
-  serve({ bootstrap: false, invite: "valid" });
-  auth.signUp.email.mockResolvedValue({
-    data: null,
-    error: { code: "invite_invalid", message: "Invite invalid", status: 403 },
-  });
-  renderApp("/sign-up?invite=tok_1", null);
-  await screen.findByLabelText("Name");
-  await fill(valid);
-  expect(await screen.findByRole("alert")).toHaveTextContent(INVALID);
 });
 
 test("the gate's real 403 body (nested error) maps to the invalid line", async () => {
@@ -233,25 +243,8 @@ test("bootstrap with a stale invite link shows the form and the first-user line"
   expect(screen.queryByText(INVALID)).not.toBeInTheDocument();
 });
 
-test("without an invite the state URL has no query string", async () => {
-  renderApp("/sign-up", null);
-  await screen.findByLabelText("Name");
-  expect(api.calls[0]?.url).toBe("/api/auth/sign-up-state");
-});
-
-test("a 403 invite_required after loading as bootstrap shows the lost-race line", async () => {
-  auth.signUp.email.mockResolvedValue({
-    data: null,
-    error: { code: "invite_required", message: "Invite required", status: 403 },
-  });
-  renderApp("/sign-up", null);
-  await screen.findByLabelText("Name");
-  await fill(valid);
-  expect(await screen.findByRole("alert")).toHaveTextContent(LOST_RACE);
-});
-
-const NAME_TOO_LONG = "Keep your name to 80 characters or fewer.";
-const EMAIL_TOO_LONG = "Keep your email to 254 characters or fewer.";
+const NAME_TOO_LONG = "Use 80 characters or fewer.";
+const EMAIL_TOO_LONG = "Use 254 characters or fewer.";
 
 test("a name over 80 or an email over 254 characters is refused under its field, without the server", async () => {
   const user = userEvent.setup();

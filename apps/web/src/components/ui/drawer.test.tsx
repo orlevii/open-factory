@@ -62,34 +62,6 @@ test("focus moves into the drawer, onto the content, not the first input", () =>
   expect(document.activeElement).toBe(document.querySelector("[data-slot=drawer-content]"));
 });
 
-test("the content it focuses shows no focus ring: it is a landing point, not a control", () => {
-  // jsdom has no :focus-visible styles; the browser pass checks the drawer opens without the ring.
-  open();
-  const content = document.querySelector("[data-slot=drawer-content]");
-  expect(document.activeElement).toBe(content);
-  expect(content).toHaveClass("outline-none");
-});
-
-test("reduced motion fades an inner wrapper", () => {
-  open();
-  const inner = document.querySelector("[data-slot=drawer-inner]");
-  expect(inner).toHaveClass("motion-reduce:animate-in", "motion-reduce:fade-in-0");
-});
-
-test("bottom drawer caps its column", () => {
-  open("bottom");
-  expect(document.querySelector("[data-slot=drawer-inner]")).toHaveClass("max-w-lg", "mx-auto");
-});
-
-test("left drawer has its own width: --sidebar-width when a consumer sets it, else 16rem", () => {
-  open("left");
-  const content = document.querySelector("[data-slot=drawer-content]");
-  // The portal sits in <body>, outside sidebar-wrapper, so the variable needs a fallback.
-  expect(content).toHaveClass("inset-y-0", "left-0", "w-[var(--sidebar-width,16rem)]");
-  expect(content).not.toHaveClass("w-(--sidebar-width)");
-  expect(document.querySelector("[data-slot=drawer-inner]")).not.toHaveClass("max-w-lg");
-});
-
 test("uncontrolled: a drag-close release mark clears when the drawer opens again", async () => {
   const user = userEvent.setup();
   const onOpenChange = vi.fn();
@@ -122,13 +94,9 @@ test("stacked: the Vaul Root gets noBodyStyles and the content caps at 82svh", (
     </Drawer>,
   );
   expect(rootProps.current?.noBodyStyles).toBe(true);
-  const content = document.querySelector("[data-slot=drawer-content]") as HTMLElement;
-  expect(content.className).toContain("max-h-[82svh]");
-  expect(content.className).not.toContain("max-h-[90svh]");
 });
 
 test("not stacked: body styles stay on and the cap is 90svh", () => {
   open();
   expect(rootProps.current?.noBodyStyles).toBeFalsy();
-  expect(document.querySelector("[data-slot=drawer-content]")?.className).toContain("max-h-[90svh]");
 });

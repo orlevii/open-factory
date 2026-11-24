@@ -15,6 +15,7 @@ export function GlobalShortcuts() {
   const router = useRouter();
   useShortcut("g i", () => void navigate({ to: "/inbox" }));
   useShortcut("g t", () => void navigate({ to: "/tasks" }));
+  useShortcut("g k", () => void navigate({ to: "/skills" }));
   useShortcut("g s", () => void navigate({ to: "/schedules" }));
   useShortcut("g u", () => void navigate({ to: "/usage" }));
   useShortcut("g a", () => void navigate({ to: "/agents" }));

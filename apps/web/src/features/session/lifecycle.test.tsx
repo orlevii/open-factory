@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { conversation, detail, resetSeq, se } from "@/test/session-fixtures";
+import { conversation, detail, envelope, resetSeq, se } from "@/test/session-fixtures";
 
 const ws = vi.hoisted(() => ({ onMessage: undefined as undefined | ((m: ServerMessage) => void) }));
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 const open = async () => {
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   await screen.findByText("Two entries.");
 };
 const push = (m: ServerMessage) => act(() => ws.onMessage?.(m));
@@ -51,6 +51,7 @@ const frame = (over: Partial<Extract<ServerMessage, { type: "agent_status" }>>) 
     turnOpen: false,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     ...over,
   });
 const composer = () => screen.getByRole("combobox", { name: "Message to Dev agent" });
@@ -67,16 +68,6 @@ test("errored: Restart and Start a new session replace Compact/Stop", async () =
   expect(await screen.findByRole("button", { name: "Stop" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Start a new session" })).not.toBeInTheDocument();
-});
-
-test("the header has no Stop: it lives in the composer, left of Send (U3 §6.1, §14)", async () => {
-  world({ status: "working", turnOpen: true });
-  await open();
-  const header = screen.getByRole("banner");
-  expect(within(header).queryByRole("button", { name: /Stop|Interrupt/ })).toBeNull();
-  const form = composer().closest("form");
-  expect(form).not.toBeNull();
-  expect(within(form as HTMLElement).getByRole("button", { name: "Stop" })).toBeInTheDocument();
 });
 
 test("a crash offers Restart only", async () => {
@@ -177,8 +168,9 @@ test("dialog copy names the agent and the loss; Cancel focused; confirm moves fo
       "@dev won't remember anything from its current session. The history stays visible here, its files are kept, and waiting messages become its first turn.",
     ),
   ).toBeInTheDocument();
-  const detailLine = within(dialog).getByText("No conversation found with session ID 1234");
-  expect(detailLine).toHaveClass("font-mono");
+  expect(
+    within(dialog).getByText("No conversation found with session ID 1234"),
+  ).toBeInTheDocument();
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
   // Cancel returns focus to the button that opened it.
   await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -225,7 +217,7 @@ test("a confirmed reset whose status frame beats the response still closes the d
 test("announcer and document title follow status frames; a no-op until change says nothing new", async () => {
   world();
   await open();
-  expect(document.title).toBe("Idle · Dev agent · Open Factory");
+  expect(document.title).toBe("Idle · Dev agent · Session · Open Factory");
   const live = () =>
     screen
       .getAllByRole("status")
@@ -236,7 +228,7 @@ test("announcer and document title follow status frames; a no-op until change sa
   await vi.waitFor(() =>
     expect(live()).toHaveTextContent("Dev agent is rate-limited, retrying at 14:30"),
   );
-  expect(document.title).toBe("Rate-limited · Dev agent · Open Factory");
+  expect(document.title).toBe("Rate-limited · Dev agent · Session · Open Factory");
   frame({ status: "rate_limited", rateLimitedUntil: todayAt(15, 0), rateLimitExact: false });
   await vi.waitFor(() =>
     expect(screen.getByText("Rate-limited, retrying at 15:00")).toBeInTheDocument(),
@@ -246,7 +238,7 @@ test("announcer and document title follow status frames; a no-op until change sa
   await vi.waitFor(() => expect(live()).toHaveTextContent("Dev agent is hibernated"));
   frame({ status: "errored", errorKind: "crash" });
   await vi.waitFor(() => expect(live()).toHaveTextContent("Dev agent is errored"));
-  expect(document.title).toBe("Errored · Dev agent · Open Factory");
+  expect(document.title).toBe("Errored · Dev agent · Session · Open Factory");
 });
 
 test("header: the queued fact uses the slot cap from the agents list; Pulling the image… wins", async () => {
@@ -268,6 +260,7 @@ test("queued blocks: rate-limited (fallback) and waiting for a free slot", async
     body: "pending body",
     urgent: false,
     from: "@or",
+    fromKind: "human",
     createdAt: "2026-11-19T09:00:00.000Z",
   };
   world({ status: "rate_limited", rateLimitedUntil: todayAt(14, 30), rateLimitExact: false }, [
@@ -291,6 +284,7 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
     kind: "notice",
     body: "Restarted by @or after an error.",
     from: "@factory",
+    fromKind: "factory",
     createdAt: "2026-11-19T09:00:00.000Z",
   };
   world({ status: "queued" }, [notice]);
@@ -299,33 +293,32 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
       {
         type: "message_in",
         messages: [
-          {
+          envelope({
             id: "m9",
             from: "@factory",
+            fromKind: "factory",
             kind: "system",
             urgent: true,
             body: "Your previous process stopped unexpectedly.",
-          },
+          }),
         ],
       },
       null,
     ),
   ]);
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const delivered = await screen.findByText("Your previous process stopped unexpectedly.");
   const block = delivered.closest("[data-message-block]") as HTMLElement;
-  const sender = within(block).getByText("Factory");
-  expect(sender).not.toHaveClass("font-mono");
+  expect(within(block).getByText("Factory")).toBeInTheDocument();
   expect(block.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   expect(within(block).queryByText("Urgent")).not.toBeInTheDocument();
   expect(block.textContent).not.toMatch(/@factory/);
-  // The queued notice is a dashed "Not delivered yet" block with the same sender.
+  // The queued notice is a "Not delivered yet" block with the same sender.
   const queued = screen
     .getByText("Restarted by @or after an error.")
     .closest("[data-message-block]") as HTMLElement;
   expect(within(queued).getByText("Factory")).toBeInTheDocument();
   expect(within(queued).getByText(/Not delivered yet/)).toBeInTheDocument();
-  expect(queued.className).toMatch(/border-dashed/);
   for (const region of screen.getAllByRole("status"))
     expect(region.textContent).not.toMatch(/stopped unexpectedly|Restarted by/);
 });
@@ -341,6 +334,7 @@ const mine = (id: string, body: string): QueueItem => ({
   id,
   kind: "message",
   from: "@alice",
+  fromKind: "human",
   body,
   createdAt: todayAt(9, 59),
 });
@@ -379,7 +373,7 @@ test("Cancel with text in the box leaves it; the line goes on your next send", a
   vi.useRealTimers();
   world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
   api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
-  api.on("POST /api/agents/dev/messages", () => json({ item: mine("m2", "draft") }, 202));
+  api.on("POST /api/agents/dev/input", () => json({ item: mine("m2", "draft") }, 202));
   await open();
   await userEvent.type(composer(), "draft");
   await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));

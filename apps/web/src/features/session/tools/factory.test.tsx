@@ -17,8 +17,6 @@ test("create_task: a quiet line with the new task's badge and title", () => {
   );
   const row = rowToggle();
   expect(row).toHaveTextContent(/^Create taskT-7·Review config change$/);
-  expect(within(row).getByText("Create task")).toHaveClass("text-muted-foreground");
-  expect(within(row).getByText("T-7")).toHaveClass("font-mono");
   expect(within(row).queryByRole("link")).not.toBeInTheDocument();
 });
 
@@ -63,7 +61,6 @@ test("schedule_message: the S- key from the result", () => {
   );
   const row = rowToggle();
   expect(row).toHaveTextContent(/^Schedule messageS-3$/);
-  expect(within(row).getByText("S-3")).toHaveClass("font-mono");
 });
 
 test("cancel_schedule: the key from the input", () => {

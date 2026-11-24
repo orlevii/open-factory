@@ -8,13 +8,11 @@ import { TaskBadge } from "./task-badge";
 const blockedLabel = (text: string) => (_: string, el: Element | null) =>
   !!el && el.classList.contains("min-w-0") && el.textContent === text;
 
-test("a linked badge: mono key, muted separator, title; its name is 'Task T-42: Plan the billing migration'", async () => {
+test("a linked badge: key, separator, title; its name is 'Task T-42: Plan the billing migration'", async () => {
   renderInRouter(<TaskBadge taskKey="T-42" title="Plan the billing migration" link />);
   const link = await screen.findByRole("link", { name: "Task T-42: Plan the billing migration" });
   expect(link).toHaveAttribute("href", "/tasks/T-42");
   expect(link).toHaveTextContent("T-42·Plan the billing migration");
-  expect(screen.getByText("T-42")).toHaveClass("font-mono");
-  expect(screen.getByText("Plan the billing migration")).toHaveClass("truncate");
 });
 
 test("a comment target adds ?comment=", async () => {

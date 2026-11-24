@@ -12,9 +12,10 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
-import { resetSeq, se } from "@/test/session-fixtures";
+import { envelope, resetSeq, se } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
 import { buildRows } from "./rows";
+import { buildSpeakerIndex, SpeakerContext } from "./speaker-line";
 import { TimelineRow } from "./timeline-row";
 
 beforeEach(() => {
@@ -30,11 +31,7 @@ function inRouter(ui: React.ReactNode) {
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
-    routeTree: root.addChildren([
-      stub("/schedules/$key"),
-      stub("/agents/$slug"),
-      stub("/tasks/$key"),
-    ]),
+    routeTree: root.addChildren([stub("/agents/$slug"), stub("/tasks/$key")]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   return render(
@@ -47,23 +44,36 @@ function inRouter(ui: React.ReactNode) {
 const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
   type: "message_in",
   messages: [
-    {
+    envelope({
       id: "m1",
       from: "@scheduler",
+      fromKind: "factory",
       kind: "scheduled",
       urgent: false,
       body: "Morning review",
       scheduleKey: "S-3",
       by: "@or",
+      byKind: "human",
       due: "2026-11-23T09:00:00+01:00",
       ...o,
+    }),
+  ],
+});
+const speakers = buildSpeakerIndex({
+  live: [
+    {
+      slug: "lead",
+      displayName: "Lead",
+      template: "lead",
+      kind: "persistent",
+      avatarVersion: null,
     },
   ],
 });
 function renderEvents(events: AnyEvent[]) {
   const { rows } = buildRows(events.map((e) => se(e, null)));
   return inRouter(
-    <div>
+    <SpeakerContext value={speakers}>
       {rows.map((row) => (
         <div key={row.key} data-row>
           <TimelineRow
@@ -77,7 +87,7 @@ function renderEvents(events: AnyEvent[]) {
           />
         </div>
       ))}
-    </div>,
+    </SpeakerContext>,
   );
 }
 
@@ -93,19 +103,38 @@ test("a delivered scheduled block: Scheduler, the S-3 badge opening the schedule
 });
 
 test("late and firings add the notes; an agent author links to its session", async () => {
-  const { container } = renderEvents([scheduled({ late: true, firings: 3, by: "lead" })]);
+  const { container } = renderEvents([
+    scheduled({ late: true, firings: 3, by: "@lead", byKind: "agent" }),
+  ]);
   await screen.findByText("Scheduler");
   expect(container.textContent).toContain(
     "due Mon 23 Nov 09:00 UTC+01:00 · delivered late · covers 3 runs",
   );
-  expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/agents/lead");
+  expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/agents/lead/chat");
 });
 
-test("a pending scheduled item shows in the dashed block with the badge and 'covers 3 runs'", async () => {
+test("an ended agent author, named by byKind, still reads as an agent (a chip, not a plain handle)", async () => {
+  renderEvents([scheduled({ by: "@gone-ab12", byKind: "agent" })]);
+  await screen.findByText("Scheduler");
+  expect(screen.getByRole("link", { name: /gone-ab12/ })).toHaveAttribute(
+    "href",
+    "/agents/gone-ab12/chat",
+  );
+});
+
+test("a human author stays a plain handle even when the list is not loaded", async () => {
+  const { container } = renderEvents([scheduled({ by: "@or", byKind: "human" })]);
+  await screen.findByText("Scheduler");
+  expect(container.textContent).toContain("by @or");
+  expect(screen.queryByRole("link", { name: /@or/ })).toBeNull();
+});
+
+test("a pending scheduled item shows the badge and 'covers 3 runs'", async () => {
   const item: QueueItem = {
     id: "q1",
     kind: "message",
     from: "@scheduler",
+    fromKind: "factory",
     body: "Check the build",
     scheduleKey: "S-5",
     firings: 3,
@@ -117,7 +146,6 @@ test("a pending scheduled item shows in the dashed block with the badge and 'cov
   expect(await screen.findByRole("button", { name: "Schedule S-5" })).toBeInTheDocument();
   expect(container.textContent).toContain("Scheduler");
   expect(container.textContent).toContain("covers 3 runs");
-  expect(container.querySelector(".border-dashed")).not.toBeNull();
 });
 
 test("the three quiet lines read as specified, from the events' `by` and `durable`", async () => {

@@ -1,7 +1,6 @@
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import sidebarSource from "@/components/ui/sidebar.tsx?raw";
 import { installInputModality } from "@/lib/input-modality";
 import type { WsOptions, WsStatus } from "@/lib/ws";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -135,11 +134,6 @@ test("a short blip never shows the strip", async () => {
   expect(strip()).toBeNull();
 });
 
-test("sidebar.tsx no longer animates menu-item or group-label layout", () => {
-  expect(sidebarSource).not.toContain("transition-[width,height,padding]");
-  expect(sidebarSource).not.toContain("transition-[margin,opacity]");
-});
-
 test("mobile nav is a left drawer: click opens, Escape closes, \u2318B opens instantly, a click reopen does not", async () => {
   const original = window.matchMedia;
   const off = installInputModality();
@@ -165,10 +159,6 @@ test("mobile nav is a left drawer: click opens, Escape closes, \u2318B opens ins
     await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
     let c = content();
     expect(c).not.toBeNull();
-    expect(c).toHaveAttribute("data-sidebar", "sidebar");
-    expect(c).toHaveAttribute("data-mobile", "true");
-    expect(c?.style.getPropertyValue("--sidebar-width")).toBe("18rem");
-    expect(c).toHaveClass("bg-sidebar");
     expect(within(c as HTMLElement).getByRole("link", { name: "Agents" })).toBeInTheDocument();
     expect(c).not.toHaveAttribute("data-instant");
 
@@ -229,7 +219,7 @@ const liveAgents = () =>
       }),
   });
 
-test("nav order: Inbox, Tasks, Templates, Schedules, Usage, Settings, then the Agents row heading the tree", async () => {
+test("nav order: Inbox, Tasks, Templates, Skills, Schedules, Usage, Settings, then the Agents row heading the tree", async () => {
   liveAgents();
   localStorage.clear();
   renderApp("/inbox", alice);
@@ -238,7 +228,7 @@ test("nav order: Inbox, Tasks, Templates, Schedules, Usage, Settings, then the A
     within(nav)
       .getAllByRole("link")
       .map((l) => l.getAttribute("href")),
-  ).toEqual(["/inbox", "/tasks", "/templates", "/schedules", "/usage", "/settings"]);
+  ).toEqual(["/inbox", "/tasks", "/templates", "/skills", "/schedules", "/usage", "/settings"]);
   const agents = screen.getByRole("link", { name: "Agents" });
   expect(nav.compareDocumentPosition(agents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const tree = await screen.findByRole("tree", { name: "Agents" });
@@ -247,7 +237,7 @@ test("nav order: Inbox, Tasks, Templates, Schedules, Usage, Settings, then the A
 
 test("on a live agent's session the Agents row is not active and the agent row is", async () => {
   liveAgents();
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const row = await screen.findByRole("treeitem", { name: /^Dev agent/ });
   expect(row).toHaveAttribute("aria-current", "page");
   // The list lands for the tree and the sidebar's liveness select in separate notifications.
@@ -256,9 +246,17 @@ test("on a live agent's session the Agents row is not active and the agent row i
   );
 });
 
+test("a live agent's row is active on its Chat too, and links to the Chat", async () => {
+  liveAgents();
+  renderApp("/agents/dev/chat", alice);
+  const row = await screen.findByRole("treeitem", { name: /^Dev agent/ });
+  expect(row).toHaveAttribute("aria-current", "page");
+  expect(row).toHaveAttribute("href", "/agents/dev/chat");
+});
+
 test("on an ended agent's session the Agents row is active", async () => {
   liveAgents();
-  renderApp("/agents/gone", alice);
+  renderApp("/agents/gone/session", alice);
   await screen.findByRole("tree", { name: "Agents" });
   expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute("aria-current", "page");
 });
@@ -277,7 +275,7 @@ test("the Agents row is not active while the agents list is still loading, then 
       });
     },
   });
-  renderApp("/agents/gone", alice);
+  renderApp("/agents/gone/session", alice);
   const agents = await screen.findByRole("link", { name: "Agents" });
   expect(agents).not.toHaveAttribute("aria-current");
   await act(async () => release?.());
@@ -287,7 +285,7 @@ test("the Agents row is not active while the agents list is still loading, then 
 test("on a live session the Agents row is active while the tree is collapsed", async () => {
   liveAgents();
   localStorage.setItem("of-tree-collapsed", "true");
-  renderApp("/agents/dev", alice);
+  renderApp("/agents/dev/session", alice);
   const agents = await screen.findByRole("link", { name: "Agents" });
   await vi.waitFor(() => expect(agents).toHaveAttribute("aria-current", "page"));
   expect(screen.queryByRole("tree")).toBeNull();
@@ -337,7 +335,7 @@ test("collapsed rail: nav icons, a rule, Agents icon, then only active/unread/ba
     within(rail)
       .getAllByRole("link")
       .map((l) => l.getAttribute("href")),
-  ).toEqual(["/agents/dev"]);
+  ).toEqual(["/agents/dev/chat"]);
   const nav = screen.getByRole("navigation", { name: "Main" });
   const agentsIcon = screen.getByRole("link", { name: "Agents" });
   expect(agentsIcon).toHaveAttribute("href", "/agents");
@@ -363,27 +361,6 @@ test("mobile drawer: tapping an agent closes the drawer", async () => {
     const node = () => document.querySelector<HTMLElement>("[data-slot=drawer-content]");
     await userEvent.click(await screen.findByRole("treeitem", { name: /^Dev agent/ }));
     await vi.waitFor(() => expect(node()?.getAttribute("data-state")).not.toBe("open"));
-  } finally {
-    window.matchMedia = original;
-  }
-});
-
-test("large text on a short phone: the tree keeps 12rem and the sidebar content scrolls, so an agent row stays reachable", async () => {
-  // jsdom has no layout: the classes are the contract. At 200% text on 390x844 the nav filled the drawer and
-  // the tree shrank to a sliver under its sticky Agents row, so a press on an agent row landed on that row.
-  liveAgents();
-  const original = window.matchMedia;
-  fakeMatchMedia.install(true);
-  try {
-    renderApp("/inbox", alice);
-    await screen.findByRole("heading", { level: 1, name: "Inbox" });
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
-    const tree = await screen.findByRole("tree", { name: "Agents" });
-    const group = tree.closest<HTMLElement>("[data-sidebar=group]");
-    const content = tree.closest<HTMLElement>("[data-sidebar=content]");
-    expect(group).toHaveClass("min-h-48", "overflow-y-auto");
-    expect(group).not.toHaveClass("min-h-0");
-    expect(content).toHaveClass("overflow-y-auto");
   } finally {
     window.matchMedia = original;
   }

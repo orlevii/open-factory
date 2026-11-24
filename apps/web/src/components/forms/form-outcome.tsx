@@ -13,6 +13,13 @@ export type Outcome = {
 /** For forms that have no form-level message yet. A module constant, so it is referentially stable. */
 export const NO_OUTCOME: Readonly<Outcome> = Object.freeze({ outcomeKey: 0 });
 
+const present = (n: ReactNode) => n != null && n !== false && n !== "";
+
+/** Whether `FormOutcome` shows the notice: only while there is neither an error nor a success. A control the notice
+ *  describes (`aria-describedby={noticeId}`) uses this, so the two cannot disagree. */
+export const showsNotice = ({ error, success, notice }: Outcome) =>
+  !present(error) && !present(success) && notice != null && notice !== "";
+
 export function FormOutcome({
   outcome,
   pending,
@@ -26,9 +33,9 @@ export function FormOutcome({
 }) {
   const { error, success, notice, outcomeKey, action } = outcome;
   // Explicit checks, never `node && <…>` on a ReactNode (0 or "" would render).
-  const hasError = error != null && error !== false && error !== "";
-  const hasSuccess = !hasError && success != null && success !== false && success !== "";
-  const showNotice = !hasError && !hasSuccess && notice != null && notice !== "";
+  const hasError = present(error);
+  const hasSuccess = !hasError && present(success);
+  const showNotice = showsNotice(outcome);
   return (
     <div className={cn("form-outcome", className)}>
       <p

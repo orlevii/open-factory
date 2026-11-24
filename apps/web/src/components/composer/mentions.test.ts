@@ -30,12 +30,12 @@ const humans = [
 const handles = (q: string, recent: string[] = []) =>
   rankMentions(q, { agents, humans, me: "or", recent }).map((m) => m.handle);
 
-test("your reports and recent senders first, then alphabetical; live agents only; @humans", () => {
-  expect(handles("", ["zed"])).toEqual(["zed", "lead", "alpha", "bravo", "dana", "humans"]);
+test("your reports and recent senders first, then alphabetical; live agents only", () => {
+  expect(handles("", ["zed"])).toEqual(["zed", "lead", "alpha", "bravo", "dana"]);
 });
 
 test("without recent senders your reports lead, then everyone by name", () => {
-  expect(handles("")).toEqual(["lead", "alpha", "bravo", "dana", "humans", "zed"]);
+  expect(handles("")).toEqual(["lead", "alpha", "bravo", "dana", "zed"]);
 });
 
 test("an agent reporting to you counts as your report", () => {
@@ -43,17 +43,16 @@ test("an agent reporting to you counts as your report", () => {
   expect(rankMentions("", { agents: list, humans: [], me: "or" }).map((m) => m.handle)).toEqual([
     "b",
     "a",
-    "humans",
   ]);
 });
 
 test("the query matches a handle or a name; prefix matches rank above the rest", () => {
-  expect(handles("a")).toEqual(["alpha", "lead", "bravo", "dana", "humans"]);
+  expect(handles("a")).toEqual(["alpha", "lead", "bravo", "dana"]);
   expect(handles("levi", [])).toEqual([]);
   expect(rankMentions("levi", { agents, humans, me: "dana" }).map((m) => m.handle)).toEqual(["or"]);
   expect(handles("lev")).toEqual([]); // yourself is never offered
   expect(handles("DA")).toEqual(["dana"]);
-  expect(handles("hum")).toEqual(["humans"]);
+  expect(handles("hum")).toEqual([]); // `humans` is not a handle: there is no group row
 });
 
 test("`@` opens anywhere after a non-word character; not inside an email or a path", () => {
@@ -75,9 +74,7 @@ test("accepting replaces the typed token with `@handle `", () => {
 test("the source reads the cached lists when asked, and only then", () => {
   const qc = new QueryClient();
   const source = mentionSource(qc, "Insert an agent's handle");
-  expect(source.items("")).toEqual([
-    expect.objectContaining({ id: "humans", label: "Humans", detail: "@humans" }),
-  ]);
+  expect(source.items("")).toEqual([]);
   qc.setQueryData(["agents", "exclude"], [agent("dev", "Dev")]);
   qc.setQueryData(["users"], [{ handle: "dana", name: "Dana", disabledAt: null }]);
   expect(source.items("d").map((i) => i.id)).toEqual(["dana", "dev"]);
@@ -90,11 +87,36 @@ test("recent agent senders come from the cached inbox", () => {
   const qc = new QueryClient();
   qc.setQueryData(["agents", "exclude"], [agent("a", "A"), agent("z", "Z")]);
   qc.setQueryData(["inbox"], {
-    pages: [{ items: [{ from: { kind: "agent", name: "z" } }], nextCursor: null }],
+    pages: [
+      {
+        items: [{ from: { kind: "agent", name: "z" }, createdAt: "2026-11-19T10:00:00Z" }],
+        nextCursor: null,
+      },
+    ],
     pageParams: [undefined],
   });
   const source = mentionSource(qc, "x");
-  expect(source.items("").map((i) => i.id)).toEqual(["z", "a", "humans"]);
+  expect(source.items("").map((i) => i.id)).toEqual(["z", "a"]);
+});
+
+test("an agent whose unread chat is newer than the inbox items ranks first", () => {
+  const qc = new QueryClient();
+  qc.setQueryData(["agents", "exclude"], [agent("a", "A"), agent("m", "M"), agent("z", "Z")]);
+  qc.setQueryData(["inbox"], {
+    pages: [
+      {
+        chats: [{ agent: { slug: "m" }, latest: { createdAt: "2026-11-19T12:00:00Z" } }],
+        items: [{ from: { kind: "agent", name: "z" }, createdAt: "2026-11-19T10:00:00Z" }],
+        nextCursor: null,
+      },
+    ],
+    pageParams: [undefined],
+  });
+  expect(
+    mentionSource(qc, "x")
+      .items("")
+      .map((i) => i.id),
+  ).toEqual(["m", "z", "a"]);
 });
 
 test("accepting with the caret inside a handle replaces the whole handle", () => {

@@ -26,8 +26,9 @@ import { Button } from "@/components/ui/button";
 import { inboxQueryOptions } from "@/features/inbox/api";
 import { useMedia } from "@/lib/breakpoints";
 import { formatTime } from "./format";
-import { parseSendResult } from "./outgoing-message";
+import { parseSendResults } from "./outgoing-message";
 import type { Row } from "./rows";
+import { recipientSummary } from "./speaker-line";
 
 /** One row-menu entry (U3 §7.5). Plain data, so a row's list is memoized per row object. */
 export type RowMenuItem =
@@ -38,6 +39,10 @@ export type RowMenuItem =
   | { kind: "inbox"; label: string; messageId: string }
   /** The message in the recipient agent's session. */
   | { kind: "session"; label: string; to: string; messageId: string }
+  /** The message in your chat with this agent. */
+  | { kind: "chat"; label: string; slug: string; messageId: string }
+  /** Everyone a send went to, in full: shown when the speaker line summarises them. */
+  | { kind: "recipients"; label: string; text: string }
   /** The row's time, as a label: touch only, where the gutter time never shows. */
   | { kind: "time"; label: string };
 
@@ -51,17 +56,21 @@ const clock = (iso: string) => {
  *  bodies: the markdown source), Copy command (Bash), View tool call (outgoing, spawn), View in the
  *  recipient's session (a delivered send to an agent), Open in inbox (a send to a human, when it is
  *  in your inbox), and the time on touch. */
-export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
+export function rowMenuItems(row: Row, slug: string, self?: string): RowMenuItem[] {
   const items: RowMenuItem[] = [
     {
       kind: "copy",
       label: "Copy link",
-      text: `${location.origin}/agents/${encodeURIComponent(slug)}?event=${row.seq}`,
+      text: `${location.origin}/agents/${encodeURIComponent(slug)}/session?event=${row.seq}`,
     },
   ];
   if (row.kind === "text") items.push({ kind: "copy", label: "Copy text", text: row.text });
-  if (row.kind === "message")
+  if (row.kind === "message") {
     items.push({ kind: "copy", label: "Copy text", text: row.message.body });
+    // A message from you to this agent is in your chat with it.
+    if (self && row.message.fromKind === "human" && handleOf(row.message.from) === handleOf(self))
+      items.push({ kind: "chat", label: "Open in chat", slug, messageId: row.message.id });
+  }
   if (row.kind === "peer")
     items.push({ kind: "copy", label: "Copy text", text: row.envelope.body });
   if (row.kind === "command") items.push({ kind: "copy", label: "Copy command", text: row.text });
@@ -78,17 +87,30 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
   }
   if (row.kind === "outgoing" || row.kind === "spawn")
     items.push({ kind: "call", label: "View tool call" });
-  // A human's copy lands in the inbox; an agent's in its session. A result names agents bare.
-  const sent = row.kind === "outgoing" ? parseSendResult(row.result) : undefined;
-  if (sent?.to.startsWith("@"))
-    items.push({ kind: "inbox", label: "Open in inbox", messageId: sent.id });
-  else if (sent)
-    items.push({
-      kind: "session",
-      label: `View in @${sent.to}'s session`,
-      to: sent.to,
-      messageId: sent.id,
-    });
+  if (row.kind === "outgoing") {
+    const to = (row.call.input as { to: string[] }).to.map(handleOf);
+    if (to.length > 1) items.push({ kind: "recipients", label: "Recipients", text: to.join(", ") });
+    // A human's copy lands in the inbox; an agent's in its session. With several recipients each has
+    // its own message, so the links are for a send to one.
+    const results = parseSendResults(row.result)?.results;
+    const only = results?.length === 1 ? results[0] : undefined;
+    if (only && "kind" in only) {
+      if (only.kind === "human") {
+        items.push({ kind: "inbox", label: "Open in inbox", messageId: only.id });
+        // To you: the same message sits in your chat with this agent.
+        if (self && handleOf(only.to) === handleOf(self))
+          items.push({ kind: "chat", label: "Open in chat", slug, messageId: only.id });
+      } else {
+        const bare = only.to.replace(/^@/, "");
+        items.push({
+          kind: "session",
+          label: `View in @${bare}'s session`,
+          to: bare,
+          messageId: only.id,
+        });
+      }
+    }
+  }
   if ("at" in row && row.at) {
     const speech =
       row.kind === "message" ||
@@ -101,14 +123,14 @@ export function rowMenuItems(row: Row, slug: string): RowMenuItem[] {
 }
 
 const at = (name: string, iso: string | undefined) => (iso ? `${name} · ${formatTime(iso)}` : name);
-const handle = (who: string) => (who.startsWith("@") ? who : `@${who}`);
+const handleOf = (who: string) => (/^[@#]/.test(who) ? who : `@${who}`);
 
 /** The row's name on the phone drawer's title line (U4 §11.1): "Message from @or · 17:55",
  *  "Bash · 17:55", the agent for its own text. */
 export function rowMenuTitle(row: Row, slug: string): string {
   switch (row.kind) {
     case "message":
-      return at(`Message from ${handle(row.message.from)}`, row.at);
+      return at(`Message from ${handleOf(row.message.from)}`, row.at);
     case "peer": {
       // A neighborhood notice (peer_joined / peer_left), not a message.
       const who = row.envelope.subject?.slug;
@@ -116,10 +138,10 @@ export function rowMenuTitle(row: Row, slug: string): string {
       return `@${who} ${row.envelope.subject?.left ? "left" : "joined"}`;
     }
     case "update_group":
-      return at(`Updates about ${row.about}`, row.at);
+      return at(`Updates about ${handleOf(row.about)}`, row.at);
     case "outgoing": {
-      const to = (row.call.input as { to?: unknown }).to;
-      return at(typeof to === "string" ? `Message to ${handle(to)}` : "Message", row.at);
+      const to = (row.call.input as { to: string[] }).to.map(handleOf);
+      return at(`Message to ${recipientSummary(to)}`, row.at);
     }
     case "spawn":
       return at("Spawn", row.at);
@@ -128,7 +150,7 @@ export function rowMenuTitle(row: Row, slug: string): string {
     case "tool":
       return at(row.call.name, row.at);
     case "text":
-      return at(handle(slug), row.at);
+      return at(handleOf(slug), row.at);
     case "command":
       return at("Command", row.at);
     case "command_output":
@@ -414,7 +436,7 @@ function RowMenuContent({
             return (
               <AdaptiveMenuItem key={item.label} asChild>
                 <Link
-                  to="/agents/$slug"
+                  to="/agents/$slug/session"
                   params={{ slug: item.to }}
                   search={{ message: item.messageId }}
                   aria-label={`View this message in @${item.to}'s session`}
@@ -422,6 +444,28 @@ function RowMenuContent({
                   {item.label}
                 </Link>
               </AdaptiveMenuItem>
+            );
+          case "chat":
+            return (
+              <AdaptiveMenuItem key={item.label} asChild>
+                <Link
+                  to="/agents/$slug/chat"
+                  params={{ slug: item.slug }}
+                  search={{ message: item.messageId }}
+                >
+                  {item.label}
+                </Link>
+              </AdaptiveMenuItem>
+            );
+          case "recipients":
+            return (
+              <AdaptiveMenuLabel
+                key={item.label}
+                className="text-[0.8125rem] font-normal text-muted-foreground"
+              >
+                {item.label}
+                <span className="block font-mono [overflow-wrap:anywhere]">{item.text}</span>
+              </AdaptiveMenuLabel>
             );
           default:
             // The time: touch only, where the gutter time never shows.

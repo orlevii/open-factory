@@ -19,6 +19,7 @@ import {
   RuntimeHarness,
   sendAs,
   silentLog,
+  testEffective,
 } from "./testing/runtime-harness.ts";
 import { RecordingSlots } from "./testing/slots.ts";
 
@@ -72,6 +73,7 @@ async function dockerRuntime(slots = new RecordingSlots()) {
   await h.makeRuntime({
     slots,
     docker: { containers: c.port, claudeBin: "/usr/local/bin/claude" },
+    nextImage: "open-factory-base:dev",
     spec: (a) => ({
       ...okSpec(a),
       runtime: "docker",
@@ -375,9 +377,12 @@ function deferred(): Deferred {
 
 const IMAGE = "open-factory-base:test";
 const MOUNT_CHECK: MountCheckContext = {
+  slug: "lead",
   workdir: "/nonexistent/of-test/workdir",
   grantedPaths: [],
-  hostSkillPaths: [],
+  skillPaths: [],
+  templateSkillPaths: [],
+  templateDir: "/nonexistent/of-test/home/templates/t",
   declaredMarketplaceDirs: [],
   pluginsDir: "/nonexistent/of-test/plugins",
   cliBundle: "/nonexistent/of-test/cli.mjs",
@@ -424,7 +429,13 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
   const driver = new FakeDriver();
   const docker = new Docker(driver);
   docker.images.set(IMAGE, { id: "sha256:img", labels: {} });
-  const containers = new ContainerManager({ docker, log: silentLog, uid: 501, gid: 20 });
+  const containers = new ContainerManager({
+    docker,
+    log: silentLog,
+    uid: 501,
+    gid: 20,
+    checkImage: async () => {},
+  });
   const prepareEntered = deferred();
   const gates = {
     prepare: undefined as Deferred | undefined,
@@ -453,7 +464,12 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     forward: (f) => (router ? router.forward(f) : Promise.resolve()),
     maxRunningAgents: () => 1,
     memberUpdateDebounceMs: () => o.memberUpdateDebounceMs ?? 3_600_000,
-    docker: { containers, claudeBin: "/usr/local/bin/claude", defaultImage: IMAGE },
+    docker: {
+      containers,
+      claudeBin: "/usr/local/bin/claude",
+      defaultImage: IMAGE,
+      resolver: { effective: async () => testEffective({ runtime: "docker" }) },
+    },
   });
   router = new Router({
     db: h.t.db,
@@ -715,10 +731,11 @@ function holdTermination(o: { fail?: Error } = {}) {
   const release = deferred();
   const original = h.store.terminateRows.bind(h.store);
   vi.spyOn(h.store, "terminateRows").mockImplementation(async (...a) => {
-    await original(...a);
+    const rejected = await original(...a);
     entered.resolve();
     await release.promise;
     if (o.fail) throw o.fail;
+    return rejected;
   });
   return { entered: entered.promise, release: release.resolve };
 }
@@ -823,6 +840,7 @@ test("a batch write in flight and the termination both complete: no deadlock", a
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
+    recipients: ["@test"],
     body: "mid-batch",
     urgent: false,
   });
@@ -904,11 +922,11 @@ test("a stuck terminated agent records stop_escalated once, however many sweeps 
   await w.settled();
   const escalations = async () => (await w.events()).filter((e) => e.type === "stop_escalated");
   const before = (await escalations()).length;
+  expect(before).toBeGreaterThanOrEqual(1);
   expect(await w.rt.sweepStuck()).toBe("still");
   expect(await w.rt.sweepStuck()).toBe("still");
   await w.settled();
-  expect((await escalations()).length).toBeLessThanOrEqual(Math.max(before, 1));
-  expect((await escalations()).length).toBe(Math.max(before, 1));
+  expect((await escalations()).length).toBe(before); // the sweeps added none
 });
 
 test("a sweep while a shutdown stop is in progress does nothing", async () => {
@@ -957,6 +975,7 @@ test("last_activity_at is written after the batch commits, as its own statement 
   const row = await h.store.createMessage({
     from: { userId: "u1" },
     toAgentId: w.id,
+    recipients: ["@test"],
     body: "mid-batch",
     urgent: false,
   });

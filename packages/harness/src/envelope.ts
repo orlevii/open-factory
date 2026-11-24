@@ -12,7 +12,7 @@ const attr = (s: string) =>
 const TAG = /<(\s*\/?\s*)factory-message/gi;
 
 /** Only the envelope tag is neutralised in a body; everything else reaches the model unchanged. */
-const body = (s: string) => s.replace(TAG, "&lt;$1factory-message");
+export const neutraliseEnvelopeTags = (s: string) => s.replace(TAG, "&lt;$1factory-message");
 
 /** Bodies are already escaped (groupEnvelopes is the one owner), so this writes `m.body` as given. */
 function one(m: FactoryMessage): string {
@@ -25,8 +25,9 @@ function one(m: FactoryMessage): string {
     (m.due ? ` due="${attr(m.due)}"` : "") +
     (m.firings && m.firings > 1 ? ` firings="${m.firings}"` : "") +
     (m.late ? ' late="true"' : "");
+  const to = m.kind === "message" && m.to?.length ? ` to="${attr(m.to.join(" "))}"` : "";
   return (
-    `<factory-message from="${attr(m.from)}" kind="${m.kind}" urgent="${m.urgent}" ${id}${about}${task}${sched}>\n` +
+    `<factory-message from="${attr(m.from)}" from_kind="${m.fromKind}" kind="${m.kind}"${to} urgent="${m.urgent}" ${id}${about}${task}${sched}>\n` +
     `${m.body}\n</factory-message>`
   );
 }
@@ -43,7 +44,9 @@ export const QUOTE_CAP = 2000;
  * line prefixed. The neutralising is idempotent, so groupEnvelopes escaping the stored body again changes nothing.
  */
 export function quoteReported(intro: string, text: string): string {
-  const capped = body(text.length > QUOTE_CAP ? `${text.slice(0, QUOTE_CAP)}[truncated]` : text);
+  const capped = neutraliseEnvelopeTags(
+    text.length > QUOTE_CAP ? `${text.slice(0, QUOTE_CAP)}[truncated]` : text,
+  );
   return [intro, ...capped.split("\n").map((l) => `> ${l}`)].join("\n");
 }
 
@@ -51,6 +54,9 @@ export type BatchRow = {
   id: string;
   kind: MessageKind;
   from: string;
+  fromKind: FactoryMessage["fromKind"];
+  /** The recipients of a `kind: "message"` row, as `@handle`s. */
+  to?: string[];
   urgent: boolean;
   body: string;
   createdAt: Date;
@@ -66,6 +72,8 @@ export type BatchRow = {
   /** S9: a `scheduled` row. `by` is its author's `@handle` or slug, `due` is ISO 8601 with the schedule zone's offset. */
   scheduleKey?: string;
   by?: string;
+  /** UI-only: what `by` is; `one()` never renders it. */
+  byKind?: "human" | "agent";
   due?: string;
   firings?: number;
   late?: boolean;
@@ -93,6 +101,7 @@ const part = (r: BatchRow) => ({ id: r.id, body: r.body, createdAt: r.createdAt.
 const scheduleFields = (r: BatchRow) => ({
   ...(r.scheduleKey ? { scheduleKey: r.scheduleKey } : {}),
   ...(r.by ? { by: r.by } : {}),
+  ...(r.byKind ? { byKind: r.byKind } : {}),
   ...(r.due ? { due: r.due } : {}),
   ...(r.firings ? { firings: r.firings } : {}),
   ...(r.late ? { late: true } : {}),
@@ -108,9 +117,11 @@ function single(r: BatchRow): FactoryMessage {
   return {
     id: r.id,
     from: r.from,
+    fromKind: r.fromKind,
     kind: r.kind,
+    ...(r.to?.length ? { to: r.to } : {}),
     urgent: r.urgent,
-    body: body(r.body),
+    body: neutraliseEnvelopeTags(r.body),
     ...(r.about ? { about: r.about } : {}),
     ...(r.fact ? { fact: r.fact } : {}),
     ...(r.subject ? { subject: r.subject } : {}),
@@ -129,9 +140,10 @@ function merge(run: BatchRow[]): FactoryMessage {
     id: first.id,
     ids: run.map((r) => r.id),
     from: first.from,
+    fromKind: first.fromKind,
     kind: first.kind,
     urgent: run.some((r) => r.urgent),
-    body: run.map((r) => body(r.body)).join("\n\n"),
+    body: run.map((r) => neutraliseEnvelopeTags(r.body)).join("\n\n"),
     ...(first.about ? { about: first.about } : {}),
     ...(first.fact ? { fact: first.fact } : {}),
     ...(first.subject ? { subject: first.subject } : {}),

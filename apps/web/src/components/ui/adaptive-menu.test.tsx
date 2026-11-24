@@ -101,11 +101,6 @@ test("below 48rem it is a drawer with the title visible and Cancel last", () => 
   expect(screen.getByText("Priya Nair")).toBeVisible();
   const buttons = [...drawer.querySelectorAll("button")];
   expect(buttons.map((b) => b.textContent)).toEqual(["Edit", "Copy link", "Terminate…", "Cancel"]);
-  for (const b of buttons) expect(b).toHaveClass("min-h-11");
-  expect(screen.getByRole("button", { name: "Terminate…" })).toHaveAttribute(
-    "data-variant",
-    "destructive",
-  );
   // Shortcuts are hidden on phones.
   expect(screen.queryByText("E")).toBeNull();
   expect(trigger()).toHaveAttribute("aria-expanded", "true");

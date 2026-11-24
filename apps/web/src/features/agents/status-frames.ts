@@ -60,6 +60,8 @@ function patchOf(m: AgentStatusFrame) {
     lastError: m.lastError,
     restartPending: m.restartPending,
     restartWaitingOn: m.restartWaitingOn,
+    // A frame without the list clears it (absent means no pending restart, I2 §7.3).
+    restartChanges: m.restartChanges,
     waitingOn: m.waitingOn ?? { tasks: [], crons: 0 },
     // The live crons and a pending Stop crons (a frame without them means none).
     crons: m.crons ?? [],

@@ -12,16 +12,20 @@ const fakeBin = (out: string) => {
 };
 
 test("compareVersions", () => {
-  expect(compareVersions("2.1.327", "2.1.327")).toBe(0);
-  expect(compareVersions("2.1.40", "2.1.327")).toBeLessThan(0);
-  expect(compareVersions("2.2.0", "2.1.327")).toBeGreaterThan(0);
+  expect(compareVersions("2.1.331", "2.1.331")).toBe(0);
+  expect(compareVersions("2.1.40", "2.1.331")).toBeLessThan(0);
+  expect(compareVersions("2.2.0", "2.1.331")).toBeGreaterThan(0);
 });
 
 test("parses `claude --version` and flags old versions", async () => {
   const env = { PATH: process.env.PATH ?? "" };
-  expect(await checkClaudeVersion(fakeBin("2.1.327 (Claude Code)"), env)).toEqual({
-    version: "2.1.327",
+  expect(await checkClaudeVersion(fakeBin("2.1.331 (Claude Code)"), env)).toEqual({
+    version: "2.1.331",
     tooOld: false,
+  });
+  expect(await checkClaudeVersion(fakeBin("2.1.330 (Claude Code)"), env)).toEqual({
+    version: "2.1.330",
+    tooOld: true,
   });
   expect(await checkClaudeVersion(fakeBin("2.1.200 (Claude Code)"), env)).toEqual({
     version: "2.1.200",

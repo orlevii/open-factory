@@ -39,80 +39,138 @@ async function show(ui: ReactNode) {
 }
 const line = () => document.querySelector<HTMLElement>("[data-speaker-line]") as HTMLElement;
 
-test("an agent sender: a 20px avatar, the name, a muted @slug, a time that never shrinks; a link to its session", async () => {
-  await show(<SpeakerLine from="b" at={AT} />);
+test("an agent sender: an avatar, the name, the @slug, a time; a link to its session", async () => {
+  await show(<SpeakerLine from="b" fromKind="agent" at={AT} />);
   const l = line();
   const link = within(l).getByRole("link");
-  expect(link).toHaveAttribute("href", "/agents/b");
+  expect(link).toHaveAttribute("href", "/agents/b/chat");
   expect(link).toHaveTextContent("Builder");
   const avatar = l.querySelector<HTMLElement>("[style*='width: 20px']");
   expect(avatar).not.toBeNull();
   expect(within(l).getByText("Builder").closest("[dir=auto]")).not.toBeNull();
-  const slug = within(l).getAllByText("@b")[0]?.closest(".font-mono") as HTMLElement;
-  expect(slug).toHaveClass("text-muted-foreground");
+  expect(within(l).getAllByText("@b").length).toBeGreaterThan(0);
   expect(
     within(l)
       .getByText(/^\d\d:\d\d$/)
       .closest("time"),
-  ).toHaveClass("shrink-0");
-});
-
-test("at a 20rem container the handle hides: the line is a container and the slug carries the query", async () => {
-  await show(<SpeakerLine from="b" at={AT} />);
-  expect(line()).toHaveClass("@container");
-  const slug = within(line()).getAllByText("@b")[0]?.closest(".font-mono") as HTMLElement;
-  expect(slug.className).toMatch(/@max-\[20rem\]:hidden/);
+  ).not.toBeNull();
 });
 
 test("the session's own agent is never a link", async () => {
-  await show(<SpeakerLine from="dev" at={AT} self />);
+  await show(<SpeakerLine from="dev" fromKind="agent" at={AT} self />);
   expect(within(line()).queryByRole("link")).toBeNull();
   expect(within(line()).getByText("Developer")).toBeInTheDocument();
 });
 
-test("your own message says 'You', with no second fill", async () => {
-  await show(<SpeakerLine from="@alice" at={AT} />);
+test("your own message says 'You', without the handle", async () => {
+  await show(<SpeakerLine from="@alice" fromKind="human" at={AT} />);
   const l = line();
   expect(within(l).getByText("You")).toHaveAttribute("dir", "auto");
   expect(within(l).queryByText("@alice")).toBeNull();
-  expect(l.className).not.toMatch(/\bbg-/);
-  for (const el of l.querySelectorAll("*")) expect(el.className.toString()).not.toMatch(/\bbg-/);
 });
 
 test("a human: the name from the users list and the muted handle, no avatar; else the handle", async () => {
   await show(
     <>
-      <SpeakerLine from="@or" at={AT} />
-      <SpeakerLine from="@stranger" at={AT} />
+      <SpeakerLine from="@or" fromKind="human" at={AT} />
+      <SpeakerLine from="@stranger" fromKind="human" at={AT} />
     </>,
   );
   const [known, unknown] = [...document.querySelectorAll<HTMLElement>("[data-speaker-line]")];
   expect(within(known as HTMLElement).getByText("Or Levi")).toHaveAttribute("dir", "auto");
   expect(within(known as HTMLElement).getAllByText("@or").length).toBeGreaterThan(0);
   expect(known?.querySelector("svg,img")).toBeNull();
-  expect(within(unknown as HTMLElement).getByText("@stranger")).toHaveClass("font-mono");
+  expect(within(unknown as HTMLElement).getByText("@stranger")).toBeInTheDocument();
 });
 
-test("an outgoing card reads 'Name → Recipient': You for you, All humans for @humans", async () => {
+test("an outgoing card reads 'Name → Recipient': You for you, an agent as a link", async () => {
   await show(
     <>
-      <SpeakerLine from="dev" self to="@alice" at={AT} />
-      <SpeakerLine from="dev" self to="@humans" at={AT} />
-      <SpeakerLine from="dev" self to="b" at={AT} />
+      <SpeakerLine
+        from="dev"
+        fromKind="agent"
+        self
+        to={[{ handle: "@alice", kind: "human" }]}
+        at={AT}
+      />
+      <SpeakerLine
+        from="dev"
+        fromKind="agent"
+        self
+        to={[{ handle: "@b", kind: "agent" }]}
+        at={AT}
+      />
     </>,
   );
   const lines = [...document.querySelectorAll<HTMLElement>("[data-speaker-line]")];
   const text = (el: HTMLElement | undefined) =>
     (el?.textContent ?? "").replace(/\s+/g, " ").replace(/\d\d:\d\d$/, "");
   expect(text(lines[0])).toMatch(/^Developer.*@dev.*You$/);
-  expect(text(lines[1])).toMatch(/All humans$/);
-  expect(within(lines[2] as HTMLElement).getByRole("link")).toHaveAttribute("href", "/agents/b");
+  expect(within(lines[1] as HTMLElement).getByRole("link", { name: /Builder/ })).toHaveAttribute(
+    "href",
+    "/agents/b/chat",
+  );
+});
+
+test("a sender's kind decides how it shows, whatever its sigil: an `@` agent is a chip, an unknown `@` handle plain", async () => {
+  await show(
+    <>
+      <SpeakerLine from="@b" fromKind="agent" at={AT} />
+      <SpeakerLine from="@b" fromKind="agent" at={AT} />
+      <SpeakerLine from="@zed" fromKind="human" at={AT} />
+    </>,
+  );
+  const [explicit, looked, human] = [
+    ...document.querySelectorAll<HTMLElement>("[data-speaker-line]"),
+  ] as HTMLElement[];
+  expect(within(explicit as HTMLElement).getByRole("link")).toHaveAttribute(
+    "href",
+    "/agents/b/chat",
+  );
+  expect(within(looked as HTMLElement).getByRole("link")).toHaveAttribute("href", "/agents/b/chat");
+  expect(within(human as HTMLElement).queryByRole("link")).toBeNull();
+  expect(within(human as HTMLElement).getByText("@zed")).toBeInTheDocument();
+});
+
+const chip = (l: HTMLElement) => l.querySelector("[data-agent-avatar]");
+
+test("an agent the server names by kind is a chip even before the lists load (no flip on first paint)", async () => {
+  const requestEnded = vi.fn();
+  await show(
+    <SpeakerContext value={buildSpeakerIndex({ requestEnded })}>
+      <SpeakerLine from="@gone-ab12" fromKind="agent" at={AT} />
+    </SpeakerContext>,
+  );
+  expect(chip(line())).not.toBeNull();
+  expect(requestEnded).not.toHaveBeenCalled();
+});
+
+test("an ended agent the server names by kind is a chip, and asks for the ended list once the live one is in", async () => {
+  const requestEnded = vi.fn();
+  await show(
+    <SpeakerContext value={buildSpeakerIndex({ live: [], requestEnded })}>
+      <SpeakerLine from="@gone-ab12" fromKind="agent" at={AT} />
+    </SpeakerContext>,
+  );
+  expect(chip(line())).not.toBeNull();
+  await waitFor(() => expect(requestEnded).toHaveBeenCalled());
+});
+
+test("a human the server names by kind never looks up agents", async () => {
+  const requestEnded = vi.fn();
+  await show(
+    <SpeakerContext value={buildSpeakerIndex({ live: [], requestEnded })}>
+      <SpeakerLine from="@gone-ab12" fromKind="human" at={AT} />
+    </SpeakerContext>,
+  );
+  expect(chip(line())).toBeNull();
+  expect(requestEnded).not.toHaveBeenCalled();
 });
 
 test("outside a session the line still renders: a slug stands in for an unknown agent", () => {
   render(
     <TooltipProvider>
-      <SpeakerLine from="@or" at={AT} />
+      <SpeakerLine from="@or" fromKind="human" at={AT} />
     </TooltipProvider>,
   );
   expect(screen.getByText("@or")).toBeInTheDocument();
@@ -188,8 +246,8 @@ test("the provider reads your handle itself, and asks for the ended list only on
       <QueryClientProvider client={qc}>
         <TooltipProvider>
           <SpeakerProvider slug="dev">
-            <SpeakerLine from="gone" at={AT} />
-            <SpeakerLine from="@alice" at={AT} />
+            <SpeakerLine from="gone" fromKind="agent" at={AT} />
+            <SpeakerLine from="@alice" fromKind="human" at={AT} />
           </SpeakerProvider>
         </TooltipProvider>
       </QueryClientProvider>,
@@ -208,25 +266,14 @@ test("the provider reads your handle itself, and asks for the ended list only on
   }
 });
 
-test("a long name never pushes the time onto its own line: names and time share a line that doesn't wrap", async () => {
-  await show(<SpeakerLine from="b" at={AT} />);
-  const time = line().querySelector("time") as HTMLElement;
-  const group = time.parentElement as HTMLElement;
-  expect(group).toHaveClass("flex-nowrap", "min-w-0");
-  expect(group).toContainElement(within(line()).getByText("Builder"));
-  // The agent's chip never stacks name over handle.
-  const chip = within(line()).getByRole("link");
-  expect(chip.className).not.toMatch(/flex-col/);
-});
-
 test("a human's name carries the handle in its title (kept when the handle hides)", async () => {
-  await show(<SpeakerLine from="@or" at={AT} />);
+  await show(<SpeakerLine from="@or" fromKind="human" at={AT} />);
   expect(within(line()).getByText("Or Levi")).toHaveAttribute("title", "Or Levi @or");
 });
 
 test("badges sit outside the names-and-time group, so a long badge wraps below instead of squeezing the names", async () => {
   await show(
-    <SpeakerLine from="b" at={AT}>
+    <SpeakerLine from="b" fromKind="agent" at={AT}>
       <span data-testid="badge">T-1 a very long task title</span>
     </SpeakerLine>,
   );

@@ -22,6 +22,7 @@ import type { AnyEvent } from "@open-factory/shared";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { ApiError } from "../src/errors.ts";
+import { claimTestHandle } from "../src/test/handles.ts";
 import { agentConfigDir, agentWorkdir } from "../src/workspace/paths.ts";
 
 const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
@@ -58,7 +59,8 @@ class StopRun extends Error {}
 // realpath: macOS tmpdir is a /var symlink and Claude reports the resolved cwd.
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-ws-")));
 const factoryHome = path.join(root, "home");
-const hostSkillsDir = path.join(root, "host-skills");
+const hostClaudeDir = path.join(root, "host-claude");
+const hostSkillsDir = path.join(hostClaudeDir, "skills");
 const repoDir = path.join(root, "smoke-repo");
 // The real host skills, by name only, to prove none of them leak into an agent's session.
 const realHostSkills = (() => {
@@ -158,8 +160,12 @@ async function turn(slug: string, body: string, ms = 240_000): Promise<AnyEvent[
   const from = list.length;
   const rt = await app.runtimes.bySlug(slug);
   if (!rt) throw new Error(`no runtime for ${slug}`);
-  const sent = await app.router.send({ userId: "smoke", handle: "smoke" }, slug, body, false);
-  if (!sent.ok) throw new Error(`send to ${slug} failed: ${sent.message}`);
+  const [sent] = (await app.router.send({ userId: "smoke", handle: "smoke" }, [slug], body, false))
+    .results;
+  if (!sent || sent.status === "refused" || sent.status === "start_failed")
+    throw new Error(
+      `send to ${slug} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+    );
   const end = Date.now() + ms;
   while (Date.now() < end) {
     const got = list.slice(from);
@@ -220,7 +226,7 @@ try {
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
     FACTORY_HOME: factoryHome,
-    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+    FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
   });
   app = await buildApp(config, {
     db: conn.db,
@@ -229,6 +235,7 @@ try {
     harnessDriver: createClaudeDriver({ log: captureLog, transports: { local: localTransport } }),
   });
   appBuilt = true;
+  await claimTestHandle(conn.db, "smoke", "user");
   await conn.sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
   for (const slug of ["smoke-alpha", "smoke-beta"]) {
     const list: AnyEvent[] = [];
@@ -240,10 +247,10 @@ try {
 
   // 1. Credentials (each create runs the real verification turn).
   await step("1. credential smoke-a created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke-a", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke-a", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step("1. credential smoke-b created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke-b", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke-b", kind: "oauth_token", value: token, expiresAt: null }),
   );
   {
     // A made-up value, never the real one: verification must reject it and store nothing.
@@ -253,6 +260,7 @@ try {
         name: "smoke-bad",
         kind: "oauth_token",
         value: "sk-ant-oat01-smoke-invalid-value-0000000000",
+        expiresAt: null,
       });
     } catch (err) {
       code = err instanceof ApiError ? `${err.status} ${err.code}` : String(err);

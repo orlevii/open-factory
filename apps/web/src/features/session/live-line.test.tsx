@@ -21,11 +21,11 @@ function agent(over: Partial<AgentSummary> = {}): AgentSummary {
     reportsTo: null,
     credential: null,
     projects: [],
-    grantsOverridden: false,
     depth: 0,
     archivedAt: null,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     ...over,
   });
 }
@@ -184,10 +184,35 @@ describe("LiveLine", () => {
     expect(el).toHaveAttribute("title", "It broke\nmore");
   });
 
-  test("no fact: an empty status region that takes no room", () => {
+  test("no fact: an empty status region", () => {
     render(<LiveLine fact={null} />);
     const el = screen.getByRole("status", { hidden: true });
     expect(el).toBeEmptyDOMElement();
-    expect(el).toHaveClass("hidden");
+  });
+});
+
+describe("restart line (I2 §7.3)", () => {
+  test("names what the restart applies, at most three kinds, the full list in the title", () => {
+    const restartChanges = [
+      "model: sonnet → opus",
+      "added skill release",
+      "added allow rule `Bash(git push:*)`",
+      "added allow rule `Bash(git pull:*)`",
+      "env LOG_LEVEL changed",
+      "MCP server github added",
+      "effort: low → high",
+    ];
+    const f = liveFact(agent({ restartPending: true, restartChanges }), ctx);
+    expect(f).toMatchObject({
+      kind: "restart",
+      text: "Restarts when idle to apply: model, 1 skill, 2 rules and 3 more",
+      title: restartChanges.join("\n"),
+    });
+  });
+
+  test("no known changes keeps the plain line", () => {
+    const f = liveFact(agent({ restartPending: true }), ctx);
+    expect(f).toMatchObject({ text: "Restarts when idle" });
+    expect(f?.title).toBeUndefined();
   });
 });

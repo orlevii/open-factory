@@ -41,7 +41,7 @@ describe("toolMetaSchema", () => {
 });
 
 describe("tool_result.meta", () => {
-  test("a tool_result without meta parses (old rows)", () => {
+  test("a tool_result without meta parses (a tool the harness keeps no facts for)", () => {
     const row = { type: "tool_result", toolUseId: "t1", content: "ok", isError: false };
     expect(anyEventSchema.parse(row)).toEqual(row);
   });

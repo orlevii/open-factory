@@ -12,6 +12,7 @@ const GROUPS: { title: string; rows: { label: string; keys: string[] }[] }[] = [
       { label: "Search", keys: ["Mod", "K"] },
       { label: "Go to Inbox", keys: ["g", "i"] },
       { label: "Go to Tasks", keys: ["g", "t"] },
+      { label: "Go to Skills", keys: ["g", "k"] },
       { label: "Go to Schedules", keys: ["g", "s"] },
       { label: "Go to Usage", keys: ["g", "u"] },
       { label: "Go to Agents", keys: ["g", "a"] },

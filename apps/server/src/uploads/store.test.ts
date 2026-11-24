@@ -109,11 +109,16 @@ test("an existing file or link at the target is refused (O_EXCL), never replaced
 });
 
 test("a stored name that could leave the folder is refused before anything is opened", async () => {
-  const store = await UploadStore.open(tmp("wd-"));
+  const wd = tmp("wd-");
+  const store = await UploadStore.open(wd);
   for (const storedName of ["../x.txt", "a/b.txt", "..", ""])
-    await expect(
-      store.write(chunks(Buffer.from("x")), { storedName, name: "x" }),
-    ).rejects.toThrow();
+    await expect(store.write(chunks(Buffer.from("x")), { storedName, name: "x" })).rejects.toThrow(
+      `${storedName} isn't a stored upload name.`,
+    );
+  // Nothing was created: not in the uploads folder, and not where the name pointed.
+  expect(existsSync(uploadsOf(wd)) ? readdirSync(uploadsOf(wd)) : []).toEqual([]);
+  for (const stray of ["x.txt", ".factory/x.txt", "a"])
+    expect(existsSync(path.join(wd, stray))).toBe(false);
 });
 
 test("a stream crossing the limit throws and deletes the temp file", async () => {
@@ -235,7 +240,8 @@ test("Docker: the stored file is under the workdir mount the container sees and 
   const mounts = buildMounts({
     workdir: wd,
     grantedPaths: [],
-    hostSkillPaths: [],
+    skillPaths: [],
+    templateSkillPaths: [],
     declaredMarketplaceDirs: [],
     pluginsDir: "/host/plugins",
     cliBundle: "/host/cli",
@@ -246,6 +252,7 @@ test("Docker: the stored file is under the workdir mount the container sees and 
     workdir: wd,
     env: {},
     claudeBin: "/usr/local/bin/claude",
+    settingsJson: "{}",
     config: { runtime: "docker", permissionMode: "auto" } as Parameters<
       typeof buildRuntimeSpec
     >[0]["config"],

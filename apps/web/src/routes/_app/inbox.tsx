@@ -1,9 +1,10 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import type { ChatRow } from "@open-factory/shared";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
-import { type InboxItem, inboxQueryOptions } from "@/features/inbox/api";
+import { chatSlugOf, type InboxItem, inboxQueryOptions } from "@/features/inbox/api";
 import { InboxList } from "@/features/inbox/inbox-list";
 import { InboxPane } from "@/features/inbox/inbox-pane";
 import {
@@ -11,6 +12,7 @@ import {
   MarkAllReadOutcome,
   useMarkAllRead,
 } from "@/features/inbox/mark-all-read";
+import { agentDetailQueryOptions } from "@/features/session/api";
 import { useMedia, WIDE } from "@/lib/breakpoints";
 
 export const Route = createFileRoute("/_app/inbox")({
@@ -35,6 +37,38 @@ function useLoadedItem(id: string | undefined): InboxItem | undefined {
   }).data;
 }
 
+/** The selected chat as a read row, for a chat with nothing unread (a reload, Back, a deep link): the list keeps
+ *  it in view. It sits at the top, from when it was selected. */
+function useSelectedChat(slug: string | undefined): ChatRow | undefined {
+  const agent = useQuery({
+    ...agentDetailQueryOptions(slug ?? ""),
+    enabled: slug !== undefined,
+    refetchOnWindowFocus: false,
+    select: (d) => d.agent,
+  }).data;
+  // Stamped once per selection (adjusted during render on a change), so the row doesn't move when the agent changes.
+  const [stamped, setStamped] = useState<{ slug: string | undefined; at: string }>();
+  if (stamped?.slug !== slug) setStamped({ slug, at: new Date().toISOString() });
+  const stamp = stamped && stamped.slug === slug ? stamped.at : undefined;
+  return useMemo(() => {
+    if (!agent || !stamp) return undefined;
+    return {
+      agent: {
+        slug: agent.slug,
+        displayName: agent.displayName,
+        template: agent.template,
+        avatarVersion: agent.avatarVersion,
+        color: agent.color,
+        kind: agent.kind,
+        status: agent.status,
+        archivedAt: agent.archivedAt,
+      },
+      unread: 0,
+      latest: { messageId: "", preview: "", createdAt: stamp, urgent: false },
+    };
+  }, [agent, stamp]);
+}
+
 function InboxPage() {
   const button = useRef<HTMLButtonElement>(null);
   const lastReadAt = useRef<string>(undefined);
@@ -42,7 +76,9 @@ function InboxPage() {
   const wide = useMedia(WIDE);
   const itemId = Route.useSearch({ select: (s) => s.item });
   const navigate = Route.useNavigate();
-  const item = useLoadedItem(wide ? itemId : undefined);
+  const chatSlug = wide ? chatSlugOf(itemId) : undefined;
+  const item = useLoadedItem(wide && chatSlug === undefined ? itemId : undefined);
+  const selectedChat = useSelectedChat(chatSlug);
 
   // Below 1024 rows navigate as before; a `?item=` from a wider window is dropped.
   useEffect(() => {
@@ -55,7 +91,11 @@ function InboxPage() {
   );
 
   const header = (
-    <PageHeader title="Inbox" actions={<MarkAllReadButton state={state} buttonRef={button} />} />
+    <PageHeader
+      wrap
+      title="Inbox"
+      actions={<MarkAllReadButton state={state} buttonRef={button} />}
+    />
   );
   // The live regions stay mounted (so the outcome is announced), but take room only with a line
   // in them: no empty strip above the list.
@@ -69,10 +109,10 @@ function InboxPage() {
       <div className="flex h-svh min-h-0 flex-col">
         {header}
         <div className="flex min-h-0 flex-1">
-          <div className="w-[23.75rem] shrink-0 overflow-y-auto border-r border-border">
+          <div className="w-[23.75rem] max-w-[45%] shrink-0 overflow-y-auto border-r border-border">
             <div className="py-4">
               <div className="px-4">{outcome}</div>
-              <InboxList selectedId={itemId} onSelect={onSelect} />
+              <InboxList selectedId={itemId} selectedChat={selectedChat} onSelect={onSelect} />
             </div>
           </div>
           <InboxPane selectedId={itemId} item={item} />

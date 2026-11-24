@@ -18,8 +18,9 @@ export type CaretAnchor = { x: number; y: number };
 /** What the composer's key handler drives: focus never leaves the textarea (keyboard-opened). */
 export type CaretMenuHandle = {
   move(delta: 1 | -1 | number): void;
-  /** Picks the highlighted item; false when there is none, or with `exactOnly` when it isn't `exact`. */
-  accept(exactOnly?: boolean): boolean;
+  /** Picks the highlighted item; false when there is none, it is disabled, or (for Enter) it sends the
+   *  text as typed instead. */
+  accept(enter?: boolean): boolean;
 };
 
 const COPY_PROPS = [
@@ -110,7 +111,7 @@ const COMMAND_ROWS_HEIGHT = "24rem";
 const MENTION_ROWS_HEIGHT = "16rem";
 
 const itemClass =
-  "flex min-h-8 pointer-coarse:min-h-9 cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm select-none data-[selected=true]:bg-accent";
+  "flex min-h-8 pointer-coarse:min-h-9 cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm select-none data-[selected=true]:bg-accent data-[disabled=true]:text-muted-foreground";
 
 const keepFocus = (e: { preventDefault(): void }) => e.preventDefault();
 
@@ -164,8 +165,8 @@ export function CaretMenu({
         const next = (((index + delta) % items.length) + items.length) % items.length;
         setValue(items[next]?.id ?? "");
       },
-      accept(exactOnly = false) {
-        if (!current || (exactOnly && !current.exact)) return false;
+      accept(enter = false) {
+        if (!current || current.disabled || (enter && current.enterSends)) return false;
         onPick(current);
         return true;
       },
@@ -208,6 +209,7 @@ export function CaretMenu({
       key={item.id}
       value={item.id}
       data-caret-item={item.id}
+      disabled={item.disabled !== undefined}
       onSelect={() => onPick(item)}
       className={itemClass}
     >
@@ -351,6 +353,7 @@ function MentionRow({ item }: { item: CompletionItem }) {
           slug={item.avatar.slug}
           template={item.avatar.template}
           avatarVersion={item.avatar.avatarVersion}
+          color={item.avatar.color ?? null}
           size={16}
         />
       ) : null}

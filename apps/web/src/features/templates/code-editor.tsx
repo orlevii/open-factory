@@ -11,8 +11,12 @@ import {
   type Lang,
   languageFor,
   languageSlot,
+  marginSlot,
+  marginsFor,
   markerSlot,
   markersFor,
+  readOnlyFor,
+  readOnlySlot,
   toDiagnostics,
 } from "./code-editor-setup";
 
@@ -39,6 +43,10 @@ type Props = {
   /** Compared by contents, so an inline `filter` doesn't re-send them per keystroke; memoizing at the
    *  call site still saves the comparison. */
   diagnostics: readonly Diag[];
+  /** No edits (the Configuration page's Combined view). Reconfigured in place: the view is never rebuilt for it. */
+  readOnly?: boolean;
+  /** The height of a sticky footer over the editor's bottom edge, so the cursor is never scrolled under it. */
+  scrollMarginBottom?: number;
 };
 
 type Configured = {
@@ -47,6 +55,8 @@ type Configured = {
   id: string;
   labelledBy: string;
   describedBy: string;
+  readOnly: boolean;
+  margin: number;
 };
 
 function sameDiags(a: readonly Diag[], b: readonly Diag[]) {
@@ -104,6 +114,8 @@ const CodeEditor = forwardRef<CodeEditorHandle, Props>(function CodeEditor(props
       onBlur: () => latest.current.props.onBlur?.(),
       ids: { id: p.id, labelledBy: p.labelledBy, describedBy: d },
       mobile: m,
+      readOnly: p.readOnly ?? false,
+      scrollMarginBottom: p.scrollMarginBottom ?? 0,
     });
     configured.current = {
       language: p.language,
@@ -111,6 +123,8 @@ const CodeEditor = forwardRef<CodeEditorHandle, Props>(function CodeEditor(props
       id: p.id,
       labelledBy: p.labelledBy,
       describedBy: d,
+      readOnly: p.readOnly ?? false,
+      margin: p.scrollMarginBottom ?? 0,
     };
     const saved = p.states.get(key);
     return saved
@@ -170,6 +184,8 @@ const CodeEditor = forwardRef<CodeEditorHandle, Props>(function CodeEditor(props
   }, [value, fileKey]);
 
   const { id, labelledBy } = props;
+  const readOnly = props.readOnly ?? false;
+  const margin = props.scrollMarginBottom ?? 0;
   useLayoutEffect(() => {
     const view = viewRef.current;
     const c = configured.current;
@@ -181,10 +197,20 @@ const CodeEditor = forwardRef<CodeEditorHandle, Props>(function CodeEditor(props
       effects.push(
         attrsSlot.reconfigure(attrsFor({ id, labelledBy, describedBy: allDescribedBy })),
       );
+    if (c.readOnly !== readOnly) effects.push(readOnlySlot.reconfigure(readOnlyFor(readOnly)));
+    if (c.margin !== margin) effects.push(marginSlot.reconfigure(marginsFor(margin)));
     if (!effects.length) return;
-    configured.current = { language, mobile, id, labelledBy, describedBy: allDescribedBy };
+    configured.current = {
+      language,
+      mobile,
+      id,
+      labelledBy,
+      describedBy: allDescribedBy,
+      readOnly,
+      margin,
+    };
     view.dispatch({ effects });
-  }, [language, mobile, id, labelledBy, allDescribedBy]);
+  }, [language, mobile, id, labelledBy, allDescribedBy, readOnly, margin]);
 
   // After the effects above: a swapped-in, restarted or re-laid-out state (a breakpoint flip recreates
   // the gutter's marks empty) gets this file's diagnostics again; an equal list on the same state doesn't.

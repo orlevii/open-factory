@@ -2,13 +2,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Library of skills (host, local folder, GitHub pinned to a commit, template-local) and plugins (from factory-registered, pinned marketplaces). Plugins install once per version into a factory-owned Claude Code **seed** that agents only read (closes #56). Add a Skills page and Library pickers in the Configuration form.
+**Goal:** Build a Library of skills (host, local folder, GitHub pinned to a commit, template-local) and plugins (from factory-registered marketplaces that Skills reads at a commit). Claude Code itself installs each agent's plugins at start, into the agent's own plugins dir, at the pin its template declares (pinned by default; Latest is an explicit choice). The factory runs no installer (Or, 2026-11-24). Add a Skills page and Library pickers, with a pin control, in the Configuration form.
 
 **Architecture:**
 - **Skill sources and marketplaces** are two DB tables. Host and template-local skills are discovered live by a `LibraryIndex`.
 - **GitHub skills** are fetched by a hardened `runGit` into `state/library/github/<id>/<sha>/`, read-only.
-- **Plugins** are installed by a hardened `StoreRunner` into `state/plugins/` (`CLAUDE_CODE_PLUGIN_CACHE_DIR`). Agents load them through `CLAUDE_CODE_PLUGIN_SEED_DIR`, and the plugin settings arrive through `--settings '<json>'`.
-- **Every start** scrubs the agent-writable plugin and skill paths and refuses reserved settings keys.
+- **Marketplaces** are read by the same `runGit` into `state/library/marketplaces/<name>/<sha>/`, read-only, for the catalog, contents and diffs.
+- **Plugins** are installed by Claude Code at agent start into `state/agents/<slug>/plugins/` (`CLAUDE_CODE_PLUGIN_CACHE_DIR`, read-write in Docker). The factory-owned keys (`enabledPlugins`, `extraKnownMarketplaces` with `ref` as the pin, `syncClaudeAiPlugins`) arrive through `--settings '<json>'`. After `init`, the factory reports any plugin that didn't load.
+- **Every start** scrubs the agent-writable skill paths and refuses reserved settings keys.
 - **Library changes** reuse I2's change flow, with `{doc, library}` on both sides.
 
 **Tech Stack:** TypeScript pnpm monorepo, Fastify, Postgres with Drizzle, Zod in `packages/shared`, React + Vite + TanStack Router/Query, cmdk (existing), Vitest, Biome, and the host `git` and `claude` CLIs. **No new npm dependency.**
@@ -23,19 +24,19 @@
   - Tests use fake Claude (`packages/harness/testing/fake-claude.mjs`, extended in B2) and a fake `git` where the test says so.
   - GitHub fetches go to a local fixture repo through `FACTORY_GITHUB_URL=file://…`.
   - Never read `~/.open-factory-spike` or the real `~/.claude`. Tests point `FACTORY_HOST_CLAUDE_DIR` at a temp dir.
-  - The one real run is Or's Gate G1 (Task B1).
+  - The one real run is Or's Gate G1 (Task B1), inside containers from the agent image. Nothing is installed on Or's machine for any test or evidence.
 - **No tokens in URLs or logs.**
-  - Every `git` and `claude plugin` output passes through `redactOutput` (`apps/server/src/redact.ts`).
+  - Every `git` output passes through `redactOutput` (`apps/server/src/redact.ts`). The factory never runs `claude plugin`.
   - Inputs refuse userinfo, `?` and `#`.
   - Events carry only redacted text.
-- **Hardened runners (spec §6.2, §7.2).**
+- **Hardened git runner (spec §6.2).** Used for GitHub skills, marketplaces and external plugin sources.
   - An empty temp cwd.
   - Env exactly `PATH` and the host `HOME`, plus the listed variables.
   - Every `git` call prefixed with the `-c` flags verbatim from spec §6.2.
   - Arguments starting with a dash are refused.
-  - Budgets: git 60 s per command and 180 s per operation; claude 120 s per command and 240 s per operation.
+  - Budgets: 60 s per command and 180 s per operation.
 - **Limits (verbatim from the spec):**
-  - GitHub checkout ≤ 50 MB;
+  - GitHub and marketplace checkout ≤ 50 MB;
   - JSON ≤ 256 KB, `marketplace.json` ≤ 1 MB, `SKILL.md` ≤ 64 KB, at most 2,000 files walked;
   - descriptions and subjects cut to 200 characters on grapheme boundaries;
   - Undo 30 s;
@@ -49,17 +50,17 @@
 - **I2 config form (where I5's pickers live).** The section is `apps/web/src/features/config/skills-section.tsx` (`SkillsSection`, titled "Skills and plugins", with `SkillPicker` via `PickAdd` and the plugins `ListField`), placed by `config-form.tsx`. Lists: `list-field.tsx` → `config-list.tsx`; the add control is `pick-add.tsx`; field paths are in `fields.ts`; `PageFooter` is `features/config/page-footer.tsx`. The agent page is `features/config/config-page.tsx` (route `routes/_app/agents.$slug_.config.tsx`); the template tab is `features/templates/template-config-tab.tsx` (route `routes/_app/templates.$name.tsx`). There is no `features/config/sections/` directory.
 - **Database tests.** Server tests need Postgres (`DATABASE_URL`). Get a database only through `makeTestApp` or `createTestDb` (`apps/server/src/test/helpers.ts`); both copy a template migrated once per migration set (`createMigratedTestDatabase` in `packages/db/src/testing.ts`), and test apps get a cheap `AppDeps.passwordHasher`. Never migrate your own database in a test. Where the local Postgres role is unavailable, run the pure unit tests and the web tests you touched and read CI for the DB suites.
 - **Testing standards (AGENTS.md).** Every new or changed test follows AGENTS.md "Testing standards": test observable behaviour; cover the failure cases and security boundaries; no existence-only tests (no asserting that a key, export, constant or element exists, and no comparing a constant to its own literal); no implementation details; **no assertions on CSS classes or styling** (no `toHaveClass`, class strings, inline styles or tokens; layout and look are checked in the browser evidence); every test can fail; mock only boundaries; one behaviour per test, `test.each` for inputs; no tombstones for deleted routes or fields. The per-task reviewer checks the tests against these too.
-- **Tests per task, full suite per Part.** Each implementer and each reviewer runs **only the test files it created or changed** (`pnpm vitest run <files>`), or `pnpm test:related <changed source files>` to run the tests that import them. The full suite, `pnpm typecheck`, `pnpm lint` and `pnpm build` run **once at the end of each Part** (A16, B12, C3); CI is the full-suite check (a `checks` job plus test shards 1–4), because local full runs are slow and flaky on this machine. A task may run `pnpm typecheck` when it deletes or renames an exported symbol, to find the callers.
+- **Tests per task, full suite per Part.** Each implementer and each reviewer runs **only the test files it created or changed** (`pnpm vitest run <files>`), or `pnpm test:related <changed source files>` to run the tests that import them. The full suite, `pnpm typecheck`, `pnpm lint` and `pnpm build` run **once at the end of each Part** (A16, B11, C3); CI is the full-suite check (a `checks` job plus test shards 1–4), because local full runs are slow and flaky on this machine. A task may run `pnpm typecheck` when it deletes or renames an exported symbol, to find the callers.
 - **One reviewer per task.** After each task, one fresh reviewer checks that task's diff against the spec sections it cites and this plan; for React tasks it also checks the diff against `vercel-react-best-practices`.
 - **React.** The React parts of this plan were checked against `vercel-react-best-practices` when it was re-validated (React + Vite + TanStack Router/Query; Next-only rules don't apply). Whoever edits a React task of this plan MUST invoke the `vercel-react-best-practices` skill first and keep the task compliant. Every task that touches `apps/web` says: "The plan is already React-compliant; follow it as written and report any deviation." The implementer follows it; the per-task reviewer and the Part's final review check the React diff against the skill.
 - **React rules from the plan review** (binding for every web task; the branch reviews check each one):
   - **R-Q1. POSTs are mutations.**
-    - These are `useMutation`, started from click handlers and kept in component state, never under the `["library"]` key: `update-preview` (B10), Check for updates per source (A12), Find skills and Find more skills (A12, A13), Install and Install in factory (B10).
-    - Test: a `library_changed` frame while an update view is open doesn't call `update-preview` again.
+    - These are `useMutation`, started from click handlers and kept in component state, never under the `["library"]` key: Check for updates per source (A12) and per marketplace (B9), Find skills and Find more skills (A12, A13), marketplace Update, Fetch, Read contents and Add its marketplace (B9), and the pin diff (`POST …/diff`, B10).
+    - Test: a `library_changed` frame while a pin review is open doesn't call `diff` again.
     - A mutation's result is kept in component state keyed by what it is for (`key`, source `id`). When the peek retargets, the stale result is dropped during render (`if (resultFor !== key) setResult(undefined)`), never in an effect.
   - **R-Q2. Query keys.** Pinned keys, arrays of primitives:
     - `["library","skills"]`, `["library","skill",group,name]`, `["library","source",id]`;
-    - `["library","plugins"]`, `["library","plugin",key,from]`, `["library","marketplaces"]`;
+    - `["library","plugins"]`, `["library","plugin",key,from,commit ?? "library"]` (the commit is part of the key, so a peek at a template's pin never shows the Library commit's cache entry), `["library","marketplaces"]`;
     - file text as `["library-file", group|key, name, path, pin]`, outside the `["library"]` prefix, with `staleTime: Infinity` when pinned. It is fetched only while View file is open (`enabled: open`), prefetched on pointer-enter or focus of the toggle, and rendered with `UntrustedCode`, never CodeMirror.
     - `libraryQueryOptions` uses `staleTime: 0`, so a window focus refreshes the host and template-local lists (spec §9.5).
   - **R-Q3. Coalesced invalidation.** WS frames are handled in `apps/web/src/routes/_app.tsx` `onMessage` (`lib/ws.ts` is only the socket). Add `onLibraryChanged(qc)` in `apps/web/src/lib/library.ts`: a **module-level** 250 ms trailing timer (like `features/agents/status-frames.ts`'s batching, never per render) that invalidates `["library"]` once; `onMessage` calls it for `library_changed`. The reconnect path already invalidates everything but chat, so no reconnect code is added. Test (`lib/library.test.ts`): 10 frames in one tick give one invalidation.
@@ -73,12 +74,7 @@
     
     The signal goes through the `mutationFn`. Tests: unmount aborts; a second Find drops the first response.
   - **R-L4. Arrival.** Reuse I3's `apps/web/src/lib/use-arrival.ts` (`arrive(row)`: focus without scroll plus the `data-focus-ring` stand-in; `useArrivalTint()`: `{arrival, start, onArrivedEnd}`, a 2 s visible-time tint with stable callbacks; used by `features/settings/credentials-section.tsx`). `useLibraryArrival()` keeps `[arrivedKey, setArrivedKey] = useState<string>()` and adjusts during render: `if (state.peek && location.key !== arrivedKey) { setArrivedKey(location.key); setPeek(state.peek) }` (the adjust-state-while-rendering pattern `credentials-section.tsx` uses; a lazy `useState` would not re-run for a second arrival on the same mounted page). One effect, deps `[location.key, rowFound]`, ref-guarded per key: `row.scrollIntoView({ block: "center" }); arrive(row); start()`. Rows take `arrival`/`onArrivedEnd` as props. Router state stays (spec R6). Test: a `library_changed` after arrival doesn't scroll again; a second arrival on the mounted page opens its peek.
-  - **R-L5. Holding a row in place.** A row moving groups (B10) keeps a `held` snapshot:
-    - set in `onPointerEnter` and `onFocus`;
-    - cleared in `onPointerLeave` and `onBlur`, checking `relatedTarget`;
-    - then `view = held ?? data` during render.
-    
-    Write a new `useHeldWhileInside()` in `features/skills/use-held.ts`. (`useHeldWhileSelected` in `features/session/agent-text.tsx` holds on text selection, not hover or focus, so it doesn't fit.)
+  - **R-L5.** Retired with the plugin redesign: rows no longer move between groups.
   - **R-C1. Multi Combobox.** The existing `Combobox` (`components/ui/combobox.tsx`) has an `onOpen` prop and an internal `onOpenChange`. The snapshot of what to leave out next time is taken in that open handler (`onOpen`), never in an effect. Callers keep `added` stable with a primitive key: `useMemo(() => new Set(names), [names.join("\0")])`, because the config draft's `readList` may return a fresh array each render. Picked options keep cmdk's `disabled` prop, so the highlight skips them.
   - **R-F1. Find results.** Ticks are a `Set<name>` updated with functional `setState`. The filtered rows, the toggle label and "None of these can be added" are derived during render. Old ticks merge with new names in the Find success handler. No `useDeferredValue`.
   - **R-H1. Hoisting.** No section component (Runs code, Files, Used by, Provenance, `renderOption`) is ever defined inside another component. Static skeleton rows are hoisted to module scope and sized from counts.
@@ -121,8 +117,10 @@ Before each push, and before `pnpm db:generate` (A2, B3), merge the latest lower
 | `library.ts` (new) | Patterns (imports `HOST_SKILL_PATTERN` from `names.ts`), reserved names, `OFFICIAL_MARKETPLACES`, `PLUGIN_REF_PATTERN`, input normalisers (`normalizeRepo`, `normalizeSubpath`, `checkBranchName`, `checkGitUrl`), schemas for every API in spec §9, `SkillGroup`, `SkillEntry`, `ROW_STATE_ORDER`, `cutGraphemes` | A (plugin schemas in B) |
 | `settings-keys.ts` (new) | `RESERVED_SETTINGS_KEYS`, `reservedKeysIn(settings)` (uses `isFactoryEnvName`) | A |
 | `config-changes.ts` (modify, from I2) | `describeDocChanges(a, b)` (today's doc-only body), `describeChanges({doc, library}, {doc, library})`, the library lines, `summarizeChanges` counts | A (plugin lines in B) |
-| `templates.ts` (modify) | `PLUGIN_REF` deleted (A1, replaced by `PLUGIN_REF_PATTERN`); `plugins`, `PLUGIN_REF_MSG` and `pluginRef` removed (B8) | A, B |
-| `config.ts` (modify, from I2/I6) | host-skills schema and `HOST_SKILL_DESCRIPTION_MAX` deleted (A8); `FACTORY_ENV_NAMES` gains the seed names (B7); `overlayTemplateSchema.plugins` removed (B8) | A, B |
+| `templates.ts` (modify) | `PLUGIN_REF` deleted (A1, replaced by `PLUGIN_REF_PATTERN`); `plugins`, `PLUGIN_REF_MSG` and `pluginRef` removed (B6) | A, B |
+| `library.ts` (modify, B6) | `pinOf`, `checkPinRef`, `OFFICIAL_MARKETPLACES` pin kinds, `ROW_STATE_ORDER` for plugins | B |
+| `events.ts` (modify, B7) | `plugin_not_loaded` session event | B |
+| `config.ts` (modify, from I2/I6) | host-skills schema and `HOST_SKILL_DESCRIPTION_MAX` deleted (A8); `FACTORY_ENV_NAMES` gains the plugin env names (B7); `overlayTemplateSchema.plugins` removed (B6) | A, B |
 | `ws.ts` (modify) | `{ type: "library_changed" }` | A |
 | `messages.ts` (modify) | I4 `MSG` constants from spec §10.4 that the server returns | A |
 | `index.ts` | exports | A, B |
@@ -131,7 +129,7 @@ Before each push, and before `pnpm db:generate` (A2, B3), merge the latest lower
 
 | File | Purpose | Part |
 |---|---|---|
-| `library.ts` (new) | `skillSources` (A), `marketplaces` (B), as spec §5.1 | A, B |
+| `library.ts` (new) | `skillSources` (A), `marketplaces` (B3), as spec §5.1 | A, B |
 
 **Server (`apps/server/src/`)**
 
@@ -145,32 +143,34 @@ Before each push, and before `pnpm db:generate` (A2, B3), merge the latest lower
 | `library/library-index.ts` (new) | `LibraryIndex.skills()`, `resolveSkill(name)`, `usedBy` | A |
 | `library/forbidden.ts` (new; shared with `mounts.ts`) | `forbiddenSet(ctx)`, `checkSkillFolder(real)` | A |
 | `library/sources-service.ts` (new) | preview, add, find, check, update, fetch, remove, restore, purge | A |
-| `library/locks.ts` (new) | `libraryLock` (KeyedMutex), `storeLock` (RwLock, B) | A, B |
+| `library/locks.ts` (new) | `libraryLock` (KeyedMutex) | A |
 | `library/library-sweep.ts` (new) | previews > 1 h, soft-delete purge, boot purge | A |
-| `library/claude-flags.ts` (new) | `AUTO_UPDATE_ENV`, `assertPluginFloor` (on the harness's `checkClaudeVersion`), `checkImageClaudeVersion`, `versionCheckEnv` (moved from `agents/runtimes.ts`) | B |
-| `library/store-runner.ts` (new) | `StoreRunner.run(args, { op })` | B |
-| `library/plugin-store.ts` (new) | `installed()`, `marketplaceIndex()`, `install`, `updatePreview`, `update`, journal, provenance | B |
-| `library/marketplaces-service.ts` (new) | preview, add, boot repair, `assertMarketplacePinned`, check, update, remove | B |
-| `library/plugin-contents.ts` (new) | `readContents(root)` | B |
-| `library/host-plugins.ts` (new) | `HostPlugins.list()`, `installInFactory` | B |
-| `library/plugin-settings.ts` (new) | `buildPluginSettings(closure, store, registry)` → the `--settings` JSON | B |
+| `library/claude-flags.ts` (new) | `assertPluginFloor` (on the harness's `checkClaudeVersion`), `checkImageClaudeVersion`, `versionCheckEnv` (moved from `agents/runtimes.ts`) | B3 |
+| `library/marketplaces-service.ts` (new) | preview, add, check, update (the Library's commit), `fetchAt`, `checkout`, remove, restore | B4 |
+| `library/plugin-sources.ts` (new) | `readPluginSource(src, sha)`: external `sha` sources, read-only | B4 |
+| `library/plugin-contents.ts` (new) | `readContents(root)` with `needs`, `diffContents(a, b)` | B5 |
+| `library/host-plugins.ts` (new) | `HostPlugins.list()`, `addMarketplace` | B8 |
+| `library/plugin-settings.ts` (new) | `buildPluginSettings(...)` → the `--settings` JSON; `readInstalled(pluginsDir)` | B7 |
 | `workspace/links.ts` | `resolveSkills` (replaces `resolveHostSkills`), prefix set, `.claude-plugin` check | A |
 | `workspace/agent-folders.ts` (new) | `scrubAgentFolders`, `checkProjectSettings`, `checkAgentFrontmatter` | A |
-| `workspace/mounts.ts` | `skillPaths`; the GitHub-skill class (A); `storeDir` and the store class, `declaredMarketplaceDirs` replaced (B) | A, B |
+| `workspace/mounts.ts` | `skillPaths`; the GitHub-skill class (A); the agent's plugins dir read-write as an exact class, `declaredMarketplaceDirs` from the closure (B7) | A, B |
 | `workspace/workspace.ts` | takes `library: LibraryIndex` instead of `hostSkillsDir`; `materialize` and `prepare` steps from spec §7.3; `ensurePlugins` deleted (B) | A, B |
-| `workspace/paths.ts` | `pluginsConfigDir` deleted (B) | B |
+| `workspace/paths.ts` | `agentPluginsDir` replaces `pluginsConfigDir` (B7) | B |
 | `workspace/settings.ts` | `buildSettings` loses `pluginKeys` and `plugins` (B) | B |
 | `workspace/plugins.ts` | deleted (B) | B |
 | `templates/validate.ts` (I2's `validateEffective`) | spec §6.6 and §7.4 rules; `ValidationContext.library` replaces `hostSkillsDir` | A, B |
 | `templates/template-index.ts` | `context()` passes `library`; rescans on `libraryChanged` | A |
 | `agents/config-resolver.ts`, `agents/config-changes.ts` (from I2) | `Effective.library`; `currentEffective` port; `libraryChanged`; `Effective.templatePlugins` deleted (B) | A, B |
 | `agents/agent-runtime.ts`, `agents/runtimes.ts` | `requestRestart` compares `{doc, library}` | A |
-| `agents/runtime-spec.ts` | `buildAgentEnv` adds the seed and auto-update env; passes `settingsJson` | B |
-| `packages/harness/src/types.ts`, `packages/harness/src/claude/args.ts` | `AgentRuntimeSpec.settingsJson`; `buildClaudeArgs` pushes `--settings` | B |
-| `packages/harness/src/claude/version.ts` | `MIN_CLAUDE_VERSION` becomes the one floor (G1) | B |
+| `agents/runtime-spec.ts` | `buildAgentEnv` adds `CLAUDE_CODE_PLUGIN_CACHE_DIR` and the update env; passes `settingsJson` | B7 |
+| `agents/agent-runtime.ts` | the init check: `plugin_not_loaded` and the Inbox notice; loaded versions into `started.library` | B7 |
+| `packages/harness/src/types.ts`, `packages/harness/src/claude/args.ts`, `packages/harness/src/claude/mapper.ts` | `AgentRuntimeSpec.settingsJson`; `buildClaudeArgs` pushes `--settings`; `session_started.plugins` | B7 |
+| `packages/harness/src/claude/version.ts` | `MIN_CLAUDE_VERSION` = 2.1.331, the one floor (B3; G1 item 21 may lower it) | B |
+| `images/base/claude-code-version`, `.github/workflows/base-image.yml` | the 2.1.331 pin (B0) | B |
+| `scripts/g1/*` | G1 in containers (B1) | B |
 | `routes/library.ts` (new) | spec §9 routes, `requireUser` only | A, B |
 | `routes/host-skills.ts` (from I2) | deleted (its `skillDescription` moves to `library/skill-md.ts`) | A |
-| `app.ts` | wiring, sweeps, boot repair | A, B |
+| `app.ts` | wiring, sweeps, boot removal of `adding` rows | A, B |
 
 **Web (`apps/web/src/`)**
 
@@ -182,12 +182,12 @@ Before each push, and before `pnpm db:generate` (A2, B3), merge the latest lower
 | `features/config/api.ts` | `hostSkillsQueryOptions` deleted | A |
 | `components/elapsed.tsx` (moved from `features/session/activity-line.tsx`) | `Elapsed` with `hideUnderMs` | A |
 | `lib/row-nav.ts` | rows selected by `data-row` | A |
-| `features/skills/use-held.ts` (new) | `useHeldWhileInside` | B |
 | `routes/_app/skills.tsx`, `skills.index.tsx` (new); `skills.plugins.tsx`, `skills.marketplaces.tsx` (B) | routes | A, B |
 | `features/skills/skills-header.tsx` | header, Check for updates outcome | A |
 | `features/skills/skill-list.tsx`, `source-header.tsx`, `row-state.tsx` | lists and states | A |
 | `features/skills/peeks/*` (`source-peek.tsx`, `skill-peek.tsx`, `update-view.tsx`, `file-view.tsx`, `use-peek.ts`) | peeks | A |
-| `features/skills/peeks/plugin-peek.tsx`, `marketplace-peek.tsx` | peeks | B |
+| `features/skills/peeks/plugin-peek.tsx`, `marketplace-peek.tsx`, `needs-from-image.tsx` | peeks | B9 |
+| `features/config/plugin-pin.tsx`, `latest-badge.tsx` (new) | the pin control, its reviews, the Latest badge | B10 |
 | `features/skills/add-skills-sheet.tsx`, `add-skills-results.tsx` | Add skills | A |
 | `features/skills/add-marketplace-sheet.tsx` | Add marketplace | B |
 | `features/skills/plugin-list.tsx`, `marketplace-list.tsx` | lists | B |
@@ -213,7 +213,7 @@ Implements spec §2 AC 1–7, §5, §6, §7.3 step 3, §7.10, §8 (skills), §9.
 
 **Files:**
 - Create: `packages/shared/src/library.ts`, `packages/shared/src/settings-keys.ts`
-- Modify: `packages/shared/src/ws.ts`, `packages/shared/src/messages.ts`, `packages/shared/src/index.ts`, `packages/shared/src/templates.ts` (delete `PLUGIN_REF`; `pluginRef` uses `PLUGIN_REF_PATTERN` until B8), `apps/web/src/lib/form-messages.ts` (the web-only §10.4 lines)
+- Modify: `packages/shared/src/ws.ts`, `packages/shared/src/messages.ts`, `packages/shared/src/index.ts`, `packages/shared/src/templates.ts` (delete `PLUGIN_REF`; `pluginRef` uses `PLUGIN_REF_PATTERN` until B6), `apps/web/src/lib/form-messages.ts` (the web-only §10.4 lines)
 - Test: `packages/shared/src/library.test.ts`, `packages/shared/src/settings-keys.test.ts`, `packages/shared/src/ws.test.ts`, `packages/shared/src/messages.test.ts`, `apps/web/src/lib/form-messages.test.ts`
 
 **Interfaces (produces):**
@@ -247,7 +247,7 @@ export function reservedKeysIn(settings: unknown): string[];  // the dotted keys
 
   In `settings-keys.test.ts`:
   - `test.each` over the spec §7.10 keys: a settings object setting that key is reported by `reservedKeysIn`, and a harmless sibling key (`permissions.allow`) is not;
-  - `reservedKeysIn({ hooks: {}, permissions: { defaultMode: "x" }, env: { OPEN_FACTORY_URL: "/x", FOO: "1" } })` returns `["env.OPEN_FACTORY_URL", "hooks", "permissions.defaultMode"]` (sorted), and an `env` name from `FACTORY_ENV_NAMES` is reported too. (The seed names join `FACTORY_ENV_NAMES` in B7.)
+  - `reservedKeysIn({ hooks: {}, permissions: { defaultMode: "x" }, env: { OPEN_FACTORY_URL: "/x", FOO: "1" } })` returns `["env.OPEN_FACTORY_URL", "hooks", "permissions.defaultMode"]` (sorted), and an `env` name from `FACTORY_ENV_NAMES` is reported too. (The plugin env names join `FACTORY_ENV_NAMES` in B7.)
 
   In `ws.test.ts`: `serverMessageSchema` accepts `{ type: "library_changed" }` and refuses an unknown frame type.
 - [ ] **Step 2: Run** `pnpm vitest run packages/shared/src/library.test.ts packages/shared/src/settings-keys.test.ts packages/shared/src/ws.test.ts`. Expected: FAIL (modules missing).
@@ -256,7 +256,7 @@ export function reservedKeysIn(settings: unknown): string[];  // the dotted keys
   - Before committing, re-read the shipped Claude Code's settings reference (`curl -sL https://code.claude.com/docs/en/settings-reference.md`, reading only). Add any other key marked "Any file" that runs a command or executable, then pin the list in the test.
   - Add a doc comment saying that I7's `agent` policy reuses this constant.
   - Add the spec §10.4 messages: field messages the server returns ("Can't share your home folder.", "No such branch." …) to shared `MSG`; web-only outcome and load lines ("Couldn't load skills." …) to `FORM_MSG` in `apps/web/src/lib/form-messages.ts`. Reuse `MSG.hostPathStart`, `FIELD_MSG.noFolder` and `FORM_MSG.enterPath` for the folder path instead of adding near-duplicates.
-  - Delete `PLUGIN_REF` from `templates.ts`; `pluginRef` uses `PLUGIN_REF_PATTERN` until B8 removes it.
+  - Delete `PLUGIN_REF` from `templates.ts`; `pluginRef` uses `PLUGIN_REF_PATTERN` until B6 removes it.
 - [ ] **Step 4: Run** the same command plus `pnpm vitest run packages/shared/src/messages.test.ts apps/web/src/lib/form-messages.test.ts` (I4's length tests). Expected: PASS.
 - [ ] **Step 5: Commit** `feat(shared): Library schemas, patterns and reserved settings keys`.
 
@@ -771,7 +771,7 @@ Implements spec §10.5 (skills). The plan is already React-compliant; follow it 
   - ADR 0028: no compatibility code; the old env var is never read, only named by the `REMOVED_ENV` boot warning;
   - hardened runners: argv, env and redaction tests present;
   - the I4 message rules;
-  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill first. Next-only rules are skipped, and the review says so. It covers effects only for external sync, no fetch in effects, stable query keys, no components defined inside components, abort on unmount for Find, and loaders that never await the host query, plus every R-Q, R-E, R-L, R-C, R-F, R-H, R-B, R-T and R-P rule in Global Constraints, that the `library_changed` coalescer is module-level (not per render), and that arrival uses `arrive`/`useArrivalTint`. This checklist is reused by B12 and C3.
+  - **the React diff against `vercel-react-best-practices`**: the reviewer invokes the skill first. Next-only rules are skipped, and the review says so. It covers effects only for external sync, no fetch in effects, stable query keys, no components defined inside components, abort on unmount for Find, and loaders that never await the host query, plus every R-Q, R-E, R-L, R-C, R-F, R-H, R-B, R-T and R-P rule in Global Constraints, that the `library_changed` coalescer is module-level (not per render), and that arrival uses `arrive`/`useArrivalTint`. This checklist is reused by B11 and C3.
 
   Apply fixes as their own commits (apps/web fixes follow `vercel-react-best-practices`).
 - [ ] **Full verification, once for the Part** (the only full run in Part A):
@@ -798,372 +798,263 @@ Implements spec §10.5 (skills). The plan is already React-compliant; follow it 
 
 # Part B: `i5/2-plugins` (PR 2)
 
-Implements spec §2 AC 8–14, §7, the plugin parts of §8–§10, §11 and §13. Cut it with `git checkout -b i5/2-plugins i5/1-library-skills`.
+Implements spec §2 AC 8–15, §7 (the plugin design Or approved on 2026-11-24: Claude Code installs per agent at start; the factory runs no installer), the plugin parts of §8–§10, §11, §13 and DESIGN.md amendment 7. The branch exists and already holds B0's first pin (2.1.327), B1's first G1 scripts and `timing.sh`; B0 and B1 below redo them for the new design.
 
 **Reset step:**
 - drop the database and recreate agents;
-- templates listing `plugins:` fail validation: move them to `settings.json` `enabledPlugins`, and add their marketplaces in Skills.
+- templates listing `plugins:` fail validation: move them to `settings.json` `enabledPlugins`, add their marketplaces in Skills, and pick the plugins again in each template (that writes the pins).
 
-### Task B0: Pin the base image's Claude Code (before G1)
+**What PR 2 no longer builds** (the old shared-store tasks; never implemented, nothing to revert): `StoreRunner`, the seed and `CLAUDE_CODE_PLUGIN_SEED_DIR` use, `storeLock`, the install journal and `bootRecover`, `provenance.json`, the update-preview copy, the start's store check and install, background installs on save, `install`/`install-in-factory`/`update-preview`/`update` plugin routes, the store mount class, `useHeldWhileInside` (rows no longer move between groups), and the `failed` marketplace row.
 
-Implements owner plan review change 2. G1 must run on the exact version the image ships, and an image that takes "latest" at build time is itself a supply-chain gap.
+### Task B0: Pin the base image's Claude Code to 2.1.331
 
-Today `images/base/Dockerfile` already installs an exact `CLAUDE_CODE_VERSION`, verified against the release manifest's sha256, and labels it as `io.open-factory.claude-code.version`. But `.github/workflows/base-image.yml` resolves that version from `downloads.claude.ai/.../latest` on every build, including the weekly rebuild.
-
-**Files:**
-- Create: `images/base/claude-code-version` (one line, e.g. `2.1.3xx`)
-- Modify: `.github/workflows/base-image.yml` (the "Resolve latest Claude Code version" step reads the file; the weekly no-cache rebuild keeps the pinned version)
-- The one floor is the harness's `MIN_CLAUDE_VERSION` (`packages/harness/src/claude/version.ts`, today `2.1.327`); B3 sets it from the G1 report. Until then the planned floor is this pinned version.
-
-- [ ] **Step 1: Choose the version.** It must meet all three:
-  - at or above `MIN_CLAUDE_VERSION` (2.1.327) and the documented floor features (seed, `syncClaudeAiPlugins`, `mcpb/`, dependency auto-install);
-  - at least 14 days old (the repo's minimum-release-age policy, applied to the CLI too);
-  - the newest version that meets both.
-  
-  If the newest release is younger than 14 days, take the newest one that isn't and say so in the PR body. Record the release date from the release manifest.
-- [ ] **Step 2:** Make the workflow read `images/base/claude-code-version`, validate it against `^[0-9]+\.[0-9]+\.[0-9]+$`, and fail on anything else. Delete the "latest" resolution (ADR 0028: no fallback). Update the workflow comment "Weekly no-cache rebuild: new Claude Code, …" to say Claude Code is pinned and changes only through this file.
-- [ ] **Step 3:** `actionlint` if installed; otherwise review the YAML diff. CI builds the image on the PR.
-- [ ] **Step 4: Commit** `chore(image): pin the base image's Claude Code version`.
-
-The image label already exists, so #160 keeps only the docs.
-
-### Task B1: Gate G1 script and fixture recipe (for Or; blocks B2 onward)
-
-Implements spec §13. **The executor writes the script but never runs it.** Running it needs real Claude Code and Or.
+Implements spec §7.9. Already on the branch: `images/base/claude-code-version` (2.1.327), and `.github/workflows/base-image.yml` reading it.
 
 **Files:**
-- Create: `scripts/g1/run.sh`, `scripts/g1/fixture/README.md`, `scripts/g1/fixture/make-fixture.sh`, `scripts/g1/report-template.md`
+- Modify: `images/base/claude-code-version` (`2.1.331`), `.github/workflows/base-image.yml` (delete any text about the 14-day release-age wait for this pin; the comment says the version changes only through this file), `scripts/g1/run.sh` and `scripts/g1/timing.sh` only if they hard-code 2.1.327.
 
-- [ ] **Step 1:** Write `make-fixture.sh`. It builds the fixture marketplace tree, to be pushed by Or to a throwaway GitHub repo (`<or>/of-g1-fixture`):
-  - **`marker`**, with every code path writing to `$MARK`: a SessionStart hook; an MCP server that also writes `${CLAUDE_PLUGIN_DATA}/x`; `bin/x`; a monitors entry; and a `package.json` with one real registry dependency, a lockfile and `preinstall`/`postinstall` scripts;
-  - **`dep`**, an exact dependency of `marker`;
-  - **`ranged`**, with a version-range dependency;
-  - **a second commit** that changes `marker`;
-  - **a local directory marketplace** with a relative plugin whose manifest has `defaultEnabled: true`;
-  - **the sneaky skills-directory plugin**;
-  - **a skill and a subagent with frontmatter hooks**.
+- [ ] **Step 1:** Write `2.1.331`. The repo's release-age rule for dependencies stays; it doesn't apply to the Claude Code pin while pre-release (Or). Record the release date from the release manifest in the commit body.
+- [ ] **Step 2:** `actionlint` if installed; otherwise review the YAML diff. CI builds the image.
+- [ ] **Step 3: Commit** `chore(image): pin Claude Code 2.1.331`.
 
-  The README gives the push steps. It also states:
-  - the npm dependency is exact-pinned, tiny and well known (named in the README);
-  - `run.sh` uses a throwaway `HOME` and npm cache under its temp dir, so Or's machine isn't touched beyond that dir.
-- [ ] **Step 2:** Write `run.sh`, covering items 1–20 of spec §13 exactly as written:
-  - `set -eu`, with `mkdir -p $MARK` up front and `test -z "$(ls -A $MARK)"` checks;
-  - full stream capture to `out.jsonl`, with `init` selected by `jq 'select(.type=="system" and .subtype=="init")'`;
-  - clones detached **behind** origin (`checkout --detach HEAD~1`);
-  - item 2 run with the seed both read-only and writable;
-  - the agent env exactly as in spec §7.3: a scrubbed plugins root, an empty `skills/`, `CLAUDE_CODE_PLUGIN_SEED_DIR`, `DISABLE_AUTOUPDATER=1`, and `--settings "$(cat plugin-settings.json)"`;
-  - it refuses to run with `HOME` pointing at a dir that contains `.open-factory-spike`;
-  - each item writes PASS, FAIL or RECORDED plus the evidence into `report.md`, from `report-template.md`.
-- [ ] **Step 2b (added after B1 shipped; Or's request): item 20, install and start timing.** Add a separate `scripts/g1/timing.sh`, called by `run.sh` as item 20 and runnable alone, that records spec §13 item 20 as RECORDED (never PASS or FAIL):
-  - it runs each case in `docker run --rm --entrypoint bash <image>` from the pinned agent image (the B0 version), with no mounts, no credentials, a fresh `CLAUDE_CONFIG_DIR` and `DISABLE_AUTOUPDATER=1`;
-  - it times (wall clock, `date +%s.%N` or `/usr/bin/time`) marketplace add, install, and a second install, for `superpowers@superpowers-marketplace`, `skill-creator` and `frontend-design@claude-plugins-official`, and the fixture's `marker` and `ranged`; then `du -sk` and a file count of the plugins dir, and whether a `node_modules/` exists;
-  - it measures the extra time to the stream-json `init` with the plugin already installed (against no plugins), and the cold start from an empty but declared plugins dir to the plugin listed in `init`;
-  - it runs each cold case 3 times and writes min and max into a table in `report.md`, with Or's reference numbers from spec §13 item 20 beside them, plus a line for the network and host that Or fills in;
-  - `report-template.md` gains the item 20 table.
-- [ ] **Step 3:** `bash -n scripts/g1/run.sh scripts/g1/timing.sh` and `shellcheck scripts/g1/*.sh` (if installed). Commit `chore: Gate G1 script and fixture for Or` (item 20: `chore: G1 install and start timing`).
-- [ ] **Step 4:** **Stop. Gate G1 is a manual step for Or; the executor never runs real Claude.** Hand off to tech-lead-i5 / main: "G1 is ready: Or runs `scripts/g1/run.sh` with Claude Code **<exact version from `images/base/claude-code-version`>** (B0) and posts `report.md` on #153." `run.sh` checks `claude --version` against that file, and refuses to run when the versions differ. Tasks B2 onward start only after Or's report. **Any FAIL goes back to owner-i5 before the design adapts.** The RECORDED items fill the constants in Tasks B3, B6 and B7: the floor, update against fresh install, and whether `mcpb/` is scrubbed.
+### Task B1: Gate G1 scripts for the container design (for Or; blocks B2 onward)
 
-### Task B2: Fake Claude: plugin seed mode
+Implements spec §13 as rewritten. **The executor writes the scripts but never runs them**; G1 is Or's manual step. Never read `~/.claude`, `~/.open-factory-spike` or a keychain.
 
 **Files:**
-- Modify: `packages/harness/testing/fake-claude.mjs` (**replace** the existing `argv[0] === "plugin"` block, which serves the old per-agent installs deleted in B7; ADR 0028) (extra env already goes in through `createFakeClaude({ env })` in `packages/harness/testing/index.ts`)
-- Test: `packages/harness/testing/fake-plugin.test.ts` (new, next to I3's `fake-setup-token.test.ts`)
+- Modify: `scripts/g1/run.sh`, `scripts/g1/report-template.md`, `scripts/g1/fixture/make-fixture.sh`, `scripts/g1/fixture/README.md`
+- Keep: `scripts/g1/timing.sh` (item 20); change it only to read the version from `images/base/claude-code-version` and to add the two session-start timings when `CLAUDE_CODE_OAUTH_TOKEN` is set.
 
-Follow the shape of I3's `setup-token` mode: an early argv branch before the session scenario is read, behaviour chosen by env knobs, never falling through. `FAKE_CLAUDE_SCENARIO` stays the *path* of the session scenario JSON and can't carry plugin scenarios.
+- [ ] **Step 1: The container harness in `run.sh`.**
+  - It refuses to run outside Docker's control (it only orchestrates `docker run --rm` from the pinned agent image, `open-factory-base:<pin>` or the tag Or passes) and refuses when `HOME` contains `.open-factory-spike`. Nothing is installed on the host.
+  - Each item runs in a fresh container. The agent's plugins dir is a host temp dir `$P` mounted read-write at the same path, with `CLAUDE_CODE_PLUGIN_CACHE_DIR=$P`; items 3, 5–8, 10 and 12 reuse `$P` across runs; every other item starts empty.
+  - The agent env is spec §7.3's: `CLAUDE_CONFIG_DIR=$AG`, an empty `skills/`, `DISABLE_AUTOUPDATER=1`, `FORCE_AUTOUPDATE_PLUGINS=1` only in items 5 (its second run, with a Latest marketplace declared alongside), 7 and 8, and `--settings "$(cat $S/plugin-settings.json)"`.
+  - A credential is passed only to session items, only as `-e CLAUDE_CODE_OAUTH_TOKEN` from Or's shell; the script never writes it to disk or to the report.
+  - Full stream capture to `out.jsonl`; `init` selected with `jq`; `set -eu`; `$MARK` checks with `test -z "$(ls -A $MARK)"`.
+  - `claude --version` inside the image must equal `images/base/claude-code-version`, or the script stops.
+- [ ] **Step 2: Items.** Delete the old items 2, 3, 4, 10, 11, 14 and 15 (seed, install-doesn't-pull, ref-less refetch, store update path, store auto-update, preview copy, runner auto-add) and everything that built the seed or the runner config. Renumber to spec §13's 0–21:
+  - **new:** 0 (file-URL git marketplace), 2 (install at start, with and without `CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1`), 3 (the per-agent plugins dir and persistence), 4 (pins: commit, tag, branch; the official marketplace's commit and tag; (f) `obra/superpowers-marketplace` at a fixed commit), 5 (a pinned plugin stays, including the ten-minute session, run without and with FORCE), 6 (repin, plus the `autoUpdate: true` fallback run if the new version doesn't load), 7 (Latest updates on restart, with and without `FORCE_AUTOUPDATE_PLUGINS=1`; `claude --version` unchanged), 8 (network down, installed: `--network none`), 9 (network down, missing);
+  - **extended:** 1 also records the `init.plugins` entry shape and whether `init` comes before the first message; 20 also records (e) the spawn-to-`initialize` time, cold and warm, with 1 and 3 plugins, when a credential is set;
+  - **rethought:** 10 (the agent's own install is disabled by an explicit `false` at the next start; record whether its marketplace stays and refreshes), 12 (`data/` and `mcpb/` land under `$P`), 13 (no plugin code at install, at the start install, at repin and at the dependency install);
+  - **kept as written, renumbered:** 1, 11, 14–19 (old 1, 5, 9, 12, 13, 16, 17, 18), 20 (timing) and 21 (floor, over items 1–9, 12, 15, 19).
+- [ ] **Step 3: Fixtures without GitHub where possible.** `make-fixture.sh` builds (a) the directory marketplace (`marker`, `dep`, `ranged`, the `defaultEnabled` plugin, an external `git-subdir` entry with a `sha` pointing into (b)), and (b) a local **bare** git repo of the same tree with two commits and tag `v1` on the first, both mounted read-only into the containers. Item 0 decides whether (b) works as `{"source":"git","url":"file:///fixture/acme.git"}`; if not, `run.sh` reads `G1_GITHUB_REPO=<or>/of-g1-fixture` for items 4–9 and the README gives the push steps. Items 5–7 "push" the second commit by updating (b) between runs (or the GitHub repo when used).
+- [ ] **Step 4: The report.** `report-template.md` follows spec §13 "The report": version, image digest, network and host, whether item 0 made GitHub unnecessary, then each item PASS/FAIL/RECORDED with its evidence, then a "Fills" list (Latest env rule, `CLAUDE_CODE_SYNC_PLUGIN_INSTALL`, `OFFICIAL_MARKETPLACES` pin rules, `plugin_not_loaded` copy, floor).
+- [ ] **Step 5:** `bash -n scripts/g1/*.sh scripts/g1/fixture/*.sh` and `shellcheck` if installed. Commit `chore: Gate G1 in containers for per-agent plugin installs`.
+- [ ] **Step 6: Stop.** Hand off to tech-lead-i5 / main: "G1 is ready: Or runs `scripts/g1/run.sh` against the image with Claude Code 2.1.331, passing `CLAUDE_CODE_OAUTH_TOKEN` for the session items, and posts `report.md` on #153." Tasks B2 onward start only after Or's report. **Any FAIL goes back to owner-i5; item 2 failing goes to Or (spec P6).** The RECORDED items fill the constants in B3, B6 and B7.
 
-**Interfaces (produces).** Fake Claude honours `CLAUDE_CODE_PLUGIN_CACHE_DIR` for `plugin marketplace add <arg>`, `install <key>` and `update <key>`:
-- it writes `known_marketplaces.json` and `installed_plugins.json` in the v2 shape of spec §4, `marketplaces/<name>/` as a `git clone` of a local fixture marketplace, and `cache/<mkt>/<plugin>/<version>/`;
-- it records argv and env to `$FAKE_CLAUDE_DIR/plugin.log`;
-- `--version` (`argv[0] === "--version"`) prints `${FAKE_CLAUDE_VERSION ?? "2.1.327"} (Claude Code)`, for the floor tests in B3 and B7.
+### Task B2: Fake Claude: install at session start
 
-Plugin scenarios come from `FAKE_CLAUDE_PLUGIN_SCENARIO=pull-marketplace|extra-dependency|unexpected-marketplace|orphan-marker|fail`, set through `createFakeClaude({ env })`. Keep `FAKE_CLAUDE_PLUGIN_SLEEP_MS` (B9 needs a blocking install) and `FAKE_CLAUDE_PLUGIN_ECHO` (redaction tests); `FAKE_CLAUDE_PLUGIN_FAIL` and `_SILENT_FAIL`, which `fail` covers, are deleted in B7 with their last users. In a normal session the init event lists `plugins` from the seed, filtered by `--settings` `enabledPlugins`.
-
-- [ ] Steps:
-  1. Write failing fake tests for each scenario and for `--version`.
-  2. Run `pnpm vitest run packages/harness/testing/fake-plugin.test.ts` → FAIL.
-  3. Implement.
-  4. Run again → PASS, plus the server test files that use the old knobs (`workspace/plugins.test.ts`, `agents/agent-service.test.ts`, the spawn-service tests). Those tests are deleted in B7, so B2 keeps `_FAIL` and `_SILENT_FAIL` working on the new block until B7 deletes them with their last users.
-  5. Commit `test: fake Claude plugin seed mode`.
-
-### Task B3: `marketplaces` table, locks, version floor, store runner
-
-Implements spec §5.1 (marketplaces), §7.2 and §7.9.
+Implements the fake side of spec §7.3 steps 4–8 and §14 "Starting with plugins".
 
 **Files:**
-- Modify: `packages/db/src/schema/library.ts` (+ generated migration, `0022_*` on today's branch; merge the lower branch first), `apps/server/src/library/locks.ts` (add `storeLock`), `packages/harness/src/claude/version.ts` (`MIN_CLAUDE_VERSION` set from G1), `apps/server/src/agents/runtimes.ts` (imports `versionCheckEnv` from `library/claude-flags.ts`)
-- Create: `apps/server/src/library/claude-flags.ts`, `apps/server/src/library/store-runner.ts`
-- Test: `apps/server/src/library/locks.test.ts`, `apps/server/src/library/store-runner.test.ts`, `apps/server/src/library/claude-flags.test.ts`
+- Modify: `packages/harness/testing/fake-claude.mjs` (replace the `argv[0] === "plugin"` block, which served the factory's per-agent installs deleted in B7; ADR 0028)
+- Test: `packages/harness/testing/fake-plugin.test.ts` (next to I3's `fake-setup-token.test.ts`)
 
-**Interfaces (produces).** There is one floor: the harness already exports `checkClaudeVersion(bin, env): Promise<{ version?, tooOld }>`, `compareVersions` and `MIN_CLAUDE_VERSION` (`packages/harness/src/claude/version.ts`, used by `agents/runtimes.ts` as a warning). B3 sets `MIN_CLAUDE_VERSION` to the G1 floor (it must be <= the B0 pin in `images/base/claude-code-version`; if G1 fails on the pinned version, that is a FAIL for owner-i5; never raise the pin past the 14-day rule to chase a fix) and adds no second constant and no second `checkClaudeVersion` (ADR 0028).
+**Behaviour.** Follow the shape of I3's `setup-token` mode (an early branch, env knobs, no fall-through):
+- **At session start**, before it emits `init`, the fake reads `--settings` and, for each `enabledPlugins` key set to `true` whose marketplace is declared in `extraKnownMarketplaces` with a `directory` or `git` (`file://`) source, "installs" it into `$CLAUDE_CODE_PLUGIN_CACHE_DIR`: it copies the plugin from the fixture at `ref` (the git source is cloned at `ref`; no `ref` means HEAD) into `cache/<mkt>/<plugin>/<version>/`, and writes `installed_plugins.json` and `known_marketplaces.json` in the v2 shape of spec §4. A key already installed at the same commit is skipped. Each install appends `install <key> <commit> <dir>` to `$FAKE_CLAUDE_DIR/plugin.log`.
+- `init.plugins` lists every key that is `true` and installed, each with its `path`; a `false` key never appears, installed or not.
+- `FAKE_CLAUDE_PLUGIN_SCENARIO=install-fail` installs nothing (as if the network were down) and still emits `init`; `slow` sleeps `FAKE_CLAUDE_PLUGIN_SLEEP_MS` before installing. Set through `createFakeClaude({ env })`.
+- A `{ "source": "github", "repo": "o/r" }` declaration is cloned from `${FAKE_CLAUDE_GITHUB_URL}/o/r.git`; tests set it to the same `file://` root as `FACTORY_GITHUB_URL`, so a marketplace the factory registered (and pins) installs end to end. The fake honours `ref` (a commit or a tag) and logs the commit it installed.
+- `--version` prints `${FAKE_CLAUDE_VERSION ?? "2.1.331"} (Claude Code)`, and the `initialize` response's `claude_code_version` uses the same default (today it hard-codes 2.1.327).
+- `claude plugin …` subcommands are no longer faked: the factory never runs them, so a call fails loudly ("fake claude: plugin subcommands aren't used by Open Factory").
+
+- [ ] **Step 1: Write failing tests:** a cold start installs the declared plugin at its `ref` and lists it in `init`; a `github`-source declaration with a commit `ref` installs that commit from `FAKE_CLAUDE_GITHUB_URL`; a second start installs nothing; a changed `ref` installs the new version; no `ref` takes HEAD; a `false` key isn't loaded; `install-fail` emits `init` without the plugin; `--version`.
+- [ ] **Step 2: Run** `pnpm vitest run packages/harness/testing/fake-plugin.test.ts` → FAIL.
+- [ ] **Step 3: Implement.** Keep `FAKE_CLAUDE_PLUGIN_FAIL` and `_SILENT_FAIL` working until B7 deletes their last users (`workspace/plugins.test.ts`, `agents/agent-service.test.ts`, the spawn-service tests); B7 deletes them.
+- [ ] **Step 4: Run** → PASS, plus `pnpm test:related packages/harness/testing/fake-claude.mjs`.
+- [ ] **Step 5: Commit** `test: fake Claude installs declared plugins at session start`.
+
+### Task B3: `marketplaces` table and the version floor
+
+Implements spec §5.1 (marketplaces) and §7.9.
+
+**Files:**
+- Modify: `packages/db/src/schema/library.ts` (+ generated migration; merge the lower branch first), `packages/harness/src/claude/version.ts` (`MIN_CLAUDE_VERSION = "2.1.331"`, or G1 item 21's older floor), `apps/server/src/agents/runtimes.ts` (imports `versionCheckEnv` from `library/claude-flags.ts`)
+- Create: `apps/server/src/library/claude-flags.ts`
+- Test: `packages/db/src/schema/library.test.ts` (CI), `apps/server/src/library/claude-flags.test.ts`
+
+**Interfaces (produces):**
 
 ```ts
-export const storeLock: RwLock;  // { read<T>(fn): Promise<T>; write<T>(fn): Promise<T> }
+// marketplaces: exactly spec §5.1, including `tags` (no previewSource, previewCommit, error or "failed" state)
 export function versionCheckEnv(server: NodeJS.ProcessEnv): Record<string, string>;  // moved from agents/runtimes.ts
 export async function assertPluginFloor(bin: string, env): Promise<void>;  // on the harness checkClaudeVersion; throws "Claude Code {found} is too old; update it to {MIN_CLAUDE_VERSION} or later."
 export async function checkImageClaudeVersion(image: string, digest: string): Promise<void>;  // docker run --rm --network none --entrypoint claude <image> --version, cached by digest
-export class StoreRunner {
-  constructor(d: { claudeBin: string; factoryHome: string; serverEnv: NodeJS.ProcessEnv; registry: () => Promise<RegistryRow[]> });
-  run(args: string[], o: { op: "add" | "install" | "update" | "remove"; cacheDir?: string; configDir?: string }): Promise<{ stdout: string }>;
-  // inside storeLock.write; chmod -R u+w … finally a-w; writes state/plugins-runner/settings.json (exact known_marketplaces set, autoUpdate:false, minus removed/adding/failed/soft-deleted); env PATH, HOME, DISABLE_AUTOUPDATER=1, CLAUDE_CODE_PLUGIN_CACHE_DIR, CLAUDE_CONFIG_DIR, + CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 for install/update
-}
 ```
 
-- [ ] **Step 1: Write failing tests.**
-  - The RwLock: two readers run together; a writer excludes readers.
-  - The runner, with fake Claude:
-    - env keys are exact, and `NONESSENTIAL` is set only for install and update;
-    - the store is `a-w` after a run and also after a failed run;
-    - the runner settings file declares exactly the store's marketplaces;
-    - a leading-dash argument is refused;
-    - output is redacted.
-  - The floor: fake Claude with `FAKE_CLAUDE_VERSION=2.1.1` makes `assertPluginFloor` fail with the interpolated message; at `MIN_CLAUDE_VERSION` it passes.
-- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/library/locks.test.ts apps/server/src/library/store-runner.test.ts apps/server/src/library/claude-flags.test.ts` → FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(server): marketplaces table, store lock, store runner and version floor`.
+- [ ] **Step 1: Write failing tests:** an unknown `state` is refused by the table (CI); fake Claude with `FAKE_CLAUDE_VERSION=2.1.1` makes `assertPluginFloor` fail with the interpolated message, and at the floor it passes; the image check runs `docker` once per digest (a fake `docker` on `PATH` counts its runs).
+- [ ] **Step 2: Run** the local test file → FAIL.
+- [ ] **Step 3: Implement.** No `storeLock`, no `StoreRunner`.
+- [ ] **Step 4: Run** → PASS (the schema test in CI).
+- [ ] **Step 5: Commit** `feat(server): marketplaces table and the Claude Code floor`.
 
 ### Task B4: Marketplaces service
 
-Implements spec §7.1 and AC 8.
+Implements spec §7.1 and AC 8. No Claude Code anywhere.
 
 **Files:**
-- Create: `apps/server/src/library/marketplaces-service.ts`
-- Test: `apps/server/src/library/marketplaces-service.test.ts` (CI for DB parts)
+- Create: `apps/server/src/library/marketplaces-service.ts`, `apps/server/src/library/plugin-sources.ts` (external `sha` sources, §7.5)
+- Modify: `apps/server/src/library/library-sweep.ts` (marketplace previews, purge of unreferenced checkouts, boot removal of `adding` rows)
+- Test: `apps/server/src/library/marketplaces-service.test.ts` (pure parts local, DB parts in CI), `apps/server/src/library/plugin-sources.test.ts`
 
 **Interfaces (produces):**
 
 ```ts
 export class MarketplacesService {
-  preview(b: { kind: "github"; repo } | { kind: "git"; url } | { kind: "directory"; path }): Promise<MarketplacePreview>;  // name, commit, branch, plugins with pinned/refusedReason; refuses reserved (OFFICIAL_MARKETPLACES only with matching source), taken (ready/adding/soft-deleted rows, store known_marketplaces); failed rows not taken
-  add(previewId: string, by: string): Promise<void>;  // 202; steps 1–5 of spec §7.1; failure → row "failed"
-  bootRepair(): Promise<void>;
-  assertMarketplacePinned(name: string): Promise<void>;  // HEAD == commit and `git status --porcelain --ignored --untracked-files=all` empty; directory no-op
-  check(name): Promise<void>; update(name, commit, by): Promise<void>; remove(name): Promise<{ undoUntil }>; restore(name); removeFailed(name): Promise<void>;
+  preview(b: { kind: "github"; repo } | { kind: "git"; url } | { kind: "directory"; path }): Promise<MarketplacePreview>;  // runGit fetch (§6.2) into a preview; name, commit, plugins with pinnable/refusedReason
+  add(previewId: string, by: string): Promise<{ status: 201 | 202; marketplace: MarketplaceDetail }>;  // Library lock; move the preview to state/library/marketplaces/<name>/<sha>/, or re-fetch (202, "adding")
+  check(name: string): Promise<MarketplaceDetail>;     // ls-remote (heads and tags); preview fetch; update*, tags, or checkError
+  update(name: string, commit: string, by: string): Promise<MarketplaceDetail>;  // moves the Library's commit only
+  fetchAt(name: string, ref: string): Promise<{ sha: string }>;  // a pinned commit or tag Skills hasn't read; records the tag; refuses a branch ("Pin acme to a commit or a tag.")
+  checkout(name: string, commit?: string): Promise<string | null>;  // the read-only dir, or null when not read
+  remove(name: string): Promise<{ undoUntil: string }>; restore(name: string): Promise<MarketplaceDetail>;
 }
+export async function readPluginSource(src: ExternalSource, sha: string): Promise<string>;  // state/library/plugin-sources/<hash>/<sha>/, read-only, runGit
 ```
 
-- [ ] **Step 1: Write failing tests:**
-  - preview before the store is touched (the fake Claude log is empty);
-  - `claude-plugins-official` with a non-Anthropic source is refused, and accepted with `anthropics/claude-plugins-official`;
-  - a name already in the store's `known_marketplaces.json` is refused;
-  - a failed add removes only what it created, and a pre-existing marketplace with the same name survives;
-  - boot repair completes a good `adding` row and fails a bad one;
-  - a fetch for a plain git server uses `refs/heads/<branch>` and checks `FETCH_HEAD`;
-  - pin drift and an untracked or ignored file both fail "Marketplace acme isn't at its pinned commit.";
-  - update checks out the exact commit through `runGit`, never `marketplace update`;
-  - the check result lists every installed or enabled plugin whose version, source or contents change at the new commit (a version or `sha` change, a source change, or a changed tree for a relative path, using `rev-parse <old>:<path>` against `<new>:<path>`). Plugins whose code-running parts change (hooks, MCP, LSP, status line, monitors, `bin/`, `package.json`, dependencies) are flagged `runsCodeChanged` and sorted first (owner plan review change 4);
-  - remove is refused with "Uninstalling plugins isn't available yet." while plugins are installed;
-  - the purge re-checks under `storeLock`.
-- [ ] **Step 2: Run** the pure parts: `pnpm vitest run apps/server/src/library/marketplaces-service.test.ts -t pure` → FAIL.
-- [ ] **Step 3: Implement.**
+- [ ] **Step 1: Write failing tests** (fixture repo through `FACTORY_GITHUB_URL=file://…`):
+  - the preview reads the catalog at the resolved commit; `claude-plugins-official` with a non-Anthropic source is refused; a taken name (ready, adding, or soft-deleted in its window) is refused;
+  - add leaves a read-only checkout at `<name>/<sha>/` and a `ready` row; an expired preview re-fetches and returns 202; boot removes a row left `adding`;
+  - check stores `update*`; the update view lists plugins whose catalog entry changed and relative plugins whose tree changed, `runsCodeChanged` first; update moves `commit` and changes no template file;
+  - preview and check record `tags` (an annotated tag resolves through `^{}`); `fetchAt` creates a checkout at a commit and at a tag (recording it), and refuses a name that is a branch; purge keeps a checkout a declaration or a loaded runtime's `started.library` references, and removes one nothing references;
+  - remove is refused with up to three users named while a template declares the marketplace;
+  - a marketplace update restarts no agent (CI: a running agent of a template that uses the marketplace has no `config_changed` event);
+  - `readPluginSource` fetches an external `git-subdir` source at its `sha` read-only, and refuses userinfo, `?`, `#` and a leading-dash argument;
+  - failures are redacted.
+- [ ] **Step 2: Run** the pure parts: `pnpm vitest run apps/server/src/library/plugin-sources.test.ts apps/server/src/library/marketplaces-service.test.ts -t pure` → FAIL.
+- [ ] **Step 3: Implement** on A4's `git-fetch.ts` and A7's locks; the marketplace checkout cap is the §6.2 50 MB.
 - [ ] **Step 4: Run** → PASS (DB parts in CI).
-- [ ] **Step 5: Commit** `feat(server): pinned marketplace registry`.
+- [ ] **Step 5: Commit** `feat(server): marketplace registry with read-only checkouts per commit`.
 
-### Task B5: Plugin contents
+### Task B5: Plugin contents, needs from the image, and diffs
 
-Implements spec §7.8.
+Implements spec §7.8 and the diff of §7.5.
 
 **Files:**
 - Create: `apps/server/src/library/plugin-contents.ts`
 - Test: `apps/server/src/library/plugin-contents.test.ts`
 
-**Interfaces (produces):** `readContents(root: string): Promise<PluginContents>`, where
+**Interfaces (produces):** `readContents(root: string): Promise<PluginContents>` and `diffContents(a: PluginContents, b: PluginContents): ContentsDiff`, where
 
 ```ts
 type PluginContents = {
-  manifest;
-  hooks: HookRow[];
-  mcp: McpRow[];
-  dependencies: string[];
+  manifest; hooks: HookRow[]; mcp: McpRow[]; dependencies: string[];
   codeParts: CodePart[];  // lsp, statusLine, monitors, bin, node
+  needs: string[];        // program names, sorted, unique (spec §7.8 "Needs from the image")
   provides: { skills; commands; agents; outputStyles };
-  unshown: string[];
-  files: string[];
-  summary: ContentsSummary;
+  unshown: string[]; files: string[]; summary: ContentsSummary;  // summary.needs = needs.length
 };
 ```
 
 - [ ] **Step 1: Write failing tests** on temp plugin dirs:
-  - hooks inline and from `hooks/hooks.json`;
-  - MCP stdio with env (values that aren't `${…}` are shown, `${TOKEN}` refs are shown as refs) and http with header **names** only;
-  - LSP, statusLine, monitors, `bin/` executables and `package.json` → "Installs Node dependencies";
-  - dependencies;
-  - each of these goes into `unshown`: `hooks/hooks.json` as a link, a 300 KB JSON, bad JSON, a walk stopped at 2,000 files, and an unknown `plugin.json` key;
-  - `files` lists only `${CLAUDE_PLUGIN_ROOT}` references that are regular files inside the root.
+  - hooks inline and from `hooks/hooks.json`; MCP stdio with env (non-`${…}` values shown) and http with header **names** only; LSP, statusLine, monitors, `bin/` and `package.json`;
+  - `needs`: `npx -y x` gives `npx`; `bash -c "uvx tool"` gives `uvx`; an MCP `command: "bun"` gives `bun`; a `package.json` gives `node`; `${CLAUDE_PLUGIN_ROOT}/scripts/x.sh` is not a need;
+  - `unshown` for a `hooks.json` link, a 300 KB JSON, bad JSON, a walk stopped at 2,000 files, and an unknown `plugin.json` key;
+  - `files` lists only referenced regular files inside the root;
+  - `diffContents` reports a hook added, an MCP server removed, a changed dependency and a new need, with code-running changes flagged.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/library/plugin-contents.test.ts` → FAIL.
-- [ ] **Step 3: Implement.**
+- [ ] **Step 3: Implement.** Cache by checkout path.
 - [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(server): read plugin contents for review`.
+- [ ] **Step 5: Commit** `feat(server): plugin contents with needs from the image, and contents diffs`.
 
-### Task B6: Plugin store: installed, install, journal, update preview and apply
+### Task B6: Declarations and pins; `plugins:` removed
 
-Implements spec §7.2 Reading, §7.5 and AC 10–11.
-
-**Files:**
-- Create: `apps/server/src/library/plugin-store.ts`
-- Test: `apps/server/src/library/plugin-store.test.ts`
-
-**Interfaces (produces):**
-
-```ts
-export class PluginStore {
-  installed(): Promise<InstalledPlugin[]>;  // installPath exists, no .orphaned_at, inside cache/ or a registered directory marketplace
-  isPinned(key: string): Promise<boolean>;  // spec §7.5 definition incl. no version-range deps
-  install(key: string, by: string): Promise<void>;  // storeLock.write; journal; post-install closure check; rollback; provenance
-  bootRecover(): Promise<void>;                     // journal left behind → roll back
-  updatePreview(key: string): Promise<{ version: string; gitCommitSha: string; diff: ContentsDiff }>;  // isolated runner config + throwaway cache with rewritten installLocations; finally delete
-  update(key: string, expect: { version: string; gitCommitSha: string }, by: string): Promise<void>;  // mismatch → rollback "x@y changed since you reviewed it. Review the update again."
-  updateAvailable(key: string): Promise<boolean>;   // version/sha/source, or relative tree change
-  state(key): { kind: "installing" | "failed"; since: string; reason?: string } | undefined;
-}
-```
-
-- [ ] **Step 1: Write failing tests** with fake Claude scenarios:
-  - three concurrent `install` calls of the same key result in one install in the log;
-  - `pull-marketplace` rolls back and fails;
-  - `extra-dependency` with a dependency from an unregistered marketplace rolls back;
-  - `orphan-marker` rollback deletes the marker written during the operation;
-  - a ranged dependency makes `isPinned` false;
-  - a crash simulated after the journal is written is rolled back by `bootRecover`;
-  - `provenance.json` holds only `{ marketplace, marketplaceCommit, installedBy, installedAt }`;
-  - `updatePreview` never writes the real store (snapshot the tree before and after);
-  - `update` with a different sha rolls back;
-  - a failed background install records the state and sends the `plugin_install_failed` notice (below);
-  - relative-path update detection works by tree.
-
-  **Where a failed background install is reported.** There is no factory-level activity log (session events are per agent). The failure is an Inbox `notice`, the path I3 uses for credential facts (`credentials/expiry-check.ts`): `eventStore.createHumanMessage({ kind: "system", notice: "plugin_install_failed", to: { userId: by }, inboxKind: "notice", body: "Couldn't install x@y. See Skills for details.", urgent: false, createdAt })`, then `bus.publishToUser(by, { type: "inbox_changed" })`. The body is a fixed sentence with only the key interpolated; the redacted reason stays in the plugin peek. No new inbox kind.
-- [ ] **Step 2: Run** `pnpm vitest run apps/server/src/library/plugin-store.test.ts` → FAIL.
-- [ ] **Step 3: Implement.** If G1 item 10 said `update` can't be pinned, implement it as a fresh install of the new version next to the old one, never uninstall-first.
-- [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(server): plugin store installs once per version, with journal and rollback`.
-
-### Task B7: Start with the seed; delete per-agent installs
-
-Implements spec §7.3 steps 1–2 and 4–8, §6.5 (store class), and AC 9, 10, 12 and 14.
-
-**Files:**
-- Create: `apps/server/src/library/plugin-settings.ts`
-- Modify:
-  - `apps/server/src/workspace/workspace.ts`;
-  - `apps/server/src/workspace/settings.ts`;
-  - `apps/server/src/workspace/mounts.ts` (`storeDir` + store class; drop `pluginsDir`; `declaredMarketplaceDirs` goes, since the store replaces template-declared directory marketplaces as a mount class);
-  - `apps/server/src/workspace/paths.ts` (`pluginsConfigDir` deleted);
-  - `apps/server/src/agents/runtime-spec.ts` (`buildAgentEnv` adds the seed and auto-update env; `buildRuntimeSpec` takes `settingsJson`);
-  - `packages/shared/src/config.ts` (`FACTORY_ENV_NAMES` gains the spec §7.3 step 6 names; without this `buildAgentEnv` throws at every start, because it refuses names `isFactoryEnvName` doesn't accept);
-  - `packages/harness/src/types.ts` (`AgentRuntimeSpec.settingsJson?: string`), `packages/harness/src/claude/args.ts` (`buildClaudeArgs` pushes `--settings`, `spec.settingsJson` when set; the Docker exec path builds from the same spec);
-  - `apps/server/src/agents/config-resolver.ts` (`Effective.templatePlugins` deleted; it existed only to name a failed install's fix);
-  - `apps/server/src/agents/agent-service.ts` (`pluginFailure` deleted), `apps/server/src/spawning/spawn-service.ts` (the `PluginInstallError` branch deleted);
-  - `apps/server/src/workspace/settings.ts` (`SettingsInput` loses `pluginKeys` and `plugins`; `workspace.ts` stops passing them);
-  - `apps/server/src/workspace/agent-folders.ts` (scrub the plugins root to `data/`);
-  - `packages/harness/testing/fake-claude.mjs` (delete `FAKE_CLAUDE_PLUGIN_FAIL` and `_SILENT_FAIL` with their last users);
-  - web (the plan is already React-compliant; follow it as written and report any deviation): `apps/web/src/features/agents/agent-form-state.ts` (delete `pluginOutput`/`setPluginOutput`, the "Installing plugins…" slow label and the `plugin_install_failed` handling, since create never installs), and `apps/web/src/features/agents/show-output.tsx` if nothing else uses it.
-- Delete:
-  - `apps/server/src/workspace/plugins.ts` and its test;
-  - `Workspace.ensurePlugins` (called from `materialize` and `prepare`), `readPluginKeys`, `linkPlugins` in `workspace.ts`; `pluginsConfigDir` in `paths.ts`;
-  - `PluginInstallError` uses and `502 plugin_install_failed`.
-- Test:
-  - `apps/server/src/library/plugin-settings.test.ts`, `apps/server/src/workspace/settings.test.ts`, `apps/server/src/workspace/workspace.test.ts`;
-  - `apps/server/src/workspace/mounts.test.ts`, `apps/server/src/workspace/agent-folders.test.ts`;
-  - `packages/harness/src/claude/args.test.ts`, `packages/shared/src/config.test.ts`;
-  - `apps/web/src/features/agents/agent-form-state.test.ts`, `apps/web/src/features/agents/new-agent-sheet.test.tsx` (their plugin-output cases go);
-  - `apps/server/src/spawning/spawn-service.test.ts`, `apps/server/src/agents/agent-service.test.ts` (CI).
-
-**Interfaces (produces):**
-- `buildPluginSettings(i: { closure: string[]; storePlugins: string[]; storeCatalogs: string[]; registry: RegistryRow[]; skillsDirNames: string[] }): { enabledPlugins: Record<string, boolean>; extraKnownMarketplaces: Record<string, { source; autoUpdate: false }>; syncClaudeAiPlugins: false }`;
-- `AgentRuntimeSpec.settingsJson = JSON.stringify(pluginSettings)`, which `buildClaudeArgs` turns into `--settings <json>`;
-- `buildAgentEnv` adds `CLAUDE_CODE_PLUGIN_SEED_DIR` and `DISABLE_AUTOUPDATER=1`;
-- `FACTORY_ENV_NAMES` (shared) gains the names from spec §7.3 step 6.
-
-- [ ] **Step 1: Write failing tests.**
-  - `plugin-settings.test.ts`:
-    - `true` for the closure, including dependencies;
-    - `false` for every other plugin in every store marketplace, catalog and installed alike;
-    - `false` for known skills-dir names;
-    - `extraKnownMarketplaces` holds only the closure's marketplaces, registry sources with no `ref`, and `autoUpdate: false`;
-    - the template's own declarations are not carried over.
-  - `settings.test.ts`: `buildSettings` writes no `enabledPlugins`, `extraKnownMarketplaces` or `syncClaudeAiPlugins`.
-  - `workspace.test.ts`:
-    - the plugins root is scrubbed to `data/` (a `data` link is removed);
-    - a link at `.claude-config/plugins` becomes a folder;
-    - a start during an install waits on `storeLock.read` and never sees a writable store;
-    - a writable store under the read hold fails "The plugin store is writable; restart the factory.";
-    - an unpinned missing plugin fails "Plugin x@y isn't installed. Install it in Skills." with fix `library`;
-    - a pinned missing one installs, then the closure is recomputed;
-    - a local agent below the floor fails.
-  - `args.test.ts`: `buildClaudeArgs` emits `--settings <json>` only when `settingsJson` is set; fake Claude records it in argv.
-  - `config.test.ts` (shared): every seed name is a factory env name.
-  - `mounts.test.ts`: the store class at exactly `realpath(<FH>/state/plugins)`; `state/plugins/cache` is refused.
-  - `spawn-service.test.ts` (CI): three spawns produce at most one `install` in the log, and `spawn_agent` returns without one.
-  - A template, overlay or secret setting `CLAUDE_CODE_PLUGIN_SEED_DIR` is an error.
-- [ ] **Step 2: Run** `pnpm vitest run` on the test files listed above that run locally → FAIL.
-- [ ] **Step 3: Implement.** If G1 item 7 said `mcpb/` isn't re-extracted, take that back to owner-i5 before changing the scrub.
-- [ ] **Step 4: Run** → PASS. Then `pnpm typecheck` (no references to deleted symbols remain).
-- [ ] **Step 5: Commit** `feat(server): agents load plugins from the factory seed; per-agent installs removed`.
-
-### Task B8: `enabledPlugins` truth; `plugins:` removed; validation
-
-Implements spec §7.4, §7.7 and R14.
+Implements spec §7.4, §7.7, §8.1 (plugins), §8.2 (plugin lines) and R14.
 
 **Files:**
 - Modify:
   - `packages/shared/src/templates.ts`: remove `plugins` from `templateConfigSchema`, `templateYamlShape` and the `normalize` mapping; delete `PLUGIN_REF_MSG` and `pluginRef`;
   - `packages/shared/src/config.ts`: remove `overlayTemplateSchema.plugins`;
-  - `apps/server/src/templates/validate.ts`: delete the warning "enabledPlugins is ignored: list plugins in template.yaml." and the `config.plugins` marketplace check (replaced by the `enabledPlugins` rules); keep the `ref`/`path` refusal;
-  - `packages/shared/src/config-changes.ts`: delete the `listLines(ta.plugins…)` line and the `plugin` kind (replaced by the plugin library lines).
-- Modify (web; the plan is already React-compliant; follow it as written and report any deviation): `apps/web/src/features/agents/template-field.tsx:178` (`config.plugins.length` becomes the count of `effectivePlugins`), `apps/web/src/features/config/messages.ts` (delete `CONFIG_FIELD_MSG.pluginRef`; `CONFIG_COPY.pluginsHelp*` go in B11), and any other web reader of `TemplateConfig.plugins` found by `pnpm typecheck`
-- Test: `packages/shared/src/templates.test.ts`, `apps/server/src/templates/validate.test.ts`, `packages/shared/src/config-changes.test.ts`
+  - `packages/shared/src/library.ts`: `pinOf(declaration)` → `{ kind: "commit", sha } | { kind: "tag", name } | { kind: "latest" } | { kind: "live" }`; `checkPinRef(ref)` checks the **shape** only (40-hex, or a name by the §6.2 ref-format rules; `refs/heads/…` refused); whether a name is a recorded tag is the "Skills hasn't read" warning; `effectivePlugins(doc)` (the enabled keys of a config doc) lives here; `OFFICIAL_MARKETPLACES` gains the pin kinds each accepts (from G1 item 4; until then, commit refused for the reserved names, as the docs say); `ROW_STATE_ORDER` loses `add_failed`, `installing`, `install_failed`, `not_pinned` and `not_installed` and gains `refused` and `cant_pin` in spec §10.2's order;
+  - `apps/web/src/features/skills/row-state.tsx`: the same states (`refused` → "Can't use", `CircleAlert`; `cant_pin` → "Can't be pinned", `TriangleAlert`);
+  - `apps/server/src/agents/config-changes.ts`: `libraryChanged` loses `plugins`, and its comments about marketplace or plugin updates, store locks and a start installing a plugin go (spec §8.3);
+  - `apps/server/src/templates/validate.ts`: spec §7.4's errors and warnings; delete "enabledPlugins is ignored: list plugins in template.yaml." and the old `config.plugins` marketplace check; `ref` is now allowed (validated as a pin), `path` stays refused;
+  - `packages/shared/src/config-changes.ts`: delete the `listLines(ta.plugins…)` line and the `plugin` kind; fix the `Library.plugins` comment (key → pin, full sha); add "plugin x@y repinned a1b2c3d → e4f5a6b", "plugin x@y now follows the latest acme", "plugin x@y pinned to a1b2c3d", "added plugin x@y", "removed plugin x@y";
+  - `apps/server/src/agents/config-resolver.ts`: `Effective.library.plugins` is key → pin string (`commit:<full sha>`, `tag:<name>`, `latest`, `live`) over the enabled keys plus the dependencies read from the Library checkouts at each pin (§8.1; the resolver has no agent plugins dir); `Effective.templatePlugins` deleted.
+- Modify (web; the plan is already React-compliant; follow it as written and report any deviation): `apps/web/src/features/agents/template-field.tsx` (`config.plugins.length` gets only a `TemplateConfig`, which has no settings: the template summary the server returns gains `pluginCount`, computed with `effectivePlugins` in `apps/server/src/routes/templates.ts`, and the field reads it), `apps/web/src/features/config/messages.ts` (delete `CONFIG_FIELD_MSG.pluginRef`), and any other reader `pnpm typecheck` finds.
+- Test: `packages/shared/src/library.test.ts`, `packages/shared/src/templates.test.ts`, `apps/server/src/templates/validate.test.ts`, `packages/shared/src/config-changes.test.ts`, `apps/web/src/features/skills/row-state.test.tsx`, `apps/server/src/agents/config-changes.test.ts` (CI)
 
 - [ ] **Step 1: Write failing tests.**
   - `plugins:` in `template.yaml` gives "Unknown field.".
-  - `enabledPlugins` errors:
-    - `false` → "Remove the plugin instead of turning it off.";
-    - an undeclared marketplace;
-    - a declared marketplace that isn't registered → "Marketplace acme hasn't been added. Add it in Skills.", with the `add_from_template` action;
-    - a source mismatch;
-    - an overlay plugin from a marketplace the template doesn't declare → "Marketplace acme isn't declared by template dev.";
-    - a `command`, `headersHelper`, `npm` or archive-without-sha256 source → "Plugin x@y uses a command source, which Open Factory doesn't install.";
-    - `syncClaudeAiPlugins` in a template.
-  - The "not installed and not pinned" warning.
-  - `describeChanges`: "added plugin x@y", and "plugin x@y updated 1.2.0 → 1.3.0" (a hex version shows as "commit 0120fb8 → 9a8b7c6").
-- [ ] **Step 2: Run** `pnpm vitest run packages/shared/src/templates.test.ts apps/server/src/templates/validate.test.ts packages/shared/src/config-changes.test.ts` → FAIL.
-- [ ] **Step 3: Implement.** Delete the old "enabledPlugins is ignored" warning. Keep the `ref`/`path` refusal. Fix every reader of `TemplateConfig.plugins` to use `effectivePlugins(doc)`.
+  - `test.each` over pin shapes: a 40-hex commit and `v1` pass; `refs/heads/main` and `a..b` are refused ("Pin acme to a commit or a tag."); `v1` with no recorded tag gives the "Skills hasn't read" warning; a commit pin on `claude-plugins-official` is refused with "Claude Code can't pin claude-plugins-official to a commit; use a tag or Latest.".
+  - `enabledPlugins` errors: `false`; an undeclared marketplace; an unregistered one (with the `add_from_template` action); a source mismatch (ignoring `ref`); an overlay plugin from a marketplace the template doesn't declare; a refused source; `syncClaudeAiPlugins` in a template; an unpinnable plugin under a pinned declaration ("x@y can't be pinned. Switch acme to Latest to add it.").
+  - Warnings: Latest ("Plugin x@y follows the latest acme: new code runs at each restart without review."); a pin Skills hasn't read.
+  - `describeChanges`: added and removed plugins; a repin; pinned → Latest and back.
+  - Server `config-changes.test.ts` (CI): a template save that moves a pin writes "plugin x@y repinned …" and restarts that template's agents when idle.
+- [ ] **Step 2: Run** the four test files → FAIL.
+- [ ] **Step 3: Implement.** Fix every reader of `TemplateConfig.plugins` to use `effectivePlugins(doc)`.
 - [ ] **Step 4: Run** → PASS, then `pnpm typecheck` (removed fields; finds the readers).
-- [ ] **Step 5: Commit** `feat: enabledPlugins is the plugin truth; plugins: removed`.
+- [ ] **Step 5: Commit** `feat: plugin declarations pin a marketplace by ref; plugins: removed`.
 
-### Task B9: Host plugins, plugin and marketplace routes, change flow
+### Task B7: Start with Claude Code installing; delete the factory's installs; the init check
 
-Implements spec §7.6, §9.1 (plugins), §9.3, §8.3 (plugins) and AC 9.
+Implements spec §7.2, §7.3 steps 1–2 and 4–8, §6.5 (the plugins-dir class), AC 9, 10, 12, 14 and 15.
+
+**Files:**
+- Create: `apps/server/src/library/plugin-settings.ts`
+- Modify:
+  - `apps/server/src/workspace/paths.ts`: `agentPluginsDir(factoryHome, slug)` = `state/agents/<slug>/plugins`; `pluginsConfigDir` deleted;
+  - `apps/server/src/workspace/workspace.ts`: `prepare` builds the closure and the plugin settings; creates `agentPluginsDir`; no `.claude-config/plugins` link; `ensurePlugins`, `readPluginKeys` and `linkPlugins` deleted; `materialize` loses the plugin part;
+  - `apps/server/src/workspace/settings.ts`: `SettingsInput` loses `pluginKeys` and `plugins`;
+  - `apps/server/src/workspace/mounts.ts`: `pluginsDir` mounts **read-write** and must equal `realpath(<FH>/state/agents/<slug>/plugins)` for this agent; `declaredMarketplaceDirs` becomes the registered directory marketplaces of the closure; the refusal becomes "… isn't this agent's workdir, a registered skill or this agent's plugins dir" (spec §6.5);
+  - `apps/server/src/agents/runtimes.ts` (and `agent-runtime.ts` where the start is prepared): local starts call `assertPluginFloor(claudeBin, versionCheckEnv(...))`, replacing today's advisory version check; Docker starts call `checkImageClaudeVersion(image, digest)` before the container is created;
+  - `apps/server/src/agents/runtime-spec.ts`: `buildAgentEnv` adds `CLAUDE_CODE_PLUGIN_CACHE_DIR`, `DISABLE_AUTOUPDATER=1`, `FORCE_AUTOUPDATE_PLUGINS=1` when a declaration is Latest, and `CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1` if G1 item 2 says so; `buildRuntimeSpec` takes `settingsJson`;
+  - `packages/shared/src/config.ts`: `FACTORY_ENV_NAMES` gains spec §7.3 step 4's names;
+  - `packages/harness/src/types.ts` (`AgentRuntimeSpec.settingsJson?: string`), `packages/harness/src/claude/args.ts` (`--settings <json>` when set);
+  - `packages/harness/src/claude/mapper.ts` and `packages/shared/src/events.ts` (`harnessEventSchema`): `session_started` gains `plugins` from the first `init`, in the shape G1 item 1 recorded;
+  - `apps/server/src/agents/agent-runtime.ts`: on `session_started`, match `plugins` to the closure by path (spec §7.3 step 8); for each missing key append `plugin_not_loaded { key, pin }` and send the Inbox notice (below); keep `loadedPlugins: Record<key, version>` on the runtime, **outside** `started.library`;
+  - `apps/server/src/routes/agents.ts` (`GET /api/agents/:slug/config`): the response gains `plugins: { key, pin, loaded? }[]` from the effective config and the runtime's `loadedPlugins`; the shared response schema gains the field;
+  - `packages/harness/src/claude/process.ts`: if G1 item 20(e) exceeds 5 s, a longer `initialize` wait for starts with an empty plugins dir or a changed pin, and say so;
+  - `packages/shared/src/events.ts`: the `plugin_not_loaded` session event;
+  - `apps/server/src/agents/agent-service.ts` (`pluginFailure` deleted), `apps/server/src/spawning/spawn-service.ts` (the `PluginInstallError` branch deleted);
+  - `packages/harness/testing/fake-claude.mjs`: delete `FAKE_CLAUDE_PLUGIN_FAIL` and `_SILENT_FAIL`;
+  - web (the plan is already React-compliant; follow it as written and report any deviation): `apps/web/src/features/agents/agent-form-state.ts` (delete `pluginOutput`/`setPluginOutput`, the "Installing plugins…" label and the `plugin_install_failed` handling), `apps/web/src/features/agents/show-output.tsx` if nothing else uses it, and the session timeline row for `plugin_not_loaded` (text from spec §7.3 step 8, `CircleAlert`, no new component if the existing notice row fits).
+- Delete: `apps/server/src/workspace/plugins.ts` and its test; `PluginInstallError` uses and `502 plugin_install_failed`; the `installPlugins` import in `apps/server/src/logging.test.ts` (and the case that uses it).
+- Test:
+  - `apps/server/src/library/plugin-settings.test.ts`, `apps/server/src/workspace/settings.test.ts`, `apps/server/src/workspace/workspace.test.ts`, `apps/server/src/workspace/mounts.test.ts`, `apps/server/src/library/claude-flags.test.ts`;
+  - `packages/harness/src/claude/args.test.ts`, `packages/harness/src/claude/mapper.test.ts`, `apps/server/src/templates/validate.test.ts` (the env names);
+  - `apps/web/src/features/agents/agent-form-state.test.ts`, `apps/web/src/features/agents/new-agent-sheet.test.tsx` (their plugin-output cases go);
+  - `apps/server/src/spawning/spawn-service.test.ts`, `apps/server/src/agents/agent-runtime.test.ts` or the start tests that own `session_started` (CI).
+
+**Interfaces (produces):**
+- `buildPluginSettings(i: { closure: string[]; declarations: Record<mkt, { source; pin: Pin }>; catalogs: Record<mkt, string[]>; installed: string[]; skillsDirNames: string[] }): { enabledPlugins: Record<string, boolean>; extraKnownMarketplaces: Record<string, { source; autoUpdate: boolean }>; syncClaudeAiPlugins: false }` (the source carries `ref` when pinned);
+- `readInstalled(pluginsDir): Promise<{ key: string; manifest?: PluginManifest }[]>` (`lstat`, 256 KB caps, paths must stay inside `pluginsDir`);
+- **The not-loaded notice:** `eventStore.createHumanMessage({ kind: "system", notice: "plugin_not_loaded", subjectAgentId: agent.id, to: "all", body: "x@y didn't load for @ana.", urgent: false, createdAt })` with no `inboxKind` (a `system` row's item is a `notice` in the API; a system row needs its subject agent), then `inbox_changed` to each returned user id, once per start (as `credentials/expiry-check.ts` does).
+
+- [ ] **Step 1: Write failing tests.**
+  - `plugin-settings.test.ts`: `true` for the closure including readable dependencies; an installed manifest naming a dependency from an undeclared marketplace gets `false`, not `true`; `false` for the other catalog plugins at the pin, for installed keys outside the closure, and for known skills-dir names; a pinned declaration carries `ref` and `autoUpdate: false`; a Latest one has no `ref` and `autoUpdate: true`; the template's own declarations aren't carried over; `syncClaudeAiPlugins: false`.
+  - `settings.test.ts`: the workdir settings file carries no plugin keys even when the template declares them.
+  - `workspace.test.ts`, with fake Claude (B2): a cold start installs into `state/agents/<slug>/plugins` and `init` lists the plugin; a restart installs nothing; a template repin installs the new version at the next start; the env holds `CLAUDE_CODE_PLUGIN_CACHE_DIR` and `DISABLE_AUTOUPDATER=1`, and `FORCE_AUTOUPDATE_PLUGINS=1` only with a Latest declaration; `materialize` and spawn install nothing; a local agent below the floor fails.
+  - `install-fail`: the agent keeps running, the session has `plugin_not_loaded`, and exactly one Inbox notice per user per start; `GET /api/agents/:slug/config` returns the plugins with their pins and, after `init`, the loaded versions.
+  - Floor: a local start with fake Claude at 2.1.1 fails with "Claude Code 2.1.1 is too old; update it to 2.1.331 or later."; a `claude --version` that prints nothing fails closed (the harness check returns `tooOld: false` without a version, so `assertPluginFloor` treats unknown as too old); a fake `docker` image at 2.1.1 fails the Docker start.
+  - `spawn-service.test.ts` (CI): three spawns return without an install, and each agent's first start installs into its own dir (AC 10).
+  - `mounts.test.ts`: the agent's own plugins dir mounts read-write; another agent's plugins dir, the dir swapped for a link, and `state/` are refused.
+  - `args.test.ts`: `--settings <json>` only when `settingsJson` is set. `mapper.test.ts`: `session_started.plugins` from the first `init`.
+  - `test.each` over every new env name: a template, an overlay, a secret and a project `env` setting it is an error.
+- [ ] **Step 2: Run** the local test files above → FAIL.
+- [ ] **Step 3: Implement.** Use G1's recorded answers for `FORCE_AUTOUPDATE_PLUGINS` (item 7) and `CLAUDE_CODE_SYNC_PLUGIN_INSTALL` (item 2); if item 2 failed, stop and wait for Or (spec P6).
+- [ ] **Step 4: Run** → PASS. Then `pnpm typecheck` (no references to deleted symbols remain).
+- [ ] **Step 5: Commit** `feat: Claude Code installs plugins per agent at start; the factory's installs removed`.
+
+### Task B8: Host plugins, plugin and marketplace routes
+
+Implements spec §7.6, §9.1 (plugins), §9.3 and §11.1.
 
 **Files:**
 - Create: `apps/server/src/library/host-plugins.ts`
-- Modify: `apps/server/src/routes/library.ts`, `apps/server/src/app.ts` (wiring; boot: `storeLock` → `a-w`, `bootRepair`, `bootRecover`)
+- Modify: `apps/server/src/routes/library.ts`, `apps/server/src/app.ts` (wiring; marketplace sweep and boot removal of `adding` rows)
 - Test: `apps/server/src/library/host-plugins.test.ts`, `apps/server/src/routes/library.test.ts` (CI)
 
 - [ ] **Step 1: Write failing tests.**
-  - `HostPlugins.list()` on a temp host dir in the v2 shape:
-    - the newest install by `lastUpdated`;
-    - a key already in the store is left out;
-    - an `installPath` outside `<hostdir>/plugins/cache` → "Can't show: outside the host's plugin folder.";
-    - a host source with userinfo or `ref` → "The host's record for acme can't be used: …".
-  - Install in factory: preview, register (skipped when it's already registered with the same source), install.
-  - Routes (CI): every plugin and marketplace route returns 401 with an agent token; `update-preview` then `update`; `install` returns 202 and publishes `library_changed`.
-  - A plugin update triggers `libraryChanged` only after the locks are released.
+  - `HostPlugins.list()` on a temp host dir in the v2 shape: the newest install by `lastUpdated`; a key whose marketplace is registered is left out; an `installPath` outside `<hostdir>/plugins/cache` gives "Can't show: outside the host's plugin folder."; a host source with userinfo or `ref` gives "The host's record for acme can't be used: …".
+  - Add its marketplace: preview then add from the host record; refused when the name is registered with another source.
+  - Routes (CI): every plugin and marketplace route returns 401 with an agent token and without a session; `GET /api/library/plugins` groups by marketplace with `pinnable`, `refusedReason`, `usedBy` with pins and `summary.needs`; `GET …/plugins/:key?commit=` reads at that commit; `POST …/plugins/:key/diff` returns the diff between two commits; `POST …/plugins/:key/read` fetches an external source; marketplace preview, add (201 and 202), check, update, fetch, remove and restore; every write publishes `library_changed`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/server/src/library/host-plugins.test.ts` → FAIL.
-- [ ] **Step 3: Implement.**
+- [ ] **Step 3: Implement.** Responses are parsed with the shared schemas; field errors use I4's `fields` shape.
 - [ ] **Step 4: Run** → PASS (routes in CI).
 - [ ] **Step 5: Commit** `feat(server): host plugins, plugin and marketplace routes`.
-- [ ] **Step 6: Background install on save** (spec §7.5 triggers, T6; owner plan review change 1).
-  - `ConfigChanges` (I2's template-change and overlay-save paths) calls `PluginStore.enqueueInstall(key, by)` for every key that a save **newly** adds to the effective `enabledPlugins` closure, when the key is pinned and missing from the store. The PUT records the change, enqueues, and returns; it never awaits the install.
-  - `enqueueInstall` dedupes by key: a key already queued or installing isn't queued again.
-  - An unpinned missing plugin enqueues nothing; the save response carries the "not installed and not pinned" warning (spec §7.4).
-  - Tests (CI, fake Claude):
-    - a template save and an overlay save that newly enable a pinned, missing plugin each enqueue exactly one install, and the PUT resolves before fake Claude's `install` finishes (the scenario blocks until released);
-    - an unpinned missing plugin enqueues nothing, and the save shows the warning;
-    - two saves racing for the same key produce one `install` in the plugin log;
-    - a failed background install sends the `plugin_install_failed` Inbox notice to the saver and sets the row state (already in B6, re-used here).
-  - Commit `feat(server): saves enqueue background installs of pinned plugins`.
 
-### Task B10: Plugins and Marketplaces views, peeks, Add marketplace
+### Task B9: Plugins and Marketplaces views, peeks, Add marketplace
 
 Implements spec §10.1–§10.4 (plugins). The plan is already React-compliant; follow it as written and report any deviation.
 
@@ -1171,83 +1062,69 @@ Implements spec §10.1–§10.4 (plugins). The plan is already React-compliant; 
 - Create:
   - `apps/web/src/routes/_app/skills.plugins.tsx`, `skills.marketplaces.tsx`;
   - `apps/web/src/features/skills/plugin-list.tsx`, `marketplace-list.tsx`;
-  - `peeks/plugin-peek.tsx`, `peeks/marketplace-peek.tsx`;
-  - `add-marketplace-sheet.tsx`;
-  - `use-held.ts` (`useHeldWhileInside`, R-L5).
-- Modify: `skills-header.tsx` (the switch; a `Select` below about 16rem), `apps/web/src/features/sheets/sheet-store.ts` (`{ kind: "add-marketplace" }`), `apps/web/src/features/sheets/sheet-bodies.ts`
+  - `peeks/plugin-peek.tsx`, `peeks/marketplace-peek.tsx`, `peeks/needs-from-image.tsx`;
+  - `add-marketplace-sheet.tsx`.
+- Modify: `skills-header.tsx` (the switch; a `Select` below about 16rem), `apps/web/src/lib/library.ts` (`pluginsQueryOptions`, `pluginQueryOptions(key, from, commit)`, `marketplacesQueryOptions`), `apps/web/src/features/sheets/sheet-store.ts` (`{ kind: "add-marketplace" }`), `apps/web/src/features/sheets/sheet-bodies.ts`
 - Test: `apps/web/src/features/skills/plugin-list.test.tsx`, `peeks/plugin-peek.test.tsx`, `peeks/marketplace-peek.test.tsx`, `add-marketplace-sheet.test.tsx`
 
-React notes (already applied; follow them): `update-preview`, Install and Install in factory are mutations kept in component state keyed by `key` and dropped during render on retarget (R-Q1); the "Update…" disclosure starts the preview in its click handler; rows that move groups use `useHeldWhileInside` (R-L5); pending rows render `<Elapsed since hideUnderMs={10_000} />` (R-E1); section components are module-level (R-H1).
+React notes (already applied; follow them): `skills.plugins.tsx` and `skills.marketplaces.tsx` use the R-B1 loader with `pluginsQueryOptions` / `marketplacesQueryOptions`; marketplace Check, Update, Fetch, Read contents and Add its marketplace are mutations kept in component state keyed by the marketplace or key and dropped during render on retarget (R-Q1); pending rows render `<Elapsed since hideUnderMs={10_000} />` (R-E1); section components (Runs code, Needs from the image, Provides, Provenance, Used by) are module-level (R-H1); the peek reads its row with a module-level `select` (R-L2).
 
-- [ ] **Step 0 (owner plan review change 4):** the Marketplace peek's update view renders "Plugins in use that change" from the check result, with the `runsCodeChanged` plugins first, each marked "Runs code changed". Add a test for it next to the Step 1 tests.
 - [ ] **Step 1: Write failing tests.**
-  - The plugin list:
-    - the groups "In the factory", "On this host" and "In marketplaces, not installed";
-    - the contents line shows the first three kinds, then "+N more", with "Parts not shown" first;
-    - hex versions show as commits;
-    - a row moving groups waits until pointer and focus leave the list, and an open peek retargets.
-    - An empty view shows "No plugins yet. Add a marketplace to install plugins."
-  - The plugin peek:
-    - "Runs code" comes first and never collapses;
-    - skeleton rows render from `contentsSummary`;
-    - View file opens from the top;
-    - "Update…" is a disclosure: it hides itself, focuses the view heading and shows "Preparing update…", then a `+`/`−` diff and "Update to 1.3.0";
-    - a mismatch error shows;
-    - opened with `readOnly`, there are no actions and an "Open in Skills" link.
-  - The marketplace peek: Check for updates; Back returns focus to the row and Esc closes; the Remove reason reads "Plugins from acme are installed. Uninstalling plugins isn't available yet.".
-  - Add marketplace:
-    - the preview shows plugins with "Not pinned" or "Can't install: command source";
-    - Add closes the sheet;
-    - the pending row "Adding acme… 0:42" uses the server's `since`;
-    - a failure gives a "Couldn't add" row and a toast with Show details;
-    - Find again replaces the failed row.
-  - The header: three views; a `Select` below the threshold.
+  - The plugin list: one group per marketplace, headed with its commit or "Local folder, live", then "On this host"; the contents line shows the first three kinds then "+N more", with "Parts not shown" first; hex versions show as commits; "2 use Latest" appears only when a user is Latest; states by spec §10.2 precedence, including "Can't use" and "Can't be pinned"; the empty view text and its link.
+  - The plugin peek: opening the same plugin at two commits shows each commit's hooks (the query key carries the commit); "Runs code" first; "Needs from the image" lists `node`, `uvx` with the note; skeleton rows from `contentsSummary`; View file from the top; "At a1b2c3d" when opened at a pin; Used by shows each template's pin and the Latest badge's accessible name; a host plugin offers only Add its marketplace; opened `readOnly`, no actions and an "Open in Skills" link.
+  - The marketplace peek: Check for updates; the update view lists changed plugins with "Runs code changed" first and its primary "Update Skills to e4f5a6b" with the note about pins; "Pinned by templates" marks older pins; Fetch for a pin Skills hasn't read; Back returns focus to the row and Esc closes; the Remove reason "Templates use plugins from acme. Remove them first.".
+  - Add marketplace: the preview shows plugins with "Can't be pinned" or "Can't use: command source"; Add closes the sheet with "Added acme at a1b2c3d." and Undo; a 202 shows the pending row with the server's `since`; a failure toasts "Couldn't add acme.".
+  - The header: three views as links with `aria-current`. (The `Select` below the width threshold is checked in the B11 browser evidence.)
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/skills` → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** → PASS.
 - [ ] **Step 5: Commit** `feat(web): Plugins and Marketplaces views, peeks and Add marketplace`.
 
-### Task B11: Plugin picker in the Configuration form
+### Task B10: Plugin picker and the pin control in the Configuration form
 
-Implements spec §10.5 (plugins) and AC 9 and 13. The plan is already React-compliant; follow it as written and report any deviation.
+Implements spec §10.5 (plugins), §7.4 form writes, AC 9, 12 and 13, and DESIGN.md amendment 7. The plan is already React-compliant; follow it as written and report any deviation.
 
 **Files:**
+- Create: `apps/web/src/features/config/plugin-pin.tsx` (the per-marketplace pin control and its in-place reviews), `apps/web/src/features/config/latest-badge.tsx`
 - Modify:
-  - `apps/web/src/features/config/skills-section.tsx` (replace I2's `name@marketplace` `ListField` with `check={checkPlugin}` by the Library picker);
-  - `apps/web/src/features/config/fields.ts` (`FIELD_PATHS.plugins` moves from `["template","plugins"]` to `["settings","enabledPlugins"]`, an object, not a list, so `ListFieldId` loses `"plugins"`);
-  - `apps/web/src/features/config/messages.ts` (delete `CONFIG_COPY.pluginsHelp*`; add the B11 footers to `CONFIG_COPY`).
-- Test: `apps/web/src/features/config/skills-section.test.tsx`, `apps/web/src/features/config/sections.test.tsx`
+  - `apps/web/src/features/config/skills-section.tsx` (replace I2's `name@marketplace` `ListField` with the Library picker, grouped by marketplace);
+  - `apps/web/src/features/config/fields.ts` (`FIELD_PATHS.plugins` moves to `["settings","enabledPlugins"]`, an object, so `ListFieldId` loses `"plugins"`);
+  - `apps/web/src/features/config/messages.ts` (delete `CONFIG_COPY.pluginsHelp*`; add the picker footers, the pin labels and the Latest risk text to `CONFIG_COPY`);
+  - `apps/web/src/features/config/config-page.tsx` (the agent's plugins show "running 1.3.0" and the badge for Latest, from `started.library`);
+  - `DESIGN.md` (amendment 7, verbatim from spec §16).
+- Test: `apps/web/src/features/config/skills-section.test.tsx`, `apps/web/src/features/config/plugin-pin.test.tsx`, `apps/web/src/features/config/sections.test.tsx`
+
+React notes (already applied; follow them): `agents.$slug_.config.tsx` and `templates.$name.tsx` add `void qc.prefetchQuery(pluginsQueryOptions)` beside the Library prefetch (R-B1, no waterfall); the diff for "Pin to …" is a mutation (`POST …/diff`) started in the menu item's handler, kept in component state keyed by marketplace and target commit, and dropped during render when either changes (R-Q1); the review panels are module-level components that receive primitives (R-H1); the draft writes happen in the primary's click handler; `added` keys follow R-C1; nothing is derived in an effect.
 
 - [ ] **Step 1: Write failing tests.**
-  - Only store plugins are offered, grouped by marketplace.
-  - Template mode: picking writes `settings.enabledPlugins[key] = true` and `settings.extraKnownMarketplaces[mkt] = registry.source` into the draft. The footer reads "Install more in Skills".
-  - Agent mode offers only the template's marketplaces, with the footer "Only plugins from dev's marketplaces. Add more in the template.", and writes `settings.enabledPlugins` into the overlay.
-  - Removing the last plugin of a marketplace leaves its declaration.
-  - A row's View opens the read-only peek.
-- [ ] **Step 2: Run** → FAIL.
+  - Template mode: picking a plugin from an undeclared marketplace writes `enabledPlugins[key] = true` and `extraKnownMarketplaces[mkt] = { source, ref: <Library commit> }`; picking another plugin from the same marketplace keeps the existing `ref`; the footer reads "Add marketplaces in Skills"; refused sources are left out and counted.
+  - The pin control: shows "Pinned · a1b2c3d" and "Newer in Skills: e4f5a6b"; "Pin to e4f5a6b…" opens the review in place with focus on its heading, shows the diff lines, and writes the new `ref` on its primary; "Use Latest, auto-update…" shows the risk text and, on "Use Latest", removes `ref`; Cancel and the primary return focus to "Change pin"; the badge's words are found with `getByText("Latest")` and `getByText("auto-updates")`; an unpinnable plugin can't be added under a pinned declaration and the live region says why; a directory marketplace shows "Local folder, live" and no Change pin.
+  - An official plugin whose marketplace refuses commit pins is pinned to the recorded tag at the Library's commit, or refused with "acme can only be pinned to a tag. Fetch a tag in Skills, or use Latest." when there is none.
+  - Agent mode: only the template's marketplaces, with the footer "Only plugins from dev's marketplaces. Add more in the template."; picking writes `settings.enabledPlugins` into the overlay; the template's pin shows read-only with the badge when Latest.
+  - Removing the last plugin of a marketplace leaves its declaration. A row's View opens the read-only peek at that pin.
+- [ ] **Step 2: Run** the three test files → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** → PASS.
-- [ ] **Step 5: Commit** `feat(web): Library plugin picker`.
+- [ ] **Step 5: Commit** `feat(web): plugin picker with pins by default and an explicit Latest`.
 
-### Task B12: Finish PR 2
+### Task B11: Finish PR 2
 
-- [ ] **Branch review.** A fresh reviewer on `git diff i5/1-library-skills...i5/2-plugins` against spec §7, §8, §10, §11, §13 and AC 8–14. It checks:
-  - every hardened path, with argv and env tests;
-  - no `ref` anywhere;
-  - no `marketplace update` call;
-  - the lock order, and that `libraryChanged` runs after the locks;
-  - the deletions are complete: grep `plugins-config|pluginsConfigDir|readPluginKeys|linkPlugins|ensurePlugins|templatePlugins|pluginFailure|pluginOutput|PluginInstallError|plugin_install_failed|FAKE_CLAUDE_PLUGIN_FAIL|FAKE_CLAUDE_PLUGIN_SILENT_FAIL` finds no matches except the new `plugin_install_failed` Inbox notice;
-  - ADR 0028;
-  - **the React diff against `vercel-react-best-practices`** (the reviewer invokes the skill first and skips Next-only rules, saying so), using A16's checklist, with R-Q1 (update-preview as a mutation), R-Q3, R-L5 and R-E1 checked on the plugin views.
+- [ ] **Branch review.** A fresh reviewer on `git diff i5/1-library-skills...i5/2-plugins` against spec §7, §8, §10, §11, §13 and AC 8–15. It checks:
+  - the factory never runs `claude plugin` and never writes an agent's plugins dir (grep `"plugin", "install"|marketplace add|StoreRunner|storeLock|plugins-journal|provenance.json|SEED_DIR` finds nothing outside G1 scripts and the reserved-env list);
+  - every `git` path is hardened, with argv and env tests;
+  - pins: default pinned, Latest explicit, the badge everywhere, validation of pin kinds;
+  - the deletions are complete: grep `plugins-config|pluginsConfigDir|readPluginKeys|linkPlugins|ensurePlugins|installPlugins|templatePlugins|pluginFailure|pluginOutput|PluginInstallError|plugin_install_failed|FAKE_CLAUDE_PLUGIN_FAIL|FAKE_CLAUDE_PLUGIN_SILENT_FAIL` finds nothing;
+  - ADR 0028 and AGENTS.md testing standards;
+  - **the React diff against `vercel-react-best-practices`** (the reviewer invokes the skill first and skips Next-only rules, saying so), using A16's checklist, with R-Q1 (diff, check, fetch and read as mutations), R-Q3 and R-E1 on the plugin views and the pin control.
 
   Fix the findings.
 - [ ] **Full verification, once for the Part**, as in A16, with a fixture marketplace through `file://` for fake Claude.
-- [ ] **Real-browser evidence**, as in A16:
-  - add `i5b_*.py` checks for AC 8–13, plus the plugin peek's hooks stacking below `@max-[28rem]`;
-  - worst-case data: a plugin with 12 hooks, a U+202E command and a multi-line `bash -c`; a `hooks.json` link; more than 2,000 files; `rust-analyzer-lsp@claude-plugins-official` with a 12-hex version; two git-URL marketplaces on one host; an empty Plugins view.
+- [ ] **Real-browser evidence**, as in A16, fake Claude only (it installs into a temp plugins dir; nothing is installed on the host):
+  - add `i5b_*.py` checks for AC 8–13 and 15, plus the plugin peek's hooks stacking below `@max-[28rem]`, the Latest badge and the pin review at 390px;
+  - worst-case data: a plugin with 12 hooks, a U+202E command and a multi-line `bash -c`; a `hooks.json` link; more than 2,000 files; a plugin needing `node`, `uvx` and `bun`; `rust-analyzer-lsp@claude-plugins-official` with a 12-hex version; two git-URL marketplaces on one host; a template with one pinned and one Latest marketplace; an empty Plugins view.
 - [ ] **Push and PR.**
   - Merge `i5/1-library-skills`, then push and get CI green on the branch.
-  - Then open the PR **ready for review (not draft)** with base `i5/1-library-skills`, titled `feat: plugins installed once into a factory seed from pinned marketplaces`. It links the spec, the plan and #153, Or's G1 report, the reset step, and says that DB tests run in CI.
+  - Then open the PR **ready for review (not draft)** with base `i5/1-library-skills`, titled `feat: plugins installed per agent by Claude Code, pinned by default`. It links the spec, the plan and #153, Or's G1 report, the reset step, the #56 re-scope note, and says that DB tests run in CI.
   - Confirm `gh pr checks` is green. Never merge; Or merges the stack.
 
 ---
@@ -1260,35 +1137,35 @@ Cut it with `git checkout -b i5/3-polish-docs i5/2-plugins`. If the evidence fix
 
 For any apps/web fix: the plan is already React-compliant; follow it as written and report any deviation.
 
-- [ ] Fix each failing evidence item from A16 and B12 as its own commit, run the test files you changed, then re-run the affected browser checks through the harness's `run.sh` lock.
+- [ ] Fix each failing evidence item from A16 and B11 as its own commit, run the test files you changed, then re-run the affected browser checks through the harness's `run.sh` lock.
 
 ### Task C2: Product docs (for the lead)
 
 - [ ] `docs/product/` is gitignored and lives only in the main checkout. **Don't edit it.** List spec §18 in the PR body and the final report, for the lead:
   - Agent template;
-  - Workspace;
-  - Administration (a new Skills section);
-  - ADR 0017 note, ADR 0024 consequences;
+  - Workspace (the layout, per-agent installs by Claude Code, pins and Latest, the read-write plugins mount, residual risk);
+  - Administration (a new Skills section, the pin control);
+  - ADR 0017 note, ADR 0024 consequences (P1–P6);
   - Data model;
-  - Agent runtime;
-  - in both Workspace and Agent runtime, say plainly: on the local runtime, the read-only seed and the scrubbed folders guard against accidents and are **not** a security boundary (Q6, Q21);
-  - Base image (#160);
+  - Agent runtime (the plugin env, `plugin_not_loaded`);
+  - in Workspace and Agent runtime, say plainly: plugin code runs as the host user on the local runtime (supported, not tested), and an agent can edit its own installed plugins;
+  - Base image (#160: the 2.1.331 pin, and the plugin runtimes an image must carry);
+  - Issue #56: re-scope or close with the measured numbers;
   - I6 path help and README;
   - Factory MCP (I7 note: `RESERVED_SETTINGS_KEYS` is the agent default-deny).
 
 ### Task C3: Final whole-branch review, verification, PR
 
-- [ ] **Whole-branch review** of `git diff spec/i5-skills-and-plugins...i5/3-polish-docs` (all of I5) against the whole spec and all 14 acceptance criteria. **The React diff is checked against `vercel-react-best-practices`** with A16's checklist and every R-* rule in Global Constraints: the reviewer invokes the skill, skips Next-only rules and says so.
+- [ ] **Whole-branch review** of `git diff spec/i5-skills-and-plugins...i5/3-polish-docs` (all of I5) against the whole spec and all 15 acceptance criteria. **The React diff is checked against `vercel-react-best-practices`** with A16's checklist and every R-* rule in Global Constraints: the reviewer invokes the skill, skips Next-only rules and says so.
 - [ ] **Full verification, once for the Part**: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, and the dev loop from a clean clone.
 - [ ] **Real-browser re-check** of every UI acceptance criterion in Chromium and WebKit headless, through the harness `run.sh` lock. Use fake Claude and the `file://` fixture only.
 - [ ] **Push and PR.** Push, get CI green, then open the PR **ready for review (not draft)** with base `i5/2-plugins`, titled `chore: Skills evidence fixes and docs list`. Never merge; Or merges the stack.
 
 ## Manual steps for Or (the executor never does these)
 
-1. **Gate G1** (Task B1): push the fixture repo, run `scripts/g1/run.sh` with the exact Claude Code version pinned in B0, and post `report.md` on #153. Part B starts only after that.
-2. **Review the certainty-3-or-lower decisions** listed on #153: Q3, Q5, Q6, Q7, Q9, Q12, Q15, Q18, T1, T7, T8, R5 and R12.
-3. **Confirm the re-validation calls** (made against the merged I1–I4/I6 code on 2026-11-24; the plan and spec already follow them):
-   - the old `FACTORY_HOST_SKILLS_DIR` gets S10's `REMOVED_ENV` boot warning (never read, no alias), which reverses the spec's earlier "no warning" (Q11);
-   - a failed background plugin install is an Inbox `notice` to the saver, not a new activity log or inbox kind (T6);
-   - one Claude Code floor: the harness's `MIN_CLAUDE_VERSION`, set from G1, instead of a second `CLAUDE_PLUGIN_FLOOR`;
-   - `describeDocChanges` stays for the web's pre-save summary, and `describeChanges` adds the library lines on the server.
+1. **Gate G1** (Task B1): build or pull the agent image with Claude Code 2.1.331, run `scripts/g1/run.sh` (containers only; nothing is installed on the host), passing `CLAUDE_CODE_OAUTH_TOKEN` from your shell for the session items, and post `report.md` on #153. A throwaway GitHub repo is needed only if item 0 shows Claude Code won't take a `file://` git marketplace. Part B's implementation (B2 onward) starts only after that.
+2. **Review the certainty-3-or-lower decisions** listed on #153: Q3, Q7, Q12, Q15, Q18, R5, R12, and the plugin-design ones P1 (one pin per marketplace per template), P3 (an agent can edit its installed plugins), P4 (not-loaded: keep running, notice to everyone) and P6 (the fallback if a headless start doesn't install).
+3. **Confirm the re-validation calls** (2026-11-24; the plan and spec already follow them):
+   - the old `FACTORY_HOST_SKILLS_DIR` gets S10's `REMOVED_ENV` boot warning (shipped in PR 1);
+   - one Claude Code floor, the harness's `MIN_CLAUDE_VERSION`, equal to the pin until G1 item 21 says otherwise;
+   - `describeDocChanges` stays for the web's pre-save summary (shipped in PR 1).

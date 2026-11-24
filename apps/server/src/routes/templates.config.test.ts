@@ -225,7 +225,7 @@ test("validation never echoes a secret value, key or url", async () => {
   await leaks((d) => {
     d.template.model = `${SECRET}!`;
     d.template.skills = [SECRET];
-    d.template.plugins = [`${SECRET}@${SECRET}`];
+    Object.assign(d.settings, { enabledPlugins: { [`${SECRET}@${SECRET}`]: true } });
   });
   expect(read("template.yaml")).toBe(YAML);
 });

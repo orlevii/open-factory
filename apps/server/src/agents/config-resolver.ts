@@ -15,6 +15,7 @@ import {
 } from "@open-factory/shared";
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
+import type { CatalogEntry } from "../library/marketplaces-service.ts";
 import { readContents } from "../library/plugin-contents.ts";
 import { classifyPluginSource } from "../library/plugin-sources.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
@@ -36,6 +37,12 @@ export type Effective = {
 /** A pin as the library map carries it (spec §8.1). */
 const pinString = (pin: Pin): string =>
   pin.kind === "commit" ? `commit:${pin.sha}` : pin.kind === "tag" ? `tag:${pin.name}` : pin.kind;
+
+/** What one `libraryOf` call has read: a marketplace's catalog at a ref, and each plugin's dependencies. */
+type Memo = {
+  catalogs: Map<string, { dir: string | null; entries: CatalogEntry[] }>;
+  deps: Map<string, string[]>;
+};
 
 const missing = (template: string) => new AgentStartError(`Template ${template} no longer exists.`);
 const invalidTemplate = (template: string) =>
@@ -92,6 +99,8 @@ export class ConfigResolver {
         : {};
     const rows = new Map((await this.d.library.marketplaces()).map((r) => [r.name, r]));
     const plugins: Record<string, string> = {};
+    // One catalog read per marketplace and ref, and one contents read per plugin, for this call only.
+    const memo: Memo = { catalogs: new Map(), deps: new Map() };
     const todo = effectivePlugins(doc);
     for (let key = todo.shift(); key !== undefined; key = todo.shift()) {
       if (key in plugins) continue;
@@ -105,25 +114,47 @@ export class ConfigResolver {
       plugins[key] = pinString(pin);
       const row = rows.get(mkt);
       if (!row) continue;
-      for (const dep of await this.dependenciesOf(row, name, pin)) todo.push(`${dep}@${mkt}`);
+      for (const dep of await this.dependenciesOf(row, name, pin, memo)) todo.push(`${dep}@${mkt}`);
     }
     return plugins;
   }
 
-  /** The dependencies a relative-path plugin names at the Library's checkout of its marketplace at `pin`. */
+  /**
+   * The dependencies a relative-path plugin names at the Library's checkout of its marketplace at `pin`. Each is taken
+   * to live in the same marketplace at the same pin; mapping a dependency that names another marketplace is B7's.
+   */
   private async dependenciesOf(
     row: Parameters<LibraryIndex["catalogAt"]>[0],
     plugin: string,
     pin: Pin,
+    memo: Memo,
   ): Promise<string[]> {
     const ref = pin.kind === "commit" ? pin.sha : pin.kind === "tag" ? pin.name : undefined;
-    const dir = await this.d.library.marketplaceDir(row, ref);
-    const entry = (await this.d.library.catalogAt(row, ref))?.find((e) => e.name === plugin);
-    if (!dir || !entry) return [];
-    const info = classifyPluginSource(entry.raw);
-    if (info.kind !== "relative") return [];
-    const contents = await readContents(path.join(dir, info.path)).catch(() => undefined);
-    return (contents?.dependencies ?? []).map((d) => d.split("@", 1)[0] ?? d).filter(Boolean);
+    const where = `${row.name}\0${ref ?? ""}`;
+    const key = `${where}\0${plugin}`;
+    const known = memo.deps.get(key);
+    if (known) return known;
+    let catalog = memo.catalogs.get(where);
+    if (!catalog) {
+      catalog = {
+        dir: await this.d.library.marketplaceDir(row, ref),
+        entries: (await this.d.library.catalogAt(row, ref)) ?? [],
+      };
+      memo.catalogs.set(where, catalog);
+    }
+    const entry = catalog.entries.find((e) => e.name === plugin);
+    let deps: string[] = [];
+    if (catalog.dir && entry) {
+      const info = classifyPluginSource(entry.raw);
+      if (info.kind === "relative") {
+        const contents = await readContents(path.join(catalog.dir, info.path)).catch(
+          () => undefined,
+        );
+        deps = (contents?.dependencies ?? []).map((d) => d.split("@", 1)[0] ?? d).filter(Boolean);
+      }
+    }
+    memo.deps.set(key, deps);
+    return deps;
   }
 
   async effective(agent: AgentRow): Promise<Effective> {

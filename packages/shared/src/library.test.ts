@@ -124,10 +124,17 @@ describe("pins", () => {
     expect(checkPinRef(ref)).toBe(true),
   );
 
-  test.each(["refs/heads/main", "refs/tags/v1", "a..b", "", "-x", "a b"])(
-    "%j is not a pin shape",
-    (ref) => expect(checkPinRef(ref)).toBe(false),
-  );
+  test.each([
+    "refs/heads/main",
+    "refs/tags/v1",
+    "a..b",
+    "",
+    "-x",
+    "a b",
+    "abc1234",
+    "A".repeat(40),
+    "v".repeat(65),
+  ])("%j is not a pin shape", (ref) => expect(checkPinRef(ref)).toBe(false));
 
   test.each([
     [{ source: { source: "github", repo: "a/b", ref: sha } }, { kind: "commit", sha }],

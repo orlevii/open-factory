@@ -67,7 +67,6 @@ const detail = (issues: unknown[] = []) => ({
       projects: [],
       skills: [],
       localSkills: true,
-      plugins: [],
       secrets: [],
       canSpawn: [],
       maxLiveSpawns: 5,

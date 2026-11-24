@@ -36,10 +36,13 @@ describe("agentOverlaySchema", () => {
     "permission_mode",
     "projects",
     "local_skills",
-    "plugins",
     "bogus",
   ])("refuses template.%s", (k) => {
     expect(agentOverlaySchema.safeParse({ template: { [k]: "x" } }).success).toBe(false);
+  });
+  it("refuses template.plugins as an unknown field: plugins live in settings.enabledPlugins", () => {
+    const r = agentOverlaySchema.safeParse({ template: { plugins: ["x@y"] } });
+    expect(r.error?.issues.map((i) => i.message)).toEqual([CONFIG_MSG.unknownField]);
   });
   it("refuses unknown top-level keys and extra mcp keys", () => {
     expect(agentOverlaySchema.safeParse({ other: {} }).success).toBe(false);

@@ -12,7 +12,6 @@ const base: ConfigDoc = {
     warm_window_minutes: 70,
     max_live_spawns: 5,
     skills: ["tdd"],
-    plugins: ["a@m"],
     can_spawn: ["rev"],
     secrets: ["GH_TOKEN"],
   },
@@ -36,17 +35,14 @@ describe("mergeConfig", () => {
     expect(mergeConfig(base, { template: { [k]: v } }).template[k]).toEqual(v),
   );
 
-  it.each(["skills", "plugins", "can_spawn", "secrets"])(
-    "unions %s base first, dropping duplicates",
-    (k) => {
-      const withTwo: ConfigDoc = { ...base, template: { [k]: ["b1", "b2"] } };
-      expect(mergeConfig(withTwo, { template: { [k]: ["new", "b2", "b1"] } }).template[k]).toEqual([
-        "b1",
-        "b2",
-        "new",
-      ]);
-    },
-  );
+  it.each(["skills", "can_spawn", "secrets"])("unions %s base first, dropping duplicates", (k) => {
+    const withTwo: ConfigDoc = { ...base, template: { [k]: ["b1", "b2"] } };
+    expect(mergeConfig(withTwo, { template: { [k]: ["new", "b2", "b1"] } }).template[k]).toEqual([
+      "b1",
+      "b2",
+      "new",
+    ]);
+  });
 
   it("unions permissions.allow/deny and autoMode lists", () => {
     const m = mergeConfig(base, {

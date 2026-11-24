@@ -82,13 +82,19 @@ export function checkBranchName(b: string): boolean {
 
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 
+const REF_MAX = 64;
+const HEX_LOOKING = /^[0-9a-fA-F]{7,}$/;
+
 /**
- * Whether a declaration's `ref` has the shape of a pin (spec §7.4): a 40-hex commit, or a tag name by the §6.2
- * ref-format rules. A `refs/…` ref is refused. Whether a name is a recorded tag is the "Skills hasn't read"
- * warning, which needs the registry.
+ * Whether a declaration's `ref` has the shape of a pin (spec §7.4): a 40-hex (lower-case) commit, or a tag name by
+ * the §6.2 ref-format rules, at most 64 characters. A `refs/…` ref is refused, and so is a hex-looking string that
+ * isn't a full commit (an abbreviated or upper-case sha, which git would resolve by prefix, not as a tag). Whether a
+ * name is a recorded tag is the "Skills hasn't read" warning, which needs the registry.
  */
 export function checkPinRef(ref: string): boolean {
-  return COMMIT_SHA.test(ref) || (!ref.startsWith("refs/") && checkBranchName(ref));
+  if (COMMIT_SHA.test(ref)) return true;
+  if (ref.length > REF_MAX || HEX_LOOKING.test(ref) || ref.startsWith("refs/")) return false;
+  return checkBranchName(ref);
 }
 
 /** A marketplace's pin: what its declaration (`extraKnownMarketplaces[name]`) holds it at (spec §8.1). */

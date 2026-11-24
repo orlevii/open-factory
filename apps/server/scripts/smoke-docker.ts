@@ -367,6 +367,10 @@ try {
     app.projects.create({ name: "smoke-repo", hostPath: repoDir }),
   );
   await step("0. docker template (haiku, warm window 1 min, one plugin) is valid", async () => {
+    // The template's marketplace must be registered in Skills (spec §7.4); a folder marketplace is live.
+    const source = JSON.stringify({ source: "directory", path: marketDir });
+    await conn.sql`insert into marketplaces (name, source, tags, state, started_at, added_by, added_at)
+      values ('smoke-market', ${source}::jsonb, '{}'::jsonb, 'ready', now(), '@smoke', now())`;
     writeTemplate("dock", {
       "template.yaml": [
         "name: dock",
@@ -376,7 +380,6 @@ try {
         "model: haiku",
         "warm_window_minutes: 1",
         "projects: [smoke-repo]",
-        "plugins: [heron@smoke-market]",
         "",
       ].join("\n"),
       "AGENTS.md":
@@ -386,6 +389,7 @@ try {
           extraKnownMarketplaces: {
             "smoke-market": { source: { source: "directory", path: marketDir } },
           },
+          enabledPlugins: { "heron@smoke-market": true },
         },
         null,
         2,

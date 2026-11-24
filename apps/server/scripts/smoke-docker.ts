@@ -401,14 +401,17 @@ try {
     if (!r || errs.length) throw new Error(JSON.stringify(errs));
   });
   await step("0. agent smoke-dock created (Claude Code installs the plugin at start)", () =>
-    app.agents.create({
-      template: "dock",
-      slug: SLUG,
-      displayName: "Smoke Dock",
-      description: "Smoke Docker agent",
-      reportsTo: null,
-      credential: "smoke",
-    }),
+    app.agents.create(
+      {
+        template: "dock",
+        slug: SLUG,
+        displayName: "Smoke Dock",
+        description: "Smoke Docker agent",
+        reportsTo: null,
+        credential: "smoke",
+      },
+      { kind: "human", handle: "or" },
+    ),
   );
   agentId = String((await conn.sql`select id from agents where slug = ${SLUG}`)[0]?.id ?? "");
   const workdir = agentWorkdir(config.factoryHome, SLUG);

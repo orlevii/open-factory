@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { AgentService, endedAgentsQuery } from "../agents/agent-service.ts";
 import { CompactingError } from "../agents/errors.ts";
 import { AgentEndedError } from "../agents/message-cancel.ts";
+import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { claimTestHandleSql } from "../test/handles.ts";
@@ -530,6 +531,7 @@ describe("S7: the ended list is bounded", () => {
       store: s.app.store,
       bus: s.app.bus,
       configChanges: s.app.configChanges,
+      policy: new PolicyInputs({ db, library: s.app.library }),
     });
     for (const ended of ["exclude", "only"] as const) {
       queries.length = 0;

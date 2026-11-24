@@ -63,14 +63,17 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     kind: "oauth_token",
     valueEnc: h.app.vault.seal("test-token", `credentials:${credentialId}`),
   });
-  await h.app.agents.create({
-    template: "lead",
-    slug: "lead",
-    displayName: "Lead",
-    description: "",
-    reportsTo: null,
-    credential: "scn-cred",
-  });
+  await h.app.agents.create(
+    {
+      template: "lead",
+      slug: "lead",
+      displayName: "Lead",
+      description: "",
+      reportsTo: null,
+      credential: "scn-cred",
+    },
+    { kind: "human", handle: "or" },
+  );
   const lead = await h.app.store.agentBySlug("lead");
   if (!lead) throw new Error("no lead");
 

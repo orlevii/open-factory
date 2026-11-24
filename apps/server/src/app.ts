@@ -17,6 +17,7 @@ import { ConfigChanges, dbConfigChangeAgents } from "./agents/config-changes.ts"
 import { ConfigResolver } from "./agents/config-resolver.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
+import { PolicyInputs } from "./agents/policy-inputs.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
@@ -369,6 +370,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     store,
     bus,
     configChanges,
+    policy: new PolicyInputs({ db: deps.db, library }),
     scheduling: schedules,
   });
   // The verifier's driver has no logger: process output can echo the credential under test.

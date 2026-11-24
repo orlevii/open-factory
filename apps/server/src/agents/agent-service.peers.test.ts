@@ -33,14 +33,17 @@ const held = async (slug: string) =>
                 where a.slug = ${slug} and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
 function create(slug: string, displayName: string, reportsTo: string | null) {
-  return h.app.agents.create({
-    template: "lead",
-    slug,
-    displayName,
-    description: "d",
-    reportsTo,
-    credential: "work",
-  });
+  return h.app.agents.create(
+    {
+      template: "lead",
+      slug,
+      displayName,
+      description: "d",
+      reportsTo,
+      credential: "work",
+    },
+    { kind: "human", handle: "or" },
+  );
 }
 
 test("create: peers get 'joined as your peer', the manager 'joined as your report'", async () => {
@@ -56,7 +59,7 @@ test("create: peers get 'joined as your peer', the manager 'joined as your repor
 
 test("manager change: left the old neighborhood, joined the new; the moved agent gets no event but a restart", async () => {
   const restart = vi.spyOn(h.app.runtimes, "requestRestart");
-  await h.app.agents.update("dev", { reportsTo: "boss" });
+  await h.app.agents.update("dev", { reportsTo: "boss" }, { kind: "human", handle: "or" });
   expect(await held("lead")).toEqual([
     { kind: "peer_left", notice: "report", body: "@dev (Dev) left: now reports to @boss." },
   ]);
@@ -70,7 +73,7 @@ test("manager change: left the old neighborhood, joined the new; the moved agent
 });
 
 test("moving to the top level: 'now reports to the humans'; top-level agents become peers", async () => {
-  await h.app.agents.update("dev", { reportsTo: null });
+  await h.app.agents.update("dev", { reportsTo: null }, { kind: "human", handle: "or" });
   // lead loses a report and gains a top-level peer; boss gains a peer. Order by created_at is deterministic.
   expect(await held("lead")).toEqual([
     { kind: "peer_left", notice: "report", body: "@dev (Dev) left: now reports to the humans." },
@@ -82,23 +85,23 @@ test("moving to the top level: 'now reports to the humans'; top-level agents bec
 });
 
 test("archive and unarchive send left and joined; archived agents receive nothing", async () => {
-  await h.app.agents.archive("dev");
+  await h.app.agents.archive("dev", { kind: "human", handle: "or" });
   expect(await held("lead")).toEqual([
     { kind: "peer_left", notice: "report", body: "@dev (Dev) left: archived." },
   ]);
-  await h.app.agents.unarchive("dev");
+  await h.app.agents.unarchive("dev", { kind: "human", handle: "or" });
   expect((await held("lead")).at(-1)).toEqual({
     kind: "peer_joined",
     notice: "report",
     body: "@dev (Dev) joined as your report.",
   });
-  await h.app.agents.archive("boss");
+  await h.app.agents.archive("boss", { kind: "human", handle: "or" });
   await create("new", "New", null);
   expect(await held("boss")).toEqual([]);
 });
 
 test("summaries count non-archived direct reports", async () => {
   expect((await h.app.agents.summary("lead")).reports).toBe(1);
-  await h.app.agents.archive("dev");
+  await h.app.agents.archive("dev", { kind: "human", handle: "or" });
   expect((await h.app.agents.summary("lead")).reports).toBe(0);
 });

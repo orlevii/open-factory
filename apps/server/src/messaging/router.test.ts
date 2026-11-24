@@ -243,7 +243,7 @@ test("archive between resolve and hand-off marks the row rejected", async () => 
     body: "late",
     urgent: false,
   });
-  await h.app.agents.archive("bob");
+  await h.app.agents.archive("bob", { kind: "human", handle: "or" });
   await h.app.runtimes.deliver(row, "agent");
   await settle("bob");
   expect((await h.sql`select state from messages where id = ${row.id}`)[0]?.state).toBe("rejected");

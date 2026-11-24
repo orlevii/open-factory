@@ -573,7 +573,7 @@ test("local_skill_names is derived only: template.yaml can't set it, validateEff
     settings: ok.tplSettings,
     mcp: ok.tplMcp,
   };
-  expect(await validateEffective(doc, ctx, "human")).toEqual([
+  expect(await validateEffective(doc, ctx)).toEqual([
     expect.objectContaining({ severity: "error", path: "template.skills.0" }),
   ]);
 });
@@ -603,7 +603,7 @@ test("validateEffective roots paths at template., settings. and mcp.", () => {
     settings: { permissions: { defaultMode: "x" } },
     mcp: { mcpServers: { factory: {} } },
   };
-  return validateEffective(doc, ctx, "human").then((issues) => {
+  return validateEffective(doc, ctx).then((issues) => {
     expect(issues.map((i) => i.path).sort()).toEqual([
       "mcp.mcpServers.factory",
       "settings.permissions.defaultMode",
@@ -670,7 +670,7 @@ test("a skill the Library lists but can't find in its folder is missing, whateve
         : { ok: false as const, reason: "not_added" as const },
   };
   const doc = { ...baseDoc(), template: { name: "dev", display_name: "Dev", skills: ["gone"] } };
-  const issues = await validateEffective(doc, { ...ctx, library }, "human");
+  const issues = await validateEffective(doc, { ...ctx, library });
   expect(issues.map((i) => [i.path, i.message])).toEqual([
     ["template.skills.0", "Skill gone is missing from its folder."],
   ]);
@@ -757,11 +757,7 @@ test("overlaySchemaIssues is empty for a good overlay", () => {
 
 test("validateEffective never echoes an env name that fails the name rule", async () => {
   const bad = "OPEN_FACTORY_sk-ant-SECRET0123";
-  const issues = await validateEffective(
-    { ...baseDoc(), settings: { env: { [bad]: "v" } } },
-    ctx,
-    "human",
-  );
+  const issues = await validateEffective({ ...baseDoc(), settings: { env: { [bad]: "v" } } }, ctx);
   expect(issues).toEqual([expect.objectContaining({ severity: "error", path: "settings.env" })]);
   expect(JSON.stringify(issues)).not.toContain("sk-ant");
 });
@@ -775,7 +771,6 @@ test.each(PLUGIN_ENV_NAMES)(
     const template = await validateEffective(
       { ...baseDoc(), settings: { env: { [name]: "1" } } },
       ctx,
-      "human",
     );
     expect(template).toEqual([
       expect.objectContaining({ severity: "error", message: `${name} is set by the factory.` }),

@@ -108,7 +108,7 @@ test("archive vs a comment mentioning the archived agent, both orders", async ()
   await a.ready;
   const comment = outcome(h.app.tasks.comment(or, "T-1", "@qa again"));
   await waitForLocks(1);
-  const archive = outcome(h.app.agents.archive("qa"));
+  const archive = outcome(h.app.agents.archive("qa", { kind: "human", handle: "or" }));
   await waitForLocks(2);
   a.release();
   await a.done;

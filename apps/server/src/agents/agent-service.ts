@@ -3,13 +3,16 @@ import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
+  type Actor,
   type AgentConfigResponse,
   type AgentModel,
   type AgentOverlay,
   type AgentSummary,
   agentOverlaySchema,
+  agentPolicyIssues,
   type ConfigDoc,
   type CreateAgentBody,
+  LOCAL_RUNTIME_REFUSAL,
   mergeConfig,
   nameSchema,
   overlayVersion,
@@ -17,6 +20,7 @@ import {
   type PutAgentConfigBody,
   type PutAgentConfigResponse,
   slugSchema,
+  touchesLocalRuntime,
   treeOrder,
   yamlPart,
 } from "@open-factory/shared";
@@ -40,7 +44,23 @@ import type { ConfigChanges } from "./config-changes.ts";
 import type { ConfigResolver } from "./config-resolver.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Exec, Tx } from "./event-store.ts";
+import type { PolicyInputs } from "./policy-inputs.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
+
+/** An agent actor asked for something only a human may do (spec §7.2): a 403 for REST, a tool error for MCP. */
+export class OrgRefusedError extends ApiError {
+  constructor(message: string) {
+    super(403, "org_refused", message);
+    this.name = "OrgRefusedError";
+  }
+}
+
+/** What `planUpdate` validated: `write` runs in the caller's transaction (which holds the row lock), `after` once it commits. */
+export type UpdatePlan = {
+  row: AgentRow;
+  write(tx: Tx): Promise<void>;
+  after(): Promise<AgentSummary>;
+};
 
 const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
 
@@ -110,6 +130,8 @@ export class AgentService {
       containers?: Pick<ContainerManager, "isRunning">;
       /** Peer events (spec §10.2): the router snapshots the neighborhood and writes the rows. */
       router: Pick<Router, "peerEvents" | "snapshot">;
+      /** The registry, catalog and template-runtime reads the agent policy and the local-runtime rule need. */
+      policy: PolicyInputs;
       /** Reset persona writes its `config_changed` event here when the agent has no loaded runtime. */
       store: Pick<EventStore, "append">;
       bus: Pick<EventBus, "publishAll">;
@@ -483,14 +505,34 @@ export class AgentService {
     });
   }
 
-  async create(b: CreateAgentBody): Promise<AgentSummary> {
+  /** Rule 8 for an agent actor: it never reaches a local runtime. A human is never judged by it. */
+  private assertNotLocal(actor: Actor, touched: Parameters<typeof touchesLocalRuntime>[0]) {
+    if (actor.kind === "agent" && touchesLocalRuntime(touched))
+      throw new OrgRefusedError(LOCAL_RUNTIME_REFUSAL);
+  }
+
+  async create(
+    b: CreateAgentBody & { config?: AgentOverlay },
+    actor: Actor,
+  ): Promise<AgentSummary> {
     const slugOk = slugSchema.safeParse(b.slug);
     if (!slugOk.success)
       throw new FieldError("slug", slugOk.error.issues[0]?.message ?? FIELD_MSG.slugInvalid);
-    return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b));
+    if (actor.kind === "agent") {
+      const spawns = b.config?.template?.can_spawn ?? [];
+      const [templateRuntime, ...canSpawnRuntimes] = await this.d.policy.templateRuntimes([
+        b.template,
+        ...spawns,
+      ]);
+      this.assertNotLocal(actor, { templateRuntime, canSpawnRuntimes });
+    }
+    return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b, actor));
   }
 
-  private async createLocked(b: CreateAgentBody): Promise<AgentSummary> {
+  private async createLocked(
+    b: CreateAgentBody & { config?: AgentOverlay },
+    actor: Actor,
+  ): Promise<AgentSummary> {
     const { db, workspace } = this.d;
     // The cheap pre-read before materialising; the claim in the insert transaction is the guarantee (spec §4.1).
     if (await handleKind(db, b.slug)) throw slugTaken();
@@ -498,6 +540,7 @@ export class AgentService {
     const credentialId = await this.credentialId(b.credential);
     const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
     const projects = await this.projectRows(b.projects ?? tpl.config.projects);
+    const config = b.config ? await this.checkedOverlay(b.config, tpl, actor) : {};
 
     const prep: MaterializeCheck = {
       slug: b.slug,
@@ -527,8 +570,8 @@ export class AgentService {
           displayName: b.displayName,
           description: b.description,
           template: b.template,
-          // I2 §5.1: the overlay starts empty; the agent runs the live template until someone configures it.
-          config: {},
+          // I2 §5.1: the overlay starts empty (the agent runs the live template) unless the creator gave one.
+          config,
           runtime: tpl.config.runtime,
           reportsTo: manager?.id ?? null,
           credentialId,
@@ -547,10 +590,61 @@ export class AgentService {
     return this.summary(b.slug);
   }
 
-  async update(slug: string, b: PatchAgentBody): Promise<AgentSummary> {
+  /**
+   * A new agent's overlay, validated before anything is materialised: the schema, then the merged doc's new issues (as
+   * `configIssues` would, with the template's runtime standing in for the row that doesn't exist yet), then for an agent
+   * actor the policy with nothing before it. Any error refuses the whole create.
+   */
+  private async checkedOverlay(
+    config: AgentOverlay,
+    tpl: { doc: ConfigDoc; dir: string; config: { runtime: "local" | "docker" } },
+    actor: Actor,
+  ): Promise<AgentOverlay> {
+    const parsed = agentOverlaySchema.safeParse(config);
+    const issues = parsed.success
+      ? [
+          ...(await overlayIssues(tpl.doc, parsed.data, {
+            ...(await this.d.templates.context()),
+            templateDir: tpl.dir,
+            agentRuntimes: [tpl.config.runtime],
+          })),
+          ...(actor.kind === "agent"
+            ? agentPolicyIssues({
+                target: "overlay",
+                before: {},
+                after: parsed.data,
+                declaredBy: tpl.doc,
+                plugins: await this.d.policy.plugins([tpl.doc]),
+              })
+            : []),
+        ]
+      : overlaySchemaIssues(config);
+    if (!parsed.success || issues.some((i) => i.severity === "error"))
+      throw new ApiError(400, "invalid_config", "The configuration has errors.", { issues });
+    return parsed.data;
+  }
+
+  async update(slug: string, b: PatchAgentBody, actor: Actor): Promise<AgentSummary> {
+    const plan = await this.planUpdate(slug, b, actor);
+    await this.d.db.transaction(async (tx) => {
+      await this.lockAgent(tx, plan.row.id);
+      await plan.write(tx);
+    });
+    return plan.after();
+  }
+
+  /**
+   * Validates a PATCH outside any transaction (disk and Library reads) and returns its writes: `write(tx)` runs in
+   * the caller's transaction after it locked the row (it locks nothing itself), `after()` the refresh, peer events and
+   * restarts once that commits.
+   */
+  async planUpdate(slug: string, b: PatchAgentBody, actor: Actor): Promise<UpdatePlan> {
     const { db, runtimes } = this.d;
+    if (b.manageOrg !== undefined && actor.kind === "agent")
+      throw new OrgRefusedError("Only a human can grant manage_org.");
     const row = await this.rowBySlug(slug);
     this.assertPersistent(row);
+    this.assertNotLocal(actor, { agentRuntime: row.runtime });
     const currentGrants = await this.grantNames(row.id);
     const changed = { feeds: false, text: false };
     let moved: { to: string | null } | undefined;
@@ -562,7 +656,12 @@ export class AgentService {
     }
     if (b.description !== undefined && b.description !== row.description) {
       set.description = b.description;
+      set.descriptionBy = actor.kind === "agent" ? actor.id : null;
       changed.text = true;
+    }
+    if (b.manageOrg !== undefined && b.manageOrg !== row.manageOrg) {
+      set.manageOrg = b.manageOrg;
+      changed.feeds = true;
     }
     // Identity only: it never feeds the process, so it sets no `changed` flag and never restarts.
     if (b.color !== undefined && b.color !== row.color) set.color = b.color;
@@ -592,26 +691,30 @@ export class AgentService {
       if (!same) changed.feeds = true;
     }
 
-    const children = await db.transaction(async (tx) => {
-      await this.lockAgent(tx, row.id);
-      if (Object.keys(set).length)
-        await tx.update(schema.agents).set(set).where(eq(schema.agents.id, row.id));
-      if (newGrants) await this.replaceGrants(tx, row.id, newGrants);
-      return this.syncChildren(tx, row.id);
-    });
-
-    await runtimes.refresh(row.id);
-    await this.applyToChildren(children);
-    if (moved && before) await this.peerEvents(row.id, { kind: "moved", to: moved.to }, before);
-    if (changed.feeds || changed.text) await runtimes.requestRestart(row.id);
-    if (changed.text) {
-      const reports = await db
-        .select({ id: schema.agents.id })
-        .from(schema.agents)
-        .where(and(eq(schema.agents.reportsTo, row.id), liveAgent));
-      for (const r of reports) await runtimes.requestRestart(r.id);
-    }
-    return this.summary(slug);
+    let children: string[] = [];
+    return {
+      row,
+      write: async (tx) => {
+        if (Object.keys(set).length)
+          await tx.update(schema.agents).set(set).where(eq(schema.agents.id, row.id));
+        if (newGrants) await this.replaceGrants(tx, row.id, newGrants);
+        children = await this.syncChildren(tx, row.id);
+      },
+      after: async () => {
+        await runtimes.refresh(row.id);
+        await this.applyToChildren(children);
+        if (moved && before) await this.peerEvents(row.id, { kind: "moved", to: moved.to }, before);
+        if (changed.feeds || changed.text) await runtimes.requestRestart(row.id);
+        if (changed.text) {
+          const reports = await db
+            .select({ id: schema.agents.id })
+            .from(schema.agents)
+            .where(and(eq(schema.agents.reportsTo, row.id), liveAgent));
+          for (const r of reports) await runtimes.requestRestart(r.id);
+        }
+        return this.summary(slug);
+      },
+    };
   }
 
   private async grantNames(agentId: string): Promise<string[]> {
@@ -894,9 +997,12 @@ export class AgentService {
     return { value: null, source: "default" };
   }
 
-  async archive(slug: string): Promise<AgentSummary> {
+  async archive(slug: string, actor: Actor): Promise<AgentSummary> {
     const { db, runtimes } = this.d;
     const row = await this.rowBySlug(slug);
+    if (actor.kind === "agent" && actor.id === row.id)
+      throw new OrgRefusedError("Ask a human to archive you.");
+    this.assertNotLocal(actor, { agentRuntime: row.runtime });
     this.assertPersistent(row);
     if (row.archivedAt) return this.summary(slug);
     // S7 §5.7: the row lock first (`FOR NO KEY UPDATE`, never `FOR UPDATE`), then the live reports in the same
@@ -944,9 +1050,12 @@ export class AgentService {
     return this.summary(slug);
   }
 
-  async unarchive(slug: string): Promise<AgentSummary> {
+  async unarchive(slug: string, actor: Actor): Promise<AgentSummary> {
     const { db, runtimes } = this.d;
     const row = await this.rowBySlug(slug);
+    if (actor.kind === "agent" && row.manageOrg)
+      throw new OrgRefusedError(`Only a human can unarchive @${slug}: it can manage the org.`);
+    this.assertNotLocal(actor, { agentRuntime: row.runtime });
     this.assertPersistent(row);
     if (!row.archivedAt) return this.summary(slug);
     // S9 §10.1: the agent row `FOR NO KEY UPDATE` first, then its schedules (agents before schedules). The manager

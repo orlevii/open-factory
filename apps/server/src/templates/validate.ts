@@ -251,12 +251,10 @@ async function validatePlugins(doc: ConfigDoc, ctx: EffectiveContext, s: Report)
 /**
  * The semantic rules for any config document: a template's own files, or a template merged with an
  * overlay. Paths are rooted at `template.`, `settings.` or `mcp.`. Messages never carry a value.
- * `policy` is "human" in I2; I7 adds "agent".
  */
 export async function validateEffective(
   doc: ConfigDoc,
   ctx: EffectiveContext,
-  _policy: "human",
 ): Promise<TemplateIssue[]> {
   const issues: TemplateIssue[] = [];
   const add = (
@@ -415,9 +413,9 @@ export async function overlayIssues(
     ...ctx,
     ...(typeof base.template.name === "string" ? { declaredBy: base.template.name } : {}),
   };
-  const before = new Set((await validateEffective(base, octx, "human")).map(issueKey));
+  const before = new Set((await validateEffective(base, octx)).map(issueKey));
   const reported = new Set(out.map((i) => i.path));
-  for (const i of await validateEffective(merged, octx, "human")) {
+  for (const i of await validateEffective(merged, octx)) {
     if (before.has(issueKey(i)) || reported.has(i.path)) continue;
     out.push({ ...i, ...(i.path ? { path: rebase(i.path, merged, overlay) } : {}) });
   }
@@ -530,7 +528,6 @@ export async function validateTemplate(
   const effective = await validateEffective(
     { template: tplYaml, settings: tplSettings, mcp: tplMcp },
     { ...ctx, templateDir: dir },
-    "human",
   );
   for (const i of effective)
     add(

@@ -128,7 +128,7 @@ test("a direct report that is idle runs it now", async () => {
   expect(rawWrites("dev")).toEqual([{ kind: "raw", text: "/context" }]);
 });
 
-test("an errored report holds it until a human restarts it", async () => {
+test("an errored report holds it until it is restarted (restart_agent, or a human)", async () => {
   await start("dev", true);
   procOf("dev")?.exit(137);
   await (await rt("dev")).settled();
@@ -140,7 +140,7 @@ test("an errored report holds it until a human restarts it", async () => {
   expect(r.json).toEqual({
     target: "@dev",
     status: "queued",
-    note: "@dev is errored; it runs after a human restarts it.",
+    note: "@dev is errored; it runs after it is restarted (restart_agent, or a human).",
   });
   expect(drv.starts).toHaveLength(starts);
 });

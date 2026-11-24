@@ -47,6 +47,7 @@ import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
 import { type OrgToolDeps, orgTools } from "./mcp/tools/org-tools.ts";
+import { restartAgentTool } from "./mcp/tools/restart-agent.ts";
 import { scheduleTools } from "./mcp/tools/schedule-tools.ts";
 import { sendCommandTool } from "./mcp/tools/send-command.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
@@ -773,13 +774,23 @@ async function listenForAgents(
           spawned: caller.kind === "ephemeral",
         }),
         ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
-        // Q12: persistent agents only; a spawned agent never sees the schedule tools.
+        // Q12 and I7 §9.1: persistent agents only; a spawned agent never sees the schedule or restart tools.
         ...(caller.kind === "persistent"
-          ? scheduleTools({
-              schedules: d.schedules,
-              factoryZone: config.factoryTimezone,
-              loadAgent: (id) => d.store.agentById(id),
-            })
+          ? [
+              restartAgentTool({
+                caller,
+                loadAgent: (id) => d.store.agentById(id),
+                store: d.store,
+                runtimes: d.runtimes,
+                resolver: d.resolver,
+                router: d.router,
+              }),
+              ...scheduleTools({
+                schedules: d.schedules,
+                factoryZone: config.factoryTimezone,
+                loadAgent: (id) => d.store.agentById(id),
+              }),
+            ]
           : []),
         listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
         ...(caller.manageOrg

@@ -144,7 +144,8 @@ function noteFor(i: {
     return i.name === "compact"
       ? "Your /compact runs when this turn ends. Write down where you are before you end the turn."
       : `Your /${i.name} runs when this turn ends.`;
-  if (i.errored) return `@${i.slug} is errored; it runs after a human restarts it.`;
+  if (i.errored)
+    return `@${i.slug} is errored; it runs after it is restarted (restart_agent, or a human).`;
   if (i.turnOpen) return `Runs when @${i.slug}'s current turn ends.`;
   if (i.idle) return "Runs now.";
   return `Wakes @${i.slug} to run it.`;

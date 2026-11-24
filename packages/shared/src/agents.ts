@@ -217,6 +217,16 @@ export const compactBodySchema = z.object({
   focus: z.string().trim().max(MAX_FOCUS_CHARS).optional(),
 });
 export const queueItemResponseSchema = z.object({ item: queueItemSchema });
+/** I7 §9.4: a human's Restart now. `force` restarts even when background work would be stopped. */
+export const restartAgentBodySchema = z.object({ force: z.boolean().optional() });
+/** I7 §9.2: what `restartNow` did; it never waits for the start. */
+export const restartStatusSchema = z.enum([
+  "restarting",
+  "restart_pending",
+  "not_running",
+  "restarted_idle",
+]);
+export const restartAgentResponseSchema = z.object({ status: restartStatusSchema });
 
 // Strict: `?archived=` was renamed to `?ended=` in S7, and an old caller must get a 400, not a silently changed list.
 export const agentListQuerySchema = z.strictObject({

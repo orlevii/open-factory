@@ -64,7 +64,8 @@ test("the database store reads live sources and live agents, and usedBy counts t
       lastValid: async () => doc,
     }),
   });
-  expect(await idx.usedBy("tdd")).toEqual({ templates: ["dev"], agents: ["ann"] });
+  // An agent uses the union of its template's skills and its own: cy lists "other" itself and inherits "tdd".
+  expect(await idx.usedBy("tdd")).toEqual({ templates: ["dev"], agents: ["ann", "cy"] });
   expect(await idx.usedBy("other")).toEqual({ templates: [], agents: ["cy"] });
   const groups = await idx.skills();
   expect(groups.map((g) => g.kind)).toEqual(["host", "source", "unknown"]);

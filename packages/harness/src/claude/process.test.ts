@@ -91,7 +91,7 @@ test("the fake answers initialize with its scenario's commands", async () => {
   await expect(p.commands?.()).resolves.toEqual([
     { name: "spike-echo", description: "Echo (project)", argumentHint: "[words]" },
   ]);
-  expect(p.claudeCodeVersion).toBe("2.1.327");
+  expect(p.claudeCodeVersion).toBe("2.1.331");
   await p.stop({ graceMs: 2000 });
 });
 

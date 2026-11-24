@@ -220,7 +220,6 @@ test("row 12: no changes means no notice, and the local runtime being disabled d
 });
 
 // Rows 9 and 10: the cut restart (§9.2.1). Everything is asserted on what the fake process received.
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** The bodies of the first batch the process in `n` was sent. */
 const firstBatch = (n: number) => h.driver.starts[n]?.sent[0]?.map((m) => m.body);
 const writeCount = () => h.driver.last.writes.length;
@@ -286,9 +285,14 @@ test("row 9: a batch whose turn never starts: the fallback stops, and its rows a
   await idle();
   await h.send("lost?");
   const old = h.driver.last;
-  await call();
-  expect(old.stopped).toBe(false);
-  await wait(350); // holdTimeoutMs is 200 in the harness
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await call();
+    expect(old.stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(250); // holdTimeoutMs is 200 in the harness
+  } finally {
+    vi.useRealTimers();
+  }
   await rt.settled();
   expect(old.stopped).toBe(true);
   expect(old.controls).toEqual([]);
@@ -359,6 +363,56 @@ test("a second restartNow while pending returns restarting, replaces by, and int
   expect(firstBatch(1)?.[0]).toBe(
     "Restarted by @boss to apply: skill. Continue where you left off.",
   );
+});
+
+test("a second restartNow after the stop began is refused as starting", async () => {
+  await midTurn();
+  await call();
+  h.driver.last.holdStop = true;
+  await finishTurn(); // the stop has begun and is held
+  expect(h.driver.last.stopped).toBe(true);
+  expect((await refusal(call())).code).toBe("starting");
+  h.driver.starts[0]?.releaseStop();
+  await rt.settled();
+});
+
+test("only the write guard protects the old process: an awaiting batch, no hold yet", async () => {
+  await idle();
+  await h.send("x"); // written, awaiting its turn
+  const old = h.driver.last;
+  await call();
+  const written = old.writes.length;
+  await h.send("two");
+  await h.send("three", true);
+  await rt.addNotice("compact_continue", "n");
+  await rt.settled();
+  expect(old.writes).toHaveLength(written);
+});
+
+test("a cut restart that throws ends its attempt before the error is rethrown", async () => {
+  await idle();
+  h.driver.last.emit(ev.background([{ taskId: "t1" }]));
+  await rt.settled();
+  const spy = vi.spyOn(store, "setAttempting").mockRejectedValueOnce(new Error("db down"));
+  await expect(call({ force: true })).rejects.toThrow("db down");
+  expect(spy).toHaveBeenLastCalledWith(rt.agent.id, false);
+  spy.mockRestore();
+  await rt.settled();
+});
+
+test("the stop of a cut restart does nothing once the agent is terminated", async () => {
+  await idle();
+  await h.send("x"); // awaiting, so the stop waits for the fallback
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await call();
+    rt.markTerminated({ committed: true });
+    await vi.advanceTimersByTimeAsync(250);
+  } finally {
+    vi.useRealTimers();
+  }
+  await rt.settled();
+  expect(await control("restart")).toEqual([]);
 });
 
 test("no delivery or notice writes to the old process while a cut restart is pending", async () => {

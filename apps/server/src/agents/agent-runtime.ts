@@ -1368,9 +1368,17 @@ export class AgentRuntime {
         };
       }
       // Row 12: an idle restart is a hibernate; the next start reads the latest config.
+      if (!this.beginHibernate("apply_changes")) {
+        // Refused (a batch still in flight): same as row 11, restart once it is delivered.
+        this.markRestartPending(r.changes ?? []);
+        this.publishStatus();
+        return {
+          status: "restart_pending" as const,
+          note: `@${slug} restarts in a moment, once its current messages are delivered.`,
+        };
+      }
       if (r.changes?.length)
         await this.addNotice("config_changed", notices.configChanged(r.changes));
-      this.beginHibernate("apply_changes");
       this.publishStatus();
       return { status: "restarted_idle" as const };
     });
@@ -1384,6 +1392,22 @@ export class AgentRuntime {
   private async beginCutRestart(by: string, changes: string[] | null) {
     this.restartNowPending = { by, changes };
     this.armRestartNowFallback();
+    try {
+      await this.cutRestartSteps(by);
+    } catch (err) {
+      // Never leave the write hold set: nothing would release it.
+      this.clearRestartNow();
+      if (this.attempting && this.attemptReason === "restart" && !this.stopping) {
+        this.attempting = false; // `markAttempting` ran but no stop began, so no exit will clear it
+        this.attemptReason = undefined;
+        await this.d.store.setAttempting(this.agent.id, false).catch(() => undefined);
+        this.publishStatus();
+      }
+      throw err;
+    }
+  }
+
+  private async cutRestartSteps(by: string) {
     if (this.openTurnId) {
       if (this.hold) return; // a Stop's or an urgent send's hold is reused, not replaced
       try {
@@ -1391,7 +1415,6 @@ export class AgentRuntime {
       } catch (err) {
         if (!(err instanceof ProcessNotRunningError)) throw err;
         // The process is going away and its `exited` isn't processed yet.
-        this.clearRestartNow();
         throw new RecoveryRefusedError(
           "stopping",
           `@${this.agent.slug} is stopping; try again shortly.`,
@@ -1439,7 +1462,14 @@ export class AgentRuntime {
   private async beginRestartNowStop(): Promise<void> {
     const pending = this.restartNowPending;
     const proc = this.proc;
-    if (!pending || !proc || this.stopping || proc === this.deadProc || proc === this.failingProc) {
+    if (
+      !pending ||
+      !proc ||
+      this.terminated ||
+      this.stopping ||
+      proc === this.deadProc ||
+      proc === this.failingProc
+    ) {
       if (!this.stopping) this.clearRestartNow();
       return;
     }

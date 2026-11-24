@@ -418,7 +418,7 @@ Measured on 2026-11-24 (main, G1 item 20, `open-factory-base:dev`, Claude Code 2
    - `CLAUDE_CODE_PLUGIN_CACHE_DIR=<agent plugins dir>`;
    - `DISABLE_AUTOUPDATER=1`, so Claude Code never updates itself (the image and host pins stay the truth);
    - `FORCE_AUTOUPDATE_PLUGINS=1` only when a declared marketplace is Latest, because the docs say `DISABLE_AUTOUPDATER` otherwise turns the plugin auto-update pass off too (G1 item 7 confirms the combination);
-   - `CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1` if G1 item 2 shows it makes a headless start install declared plugins before `init`.
+   - `CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1` on every start that declares a plugin from a remote marketplace (G1 item 8, 2026-11-24: without it a remote marketplace is cloned and the session reaches `init` before the plugins install; they appear only later in a long session, never in a short one. With it the installs finish before `init`. A directory marketplace installs before `init` either way, G1 item 2).
 
    These names, plus `CLAUDE_CODE_PLUGIN_SEED_DIR`, `CLAUDE_CODE_PLUGIN_DIRS` and `DISABLE_UPDATES`, join `FACTORY_ENV_NAMES` (`packages/shared/src/config.ts`), so no template, overlay, secret or project `env` can set them, and `buildAgentEnv` accepts them.
 5. **The factory-owned plugin keys** go as an inline JSON string, `--settings '<json>'`, built at each start (carried by `AgentRuntimeSpec.settingsJson`). The file never lands in the workdir or a mount, and holds no secrets. A copy is kept at `state/agents/<slug>/plugin-settings.json` for diagnosis only. Command-line settings outrank local, project and user settings (R11). `buildSettings` drops its plugin inputs. The keys:
@@ -1003,6 +1003,8 @@ There is no change to the `agents` or `templates` columns.
 
 G1 needs real Claude Code, which the design team must not run. It is a **hard gate for PR 2** and runs on the **exact** version the base image pins (§7.9, 2.1.331). A pass/fail item that fails goes back to owner-i5 before the design adapts; a RECORDED item fills a constant or a line of copy. G1 doesn't block PR 1.
 
+G1 covers only plugins from public marketplaces that install like superpowers (Or, beta scope); private repos, org-required plugins and auth-needing sources are not tested in this version (§21).
+
 The plan's first PR 2 tasks turn this into scripts (`scripts/g1/run.sh`, `scripts/g1/timing.sh`) plus a fixture recipe. This section fixes what they must prove, and how.
 
 **Setup:**
@@ -1341,6 +1343,7 @@ Certainty is on a 1–5 scale. **Bold** marks the decisions for Or's review.
 ## 21. Follow-ups (separate issues)
 
 - Per-source GitHub tokens for private repos (Q8).
+- Beta scope (Or, 2026-11-24): G1 and this design cover only plugins from public marketplaces that install like superpowers. Private repos, org-required plugins, auth-needing sources and other exotic sources are not tested in this version; handle them when a real case appears.
 - Garbage collection of old GitHub checkouts and marketplace checkouts (Q10). Old plugin versions in agents' dirs are Claude Code's own orphan cleanup.
 - Per-plugin pins inside one marketplace, if one shared pin per template proves too coarse (P1).
 - Verifying an agent's installed plugin files against the pin at start (P3).

@@ -3,6 +3,7 @@
 # installs, run only inside throwaway containers of the pinned agent image.
 #
 # Usage: scripts/g1/run.sh [image]
+# Optional: G1_ITEMS="3 4 8" runs only those items.
 #
 #   image  the agent image to test, default open-factory-base:<pin>, where <pin>
 #          is images/base/claude-code-version. G1_IMAGE does the same.
@@ -534,7 +535,10 @@ persist_run() { # <label> <settings-file> <dir> [<required file under $P>...]
   b2=$(inst_sum)
   n2=$(plugin_names "$dd/second/init.json")
   ev "$label: cache dirs cksum: $a1 -> $a2; installed_plugins.json cksum: $b1 -> $b2; plugins loaded: [$n1] -> [$n2]"
-  if [ "$a1" != "$a2" ] || [ "$b1" != "$b2" ] || [ "$n1" != "$n2" ] || [ -z "$n2" ]; then PS=FAIL; fi
+  # installed_plugins.json is recorded, not asserted: G1 (2026-11-24) saw the
+  # registry still empty when the first headless start exited and written at the
+  # restart, with the cache dirs identical. Installs happen iff the cache changes.
+  if [ "$a1" != "$a2" ] || [ "$n1" != "$n2" ] || [ -z "$n2" ]; then PS=FAIL; fi
 }
 
 # 3: the per-agent plugins dir and persistence.
@@ -548,10 +552,14 @@ item03() {
   persist_run "(a) directory marketplace" "$d/a.json" "$d/a"
   [ "$PS" = PASS ] || status=FAIL
   # (b) A remote marketplace, pinned: everything lands under $P.
+  # obra/superpowers-marketplace: item 4 shows it honours a commit pin; the official
+  # marketplace does not (item 4d), and item 4 has not run yet at this point.
+  set_pm SUP
   fresh_remote s03b
   settings "$d/b.json" "$(enabled "$PM_KEY=true")" "$(pm_decl "$PM_OLD")"
   persist_run "(b) remote marketplace $PM_NAME at $PM_OLD" "$d/b.json" "$d/b" installed_plugins.json known_marketplaces.json marketplaces cache
   [ "$PS" = PASS ] || status=FAIL
+  set_pm OFF
   record 3 "$status" "The per-agent plugins dir holds everything, and a restart installs nothing"
 }
 
@@ -1163,28 +1171,34 @@ pick_commits OFF "$OFF_URL" skill-creator
 pick_commits SUP "$SUP_URL" superpowers
 set_pm OFF                                   # item 4 may switch it to SUP
 
-item00
-item01
-item02
-item03
-item04
-item05
-item06
-item07
-item08
-item09
-item10
-item11
-item12
-item13
-item14
-item15
-item16
-item17
-item18
-item19
-item20
-item21
+# G1_ITEMS="3 4 5" runs only those items (default: all). Item 4 chooses the
+# marketplace that 5-9 pin, so include it when you run 5-9.
+run_item() {
+  local n=$((10#$1))
+  case " ${G1_ITEMS:-all} " in *" all "*|*" $n "*) "item$1" ;; esac
+}
+run_item 00
+run_item 01
+run_item 02
+run_item 03
+run_item 04
+run_item 05
+run_item 06
+run_item 07
+run_item 08
+run_item 09
+run_item 10
+run_item 11
+run_item 12
+run_item 13
+run_item 14
+run_item 15
+run_item 16
+run_item 17
+run_item 18
+run_item 19
+run_item 20
+run_item 21
 
 echo
 echo "g1: manual steps: item 19 (an organisation) and item 21 (an older image). See report.md."

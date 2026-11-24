@@ -998,7 +998,7 @@ Implements spec §7.2, §7.3 steps 1–2 and 4–8, §6.5 (the plugins-dir class
   - `apps/server/src/workspace/settings.ts`: `SettingsInput` loses `pluginKeys` and `plugins`;
   - `apps/server/src/workspace/mounts.ts`: `pluginsDir` mounts **read-write** and must equal `realpath(<FH>/state/agents/<slug>/plugins)` for this agent; `declaredMarketplaceDirs` becomes the registered directory marketplaces of the closure; the refusal becomes "… isn't this agent's workdir, a registered skill or this agent's plugins dir" (spec §6.5);
   - `apps/server/src/agents/runtimes.ts` (and `agent-runtime.ts` where the start is prepared): local starts call `assertPluginFloor(claudeBin, versionCheckEnv(...))`, replacing today's advisory version check; Docker starts call `checkImageClaudeVersion(image, digest)` before the container is created;
-  - `apps/server/src/agents/runtime-spec.ts`: `buildAgentEnv` adds `CLAUDE_CODE_PLUGIN_CACHE_DIR`, `DISABLE_AUTOUPDATER=1`, `FORCE_AUTOUPDATE_PLUGINS=1` when a declaration is Latest, and `CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1` if G1 item 2 says so; `buildRuntimeSpec` takes `settingsJson`;
+  - `apps/server/src/agents/runtime-spec.ts`: `buildAgentEnv` adds `CLAUDE_CODE_PLUGIN_CACHE_DIR`, `DISABLE_AUTOUPDATER=1`, `FORCE_AUTOUPDATE_PLUGINS=1` when a declaration is Latest, and `CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1` whenever a declared marketplace is remote (not a directory); `buildRuntimeSpec` takes `settingsJson`;
   - `packages/shared/src/config.ts`: `FACTORY_ENV_NAMES` gains spec §7.3 step 4's names;
   - `packages/harness/src/types.ts` (`AgentRuntimeSpec.settingsJson?: string`), `packages/harness/src/claude/args.ts` (`--settings <json>` when set);
   - `packages/harness/src/claude/mapper.ts` and `packages/shared/src/events.ts` (`harnessEventSchema`): `session_started` gains `plugins` from the first `init`, in the shape G1 item 1 recorded;
@@ -1032,7 +1032,7 @@ Implements spec §7.2, §7.3 steps 1–2 and 4–8, §6.5 (the plugins-dir class
   - `args.test.ts`: `--settings <json>` only when `settingsJson` is set. `mapper.test.ts`: `session_started.plugins` from the first `init`.
   - `test.each` over every new env name: a template, an overlay, a secret and a project `env` setting it is an error.
 - [ ] **Step 2: Run** the local test files above → FAIL.
-- [ ] **Step 3: Implement.** Use G1's recorded answers for `FORCE_AUTOUPDATE_PLUGINS` (item 7) and `CLAUDE_CODE_SYNC_PLUGIN_INSTALL` (item 2); if item 2 failed, stop and wait for Or (spec P6).
+- [ ] **Step 3: Implement.** Use G1's recorded answer for `FORCE_AUTOUPDATE_PLUGINS` (item 7); `CLAUDE_CODE_SYNC_PLUGIN_INSTALL=1` is always set when a remote-marketplace plugin is declared (G1 item 8); if item 2 failed, stop and wait for Or (spec P6).
 - [ ] **Step 4: Run** → PASS. Then `pnpm typecheck` (no references to deleted symbols remain).
 - [ ] **Step 5: Commit** `feat: Claude Code installs plugins per agent at start; the factory's installs removed`.
 

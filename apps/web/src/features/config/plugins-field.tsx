@@ -251,7 +251,7 @@ const PluginGroup = memo(function PluginGroup({
   const pinCommit = decl === undefined ? undefined : commitOf(decl, row);
   return (
     // biome-ignore lint/a11y/useSemanticElements: a group named by its marketplace, with its own list inside
-    <div role="group" aria-labelledby={labelId} className="grid gap-1">
+    <div role="group" aria-labelledby={labelId} className="grid min-w-0 grid-cols-1 gap-1">
       <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem]">
         <span id={labelId} className="min-w-0 font-mono font-medium">
           <MiddleTruncate text={mkt} />
@@ -341,7 +341,7 @@ function pickable(data: MarketplacesResponse | undefined, allowed: Rec | undefin
 function LatestOffer({ mkt, onConfirm }: { mkt: string; onConfirm: () => void }) {
   const [review, setReview] = useState(false);
   return (
-    <div className="grid gap-2 border-t border-border px-3 py-2 text-xs">
+    <div className="grid grid-cols-1 gap-2 border-t border-border px-3 py-2 text-xs [overflow-wrap:anywhere]">
       {review ? (
         <>
           <p className="font-medium text-foreground">{PLUGIN_COPY.latestHeading(mkt)}</p>

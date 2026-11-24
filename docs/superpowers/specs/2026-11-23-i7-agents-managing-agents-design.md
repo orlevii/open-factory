@@ -84,7 +84,7 @@ Each criterion names the PR that makes it true (§15).
    - refuses writing a local template;
    - validates before it writes, so a refused write leaves the file untouched.
 10. (PR 2) On a factory with one `manage_org` agent, asking it in Chat to "set up a dev team: a lead and two developers reporting to it" results in templates and three agents with the right managers, all visible in the UI with toasts. This is a fake-Claude evidence script that issues the tool calls; the live run is Or's.
-11. (PR 3) `restart_agent` on an errored report with a note restarts it and resumes its session. The target's first batch holds the restart notice, then the note as a message from the caller.
+11. (PR 3) `restart_agent` on an errored report with a note restarts it and resumes its session. The target's first batch holds the restart notice first, any messages that were pending, and the note last, as a message from the caller.
 12. (PR 3) `restart_agent` on a running report with a live background `pnpm test` is refused with the roadmap's text. With `force: true` the report is interrupted, restarted on the latest config and resumed. It then gets the waking "Restarted by @lead to apply: … Continue where you left off." plus `background_work_lost`.
 13. (PR 3) `restart_agent` to a non-report (without `manage_org`), to itself, to an archived agent, or to a compacting agent is refused with one sentence.
 14. (PR 3) A human's Restart now on a running agent restarts it with no confirm when nothing would be lost. When something would be lost, a ConfirmDialog lists it, and "Restart anyway" sends `force: true`.
@@ -537,7 +537,7 @@ Other rules:
 
 ### 9.3 The note
 
-When the call isn't refused, `note` is sent as an ordinary message from the caller to the target, through the Router's list `send(from: caller, to: [target], body: note)` (Q6, Q7). It is sent after `restartNow` returns, except for an errored target (row 6): its restart starts a process at once, so the note is sent just before `restartNow` (only when the restart can be accepted) and the notice, sorted first, and the note reach the new process in one batch.
+When the call isn't refused, `note` is sent as an ordinary message from the caller to the target, through the Router's list `send(from: caller, to: [target], body: note)` (Q6, Q7). It is sent after `restartNow` returns, except for an errored target (row 6): its restart starts a process at once, so the note is sent just before `restartNow`, after the refusals that can be predicted (`runtime_disabled`, `resume_unrecoverable`) are checked up front and leave no note behind, and the notice, sorted first, and the note reach the new process in one batch. A refusal that can't be predicted (an attempt already in progress, a stop under way, a terminate landing in the window) can leave the note queued; the error result doesn't say so, and the note is harmless to receive later.
 - In a cut restart, `restartNowPending` keeps every write, the note included, away from the old process (§9.2.1 step 1).
 - Notices sort first in a batch (`addNotice` ordering), so the first turn after the restart reads the notice, then the note in a normal envelope (`from="@lead" from_kind="agent"`).
 - For a hibernated or idle target the message wakes it, which is the caller's intent.

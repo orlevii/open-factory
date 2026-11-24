@@ -176,6 +176,15 @@ test("an errored report with a note restarts, resumes its session, and gets the 
   expect(next.sent).toHaveLength(1); // one batch: the note did not arrive as a second turn
 });
 
+test("an errored report whose restart is refused up front gets no note", async () => {
+  // The row is read fresh by the runtime (as the task-lifecycle test does), so an errored status is set in the db.
+  await h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'resume_unrecoverable' where slug = 'dev'`;
+  const r = await call("lead", { target: "dev", note: "Rerun the tests." });
+  expect(r).toMatchObject({ err: true });
+  const rows = await h.sql`select 1 from messages where body = 'Rerun the tests.'`;
+  expect(rows).toHaveLength(0);
+});
+
 test("a refused restart (background work and no force) restarts nothing and sends no note", async () => {
   await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
   startsOf("dev")

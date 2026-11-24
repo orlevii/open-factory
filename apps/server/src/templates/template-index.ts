@@ -551,12 +551,7 @@ export class TemplateIndex {
    * template (spec §7.3a). A copy (`copying`) adds every entry to a new template. Anything else the policy objects
    * to is returned. Reads only.
    */
-  private async agentPolicy(
-    name: string,
-    before: ConfigDoc,
-    after: ConfigDoc,
-    copying = false,
-  ) {
+  private async agentPolicy(name: string, before: ConfigDoc, after: ConfigDoc, copying = false) {
     const spawns = (d: ConfigDoc) => {
       const raw = yamlPart(d.template).can_spawn;
       return Array.isArray(raw) ? raw.filter((n): n is string => typeof n === "string") : [];

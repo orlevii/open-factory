@@ -64,5 +64,5 @@ no dependencies of its own) and one of the best-known packages on the registry.
 Only its temp dir (`${TMPDIR:-/tmp}/of-g1.XXXXXX`). It uses a throwaway `HOME`
 and a throwaway npm cache inside it, so `~/.claude` and `~/.npm` are never read
 or written, and it never reads `~/.open-factory-spike`. Delete the dir when you
-are done (`chmod -R u+w <dir> && rm -rf <dir>`, since the seed is read-only).
+are done (`chmod -R u+w <dir> && rm -rf <dir>`, since the seed is read-only). Do delete it: the agent config dirs under it may hold partial credential state (Claude writes an API-key approval and sign-in files there). `run.sh` also prints a quoted delete command at the end.
 It clones from GitHub and Claude Code talks to the network.

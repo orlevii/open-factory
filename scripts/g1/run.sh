@@ -43,6 +43,13 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; the
   die "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (item 18 needs a token-signed-in agent)"
 fi
 
+# Keep the credential out of every child process of this script (claude
+# --version, git, npm, node, jq, make-fixture.sh): copy it into non-exported
+# variables and unset the exported names. Only agent_cmd hands it to the agent.
+G1_KEY_API=${ANTHROPIC_API_KEY:-}
+G1_KEY_OAUTH=${CLAUDE_CODE_OAUTH_TOKEN:-}
+unset ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN
+
 PINNED=$(tr -d '[:space:]' < "$ROOT/images/base/claude-code-version")
 [ -n "$PINNED" ] || die "images/base/claude-code-version is empty"
 
@@ -52,6 +59,7 @@ T=$(cd "$T" && pwd -P)
 export HOME=$T/home
 export npm_config_cache=$T/npm-cache
 export GIT_TERMINAL_PROMPT=0
+export DISABLE_AUTOUPDATER=1 # so even `claude --version` can't replace a binary
 mkdir -p "$HOME" "$npm_config_cache"
 
 CLAUDE_VERSION=$(claude --version | awk '{print $1}')
@@ -85,6 +93,7 @@ mkdir -p "$S" "$RES" "$MARK" "$RUNNER" "$EMPTY"   # MARK up front: set -eu safe
 AG=""
 W=""
 
+cd "$T" # never leave the owner's cwd (maybe a git repo) as the cwd of git -C ""
 echo "g1: work dir $T"
 echo "g1: claude $CLAUDE_VERSION (pinned $PINNED)"
 
@@ -150,7 +159,12 @@ reset_seed() { # back to the store as built, read-only
   seed_ro
 }
 
-clone_dir() { jq -r --arg n "$1" '.[$n].installLocation' "$SEED/known_marketplaces.json"; }
+clone_dir() { # <marketplace>: its installLocation, or die if unregistered
+  local p
+  p=$(jq -r --arg n "$1" '.[$n].installLocation // empty' "$SEED/known_marketplaces.json")
+  [ -n "$p" ] || die "marketplace $1 is not registered in the store"
+  printf '%s\n' "$p"
+}
 clone_head() { git -C "$(clone_dir "$1")" rev-parse HEAD; }
 
 fresh_ws() { # <name>: new workdir W (no .claude settings) and agent config dir AG
@@ -192,9 +206,20 @@ runner_cmd() { # <traffic-off|traffic-on> <claude args...>
   env -i "${e[@]}" sh -c 'cd "$0" && exec claude "$@"' "$EMPTY" "$@"
 }
 
+# The factory writes the runner's settings.json before each run (spec 7.2):
+# extraKnownMarketplaces matching exactly the store's known_marketplaces.json,
+# each with autoUpdate: false, and nothing else. Enabled after the seed is
+# built; the build-time runs stay bare because the marketplaces don't exist yet.
+RUNNER_READY=""
+write_runner_settings() {
+  jq -c '{extraKnownMarketplaces: map_values({source: .source, autoUpdate: false})}' \
+    "${STORE:-$SEED}/known_marketplaces.json" > "$RUNNER/settings.json"
+}
+
 rr() { # <outfile> <mode> <claude args...>: run, log, never fail; last line is exit=N
   local out=$1 rc=0
   shift
+  if [ -n "$RUNNER_READY" ] && [ -z "${RCFG:-}" ]; then write_runner_settings; fi
   run_limited 240 runner_cmd "$@" > "$out" 2>&1 || rc=$?
   printf 'exit=%s\n' "$rc" >> "$out"
 }
@@ -203,32 +228,36 @@ rr_rc() { tail -n 1 "$1" | sed 's/^exit=//'; }
 
 # The agent, as spec 7.3 builds it: CLAUDE_CONFIG_DIR=$AG (read from AG),
 # CLAUDE_CODE_PLUGIN_SEED_DIR, DISABLE_AUTOUPDATER=1, an env of PATH and HOME
-# plus MARK and the caller's credential. G1_EXTRA ("A=1 B=2") adds variables.
+# plus MARK, TERM (the interactive items need it) and the caller's credential. G1_EXTRA ("A=1 B=2") adds variables.
 # This function is copied into $T/agent.sh for the manual items.
 agent_cmd() { # <workdir> <claude args...>
   local w=$1
   shift
   local -a e=(
-    PATH="$PATH" HOME="$HOME" MARK="$MARK"
+    PATH="$PATH" HOME="$HOME" MARK="$MARK" TERM="${TERM:-xterm-256color}"
     CLAUDE_CONFIG_DIR="${AG:?AG is not set}"
     CLAUDE_CODE_PLUGIN_SEED_DIR="$SEED"
     DISABLE_AUTOUPDATER=1
   )
-  local v
-  for v in ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do
-    if [ -n "${!v:-}" ]; then
-      e+=("$v=${!v}")
-    fi
-  done
+  local v api oauth
+  # Inside run.sh the credential is in G1_KEY_API / G1_KEY_OAUTH (not exported).
+  # In a manual agent.sh run it is the exported ANTHROPIC_API_KEY or
+  # CLAUDE_CODE_OAUTH_TOKEN of that terminal.
+  api=${G1_KEY_API:-${ANTHROPIC_API_KEY:-}}
+  oauth=${G1_KEY_OAUTH:-${CLAUDE_CODE_OAUTH_TOKEN:-}}
+  if [ -n "$api" ]; then e+=("ANTHROPIC_API_KEY=$api"); fi
+  if [ -n "$oauth" ]; then e+=("CLAUDE_CODE_OAUTH_TOKEN=$oauth"); fi
+  set -f # G1_EXTRA is split on spaces only, never globbed
   # shellcheck disable=SC2086
   for v in ${G1_EXTRA:-}; do
     e+=("$v")
   done
+  set +f
   env -i "${e[@]}" sh -c 'cd "$0" && exec claude "$@"' "$w" "$@"
 }
 
 {
-  printf '#!/usr/bin/env bash\n# usage: AG=<agent config dir> agent.sh <workdir> <claude args...>\nset -eu\n'
+  printf '#!/usr/bin/env bash\n# usage: export ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN, then\n#   AG=<agent config dir> agent.sh <workdir> <claude args...>\nset -eu\n'
   declare -p HOME SEED MARK
   declare -f agent_cmd
   printf 'agent_cmd "$@"\n'
@@ -357,6 +386,7 @@ build_seed() {
   mark_list > "$d/mark-after-build.txt"
   cp -a "$SEED" "$PRISTINE"
   seed_ro
+  RUNNER_READY=1
 }
 
 # --------------------------------------------------------------- the items
@@ -491,6 +521,12 @@ item03() {
   record 03 "$status" "Install doesn't pull (variable set asserts; the rest is recorded)"
 }
 
+# Files a fetch or pull would touch (not index refreshes from a status-style read).
+fetch_artifacts() { # <clone> <t0>: count
+  find "$1/.git/FETCH_HEAD" "$1/.git/ORIG_HEAD" "$1/.git/packed-refs" "$1/.git/refs" "$1/.git/objects" \
+    -newer "$2" -type f 2>/dev/null | wc -l | tr -d ' '
+}
+
 item04() {
   local d=$S/04 fh fo fh2 fo2 fnew onew status=PASS
   reset_seed
@@ -505,9 +541,11 @@ item04() {
   agent_run "$d/net" "$W" "$d/settings.json" "$PROMPT"
   fh2=$(clone_head fixture)
   fo2=$(clone_head claude-plugins-official)
-  fnew=$(find "$(clone_dir fixture)/.git" -newer "$d/t0" -type f 2>/dev/null | wc -l | tr -d ' ')
-  onew=$(find "$(clone_dir claude-plugins-official)/.git" -newer "$d/t0" -type f 2>/dev/null | wc -l | tr -d ' ')
-  ev "network on: fixture HEAD $fh -> $fh2 (.git files newer: $fnew); official HEAD $fo -> $fo2 (.git files newer: $onew)"
+  fnew=$(fetch_artifacts "$(clone_dir fixture)" "$d/t0")
+  onew=$(fetch_artifacts "$(clone_dir claude-plugins-official)" "$d/t0")
+  ev "network on: fixture HEAD $fh -> $fh2; official HEAD $fo -> $fo2"
+  ev "fetch artifacts newer than t0 (FETCH_HEAD, ORIG_HEAD, packed-refs, refs, objects): fixture $fnew, official $onew"
+  ev "RECORDED: all .git files newer than t0: fixture $(find "$(clone_dir fixture)/.git" -newer "$d/t0" -type f 2>/dev/null | wc -l | tr -d ' '), official $(find "$(clone_dir claude-plugins-official)/.git" -newer "$d/t0" -type f 2>/dev/null | wc -l | tr -d ' ') (index refreshes are harmless)"
   grep -i -h -m10 -E 'clon|fetch|pull|refresh|updat' "$d/net/stderr.txt" 2>/dev/null | cut -c1-300 | sed 's/^/    stderr: /' >> "$EV" || true
   if [ "$fh" != "$fh2" ] || [ "$fo" != "$fo2" ] || [ "$fnew" != 0 ] || [ "$onew" != 0 ]; then status=FAIL; fi
 
@@ -516,8 +554,8 @@ item04() {
   AGENT_LIMIT=120 G1_EXTRA="HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9 NO_PROXY=" \
     agent_run "$d/blocked" "$W" "$d/settings.json" "$PROMPT"
   fo2=$(clone_head claude-plugins-official)
-  onew=$(find "$(clone_dir claude-plugins-official)/.git" -newer "$d/t0-blocked" -type f 2>/dev/null | wc -l | tr -d ' ')
-  ev "network blocked (dead proxy): official HEAD -> $fo2 (.git files newer: $onew); init event present: $([ -s "$d/blocked/init.json" ] && echo yes || echo no)"
+  onew=$(fetch_artifacts "$(clone_dir claude-plugins-official)" "$d/t0-blocked")
+  ev "network blocked (dead proxy): official HEAD -> $fo2 (fetch artifacts newer: $onew); init event present: $([ -s "$d/blocked/init.json" ] && echo yes || echo no)"
   grep -i -h -m10 -E 'clon|fetch|pull|refresh|updat|network|ECONN' "$d/blocked/stderr.txt" 2>/dev/null | cut -c1-300 | sed 's/^/    stderr: /' >> "$EV" || true
   if [ "$fo" != "$fo2" ] || [ "$onew" != 0 ]; then status=FAIL; fi
   reset_seed
@@ -722,9 +760,14 @@ EOF
   chmod +x "$d/session.sh"
 
   cat > "$d/instructions.txt" <<EOF
-ITEMS 11 and 16b (manual, interactive): in a second terminal run
+ITEMS 11 and 16b (manual, interactive): in a second terminal first export the
+credential (it is not passed on the command line):
 
+    export ANTHROPIC_API_KEY=...        # or CLAUDE_CODE_OAUTH_TOKEN=...
     bash $d/session.sh
+
+The throwaway HOME is fresh, so expect first-run prompts (theme, folder trust,
+approval of the API key). Answer them; they are part of the run.
 
 It starts Claude Code interactively in the agent env (seed read-only,
 --settings from plugin-settings, workdir $W with project-level hooks and a
@@ -955,9 +998,10 @@ item18() {
   ev "Steps for Or:"
   ev "  1. In the claude.ai organisation settings, mark one plugin as required (if the organisation can)."
   ev "  2. Create a throwaway agent dir: mkdir -p $T/ag/s18/plugins $T/ag/s18/skills $T/w/s18"
-  ev "  3. Run with a token sign-in and syncClaudeAiPlugins false (the same --settings as the other items):"
-  ev "       CLAUDE_CODE_OAUTH_TOKEN=<your token> AG=$T/ag/s18 $T/agent.sh $T/w/s18 -p ok --output-format stream-json --verbose --settings '{\"syncClaudeAiPlugins\":false}' > $T/s/18-out.jsonl"
-  ev "     (ANTHROPIC_API_KEY alone is not a claude.ai sign-in; use the token.)"
+  ev "  3. In a terminal, export the token (never put it on a command line) and make sure no API key is set:"
+  ev "       read -rs CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN; unset ANTHROPIC_API_KEY"
+  ev "     then run with syncClaudeAiPlugins false (the same --settings as the other items):"
+  ev "       AG=$T/ag/s18 $T/agent.sh $T/w/s18 -p ok --output-format stream-json --verbose --settings '{\"syncClaudeAiPlugins\":false}' > $T/s/18-out.jsonl"
   ev "  4. jq 'select(.type==\"system\" and .subtype==\"init\") | .plugins' $T/s/18-out.jsonl"
   ev "  5. Write down in the report: does the required plugin load with syncClaudeAiPlugins false? If the organisation cannot mark a plugin required, write UNTESTED."
   record 18 MANUAL "Required synced plugins with syncClaudeAiPlugins: false (token-signed-in agent)"
@@ -1024,7 +1068,8 @@ finish() {
     if grep -q $'\tFAIL\t' "$T/summary.tsv" 2>/dev/null; then
       echo "g1: FAIL items present: send them to owner-i5 before the design adapts"
     fi
-    echo "g1: post report.md on #153. Delete the work dir with: chmod -R u+w $T && rm -rf $T"
+    echo "g1: post report.md on #153."
+    printf 'g1: delete the work dir when done (it may hold partial credential state): chmod -R u+w %q && rm -rf %q\n' "$T" "$T"
   fi
   if [ "$rc" -ne 0 ]; then echo "g1: stopped early (exit $rc); the report holds what finished" >&2; fi
   exit "$rc"

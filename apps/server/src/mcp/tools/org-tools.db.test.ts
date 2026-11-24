@@ -153,6 +153,7 @@ test("a handler reached with a revoked caller row refuses with the sentence", as
     credentials: t.app.credentials,
     secrets: t.app.secrets,
     projects: t.app.projects,
+    bus: t.app.bus,
   });
   let handler:
     | ((a: object, c: object) => Promise<{ isError?: boolean; content: { text: string }[] }>)

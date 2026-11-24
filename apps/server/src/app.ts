@@ -673,6 +673,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
         credentials,
         secrets: app.secrets,
         projects: app.projects,
+        bus,
       },
       log: app.log,
     });

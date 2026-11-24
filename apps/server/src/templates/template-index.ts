@@ -754,7 +754,7 @@ export class TemplateIndex {
   async create(
     b: { name: string; displayName: string; description?: string },
     actor: Actor,
-  ): Promise<void> {
+  ): Promise<{ issues: TemplateIssue[] }> {
     const dir = this.folder(b.name);
     return this.locks.run(b.name, async () => {
       await mkdir(this.dir, { recursive: true });
@@ -781,7 +781,8 @@ export class TemplateIndex {
         await rm(dir, { recursive: true, force: true });
         throw e;
       }
-      await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
+      const full = await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
+      return { issues: full.row.issues };
     });
   }
 

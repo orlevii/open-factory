@@ -1,4 +1,4 @@
-import { PLUGIN_REF } from "@open-factory/shared";
+import { PLUGIN_REF_PATTERN } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useMemo } from "react";
 import type { ComboOption } from "@/components/ui/combobox";
@@ -12,7 +12,8 @@ import { useConfigScope } from "./scope";
 import { Section } from "./section";
 import { readAt, readList } from "./tolerant";
 
-const checkPlugin = (v: string) => (PLUGIN_REF.test(v) ? undefined : CONFIG_FIELD_MSG.pluginRef);
+const checkPlugin = (v: string) =>
+  PLUGIN_REF_PATTERN.test(v) ? undefined : CONFIG_FIELD_MSG.pluginRef;
 
 const renderSkill = (o: ComboOption) => (
   <>

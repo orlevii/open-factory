@@ -45,4 +45,9 @@ export const FORM_MSG = {
   restartsReports: "Saving restarts its reports when idle.",
   restartsBoth: "Saving restarts it and its reports.",
   signInOtherPanel: "Another sign-in is open; Start ends it.",
+  loadSkills: "Couldn't load skills.",
+  pickAtLeastOne: "Pick at least one skill.",
+  sourceChanged: "The source changed. Find skills again.",
+  folderOverSize: "Folder is over 50 MB.",
+  repoOtherCommit: "The repo returned another commit.",
 } as const;

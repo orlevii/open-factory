@@ -118,3 +118,8 @@ test("I2 config_changed frames parse with an agent, a template, and no other fie
     serverMessageSchema.parse({ type: "config_changed", agent: "ana", changes: ["env X changed"] }),
   ).toEqual({ type: "config_changed", agent: "ana" });
 });
+
+test("library_changed is a server frame; unknown frame types are refused", () => {
+  expect(serverMessageSchema.parse({ type: "library_changed" }).type).toBe("library_changed");
+  expect(serverMessageSchema.safeParse({ type: "library_renamed" }).success).toBe(false);
+});

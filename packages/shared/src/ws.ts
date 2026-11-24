@@ -104,6 +104,8 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("settings_changed") }),
   z.object({ type: z.literal("users_changed") }),
   z.object({ type: z.literal("images_changed") }),
+  /** I5 §9.5: the Library (skill sources, marketplaces, plugins) changed; the Library pages refetch. */
+  z.object({ type: z.literal("library_changed") }),
   /**
    * I2 §7.2: an agent's effective config changed (one frame per affected agent), or a template's (one per template
    * change). Names only: the change lines are in the agent's `config_changed` event.

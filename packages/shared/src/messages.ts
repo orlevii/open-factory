@@ -49,4 +49,11 @@ export const MSG = {
   signInNameTaken: "That name was taken. Start again.",
   signInOAuthOnly: "Only OAuth tokens can sign in again.",
   credentialDeleted: "That credential was deleted.",
+  folderHome: "Can't share your home folder.",
+  folderFactory: "Can't share the factory's folder.",
+  folderShare: "Can't share this folder.",
+  repoFormat: "Use owner/repo or a github.com URL.",
+  repoUnreachable: "Couldn't reach this repo.",
+  branchMissing: "No such branch.",
+  subpathNotFolder: "Not a folder in this repo.",
 } as const;

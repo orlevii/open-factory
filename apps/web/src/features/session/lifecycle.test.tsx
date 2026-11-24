@@ -97,7 +97,7 @@ test("Restart hidden for resume_unrecoverable and when runtimeDisabled", async (
 
 test("Restart posts, reads Restarting… and moves focus to the composer", async () => {
   world({ status: "errored", errorKind: "crash" });
-  api.on("POST /api/agents/dev/restart", () => json({}, 202));
+  api.on("POST /api/agents/dev/restart", () => json({ status: "restarting" }, 202));
   await open();
   await userEvent.click(screen.getByRole("button", { name: "Restart" }));
   const pending = await screen.findByRole("button", { name: "Restarting…" });
@@ -114,7 +114,7 @@ test("Restart posts, reads Restarting… and moves focus to the composer", async
 
 test("Restarting… ends on the next error event (failed restart)", async () => {
   world({ status: "errored", errorKind: "crash" });
-  api.on("POST /api/agents/dev/restart", () => json({}, 202));
+  api.on("POST /api/agents/dev/restart", () => json({ status: "restarting" }, 202));
   await open();
   await userEvent.click(screen.getByRole("button", { name: "Restart" }));
   await screen.findByRole("button", { name: "Restarting…" });
@@ -129,24 +129,17 @@ test("Restarting… ends on the next error event (failed restart)", async () => 
   );
 });
 
-test("Restart: a 409 not_errored is ignored silently; other failures say so inline", async () => {
+test("Restart: a failure toasts naming the agent, and the button comes back", async () => {
   world({ status: "errored", errorKind: "crash" });
-  api.on("POST /api/agents/dev/restart", () =>
-    json({ error: { code: "not_errored", message: "@dev isn't errored." } }, 409),
-  );
-  await open();
-  await userEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await vi.waitFor(() =>
-    expect(screen.getByRole("button", { name: "Restart" })).not.toHaveAttribute("aria-disabled"),
-  );
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   api.on("POST /api/agents/dev/restart", () =>
     json({ error: { code: "attempt_in_progress", message: "A restart is already running." } }, 409),
   );
+  await open();
   await userEvent.click(screen.getByRole("button", { name: "Restart" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Couldn't restart: A restart is already running.",
-  );
+  expect(
+    await screen.findByText("Couldn't restart @dev: A restart is already running."),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Restart" })).not.toHaveAttribute("aria-disabled");
 });
 
 test("dialog copy names the agent and the loss; Cancel focused; confirm moves focus to the composer", async () => {
@@ -156,7 +149,7 @@ test("dialog copy names the agent and the loss; Cancel focused; confirm moves fo
     errorKind: "resume_unrecoverable",
     lastError: "No conversation found with session ID 1234",
   });
-  api.on("POST /api/agents/dev/reset-session", () => json({}, 202));
+  api.on("POST /api/agents/dev/reset-session", () => json({ status: "restarting" }, 202));
   await open();
   const trigger = screen.getByRole("button", { name: "Start a new session" });
   await userEvent.click(trigger);

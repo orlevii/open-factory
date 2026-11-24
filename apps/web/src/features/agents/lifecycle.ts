@@ -1,8 +1,11 @@
-import { type AgentSummary, ApiError } from "@open-factory/shared";
+import { type AgentSummary, ApiError, type ServerMessage } from "@open-factory/shared";
 import type { QueryClient } from "@tanstack/react-query";
+import { useSyncExternalStore } from "react";
+import { z } from "zod";
 import { notify } from "@/components/ui/toaster";
 import * as api from "@/features/agents/api";
-import { agentDetailQueryOptions } from "@/features/session/api";
+import { restartOutcomeText, showRestartConfirm } from "@/features/agents/restart-confirm";
+import { agentDetailQueryOptions, postRestart } from "@/features/session/api";
 
 /**
  * An agent's lifecycle actions (U4 §6.5): Reset persona, Archive and Restore. They run from
@@ -148,5 +151,68 @@ export async function restoreAgent(
     onChanged?.();
     if (!inline) notify({ text: `Restored @${slug}.${note}` });
     return undefined;
+  });
+}
+
+// Restart now (I7 §9.4). The latch is a module store, so every Restart button for one agent shares it
+// and it outlives the menu or button that started it.
+const latch = new Map<string, { responded: boolean; framed: boolean }>();
+const latchListeners = new Set<() => void>();
+function setLatch(slug: string, next: { responded: boolean; framed: boolean } | undefined) {
+  if (next) latch.set(slug, next);
+  else if (!latch.delete(slug)) return;
+  for (const l of latchListeners) l();
+}
+const subscribeLatch = (l: () => void) => {
+  latchListeners.add(l);
+  return () => void latchListeners.delete(l);
+};
+
+/** Pending from the click until both the response and the next status frame for the agent are in, or an
+ *  `error` event arrives, whichever comes first. */
+export const useRestartPending = (slug: string): boolean =>
+  useSyncExternalStore(
+    subscribeLatch,
+    () => latch.has(slug),
+    () => false,
+  );
+
+/** Fed from the app's WebSocket handler (as the status frames are), never a per-button listener. */
+export function onRestartFrame(m: ServerMessage): void {
+  if (m.type !== "agent_status" && m.type !== "session_event") return;
+  const l = latch.get(m.agent);
+  if (!l) return;
+  if (m.type === "session_event") {
+    if (m.event.event.type === "error") setLatch(m.agent, undefined);
+  } else if (l.responded) setLatch(m.agent, undefined);
+  else l.framed = true;
+}
+
+const lostWorkData = z.object({ tasks: z.array(z.string()), crons: z.array(z.string()) });
+
+/**
+ * Restarts the agent now (no force) and toasts the outcome. A 409 `lost_work` opens the confirm; any other
+ * failure toasts. The result lands on the agent it was asked for, wherever the asking menu has gone.
+ */
+export function restartAgentNow(slug: string, qc: QueryClient): Promise<void> {
+  return once(`restart:${slug}`, async () => {
+    setLatch(slug, { responded: false, framed: false });
+    try {
+      const status = await postRestart(slug);
+      notify({ text: restartOutcomeText(slug, status) });
+      const l = latch.get(slug);
+      // Only a restart that is starting is followed by a status frame.
+      if (status !== "restarting" || l?.framed) setLatch(slug, undefined);
+      else if (l) l.responded = true;
+      void refresh(qc, slug);
+    } catch (err) {
+      setLatch(slug, undefined);
+      const data =
+        err instanceof ApiError && err.code === "lost_work"
+          ? lostWorkData.safeParse(err.body.data)
+          : undefined;
+      if (data?.success) showRestartConfirm({ slug, ...data.data });
+      else notify({ text: `Couldn't restart @${slug}: ${reason(err)}` });
+    }
   });
 }

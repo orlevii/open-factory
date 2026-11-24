@@ -8,6 +8,7 @@ import {
   eventsPageSchema,
   messageLookupSchema,
   queueItemResponseSchema,
+  restartAgentResponseSchema,
   sendMessagesResponseSchema,
 } from "@open-factory/shared";
 import { type QueryClient, queryOptions, skipToken } from "@tanstack/react-query";
@@ -127,14 +128,20 @@ export const postInterrupt = (slug: string) =>
     schema: z.object({}),
   }).then(() => undefined);
 
-const postEmpty = (slug: string, action: "restart" | "reset-session") =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/${action}`, {
+export const postResetSession = (slug: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/reset-session`, {
     method: "POST",
     body: {},
     schema: z.object({}),
   }).then(() => undefined);
-export const postRestart = (slug: string) => postEmpty(slug, "restart");
-export const postResetSession = (slug: string) => postEmpty(slug, "reset-session");
+
+/** I7 §9.4: what the restart did (a 409 `lost_work` throws, its lists in the error's `body.data`). */
+export const postRestart = (slug: string, { force }: { force?: boolean } = {}) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/restart`, {
+    method: "POST",
+    body: force ? { force: true } : {},
+    schema: restartAgentResponseSchema,
+  }).then((r) => r.status);
 
 /** S7: terminate a spawned agent (idempotent: one already terminated comes back as it is). */
 export const postTerminate = (slug: string) =>

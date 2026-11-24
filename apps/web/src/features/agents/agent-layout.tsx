@@ -1,7 +1,6 @@
 import type { AgentDetail, AgentSummary } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet, useRouterState } from "@tanstack/react-router";
-import { CircleAlert } from "lucide-react";
 import {
   createContext,
   type ReactNode,
@@ -34,7 +33,6 @@ import type { AgentView } from "./view-memory";
 /** What the views do to the layout. Every member is stable for the layout's life, so reading it
  *  never renders a view. */
 export type AgentActions = {
-  setRestartError(message: string | undefined): void;
   setPinOutcome(o: PinOutcome | undefined): void;
   /** A send that raced the termination (409 agent_terminated): the read-only line keeps saying so. */
   setRaceNotice(notice: string | undefined): void;
@@ -91,8 +89,7 @@ export function AgentLayout({
   // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
   const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
   const slotsMax = running.data?.max;
-  // The header's actions report here, in a notice row under it: a failed Restart, a Pin outcome.
-  const [restartError, setRestartError] = useState<string>();
+  // The header's actions report here, in a notice row under it: a Pin outcome.
   const [pinOutcome, setPinOutcome] = useState<PinOutcome>();
   const [raceNotice, setRaceNotice] = useState<string>();
   const [adopted, setAdopted] = useState<{ agent: AgentSummary }>();
@@ -100,14 +97,7 @@ export function AgentLayout({
   const stop = useStopCrons(agent);
   const selfTerminating = useRef(false);
 
-  // A failed Restart belongs to that Errored spell: leaving it clears the notice (adjusted during
-  // render on the status edge, no effect).
   const status = agent?.status;
-  const [noticeStatus, setNoticeStatus] = useState(status);
-  if (status !== noticeStatus) {
-    setNoticeStatus(status);
-    if (status !== "errored") setRestartError(undefined);
-  }
 
   const onAgent = useCallback(
     (a: AgentSummary) => {
@@ -144,7 +134,6 @@ export function AgentLayout({
   );
   const actions = useMemo<AgentActions>(
     () => ({
-      setRestartError,
       setPinOutcome,
       setRaceNotice,
       onTerminateStart,
@@ -195,7 +184,6 @@ export function AgentLayout({
                 panel={panel}
                 stop={stop}
                 slotsMax={slotsMax}
-                onRestartError={setRestartError}
                 onPinOutcome={setPinOutcome}
                 onAgent={onAgent}
                 onTerminateStart={onTerminateStart}
@@ -204,15 +192,6 @@ export function AgentLayout({
               />
             ) : (
               <PageHeader title={slug} />
-            )}
-            {status === "errored" && restartError && (
-              <p
-                role="alert"
-                className="flex shrink-0 items-center gap-1.5 px-4 pt-3 text-[0.8125rem] leading-[1.125rem] text-destructive md:px-6"
-              >
-                <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-                <span className="min-w-0">Couldn't restart: {restartError}</span>
-              </p>
             )}
             {terminated && (
               // Mounted while terminated (before it fills) so the outcome is announced.

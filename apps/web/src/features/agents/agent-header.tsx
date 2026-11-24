@@ -20,6 +20,7 @@ import {
   type PinOutcome,
 } from "@/features/session/live-line";
 import { RecoveryActions } from "@/features/session/recovery-actions";
+import { RestartNowButton } from "@/features/session/restart-now-button";
 import { StatusBadge, statusLabel } from "@/features/session/status-badge";
 import type { StopCrons } from "@/features/session/stop-crons";
 import type { AgentView } from "./view-memory";
@@ -35,7 +36,6 @@ export const AgentHeader = memo(function AgentHeader({
   panel,
   stop,
   slotsMax,
-  onRestartError,
   onPinOutcome,
   onAgent,
   onTerminateStart,
@@ -47,7 +47,6 @@ export const AgentHeader = memo(function AgentHeader({
   panel: AgentDetailsPanel;
   stop: StopCrons;
   slotsMax: number | undefined;
-  onRestartError(message: string | undefined): void;
   onPinOutcome(o: PinOutcome | undefined): void;
   onAgent(a: AgentSummary): void;
   onTerminateStart(): void;
@@ -56,6 +55,7 @@ export const AgentHeader = memo(function AgentHeader({
   onLifecycle(): void;
 }) {
   const archived = agent.archivedAt !== null;
+  const fact = liveFact(agent, { slotsMax: slotsMax, now: new Date() });
   // A third header action (Restart / Start a new session, or Pin) beside Agent details and ⋯, each a 40px box on
   // touch: below a 22rem header the avatar, the view switch and the details toggle give way (the ⋯ menu carries
   // both) so the row stays one line. 22rem is 352px at 100% text and 704px at 200%: a phone at either.
@@ -90,10 +90,11 @@ export const AgentHeader = memo(function AgentHeader({
           <span className="shrink-0 md:hidden">
             <StatusBadge status={agent.status} size="short" />
           </span>
-          <LiveLine
-            fact={liveFact(agent, { slotsMax: slotsMax, now: new Date() })}
-            sessionOf={view === "chat" ? agent.slug : undefined}
-          />
+          <LiveLine fact={fact} sessionOf={view === "chat" ? agent.slug : undefined} />
+          {/* A sibling of the status line, never inside its role="status". */}
+          {fact?.kind === "restart" && (
+            <RestartNowButton slug={agent.slug} className="shrink-0 max-sm:hidden" />
+          )}
         </>
       }
       actions={
@@ -102,7 +103,6 @@ export const AgentHeader = memo(function AgentHeader({
           archived={archived}
           panel={panel}
           view={view}
-          onRestartError={onRestartError}
           onPinOutcome={onPinOutcome}
           onAgent={onAgent}
           actionsMenu={
@@ -130,7 +130,6 @@ function AgentActions({
   panel,
   view,
   actionsMenu,
-  onRestartError,
   onPinOutcome,
   onAgent,
 }: {
@@ -139,7 +138,6 @@ function AgentActions({
   panel: AgentDetailsPanel;
   view: AgentView;
   actionsMenu: ReactNode;
-  onRestartError(message: string | undefined): void;
   onPinOutcome(o: PinOutcome | undefined): void;
   onAgent(a: AgentSummary): void;
 }) {
@@ -152,7 +150,7 @@ function AgentActions({
       {agent.status === "terminated" && canPin(agent) && (
         <PinButton agent={agent} onAgent={onAgent} onOutcome={onPinOutcome} header />
       )}
-      {live && <RecoveryActions agent={agent} onError={onRestartError} />}
+      {live && <RecoveryActions agent={agent} />}
       <ViewSwitch slug={agent.slug} view={view} inMenu />
       <Tooltip>
         <TooltipTrigger asChild>

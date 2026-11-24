@@ -643,7 +643,7 @@ test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (i
   expect(within(header).queryByRole("button", { name: /Compact/ })).not.toBeInTheDocument();
 });
 
-test("header: no Stop while no turn is open; Restart when errored, its failure a notice row below the header", async () => {
+test("header: no Stop while no turn is open; Restart when errored, its failure a toast", async () => {
   routes["/api/agents/dev"] = () =>
     json(detail({ status: "errored", lastError: "Boom\nmore", errorKind: "crash" }));
   routes["/api/agents/dev/restart"] = () =>
@@ -654,28 +654,8 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
   expect(within(header).getByText("Boom")).toBeInTheDocument();
   await userEvent.click(within(header).getByRole("button", { name: "Restart" }));
-  const alert = await screen.findByText(/Couldn't restart: No slot\./);
-  expect(header.contains(alert)).toBe(false);
-  // Leaving Errored clears it: a later error doesn't bring back the old failure.
-  const frame = (status: "idle" | "errored") =>
-    act(() =>
-      ws.onMessage?.({
-        type: "agent_status",
-        agent: "dev",
-        status,
-        turnOpen: false,
-        restartPending: false,
-        restartWaitingOn: 0,
-        restartChanges: [],
-      }),
-    );
-  frame("idle");
-  await vi.waitFor(() => expect(screen.queryByText(/Couldn't restart/)).not.toBeInTheDocument());
-  frame("errored");
-  await vi.waitFor(() =>
-    expect(within(header).getByRole("button", { name: "Restart" })).toBeInTheDocument(),
-  );
-  expect(screen.queryByText(/Couldn't restart/)).not.toBeInTheDocument();
+  const toast = await screen.findByText("Couldn't restart @dev: No slot.");
+  expect(header.contains(toast)).toBe(false);
 });
 
 test("header: a terminated agent's Pin is its own button, outside the live line", async () => {

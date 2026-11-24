@@ -34,6 +34,7 @@ import { atPhrase, formatTime } from "./format";
 import { formatBy } from "./format-by";
 import { canPin, PinButton } from "./live-line";
 import { LINK_CLASS } from "./message-block";
+import { RestartNowButton } from "./restart-now-button";
 import { registerAgentDetailsOpener } from "./session-commands";
 import { Actor } from "./spawn-block";
 import { resetPhrase } from "./status-badge";
@@ -228,6 +229,7 @@ function Now({
               : "Restarts when idle to apply changes"}
             {waitingText(agent.restartWaitingOn)}
             <Why label="Why does it restart?">{RESTART_WHY}</Why>
+            <RestartNowButton slug={agent.slug} />
             {changes.length > 0 && (
               <span className="block basis-full pl-5 [overflow-wrap:anywhere]">
                 {changes.map((c) => (

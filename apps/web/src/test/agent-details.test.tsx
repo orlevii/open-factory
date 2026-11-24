@@ -502,3 +502,10 @@ test("Runtime: no Manages the org row when the flag is off", async () => {
   await section("Runtime");
   expect(screen.queryByText("Manages the org")).not.toBeInTheDocument();
 });
+
+test("Now: a pending restart carries Restart now", async () => {
+  setup({ agent: agentSummary({ restartPending: true }) });
+  expect(
+    within(await section("Now")).getByRole("button", { name: "Restart now" }),
+  ).toBeInTheDocument();
+});

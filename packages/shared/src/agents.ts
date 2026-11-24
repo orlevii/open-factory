@@ -227,6 +227,7 @@ export const restartStatusSchema = z.enum([
   "restarted_idle",
 ]);
 export const restartAgentResponseSchema = z.object({ status: restartStatusSchema });
+export type RestartStatus = z.infer<typeof restartStatusSchema>;
 
 // Strict: `?archived=` was renamed to `?ended=` in S7, and an old caller must get a 400, not a silently changed list.
 export const agentListQuerySchema = z.strictObject({

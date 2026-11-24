@@ -14,7 +14,12 @@ import {
 } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
-import { archiveAgent, resetPersona, restoreAgent } from "@/features/agents/lifecycle";
+import {
+  archiveAgent,
+  resetPersona,
+  restartAgentNow,
+  restoreAgent,
+} from "@/features/agents/lifecycle";
 import type { AgentView } from "@/features/agents/view-memory";
 import { viewSwitchTarget } from "@/features/agents/view-switch";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
@@ -96,6 +101,8 @@ export function AgentMenu({
   const canEdit = !spawned && !archived && !endedInList;
   // Archived agents too: their configuration stays editable and applies when restored (I2 §12.4).
   const canConfigure = !spawned && !terminated && !endedInList;
+  // A live session to restart: not hibernated, queued or errored (an errored agent has the header's Restart).
+  const canRestart = ["working", "idle", "rate_limited"].includes(agent.status) && !archived;
   const canStopCrons = session && stop !== undefined && agent.crons.length > 0;
   const canTerminate = session && spawned && live;
   const canResetPersona = !spawned && !terminated;
@@ -213,6 +220,12 @@ export function AgentMenu({
         }}
       >
         Stop crons…
+      </AdaptiveMenuItem>,
+    );
+  if (canRestart)
+    views.push(
+      <AdaptiveMenuItem key="restart" onSelect={() => void restartAgentNow(slug, qc)}>
+        Restart now
       </AdaptiveMenuItem>,
     );
   const lifecycle: ReactElement[] = [];

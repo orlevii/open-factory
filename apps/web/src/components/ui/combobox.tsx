@@ -24,12 +24,22 @@ type Side = "top" | "right" | "bottom" | "left"
 const FIXED = "f:"
 const itemKey = (o: ComboOption) => (o.fixed ? FIXED : "o:") + o.value
 
-/** Fixed options always match with cmdk's top score, so its re-sort keeps them first; the rest
- *  match on their label (the first keyword) and then their keywords. */
+/** Fixed options always match with cmdk's top score, so its re-sort keeps them first. The rest rank by
+ *  their label (the first keyword): the exact label, then a prefix, then a substring, then cmdk's fuzzy
+ *  match (a weak tail). The other keywords (a description) match only as a whole-word-run substring, so
+ *  a short query doesn't light up every description holding its letters in order. */
 function filter(value: string, search: string, keywords?: string[]) {
   if (value.startsWith(FIXED)) return 1
   const [label = "", ...rest] = keywords ?? []
-  return defaultFilter(label, search, rest)
+  const q = search.trim().toLowerCase()
+  if (!q) return 0.5
+  const name = label.toLowerCase()
+  if (name === q) return 0.99
+  if (name.startsWith(q)) return 0.9
+  if (name.includes(q)) return 0.8
+  const fuzzy = defaultFilter(label, search, [])
+  if (fuzzy > 0) return fuzzy * 0.5
+  return rest.some((k) => k.toLowerCase().includes(q)) ? 0.4 : 0
 }
 
 /** Fixed options first, then the current value, then the rest in their order. Grouped options keep

@@ -338,3 +338,23 @@ test("multi: a filter with no match says so, instead of the empty-list text", as
   await userEvent.keyboard("zzz");
   expect(screen.getByText("No matches.")).toBeInTheDocument();
 });
+
+test("filter ranks the exact name, then a prefix, then a substring; a description matches only as a substring", async () => {
+  const skills: ComboOption[] = [
+    { value: "a", label: "write-docs", keywords: ["Turns tdd notes into docs"] },
+    { value: "b", label: "my-tdd-helper" },
+    { value: "c", label: "tdd-guard" },
+    { value: "d", label: "tdd" },
+    { value: "e", label: "test-driven-deploy", keywords: ["Tests dependencies, then deploys"] },
+    { value: "f", label: "lint" },
+  ];
+  const { trigger } = setup({ options: skills });
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("tdd");
+  // Exact, prefix, name substring, then fuzzy name; the description hit (write-docs) comes after them and
+  // "lint" (no match anywhere) is gone.
+  await vi.waitFor(() =>
+    expect(optionNames()).toEqual(["tdd", "tdd-guard", "my-tdd-helper", "test-driven-deploy", "write-docs"]),
+  );
+});

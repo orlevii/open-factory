@@ -214,6 +214,35 @@ test("a pin Skills hasn't read has a Fetch that reads it", async () => {
   expect(mocks.calls.find((c) => c.url.endsWith("/acme/fetch"))?.body).toEqual({ ref: UNREAD });
 });
 
+test("a hand-written tag pin Skills hasn't read has a Fetch that sends the tag whole", async () => {
+  const rows = [
+    marketplaceRow("acme", {
+      plugins: [
+        plugin("a@acme", {
+          usedBy: { templates: [{ name: "old", pin: "tag:v2.0.0-beta", agents: 1 }], overlays: [] },
+        }),
+      ],
+      usedBy: { templates: 1, agents: 1 },
+    }),
+  ];
+  const {
+    user,
+    dialog: d,
+    mocks,
+  } = await open(rows, {
+    "GET /api/library/plugins/a%40acme?": () =>
+      json({ error: { code: "not_read", message: "Not found" } }, 404),
+    "POST /api/library/marketplaces/acme/fetch": () => json({ sha: UNREAD }),
+  });
+  expect(await d.findByText("Skills hasn't read acme at v2.0.0-beta.")).toBeInTheDocument();
+  await user.click(d.getByRole("button", { name: "Fetch" }));
+  expect(await d.findByText("Read acme at v2.0.0-beta.")).toBeInTheDocument();
+  expect(mocks.calls.find((c) => c.url.endsWith("/acme/fetch"))?.body).toEqual({
+    ref: "v2.0.0-beta",
+  });
+  expect(mocks.calls.some((c) => c.url.includes("commit=v2.0.0-beta"))).toBe(true);
+});
+
 test("a plugin opens in place with Back, Back returns focus to its row, and Esc closes the whole peek", async () => {
   const { user, dialog: d } = await open(undefined, {
     "GET /api/library/plugins/review%40acme": () =>

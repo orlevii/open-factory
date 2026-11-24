@@ -50,7 +50,7 @@ export const FORM_MSG = {
   loadMarketplaces: "Couldn't load marketplaces.",
   pickAtLeastOne: "Pick at least one skill.",
   sourceChanged: "The source changed. Find skills again.",
-  marketplaceChanged: "The source changed. Find the marketplace again.",
+  marketplaceChanged: "The source changed. Find it again.",
   gitUrl: "Use an https git URL.",
   checkFailed: "Couldn't check for updates.",
   noSourcesToCheck: "No sources to check.",

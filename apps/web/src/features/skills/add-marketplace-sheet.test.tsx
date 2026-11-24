@@ -165,7 +165,7 @@ test("editing the source after Find marks the preview stale and returns the prim
   });
   await find(user, d);
   await user.type(d.getByLabelText("Repository"), "2");
-  expect(d.getByText("The source changed. Find the marketplace again.")).toBeInTheDocument();
+  expect(d.getByText("The source changed. Find it again.")).toBeInTheDocument();
   expect(button(d, "Find marketplace")).toBeInTheDocument();
 });
 

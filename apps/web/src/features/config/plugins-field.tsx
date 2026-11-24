@@ -7,7 +7,7 @@ import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import type { ComboOption } from "@/components/ui/combobox";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { UntrustedProse } from "@/components/untrusted-text";
+import { UntrustedProse, visibleControls } from "@/components/untrusted-text";
 import { ContentsLine } from "@/features/skills/contents-line";
 import { contentKinds, pluginRowState, versionLabel } from "@/features/skills/format";
 import { PluginKey } from "@/features/skills/plugin-key";
@@ -214,7 +214,11 @@ const PluginRow = memo(function PluginRow({
 /** The pin a declaration resolves to as a commit: its commit, or the commit its tag was recorded at. */
 function commitOf(decl: unknown, row: Row | undefined): string | undefined {
   const pin = pinOf(decl);
-  return pin.kind === "commit" ? pin.sha : pin.kind === "tag" ? row?.tags[pin.name] : undefined;
+  return pin.kind === "commit"
+    ? pin.sha
+    : pin.kind === "tag" && row && Object.hasOwn(row.tags, pin.name)
+      ? row.tags[pin.name]
+      : undefined;
 }
 
 /** One marketplace's plugins, headed by its name and its pin (spec §10.5). */
@@ -297,7 +301,7 @@ const PluginGroup = memo(function PluginGroup({
 const renderPlugin = (o: ComboOption) => (
   <span className="grid min-w-0">
     <span className="font-mono text-[0.8125rem] whitespace-normal [overflow-wrap:anywhere]">
-      {o.label}
+      {visibleControls(o.label)}
     </span>
     {o.keywords?.[0] ? (
       <span className="truncate text-xs text-muted-foreground">

@@ -119,7 +119,7 @@ test("a hex version shows as the commit it is, and a semver stays as it is", asy
   expect(within(await row(/^b/)).getByText("1.4.2")).toBeInTheDocument();
 });
 
-test("2 use Latest appears only on a plugin a template uses at Latest", async () => {
+test("the Latest badge appears only on a plugin a template uses at Latest", async () => {
   const user = (name: string, pin: string) => ({ name, pin, agents: 3 });
   await open(
     pluginsResponse([
@@ -141,9 +141,9 @@ test("2 use Latest appears only on a plugin a template uses at Latest", async ()
     ]),
   );
   const fast = await row(/^fast/);
-  expect(within(fast).getByText("2 use Latest")).toBeInTheDocument();
+  expect(within(fast).getByText("auto-updates")).toBeInTheDocument();
   expect(within(fast).getByText("Used by 3 templates · 9 agents")).toBeInTheDocument();
-  expect(within(await row(/^slow/)).queryByText(/Latest/)).not.toBeInTheDocument();
+  expect(within(await row(/^slow/)).queryByText(/auto-updates/)).not.toBeInTheDocument();
 });
 
 test.each([

@@ -121,18 +121,30 @@ function PinnedBy({ pin, libraryCommit }: { pin: string; libraryCommit: string |
 
 /** "Skills hasn't read a1b2c3d" for a hand-written pin with no checkout, with Fetch (spec §7.1). Found by reading one
  *  plugin at that commit: the server refuses it when no checkout exists, and the query refetches after Fetch. */
-function UnreadPin({ name, sha, pluginName }: { name: string; sha: string; pluginName: string }) {
+function UnreadPin({
+  name,
+  pinRef,
+  isTag,
+  pluginName,
+}: {
+  name: string;
+  pinRef: string;
+  isTag: boolean;
+  pluginName: string;
+}) {
   const qc = useQueryClient();
-  const probe = useQuery({ ...pluginQueryOptions(pluginName, "library", sha), retry: false });
+  const probe = useQuery({ ...pluginQueryOptions(pluginName, "library", pinRef), retry: false });
   const [line, setLine] = useState<Line>();
   const fetchPin = useMutation({
-    mutationFn: () => fetchMarketplaceRef(name, sha),
+    mutationFn: () => fetchMarketplaceRef(name, pinRef),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["library"] }),
   });
+  // A commit reads as its short form; a tag is a name and shows whole.
+  const shown = isTag ? visibleControls(pinRef) : pinRef.slice(0, 7);
   const onFetch = () => {
     setLine(undefined);
     fetchPin.mutate(undefined, {
-      onSuccess: () => setLine({ tone: "success", node: `Read ${name} at ${sha.slice(0, 7)}.` }),
+      onSuccess: () => setLine({ tone: "success", node: `Read ${name} at ${shown}.` }),
       onError: (e) => setLine({ tone: "error", node: failure(e, FORM_MSG.unreachable) }),
     });
   };
@@ -145,7 +157,7 @@ function UnreadPin({ name, sha, pluginName }: { name: string; sha: string; plugi
         <p className="flex flex-wrap items-center gap-x-2 text-[0.8125rem]">
           <RowState state="missing" />
           <span>
-            Skills hasn't read {visibleControls(name)} at {sha.slice(0, 7)}.
+            Skills hasn't read {visibleControls(name)} at {shown}.
           </span>
           <Button
             variant="ghost"
@@ -237,11 +249,14 @@ export function MarketplacePeekBody({
   const updateCommit = d?.updateCommit ?? row?.updateCommit ?? null;
   const plugins = row?.plugins ?? [];
   const pinned = pinnedBy(plugins);
-  const unread = new Map<string, string>();
+  // Hand-written pins to probe, by `commit:<sha>` or `tag:<name>` (Fetch takes either, spec §7.1).
+  const unread = new Map<string, { ref: string; isTag: boolean; plugin: string }>();
   for (const p of pinned) {
     const pin = parsePluginPin(p.pin);
-    if (pin.kind === "commit" && pin.sha !== commit && !unread.has(pin.sha))
-      unread.set(pin.sha, p.plugin);
+    if (pin.kind === "commit" && pin.sha !== commit && !unread.has(p.pin))
+      unread.set(p.pin, { ref: pin.sha, isTag: false, plugin: p.plugin });
+    else if (pin.kind === "tag" && !unread.has(p.pin))
+      unread.set(p.pin, { ref: pin.name, isTag: true, plugin: p.plugin });
   }
   const users = d ? d.usedBy.templates + d.usedBy.agents : 0;
   const inUse = users > 0;
@@ -424,8 +439,14 @@ export function MarketplacePeekBody({
               ))}
             </ul>
             <div className="mt-2 space-y-1.5">
-              {[...unread].map(([sha, plugin]) => (
-                <UnreadPin key={sha} name={name} sha={sha} pluginName={plugin} />
+              {[...unread].map(([id, u]) => (
+                <UnreadPin
+                  key={id}
+                  name={name}
+                  pinRef={u.ref}
+                  isTag={u.isTag}
+                  pluginName={u.plugin}
+                />
               ))}
             </div>
           </Section>

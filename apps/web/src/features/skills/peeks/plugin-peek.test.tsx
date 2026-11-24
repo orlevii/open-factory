@@ -284,6 +284,8 @@ test("a host plugin offers only Add its marketplace, which registers it with an 
     checkedAt: null,
     checkError: null,
     usedBy: { templates: 0, agents: 0 },
+    since: null,
+    checking: null,
   };
   const {
     dialog: d,

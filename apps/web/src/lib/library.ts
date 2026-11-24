@@ -163,8 +163,13 @@ export const marketplacesQueryOptions = queryOptions({
 
 export type PluginFrom = "library" | "host";
 
-const commitQuery = (from: PluginFrom, commit: string | undefined) =>
-  from === "host" ? "?from=host" : commit ? `?commit=${encodeURIComponent(commit)}` : "";
+const commitParams = (from: PluginFrom, commit: string | undefined) =>
+  from === "host" ? "from=host" : commit ? `commit=${encodeURIComponent(commit)}` : "";
+
+const withQuery = (path: string, ...params: string[]) => {
+  const q = params.filter(Boolean).join("&");
+  return q ? `${path}?${q}` : path;
+};
 
 /**
  * One plugin's contents and provenance. The key carries the commit and where it is read from, so the same plugin at two
@@ -174,9 +179,12 @@ export const pluginQueryOptions = (key: string, from: PluginFrom, commit?: strin
   queryOptions({
     queryKey: ["library", "plugin", key, from, commit ?? ""],
     queryFn: () =>
-      apiFetch(`/api/library/plugins/${encodeURIComponent(key)}${commitQuery(from, commit)}`, {
-        schema: pluginDetailSchema,
-      }),
+      apiFetch(
+        withQuery(`/api/library/plugins/${encodeURIComponent(key)}`, commitParams(from, commit)),
+        {
+          schema: pluginDetailSchema,
+        },
+      ),
   });
 
 export const marketplaceQueryOptions = (name: string) =>
@@ -199,7 +207,11 @@ export const pluginFileQueryOptions = (
     queryKey: ["library-file", "plugin", key, path, from, commit ?? ""],
     queryFn: () =>
       apiFetch(
-        `/api/library/plugins/${encodeURIComponent(key)}/file?path=${encodeURIComponent(path)}${commitQuery(from, commit).replace("?", "&")}`,
+        withQuery(
+          `/api/library/plugins/${encodeURIComponent(key)}/file`,
+          `path=${encodeURIComponent(path)}`,
+          commitParams(from, commit),
+        ),
         { schema: pluginFileTextSchema },
       ),
     staleTime: commit ? Number.POSITIVE_INFINITY : 0,

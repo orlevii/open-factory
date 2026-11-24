@@ -53,6 +53,13 @@ const DIFF = {
     runsCode: true,
   },
 };
+const TWO_SAME_HOOKS = {
+  ...DIFF,
+  diff: {
+    ...DIFF.diff,
+    hooks: { added: [DIFF.diff.hooks.added[0], DIFF.diff.hooks.added[0]], removed: [] },
+  },
+};
 const serveDiff = () =>
   useMarketplaces(MARKETPLACES, {
     "POST /api/library/plugins/review%40acme/diff": () => json(DIFF),
@@ -91,6 +98,16 @@ describe("pinned by default", () => {
     expect(lastOf(onValue)).toEqual(withPlugins(pinned(LIB)));
     expect(screen.queryByRole("heading", { name: "Pin acme to e4f5a6b" })).toBeNull();
     expect(screen.getByRole("button", { name: "Change pin for acme" })).toHaveFocus();
+  });
+
+  test("two identical changes both show in the diff", async () => {
+    useMarketplaces(MARKETPLACES, {
+      "POST /api/library/plugins/review%40acme/diff": () => json(TWO_SAME_HOOKS),
+    });
+    render(<PluginsForm start={withPlugins(pinned(PIN))} />);
+    await changePin();
+    await userEvent.click(await screen.findByRole("menuitem", { name: /Pin to e4f5a6b/ }));
+    expect(await screen.findAllByText("PreToolUse (Bash): ./guard.sh")).toHaveLength(2);
   });
 
   test("the primary waits for the diff", async () => {

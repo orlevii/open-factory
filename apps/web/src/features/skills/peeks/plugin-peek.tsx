@@ -120,8 +120,12 @@ function RunsCode({ contents }: { contents: Contents }) {
           )}
           {mcp.length > 0 && (
             <ul className="space-y-2" aria-label="MCP servers">
-              {mcp.map((m) => (
-                <McpRow key={m.name} m={m} />
+              {mcp.map((m, i) => (
+                <McpRow
+                  // biome-ignore lint/suspicious/noArrayIndexKey: two servers can share a name, and the list is static
+                  key={`${i}\0${m.name}`}
+                  m={m}
+                />
               ))}
             </ul>
           )}

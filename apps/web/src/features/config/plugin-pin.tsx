@@ -106,8 +106,13 @@ function PluginDiff({ d }: { d: Diff }) {
       {!d.from.present && (
         <DiffLine sign="+" text={PLUGIN_COPY.newSince(shortRef(d.from.commit))} />
       )}
-      {lines.map((l) => (
-        <DiffLine key={`${l.sign}${l.text}`} sign={l.sign} text={l.text} />
+      {lines.map((l, i) => (
+        <DiffLine
+          // biome-ignore lint/suspicious/noArrayIndexKey: two changes can read the same, and the list is static
+          key={`${i}\0${l.sign}${l.text}`}
+          sign={l.sign}
+          text={l.text}
+        />
       ))}
     </li>
   );

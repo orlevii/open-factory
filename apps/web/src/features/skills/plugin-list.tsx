@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { memo, useId } from "react";
 import { ErrorLine } from "@/components/error-line";
 import { visibleControls } from "@/components/untrusted-text";
+import { LatestBadge } from "@/features/config/latest-badge";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { FORM_MSG } from "@/lib/form-messages";
 import { type PluginsResponse, pluginsQueryOptions } from "@/lib/library";
@@ -25,8 +26,6 @@ function usage(u: Entry["usedBy"]) {
     u.overlays.filter((o) => o.pin === "latest").length;
   return { templates: u.templates.length, agents, latest };
 }
-
-const latestText = (n: number) => (n === 1 ? "1 uses Latest" : `${n} use Latest`);
 
 const PluginRow = memo(function PluginRow({
   entry,
@@ -68,9 +67,7 @@ const PluginRow = memo(function PluginRow({
         <span className="text-[0.8125rem] text-muted-foreground">
           {usedByText(u.templates, u.agents)}
         </span>
-        {u.latest > 0 && (
-          <span className="text-[0.8125rem] text-muted-foreground">{latestText(u.latest)}</span>
-        )}
+        {u.latest > 0 && <LatestBadge />}
         {state && <RowState state={state} />}
       </button>
     </li>

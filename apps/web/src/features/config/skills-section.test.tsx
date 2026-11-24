@@ -11,6 +11,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { type ReactNode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { marketplaceRow, plugin } from "@/features/skills/fixtures";
 import { installInputModality } from "@/lib/input-modality";
 import { libraryQueryOptions } from "@/lib/library";
 import { doc } from "@/test/config-harness";
@@ -341,6 +342,37 @@ describe("plugin picker", () => {
         extraKnownMarketplaces: { acme: pinned(LIB) },
       },
     });
+  });
+
+  test("a catalog plugin name with a bidi override shows as a visible token, never raw", async () => {
+    useMarketplaces([
+      marketplaceRow("acme", {
+        source: { source: "github", repo: "acme/acme" },
+        commit: LIB,
+        plugins: [plugin("evil\u202Egpj@acme")],
+      }),
+    ]);
+    render(<PluginsForm />);
+    await openPlugins();
+    expect(await screen.findByText("evil⟨U+202E⟩gpj@acme")).toBeInTheDocument();
+    expect(screen.queryByText(/\u202E/, { selector: "span" })).toBeNull();
+  });
+
+  test("a tag pin named like an Object method resolves to no commit instead of a function", async () => {
+    useMarketplaces();
+    render(
+      <PluginsForm
+        start={{
+          settings: {
+            enabledPlugins: { "review@acme": true },
+            extraKnownMarketplaces: { acme: pinned("constructor") },
+          },
+        }}
+      />,
+    );
+    // The group renders (a function as the commit would throw or print its source).
+    expect(await screen.findByRole("group", { name: "acme" })).toBeInTheDocument();
+    expect(screen.queryByText(/native code/)).toBeNull();
   });
 
   test("another plugin of a declared marketplace joins its pin", async () => {

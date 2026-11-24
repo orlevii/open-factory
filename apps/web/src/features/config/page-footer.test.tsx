@@ -3,7 +3,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import { NO_OUTCOME } from "@/components/forms/form-outcome";
 import { PageFooter } from "./page-footer";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 const footer = (
   <PageFooter

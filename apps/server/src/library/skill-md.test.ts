@@ -83,7 +83,12 @@ test("parses frontmatter hooks into event, matcher and command", async () => {
   ]);
 });
 
-test("only the first 64 KB are read", async () => {
+test("only the first 64 KB are read: frontmatter that closes after the cap is not parsed", async () => {
+  const dir = skill(`---\nname: foo\nnote: ${"y".repeat(70_000)}\ndescription: late\n---\n`);
+  expect(await readSkillMd(dir)).toEqual({ hooks: [] });
+});
+
+test("frontmatter inside the first 64 KB is parsed however long the body is", async () => {
   const dir = skill(`---\nname: foo\n---\n${"y".repeat(200_000)}`);
   expect((await readSkillMd(dir))?.name).toBe("foo");
 });

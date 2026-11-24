@@ -242,6 +242,25 @@ test("template-local skills form a group per template and never resolve", async 
   expect(await idx.resolveSkill("mine")).toEqual({ ok: false, reason: "not_added" });
 });
 
+test("a template-local skill has no users of its own and does not take a same-named entry's", async () => {
+  host("shared");
+  md(path.join(home, "templates", "dev", "skills", "shared"), "name: shared");
+  const idx = make({
+    templates: { dev: { local: ["shared"] }, ops: { skills: ["shared"] } },
+    agents: [{ slug: "ann", template: "ops", config: {} }],
+  });
+  const groups = await idx.skills();
+  expect(groups.map((g) => g.group)).toEqual(["host", "template:dev"]);
+  expect(groups[0]?.skills[0]).toMatchObject({
+    name: "shared",
+    usedBy: { templates: 1, agents: 1 },
+  });
+  expect(groups[1]?.skills[0]).toMatchObject({
+    name: "shared",
+    usedBy: { templates: 0, agents: 0 },
+  });
+});
+
 test("a name a template lists that resolves nowhere is in the unknown group with its users", async () => {
   host("here");
   const idx = make({

@@ -18,7 +18,7 @@ import { readSkillMd } from "./skill-md.ts";
 export type SkillGroup = z.infer<typeof skillGroupSchema>;
 type SkillRow = SkillGroup["skills"][number];
 
-export type ResolveFail = "not_added" | "missing" | "hidden" | "unusable";
+export type ResolveFail = "not_added" | "missing" | "unusable";
 export type Resolved =
   | { ok: true; name: string; dir: string; ref: string }
   | { ok: false; reason: ResolveFail; detail?: string };
@@ -167,7 +167,9 @@ export class LibraryIndex {
       if (s.state !== "ready" || !s.skills.includes(name)) continue;
       const f = await this.registered(s, name);
       if (f.state !== "ok") return { ok: false, reason: f.state, detail: f.detail };
-      return { ok: true, name, dir: await realpath(f.dir), ref: f.ref };
+      const dir = await realpath(f.dir).catch(() => undefined);
+      if (!dir) return { ok: false, reason: "missing", detail: f.detail };
+      return { ok: true, name, dir, ref: f.ref };
     }
     if (
       !(HOST_SKILL_PATTERN.test(name) && (await readSkillMd(path.join(this.hostSkillsDir, name))))
@@ -218,12 +220,14 @@ export class LibraryIndex {
       templates: usage.get(n)?.templates.size ?? 0,
       agents: usage.get(n)?.agents.size ?? 0,
     });
-    const row = (name: string, f: Found, hidden?: string): SkillRow => ({
+    const none = { templates: 0, agents: 0 };
+    const row = (name: string, f: Found, hidden?: string, local = false): SkillRow => ({
       name,
       description: f.description,
       state: hidden ? "hidden" : f.state,
       ...(hidden ? { stateDetail: hidden } : f.detail ? { stateDetail: f.detail } : {}),
-      usedBy: usedBy(name),
+      // A template-local skill is not in the Library namespace, so a same-named entry's users aren't its users.
+      usedBy: local ? none : usedBy(name),
     });
 
     const sources = await this.store.sources();
@@ -270,7 +274,12 @@ export class LibraryIndex {
       const rows: SkillRow[] = [];
       for (const n of (await port.localSkillsOf(t)).sort()) {
         rows.push(
-          row(n, await inspect(n, path.join(this.factoryHome, "templates", t, "skills", n))),
+          row(
+            n,
+            await inspect(n, path.join(this.factoryHome, "templates", t, "skills", n)),
+            undefined,
+            true,
+          ),
         );
       }
       if (rows.length > 0) {

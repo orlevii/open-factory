@@ -291,6 +291,7 @@ export class AgentService {
         scheduleCount: scheduleCount.get(r.id) ?? 0,
         avatarVersion: avatarOf.get(r.template) ?? null,
         color: r.color,
+        manageOrg: r.manageOrg,
         credential: credName.get(r.credentialId ?? "") ?? null,
         projects: (projectsOf.get(r.id) ?? []).sort(),
         depth,

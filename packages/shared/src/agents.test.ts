@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import {
   agentListQuerySchema,
   agentSummarySchema,
+  createAgentBodySchema,
   patchAgentBodySchema,
   queueItemSchema,
   sendMessagesBodySchema,
@@ -78,4 +79,22 @@ test("PATCH colour is an int 1..12 or null", () => {
     expect(patchAgentBodySchema.safeParse({ color }).success).toBe(true);
   for (const color of [0, 13, 1.5, "3"])
     expect(patchAgentBodySchema.safeParse({ color }).success).toBe(false);
+});
+
+test("PATCH manageOrg must be a boolean", () => {
+  expect(patchAgentBodySchema.safeParse({ manageOrg: "yes" }).success).toBe(false);
+  expect(patchAgentBodySchema.safeParse({ manageOrg: true }).success).toBe(true);
+});
+
+test("create body strips manageOrg instead of accepting it", () => {
+  const parsed = createAgentBodySchema.parse({
+    template: "lead",
+    slug: "boss",
+    displayName: "Boss",
+    description: "",
+    reportsTo: null,
+    credential: "default",
+    manageOrg: true,
+  });
+  expect(parsed).not.toHaveProperty("manageOrg");
 });

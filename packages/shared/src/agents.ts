@@ -71,6 +71,8 @@ export const agentSummarySchema = z.object({
   avatarVersion: z.string().nullable().default(null),
   /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto. */
   color: avatarColorSchema.nullable().default(null),
+  /** §5.1: the org manager flag; only persistent agents can hold it. */
+  manageOrg: z.boolean(),
   credential: z.string().nullable(),
   projects: z.array(z.string()),
   depth: z.number().int().nonnegative(),
@@ -247,6 +249,7 @@ export const patchAgentBodySchema = z
     credential: nameSchema,
     projects: z.array(nameSchema),
     color: avatarColorSchema.nullable(),
+    manageOrg: z.boolean(),
   })
   .partial();
 export type PatchAgentBody = z.infer<typeof patchAgentBodySchema>;

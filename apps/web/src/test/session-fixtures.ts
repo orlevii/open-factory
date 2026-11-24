@@ -34,6 +34,7 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   turnOpen: false,
   runtime: "local",
   kind: "persistent",
+  manageOrg: false,
   template: "dev",
   reportsTo: null,
   reports: 0,

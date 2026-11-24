@@ -68,6 +68,12 @@ export const agents = pgTable(
     terminatedAt: timestamp("terminated_at", { withTimezone: true }),
     /** '@handle' (a human), the spawner's bare slug, or '@factory' (the TTL). */
     terminatedBy: text("terminated_by"),
+    /** §5.1: the org manager (persistent only): sees and manages the whole org. */
+    manageOrg: boolean("manage_org").notNull().default(false),
+    /** §10: the agent that last wrote `description` (the manager who set it); null when nobody did. */
+    descriptionBy: text("description_by").references((): AnyPgColumn => agents.id, {
+      onDelete: "set null",
+    }),
     workspacePinned: boolean("workspace_pinned").notNull().default(false),
     workspaceDeletedAt: timestamp("workspace_deleted_at", { withTimezone: true }),
     /** S7 §10.2: the last process start, turn end or delivered batch; read by the TTL sweep. */
@@ -90,6 +96,7 @@ export const agents = pgTable(
       "agents_terminated_ephemeral",
       sql`${t.kind} = 'ephemeral' OR (${t.terminatedAt} IS NULL AND ${t.terminatedBy} IS NULL)`,
     ),
+    check("agents_manage_org_persistent", sql`NOT ${t.manageOrg} OR ${t.kind} = 'persistent'`),
     check("agents_ephemeral_manager", sql`${t.kind} = 'persistent' OR ${t.reportsTo} IS NOT NULL`),
     index("agents_spawned_idx").on(t.reportsTo, t.createdAt).where(sql`${t.kind} = 'ephemeral'`),
     // The Ended list (Task 16): newest end first, limit 200.

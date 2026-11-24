@@ -361,6 +361,21 @@ describe("add", () => {
     expect(s.logged.some((m) => m.includes("adding marketplace acme failed"))).toBe(true);
   });
 
+  test("an add that is still fetching reports since, and clears it once ready", async () => {
+    await basicRepo();
+    const s = setup();
+    const p = await s.svc.preview(github);
+    await rm(path.join(fh, "state", "library", "preview", p.previewId), {
+      recursive: true,
+      force: true,
+    });
+    const out = await s.svc.add(p.previewId, "@or");
+    expect(out.marketplace.since).toBe(new Date(nowMs).toISOString());
+    expect((await s.svc.detailOf("acme")).since).toBe(new Date(nowMs).toISOString());
+    await s.svc.idle();
+    expect((await s.svc.detailOf("acme")).since).toBeNull();
+  });
+
   test("an unknown preview id is expired", async () => {
     const e = await setup()
       .svc.add("nope", "@or")
@@ -527,6 +542,17 @@ describe("check and update", () => {
     expect(d.checkedAt).not.toBeNull();
     expect(s.publishDepth.at(-1)).toBe(0);
     expect(await s.svc.checkout("acme", sha1)).toBeNull();
+  });
+
+  test("a check in flight reports checking.since, and clears it once the check ends", async () => {
+    const { s } = await added();
+    const p = s.svc.check("acme");
+    expect(s.svc.checkingSince("acme")).toBe(new Date(nowMs).toISOString());
+    expect((await s.svc.detailOf("acme")).checking).toEqual({
+      since: new Date(nowMs).toISOString(),
+    });
+    await p;
+    expect((await s.svc.detailOf("acme")).checking).toBeNull();
   });
 
   test("check with nothing new clears a stale update", async () => {

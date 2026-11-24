@@ -313,6 +313,7 @@ export class PluginsIndex {
         name: row.name,
         commit: row.commit,
         state: row.state,
+        since: row.state === "adding" ? row.startedAt.toISOString() : null,
         plugins: await this.entriesOf(row, decl),
       });
     }

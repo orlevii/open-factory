@@ -453,9 +453,9 @@ export const marketplaceDetailSchema = z.object({
   checkError: z.string().nullable(),
   usedBy: usedBySchema,
   /** When an add started (ISO), while the row is "adding" (spec §10.2); the web shows the elapsed time from it. */
-  since: z.string().nullable().optional(),
+  since: z.string().nullable(),
   /** A check is queued or running; `since` is when it was queued (ISO), as for a skill source. */
-  checking: z.object({ since: z.string() }).nullable().optional(),
+  checking: z.object({ since: z.string() }).nullable(),
 });
 
 /** What moving a marketplace's Library commit would change (spec §7.1). */
@@ -605,7 +605,7 @@ export const pluginsResponseSchema = z.object({
       commit: z.string().nullable(),
       state: z.enum(["adding", "ready"]),
       /** When an add started (ISO), while the marketplace is "adding". */
-      since: z.string().nullable().optional(),
+      since: z.string().nullable(),
       plugins: z.array(pluginEntrySchema),
     }),
   ),

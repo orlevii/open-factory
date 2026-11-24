@@ -78,7 +78,7 @@ export const pluginGroup = (
   commit: string | null,
   plugins: PluginEntry[],
   o: Partial<PluginGroup> = {},
-): PluginGroup => ({ name, commit, state: "ready", plugins, ...o });
+): PluginGroup => ({ name, commit, state: "ready", since: null, plugins, ...o });
 
 export const pluginsResponse = (
   marketplaces: PluginGroup[],
@@ -99,6 +99,8 @@ export const marketplaceRow = (name: string, o: Partial<MarketplaceRow> = {}): M
   updateSubject: null,
   checkedAt: null,
   checkError: null,
+  since: null,
+  checking: null,
   usedBy: { templates: 0, agents: 0 },
   plugins: [],
   users: { templates: [], agents: [] },

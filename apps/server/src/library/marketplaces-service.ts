@@ -124,6 +124,10 @@ export interface MarketplaceDetail {
   checkedAt: string | null;
   checkError: string | null;
   usedBy: { templates: number; agents: number };
+  /** When the add started (ISO), while the row is "adding"; null otherwise. */
+  since: string | null;
+  /** When the queued or running check was queued (ISO); null when no check is pending. */
+  checking: { since: string } | null;
 }
 
 export interface MarketplaceUpdateView {
@@ -338,7 +342,8 @@ export function previewPluginOf(marketplace: string, e: CatalogEntry): PreviewPl
 export class MarketplacesService {
   private readonly previews = new Map<string, PreviewMeta>();
   private readonly pending = new Set<Promise<unknown>>();
-  private readonly checking = new Set<string>();
+  /** Names whose check is queued or running, with when it was queued (ISO). In memory only. */
+  private readonly checking = new Map<string, string>();
   private readonly now: () => Date;
   private readonly undoMs: number;
 
@@ -417,6 +422,7 @@ export class MarketplacesService {
   private async detail(row: MarketplaceRow): Promise<MarketplaceDetail> {
     const users = await this.d.usedBy(row.name);
     const iso = (v: Date | null) => (v ? v.toISOString() : null);
+    const checking = this.checkingSince(row.name);
     return {
       name: row.name,
       source: row.source,
@@ -432,7 +438,14 @@ export class MarketplacesService {
       checkedAt: iso(row.checkedAt),
       checkError: row.checkError,
       usedBy: { templates: users.templates.length, agents: users.agents.length },
+      since: row.state === "adding" ? iso(row.startedAt) : null,
+      checking: checking ? { since: checking } : null,
     };
+  }
+
+  /** When a check was queued for the marketplace (ISO), while one is queued or running; the list shows it as "Checking…". */
+  checkingSince(name: string): string | undefined {
+    return this.checking.get(name);
   }
 
   async detailOf(name: string): Promise<MarketplaceDetail> {
@@ -768,10 +781,27 @@ export class MarketplacesService {
     return { committedAt, subject };
   }
 
-  /** ls-remote on the recorded branch; a newer commit is fetched into a preview; tags are recorded. */
+  /** One marketplace's check: marks it checking unless a queued check already owns the mark. */
   async check(name: string): Promise<MarketplaceDetail> {
+    const owns = !this.checking.has(name);
+    if (owns) {
+      this.checking.set(name, this.now().toISOString());
+      this.d.publish?.();
+    }
+    let row: MarketplaceRow;
+    try {
+      row = await this.runCheck(name);
+    } finally {
+      if (owns) this.checking.delete(name);
+      this.d.publish?.();
+    }
+    return this.detail(row);
+  }
+
+  /** ls-remote on the recorded branch; a newer commit is fetched into a preview; tags are recorded. */
+  private async runCheck(name: string): Promise<MarketplaceRow> {
     const row = await this.get(name);
-    if (row.source.source === "directory" || row.state !== "ready") return this.detail(row);
+    if (row.source.source === "directory" || row.state !== "ready") return row;
     let patch: Partial<MarketplaceRow>;
     try {
       const url = this.urlOf(row.source);
@@ -806,8 +836,7 @@ export class MarketplacesService {
       if (!cur || cur.deletedAt !== null || cur.commit !== row.commit) return cur;
       return this.d.store.update(name, { ...patch, checkedAt: this.now() });
     });
-    this.d.publish?.();
-    return this.detail(next ?? row);
+    return next ?? row;
   }
 
   /** Check for updates over every git or GitHub marketplace, 4 at a time, in the background (`idle()` waits). */
@@ -822,7 +851,8 @@ export class MarketplacesService {
       )
       .map((r) => r.name);
     const names = [...queue];
-    for (const n of names) this.checking.add(n);
+    const since = this.now().toISOString();
+    for (const n of names) this.checking.set(n, since);
     const worker = async () => {
       for (let n = queue.shift(); n !== undefined; n = queue.shift()) {
         try {

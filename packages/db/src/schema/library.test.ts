@@ -84,8 +84,9 @@ test("a marketplace reads back with its source, commit and tags", async () => {
 
 test("a marketplace refuses a state outside adding and ready", async () => {
   const addedAt = new Date("2026-11-24T10:00:00Z");
-  await expect(
-    h.db.insert(marketplaces).values({
+  const refused = await h.db
+    .insert(marketplaces)
+    .values({
       name: "bogus",
       source: { source: "directory", path: "/plugins" },
       tags: {},
@@ -94,6 +95,11 @@ test("a marketplace refuses a state outside adding and ready", async () => {
       startedAt: addedAt,
       addedBy: "or",
       addedAt,
-    }),
-  ).rejects.toThrow(/marketplaces_state_check/);
+    })
+    .then(
+      () => null,
+      (e: unknown) => e as { cause?: { code?: string } },
+    );
+  // Postgres check_violation, however the driver words the message.
+  expect(refused?.cause?.code).toBe("23514");
 });

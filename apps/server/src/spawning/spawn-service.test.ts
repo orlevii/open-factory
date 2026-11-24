@@ -215,6 +215,8 @@ test("three spawns of a template with a plugin return without an install; each s
     .update(schema.agents)
     .set({ config: { template: { can_spawn: ["plugged"], max_live_spawns: 5 } } })
     .where(eq(schema.agents.id, lead.id));
+  // `can_spawn` is what the running process started with, so start it again on the new row.
+  await asRunning(t.app, lead);
   const slugs: string[] = [];
   for (const suffix of ["a", "b", "c"]) {
     const r = await t.app.spawner.spawn(lead.id, args({ template: "plugged", suffix }), null);

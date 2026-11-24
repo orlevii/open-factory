@@ -616,7 +616,8 @@ test("check finds a newer commit, its update view lists the changed plugins, and
 
   const view = (await call("GET", "/api/library/marketplaces/acme")).json();
   expect(view.update).toMatchObject({ from: w.shas[1], to: third });
-  expect(view.update.changed).toEqual([{ name: "rel", what: ["tree"], runsCodeChanged: true }]);
+  // A plain file changed: the tree differs, but no hook, server, bin/ or dependency does (spec §7.1).
+  expect(view.update.changed).toEqual([{ name: "rel", what: ["tree"], runsCodeChanged: false }]);
 
   const stale = await call("POST", "/api/library/marketplaces/acme/update", {
     commit: "b".repeat(40),

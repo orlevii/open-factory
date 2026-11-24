@@ -126,7 +126,8 @@ test("updating a marketplace restarts no agent and sends no config_changed", asy
   expect(await eventTypes()).toEqual(typesBefore);
   // The template still pins the commit it declared, and the Library holds the checkout it runs at.
   expect((await call("GET", "/api/agents/dev/config")).json().plugins).toEqual([
-    { key: "rel@acme", pin: `commit:${second}` },
+    // `loaded` is the version the running process reported at its `init` (spec §7.3 step 8).
+    { key: "rel@acme", pin: `commit:${second}`, loaded: "1.1.0" },
   ]);
   const view = (await call("GET", "/api/library/plugins")).json().marketplaces[0];
   expect(view.commit).toBe(third);

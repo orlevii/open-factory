@@ -397,6 +397,8 @@ test("a template save that moves a pin writes the repin line and restarts that t
     await h.t.sql`update agents set template = 't-pin' where id = ${id}`;
   const rt = await w.runBusy(running);
   w.current.set(running, after);
+  // The re-read inside the restart check resolves the library from the new declaration.
+  w.setLibrary(pinsOf(after));
   await w.changes.templateChanged({ name: "t-pin", before, after, by: FILE_CHANGE });
   await rt?.settled();
 

@@ -746,7 +746,7 @@ Shared schemas live in `packages/shared/src/library.ts`.
 
 ### 9.5 Live updates
 
-The new WS frame `{ type: "library_changed" }` is published after every Library write, every install-state change and every check result. The web then invalidates the `["library"]` queries. The host and template-local lists have no watcher; they refresh on window focus and on I2's template change event (T5).
+The new WS frame `{ type: "library_changed" }` is published after every Library write, every install-state change and every check result. The web then invalidates the `["library"]` queries. The frame carries an optional `addFailed: "owner/repo"`, sent only when a background (202) GitHub add failed and its row was removed; the web then shows the toast "Couldn't add <repo>." The host and template-local lists have no watcher; they refresh on window focus and on I2's template change event (T5).
 
 ### 9.6 Locks (self-review M5)
 

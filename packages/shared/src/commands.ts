@@ -92,6 +92,13 @@ export type InputClass =
 
 /** Any line break: LF, CR, NEL, U+2028, U+2029. One command is one line. */
 const LINE_BREAK = /[\n\r\u0085\u2028\u2029]/;
+export const hasLineBreak = (s: string): boolean => LINE_BREAK.test(s);
+
+/** `/name rest`: the typed name (as typed, maybe empty) and the rest of the line. */
+const SLASH_INPUT = /^\/([^\s\u0085]*)[\s\u0085]*([\s\S]*)$/;
+/** The name typed after the leading `/` of a line, as typed; empty when there is none. */
+export const typedCommandName = (text: string): string =>
+  SLASH_INPUT.exec(text.trimStart())?.[1] ?? "";
 
 /**
  * What a line of session input is. A command when its first token (after `/`, lowercased) is a known name or alias or
@@ -101,7 +108,7 @@ const LINE_BREAK = /[\n\r\u0085\u2028\u2029]/;
 export function classifyInput(text: string, known: ReadonlySet<string>): InputClass {
   const t = text.trimStart();
   if (!t.startsWith("/")) return { kind: "text" };
-  const m = /^\/([^\s\u0085]*)[\s\u0085]*([\s\S]*)$/.exec(t);
+  const m = SLASH_INPUT.exec(t);
   const typed = m?.[1] ?? "";
   const name = typed.toLowerCase();
   if (!name || !(known.has(name) || Object.hasOwn(DENIED_COMMANDS, name))) return { kind: "text" };

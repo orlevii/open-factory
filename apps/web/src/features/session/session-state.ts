@@ -335,7 +335,8 @@ const echoedBy = (items: QueueItem[]) => items.map((q) => q.clientMessageId);
  *  replaces goes in the same step and the row's key (shared with it) is handed off, so the node stays
  *  and nothing fades. */
 function rawLanded(s: SessionState, cid: string): SessionState {
-  const queue = s.queue.filter((q) => q.clientMessageId !== cid);
+  // An agent's raw input has no `clientMessageId`: its queue item is keyed by the entry id.
+  const queue = s.queue.filter((q) => (q.clientMessageId ?? q.id) !== cid);
   const block = s.sending.some((b) => b.clientMessageId === cid);
   const removed = queue.length !== s.queue.length || block;
   // An aborted send has neither: the row still lands it, clears its error and hands the key off.
@@ -395,8 +396,8 @@ function applyLive(s: SessionState, fresh: SessionEvent[]): SessionState {
         next,
         e.messages.map((m) => m.clientMessageId),
       );
-    } else if (e.type === "operator_input" && e.clientMessageId !== undefined) {
-      next = rawLanded(next, e.clientMessageId);
+    } else if (e.type === "operator_input") {
+      next = rawLanded(next, e.clientMessageId ?? e.entryId);
     } else if (e.type === "turn_end" && next.agent?.turnOpen) {
       next = withAgent(next, { ...next.agent, turnOpen: false, turnStartedAt: undefined });
     } else if (e.type === "interrupt_unconfirmed") {

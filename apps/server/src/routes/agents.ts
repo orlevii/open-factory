@@ -26,7 +26,7 @@ import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
-import { commandList, commandsResponse } from "../agents/commands.ts";
+import { commandsResponse, knownCommandNames } from "../agents/commands.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -325,6 +325,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         const item = await rt.compact({
           ...(req.body.focus ? { focus: req.body.focus } : {}),
           byHandle: user(req).handle,
+          userId: user(req).id,
         });
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
       } catch (e) {
@@ -362,10 +363,9 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       if (!text) return refuse("text", 400, "validation_error", "Input is empty.");
       if (utf8.encode(text).length > MAX_BODY_BYTES)
         return refuse("text", 400, "validation_error", "Input is larger than 64 KB.");
-      const known = new Set(
-        commandList((await app.store.agentCommands(row.id))?.commands, row.config.skills).flatMap(
-          (c) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase()),
-        ),
+      const known = knownCommandNames(
+        (await app.store.agentCommands(row.id))?.commands,
+        row.config.skills,
       );
       const cls = classifyInput(text, known);
       if (cls.kind === "command") {

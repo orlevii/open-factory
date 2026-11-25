@@ -697,7 +697,13 @@ function renderRows(events: AnyEvent[]) {
 
 test("raw input renders like your message: You, raw, the command in mono", () => {
   const rows = renderRows([
-    { type: "operator_input", text: "/code-review src/", by: "@alice", entryId: "e1" },
+    {
+      type: "operator_input",
+      text: "/code-review src/",
+      by: "@alice",
+      byKind: "human",
+      entryId: "e1",
+    },
   ]);
   expect(rows.map((r) => r.kind)).toEqual(["command"]);
   const row = document.querySelector("[data-test-row=command]") as HTMLElement;
@@ -739,7 +745,13 @@ test("/usage and /cost output render as a code plate with Copy", () => {
 test("the row menu copies a command and its output", () => {
   const rows = buildRows(
     [
-      { type: "operator_input", text: "/context", by: "@alice", entryId: "e2" } as AnyEvent,
+      {
+        type: "operator_input",
+        text: "/context",
+        by: "@alice",
+        byKind: "human",
+        entryId: "e2",
+      } as AnyEvent,
       { type: "command_output", command: "context", text: "ctx" } as AnyEvent,
     ].map((e) => se(e)),
   ).rows;

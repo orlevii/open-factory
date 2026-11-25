@@ -146,6 +146,7 @@ export type Row =
       seq: number;
       at: string;
       by: string;
+      fromKind: "human" | "agent";
       text: string;
       key: string;
       pending?: RawPending;
@@ -330,7 +331,7 @@ export const textRowKey = (messageId: string, blockIndex: number) => `t:${messag
 
 /** The key a raw send renders under (I1 §5): its "Sending" block, its queue item and the
  *  `operator_input` row share it, so one node lives from send to timeline. */
-export const rawKey = (clientMessageId: string) => `raw:${clientMessageId}`;
+export const rawKey = (clientMessageIdOrEntryId: string) => `raw:${clientMessageIdOrEntryId}`;
 
 /** A raw block that isn't a timeline row yet: sending (the POST is in flight) or queued behind the
  *  open turn. Its own Cancel is only on a queued block of yours. */
@@ -604,8 +605,9 @@ export function buildRows(events: SessionEvent[]): {
           seq: se.seq,
           at: se.at,
           by: e.by,
+          fromKind: e.byKind,
           text: e.text,
-          key: e.clientMessageId !== undefined ? rawKey(e.clientMessageId) : `${se.seq}`,
+          key: rawKey(e.clientMessageId ?? e.entryId),
         });
         break;
       case "command_output":

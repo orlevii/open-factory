@@ -25,11 +25,13 @@ const RAW_NOTE = "text-muted-foreground";
  */
 export function CommandBlock({
   by,
+  fromKind,
   text,
   at,
   pending,
 }: {
   by: string;
+  fromKind: "human" | "agent";
   text: string;
   at: string;
   pending?: RawPending | undefined;
@@ -61,7 +63,7 @@ export function CommandBlock({
     >
       <SpeakerLine
         from={by}
-        fromKind="human"
+        fromKind={fromKind}
         at={at || undefined}
         status={status}
         action={

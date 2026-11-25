@@ -9,6 +9,7 @@ import {
   type HarnessDriver,
   type HarnessProcess,
   type LiveEvent,
+  neutraliseEnvelopeTags,
   ProcessNotRunningError,
 } from "@open-factory/harness";
 import {
@@ -54,6 +55,7 @@ import {
   forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
+  SelfCommandPendingError,
   type StartFix,
   StopCronsError,
 } from "./errors.ts";
@@ -239,6 +241,9 @@ type CompactEntry = {
   id: string;
   focus?: string;
   by: string;
+  /** The human sender; an agent's entry (`send_command`) has none, so nobody can cancel it. */
+  userId?: string;
+  self?: boolean;
   createdAt: Date;
   clientMessageId?: string;
 };
@@ -466,6 +471,9 @@ export class AgentRuntime {
   private heldTimer: ReturnType<typeof setTimeout> | undefined;
   private heldFiredFor: number | undefined; // the due time the held timer last fired for: never fired twice
   private compactInFlight = false;
+  /** A manual `compact_failed` arrived while `compactInFlight`: whether Claude then sends the compact's own
+   *  `turn_end{command: "compact"}` is unverified, so the next origin-less `turn_end` also ends the compact. */
+  private compactFailedSeen = false;
   /**
    * I1 §6.3 (D3): the user's message a turn is working on, read synchronously for `GET /chat`. `key` is the id of the
    * user's first message in the batch (or, with none awaiting, the first absorbed into the open turn); `since` is that
@@ -481,6 +489,10 @@ export class AgentRuntime {
 
   /** I1 §5.1: a raw entry was written and its turn hasn't ended; nothing is written behind it (like a compact). */
   private rawInFlight = false;
+  /** I1 §7: the written raw entry is the agent's own command. */
+  private rawSelf = false;
+  /** I1 §7: the agent's own `/compact` was written; `failed` once a `compact_failed` came after it. Gone on exit. */
+  private selfCompact: { failed: boolean } | undefined;
   /** U3 §13.3: written commands' ids and senders (the newest few), for the Cancel that arrives too late. */
   private readonly writtenRaw = new Map<string, string>();
   /** U3 §13.3: `userId \0 clientMessageId` → the dispatch's entry, queued or written (the newest few). */
@@ -824,23 +836,37 @@ export class AgentRuntime {
     });
   }
 
+  /** I1 §7: one command queued for itself per agent: queued, or written with its turn still running. */
+  private selfCommandPending(): boolean {
+    return (
+      this.queue.some((e) => (e.kind === "raw" || e.kind === "compact") && e.self) ||
+      Boolean(this.selfCompact) ||
+      (this.rawInFlight && this.rawSelf)
+    );
+  }
+
+  /** `focus` is neutralised here (§5.1.3), so every caller is covered. */
   async compact(c: {
     focus?: string;
     byHandle: string;
     userId?: string;
     clientMessageId?: string;
+    self?: boolean;
   }): Promise<QueueItem> {
     const entry: CompactEntry = {
       kind: "compact",
       id: randomUUID(),
       by: `@${c.byHandle}`,
       createdAt: new Date(),
-      ...(c.focus ? { focus: c.focus } : {}),
+      ...(c.userId ? { userId: c.userId } : {}),
+      ...(c.self ? { self: true } : {}),
+      ...(c.focus ? { focus: neutraliseEnvelopeTags(c.focus) } : {}),
       ...(c.clientMessageId ? { clientMessageId: c.clientMessageId } : {}),
     };
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (c.self && this.selfCommandPending()) throw new SelfCommandPendingError();
       // A retry (a lost 202) returns the earlier dispatch and queues nothing, as for raw input.
       const retryKey =
         c.userId && c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
@@ -889,6 +915,7 @@ export class AgentRuntime {
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (c.self && this.selfCommandPending()) throw new SelfCommandPendingError();
       // A retry (a lost 202) returns the earlier dispatch, queued, written or cancelled, and writes nothing.
       const retryKey =
         c.userId && c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
@@ -1880,6 +1907,7 @@ export class AgentRuntime {
             err instanceof NoOpenTurnError ||
             err instanceof CompactingError ||
             err instanceof CommandsUnsupportedError ||
+            err instanceof SelfCommandPendingError ||
             err instanceof RecoveryRefusedError ||
             err instanceof NotSenderError ||
             err instanceof AlreadyDeliveredError ||
@@ -1940,7 +1968,7 @@ export class AgentRuntime {
             kind: "raw",
             body: e.text,
             from: e.by,
-            fromKind: e.self ? "agent" : "human",
+            fromKind: e.userId ? "human" : "agent",
             createdAt: e.createdAt.toISOString(),
             ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
             ...(this.proc && this.turnOpen() ? { waitReason: "turn" as const } : {}),
@@ -1949,7 +1977,7 @@ export class AgentRuntime {
             id: e.id,
             kind: "compact",
             from: e.by,
-            fromKind: "human",
+            fromKind: e.userId ? "human" : "agent",
             createdAt: e.createdAt.toISOString(),
             ...(e.focus ? { focus: e.focus } : {}),
             ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
@@ -2763,7 +2791,14 @@ export class AgentRuntime {
         this.lastActivityAt = Date.now();
         this.persistActivity(); // the turn_end event and the turn row are written (S7 §10.2)
         await this.oweNoticeIfCutOff();
-        if (e.command === "compact") this.compactInFlight = false;
+        if (e.command === "compact" || (this.compactFailedSeen && !e.originKind)) {
+          this.compactInFlight = false;
+          this.compactFailedSeen = false;
+          // I1 §7: decided once, here: failed if a `compact_failed` came since the compact was written.
+          const own = this.selfCompact;
+          this.selfCompact = undefined;
+          if (own) await this.addNotice("compact_continue", notices.compactContinue(own));
+        }
         // U3 §13.3: the command's turn (the first origin-less one after the write) ends its barrier.
         if (!e.originKind) this.rawInFlight = false;
         if (e.originKind === "task-notification")
@@ -2805,6 +2840,13 @@ export class AgentRuntime {
             "could not record the rate-limit status",
           );
         }
+        break;
+      case "compact_failed":
+        if (e.trigger === "manual") {
+          if (this.selfCompact) this.selfCompact.failed = true;
+          if (this.compactInFlight) this.compactFailedSeen = true;
+        }
+        await this.append(this.openTurnId, e);
         break;
       case "rate_limited":
         await this.append(this.openTurnId, e);
@@ -2944,7 +2986,9 @@ export class AgentRuntime {
     this.turnStartedAt = undefined;
     this.releaseHold();
     this.compactInFlight = false;
+    this.compactFailedSeen = false;
     this.rawInFlight = false;
+    this.selfCompact = undefined; // no notice: the restart's own notice covers it
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
     const batchUnanswered = this.awaiting.length > 0;
     // Stamped by the close below (I1 §6.3). A batch written before session_started is still in `rolledBack`: it was
@@ -3708,6 +3752,8 @@ export class AgentRuntime {
           break;
         }
         this.compactInFlight = true;
+        this.compactFailedSeen = false;
+        this.selfCompact = head.self ? { failed: false } : undefined;
         await this.append(null, {
           type: "control",
           cmd: "compact",
@@ -3771,6 +3817,7 @@ export class AgentRuntime {
       return;
     }
     this.rawInFlight = true;
+    this.rawSelf = Boolean(head.self);
     this.writtenRaw.set(head.id, head.userId ?? "");
     if (this.writtenRaw.size > WRITTEN_RAW_KEPT) {
       const [oldest] = this.writtenRaw.keys();
@@ -3780,6 +3827,7 @@ export class AgentRuntime {
       type: "operator_input",
       text: head.text,
       by: head.by,
+      byKind: head.userId ? "human" : "agent",
       entryId: head.id,
       ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
     });

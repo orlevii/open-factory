@@ -1334,6 +1334,7 @@ test("↑ recall fills the box with your newest raw input, as typed", async () =
         type: "operator_input",
         text: "/code-review src/",
         by: "@alice",
+        byKind: "human",
         entryId: "e1",
       },
     ],

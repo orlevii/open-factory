@@ -5,7 +5,8 @@ export type NoticeType =
   | "restart"
   | "restart_crons"
   | "rate_limit_reset"
-  | "crons_stopped";
+  | "crons_stopped"
+  | "compact_continue";
 
 const tasksSentence = (tasks: string[]) =>
   tasks.length
@@ -60,6 +61,12 @@ export const notices = {
   /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). */
   cronsStopped(i: { by: string; crons: string[] }): string {
     return `${i.by} stopped your crons: ${i.crons.join("; ")}. Don't recreate them unless you are asked to.`;
+  },
+  /** I1 §7: an agent compacted itself. Fixed text: Claude's failure text is process output and is never quoted. */
+  compactContinue(i: { failed: boolean }): string {
+    return i.failed
+      ? "Your /compact didn't run (see the Session). Continue where you left off."
+      : "Your /compact finished. Continue where you left off.";
   },
   /** `at` only when the reset time was exact. */
   rateLimitReset(i: { credential: string; at?: Date }): string {

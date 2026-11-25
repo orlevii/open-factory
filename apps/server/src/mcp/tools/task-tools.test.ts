@@ -52,6 +52,7 @@ test("every agent lists the five task tools; a spawner has two more", async () =
     "list_schedules",
     "list_tasks",
     "schedule_message",
+    "send_command",
     "send_message",
     "update_task",
   ];

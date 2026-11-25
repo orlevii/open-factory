@@ -192,21 +192,3 @@ describe("PUT", () => {
     expect(r.json().error.code).toBe("ephemeral_agent");
   });
 });
-
-describe("agent detail model", () => {
-  test("default, then the agent's own", async () => {
-    await reset();
-    expect((await call("GET", "/api/agents/dev")).json().model).toEqual({
-      value: null,
-      source: "default",
-    });
-    await t.db
-      .update(schema.agents)
-      .set({ config: { template: { model: "opus" } } })
-      .where(eq(schema.agents.slug, "dev"));
-    expect((await call("GET", "/api/agents/dev")).json().model).toEqual({
-      value: "opus",
-      source: "agent",
-    });
-  });
-});

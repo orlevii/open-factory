@@ -4,7 +4,6 @@ import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
   type Actor,
-  type AgentModel,
   type AgentOverlay,
   type AgentSummary,
   actorBy,
@@ -991,18 +990,6 @@ export class AgentService {
   /** The overlay as stored; one that fails its schema (an agent made before I2) is kept as is for the editor to fix. */
   private overlayOf(row: AgentRow): Record<string, unknown> {
     return row.config as Record<string, unknown>;
-  }
-
-  /** I2 §12.3: the model the agent runs with and where it comes from, read from the rows (no disk, no scan). */
-  async modelOf(slug: string): Promise<AgentModel> {
-    const row = await this.rowBySlug(slug);
-    const own = agentOverlaySchema.safeParse(this.overlayOf(row));
-    const mine = own.success ? own.data.template?.model : undefined;
-    if (mine) return { value: mine, source: "agent" };
-    const doc = await this.d.templates.lastValid(row.template);
-    const theirs = doc?.template.model;
-    if (typeof theirs === "string" && theirs) return { value: theirs, source: "template" };
-    return { value: null, source: "default" };
   }
 
   async archive(slug: string, actor: Actor): Promise<AgentSummary> {

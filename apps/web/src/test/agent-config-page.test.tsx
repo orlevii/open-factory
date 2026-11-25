@@ -18,8 +18,8 @@ vi.mock("@/lib/ws", () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 const DOC: ConfigDoc = {
-  template: { model: "sonnet" },
-  settings: { permissions: { allow: ["Bash(git:*)"] } },
+  template: { model: "sonnet", can_spawn: ["reviewer"] },
+  settings: {},
   mcp: { mcpServers: {} },
 };
 
@@ -88,8 +88,10 @@ async function toRaw() {
   });
 }
 
-async function addAllowRule(rule: string) {
-  await userEvent.type(screen.getByRole("textbox", { name: "Add allow rule" }), `${rule}{Enter}`);
+const warmWindow = () => screen.getByRole("textbox", { name: "Warm window" });
+async function setWarmWindow(minutes: string) {
+  await userEvent.clear(warmWindow());
+  await userEvent.type(warmWindow(), minutes);
 }
 
 test("the page: header, tabs, the template's rows, and a footer in the flow while clean", async () => {
@@ -98,7 +100,7 @@ test("the page: header, tabs, the template's rows, and a footer in the flow whil
   expect(screen.getByRole("link", { name: "dev" })).toHaveAttribute("href", "/templates/dev");
   expect(screen.getByRole("link", { name: "← @ana" })).toHaveAttribute("href", "/agents/ana/chat");
   expect(tab("Configuration")).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByText("Bash(git:*)")).toBeInTheDocument();
+  expect(screen.getByText("reviewer")).toBeInTheDocument();
   // The template's own skills come from the template config GET.
   expect(await screen.findByText("notes")).toBeInTheDocument();
   expect(footer()).not.toHaveAttribute("data-sticky");
@@ -128,16 +130,16 @@ test("Discard works with only an MCP editor open, and closes it", async () => {
 test("the footer is sticky only while dirty, or while an outcome shows", async () => {
   await open();
   expect(footer()).not.toHaveAttribute("data-sticky");
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   expect(footer()).toHaveAttribute("data-sticky");
   await userEvent.click(save());
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.saved)).toBeInTheDocument();
   expect(footer()).toHaveAttribute("data-sticky"); // the outcome shows
   expect(puts()[0]?.body).toEqual({
-    overlay: { settings: { permissions: { allow: ["Read"] } } },
+    overlay: { template: { warm_window_minutes: 30 } },
     baseVersion: "v1",
   });
-  await addAllowRule("Write"); // the next edit ends "Saved."
+  await setWarmWindow("45"); // the next edit ends "Saved."
   expect(within(footer()).queryByText(CONFIG_PAGE_MSG.saved)).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
   await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
@@ -194,10 +196,11 @@ test("the raw text and its key order survive a visit to the form with no edit; a
   expect(screen.getByRole("textbox", { name: "Raw JSON" })).toHaveValue(text);
 
   await userEvent.click(tab("Configuration"));
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   const after = await toRaw();
   expect(JSON.parse(after.value)).toEqual({
-    settings: { zeta: 1, alpha: { b: 2, a: 1 }, permissions: { allow: ["Read"] } },
+    settings: { zeta: 1, alpha: { b: 2, a: 1 } },
+    template: { warm_window_minutes: 30 },
   });
   expect(after.value).not.toBe(text);
 });
@@ -207,29 +210,32 @@ test("an unknown settings key added in Raw survives a form save (acceptance 12)"
   const raw = await toRaw();
   fireEvent.change(raw, { target: { value: '{"settings": {"futureKey": {"x": [1, 2]}}}' } });
   await userEvent.click(tab("Configuration"));
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   await userEvent.click(save());
   await waitFor(() => expect(puts()).toHaveLength(1));
   expect(puts()[0]?.body).toEqual({
-    overlay: { settings: { futureKey: { x: [1, 2] }, permissions: { allow: ["Read"] } } },
+    overlay: {
+      settings: { futureKey: { x: [1, 2] } },
+      template: { warm_window_minutes: 30 },
+    },
     baseVersion: "v1",
   });
 });
 
 test("Discard is instant, with Undo until the next edit", async () => {
   await open();
-  await addAllowRule("Read");
-  expect(screen.getByText("Read")).toBeInTheDocument();
+  await setWarmWindow("30");
+  expect(warmWindow()).toHaveValue("30");
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-  expect(screen.queryByText("Read")).toBeNull();
+  expect(warmWindow()).toHaveValue("");
   expect(within(footer()).getByText(CONFIG_PAGE_MSG.discarded)).toBeInTheDocument();
   await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
-  expect(screen.getByText("Read")).toBeInTheDocument();
+  expect(warmWindow()).toHaveValue("30");
 
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-  await addAllowRule("Write");
+  await setWarmWindow("45");
   expect(within(footer()).queryByRole("button", { name: "Undo" })).toBeNull();
-  expect(screen.queryByText("Read")).toBeNull();
+  expect(warmWindow()).toHaveValue("45");
 });
 
 test("409: Changed since you opened it, and Reload rebases, keeping my skill beside theirs", async () => {
@@ -261,12 +267,16 @@ test("409: Changed since you opened it, and Reload rebases, keeping my skill bes
 test("drift: a refetch under my edits shows the conflict line with Reload, and the notice lists only my changes", async () => {
   agent = { ...agent, status: "idle" };
   const { queryClient } = await open();
-  await addAllowRule("Read");
-  expect(screen.getByText("Saving restarts @ana when idle to apply: 1 rule.")).toBeInTheDocument();
+  await setWarmWindow("30");
+  expect(
+    screen.getByText("Saving restarts @ana when idle to apply: warm window."),
+  ).toBeInTheDocument();
   config = cfg({ overlay: { template: { model: "opus" } }, version: "v2" });
   await queryClient.invalidateQueries({ queryKey: ["agent-config", "ana"] });
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.changedSince)).toBeInTheDocument();
-  expect(screen.getByText("Saving restarts @ana when idle to apply: 1 rule.")).toBeInTheDocument();
+  expect(
+    screen.getByText("Saving restarts @ana when idle to apply: warm window."),
+  ).toBeInTheDocument();
   put = (body) => saved((body as { overlay: unknown }).overlay, { version: "v3" });
   await userEvent.click(within(footer()).getByRole("button", { name: "Reload" }));
   await waitFor(() =>
@@ -275,14 +285,14 @@ test("drift: a refetch under my edits shows the conflict line with Reload, and t
   await userEvent.click(save());
   await waitFor(() => expect(puts()).toHaveLength(1));
   expect(puts()[0]?.body).toEqual({
-    overlay: { template: { model: "opus" }, settings: { permissions: { allow: ["Read"] } } },
+    overlay: { template: { model: "opus", warm_window_minutes: 30 } },
     baseVersion: "v2",
   });
 });
 
 test("Save while an MCP server editor is open: refused, nothing sent, focus on its Name", async () => {
   await open();
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   await userEvent.click(screen.getByRole("button", { name: "Add server" }));
   await userEvent.click(save());
   expect(within(footer()).getByText(CONFIG_FORM_MSG.finishServer)).toBeInTheDocument();
@@ -292,7 +302,7 @@ test("Save while an MCP server editor is open: refused, nothing sent, focus on i
 
 test("Discard and Undo close an open MCP editor, so its Done can't bring discarded edits back", async () => {
   await open();
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   await userEvent.click(screen.getByRole("button", { name: "Add server" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "gh");
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
@@ -303,13 +313,13 @@ test("Discard and Undo close an open MCP editor, so its Done can't bring discard
   expect(within(footer()).queryByText(CONFIG_FORM_MSG.finishServer)).toBeNull();
   await waitFor(() => expect(puts()).toHaveLength(1));
   expect(puts()[0]?.body).toMatchObject({
-    overlay: { settings: { permissions: { allow: ["Read"] } } },
+    overlay: { template: { warm_window_minutes: 30 } },
   });
 });
 
 test("an edit in Raw that doesn't parse still ends an earlier Discard's Undo", async () => {
   await open();
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
   const raw = await toRaw();
   fireEvent.change(raw, { target: { value: "{ nope" } });
@@ -317,7 +327,7 @@ test("an edit in Raw that doesn't parse still ends an earlier Discard's Undo", a
   await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
   expect(screen.getByRole("textbox", { name: "Raw JSON" })).toHaveValue("{}\n");
   await userEvent.click(tab("Configuration"));
-  expect(screen.queryByText("Read")).toBeNull();
+  expect(warmWindow()).toHaveValue("");
 });
 
 test("AC11: a server added in the form is the same entry in Raw JSON", async () => {
@@ -343,7 +353,7 @@ test("M1: the form's own state (an open MCP editor) survives a visit to Raw", as
 
 test("Combined is the template with this agent's draft, read-only", async () => {
   await open();
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   await toRaw();
   await userEvent.click(screen.getByRole("radio", { name: "Combined" }));
   const combined = await waitFor(() => {
@@ -352,12 +362,12 @@ test("Combined is the template with this agent's draft, read-only", async () => 
     return t;
   });
   expect(combined).toHaveAttribute("readonly");
-  expect(JSON.parse(combined.value).settings.permissions.allow).toEqual(["Bash(git:*)", "Read"]);
+  expect(JSON.parse(combined.value).template.warm_window_minutes).toBe(30);
 });
 
 test("server issues land on their fields, and a 400 replaces them", async () => {
   await open();
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   const rejected = (message: string) =>
     json(
       {
@@ -367,9 +377,9 @@ test("server issues land on their fields, and a 400 replaces them", async () => 
           issues: [
             {
               severity: "error",
-              file: "settings.json",
+              file: "template.yaml",
               message,
-              path: "settings.permissions.allow.0",
+              path: "template.warm_window_minutes",
             },
           ],
         },
@@ -380,26 +390,24 @@ test("server issues land on their fields, and a 400 replaces them", async () => 
   await userEvent.click(save());
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.hasErrors)).toBeInTheDocument();
   // The message sits on the row the path names (the row's remove button is described by it).
-  expect(screen.getByRole("button", { name: "Remove allow rule 1" })).toHaveAccessibleDescription(
-    "Unknown tool.",
-  );
+  expect(warmWindow()).toHaveAccessibleDescription("Unknown tool.");
   put = () => rejected("Not a tool either.");
   await userEvent.click(save());
   expect(await screen.findByText("Not a tool either.")).toBeInTheDocument();
   expect(screen.queryByText("Unknown tool.")).toBeNull();
-  expect(screen.getByRole("button", { name: "Remove allow rule 1" })).toHaveAccessibleDescription(
-    "Not a tool either.",
-  );
+  expect(warmWindow()).toHaveAccessibleDescription("Not a tool either.");
 });
 
 test("save outcome: a running agent restarts when idle", async () => {
   agent = { ...agent, status: "idle" };
   await open();
-  await addAllowRule("Read");
-  expect(screen.getByText("Saving restarts @ana when idle to apply: 1 rule.")).toBeInTheDocument();
+  await setWarmWindow("30");
+  expect(
+    screen.getByText("Saving restarts @ana when idle to apply: warm window."),
+  ).toBeInTheDocument();
   put = (body) =>
     saved((body as { overlay: unknown }).overlay, {
-      changes: ["added allow rule Read"],
+      changes: ["warm window: 70 → 30"],
       restartChecked: true,
     });
   await userEvent.click(save());
@@ -415,8 +423,8 @@ test("broken template: a persistent block, a read-only form with no base, Raw ed
     "href",
     "/templates/dev",
   );
-  expect(screen.queryByRole("textbox", { name: "Add allow rule" })).toBeNull();
-  expect(screen.queryByText("Bash(git:*)")).toBeNull();
+  expect(warmWindow()).toHaveAttribute("readonly");
+  expect(screen.queryByText("reviewer")).toBeNull();
   const raw = await toRaw();
   fireEvent.change(raw, { target: { value: '{"template": {"model": "opus"}}' } });
   await userEvent.click(save());
@@ -431,7 +439,7 @@ test("archived: a persistent block, and the form stays editable", async () => {
   expect(
     screen.getByText("@ana is archived. Changes apply when it's restored."),
   ).toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Add allow rule" })).toBeInTheDocument();
+  expect(warmWindow()).toBeInTheDocument();
 });
 
 test("restart pending: a top line", async () => {

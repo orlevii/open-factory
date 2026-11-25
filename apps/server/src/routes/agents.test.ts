@@ -60,7 +60,6 @@ test("list and detail", async () => {
   });
   expect((await req("GET", "/api/agents/dev")).json()).toEqual({
     agent: expect.objectContaining({ slug: "dev" }),
-    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 0,
   });

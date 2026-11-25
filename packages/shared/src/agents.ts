@@ -147,16 +147,8 @@ export const agentListSchema = z.object({
   more: z.boolean().default(false),
   running: z.object({ count: z.number().int().nonnegative() }),
 });
-/** The model an agent runs with and where it comes from (I2 §12.3): its own overlay, its template, or Claude's default. */
-export const agentModelSchema = z.object({
-  value: z.string().nullable(),
-  source: z.enum(["agent", "template", "default"]),
-});
-export type AgentModel = z.infer<typeof agentModelSchema>;
-
 export const agentDetailSchema = z.object({
   agent: agentSummarySchema,
-  model: agentModelSchema,
   queue: z.array(queueItemSchema),
   lastSeq: z.number().int().nonnegative(),
 });

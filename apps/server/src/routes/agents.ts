@@ -155,12 +155,11 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get("/api/agents/:slug", { schema: { params: slugParams } }, async (req, reply) => {
     const rt = await app.runtimes.bySlug(req.params.slug);
     if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-    const [agent, model, lastSeq] = await Promise.all([
+    const [agent, lastSeq] = await Promise.all([
       app.agents.summary(req.params.slug),
-      app.agents.modelOf(req.params.slug),
       app.store.lastSeq(rt.agent.id),
     ]);
-    return agentDetailSchema.parse({ agent, model, queue: rt.queueItems(), lastSeq });
+    return agentDetailSchema.parse({ agent, queue: rt.queueItems(), lastSeq });
   });
 
   // U3 §13.3: the commands this agent may run (the allowed set the dispatch route enforces too).

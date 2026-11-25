@@ -72,7 +72,6 @@ const created = (slug = "team-lead") => ({
   [`GET /api/agents/${slug}`]: () =>
     json({
       agent: agentSummary({ slug }),
-      model: { value: null, source: "default" },
       queue: [],
       lastSeq: 0,
     }),

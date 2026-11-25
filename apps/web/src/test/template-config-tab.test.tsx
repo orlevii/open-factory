@@ -17,7 +17,7 @@ vi.mock("@/lib/ws", () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 const yamlError = { severity: "error", file: "template.yaml", message: "YAML: bad", line: 1 };
-const SETTINGS = '{\n  "permissions": {\n    "allow": ["Bash(git:*)"]\n  }\n}\n';
+const SETTINGS = '{\n  "futureKey": { "x": [1, 2] }\n}\n';
 const detail = (issues: unknown[] = [], settings = SETTINGS, hash = "h-s1") => ({
   template: {
     name: "dev",
@@ -35,8 +35,8 @@ const detail = (issues: unknown[] = [], settings = SETTINGS, hash = "h-s1") => (
 });
 // `futureKey`: a settings.json key the form doesn't know, which a form save must keep (AC 12).
 const DOC: ConfigDoc = {
-  template: {},
-  settings: { futureKey: { x: [1, 2] }, permissions: { allow: ["Bash(git:*)"] } },
+  template: { can_spawn: ["reviewer"] },
+  settings: { futureKey: { x: [1, 2] } },
   mcp: { mcpServers: {} },
 };
 const tcfg = (over: Partial<TemplateConfigResponse> = {}): TemplateConfigResponse => ({
@@ -93,8 +93,11 @@ async function toFile(name: string) {
     return t;
   });
 }
-const addAllowRule = (rule: string) =>
-  userEvent.type(screen.getByRole("textbox", { name: "Add allow rule" }), `${rule}{Enter}`);
+const warmWindow = () => screen.getByRole("textbox", { name: "Warm window" });
+const setWarmWindow = async (minutes: string) => {
+  await userEvent.clear(warmWindow());
+  await userEvent.type(warmWindow(), minutes);
+};
 
 test("a valid template opens on Configuration, first, set apart from the file tabs", async () => {
   await open();
@@ -107,7 +110,7 @@ test("a valid template opens on Configuration, first, set apart from the file ta
       "Used by 3 agents. Saving restarts the ones whose configuration changes, when idle.",
     ),
   ).toBeInTheDocument();
-  expect(screen.getByText("Bash(git:*)")).toBeInTheDocument();
+  expect(screen.getByText("reviewer")).toBeInTheDocument();
 });
 
 test("a broken template opens on template.yaml, and its Configuration form is read-only", async () => {
@@ -117,7 +120,7 @@ test("a broken template opens on template.yaml, and its Configuration form is re
   await waitFor(() => expect(tab(/template\.yaml/)).toHaveAttribute("aria-selected", "true"));
   await userEvent.click(tab(/^Configuration/));
   expect(await screen.findByText("3 agents can't start until this is fixed.")).toBeInTheDocument();
-  expect(screen.queryByRole("textbox", { name: "Add allow rule" })).toBeNull();
+  expect(warmWindow()).toHaveAttribute("readonly");
   expect(screen.getByRole("button", { name: "Save changes" })).toHaveAttribute(
     "aria-disabled",
     "true",
@@ -126,7 +129,7 @@ test("a broken template opens on template.yaml, and its Configuration form is re
 
 test("a dirty form makes the config file tabs read-only, and marks the Configuration tab", async () => {
   await open();
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   expect(tab(/^Configuration/)).toHaveAccessibleName(/^Configuration\s*\(unsaved\)$/);
   const settings = await toFile("settings.json");
   expect(settings).toHaveAttribute("readonly");
@@ -153,7 +156,7 @@ test("a dirty config file makes the form read-only, with a jump to it", async ()
   expect(
     screen.getAllByText("settings.json has unsaved edits. Save or discard them first."),
   ).toHaveLength(1);
-  expect(screen.queryByRole("textbox", { name: "Add allow rule" })).toBeNull();
+  expect(warmWindow()).toHaveAttribute("readonly");
   await userEvent.click(screen.getByRole("button", { name: "Open settings.json" }));
   expect(tab(/settings\.json/)).toHaveAttribute("aria-selected", "true");
 });
@@ -162,12 +165,12 @@ test("after a file-tab save with the form clean, the form reloads silently", asy
   await open();
   const before = calls("GET", "/api/templates/dev/config").length;
   const settings = await toFile("settings.json");
-  const next = '{\n  "permissions": {\n    "allow": ["Bash(git:*)", "Read"]\n  }\n}\n';
+  const next = '{\n  "futureKey": { "x": [1, 2] },\n  "env": { "FROM_FILE": "1" }\n}\n';
   fireEvent.change(settings, { target: { value: next } });
   config = tcfg({
     doc: {
       ...DOC,
-      settings: { futureKey: { x: [1, 2] }, permissions: { allow: ["Bash(git:*)", "Read"] } },
+      settings: { futureKey: { x: [1, 2] }, env: { FROM_FILE: "1" } },
     },
     hashes: { "template.yaml": "h-y1", "settings.json": "h-s2", "mcp.json": null },
   });
@@ -176,7 +179,7 @@ test("after a file-tab save with the form clean, the form reloads silently", asy
     expect(calls("GET", "/api/templates/dev/config").length).toBeGreaterThan(before),
   );
   await userEvent.click(tab(/^Configuration/));
-  expect(await screen.findByText("Read")).toBeInTheDocument();
+  expect(await screen.findByText("FROM_FILE")).toBeInTheDocument();
   // Silent: the form's footer shows no outcome and stays in the flow.
   expect(within(footer()).queryByRole("alert")).toBeEmptyDOMElement();
   expect(within(footer()).getAllByRole("status")[0]).toBeEmptyDOMElement();
@@ -185,25 +188,27 @@ test("after a file-tab save with the form clean, the form reloads silently", asy
 
 test("a Configuration save sends the doc with the base hashes, then the file tabs read the files again", async () => {
   await open();
-  await addAllowRule("Read");
-  tpl = detail([], '{\n  "permissions": {\n    "allow": ["Bash(git:*)", "Read"]\n  }\n}\n', "h-s2");
+  await setWarmWindow("30");
+  tpl = detail([], SETTINGS, "h-s2");
+  tpl.template.files[0] = {
+    file: "template.yaml",
+    content: "name: dev\nwarm_window_minutes: 30\n",
+    hash: "h-y2",
+  };
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.saved)).toBeInTheDocument();
   expect(calls("PUT", "/api/templates/dev/config")[0]?.body).toEqual({
-    doc: {
-      ...DOC,
-      settings: { futureKey: { x: [1, 2] }, permissions: { allow: ["Bash(git:*)", "Read"] } },
-    },
+    doc: { ...DOC, template: { can_spawn: ["reviewer"], warm_window_minutes: 30 } },
     baseHashes: { "template.yaml": "h-y1", "settings.json": "h-s1", "mcp.json": null },
   });
-  const settings = await toFile("settings.json");
-  expect(settings.value).toContain('"Read"');
-  expect(settings).not.toHaveAttribute("readonly");
+  const yaml = await toFile("template.yaml");
+  expect(yaml.value).toContain("warm_window_minutes: 30");
+  expect(yaml).not.toHaveAttribute("readonly");
 });
 
 test("changed on disk: the conflict line with Reload, which rebases onto the files as they are", async () => {
   await open();
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   putConfig = () => json({ error: { code: "changed_on_disk", message: "Changed on disk." } }, 409);
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.changedSince)).toBeInTheDocument();
@@ -224,8 +229,8 @@ test("changed on disk: the conflict line with Reload, which rebases onto the fil
   await waitFor(() => expect(calls("PUT", "/api/templates/dev/config")).toHaveLength(2));
   expect(calls("PUT", "/api/templates/dev/config")[1]?.body).toEqual({
     doc: {
-      template: { model: "opus" },
-      settings: { futureKey: { x: [1, 2] }, permissions: { allow: ["Bash(git:*)", "Read"] } },
+      template: { model: "opus", warm_window_minutes: 30 },
+      settings: { futureKey: { x: [1, 2] } },
       mcp: { mcpServers: {} },
     },
     baseHashes: { "template.yaml": "h-y2", "settings.json": "h-s1", "mcp.json": null },
@@ -234,11 +239,11 @@ test("changed on disk: the conflict line with Reload, which rebases onto the fil
 
 test("Discard with Undo, and Save refused while an MCP server editor is open", async () => {
   await open();
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-  expect(screen.queryByText("Read")).toBeNull();
+  expect(warmWindow()).toHaveValue("");
   await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
-  expect(screen.getByText("Read")).toBeInTheDocument();
+  expect(warmWindow()).toHaveValue("30");
   await userEvent.click(screen.getByRole("button", { name: "Add server" }));
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(within(footer()).getByText(CONFIG_FORM_MSG.finishServer)).toBeInTheDocument();
@@ -253,7 +258,7 @@ test("Discard closes an open MCP editor; an open editor survives a visit to mcp.
   await userEvent.click(tab(/mcp\.json/));
   await userEvent.click(tab(/^Configuration/));
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("gh");
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
   expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
   await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
@@ -281,7 +286,7 @@ test("the File select lists every tab with its marks, and choosing one selects t
   // An error in settings.json opens template.yaml; the form (its doc mocked valid) is a click away.
   await userEvent.click(await screen.findByRole("tab", { name: /^Configuration/ }));
   await screen.findByRole("heading", { level: 2, name: "Model" });
-  await addAllowRule("Read");
+  await setWarmWindow("30");
   const picker = screen.getByRole("combobox", { name: "File" });
   await userEvent.click(picker);
   const names = screen.getAllByRole("option").map((o) => o.textContent);

@@ -101,16 +101,6 @@ export const CONFIG_PAGE_COPY = {
   spawnedLead: "Spawned agents use their template's configuration",
   spawnedPlus: ", plus",
   spawnedLimits: "'s deny rules and secret limits.",
-  /** Edit agent's model summary (spec §12.6): "Model opus (this agent) · Open configuration". */
-  model: "Model",
-  modelDefault: "Claude Code default",
-} as const;
-
-/** Where the model comes from, after its value in Edit agent's summary. */
-export const MODEL_SOURCE_COPY = {
-  agent: " (this agent)",
-  template: " (from template)",
-  default: "",
 } as const;
 
 /** "Saved. Restarts @ana when idle.": only when the restart notice would have shown (running, with changes). */

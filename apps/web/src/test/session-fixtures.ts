@@ -64,7 +64,6 @@ export const detail = (
   lastSeq = 10,
 ): AgentDetail => ({
   agent: agentSummary(over),
-  model: { value: null, source: "default" },
   queue,
   lastSeq,
 });

@@ -455,7 +455,6 @@ test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
     "GET /api/agents/dev": () =>
       json({
         agent: agentSummary(),
-        model: { value: null, source: "default" },
         queue: [],
         lastSeq: 0,
       }),
@@ -584,7 +583,6 @@ test("Restore mentions pending messages when the agent has some", async () => {
     "GET /api/agents/dev": () =>
       json({
         agent: agentSummary(),
-        model: { value: null, source: "default" },
         queue: [
           {
             id: "q1",

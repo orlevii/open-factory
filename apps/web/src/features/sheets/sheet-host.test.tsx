@@ -267,7 +267,6 @@ test("intent prefetch has its own freshness window: hover, press and open fetch 
     "GET /api/agents/lead": () =>
       json({
         agent: agentSummary({ slug: "lead" }),
-        model: { value: null, source: "default" },
         queue: [],
         lastSeq: 0,
       }),

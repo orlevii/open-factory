@@ -164,12 +164,12 @@ test("a hand-typed reserved name is refused with the reserved message, nothing s
   const api = mockApi({ "GET /api/templates": list() });
   mount();
   const d = await dialog();
-  await userEvent.type(within(d).getByLabelText("Display name"), "Images");
-  expect(within(d).getByText("templates/images-2")).toBeInTheDocument();
+  await userEvent.type(within(d).getByLabelText("Display name"), "New");
+  expect(within(d).getByText("templates/new-2")).toBeInTheDocument();
   await userEvent.click(within(d).getByRole("button", { name: "Change" }));
   const name = within(d).getByLabelText("Name");
   await userEvent.clear(name);
-  await userEvent.type(name, "images");
+  await userEvent.type(name, "new");
   await userEvent.tab();
   // On blur, before any submit.
   expect(await within(d).findByText("That name is reserved.")).toBeInTheDocument();

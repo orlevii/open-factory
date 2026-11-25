@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { envelopeSchema } from "./messaging.ts";
 import { toolMetaSchema } from "./tool-meta.ts";
+import { cleanupSchema } from "./workspace-cleanup.ts";
 
 const parent = { parentToolUseId: z.string().optional() };
 /**
@@ -184,23 +185,6 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
 ]);
 export type HarnessEvent = z.infer<typeof harnessEventSchema>;
 
-/** One project's result of a spawned agent's worktree cleanup (spec §7.5). */
-export const projectResultSchema = z.object({
-  project: z.string(),
-  removed: z.boolean(),
-  deleted: z.array(z.string()),
-  kept: z.array(
-    z.object({
-      branch: z.string(),
-      commits: z.number().int().optional(),
-      reason: z.literal("elsewhere").optional(),
-    }),
-  ),
-  /** The whole sentence after "<project>: " (e.g. "couldn't clean up: not a git repository"); the renderer adds only the project prefix. */
-  error: z.string().optional(),
-});
-export type ProjectResult = z.infer<typeof projectResultSchema>;
-
 /** Appended by the server, never produced by a driver. */
 export const factoryEventSchema = z.discriminatedUnion("type", [
   z.object({
@@ -302,9 +286,7 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
   /** A terminated spawned agent's worktrees, cleaned up just before its workspace was deleted (I8 spec §7.5). At most one per agent. */
   z.object({
     type: z.literal("workspace_cleanup"),
-    projects: z.array(projectResultSchema),
-    /** Set when git is unavailable on the factory host, so no project could be checked (the host line of the notice). */
-    host: z.enum(["missing", "too_old"]).optional(),
+    ...cleanupSchema.shape,
   }),
 ]);
 export type FactoryEvent = z.infer<typeof factoryEventSchema>;

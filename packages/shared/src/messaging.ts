@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { cleanupSchema } from "./workspace-cleanup.ts";
 
 export const MESSAGE_KINDS = [
   "message",
@@ -121,6 +122,8 @@ export const inboxItemSchema = z.object({
     .optional(),
   /** A `loop_held` notice's hold (I8 §6.4); `status` is live, so the pane can say who ended. */
   loopHold: loopHoldSchema.optional(),
+  /** A `worktrees_kept` notice's cleanup result, so the pane never parses the body (I8 §7.6). */
+  cleanup: cleanupSchema.optional(),
   link: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("session"),

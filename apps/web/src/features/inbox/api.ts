@@ -288,7 +288,7 @@ export function useResumeHold(holdId: string) {
 
 /** Notices whose action lives only in the Inbox: their row links to `/inbox?item=<id>` at every width, and below
  *  1024px the pane opens full-width. */
-export const FULL_WIDTH_NOTICES: readonly string[] = ["loop_held"];
+export const FULL_WIDTH_NOTICES: readonly string[] = ["loop_held", "worktrees_kept"];
 export const isFullWidthNotice = (item: InboxItem): boolean =>
   item.notice !== undefined && FULL_WIDTH_NOTICES.includes(item.notice);
 

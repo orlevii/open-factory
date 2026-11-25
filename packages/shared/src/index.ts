@@ -35,4 +35,5 @@ export * from "./tool-meta.ts";
 export * from "./tree.ts";
 export * from "./usage.ts";
 export * from "./users.ts";
+export * from "./workspace-cleanup.ts";
 export * from "./ws.ts";

@@ -292,4 +292,15 @@ describe("SpawnCleanup.run", () => {
     await expect(run.run(await agentRow("dev"))).resolves.toBeUndefined();
     expect(log.error).toHaveBeenCalled();
   });
+
+  test("the human's inbox item carries the cleanup event; the host line and an empty project list survive", async () => {
+    await make(async () => kept).run(await agentRow("dev"));
+    await make(async () => {
+      throw new GitMissingError();
+    }).run(await agentRow("dead"));
+    const page = await store.inboxPage("u1");
+    const byAbout = (about: string) => page.items.find((i) => i.about === about);
+    expect(byAbout("dev-ab12")?.cleanup).toEqual({ projects: [kept, kept, kept] });
+    expect(byAbout("dead")?.cleanup).toEqual({ projects: [], host: "missing" });
+  });
 });

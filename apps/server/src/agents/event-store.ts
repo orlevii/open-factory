@@ -5,6 +5,7 @@ import {
   anyEventSchema,
   boundVersion,
   type Command,
+  cleanupSchema,
   type ErrorKind,
   formatKey,
   type InboxItem,
@@ -126,6 +127,8 @@ export interface InboxEntry {
   credential?: { name: string; expiresAt: string | null; current: boolean };
   /** A `loop_held` notice's hold (I8 §6.4). */
   loopHold?: InboxItem["loopHold"];
+  /** A `worktrees_kept` notice's cleanup result (I8 §7.6). */
+  cleanup?: InboxItem["cleanup"];
   link:
     | { kind: "session"; agentSlug: string; seq?: number }
     | { kind: "task"; key: string; commentId?: string }
@@ -1466,6 +1469,7 @@ export class EventStore {
   ): Promise<InboxEntry[]> {
     const senders = await this.senderEvents(page.map((r) => r.m));
     const holds = await this.loopHoldsOf(page.map((r) => r.m));
+    const cleanups = await this.cleanupsOf(page.map((r) => r.m));
     const items: InboxEntry[] = [];
     for (const r of page) {
       // I3 §5.8: a credential notice is built first, so it never reaches the session link with an empty slug.
@@ -1524,6 +1528,11 @@ export class EventStore {
         ...(r.m.notice === "loop_held" && r.m.loopHoldId && holds.get(r.m.loopHoldId)
           ? { loopHold: holds.get(r.m.loopHoldId) }
           : {}),
+        ...(r.m.notice === "worktrees_kept" &&
+        r.m.subjectAgentId &&
+        cleanups.get(r.m.subjectAgentId)
+          ? { cleanup: cleanups.get(r.m.subjectAgentId) }
+          : {}),
         link:
           task && r.item.kind !== "message"
             ? {
@@ -1535,6 +1544,32 @@ export class EventStore {
       });
     }
     return items;
+  }
+
+  /** I8 §7.6: the `workspace_cleanup` event of each `worktrees_kept` notice's subject agent (at most one per agent). */
+  private async cleanupsOf(
+    ms: MessageRow[],
+  ): Promise<Map<string, NonNullable<InboxItem["cleanup"]>>> {
+    const ids = [
+      ...new Set(
+        ms.flatMap((m) =>
+          m.notice === "worktrees_kept" && m.subjectAgentId ? [m.subjectAgentId] : [],
+        ),
+      ),
+    ];
+    const out = new Map<string, NonNullable<InboxItem["cleanup"]>>();
+    if (!ids.length) return out;
+    const rows = await this.db
+      .select({ agentId: sessionEvents.agentId, payload: sessionEvents.payload })
+      .from(sessionEvents)
+      .where(
+        and(inArray(sessionEvents.agentId, ids), sql`${sessionEvents.type} = 'workspace_cleanup'`),
+      );
+    for (const r of rows) {
+      const parsed = cleanupSchema.safeParse(r.payload);
+      if (parsed.success) out.set(r.agentId, parsed.data);
+    }
+    return out;
   }
 
   /** I8 §6.4: the hold each `loop_held` notice is about, with its agents' live status and its rows' counts. */

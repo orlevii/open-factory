@@ -6,6 +6,7 @@ import {
   inboxPageSchema,
   readAllResponseSchema,
   readFromResponseSchema,
+  resumeLoopHoldResponseSchema,
   undoReadAllResponseSchema,
   unreadCountSchema,
 } from "@open-factory/shared";
@@ -15,6 +16,7 @@ import {
   type QueryClient,
   queryOptions,
   useInfiniteQuery,
+  useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -263,4 +265,22 @@ export function useOpenItem() {
     },
     [cache],
   );
+}
+
+/** Resume a loop-guard hold (I8 §6.6): the 200's `sentOn` with the moment it answered (the pane shows
+ *  "Resumed by you · {at}" before the refetch brings `resumedAt`). The inbox and the item's own query refetch
+ *  after any outcome: a 409 means someone else resumed first, and its refetch brings who. */
+export function useResumeHold(holdId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`/api/loop-holds/${encodeURIComponent(holdId)}/resume`, {
+        method: "POST",
+        body: {},
+        schema: resumeLoopHoldResponseSchema,
+      });
+      return { sentOn: r.sentOn, at: new Date().toISOString() };
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: inboxQueryKey }),
+  });
 }

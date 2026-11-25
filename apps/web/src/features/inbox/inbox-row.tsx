@@ -54,6 +54,11 @@ function SenderLine({ item }: { item: InboxItem }) {
   return (
     <>
       <Sender item={item} />
+      {item.loopHold && (
+        <span className="shrink-0 font-normal text-muted-foreground">
+          {item.loopHold.resumedAt ? "Resumed" : "Held"}
+        </span>
+      )}
       {item.urgent && (
         // 16px of text inside the border: the badge fits line one's 18px.
         <span className={`shrink-0 rounded-sm border border-border px-1.5 leading-4 ${muted}`}>
@@ -121,7 +126,8 @@ function labelOf(item: InboxItem, time: string, now: number): string {
     item.from.kind === "factory"
       ? `Factory${item.about ? ` about @${item.about}` : ""}`
       : `@${item.from.name}`;
-  return `${unread}From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}, ${time}`;
+  const hold = item.loopHold ? `, ${item.loopHold.resumedAt ? "resumed" : "held"}` : "";
+  return `${unread}From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}${hold}, ${time}`;
 }
 
 // A grid row's single track would stretch to the 4.5rem minimum, and the lines' auto tracks with it

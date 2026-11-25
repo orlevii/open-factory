@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -54,6 +55,7 @@ import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
 import { taskTools } from "./mcp/tools/task-tools.ts";
 import { type TerminatePort, terminateAgentTool } from "./mcp/tools/terminate-agent.ts";
+import { LoopGuard } from "./messaging/loop-guard.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
 import { ProjectService } from "./projects/project-service.ts";
@@ -324,7 +326,24 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     )
       void runtimes.settingsChanged();
   });
-  const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
+  const loopGuard = new LoopGuard({
+    settings,
+    store,
+    bus,
+    runtimes,
+    log: app.log,
+    clock: () => new Date(),
+    newId: randomUUID,
+  });
+  const router = new Router({
+    db: deps.db,
+    store,
+    runtimes,
+    bus,
+    log: app.log,
+    neighborhood,
+    loopGuard,
+  });
   // I2 §7.1: a template change is dispatched off the scan's path, on a per-template serial queue (never awaited there).
   const configChanges = new ConfigChanges({
     agents: dbConfigChangeAgents(deps.db, resolver),

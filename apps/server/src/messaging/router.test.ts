@@ -7,6 +7,7 @@ import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
 import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { LoopGuard } from "./loop-guard.ts";
 import { Router } from "./router.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
@@ -27,6 +28,16 @@ beforeEach(async () => {
 });
 afterEach(() => h.close());
 
+const guardOf = () =>
+  new LoopGuard({
+    settings: h.app.factorySettings,
+    store: h.app.store,
+    bus: h.app.bus,
+    runtimes: h.app.runtimes,
+    log: h.app.log,
+    clock: () => new Date(),
+    newId: randomUUID,
+  });
 const proc = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug).at(-1);
 const settle = async (...slugs: string[]) => {
   for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
@@ -153,6 +164,7 @@ test("hand-offs wait for bootDone", async () => {
     bus: h.app.bus,
     log: h.app.log,
     neighborhood: h.app.neighborhood,
+    loopGuard: guardOf(),
   });
   const a = await h.app.store.agentBySlug("ada");
   const create = h.app.store.createMessage.bind(h.app.store);
@@ -187,6 +199,7 @@ test("after close() no hand-off runs: rows committed during shutdown stay pendin
     bus: h.app.bus,
     log: h.app.log,
     neighborhood: h.app.neighborhood,
+    loopGuard: guardOf(),
   });
   router.bootDone();
   router.close();
@@ -890,5 +903,89 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
       "invalid_attachment",
       "invalid_attachment",
     ]);
+  });
+});
+
+describe("loop guard on list sends", () => {
+  const N = 2;
+  let orCookie = "";
+  beforeEach(async () => {
+    const me = await signUp(h.app, { handle: "or" });
+    orCookie = me.cookie;
+    await h.app.factorySettings.update({ loopGuardMessages: N }, me.user.id);
+    await h.seedAgent({ slug: "cy" });
+  });
+  const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id ?? "";
+  const send = async (from: string, to: string[]) =>
+    (await h.app.router.send({ agentId: await idOf(from) }, to, "ping", false)).results;
+  /** Each direction sends N messages and bob one more, so the next send from ada exceeds N both ways. */
+  async function loopAdaBob() {
+    for (let i = 0; i < N; i++) {
+      await send("ada", ["@bob"]);
+      await send("bob", ["@ada"]);
+    }
+    await send("bob", ["@ada"]);
+  }
+
+  test("the tripping row is held with the note, the human recipient of the same list still gets it, and the held row is never handed over", async () => {
+    await loopAdaBob();
+    const delivered = vi.spyOn(h.app.runtimes, "deliver");
+    const results = await send("ada", ["@bob", "@or"]);
+    expect(results).toMatchObject([
+      {
+        to: "@bob",
+        kind: "agent",
+        status: "held",
+        note: "Held: you and @bob exchanged 6 messages in 1 minute with no human in between. A human must resume this pair in the Inbox; it is sent on then.",
+      },
+      { to: "@or", kind: "human", status: "inbox" },
+    ]);
+    const held = results[0];
+    const [row] =
+      await h.sql`select state, loop_hold_id from messages where id = ${(held as { id: string }).id}`;
+    expect(row?.state).toBe("loop_held");
+    expect(row?.loop_hold_id).toBeTruthy();
+    expect(delivered).not.toHaveBeenCalled();
+    expect(frames).toContainEqual({ type: "inbox_changed" });
+  });
+
+  test("a later send in either direction gets the later-row note", async () => {
+    await loopAdaBob();
+    await send("ada", ["@bob"]);
+    const fromAda = (await send("ada", ["@bob"]))[0];
+    const fromBob = (await send("bob", ["@ada"]))[0];
+    expect(fromAda).toMatchObject({
+      status: "held",
+      note: "Held: messages between you and @bob are held until a human resumes them in the Inbox; it is sent on then.",
+    });
+    expect(fromBob).toMatchObject({
+      status: "held",
+      note: "Held: messages between you and @ada are held until a human resumes them in the Inbox; it is sent on then.",
+    });
+  });
+
+  test("a list send holds only the recipient whose pair is held", async () => {
+    await loopAdaBob();
+    await send("ada", ["@bob"]);
+    const results = await send("ada", ["@bob", "@cy"]);
+    expect(results).toMatchObject([
+      { to: "@bob", status: "held" },
+      { to: "@cy", status: "queued" },
+    ]);
+    expect(await pendingOf("cy")).toHaveLength(1);
+  });
+
+  test("a human sender is never held, however many messages the pair exchanged", async () => {
+    await loopAdaBob();
+    await send("ada", ["@bob"]);
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/messages",
+      headers: { cookie: orCookie },
+      payload: { to: ["bob"], body: "from a human" },
+    });
+    expect(res.statusCode).toBeLessThan(300);
+    const [row] = await h.sql`select state from messages where body = 'from a human'`;
+    expect(row?.state).toBe("pending");
   });
 });

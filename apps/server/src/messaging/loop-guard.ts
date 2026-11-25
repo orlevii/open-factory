@@ -23,6 +23,18 @@ export type GuardResult =
       managerRows: PendingRow[];
     };
 
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** The sender-facing copy of a held recipient's result (spec §6.5). */
+export const loopNotes = {
+  /** The row that opened the hold; `total` counts both directions including that row. */
+  tripping: (to: string, total: number, minutes: number): string =>
+    `Held: you and ${to} exchanged ${plural(total, "message", "messages")} in ${plural(minutes, "minute", "minutes")} with no human in between. A human must resume this pair in the Inbox; it is sent on then.`,
+  /** A later row of an open hold (no stored counts). */
+  later: (to: string): string =>
+    `Held: messages between you and ${to} are held until a human resumes them in the Inbox; it is sent on then.`,
+};
+
 type Deps = {
   settings: FactorySettings;
   store: EventStore;

@@ -1,16 +1,9 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
-  type AgentRow,
-  createDb,
-  type Db,
-  MIGRATIONS_DIR,
-  migrate,
-  schema,
-} from "@open-factory/db";
-import { createTestDatabase } from "@open-factory/db/testing";
+import { type AgentRow, createDb, type Db, schema } from "@open-factory/db";
+import { createMigratedTestDatabase } from "@open-factory/db/testing";
 import type { HarnessDriver } from "@open-factory/harness";
 import {
   type AgentOverlay,
@@ -20,6 +13,7 @@ import {
 } from "@open-factory/shared";
 import type { FastifyInstance } from "fastify";
 import { type AppDeps, buildApp, loggerOptions } from "../app.ts";
+import type { PasswordHasher } from "../auth/options.ts";
 import { type Config, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
 import type { FactorySettingsValues } from "../settings/factory-settings.ts";
@@ -52,9 +46,26 @@ export interface TestAppOptions {
   factorySettings?: Partial<FactorySettingsValues>;
 }
 
+/**
+ * Salted scrypt like production, at a tiny cost factor: better-auth's default (N=16384, r=16) costs ~100 ms of CPU
+ * per sign-up and sign-in, which dominated the suite under parallel load. Same hash/verify contract.
+ */
+export const testPasswordHasher: PasswordHasher = {
+  async hash(password) {
+    const salt = randomBytes(16);
+    return `${salt.toString("hex")}:${scryptSync(password.normalize("NFKC"), salt, 32, { N: 16 }).toString("hex")}`;
+  },
+  async verify({ hash, password }) {
+    const [salt, key] = hash.split(":");
+    if (!salt || !key) return false;
+    const expected = Buffer.from(key, "hex");
+    const actual = scryptSync(password.normalize("NFKC"), Buffer.from(salt, "hex"), 32, { N: 16 });
+    return expected.length === actual.length && timingSafeEqual(actual, expected);
+  },
+};
+
 export async function makeTestApp(opts: TestAppOptions = {}) {
-  const tdb = await createTestDatabase();
-  await migrate(tdb.url, MIGRATIONS_DIR);
+  const tdb = await createMigratedTestDatabase();
   const factoryHome = realpathSync(mkdtempSync(path.join(tmpdir(), "of-home-")));
   const hostSkillsDir = mkdtempSync(path.join(tmpdir(), "of-skills-"));
   const build = async (o: TestAppOptions) => {
@@ -87,6 +98,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
           })()
         : false,
       harnessDriver: o.harnessDriver,
+      passwordHasher: testPasswordHasher,
       ...(o.docker ? { docker: o.docker } : {}),
       ...(o.signInSpawn ? { signInSpawn: o.signInSpawn } : {}),
       ...(o.clock ? { clock: o.clock } : {}),
@@ -227,8 +239,7 @@ export async function signUp(app: FastifyInstance, input: Partial<SignUpInput> =
 
 /** A migrated throwaway database for unit tests that don't need the app. */
 export async function createTestDb() {
-  const tdb = await createTestDatabase();
-  await migrate(tdb.url, MIGRATIONS_DIR);
+  const tdb = await createMigratedTestDatabase();
   const h = createDb(tdb.url);
   return {
     ...h,

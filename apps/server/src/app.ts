@@ -20,6 +20,7 @@ import { EventStore } from "./agents/event-store.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
+import type { PasswordHasher } from "./auth/options.ts";
 import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { ExpiryCheck } from "./credentials/expiry-check.ts";
@@ -159,6 +160,8 @@ export interface AppDeps {
   signInSpawn?: typeof spawn;
   /** Checked for the removed env vars (S10 Q6) to warn at boot; `process.env` when absent. */
   env?: NodeJS.ProcessEnv;
+  /** better-auth's scrypt when absent; tests inject a cheap one. */
+  passwordHasher?: PasswordHasher;
 }
 
 export function loggerOptions(config: Config) {
@@ -195,7 +198,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorate("config", config);
-  app.decorate("auth", createAuth(config, deps.db));
+  app.decorate("auth", createAuth(config, deps.db, deps.passwordHasher));
   registerErrorHandlers(app);
 
   await mkdir(config.factoryHome, { recursive: true });

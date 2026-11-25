@@ -1,13 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createDb } from "../client.ts";
-import { MIGRATIONS_DIR, migrate } from "../migrate.ts";
-import { createTestDatabase } from "../testing.ts";
+import { createMigratedTestDatabase } from "../testing.ts";
 
-let tdb: Awaited<ReturnType<typeof createTestDatabase>>;
+let tdb: Awaited<ReturnType<typeof createMigratedTestDatabase>>;
 let h: ReturnType<typeof createDb>;
 beforeAll(async () => {
-  tdb = await createTestDatabase();
-  await migrate(tdb.url, MIGRATIONS_DIR);
+  tdb = await createMigratedTestDatabase();
   h = createDb(tdb.url);
 });
 afterAll(async () => {

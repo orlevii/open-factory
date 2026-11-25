@@ -35,6 +35,8 @@ A test earns its place by failing when a behaviour a user, caller or operator re
 - **Keep tests fast and independent.** No real sleeps: use fake timers or wait for the condition. Share expensive fixtures (databases, apps) per file, but never depend on another test's state or order.
 - **No tombstones.** Pre-release, a deleted route, component or field needs no test that it stays deleted.
 
+While iterating, run only what your change can break: `pnpm test:fast` runs the tests related to every file changed since `origin/main` (committed or not), and `pnpm test:related <file>...` runs the tests that import the given files. Server tests need `DATABASE_URL`; each test database is copied from a template migrated once per migration set (`createMigratedTestDatabase`), so get a database through `makeTestApp`/`createTestDb` rather than migrating your own. The full `pnpm test` stays the check before you push and is what CI runs (sharded).
+
 ## Git worktrees
 
 Create git worktrees under `.worktrees/` at the repo root (for example `git worktree add .worktrees/<branch> -b <branch>`). The directory is gitignored.

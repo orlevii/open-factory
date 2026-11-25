@@ -12,7 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  # Lint, typecheck, build and the CLI smoke: a few seconds each, so one job.
+  checks:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -38,10 +39,41 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint:ci
       - run: pnpm typecheck
-      - run: pnpm test
       - run: pnpm build
       - name: CLI smoke
         run: scripts/smoke-cli.sh
+
+  # The whole vitest suite split across parallel jobs, each with its own Postgres.
+  test:
+    name: test (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: factory
+          POSTGRES_PASSWORD: factory
+          POSTGRES_DB: factory
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U factory"
+          --health-interval 2s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://factory:factory@localhost:5432/factory
+      FACTORY_SECRET_KEY: ci-only-secret-key-that-is-long-enough-123
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test --shard=${{ matrix.shard }}/4
 
   linux-reach:
     runs-on: ubuntu-latest

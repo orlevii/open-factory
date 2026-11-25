@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
 import { TaskError } from "./errors.ts";
@@ -149,4 +149,69 @@ test("a comment bumps the task's updated time", async () => {
   await h.app.tasks.comment(or, "T-1", "hi");
   const after = new Date((await h.sql`select updated_at from tasks`)[0]?.updated_at);
   expect(after.getTime()).toBeGreaterThan(before.getTime());
+});
+
+describe("loop guard on task comments", () => {
+  const N = 2;
+  beforeEach(async () => {
+    await h.app.factorySettings.update({ loopGuardMessages: N }, ids.or as string);
+  });
+  const send = (from: string, to: string) =>
+    h.app.router.send({ agentId: ids[from] as string }, [`@${to}`], "ping", false);
+  /** Each direction sends N messages and qa one more, so the next row from dev exceeds N both ways. */
+  async function loopDevQa() {
+    for (let i = 0; i < N; i++) {
+      await send("dev", "qa");
+      await send("qa", "dev");
+    }
+    await send("qa", "dev");
+  }
+
+  test("an agent comment mentioning a looping peer is posted, the peer's row is held and the result says so", async () => {
+    await loopDevQa();
+    const r = await h.app.tasks.comment(agent("dev"), "T-1", "@qa what do you think?");
+    expect(r.deliveredTo).toEqual([]);
+    expect(r.held).toHaveLength(1);
+    expect(r.held[0]?.to).toBe("@qa");
+    expect(r.held[0]?.note).toMatch(
+      /^Held: you and @qa exchanged \d+ messages in 1 minute with no human in between/,
+    );
+    const [c] = await h.sql`select body from task_comments where id = ${r.id}`;
+    expect(c?.body).toBe("@qa what do you think?");
+    const rows = await taskRowsTo("qa", "task_comment");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ state: "loop_held" });
+    const [hold] = await h.sql`select count(*)::int as n from loop_holds where resumed_at is null`;
+    expect(hold?.n).toBe(1);
+  });
+
+  test("a later comment into an open hold gets the later-row note", async () => {
+    await loopDevQa();
+    await h.app.tasks.comment(agent("dev"), "T-1", "@qa one");
+    const r = await h.app.tasks.comment(agent("dev"), "T-1", "@qa two");
+    expect(r.held).toEqual([
+      {
+        to: "@qa",
+        note: "Held: messages between you and @qa are held until a human resumes them in the Inbox; it is sent on then.",
+      },
+    ]);
+  });
+
+  test("only the mentioned agent whose pair is held is held; the others are delivered", async () => {
+    await loopDevQa();
+    const r = await h.app.tasks.comment(agent("lead"), "T-1", "@qa @dev hi");
+    expect(r.held).toEqual([]);
+    expect(r.deliveredTo.sort()).toEqual(["dev", "qa"]);
+    const r2 = await h.app.tasks.comment(agent("dev"), "T-1", "@qa @lead hi");
+    expect(r2.held.map((x) => x.to)).toEqual(["@qa"]);
+    expect(r2.deliveredTo).toEqual(["lead"]);
+  });
+
+  test("a human comment is never checked, however many messages the pair exchanged", async () => {
+    await loopDevQa();
+    await h.app.tasks.comment(agent("dev"), "T-1", "@qa trip");
+    const r = await h.app.tasks.comment(or, "T-1", "@qa please");
+    expect(r.held).toEqual([]);
+    expect(r.deliveredTo).toContain("qa");
+  });
 });

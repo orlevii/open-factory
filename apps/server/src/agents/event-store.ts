@@ -936,6 +936,9 @@ export class EventStore {
       from?: { userId: string } | { agentId: string };
       toAgentId: string;
       body: string;
+      /** `loop_held` parks the row under an open loop hold (I8 §6.3); it is never handed over. */
+      state?: "pending" | "loop_held";
+      loopHoldId?: string | null;
     },
   ): Promise<PendingRow> {
     const id = randomUUID();
@@ -949,6 +952,8 @@ export class EventStore {
       ...(m.from && "agentId" in m.from ? { fromAgentId: m.from.agentId } : {}),
       toAgentId: m.toAgentId,
       body: m.body,
+      ...(m.state ? { state: m.state } : {}),
+      loopHoldId: m.loopHoldId ?? null,
       createdAt: this.clock(),
     });
     return this.pendingRow(id, tx);

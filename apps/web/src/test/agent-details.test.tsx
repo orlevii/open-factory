@@ -419,6 +419,132 @@ test("Runtime: template, credential and projects; Unsandboxed only for a local a
   expect(docker.queryByText("Unsandboxed")).toBeNull();
 });
 
+test("Org: a human manager shows their initials avatar, name and handle, not a link", async () => {
+  setup({
+    agent: agentSummary({ reportsTo: { kind: "user", handle: "or" } }),
+    seed: (qc) =>
+      qc.setQueryData(
+        ["users"],
+        [
+          {
+            id: "u1",
+            name: "Or Levi",
+            handle: "or",
+            email: "or@example.com",
+            createdAt: "2026-11-01T00:00:00.000Z",
+            disabledAt: null,
+          },
+        ],
+      ),
+  });
+  const org = await section("Org");
+  expect(within(org).getByText("Or Levi")).toBeInTheDocument();
+  expect(within(org).getByText("@or")).toBeInTheDocument();
+  expect(org.querySelector("[data-human-avatar]")).toHaveTextContent("OL");
+  expect(within(org).queryByRole("link")).toBeNull();
+});
+
+/** The text of a Runtime row's value. */
+const rowValue = (rt: HTMLElement, label: string) =>
+  within(rt)
+    .getByText(label, { selector: "dt" })
+    .nextElementSibling?.textContent?.replace(/\s+/g, " ")
+    .trim();
+
+test.each([
+  [{ value: "opus", source: "agent" as const }, "opus (agent)"],
+  [{ value: "sonnet", source: "template" as const }, "sonnet"],
+  [{ value: null, source: null }, "Claude Code default"],
+])("Runtime: the Model row shows %j as %s", async (model, text) => {
+  setup({ agent: agentSummary({ model }) });
+  expect(rowValue(await section("Runtime"), "Model")).toBe(text);
+});
+
+test("Runtime: the Effort row shows its own value and source, apart from the model's", async () => {
+  setup({
+    agent: agentSummary({
+      model: { value: "opus", source: "agent" },
+      effort: { value: "high", source: "template" },
+    }),
+  });
+  const rt = await section("Runtime");
+  expect(rowValue(rt, "Effort")).toBe("high");
+  expect(rowValue(rt, "Model")).toBe("opus (agent)");
+});
+
+test("Runtime: a pending restart marks only the row it changes with 'after this turn'", async () => {
+  setup({
+    agent: agentSummary({
+      model: { value: "opus", source: "agent" },
+      effort: { value: "high", source: "template" },
+      restartPending: true,
+      restartChanges: ["model: sonnet → opus"],
+    }),
+  });
+  const rt = await section("Runtime");
+  expect(rowValue(rt, "Model")).toBe("opus (agent) · after this turn");
+  expect(rowValue(rt, "Effort")).toBe("high");
+});
+
+test("Runtime: no restart pending, no 'after this turn'", async () => {
+  setup({
+    agent: agentSummary({
+      model: { value: "opus", source: "agent" },
+      restartPending: false,
+      restartChanges: ["model: sonnet → opus"],
+    }),
+  });
+  expect(rowValue(await section("Runtime"), "Model")).toBe("opus (agent)");
+});
+
+test("Runtime: a Docker agent's Image row is the running image, and 'Next start' only when the config resolves to another", async () => {
+  const first = setup({
+    agent: agentSummary({
+      runtime: "docker",
+      image: { running: "ghcr.io/acme/dev:1", next: "ghcr.io/acme/dev:1" },
+    }),
+  });
+  expect(rowValue(await section("Runtime"), "Image")).not.toContain("Next start");
+  first.unmount();
+  const second = setup({
+    agent: agentSummary({
+      runtime: "docker",
+      image: { running: "ghcr.io/acme/dev:1", next: "ghcr.io/acme/dev:2" },
+    }),
+  });
+  const rt = await section("Runtime");
+  expect(rowValue(rt, "Image")).toContain("ghcr.io/acme/dev:1");
+  expect(rowValue(rt, "Image")).toMatch(/Next start:\s*ghcr\.io\/acme\/dev:2/);
+  second.unmount();
+  // Nothing running: the image the next start uses is the one shown.
+  setup({
+    agent: agentSummary({
+      runtime: "docker",
+      image: { running: null, next: "ghcr.io/acme/dev:2" },
+    }),
+  });
+  const idle = await section("Runtime");
+  expect(rowValue(idle, "Image")).toContain("ghcr.io/acme/dev:2");
+  expect(rowValue(idle, "Image")).not.toContain("Next start");
+});
+
+test("Runtime: the image's Copy button copies the whole reference", async () => {
+  const writeText = vi.fn(async () => {});
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+  setup({
+    agent: agentSummary({
+      runtime: "docker",
+      image: { running: "registry.example.com/team/some/very/long/path/dev:2026-11-25", next: "x" },
+    }),
+  });
+  const rt = within(await section("Runtime"));
+  await userEvent.click(rt.getByRole("button", { name: /^Copy image / }));
+  expect(writeText).toHaveBeenCalledWith(
+    "registry.example.com/team/some/very/long/path/dev:2026-11-25",
+  );
+  expect(await rt.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+});
+
 test("Runtime: a Configuration row opens the agent's Configuration page", async () => {
   setup({ agent: agentSummary({ slug: "ana" }) });
   const rt = within(await section("Runtime"));

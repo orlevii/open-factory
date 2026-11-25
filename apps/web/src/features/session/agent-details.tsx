@@ -1,7 +1,12 @@
-import { type AgentSummary, type AgentsUsage, summarizeChanges } from "@open-factory/shared";
+import {
+  type AgentSummary,
+  type AgentsUsage,
+  summarizeChanges,
+  type UserAdminItem,
+} from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { RotateCw, X } from "lucide-react";
+import { Copy, RotateCw, X } from "lucide-react";
 import {
   type ReactNode,
   type RefObject,
@@ -13,12 +18,16 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { AgentChip } from "@/components/agent-chip";
+import { CopyFailed, CopyIcon, useCopy } from "@/components/copy-feedback";
+import { HumanAvatar } from "@/components/human-avatar";
+import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { CONFIG_PAGE_COPY } from "@/features/config/messages";
 import { schedulesListOptions } from "@/features/schedules/api";
 import { ScheduleTime } from "@/features/schedules/schedule-time";
+import { usersQueryOptions } from "@/features/settings/api";
 import { preloadSheet, sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { agentTasksOptions } from "@/features/tasks/api";
@@ -266,6 +275,22 @@ function Now({
   );
 }
 
+/** A human manager: the initials avatar, their name when the users list has it, and the handle. */
+function Human({ handle }: { handle: string }) {
+  const select = useCallback(
+    (users: UserAdminItem[]) => users.find((u) => u.handle === handle)?.name,
+    [handle],
+  );
+  const name = useQuery({ ...usersQueryOptions, select }).data;
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <HumanAvatar name={name ?? ""} size={16} />
+      {name && <span className="min-w-0 truncate">{name}</span>}
+      <span className="min-w-0 truncate font-mono text-muted-foreground">@{handle}</span>
+    </span>
+  );
+}
+
 function Org({ agent }: { agent: AgentSummary }) {
   const slug = agent.slug;
   const select = useCallback(
@@ -289,7 +314,7 @@ function Org({ agent }: { agent: AgentSummary }) {
         {agent.reportsTo.kind === "agent" ? (
           <AgentChip slug={agent.reportsTo.handle} link size={16} />
         ) : (
-          <span>@{agent.reportsTo.handle}</span>
+          <Human handle={agent.reportsTo.handle} />
         )}
       </div>
       {agent.reports > 0 && (
@@ -441,7 +466,57 @@ function Usage({ agent }: { agent: AgentSummary }) {
   );
 }
 
+/**
+ * A resolved model or effort, as stored (an alias or an id): "opus (agent)" when this agent overrides it, the
+ * template's value bare, "Claude Code default" when nothing sets it. "· after this turn" while a restart that applies
+ * it is pending: the running process still has the old one.
+ */
+function ConfigValue({ resolved, pending }: { resolved: AgentSummary["model"]; pending: boolean }) {
+  return (
+    <>
+      {resolved.value === null ? (
+        "Claude Code default"
+      ) : (
+        <>
+          <span className="font-mono [overflow-wrap:anywhere]">{resolved.value}</span>
+          {resolved.source === "agent" && <span className="text-muted-foreground"> (agent)</span>}
+        </>
+      )}
+      {pending && <span className="text-muted-foreground"> · after this turn</span>}
+    </>
+  );
+}
+
+/** An image reference: mono, truncated in the middle (the registry and the tag both stay), with a Copy button. */
+function ImageRef({ reference }: { reference: string }) {
+  const { state, instant, copy } = useCopy();
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <span title={reference} className="flex min-w-0 font-mono">
+        <MiddleTruncate text={reference} keepEnd />
+      </span>
+      {state === "failed" && <CopyFailed />}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={state === "copied" ? "Copied" : `Copy image ${reference}`}
+        onClick={(e) => void copy(reference, e.detail === 0)}
+      >
+        <CopyIcon
+          state={state}
+          instant={instant}
+          idle={<Copy aria-hidden="true" className="size-3.5" />}
+        />
+      </Button>
+    </span>
+  );
+}
+
 function Runtime({ agent }: { agent: AgentSummary }) {
+  // The restart that is pending applies these lines ("model: sonnet → opus"); a row says so only for its own.
+  const pendingFor = (field: "model" | "effort") =>
+    agent.restartPending && agent.restartChanges.some((l) => l.startsWith(field));
   return (
     <Section title="Runtime">
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
@@ -472,14 +547,28 @@ function Runtime({ agent }: { agent: AgentSummary }) {
             <dd className="min-w-0 truncate font-mono">{agent.credential}</dd>
           </>
         )}
+        <dt className="text-muted-foreground">Model</dt>
+        <dd className="min-w-0">
+          <ConfigValue resolved={agent.model} pending={pendingFor("model")} />
+        </dd>
+        <dt className="text-muted-foreground">Effort</dt>
+        <dd className="min-w-0">
+          <ConfigValue resolved={agent.effort} pending={pendingFor("effort")} />
+        </dd>
         {agent.runtime === "docker" && agent.image && (
           <>
             <dt className="text-muted-foreground">Image</dt>
-            <dd className="min-w-0">
-              <span className="font-mono [overflow-wrap:anywhere]">
-                {agent.image.running ?? agent.image.next}
-              </span>
-              {agent.pulling && " (pulling)"}
+            <dd className="grid min-w-0 gap-0.5">
+              <ImageRef reference={agent.image.running ?? agent.image.next} />
+              {agent.pulling && <span className="text-muted-foreground">Pulling…</span>}
+              {agent.image.running !== null && agent.image.running !== agent.image.next && (
+                <span className="flex min-w-0 items-center gap-1 text-muted-foreground">
+                  <span className="shrink-0">Next start:</span>
+                  <span className="flex min-w-0 font-mono">
+                    <MiddleTruncate text={agent.image.next} keepEnd />
+                  </span>
+                </span>
+              )}
             </dd>
           </>
         )}

@@ -30,6 +30,8 @@ import {
   liveKey,
   type MessageKind,
   type QueueItem,
+  REQUEST_KINDS,
+  type RequestRef,
   statusOf,
   taskKey,
   type WaitingOn,
@@ -381,6 +383,12 @@ const queueScheduleOf = (row: MessageRow & { scheduleKey?: string | null }) =>
       }
     : {};
 
+/** The requests among written entries (REQUEST_KINDS), as the `re` of the updates the turn forwards. */
+const requestsOf = (entries: MessageEntry[]): RequestRef[] =>
+  entries
+    .filter((e) => REQUEST_KINDS.has(kindOf(e.row)))
+    .map((e) => ({ id: e.row.id, from: e.from }));
+
 const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
@@ -391,6 +399,7 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   body: e.row.body,
   createdAt: e.row.createdAt,
   ...(e.about ? { about: e.about } : {}),
+  ...(e.row.kind === "member_update" && e.row.re?.length ? { re: e.row.re } : {}),
   ...(e.groupKey ? { groupKey: e.groupKey } : {}),
   // A factory member update's fact code is its notice (spec §9.1).
   ...(e.row.kind === "member_update" && e.from === "@factory" && e.row.notice
@@ -494,6 +503,16 @@ export class AgentRuntime {
   private inFlight: MessageEntry[][] = []; // written, waiting for session_started
   private awaiting: WrittenBatch[] = []; // written with no open turn, settled at the next turn_end
   private absorbed: WrittenBatch[] = []; // written into the open turn (already stamped with it)
+  /**
+   * The requests of the open turn, in write order: those the turn started with, then each one written into it. A
+   * forwarded text carries the first `turnRequestsSeen` of them as `re`, so the manager can tell whose request it
+   * answers. Claude reads a mid-turn write only at the next top-level tool boundary, so a request counts once a tool
+   * result follows its write. Requests still unseen when the turn ends are what Claude runs as its next turn, so they
+   * carry into it (`carriedRequests`). Empty in a self-started turn nothing reached.
+   */
+  private turnRequests: RequestRef[] = [];
+  private turnRequestsSeen = 0;
+  private carriedRequests: RequestRef[] = [];
   /** An exit's snapshot of `awaiting` and `absorbed` until its close settles, so `workingFor` never goes blank (I1 §6.3). */
   private closing: WrittenBatch[] | undefined;
   private compactInFlight = false;
@@ -2397,10 +2416,15 @@ export class AgentRuntime {
    * as `turn_failed`, denials as `denied`. Subagent text, tool calls, blank text and everything else stay here.
    */
   private async forwardEvent(e: AnyEvent) {
+    // A top-level tool boundary: Claude has now read every request written into the turn so far.
+    if (e.type === "tool_result" && !e.parentToolUseId)
+      this.turnRequestsSeen = this.turnRequests.length;
     if (this.terminated) return; // S7 §8: nothing about a terminated agent is forwarded
     if (e.type === "assistant_text") {
       if (e.parentToolUseId || !e.text.trim()) return;
-      await this.d.forward({ agentId: this.agent.id, body: capText(e.text) });
+      const seen = this.turnRequests.slice(0, this.turnRequestsSeen);
+      const re = seen.length ? { re: seen } : {};
+      await this.d.forward({ agentId: this.agent.id, body: capText(e.text), ...re });
     } else if (e.type === "error" && (e.source === "api" || e.source === "refusal"))
       await this.forwardFact("turn_failed", { text: e.message });
     else if (e.type === "permission_denied")
@@ -3116,6 +3140,12 @@ export class AgentRuntime {
         this.openTurnId = await this.d.store.openTurn(this.agent.id, this.procCredentialId ?? null);
         this.lastUsage = undefined;
         this.absorbed = [];
+        this.turnRequests = [
+          ...this.carriedRequests,
+          ...requestsOf(this.awaiting.flatMap((b) => b.entries)),
+        ];
+        this.turnRequestsSeen = this.turnRequests.length;
+        this.carriedRequests = [];
         this.turnStartedAt = (await this.append(this.openTurnId, e)).at;
         this.chatChanged(sendersOf(this.awaiting));
         // I7 §9.2.1 step 2: the turn of a batch written before the cut restart began has started now.
@@ -3170,6 +3200,9 @@ export class AgentRuntime {
           if (settles) this.awaiting = [];
         }
         this.absorbed = []; // the stamp and the close committed: the batch is no longer working
+        this.carriedRequests = this.turnRequests.slice(this.turnRequestsSeen);
+        this.turnRequests = [];
+        this.turnRequestsSeen = 0;
         this.chatChanged(closing);
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
         if (!e.originKind && this.attempting && this.attemptBatchWritten && this.sessionStarted)
@@ -3394,6 +3427,10 @@ export class AgentRuntime {
     const credentialId = this.procCredentialId ?? null; // cleared below, the close still records it
     this.awaiting = [];
     this.absorbed = [];
+    // The process is gone: unconfirmed rows are redelivered as pending, so nothing carries over.
+    this.turnRequests = [];
+    this.turnRequestsSeen = 0;
+    this.carriedRequests = [];
     if (this.proc === proc) {
       this.proc = undefined;
       this.procCredentialId = undefined;
@@ -4324,7 +4361,10 @@ export class AgentRuntime {
     if (!this.sessionStarted) this.inFlight.push(batch);
     const written = writtenBatch(batch, new Date().toISOString());
     if (!turnAtWrite) this.awaiting.push(written);
-    else this.absorbed.push(written);
+    else {
+      this.absorbed.push(written);
+      this.turnRequests.push(...requestsOf(batch));
+    }
     this.publishQueue();
     this.chatChanged(sendersOf([written]));
     return true;

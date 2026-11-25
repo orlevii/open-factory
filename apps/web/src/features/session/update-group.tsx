@@ -1,8 +1,9 @@
-import type { Envelope } from "@open-factory/shared";
+import type { Envelope, RequestRef } from "@open-factory/shared";
+import { Link } from "@tanstack/react-router";
 import { ArrowUpFromLine, CircleAlert, CircleCheck, ShieldAlert, Users } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { formatTime } from "./format";
-import { AgentLink, ClampedMarkdown } from "./message-block";
+import { AgentLink, ClampedMarkdown, LINK_CLASS } from "./message-block";
 import { CodePlate, QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
 import { terminatedPhrase } from "./spawn-block";
@@ -17,7 +18,7 @@ export const decodeFactBody = (body: string) =>
   body.replace(/&lt;(\s*\/?\s*factory-message)/gi, "<$1");
 
 type Item =
-  | { type: "part"; id: string; body: string; createdAt: string }
+  | { type: "part"; id: string; body: string; createdAt: string; re: RequestRef[] }
   | { type: "fact"; id: string; fact: string; body: string };
 
 /** A group's parts in order: a report's own text (its `parts`) and the factory's facts about it. */
@@ -28,7 +29,7 @@ function itemsOf(envelopes: Envelope[]): Item[] {
     if (e.from === "@factory" && fact) {
       return e.parts.map((p) => ({ type: "fact", id: p.id, fact, body: decodeFactBody(p.body) }));
     }
-    return e.parts.map((p) => ({ type: "part", ...p }));
+    return e.parts.map((p) => ({ type: "part", ...p, re: e.re ?? [] }));
   });
 }
 
@@ -48,6 +49,7 @@ export function UpdateGroup({
   const latest = parts.at(-1);
   const collapsed = !all && parts.length > 1;
   const shown = collapsed ? items.filter((i) => i.type === "fact" || i === latest) : items;
+  const withLine = replyLines(shown);
   const written = parts[0]?.createdAt;
   const late =
     written !== undefined &&
@@ -87,7 +89,10 @@ export function UpdateGroup({
             className={i > 0 && item.type === "part" ? "border-t border-border pt-2" : undefined}
           >
             {item.type === "part" ? (
-              <ClampedMarkdown source={item.body} limit={PART_CLAMP_LINES} />
+              <>
+                {withLine.has(item) && <ReplyLine report={about} re={item.re} />}
+                <ClampedMarkdown source={item.body} limit={PART_CLAMP_LINES} />
+              </>
             ) : (
               <FactLine fact={item.fact} body={item.body} />
             )}
@@ -108,6 +113,49 @@ export function UpdateGroup({
         </button>
       )}
     </article>
+  );
+}
+
+type Part = Extract<Item, { type: "part" }>;
+
+/** The parts that show a reply line: a part repeats none when it answers the same requests as the part shown before it. */
+function replyLines(items: Item[]): Set<Part> {
+  const out = new Set<Part>();
+  let previous: string | undefined;
+  for (const item of items) {
+    if (item.type !== "part") continue;
+    const key = item.re.map((r) => r.id).join(" ");
+    if (key !== previous) out.add(item);
+    previous = key;
+  }
+  return out;
+}
+
+/**
+ * Whose requests a report's text answers: each sender once, linked to their (first) request in the report's session.
+ * No requests: the report did the work on its own (a cron, a task notification).
+ */
+function ReplyLine({ report, re }: { report: string; re: RequestRef[] }) {
+  const senders = [...new Map(re.map((r) => [r.from, r.id])).entries()];
+  return (
+    <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+      {senders.length === 0
+        ? "On its own"
+        : senders.map(([from, id], i) => (
+            <span key={from}>
+              {i === 0 ? "Replying to " : ", "}
+              <Link
+                to="/agents/$slug/session"
+                params={{ slug: report }}
+                search={{ message: id }}
+                aria-label={`Open ${from}'s request in @${report}'s session`}
+                className={`font-mono ${LINK_CLASS}`}
+              >
+                {from}
+              </Link>
+            </span>
+          ))}
+    </p>
   );
 }
 

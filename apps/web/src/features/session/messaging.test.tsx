@@ -226,6 +226,53 @@ test("an update group: heading always shown, the latest part visible, 'Show all 
   expect(within(group).getByText("first part")).toBeInTheDocument();
 });
 
+test("each update says whose requests it answers, linked to the request in the report's session", async () => {
+  const update = (id: string, body: string, re: { id: string; from: string }[]) =>
+    env({ id, from: "b", kind: "member_update", body, re });
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          update("u1", "reading the code", [{ id: "m1", from: "@lead" }]),
+          update("u2", "bug fixed", [
+            { id: "m1", from: "@lead" },
+            { id: "m2", from: "@or" },
+          ]),
+        ],
+      },
+    ],
+    "bug fixed",
+  );
+  const group = screen.getByRole("article", { name: "Update from @b" });
+  await userEvent.click(within(group).getByRole("button", { name: "Show all (2 updates)" }));
+  expect(
+    within(group)
+      .getAllByText(/^Replying to/)
+      .map((n) => n.closest("p")?.textContent),
+  ).toEqual(["Replying to @lead", "Replying to @lead, @or"]);
+  const links = within(group).getAllByRole("link", { name: "Open @or's request in @b's session" });
+  expect(links.map((l) => l.getAttribute("href"))).toEqual(["/agents/b/session?message=m2"]);
+});
+
+test("an update with no requests says the report did it on its own, once per run of such parts", async () => {
+  const parts = ["cron ran", "all green"].map((body, i) => ({ id: `u${i}`, body, createdAt: AT }));
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({ id: "u0", ids: ["u0", "u1"], from: "b", kind: "member_update", body: "", parts }),
+        ],
+      },
+    ],
+    "all green",
+  );
+  const group = screen.getByRole("article", { name: "Update from @b" });
+  await userEvent.click(within(group).getByRole("button", { name: "Show all (2 updates)" }));
+  expect(within(group).getAllByText("On its own")).toHaveLength(1);
+});
+
 test("a factory fact renders the body's first line, keyed by fact code, with the quote in its detail", async () => {
   await open(
     [

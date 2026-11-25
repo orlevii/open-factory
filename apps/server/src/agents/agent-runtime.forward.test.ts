@@ -1,11 +1,16 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { CAP_BYTES } from "./cap.ts";
 import { ev } from "./testing/fake-driver.ts";
-import { RuntimeHarness } from "./testing/runtime-harness.ts";
+import { insertAgent } from "./testing/rows.ts";
+import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
 import { RecordingSlots } from "./testing/slots.ts";
 
 const h = new RuntimeHarness();
-beforeAll(() => h.setup());
+const PEER = "peer-fwd";
+beforeAll(async () => {
+  await h.setup();
+  await insertAgent(h.t.sql, { id: PEER, slug: "peerfwd" });
+});
 afterAll(() => h.close());
 beforeEach(async () => {
   await h.makeRuntime();
@@ -34,6 +39,69 @@ test("top-level text is forwarded from the report; subagent text, tool calls and
   );
   await h.rt.settled();
   expect(h.forwarded).toEqual([{ agentId: h.agentId, body: "visible" }]);
+});
+
+/** A human's request, written to the report now (into the open turn when one is open). */
+async function request(body: string) {
+  const row = await h.row(body);
+  await deliverHuman(h.rt, row);
+  await h.rt.settled();
+  return { id: row.id, from: `@${row.fromHandle}` };
+}
+
+/** A top-level tool call and its result: the boundary where Claude reads what was written mid-turn. */
+const toolStep = (id: string) => [
+  { type: "tool_call", toolUseId: id, name: "Bash", input: { command: "ls" } } as const,
+  { type: "tool_result", toolUseId: id, content: "ok", isError: false } as const,
+];
+
+test("a forwarded text names the requests the report had read when it wrote it: a mid-turn one after the next tool step", async () => {
+  await idle();
+  const m1 = await request("fix the login bug");
+  h.driver.last.emit(ev.turn(), ev.text("reading the login code"));
+  await h.rt.settled();
+  const m2 = await request("also update the README");
+  h.driver.last.emit(ev.text("still on the login code"), ...toolStep("t1"));
+  h.driver.last.emit(ev.text("the login bug is fixed"), ev.usage(), ev.end());
+  await h.rt.settled();
+  expect(h.forwarded).toEqual([
+    { agentId: h.agentId, body: "reading the login code", re: [m1] },
+    { agentId: h.agentId, body: "still on the login code", re: [m1] },
+    { agentId: h.agentId, body: "the login bug is fixed", re: [m1, m2] },
+  ]);
+});
+
+test("a request written after the turn's last tool step is the next turn's request", async () => {
+  await idle();
+  const m1 = await request("fix the login bug");
+  h.driver.last.emit(ev.turn(), ...toolStep("t1"));
+  await h.rt.settled();
+  const m2 = await request("also update the README");
+  h.driver.last.emit(ev.text("the login bug is fixed"), ev.usage(), ev.end());
+  h.driver.last.emit(ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
+  await h.rt.settled();
+  expect(h.forwarded).toEqual([
+    { agentId: h.agentId, body: "the login bug is fixed", re: [m1] },
+    { agentId: h.agentId, body: "README updated", re: [m2] },
+  ]);
+});
+
+test("a peer note written with a request is not one of the turn's requests", async () => {
+  await idle();
+  await h.rt.receive(
+    await h.store.createOrgRow({
+      kind: "peer_joined",
+      toAgentId: h.agentId,
+      subjectAgentId: PEER,
+      notice: "peer",
+      body: "@peerfwd joined as your peer.",
+    }),
+  );
+  const m1 = await request("status?");
+  expect(h.driver.last.sent.at(-1)?.map((m) => m.kind)).toEqual(["message", "peer_joined"]);
+  h.driver.last.emit(ev.turn(), ev.text("all good"), ev.usage(), ev.end());
+  await h.rt.settled();
+  expect(h.forwarded).toEqual([{ agentId: h.agentId, body: "all good", re: [m1] }]);
 });
 
 test("text over 64 KB is truncated", async () => {

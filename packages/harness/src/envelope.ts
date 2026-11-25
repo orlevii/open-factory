@@ -18,6 +18,10 @@ export const neutraliseEnvelopeTags = (s: string) => s.replace(TAG, "&lt;$1facto
 function one(m: FactoryMessage): string {
   const id = m.ids && m.ids.length > 1 ? `ids="${attr(m.ids.join(" "))}"` : `id="${attr(m.id)}"`;
   const about = m.about ? ` about="${attr(m.about)}"` : "";
+  // Each sender once, in the order of their first request.
+  const re = m.re?.length
+    ? ` re="${attr(m.re.map((r) => r.id).join(" "))}" re_from="${attr([...new Set(m.re.map((r) => r.from))].join(" "))}"`
+    : "";
   const task = m.taskKey ? ` task="${attr(m.taskKey)}"` : "";
   const sched =
     (m.scheduleKey ? ` schedule="${attr(m.scheduleKey)}"` : "") +
@@ -27,7 +31,7 @@ function one(m: FactoryMessage): string {
     (m.late ? ' late="true"' : "");
   const to = m.kind === "message" && m.to?.length ? ` to="${attr(m.to.join(" "))}"` : "";
   return (
-    `<factory-message from="${attr(m.from)}" from_kind="${m.fromKind}" kind="${m.kind}"${to} urgent="${m.urgent}" ${id}${about}${task}${sched}>\n` +
+    `<factory-message from="${attr(m.from)}" from_kind="${m.fromKind}" kind="${m.kind}"${to} urgent="${m.urgent}" ${id}${about}${re}${task}${sched}>\n` +
     `${m.body}\n</factory-message>`
   );
 }
@@ -61,6 +65,8 @@ export type BatchRow = {
   body: string;
   createdAt: Date;
   about?: string;
+  /** A report's `member_update`: the requests of its turn when it wrote the text. */
+  re?: Envelope["re"];
   /** The report's slug for member updates. */
   groupKey?: string;
   fact?: string;
@@ -123,6 +129,7 @@ function single(r: BatchRow): FactoryMessage {
     urgent: r.urgent,
     body: neutraliseEnvelopeTags(r.body),
     ...(r.about ? { about: r.about } : {}),
+    ...(r.re?.length ? { re: r.re } : {}),
     ...(r.fact ? { fact: r.fact } : {}),
     ...(r.subject ? { subject: r.subject } : {}),
     ...taskFields(r),
@@ -145,6 +152,7 @@ function merge(run: BatchRow[]): FactoryMessage {
     urgent: run.some((r) => r.urgent),
     body: run.map((r) => neutraliseEnvelopeTags(r.body)).join("\n\n"),
     ...(first.about ? { about: first.about } : {}),
+    ...(first.re?.length ? { re: first.re } : {}),
     ...(first.fact ? { fact: first.fact } : {}),
     ...(first.subject ? { subject: first.subject } : {}),
     ...taskFields(first),
@@ -152,9 +160,19 @@ function merge(run: BatchRow[]): FactoryMessage {
   };
 }
 
-/** Rows merge only when everything the envelope carries besides the body is the same (sender, about, fact, subject). */
+/**
+ * Rows merge only when everything the envelope carries besides the body is the same (sender, about, fact, subject, and
+ * the requests the text answers: a block written before a mid-turn request never shares an envelope with one after).
+ */
 const runKey = (r: BatchRow) =>
-  JSON.stringify([r.from, r.about ?? null, r.fact ?? null, r.subject ?? null, r.taskKey ?? null]);
+  JSON.stringify([
+    r.from,
+    r.about ?? null,
+    r.fact ?? null,
+    r.subject ?? null,
+    r.taskKey ?? null,
+    r.re?.map((x) => x.id) ?? [],
+  ]);
 
 /** Builds every batch: notices, messages, member-update groups (merged per consecutive sender), then peer events. */
 export function groupEnvelopes(rows: BatchRow[]): FactoryMessage[] {

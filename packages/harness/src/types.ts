@@ -43,6 +43,8 @@ export interface FactoryMessage {
   late?: boolean;
   ids?: string[];
   about?: string;
+  /** A report's `member_update`: the requests of its turn when it wrote the text; rendered as `re` and `re_from`. */
+  re?: Envelope["re"];
   /** The raw, unescaped bodies (for the UI). */
   parts: Envelope["parts"];
   fact?: string;

@@ -335,3 +335,47 @@ test("neutraliseEnvelopeTags escapes any spelling of the tag and nothing else", 
   expect(neutraliseEnvelopeTags("< / FACTORY-MESSAGE>")).toBe("&lt; / factory-message>");
   expect(neutraliseEnvelopeTags("a < b && <b>bold</b>")).toBe("a < b && <b>bold</b>");
 });
+
+const upd = (id: string, re?: BatchRow["re"]) =>
+  row({
+    id,
+    kind: "member_update",
+    from: "@dev",
+    fromKind: "agent",
+    groupKey: "dev",
+    ...(re ? { re } : {}),
+  });
+
+test("a report's update names the requests it answers as re and re_from, each sender once", () => {
+  const re = [
+    { id: "m1", from: "@lead" },
+    { id: "m2", from: "@or" },
+    { id: "m3", from: "@lead" },
+  ];
+  expect(render([upd("u1", re)])).toBe(
+    '<factory-message from="@dev" from_kind="agent" kind="member_update" urgent="false" id="u1" re="m1 m2 m3" re_from="@lead @or">\nu1\n</factory-message>',
+  );
+});
+
+test("an update without requests carries no re and no re_from", () => {
+  expect(render([upd("u1")])).not.toMatch(/\bre(_from)?=/);
+});
+
+test("re and re_from are escaped by attr()", () => {
+  expect(render([upd("u1", [{ id: 'x"y', from: '@a<b>"' }])])).toContain(
+    're="x&quot;y" re_from="@a&lt;b&gt;&quot;"',
+  );
+});
+
+test("updates merge only when they answer the same requests", () => {
+  const before = [{ id: "m1", from: "@lead" }];
+  const after = [...before, { id: "m2", from: "@or" }];
+  const out = groupEnvelopes([upd("u1", before), upd("u2", after), upd("u3", after)]);
+  expect(out.map((m) => [m.ids ?? [m.id], m.re?.map((r) => r.id)])).toEqual([
+    [["u1"], ["m1"]],
+    [
+      ["u2", "u3"],
+      ["m1", "m2"],
+    ],
+  ]);
+});

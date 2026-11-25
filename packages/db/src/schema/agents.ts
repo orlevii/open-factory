@@ -1,4 +1,4 @@
-import type { AgentOverlay, Command, MessageAttachment } from "@open-factory/shared";
+import type { AgentOverlay, Command, MessageAttachment, RequestRef } from "@open-factory/shared";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -225,6 +225,8 @@ export const messages = pgTable(
     clientMessageId: text("client_message_id"),
     // U3 §13.5: the confirmed uploads, for the envelope's UI field (the body carries the `[attached: …]` lines).
     attachments: jsonb("attachments").$type<MessageAttachment[]>(),
+    // A `member_update` of a report's text: the requests of the report's turn when it wrote it (the envelope's `re`).
+    re: jsonb("re").$type<RequestRef[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   },

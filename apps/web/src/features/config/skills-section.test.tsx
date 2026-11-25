@@ -185,14 +185,40 @@ test("a group's row adds every skill of it in one pick, stays open and announces
   expect(last(onValue)).toEqual({ template: { skills: ["tdd", "review"] } });
   expect(list).toBeInTheDocument();
   expect(hostRow()).toHaveTextContent("All added");
-  expect(hostRow()).toHaveAttribute("aria-disabled", "true");
   for (const name of [/tdd/, /review/])
-    expect(screen.getByRole("option", { name })).toHaveAttribute("aria-disabled", "true");
-  expect(screen.getByRole("option", { name: /from-github/ })).not.toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
+    expect(screen.getByRole("option", { name })).toHaveTextContent("Added");
+  expect(screen.getByRole("option", { name: /from-github/ })).not.toHaveTextContent("Added");
   expect(screen.getAllByRole("status").some((s) => s.textContent === "Added 2 from Host")).toBe(
+    true,
+  );
+});
+
+test("picking an added skill again removes it from the list and announces it; the popover stays open", async () => {
+  useLibrary();
+  const onValue = vi.fn();
+  render(<Form onValue={onValue} />);
+  const list = await open();
+  await userEvent.click(screen.getByRole("option", { name: /tdd/ }));
+  await userEvent.click(screen.getByRole("option", { name: /review/ }));
+  await userEvent.click(screen.getByRole("option", { name: /tdd/ }));
+  expect(last(onValue)).toEqual({ template: { skills: ["review"] } });
+  expect(list).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: /tdd/ })).not.toHaveTextContent("Added");
+  expect(screen.getAllByRole("status").some((s) => s.textContent === "Removed tdd")).toBe(true);
+});
+
+test("a fully added group's row removes the group's skills again, and only them", async () => {
+  useLibrary();
+  const onValue = vi.fn();
+  render(<Form onValue={onValue} />);
+  await open();
+  await userEvent.click(screen.getByRole("option", { name: /from-github/ }));
+  await userEvent.click(hostRow());
+  expect(last(onValue)).toEqual({ template: { skills: ["from-github", "tdd", "review"] } });
+  await userEvent.click(hostRow());
+  expect(last(onValue)).toEqual({ template: { skills: ["from-github"] } });
+  expect(hostRow()).toHaveTextContent("Add all 2");
+  expect(screen.getAllByRole("status").some((s) => s.textContent === "Removed 2 from Host")).toBe(
     true,
   );
 });
@@ -283,7 +309,6 @@ test("picking keeps the popover open, marks Added, writes the draft and announce
   await userEvent.click(screen.getByRole("option", { name: /tdd/ }));
   expect(last(onValue)).toEqual({ template: { skills: ["tdd"] } });
   expect(list).toBeInTheDocument();
-  expect(screen.getByRole("option", { name: /tdd/ })).toHaveAttribute("aria-disabled", "true");
   expect(screen.getByRole("option", { name: /tdd/ })).toHaveTextContent("Added");
   const said = screen.getAllByRole("status").find((s) => s.textContent === "Added tdd");
   expect(said).toBeDefined();

@@ -71,6 +71,8 @@ export type AddSlot = {
   add: (value: string, opts?: { scroll?: boolean }) => void;
   /** Scrolls a row of this agent into view (a picker does it once it closes). */
   reveal: (value: string) => void;
+  /** Removes this list's own `value`, if it has it (a picker unticking what it added). Focus stays where it is. */
+  remove: (value: string) => void;
 };
 
 export type RowNote = { message: string; severity: "error" | "warning" };
@@ -243,6 +245,14 @@ export function ConfigList({
   const add = () => {
     if (commit(text)) setText("");
   };
+  // Read through a ref: a picker removes several values in one go, and each removal re-renders (flushSync) before
+  // the next looks up its index.
+  const ownNow = useRef(own);
+  ownNow.current = own;
+  const removeValue = (value: string) => {
+    const at = ownNow.current.indexOf(value);
+    if (at >= 0) flushSync(() => onRemove(at));
+  };
 
   const toggle = () => {
     if (expanded) {
@@ -282,12 +292,19 @@ export function ConfigList({
       warning={warning}
       legendAction={
         !readOnly && labelAction && !inherited
-          ? (a) => labelAction({ ...a, add: commit, reveal })
+          ? (a) => labelAction({ ...a, add: commit, reveal, remove: removeValue })
           : undefined
       }
     >
       {({ id, describedBy, invalid }) => {
-        const slot: AddSlot = { id, describedBy, invalid, add: commit, reveal };
+        const slot: AddSlot = {
+          id,
+          describedBy,
+          invalid,
+          add: commit,
+          reveal,
+          remove: removeValue,
+        };
         const action = readOnly || !inherited ? null : labelAction?.(slot);
         return (
           <div className="grid gap-2">

@@ -96,7 +96,12 @@ export function PickAddMany({
   const [said, setSaid] = useState("");
   const [refused, setRefused] = useState("");
   const [refusedValue, setRefusedValue] = useState("");
-  const multiple = useMemo(() => ({ added, announce: setSaid, groupRows }), [added, groupRows]);
+  // With group rows the boxes untick: picking an added skill again removes it from the list.
+  const remove = groupRows ? slot.remove : undefined;
+  const multiple = useMemo(
+    () => ({ added, announce: setSaid, groupRows, remove }),
+    [added, groupRows, remove],
+  );
   const last = useRef<string>(undefined);
   return (
     <>

@@ -100,6 +100,7 @@ function ComboItem({
   added,
   checkbox,
   onCommit,
+  onUncommit,
   renderOption,
 }: {
   option: ComboOption
@@ -109,6 +110,8 @@ function ComboItem({
   /** Multi-pick with group rows: a checkbox on the left says whether it was added, in place of the check. */
   checkbox: boolean
   onCommit: (value: string) => void
+  /** Multi-pick that can untick: an added option stays enabled, and picking it again removes it. */
+  onUncommit?: ((value: string) => void) | undefined
   renderOption?: ((option: ComboOption) => React.ReactNode) | undefined
 }) {
   if (checkbox)
@@ -116,11 +119,11 @@ function ComboItem({
       <CommandPrimitive.Item
         value={itemKey(option)}
         keywords={[option.label, ...(option.keywords ?? [])]}
-        disabled={option.disabled || added}
-        onSelect={() => onCommit(option.value)}
+        disabled={option.disabled || (added && !onUncommit)}
+        onSelect={() => (added && onUncommit ? onUncommit(option.value) : onCommit(option.value))}
         className={cn(itemClass, "pr-2")}
       >
-        <CheckMark state={added} disabled={added} />
+        <CheckMark state={added} disabled={added && !onUncommit} />
         <span className="min-w-0 flex-1 truncate">{renderOption ? renderOption(option) : option.label}</span>
         {added ? <span className="sr-only">, Added</span> : null}
       </CommandPrimitive.Item>
@@ -152,25 +155,31 @@ function GroupRow({
   group,
   heading,
   toAdd,
+  toRemove,
   someAdded,
   onCommit,
+  onUncommit,
 }: {
   group: string
   heading: React.ReactNode
   /** The group's options this row would add now. */
   toAdd: string[]
+  /** Once nothing is left to add: the group's added options (that match the filter) this row would remove. */
+  toRemove: string[]
   someAdded: boolean
   onCommit: (group: string, values: string[]) => void
+  onUncommit?: ((group: string, values: string[]) => void) | undefined
 }) {
   const done = toAdd.length === 0
+  const canRemove = done && !!onUncommit && toRemove.length > 0
   return (
     <CommandPrimitive.Item
       value={groupKey(group)}
-      disabled={done}
-      onSelect={() => onCommit(group, toAdd)}
+      disabled={done && !canRemove}
+      onSelect={() => (canRemove ? onUncommit?.(group, toRemove) : onCommit(group, toAdd))}
       className={cn(itemClass, "pr-2 font-medium")}
     >
-      <CheckMark state={done ? true : someAdded ? "mixed" : false} disabled={done} />
+      <CheckMark state={done ? true : someAdded ? "mixed" : false} disabled={done && !canRemove} />
       <span className="flex min-w-0 flex-1">{heading}</span>
       <span className="shrink-0 text-xs font-normal text-muted-foreground">
         {done ? "All added" : `Add ${toAdd.length === 1 ? "1" : `all ${toAdd.length}`}`}
@@ -189,6 +198,8 @@ function ComboList({
   groupRows,
   onCommit,
   onCommitGroup,
+  onUncommit,
+  onUncommitGroup,
   onSearch,
   renderOption,
   renderGroup,
@@ -205,6 +216,9 @@ function ComboList({
   groupRows?: boolean
   onCommit: (value: string) => void
   onCommitGroup?: (group: string, values: string[]) => void
+  /** Multi-pick that can untick: removes an option added in this opening (the highlight stays). */
+  onUncommit?: ((value: string) => void) | undefined
+  onUncommitGroup?: ((group: string, values: string[]) => void) | undefined
   onSearch: () => void
   renderOption?: ((option: ComboOption) => React.ReactNode) | undefined
   renderGroup?: ((group: string) => React.ReactNode) | undefined
@@ -260,6 +274,7 @@ function ComboList({
       added={added?.has(o.value) ?? false}
       checkbox={!!groupRows}
       onCommit={commit}
+      onUncommit={onUncommit}
       renderOption={renderOption}
     />
   )
@@ -327,8 +342,10 @@ function ComboList({
                   group={group}
                   heading={heading}
                   toAdd={shown.filter((o) => !o.disabled && !added?.has(o.value)).map((o) => o.value)}
+                  toRemove={shown.filter((o) => added?.has(o.value)).map((o) => o.value)}
                   someAdded={members.some((o) => added?.has(o.value))}
                   onCommit={commitGroup}
+                  onUncommit={onUncommitGroup}
                 />
               ) : null}
               {members.map(item)}
@@ -397,6 +414,8 @@ function Combobox({
     /** Each group opens with a row that adds all of its options (that match the filter) in one pick, and
      *  options show a checkbox. `onValueChange` is called once per added value. */
     groupRows?: boolean
+    /** With group rows: picking an added option (or a fully added group's row) again removes it. */
+    remove?: (value: string) => void
   }
   /** A caller-supplied trigger (one element) in place of the default Select-shaped button. */
   trigger?: React.ReactElement
@@ -468,6 +487,23 @@ function Combobox({
     for (const v of values) onValueChange(v)
   }
 
+  const remove = multiple?.remove
+  const label = (v: string) => options.find((o) => o.value === v)?.label ?? v
+  const uncommit = remove
+    ? (v: string) => {
+        lockPlacement()
+        multiple.announce(`Removed ${label(v)}`)
+        remove(v)
+      }
+    : undefined
+  const uncommitGroup = remove
+    ? (group: string, values: string[]) => {
+        lockPlacement()
+        multiple.announce(`Removed ${values.length === 1 ? label(values[0] ?? "") : `${values.length} from ${group}`}`)
+        for (const v of values) remove(v)
+      }
+    : undefined
+
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild ref={triggerRef}>
@@ -524,6 +560,8 @@ function Combobox({
           groupRows={multiple?.groupRows}
           onCommit={commit}
           onCommitGroup={commitGroup}
+          onUncommit={uncommit}
+          onUncommitGroup={uncommitGroup}
           onSearch={lockPlacement}
           renderOption={renderOption}
           renderGroup={renderGroup}

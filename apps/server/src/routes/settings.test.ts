@@ -28,6 +28,7 @@ test("GET returns the defaults and the env-only local runtime flag", async () =>
     warmWindowMinutes: 70,
     memberUpdateDebounceSeconds: 30,
     allowLocalRuntime: true,
+    defaultImage: h.app.config.defaultImage,
     updatedAt: null,
     updatedBy: null,
   } satisfies FactorySettingsDto);

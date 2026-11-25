@@ -20,6 +20,9 @@ export const FORM_OWNED_KEYS = [
   "skills",
   "can_spawn",
   "secrets",
+  "runtime",
+  "image",
+  "permission_mode",
 ] as const;
 
 /**

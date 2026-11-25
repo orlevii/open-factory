@@ -5,6 +5,7 @@ import { FieldShell } from "@/components/field-shell";
 import { focusField } from "@/components/forms/focus-field";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { Button } from "@/components/ui/button";
+import { FormDialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,6 +15,7 @@ import {
   checkName,
   checkUrl,
   type EditorField,
+  firstInvalidField,
   newPair,
   type Pair,
   pairErrors,
@@ -35,20 +37,24 @@ const KINDS = [
 type PairList = "env" | "headers";
 
 /**
- * The inline MCP server editor (spec §12.2): under its row, with no sheet over a dirty page. It holds its own draft
- * until Done, so switching kind keeps what was typed in the other kind's fields; only the chosen kind is saved.
- * Values (args, env, URL, headers) appear only inside these inputs.
+ * The MCP server dialog (spec §2.5, §4.3), a drawer below `md`; add and edit share it. It holds its own draft until
+ * Apply, so switching kind keeps what was typed in the other kind's fields; only the chosen kind is saved. Dismissing
+ * (Esc, scrim, Cancel) hands the draft to `onDismiss` and never asks. Values (args, env, URL, headers) appear only
+ * inside these inputs.
  */
-export function McpEditor({
+export function McpDialog({
+  open,
   initial,
   original,
   taken,
   knownSecrets,
   mode,
   onAddSecret,
-  onDone,
-  onCancel,
+  onApply,
+  onDismiss,
+  onCloseAutoFocus,
 }: {
+  open: boolean;
   initial: ServerDraft;
   /** The name the server had (null for a new one): renaming replaces it in place. */
   original: string | null;
@@ -58,13 +64,15 @@ export function McpEditor({
   knownSecrets: ReadonlySet<string>;
   mode: ConfigMode;
   onAddSecret: (name: string) => void;
-  onDone: (draft: ServerDraft, original: string | null) => void;
-  onCancel: () => void;
+  onApply: (draft: ServerDraft, original: string | null) => void;
+  /** Closed without applying: the caller keeps the draft for this server. */
+  onDismiss: (draft: ServerDraft) => void;
+  onCloseAutoFocus: (e: Event) => void;
 }) {
   const [d, setD] = useState(initial);
-  // Pair name errors show once a pair name is left, or after a Done.
+  // Pair name errors show once a pair name is left, or after Apply.
   const [touched, setTouched] = useState<ReadonlySet<number> | "all">(() => new Set());
-  const root = useRef<HTMLFieldSetElement>(null);
+  const root = useRef<HTMLDivElement>(null);
   const kindName = useId();
 
   const fieldErrors = useFieldErrors<EditorField>({
@@ -107,19 +115,19 @@ export function McpEditor({
     [knownSecrets, onAddSecret],
   );
 
-  const done = () => {
+  const apply = () => {
     flushSync(() => setTouched("all"));
     if (!fieldErrors.submit(KIND_FIELDS[d.kind])) return;
     if (errors.size > 0) {
       focusField(root.current);
       return;
     }
-    onDone(d, original);
+    onApply(d, original);
   };
   const enterDone = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
-    done();
+    apply();
   };
   const text =
     (f: EditorField, key: "name" | "command" | "url") => (e: { target: { value: string } }) => {
@@ -127,113 +135,127 @@ export function McpEditor({
       setD((p) => ({ ...p, [key]: e.target.value }));
     };
 
+  const focusStart = (e: Event) => {
+    e.preventDefault();
+    document
+      .getElementById(`field-${original ? firstInvalidField(initial, taken) : "mcp-name"}`)
+      ?.focus();
+  };
+
   return (
-    <fieldset
-      ref={root}
-      aria-label={original ? `Edit ${original}` : CONFIG_COPY.addServer}
-      className="grid min-w-0 gap-4 rounded-lg border border-border bg-card p-3"
+    <FormDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onDismiss(d);
+      }}
+      title={original ? `Edit ${original}` : CONFIG_COPY.addServer}
+      onOpenAutoFocus={focusStart}
+      onCloseAutoFocus={onCloseAutoFocus}
+      primary={
+        <Button type="button" inForm onClick={apply}>
+          {original ? CONFIG_COPY.applyChanges : CONFIG_COPY.addServer}
+        </Button>
+      }
     >
-      <FieldShell name="mcp-name" label="Name" error={fieldErrors.errors["mcp-name"]}>
-        {({ id, describedBy, invalid }) => (
-          <Input
-            id={id}
-            value={d.name}
-            autoComplete="off"
-            spellCheck={false}
-            className="font-mono"
-            aria-describedby={describedBy}
-            aria-invalid={invalid || undefined}
-            onChange={text("mcp-name", "name")}
-            onBlur={(e) => fieldErrors.blur("mcp-name", e)}
-            onKeyDown={enterDone}
-          />
-        )}
-      </FieldShell>
-      <SegmentedControl
-        legend="Kind"
-        legendVisible
-        name={kindName}
-        value={d.kind}
-        options={KINDS}
-        onChange={(kind) => setD((p) => ({ ...p, kind }))}
-      />
-      {d.kind === "command" ? (
-        <>
-          <FieldShell name="mcp-command" label="Command" error={fieldErrors.errors["mcp-command"]}>
-            {({ id, describedBy, invalid }) => (
-              <Input
-                id={id}
-                value={d.command}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="npx"
-                className="font-mono"
-                aria-describedby={describedBy}
-                aria-invalid={invalid || undefined}
-                onChange={text("mcp-command", "command")}
-                onBlur={(e) => fieldErrors.blur("mcp-command", e)}
-                onKeyDown={enterDone}
-              />
-            )}
-          </FieldShell>
-          <FieldShell name="mcp-args" label="Arguments" help={CONFIG_COPY.argsHelp}>
-            {({ id, describedBy }) => (
-              <Textarea
-                id={id}
-                value={d.args}
-                spellCheck={false}
-                className="font-mono text-[0.8125rem]"
-                aria-describedby={describedBy}
-                onChange={(e) => setD((p) => ({ ...p, args: e.target.value }))}
-              />
-            )}
-          </FieldShell>
-        </>
-      ) : (
-        <FieldShell name="mcp-url" label="URL" error={fieldErrors.errors["mcp-url"]}>
+      <div ref={root} className="grid min-w-0 gap-4">
+        <FieldShell name="mcp-name" label="Name" error={fieldErrors.errors["mcp-name"]}>
           {({ id, describedBy, invalid }) => (
             <Input
               id={id}
-              value={d.url}
-              type="url"
+              value={d.name}
               autoComplete="off"
               spellCheck={false}
-              placeholder="https://"
               className="font-mono"
               aria-describedby={describedBy}
               aria-invalid={invalid || undefined}
-              onChange={text("mcp-url", "url")}
-              onBlur={(e) => fieldErrors.blur("mcp-url", e)}
+              onChange={text("mcp-name", "name")}
+              onBlur={(e) => fieldErrors.blur("mcp-name", e)}
               onKeyDown={enterDone}
             />
           )}
         </FieldShell>
-      )}
-      <Pairs
-        which={list}
-        pairs={d[list]}
-        errors={errors}
-        touched={touched}
-        mode={mode}
-        onPatch={patchPair}
-        onRemove={removePair}
-        onTouch={touch}
-        onSecret={onSecret}
-        onAdd={() => {
-          const p = newPair();
-          flushSync(() => setD((prev) => ({ ...prev, [list]: [...prev[list], p] })));
-          document.getElementById(`field-mcp-${list}-${p.id}-name`)?.focus();
-        }}
-      />
-      <div className="flex gap-2">
-        <Button type="button" variant="ghost" inForm onClick={done}>
-          {CONFIG_COPY.done}
-        </Button>
-        <Button type="button" variant="ghost" inForm onClick={onCancel}>
-          {CONFIG_COPY.cancel}
-        </Button>
+        <SegmentedControl
+          legend="Kind"
+          legendVisible
+          name={kindName}
+          value={d.kind}
+          options={KINDS}
+          onChange={(kind) => setD((p) => ({ ...p, kind }))}
+        />
+        {d.kind === "command" ? (
+          <>
+            <FieldShell
+              name="mcp-command"
+              label="Command"
+              error={fieldErrors.errors["mcp-command"]}
+            >
+              {({ id, describedBy, invalid }) => (
+                <Input
+                  id={id}
+                  value={d.command}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="npx"
+                  className="font-mono"
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid || undefined}
+                  onChange={text("mcp-command", "command")}
+                  onBlur={(e) => fieldErrors.blur("mcp-command", e)}
+                  onKeyDown={enterDone}
+                />
+              )}
+            </FieldShell>
+            <FieldShell name="mcp-args" label="Arguments" help={CONFIG_COPY.argsHelp}>
+              {({ id, describedBy }) => (
+                <Textarea
+                  id={id}
+                  value={d.args}
+                  spellCheck={false}
+                  className="font-mono text-[0.8125rem]"
+                  aria-describedby={describedBy}
+                  onChange={(e) => setD((p) => ({ ...p, args: e.target.value }))}
+                />
+              )}
+            </FieldShell>
+          </>
+        ) : (
+          <FieldShell name="mcp-url" label="URL" error={fieldErrors.errors["mcp-url"]}>
+            {({ id, describedBy, invalid }) => (
+              <Input
+                id={id}
+                value={d.url}
+                type="url"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="https://"
+                className="font-mono"
+                aria-describedby={describedBy}
+                aria-invalid={invalid || undefined}
+                onChange={text("mcp-url", "url")}
+                onBlur={(e) => fieldErrors.blur("mcp-url", e)}
+                onKeyDown={enterDone}
+              />
+            )}
+          </FieldShell>
+        )}
+        <Pairs
+          which={list}
+          pairs={d[list]}
+          errors={errors}
+          touched={touched}
+          mode={mode}
+          onPatch={patchPair}
+          onRemove={removePair}
+          onTouch={touch}
+          onSecret={onSecret}
+          onAdd={() => {
+            const p = newPair();
+            flushSync(() => setD((prev) => ({ ...prev, [list]: [...prev[list], p] })));
+            document.getElementById(`field-mcp-${list}-${p.id}-name`)?.focus();
+          }}
+        />
       </div>
-    </fieldset>
+    </FormDialog>
   );
 }
 
@@ -354,7 +376,7 @@ const PairRow = memo(function PairRow({
   };
 
   return (
-    <div className="grid min-w-0 gap-2 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] md:items-start">
+    <div className="grid min-w-0 gap-2 @lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] @lg:items-start">
       <FieldShell name={`${base}-name`} label="Name" error={error}>
         {({ id, describedBy, invalid }) => (
           <Input
@@ -401,7 +423,7 @@ const PairRow = memo(function PairRow({
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="justify-self-end md:mt-8"
+        className="justify-self-end @lg:mt-8"
         aria-label={`Remove ${n}`}
         onClick={() => onRemove(pair.id, index)}
       >

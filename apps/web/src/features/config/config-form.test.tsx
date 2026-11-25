@@ -37,7 +37,9 @@ function Form({
   issues = [],
   conflicts,
   onShowRaw,
+  mode = "agent",
 }: {
+  mode?: "agent" | "template";
   start: unknown;
   onValue?: (v: unknown) => void;
   issues?: TemplateIssue[];
@@ -48,7 +50,7 @@ function Form({
   return (
     <QueryWrap>
       <ConfigForm
-        mode="agent"
+        mode={mode}
         value={value}
         base={doc({ model: "sonnet", effort: "high" })}
         templateName="dev"
@@ -98,14 +100,14 @@ test("wrong types anywhere never throw: each field reads 'Edit this in Raw JSON.
 });
 
 test("a non-object draft (valid JSON, wrong schema) renders tolerantly", () => {
-  render(<Form start={[1, 2]} />);
+  render(<Form mode="template" start={[1, 2]} />);
   // Every field of the form.
   expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(CONFIG_FIELDS.length);
 });
 
 test("every field's issue lands on its note, and no mapped issue reaches the top block", () => {
   const issues = CONFIG_FIELDS.map((f) => issue(fieldPath(f), `Issue on ${f}.`));
-  render(<Form start={{}} issues={issues} />);
+  render(<Form mode="template" start={{}} issues={issues} />);
   for (const f of CONFIG_FIELDS)
     expect(document.getElementById(`field-${f}-error`), f).toHaveTextContent(`Issue on ${f}.`);
   expect(screen.queryByRole("region", { name: "Issues the form can't show" })).toBeNull();
@@ -120,6 +122,14 @@ test("the sections come in the spec's order", () => {
     "Environment",
     "Behavior",
   ]);
+});
+
+test("the template form starts with Runtime; an agent's form has no Runtime section", () => {
+  const { unmount } = render(<Form mode="template" start={{}} />);
+  expect(screen.getAllByRole("heading", { level: 2 })[0]).toHaveTextContent("Runtime");
+  unmount();
+  render(<Form start={{}} />);
+  expect(screen.queryByRole("heading", { level: 2, name: "Runtime" })).toBeNull();
 });
 
 test("issues no field owns are listed at the top with 'Show in Raw JSON'; owned ones land on their field", async () => {

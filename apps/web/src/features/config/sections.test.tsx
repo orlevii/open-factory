@@ -1,5 +1,5 @@
-import type { ConfigDoc, TemplateIssue } from "@open-factory/shared";
-import { act, render, screen, within } from "@testing-library/react";
+import { type ConfigDoc, OVERLAY_LIMITS, type TemplateIssue } from "@open-factory/shared";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -77,7 +77,6 @@ function Form({
   onValue,
   issues = [],
   localSkills,
-  onEditorOpenChange,
 }: {
   start: unknown;
   base?: ConfigDoc | null;
@@ -85,7 +84,6 @@ function Form({
   onValue?: (v: unknown) => void;
   issues?: TemplateIssue[];
   localSkills?: string[];
-  onEditorOpenChange?: (open: boolean) => void;
 }) {
   const [value, setValue] = useState<unknown>(start);
   return (
@@ -97,7 +95,6 @@ function Form({
         templateName="dev"
         issues={issues}
         localSkills={localSkills}
-        onEditorOpenChange={onEditorOpenChange}
         onChange={(u) =>
           setValue((p: unknown) => {
             const n = u(p);
@@ -117,6 +114,12 @@ const withServers = (servers: Record<string, unknown>, template: Record<string, 
 });
 const last = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls.at(-1)?.[0];
 const mcpGroup = () => screen.getByRole("group", { name: "MCP servers" });
+const dialog = () => screen.getByRole("dialog");
+const rowOf = (name: string) => {
+  const row = document.querySelector<HTMLElement>(`[data-mcp-row="${CSS.escape(name)}"]`);
+  if (!row) throw new Error(`no row ${name}`);
+  return row;
+};
 
 test("an MCP row never renders args, the full URL, headers or env values", () => {
   render(
@@ -140,7 +143,7 @@ test("an MCP row never renders args, the full URL, headers or env values", () =>
   const group = mcpGroup();
   expect(within(group).getByText("npx · 3 args")).toBeInTheDocument();
   expect(within(group).getByText("mcp.acme.dev")).toBeInTheDocument();
-  expect(within(group).getByRole("button", { name: "Edit gh" })).toBeInTheDocument();
+  expect(within(group).getByRole("button", { name: "gh" })).toBeInTheDocument();
   expect(within(group).getByRole("button", { name: "Remove gh" })).toBeInTheDocument();
   // Not in the text, and not in any attribute (labels, descriptions) either.
   const html = document.body.innerHTML;
@@ -165,12 +168,12 @@ test("a command that isn't a bare program name never shows in its row", () => {
   expect(document.body.innerHTML).not.toContain("sk-ant");
 });
 
-test("Add server: the editor appears with focus on Name, and switching kind keeps the other kind's fields", async () => {
+test("Add server: the dialog opens with focus on Name, and switching kind keeps the other kind's fields", async () => {
   const onValue = vi.fn();
   render(<Form start={{}} onValue={onValue} />);
   await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.addServer }));
   const name = screen.getByRole("textbox", { name: "Name" });
-  expect(name).toHaveFocus();
+  await waitFor(() => expect(name).toHaveFocus());
   await userEvent.type(name, "gh");
   await userEvent.type(screen.getByRole("textbox", { name: "Command" }), "npx");
   await userEvent.type(screen.getByRole("textbox", { name: "Arguments" }), "-y{Enter}pkg");
@@ -182,12 +185,12 @@ test("Add server: the editor appears with focus on Name, and switching kind keep
   expect(screen.getByRole("textbox", { name: "Arguments" })).toHaveValue("-y\npkg");
   await userEvent.click(screen.getByRole("radio", { name: "URL" }));
   expect(screen.getByRole("textbox", { name: "URL" })).toHaveValue("https://mcp.acme.dev/x");
-  await userEvent.click(screen.getByRole("button", { name: "Done" }));
+  await userEvent.click(within(dialog()).getByRole("button", { name: CONFIG_COPY.addServer }));
   // Only the chosen kind is saved.
   expect(last(onValue)).toEqual({
     mcp: { mcpServers: { gh: { type: "http", url: "https://mcp.acme.dev/x" } } },
   });
-  expect(screen.getByRole("button", { name: "Edit gh" })).toHaveFocus();
+  await waitFor(() => expect(rowOf("gh")).toHaveFocus());
 });
 
 test("the editor refuses a missing command, the reserved name and a bad env name", async () => {
@@ -195,7 +198,7 @@ test("the editor refuses a missing command, the reserved name and a bad env name
   render(<Form start={{}} onValue={onValue} />);
   await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.addServer }));
   await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "factory");
-  await userEvent.click(screen.getByRole("button", { name: "Done" }));
+  await userEvent.click(within(dialog()).getByRole("button", { name: CONFIG_COPY.addServer }));
   expect(document.getElementById("field-mcp-name-error")).toHaveTextContent(
     CONFIG_FIELD_MSG.factoryServer,
   );
@@ -209,7 +212,7 @@ test("the editor refuses a missing command, the reserved name and a bad env name
   await userEvent.type(screen.getByRole("textbox", { name: "Command" }), "npx");
   await userEvent.click(screen.getByRole("button", { name: "Add variable" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Name, env variable 1" }), "A-B");
-  await userEvent.click(screen.getByRole("button", { name: "Done" }));
+  await userEvent.click(within(dialog()).getByRole("button", { name: CONFIG_COPY.addServer }));
   expect(screen.getByRole("textbox", { name: "Name, env variable 1" })).toHaveFocus();
   expect(screen.getByText(CONFIG_FIELD_MSG.envName)).toBeInTheDocument();
   expect(onValue).not.toHaveBeenCalled();
@@ -220,7 +223,7 @@ test(`Insert secret puts \${GH_TOKEN} at the caret, adds the secret with its not
   render(
     <Form start={{ mcp: { mcpServers: { gh: { url: "https://x.dev" } } } }} onValue={onValue} />,
   );
-  await userEvent.click(screen.getByRole("button", { name: "Edit gh" }));
+  await userEvent.click(screen.getByRole("button", { name: "gh" }));
   await userEvent.click(screen.getByRole("button", { name: "Add header" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Name, header 1" }), "Authorization");
   const value = screen.getByRole("textbox", { name: "Value, header 1" }) as HTMLInputElement;
@@ -236,7 +239,7 @@ test(`Insert secret puts \${GH_TOKEN} at the caret, adds the secret with its not
   // Removing the reference keeps the secret.
   await userEvent.clear(value);
   await userEvent.type(value, "none");
-  await userEvent.click(screen.getByRole("button", { name: "Done" }));
+  await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.applyChanges }));
   expect(last(onValue)).toEqual({
     template: { secrets: ["GH_TOKEN"] },
     mcp: {
@@ -256,7 +259,7 @@ test("Insert secret with no saved caret appends; a secret the template already l
       onValue={onValue}
     />,
   );
-  await userEvent.click(screen.getByRole("button", { name: "Edit gh" }));
+  await userEvent.click(screen.getByRole("button", { name: "gh" }));
   await userEvent.click(screen.getByRole("button", { name: "Insert secret, env variable 1" }));
   await userEvent.click(await screen.findByRole("button", { name: "GH_TOKEN" }));
   expect(screen.getByRole("textbox", { name: "Value, env variable 1" })).toHaveValue(
@@ -269,7 +272,7 @@ test("Insert secret with no saved caret appends; a secret the template already l
 test("Add secret opens the Add secret sheet and inserts the new name on return", async () => {
   const onValue = vi.fn();
   render(<Form start={{ mcp: { mcpServers: { gh: { command: "npx" } } } }} onValue={onValue} />);
-  await userEvent.click(screen.getByRole("button", { name: "Edit gh" }));
+  await userEvent.click(screen.getByRole("button", { name: "gh" }));
   await userEvent.click(screen.getByRole("button", { name: "Add variable" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Name, env variable 1" }), "TOKEN");
   await userEvent.click(screen.getByRole("button", { name: "Insert secret, env variable 1" }));
@@ -285,15 +288,15 @@ test("Add secret opens the Add secret sheet and inserts the new name on return",
   expect(screen.getByText("Adds NEW_TOKEN to this agent's secrets.")).toBeInTheDocument();
 });
 
-test("Override copies the template's server into this agent's, whole, and opens it", async () => {
+test("Override copies the template's server into this agent's, whole, and opens it in the dialog", async () => {
   const onValue = vi.fn();
   const remote = { type: "http", url: USER_URL, headers: { Authorization: `Bearer \${GH}` } };
   render(<Form start={{}} base={withServers({ remote })} onValue={onValue} />);
   await userEvent.click(screen.getByRole("button", { name: "Override remote" }));
   expect(last(onValue)).toEqual({ mcp: { mcpServers: { remote } } });
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("remote");
-  expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus();
-  expect(within(mcpGroup()).getByText(CONFIG_COPY.overridden)).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus());
+  expect(screen.getByText(CONFIG_COPY.overridden)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Override remote" })).toBeNull();
 });
 
@@ -416,7 +419,7 @@ test("from secrets: rows read 'Available as $NAME'; a picked secret is added", a
 test("template mode: one group per list and no Override", () => {
   render(<Form mode="template" start={withServers({ gh: { command: "npx" } })} />);
   expect(screen.queryByText(/From template/)).toBeNull();
-  expect(screen.getByRole("button", { name: "Edit gh" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "gh" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /^Override/ })).toBeNull();
 });
 
@@ -484,28 +487,138 @@ test("an env issue on a name with no row, and a list issue past the list, fall t
   expect(document.getElementById("field-canSpawn-error")).toHaveTextContent("Gone template.");
 });
 
-test("the form reports an open MCP editor: on open, Done, Cancel, removing it, and unmount", async () => {
-  const changes = vi.fn();
-  const { unmount } = render(
+test("Edit opens the dialog on the stored server and Apply changes writes it in place, keeping its place and the other keys", async () => {
+  const onValue = vi.fn();
+  render(
     <Form
-      start={{ mcp: { mcpServers: { gh: { command: "npx" } } } }}
-      onEditorOpenChange={changes}
+      start={{
+        mcp: {
+          mcpServers: {
+            a: { command: "x" },
+            gh: { command: "npx", args: ["-y"], timeout: 5 },
+            z: { command: "z" },
+          },
+        },
+      }}
+      onValue={onValue}
     />,
   );
-  await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.addServer }));
-  expect(changes.mock.calls).toEqual([[true]]);
+  await userEvent.click(screen.getByRole("button", { name: "gh" }));
+  expect(within(dialog()).getByText("Edit gh", { selector: "h2" })).toBeInTheDocument();
+  const command = screen.getByRole("textbox", { name: "Command" });
+  expect(command).toHaveValue("npx");
+  await userEvent.type(command, "x");
+  await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.applyChanges }));
+  expect(Object.keys((last(onValue) as { mcp: { mcpServers: object } }).mcp.mcpServers)).toEqual([
+    "a",
+    "gh",
+    "z",
+  ]);
+  expect(last(onValue)).toMatchObject({
+    mcp: { mcpServers: { gh: { command: "npxx", args: ["-y"], timeout: 5 } } },
+  });
+  await waitFor(() => expect(rowOf("gh")).toHaveFocus());
+  expect(rowOf("gh")).toHaveAttribute("data-arrived");
+});
+
+test("an edit of a server whose command is empty opens with focus on Command", async () => {
+  render(<Form start={{ mcp: { mcpServers: { gh: { command: "" } } } }} />);
+  await userEvent.click(screen.getByRole("button", { name: "gh" }));
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Command" })).toHaveFocus());
+});
+
+test.each([
+  ["Cancel", async () => userEvent.click(screen.getByRole("button", { name: "Cancel" }))],
+  ["Escape", async () => userEvent.keyboard("{Escape}")],
+])(
+  "dismissing the dialog with %s keeps each server's draft, never asks, and changes nothing",
+  async (_how, dismiss) => {
+    const onValue = vi.fn();
+    render(
+      <Form
+        start={{ mcp: { mcpServers: { a: { command: "x" }, b: { command: "y" } } } }}
+        onValue={onValue}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "a" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Command" }), "-draft");
+    await dismiss();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Focus returns to the edited row; nothing reached the draft.
+    await waitFor(() => expect(rowOf("a")).toHaveFocus());
+    expect(onValue).not.toHaveBeenCalled();
+    // A new server has its own draft, and b is untouched by a's.
+    await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.addServer }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "fresh");
+    await dismiss();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "b" }));
+    expect(screen.getByRole("textbox", { name: "Command" })).toHaveValue("y");
+    await dismiss();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "a" }));
+    expect(screen.getByRole("textbox", { name: "Command" })).toHaveValue("x-draft");
+    await dismiss();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.addServer }));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("fresh");
+  },
+);
+
+test("applying a server drops its kept draft", async () => {
+  render(<Form start={{ mcp: { mcpServers: { a: { command: "x" } } } }} />);
+  await userEvent.click(screen.getByRole("button", { name: "a" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Command" }), "1");
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(changes.mock.calls).toEqual([[true], [false]]);
-  await userEvent.click(screen.getByRole("button", { name: "Edit gh" }));
-  await userEvent.click(screen.getByRole("button", { name: "Done" }));
-  expect(changes.mock.calls).toEqual([[true], [false], [true], [false]]);
-  await userEvent.click(screen.getByRole("button", { name: "Edit gh" }));
-  await userEvent.click(screen.getByRole("button", { name: "Remove gh" }));
-  expect(changes.mock.calls.at(-1)).toEqual([false]);
-  await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.addServer }));
-  changes.mockClear();
-  unmount();
-  expect(changes.mock.calls).toEqual([[false]]);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await userEvent.click(screen.getByRole("button", { name: "a" }));
+  await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.applyChanges }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await userEvent.click(screen.getByRole("button", { name: "a" }));
+  expect(screen.getByRole("textbox", { name: "Command" })).toHaveValue("x1");
+});
+
+test("at the server limit Add server is aria-disabled with its reason, and opens nothing", async () => {
+  const servers = Object.fromEntries(
+    Array.from({ length: OVERLAY_LIMITS.mcpServers }, (_, i) => [`s${i}`, { command: "x" }]),
+  );
+  render(<Form start={{ mcp: { mcpServers: servers } }} />);
+  const add = screen.getByRole("button", { name: CONFIG_COPY.addServer });
+  expect(add).toHaveAttribute("aria-disabled", "true");
+  expect(add).toHaveAccessibleDescription(CONFIG_FIELD_MSG.tooManyServers);
+  await userEvent.click(add);
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("a row's Remove is a sibling of its name button, not inside it", () => {
+  render(<Form start={{ mcp: { mcpServers: { gh: { command: "npx" } } } }} />);
+  const name = screen.getByRole("button", { name: "gh" });
+  const remove = screen.getByRole("button", { name: "Remove gh" });
+  expect(name).not.toContainElement(remove);
+  expect(remove.parentElement?.closest("button")).toBeNull();
+});
+
+test("in agent mode a template's server name is not a button; it only offers Override", () => {
+  render(
+    <Form start={{}} base={withServers({ remote: { type: "http", url: "https://x.dev" } })} />,
+  );
+  const tpl = screen.getByRole("list", { name: "From template dev · 1" });
+  expect(within(tpl).getByText("remote")).toBeInTheDocument();
+  expect(
+    within(tpl)
+      .getAllByRole("button")
+      .map((b) => b.textContent),
+  ).toEqual([CONFIG_COPY.override]);
+});
+
+test("in agent mode Add server sits on the This agent row", () => {
+  render(
+    <Form start={{}} base={withServers({ remote: { type: "http", url: "https://x.dev" } })} />,
+  );
+  const label = within(mcpGroup()).getByText(`${CONFIG_COPY.thisAgent} · 0`);
+  expect(label.parentElement).toContainElement(
+    screen.getByRole("button", { name: CONFIG_COPY.addServer }),
+  );
 });
 
 test("Override of an entry the form can't edit copies it and leaves the Raw JSON row", async () => {
@@ -515,6 +628,6 @@ test("Override of an entry the form can't edit copies it and leaves the Raw JSON
   await userEvent.click(screen.getByRole("button", { name: "Override odd" }));
   expect(last(onValue)).toEqual({ mcp: { mcpServers: { odd } } });
   expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Edit odd" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "odd" })).toBeNull();
   expect(screen.getByRole("button", { name: "Remove odd" })).toBeInTheDocument();
 });

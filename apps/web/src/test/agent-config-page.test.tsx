@@ -2,7 +2,7 @@ import type { AgentConfigResponse, AgentSummary, ConfigDoc } from "@open-factory
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { CONFIG_FORM_MSG, CONFIG_PAGE_MSG } from "@/features/config/messages";
+import { CONFIG_PAGE_MSG } from "@/features/config/messages";
 import { type Handler, json, type MockApi, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { detail } from "@/test/session-fixtures";
@@ -113,18 +113,6 @@ test("the header names the agent and links its template: '@ana · Template dev'"
   const meta = link.closest("[data-slot=config-meta]") as HTMLElement;
   expect(meta).not.toBeNull();
   expect(meta).toHaveTextContent("@ana · Template dev");
-});
-
-test("Discard works with only an MCP editor open, and closes it", async () => {
-  await open();
-  await userEvent.click(screen.getByRole("button", { name: "Add server" }));
-  const discard = screen.getByRole("button", { name: "Discard" });
-  expect(discard).not.toHaveAttribute("aria-disabled");
-  await userEvent.click(discard);
-  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
-  // Nothing was edited: no "Discarded." with an Undo that would have nothing to restore.
-  expect(within(footer()).queryByText(CONFIG_PAGE_MSG.discarded)).toBeNull();
-  expect(screen.getByRole("button", { name: "Discard" })).toHaveAttribute("aria-disabled", "true");
 });
 
 test("the footer is sticky only while dirty, or while an outcome shows", async () => {
@@ -290,27 +278,18 @@ test("drift: a refetch under my edits shows the conflict line with Reload, and t
   });
 });
 
-test("Save while an MCP server editor is open: refused, nothing sent, focus on its Name", async () => {
-  await open();
-  await setWarmWindow("30");
-  await userEvent.click(screen.getByRole("button", { name: "Add server" }));
-  await userEvent.click(save());
-  expect(within(footer()).getByText(CONFIG_FORM_MSG.finishServer)).toBeInTheDocument();
-  expect(puts()).toHaveLength(0);
-  expect(document.getElementById("field-mcp-name")).toHaveFocus();
-});
-
-test("Discard and Undo close an open MCP editor, so its Done can't bring discarded edits back", async () => {
+test("Discard drops a dismissed MCP server draft, so Undo and Save don't bring it back", async () => {
   await open();
   await setWarmWindow("30");
   await userEvent.click(screen.getByRole("button", { name: "Add server" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "gh");
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
-  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
   await userEvent.click(within(footer()).getByRole("button", { name: "Undo" }));
-  expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Add server" }));
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("");
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await userEvent.click(save());
-  expect(within(footer()).queryByText(CONFIG_FORM_MSG.finishServer)).toBeNull();
   await waitFor(() => expect(puts()).toHaveLength(1));
   expect(puts()[0]?.body).toMatchObject({
     overlay: { template: { warm_window_minutes: 30 } },
@@ -335,19 +314,21 @@ test("AC11: a server added in the form is the same entry in Raw JSON", async () 
   await userEvent.click(screen.getByRole("button", { name: "Add server" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "gh");
   await userEvent.type(screen.getByRole("textbox", { name: "Command" }), "npx");
-  await userEvent.click(screen.getByRole("button", { name: "Done" }));
+  await userEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Add server" }),
+  );
   const raw = await toRaw();
   expect(JSON.parse(raw.value)).toEqual({ mcp: { mcpServers: { gh: { command: "npx" } } } });
 });
 
-test("M1: the form's own state (an open MCP editor) survives a visit to Raw", async () => {
+test("M1: a dismissed MCP server draft survives a visit to Raw", async () => {
   await open();
   await userEvent.click(screen.getByRole("button", { name: "Add server" }));
   await userEvent.type(screen.getByRole("textbox", { name: "Name" }), "gh");
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await toRaw();
-  const panel = document.getElementById("field-mcp-name")?.closest("[role=tabpanel]");
-  expect(panel).toHaveAttribute("data-state", "inactive");
   await userEvent.click(tab("Configuration"));
+  await userEvent.click(screen.getByRole("button", { name: "Add server" }));
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("gh");
 });
 

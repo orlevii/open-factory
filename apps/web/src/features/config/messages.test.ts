@@ -4,7 +4,6 @@ import {
   archivedLine,
   brokenTemplateLine,
   CONFIG_FIELD_MSG,
-  CONFIG_FORM_MSG,
   CONFIG_PAGE_MSG,
   fileHasEdits,
   noAgentLine,
@@ -18,7 +17,6 @@ import {
 
 test.each([
   ["field", CONFIG_FIELD_MSG],
-  ["form", CONFIG_FORM_MSG],
   ["page", CONFIG_PAGE_MSG],
 ])("every configuration %s message is at most 40 characters", (_name, msgs) => {
   for (const [k, m] of Object.entries(msgs)) expect(m.length, k).toBeLessThanOrEqual(40);

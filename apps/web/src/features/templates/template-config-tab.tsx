@@ -18,7 +18,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { putTemplateConfig, templateConfigQueryOptions } from "@/features/config/api";
 import { ConfigForm, type RawTarget } from "@/features/config/config-form";
 import {
-  CONFIG_FORM_MSG,
   CONFIG_PAGE_MSG,
   fileHasEdits,
   openFileLabel,
@@ -93,8 +92,7 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
   });
   const { outcome, outcomeKey, setOutcome } = usePageOutcome();
   const [issuesOverride, setIssuesOverride] = useState<TemplateIssue[] | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
-  // Discard, Undo and Reload remount the form, so an open MCP editor doesn't bring discarded edits back on Done.
+  // Discard, Undo and Reload remount the form, so an MCP dialog's kept draft doesn't bring discarded edits back on Apply.
   const [formEpoch, setFormEpoch] = useState(0);
   const saveId = useId();
 
@@ -143,12 +141,6 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
 
   async function onSave() {
     if (save.isPending || lockedBy || !valid) return;
-    if (editorOpen) {
-      // The open MCP editor's edits aren't in the draft until its Done: nothing is sent (C3 review I2).
-      setOutcome({ kind: "error", text: CONFIG_FORM_MSG.finishServer });
-      document.getElementById("field-mcp-name")?.focus();
-      return;
-    }
     if (!dirty) return;
     const sent = draft.current.draft as ConfigDoc;
     setOutcome(NO_PAGE_OUTCOME);
@@ -233,14 +225,13 @@ export const TemplateConfigTab = memo(function TemplateConfigTab({
         conflicts={conflicts}
         onShowRaw={onShowRaw}
         localSkills={data.localSkills}
-        onEditorOpenChange={setEditorOpen}
       />
       <PageFooter
         outcome={footerOutcome}
         sticky={dirty || shown}
         pending={save.isPending}
         canSave={dirty && valid && !lockedBy}
-        canDiscard={dirty || editorOpen}
+        canDiscard={dirty}
         onSave={() => void onSave()}
         onDiscard={onDiscard}
         saveId={saveId}

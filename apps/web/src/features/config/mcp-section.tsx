@@ -1,9 +1,9 @@
 import { OVERLAY_LIMITS } from "@open-factory/shared";
-import { Pencil, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import {
   memo,
+  type TransitionEvent,
   useCallback,
-  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -11,13 +11,14 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { FieldShell } from "@/components/field-shell";
+import { FieldNote, noteDescribedBy } from "@/components/field-note";
 import { Button } from "@/components/ui/button";
 import { IssueIcon } from "@/features/templates/issue-list";
+import { arrive, useArrivalTint } from "@/lib/use-arrival";
 import { cn } from "@/lib/utils";
 import type { RowNote } from "./config-list";
 import { FIELD_PATHS } from "./fields";
-import { McpEditor } from "./mcp-editor";
+import { McpDialog } from "./mcp-dialog";
 import {
   fromDraft,
   isFormShaped,
@@ -50,47 +51,34 @@ function view(name: string, entry: unknown): RowView {
 
 const servers = (r: unknown): [string, unknown][] => (isRec(r) ? Object.entries(r) : []);
 
-/** Which editor is open: a server of this group by name, or a new one. */
-type Editing = { name: string | null; seq: number } | null;
+/**
+ * Which dialog is open: a server of this group by name, or a new one. `open` goes false while the dialog leaves, so
+ * its content stays for the exit; `initial` is the kept draft for that server, or its stored entry.
+ */
+type Editing = { name: string | null; seq: number; open: boolean; initial: ServerDraft } | null;
+/** Where focus goes when the dialog has closed: the row (tinted when a change was applied), else the Add button. */
+type Landing = { name: string | null; tint: boolean };
 
 /** Spec §12.2 section 3. */
 export function McpSection() {
-  return (
-    <Section title="MCP servers">
-      <McpField />
-    </Section>
-  );
+  return <McpField />;
 }
 
 function McpField() {
   const s = useConfigScope();
   const note = useFieldNote("mcp");
-  const { update, fieldErrors, mode, readOnly, onEditorOpenChange } = s;
-  const [editing, setEditingState] = useState<Editing>(null);
-  // The page refuses Save while an editor holds unapplied edits (review I2). It hears each open and close from the
-  // handlers that cause them, and a close when the form unmounts with an editor open (a tab switch drops the editor).
-  // The ref mirrors the state for handlers; the callback ref is the latest-callback pattern (updated after commit).
-  const editingNow = useRef<Editing>(null);
-  const notify = useRef(onEditorOpenChange);
-  useLayoutEffect(() => {
-    notify.current = onEditorOpenChange;
-  });
-  useEffect(
-    () => () => {
-      if (editingNow.current) notify.current?.(false);
-    },
-    [],
-  );
-  const setEditing = useCallback((next: Editing) => {
-    const was = editingNow.current !== null;
-    editingNow.current = next;
-    setEditingState(next);
-    if (was !== (next !== null)) notify.current?.(next !== null);
-  }, []);
+  const { update, mode, readOnly } = s;
+  const [editing, setEditing] = useState<Editing>(null);
+  // A dismissed dialog keeps its draft, per server (a new one under ""), for as long as the form lives.
+  const drafts = useRef(new Map<string, ServerDraft>());
+  const landing = useRef<Landing | null>(null);
   const seq = useRef(0);
   const groupId = useId();
+  const reasonId = useId();
   const ownListEl = useRef<HTMLUListElement>(null);
   const addEl = useRef<HTMLButtonElement>(null);
+  const { arrival, start, onArrivedEnd } = useArrivalTint();
+  const [arrivedName, setArrivedName] = useState<string>();
 
   const own = readAt(s.value, PATH);
   const ownRec = own.ok && (own.value === undefined || isRec(own.value)) ? own.value : null;
@@ -127,29 +115,40 @@ function McpField() {
   }, [items, ownNames, inheritedEntries]);
   const shown = withRest(note, rest);
 
-  const open = useCallback(
-    (name: string | null) => {
-      seq.current += 1;
-      flushSync(() => setEditing({ name, seq: seq.current }));
-      document.getElementById("field-mcp-name")?.focus();
-    },
-    [setEditing],
-  );
+  const ownEntriesRef = useRef(ownEntries);
+  useLayoutEffect(() => {
+    ownEntriesRef.current = ownEntries;
+  });
+  // `entry`: the server's stored value, when the draft holding it hasn't committed yet (an override).
+  const open = useCallback((name: string | null, entry?: unknown) => {
+    const stored = name === null ? undefined : ownEntriesRef.current.find(([n]) => n === name)?.[1];
+    const source = entry ?? stored;
+    seq.current += 1;
+    setEditing({
+      name,
+      seq: seq.current,
+      open: true,
+      initial:
+        drafts.current.get(name ?? "") ?? toDraft(name ?? "", isRec(source) ? source : undefined),
+    });
+  }, []);
+
+  const openEdit = useCallback((name: string) => open(name), [open]);
 
   const remove = useCallback(
     (name: string, index: number) => {
       flushSync(() => {
+        drafts.current.delete(name);
         update(PATH, (prev) => {
           if (!isRec(prev)) return prev;
           return Object.fromEntries(Object.entries(prev).filter(([k]) => k !== name));
         });
-        if (editingNow.current?.name === name) setEditing(null);
       });
       const rows = ownListEl.current?.children;
       const row = rows?.[index] ?? rows?.[index - 1];
       (row?.querySelector<HTMLElement>("button[data-remove]") ?? addEl.current)?.focus();
     },
-    [update, setEditing],
+    [update],
   );
 
   // Override: the template's entry, copied whole into this agent's servers, then edited there.
@@ -159,7 +158,7 @@ function McpField() {
       if (entry === undefined) return;
       update([...PATH, name], () => structuredClone(entry));
       // An entry the form can't edit is copied as it is; its row then reads "Edit this in Raw JSON." (review M2).
-      if (isFormShaped(entry)) open(name);
+      if (isFormShaped(entry)) open(name, entry);
     },
     [inheritedEntries, update, open],
   );
@@ -172,16 +171,9 @@ function McpField() {
     [update],
   );
 
-  const close = (name: string | null) => {
-    flushSync(() => setEditing(null));
-    const target =
-      name === null
-        ? addEl.current
-        : document.querySelector<HTMLElement>(`[data-edit="${CSS.escape(name)}"]`);
-    (target ?? addEl.current)?.focus();
-  };
+  const closeDialog = () => setEditing((e) => (e ? { ...e, open: false } : e));
 
-  const save = (d: ServerDraft, original: string | null) => {
+  const apply = (d: ServerDraft, original: string | null) => {
     const name = d.name.trim();
     const entry = fromDraft(d);
     update(PATH, (prev) => {
@@ -192,38 +184,63 @@ function McpField() {
       if (at < 0) return Object.fromEntries([...kept, [name, entry]]);
       return Object.fromEntries(kept.map(([k, v]) => (k === original ? [name, entry] : [k, v])));
     });
-    close(name);
+    drafts.current.delete(original ?? "");
+    landing.current = { name, tint: true };
+    closeDialog();
   };
 
-  const startAdd = () => {
-    if (ownEntries.length >= OVERLAY_LIMITS.mcpServers) {
-      fieldErrors.set("mcp", CONFIG_FIELD_MSG.tooManyServers);
-      return;
+  const dismiss = (d: ServerDraft) => {
+    if (!editing) return;
+    drafts.current.set(editing.name ?? "", d);
+    landing.current = { name: editing.name, tint: false };
+    closeDialog();
+  };
+
+  const land = (e: Event) => {
+    e.preventDefault();
+    const at = landing.current;
+    landing.current = null;
+    const row =
+      at?.name != null
+        ? ownListEl.current?.querySelector<HTMLElement>(`[data-mcp-row="${CSS.escape(at.name)}"]`)
+        : null;
+    if (!row) return addEl.current?.focus();
+    arrive(row);
+    if (at?.tint) {
+      setArrivedName(at.name ?? undefined);
+      start();
     }
-    open(null);
   };
 
   if (ownRec === null) return <WrongType field="mcp" label="MCP servers" />;
 
-  const editor = (name: string | null) => {
-    if (!editing || editing.name !== name) return null;
-    const entry = name === null ? undefined : ownEntries.find(([n]) => n === name)?.[1];
-    const taken = new Set(ownNames);
-    if (name !== null) taken.delete(name);
-    return (
-      <McpEditor
-        key={editing.seq}
-        initial={toDraft(name ?? "", isRec(entry) ? entry : undefined)}
-        original={name}
-        taken={taken}
-        knownSecrets={knownSecrets}
-        mode={mode}
-        onAddSecret={addSecret}
-        onDone={save}
-        onCancel={() => close(name)}
-      />
-    );
-  };
+  const atLimit = ownEntries.length >= OVERLAY_LIMITS.mcpServers;
+  // At the limit Add stays focusable and says why, beside it.
+  const addServer = readOnly ? null : (
+    <span className="flex items-center gap-2">
+      {atLimit ? (
+        <span id={reasonId} className="text-[0.8125rem] text-muted-foreground">
+          {CONFIG_FIELD_MSG.tooManyServers}
+        </span>
+      ) : null}
+      <Button
+        ref={addEl}
+        type="button"
+        variant="ghost"
+        size="sm"
+        aria-disabled={atLimit || undefined}
+        aria-describedby={atLimit ? reasonId : undefined}
+        aria-haspopup="dialog"
+        onClick={() => !atLimit && open(null)}
+      >
+        <Plus aria-hidden="true" />
+        {CONFIG_COPY.addServer}
+      </Button>
+    </span>
+  );
+
+  const taken = new Set(ownNames);
+  if (editing?.name != null) taken.delete(editing.name);
 
   const ownList = (
     <ul
@@ -232,23 +249,46 @@ function McpField() {
       className="grid gap-1"
     >
       {ownViews.map((v, i) => (
-        <li key={v.name} className="grid gap-2">
+        <li
+          key={v.name}
+          data-mcp-row={v.name}
+          tabIndex={-1}
+          className="rounded-md outline-none"
+          {...(arrivedName === v.name && arrival
+            ? {
+                "data-arrived": arrival === "fading" ? "fading" : "",
+                onTransitionEnd: (e: TransitionEvent<HTMLLIElement>) => {
+                  if (e.target !== e.currentTarget || arrival !== "fading") return;
+                  if (e.propertyName && e.propertyName !== "opacity") return;
+                  onArrivedEnd();
+                },
+              }
+            : {})}
+        >
           <ServerRow
             view={v}
             index={i}
             note={rowNotes.get(v.name)}
-            onEdit={readOnly || !v.editable ? undefined : open}
+            onEdit={readOnly || !v.editable ? undefined : openEdit}
             onRemove={readOnly ? undefined : remove}
           />
-          {editor(v.name)}
         </li>
       ))}
     </ul>
   );
 
   return (
-    <FieldShell name="mcp" label="MCP servers" legend error={shown.error} warning={shown.warning}>
-      {() => (
+    <Section title="MCP servers" action={tplViews ? undefined : addServer}>
+      <fieldset
+        data-field=""
+        className="grid min-w-0 gap-1.5"
+        aria-describedby={noteDescribedBy("field-mcp", {
+          error: shown.error,
+          warning: shown.warning,
+        })}
+        aria-invalid={shown.error ? true : undefined}
+      >
+        <legend className="sr-only">MCP servers</legend>
         <div className="grid gap-2">
           {tplViews ? (
             <div className="grid gap-1">
@@ -271,36 +311,41 @@ function McpField() {
           ) : null}
           {tplViews ? (
             <div className="grid gap-1">
-              <p id={`${groupId}-own`} className="text-[0.8125rem] text-muted-foreground">
-                {CONFIG_COPY.thisAgent} · {ownViews.length}
-              </p>
+              <div className="flex min-h-7 items-center justify-between gap-2">
+                <p id={`${groupId}-own`} className="text-[0.8125rem] text-muted-foreground">
+                  {CONFIG_COPY.thisAgent} · {ownViews.length}
+                </p>
+                {addServer}
+              </div>
               {ownList}
             </div>
           ) : (
             ownList
           )}
-          {editor(null)}
-          {readOnly || editing?.name === null ? null : (
-            <Button
-              ref={addEl}
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="justify-self-start"
-              onClick={startAdd}
-            >
-              <Plus aria-hidden="true" />
-              {CONFIG_COPY.addServer}
-            </Button>
-          )}
         </div>
-      )}
-    </FieldShell>
+        <FieldNote id="field-mcp" error={shown.error} warning={shown.warning} />
+      </fieldset>
+      {editing ? (
+        <McpDialog
+          key={editing.seq}
+          open={editing.open}
+          initial={editing.initial}
+          original={editing.name}
+          taken={taken}
+          knownSecrets={knownSecrets}
+          mode={mode}
+          onAddSecret={addSecret}
+          onApply={apply}
+          onDismiss={dismiss}
+          onCloseAutoFocus={land}
+        />
+      ) : null}
+    </Section>
   );
 }
 
 /**
- * One server: line 1 is the name (wrapping) and the kind, line 2 the muted summary. The args, the full URL, the
+ * One server: line 1 is the name (a button that opens its dialog, when editable; wrapping) and the kind, line 2 the muted summary. The args, the full URL, the
  * headers and env values are never shown here: tokens hide in them.
  */
 const ServerRow = memo(function ServerRow({
@@ -326,9 +371,22 @@ const ServerRow = memo(function ServerRow({
     <div className="flex min-h-8 items-start gap-2 rounded-md px-2 pointer-coarse:min-h-10">
       <div className="min-w-0 flex-1 py-1.5">
         <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
-          <span className="min-w-0 font-mono text-[0.8125rem] [overflow-wrap:anywhere]">
-            {v.name}
-          </span>
+          {onEdit ? (
+            <button
+              type="button"
+              data-edit={v.name}
+              aria-haspopup="dialog"
+              aria-describedby={note ? noteId : undefined}
+              className="-mx-1 min-w-0 rounded-sm px-1 text-left font-mono text-[0.8125rem] underline-offset-4 [overflow-wrap:anywhere] hover:underline"
+              onClick={() => onEdit(v.name)}
+            >
+              {v.name}
+            </button>
+          ) : (
+            <span className="min-w-0 font-mono text-[0.8125rem] [overflow-wrap:anywhere]">
+              {v.name}
+            </span>
+          )}
           {v.kind ? <span className="text-[0.8125rem] text-muted-foreground">{v.kind}</span> : null}
         </p>
         {v.summary ? (
@@ -365,20 +423,6 @@ const ServerRow = memo(function ServerRow({
           onClick={() => onOverride(v.name)}
         >
           {CONFIG_COPY.override}
-        </Button>
-      ) : null}
-      {onEdit ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="mt-0.5 shrink-0"
-          data-edit={v.name}
-          aria-label={`Edit ${v.name}`}
-          aria-describedby={note ? noteId : undefined}
-          onClick={() => onEdit(v.name)}
-        >
-          <Pencil aria-hidden="true" />
         </Button>
       ) : null}
       {onRemove ? (

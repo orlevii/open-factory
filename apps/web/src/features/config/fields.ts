@@ -3,6 +3,9 @@
  * Overlay and doc paths share one shape (`template.*`, `settings.*`, `mcp.mcpServers.*`), so one table serves both modes.
  */
 export const CONFIG_FIELDS = [
+  "runtime",
+  "image",
+  "permissionMode",
   "model",
   "effort",
   "warmWindow",
@@ -15,6 +18,9 @@ export const CONFIG_FIELDS = [
 export type ConfigField = (typeof CONFIG_FIELDS)[number];
 
 export const FIELD_PATHS: Readonly<Record<ConfigField, readonly string[]>> = {
+  runtime: ["template", "runtime"],
+  image: ["template", "image"],
+  permissionMode: ["template", "permission_mode"],
   model: ["template", "model"],
   effort: ["template", "effort"],
   warmWindow: ["template", "warm_window_minutes"],

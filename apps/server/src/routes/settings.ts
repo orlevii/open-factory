@@ -70,6 +70,7 @@ async function dto(app: FastifyInstance, db: Db): Promise<FactorySettingsDto> {
     warmWindowMinutes: s.warmWindowMinutes,
     memberUpdateDebounceSeconds: s.memberUpdateDebounceSeconds,
     allowLocalRuntime: localRuntimeAllowed(app.config),
+    defaultImage: app.config.defaultImage,
     updatedAt: s.updatedAt?.toISOString() ?? null,
     updatedBy: editor ? `@${editor.handle}` : null,
   };

@@ -333,7 +333,10 @@ The roof angle is the one shape that belongs to Open Factory. It is used in **ex
   | A quick peek (a task, a build log, Agent details below 1024px) | Right peek sheet, no scrim, 480px (Agent details 320px) |
   | Primary work you'd deep-link or keep open | A page |
   | A destructive, irreversible confirmation | Dialog |
+| A form opened from a page for one item (an MCP server) | Dialog |
   | Any sheet or dialog below `md` (48rem; 768px at the default text size) | A bottom drawer (Vaul); the nav is a left drawer; the command palette stays a top dialog |
+
+  A dialog for a form anchors at a fixed top (about 12svh, origin top centre) so it never jumps as fields come and go, enters from 96% over 150ms (the scale only when motion is allowed), leaves with a 100ms fade, scrolls its body under a fixed footer (ghost Cancel, then the primary), and on close returns focus to the row it was about, which takes the arrival tint. Create flows stay sheets. A short prerequisite created from inside a sheet or dialog (a credential, a project, a secret) expands inline; New template, a large form, is the one stacked sheet that remains.
 
   Every create and edit form is a sheet opened over the page you are on, from every entry point; a form never has its own page. Exception: a Configuration (agent, template) is a page. It is long, has several sections and a raw editor, and is deep-linked. Create and identity edits stay sheets. Sheets are not addressed by URL; old form URLs open the sheet over their list. A sheet belongs to the page it opened over and closes, instantly, when you leave that page, keeping its draft. Its dismiss button says Close, and a sheet that reopens with a kept draft says so, with Discard. A prerequisite missing from a form (a credential, a template, a project, a secret) is created in a sheet stacked over it and selected on return. A stacked sheet is 48px narrower than its parent (on phones, shorter), and names it.
 

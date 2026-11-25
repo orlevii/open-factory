@@ -1,5 +1,5 @@
 import type { ConfigDoc, TemplateIssue } from "@open-factory/shared";
-import { modelSchema } from "@open-factory/shared";
+import { imageRefSchema, modelSchema } from "@open-factory/shared";
 import { createContext, type ReactNode, use, useCallback, useMemo, useRef } from "react";
 import { type FieldErrors, useFieldErrors } from "@/components/forms/use-field-errors";
 import type { RowNote } from "./config-list";
@@ -34,11 +34,6 @@ export type ConfigFormProps = {
   onShowRaw?: (at: RawTarget) => void;
   /** The template's own `skills/` folders (from the template config API), listed read-only as "Template skill". */
   localSkills?: readonly string[];
-  /**
-   * An MCP server editor opened (true) or closed (false). Its edits reach the draft only on Done, so the page refuses
-   * Save while one is open, with `CONFIG_FORM_MSG.finishServer`. A form unmounted with an editor open reports false.
-   */
-  onEditorOpenChange?: (open: boolean) => void;
 };
 
 /** A field's own issue, and the notes on its items (the path under the field: a list index, or an entry name and below), with their severity. */
@@ -57,7 +52,6 @@ export type ConfigScope = {
   conflicts: ReadonlySet<ConfigField>;
   fieldErrors: FieldErrors<ConfigField>;
   onShowRaw?: (at: RawTarget) => void;
-  onEditorOpenChange?: (open: boolean) => void;
 };
 
 const Scope = createContext<ConfigScope | null>(null);
@@ -91,6 +85,14 @@ function modelCheck(value: unknown): string | undefined {
   return p.success ? undefined : p.error.issues[0]?.message;
 }
 
+/** The image field's client check: a Docker reference, or empty (the factory default). */
+function imageCheck(value: unknown): string | undefined {
+  const r = readString(readAt(value, FIELD_PATHS.image));
+  if (!r.ok || r.value === undefined || r.value === "") return undefined;
+  const p = imageRefSchema.safeParse(r.value);
+  return p.success ? undefined : p.error.issues[0]?.message;
+}
+
 /**
  * The form's shared state for its fields: the tolerant value, the inherited base, issues grouped by field once per
  * change (L2), and the field errors (L4). Sections (this task's Model; C3's others) read it with `useConfigScope`.
@@ -107,7 +109,6 @@ export function ConfigFormScope({
   issues,
   conflicts,
   onShowRaw,
-  onEditorOpenChange,
   children,
 }: ConfigFormProps & { children: ReactNode }) {
   const root = useRef<HTMLDivElement>(null);
@@ -116,6 +117,7 @@ export function ConfigFormScope({
     checks: {
       model: () => modelCheck(value),
       warmWindow: () => numberCheck(value, "warmWindow"),
+      image: () => imageCheck(value),
     },
     fields: CONFIG_FIELDS,
   });
@@ -172,7 +174,6 @@ export function ConfigFormScope({
     conflicts: conflictFields,
     fieldErrors,
     onShowRaw,
-    onEditorOpenChange,
   };
   return (
     <Scope value={scope}>

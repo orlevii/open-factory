@@ -364,6 +364,8 @@
    stays the global one). Scoped to these attributes so nothing else picks it up. */
 [data-credential-row]:focus-visible,
 [data-credential-row][data-focus-ring],
+[data-mcp-row]:focus-visible,
+[data-mcp-row][data-focus-ring],
 [data-sign-in-again][data-focus-ring] {
   outline: 2px solid var(--ring);
   outline-offset: -2px;

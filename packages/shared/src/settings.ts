@@ -100,6 +100,8 @@ export function readFactorySettingsValues(raw: unknown): FactorySettingsValues {
 
 export const factorySettingsSchema = factorySettingsValuesSchema.extend({
   allowLocalRuntime: z.boolean(),
+  /** `FACTORY_DEFAULT_IMAGE`: the image a template with no `image:` uses. Read-only. */
+  defaultImage: z.string(),
   updatedAt: z.string().nullable(),
   /** The @handle of the last editor. */
   updatedBy: z.string().nullable(),

@@ -29,6 +29,7 @@ const settings = (o: Partial<FactorySettingsDto> = {}): FactorySettingsDto => ({
   warmWindowMinutes: 70,
   memberUpdateDebounceSeconds: 30,
   allowLocalRuntime: false,
+  defaultImage: "ghcr.io/x/base:latest",
   updatedAt: null,
   updatedBy: null,
   ...o,

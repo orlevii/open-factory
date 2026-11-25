@@ -969,6 +969,7 @@ test.each([
           warmWindowMinutes: 70,
           memberUpdateDebounceSeconds: 30,
           allowLocalRuntime: false,
+          defaultImage: "ghcr.io/x/base:latest",
           updatedAt: null,
           updatedBy: null,
         }),

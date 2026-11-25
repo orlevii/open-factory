@@ -20,12 +20,6 @@ export const CONFIG_FIELD_MSG = {
   headerName: "Use a valid header name.",
 } as const;
 
-/** Form-level messages the page shows (I4 rules: at most 40 characters). */
-export const CONFIG_FORM_MSG = {
-  /** Save while an MCP server editor is open (`onEditorOpenChange(true)`): its edits aren't in the draft yet. */
-  finishServer: "Finish editing the server first.",
-} as const;
-
 /** Labels and lines the spec fixes verbatim. Not field messages, so not bound by the 40-character rule. */
 export const CONFIG_COPY = {
   /** An agent inherit option when no template doc is known; with one it names the value: Template's (opus). */
@@ -48,6 +42,7 @@ export const CONFIG_COPY = {
   noSecrets: "No secrets yet.",
   addSecret: "Add secret",
   addServer: "Add server",
+  applyChanges: "Apply changes",
   override: "Override",
   overridden: "Replaced by this agent",
   kindCommand: "Command",
@@ -55,7 +50,6 @@ export const CONFIG_COPY = {
   urlUnreadable: "URL not shown",
   argsHelp: "One per line.",
   envHelp: "Saved as text in settings.json. Not for secrets.",
-  done: "Done",
   cancel: "Cancel",
 } as const;
 
@@ -148,3 +142,20 @@ export const openFileLabel = (file: string) => `Open ${file}`;
 /** On the form while a config file tab has unsaved edits (R2). */
 export const fileHasEdits = (file: string) =>
   `${file} has unsaved edits. Save or discard them first.`;
+
+/** The Runtime section's notes (spec §2.3). The wording of the local-runtime reason matches Agent details. */
+export const RUNTIME_COPY = {
+  runtimeNote: "Applies to new agents",
+  localDisabled: "Disabled on this factory: set `FACTORY_ALLOW_LOCAL_RUNTIME` on the server",
+  imageNote: "Applies at each agent's next start",
+  imageNotUsed: "Not used by Local agents",
+  permissionNote: "Applies at each agent's next start",
+  bypassNeedsDocker: "Bypass needs Docker",
+  switchedToAuto: "Set to Auto: Bypass needs Docker",
+} as const;
+
+/** Empty uses the factory's default image: named once it is known, never as a placeholder. */
+export const imageNote = (defaultImage: string | undefined) =>
+  defaultImage
+    ? `${RUNTIME_COPY.imageNote}. Empty uses \`${defaultImage}\``
+    : RUNTIME_COPY.imageNote;

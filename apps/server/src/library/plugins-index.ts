@@ -32,7 +32,8 @@ import {
   type PluginContents,
   readContents,
 } from "./plugin-contents.ts";
-import { hasRangedDependency, readManifest } from "./plugin-settings.ts";
+import { unheldDependency } from "./plugin-pinnable.ts";
+import { hasRangedDependency, type PluginManifest, readManifest } from "./plugin-settings.ts";
 import {
   cachedPluginSource,
   classifyPluginSource,
@@ -89,6 +90,8 @@ interface Located {
   state: PluginEntryView["state"];
   /** A dependency names a version range, so the plugin can't be held by a pin (spec §7.4). */
   ranged: boolean;
+  /** A dependency in the same catalog that a pin can't hold (spec §7.4: held "the same way"). */
+  unheld?: string;
   source: PluginDetail["source"];
   /** The readable root of the plugin's code. */
   dir: string | null;
@@ -188,8 +191,18 @@ export class PluginsIndex {
       if (!insideOrSame(root, real)) {
         return { ...base, state: "missing", source, note: PLUGIN_MSG.outside };
       }
-      const ranged = hasRangedDependency(await readManifest(real));
-      return { ...base, state: ranged ? "cant_pin" : "ok", ranged, source, dir: real };
+      const manifest = await readManifest(real);
+      const ranged = hasRangedDependency(manifest);
+      const unheld = ranged ? undefined : await this.unheldOf(entry, row, mdir, manifest);
+      const held = !ranged && unheld === undefined;
+      return {
+        ...base,
+        state: held ? "ok" : "cant_pin",
+        ranged,
+        ...(unheld !== undefined ? { unheld } : {}),
+        source,
+        dir: real,
+      };
     }
     const ext = info.source;
     const detail = ext.source === "github" ? ext.repo : ext.url;
@@ -200,17 +213,40 @@ export class PluginsIndex {
       return { ...base, state, source, note: PLUGIN_MSG.followsSource };
     }
     const cached = await cachedPluginSource(ext, ext.sha, this.opts);
-    const ranged = cached !== null && hasRangedDependency(await readManifest(cached));
+    const manifest = cached !== null ? await readManifest(cached) : undefined;
+    const ranged = hasRangedDependency(manifest);
+    const unheld =
+      ranged || !info.pinnable ? undefined : await this.unheldOf(entry, row, mdir, manifest);
     return {
       ...base,
-      state: ranged ? ("cant_pin" as const) : state,
+      state: ranged || unheld !== undefined ? ("cant_pin" as const) : state,
       ranged,
+      ...(unheld !== undefined ? { unheld } : {}),
       source,
       ext: { source: ext, sha: ext.sha },
       dir: cached,
       note: cached ? null : PLUGIN_MSG.notRead,
       canRead: cached === null,
     };
+  }
+
+  /** The first dependency of `manifest` in this marketplace's catalog at `mdir` that a pin can't hold. */
+  private async unheldOf(
+    entry: CatalogEntry,
+    row: MarketplaceRow,
+    mdir: string,
+    manifest: PluginManifest | undefined,
+  ): Promise<string | undefined> {
+    if (!manifest?.dependencies.length) return undefined;
+    const entries = (await readCatalog(mdir).catch(() => undefined))?.plugins ?? [];
+    return unheldDependency(entry.name, row.name, manifest, {
+      entries,
+      dir: mdir,
+      external: async (src, sha) => {
+        const dir = await cachedPluginSource(src, sha, this.opts);
+        return dir ? readManifest(dir) : undefined;
+      },
+    });
   }
 
   private async row(name: string): Promise<MarketplaceRow> {
@@ -282,7 +318,7 @@ export class PluginsIndex {
   // Reads ---------------------------------------------------------------------------------
 
   private async entryView(l: Located, decl: Declarations): Promise<PluginEntryView> {
-    const p = previewPluginOf(l.row.name, l.entry, l.ranged);
+    const p = previewPluginOf(l.row.name, l.entry, l.ranged, l.unheld);
     const { contents } = await this.contentsOf(l);
     return {
       key: l.key,
@@ -390,7 +426,7 @@ export class PluginsIndex {
   }
 
   private async detailOf(l: Located, hostVersion: string | null): Promise<PluginDetail> {
-    const p = previewPluginOf(l.row.name, l.entry, l.ranged);
+    const p = previewPluginOf(l.row.name, l.entry, l.ranged, l.unheld);
     const { contents, note } = await this.contentsOf(l);
     return {
       key: l.key,
@@ -465,7 +501,7 @@ export class PluginsIndex {
         commit: sha ?? ref,
         present: l !== undefined,
         version: l
-          ? (previewPluginOf(row.name, l.entry, l.ranged).version ??
+          ? (previewPluginOf(row.name, l.entry, l.ranged, l.unheld).version ??
             read.contents?.manifest.version ??
             null)
           : null,

@@ -31,11 +31,29 @@ const CATALOG = {
     { name: "held", source: { source: "github", repo: "o/held", sha: COMMIT } },
     { name: "free", source: { source: "github", repo: "o/free" } },
     { name: "cmd", source: { source: "command", command: "x" } },
+    { name: "ranged", source: "./plugins/ranged" },
+    { name: "needs-free", source: "./plugins/needs-free" },
+    { name: "needs-held", source: "./plugins/needs-held" },
+    { name: "cycle-a", source: "./plugins/cycle-a" },
+    { name: "cycle-b", source: "./plugins/cycle-b" },
   ],
+};
+// Plugin manifests of the relative plugins above: dependencies a pin may or may not hold.
+const MANIFESTS: Record<string, unknown[]> = {
+  ranged: [{ name: "held", version: "^1.0.0" }],
+  "needs-free": ["free"],
+  "needs-held": ["held", "rel"],
+  "cycle-a": ["cycle-b"],
+  "cycle-b": ["cycle-a", "needs-held"],
 };
 const writeCatalog = (dir: string, catalog = CATALOG) => {
   mkdirSync(path.join(dir, ".claude-plugin"), { recursive: true });
   writeFileSync(path.join(dir, ".claude-plugin", "marketplace.json"), JSON.stringify(catalog));
+  for (const [plugin, dependencies] of Object.entries(MANIFESTS)) {
+    const at = path.join(dir, "plugins", plugin, ".claude-plugin");
+    mkdirSync(at, { recursive: true });
+    writeFileSync(path.join(at, "plugin.json"), JSON.stringify({ name: plugin, dependencies }));
+  }
 };
 const registryHome = mkdtempSync(path.join(tmpdir(), "of-reg-"));
 const checkout = (name: string, sha: string) =>
@@ -392,6 +410,22 @@ test("a plugin whose catalog entry uses a refused source is an error", async () 
 test("an unpinnable plugin under a pinned declaration says to switch to Latest", async () => {
   const issues = await issuesOf(declare("acme", { ...ACME, ref: "v1" }, ["free@acme"]));
   expect(messages(issues)).toEqual(["free@acme can't be pinned. Switch acme to Latest to add it."]);
+});
+
+test("a plugin with a ranged dependency under a pinned declaration says to switch to Latest", async () => {
+  const issues = await issuesOf(declare("acme", { ...ACME, ref: "v1" }, ["ranged@acme"]));
+  expect(messages(issues)).toEqual([
+    "ranged@acme can't be pinned. Switch acme to Latest to add it.",
+  ]);
+});
+
+test("a plugin whose dependency isn't held by a pin can't be pinned; held and cyclic dependencies can", async () => {
+  const pinned = { ...ACME, ref: "v1" };
+  expect(
+    messages(await issuesOf(declare("acme", pinned, ["needs-free@acme", "needs-held@acme"]))),
+  ).toEqual(["needs-free@acme can't be pinned. Switch acme to Latest to add it."]);
+  // cycle-a -> cycle-b -> (cycle-a, needs-held): ends, and every dependency is held.
+  expect(messages(await issuesOf(declare("acme", pinned, ["cycle-a@acme"])))).toEqual([]);
 });
 
 test("Latest is a warning for each plugin that follows it, and lets an unpinnable plugin in", async () => {

@@ -1,5 +1,5 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -31,6 +31,7 @@ const detail = (group: string, name: string, o: Record<string, unknown> = {}) =>
   usedByTemplates: [],
   files: [{ path: "SKILL.md", executable: false }],
   skillMd: "# review\nfirst line",
+  skillMdCut: false,
   ...o,
 });
 
@@ -200,6 +201,21 @@ test("View file is one toggle that opens from line 1, and only then fetches", as
   expect(mocks.calls.find((c) => c.url.includes("/file"))?.url).toContain("path=notes.txt");
 });
 
+test("SKILL.md says Cut at 256 KB only when the server says it cut it", async () => {
+  const one = await open(detail("source:s1", "review", { skillMdCut: true }));
+  await one.user.click(await screen.findByRole("button", { name: "View file" }));
+  expect(await screen.findByText("Cut at 256 KB.")).toBeInTheDocument();
+});
+
+test("a SKILL.md near the cap is not called cut unless the server says so", async () => {
+  const { user } = await open(
+    detail("source:s1", "review", { skillMd: "x".repeat(256 * 1024 - 1), skillMdCut: false }),
+  );
+  await user.click(await screen.findByRole("button", { name: "View file" }));
+  await screen.findByText(/^x+/);
+  expect(screen.queryByText("Cut at 256 KB.")).not.toBeInTheDocument();
+});
+
 test("a file's text is fetched once for a pinned source: closing and reopening reuses it", async () => {
   const { mocks, user } = await open(
     detail("source:s1", "review", {
@@ -253,4 +269,56 @@ test.each(FROM_CASES)("the From line of a %s skill reads '%s'", async (_n, group
   renderApp("/skills", alice);
   await user.click(await screen.findByRole("button", { name: /^lint/ }));
   expect(await screen.findByText(line)).toBeInTheDocument();
+});
+
+test("when the list no longer holds the skill's source, the From line keeps its link, reading 'From source'", async () => {
+  const state = {
+    listed: library([hostGroup(), sourceGroup(source("s1", { pin: PIN }), [skill("review")])]),
+  };
+  mockApi({
+    "GET /api/library/skills": () => json(state.listed),
+    "GET /api/library/skills/source%3As1/review": () => json(base),
+    "GET /api/library/sources/s1": () => json(sourceDetail),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
+  });
+  const user = userEvent.setup();
+  const { queryClient } = renderApp("/skills", alice);
+  await user.click(await screen.findByRole("button", { name: /^review/ }));
+  expect(
+    await screen.findByRole("button", { name: /^From acme\/s1 · a1b2c3d$/ }),
+  ).toBeInTheDocument();
+  // The source is removed elsewhere: the next list lacks it, while the peek is still open.
+  state.listed = library([hostGroup()]);
+  await act(() => queryClient.invalidateQueries({ queryKey: ["library", "skills"] }));
+  const link = await screen.findByRole("button", { name: "From source" });
+  await user.click(link);
+  expect(await screen.findByRole("heading", { level: 3, name: "Source" })).toBeInTheDocument();
+});
+
+test.each([
+  ["a pinned source", PIN, 1],
+  ["a live source", null, 0],
+])("hovering View file warms the text for %s: %i fetches", async (_n, pin, fetches) => {
+  const mocks = mockApi({
+    "GET /api/library/skills": () =>
+      json(library([hostGroup(), sourceGroup(source("s1", { pin }), [skill("review")])])),
+    "GET /api/library/skills/source%3As1/review": () =>
+      json(detail("source:s1", "review", { files: [{ path: "notes.txt", executable: false }] })),
+    "GET /api/library/sources/s1": () => json({ ...sourceDetail, pin }),
+    "GET /api/library/skills/source%3As1/review/file?": () =>
+      json({ path: "notes.txt", text: "hello" }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
+  });
+  const user = userEvent.setup();
+  renderApp("/skills", alice);
+  await user.click(await screen.findByRole("button", { name: /^review/ }));
+  await user.hover(await screen.findByRole("button", { name: "View file" }));
+  await waitFor(() =>
+    expect(mocks.calls.filter((c) => c.url.includes("/file"))).toHaveLength(fetches),
+  );
+  // Nothing more arrives for a live file, which is fetched only when opened.
+  await new Promise((r) => setTimeout(r, 50));
+  expect(mocks.calls.filter((c) => c.url.includes("/file"))).toHaveLength(fetches);
 });

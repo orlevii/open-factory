@@ -182,16 +182,15 @@ test("while the detail loads the sections show Loading contents, and then the re
   expect(d.queryByText("Loading contents…")).not.toBeInTheDocument();
 });
 
-test("View file opens from the first line, flips to Hide file, and shows Cut at 256 KB when the server cut it", async () => {
+test("View file opens from the first line and flips to Hide file", async () => {
   const text = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n");
-  const cut = `${"x".repeat(256 * 1024 - 1)}`;
   const { dialog: d, user } = await open({
     "GET /api/library/plugins/review%40acme": () =>
-      json(detail({ contents: contents({ files: ["hooks/guard.sh", "big.txt"] }) })),
+      json(detail({ contents: contents({ files: ["hooks/guard.sh"] }) })),
     "GET /api/library/plugins/review%40acme/file?": (_b, url) =>
       json({
         path: new URL(url, "http://x").searchParams.get("path"),
-        text: url.includes("big.txt") ? cut : text,
+        text,
       }),
   });
   const files = await d.findAllByRole("button", { name: "View file" });
@@ -202,8 +201,7 @@ test("View file opens from the first line, flips to Hide file, and shows Cut at 
   const toggle = d.getByRole("button", { name: "Hide file" });
   expect(toggle).toHaveAttribute("aria-expanded", "true");
   expect(toggle).toHaveFocus();
-  await user.click(d.getAllByRole("button", { name: "View file" })[0] as HTMLElement);
-  expect(await d.findByText("Cut at 256 KB.")).toBeInTheDocument();
+  expect(d.queryByText("Cut at 256 KB.")).not.toBeInTheDocument();
 });
 
 test("Used by shows each template's pin and the Latest badge's words, and links to the template", async () => {

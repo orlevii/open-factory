@@ -198,6 +198,29 @@ test("treeShas joins an empty subpath without a leading slash", async () => {
   expect(shas.skill).not.toBe(shas["pre/skill"]);
 });
 
+test("treeShas fails closed on an answer that isn't an object id", async () => {
+  const f = await makeFixtureRepo(path.join(tmp, "r"), { commits: [{ "skill/SKILL.md": "x" }] });
+  const co = path.join(tmp, "co");
+  await fetchCommit(f.url, f.shas[0] as string, co, o);
+  const bin = path.join(tmp, "fakegit");
+  writeFileSync(bin, "#!/bin/sh\necho not-a-sha\n");
+  chmodSync(bin, 0o755);
+  await expect(treeShas(co, f.shas[0] as string, ["skill"], { gitBin: bin })).rejects.toThrow(
+    GitError,
+  );
+  await expect(treeShas(co, "HEAD", ["skill"])).rejects.toThrow(GitError);
+});
+
+test("checkoutSize throws over_cap for a tree with too many files, however small", async () => {
+  const f = await makeFixtureRepo(path.join(tmp, "r"), {
+    commits: [{ a: "1", b: "2", "d/c": "3" }],
+  });
+  const co = path.join(tmp, "co");
+  await fetchCommit(f.url, f.shas[0] as string, co, o);
+  await expect(checkoutSize(co, 1024, 3)).rejects.toThrow("over_cap");
+  expect(await checkoutSize(co, 1024, 4)).toBe(3);
+});
+
 test("each git command is bounded by the remaining operation budget, not the 60 s default", async () => {
   const f = await makeFixtureRepo(path.join(tmp, "r"), { commits: [{ a: "1" }] });
   vi.mocked(runGit).mockClear();

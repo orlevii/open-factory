@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createDb } from "../client.ts";
 import { createMigratedTestDatabase } from "../testing.ts";
 import { marketplaces, skillSources } from "./library.ts";
@@ -102,4 +102,56 @@ test("a marketplace refuses a state outside adding and ready", async () => {
     );
   // Postgres check_violation, however the driver words the message.
   expect(refused?.cause?.code).toBe("23514");
+});
+
+describe("skill_sources check constraints", () => {
+  const addedAt = new Date("2026-11-24T10:00:00Z");
+  const base = {
+    kind: "github" as const,
+    repo: "acme/skills",
+    subpath: "",
+    branch: "main",
+    commit: "a".repeat(40),
+    skills: ["a"],
+    state: "ready" as const,
+    startedAt: addedAt,
+    addedBy: "or",
+    addedAt,
+  };
+  const refusal = (values: Record<string, unknown>) =>
+    h.db
+      .insert(skillSources)
+      .values({ ...base, ...values } as typeof base)
+      .then(
+        () => null,
+        (e: unknown) => e as { cause?: { code?: string; constraint_name?: string } },
+      );
+
+  test("refuses a kind outside folder and github", async () => {
+    const refused = await refusal({ kind: "zip" });
+    expect(refused?.cause?.code).toBe("23514");
+    expect(refused?.cause?.constraint_name).toBe("skill_sources_kind_check");
+  });
+  test("refuses a state outside adding and ready", async () => {
+    const refused = await refusal({ state: "failed" });
+    expect(refused?.cause?.constraint_name).toBe("skill_sources_state_check");
+  });
+  test("refuses a folder source without a path", async () => {
+    const refused = await refusal({
+      kind: "folder",
+      repo: null,
+      subpath: null,
+      branch: null,
+      commit: null,
+    });
+    expect(refused?.cause?.constraint_name).toBe("skill_sources_kind_fields_check");
+  });
+  test("refuses a GitHub source without a commit", async () => {
+    const refused = await refusal({ commit: null });
+    expect(refused?.cause?.constraint_name).toBe("skill_sources_kind_fields_check");
+  });
+  test("refuses a source with no picked skills", async () => {
+    const refused = await refusal({ skills: [] });
+    expect(refused?.cause?.constraint_name).toBe("skill_sources_skills_check");
+  });
 });

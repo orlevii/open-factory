@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -177,3 +178,21 @@ test("removeAll removes the root tree without following links; a symlinked root 
   expect(existsSync(`${host}/keep`)).toBe(true);
   await new SafeFs(`${outer}/missing`).removeAll();
 });
+
+test.skipIf(process.getuid?.() === 0)(
+  "emptyDir removes everything it can when one entry won't go, then reports the failure",
+  async () => {
+    const wd = tmp("wd-");
+    mkdirSync(`${wd}/box/locked`, { recursive: true });
+    writeFileSync(`${wd}/box/locked/stuck`, "x");
+    writeFileSync(`${wd}/box/a`, "a");
+    writeFileSync(`${wd}/box/z`, "z");
+    chmodSync(`${wd}/box/locked`, 0o555);
+    try {
+      await expect(new SafeFs(wd).emptyDir("box")).rejects.toThrow();
+      expect(readdirSync(`${wd}/box`)).toEqual(["locked"]);
+    } finally {
+      chmodSync(`${wd}/box/locked`, 0o755);
+    }
+  },
+);

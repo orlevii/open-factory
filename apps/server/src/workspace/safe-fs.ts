@@ -206,13 +206,19 @@ export class SafeFs {
       return;
     }
     if (!st.isDirectory()) throw new WorkspaceError(`${abs} isn't a folder; move it away.`);
+    // One entry that can't go doesn't stop the rest: the folder is left as empty as it can be, then the first failure surfaces.
+    let failure: unknown;
     for (const name of await readdir(abs)) {
-      const child = path.join(rel, name);
-      const cst = await this.entry(child);
-      if (!cst) continue;
-      if (cst.isSymbolicLink()) await unlink(path.join(abs, name));
-      else await rm(path.join(abs, name), { recursive: true, force: true });
+      try {
+        const cst = await this.entry(path.join(rel, name));
+        if (!cst) continue;
+        if (cst.isSymbolicLink()) await unlink(path.join(abs, name));
+        else await rm(path.join(abs, name), { recursive: true, force: true });
+      } catch (err) {
+        failure ??= err;
+      }
     }
+    if (failure) throw failure;
   }
 
   /** Copy for backups: a symlink source is copied as a symlink (never its target's bytes).

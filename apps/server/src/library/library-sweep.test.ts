@@ -37,7 +37,7 @@ beforeEach(() => {
   store = memorySourcesStore();
   svc = new SourcesService({
     store,
-    usedBy: async () => ({ templates: [], agents: [] }),
+    usedByAny: async () => ({ templates: [], agents: [] }),
     factoryHome: fh,
     hostClaudeDir: path.join(tmp, "claude"),
     forbidden: { home: tmp, factoryHome: fh, dockerSockets: [] },
@@ -51,6 +51,7 @@ beforeEach(() => {
     factoryHome: fh,
     inUse: () => inUse,
     now: () => new Date(nowMs),
+    log: (m) => logged.push(m),
   });
 });
 afterEach(async () => {
@@ -114,6 +115,19 @@ test("previews older than an hour are removed and newer ones kept", async () => 
   const fresh = preview("fresh", 59 * 60_000);
   await sweep.purge();
   expect([existsSync(old), existsSync(fresh)]).toEqual([false, true]);
+});
+
+test("a crashed install's temp copy beside the current pin is swept, the pin itself kept", async () => {
+  await store.insert(row("live"));
+  const pin = cache("live");
+  const leftover = cache("live", `${SHA}.tmp-1234`);
+  const stagedUpdate = preview(`upd-live-${NEW}.tmp-1234`, 61 * 60_000);
+  await sweep.purge();
+  expect([existsSync(pin), existsSync(leftover), existsSync(stagedUpdate)]).toEqual([
+    true,
+    false,
+    false,
+  ]);
 });
 
 test("a source past its Undo window is purged with its cache, one inside it is kept", async () => {

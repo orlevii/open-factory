@@ -231,6 +231,21 @@ test("a missing GitHub cache dir is missing, with Fetch again", async () => {
   });
 });
 
+test("a GitHub skill whose cache holds no code is flagged fetchAgain on its row and detail", async () => {
+  const s = source({});
+  const idx = make({ sources: [s] });
+  const row = (await idx.skills()).find((g) => g.group === `source:${s.id}`)?.skills[0];
+  expect(row).toMatchObject({ state: "missing", stateDetail: "Fetch again", fetchAgain: true });
+  expect(await idx.detail(`source:${s.id}`, "tdd")).toMatchObject({ fetchAgain: true });
+});
+
+test("a missing host skill is not flagged fetchAgain", async () => {
+  const idx = make({ templates: { dev: { skills: ["ghost"] } } });
+  const d = await idx.detail("unknown", "ghost");
+  expect(d.state).toBe("missing");
+  expect(d.fetchAgain).toBeUndefined();
+});
+
 test("template-local skills form a group per template and never resolve", async () => {
   md(path.join(home, "templates", "dev", "skills", "mine"), "name: mine\ndescription: local one");
   const idx = make({ templates: { dev: { local: ["mine"] }, ops: {} } });
@@ -327,6 +342,7 @@ test("a host skill's detail has its row, files and SKILL.md; a link to it is fol
   expect(d).toMatchObject({ group: "host", name: "tdd", state: "ok", description: "about tdd" });
   expect(d.files.map((f) => f.path)).toEqual(["SKILL.md", "notes.txt"]);
   expect(d.skillMd).toContain("# x");
+  expect(d.skillMdCut).toBe(false);
   expect(await idx.fileText("host", "tdd", "notes.txt")).toBe("n");
 });
 
@@ -370,6 +386,7 @@ test("a skill with no usable folder has no files, and a name the group lacks is 
     state: "missing",
     files: [],
     skillMd: "",
+    skillMdCut: false,
   });
   await expect(idx.detail("host", "ghost")).rejects.toMatchObject({ status: 404 });
   await expect(idx.fileText("unknown", "ghost", "SKILL.md")).rejects.toMatchObject({ status: 404 });

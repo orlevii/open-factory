@@ -17,21 +17,24 @@ import {
   MSG,
   normalizeRepo,
   OFFICIAL_MARKETPLACES,
+  PLUGIN_NAME_PATTERN,
   RESERVED_MARKETPLACES,
 } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
 import { resolveHostFolder } from "../host-path.ts";
-import { redactOutput } from "../redact.ts";
+
 import {
   CHECKOUT_CAP_BYTES,
   COMMIT_PATTERN,
+  checkErrorText,
   isDir,
   isRecord,
   META_KEEP_MS,
   SUBJECT_MAX,
   sha256,
   tagSha,
+  touchDir,
   UNDO_MS,
   usersLine,
 } from "./common.ts";
@@ -49,6 +52,7 @@ import {
 } from "./git-fetch.ts";
 import { LIBRARY_KEY, libraryLock } from "./locks.ts";
 import { CODE_KEYS, CODE_PATHS } from "./plugin-contents.ts";
+import { unheldDependency } from "./plugin-pinnable.ts";
 import { hasRangedDependency, readManifestUnder } from "./plugin-settings.ts";
 import { classifyPluginSource } from "./plugin-sources.ts";
 
@@ -74,6 +78,8 @@ export const MARKETPLACE_MSG = {
   unpinnable: "Can't be pinned: it follows its own source.",
   rangedDependency:
     "Can't be pinned: a dependency names a version range, which Claude Code resolves to the newest matching tag.",
+  unheldDependency: (dep: string) =>
+    `Can't be pinned: it depends on ${dep}, which a pin can't hold.`,
   refusedSource: (plugin: string, mkt: string, kind: string) =>
     `Plugin ${plugin}@${mkt} uses a ${kind} source, which Open Factory doesn't install.`,
 } as const;
@@ -228,9 +234,6 @@ export interface CatalogEntry {
   raw: Record<string, unknown>;
 }
 
-/** A catalog plugin name is a segment of a plugin key and of `--settings`, so only the key's own characters pass. */
-const CATALOG_PLUGIN_NAME = /^[A-Za-z0-9._-]{1,64}$/;
-
 /**
  * Reads `.claude-plugin/marketplace.json` from a directory: `lstat`, a regular file, at most 1 MB. An entry whose name
  * isn't a valid plugin name is left out: third-party text never reaches a key, a route or a `--settings` entry.
@@ -253,7 +256,7 @@ export async function readCatalog(dir: string): Promise<{ name: string; plugins:
   }
   const plugins: CatalogEntry[] = [];
   for (const p of doc.plugins) {
-    if (isRecord(p) && typeof p.name === "string" && CATALOG_PLUGIN_NAME.test(p.name))
+    if (isRecord(p) && typeof p.name === "string" && PLUGIN_NAME_PATTERN.test(p.name))
       plugins.push({ name: p.name, raw: p });
   }
   return { name: doc.name, plugins };
@@ -321,12 +324,14 @@ async function codeDigest(
 
 /**
  * One catalog entry as the preview and the Plugins view show it (spec §7.4, §7.7): pinnable, or why not.
- * `ranged` is whether the plugin's manifest has a dependency with a version range (false when it isn't readable).
+ * `ranged` is whether the plugin's manifest has a dependency with a version range (false when it isn't readable);
+ * `unheldDep` names a dependency in the same catalog that a pin can't hold (see `unheldDependency`).
  */
 export function previewPluginOf(
   marketplace: string,
   e: CatalogEntry,
   ranged = false,
+  unheldDep?: string,
 ): PreviewPlugin {
   const info = classifyPluginSource(e.raw);
   const base = {
@@ -358,6 +363,14 @@ export function previewPluginOf(
       pinnable: false,
       state: "cant_pin",
       refusedReason: MARKETPLACE_MSG.rangedDependency,
+    };
+  }
+  if (unheldDep !== undefined) {
+    return {
+      ...base,
+      pinnable: false,
+      state: "cant_pin",
+      refusedReason: MARKETPLACE_MSG.unheldDependency(unheldDep),
     };
   }
   return { ...base, pinnable: true, state: "ok" };
@@ -526,7 +539,11 @@ export class MarketplacesService {
         const info = classifyPluginSource(e.raw);
         const manifest =
           info.kind === "relative" ? await readManifestUnder(dir, info.path) : undefined;
-        return previewPluginOf(name, e, hasRangedDependency(manifest));
+        const unheld =
+          info.kind === "relative" && !hasRangedDependency(manifest)
+            ? await unheldDependency(e.name, name, manifest, { entries, dir })
+            : undefined;
+        return previewPluginOf(name, e, hasRangedDependency(manifest), unheld);
       }),
     );
   }
@@ -784,7 +801,10 @@ export class MarketplacesService {
   /** The staged copy of an update commit, fetched if it isn't there (or was swept). */
   private async updatePreview(row: MarketplaceRow, commit: string): Promise<string> {
     const final = path.join(this.previewRoot, `upd-mkt-${row.name}-${commit}`);
-    if (await isDir(final)) return final;
+    if (await isDir(final)) {
+      await touchDir(final);
+      return final;
+    }
     const tmp = `${final}.tmp-${randomUUID()}`;
     try {
       await fetchCommit(
@@ -855,14 +875,7 @@ export class MarketplacesService {
       }
       patch = { ...patch, checkError: null };
     } catch (e) {
-      patch = {
-        checkError: cutGraphemes(
-          e instanceof GitError || e instanceof ApiError
-            ? redactOutput(e.message)
-            : MARKETPLACE_MSG.checkFailed,
-          SUBJECT_MAX,
-        ),
-      };
+      patch = { checkError: checkErrorText(e, MARKETPLACE_MSG.checkFailed) };
     }
     const next = await libraryLock.run(LIBRARY_KEY, async () => {
       const cur = (await this.d.store.all()).find((r) => r.name === name);

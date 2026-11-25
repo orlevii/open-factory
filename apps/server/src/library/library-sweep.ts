@@ -29,7 +29,7 @@ export interface SweepDeps {
   undoMs?: number;
   /** Called after rows were purged (the `library_changed` frame). */
   publish?: () => void;
-  log?: (message: string, err: unknown) => void;
+  log: (message: string, err: unknown) => void;
 }
 
 const within = (dir: string, p: string) => p === dir || p.startsWith(dir + path.sep);
@@ -121,7 +121,7 @@ export class LibrarySweep {
 
   private run(fn: () => Promise<void>): void {
     const p = fn()
-      .catch((e) => this.d.log?.("library purge failed", e))
+      .catch((e) => this.d.log("library purge failed", e))
       .finally(() => this.running.delete(p));
     this.running.add(p);
   }
@@ -149,7 +149,7 @@ export class LibrarySweep {
           await this.d.store.delete(s.id);
           any = true;
         } catch (e) {
-          this.d.log?.(`purging source ${s.id} failed`, e);
+          this.d.log(`purging source ${s.id} failed`, e);
         }
       }
       await this.purgeCaches();
@@ -176,7 +176,7 @@ export class LibrarySweep {
       const p = path.join(root, name);
       const st = await stat(p).catch(() => undefined);
       if (!st || !(all || st.mtimeMs < cutoff)) continue;
-      await removeTree(p).catch((e) => this.d.log?.(`removing preview ${name} failed`, e));
+      await removeTree(p).catch((e) => this.d.log(`removing preview ${name} failed`, e));
     }
   }
 
@@ -189,9 +189,7 @@ export class LibrarySweep {
         const dir = path.join(root, hash, sha);
         const st = await stat(dir).catch(() => undefined);
         if (!st || st.mtimeMs >= cutoff || inUse.some((p) => within(dir, p))) continue;
-        await removeTree(dir).catch((e) =>
-          this.d.log?.(`removing plugin source ${hash} failed`, e),
-        );
+        await removeTree(dir).catch((e) => this.d.log(`removing plugin source ${hash} failed`, e));
       }
     }
   }
@@ -205,14 +203,14 @@ export class LibrarySweep {
       const idDir = path.join(root, id);
       if (!row) {
         if (!(await this.referenced(idDir))) {
-          await removeTree(idDir).catch((e) => this.d.log?.(`removing cache ${id} failed`, e));
+          await removeTree(idDir).catch((e) => this.d.log(`removing cache ${id} failed`, e));
         }
         continue;
       }
       for (const sha of await readdir(idDir).catch(() => [] as string[])) {
         const dir = path.join(idDir, sha);
         if (sha === row.commit || (await this.referenced(dir))) continue;
-        await removeTree(dir).catch((e) => this.d.log?.(`removing cache ${id}/${sha} failed`, e));
+        await removeTree(dir).catch((e) => this.d.log(`removing cache ${id}/${sha} failed`, e));
       }
     }
   }

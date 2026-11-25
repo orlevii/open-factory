@@ -249,7 +249,7 @@ function PinText({ pin }: { pin: string }) {
     case "commit":
       return <span className="text-muted-foreground">pinned {p.sha.slice(0, 7)}</span>;
     case "tag":
-      return <span className="text-muted-foreground">pinned tag {p.name}</span>;
+      return <span className="text-muted-foreground">pinned tag {visibleControls(p.name)}</span>;
     case "latest":
       return <LatestBadge />;
     case "live":

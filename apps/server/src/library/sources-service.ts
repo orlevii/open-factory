@@ -23,9 +23,11 @@ import { ApiError, FieldError } from "../errors.ts";
 import { resolveHostFolder } from "../host-path.ts";
 import {
   CHECKOUT_CAP_BYTES,
+  checkErrorText,
   isDir,
   META_KEEP_MS,
   SUBJECT_MAX,
+  touchDir,
   UNDO_MS,
   usersLine,
 } from "./common.ts";
@@ -147,8 +149,8 @@ export function dbSourcesStore(db: Db): SourcesStore {
 
 export interface SourcesDeps {
   store: SourcesStore;
-  /** Who lists a skill: template names and agent slugs (`LibraryIndex.usedBy`). */
-  usedBy(name: string): Promise<{ templates: string[]; agents: string[] }>;
+  /** Who lists any of the skills: template names and agent slugs (`LibraryIndex.usedByAny`). */
+  usedByAny(names: string[]): Promise<{ templates: string[]; agents: string[] }>;
   factoryHome: string;
   hostClaudeDir: string;
   /** For `resolveHostFolder`; defaults to `os.homedir()`. */
@@ -365,20 +367,8 @@ export class SourcesService {
     return row;
   }
 
-  /** Who lists any of `names`: sorted template names and agent slugs, each once. */
-  private async usersOf(names: string[]): Promise<{ templates: string[]; agents: string[] }> {
-    const templates = new Set<string>();
-    const agents = new Set<string>();
-    for (const n of names) {
-      const u = await this.d.usedBy(n);
-      for (const t of u.templates) templates.add(t);
-      for (const a of u.agents) agents.add(a);
-    }
-    return { templates: [...templates].sort(), agents: [...agents].sort() };
-  }
-
   private async detail(row: SkillSourceRow): Promise<SourceDetail> {
-    const users = await this.usersOf(row.skills);
+    const users = await this.d.usedByAny(row.skills);
     const iso = (v: Date | null) => (v ? v.toISOString() : null);
     return {
       id: row.id,
@@ -791,7 +781,10 @@ export class SourcesService {
   /** The staged copy of an update commit, fetched if it isn't there (or was swept). */
   private async updatePreview(row: SkillSourceRow, commit: string): Promise<string> {
     const final = path.join(this.previewRoot, `upd-${row.id}-${commit}`);
-    if (await isDir(final)) return final;
+    if (await isDir(final)) {
+      await touchDir(final);
+      return final;
+    }
     const tmp = `${final}.tmp-${randomUUID()}`;
     try {
       await fetchCommit(this.urlOf(row.repo ?? ""), commit, tmp, this.fetchOpts(row.repo ?? ""));
@@ -849,12 +842,7 @@ export class SourcesService {
       }
       patch = { ...patch, checkError: null };
     } catch (e) {
-      patch = {
-        checkError: cutGraphemes(
-          e instanceof GitError || e instanceof FieldError ? e.message : SOURCE_MSG.checkFailed,
-          SUBJECT_MAX,
-        ),
-      };
+      patch = { checkError: checkErrorText(e, SOURCE_MSG.checkFailed) };
     }
     const next = await libraryLock.run(LIBRARY_KEY, async () => {
       const cur = (await this.d.store.all()).find((r) => r.id === id);
@@ -1015,11 +1003,11 @@ export class SourcesService {
       }
       const usedDropped: string[] = [];
       for (const n of dropped) {
-        const u = await this.usersOf([n]);
+        const u = await this.d.usedByAny([n]);
         if (u.templates.length + u.agents.length > 0) usedDropped.push(n);
       }
       if (usedDropped.length > 0) {
-        const users = await this.usersOf(usedDropped);
+        const users = await this.d.usedByAny(usedDropped);
         throw new ApiError(
           409,
           "update_drops_used",
@@ -1085,7 +1073,7 @@ export class SourcesService {
   async remove(id: string): Promise<{ undoUntil: string }> {
     const undoUntil = await libraryLock.run(LIBRARY_KEY, async () => {
       const row = await this.get(id);
-      const users = await this.usersOf(row.skills);
+      const users = await this.d.usedByAny(row.skills);
       if (users.templates.length + users.agents.length > 0) {
         throw new ApiError(409, "in_use", `Used by ${usersLine(users.templates, users.agents)}.`, {
           templates: users.templates,

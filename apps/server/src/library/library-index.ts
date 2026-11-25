@@ -97,6 +97,8 @@ export function dbStore(db: Pick<Db, "select">): LibraryStore {
 export type Found = {
   state: "ok" | "missing" | "unusable";
   detail?: string;
+  /** A GitHub cache with no code yet; the row says so for the page's Fetch again. */
+  fetchAgain?: true;
   dir: string;
   description: string;
 };
@@ -183,7 +185,14 @@ export class LibraryIndex {
     const root = path.join(this.factoryHome, "state", "library", "github", s.id, sha);
     const ref = `github:${sha}`;
     if (!(await isDir(root))) {
-      return { state: "missing", detail: "Fetch again", dir: root, description: "", ref };
+      return {
+        state: "missing",
+        detail: "Fetch again",
+        fetchAgain: true,
+        dir: root,
+        description: "",
+        ref,
+      };
     }
     const dir = (await readSkillMd(root)) ? root : path.join(root, name);
     return { ...(await inspect(name, dir, "Fetch again")), ref };
@@ -319,6 +328,18 @@ export class LibraryIndex {
     return { templates: [...(u?.templates ?? [])].sort(), agents: [...(u?.agents ?? [])].sort() };
   }
 
+  /** Who lists any of `names` (one usage pass): sorted template names and agent slugs, each once. */
+  async usedByAny(names: string[]): Promise<{ templates: string[]; agents: string[] }> {
+    const usage = await this.usage();
+    const templates = new Set<string>();
+    const agents = new Set<string>();
+    for (const n of names) {
+      for (const t of usage.get(n)?.templates ?? []) templates.add(t);
+      for (const a of usage.get(n)?.agents ?? []) agents.add(a);
+    }
+    return { templates: [...templates].sort(), agents: [...agents].sort() };
+  }
+
   async skills(): Promise<SkillGroup[]> {
     const usage = await this.usage();
     const usedBy = (n: string) => ({
@@ -331,6 +352,7 @@ export class LibraryIndex {
       description: f.description,
       state: hidden ? "hidden" : f.state,
       ...(hidden ? { stateDetail: hidden } : f.detail ? { stateDetail: f.detail } : {}),
+      ...(!hidden && f.fetchAgain ? { fetchAgain: true } : {}),
       // A template-local skill is not in the Library namespace, so a same-named entry's users aren't its users.
       usedBy: local ? none : usedBy(name),
     });
@@ -439,6 +461,7 @@ export class LibraryIndex {
     // A template-local skill is outside the Library namespace: nobody "uses" it by name.
     const use = group.startsWith("template:") ? undefined : (await this.usage()).get(name);
     const templates = new Set([...(use?.templates ?? []), ...(use?.agentsByTemplate.keys() ?? [])]);
+    const md = dir ? await readSkillMdText(dir) : { text: "", cut: false };
     return {
       ...row,
       group,
@@ -447,7 +470,8 @@ export class LibraryIndex {
         .sort()
         .map((t) => ({ name: t, agents: use?.agentsByTemplate.get(t) ?? 0 })),
       files: dir ? await listSkillFiles(dir) : [],
-      skillMd: dir ? await readSkillMdText(dir) : "",
+      skillMd: md.text,
+      skillMdCut: md.cut,
     };
   }
 

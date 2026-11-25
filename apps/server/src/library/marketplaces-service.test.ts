@@ -228,6 +228,38 @@ describe("preview", () => {
     ]);
   });
 
+  test("a plugin is pinnable only if every dependency in the catalog is held, and a cycle ends", async () => {
+    const manifest = (name: string, dependencies: unknown[]) =>
+      JSON.stringify({ name, dependencies });
+    await makeFixtureRepo(repoDir(), {
+      commits: [
+        {
+          ...catalog([
+            { name: "a", source: "./plugins/a" },
+            { name: "b", source: { source: "url", url: "https://example.com/b.git" } },
+            { name: "c", source: "./plugins/c" },
+            { name: "d", source: "./plugins/d" },
+          ]),
+          "plugins/a/.claude-plugin/plugin.json": manifest("a", ["b"]),
+          "plugins/c/.claude-plugin/plugin.json": manifest("c", ["d"]),
+          "plugins/d/.claude-plugin/plugin.json": manifest("d", ["c"]),
+        },
+      ],
+    });
+    const p = await setup().svc.preview(github);
+    expect(p.plugins).toEqual([
+      {
+        name: "a",
+        pinnable: false,
+        state: "cant_pin",
+        refusedReason: "Can't be pinned: it depends on b, which a pin can't hold.",
+      },
+      expect.objectContaining({ name: "b", pinnable: false }),
+      { name: "c", pinnable: true, state: "ok" },
+      { name: "d", pinnable: true, state: "ok" },
+    ]);
+  });
+
   test("a catalog entry whose name isn't a plugin name is left out", async () => {
     await makeFixtureRepo(repoDir(), {
       commits: [
@@ -503,7 +535,7 @@ describe("boot", () => {
 function sweepFor(s: Setup, inUse: string[] = []) {
   const sources = new SourcesService({
     store: memorySourcesStore(),
-    usedBy: async () => ({ templates: [], agents: [] }),
+    usedByAny: async () => ({ templates: [], agents: [] }),
     factoryHome: fh,
     hostClaudeDir: path.join(tmp, "claude"),
     forbidden: { home: tmp, factoryHome: fh, dockerSockets: [] },
@@ -518,6 +550,7 @@ function sweepFor(s: Setup, inUse: string[] = []) {
     factoryHome: fh,
     inUse: () => inUse,
     now: () => new Date(nowMs),
+    log: () => {},
   });
 }
 

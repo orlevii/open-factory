@@ -3,6 +3,7 @@ import { ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
 import type { z } from "zod";
 import { UntrustedCode, UntrustedProse } from "@/components/untrusted-text";
+import { PLUGIN_COPY } from "@/features/config/messages";
 import { TimeAgo } from "@/features/settings/shared";
 import { SkeletonRows } from "./sections";
 
@@ -29,18 +30,31 @@ export function DiffLine({ sign, text }: { sign: "+" | "−"; text: string }) {
   );
 }
 
-const hookText = (h: { event: string; matcher: string; command: string }) =>
+export const hookText = (h: { event: string; matcher: string; command: string }) =>
   `${h.event}${h.matcher ? ` (${h.matcher})` : ""}: ${h.command}`;
+
+/** The name of a changed skill or plugin, with "Runs code changed" when its executable parts moved. */
+export function ChangedHeader({
+  name,
+  runsCodeChanged,
+}: {
+  name: string;
+  runsCodeChanged: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-[0.8125rem]">
+      <span className="font-mono">
+        <UntrustedProse text={name} />
+      </span>
+      {runsCodeChanged && <span className="font-medium">{PLUGIN_COPY.runsCodeChanged}</span>}
+    </div>
+  );
+}
 
 function ChangedSkill({ c }: { c: Changed }) {
   return (
     <li className="space-y-1">
-      <div className="flex items-center gap-2 text-[0.8125rem]">
-        <span className="font-mono">
-          <UntrustedProse text={c.name} />
-        </span>
-        {c.runsCodeChanged && <span className="font-medium">Runs code changed</span>}
-      </div>
+      <ChangedHeader name={c.name} runsCodeChanged={c.runsCodeChanged} />
       {c.hooks.removed.map((h) => (
         <DiffLine key={`-${hookText(h)}`} sign="−" text={hookText(h)} />
       ))}

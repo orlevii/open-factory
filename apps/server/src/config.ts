@@ -122,9 +122,9 @@ const REMOVED_ENV: Record<string, string> = {
 };
 
 export function removedEnvWarnings(env: NodeJS.ProcessEnv): string[] {
-  return Object.keys(REMOVED_ENV)
-    .filter((k) => env[k] !== undefined && env[k] !== "")
-    .map((k) => REMOVED_ENV[k] as string);
+  return Object.entries(REMOVED_ENV)
+    .filter(([k]) => env[k] !== undefined && env[k] !== "")
+    .map(([, warning]) => warning);
 }
 
 /** Where host skills are read from: `<FACTORY_HOST_CLAUDE_DIR>/skills` (I5 §5.2). */

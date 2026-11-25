@@ -45,18 +45,19 @@ export async function assertPluginFloor(bin: string, env: Record<string, string>
 /** Image digest to its in-flight or passed check. A failed check is dropped, so the next start asks again. */
 const imageChecks = new Map<string, Promise<void>>();
 
-/** Docker images, once per digest (spec §7.9): `docker run --rm --network none --security-opt no-new-privileges:true --entrypoint claude <image> --version`. */
+/** Docker images, once per digest (spec §7.9): `docker run --rm --network none --security-opt no-new-privileges:true --entrypoint claude <digest> --version` (the image ID, so the result belongs to the digest it's cached under). */
 export function checkImageClaudeVersion(image: string, digest: string): Promise<void> {
   let check = imageChecks.get(digest);
   if (!check) {
-    check = runImageVersionCheck(image);
+    check = runImageVersionCheck(image, digest);
     imageChecks.set(digest, check);
     check.catch(() => imageChecks.delete(digest));
   }
   return check;
 }
 
-async function runImageVersionCheck(image: string): Promise<void> {
+/** Runs the image by its ID (`digest`), never by `image`: a tag can move between reading the ID and this probe. */
+async function runImageVersionCheck(image: string, digest: string): Promise<void> {
   const stdout = await new Promise<string>((resolve, reject) => {
     execFile(
       "docker",
@@ -68,7 +69,7 @@ async function runImageVersionCheck(image: string): Promise<void> {
         ...SECURITY_OPT.flatMap((o) => ["--security-opt", o]),
         "--entrypoint",
         "claude",
-        image,
+        digest,
         "--version",
       ],
       { env: dockerCheckEnv(process.env), timeout: 60_000 },

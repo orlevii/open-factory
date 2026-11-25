@@ -1,5 +1,5 @@
 import type { SkillGroupsResponse } from "@open-factory/shared";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -318,6 +318,33 @@ test("the picker does not fetch on mount: the Library list is already cached", a
   expect(api.calls.filter((c) => c.url === "/api/library/skills")).toHaveLength(0);
 });
 
+test("a window focus refetches the Library list, so a skill added on disk shows in the picker", async () => {
+  const state = { library: LIBRARY as unknown };
+  const api = useLibrary();
+  api.on("GET /api/library/skills", () => json(state.library));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(libraryQueryOptions.queryKey, LIBRARY);
+  render(<Form client={client} />);
+  state.library = {
+    ...LIBRARY,
+    groups: [
+      {
+        ...LIBRARY.groups[0],
+        skills: [
+          ...(LIBRARY.groups[0] as { skills: unknown[] }).skills,
+          ok("fresh", "New on disk."),
+        ],
+      },
+      ...LIBRARY.groups.slice(1),
+    ],
+  };
+  focusManager.setFocused(false);
+  focusManager.setFocused(true);
+  await open();
+  expect(await screen.findByRole("option", { name: /fresh/ })).toBeInTheDocument();
+  expect(api.calls.filter((c) => c.url === "/api/library/skills")).toHaveLength(1);
+});
+
 // Plugins (spec §10.5, §7.4).
 
 const addPlugin = () => screen.getByRole("button", { name: "Add plugin" });
@@ -477,7 +504,7 @@ describe("plugin picker", () => {
     });
   });
 
-  test("an official marketplace with no tag at its commit refuses the pick", async () => {
+  test("an official marketplace with no tag at its commit refuses the pick and offers Latest", async () => {
     useMarketplaces(
       MARKETPLACES.map((m) => (m.name === "claude-plugins-official" ? { ...m, tags: {} } : m)),
     );
@@ -492,6 +519,43 @@ describe("plugin picker", () => {
         "claude-plugins-official can only be pinned to a tag. Fetch a tag in Skills, or use Latest.",
       ).length,
     ).toBeGreaterThan(0);
+    expect(onValue).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Use Latest for claude-plugins-official…" }),
+    );
+    expect(
+      screen.getByText(/runs claude-plugins-official's newest code at each restart/),
+    ).toBeInTheDocument();
+    expect(onValue).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Use Latest and add" }));
+    expect(lastOf(onValue).settings).toEqual({
+      enabledPlugins: { "docs@claude-plugins-official": true },
+      extraKnownMarketplaces: {
+        "claude-plugins-official": {
+          source: { source: "github", repo: "anthropics/claude-plugins-official" },
+        },
+      },
+    });
+  });
+
+  test("the Latest offer can be cancelled without changing the draft", async () => {
+    useMarketplaces(
+      MARKETPLACES.map((m) => (m.name === "claude-plugins-official" ? { ...m, tags: {} } : m)),
+    );
+    const onValue = vi.fn();
+    render(<PluginsForm onValue={onValue} />);
+    await openPlugins();
+    await userEvent.click(
+      await screen.findByRole("option", { name: /docs@claude-plugins-official/ }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Use Latest for claude-plugins-official…" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.getByRole("button", { name: "Use Latest for claude-plugins-official…" }),
+    ).toBeInTheDocument();
     expect(onValue).not.toHaveBeenCalled();
   });
 

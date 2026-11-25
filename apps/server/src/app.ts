@@ -506,7 +506,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     });
   const skillSources: SourcesService = new SourcesService({
     store: sourcesStore,
-    usedBy: (name) => library.usedBy(name),
+    usedByAny: (names) => library.usedByAny(names),
     factoryHome: config.factoryHome,
     hostClaudeDir: config.hostClaudeDir,
     forbidden: {

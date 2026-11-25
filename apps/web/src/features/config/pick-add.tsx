@@ -66,6 +66,7 @@ export function PickAddMany({
   picked,
   trigger,
   onPick,
+  refusalExtra,
 }: {
   slot: AddSlot;
   label: string;
@@ -79,6 +80,11 @@ export function PickAddMany({
   trigger: ReactElement;
   /** A rule a pick must pass: a refusal message (shown in the footer and announced) stops the add. Stable. */
   onPick?: (value: string) => string | undefined;
+  /**
+   * What sits under a refusal (an action that gets past it). `accept` is called once the caller has added the value
+   * itself: it clears the refusal and marks the value as the one to reveal on close.
+   */
+  refusalExtra?: (value: string, accept: () => void) => ReactNode;
 }) {
   // `picked` may be a fresh array each render (the draft is read tolerantly): its joined names are the key.
   const key = picked.join("\0");
@@ -86,6 +92,7 @@ export function PickAddMany({
   const added = useMemo(() => new Set(picked), [key]);
   const [said, setSaid] = useState("");
   const [refused, setRefused] = useState("");
+  const [refusedValue, setRefusedValue] = useState("");
   const multiple = useMemo(() => ({ added, announce: setSaid }), [added]);
   const last = useRef<string>(undefined);
   return (
@@ -95,6 +102,7 @@ export function PickAddMany({
         onValueChange={(v) => {
           const why = onPick?.(v);
           setRefused(why ?? "");
+          setRefusedValue(why ? v : "");
           if (why) {
             setSaid(why);
             return;
@@ -112,6 +120,12 @@ export function PickAddMany({
             <>
               {footer}
               <p className="border-t border-border px-3 py-2 text-xs text-foreground">{refused}</p>
+              {refusalExtra?.(refusedValue, () => {
+                last.current = refusedValue;
+                setRefused("");
+                setRefusedValue("");
+                setSaid(`Added ${refusedValue}`);
+              })}
             </>
           ) : (
             footer

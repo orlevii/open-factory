@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { checkBranchName } from "@open-factory/shared";
-import { COMMIT_PATTERN as SHA } from "./common.ts";
+import { CHECKOUT_MAX_ENTRIES, COMMIT_PATTERN as SHA } from "./common.ts";
 import { GitError, runGit } from "./git.ts";
 
 const OPERATION_BUDGET_MS = 180_000;
@@ -123,26 +123,43 @@ export async function fetchCommit(
   });
 }
 
-/** Tree sha of each repo-relative path at `sha` (`<sha>:<path>`, no leading slash). */
+/**
+ * Tree sha of each repo-relative path at `sha` (`<sha>:<path>`, no leading slash), all within one operation budget.
+ * Fails closed: an answer that isn't a full object id is an error, never a recorded pin.
+ */
 export async function treeShas(
   co: string,
   sha: string,
   paths: string[],
+  o: Pick<GitFetchOptions, "signal" | "gitBin" | "budgetMs"> = {},
 ): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
-  for (const p of paths) {
-    const { stdout } = await runGit(["rev-parse", `${sha}:${p}`], { cwd: co, allowFile: false });
-    out[p] = stdout.trim();
-  }
-  return out;
+  if (!SHA.test(sha)) throw new GitError("git failed: invalid commit.", "");
+  return withBudget({ allowFile: false, ...o }, async (git) => {
+    const out: Record<string, string> = {};
+    for (const p of paths) {
+      const tree = (await git(["rev-parse", `${sha}:${p}`], co)).stdout.trim();
+      if (!SHA.test(tree)) throw new GitError(`git returned no tree for ${p}.`, "");
+      out[p] = tree;
+    }
+    return out;
+  });
 }
 
-/** Bytes of regular files under `dir`, without following links and without `.git`. */
-export async function checkoutSize(dir: string, capBytes: number): Promise<number> {
+/**
+ * Bytes of regular files under `dir`, without following links and without `.git`. Throws `over_cap` past `capBytes`
+ * or past `maxEntries` files and folders (a tree of countless tiny files is as unreasonable as a big one).
+ */
+export async function checkoutSize(
+  dir: string,
+  capBytes: number,
+  maxEntries = CHECKOUT_MAX_ENTRIES,
+): Promise<number> {
   let total = 0;
+  let entries = 0;
   const walk = async (d: string): Promise<void> => {
     for (const e of await readdir(d, { withFileTypes: true })) {
       if (e.name === ".git" && d === dir) continue;
+      if (++entries > maxEntries) throw new Error("over_cap");
       const p = path.join(d, e.name);
       const st = await lstat(p);
       if (st.isDirectory()) await walk(p);

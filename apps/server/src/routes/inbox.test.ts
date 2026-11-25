@@ -472,6 +472,9 @@ test("?unread=true&notify=true returns the chats and only mention, agent_errored
     });
   await callTool(url, tokA, "send_message", { to: ["@or"], body: "a chat" });
   await h.app.tasks.create(or, { title: "Plan", assignee: "ada" });
+  await h.app.tasks.comment(agent, "T-1", "@or already read");
+  const readId = (await get("/api/inbox?unread=true")).json().items[0].id;
+  await post(`/api/inbox/${readId}/read`); // read: never returned under notify
   await h.app.tasks.comment(agent, "T-1", "@or ping");
   await h.app.tasks.update(agent, "T-1", { status: "done" }); // a task_event: never notifies
   await h.db

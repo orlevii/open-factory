@@ -73,7 +73,7 @@ function groupOf(i: NotifiableItem): { id: string; kind: Kind } | undefined {
 }
 
 const byCreatedAt = (a: NotifiableItem, b: NotifiableItem) =>
-  a.createdAt.localeCompare(b.createdAt);
+  a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
 
 function itemBurst(key: string, kind: Kind, sorted: NotifiableItem[]): Burst | undefined {
   const oldest = sorted[0];

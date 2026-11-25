@@ -187,6 +187,15 @@ test("a burst that is only baselined never notifies, even once the tab is hidden
   expect(shown).toHaveLength(0);
 });
 
+test("reading a burst's newest item elsewhere does not re-notify a burst already counted", () => {
+  on();
+  const notifier = new Notifier(() => {});
+  const [a, b] = [item(), item()];
+  notifier.baseline(bursts({ items: [a, b] }));
+  notifier.update(bursts({ items: [a] }), false);
+  expect(shown).toHaveLength(0);
+});
+
 test("a throwing constructor marks notifications unsupported and the hook reports it", () => {
   stubNotification("granted", undefined, true);
   localStorage.setItem("of-notifications", "1");

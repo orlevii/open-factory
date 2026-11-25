@@ -76,8 +76,10 @@ export function useBrowserNotifications() {
 
 /**
  * What this tab shows (spec §5.2): one notification per burst, replaced silently while its key stays unread,
- * closed when the key is read or resolved. `seen` holds the newest id of every burst already counted.
+ * closed when the key is read or resolved. `seen` holds every item id of the bursts already counted.
  */
+const idsOf = (b: Burst) => [...b.itemIds, b.newestId];
+
 export class Notifier {
   private seen = new Set<string>();
   private shown = new Map<string, { tag: string; n: Notification }>();
@@ -91,7 +93,7 @@ export class Notifier {
   }
 
   baseline(bs: Burst[]): void {
-    for (const b of bs) this.seen.add(b.newestId);
+    for (const b of bs) for (const id of idsOf(b)) this.seen.add(id);
     this.ready = true;
   }
 
@@ -99,12 +101,13 @@ export class Notifier {
     const live = new Map(bs.filter((b) => !b.resolved).map((b) => [b.key, b]));
     for (const key of [...this.shown.keys()]) if (!live.has(key)) this.drop(key);
     for (const b of live.values()) {
-      if (this.seen.has(b.newestId)) {
+      const ids = idsOf(b);
+      if (ids.every((id) => this.seen.has(id))) {
         // Partly read elsewhere: the old notification goes, and nothing new arrived to replace it.
         if (this.shown.get(b.key)?.tag !== b.tag) this.drop(b.key);
         continue;
       }
-      this.seen.add(b.newestId);
+      for (const id of ids) this.seen.add(id);
       if (visible || !isOn()) continue;
       if (this.shown.get(b.key)?.tag !== b.tag) this.drop(b.key);
       let n: Notification;

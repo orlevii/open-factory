@@ -76,7 +76,6 @@ const realHostSkills = (() => {
 // ---------- system/init capture (stdout lines reach the driver's debug log) ----------
 interface Init {
   skills: string[];
-  plugins: unknown[];
   cwd: string;
 }
 const inits = new Map<string, Init>();
@@ -89,7 +88,6 @@ const captureLog = {
       if (j.type === "system" && j.subtype === "init" && !inits.has(o.agent))
         inits.set(o.agent, {
           skills: Array.isArray(j.skills) ? j.skills.map(String) : [],
-          plugins: Array.isArray(j.plugins) ? j.plugins : [],
           cwd: String(j.cwd ?? ""),
         });
     } catch {}
@@ -186,9 +184,6 @@ const textOf = (es: AnyEvent[]) =>
           : [],
     )
     .join("\n");
-/** Plugins that aren't Claude Code's own built-ins (`path: "builtin"`), i.e. ones from a config dir. */
-const hostPlugins = (i: Init | undefined) =>
-  (i?.plugins ?? []).filter((p) => (p as { path?: unknown })?.path !== "builtin");
 /** Tool calls and their results, for diagnosing a failed check. */
 const toolTrace = (es: AnyEvent[]) =>
   es
@@ -369,9 +364,9 @@ try {
   );
   const leakedA = aSkills.filter((s) => realHostSkills.includes(s));
   check(
-    "5. alpha system/init has none of the real host skills and only built-in plugins",
-    Boolean(aInit) && leakedA.length === 0 && hostPlugins(aInit).length === 0,
-    `leaked: ${leakedA.join(", ")}; plugins: ${JSON.stringify(hostPlugins(aInit))}`,
+    "5. alpha system/init has none of the real host skills",
+    Boolean(aInit) && leakedA.length === 0,
+    `leaked: ${leakedA.join(", ")}`,
   );
   const readme = readFileSync(path.join(repoDir, "README.md"), "utf8");
   check(
@@ -440,9 +435,9 @@ try {
   );
   const leakedB = bSkills.filter((s) => realHostSkills.includes(s));
   check(
-    "6. beta system/init has none of the real host skills and only built-in plugins",
-    Boolean(bInit) && leakedB.length === 0 && hostPlugins(bInit).length === 0,
-    `leaked: ${leakedB.join(", ")}; plugins: ${JSON.stringify(hostPlugins(bInit))}`,
+    "6. beta system/init has none of the real host skills",
+    Boolean(bInit) && leakedB.length === 0,
+    `leaked: ${leakedB.join(", ")}`,
   );
   const bText = textOf(b);
   check(

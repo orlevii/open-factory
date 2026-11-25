@@ -25,9 +25,6 @@ import {
 import { SafeFs } from "./safe-fs.ts";
 import { buildSettings } from "./settings.ts";
 
-const _obj = (v: unknown): Record<string, unknown> =>
-  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-
 export interface PrepareInput {
   slug: string;
   displayName: string;

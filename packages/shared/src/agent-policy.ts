@@ -130,7 +130,7 @@ export const refusedReferences = (value: unknown): string[] => [
 
 const LOCAL_RUNTIME = "local";
 
-/** The one local-runtime predicate (rule 8) every write service calls for an agent actor. */
+/** The one local-runtime predicate (rule 7) every write service calls for an agent actor. */
 export function touchesLocalRuntime(i: {
   templateRuntime?: string;
   templateHasLocalAgents?: boolean;
@@ -303,7 +303,7 @@ export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
       }
   }
 
-  // Rule 6: the factory's own server.
+  // Rule 5: the factory's own server.
   if (
     Object.hasOwn(after.servers, "factory") &&
     !same(own(before.servers, "factory"), own(after.servers, "factory"))

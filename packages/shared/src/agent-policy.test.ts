@@ -319,7 +319,7 @@ describe("rule 4: env names and references", () => {
     ).toEqual(["PATH", "ANTHROPIC_API_KEY"]));
 });
 
-describe("rule 6: MCP servers", () => {
+describe("rule 5: MCP servers", () => {
   test("a server named factory is refused", () =>
     expect(messages(edited((d) => (d.mcp.mcpServers.factory = { command: "x" })))).toEqual([
       "That server name is reserved.",
@@ -337,7 +337,7 @@ describe("rule 6: MCP servers", () => {
   });
 });
 
-describe("rule 7: reserved settings keys", () => {
+describe("rule 6: reserved settings keys", () => {
   test.each(RESERVED_SETTINGS_KEYS)("an agent adding %s to settings is refused", (key) => {
     const after = clone(base);
     const parts = key.split(".");
@@ -353,7 +353,7 @@ describe("rule 7: reserved settings keys", () => {
   });
 });
 
-describe("rule 8: no local runtime", () => {
+describe("rule 7: no local runtime", () => {
   test.each([
     { templateRuntime: "local" as const },
     { templateHasLocalAgents: true },

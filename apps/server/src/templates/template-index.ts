@@ -552,7 +552,7 @@ export class TemplateIndex {
   /**
    * The agent rules over a change from `before` to `after` of template `name`. A local runtime is refused outright
    * (`OrgRefusedError`) when `before` is local or has local agents, or when the change adds a `can_spawn` entry that
-   * is local or missing (rule 8): entries `before` already had don't count, so an agent can still repair a broken
+   * is local or missing (rule 7): entries `before` already had don't count, so an agent can still repair a broken
    * template (spec §7.3a). A copy (`copying`) adds every entry to a new template. Anything else the policy objects
    * to is returned. Reads only.
    */

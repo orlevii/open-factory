@@ -1,7 +1,7 @@
 import { type Db, schema } from "@open-factory/db";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
-/** What the agent policy and the local-runtime rule read from the database (spec §6.1, §6.2 rule 8). */
+/** What the agent policy and the local-runtime rule read from the database (spec §6.1, §6.2 rule 7). */
 export class PolicyInputs {
   constructor(
     private readonly d: {

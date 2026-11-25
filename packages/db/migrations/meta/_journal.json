@@ -173,22 +173,29 @@
     {
       "idx": 24,
       "version": "7",
-      "when": 1795601646708,
-      "tag": "0024_secret_swarm",
+      "when": 1795572389979,
+      "tag": "0024_whole_gorgon",
       "breakpoints": true
     },
     {
       "idx": 25,
       "version": "7",
-      "when": 1795607656277,
-      "tag": "0025_tranquil_jetstream",
+      "when": 1795574101929,
+      "tag": "0025_green_nicolaos",
       "breakpoints": true
     },
     {
       "idx": 26,
       "version": "7",
-      "when": 1795612141037,
-      "tag": "0026_heavy_changeling",
+      "when": 1795624990523,
+      "tag": "0026_flowery_zemo",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1795624997826,
+      "tag": "0027_charming_the_spike",
       "breakpoints": true
     }
   ]

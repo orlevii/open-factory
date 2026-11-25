@@ -28,6 +28,8 @@ const frame = (m: ServerMessage) => act(() => h.opts?.onMessage?.(m));
 const settings = (o: Partial<FactorySettingsDto> = {}): FactorySettingsDto => ({
   warmWindowMinutes: 70,
   memberUpdateDebounceSeconds: 30,
+  loopGuardMessages: 10,
+  loopGuardWindowMinutes: 10,
   allowLocalRuntime: false,
   defaultImage: "ghcr.io/x/base:latest",
   updatedAt: null,
@@ -75,10 +77,14 @@ const field = async (label: string) =>
 
 const WARM_HINT =
   "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes.";
+const LIMIT_HINT =
+  "Two agents that each send the other more than this many messages within the window, with no human in between, are held until someone resumes them in the Inbox (2–1000).";
+const WINDOW_HINT =
+  "How far back the limit counts. A human message to either agent starts a new window (1–1440 min).";
 const DEBOUNCE_HINT =
   "How long to collect status changes from an agent's reports before telling it (0–86400 seconds). 0 delivers each update at once.";
 
-test("the two fields carry their hints and suffixes, with the loaded values", async () => {
+test("the warm window, debounce and loop guard fields carry their hints and suffixes, with the loaded values", async () => {
   world();
   renderApp("/settings/factory", alice);
   const warm = await field("Default warm window");
@@ -88,8 +94,33 @@ test("the two fields carry their hints and suffixes, with the loaded values", as
   expect(warm).toHaveAccessibleDescription(WARM_HINT);
   expect(debounce).toHaveAccessibleDescription(DEBOUNCE_HINT);
   const region = await factory();
-  expect(within(region).getByText("min")).toBeInTheDocument();
+  expect(within(region).getAllByText("min")).toHaveLength(2);
   expect(within(region).getByText("seconds")).toBeInTheDocument();
+});
+
+test("the loop guard fields carry their labels, suffixes and hints, with the loaded values", async () => {
+  world();
+  renderApp("/settings/factory", alice);
+  const limit = await field("Loop guard limit");
+  const window = await field("Loop guard window");
+  await waitFor(() => expect(limit).toHaveValue(10));
+  expect(window).toHaveValue(10);
+  expect(limit).toHaveAccessibleDescription(LIMIT_HINT);
+  expect(window).toHaveAccessibleDescription(WINDOW_HINT);
+  expect(within(await factory()).getByText("messages")).toBeInTheDocument();
+});
+
+test("the loop guard window validates on blur with the shared bounds sentence", async () => {
+  world();
+  const user = userEvent.setup();
+  renderApp("/settings/factory", alice);
+  const window = await field("Loop guard window");
+  await waitFor(() => expect(window).toHaveValue(10));
+  await user.clear(window);
+  await user.type(window, "1441");
+  await user.tab();
+  expect(window).toHaveAccessibleDescription("Enter a whole number from 1 to 1440.");
+  expect(window).toHaveAttribute("aria-invalid", "true");
 });
 
 test.each([

@@ -385,3 +385,58 @@ test("a termination during app.close(): no factory-restarted notice for it, and 
   expect(after.filter((type) => type === "terminated")).toHaveLength(1);
   expect(after).not.toContain("reconciled");
 });
+
+/** An open hold between two agents. */
+async function openHold(app: T, p: string, q: string) {
+  const [x, y] = p < q ? [p, q] : [q, p];
+  const holdId = randomUUID();
+  await app.db
+    .insert(schema.loopHolds)
+    .values({ id: holdId, agentA: x, agentB: y, openedAt: new Date() });
+  return holdId;
+}
+/** A `loop_held` row of a hold, parked and never handed over. */
+const heldRow = (app: T, loopHoldId: string, fromId: string, toId: string, body: string) =>
+  app.app.store.createMessage({
+    from: { agentId: fromId },
+    toAgentId: toId,
+    recipients: ["@x"],
+    body,
+    urgent: false,
+    state: "loop_held",
+    loopHoldId,
+  });
+
+test("terminating an agent rejects its loop-held rows; archiving leaves them held", async () => {
+  const { t, driver, lead, pm } = await setup();
+  const a = await spawnIdle(t, driver, lead, "la");
+  const b = pm;
+  const hold = await openHold(t, a.id, b.id);
+  const toA = await heldRow(t, hold, b.id, a.id, "held to a");
+  const toB = await heldRow(t, hold, a.id, b.id, "held to b");
+  expect(await t.app.store.pendingQueue(a.id)).not.toContainEqual(
+    expect.objectContaining({ id: toA.id }),
+  );
+  await t.app.agents.archive(b.slug, { kind: "human", handle: "or" });
+  expect(await stateOf(t, toB.id)).toBe("loop_held");
+  await t.app.terminator.terminate(a.id, "@or");
+  expect(await stateOf(t, toA.id)).toBe("rejected");
+  expect(await stateOf(t, toB.id)).toBe("loop_held");
+});
+
+test("boot rejects loop-held rows to terminated agents and leaves the others", async () => {
+  const { t, driver, lead } = await setup();
+  const a = await spawnIdle(t, driver, lead, "ba");
+  const b = await spawnIdle(t, driver, lead, "bb");
+  const hold = await openHold(t, a.id, b.id);
+  const toA = await heldRow(t, hold, b.id, a.id, "to a");
+  const toB = await heldRow(t, hold, a.id, b.id, "to b");
+  // The crash window: terminated without the transaction having rejected what raced in.
+  await t.db
+    .update(schema.agents)
+    .set({ terminatedAt: new Date(), terminatedBy: "@or" })
+    .where(eq(schema.agents.id, a.id));
+  await t.app.store.rejectPendingToTerminated();
+  expect(await stateOf(t, toA.id)).toBe("rejected");
+  expect(await stateOf(t, toB.id)).toBe("loop_held");
+});

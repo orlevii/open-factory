@@ -63,6 +63,8 @@ export const projectResponseSchema = z.object({ project: projectSummarySchema })
 export const FACTORY_BOUNDS = {
   warmWindowMinutes: [1, 1440],
   memberUpdateDebounceSeconds: [0, 86_400],
+  loopGuardMessages: [2, 1000],
+  loopGuardWindowMinutes: [1, 1440],
 } as const;
 
 const bounded = ([lo, hi]: readonly [number, number]) => {
@@ -75,6 +77,8 @@ const bounded = ([lo, hi]: readonly [number, number]) => {
 export const factorySettingsValuesSchema = z.object({
   warmWindowMinutes: bounded(FACTORY_BOUNDS.warmWindowMinutes).default(70),
   memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds).default(30),
+  loopGuardMessages: bounded(FACTORY_BOUNDS.loopGuardMessages).default(10),
+  loopGuardWindowMinutes: bounded(FACTORY_BOUNDS.loopGuardWindowMinutes).default(10),
 });
 export type FactorySettingsValues = z.infer<typeof factorySettingsValuesSchema>;
 
@@ -95,6 +99,8 @@ export function readFactorySettingsValues(raw: unknown): FactorySettingsValues {
   return {
     warmWindowMinutes: read("warmWindowMinutes"),
     memberUpdateDebounceSeconds: read("memberUpdateDebounceSeconds"),
+    loopGuardMessages: read("loopGuardMessages"),
+    loopGuardWindowMinutes: read("loopGuardWindowMinutes"),
   };
 }
 
@@ -111,5 +117,7 @@ export type FactorySettingsDto = z.infer<typeof factorySettingsSchema>;
 export const patchFactorySettingsSchema = z.strictObject({
   warmWindowMinutes: bounded(FACTORY_BOUNDS.warmWindowMinutes).optional(),
   memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds).optional(),
+  loopGuardMessages: bounded(FACTORY_BOUNDS.loopGuardMessages).optional(),
+  loopGuardWindowMinutes: bounded(FACTORY_BOUNDS.loopGuardWindowMinutes).optional(),
 });
 export type PatchFactorySettings = z.infer<typeof patchFactorySettingsSchema>;

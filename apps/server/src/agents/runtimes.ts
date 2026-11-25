@@ -441,6 +441,14 @@ export class AgentRuntimes {
   }
 
   /**
+   * Hands a notice row that was written in another transaction (the loop guard's manager notices) to the agent's
+   * runtime, without waking it. Nothing when the agent has no runtime.
+   */
+  async adoptNotice(agentId: string, rowId: string): Promise<void> {
+    await (await this.get(agentId))?.adoptNotice(rowId);
+  }
+
+  /**
    * I7 §8.2: records an agent actor's change to `reportId`'s configuration in its manager's one pending
    * `report_config_changed` notice for that report (merged), through the manager's runtime when one exists, as
    * `recordConfigNotice` does. Nothing for an archived or terminated manager. The lines are `describeChanges` output.

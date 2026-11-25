@@ -13,8 +13,9 @@ import { extractMentions } from "@open-factory/shared/mentions";
 import { inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
-import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
+import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
+import { type GuardResult, type LoopGuard, loopNotes, pairOf } from "../messaging/loop-guard.ts";
 import { resolveName } from "../messaging/principals.ts";
 import type { Router } from "../messaging/router.ts";
 import { blockedBy, isBlocked } from "./blocked.ts";
@@ -45,6 +46,8 @@ export type CommentResult = {
     name: string;
     reason: "unknown" | "ambiguous" | "archived" | "terminated" | "reserved" | "too_many";
   }[];
+  /** Agent recipients the loop guard parked (I8 §6.3): the comment is posted, their copy waits for a human's Resume. */
+  held: { to: string; note: string }[];
   note?: string;
 };
 
@@ -112,6 +115,7 @@ export class TaskService {
       runtimes: AgentRuntimes;
       bus: EventBus;
       log: FastifyBaseLogger;
+      loopGuard: LoopGuard;
     },
   ) {
     this.reads = new TaskReads({ db: d.db, tasks: d.tasks });
@@ -209,11 +213,12 @@ export class TaskService {
         .filter((r) => r.wake === "task_message")
         .flatMap((r) => (r.row.toAgentId ? [r.row.toAgentId] : [])),
     );
+    this.d.loopGuard.afterCommit(out.guards);
     return { ...out.result, ...(notes.length ? { note: notes.join(" ") } : {}) };
   }
 
   private async commentProcedure(
-    tx: Exec,
+    tx: Tx,
     actor: Actor,
     key: string,
     text: string,
@@ -331,16 +336,32 @@ export class TaskService {
     const mentionedHumans = userIds
       .filter((u) => written.userIds.includes(u))
       .map((u) => `@${handles.get(u)}`);
+    const held: CommentResult["held"] = [];
+    for (const g of written.loopHeld) {
+      const to = `@${await this.slugOf(g.toAgentId, tx)}`;
+      held.push({
+        to,
+        note: g.verdict.opened
+          ? loopNotes.tripping(
+              to,
+              g.verdict.counts.ab + g.verdict.counts.ba,
+              g.verdict.counts.minutes,
+            )
+          : loopNotes.later(to),
+      });
+    }
     return {
       agentRows: written.agentRows,
       userIds: written.userIds,
       keys: [taskKey(task.number)],
+      guards: written.loopHeld.map((g) => g.verdict),
       result: {
         id: comment.id,
         createdAt: comment.createdAt,
         deliveredTo,
         mentionedHumans,
         notReached,
+        held,
       },
     };
   }
@@ -352,7 +373,7 @@ export class TaskService {
 
   /** Spec §13.1, in order. */
   private async procedure(
-    tx: Exec,
+    tx: Tx,
     actor: Actor,
     key: string | null,
     input: Input,
@@ -789,17 +810,35 @@ export class TaskService {
 
   /** Writes the planned rows: agent rows pending (handed over after the commit), human rows delivered with inbox items. */
   protected async write(
-    tx: Exec,
+    tx: Tx,
     actor: Actor,
     planned: PlannedRow[],
   ): Promise<{
     agentRows: { row: PendingRow; wake: "human" | "task_message" }[];
     userIds: string[];
+    loopHeld: { toAgentId: string; verdict: Extract<GuardResult, { held: true }> }[];
   }> {
     const agentRows: { row: PendingRow; wake: "human" | "task_message" }[] = [];
+    const loopHeld: { toAgentId: string; verdict: Extract<GuardResult, { held: true }> }[] = [];
     const userIds = new Set<string>();
+    // I8 §6.3: an agent's comment is counted and checked per agent recipient; every pair is locked first, once.
+    const guarded = (p: PlannedRow): p is PlannedRow & { to: { agentId: string } } =>
+      p.kind === "task_comment" &&
+      actor.kind === "agent" &&
+      typeof p.to === "object" &&
+      "agentId" in p.to &&
+      p.to.agentId !== actor.agentId;
+    if (actor.kind === "agent")
+      await this.d.loopGuard.lockPairs(
+        tx,
+        planned.filter(guarded).map((p) => pairOf(actor.agentId, p.to.agentId)),
+      );
     for (const p of planned) {
       if (typeof p.to === "object" && "agentId" in p.to) {
+        const verdict =
+          actor.kind === "agent" && guarded(p)
+            ? await this.d.loopGuard.check(tx, actor.agentId, p.to.agentId)
+            : undefined;
         const row = await this.d.store.createTaskMessage(tx, {
           kind: p.kind,
           taskId: p.taskId,
@@ -808,8 +847,10 @@ export class TaskService {
           ...(p.from ? { from: p.from } : {}),
           toAgentId: p.to.agentId,
           body: p.body,
+          ...(verdict?.held ? { state: "loop_held", loopHoldId: verdict.holdId } : {}),
         });
-        agentRows.push({ row, wake: p.wake });
+        if (verdict?.held) loopHeld.push({ toAgentId: p.to.agentId, verdict });
+        else agentRows.push({ row, wake: p.wake });
       } else {
         if (p.kind === "task_assigned") continue; // humans are never assignees
         await this.d.store.createHumanMessage(
@@ -830,8 +871,7 @@ export class TaskService {
         userIds.add(p.to.userId);
       }
     }
-    void actor;
-    return { agentRows, userIds: [...userIds] };
+    return { agentRows, userIds: [...userIds], loopHeld };
   }
 
   private async labelOf(tx: Exec, p: Principal): Promise<string> {

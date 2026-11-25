@@ -14,11 +14,15 @@ test("load reads the seeded row", async () => {
   expect(s.get()).toEqual({
     warmWindowMinutes: 70,
     memberUpdateDebounceSeconds: 30,
+    loopGuardMessages: 10,
+    loopGuardWindowMinutes: 10,
     updatedAt: null,
     updatedBy: null,
   });
   expect(s.warmWindowMinutes()).toBe(70);
   expect(s.memberUpdateDebounceMs()).toBe(30_000);
+  expect(s.loopGuardMessages()).toBe(10);
+  expect(s.loopGuardWindowMs()).toBe(600_000);
 });
 
 test("update persists, swaps the copy and tells the listeners", async () => {
@@ -35,8 +39,18 @@ test("update persists, swaps the copy and tells the listeners", async () => {
     expect(s.get().updatedAt).toBeInstanceOf(Date);
     expect(seen).toEqual([
       {
-        prev: { warmWindowMinutes: 70, memberUpdateDebounceSeconds: 30 },
-        next: { warmWindowMinutes: 70, memberUpdateDebounceSeconds: 0 },
+        prev: {
+          warmWindowMinutes: 70,
+          memberUpdateDebounceSeconds: 30,
+          loopGuardMessages: 10,
+          loopGuardWindowMinutes: 10,
+        },
+        next: {
+          warmWindowMinutes: 70,
+          memberUpdateDebounceSeconds: 0,
+          loopGuardMessages: 10,
+          loopGuardWindowMinutes: 10,
+        },
       },
     ]);
     const reloaded = await FactorySettings.load(t.db);

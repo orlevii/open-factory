@@ -69,6 +69,8 @@ async function dto(app: FastifyInstance, db: Db): Promise<FactorySettingsDto> {
   return {
     warmWindowMinutes: s.warmWindowMinutes,
     memberUpdateDebounceSeconds: s.memberUpdateDebounceSeconds,
+    loopGuardMessages: s.loopGuardMessages,
+    loopGuardWindowMinutes: s.loopGuardWindowMinutes,
     allowLocalRuntime: localRuntimeAllowed(app.config),
     defaultImage: app.config.defaultImage,
     updatedAt: s.updatedAt?.toISOString() ?? null,

@@ -81,6 +81,22 @@ export type Envelope = z.infer<typeof envelopeSchema>;
 
 /** `notice` is a factory notice (an agent errored, ...); `credential` is a factory fact about a credential; a chat message is the Chat's, never an item (I1 §6.7). */
 export const INBOX_KINDS = ["notice", "mention", "task_event", "credential"] as const;
+export const loopHoldSchema = z.object({
+  id: z.string(),
+  agents: z.tuple([
+    z.object({ slug: z.string(), status: z.enum(["live", "terminated", "archived"]) }),
+    z.object({ slug: z.string(), status: z.enum(["live", "terminated", "archived"]) }),
+  ]),
+  /** Rows still `loop_held` on this hold. */
+  waiting: z.number().int(),
+  /** Rows whose state is neither `loop_held` nor `rejected`. */
+  sentOn: z.number().int(),
+  resumedAt: z.string().nullable(),
+  /** The resuming human's handle with `@`. */
+  resumedBy: z.string().nullable(),
+});
+export const resumeLoopHoldResponseSchema = z.object({ sentOn: z.number().int() });
+
 export const inboxItemSchema = z.object({
   id: z.string(),
   messageId: z.string(),
@@ -94,12 +110,16 @@ export const inboxItemSchema = z.object({
   createdAt: z.string(),
   /** The task a mention or task event is about, with its current title. */
   task: z.object({ key: z.string(), title: z.string() }).optional(),
+  /** An @factory notice's type (`agent_errored`, `loop_held`, ...), so the UI never parses the preview. */
+  notice: z.string().optional(),
   /** A task event's notice, so the UI never parses the preview. */
   fact: z.enum(["done", "cancelled"]).optional(),
   /** The credential a `credential` item is about. */
   credential: z
     .object({ name: z.string(), expiresAt: z.string().nullable(), current: z.boolean() })
     .optional(),
+  /** A `loop_held` notice's hold (I8 §6.4); `status` is live, so the pane can say who ended. */
+  loopHold: loopHoldSchema.optional(),
   link: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("session"),
@@ -133,7 +153,7 @@ export const messageLookupSchema = z.object({
   from: z.string(),
   fromKind: z.enum(["human", "agent", "factory"]),
   to: z.string(),
-  state: z.enum(["pending", "delivered", "rejected", "cancelled"]),
+  state: z.enum(["pending", "loop_held", "delivered", "rejected", "cancelled"]),
   recipientEvent: eventRefSchema.optional(),
   senderEvent: eventRefSchema.optional(),
   scheduleKey: z.string().optional(),

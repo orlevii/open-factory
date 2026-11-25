@@ -530,6 +530,8 @@ test("editor: the warm_window_minutes hint shows the live factory default", asyn
       json({
         warmWindowMinutes: 45,
         memberUpdateDebounceSeconds: 60,
+        loopGuardMessages: 10,
+        loopGuardWindowMinutes: 10,
         allowLocalRuntime: false,
         defaultImage: "ghcr.io/x/base:latest",
         updatedAt: null,

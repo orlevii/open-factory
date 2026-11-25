@@ -1,9 +1,11 @@
+ALTER TABLE "marketplaces" DISABLE ROW LEVEL SECURITY;--> statement-breakpoint
+DROP TABLE "marketplaces" CASCADE;--> statement-breakpoint
 ALTER TABLE "agents" DROP CONSTRAINT "agents_ephemeral_manager";--> statement-breakpoint
 ALTER TABLE "agents" ADD COLUMN "reports_to_user" text;--> statement-breakpoint
+ALTER TABLE "factory_settings" ADD COLUMN "settings" jsonb DEFAULT '{}'::jsonb NOT NULL;--> statement-breakpoint
 ALTER TABLE "agents" ADD CONSTRAINT "agents_reports_to_user_users_id_fk" FOREIGN KEY ("reports_to_user") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "agents" ADD CONSTRAINT "agents_manager" CHECK (("agents"."kind" = 'ephemeral' AND "agents"."reports_to" IS NOT NULL AND "agents"."reports_to_user" IS NULL)
-        OR ("agents"."kind" = 'persistent' AND num_nonnulls("agents"."reports_to", "agents"."reports_to_user") = 1));
---> statement-breakpoint
+        OR ("agents"."kind" = 'persistent' AND num_nonnulls("agents"."reports_to", "agents"."reports_to_user") = 1));--> statement-breakpoint
 -- I9 §4.5: a member update may go to a human manager (to_user_id) as well as to a manager agent.
 ALTER TABLE "messages" DROP CONSTRAINT "messages_sender_kind_check";--> statement-breakpoint
 ALTER TABLE "messages" ADD CONSTRAINT "messages_sender_kind_check" CHECK (

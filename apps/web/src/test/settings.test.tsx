@@ -968,6 +968,8 @@ test.each([
         json({
           warmWindowMinutes: 70,
           memberUpdateDebounceSeconds: 30,
+          loopGuardMessages: 10,
+          loopGuardWindowMinutes: 10,
           allowLocalRuntime: false,
           defaultImage: "ghcr.io/x/base:latest",
           updatedAt: null,

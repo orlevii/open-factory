@@ -201,14 +201,12 @@ test("Space on a focused row selects it like Enter", async () => {
   await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i5/read"]));
 });
 
-test("<1024 rows navigate; ?item= is dropped", async () => {
-  api.on("GET /api/agents/dev", () => json({ error: { code: "not_found", message: "x" } }, 404));
-  const app = await visit(800, "/inbox?item=i2");
-  await waitFor(() => expect(search(app).item).toBeUndefined());
-  expect(screen.queryByRole("region", { name: "Reading pane" })).toBeNull();
-  expect(row("i2")).not.toHaveAttribute("aria-current");
-  fireEvent.click(row("i1") as HTMLElement);
+test("<1024 rows navigate to their target, and a ?item= goes to the item's own target", async () => {
+  fakeMatchMedia.installWidth(800);
+  const app = renderApp("/inbox?item=i2", alice);
   await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/dev/session"));
+  expect(app.router.state.location.search).toEqual({ event: 42 });
+  expect(screen.queryByRole("region", { name: "Reading pane" })).toBeNull();
 });
 
 test("neighbours' pane data are prefetched on selection", async () => {

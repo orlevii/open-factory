@@ -473,6 +473,7 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     bus,
     log: silentLog as unknown as FastifyBaseLogger,
     neighborhood: new Neighborhood(h.t.db),
+    loopGuard: {} as never, // these tests never send as an agent
   });
   router.bootDone();
   const terminator = new TerminateService({

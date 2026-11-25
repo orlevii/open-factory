@@ -21,6 +21,8 @@ const inboxQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   /** Home's panel: `?unread=true&limit=5`. */
   unread: z.enum(["true", "false"]).optional(),
+  /** The notifier's query: with `unread`, the items that notify, up to 200 whatever `limit` says. */
+  notify: z.enum(["true", "false"]).optional(),
 });
 
 /** Spec §11: the caller's inbox, newest first. Human session only: an agent token gets 401 like no auth. */
@@ -37,9 +39,13 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { querystring: inboxQuerySchema, response: { 200: inboxPageSchema } } },
     async (req) => {
       try {
-        const page = await app.store.inboxPage(userOf(req), req.query.before, req.query.limit, {
-          unread: req.query.unread === "true",
-        });
+        const notify = req.query.notify === "true";
+        const page = await app.store.inboxPage(
+          userOf(req),
+          req.query.before,
+          notify ? 200 : req.query.limit,
+          { unread: req.query.unread === "true", notify },
+        );
         // The chat rows carry their agent's summary fields (I1 §6.7). The response schema validates and serializes it.
         const { chats: unread, updates: unreadUpdates, ...rest } = page;
         const withAgent = (rows: typeof unread) =>

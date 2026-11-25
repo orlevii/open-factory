@@ -19,9 +19,13 @@ const fromRow = (r: Row): Current => ({
 const values = ({
   warmWindowMinutes,
   memberUpdateDebounceSeconds,
+  loopGuardMessages,
+  loopGuardWindowMinutes,
 }: Current): FactorySettingsValues => ({
   warmWindowMinutes,
   memberUpdateDebounceSeconds,
+  loopGuardMessages,
+  loopGuardWindowMinutes,
 });
 
 /**
@@ -53,6 +57,11 @@ export class FactorySettings {
   readonly warmWindowMinutes = (): number => this.current.warmWindowMinutes;
   /** The setting is stored in seconds; every consumer reads milliseconds. */
   readonly memberUpdateDebounceMs = (): number => this.current.memberUpdateDebounceSeconds * 1000;
+
+  /** Loop guard (I8 §6.1): the per-direction message count that trips a hold. */
+  readonly loopGuardMessages = (): number => this.current.loopGuardMessages;
+  /** Loop guard window; stored in minutes, read in milliseconds. */
+  readonly loopGuardWindowMs = (): number => this.current.loopGuardWindowMinutes * 60_000;
 
   /**
    * Merges the patch into the stored object (one statement, so concurrent patches of different keys both land), then

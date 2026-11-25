@@ -10,7 +10,7 @@ import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-quer
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { useOutcome } from "@/components/forms/form-outcome";
 import type { FieldErrors } from "@/components/forms/use-field-errors";
-import { homeInboxQueryKey, inboxQueryKey } from "@/features/inbox/api";
+import { inboxQueryKey } from "@/features/inbox/api";
 import { credentialsQueryOptions } from "@/features/settings/api";
 import { FORM_MSG } from "@/lib/form-messages";
 import {
@@ -120,7 +120,6 @@ function finish(qc: QueryClient, attemptId: string, r: Result): Result {
     patchAttempt(qc, attemptId, (a) => ({ ...a, state: "settled" }));
     void qc.invalidateQueries({ queryKey: credentialsQueryOptions.queryKey });
     void qc.invalidateQueries({ queryKey: inboxQueryKey });
-    void qc.invalidateQueries({ queryKey: homeInboxQueryKey });
     return r;
   }
   const back = attemptOf(r.error);

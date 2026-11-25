@@ -1,6 +1,6 @@
 {
-  "id": "61e62a25-8e8e-44cd-aa29-6c664e538318",
-  "prevId": "3ba6182e-93ce-4304-8383-46c1eb8fb1a3",
+  "id": "1b6fdf58-4c3f-4f20-8622-58a7830505b2",
+  "prevId": "925f777d-8565-4fbf-a51e-7eb21a905596",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -534,6 +534,123 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.loop_holds": {
+      "name": "loop_holds",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "agent_a": {
+          "name": "agent_a",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "agent_b": {
+          "name": "agent_b",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "opened_at": {
+          "name": "opened_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resumed_at": {
+          "name": "resumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resumed_by": {
+          "name": "resumed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "loop_holds_open_unique": {
+          "name": "loop_holds_open_unique",
+          "columns": [
+            {
+              "expression": "agent_a",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "agent_b",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"loop_holds\".\"resumed_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "loop_holds_agent_a_agents_id_fk": {
+          "name": "loop_holds_agent_a_agents_id_fk",
+          "tableFrom": "loop_holds",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_a"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "loop_holds_agent_b_agents_id_fk": {
+          "name": "loop_holds_agent_b_agents_id_fk",
+          "tableFrom": "loop_holds",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "agent_b"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "loop_holds_resumed_by_users_id_fk": {
+          "name": "loop_holds_resumed_by_users_id_fk",
+          "tableFrom": "loop_holds",
+          "tableTo": "users",
+          "columnsFrom": [
+            "resumed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "loop_holds_order": {
+          "name": "loop_holds_order",
+          "value": "\"loop_holds\".\"agent_a\" < \"loop_holds\".\"agent_b\""
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.messages": {
       "name": "messages",
       "schema": "",
@@ -637,6 +754,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'pending'"
+        },
+        "loop_hold_id": {
+          "name": "loop_hold_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "delivered_turn_id": {
           "name": "delivered_turn_id",
@@ -742,6 +865,28 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_schedule_pending_idx": {
+          "name": "messages_schedule_pending_idx",
+          "columns": [
+            {
+              "expression": "schedule_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "to_agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"messages\".\"state\" IN ('pending','loop_held') AND \"messages\".\"schedule_id\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -866,6 +1011,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "messages_loop_hold_idx": {
+          "name": "messages_loop_hold_idx",
+          "columns": [
+            {
+              "expression": "loop_hold_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"messages\".\"loop_hold_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -940,6 +1101,19 @@
           "tableTo": "users",
           "columnsFrom": [
             "to_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "messages_loop_hold_id_loop_holds_id_fk": {
+          "name": "messages_loop_hold_id_loop_holds_id_fk",
+          "tableFrom": "messages",
+          "tableTo": "loop_holds",
+          "columnsFrom": [
+            "loop_hold_id"
           ],
           "columnsTo": [
             "id"
@@ -1106,6 +1280,28 @@
           ],
           "isUnique": false,
           "where": "\"session_events\".\"type\" = 'terminated'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "session_events_operator_input_idx": {
+          "name": "session_events_operator_input_idx",
+          "columns": [
+            {
+              "expression": "agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"session_events\".\"type\" = 'operator_input'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -2155,6 +2351,41 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'{}'::jsonb"
+        },
+        "max_running_agents": {
+          "name": "max_running_agents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 8
+        },
+        "default_warm_window_minutes": {
+          "name": "default_warm_window_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 70
+        },
+        "member_update_debounce_seconds": {
+          "name": "member_update_debounce_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 30
+        },
+        "loop_guard_messages": {
+          "name": "loop_guard_messages",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 10
+        },
+        "loop_guard_window_minutes": {
+          "name": "loop_guard_window_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 10
         },
         "updated_at": {
           "name": "updated_at",

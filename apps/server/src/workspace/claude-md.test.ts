@@ -146,6 +146,13 @@ test.each([
   expect(md).toContain(`\`member_update\` envelopes, ${text}.`);
 });
 
+test("Messaging section says what a held send means and what to do", () => {
+  const md = buildClaudeMd(input);
+  expect(md).toContain(
+    "If a send comes back `held`, stop messaging that agent about it and carry on with other work or end your turn: a human resumes the pair.",
+  );
+});
+
 test("same inputs give byte-identical output; no timestamps", () => {
   const full = {
     ...input,

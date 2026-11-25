@@ -23,6 +23,8 @@ const FIELDS = [
   "maxRunningAgents",
   "defaultWarmWindowMinutes",
   "memberUpdateDebounceSeconds",
+  "loopGuardMessages",
+  "loopGuardWindowMinutes",
 ] as const;
 type Field = (typeof FIELDS)[number];
 type Values = Record<Field, string>;
@@ -31,6 +33,8 @@ const valuesOf = (s: FactorySettingsDto): Values => ({
   maxRunningAgents: String(s.maxRunningAgents),
   defaultWarmWindowMinutes: String(s.defaultWarmWindowMinutes),
   memberUpdateDebounceSeconds: String(s.memberUpdateDebounceSeconds),
+  loopGuardMessages: String(s.loopGuardMessages),
+  loopGuardWindowMinutes: String(s.loopGuardWindowMinutes),
 });
 const same = (a: Values, b: Values) => FIELDS.every((f) => a[f] === b[f]);
 const toNumber = (s: string) => (s.trim() === "" ? Number.NaN : Number(s));
@@ -48,11 +52,17 @@ const HINTS: Record<Field, string> = {
     "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes.",
   memberUpdateDebounceSeconds:
     "How long to collect status changes from an agent's reports before telling it (0–86400 s). 0 sends each change at once.",
+  loopGuardMessages:
+    "Two agents that each send the other more than this many messages within the window, with no human in between, are held until someone resumes them in the Inbox (2–1000).",
+  loopGuardWindowMinutes:
+    "How far back the limit counts. A human message to either agent starts a new window (1–1440 min).",
 };
 const LABELS: Record<Field, string> = {
   maxRunningAgents: "Concurrency cap",
   defaultWarmWindowMinutes: "Default warm window",
   memberUpdateDebounceSeconds: "Member-update debounce",
+  loopGuardMessages: "Loop guard limit",
+  loopGuardWindowMinutes: "Loop guard window",
 };
 
 /** "3 of 8 running": the list fetch seeds it, `supervisor` frames keep it live. */
@@ -100,6 +110,8 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
       defaultWarmWindowMinutes: () => check("defaultWarmWindowMinutes", v.defaultWarmWindowMinutes),
       memberUpdateDebounceSeconds: () =>
         check("memberUpdateDebounceSeconds", v.memberUpdateDebounceSeconds),
+      loopGuardMessages: () => check("loopGuardMessages", v.loopGuardMessages),
+      loopGuardWindowMinutes: () => check("loopGuardWindowMinutes", v.loopGuardWindowMinutes),
     },
   });
 
@@ -208,6 +220,8 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
         {numberField("maxRunningAgents", undefined, <RunningCount />)}
         {numberField("defaultWarmWindowMinutes", "min")}
         {numberField("memberUpdateDebounceSeconds", "s")}
+        {numberField("loopGuardMessages", "messages")}
+        {numberField("loopGuardWindowMinutes", "min")}
         <div className="grid gap-0.5">
           <p className="text-[0.8125rem] font-medium">
             {`Local runtime: ${server.allowLocalRuntime ? "Allowed" : "Not allowed"}`}

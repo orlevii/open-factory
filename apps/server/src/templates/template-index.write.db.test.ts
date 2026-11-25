@@ -217,32 +217,6 @@ test("an agent write to a template with an archived local agent is refused (R9)"
   await idx.writeFile("haslocal", "AGENTS.md", "# x\n", hashOf("haslocal", "AGENTS.md"), human);
 });
 
-test("an agent write adding a plugin under a Latest declaration is refused (rule 5)", async () => {
-  const settings = {
-    extraKnownMarketplaces: { acme: { source: { source: "github", repo: "acme/plugins" } } },
-  };
-  writeTemplate("plug", { "settings.json": JSON.stringify(settings) });
-  await idx.scan();
-  await expect(
-    idx.writeFile(
-      "plug",
-      "settings.json",
-      JSON.stringify({ ...settings, enabledPlugins: { "fmt@acme": true } }),
-      hashOf("plug", "settings.json"),
-      hr,
-    ),
-  ).rejects.toMatchObject({
-    code: "invalid_config",
-    extra: {
-      issues: [
-        expect.objectContaining({
-          message: "Plugin fmt@acme follows the latest acme; only a human can add it.",
-        }),
-      ],
-    },
-  });
-});
-
 test("an agent can drop a can_spawn entry that names a missing template, but not add a local one", async () => {
   writeTemplate("fix", { "template.yaml": yamlOf("fix", "can_spawn: [ghost]\n") });
   writeTemplate("loc", { "template.yaml": yamlOf("loc", "runtime: local\n") });

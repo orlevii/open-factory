@@ -2,7 +2,6 @@ import path from "node:path";
 import {
   type Actor,
   createTemplateBodySchema,
-  effectivePlugins,
   issuesResponseSchema,
   nameSchema,
   putTemplateConfigBodySchema,
@@ -71,7 +70,6 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
             errors: r.issues.filter((i) => i.severity === "error").length,
             warnings: r.issues.filter((i) => i.severity === "warning").length,
             agentCount: byTemplate.get(r.name) ?? 0,
-            pluginCount: r.lastValid ? effectivePlugins(r.lastValid).length : 0,
             ...(imageStatus ? { imageStatus } : {}),
           };
         }),

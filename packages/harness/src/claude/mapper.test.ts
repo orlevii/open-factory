@@ -68,7 +68,6 @@ test("rate-limit-event-allowed: one plain turn; the allowed rate limit is a stat
     cwd: "/spike/work/a",
     claudeCodeVersion: "2.1.327",
     mcpServers: [],
-    plugins: expect.any(Array),
   });
   expect(events[2]).toEqual({
     type: "assistant_text",
@@ -88,38 +87,6 @@ test("rate-limit-event-allowed: one plain turn; the allowed rate limit is a stat
     terminalReason: "completed",
     numTurns: 1,
   });
-});
-
-test("session_started carries the plugins of the first init, as {name, path, source, version?}", () => {
-  const state = createMapperState({ resumed: false });
-  const init = (plugins: unknown) => ({
-    type: "system",
-    subtype: "init",
-    session_id: "s1",
-    model: "m",
-    cwd: "/w",
-    claude_code_version: "2.1.331",
-    ...(plugins === undefined ? {} : { plugins }),
-  });
-  const first = mapEvents(
-    init([
-      { name: "p", path: "/P/cache/mk/p/1.2.0", source: "p@mk", version: "1.2.0" },
-      { name: "q", path: "/P/cache/mk/q/abc", source: "q@mk" },
-      { name: "junk" },
-    ]),
-    state,
-  );
-  expect(ofType(first, "session_started")[0]?.plugins).toEqual([
-    { name: "p", path: "/P/cache/mk/p/1.2.0", source: "p@mk", version: "1.2.0" },
-    { name: "q", path: "/P/cache/mk/q/abc", source: "q@mk" },
-  ]);
-  // Only the first init counts: a later one starts a turn and nothing else.
-  expect(
-    ofType(mapEvents(init([{ name: "r", path: "/x", source: "r@mk" }]), state), "session_started"),
-  ).toEqual([]);
-  expect(
-    ofType(mapEvents(init(undefined), createMapperState({ resumed: false })), "session_started")[0],
-  ).not.toHaveProperty("plugins");
 });
 
 test("interrupt-then-message: interrupted turn is a turn_end error, not an error event", () => {
@@ -817,17 +784,6 @@ test("session_started carries the MCP connection results (fixture mcp-http-env-h
   const { events } = mapFixture("mcp-http-env-header");
   const s = events.find((e) => e.type === "session_started");
   expect(s).toMatchObject({ mcpServers: [{ name: "factory", status: "connected" }] });
-});
-
-test("session_started passes through any MCP status string, including pending", () => {
-  const { events } = mapFixture("mcp-plugin-and-project");
-  const s = events.find((e) => e.type === "session_started");
-  expect(s).toMatchObject({
-    mcpServers: [
-      { name: "plugin:vplug:plugsrv", status: "connected" },
-      { name: "proj", status: "connected" },
-    ],
-  });
 });
 
 // Spec §9.1 (Q16): per-tool meta on tool_result, built from `tool_use_result` and bounded.

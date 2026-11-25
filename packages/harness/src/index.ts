@@ -4,7 +4,6 @@ export * from "./claude/driver.ts";
 export * from "./claude/live.ts";
 export * from "./claude/mapper.ts";
 export * from "./claude/process.ts";
-export * from "./claude/version.ts";
 export * from "./envelope.ts";
 export * from "./transport/local.ts";
 export * from "./transport/types.ts";

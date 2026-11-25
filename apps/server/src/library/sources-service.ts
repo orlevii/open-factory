@@ -165,12 +165,10 @@ export interface SourcesDeps {
   onLibraryChanged?: (e: {
     skills?: string[];
     by: string;
-    before?: { skills: Record<string, string>; plugins: Record<string, string> };
+    before?: { skills: Record<string, string> };
   }) => Promise<void>;
   /** What the Library resolves these names to now; taken before a mutation and handed back as `before`. */
-  captureLibrary?: (
-    skills: string[],
-  ) => Promise<{ skills: Record<string, string>; plugins: Record<string, string> }>;
+  captureLibrary?: (skills: string[]) => Promise<{ skills: Record<string, string> }>;
   /** The `library_changed` WS frame (spec §9.5); `addFailed` is the repo of a background add that failed. */
   publish?: (e?: { addFailed?: string }) => void;
   /** Starts a one-shot purge after `ms` (the sweep's, §9.4). */
@@ -337,7 +335,7 @@ export class SourcesService {
     skills: string[] | undefined,
     by: string,
     o?: { addFailed?: string },
-    before?: { skills: Record<string, string>; plugins: Record<string, string> },
+    before?: { skills: Record<string, string> },
   ): Promise<void> {
     this.d.publish?.(o);
     if (skills === undefined) return;

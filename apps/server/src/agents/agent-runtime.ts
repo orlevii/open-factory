@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
-import path from "node:path";
 import type { AgentRow, MessageRow, RuntimeJournal } from "@open-factory/db";
 import {
   type AgentRuntimeSpec,
@@ -38,7 +36,6 @@ import {
   type WaitingOn,
 } from "@open-factory/shared";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
-import { readManifest } from "../library/plugin-settings.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import { type FactDetail, type Forward, factFor } from "../messaging/forwarder.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
@@ -581,15 +578,6 @@ export class AgentRuntime {
    * it.
    */
   started: Effective | undefined;
-  /** The plugins the running process was started to load, each with its pin (spec §7.3 step 8); checked at its first `init`. */
-  private expectedPlugins: { key: string; pin: string }[] = [];
-  /** Where a plugin `init` reports may live (the agent's plugins dir, the registered directory marketplaces). */
-  private pluginRoots: string[] = [];
-  /**
-   * The version of each plugin the process's first `init` listed (spec §7.3 step 8). Deliberately not in
-   * `started.library`: a loaded version never counts as a config change.
-   */
-  loadedPlugins: Record<string, string> = {};
   /**
    * I2 §7.3: the store-clock stamp taken before the current process's prepare. A `config_changed` row created after it
    * describes a change this process may not have, so it is held for the next process.
@@ -2726,14 +2714,7 @@ export class AgentRuntime {
       return this.failStart(err, "prepareStart failed");
     }
     // `effective` holds env values: it is kept out of the spec the driver sees, and kept as `started` at the launch.
-    const {
-      launch: dockerLaunch,
-      credentialId,
-      effective,
-      plugins,
-      pluginRoots,
-      ...prepSpec
-    } = prepared;
+    const { launch: dockerLaunch, credentialId, effective, ...prepSpec } = prepared;
     // I2 §6.2: the Supervisor checked (and pulled) `nextImage` before the grant. A start that resolved another image (a
     // disk edit no scan has seen yet) updates it and goes back through the pull, as an image found missing does.
     if (dockerLaunch && dockerLaunch.image !== this.nextImage) {
@@ -2771,9 +2752,6 @@ export class AgentRuntime {
     onLaunched();
     this.proc = proc;
     this.started = effective;
-    this.expectedPlugins = plugins;
-    this.pluginRoots = pluginRoots ?? [];
-    this.loadedPlugins = {};
     this.procStartedAt = procStartedAt;
     // This process runs on the config the changes describe.
     this.pendingChanges.clear();
@@ -3123,65 +3101,6 @@ export class AgentRuntime {
     this.publishStatus();
   }
 
-  /** `p` (by its real path) is inside the plugins dir or a registered directory marketplace; `init` is not trusted for it. */
-  private async insideRoots(p: string): Promise<boolean> {
-    try {
-      const real = await realpath(p);
-      return this.pluginRoots.some((root) => {
-        const rel = path.relative(root, real);
-        return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-      });
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Spec §7.3 step 8: the first `init`'s plugins against the closure this process was started with, matched on
-   * `source` (`name@marketplace`). Each plugin that didn't load leaves the agent running without it, adds the
-   * `plugin_not_loaded` event and sends every user one Inbox notice, once per start. A failed notice is logged: the
-   * event is the record.
-   */
-  private async checkPlugins(
-    init: { name: string; path: string; source: string; version?: string }[],
-  ): Promise<void> {
-    const bySource = new Map(init.map((p) => [p.source, p]));
-    const missing: string[] = [];
-    for (const { key, pin } of this.expectedPlugins) {
-      const found = bySource.get(key);
-      if (found) {
-        // The plugin's own manifest is the evidence for its version: the catalog's (`init`'s) can differ (spec §7.4).
-        const manifest = (await this.insideRoots(found.path))
-          ? await readManifest(found.path)
-          : undefined;
-        this.loadedPlugins[key] = manifest?.version ?? found.version ?? "";
-        continue;
-      }
-      missing.push(key);
-      try {
-        await this.append(null, { type: "plugin_not_loaded", key, pin });
-      } catch (err) {
-        this.d.log.error({ err, agent: this.agent.slug, plugin: key }, "the plugin event failed");
-      }
-    }
-    if (!missing.length) return;
-    // One notice per start for every user, however many plugins are missing (spec §7.3 step 8).
-    try {
-      const out = await this.d.store.createHumanMessage({
-        kind: "system",
-        notice: "plugin_not_loaded",
-        subjectAgentId: this.agent.id,
-        to: "all",
-        body: `${missing.join(", ")} didn't load for @${this.agent.slug}.`,
-        urgent: false,
-        createdAt: this.d.store.clock(),
-      });
-      for (const userId of out.userIds) this.d.bus.publishToUser(userId, { type: "inbox_changed" });
-    } catch (err) {
-      this.d.log.error({ err, agent: this.agent.slug }, "the plugin notice failed");
-    }
-  }
-
   private async onEvent(proc: HarnessProcess, e: HarnessEvent) {
     if (this.deadProc === proc && e.type !== "exited") return;
     if (proc !== this.proc && this.deadProc !== proc) return;
@@ -3209,7 +3128,6 @@ export class AgentRuntime {
             await this.append(null, { type: "mcp_unavailable", status });
           }
         }
-        await this.checkPlugins(e.plugins ?? []);
         const flight = this.inFlight.splice(0);
         for (const batch of flight) await this.d.store.markDelivered(batch.map((m) => m.row.id));
         // A batch written before session_started was pending until now (I1 §6.5): its sender's chat changed.
@@ -3509,7 +3427,6 @@ export class AgentRuntime {
       this.proc = undefined;
       this.procCredentialId = undefined;
       this.started = undefined;
-      this.loadedPlugins = {};
       this.procStartedAt = undefined;
     }
     this.sessionStarted = false;

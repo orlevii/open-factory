@@ -24,7 +24,7 @@ export const project = (name: string, hostPath = `/src/${name}`) => ({
   templates: [],
 });
 
-export const templateSummary = (name: string, errors = 0, pluginCount = 0) => ({
+export const templateSummary = (name: string, errors = 0) => ({
   name,
   displayName: name,
   description: "",
@@ -32,7 +32,6 @@ export const templateSummary = (name: string, errors = 0, pluginCount = 0) => ({
   errors,
   warnings: 0,
   agentCount: 0,
-  pluginCount,
 });
 
 export const templateConfig = (over: Partial<TemplateConfig> = {}): TemplateConfig => ({

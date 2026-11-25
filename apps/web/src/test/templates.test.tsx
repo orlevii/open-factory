@@ -39,7 +39,6 @@ const summary = (
   errors: 0,
   warnings: 0,
   agentCount: 0,
-  pluginCount: 0,
   ...p,
 });
 const file = (

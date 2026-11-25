@@ -5,7 +5,7 @@ import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceNotFound } from "@/components/route-states";
 import { templateQueryOptions } from "@/features/templates/api";
 import { TemplateEditor } from "@/features/templates/template-editor";
-import { libraryQueryOptions, marketplacesQueryOptions } from "@/lib/library";
+import { libraryQueryOptions } from "@/lib/library";
 
 export const Route = createFileRoute("/_app/templates/$name")({
   // Only so the first load shows the pending mark and an unknown name the not-found state.
@@ -16,7 +16,6 @@ export const Route = createFileRoute("/_app/templates/$name")({
     if (!preload) import("@/features/templates/code-editor").catch(() => {});
     // The skills picker's list: started now, never waited on, so the picker doesn't fetch on mount (R-B1).
     void context.queryClient.prefetchQuery(libraryQueryOptions);
-    void context.queryClient.prefetchQuery(marketplacesQueryOptions);
     try {
       // A hover warms the cache once (ensureQueryData); a click always refetches, because templates are
       // rescanned from disk (staleTime 0).

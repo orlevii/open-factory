@@ -37,7 +37,6 @@ import type { KeyedMutex } from "../workspace/lock.ts";
 import type { MaterializeCheck, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
 import type { ConfigChanges } from "./config-changes.ts";
-import type { ConfigResolver } from "./config-resolver.ts";
 import type { OverlayPlan } from "./config-service.ts";
 import { OrgRefusedError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
@@ -124,8 +123,6 @@ export class AgentService {
       workspace: Workspace;
       lock: KeyedMutex;
       runtimes: AgentRuntimes;
-      /** `GET …/config` reads each plugin's pin through the Library resolve (spec §8.1). */
-      resolver: Pick<ConfigResolver, "libraryOf">;
       log: RuntimeLog;
       /** The one ContainerManager: a running container counts as a process for the persona-reset gate (spec §11.4). */
       containers?: Pick<ContainerManager, "isRunning">;
@@ -626,13 +623,7 @@ export class AgentService {
             agentRuntimes: [tpl.config.runtime],
           })),
           ...(actor.kind === "agent"
-            ? agentPolicyIssues({
-                target: "overlay",
-                before: {},
-                after: parsed.data,
-                declaredBy: tpl.doc,
-                plugins: await this.d.policy.plugins([tpl.doc]),
-              })
+            ? agentPolicyIssues({ target: "overlay", before: {}, after: parsed.data })
             : []),
         ]
       : overlaySchemaIssues(config);

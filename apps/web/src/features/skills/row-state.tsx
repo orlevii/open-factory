@@ -12,11 +12,9 @@ const LOOK: Record<RowStateName, Look> = {
   checking: { word: "Checking…", icon: "spinner" },
   missing: { word: "Missing", icon: "alert" },
   unusable: { word: "Unusable", icon: "alert" },
-  refused: { word: "Can't use", icon: "alert" },
   check_failed: { word: "Couldn't check", icon: "alert" },
   update: { word: "Update available", icon: "update" },
   hidden: { word: "Hidden", icon: "warning" },
-  cant_pin: { word: "Can't be pinned", icon: "warning" },
 };
 
 function StateIcon({ icon }: { icon: Look["icon"] }) {

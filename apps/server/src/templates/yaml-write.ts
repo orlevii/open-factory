@@ -19,7 +19,6 @@ export const FORM_OWNED_KEYS = [
   "warm_window_minutes",
   "max_live_spawns",
   "skills",
-  "plugins",
   "can_spawn",
   "secrets",
 ] as const;

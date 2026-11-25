@@ -377,14 +377,11 @@ function deferred(): Deferred {
 
 const IMAGE = "open-factory-base:test";
 const MOUNT_CHECK: MountCheckContext = {
-  slug: "lead",
   workdir: "/nonexistent/of-test/workdir",
   grantedPaths: [],
   skillPaths: [],
   templateSkillPaths: [],
   templateDir: "/nonexistent/of-test/home/templates/t",
-  declaredMarketplaceDirs: [],
-  pluginsDir: "/nonexistent/of-test/plugins",
   cliBundle: "/nonexistent/of-test/cli.mjs",
   factoryHome: "/nonexistent/of-test/home",
   home: "/nonexistent/of-test/user",
@@ -434,7 +431,6 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     log: silentLog,
     uid: 501,
     gid: 20,
-    checkImage: async () => {},
   });
   const prepareEntered = deferred();
   const gates = {

@@ -3,42 +3,11 @@ import {
   type AgentPolicyInput,
   agentPolicyIssues,
   isRefusedEnv,
-  type PolicyPlugins,
   refusedReferences,
   touchesLocalRuntime,
 } from "./agent-policy.ts";
 import type { AgentOverlay, ConfigDoc } from "./config.ts";
-import { declarationFor, type RegistryPin } from "./library.ts";
 import { RESERVED_SETTINGS_KEYS } from "./settings-keys.ts";
-
-const C = "c".repeat(40);
-const D = "d".repeat(40);
-const acme: RegistryPin = {
-  name: "acme",
-  source: { source: "github", repo: "acme/plugins" },
-  commit: C,
-  tags: { v1: D },
-};
-const local: RegistryPin = {
-  name: "local",
-  source: { source: "directory", path: "/mk" },
-  commit: null,
-  tags: {},
-};
-const official: RegistryPin = {
-  name: "claude-plugins-official",
-  source: { source: "github", repo: "anthropics/claude-plugins-official" },
-  commit: C,
-  tags: {},
-};
-const plugins: PolicyPlugins = {
-  marketplaces: new Map([acme, local, official].map((r) => [r.name, r])),
-  catalogs: new Map([
-    [`acme@${C}`, new Set(["fmt"])],
-    ["local@", new Set(["tool"])],
-  ]),
-};
-const noPlugins: PolicyPlugins = { marketplaces: new Map(), catalogs: new Map() };
 
 const base: ConfigDoc = {
   template: { name: "dev", display_name: "Dev", model: "sonnet" },
@@ -53,8 +22,7 @@ const base: ConfigDoc = {
 const clone = (d: ConfigDoc): ConfigDoc => structuredClone(d);
 const frozen = { runtime: "docker", image: null, permission_mode: "auto" };
 
-type Over = Partial<Omit<AgentPolicyInput, "target" | "declaredBy">> &
-  ({ target?: "template" } | { target: "overlay"; declaredBy: ConfigDoc });
+type Over = Partial<AgentPolicyInput>;
 
 const issues = (
   after: ConfigDoc | AgentOverlay,
@@ -66,7 +34,6 @@ const issues = (
     before,
     after,
     frozen,
-    plugins: noPlugins,
     ...over,
   });
 const messages = (...args: Parameters<typeof issues>) => issues(...args).map((i) => i.message);
@@ -177,7 +144,7 @@ describe("rule 2: restrictions are add-only", () => {
 
   test("an overlay's deny and ask lists are add-only too", () => {
     const run = (after: AgentOverlay, before: AgentOverlay) =>
-      messages(after, { target: "overlay", frozen: undefined, declaredBy: base }, before);
+      messages(after, { target: "overlay", frozen: undefined }, before);
     const was: AgentOverlay = { settings: { permissions: { deny: ["a", "b"], ask: ["c"] } } };
     expect(run({ settings: { permissions: { deny: ["a", "b", "z"], ask: ["c"] } } }, was)).toEqual(
       [],
@@ -279,7 +246,7 @@ describe("rule 4: env names and references", () => {
     expect(
       messages(
         { settings: { env: { NODE_OPTIONS: "x" } }, template: { secrets: ["PATH"] } },
-        { target: "overlay", frozen: undefined, declaredBy: base },
+        { target: "overlay", frozen: undefined },
         {},
       ),
     ).toEqual(["PATH can only be set by a human.", "NODE_OPTIONS can only be set by a human."]));
@@ -352,193 +319,6 @@ describe("rule 4: env names and references", () => {
     ).toEqual(["PATH", "ANTHROPIC_API_KEY"]));
 });
 
-describe("rule 5: plugins only at a human-set pin", () => {
-  const declare = (d: ConfigDoc, decl: unknown, mkt = "acme") => {
-    d.settings.extraKnownMarketplaces = {
-      ...(d.settings.extraKnownMarketplaces as object),
-      [mkt]: decl,
-    };
-  };
-  const enable = (d: ConfigDoc, key: string) => {
-    d.settings.enabledPlugins = { ...(d.settings.enabledPlugins as object), [key]: true };
-  };
-  const rule5 = (after: ConfigDoc, before: ConfigDoc = base) =>
-    messages(after, { plugins }, before);
-
-  test("declaring a marketplace as Skills has it, and enabling a plugin from its catalog, passes", () =>
-    expect(
-      rule5(
-        edited((d) => {
-          declare(d, declarationFor(acme));
-          enable(d, "fmt@acme");
-        }),
-      ),
-    ).toEqual([]));
-
-  const pinned = "Marketplace acme must match Skills: its source, pinned to cccccc" + "c.";
-  test.each([
-    ["no ref (Latest)", { source: { source: "github", repo: "acme/plugins" } }],
-    ["another commit", { source: { source: "github", repo: "acme/plugins", ref: "e".repeat(40) } }],
-    ["a tag Skills hasn't read", { source: { source: "github", repo: "acme/plugins", ref: "v9" } }],
-    ["a different repo", { source: { source: "github", repo: "evil/plugins", ref: C } }],
-  ])("a declaration with %s is refused", (_n, decl) =>
-    expect(rule5(edited((d) => declare(d, decl)))).toEqual([pinned]),
-  );
-
-  describe("a tag-pinned declaration", () => {
-    const tagged: RegistryPin = { ...official, commit: C, tags: { v1: C } };
-    const withTag: PolicyPlugins = {
-      marketplaces: new Map([[tagged.name, tagged]]),
-      catalogs: new Map([[`${tagged.name}@v1`, new Set(["fmt"])]]),
-    };
-    const decl = (ref: string | undefined) => ({
-      source: { source: "github", repo: "anthropics/claude-plugins-official", ...(ref && { ref }) },
-    });
-    const run = (ref: string | undefined, key?: string) =>
-      messages(
-        edited((d) => {
-          declare(d, decl(ref), tagged.name);
-          if (key) enable(d, key);
-        }),
-        { plugins: withTag },
-      );
-
-    test("with the tag ref it passes, and its plugin is judged at the tag", () => {
-      expect(run("v1", "fmt@claude-plugins-official")).toEqual([]);
-      expect(run("v1", "nope@claude-plugins-official")).toEqual([
-        "Plugin nope@claude-plugins-official isn't in claude-plugins-official at v1.",
-      ]);
-    });
-
-    test.each([
-      ["the commit", C],
-      ["Latest", undefined],
-    ])("%s is refused", (_n, ref) =>
-      expect(run(ref)).toEqual([
-        "Marketplace claude-plugins-official must match Skills: its source, pinned to v1.",
-      ]),
-    );
-  });
-
-  test("a marketplace with no pin Skills has read is refused", () =>
-    expect(
-      rule5(
-        edited((d) =>
-          declare(
-            d,
-            { source: { source: "github", repo: "anthropics/claude-plugins-official", ref: C } },
-            "claude-plugins-official",
-          ),
-        ),
-      ),
-    ).toEqual(["Marketplace claude-plugins-official has no pin Skills has read; ask a human."]));
-
-  test("a marketplace missing from the registry is refused", () =>
-    expect(
-      rule5(
-        edited((d) => declare(d, { source: { source: "github", repo: "x/y", ref: C } }, "ghost")),
-      ),
-    ).toEqual(["Marketplace ghost has no pin Skills has read; ask a human."]));
-
-  test("a folder marketplace declared as its source alone passes", () =>
-    expect(rule5(edited((d) => declare(d, declarationFor(local), "local")))).toEqual([]));
-
-  test("removing a declaration and its plugins passes", () => {
-    const withIt = edited((d) => {
-      declare(d, { source: { source: "github", repo: "acme/plugins" } });
-      enable(d, "fmt@acme");
-    });
-    expect(rule5(clone(base), withIt)).toEqual([]);
-  });
-
-  test("a plugin missing from the catalog at the pin is refused", () =>
-    expect(
-      rule5(
-        edited((d) => {
-          declare(d, declarationFor(acme));
-          enable(d, "nope@acme");
-        }),
-      ),
-    ).toEqual(["Plugin nope@acme isn't in acme at ccccccc."]));
-
-  test("a plugin whose catalog Skills hasn't read at that pin is refused", () =>
-    expect(
-      messages(
-        edited((d) => {
-          declare(d, declarationFor(acme));
-          enable(d, "fmt@acme");
-        }),
-        { plugins: { ...plugins, catalogs: new Map() } },
-      ),
-    ).toEqual(["Plugin fmt@acme isn't in acme at ccccccc."]));
-
-  const latest = edited((d) => declare(d, { source: { source: "github", repo: "acme/plugins" } }));
-
-  test("adding a plugin under a Latest declaration a human wrote is refused", () =>
-    expect(
-      rule5(
-        (() => {
-          const a = clone(latest);
-          enable(a, "fmt@acme");
-          return a;
-        })(),
-        latest,
-      ),
-    ).toEqual(["Plugin fmt@acme follows the latest acme; only a human can add it."]));
-
-  test("a plugin already enabled under Latest stays", () => {
-    const before = clone(latest);
-    enable(before, "fmt@acme");
-    expect(rule5(clone(before), before)).toEqual([]);
-  });
-
-  test("a plugin from a live folder marketplace is judged against its folder catalog", () => {
-    const withLocal = edited((d) => declare(d, declarationFor(local), "local"));
-    const ok = clone(withLocal);
-    enable(ok, "tool@local");
-    expect(rule5(ok, withLocal)).toEqual([]);
-    const bad = clone(withLocal);
-    enable(bad, "nope@local");
-    expect(rule5(bad, withLocal)).toEqual(["Plugin nope@local isn't in local."]);
-  });
-
-  describe("overlays", () => {
-    const overlayWith = (key: string): AgentOverlay => ({
-      settings: { enabledPlugins: { [key]: true } },
-    });
-    const run = (declaredBy: ConfigDoc, key = "fmt@acme") =>
-      messages(overlayWith(key), { target: "overlay", frozen: undefined, plugins, declaredBy }, {});
-
-    test("a plugin runs at the template's pin and passes", () =>
-      expect(run(edited((d) => declare(d, declarationFor(acme))))).toEqual([]));
-
-    test("a plugin under the template's Latest declaration is refused", () =>
-      expect(run(latest)).toEqual([
-        "Plugin fmt@acme follows the latest acme; only a human can add it.",
-      ]));
-
-    test("a plugin missing from the catalog at the template's pin is refused", () =>
-      expect(
-        run(
-          edited((d) => declare(d, declarationFor(acme))),
-          "nope@acme",
-        ),
-      ).toEqual(["Plugin nope@acme isn't in acme at ccccccc."]));
-
-    test("a marketplace the template doesn't declare is left to the human rule", () =>
-      expect(run(clone(base))).toEqual([]));
-
-    test("an overlay can never carry extraKnownMarketplaces", () =>
-      expect(
-        messages(
-          { settings: { extraKnownMarketplaces: { acme: declarationFor(acme) } } },
-          { target: "overlay", frozen: undefined, plugins, declaredBy: base },
-          {},
-        ),
-      ).toEqual(["settings.extraKnownMarketplaces can only be changed by a human."]));
-  });
-});
-
 describe("rule 6: MCP servers", () => {
   test("a server named factory is refused", () =>
     expect(messages(edited((d) => (d.mcp.mcpServers.factory = { command: "x" })))).toEqual([
@@ -558,11 +338,7 @@ describe("rule 6: MCP servers", () => {
 });
 
 describe("rule 7: reserved settings keys", () => {
-  const settingsKeys = RESERVED_SETTINGS_KEYS.filter(
-    (k) => k !== "enabledPlugins" && k !== "extraKnownMarketplaces",
-  );
-
-  test.each(settingsKeys)("an agent adding %s to settings is refused", (key) => {
+  test.each(RESERVED_SETTINGS_KEYS)("an agent adding %s to settings is refused", (key) => {
     const after = clone(base);
     const parts = key.split(".");
     let cur = after.settings as Record<string, unknown>;

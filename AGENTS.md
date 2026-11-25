@@ -2,7 +2,7 @@
 
 ## About the project
 
-Open Factory is an open-source, self-hostable system for running an organization of AI agents. A human defines **agent templates** (persona, skills, MCP servers, plugins, model), creates **persistent agents** from them, and arranges them in a **reporting line**. Agents message each other directly, delegate by spawning **ephemeral agents** with fresh context, and track work in lightweight **tasks** when tracking is useful. Every agent has one continuous Claude Code session that the human can watch.
+Open Factory is an open-source, self-hostable system for running an organization of AI agents. A human defines **agent templates** (persona, skills, MCP servers, model), creates **persistent agents** from them, and arranges them in a **reporting line**. Agents message each other directly, delegate by spawning **ephemeral agents** with fresh context, and track work in lightweight **tasks** when tracking is useful. Every agent has one continuous Claude Code session that the human can watch.
 
 It is engineering-first (repos, worktrees, PRs and CI are native), but non-engineering roles are first-class too. It targets a single developer or small team running on their own machine or one server.
 

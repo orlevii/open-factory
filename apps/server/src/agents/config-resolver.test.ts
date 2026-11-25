@@ -1,11 +1,7 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import type { AgentRow, MarketplaceRow } from "@open-factory/db";
+import type { AgentRow } from "@open-factory/db";
 import type { ConfigDoc } from "@open-factory/shared";
 import { describe, expect, test } from "vitest";
 import { ApiError } from "../errors.ts";
-import { hostOnlyLibrary } from "../test/library.ts";
 import { ConfigResolver, configOf } from "./config-resolver.ts";
 import { AgentStartError, forSpawnedAgent } from "./errors.ts";
 
@@ -22,68 +18,7 @@ const baseDoc = (): ConfigDoc => ({
   mcp: { mcpServers: { a: { command: "secret-cmd", args: ["--token", "s3cr3t"] } } },
 });
 
-// One registered marketplace, `acme`, read at COMMIT (and the tag v1 at TAG_COMMIT), and a folder marketplace.
-const COMMIT = "a".repeat(40);
-const TAG_COMMIT = "b".repeat(40);
-const home = mkdtempSync(path.join(tmpdir(), "of-resolver-"));
-const catalog = {
-  name: "acme",
-  plugins: [
-    { name: "rel", source: "./plugins/rel" },
-    { name: "dep", source: "./plugins/dep" },
-  ],
-};
-const writeMarketplace = (dir: string) => {
-  mkdirSync(path.join(dir, ".claude-plugin"), { recursive: true });
-  writeFileSync(path.join(dir, ".claude-plugin", "marketplace.json"), JSON.stringify(catalog));
-  mkdirSync(path.join(dir, "plugins", "rel", ".claude-plugin"), { recursive: true });
-  writeFileSync(
-    path.join(dir, "plugins", "rel", ".claude-plugin", "plugin.json"),
-    JSON.stringify({ name: "rel", dependencies: ["dep"] }),
-  );
-  mkdirSync(path.join(dir, "plugins", "dep", ".claude-plugin"), { recursive: true });
-  writeFileSync(
-    path.join(dir, "plugins", "dep", ".claude-plugin", "plugin.json"),
-    JSON.stringify({ name: "dep" }),
-  );
-};
-const folder = mkdtempSync(path.join(tmpdir(), "of-resolver-mk-"));
-writeMarketplace(folder);
-for (const sha of [COMMIT, TAG_COMMIT])
-  writeMarketplace(path.join(home, "state", "library", "marketplaces", "acme", sha));
-const marketplaceRow = (name: string, source: MarketplaceRow["source"]): MarketplaceRow => ({
-  name,
-  source,
-  branch: "main",
-  commit: source.source === "directory" ? null : COMMIT,
-  committedAt: null,
-  subject: null,
-  updateCommit: null,
-  updateAt: null,
-  updateSubject: null,
-  checkedAt: null,
-  checkError: null,
-  tags: { v1: TAG_COMMIT },
-  state: "ready",
-  startedAt: new Date(0),
-  addedBy: "@or",
-  addedAt: new Date(0),
-  deletedAt: null,
-});
-const registered = hostOnlyLibrary(
-  home,
-  home,
-  [],
-  [
-    marketplaceRow("acme", { source: "github", repo: "o/acme" }),
-    marketplaceRow("local", { source: "directory", path: folder }),
-  ],
-);
-
 const stubLibrary = {
-  marketplaces: () => registered.marketplaces(),
-  marketplaceDir: registered.marketplaceDir.bind(registered),
-  catalogAt: registered.catalogAt.bind(registered),
   resolveSkill: async (name: string) =>
     name === "tdd"
       ? { ok: true as const, name, dir: "/x/tdd", ref: "github:abc" }
@@ -131,50 +66,7 @@ describe("ConfigResolver.effective", () => {
     const doc = baseDoc();
     doc.template.skills = ["tdd", "grilling"];
     const e = await resolverFor(doc).effective(agent());
-    expect(e.library).toEqual({ skills: { tdd: "github:abc", grilling: "missing" }, plugins: {} });
-  });
-
-  const withPlugins = (decl: unknown, plugins: Record<string, true>, mkt = "acme"): ConfigDoc => ({
-    ...baseDoc(),
-    settings: { extraKnownMarketplaces: { [mkt]: decl }, enabledPlugins: plugins },
-  });
-  const github = { source: "github", repo: "o/acme" };
-
-  test.each([
-    ["a commit", { ref: COMMIT }, `commit:${COMMIT}`],
-    ["a tag", { ref: "v1" }, "tag:v1"],
-    ["no ref (Latest)", {}, "latest"],
-  ])("a plugin's pin is its declaration's: %s", async (_n, ref, pin) => {
-    const doc = withPlugins({ source: { ...github, ...ref } }, { "x@acme": true });
-    const e = await resolverFor(doc).effective(agent());
-    expect(e.library.plugins).toEqual({ "x@acme": pin });
-  });
-
-  test("a folder marketplace's plugins are live", async () => {
-    const doc = withPlugins(
-      { source: { source: "directory", path: folder } },
-      { "x@local": true },
-      "local",
-    );
-    expect((await resolverFor(doc).effective(agent())).library.plugins).toEqual({
-      "x@local": "live",
-    });
-  });
-
-  test("the dependencies of a plugin are read from the checkout at its pin and share it", async () => {
-    const doc = withPlugins({ source: { ...github, ref: "v1" } }, { "rel@acme": true });
-    expect((await resolverFor(doc).effective(agent())).library.plugins).toEqual({
-      "rel@acme": "tag:v1",
-      "dep@acme": "tag:v1",
-    });
-  });
-
-  test("a plugin from a marketplace the doc doesn't declare is missing, and a disabled one isn't listed", async () => {
-    const doc = withPlugins({ source: github }, { "x@elsewhere": true });
-    doc.settings.enabledPlugins = { "x@elsewhere": true, "off@acme": false };
-    expect((await resolverFor(doc).effective(agent())).library.plugins).toEqual({
-      "x@elsewhere": "missing",
-    });
+    expect(e.library).toEqual({ skills: { tdd: "github:abc", grilling: "missing" } });
   });
 
   test("merges the overlay into the template, settings and mcp", async () => {

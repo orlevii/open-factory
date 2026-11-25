@@ -18,7 +18,7 @@ const MAX_DEPTH = 5;
 
 /**
  * Empties `.claude-config/{skills,agents,commands}` (R12): the factory never writes there, and Claude Code loads
- * user-level skills, subagents and commands from them (skills-directory plugins too). A link is removed as a link.
+ * user-level skills, subagents and commands from them. A link is removed as a link.
  */
 export async function scrubAgentFolders(workdir: string): Promise<void> {
   const safe = new SafeFs(workdir);
@@ -203,25 +203,4 @@ export async function checkAgentFrontmatter(
   }
   await checkMarkdownTree(workdir, "agents", ["hooks", "mcpServers"]);
   await checkMarkdownTree(workdir, "commands", ["hooks"]);
-}
-
-/**
- * Every entry of `.claude/skills/` (R3, R12): a factory link, a link the agent made, or a folder it wrote. `stat` follows
- * the entry, as Claude Code does; one that holds `.claude-plugin` is a plugin, which would load outside the store.
- */
-export async function checkSkillPlugins(workdir: string): Promise<void> {
-  for (const name of await entriesOf(workdir, path.join(CLAUDE, "skills"))) {
-    const found = await stat(path.join(workdir, CLAUDE, "skills", name, ".claude-plugin")).then(
-      () => true,
-      (err) => {
-        // Only "nothing there" clears an entry; an unreadable one can't be vouched for.
-        if (isErr(err, "ENOENT", "ENOTDIR")) return false;
-        throw err;
-      },
-    );
-    if (found)
-      throw new WorkspaceError(
-        `skills/${name} is a plugin, so it can't load as a skill; move it away.`,
-      );
-  }
 }

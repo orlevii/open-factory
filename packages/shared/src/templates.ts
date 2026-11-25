@@ -117,8 +117,6 @@ export const templateIssueSchema = z.object({
   line: z.number().int().positive().optional(),
   column: z.number().int().positive().optional(),
   path: z.string().optional(),
-  /** A fix the page offers on the issue: open Add marketplace prefilled from the declaration (spec §7.4). */
-  action: z.literal("add_from_template").optional(),
 });
 export type TemplateIssue = z.infer<typeof templateIssueSchema>;
 
@@ -130,8 +128,6 @@ export const templateSummarySchema = z.object({
   errors: z.number().int(),
   warnings: z.number().int(),
   agentCount: z.number().int(),
-  /** The plugins its `settings.json` enables (`effectivePlugins`). */
-  pluginCount: z.number().int().nonnegative(),
   imageStatus: imageStatusSchema.optional(),
 });
 export const templatesListSchema = z.object({

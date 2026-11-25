@@ -59,7 +59,6 @@ const summaryOf = (t: TemplateDetail): TemplateList["templates"][number] => ({
   errors: t.issues.filter((i) => i.severity === "error").length,
   warnings: t.issues.filter((i) => i.severity === "warning").length,
   agentCount: 0,
-  pluginCount: 0,
 });
 
 function check(field: Field, v: { displayName: string; name: string; description: string }) {

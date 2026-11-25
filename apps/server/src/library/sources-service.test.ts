@@ -100,7 +100,7 @@ interface Setup {
   changed: Array<{
     skills?: string[];
     by: string;
-    before?: { skills: Record<string, string>; plugins: Record<string, string> };
+    before?: { skills: Record<string, string> };
   }>;
   /** The row's pin at each `captureLibrary` call. */
   captured: (string | null | undefined)[];
@@ -141,7 +141,7 @@ function setup(o: { users?: Users; fileWalkCap?: number } = {}): Setup {
     captureLibrary: async (skills) => {
       // The pin the row has when the Library is captured: it must still be the old one.
       captured.push((await store.all())[0]?.commit);
-      return { skills: Object.fromEntries(skills.map((n) => [n, "captured"])), plugins: {} };
+      return { skills: Object.fromEntries(skills.map((n) => [n, "captured"])) };
     },
     onLibraryChanged: async (e) => {
       changed.push(e);
@@ -193,8 +193,6 @@ describe("preview", () => {
         {
           "tdd/SKILL.md": md("tdd"),
           "dup/SKILL.md": md("dup"),
-          "plug/SKILL.md": md("plug"),
-          "plug/.claude-plugin/plugin.json": "{}",
           "other/SKILL.md": md("not-other"),
           "no-skill/README.md": "x",
         },
@@ -206,7 +204,6 @@ describe("preview", () => {
     expect(p.found.map((f) => [f.name, f.pickable, f.reason, f.takenBy, f.detail])).toEqual([
       ["dup", false, "taken", "Host", undefined],
       ["other", false, "unusable", undefined, "SKILL.md names it not-other"],
-      ["plug", false, "unusable", undefined, "It's a plugin; add it through a marketplace"],
       ["tdd", true, undefined, undefined, undefined],
     ]);
   });
@@ -460,7 +457,6 @@ describe("check and update", () => {
         by: "@ana",
         before: {
           skills: { gone: "captured", lint: "captured", tdd: "captured" },
-          plugins: {},
         },
       },
     ]);
@@ -623,7 +619,7 @@ describe("remove and restore", () => {
     expect(await s.svc.restore(src.id, "@ana")).toMatchObject({ id: src.id, skills: ["a"] });
     expect((await s.store.all())[0]?.deletedAt).toBeNull();
     expect(s.changed).toEqual([
-      { skills: ["a"], by: "@ana", before: { skills: { a: "captured" }, plugins: {} } },
+      { skills: ["a"], by: "@ana", before: { skills: { a: "captured" } } },
     ]);
     expect(s.lockFreeInCallback).toEqual([true]);
     expect(s.publishDepth).toEqual([0, 0, 0]);

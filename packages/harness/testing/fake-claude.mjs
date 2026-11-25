@@ -2,18 +2,8 @@
 // Test double for `claude -p --input-format stream-json --output-format stream-json`.
 // Replays slices of packages/harness/fixtures/*.jsonl. Config comes from env (set by the wrapper
 // script that createFakeClaude writes): FAKE_CLAUDE_SCENARIO (path), FAKE_CLAUDE_DIR (log + state).
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import {
-  appendFileSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import path from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 process.title = "claude";
@@ -77,120 +67,8 @@ if (argv0[0] === "setup-token") {
     process.stdout.on("error", () => {});
     setInterval(() => {}, 60_000);
   } else process.stdin.on("end", () => process.exit(1));
-  await new Promise(() => {}); // never falls through to the plugin block or the scenario code
+  await new Promise(() => {}); // never falls through to the scenario code
 }
-// Session start (spec §7.3 steps 4-8): Claude Code reads `--settings` and installs each enabled plugin of a
-// directory or git marketplace into CLAUDE_CODE_PLUGIN_CACHE_DIR, at the declared ref, before `init`.
-const COMMIT = /^[0-9a-f]{40}$/;
-// Claude Code refuses a commit pin on these names: they follow a branch or tag.
-const RESERVED_MARKETPLACES = ["claude-plugins-official"];
-const readJsonOr = (p, fallback) => {
-  try {
-    return JSON.parse(readFileSync(p, "utf8"));
-  } catch {
-    return fallback;
-  }
-};
-const git = (args, cwd) => {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
-  if (r.status !== 0) throw new Error(r.stderr);
-  return r.stdout.trim();
-};
-
-// The marketplace's checkout under the plugins root, with its commit (none for a directory). Null when Claude
-// Code refuses the pin or the fetch fails: the plugins from it don't load.
-function fetchMarketplace(cache, mkt, decl) {
-  const src = decl.source ?? {};
-  if (RESERVED_MARKETPLACES.includes(mkt) && COMMIT.test(src.ref ?? "")) return null;
-  const dest = path.join(cache, "marketplaces", mkt);
-  rmSync(dest, { recursive: true, force: true });
-  try {
-    if (src.source === "directory") {
-      cpSync(src.path, dest, { recursive: true });
-      return { root: dest, commit: undefined };
-    }
-    let url;
-    if (src.source === "git") url = src.url;
-    else if (src.source === "github" && process.env.FAKE_CLAUDE_GITHUB_URL)
-      url = `${process.env.FAKE_CLAUDE_GITHUB_URL}/${src.repo}.git`;
-    if (!url) return null;
-    git(["clone", "--quiet", url, dest]);
-    if (src.ref) git(["checkout", "--quiet", src.ref], dest);
-    return { root: dest, commit: git(["rev-parse", "HEAD"], dest) };
-  } catch {
-    return null;
-  }
-}
-
-// Installs what `settings` enables and returns the `init.plugins` entries of the plugins that are loaded.
-function installSessionPlugins(settings) {
-  const cache = process.env.CLAUDE_CODE_PLUGIN_CACHE_DIR;
-  const declared = settings.extraKnownMarketplaces ?? {};
-  const installedFile = path.join(cache, "installed_plugins.json");
-  const knownFile = path.join(cache, "known_marketplaces.json");
-  const installed = readJsonOr(installedFile, { version: 2, plugins: {} });
-  const known = readJsonOr(knownFile, {});
-  const markets = new Map();
-  const loaded = [];
-  const now = new Date().toISOString();
-  for (const [key, on] of Object.entries(settings.enabledPlugins ?? {})) {
-    if (on !== true) continue;
-    const at = key.lastIndexOf("@");
-    const name = key.slice(0, at);
-    const mkt = key.slice(at + 1);
-    if (!declared[mkt]) continue;
-    if (!markets.has(mkt)) markets.set(mkt, fetchMarketplace(cache, mkt, declared[mkt]));
-    const m = markets.get(mkt);
-    if (!m) continue;
-    known[mkt] = {
-      source: declared[mkt].source,
-      installLocation: m.root,
-      lastUpdated: now,
-      autoUpdate: declared[mkt].autoUpdate ?? false,
-    };
-    const catalog = readJsonOr(path.join(m.root, ".claude-plugin", "marketplace.json"), {});
-    const entry = catalog.plugins?.find((p) => p.name === name);
-    if (typeof entry?.source !== "string" || !entry.source.startsWith("./")) continue;
-    const srcDir = path.join(m.root, entry.source);
-    const manifest = readJsonOr(path.join(srcDir, ".claude-plugin", "plugin.json"), {});
-    const version = manifest.version ?? entry.version ?? "unknown";
-    const installPath = path.join(cache, "cache", mkt, name, version);
-    const current = installed.plugins[key]?.[0];
-    const sameCommit =
-      current !== undefined &&
-      current.installPath === installPath &&
-      current.gitCommitSha === m.commit &&
-      existsSync(installPath);
-    if (!sameCommit) {
-      rmSync(installPath, { recursive: true, force: true });
-      mkdirSync(path.dirname(installPath), { recursive: true });
-      cpSync(srcDir, installPath, {
-        recursive: true,
-        filter: (f) => path.basename(f) !== ".git",
-      });
-      installed.plugins[key] = [
-        {
-          scope: "user",
-          installPath,
-          version,
-          installedAt: now,
-          lastUpdated: now,
-          ...(m.commit ? { gitCommitSha: m.commit } : {}),
-        },
-      ];
-      appendFileSync(
-        `${process.env.FAKE_CLAUDE_DIR}/plugin.log`,
-        `install ${key} ${m.commit ?? "-"} ${installPath}\n`,
-      );
-    }
-    loaded.push({ name, path: installPath, source: key, version });
-  }
-  mkdirSync(cache, { recursive: true });
-  writeFileSync(installedFile, JSON.stringify(installed, null, 2));
-  writeFileSync(knownFile, JSON.stringify(known, null, 2));
-  return loaded;
-}
-
 const FIXTURES = new URL("../fixtures/", import.meta.url);
 const scenario = JSON.parse(readFileSync(process.env.FAKE_CLAUDE_SCENARIO, "utf8"));
 const dir = process.env.FAKE_CLAUDE_DIR;
@@ -226,32 +104,12 @@ function emit(slice) {
   for (const l of lines) {
     const obj = JSON.parse(l);
     if ("session_id" in obj) obj.session_id = sessionId;
-    if (sessionSettings && obj.type === "system" && obj.subtype === "init")
-      obj.plugins = loadedPlugins ?? [];
     out(obj);
   }
 }
 
-// The session start's plugin installs, once `--settings` is given (the fixture's `init` then lists what loaded).
-const settingsIdx = args.indexOf("--settings");
-const sessionSettings = settingsIdx >= 0 ? JSON.parse(args[settingsIdx + 1]) : undefined;
-let loadedPlugins;
 async function startSession() {
-  const pluginScenario = process.env.FAKE_CLAUDE_PLUGIN_SCENARIO;
-  const install = async () => {
-    if (!sessionSettings) return;
-    if (pluginScenario === "slow")
-      await sleep(Number(process.env.FAKE_CLAUDE_PLUGIN_SLEEP_MS ?? 0));
-    loadedPlugins = pluginScenario === "install-fail" ? [] : installSessionPlugins(sessionSettings);
-  };
-  // `late`: init goes out before the installs, as Claude Code does with a remote marketplace (G1 item 8).
-  if (pluginScenario === "late") {
-    await runSteps(scenario.onStart);
-    await install();
-  } else {
-    await install();
-    await runSteps(scenario.onStart);
-  }
+  await runSteps(scenario.onStart);
 }
 
 async function runSteps(steps) {

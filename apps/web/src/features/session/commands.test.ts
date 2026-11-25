@@ -31,7 +31,7 @@ const LIST: Command[] = [
   }),
   cmd("compact", { description: "Free up room by summarizing", builtin: true }),
   cmd("deploy", { description: "Ship the app to staging (project)" }),
-  cmd("acme:lint-all", { description: "Lint the repo, then review the context (plugin)" }),
+  cmd("acme:lint-all", { description: "Lint the repo, then review the context (project)" }),
 ];
 
 let qc: QueryClient;
@@ -63,7 +63,7 @@ test("name matches rank above every description match; an exact name first", () 
   expect(names("context")).toEqual(["context", "acme:lint-all"]);
   // "usage" by its alias "cost"; "acme:lint-all" only by its description.
   expect(names("co")).toEqual(["code-review", "compact", "context", "usage", "acme:lint-all"]);
-  // The part after a plugin's `:` counts as the name.
+  // The part after a namespace's `:` counts as the name.
   expect(names("lint")[0]).toBe("acme:lint-all");
   expect(rankCommands("lint", LIST)[0]?.prefix).toBe(true);
   // A description-only match is never a name-prefix one.

@@ -825,7 +825,7 @@ test("the palette's New agent opens the sheet", async () => {
 test("a docker template shows the summary; a local one says Unsandboxed and the validator's warning", async () => {
   const { unmount } = await open(
     {
-      templates: [templateSummary("lead", 0, 1), templateSummary("writer")],
+      templates: [templateSummary("lead"), templateSummary("writer")],
       details: {
         lead: templateDetail(
           templateConfig({
@@ -838,9 +838,7 @@ test("a docker template shows the summary; a local one says Unsandboxed and the 
     },
     { template: "lead" },
   );
-  expect(
-    await screen.findByText("Docker · model opus · skills: grilling · plugins: 1"),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("Docker · model opus · skills: grilling")).toBeInTheDocument();
   act(() => closeSheet());
   unmount();
   await open(

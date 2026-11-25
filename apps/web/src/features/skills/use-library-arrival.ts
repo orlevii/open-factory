@@ -3,13 +3,7 @@ import { type UseQueryOptions, useQuery } from "@tanstack/react-query";
 import { useLocation } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import {
-  libraryQueryOptions,
-  type MarketplacesResponse,
-  marketplacesQueryOptions,
-  type PluginsResponse,
-  pluginsQueryOptions,
-} from "@/lib/library";
+import { libraryQueryOptions } from "@/lib/library";
 import { arrive, useArrivalTint } from "@/lib/use-arrival";
 import { PEEK_KINDS, type PeekTarget, parsePeekKey, peekKeyOf } from "./use-peek";
 
@@ -44,19 +38,6 @@ export const SKILLS_ARRIVAL: ArrivalView<SkillGroupsResponse> = {
     const name = target.id.slice(slash + 1);
     return data.groups.some((g) => g.group === group && g.skills.some((s) => s.name === name));
   },
-};
-
-export const PLUGINS_ARRIVAL: ArrivalView<PluginsResponse> = {
-  options: pluginsQueryOptions,
-  has: (data, target) =>
-    target.kind === "host-plugin"
-      ? data.host.some((h) => h.key === target.id)
-      : data.marketplaces.some((m) => m.plugins.some((p) => p.key === target.id)),
-};
-
-export const MARKETPLACES_ARRIVAL: ArrivalView<MarketplacesResponse> = {
-  options: marketplacesQueryOptions,
-  has: (data, target) => data.marketplaces.some((m) => m.name === target.id),
 };
 
 /**

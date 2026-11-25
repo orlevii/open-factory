@@ -40,18 +40,11 @@ describe("agentOverlaySchema", () => {
   ])("refuses template.%s", (k) => {
     expect(agentOverlaySchema.safeParse({ template: { [k]: "x" } }).success).toBe(false);
   });
-  it("refuses template.plugins as an unknown field: plugins live in settings.enabledPlugins", () => {
-    const r = agentOverlaySchema.safeParse({ template: { plugins: ["x@y"] } });
-    expect(r.error?.issues.map((i) => i.message)).toEqual([CONFIG_MSG.unknownField]);
-  });
   it("refuses unknown top-level keys and extra mcp keys", () => {
     expect(agentOverlaySchema.safeParse({ other: {} }).success).toBe(false);
     expect(agentOverlaySchema.safeParse({ mcp: { mcpServers: {}, x: 1 } }).success).toBe(false);
   });
-  it("refuses extraKnownMarketplaces and permissions.defaultMode in settings", () => {
-    expect(agentOverlaySchema.safeParse({ settings: { extraKnownMarketplaces: {} } }).success).toBe(
-      false,
-    );
+  it("refuses permissions.defaultMode in settings", () => {
     expect(
       agentOverlaySchema.safeParse({ settings: { permissions: { defaultMode: "auto" } } }).success,
     ).toBe(false);

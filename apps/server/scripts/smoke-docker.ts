@@ -1,9 +1,9 @@
 // Live Docker check for S5 (spec §18.5). Not part of `pnpm test`.
 // Needs Postgres (pnpm compose up -d), Docker with the local image open-factory-base:dev, a real `claude` on the
-// host PATH (credential verification and the plugin install run there), the CLI bundle (pnpm build) and the
+// host PATH (credential verification runs there), the CLI bundle (pnpm build) and the
 // OAuth token in ~/.open-factory-spike/oauth-token. The token is read from that file at run time into a factory
 // credential and is never printed: everything this script prints goes through `redact`.
-// Uses a throwaway database, a temp FACTORY_HOME, a temp git repo and a temp directory marketplace; the server
+// Uses a throwaway database, a temp FACTORY_HOME, a temp git repo and a host skill; the server
 // listens on 127.0.0.1 (Docker Desktop reaches it at host.docker.internal; on plain Linux set HOST per the README).
 // Model: haiku. Warm window: 1 minute.
 import { execFileSync } from "node:child_process";
@@ -87,14 +87,12 @@ const factoryHome = path.join(root, "home");
 const hostClaudeDir = path.join(root, "host-claude");
 const hostSkillsDir = path.join(hostClaudeDir, "skills");
 const repoDir = path.join(root, "smoke-repo");
-const marketDir = path.join(root, "smoke-market");
 const WORD = `OSPREY-${randomBytes(3).toString("hex").toUpperCase()}`;
 const HERON_FACT = "HERON-DOCKER-OK";
 
 // ---------- system/init capture and warnings from the server log (pino JSON lines, never printed raw) ----------
 interface Init {
   skills: string[];
-  plugins: unknown[];
   cwd: string;
 }
 const inits: Init[] = [];
@@ -115,7 +113,6 @@ const logStream = new Writable({
           if (j.type === "system" && j.subtype === "init")
             inits.push({
               skills: Array.isArray(j.skills) ? j.skills.map(String) : [],
-              plugins: Array.isArray(j.plugins) ? j.plugins : [],
               cwd: String(j.cwd ?? ""),
             });
         }
@@ -313,7 +310,7 @@ try {
     PORT: String(port),
     NODE_ENV: "development",
   });
-  await step("0. setup: CLI bundle, image, temp repo and directory marketplace", async () => {
+  await step("0. setup: CLI bundle, image, temp repo and host skill", async () => {
     if (!existsSync(config.cliBundle))
       throw new Error(`no CLI bundle at ${config.cliBundle}: run pnpm build first`);
     await dk.getImage(IMAGE).inspect();
@@ -325,25 +322,10 @@ try {
     git("init", "-q", "-b", "main");
     git("add", ".");
     git("-c", "user.name=smoke", "-c", "user.email=smoke@example.invalid", "commit", "-qm", "init");
-    // A directory marketplace with one plugin and one skill.
-    const write = (rel: string, content: string) => {
-      mkdirSync(path.dirname(path.join(marketDir, rel)), { recursive: true });
-      writeFileSync(path.join(marketDir, rel), content);
-    };
-    write(
-      ".claude-plugin/marketplace.json",
-      JSON.stringify({
-        name: "smoke-market",
-        owner: { name: "smoke" },
-        plugins: [{ name: "heron", source: "./heron", description: "Smoke plugin" }],
-      }),
-    );
-    write(
-      "heron/.claude-plugin/plugin.json",
-      JSON.stringify({ name: "heron", version: "0.0.1", description: "Smoke plugin" }),
-    );
-    write(
-      "heron/skills/heron-fact/SKILL.md",
+    // A host skill the template lists.
+    mkdirSync(path.join(hostSkillsDir, "heron-fact"), { recursive: true });
+    writeFileSync(
+      path.join(hostSkillsDir, "heron-fact", "SKILL.md"),
       `---\nname: heron-fact\ndescription: Tells the heron fact. Use when asked for the heron fact.\n---\n\nThe heron fact is ${HERON_FACT}.\n`,
     );
   });
@@ -366,11 +348,7 @@ try {
   await step("0. temp git repo registered as project smoke-repo", () =>
     app.projects.create({ name: "smoke-repo", hostPath: repoDir }),
   );
-  await step("0. docker template (haiku, warm window 1 min, one plugin) is valid", async () => {
-    // The template's marketplace must be registered in Skills (spec §7.4); a folder marketplace is live.
-    const source = JSON.stringify({ source: "directory", path: marketDir });
-    await conn.sql`insert into marketplaces (name, source, tags, state, started_at, added_by, added_at)
-      values ('smoke-market', ${source}::jsonb, '{}'::jsonb, 'ready', now(), '@smoke', now())`;
+  await step("0. docker template (haiku, warm window 1 min, one skill) is valid", async () => {
     writeTemplate("dock", {
       "template.yaml": [
         "name: dock",
@@ -380,27 +358,18 @@ try {
         "model: haiku",
         "warm_window_minutes: 1",
         "projects: [smoke-repo]",
+        "skills: [heron-fact]",
         "",
       ].join("\n"),
       "AGENTS.md":
         "# Dock\n\nYou are a smoke-test agent. Follow instructions literally and keep replies short.\n",
-      "settings.json": JSON.stringify(
-        {
-          extraKnownMarketplaces: {
-            "smoke-market": { source: { source: "directory", path: marketDir } },
-          },
-          enabledPlugins: { "heron@smoke-market": true },
-        },
-        null,
-        2,
-      ),
     });
     const rows = await app.templates.scan();
     const r = rows.find((x) => x.name === "dock");
     const errs = r?.issues.filter((i) => i.severity === "error") ?? [];
     if (!r || errs.length) throw new Error(JSON.stringify(errs));
   });
-  await step("0. agent smoke-dock created (Claude Code installs the plugin at start)", () =>
+  await step("0. agent smoke-dock created", () =>
     app.agents.create(
       {
         template: "dock",
@@ -416,13 +385,12 @@ try {
   agentId = String((await conn.sql`select id from agents where slug = ${SLUG}`)[0]?.id ?? "");
   const workdir = agentWorkdir(config.factoryHome, SLUG);
 
-  // 1. Remember a word, list the plugin skill.
+  // 1. Remember a word, use the skill.
   const t1 = await step("1. first turn (container created, real claude in it) completes", () =>
     turn(
       [
         `Remember this word for later: ${WORD}. Keep it in this conversation only: do not write it to any file or memory.`,
-        "Then do two things: 1) use the heron-fact skill and say the heron fact;",
-        "2) list the names of the skills you have that come from plugins.",
+        "Then use the heron-fact skill and say the heron fact.",
       ].join("\n"),
     ),
   );
@@ -434,12 +402,11 @@ try {
   );
   const init = inits.at(-1);
   check(
-    "1. system/init lists the heron plugin and its skill, cwd = the workdir",
+    "1. system/init lists the heron-fact skill, cwd = the workdir",
     Boolean(init) &&
-      JSON.stringify(init?.plugins).includes("heron") &&
       (init?.skills ?? []).some((s) => s.includes("heron-fact")) &&
       init?.cwd === workdir,
-    `plugins: ${brief(JSON.stringify(init?.plugins ?? []))}; heron skills: ${(init?.skills ?? []).filter((s) => s.includes("heron")).join(", ")}; cwd: ${init?.cwd}`,
+    `heron skills: ${(init?.skills ?? []).filter((s) => s.includes("heron")).join(", ")}; cwd: ${init?.cwd}`,
   );
   const t1Text = textOf(t1.events);
   check(

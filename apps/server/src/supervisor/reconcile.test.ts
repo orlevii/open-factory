@@ -45,7 +45,6 @@ class Boot {
     log: silentLog,
     uid: 501,
     gid: 20,
-    checkImage: async () => {},
   });
   readonly runtimes: AgentRuntimes;
   readonly logs: { level: string; msg: string }[] = [];

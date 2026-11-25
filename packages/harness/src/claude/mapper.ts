@@ -155,22 +155,6 @@ function system(e: Json, s: MapperState): HarnessEvent[] {
                 })),
               }
             : {}),
-          ...(Array.isArray(e.plugins)
-            ? {
-                plugins: e.plugins.flatMap((p: Json) =>
-                  typeof p?.source === "string"
-                    ? [
-                        {
-                          name: String(p.name ?? ""),
-                          path: String(p.path ?? ""),
-                          source: p.source,
-                          ...(typeof p.version === "string" ? { version: p.version } : {}),
-                        },
-                      ]
-                    : [],
-                ),
-              }
-            : {}),
         });
       }
       out.push({ type: "turn_started" });

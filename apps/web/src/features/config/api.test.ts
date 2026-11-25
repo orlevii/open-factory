@@ -22,7 +22,6 @@ test("a saved config replaces the cached GET without its save-only fields", () =
     version: "v2",
     template: { name: "dev", doc: null, valid: false },
     merged: null,
-    plugins: [],
     issues: [],
     changes: ["model: sonnet → opus"],
     restartChecked: true,
@@ -34,7 +33,6 @@ test("a saved config replaces the cached GET without its save-only fields", () =
     version: "v2",
     template: { name: "dev", doc: null, valid: false },
     merged: null,
-    plugins: [],
     issues: [],
   });
   expect(saveAgentConfigMutation("ana").mutationKey).toEqual(["agent-config", "ana", "save"]);

@@ -105,7 +105,7 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("users_changed") }),
   z.object({ type: z.literal("images_changed") }),
   /**
-   * I5 §9.5: the Library (skill sources, marketplaces, plugins) changed; the Library pages refetch. `addFailed` is
+   * I5 §9.5: the Library (skill sources) changed; the Library pages refetch. `addFailed` is
    * the repo of a background GitHub add that failed and whose row was removed: the spec (§10.4) asks for a toast
    * but has no frame for it, so this one optional field carries it.
    */

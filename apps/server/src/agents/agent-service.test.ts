@@ -60,24 +60,6 @@ beforeAll(async () => {
     valueEnc: t.app.vault.seal("tok", `credentials:${credId}`),
   });
   writeTemplate("lead", yaml("lead"));
-  // The template's marketplace must be registered in Skills (spec §7.4).
-  await t.db.insert(schema.marketplaces).values({
-    name: "mk",
-    source: { source: "directory", path: "/mk" },
-    tags: {},
-    state: "ready",
-    startedAt: new Date(),
-    addedBy: "@or",
-    addedAt: new Date(),
-  });
-  writeTemplate("plugged", yaml("plugged"));
-  writeFileSync(
-    path.join(home, "templates/plugged/settings.json"),
-    JSON.stringify({
-      extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/mk" } } },
-      enabledPlugins: { "p@mk": true },
-    }),
-  );
   writeTemplate("broken", "name: broken\nruntime: nonsense\n");
 });
 afterAll(() => t.close());
@@ -194,21 +176,7 @@ test("create with a reserved slug is refused before any claim", async () => {
   }
 });
 
-test("create: a template with a plugin installs nothing and runs no claude; an existing folder → folder_exists, untouched", async () => {
-  await svc.create(
-    {
-      template: "plugged",
-      slug: "plug",
-      displayName: "P",
-      description: "",
-      reportsTo: null,
-      credential: "work",
-    },
-    { kind: "human", handle: "or" },
-  );
-  expect(existsSync(path.join(home, "agents/plug"))).toBe(true);
-  expect(existsSync(path.join(home, "state/agents/plug/plugins"))).toBe(false);
-  expect(existsSync(path.join(fake.dir, "plugin.log"))).toBe(false);
+test("create: an existing folder → folder_exists, untouched", async () => {
   mkdirSync(path.join(home, "agents/occupied"), { recursive: true });
   writeFileSync(path.join(home, "agents/occupied/keep.txt"), "k");
   await expect(

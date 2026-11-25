@@ -28,7 +28,6 @@ const cfg = (over: Partial<AgentConfigResponse> = {}): AgentConfigResponse => ({
   version: "v1",
   template: { name: "dev", doc: DOC, valid: true },
   merged: DOC,
-  plugins: [],
   issues: [],
   ...over,
 });

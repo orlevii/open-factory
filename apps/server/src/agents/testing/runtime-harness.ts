@@ -74,7 +74,7 @@ export const testEffective = (config: Partial<TemplateConfig> = {}): Effective =
     ...config,
   },
   templateSkills: [],
-  library: { skills: {}, plugins: {} },
+  library: { skills: {} },
 });
 
 /**
@@ -99,7 +99,6 @@ export const okSpec = (
   permissionMode: "auto",
   mounts: [],
   effective: testEffective(config),
-  plugins: [],
 });
 
 /**

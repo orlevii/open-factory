@@ -52,7 +52,7 @@ beforeAll(async () => {
     db: t.db,
     config: cfg,
     library,
-    policy: new PolicyInputs({ db: t.db, library }),
+    policy: new PolicyInputs({ db: t.db }),
   });
   idx.onChange((e) => {
     events.push(e);
@@ -351,7 +351,7 @@ test("a write through the API reports its author; scanOne never awaits listeners
     db: t.db,
     config: cfg,
     library,
-    policy: new PolicyInputs({ db: t.db, library }),
+    policy: new PolicyInputs({ db: t.db }),
   });
   const slowSeen: TemplateChange[] = [];
   slow.onChange(async (e) => {
@@ -381,7 +381,7 @@ test("a failing listener is logged and does not stop the next one", async () => 
     db: t.db,
     config: cfg,
     library,
-    policy: new PolicyInputs({ db: t.db, library }),
+    policy: new PolicyInputs({ db: t.db }),
     log: log as never,
   });
   const seen: string[] = [];

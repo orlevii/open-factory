@@ -1,4 +1,4 @@
-/** Constants and helpers the skill-source and marketplace services share (spec §6.2, §9.4). */
+/** Constants and helpers the skill-source services share (spec §6.2, §9.4). */
 import { createHash } from "node:crypto";
 import { stat, utimes } from "node:fs/promises";
 import { cutGraphemes } from "@open-factory/shared";
@@ -8,7 +8,7 @@ import { GitError } from "./git.ts";
 
 /** The Undo window of a removal (spec §9.4). */
 export const UNDO_MS = 30_000;
-/** GitHub and marketplace checkouts are at most 50 MB (spec §6.2). */
+/** GitHub checkouts are at most 50 MB (spec §6.2). */
 export const CHECKOUT_CAP_BYTES = 50 * 1024 * 1024;
 /** A checkout holds at most this many files and folders: a bound on the walks over it (size, copy, listing). */
 export const CHECKOUT_MAX_ENTRIES = 50_000;
@@ -17,10 +17,6 @@ export const META_KEEP_MS = 24 * 60 * 60 * 1000;
 /** Subjects and descriptions are cut to 200 graphemes. */
 export const SUBJECT_MAX = 200;
 /** A full git commit id (sha-1 or sha-256). */
-/** The commit a recorded tag names; undefined for a name that isn't one of the row's own keys (`constructor`, …). */
-export const tagSha = (tags: Record<string, string>, name: string): string | undefined =>
-  Object.hasOwn(tags, name) ? tags[name] : undefined;
-
 export const COMMIT_PATTERN = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 
 export const isDir = async (p: string) =>
@@ -40,7 +36,7 @@ export function usersLine(templates: string[], agents: string[]): string {
 
 /**
  * What a failed update check records on the row (spec §10.1): a git or validation message, redacted and cut, or
- * `fallback` for anything unexpected. Skill sources and marketplaces both use it.
+ * `fallback` for anything unexpected.
  */
 export function checkErrorText(e: unknown, fallback: string): string {
   return cutGraphemes(

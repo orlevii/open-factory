@@ -128,14 +128,8 @@ export class TemplateIndex {
   readonly dir: string;
   private readonly db: Db;
   private readonly config: Config;
-  private readonly library: Pick<
-    LibraryIndex,
-    "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt"
-  >;
-  private readonly policy: Pick<
-    PolicyInputs,
-    "plugins" | "templateRuntimes" | "templateHasLocalAgents"
-  >;
+  private readonly library: Pick<LibraryIndex, "resolveSkill">;
+  private readonly policy: Pick<PolicyInputs, "templateRuntimes" | "templateHasLocalAgents">;
   private readonly log: Pick<FastifyBaseLogger, "error"> | undefined;
   private readonly listeners: TemplateChangeListener[] = [];
   /**
@@ -152,9 +146,9 @@ export class TemplateIndex {
     db: Db;
     config: Config;
     /** Skills are validated through the Library (spec §6.6). */
-    library: Pick<LibraryIndex, "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt">;
-    /** What the agent policy reads (spec §7.3a): the Library's plugins, other templates' runtimes, local agents. */
-    policy: Pick<PolicyInputs, "plugins" | "templateRuntimes" | "templateHasLocalAgents">;
+    library: Pick<LibraryIndex, "resolveSkill">;
+    /** What the agent policy reads (spec §7.3a): other templates' runtimes, local agents. */
+    policy: Pick<PolicyInputs, "templateRuntimes" | "templateHasLocalAgents">;
     log?: Pick<FastifyBaseLogger, "error">;
   }) {
     this.db = d.db;
@@ -589,7 +583,6 @@ export class TemplateIndex {
         image: typeof y.image === "string" ? y.image : null,
         permission_mode: typeof y.permission_mode === "string" ? y.permission_mode : "auto",
       },
-      plugins: await this.policy.plugins([after]),
     });
   }
 

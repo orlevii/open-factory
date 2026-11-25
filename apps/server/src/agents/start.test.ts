@@ -5,7 +5,6 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
-  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -127,14 +126,13 @@ async function seedStartFixture() {
   agent = row;
   await t.db.insert(schema.agentProjectGrants).values({ agentId: agent.id, projectId: "p1" });
   lock = new KeyedMutex();
-  const fake = createFakeClaude({ scenario: "reply" });
+  const _fake = createFakeClaude({ scenario: "reply" });
   const cliBundle = path.join(mkdtempSync(path.join(tmpdir(), "cli-")), "open-factory.js");
   writeFileSync(cliBundle, "//");
   const library = hostOnlyLibrary(hs, home);
   workspace = new Workspace({
     factoryHome: home,
     library,
-    claudeBin: fake.bin,
     cliBundle,
     lock,
   });
@@ -165,7 +163,7 @@ async function seedStartFixture() {
       db: t.db,
       config: factoryConfig,
       library,
-      policy: new PolicyInputs({ db: t.db, library }),
+      policy: new PolicyInputs({ db: t.db }),
     }),
     library,
   });
@@ -202,14 +200,9 @@ test("assembles the spec: env has the decrypted credential and secret; files pre
   expect(existsSync(path.join(spec.cwd, "projects/app"))).toBe(true);
 });
 
-test("the spec carries the plugin settings as --settings, the plugins dir env and the closure to check", async () => {
+test("the agent's env switches Claude Code's self-update off", async () => {
   const spec = await prepareStart(agent, { agentToken: "tok" });
-  expect(spec.env.CLAUDE_CODE_PLUGIN_CACHE_DIR).toBe(
-    path.join(realpathSync(home), "state/agents", agent.slug, "plugins"),
-  );
   expect(spec.env.DISABLE_AUTOUPDATER).toBe("1");
-  expect(JSON.parse(spec.settingsJson ?? "")).toMatchObject({ syncClaudeAiPlugins: false });
-  expect(spec.plugins).toEqual([]);
 });
 
 test("the child env is an allowlist: server secrets and own credentials never reach the agent", async () => {

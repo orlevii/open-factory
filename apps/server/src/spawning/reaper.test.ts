@@ -377,8 +377,9 @@ test("workspace deleted after the grace, not when pinned; unpin after grace dele
   const outside = mkdtempSync(path.join(tmpdir(), "of-outside-"));
   writeFileSync(path.join(outside, "keep.txt"), "not the agent's");
   symlinkSync(outside, path.join(ws.workdir(a.slug), "planted"));
+  // The factory-owned state folder (persona backups live there once a reset happened).
   const stateA = agentStateDir(s.t.factoryHome, a.slug);
-  expect(existsSync(stateA)).toBe(true);
+  mkdirSync(path.join(stateA, "persona"), { recursive: true });
   await s.t.app.store.setWorkspacePinned(b.id, true);
 
   now = Date.now() + 3 * day - 60_000; // inside the grace
@@ -407,6 +408,7 @@ test("a pin that lands after the candidate was read unpinned keeps the workspace
   await s.t.app.terminator.terminate(c.id, "@or");
   await c.rt.settled();
   const ws = s.t.app.workspace;
+  mkdirSync(path.join(agentStateDir(s.t.factoryHome, c.slug), "persona"), { recursive: true });
   const observed: boolean[] = [];
   const original = ws.deleteWorkspace.bind(ws);
   vi.spyOn(ws, "deleteWorkspace").mockImplementation(async (slug, stillUnpinned, markDeleted) => {

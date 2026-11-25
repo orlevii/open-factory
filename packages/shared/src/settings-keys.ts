@@ -5,16 +5,7 @@ import { isFactoryEnvName } from "./config.ts";
  * agent-writable project and local settings. I2 hands this same constant to I7 as the `agent` policy's
  * default-deny list, so the two can't drift; any change here changes I7's policy too.
  */
-/** The plugin keys: the factory passes its own with `--settings` and drops these from a template's settings. */
-export const PLUGIN_SETTINGS_KEYS = [
-  "enabledPlugins",
-  "extraKnownMarketplaces",
-  "syncClaudeAiPlugins",
-] as const;
-
 export const RESERVED_SETTINGS_KEYS: readonly string[] = [
-  ...PLUGIN_SETTINGS_KEYS,
-  "strictKnownMarketplaces",
   "permissions.defaultMode",
   "permissions.additionalDirectories",
   "claudeMdExcludes",

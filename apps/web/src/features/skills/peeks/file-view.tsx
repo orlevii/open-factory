@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { UntrustedCode, UntrustedProse } from "@/components/untrusted-text";
 import type { skillFileQueryOptions } from "@/lib/library";
 
-/** One file's text query: a skill's or a plugin's (the same `{ path, text }` shape). */
+/** One file's text query: a skill's `{ path, text }`. */
 export type FileQuery = ReturnType<typeof skillFileQueryOptions>;
 
 /**

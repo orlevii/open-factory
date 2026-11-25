@@ -28,7 +28,6 @@ const list =
         errors: 0,
         warnings: 0,
         agentCount: 0,
-        pluginCount: 0,
       })),
     });
 const created = (name: string) => () =>

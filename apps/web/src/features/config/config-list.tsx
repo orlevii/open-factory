@@ -42,7 +42,7 @@ type Props = {
   /** Notes for single rows (a server issue on `…allow.3`), by index in `own`. */
   rowNotes?: ReadonlyMap<number, RowNote>;
   placeholder?: string;
-  /** A rule for one new item (a plugin's `name@marketplace`); its message goes to `onReject`. */
+  /** A rule for one new item (an item's own format); its message goes to `onReject`. */
   check?: (value: string) => string | undefined;
   onAdd: (value: string) => void;
   onRemove: (index: number) => void;
@@ -156,7 +156,7 @@ const Row = memo(function Row({
   );
 });
 
-/** Every list on the Configuration form (spec §12.2): rules, notes, skills, plugins, secrets, spawnable templates. */
+/** Every list on the Configuration form (spec §12.2): rules, notes, skills, secrets, spawnable templates. */
 export function ConfigList({
   name,
   label,

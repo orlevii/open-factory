@@ -1,7 +1,6 @@
 import type { AgentOverlay, ConfigDoc } from "./config.ts";
 import { CONFIG_MSG, isFactoryEnvName } from "./config.ts";
 import { canonicalJson, yamlPart } from "./config-merge.ts";
-import { declarationFor, effectivePlugins, pinOf, pinRefFor, type RegistryPin } from "./library.ts";
 import type { TemplateFile, TemplateIssue } from "./templates.ts";
 
 /**
@@ -44,8 +43,6 @@ export const AGENT_EDITABLE = {
     "autoMode.soft_deny",
     "autoMode.hard_deny",
     "env.*",
-    "enabledPlugins.*",
-    "extraKnownMarketplaces.*", // templates only: an overlay can't carry it
   ],
   mcp: ["mcpServers.*"],
 } as const satisfies Record<string, readonly string[]>;
@@ -68,7 +65,7 @@ const REMOVED: Record<string, string> = {
 
 /**
  * Env names an agent can't set or reference (spec §6.2 rule 4), compared upper-cased. The factory-owned names
- * (`isFactoryEnvName`, which includes the plugin env and the `OPEN_FACTORY_` prefix) are checked beside these.
+ * (`isFactoryEnvName`, which includes the `OPEN_FACTORY_` prefix) are checked beside these.
  */
 export const AGENT_REFUSED_ENV = {
   names: [
@@ -151,24 +148,12 @@ export function touchesLocalRuntime(i: {
 export const LOCAL_RUNTIME_REFUSAL =
   "Local-runtime agents and templates can only be changed by a human.";
 
-/** What the policy reads about plugins, loaded by the caller (the registry and catalog reads are async). */
-export type PolicyPlugins = {
-  /** The ready registry rows: what a human added in Skills. */
-  marketplaces: ReadonlyMap<string, RegistryPin>;
-  /** Plugin names in each marketplace's catalog at a pin, keyed `"<marketplace>@<ref>"` (ref "" for a folder). Absent when Skills hasn't read that pin. */
-  catalogs: ReadonlyMap<string, ReadonlySet<string>>;
-};
-
 export type AgentPolicyInput = {
   before: ConfigDoc | AgentOverlay;
   after: ConfigDoc | AgentOverlay;
   frozen?: { runtime: string; image: string | null; permission_mode: string };
-  plugins: PolicyPlugins;
-} & (
-  | { target: "template"; declaredBy?: undefined }
-  /** An overlay's plugins run at the declarations of the template doc it sits on, so the caller must pass it. */
-  | { target: "overlay"; declaredBy: ConfigDoc }
-);
+  target: "template" | "overlay";
+};
 
 type Parts = { template: Rec; settings: Rec; servers: Rec; mcp: Rec };
 
@@ -215,14 +200,8 @@ const own = (o: unknown, k: string): unknown =>
 
 const at = (root: unknown, path: readonly string[]): unknown => path.reduce<unknown>(own, root);
 
-const short = (ref: string) => (/^[0-9a-f]{40}$/.test(ref) ? ref.slice(0, 7) : ref);
-const splitPlugin = (key: string) => {
-  const i = key.lastIndexOf("@");
-  return { plugin: key.slice(0, i), marketplace: key.slice(i + 1) };
-};
-
 /**
- * Judges what an agent wants to write against what is there (spec §6.2). Pure: the caller loads `plugins`. Any issue
+ * Judges what an agent wants to write against what is there (spec §6.2). Pure. Any issue
  * is a refusal. It runs after the human validation, which still refuses what no actor may write.
  */
 export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
@@ -237,9 +216,7 @@ export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
   const templatePatterns: readonly string[] = isTemplate
     ? AGENT_EDITABLE.templateYaml
     : AGENT_EDITABLE.overlayTemplate;
-  const settingsPatterns: readonly string[] = isTemplate
-    ? AGENT_EDITABLE.settings
-    : AGENT_EDITABLE.settings.filter((p) => !p.startsWith("extraKnownMarketplaces"));
+  const settingsPatterns: readonly string[] = AGENT_EDITABLE.settings;
   const withoutFrozen = (t: Rec): Rec => {
     const y = yamlPart(t);
     if (!(isTemplate && i.frozen)) return y;
@@ -333,46 +310,5 @@ export function agentPolicyIssues(i: AgentPolicyInput): TemplateIssue[] {
   )
     add("mcp", ["mcp", "mcpServers", "factory"], CONFIG_MSG.factoryServer);
 
-  // Rule 5: plugins only at a human-set pin.
-  const declarations = (doc: Parts | undefined): Rec => {
-    const d = doc?.settings.extraKnownMarketplaces;
-    return isRec(d) ? d : {};
-  };
-  if (isTemplate)
-    for (const [mkt, decl] of Object.entries(declarations(after))) {
-      if (same(own(declarations(before), mkt), decl)) continue;
-      const row = i.plugins.marketplaces.get(mkt);
-      const path = ["settings", "extraKnownMarketplaces", mkt];
-      const ref = row && pinRefFor(row);
-      if (!row || (row.source.source !== "directory" && ref === undefined))
-        add("settings", path, `Marketplace ${mkt} has no pin Skills has read; ask a human.`);
-      else if (!same(declarationFor(row), decl))
-        add(
-          "settings",
-          path,
-          `Marketplace ${mkt} must match Skills: its source, pinned to ${short(ref ?? "")}.`,
-        );
-    }
-  const declaring = i.target === "template" ? after : partsOf(i.declaredBy);
-  const wasEnabled = new Set(effectivePlugins({ settings: before.settings }));
-  for (const key of effectivePlugins({ settings: after.settings })) {
-    if (wasEnabled.has(key)) continue;
-    const { plugin, marketplace: mkt } = splitPlugin(key);
-    const decl = own(declarations(declaring), mkt);
-    if (decl === undefined) continue; // an undeclared marketplace is the human rule's to report
-    const path = ["settings", "enabledPlugins", key];
-    const pin = pinOf(decl);
-    if (pin.kind === "latest") {
-      add("settings", path, `Plugin ${key} follows the latest ${mkt}; only a human can add it.`);
-      continue;
-    }
-    const ref = pin.kind === "commit" ? pin.sha : pin.kind === "tag" ? pin.name : "";
-    if (!i.plugins.catalogs.get(`${mkt}@${ref}`)?.has(plugin))
-      add(
-        "settings",
-        path,
-        `Plugin ${key} isn't in ${mkt}${ref === "" ? "" : ` at ${short(ref)}`}.`,
-      );
-  }
   return out;
 }

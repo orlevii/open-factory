@@ -1,23 +1,4 @@
 import {
-  marketplaceAddBodySchema,
-  marketplaceDetailSchema,
-  marketplaceFetchBodySchema,
-  marketplaceFetchedSchema,
-  marketplaceNameParamsSchema,
-  marketplacePreviewBodySchema,
-  marketplacePreviewSchema,
-  marketplacesResponseSchema,
-  marketplaceUpdateBodySchema,
-  marketplaceViewSchema,
-  pluginDetailSchema,
-  pluginDiffBodySchema,
-  pluginDiffSchema,
-  pluginFileQuerySchema,
-  pluginFileTextSchema,
-  pluginKeyParamsSchema,
-  pluginReadBodySchema,
-  pluginReadQuerySchema,
-  pluginsResponseSchema,
   skillDetailSchema,
   skillFileQuerySchema,
   skillFileTextSchema,
@@ -41,9 +22,8 @@ const skillParams = z.object({ group: z.string().min(1), name: z.string().min(1)
 const idParams = z.object({ id: z.string().min(1) });
 
 /**
- * The Library (spec §9): skills, plugins and their sources. Humans only: `requireUser` takes a session, never an agent
- * token, and the factory MCP server registers no Library tool (spec §11.1). The sources and marketplaces
- * services publish `library_changed` after every write.
+ * The Library (spec §9): skills and their sources. Humans only: `requireUser` takes a session, never an agent
+ * token, and the factory MCP server registers no Library tool (spec §11.1). The sources service publishes `library_changed` after every write.
  */
 export const libraryRoutes: FastifyPluginAsyncZod = async (app) => {
   // onRequest, not preHandler: auth must come before validation (401 before 400).
@@ -167,9 +147,8 @@ export const libraryRoutes: FastifyPluginAsyncZod = async (app) => {
     "/api/library/check",
     { schema: { response: { 202: z.object({}) } } },
     async (_req, reply) => {
-      // Progress arrives as `library_changed` frames, one per checked source or marketplace (§9.2).
+      // Progress arrives as `library_changed` frames, one per checked source (§9.2).
       await app.skillSources.startCheckAll();
-      await app.marketplaces.startCheckAll();
       return reply.code(202).send({});
     },
   );
@@ -186,166 +165,5 @@ export const libraryRoutes: FastifyPluginAsyncZod = async (app) => {
     "/api/library/sources/:id/restore",
     { schema: { params: idParams, response: { 200: sourceDetailSchema } } },
     async (req) => app.skillSources.restore(req.params.id, by(req)),
-  );
-
-  // Plugins (§9.1).
-
-  app.get(
-    "/api/library/plugins",
-    { schema: { response: { 200: pluginsResponseSchema } } },
-    async () => app.plugins.list(),
-  );
-
-  app.get(
-    "/api/library/plugins/:key",
-    {
-      schema: {
-        params: pluginKeyParamsSchema,
-        querystring: pluginReadQuerySchema,
-        response: { 200: pluginDetailSchema },
-      },
-    },
-    async (req) => app.plugins.detail(req.params.key, req.query),
-  );
-
-  app.get(
-    "/api/library/plugins/:key/file",
-    {
-      schema: {
-        params: pluginKeyParamsSchema,
-        querystring: pluginFileQuerySchema,
-        response: { 200: pluginFileTextSchema },
-      },
-    },
-    async (req) => {
-      const { path, ...from } = req.query;
-      return { path, text: await app.plugins.fileText(req.params.key, path, from) };
-    },
-  );
-
-  app.get(
-    "/api/library/marketplaces",
-    { schema: { response: { 200: marketplacesResponseSchema } } },
-    async () => app.plugins.marketplaces(),
-  );
-
-  app.get(
-    "/api/library/marketplaces/:name",
-    { schema: { params: marketplaceNameParamsSchema, response: { 200: marketplaceViewSchema } } },
-    async (req) => {
-      const detail = await app.marketplaces.detailOf(req.params.name);
-      if (!detail.updateCommit) return { ...detail, update: null };
-      // As for a source: a view that can't be built leaves the peek without its changes, not without the marketplace.
-      const update = await app.marketplaces.updateView(req.params.name).catch((e: unknown) => {
-        if (!(e instanceof GitError || e instanceof ApiError)) throw e;
-        req.log.warn({ err: e }, "building the marketplace update view failed");
-        return null;
-      });
-      return { ...detail, update };
-    },
-  );
-
-  // Marketplaces and plugins that fetch (§9.3).
-
-  app.post(
-    "/api/library/marketplaces/preview",
-    { schema: { body: marketplacePreviewBodySchema, response: { 200: marketplacePreviewSchema } } },
-    async (req) => app.marketplaces.preview(req.body),
-  );
-
-  app.post(
-    "/api/library/marketplaces",
-    {
-      schema: {
-        body: marketplaceAddBodySchema,
-        response: { 201: marketplaceDetailSchema, 202: marketplaceDetailSchema },
-      },
-    },
-    async (req, reply) => {
-      const { status, marketplace } = await app.marketplaces.add(req.body.previewId, by(req));
-      return reply.code(status).send(marketplace);
-    },
-  );
-
-  app.post(
-    "/api/library/marketplaces/:name/check",
-    { schema: { params: marketplaceNameParamsSchema, response: { 200: marketplaceDetailSchema } } },
-    async (req) => app.marketplaces.check(req.params.name),
-  );
-
-  app.post(
-    "/api/library/marketplaces/:name/update",
-    {
-      schema: {
-        params: marketplaceNameParamsSchema,
-        body: marketplaceUpdateBodySchema,
-        response: { 200: marketplaceDetailSchema },
-      },
-    },
-    async (req) => app.marketplaces.update(req.params.name, req.body.commit, by(req)),
-  );
-
-  app.post(
-    "/api/library/marketplaces/:name/fetch",
-    {
-      schema: {
-        params: marketplaceNameParamsSchema,
-        body: marketplaceFetchBodySchema,
-        response: { 200: marketplaceFetchedSchema },
-      },
-    },
-    async (req) => app.marketplaces.fetchAt(req.params.name, req.body.ref),
-  );
-
-  app.post(
-    "/api/library/plugins/:key/diff",
-    {
-      schema: {
-        params: pluginKeyParamsSchema,
-        body: pluginDiffBodySchema,
-        response: { 200: pluginDiffSchema },
-      },
-    },
-    async (req) => app.plugins.diff(req.params.key, req.body.from, req.body.to),
-  );
-
-  app.post(
-    "/api/library/plugins/:key/read",
-    {
-      schema: {
-        params: pluginKeyParamsSchema,
-        body: pluginReadBodySchema,
-        response: { 200: pluginDetailSchema },
-      },
-    },
-    async (req) => app.plugins.read(req.params.key, req.body.commit),
-  );
-
-  app.post(
-    "/api/library/host-plugins/:key/add-marketplace",
-    {
-      schema: {
-        params: pluginKeyParamsSchema,
-        response: { 201: marketplaceDetailSchema, 202: marketplaceDetailSchema },
-      },
-    },
-    async (req, reply) => {
-      const { status, marketplace } = await app.hostPlugins.addMarketplace(req.params.key, by(req));
-      return reply.code(status).send(marketplace);
-    },
-  );
-
-  // Removal and Undo of a marketplace (§9.4).
-
-  app.delete(
-    "/api/library/marketplaces/:name",
-    { schema: { params: marketplaceNameParamsSchema, response: { 200: sourceRemovedSchema } } },
-    async (req) => app.marketplaces.remove(req.params.name),
-  );
-
-  app.post(
-    "/api/library/marketplaces/:name/restore",
-    { schema: { params: marketplaceNameParamsSchema, response: { 200: marketplaceDetailSchema } } },
-    async (req) => app.marketplaces.restore(req.params.name, by(req)),
   );
 };

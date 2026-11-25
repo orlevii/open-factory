@@ -181,14 +181,14 @@ test("Now: a pending restart names what it applies, with the full list below", a
   const restartChanges = [
     "model: sonnet → opus",
     "added skill release",
-    "added plugin x@y",
+    "added secret GH_TOKEN",
     "env LOG_LEVEL changed",
     "MCP server github added",
   ];
   setup({ agent: agentSummary({ restartPending: true, restartChanges }) });
   const now = within(await section("Now"));
   expect(now.getByText(/Restarts when idle to apply:/, { exact: false }).textContent).toContain(
-    "model, 1 skill, 1 plugin and 2 more",
+    "model, 1 skill, 1 secret and 2 more",
   );
   for (const c of restartChanges) expect(now.getByText(c)).toBeInTheDocument();
 });

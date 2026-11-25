@@ -80,7 +80,6 @@ function make(
   const store: LibraryStore = {
     sources: async () => o.sources ?? [],
     agents: async () => (o.agents ?? []) as Awaited<ReturnType<LibraryStore["agents"]>>,
-    marketplaces: async () => [],
   };
   return new LibraryIndex({
     db: undefined as never,
@@ -120,16 +119,6 @@ test("a frontmatter name that differs from the folder is unusable", async () => 
     name: "foo",
     state: "unusable",
     stateDetail: "SKILL.md names it bar",
-  });
-});
-
-test("a folder holding .claude-plugin is unusable", async () => {
-  const dir = host("plug");
-  mkdirSync(path.join(dir, ".claude-plugin"));
-  expect(await make().resolveSkill("plug")).toEqual({
-    ok: false,
-    reason: "unusable",
-    detail: "It's a plugin; add it through a marketplace",
   });
 });
 

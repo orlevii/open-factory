@@ -158,7 +158,6 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
   const workspace = new Workspace({
     factoryHome: home,
     library,
-    claudeBin: fake.bin,
     cliBundle,
     lock,
   });
@@ -197,7 +196,6 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     log: silentLog,
     uid: 501,
     gid: 20,
-    checkImage: async () => {},
   });
   const realPrepare = workspace.prepare.bind(workspace);
   vi.spyOn(workspace, "prepare").mockImplementation(async (i) => {
@@ -214,7 +212,7 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
         db: t.db,
         config: factoryConfig,
         library,
-        policy: new PolicyInputs({ db: t.db, library }),
+        policy: new PolicyInputs({ db: t.db }),
       }),
       library,
     }),
@@ -241,7 +239,7 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
           db: t.db,
           config: factoryConfig,
           library,
-          policy: new PolicyInputs({ db: t.db, library }),
+          policy: new PolicyInputs({ db: t.db }),
         }),
         library,
       }),
@@ -322,7 +320,7 @@ test("a Docker wake stops a running container, prepares, ensures, then execs", a
   const mounts = (container(w)?.opts.HostConfig?.Mounts ?? []).map((m) => m.Source);
   expect(mounts).toContain(w.workdir);
   expect(mounts).toContain(w.cliBundle);
-  expect(mounts).toHaveLength(3); // workdir, plugins dir, CLI bundle
+  expect(mounts).toHaveLength(2); // workdir, CLI bundle
 });
 
 test("container event carries image id and claude version label", async () => {

@@ -531,13 +531,12 @@ describe("S7: the ended list is bounded", () => {
       workspace: s.app.workspace,
       lock: s.app.workspaceLock,
       runtimes: s.app.runtimes,
-      resolver: s.app.resolver,
       log: s.app.log,
       router: s.app.router,
       store: s.app.store,
       bus: s.app.bus,
       configChanges: s.app.configChanges,
-      policy: new PolicyInputs({ db, library: s.app.library }),
+      policy: new PolicyInputs({ db }),
     });
     for (const ended of ["exclude", "only"] as const) {
       queries.length = 0;

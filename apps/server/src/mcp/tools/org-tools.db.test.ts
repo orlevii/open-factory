@@ -69,9 +69,6 @@ const configEvents = async (slug: string) =>
     await t.sql`select 1 from session_events where agent_id = ${(await row(slug)).id} and type = 'config_changed'`
   ).length;
 
-// A directory marketplace holding one plugin, `tool@mk`.
-let mk: string;
-
 beforeAll(async () => {
   t = await makeTestApp({
     env: { FACTORY_CLAUDE_BIN: createFakeClaude({ scenario: "reply" }).bin },
@@ -87,28 +84,7 @@ beforeAll(async () => {
   await t.app.secrets.put("S", SECRET);
   const repo = mkdtempSync(path.join(tmpdir(), "repo-"));
   await t.app.projects.create({ name: "site", hostPath: repo });
-  mk = mkdtempSync(path.join(tmpdir(), "mk-"));
-  mkdirSync(path.join(mk, ".claude-plugin"));
-  writeFileSync(
-    path.join(mk, ".claude-plugin/marketplace.json"),
-    JSON.stringify({ name: "mk", plugins: [{ name: "tool", source: "./tool", version: "1.0.0" }] }),
-  );
-  await t.db.insert(schema.marketplaces).values({
-    name: "mk",
-    source: { source: "directory", path: mk },
-    state: "ready",
-    tags: {},
-    startedAt: new Date(),
-    addedBy: "@or",
-    addedAt: new Date(),
-  });
-  const dev = writeTemplate("dev", `secrets:\n  - S\n`);
-  writeFileSync(
-    path.join(dev, "settings.json"),
-    JSON.stringify({
-      extraKnownMarketplaces: { mk: { source: { source: "directory", path: mk } } },
-    }),
-  );
+  writeTemplate("dev", `secrets:\n  - S\n`);
   writeTemplate("lead");
   await t.app.templates.scan();
   await t.app.agents.create(body("hr-bot"), human);
@@ -149,7 +125,6 @@ test("a handler reached with a revoked caller row refuses with the sentence", as
     config: t.app.configs,
     templates: t.app.templates,
     library: t.app.library,
-    plugins: t.app.plugins,
     credentials: t.app.credentials,
     secrets: t.app.secrets,
     projects: t.app.projects,
@@ -281,14 +256,12 @@ test("update_agent: identity and config together write both and list the changes
 
 test("get_agent: overlay_hash is the overlay version, references stay literal, credential and projects are names", async () => {
   await t.app.agents.update("dev-1", { projects: ["site"] }, human);
-  // An enabled plugin: the template declares the directory marketplace, which pins live.
   await t.app.configs.saveOverlay(
     "dev-1",
     {
       template: { model: "opus" },
       settings: {
         env: { GH: REF },
-        enabledPlugins: { "tool@mk": true },
       },
     },
     overlayVersion((await row("dev-1")).config as never),
@@ -305,7 +278,6 @@ test("get_agent: overlay_hash is the overlay version, references stay literal, c
     manage_org: false,
     kind: "persistent",
   });
-  expect(r.json.plugins).toEqual([{ key: "tool@mk", pin: "live" }]);
 });
 
 test("an agent editing its own description gets its restart with wake; another agent's edit does not", async () => {
@@ -369,21 +341,7 @@ test("archive_agent and unarchive_agent follow the human rules; self-archive is 
   expect((await row("plain")).archivedAt).toBeNull();
 });
 
-test("list_library: sources are kinds, a catalog plugin is listed, host plugins and paths are not, 201 skills set more", async () => {
-  const r = await call("hr-bot", "list_library", { query: "tool" });
-  expect(r.json.plugins).toEqual([
-    expect.objectContaining({
-      key: "tool@mk",
-      marketplace: "mk",
-      pinnable: expect.any(Boolean),
-      state: expect.any(String),
-    }),
-  ]);
-  expect(r.json.marketplaces).toEqual([]);
-  const all = await call("hr-bot", "list_library", {});
-  expect(all.json.marketplaces).toEqual([{ name: "mk", kind: "directory", pin: null }]);
-  expect(all.text).not.toContain(mk);
-
+test("list_library: sources are kinds, host paths are not, 201 skills set more", async () => {
   for (let i = 0; i < 201; i++) {
     const d = path.join(t.hostSkillsDir, `skill-${i}`);
     mkdirSync(d, { recursive: true });

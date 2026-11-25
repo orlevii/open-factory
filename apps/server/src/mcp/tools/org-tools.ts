@@ -20,7 +20,6 @@ import type { EventBus } from "../../agents/event-bus.ts";
 import type { CredentialService } from "../../credentials/credential-service.ts";
 import { ApiError } from "../../errors.ts";
 import type { LibraryIndex } from "../../library/library-index.ts";
-import type { PluginsIndex } from "../../library/plugins-index.ts";
 import type { ProjectService } from "../../projects/project-service.ts";
 import type { SecretService } from "../../secrets/secret-service.ts";
 import type { TemplateIndex } from "../../templates/template-index.ts";
@@ -39,7 +38,6 @@ export type OrgToolDeps = {
   config: ConfigService;
   templates: TemplateIndex;
   library: LibraryIndex;
-  plugins: PluginsIndex;
   credentials: CredentialService;
   secrets: SecretService;
   projects: ProjectService;
@@ -169,7 +167,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     ),
     tool(
       "get_agent",
-      "Read an agent: its identity, manager, credential and projects by name, its overlay with overlay_hash (pass it back as base_hash to change config), its effective configuration (references, never values), plugins and issues.",
+      "Read an agent: its identity, manager, credential and projects by name, its overlay with overlay_hash (pass it back as base_hash to change config), its effective configuration (references, never values) and issues.",
       getAgentToolSchema,
       async ({ slug }) => {
         const s = bare(slug);
@@ -189,7 +187,6 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           overlay: cfg.overlay,
           overlay_hash: cfg.version,
           effective: cfg.merged,
-          plugins: cfg.plugins,
           issues: cfg.issues,
         };
       },
@@ -284,14 +281,10 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     ),
     tool(
       "list_library",
-      "List the Library's skills, the plugins of its registered marketplaces (with whether a pin can hold them) and the marketplaces. Narrow with query.",
+      "List the Library's skills. Narrow with query.",
       listLibraryToolSchema,
       async ({ query }) => {
-        const [groups, listed, registry] = await Promise.all([
-          d.library.skills(),
-          d.plugins.list(),
-          d.library.marketplaces(),
-        ]);
+        const groups = await d.library.skills();
         const skills = groups.flatMap((g) => {
           const source =
             g.kind === "host"
@@ -312,33 +305,9 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
               state: s.state,
             }));
         });
-        const plugins = listed.marketplaces.flatMap((m) =>
-          m.plugins
-            .filter((p) => matches(query, p.name, p.description))
-            .map((p) => ({
-              key: p.key,
-              version: p.version ?? null,
-              marketplace: m.name,
-              pinnable: p.pinnable,
-              state: p.state,
-              contents: p.contentsSummary,
-            })),
-        );
-        const marketplaces = registry
-          .filter((r) => matches(query, r.name))
-          .map((r) => ({
-            name: r.name,
-            kind: r.source.source,
-            pin: r.source.source === "directory" ? null : shortPin(r.commit),
-          }));
-        const more =
-          skills.length > LIBRARY_LIST_MAX ||
-          plugins.length > LIBRARY_LIST_MAX ||
-          marketplaces.length > LIBRARY_LIST_MAX;
+        const more = skills.length > LIBRARY_LIST_MAX;
         return {
           skills: skills.slice(0, LIBRARY_LIST_MAX),
-          plugins: plugins.slice(0, LIBRARY_LIST_MAX),
-          marketplaces: marketplaces.slice(0, LIBRARY_LIST_MAX),
           ...(more
             ? {
                 more: true,

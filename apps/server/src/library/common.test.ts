@@ -6,7 +6,7 @@ import { ApiError } from "../errors.ts";
 import { checkErrorText, touchDir } from "./common.ts";
 import { GitError } from "./git.ts";
 
-test("a failed check keeps a git or validation message, redacted, for skill sources and marketplaces alike", () => {
+test("a failed check keeps a git or validation message, redacted,", () => {
   const token = `ghp_${"a".repeat(36)}`;
   expect(
     checkErrorText(

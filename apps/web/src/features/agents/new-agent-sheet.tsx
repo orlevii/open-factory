@@ -120,7 +120,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     slugFor,
     form,
   });
-  const { values, shown, errors, set, blur, claim, pending, config, pluginCount } = s;
+  const { values, shown, errors, set, blur, claim, pending, config } = s;
   const { missingSecrets, noCredentials, credentials, staleNotes } = s;
   const detail = useQuery({
     ...templateQueryOptions(values.template),
@@ -331,7 +331,6 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
             {config && (
               <TemplateSummary
                 config={config}
-                pluginCount={pluginCount}
                 issues={detail.data?.issues ?? []}
                 missingSecrets={missingSecrets}
                 onAddSecret={onAddSecret}

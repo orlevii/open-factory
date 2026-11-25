@@ -8,7 +8,6 @@ import { installInputModality } from "@/lib/input-modality";
 import { doc, QueryWrap } from "@/test/config-harness";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
-import { lastOf, PIN, PluginsForm, pinned, useMarketplaces } from "@/test/plugins-harness";
 import { ConfigForm } from "./config-form";
 import { CONFIG_COPY, CONFIG_FIELD_MSG } from "./messages";
 
@@ -522,97 +521,4 @@ test("Override of an entry the form can't edit copies it and leaves the Raw JSON
   expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Edit odd" })).toBeNull();
   expect(screen.getByRole("button", { name: "Remove odd" })).toBeInTheDocument();
-});
-
-// Plugins in agent mode (spec §10.5): the template's marketplaces and pins, read-only.
-
-describe("plugins, agent mode", () => {
-  beforeEach(() => {
-    fakeMatchMedia.install(false);
-    useMarketplaces();
-  });
-  const template = (decl: unknown) =>
-    doc(
-      {},
-      {
-        enabledPlugins: { "review@acme": true },
-        extraKnownMarketplaces: { acme: decl },
-      },
-    );
-
-  test("offers only the template's marketplaces and writes the overlay's enabledPlugins", async () => {
-    const onValue = vi.fn();
-    render(<PluginsForm mode="agent" base={template(pinned(PIN))} onValue={onValue} />);
-    await userEvent.click(screen.getByRole("button", { name: "Add plugin" }));
-    const list = await screen.findByRole("listbox", { name: "Add plugin" });
-    expect(within(list).getByRole("group", { name: "acme" })).toBeInTheDocument();
-    expect(within(list).queryByRole("group", { name: "mine" })).toBeNull();
-    expect(screen.queryByRole("option", { name: /local@mine/ })).toBeNull();
-    expect(
-      screen.getByText("Only plugins from dev's marketplaces. Add more in the template."),
-    ).toBeInTheDocument();
-    // What the template already has isn't offered again.
-    expect(screen.queryByRole("option", { name: /review@acme/ })).toBeNull();
-    await userEvent.click(screen.getByRole("option", { name: /lint@acme/ }));
-    expect(lastOf(onValue)).toEqual({ settings: { enabledPlugins: { "lint@acme": true } } });
-  });
-
-  test("the template's group and the agent's own group of one marketplace are each named by it", async () => {
-    render(
-      <PluginsForm
-        mode="agent"
-        base={template(pinned(PIN))}
-        start={{ settings: { enabledPlugins: { "lint@acme": true } } }}
-      />,
-    );
-    expect(await screen.findAllByRole("group", { name: "acme" })).toHaveLength(2);
-  });
-
-  test("the template's pin is shown read-only, with the Latest badge when it follows upstream", async () => {
-    const first = render(<PluginsForm mode="agent" base={template(pinned(PIN))} />);
-    const g = await screen.findByRole("group", { name: "acme" });
-    await waitFor(() => expect(g).toHaveTextContent(/Pinned\s*·\s*a1b2c3d/));
-    expect(within(g).queryByRole("button", { name: /Change pin/ })).toBeNull();
-    expect(within(g).queryByRole("button", { name: /Remove/ })).toBeNull();
-    // A read-only pin has no update to offer.
-    expect(g).not.toHaveTextContent("Newer in Skills");
-    first.unmount();
-
-    render(
-      <PluginsForm
-        mode="agent"
-        base={template(pinned())}
-        running={[{ key: "review@acme", pin: "latest", loaded: "1.3.0" }]}
-      />,
-    );
-    const latest = await screen.findByRole("group", { name: "acme" });
-    expect(within(latest).getByText("Latest")).toBeInTheDocument();
-    expect(within(latest).getByText("auto-updates")).toBeInTheDocument();
-    expect(within(latest).getByText("running 1.3.0")).toBeInTheDocument();
-    expect(within(latest).queryByRole("button", { name: /Change pin/ })).toBeNull();
-  });
-
-  test("a server issue on a plugin or its marketplace lands on that row's group", async () => {
-    render(
-      <PluginsForm
-        mode="agent"
-        base={template(pinned(PIN))}
-        start={{ settings: { enabledPlugins: { "lint@acme": true } } }}
-        issues={[
-          {
-            severity: "error",
-            file: "settings.json",
-            message: "Plugin lint@acme uses a command source, which Open Factory doesn't install.",
-            path: "settings.enabledPlugins.lint@acme",
-          },
-        ]}
-      />,
-    );
-    expect(
-      await screen.findByText(
-        "Plugin lint@acme uses a command source, which Open Factory doesn't install.",
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Issues the form can't show" })).toBeNull();
-  });
 });

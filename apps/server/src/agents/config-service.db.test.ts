@@ -17,7 +17,7 @@ let home: string;
 const human: Actor = { kind: "human", handle: "or" };
 let hr: Actor;
 
-function writeTemplate(name: string, runtime: "docker" | "local", settings: object = {}) {
+function writeTemplate(name: string, runtime: "docker" | "local") {
   const d = path.join(home, "templates", name);
   mkdirSync(d, { recursive: true });
   writeFileSync(
@@ -25,7 +25,7 @@ function writeTemplate(name: string, runtime: "docker" | "local", settings: obje
     `name: ${name}\ndisplay_name: ${name}\nruntime: ${runtime}\n`,
   );
   writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
-  writeFileSync(path.join(d, "settings.json"), JSON.stringify(settings));
+  writeFileSync(path.join(d, "settings.json"), JSON.stringify({}));
 }
 const body = (slug: string, template = "dev") => ({
   template,
@@ -58,19 +58,7 @@ beforeAll(async () => {
     kind: "oauth_token",
     valueEnc: t.app.vault.seal("tok", `credentials:${credId}`),
   });
-  await t.db.insert(schema.marketplaces).values({
-    name: "acme",
-    source: { source: "github", repo: "acme/plugins" },
-    state: "ready",
-    commit: "a".repeat(40),
-    tags: {},
-    startedAt: new Date(),
-    addedBy: "@or",
-    addedAt: new Date(),
-  });
-  writeTemplate("dev", "docker", {
-    extraKnownMarketplaces: { acme: { source: { source: "github", repo: "acme/plugins" } } },
-  });
+  writeTemplate("dev", "docker");
   writeTemplate("localtpl", "local");
   const svc = t.app.agents;
   await svc.create(body("hr-bot"), human);
@@ -112,16 +100,6 @@ test("an agent can't remove an overlay deny rule, and nothing is written", async
   expect(JSON.stringify(err.extra)).toContain("Deny rules can only be removed by a human.");
   expect((await rowOf("dev")).config).toEqual(stored);
   await t.db.update(schema.agents).set({ config: {} }).where(eq(schema.agents.slug, "dev"));
-});
-
-test("an agent can't enable a plugin from a marketplace the template follows at Latest", async () => {
-  const overlay = { settings: { enabledPlugins: { "x@acme": true } } };
-  const err = await refusal(cfg.saveOverlay("dev", overlay, await versionOf("dev"), hr));
-  expect(err).toMatchObject({ status: 400, code: "invalid_config" });
-  expect(JSON.stringify(err.extra)).toContain(
-    "Plugin x@acme follows the latest acme; only a human can add it.",
-  );
-  expect((await rowOf("dev")).config).toEqual({});
 });
 
 test("a spawned target is refused: Spawned agents can't be edited", async () => {

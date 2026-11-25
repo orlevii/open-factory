@@ -13,17 +13,6 @@ export const OVERLAY_LIMITS = {
 
 export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** The plugin env (spec §7.3 step 4): Claude Code's plugins dir and update switches are the factory's. */
-export const PLUGIN_ENV_NAMES = [
-  "CLAUDE_CODE_PLUGIN_CACHE_DIR",
-  "CLAUDE_CODE_PLUGIN_SEED_DIR",
-  "CLAUDE_CODE_PLUGIN_DIRS",
-  "CLAUDE_CODE_SYNC_PLUGIN_INSTALL",
-  "DISABLE_AUTOUPDATER",
-  "DISABLE_UPDATES",
-  "FORCE_AUTOUPDATE_PLUGINS",
-] as const;
-
 /** Env names the factory sets itself: an overlay or template can never override them (spec §5.1). */
 export const FACTORY_ENV_NAMES: readonly string[] = [
   "CLAUDE_CONFIG_DIR",
@@ -33,7 +22,8 @@ export const FACTORY_ENV_NAMES: readonly string[] = [
   "GIT_AUTHOR_EMAIL",
   "GIT_COMMITTER_NAME",
   "GIT_COMMITTER_EMAIL",
-  ...PLUGIN_ENV_NAMES,
+  "DISABLE_AUTOUPDATER",
+  "DISABLE_UPDATES",
 ];
 const FACTORY_ENV_PREFIX = "OPEN_FACTORY_";
 export const isFactoryEnvName = (name: string): boolean =>
@@ -42,7 +32,6 @@ export const isFactoryEnvName = (name: string): boolean =>
 /** Constant messages only: a message never carries a value (spec §7.2). Each is at most 40 characters. */
 export const CONFIG_MSG = {
   unknownField: "Unknown field.",
-  noMarketplaces: "Not allowed in an overlay.",
   noDefaultMode: "Set in the template, not here.",
   envName: "Use letters, digits and underscores.",
   factoryEnv: "Set by the factory.",
@@ -111,12 +100,6 @@ const checkLimits = (
 };
 
 const settingsSchema = z.record(z.string(), z.unknown()).superRefine((s, ctx) => {
-  if ("extraKnownMarketplaces" in s)
-    ctx.addIssue({
-      code: "custom",
-      path: ["extraKnownMarketplaces"],
-      message: CONFIG_MSG.noMarketplaces,
-    });
   const perms = s.permissions;
   if (isRecord(perms) && "defaultMode" in perms)
     ctx.addIssue({

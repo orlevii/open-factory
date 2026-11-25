@@ -294,11 +294,6 @@ export class AgentRuntimes {
     return this.loaded.get(agentId)?.started;
   }
 
-  /** The version of each plugin a loaded runtime's running process listed at its first `init` (spec §7.3 step 8). */
-  loadedPluginsOf(agentId: string): Record<string, string> | undefined {
-    return this.loaded.get(agentId)?.loadedPlugins;
-  }
-
   /**
    * S6 §7.3: hands a committed `message` row to its recipient. A human's send awaits the job (S3's synchronous
    * `503 agent_start_failed` and `409 agent_archived`); an agent's only enqueues it: a slow start never blocks the

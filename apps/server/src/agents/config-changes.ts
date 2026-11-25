@@ -265,10 +265,7 @@ export class ConfigChanges {
           ? { doc: started.doc, library: started.library }
           : {
               doc: now.doc,
-              library: {
-                skills: pick(now.library.skills, e.before?.skills, skills),
-                plugins: now.library.plugins,
-              },
+              library: { skills: pick(now.library.skills, e.before?.skills, skills) },
             };
         const r = await this.apply(agent, e.by, before, now, null);
         done.push(r.done);

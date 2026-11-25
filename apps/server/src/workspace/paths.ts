@@ -13,6 +13,3 @@ export const personaRoot = (factoryHome: string, slug: string) =>
 /** A reset staged while the agent may be running; `prepare` applies and removes it. */
 export const personaPendingDir = (factoryHome: string, slug: string) =>
   path.join(agentStateDir(factoryHome, slug), "persona-pending");
-/** Claude Code's plugins root for this agent (`CLAUDE_CODE_PLUGIN_CACHE_DIR`): it installs and updates here, never the factory (spec §7.2). */
-export const agentPluginsDir = (factoryHome: string, slug: string) =>
-  path.join(agentStateDir(factoryHome, slug), "plugins");

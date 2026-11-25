@@ -277,11 +277,6 @@ export function useAgentFormState({
     update({ touched: { ...latest.current.touched, [f]: true }, [f]: shown[f] });
   };
 
-  /** The plugins the chosen template enables, for the template field's summary. */
-  const pluginCount = create
-    ? (templates.data?.templates.find((x) => x.name === values.template)?.pluginCount ?? 0)
-    : 0;
-
   function check(f: Field, v: Values): string | undefined {
     switch (f) {
       case "template": {
@@ -448,7 +443,6 @@ export function useAgentFormState({
     submit,
     pending,
     outcome: o.outcome,
-    pluginCount,
     config,
     missingSecrets,
     noCredentials,

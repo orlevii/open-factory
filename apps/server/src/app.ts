@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { type Db, schema } from "@open-factory/db";
+import type { Db } from "@open-factory/db";
 import { createClaudeDriver, type HarnessDriver, localTransport } from "@open-factory/harness";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
@@ -33,13 +33,8 @@ import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
 import { ImageBuilder } from "./images/builder.ts";
-import { checkImageClaudeVersion } from "./library/claude-flags.ts";
-import { HostPlugins } from "./library/host-plugins.ts";
 import { LibraryIndex } from "./library/library-index.ts";
-import { LibrarySweep, marketplaceDirsInUse, skillDirsInUse } from "./library/library-sweep.ts";
-import { dbMarketplacesStore, MarketplacesService } from "./library/marketplaces-service.ts";
-import { declaredRefs, marketplaceUsers } from "./library/plugin-usage.ts";
-import { PluginsIndex } from "./library/plugins-index.ts";
+import { LibrarySweep, skillDirsInUse } from "./library/library-sweep.ts";
 import { dbSourcesStore, SourcesService } from "./library/sources-service.ts";
 import { bridgeInfo, resolveAgentBindHosts } from "./mcp/bind-hosts.ts";
 import { startAgentListener } from "./mcp/listener.ts";
@@ -153,12 +148,6 @@ declare module "fastify" {
     library: LibraryIndex;
     /** I5 §9.2: skill sources (preview, add, check, update, remove, Undo). */
     skillSources: SourcesService;
-    /** I5 §7.1, §9.3: the marketplace registry (preview, add, check, update, fetch, remove, Undo). */
-    marketplaces: MarketplacesService;
-    /** I5 §9.1: the Plugins view (catalogs, contents, diffs, external reads). */
-    plugins: PluginsIndex;
-    /** I5 §7.6: plugins installed on the host, and Add its marketplace. */
-    hostPlugins: HostPlugins;
   }
 }
 
@@ -253,7 +242,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const workspace = new Workspace({
     factoryHome: config.factoryHome,
     library,
-    claudeBin: config.claudeBin,
     cliBundle: config.cliBundle,
     lock,
     log: app.log,
@@ -263,12 +251,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const containers = new ContainerManager({
     docker,
     log: app.log,
-    checkImage: checkImageClaudeVersion,
   });
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
-  const policy = new PolicyInputs({ db: deps.db, library });
+  const policy = new PolicyInputs({ db: deps.db });
   const templates: TemplateIndex = new TemplateIndex({
     db: deps.db,
     config,
@@ -370,7 +357,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     workspace,
     lock,
     runtimes,
-    resolver,
     log: app.log,
     containers,
     router,
@@ -383,8 +369,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const configs = new ConfigService({
     db: deps.db,
     templates,
-    runtimes,
-    resolver,
     policy,
     configChanges,
   });
@@ -540,54 +524,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     onLibraryChanged: (e) => configChanges.libraryChanged(e),
     log: (message, err) => app.log.error({ err }, message),
   });
-  // The directories a loaded runtime's `started.library` still references: GitHub skill caches and marketplace
-  // checkouts at a pinned commit or tag (spec §9.4). Purge keeps them and retries on the next timer.
-  const libraryDirsInUse = async (): Promise<string[]> => [
-    ...(await skillDirsInUse(skillSources.githubRoot, runtimes.allStarted())),
-    ...marketplaceDirsInUse(marketplaces.root, runtimes.allStarted(), await marketplaces.rows()),
-  ];
-  // A marketplace write moves only the Library's commit: it never calls the config change flow and restarts no
-  // agent (spec §8.3), so its only hook is the `library_changed` frame.
-  const marketplaces: MarketplacesService = new MarketplacesService({
-    store: dbMarketplacesStore(deps.db),
-    usedBy: async (name) => marketplaceUsers(await library.declarations(), name),
-    inUse: libraryDirsInUse,
-    declaredRefs: async () => declaredRefs(await library.declarations()),
-    factoryHome: config.factoryHome,
-    forbidden: {
-      home: os.homedir(),
-      factoryHome: config.factoryHome,
-      dockerSockets: dockerSocketPaths(process.env, os.homedir()),
-    },
-    githubUrl: config.githubUrl,
-    publish: libraryChanged,
-    purgeAfter: (ms) => librarySweep.purgeAfter(ms),
-    log: (message, err) => app.log.error({ err }, message),
-  });
-  const hostPlugins = new HostPlugins({
-    hostClaudeDir: config.hostClaudeDir,
-    registered: async () => (await library.marketplaces()).map((r) => r.name),
-    marketplaces,
-    forbidden: {
-      home: os.homedir(),
-      factoryHome: config.factoryHome,
-      dockerSockets: dockerSocketPaths(process.env, os.homedir()),
-    },
-    log: (message, err) => app.log.error({ err }, message),
-  });
-  const plugins = new PluginsIndex({
-    library,
-    marketplaces,
-    host: hostPlugins,
-    factoryHome: config.factoryHome,
-    githubUrl: config.githubUrl,
-    publish: libraryChanged,
-    log: (message, err) => app.log.error({ err }, message),
-  });
+  // The directories a loaded runtime's `started.library` still references: GitHub skill caches (spec §9.4). Purge
+  // keeps them and retries on the next timer.
+  const libraryDirsInUse = async (): Promise<string[]> =>
+    skillDirsInUse(skillSources.githubRoot, runtimes.allStarted());
   const librarySweep = new LibrarySweep({
     sources: skillSources,
     store: sourcesStore,
-    marketplaces,
     factoryHome: config.factoryHome,
     inUse: libraryDirsInUse,
     publish: libraryChanged,
@@ -595,9 +538,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("library", library);
   app.decorate("skillSources", skillSources);
-  app.decorate("marketplaces", marketplaces);
-  app.decorate("hostPlugins", hostPlugins);
-  app.decorate("plugins", plugins);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
@@ -621,7 +561,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     await expiryCheck.idle();
     await scheduler.idle();
     await skillSources.idle();
-    await marketplaces.idle();
   });
 
   if (new URL(config.agentUrl).port === String(config.port)) {
@@ -672,7 +611,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
         config: configs,
         templates,
         library,
-        plugins,
         credentials,
         secrets: app.secrets,
         projects: app.projects,

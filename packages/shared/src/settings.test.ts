@@ -29,10 +29,14 @@ test("stored values read with a default for every missing key", () => {
   expect(factorySettingsValuesSchema.parse({})).toEqual({
     warmWindowMinutes: 70,
     memberUpdateDebounceSeconds: 30,
+    loopGuardMessages: 10,
+    loopGuardWindowMinutes: 10,
   });
   expect(factorySettingsValuesSchema.parse({ warmWindowMinutes: 90 })).toEqual({
     warmWindowMinutes: 90,
     memberUpdateDebounceSeconds: 30,
+    loopGuardMessages: 10,
+    loopGuardWindowMinutes: 10,
   });
 });
 

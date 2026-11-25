@@ -30,13 +30,7 @@ import { CommentBlock } from "@/features/tasks/comment-block";
 import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/comment-composer";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { INBOX_DWELL_MS, PREFETCH_REST_MS } from "@/lib/timing";
-import {
-  chatSlugOf,
-  type InboxItem,
-  inboxItemOptions,
-  inboxQueryOptions,
-  useOpenItem,
-} from "./api";
+import { chatSlugOf, type InboxItem, inboxQueryOptions, useOpenItem, usePaneItem } from "./api";
 import { aboutOf } from "./credential-notice";
 import { LoopHoldPane } from "./loop-hold-pane";
 
@@ -132,21 +126,6 @@ function Body({ children }: { children: ReactNode }) {
       {children}
     </div>
   );
-}
-
-/**
- * The item to show: the row from the loaded pages; else `GET /api/inbox/:id` (a deep link outside
- * them, or a row a refetch dropped). A row that drops out keeps showing while that fetch runs, so
- * the header never blanks; a 404 is `gone`.
- */
-function usePaneItem(id: string, loaded: InboxItem | undefined) {
-  const [kept, setKept] = useState(loaded);
-  if (loaded && loaded !== kept) setKept(loaded);
-  const fetched = useQuery({ ...inboxItemOptions(id), enabled: !loaded });
-  const gone = !loaded && fetched.error instanceof ApiError && fetched.error.status === 404;
-  // `kept` is always this id's row: PaneItem is keyed by id.
-  const item = loaded ?? (gone ? undefined : (fetched.data ?? kept));
-  return { item, gone, failed: !item && !gone && fetched.isError };
 }
 
 /** Sending a reply marks the item read at once. */

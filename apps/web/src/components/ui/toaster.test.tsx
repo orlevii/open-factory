@@ -2,11 +2,14 @@ import { ApiError } from "@open-factory/shared";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { notify, resetToasts, Toaster, toastDuration } from "./toaster";
 
 beforeEach(() => fakeMatchMedia.install(false));
+// A toast dismissed while mounted (Undo, an action) is removed by a 200 ms timer sonner never clears. Let the last
+// ones run before the file's environment is torn down, or their setState throws "window is not defined".
+afterAll(() => new Promise((r) => setTimeout(r, 250)));
 afterEach(() => {
   vi.restoreAllMocks();
   // Sonner's store outlives a render; clear it so the next test starts with no toasts.

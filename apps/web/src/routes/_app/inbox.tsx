@@ -19,7 +19,7 @@ import { useSetupVisible } from "@/features/setup/use-setup-visible";
 import { useMedia, WIDE } from "@/lib/breakpoints";
 
 export const Route = createFileRoute("/_app/inbox")({
-  // `item` is the reading pane's selection (≥1024). No loaderDeps: selecting never re-runs the loader.
+  // `item` is the reading pane's selection at every width. No loaderDeps: selecting never re-runs the loader.
   validateSearch: z.object({ item: z.string().min(1).optional().catch(undefined) }),
   // Only so the first load shows the route's pending mark; a failure is the list's own error line.
   loader: async ({ context }) => {

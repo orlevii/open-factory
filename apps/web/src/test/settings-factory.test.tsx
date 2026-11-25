@@ -86,7 +86,7 @@ const WINDOW_HINT =
 const DEBOUNCE_HINT =
   "How long to collect status changes from an agent's reports before telling it (0–86400 s). 0 sends each change at once.";
 
-test("the three fields carry their hints and suffixes, with the loaded values", async () => {
+test("the concurrency, warm window and debounce fields carry their hints and suffixes, with the loaded values", async () => {
   world();
   renderApp("/settings/factory", alice);
   const cap = await field("Concurrency cap");

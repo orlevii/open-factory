@@ -335,7 +335,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     bus,
     runtimes,
     log: app.log,
-    clock: () => new Date(),
+    clock: () => store.clock(),
     newId: randomUUID,
   });
   const router = new Router({

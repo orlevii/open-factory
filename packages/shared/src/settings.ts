@@ -90,5 +90,7 @@ export const patchFactorySettingsSchema = z.strictObject({
   maxRunningAgents: bounded(FACTORY_BOUNDS.maxRunningAgents),
   defaultWarmWindowMinutes: bounded(FACTORY_BOUNDS.defaultWarmWindowMinutes),
   memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds),
+  loopGuardMessages: bounded(FACTORY_BOUNDS.loopGuardMessages),
+  loopGuardWindowMinutes: bounded(FACTORY_BOUNDS.loopGuardWindowMinutes),
 });
 export type PatchFactorySettings = z.infer<typeof patchFactorySettingsSchema>;

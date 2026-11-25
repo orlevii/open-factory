@@ -220,3 +220,38 @@ test("the member update debounce setting reaches the runtimes: 0 writes a member
     await t.close();
   }
 });
+
+test("a report's text reaches its manager naming the request it answers", async () => {
+  const driver = new FakeDriver();
+  const t = await makeTestApp({
+    harnessDriver: driver,
+    factorySettings: { memberUpdateDebounceSeconds: 0 },
+  });
+  try {
+    const lead = await t.seedAgent({ slug: "lead" });
+    const dev = await t.seedAgent({ slug: "dev" });
+    await t.sql`update agents set reports_to = ${lead.id}, reports_to_user = null where id = ${dev.id}`;
+    const { proc: leadProc } = await startIdle(t, driver, "lead");
+    const { cookie } = await signUp(t.app, { handle: "asker" });
+    const res = await t.app.inject({
+      method: "POST",
+      url: "/api/messages",
+      headers: { cookie },
+      payload: { to: ["dev"], body: "update the README" },
+    });
+    expect(res.statusCode).toBeLessThan(300);
+    const [asked] = await t.sql<{ id: string }[]>`
+      select id from messages where to_agent_id = ${dev.id} and kind = 'message'`;
+    const devProc = driver.starts.filter((s) => s.spec.slug === "dev").at(-1);
+    devProc?.emit(ev.session(), ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
+    await (await t.app.runtimes.bySlug("dev"))?.settled();
+    await vi.waitFor(() =>
+      expect(
+        leadProc.sent.flat().find((m) => m.kind === "member_update" && m.body === "README updated")
+          ?.re,
+      ).toEqual([{ id: asked?.id, from: "@asker" }]),
+    );
+  } finally {
+    await t.close();
+  }
+});

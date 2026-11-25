@@ -561,6 +561,7 @@ export class Router {
           kind: "member_update",
           toAgentId: agent.reportsTo,
           ...(f.fact ? { subjectAgentId: f.agentId, notice: f.fact } : { fromAgentId: f.agentId }),
+          ...(f.re ? { re: f.re } : {}),
           body: f.body,
         },
         tx,
@@ -590,6 +591,7 @@ export class Router {
               ...(f.fact
                 ? { subjectAgentId: f.agentId, notice: f.fact }
                 : { fromAgentId: f.agentId }),
+              ...(f.re ? { re: f.re } : {}),
               to,
               body: f.body,
               urgent: false,

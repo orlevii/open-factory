@@ -12,6 +12,7 @@ import {
   type MessageKind,
   parseCommands,
   plainPreview,
+  type RequestRef,
   type SessionEvent,
   type TaskNotice,
   taskKey,
@@ -910,6 +911,8 @@ export class EventStore {
       subjectAgentId?: string;
       notice?: string;
       body: string;
+      /** A report's text: the requests it answers. */
+      re?: RequestRef[];
     },
     tx: Exec = this.db,
   ): Promise<PendingRow> {
@@ -921,6 +924,7 @@ export class EventStore {
       fromAgentId: m.fromAgentId ?? null,
       subjectAgentId: m.subjectAgentId ?? null,
       notice: m.notice ?? null,
+      re: m.re?.length ? m.re : null,
       body: m.body,
       createdAt: this.clock(),
     });
@@ -991,6 +995,8 @@ export class EventStore {
       body: string;
       urgent: boolean;
       fromToolUseId?: string | null;
+      /** A report's text to its human manager: the requests it answers. */
+      re?: RequestRef[];
     },
     outer: Exec = this.db,
   ): Promise<{ row: MessageRow; userIds: string[] }> {
@@ -1043,6 +1049,7 @@ export class EventStore {
           toAllHumans: m.to === "all",
           recipients: m.kind === "message" ? (m.recipients ?? null) : null,
           fromToolUseId: m.fromToolUseId ?? null,
+          re: m.re?.length ? m.re : null,
           body: m.body,
           urgent: m.urgent,
           state: "delivered",

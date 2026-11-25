@@ -1,11 +1,12 @@
 import { quoteReported } from "@open-factory/harness";
-import type { FactCode } from "@open-factory/shared";
+import type { FactCode, RequestRef } from "@open-factory/shared";
 
 /**
  * One item a report forwards to its manager (spec §9.1): without `fact` the report's own text (sent as the report);
- * with one, a factory fact about the report (sent as `@factory`, `subject_agent_id` = the report).
+ * with one, a factory fact about the report (sent as `@factory`, `subject_agent_id` = the report). `re`: the requests
+ * of the report's turn when it wrote the text (its own text only).
  */
-export type Forward = { agentId: string; fact?: FactCode; body: string };
+export type Forward = { agentId: string; fact?: FactCode; body: string; re?: RequestRef[] };
 
 export type FactDetail = {
   /** Report-controlled text, quoted (spec §9.2). */

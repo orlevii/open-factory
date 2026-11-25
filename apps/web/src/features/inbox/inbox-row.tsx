@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
 import { type ComponentProps, type MouseEvent, memo, type ReactNode, useMemo } from "react";
 import { AgentChip } from "@/components/agent-chip";
+import { ROW_GRID } from "@/components/row-grid";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
@@ -175,7 +176,7 @@ export const InboxRow = memo(function InboxRow({
     onAuxClick: (e: MouseEvent) => {
       if (e.button === 1) onOpen(item, e);
     },
-    className: `${LINK_CLASS} grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`,
+    className: `${LINK_CLASS} ${ROW_GRID}`,
   };
   const body = (
     <>

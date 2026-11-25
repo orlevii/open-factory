@@ -34,14 +34,91 @@ const openMenu = async (r: HTMLElement | null) => {
   return screen.findByRole("menu");
 };
 
-test("your message is a card: speaker 'You', the 40-line clamp", async () => {
+test("your message is unboxed under its speaker line 'You' and clamped at 40 lines", async () => {
   stubChatApi({ chat: () => page([mine(1, { body: paragraphs(60) })]) });
   renderApp("/agents/dev/chat", alice);
-  await waitFor(() => expect(row("m1")?.querySelector("[data-message-block]")).toBeTruthy());
-  const card = row("m1")?.querySelector("[data-message-block]") as HTMLElement;
-  expect(within(card).getByText("You")).toBeInTheDocument();
-  expect(within(card).getByRole("button", { name: "Show all" })).toBeInTheDocument();
-  expect(within(card).queryByText("Paragraph 60")).toBeNull();
+  const r = (await waitFor(() => {
+    const el = row("m1");
+    expect(el).not.toBeNull();
+    return el;
+  })) as HTMLElement;
+  expect(r.querySelector("[data-message-block]")).toBeNull();
+  expect(within(r).getByText("You")).toBeInTheDocument();
+  expect(within(r).getByRole("button", { name: "Show all" })).toBeInTheDocument();
+  expect(within(r).queryByText("Paragraph 60")).toBeNull();
+  fireEvent.click(within(r).getByRole("button", { name: "Show all" }));
+  expect(await within(r).findByText("Paragraph 60")).toBeInTheDocument();
+});
+
+test("a human message keeps its urgent badge, attachments and Also-to", async () => {
+  stubChatApi({
+    chat: () =>
+      page([
+        mine(1, {
+          urgent: true,
+          recipients: ["@dev", "@qa"],
+          body: "see this\n\n[attached: .factory/uploads/20261123-0a1b2c3d-0000-4000-8000-000000000001-notes.txt]",
+          attachments: [
+            {
+              uploadId: "0a1b2c3d-0000-4000-8000-000000000001",
+              name: "notes.txt",
+              kind: "text",
+              bytes: 12,
+            },
+          ],
+        }),
+      ]),
+  });
+  renderApp("/agents/dev/chat", alice);
+  const r = (await waitFor(() => {
+    const el = row("m1");
+    expect(el).not.toBeNull();
+    return el;
+  })) as HTMLElement;
+  expect(within(r).getByText("Urgent")).toBeInTheDocument();
+  expect(within(r).getByRole("group", { name: "Also to @qa" })).toBeInTheDocument();
+  const files = within(r).getByRole("list", { name: "Attached files" });
+  expect(within(files).getByRole("link", { name: /notes\.txt/ })).toHaveAttribute(
+    "href",
+    "/api/agents/dev/uploads/0a1b2c3d-0000-4000-8000-000000000001",
+  );
+  expect(within(r).queryByText(/\[attached:/)).toBeNull();
+});
+
+const outcome = (key: string, endedAt: string) =>
+  ({
+    kind: "turn_outcome",
+    key,
+    turnId: `t-${key}`,
+    endedAt,
+    eventSeq: null,
+    outcome: "no_reply",
+  }) as const;
+const speakerLines = () => document.querySelectorAll("[data-speaker-line]").length;
+
+test.each([
+  ["the same sender within five minutes shares one speaker line", [mine(1), mine(2)], 1],
+  [
+    "a gap over five minutes starts a new speaker line",
+    [mine(1), mine(2, { createdAt: "2026-11-23T09:06:00.000Z" })],
+    2,
+  ],
+  ["a different sender starts a new speaker line", [mine(1), chatMsg(2)], 2],
+  [
+    "an item between the messages starts a new speaker line",
+    [mine(1), outcome("m1", "2026-11-23T09:00:01.500Z"), mine(2)],
+    2,
+  ],
+  ["an urgent message keeps its own speaker line", [mine(1), mine(2, { urgent: true })], 2],
+] as const)("grouping: %s", async (_name, entries, lines) => {
+  stubChatApi({ chat: () => page([...entries]) });
+  renderApp("/agents/dev/chat", alice);
+  await screen.findByText("Ask 1");
+  expect(speakerLines()).toBe(lines);
+  // Every message still has its time on screen (a grouped one shows it on hover or focus).
+  expect(document.querySelectorAll("[data-row] time")).toHaveLength(
+    entries.filter((e) => e.kind === "message").length,
+  );
 });
 
 test("the agent's reply is unboxed prose and never clamped", async () => {
@@ -114,7 +191,12 @@ test("a pending message waits for the agent's step and cancels in place, with Un
     },
   });
   renderApp("/agents/dev/chat", alice);
-  expect(await screen.findByText("Waiting for Dev agent's current step")).toBeInTheDocument();
+  const status = await screen.findByText("Waiting for Dev agent's current step");
+  const r = row("m1") as HTMLElement;
+  // The status replaces the time in the speaker line and describes the message.
+  expect(r.querySelector("[data-speaker-line] time")).toHaveAttribute("aria-hidden", "true");
+  expect(r).toHaveAccessibleDescription("Waiting for Dev agent's current step");
+  expect(status.closest("[data-speaker-line]")).not.toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(await screen.findByText("Message cancelled.")).toBeInTheDocument();
   expect(screen.queryByText("Ask 1")).toBeNull();
@@ -126,14 +208,33 @@ test("a pending message waits for the agent's step and cancels in place, with Un
   ]);
 });
 
-test("a rejected message says why", async () => {
+test("a rejected message shows 'Not delivered: <reason>' and no Retry", async () => {
   stubChatApi({
     chat: () => page([mine(1, { state: "rejected", rejectReason: "the agent was terminated" })]),
   });
   renderApp("/agents/dev/chat", alice);
-  expect(
-    await screen.findByText("This message wasn't delivered: the agent was terminated."),
-  ).toBeInTheDocument();
+  expect(await screen.findByText("Not delivered: the agent was terminated")).toBeInTheDocument();
+  expect(row("m1")).toHaveAccessibleDescription("Not delivered: the agent was terminated");
+  expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
+});
+
+test("a held message's status becomes its time once delivered, announced politely", async () => {
+  let state: "pending" | "delivered" = "pending";
+  stubChatApi({ chat: () => page([mine(1, { state })]) });
+  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  await screen.findByText("Waiting for Dev agent's current step");
+  state = "delivered";
+  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: "dev" }));
+  await waitFor(() =>
+    expect(screen.queryByText("Waiting for Dev agent's current step")).toBeNull(),
+  );
+  const r = row("m1") as HTMLElement;
+  expect(r.querySelector("[data-speaker-line] time")).not.toHaveAttribute("aria-hidden");
+  expect(r).not.toHaveAccessibleDescription("Waiting for Dev agent's current step");
+  const region = document
+    .querySelector("[data-chat-view]")
+    ?.parentElement?.querySelector("[role=status]");
+  expect(region).toHaveTextContent("Delivered to Dev agent.");
 });
 
 test("the empty thread says so", async () => {

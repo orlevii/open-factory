@@ -2,6 +2,7 @@ import type { ChatRow } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { type MouseEvent, memo } from "react";
 import { AgentChip } from "@/components/agent-chip";
+import { ROW_GRID } from "@/components/row-grid";
 import { formatInboxTime } from "@/features/session/format";
 import { skipFocusPreload } from "@/lib/row-nav";
 import { chatRowId } from "./api";
@@ -66,7 +67,7 @@ export const ChatInboxRow = memo(function ChatInboxRow({
         preload={selectable ? false : undefined}
         onFocus={skipFocusPreload}
         onClick={(e) => onOpen(agent.slug, e)}
-        className={`${LINK_CLASS} grid-cols-[0.75rem_minmax(0,1fr)] gap-x-2 px-2`}
+        className={`${LINK_CLASS} ${ROW_GRID}`}
       >
         <span
           aria-hidden="true"

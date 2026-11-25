@@ -227,6 +227,7 @@ export function InboxList({
   if (!loaded)
     return q.isError ? (
       <ErrorLine
+        inRows
         text="Couldn't load the inbox."
         onRetry={() =>
           void q.refetch().then((r) => {
@@ -241,7 +242,7 @@ export function InboxList({
     return (
       <>
         {steps}
-        {!steps && <EmptyState text="Nothing in your inbox." />}
+        {!steps && <EmptyState inRows text="Nothing in your inbox." />}
       </>
     );
 
@@ -291,7 +292,12 @@ export function InboxList({
           )}
         </ul>
         {q.isFetchNextPageError ? (
-          <ErrorLine text="Couldn't load earlier messages." onRetry={loadEarlier} autoFocus />
+          <ErrorLine
+            inRows
+            text="Couldn't load earlier messages."
+            onRetry={loadEarlier}
+            autoFocus
+          />
         ) : (
           q.hasNextPage && (
             <div>

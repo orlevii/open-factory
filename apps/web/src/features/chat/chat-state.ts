@@ -161,3 +161,19 @@ export function withoutSending(data: ChatData, key: string): ChatData {
   };
   return { ...data, pages: [page, ...data.pages.slice(1)] };
 }
+
+/** Consecutive messages from one sender at most this far apart share a speaker line. */
+export const GROUP_WINDOW_MS = 5 * 60_000;
+
+/**
+ * Whether `e` continues the speaker line of the entry before it: both messages from the same sender
+ * to the same recipients, at most five minutes apart, `e` not urgent (its badge lives on a speaker
+ * line). Anything between them (an outcome, a divider, a cancelled message) is the caller's to check.
+ */
+export function continuesGroup(prev: ChatEntry | undefined, e: ChatEntry): boolean {
+  if (prev?.kind !== "message" || e.kind !== "message" || e.urgent) return false;
+  if (prev.from !== e.from || prev.fromKind !== e.fromKind) return false;
+  if (prev.recipients.join("\n") !== e.recipients.join("\n")) return false;
+  const gap = Date.parse(e.createdAt) - Date.parse(prev.createdAt);
+  return gap >= 0 && gap <= GROUP_WINDOW_MS;
+}

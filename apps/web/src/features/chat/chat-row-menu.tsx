@@ -40,15 +40,12 @@ export function ChatRowMenu({
   slug,
   others,
   tabbable,
-  card,
   menuRef,
 }: {
   entry: MessageEntry;
   slug: string;
   others: readonly string[];
   tabbable: boolean;
-  /** Your message is a card: the ⋯ sits inside its padding. */
-  card: boolean;
   menuRef: Ref<RowMenuHandle>;
 }) {
   const items = useCallback(() => chatMenuItems(entry, slug, others), [entry, slug, others]);
@@ -56,5 +53,5 @@ export function ChatRowMenu({
     () => `Message from ${entry.from} · ${formatTime(entry.createdAt)}`,
     [entry.from, entry.createdAt],
   );
-  return <RowMenu ref={menuRef} items={items} title={title} focusable={tabbable} inCard={card} />;
+  return <RowMenu ref={menuRef} items={items} title={title} focusable={tabbable} />;
 }

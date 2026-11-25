@@ -31,7 +31,7 @@ import { INBOX_DWELL_MS } from "@/lib/timing";
 import { arrive, useArrivalTint } from "@/lib/use-arrival";
 import { ChatComposer } from "./chat-composer";
 import { type CancelNote, ChatRow, rowGap } from "./chat-row";
-import { entryKey, keysOf } from "./chat-state";
+import { continuesGroup, entryKey, isSending, keysOf } from "./chat-state";
 import { outcomeSentence, TurnLine } from "./turn-line";
 import { refreshChat, useChat, useWorkingKey } from "./use-chat";
 
@@ -307,6 +307,10 @@ function Thread({
       entries.flatMap((e, i) => {
         const key = entryKey(e);
         const divider = key === unreadKey ? <NewDivider key="new-divider" /> : null;
+        // One speaker line for a run of messages: a divider, an outcome or a cancelled message breaks it.
+        const before = entries[i - 1];
+        const cancelled = before?.kind === "message" && notes.get(before.id)?.rolledBack === false;
+        const grouped = !divider && !cancelled && continuesGroup(before, e);
         const el =
           e.kind === "turn_outcome" ? (
             <TurnLine
@@ -327,7 +331,8 @@ function Thread({
               agentName={agentName}
               self={self}
               live={live.has(key)}
-              gap={rowGap(i === 0)}
+              grouped={grouped}
+              gap={grouped ? "mt-1" : rowGap(i === 0)}
               tabbable={key === tabKey}
               arrival={key === targetKey ? arrival : undefined}
               note={notes.get(e.id)}
@@ -382,6 +387,28 @@ function Thread({
     }
     return "";
   }, [entries, live, agentName]);
+
+  // Your messages' state changes, for assistive tech: held, delivered after being held, not delivered.
+  const states = useRef(new Map<string, string>());
+  const [stateNote, setStateNote] = useState("");
+  useEffect(() => {
+    const before = states.current;
+    const next = new Map<string, string>();
+    let note = "";
+    for (const e of entries) {
+      if (e.kind !== "message" || e.fromKind !== "human") continue;
+      const state = isSending(e) ? "sending" : e.state;
+      next.set(entryKey(e), state);
+      const was = before.get(entryKey(e));
+      if (was === state || (was === undefined && state !== "pending")) continue;
+      if (state === "pending") note = `Waiting for ${agentName}'s current step.`;
+      else if (state === "rejected")
+        note = e.rejectReason ? `Not delivered: ${e.rejectReason}` : "Not delivered.";
+      else if (state === "delivered" && was === "pending") note = `Delivered to ${agentName}.`;
+    }
+    states.current = next;
+    if (note) setStateNote(note);
+  }, [entries, agentName]);
 
   const speech = useMemo(() => {
     if (!seen) return 0;
@@ -453,7 +480,7 @@ function Thread({
         </div>
       </div>
       <div role="status" aria-live="polite" className="sr-only">
-        {announce}
+        {[stateNote, announce].filter(Boolean).join(" ")}
       </div>
       {/* Centred on the 52rem column, not the scroller. */}
       <div className="pointer-events-none absolute inset-x-0 bottom-3 px-4 md:px-6">

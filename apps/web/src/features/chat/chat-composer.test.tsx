@@ -323,7 +323,7 @@ test("your send is one node: the optimistic block and the server's row are the s
   // The block's key is the clientMessageId the POST carries.
   const id = optimistic.querySelector("[data-row]")?.getAttribute("data-row") as string;
   expect(id).toMatch(/^[0-9a-f-]{36}$/);
-  expect(optimistic.querySelector("[data-message-block]")).toHaveAttribute("aria-label", "Sending");
+  expect(optimistic.querySelector("[data-row]")).toHaveAccessibleDescription("Sending…");
   expect(screen.getAllByText("hello there")).toHaveLength(1);
   // The server's row, same clientMessageId, arrives through the chat query.
   thread = [
@@ -337,7 +337,7 @@ test("your send is one node: the optimistic block and the server's row are the s
   expect(screen.getAllByText("hello there")).toHaveLength(1);
   expect(body.closest("[data-row-wrap]")).toBe(optimistic);
   expect(optimistic).not.toHaveAttribute("data-live");
-  expect(optimistic.querySelector("[data-message-block]")).not.toHaveAttribute("aria-label");
+  expect(optimistic.querySelector("[data-row]")).not.toHaveAccessibleDescription("Sending…");
   expect(sent[0]?.body.clientMessageId).toBe(id);
 });
 
@@ -514,8 +514,8 @@ test("a send the server could not start keeps its block, pending", async () => {
   await screen.findByText("Reply 2");
   await userEvent.type(await box(), "queued{Enter}");
   await waitFor(() => expect(sent).toHaveLength(1));
-  const block = (await screen.findByText("queued")).closest("[data-message-block]");
-  expect(block).toHaveAttribute("aria-label", "Sending");
+  const block = (await screen.findByText("queued")).closest("[data-row]");
+  expect(block).toHaveAccessibleDescription("Sending…");
 });
 
 test("sending from a ?message= window goes back to the newest messages", async () => {

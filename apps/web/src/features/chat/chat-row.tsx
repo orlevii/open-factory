@@ -1,13 +1,17 @@
-import { memo, type TransitionEvent, useMemo } from "react";
+import { CircleAlert, Clock } from "lucide-react";
+import { memo, type TransitionEvent, useEffect, useId, useMemo, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Markdown } from "@/components/markdown/markdown";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { formatTime } from "@/features/session/format";
 import { InLongPressRow } from "@/features/session/long-press-region";
-import { MessageBlock } from "@/features/session/message-block";
+import { AttachmentList, ClampedMarkdown, UrgentBadge } from "@/features/session/message-block";
 import { RowGutter, useRowLongPress } from "@/features/session/row-chrome";
 import { useSendPhase } from "@/features/session/send-phase";
 import { SpeakerLine } from "@/features/session/speaker-line";
 import { ROW_GUTTER } from "@/features/session/timeline-item";
+import { stripAttachedLines } from "@/features/session/uploads";
 import type { Arrival } from "@/lib/use-arrival";
 import { AlsoTo } from "./also-to";
 import { ChatRowMenu, type MessageEntry } from "./chat-row-menu";
@@ -41,6 +45,8 @@ export type ChatRowProps = {
   self: string | undefined;
   /** Arrived by a live frame: fades in once. A boolean, never the live Set. */
   live: boolean;
+  /** Continues the message above: no speaker line. */
+  grouped: boolean;
   gap: string;
   /** The row is the log's one tab stop. */
   tabbable: boolean;
@@ -55,27 +61,51 @@ export type ChatRowProps = {
 };
 
 /**
- * One message of the thread (I1 §6.4): yours a card (speaker line "You", the clamp), the agent's an
- * unboxed `.prose-of` reply under its speaker line, never clamped. Memoised on primitives and stable
- * handlers, so a refetch that changes one entry renders one row.
+ * One message of the thread (I1 §6.4, I9 §2.16): every sender the same, a speaker line then the body
+ * unboxed (yours clamped, an agent's never), the time or the message's status in one slot. A message that
+ * continues the one above (`grouped`) has no speaker line: its time shows in the leading edge on hover.
+ * Memoised on primitives and stable handlers, so a refetch that changes one entry renders one row.
  */
 export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
   const { entry, slug, self } = p;
   const key = entryKey(entry);
   const mine = entry.fromKind === "human";
-  // Your send before the server's row: the delivered card's shape, its body muted; "Sending…" only when slow.
+  // Your send before the server's row: the delivered row's shape, its body muted; "Sending…" only when slow.
   const sending = isSending(entry);
   const { slow } = useSendPhase(sending);
   const { menu, press } = useRowLongPress();
+  const statusId = useId();
+  const rejectedId = useId();
   const others = useMemo(
     () => othersOf(entry.recipients, slug, self),
     [entry.recipients, slug, self],
   );
-  const alsoTo = others.length > 0 ? <AlsoTo others={others} /> : undefined;
+  const chips = entry.attachments?.length ? entry.attachments : undefined;
+  const shown = useMemo(() => stripAttachedLines(entry.body, chips), [entry.body, chips]);
+  const queued = entry.state === "pending" && !sending;
+  const status: Status | undefined = sending
+    ? { icon: "spinner", text: "Sending…", visible: slow }
+    : queued
+      ? { icon: "clock", text: `Waiting for ${p.agentName}'s current step`, visible: true }
+      : undefined;
+  const rejected = entry.state === "rejected";
+  const describedBy = rejected ? rejectedId : status ? statusId : undefined;
+  const cancel = queued ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      data-cancel-for={entry.id}
+      onClick={() => p.onCancel(entry.id)}
+    >
+      Cancel
+    </Button>
+  ) : undefined;
   const rowProps = {
     "data-row": key,
     tabIndex: p.tabbable ? 0 : -1,
     onFocus: () => p.onRowFocus(key),
+    "aria-describedby": describedBy,
     ...(p.arrival
       ? {
           "data-arrived": p.arrival === "fading" ? "fading" : "",
@@ -98,78 +128,150 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
       {...press}
       data-row-wrap
       {...(p.live ? { "data-live": "" } : {})}
-      className={`group relative min-w-0 rounded-md ${mine ? "" : ROW_GUTTER} ${p.gap}`}
+      className={`group relative min-w-0 rounded-md pointer-fine:hover:bg-accent ${ROW_GUTTER} ${p.gap}`}
     >
       <InLongPressRow value={true}>
-        {mine ? (
-          <div {...rowProps}>
-            <MessageBlock
+        <RowGutter />
+        <div {...rowProps}>
+          {!p.grouped && (
+            <SpeakerLine
               from={entry.from}
-              fromKind="human"
-              body={entry.body}
-              urgent={entry.urgent}
-              at={entry.createdAt}
-              attachments={entry.attachments}
-              slug={slug}
-              badge={alsoTo}
-              {...(sending ? { sending: slow ? { label: "Sending…" } : {} } : {})}
-              {...(entry.state === "pending" && !sending
-                ? { queued: { text: `Waiting for ${p.agentName}'s current step` } }
-                : {})}
-              {...(entry.state === "rejected"
-                ? {
-                    failed: entry.rejectReason
-                      ? `This message wasn't delivered: ${entry.rejectReason.replace(/\.$/, "")}.`
-                      : "This message wasn't delivered.",
-                  }
-                : {})}
-              action={
-                entry.state === "pending" && !sending ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="xs"
-                    data-cancel-for={entry.id}
-                    onClick={() => p.onCancel(entry.id)}
-                  >
-                    Cancel
-                  </Button>
-                ) : undefined
+              fromKind={entry.fromKind}
+              self={!mine}
+              status={
+                <TimeSlot
+                  at={entry.createdAt}
+                  status={status?.visible ? status : undefined}
+                  statusId={statusId}
+                />
               }
-            />
-          </div>
-        ) : (
-          <>
-            <RowGutter />
-            {/* An agent's reply carries no attachments or urgency in a human's chat today (the send tool has neither
-                for a human recipient), so only the text renders. */}
-            <div {...rowProps}>
-              <SpeakerLine from={entry.from} fromKind={entry.fromKind} self at={entry.createdAt}>
-                {alsoTo}
-              </SpeakerLine>
-              <div dir="auto">
-                <Markdown source={entry.body} />
+              action={cancel}
+            >
+              {alsoTo(others)}
+              {entry.urgent && <UrgentBadge />}
+            </SpeakerLine>
+          )}
+          <div className="relative pl-8">
+            {p.grouped && (
+              <time
+                dateTime={entry.createdAt}
+                title={new Date(entry.createdAt).toLocaleString()}
+                className="absolute top-0 left-0 w-8 pr-1.5 text-right text-[0.6875rem] leading-6 text-muted-foreground tabular-nums opacity-0 transition-opacity duration-100 ease-(--ease-out) group-focus-within:opacity-100 group-hover:opacity-100"
+              >
+                {formatTime(entry.createdAt)}
+              </time>
+            )}
+            {p.grouped && status?.visible && (
+              <div className="mb-1 flex items-center gap-2 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
+                <span id={statusId} className="flex items-center gap-1">
+                  <StatusMark icon={status.icon} />
+                  {status.text}
+                </span>
+                {cancel}
               </div>
+            )}
+            {status && !status.visible && (
+              <span id={statusId} className="sr-only">
+                {status.text}
+              </span>
+            )}
+            {rejected && (
+              <p
+                id={rejectedId}
+                className="mb-1 flex items-start gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
+              >
+                <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  {entry.rejectReason ? `Not delivered: ${entry.rejectReason}` : "Not delivered"}
+                </span>
+              </p>
+            )}
+            <div
+              dir="auto"
+              className={
+                sending ? "text-muted-foreground [--foreground:var(--muted-foreground)]" : undefined
+              }
+            >
+              {mine ? (
+                <ClampedMarkdown source={shown} variant="default" />
+              ) : (
+                <Markdown source={shown} />
+              )}
             </div>
-          </>
-        )}
+            {chips ? <AttachmentList slug={slug} attachments={chips} /> : null}
+          </div>
+        </div>
       </InLongPressRow>
       {p.note?.rolledBack && (
         <div className="pt-1">
           <InlineOutcome tone="error">Couldn't cancel: {p.note.error}</InlineOutcome>
         </div>
       )}
-      <ChatRowMenu
-        entry={entry}
-        slug={slug}
-        others={others}
-        tabbable={p.tabbable}
-        card={mine}
-        menuRef={menu}
-      />
+      <ChatRowMenu entry={entry} slug={slug} others={others} tabbable={p.tabbable} menuRef={menu} />
     </div>
   );
 });
+
+const alsoTo = (others: readonly string[]) =>
+  others.length > 0 ? <AlsoTo others={others} /> : undefined;
+
+/** A message's state before it is just a delivered message with a time. */
+type Status = { icon: "spinner" | "clock"; text: string; visible: boolean };
+
+function StatusMark({ icon }: { icon: Status["icon"] }) {
+  return icon === "spinner" ? (
+    <Spinner size="text" />
+  ) : (
+    <Clock aria-hidden="true" className="size-3.5" />
+  );
+}
+
+/**
+ * The speaker line's time, and a status (sending, waiting for the agent) in the same slot: the two
+ * are layers of one grid cell swapped by opacity (150ms in, 100ms out), so the line never changes size
+ * between them. The last status stays mounted while it fades out, then leaves so it holds no width.
+ */
+function TimeSlot({
+  at,
+  status,
+  statusId,
+}: {
+  at: string;
+  status: Status | undefined;
+  statusId: string;
+}) {
+  const [kept, setKept] = useState(status);
+  if (status && (kept?.text !== status.text || kept.icon !== status.icon)) setKept(status);
+  useEffect(() => {
+    if (status || !kept) return;
+    const t = setTimeout(() => setKept(undefined), 100);
+    return () => clearTimeout(t);
+  }, [status, kept]);
+  return (
+    <span className="slot-swap">
+      <time
+        dateTime={at}
+        title={new Date(at).toLocaleString()}
+        aria-hidden={status ? true : undefined}
+        data-shown={status ? undefined : ""}
+        className="text-muted-foreground tabular-nums"
+      >
+        {formatTime(at)}
+      </time>
+      {kept && (
+        <span
+          id={status ? statusId : undefined}
+          aria-hidden={status ? undefined : true}
+          data-shown={status ? "" : undefined}
+          className="flex items-center gap-1 text-muted-foreground"
+        >
+          <StatusMark icon={kept.icon} />
+          {kept.text}
+        </span>
+      )}
+    </span>
+  );
+}
 
 function CancelledLine({
   id,

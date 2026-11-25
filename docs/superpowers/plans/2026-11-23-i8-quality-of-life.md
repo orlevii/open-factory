@@ -37,6 +37,7 @@
 17. **Task 4.4.** The worktree line is `claude-md.ts:248`.
 18. **Task 4.2, verified.** `git worktree add` through the agent's `./projects/<name>` symlink records the physical path (git 2.50.1), and Docker mounts keep host paths, so matching against `realpath(repo)` holds (spec §12).
 19. **Test file paths fixed:** `inbox-pane.test.tsx` exists in both `apps/web/src/test/` and `features/inbox/`; `inbox-route.test.tsx` and `inbox-row.test.tsx` are new files.
+20. **Plan review (2026-11-25), applied:** after-commit work is explicit (`LoopGuard.afterCommit(results)` at every call site, `Router.handOffResumed` for Resume, manager notices adopted without a wake through a new public `AgentRuntimes.adoptNotice`); `ProjectResult` is a shared schema from Task 4.2; the notifier is a module singleton reset from the sidebar's sign-out; both credential success paths invalidate `["setup"]`; Task 3.2 adds the settings fields it reads; `loopHold` statuses come from `terminated_at`/`archived_at`; `SpawnCleanup.run` is idempotent across reaper retries; tests that asserted CSS, call counts or snapshots were rewritten per AGENTS.md.
 
 ## Global Constraints
 
@@ -129,7 +130,7 @@ Before each push, merge the base again (never rebase). PR 1 and PR 2 target `i7/
 | 10 390px full width | 3.10 | `inbox-route.test.tsx`, evidence `i8_c21` at 390 |
 | 11 resets, comments count | 3.2, 3.4 | `loop-guard.db.test.ts` |
 | 12 settings | 3.8 | `settings.test.ts`, `settings-factory.test.tsx` |
-| 13 CLAUDE.md worktree line | 4.4 | `claude-md.test.ts` snapshot |
+| 13 CLAUDE.md worktree line | 4.4 | `claude-md.test.ts` |
 | 14 cleanup, branches, notice | 4.2, 4.3, 4.5 | `cleanup.test.ts` (real git), `reaper.test.ts` |
 | 15 hardening | 4.1, 4.2 | `git.test.ts`, `cleanup.hardening.test.ts` (real git) |
 
@@ -180,7 +181,7 @@ return { hasCredential: r.c, hasTemplate: r.t, hasAgent: r.a };
 
 - [ ] **Step 1: Failing tests:** `createAgentBodySchema.parse({...valid, manageOrg: true}).manageOrg === true`, and `manageOrg: "yes"` refused (this **replaces** "create body strips manageOrg instead of accepting it", `agents.test.ts:89`; delete it, no compat); `POST /api/agents` with `manageOrg: true` from a human creates the agent with `manageOrg` true (summary and row); `AgentService.create({...,manageOrg:true}, agentActor)` → `OrgRefusedError("Only a human can grant manage_org.")` (I7's sentence verbatim) and no row, no workspace. `create_agent` refusing it is already tested (`org-tools.test.ts:17`).
 - [ ] **Step 2: Run** the shared test — FAIL.
-- [ ] **Step 3: Implement.** In `create`, before the lock: `if (b.manageOrg && actor.kind === "agent") throw new OrgRefusedError("Only a human can grant manage_org.")` (the same test `update` uses at `agent-service.ts:683`); in `createLocked`'s insert, `manageOrg: b.manageOrg ?? false`.
+- [ ] **Step 3: Implement.** In `create`, before the lock: `if (b.manageOrg !== undefined && actor.kind === "agent") throw new OrgRefusedError("Only a human can grant manage_org.")` (the same test `update` uses at `agent-service.ts:683`); in `createLocked`'s insert, `manageOrg: b.manageOrg ?? false`.
 - [ ] **Step 4: Run** shared test PASS; typecheck.
 - [ ] **Step 5: Commit** `feat(server): humans can grant manage_org when creating an agent`.
 
@@ -192,13 +193,13 @@ Revalidated: no sheet-store change. Step 1 of the block opens Add credential wit
 
 **Files:**
 - Create: `apps/web/src/features/setup/api.ts`
-- Modify: `features/settings/forms/add-credential-form.tsx` (where it reports success, before `onDone`: `invalidateQueries({ queryKey: ["setup"] })`, so Settings, the sheet and New agent's inline setup all count), `features/templates/new-template-form.tsx` (after `createTemplate` succeeds), `features/agents/new-agent-sheet.tsx` (`create`, next to `invalidateQueries({ queryKey: ["agents"] })`: `qc.setQueryData(["setup"], (d) => d && { ...d, hasAgent: true })`), `routes/_app.tsx` (the `org_action` branch of `onMessage` invalidates `["setup"]`)
+- Modify: `features/settings/forms/add-credential-form.tsx` (it succeeds on two paths, `paste()` (L113) and sign-in (`useSignIn({ …, onDone })`, L98, fired from `use-sign-in.ts`); wrap once, `const done = (c) => { void qc.invalidateQueries({ queryKey: ["setup"] }); onDone(c) }`, and pass `done` to both, so Settings, the sheet and New agent's inline setup all count), `features/templates/new-template-form.tsx` (after `createTemplate` succeeds), `features/agents/new-agent-sheet.tsx` (`create`, next to `invalidateQueries({ queryKey: ["agents"] })`: `qc.setQueryData(["setup"], (d) => d && { ...d, hasAgent: true })`), `routes/_app.tsx` (the `org_action` branch of `onMessage` invalidates `["setup"]`)
 - Test: `apps/web/src/features/setup/api.test.ts`, the existing `add-credential-form.test.tsx` and `new-agent-sheet.test.tsx`
 
 **Interfaces:**
 - Produces: `setupQueryOptions = queryOptions({ queryKey: ["setup"], queryFn: () => api.get("/api/setup", setupStatusSchema), staleTime: (q) => (q.state.data?.hasAgent ? Infinity : 30_000), refetchOnWindowFocus: true })` (once an agent exists the answer never changes back, Q11); `useSetup()`.
 
-- [ ] **Step 1: Failing tests:** creating a credential (through the form), a template or an agent leaves `["setup"]` stale and a mounted reader refetches; creating an agent flips a cached `hasAgent` to true without a request; an `org_action` frame refetches a mounted `["setup"]`; `openSheetForResult({kind:"add-credential"})` with no sheet open renders Add credential and, on submit, closes and returns focus to the opener (a test in `sheet-host.test.tsx` if none covers the self-serving layer yet).
+- [ ] **Step 1: Failing tests:** creating a credential through the form's paste path and through its sign-in path, a template or an agent leaves `["setup"]` stale and a mounted reader refetches; creating an agent flips a cached `hasAgent` to true without a request; an `org_action` frame refetches a mounted `["setup"]`; `openSheetForResult({kind:"add-credential"})` with no sheet open renders Add credential and, on submit, closes and returns focus to the opener (a test in `sheet-host.test.tsx` if none covers the self-serving layer yet).
 - [ ] **Step 2: Run** the touched test files — FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** PASS.
@@ -211,10 +212,10 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it. **I
 **Files:**
 - Create: `apps/web/src/features/setup/setup-steps.tsx`, `apps/web/src/features/setup/use-setup-visible.ts`
 - Modify: `apps/web/src/routes/_app/inbox.tsx` (loader fetches both in parallel: `await Promise.all([context.queryClient.ensureInfiniteQueryData(inboxQueryOptions).catch(noop), context.queryClient.ensureQueryData(setupQueryOptions).catch(noop)])`), `apps/web/src/features/inbox/inbox-list.tsx` (L233, `if (rows.length === 0) return <EmptyState text="Nothing in your inbox." />`: the empty line is held while setup is pending; below 1024 the block renders at the top of the list and the empty line is omitted while `hasAgent` is false), `apps/web/src/features/inbox/inbox-pane.tsx` (`InboxPane`, L596: with nothing selected and `hasAgent` false, the pane renders `<SetupSteps/>` max-w-[40rem] instead of "No item selected.")
-- Test: `apps/web/src/features/setup/setup-steps.test.tsx`, `apps/web/src/test/inbox-setup.test.tsx` (new), update the "No item selected." cases in `apps/web/src/test/inbox-pane.test.tsx` and `apps/web/src/features/inbox/inbox-pane.test.tsx`, and `inbox-list.test.tsx`'s empty case
+- Test: `apps/web/src/features/setup/setup-steps.test.tsx`, `apps/web/src/test/inbox-setup.test.tsx` (new), update the "No item selected." cases in `apps/web/src/test/inbox-pane.test.tsx` (L102, L117) and the `/inbox` empty case in `apps/web/src/test/empty-states.test.tsx` (L14) to answer `GET /api/setup`
 
 **Interfaces:**
-- Consumes: `useSetup()`, `openSheet` from the sheet store.
+- Consumes: `useSetup()`, `openSheet` and `openSheetForResult` from the sheet store.
 - Produces: `<SetupSteps status={SetupStatus} />`; `useSetupVisible(hasAgent: boolean | undefined): { shown: boolean; listProps: { onPointerEnter; onPointerLeave; onFocusCapture; onBlurCapture }; blockProps: { onFocusCapture; onBlurCapture } }` (`features/setup/use-setup-visible.ts`), called **once** in `InboxPage` and passed to `InboxList` and `InboxPane`.
 
 `useSetupVisible` (spec §4.2, React review M2, option A): pointer-in-list and focus-in-list are **refs**; the only state is `held: boolean`. `shown` is adjusted **during render** (the `useRested` pattern): when `hasAgent` becomes true and neither the pointer is over the list column nor focus is inside the list column, `shown` turns false in the same render; otherwise `held` is set and the pointer-leave / blur handlers clear it. Focus inside the block itself does **not** hold it. A `focusInside` ref is set by the block's focus handlers; a `useLayoutEffect` keyed on `shown` moves focus to the first Inbox row, or to the page `h1` when the Inbox is empty, when `shown` went false with `focusInside` set. No effect mirrors the query into state.
@@ -225,15 +226,14 @@ Spec §4.2–4.3 copy and layout verbatim:
 - Steps: 1 "Sign in to Claude" / "Connect the Claude account your agents run on." → `openSheetForResult({kind:"add-credential"}, () => {})`, done = `hasCredential`; 2 "Create a template" / "A template is a role: persona, skills, tools and model." → `openSheet({kind:"new-template", then:"open-editor"})`, done = `hasTemplate`; 3 "Create an agent" / "It runs a template in its own session. Give it \"Can manage the org\" to have it build the rest." → `openSheet({kind:"new-agent"})`, never done.
 
 - [ ] **Step 1: Failing tests:**
-  - block: three rows in order with exact copy; done rows show the check and stay enabled; each click opens its sheet kind; accessible names; no `truncate` class on descriptions.
+  - block: three rows in order with exact copy; done rows show the check and stay enabled; each click opens its sheet kind; accessible names.
   - inbox (wide, `matchMedia` mocked ≥1024): with `hasAgent` false and nothing selected the pane shows the block and the list shows "Nothing in your inbox."; selecting an item shows the item; clearing returns the block.
   - inbox (narrow): the block is at the top of the list; with no items there is no "Nothing in your inbox."; with an item it follows below.
   - first paint: render with the inbox query resolved and setup pending → neither the empty line nor the block; then setup resolves → block (assert "Nothing in your inbox." never appeared: spy on the text across renders).
   - leaving, through the real paths (an `org_action` frame invalidating `["setup"]`, and a window-focus refetch, with the API mock flipping `hasAgent`): the block unmounts in that render when the pointer is outside the list column; with the pointer over the list column (or focus inside the list column) it stays until pointer leave / blur; focus on a step row does **not** hold it, and when it unmounts with focus inside, focus lands on the first inbox row (or the `h1` when empty) in a layout effect (no frame with focus on `body`).
-  - no horizontal overflow class combos (`min-w-0` on text column).
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/setup apps/web/src/test/inbox-setup.test.tsx` — FAIL.
 - [ ] **Step 3: Implement.** `InboxPage` calls `useSetupVisible(hasAgent)` once and passes `shown` down. `InboxPage`, `InboxList` and `InboxPane` read only `useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent })` (rerender-derived-state, m2); only `SetupSteps` reads the whole status.
-  - The three step specs are **module constants** (rendering-hoist-jsx, m3), each with its sheet spec and a module-level intent, as `features/agents/agent-menu.tsx:24` does (`sheetIntent` from `features/sheets/sheet-bodies.ts:172`):
+  - The three step specs are **module constants** (rendering-hoist-jsx, m3), each with its sheet spec and a module-level intent, as `features/agents/agent-menu.tsx:34` does (`sheetIntent` from `features/sheets/sheet-bodies.ts:211`):
 
 ```ts
 const noop = () => {};
@@ -330,7 +330,7 @@ Rules (spec §5.1): chat → title display name (as the chat row shows it), body
 
 Formatters are created once at module level (js-cache-function-results, m5): `const PLURAL = new Intl.PluralRules("en")`, `const NUM = new Intl.NumberFormat()`, `const DAY = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" })`; never per call.
 
-- [ ] **Step 1: Failing tests:** each source's title, body and open target; a 60-char handle is middle-truncated to 40 and a display name end-truncated; plurals at 1 and 2; **no test fixture's message preview or body text appears in any title or body** (assert with fixtures whose preview is a unique marker string); `task_event`, `factory_restarted`, `crash_recovered`, `plugin_not_loaded`, `worktrees_kept` produce nothing; tags change after the first unread changes.
+- [ ] **Step 1: Failing tests:** each source's title, body and open target; a 60-char handle is middle-truncated to 40 and a display name end-truncated; plurals at 1 and 2; **no test fixture's message preview or body text appears in any title or body** (assert with fixtures whose preview is a unique marker string); `task_event`, `factory_restarted`, `plugin_not_loaded`, `worktrees_kept` produce nothing; tags change after the first unread changes.
 - [ ] **Step 2: Run** `pnpm vitest run apps/web/src/features/inbox/notification-copy.test.ts` — FAIL. **Step 3: Implement.** **Step 4: Run** PASS.
 - [ ] **Step 5: Commit** `feat(web): notification copy and bursts without message text`.
 
@@ -347,7 +347,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it. **I
 
 **Interfaces:**
 - Produces: `class Notifier { constructor(onOpen: (b: Burst) => void); baseline(bs: Burst[]): void; update(bs: Burst[], visible: boolean): void; closeAll(): void; reset(): void }` (holds `seen: Set<string>` of newest ids and `shown: Map<key, { tag; n: Notification }>`).
-- Lifecycle (React review M3, option A): one instance per `AppLayout` (`routes/_app.tsx`): `const [notifier] = useState(() => new Notifier((b) => onOpenRef.current(b)))`, with `onOpenRef.current` updated in an effect (not during render). `reset()` closes every shown notification and clears `seen`/`shown`; it is called on sign-out next to `resetSheets()`. Delete the render-time `notifyRef.current = notify` write in `_app.tsx` (L76-77); the WS handler calls `notifier`-driving `useInboxNotifier`'s stable callback. Tests create a fresh instance each.
+- Lifecycle (revalidated: sign-out runs `resetSheets()` in `components/app-sidebar.tsx:126`, outside `AppLayout`, so a `useState` instance can't be reached there): **one module-level instance** in `notifications.ts`, `const notifier = new Notifier()`, with `setNotifierOpen(fn)` registered by `useInboxNotifier` in an effect (cleanup unregisters) and `resetNotifier()` exported and called in the sidebar's `signOut` next to `resetSheets()`. `reset()` closes every shown notification and clears `seen`/`shown`. Tests construct their own `new Notifier(onOpen)`. Delete the render-time `notifyRef.current = notify` write in `_app.tsx` (L76-77); the WS handler calls `notifier`-driving `useInboxNotifier`'s stable callback. Tests create a fresh instance each.
 - Data (React review M4): the notifier reads `GET /api/inbox?unread=true&notify=true`, which returns every chat plus every unread `mention`, `agent_errored`, `credential` and `loop_held` item (newest first, capped at 200), so a key never looks read because its items fell off the first page. The callback: cheap `isOn()` guard before fetching; read `document.visibilityState` **after** the await; only the latest fetch is applied (a sequence number), and a frame arriving mid-fetch schedules exactly one trailing fetch.
 
 `update` per spec §5.2:
@@ -367,7 +367,6 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it. **I
   - task_event and other facts → nothing;
   - baseline: unread at load never notifies;
   - a constructor that throws → `supported` false and a mounted sidebar re-renders without the switch (through `useSyncExternalStore`), no unhandled rejection;
-  - `toggle` keeps its identity across renders;
   - click: `window.focus` called, navigates to each source's target, mention/error/credential items marked read (`postRead` called), chats not marked by the click.
 - [ ] **Step 2: Run** — FAIL. **Step 3: Implement.** **Step 4: Run** PASS.
 - [ ] **Step 5: Commit** `feat(web): one notification per burst, replaced silently, closed when read`.
@@ -376,7 +375,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it. **I
 
 - [ ] **Step 1: Product docs** (main checkout): `behavior/inbox.md` — which items notify, no text (replace "a 120-character preview"), bursts, the click marks items read (keep that sentence). List in the PR body.
 - [ ] **Step 2: Evidence** (harness `run.sh` and its lock, fake Claude): `i8-evidence/checks/i8_c10_notifications.py` — grant notification permission in the Playwright context, stub `Notification` to record (headless can't show OS notifications) while the page is hidden (`page.evaluate` overriding `visibilityState` + dispatching `visibilitychange`), have the fake agent reply three times via `ctl.py`, assert one tag and the final body "3 new messages", invoke the recorded `onclick` and assert the URL is the Chat at the first unread message. Chromium only (WebKit lacks the permission API in headless).
-- [ ] **Step 3: Whole-PR review** as in Task 1.7 Step 1, against spec §5 and AC 5–7, plus: no message text reaches `Notification` (grep the diff for `preview` in notification code), I1/I3 notifier lines superseded, **the React diff against `vercel-react-best-practices`** (module-level notifier, no state set in the WS handler, effects only for external sync with cleanup).
+- [ ] **Step 3: Whole-PR review** as in Task 1.7 Step 1, against spec §5 and AC 5–7, plus: no message text reaches `Notification` (grep the diff for `preview` in notification code), I1/I3 notifier lines superseded, **the React diff against `vercel-react-best-practices`** (the module-level notifier and `resetNotifier()` on sign-out, no state set in the WS handler, effects only for external sync with cleanup).
 - [ ] **Step 4: Full verification** as in Task 1.7 Step 2.
 - [ ] **Step 5: Push and PR** (base `i7/3-restart`; ready once green), title `feat(web): desktop notifications only when you're needed, without message text`; body as in Task 1.7 Step 3, stating plainly that the evidence stubs `Notification` and no real OS notification was checked. CI until green. Never merge.
 
@@ -391,7 +390,7 @@ Implements spec §6, AC 8–12. `git checkout -b i8/3-loop-guard i8/2-notificati
 **Implementer:** Haiku.
 
 **Files:**
-- Modify: `packages/db/src/schema/agents.ts` (`messages.loopHoldId: text("loop_hold_id").references(() => loopHolds.id)`; new `loopHolds` table; partial index `session_events_operator_input_idx` on `(agent_id, at) where type = 'operator_input'`), `packages/db/src/schema/factory.ts` (`loopGuardMessages integer not null default 10`, `loopGuardWindowMinutes integer not null default 10`)
+- Modify: `packages/db/src/schema/agents.ts` (`messages.loopHoldId: text("loop_hold_id").references((): AnyPgColumn => loopHolds.id)`, a forward reference as the file's other ones; new `loopHolds` table; partial index `session_events_operator_input_idx` on `(agent_id, at) where type = 'operator_input'`), `packages/db/src/schema/factory.ts` (`loopGuardMessages integer not null default 10`, `loopGuardWindowMinutes integer not null default 10`)
 - Create: the migration via `pnpm db:generate` (0024 on this base), then hand edits in the same file (the existing hand-written CHECK is 0011's, the index 0009's):
 
 ```sql
@@ -432,7 +431,7 @@ export const loopHolds = pgTable("loop_holds", {
 - Test: `apps/server/src/messaging/loop-guard.db.test.ts` (DB) and `loop-guard.test.ts` (pure helpers)
 
 **Interfaces:**
-- Consumes: `FactorySettings.loopGuardMessages()`, `.loopGuardWindowMs()` (Task 3.8 adds them; add the getters here first, defaulting from the row), `EventStore.clock()`.
+- Consumes: `FactorySettings.loopGuardMessages()`, `.loopGuardWindowMs()`, `EventStore.clock()`. This task adds the two values end to end on the server side first (the `factorySettingsSchema` fields with their bounds in `packages/shared/src/settings.ts`, `FACTORY_BOUNDS`, the `FactorySettings` values and getters beside `memberUpdateDebounceMs`); Task 3.8 then adds the PATCH route handling and the web fields.
 - Produces:
 
 ```ts
@@ -441,13 +440,20 @@ export const pairOf = (x: string, y: string): PairKey => (x < y ? { a: x, b: y }
 export type GuardResult =
   | { held: false }
   | { held: true; holdId: string; opened: false }
-  | { held: true; holdId: string; opened: true; counts: { ab: number; ba: number; minutes: number } };
+  | { held: true; holdId: string; opened: true; counts: { ab: number; ba: number; minutes: number };
+      managerRows: PendingRow[] };   // Task 3.5 fills it; [] until then
 export class LoopGuard {
-  constructor(d: { settings: FactorySettings; clock: () => Date; newId: () => string });
+  constructor(d: { settings: FactorySettings; store: EventStore; bus: EventBus; runtimes: Pick<AgentRuntimes, "adoptNotice">;
+                   log: RuntimeLog; clock: () => Date; newId: () => string });
   lockPairs(tx: Tx, pairs: PairKey[]): Promise<void>;
   check(tx: Tx, from: string, to: string): Promise<GuardResult>;
+  /** After the caller's commit, for every result of its transaction: when any opened a hold, publishAll inbox_changed
+   *  and hand the managers' notices over (Task 3.5). Never throws (logs). */
+  afterCommit(results: GuardResult[]): void;
 }
 ```
+
+**Every call site** (Router.send, TaskService's comment transaction, Scheduler.fireOnce) collects the `GuardResult`s of its transaction and calls `loopGuard.afterCommit(results)` only after the commit. Under `withDeadlockRetry` the list is per attempt (reset at the start of the transaction callback). `fireOnce`'s `Outcome` gains `guard?: GuardResult` so `fire()` can call `afterCommit` after the transaction resolves.
 
 `lockPairs`: compute keys in SQL to lock what Postgres hashes, sorted numerically:
 
@@ -497,7 +503,7 @@ Add 1 for the new row in its direction. If both `> N`: insert the hold (`opened_
   - a resumed hold's `resumed_at` is a window start; a reset after the hold opened doesn't release it;
   - task_comment and agent-authored scheduled rows count; human-authored scheduled rows don't;
   - window: rows older than `window` don't count;
-  - **concurrency:** two connections each running `lockPairs([{A,B},{A,C}])` / `lockPairs([{A,C},{A,B}])` and inserting → both commit, no deadlock (Postgres `40P01` never seen); two racing sends at the threshold → exactly one opens the hold, the other sees it open.
+  - **concurrency:** two connections each running `lockPairs([{A,B},{A,C}])` / `lockPairs([{A,C},{A,B}])` and inserting → both commit, no deadlock (Postgres `40P01` never seen); two racing sends at the threshold → exactly one opens the hold, the other sees it open (no production test hook: the test holds the pair's advisory lock from a second connection to line the two up).
   - unit: `pairOf` orders; the minutes rounding is ≥ 1.
 - [ ] **Step 2–4:** implement; measure `explain analyze` of the window and count statements on the U4 `worst` dataset (214 agents) and paste the plans in the PR body; add an index only if a sequential scan on `messages` shows up for the scheduled branch.
 - [ ] **Step 5: Commit** `feat(server): the loop guard derives pair counts under sorted advisory locks`.
@@ -507,7 +513,7 @@ Add 1 for the new row in its direction. If both `> N`: insert the hold (`opened_
 **Implementer:** Sonnet.
 
 **Files:**
-- Modify: `apps/server/src/messaging/router.ts` (`send`: for an agent sender, collect agent recipients, `loopGuard.lockPairs` once at the start of the `store.transaction` that inserts, `check` per agent recipient before its `createMessage`; a held row is inserted with `state: "loop_held"`, `loopHoldId` and is not handed over (it skips the `agentRows` hand-off); `RecipientResult` gains `{ to; kind: "agent"; status: "held"; id; note }`; `repeated()` maps a `loop_held` row to `held` with the later-row note), `apps/server/src/agents/event-store.ts` (`createMessage` accepts `state?: "pending" | "loop_held"` and `loopHoldId?`), `packages/shared/src/messaging.ts` (`messageLookupSchema.state` gains `"loop_held"`), `apps/server/src/mcp/tools/send-message.ts` (result type), `apps/server/src/app.ts` (construct `LoopGuard` before the Router, L327; inject into Router, TaskService, Scheduler). The spawn brief (`spawn-service.ts:309`) is not checked (spec §6.3).
+- Modify: `apps/server/src/messaging/router.ts` (`send`: for an agent sender, collect agent recipients, `loopGuard.lockPairs` once at the start of the `store.transaction` that inserts, `check` per agent recipient before its `createMessage`; a held row is inserted with `state: "loop_held"`, `loopHoldId` and is not handed over (it skips the `agentRows` hand-off); `RecipientResult` gains `{ to; kind: "agent"; status: "held"; id; note }` (the note from `check`: tripping when `opened`, later-row otherwise; `repeated()` needs no change, it only serves a human's `clientMessageId` repeat and humans are never checked); after the commit, `loopGuard.afterCommit(results)`), `apps/server/src/agents/event-store.ts` (`createMessage` accepts `state?: "pending" | "loop_held"` and `loopHoldId?`; the server `MessageLookup.state` union, L88, gains `"loop_held"`), `packages/shared/src/messaging.ts` (`messageLookupSchema.state` gains `"loop_held"`), `apps/server/src/mcp/tools/send-message.ts` (result type), `apps/server/src/app.ts` (construct `LoopGuard` before the Router, L327; inject into Router, TaskService, Scheduler). The spawn brief (`spawn-service.ts:309`) is not checked (spec §6.3).
 - Test: `apps/server/src/messaging/router.test.ts` (DB)
 
 - [ ] **Step 1: Failing tests:** after the threshold, `send(A, ["@b","@orlevi"])` returns `@b` `status: "held"` with the tripping note verbatim and `@orlevi` `status: "inbox"`; the held row is not in B's queue (`runtimes.deliver` not called for it); a later send in either direction gets the later-row note verbatim; a human sender is never checked; a list send to B and C where only A↔B is held holds only B.
@@ -538,7 +544,7 @@ Add 1 for the new row in its direction. If both `> N`: insert the hold (`opened_
 Notices (spec §6.4 copy verbatim; `@a` = sender of the tripping row):
 - humans: `createHumanMessage({ kind: "system", fromAgentId: null, notice: "loop_held", subjectAgentId: A, loopHoldId, to: "all", body: "@a and @b exchanged 22 messages in 3 minutes; further messages between them are held.", urgent: false }, tx)`;
 - managers: for `new Set([A.reportsTo, B.reportsTo])` minus null, minus A and B, minus archived/terminated: `store.insertNotice({ toAgentId: manager, notice: "loop_held", subjectAgentId: A, body }, tx)`, a new row each time (not `createNotice`: it isn't transaction-aware and would overwrite a pending `loop_held` notice about A from another hold), no `loopHoldId`, body "@a and @b exchanged 22 messages in 3 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox.";
-- after commit: `bus.publishAll({ type: "inbox_changed" })`; the manager rows handed over with `router.handOffHeldRows`-style hand-off (look up as `PendingRow`, deliver as other `@factory` notices are).
+- `onOpened` returns the manager rows; `check` puts them in `managerRows`. In `afterCommit`: `bus.publishAll({ type: "inbox_changed" })`, and for each manager row `runtimes.adoptNotice(row.toAgentId, row.id)`, a new public `AgentRuntimes` method wrapping the runtime's existing `adoptNotice` as `recordConfigNotice` does (`runtimes.ts:451`; a manager with no loaded runtime reads the row from its queue at its next load). **No wake:** the manager learns at its next turn; it can't resume, a human must (spec §6.4). Not `handOffHeldRows`: `receiveHeld` throws for non-held kinds (`agent-runtime.ts`, `HELD_KINDS`).
 
 - [ ] **Step 1: Failing tests:** opening a hold writes exactly one human notice with `loop_hold_id` and one inbox item per user; a manager who is B gets nothing; a shared manager gets one; an archived manager gets nothing; two holds involving A in a row give A's manager two notices; terminating B rejects its `loop_held` rows; archiving B leaves them `loop_held`; `rejectPendingToTerminated` at boot rejects `loop_held` rows to terminated agents; boot's wake rebuild ignores `loop_held` rows.
 - [ ] **Step 2–4:** implement. **Step 5: Commit** `feat(server): loop hold notices; held rows follow termination`.
@@ -549,9 +555,9 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it (the
 
 **Files:**
 - Modify: `apps/server/src/workspace/claude-md.ts` (the `## Messaging` section, L153: spec §6.5 sentence verbatim), `apps/web/src/features/session/outgoing-message.tsx` (status `held` renders like pending: muted line "Held by the loop guard: @b", handle in mono; checked **before** the `if (r.note)` branch at ~L233, since a held result carries a note written for the agent)
-- Test: `apps/server/src/workspace/claude-md.test.ts` (snapshot), `outgoing-message.test.tsx`
+- Test: `apps/server/src/workspace/claude-md.test.ts` (its section `toContain` style; it has no snapshots), `outgoing-message.test.tsx`
 
-- [ ] **Step 1–4:** failing snapshot and card test; implement; pass. **Step 5: Commit** `feat: agents learn what held means; the outgoing card shows it`.
+- [ ] **Step 1–4:** failing CLAUDE.md and card tests; implement; pass. **Step 5: Commit** `feat: agents learn what held means; the outgoing card shows it`.
 
 ### Task 3.7: Resume
 
@@ -559,7 +565,7 @@ Implementer and reviewer invoke `vercel-react-best-practices` and follow it (the
 
 **Files:**
 - Create: `apps/server/src/routes/loop-holds.ts`, `apps/server/src/messaging/loop-resume.ts`
-- Modify: `apps/server/src/app.ts`, `apps/server/src/agents/event-store.ts` (inbox `toEntries`: for `notice = 'loop_held'` rows with `loop_hold_id`, join `loop_holds`, both agents' slug and live status, `waiting` = count of `loop_held` rows with that id, `sentOn` = count of rows with that id whose state is neither `loop_held` nor `rejected`, `resumedBy` = `'@' || users.handle`), `packages/shared/src/messaging.ts` (`loopHold` per spec §6.4; `resumeLoopHoldResponseSchema = z.object({ sentOn: z.number().int() })`, 409 body `{ resumedBy: string, resumedAt: string }`)
+- Modify: `apps/server/src/messaging/router.ts` (new public `handOffResumed(rows: PendingRow[])`, modelled on `handOffTaskRows` (L711): after `booted`, unless closed, in order, `runtimes.deliver(row, "agent", reason)` with reason `"agent_message"` for `message`, `"task_message"` for `task_comment`, `"scheduled"` for `scheduled`; a failure is logged and the row stays pending. `handOver` and `Scheduler.handOff` are private and `handOffHeldRows` only takes held kinds, so none of them fits), `apps/server/src/app.ts`, `apps/server/src/agents/event-store.ts` (inbox `toEntries`: for `notice = 'loop_held'` rows with `loop_hold_id`, join `loop_holds`, both agents' slug and live status, `waiting` = count of `loop_held` rows with that id, `sentOn` = count of rows with that id whose state is neither `loop_held` nor `rejected`, `resumedBy` = `'@' || users.handle`; each agent's `status` is `"terminated"` when `terminated_at` is set, `"archived"` when `archived_at` is, else `"live"`: `EventStore` has no runtimes, and the pane only needs ended-or-not), `packages/shared/src/messaging.ts` (`loopHold` per spec §6.4; `resumeLoopHoldResponseSchema = z.object({ sentOn: z.number().int() })`, 409 body `{ resumedBy: string, resumedAt: string }`)
 - Test: `apps/server/src/routes/loop-holds.db.test.ts` (DB)
 
 ```ts
@@ -572,11 +578,10 @@ await tx.update(loopHolds).set({ resumedAt: clock(), resumedBy: userId }).where(
 const rows = await tx.update(messages).set({ state: "pending" })
   .where(and(eq(messages.loopHoldId, id), eq(messages.state, "loop_held")))
   .returning(/* PendingRow columns */);
-// after commit: rows sorted by createdAt → hand-off through the Router (send's agent path, or handOffHeldRows /
-// handOffTaskRows for comment rows; scheduled rows as Scheduler.handOff does); publishAll inbox_changed
+// after commit: router.handOffResumed(rows sorted by createdAt); publishAll inbox_changed
 ```
 
-- [ ] **Step 1: Failing tests:** the inbox entry's `loopHold.sentOn` = count of rows with that `loop_hold_id` whose state is neither `loop_held` nor `rejected` (0 before Resume, n after, unchanged by a remount); Resume flips every held row to pending, hands them off in `created_at` order, returns `{ sentOn: n }`, sets `resumed_at`/`resumed_by`; a second Resume → 409 with `resumedBy: "@or"`; unknown id → 404; no session → 401; the window restarts at `resumed_at` (N more each way before a new hold); **race:** a send paused (test hook) between `check` (saw the hold open) and its insert while Resume runs → Resume waits on the pair lock, the send commits its held row, Resume then flips it too (no `loop_held` row left on a closed hold); a hold whose rows were all rejected resumes with `sentOn: 0`; the inbox entry's `loopHold` has `waiting`, `sentOn`, both statuses and `resumedBy`.
+- [ ] **Step 1: Failing tests:** the inbox entry's `loopHold.sentOn` = count of rows with that `loop_hold_id` whose state is neither `loop_held` nor `rejected` (0 before Resume, n after, unchanged by a remount); Resume flips every held row to pending, hands them off in `created_at` order, returns `{ sentOn: n }`, sets `resumed_at`/`resumed_by`; a second Resume → 409 with `resumedBy: "@or"`; unknown id → 404; no session → 401; the window restarts at `resumed_at` (N more each way before a new hold); **race:** a send that has passed `check` (saw the hold open) but not committed while Resume runs (the test runs the send's transaction by hand on a second connection: `lockPairs`, `check`, pause, insert, commit; no production hook) → Resume waits on the pair lock, the send commits its held row, Resume then flips it too (no `loop_held` row left on a closed hold); a hold whose rows were all rejected resumes with `sentOn: 0`; the inbox entry's `loopHold` has `waiting`, `sentOn`, both statuses and `resumedBy`.
 - [ ] **Step 2–4:** implement. **Step 5: Commit** `feat(server): humans resume a held pair`.
 
 ### Task 3.8: The two settings
@@ -584,7 +589,7 @@ const rows = await tx.update(messages).set({ state: "pending" })
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it. **Implementer:** Haiku.
 
 **Files:**
-- Modify: `packages/shared/src/settings.ts` (`FACTORY_BOUNDS.loopGuardMessages: [2, 1000]`, `loopGuardWindowMinutes: [1, 1440]`; both in `factorySettingsSchema` and `patchFactorySettingsSchema`), `apps/server/src/settings/factory-settings.ts` (values, getters `loopGuardMessages()`, `loopGuardWindowMs()` beside `memberUpdateDebounceMs`, L54), `apps/server/src/routes/settings.ts`, `apps/web/src/features/settings/factory-section.tsx` (labels in the `Field` map at L55; two `numberField`s after `memberUpdateDebounceSeconds` at L210; labels, suffixes and hints verbatim from spec §6.8)
+- Modify: `packages/shared/src/settings.ts` (`patchFactorySettingsSchema` gains both, `bounded(FACTORY_BOUNDS.…)`; the bounds and `factorySettingsSchema` fields came in Task 3.2), `apps/server/src/settings/factory-settings.ts` (the patch path writes them; the getters came in Task 3.2), `apps/server/src/routes/settings.ts`, `apps/web/src/features/settings/factory-section.tsx` (labels in the `Field` map at L55; two `numberField`s after `memberUpdateDebounceSeconds` at L210; labels, suffixes and hints verbatim from spec §6.8)
 - Test: `packages/shared/src/settings.test.ts`, `apps/server/src/routes/settings-routes.test.ts` (DB), `apps/web/src/test/settings-factory.test.tsx`
 
 - [ ] **Step 1: Failing tests:** bounds reject 1 and 1001 / 0 and 1441 with the shared sentence; PATCH updates and the guard reads the new value on the next check (no restart); the form shows "Loop guard limit" with suffix "messages" and its hint, "Loop guard window" with "min" and its hint.
@@ -605,7 +610,7 @@ React review M5: the result line renders from the **mutation's data** right afte
 
 Pane per spec §6.7 (copy verbatim): body text with handles in `font-mono` and `[overflow-wrap:anywhere]`; waiting line (`plural`: "1 message waiting" / "4 messages waiting" / "Nothing is waiting"); a terminated agent line "@b was terminated; its held messages were rejected."; the action slot at one fixed `min-h` holding either the primary button "Resume @a and @b" (wraps, `min-w` kept while pending with "Resuming…" and the spinner, `aria-disabled`) or the `role="status"` `tabIndex={-1}` line (focused after your own Resume via a ref in the mutation's `onSuccess`): "Resumed by you · {formatInboxTime} · {n} messages sent on" / "… · nothing was left to send"; another human's or a 409: "Resumed by @ana · {time}" (`title` = full timestamp); two ghost links "Open @a's session" / "Open @b's session" to `/agents/$slug/session`; a non-409 failure keeps the button and shows `FormOutcome` with `FORM_MSG.resumeFailed = "Couldn't resume. Try again."`. No toast. The notifier closes the hold's notification once `resumedAt` is set (Task 2.3 `resolved`).
 
-- [ ] **Step 1: Failing tests:** each line's copy at 0/1/4 waiting; terminated line; pending keeps width and is `aria-disabled`; success replaces the button with the status line and focuses it; 409 shows the other human; error line; header `OpenLink` absent; row label Held → Resumed after `inbox_changed`; navigating away mid-Resume and back shows the button until `inbox_changed`, then the resumed line from `loopHold.resumedAt` (m9); `formatInboxTime` used (a resumed time from yesterday shows its date).
+- [ ] **Step 1: Failing tests:** each line's copy at 0/1/4 waiting; terminated line; pending shows "Resuming…" and is `aria-disabled`; success replaces the button with the status line and focuses it; 409 shows the other human; error line; header `OpenLink` absent; row label Held → Resumed after `inbox_changed`; navigating away mid-Resume and back shows the button until `inbox_changed`, then the resumed line from `loopHold.resumedAt` (m9); `formatInboxTime` used (a resumed time from yesterday shows its date).
 - [ ] **Step 2–4:** implement. **Step 5: Commit** `feat(web): the loop hold pane with Resume`.
 
 ### Task 3.10: Full-width notice pane below 1024px
@@ -613,7 +618,7 @@ Pane per spec §6.7 (copy verbatim): body text with handles in `font-mono` and `
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it. **Implementer:** Sonnet.
 
 **Files:**
-- Modify: `apps/web/src/routes/_app/inbox.tsx` (React review M6: **delete** the effect in `InboxPage` that drops `?item=` below 1024 ("a `?item=` from a wider window is dropped"); narrow passes `itemId` to `useLoadedItem` too; below `WIDE` with an `itemId` the page renders `<NarrowItem id={itemId} />` instead of the list), `apps/web/src/features/inbox/api.ts` (move `usePaneItem(id, loaded)` here from `inbox-pane.tsx:139` and export it), `apps/web/src/features/inbox/inbox-row.tsx` (rows of `FULL_WIDTH_NOTICES` link to `/inbox?item=<id>` at every width)
+- Modify: `apps/web/src/routes/_app/inbox.tsx` (React review M6: **delete** the effect in `InboxPage` that drops `?item=` below 1024 ("a `?item=` from a wider window is dropped"); narrow passes `itemId` to `useLoadedItem` too; below `WIDE` with an `itemId` the page renders `<NarrowItem id={itemId} />` instead of the list), `apps/web/src/features/inbox/api.ts` (move `usePaneItem(id, loaded)` here from `inbox-pane.tsx:139` and export it), `apps/web/src/features/inbox/inbox-row.tsx` (rows of `FULL_WIDTH_NOTICES`, exported from `features/inbox/api.ts` so feature code doesn't import from a route, link to `/inbox?item=<id>` at every width)
 - Create: `apps/web/src/features/inbox/narrow-item.tsx`: `NarrowItem` resolves the item with `usePaneItem(id)`: a `chat:<slug>` id returns `<Navigate to="/agents/$slug/chat" params={{ slug }} replace />` with no fetch; while resolving, a static skeleton (never the list); an item whose `notice` is in `FULL_WIDTH_NOTICES` (`["loop_held"]` here; PR 4 adds `"worktrees_kept"`) renders `<InboxPane>` full-width with Back as `<Link to="/inbox" search={{}}>`; any other kind returns `<Navigate replace … />` to the item's own target (no navigate-in-effect).
 - Test: `apps/web/src/test/inbox-route.test.tsx` (new; `fake-match-media.ts` for the width)
 
@@ -719,13 +724,16 @@ export async function git(repo, args, { timeoutMs = 15_000 } = {}) {
 - Produces:
 
 ```ts
-export type ProjectResult = {
-  project: string;
-  removed: boolean;
-  deleted: string[];
-  kept: { branch: string; commits?: number; reason?: "elsewhere" }[];
-  error?: string;            // the spec's per-project sentence after "web: "
-};
+// packages/shared/src/events.ts (defined here in 4.2, so 4.3's event and 4.5's item can use it; cleanup-project.ts imports it)
+export const projectResultSchema = z.object({
+  project: z.string(),
+  removed: z.boolean(),
+  deleted: z.array(z.string()),
+  kept: z.array(z.object({ branch: z.string(), commits: z.number().int().optional(), reason: z.literal("elsewhere").optional() })),
+  error: z.string().optional(),            // the spec's per-project sentence after "web: "
+});
+export type ProjectResult = z.infer<typeof projectResultSchema>;
+// apps/server/src/spawning/cleanup-project.ts
 export async function cleanupProject(p: { name: string; hostPath: string }, slug: string): Promise<ProjectResult | null>; // null = nothing of ours there
 ```
 
@@ -742,7 +750,7 @@ Steps, exactly (spec §7.5; every refusal becomes `error` and stops that project
 `GitMissingError` propagates (the caller turns it into the one host-level line). Returns `null` when steps 2–4 found nothing of ours (no folder, no entries, no admin dirs).
 
 - [ ] **Step 1: Failing tests** (`cleanup-project.test.ts`, real git, a bare `origin` repo in the temp dir as the remote, no network):
-  - (hardening) `cleanupProject(p, "..")`, `"a/b"`, `".agents"` and `""` throw `invalid slug` before any filesystem or git call (a spy on `lstat` and `git` records none);
+  - (hardening) `cleanupProject(p, "..")`, `"a/b"`, `".agents"` and `""` throw `invalid slug`, and the temp repo's tree, refs and worktree metadata are unchanged afterwards;
   - our two worktrees `.worktrees/.agents/dev-ab12/feat/x` (unpushed commit) and `…/fix/y` (pushed: `git push origin fix/y`) → folder gone; both admin dirs gone; `fix/y` deleted; `feat/x` kept with `commits: 1`; `git worktree list` shows only the main checkout;
   - a merged branch (fast-forwarded into `main` locally, never pushed) → deleted;
   - a human worktree `.worktrees/feat-z` whose folder was moved away (prunable) keeps its admin dir (we never prune);
@@ -779,13 +787,13 @@ Steps, exactly (spec §7.5; every refusal becomes `error` and stops that project
 **Interfaces:**
 - Produces: `class SpawnCleanup { constructor(d: { db: Db; store: EventStore; bus: EventBus; router: Router; log: RuntimeLog; cleanupProject?: typeof cleanupProject }); run(agent: AgentRow): Promise<void> /* never rejects */ }`; `noticeBody(slug, results, hostLine?): string | null` (pure).
 
-`run`: `projects = select name, host_path from projects order by name`; for each, `try { r = await cleanupProject(p, agent.slug) } catch (e) { if (e instanceof GitMissingError) { hostLine = true; break } r = { project: p.name, removed: false, deleted: [], kept: [], error: "couldn't clean up: " + short(e) } }`; collect non-null results. If any: `store.append(agent.id, null, { type: "workspace_cleanup", projects })` (the agent is terminated and its journal is empty — the reaper skips agents with a journal — so the single-writer rule holds). `body = noticeBody(...)`; when non-null (something kept or failed, or the host line): one `createHumanMessage({ kind: "system", fromAgentId: null, notice: "worktrees_kept", subjectAgentId: agent.id, to: "all", body, urgent: false })` (its inbox link is the plain session link `toEntries` already builds for a `system` row: no `seq`, and the event is the agent's last), then `publishAll(inbox_changed)`; and when the manager (`reportsTo`) is live, `store.createNotice({ toAgentId: manager, notice: "worktrees_kept", subjectAgentId: agent.id, body })`, handed over as other `@factory` notices are. Everything in one outer `try/catch` that logs and returns: `run` never rejects, so `deleteWorkspace` always proceeds.
+`run`: if the agent already has a `workspace_cleanup` event, return (a retried sweep); `projects = select name, host_path from projects order by name`; for each, `try { r = await cleanupProject(p, agent.slug) } catch (e) { if (e instanceof GitMissingError) { hostLine = true; break } r = { project: p.name, removed: false, deleted: [], kept: [], error: "couldn't clean up: " + short(e) } }`; collect non-null results. If any: `store.append(agent.id, null, { type: "workspace_cleanup", projects })` (the agent is terminated and its journal is empty — the reaper skips agents with a journal — so the single-writer rule holds). `body = noticeBody(...)`; when non-null (something kept or failed, or the host line): one `createHumanMessage({ kind: "system", fromAgentId: null, notice: "worktrees_kept", subjectAgentId: agent.id, to: "all", body, urgent: false })` (its inbox link is the plain session link `toEntries` already builds for a `system` row: no `seq`, and the event is the agent's last), then `publishAll(inbox_changed)`; and when the manager (`reportsTo`) is live, `store.createNotice({ toAgentId: manager, notice: "worktrees_kept", subjectAgentId: agent.id, body })`, handed over as other `@factory` notices are. Everything in one outer `try/catch` that logs and returns: `run` never rejects, so `deleteWorkspace` always proceeds. `store.append` publishes no session frame: the agent is terminated, so an open Session shows the line on its next load (accepted).
 
 `noticeBody` (spec §7.6 copy verbatim): first line "Cleaned up @dev-ab12's worktrees." when any `removed`, else (or when any `error`) "Couldn't fully clean up @dev-ab12's worktrees."; then per project with kept or error: "web: kept `feat/x` (3 commits not pushed or merged), `feat/y` (checked out elsewhere)" / "web: couldn't clean up: not a git repository"; the host line "Couldn't clean up worktrees: git isn't installed on the factory host."; at most 20 entries then "and N more in @dev-ab12's session"; `null` when nothing was kept and nothing failed.
 
 - [ ] **Step 1: Failing tests:**
   - pure `noticeBody`: removed+kept, failures only, host line, the cap at 20 with "and N more…", plural "1 commit"/"3 commits", `null` for removals only;
-  - `cleanup.db.test.ts` (with a fake `cleanupProject`): kept → one human notice with `notice: "worktrees_kept"` whose item links to the agent's session, one manager message when the manager is live, none when it is terminated; removals only → event appended, no notice; a throwing `cleanupProject` → still resolves; `GitMissingError` → the host line; a failing `createHumanMessage` → logged, `run` resolves;
+  - `cleanup.db.test.ts` (with a fake `cleanupProject`): kept → one human notice with `notice: "worktrees_kept"` whose item links to the agent's session, one manager message when the manager is live, none when it is terminated; removals only → event appended, no notice; a throwing `cleanupProject` → still resolves; `GitMissingError` → the host line; a second `run` for the same agent (the reaper retries when the folder removal throws, `reaper.ts:162`) appends no second event and sends no second notice;
   - `reaper.test.ts`: `beforeRemove` runs before the folders are removed and only when unpinned; a pin set before the sweep skips both; `run` rejecting is impossible (assert deletion proceeds when the injected cleanup throws inside);
   - projects are scanned regardless of grants (a terminated agent has none: termination deletes `agent_project_grants`, `event-store.ts:221`);
   - slug uniqueness: spawning with `suffix` equal to a terminated agent's suffix is refused with "@<slug> is taken; pick another suffix or leave it out." (`spawn-service.ts:31`), in `spawn-service.test.ts` if not already covered there.
@@ -797,21 +805,21 @@ Steps, exactly (spec §7.5; every refusal becomes `error` and stops that project
 
 **Files:**
 - Modify: `apps/server/src/workspace/claude-md.ts` (L248, today "`<repo>/.worktrees/<slug>-<branch>`": the line from spec §7.1 with the agent's slug; spawned agents (`i.kind !== "persistent"`) get the second sentence too)
-- Test: `apps/server/src/workspace/claude-md.test.ts` (snapshots for a persistent and a spawned agent)
+- Test: `apps/server/src/workspace/claude-md.test.ts` (the line for a persistent and a spawned agent, in the file's `toContain` style)
 
-- [ ] **Step 1–4:** failing snapshots; implement; pass. **Step 5: Commit** `feat(server): agents put worktrees under .worktrees/.agents/<slug>`.
+- [ ] **Step 1–4:** failing tests; implement; pass. **Step 5: Commit** `feat(server): agents put worktrees under .worktrees/.agents/<slug>`.
 
 ### Task 4.5: Web: the cleanup line and notice pane
 
 Implementer and reviewer invoke `vercel-react-best-practices` and follow it. **Implementer:** Sonnet.
 
 **Files:**
-- Modify: `packages/shared/src/messaging.ts` + `apps/server/src/agents/event-store.ts` (React review m10: inbox items of `notice = 'worktrees_kept'` gain `cleanup?: ProjectResult[]`, built in `toEntries` from the subject agent's `workspace_cleanup` event (one read for the page's such items: `session_events where type = 'workspace_cleanup' and agent_id in (…)`); `ProjectResult` moves to `packages/shared/src/events.ts`), `apps/web/src/features/session/rows.ts` / `timeline-row.tsx` (a `workspace_cleanup` event renders as a muted factory line grouped by project, branch names `font-mono [overflow-wrap:anywhere]`, copy from spec §7.5), `apps/web/src/features/inbox/inbox-pane.tsx` (`notice === "worktrees_kept"` → `CleanupPane`; header `OpenLink` stays and opens the agent's session, whose last event is the cleanup), `apps/web/src/routes/_app/inbox.tsx` (`FULL_WIDTH_NOTICES` gains `"worktrees_kept"`)
+- Modify: `packages/shared/src/messaging.ts` + `apps/server/src/agents/event-store.ts` (React review m10: inbox items of `notice = 'worktrees_kept'` gain `cleanup?: ProjectResult[]`, built in `toEntries` from the subject agent's `workspace_cleanup` event (one read for the page's such items: `session_events where type = 'workspace_cleanup' and agent_id in (…)`); `ProjectResult` is already in `packages/shared/src/events.ts` from Task 4.2), `apps/web/src/features/session/rows.ts` / `timeline-row.tsx` (a `workspace_cleanup` event renders as a muted factory line grouped by project, branch names `font-mono [overflow-wrap:anywhere]`, copy from spec §7.5), `apps/web/src/features/inbox/inbox-pane.tsx` (`notice === "worktrees_kept"` → `CleanupPane`; header `OpenLink` stays and opens the agent's session, whose last event is the cleanup), `apps/web/src/routes/_app/inbox.tsx` (`FULL_WIDTH_NOTICES` gains `"worktrees_kept"`)
 - The `workspace_cleanup` row type in `rows.ts` / `timeline-row.tsx` keeps the timeline's memoised row contract (m11): a module-level component, no inline component definitions, stable props (the event object from the store, no per-render objects).
 - Create: `apps/web/src/features/inbox/cleanup-pane.tsx` (renders from `item.cleanup`, the same `ProjectResult[]` shape as the session line, never by parsing the body: lines grouped by project, branch names mono with `copy-feedback.tsx`, then "Push them to keep the work, or delete them in the project's repository.")
 - Test: `cleanup-pane.test.tsx`, a `rows` test, `inbox-route.test.tsx` (full width at 390)
 
-- [ ] **Step 1–4:** failing tests (copy, mono branches, copy button feedback, long branch names wrap without page overflow, no composer, full-width at 390 with Back, no desktop notification for this notice — Task 2.2's test already covers it); implement; pass.
+- [ ] **Step 1–4:** failing tests (copy, copy button feedback, long branch names wrap without page overflow, no composer, full-width at 390 with Back, no desktop notification for this notice — Task 2.2's test already covers it); implement; pass.
 - [ ] **Step 5: Commit** `feat(web): the cleanup line and notice`.
 
 ### Task 4.6: Product docs, evidence, whole-I8 review, PR 4

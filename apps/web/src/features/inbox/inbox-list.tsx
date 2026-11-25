@@ -253,8 +253,8 @@ export function InboxList({
   };
   return (
     <div className="grid gap-4">
-      {steps}
       <div className="grid gap-4" {...setup.listProps}>
+        {steps}
         <ul
           ref={list}
           aria-label="Inbox"

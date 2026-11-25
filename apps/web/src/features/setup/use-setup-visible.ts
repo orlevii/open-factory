@@ -3,11 +3,11 @@ import { type FocusEvent, useCallback, useLayoutEffect, useRef, useState } from 
 export type SetupVisible = {
   /** The steps block is on screen. */
   shown: boolean;
-  /** For the list column: while the pointer or focus is in it, a finished setup does not remove the block. */
+  /** For the list column (the narrow block included): while the pointer or focus is in it, a finished setup does not remove the block. */
   listProps: {
     onPointerEnter(): void;
     onPointerLeave(): void;
-    onFocusCapture(): void;
+    onFocusCapture(e: FocusEvent): void;
     onBlurCapture(e: FocusEvent): void;
     /** Leaving the DOM is leaving: no pointerleave or blur fires then, so this resets what they track. */
     ref(el: HTMLElement | null): void;
@@ -77,7 +77,9 @@ export function useSetupVisible(hasAgent: boolean | undefined): SetupVisible {
         pointer.current = false;
         leave();
       },
-      onFocusCapture() {
+      onFocusCapture(e) {
+        // Below 1024 the block sits inside the list column: focus on a step is not focus on the list.
+        if (block.current?.contains(e.target as Node)) return;
         focus.current = true;
       },
       onBlurCapture(e) {

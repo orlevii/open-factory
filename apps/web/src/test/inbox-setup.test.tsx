@@ -189,6 +189,20 @@ test("with the pointer over the list column the steps stay until it leaves", asy
   await waitFor(() => expect(block()).toBeNull());
 });
 
+test("narrow: with the pointer over the steps the block stays until it leaves", async () => {
+  boot({ items: true });
+  await visit(390);
+  const steps = await screen.findByRole("region", { name: "Set up your factory" });
+  await waitFor(() => expect(row()).not.toBeNull());
+  const step = within(steps).getByRole("button", { name: /Step 2 of 3/ });
+  const user = userEvent.setup();
+  await user.hover(step);
+  await agentAppears("frame");
+  expect(block()).not.toBeNull();
+  await user.unhover(step);
+  await waitFor(() => expect(block()).toBeNull());
+});
+
 test("with focus inside the list column the steps stay until it leaves", async () => {
   boot({ items: true });
   await visit(1280);

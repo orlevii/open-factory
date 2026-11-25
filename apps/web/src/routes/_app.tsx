@@ -160,7 +160,9 @@ function AppLayout() {
         // I7: an agent changed the org: one merged toast per actor window; the lists it touched refetch.
         if (m.type === "org_action") {
           orgToasts.onOrgAction(m);
-          void qc.invalidateQueries({ queryKey: setupQueryOptions.queryKey });
+          // An org action means an agent exists: only a cache still saying otherwise needs the refetch.
+          if (qc.getQueryData(setupQueryOptions.queryKey)?.hasAgent === false)
+            void qc.invalidateQueries({ queryKey: setupQueryOptions.queryKey });
           if (m.action === "template_created")
             void qc.invalidateQueries(
               { queryKey: ["templates"], exact: true },

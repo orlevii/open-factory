@@ -273,6 +273,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     // The lists refetch in the background; the session view needn't wait for them.
     void qc.invalidateQueries({ queryKey: ["agents"] });
     // An agent exists now: the first-run answer can't change back, so a cached one is flipped without a request.
+    // An in-flight refetch must not land after this and put the stale `false` back.
+    void qc.cancelQueries({ queryKey: setupQueryOptions.queryKey });
     qc.setQueryData(setupQueryOptions.queryKey, (d) => d && { ...d, hasAgent: true });
     const open = stillOpen();
     // A late success clears the draft only if it still holds the submitted values; a New agent reopened on those

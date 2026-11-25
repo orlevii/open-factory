@@ -1,5 +1,6 @@
 import type { SetupStatus } from "@open-factory/shared";
 import { Check, ChevronRight } from "lucide-react";
+import { useId } from "react";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet, openSheetForResult } from "@/features/sheets/sheet-store";
 import { useSetup } from "./api";
@@ -41,9 +42,10 @@ export function SetupSteps({
   status: SetupStatus;
   blockProps?: SetupVisible["blockProps"];
 }) {
+  const id = useId();
   return (
-    <section aria-labelledby="setup-h" {...blockProps}>
-      <h2 id="setup-h" className="font-heading text-[1rem] leading-[1.25rem] font-semibold">
+    <section aria-labelledby={`${id}-h`} {...blockProps}>
+      <h2 id={`${id}-h`} className="font-heading text-[1rem] leading-[1.25rem] font-semibold">
         Set up your factory
       </h2>
       <ol className="mt-2 border-y border-border">
@@ -56,7 +58,7 @@ export function SetupSteps({
                 {...step.intent}
                 onClick={step.open}
                 aria-label={`Step ${i + 1} of ${STEPS.length}, ${step.title}, ${done ? "done" : "not done"}`}
-                aria-describedby={`setup-step-${i}`}
+                aria-describedby={`${id}-step-${i}`}
                 className="flex min-h-14 w-full items-start gap-3 px-2 py-3 text-left of-row"
               >
                 <span
@@ -68,7 +70,7 @@ export function SetupSteps({
                 <span className="min-w-0 flex-1">
                   <span className="block text-[0.875rem] font-medium">{step.title}</span>
                   <span
-                    id={`setup-step-${i}`}
+                    id={`${id}-step-${i}`}
                     className="block text-[0.8125rem] text-muted-foreground"
                   >
                     {step.desc}

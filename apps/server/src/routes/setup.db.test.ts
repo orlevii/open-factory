@@ -55,7 +55,8 @@ test("GET /api/setup: an archived agent still counts as hasAgent", async () => {
   expect(r.json()).toEqual({ hasCredential: true, hasTemplate: false, hasAgent: true });
 });
 
-test("GET /api/setup: a terminated ephemeral agent alone still counts as hasAgent", async () => {
+test("GET /api/setup: a terminated ephemeral agent still counts as hasAgent", async () => {
+  // seedAgent also seeds a credential; only hasAgent is asserted here.
   const boss = await h.seedAgent({ slug: "boss" });
   await claimTestHandle(h.db, "eph", "agent");
   await h.db.insert(schema.agents).values({

@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { requireUser } from "../auth/require-user.ts";
 
-/** I8 §3: the first-run checklist, derived from what exists. Human session only. */
+/** I8 §4.1: the first-run checklist, derived from what exists. Human session only. */
 export const setupRoutes: FastifyPluginAsyncZod<{ db: Db }> = async (app, { db }) => {
   app.addHook("onRequest", requireUser);
 

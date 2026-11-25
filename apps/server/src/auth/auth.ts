@@ -9,11 +9,21 @@ import { signUpContext } from "../users/sign-up-gate.ts";
 import { authOptions, type PasswordHasher } from "./options.ts";
 import { trustedOrigins } from "./origins.ts";
 
-export function createAuth(config: Config, db: Db, passwordHasher?: PasswordHasher) {
+/**
+ * One better-auth instance for one public origin (`baseURL`). better-auth fixes a cookie's `Secure` flag and
+ * `__Secure-` prefix once, from the base URL's scheme, so an app opened at an https and an http origin needs one
+ * instance for each. They share the database, so a session is a session on either.
+ */
+export function createAuth(
+  config: Config,
+  db: Db,
+  baseURL: string,
+  passwordHasher?: PasswordHasher,
+) {
   return betterAuth(
     authOptions({
       secret: authSecret(config.secretKey),
-      baseURL: config.publicUrl,
+      baseURL,
       trustedOrigins: trustedOrigins(config),
       passwordHasher,
       database: drizzleAdapter(db, { provider: "pg", schema, usePlural: true }),

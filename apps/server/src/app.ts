@@ -106,7 +106,10 @@ import { wsRoutes } from "./ws/route.ts";
 
 declare module "fastify" {
   interface FastifyInstance {
+    /** PUBLIC_URL's better-auth instance. */
     auth: Auth;
+    /** The better-auth instance for a public origin (`publicOriginOf`); PUBLIC_URL's for any other. */
+    authFor: (origin: string) => Auth;
     config: Config;
     runtimes: AgentRuntimes;
     bus: EventBus;
@@ -207,11 +210,27 @@ export function loggerOptions(config: Config) {
 export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: deps.logger ?? loggerOptions(config),
+    // Only listed proxies: their X-Forwarded-For/-Proto/-Host set request.ip, .protocol and .host.
+    ...(config.trustProxy ? { trustProxy: config.trustProxy } : {}),
   }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorate("config", config);
-  app.decorate("auth", createAuth(config, deps.db, deps.passwordHasher));
+  // One better-auth instance per public origin (see createAuth); `auth` is PUBLIC_URL's.
+  const auths = new Map(
+    config.publicOrigins.map((o) => [
+      o,
+      createAuth(
+        config,
+        deps.db,
+        o === config.publicOrigin ? config.publicUrl : o,
+        deps.passwordHasher,
+      ),
+    ]),
+  );
+  const primaryAuth = auths.get(config.publicOrigin) as Auth;
+  app.decorate("auth", primaryAuth);
+  app.decorate("authFor", (origin: string) => auths.get(origin) ?? primaryAuth);
   registerErrorHandlers(app);
 
   await mkdir(config.factoryHome, { recursive: true });

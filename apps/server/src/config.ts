@@ -12,7 +12,12 @@ export interface Config {
   secretKey: string;
   factoryHome: string;
   publicUrl: string;
+  /** `PUBLIC_URL`'s origin: the fallback for a request on an origin that isn't listed, and the one invite links use. */
   publicOrigin: string;
+  /** `PUBLIC_URL`'s origin first, then `EXTRA_PUBLIC_ORIGINS`: every origin the app may be opened at. */
+  publicOrigins: string[];
+  /** `TRUST_PROXY`: the proxies whose `X-Forwarded-*` headers the server believes; none when unset. */
+  trustProxy: string[] | undefined;
   devWebOrigin: string;
   port: number;
   host: string;
@@ -64,6 +69,8 @@ const envSchema = z.object({
     ),
   FACTORY_HOME: z.string().min(1).default("~/open-factory"),
   PUBLIC_URL: httpUrl.optional(),
+  EXTRA_PUBLIC_ORIGINS: z.string().optional(),
+  TRUST_PROXY: z.string().optional(),
   DEV_WEB_ORIGIN: httpUrl.default("http://localhost:5173"),
   PORT: z.coerce.number({ message: "must be a port number" }).int().min(1).max(65535).default(3000),
   HOST: z.string().min(1).default("127.0.0.1"),
@@ -98,6 +105,32 @@ export function hostSkillsDirOf(c: Pick<Config, "hostClaudeDir">): string {
   return path.join(c.hostClaudeDir, "skills");
 }
 
+const list = (v: string | undefined) =>
+  (v ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+/** The origin of an http(s) URL that is only an origin (no path, query or credentials), else undefined. */
+function originOf(v: string): string | undefined {
+  try {
+    const u = new URL(v);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return undefined;
+    if (u.username || u.password || u.search || u.hash || u.pathname !== "/") return undefined;
+    return u.origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function isIpOrCidr(v: string): boolean {
+  const [addr, bits, ...rest] = v.split("/");
+  const family = isIP(addr ?? "");
+  if (!family || rest.length) return false;
+  if (bits === undefined) return true;
+  return /^\d+$/.test(bits) && Number(bits) <= (family === 4 ? 32 : 128);
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   // `PORT=` in .env or the shell means "not set", not "port 0".
   const set = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ""));
@@ -129,13 +162,33 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
       );
     }
   }
+  const publicOrigin = new URL(publicUrl).origin;
+  const publicOrigins = [publicOrigin];
+  for (const o of list(e.EXTRA_PUBLIC_ORIGINS)) {
+    const origin = originOf(o);
+    if (!origin)
+      issues.push(
+        `EXTRA_PUBLIC_ORIGINS entry "${o}" must be an http(s) origin, like http://127.0.0.1:3000`,
+      );
+    else if (!publicOrigins.includes(origin)) publicOrigins.push(origin);
+  }
+  const trustProxy = list(e.TRUST_PROXY);
+  for (const p of trustProxy) {
+    if (!isIpOrCidr(p)) {
+      issues.push(
+        `TRUST_PROXY entry "${p}" must be an IP address or a CIDR range, like 127.0.0.1 or 10.0.0.0/8`,
+      );
+    }
+  }
   if (issues.length) throw new ConfigError(issues);
   return {
     databaseUrl: e.DATABASE_URL,
     secretKey: e.FACTORY_SECRET_KEY,
     factoryHome: path.resolve(expandHome(e.FACTORY_HOME)),
     publicUrl,
-    publicOrigin: new URL(publicUrl).origin,
+    publicOrigin,
+    publicOrigins,
+    trustProxy: trustProxy.length ? trustProxy : undefined,
     devWebOrigin: new URL(e.DEV_WEB_ORIGIN).origin,
     port: e.PORT,
     host: e.HOST,

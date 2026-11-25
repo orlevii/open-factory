@@ -1,5 +1,6 @@
 import { fromNodeHeaders } from "better-auth/node";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { publicOriginOf } from "./origins.ts";
 
 export interface RequestUser {
   id: string;
@@ -16,7 +17,8 @@ declare module "fastify" {
 
 /** The one session check: better-auth getSession handles both cookie and Authorization: Bearer. */
 export async function getUser(request: FastifyRequest): Promise<RequestUser | null> {
-  const session = await request.server.auth.api.getSession({
+  const auth = request.server.authFor(publicOriginOf(request, request.server.config));
+  const session = await auth.api.getSession({
     headers: fromNodeHeaders(request.headers),
   });
   if (!session) return null;

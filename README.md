@@ -29,7 +29,9 @@ Environment variables (`npm start` loads `.env` if present):
 | `DATABASE_URL`       | yes      | none                       | Postgres URL                                                                                                                                 |
 | `FACTORY_SECRET_KEY` | yes      | none                       | min 32 chars; root key, see "Secret key". The placeholder from `.env.example` is rejected; generate one with `openssl rand -base64 32`       |
 | `FACTORY_HOME`       | no       | `~/open-factory`           | leading `~` expanded, resolved to an absolute path. Not created in this version                                                              |
-| `PUBLIC_URL`         | no       | `http://localhost:${PORT}` | http(s) URL; its origin is the better-auth base URL and trusted origin. Open the app at exactly this origin (`127.0.0.1` is not `localhost`) |
+| `PUBLIC_URL`         | no       | `http://localhost:${PORT}` | http(s) URL; its origin is the better-auth base URL and trusted origin, and invite links use it. Open the app at this origin or one in `EXTRA_PUBLIC_ORIGINS` (`127.0.0.1` is not `localhost`) |
+| `EXTRA_PUBLIC_ORIGINS` | no     | none                       | comma-separated http(s) origins the app is also opened at, such as `http://127.0.0.1:3000` beside an https `PUBLIC_URL`. Each is trusted, and sign-in there sets cookies for its own scheme (`Secure` only over https) |
+| `TRUST_PROXY`        | no       | none                       | comma-separated IP addresses or CIDR ranges of your reverse proxies. Only their `X-Forwarded-For`, `-Proto` and `-Host` are believed; see "Running on a server" |
 | `DEV_WEB_ORIGIN`     | no       | `http://localhost:5173`    | Vite dev server origin, trusted only when `NODE_ENV` is not `production`                                                                     |
 | `PORT`               | no       | `3000`                     |                                                                                                                                              |
 | `HOST`               | no       | `127.0.0.1`                | fail-closed default; servers set `HOST=0.0.0.0` explicitly                                                                                   |
@@ -133,13 +135,13 @@ An agent can spawn a fresh agent for one piece of work with `spawn_agent` (templ
 
 ## Running on a server
 
-Set `HOST=0.0.0.0` **and** `PUBLIC_URL=https://your.host`, put TLS in front, and open the app at exactly `PUBLIC_URL` (`localhost` is not `127.0.0.1`). Also set `NODE_ENV=production`: development logging uses `pino-pretty` (a devDependency), and `NODE_ENV` also gates trust of `DEV_WEB_ORIGIN`.
+Set `PUBLIC_URL=https://your.host`, put TLS in front, and open the app at `PUBLIC_URL` (`localhost` is not `127.0.0.1`). Set `HOST=0.0.0.0` only when the proxy runs on another machine; a proxy on the same machine reaches the default `127.0.0.1`. To also open the app directly, for example at `http://127.0.0.1:3000`, add that origin to `EXTRA_PUBLIC_ORIGINS`. Set `TRUST_PROXY` to the proxy's address (for example `127.0.0.1`) and have the proxy send `X-Forwarded-For` and `X-Forwarded-Proto`, plus the public `Host` or `X-Forwarded-Host`. Also set `NODE_ENV=production`: development logging uses `pino-pretty` (a devDependency), and `NODE_ENV` also gates trust of `DEV_WEB_ORIGIN`.
 
 ### Users and invites
 
 The first person to sign up needs no invite; after that, sign-up needs an invite link from Settings → Users (7-day, single use). Disable a user in Settings → Users to sign them out everywhere.
 
-Behind a reverse proxy, login rate limiting and session IP addresses see the proxy's IP, not the client's: the server uses the socket address and ignores any `X-Forwarded-For` the client sends. All clients behind the proxy then share one rate-limit bucket. This stays the case until a trust-proxy setting exists.
+Login rate limiting and session IP addresses use the client's address. Behind a reverse proxy that is the proxy's unless `TRUST_PROXY` lists it: without it, the server ignores `X-Forwarded-For`, and all clients behind the proxy share one rate-limit bucket. Never list an address untrusted clients connect from: its `X-Forwarded-For` would let a client pick its own address.
 
 ## Secret key
 

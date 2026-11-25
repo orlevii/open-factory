@@ -41,6 +41,27 @@ describe("loadConfig", () => {
       /must be an IP address/,
     );
   });
+  test("EXTRA_PUBLIC_ORIGINS adds origins after PUBLIC_URL's, once each; TRUST_PROXY lists IPs and CIDR ranges", () => {
+    const c = loadConfig({
+      ...ok,
+      PUBLIC_URL: "https://factory.example.com",
+      EXTRA_PUBLIC_ORIGINS: "http://127.0.0.1:3000/, https://factory.example.com",
+      TRUST_PROXY: "127.0.0.1, 10.0.0.0/8, ::1",
+    });
+    expect(c.publicOrigins).toEqual(["https://factory.example.com", "http://127.0.0.1:3000"]);
+    expect(c.trustProxy).toEqual(["127.0.0.1", "10.0.0.0/8", "::1"]);
+    expect(loadConfig(ok).trustProxy).toBeUndefined();
+  });
+  test.each([
+    ["EXTRA_PUBLIC_ORIGINS", "127.0.0.1:3000", /EXTRA_PUBLIC_ORIGINS entry "127.0.0.1:3000"/],
+    ["EXTRA_PUBLIC_ORIGINS", "http://x.io/app", /must be an http\(s\) origin/],
+    ["EXTRA_PUBLIC_ORIGINS", "ftp://x.io", /must be an http\(s\) origin/],
+    ["TRUST_PROXY", "true", /TRUST_PROXY entry "true"/],
+    ["TRUST_PROXY", "proxy.local", /must be an IP address or a CIDR range/],
+    ["TRUST_PROXY", "10.0.0.0/33", /must be an IP address or a CIDR range/],
+  ])("%s=%s is a config error", (key, value, msg) => {
+    expect(() => loadConfig({ ...ok, [key]: value })).toThrow(msg);
+  });
   test("agent listener settings", () => {
     const c = loadConfig({ ...ok, PORT: "4000" });
     expect(c.agentPort).toBe(4001);

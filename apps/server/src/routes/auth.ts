@@ -1,6 +1,7 @@
 import type { Db } from "@open-factory/db";
 import { fromNodeHeaders } from "better-auth/node";
 import type { FastifyInstance } from "fastify";
+import { publicOriginOf } from "../auth/origins.ts";
 import { handleSignUp, signUpMutex } from "../users/sign-up-gate.ts";
 
 export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
@@ -8,12 +9,15 @@ export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
     method: ["GET", "POST"],
     url: "/api/auth/*",
     async handler(request, reply) {
-      const url = new URL(request.url, app.config.publicUrl);
+      // The request goes to the instance for the origin it came in on, so its cookies match that origin's scheme.
+      const origin = publicOriginOf(request, app.config);
+      const auth = app.authFor(origin);
+      const url = new URL(request.url, origin);
       const headers = fromNodeHeaders(request.headers);
       // The body is re-serialized below, so the client's length no longer applies.
       headers.delete("content-length");
-      // better-auth keys rate limits and session.ipAddress on X-Forwarded-For. Use the socket IP
-      // so a client can't pick its own (behind a proxy this is the proxy's IP; see README).
+      // better-auth keys rate limits and session.ipAddress on X-Forwarded-For. Use request.ip (the socket's, or the
+      // client's as a TRUST_PROXY proxy reports it) so a client can't pick its own; see README.
       headers.set("x-forwarded-for", request.ip);
       const hasBody = request.body !== undefined && request.body !== null;
       const req = new Request(url, {
@@ -28,17 +32,17 @@ export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
       // Postgres advisory lock here as well.
       const signOut = request.method === "POST" && url.pathname === "/api/auth/sign-out";
       // Resolved before forwarding: a successful sign-out deletes the session. Spec I3 §5.4. A lookup failure never fails the sign-out.
-      const session = signOut ? await app.auth.api.getSession({ headers }).catch(() => null) : null;
+      const session = signOut ? await auth.api.getSession({ headers }).catch(() => null) : null;
       const res =
         request.method === "POST" && url.pathname === "/api/auth/sign-up/email"
           ? await handleSignUp(
-              { db, invites: app.invites, auth: app.auth, bus: app.bus, log: request.log },
+              { db, invites: app.invites, auth, bus: app.bus, log: request.log },
               req,
               request.body,
             )
           : request.method === "POST" && url.pathname === "/api/auth/update-user"
-            ? await signUpMutex.run("sign-up", () => app.auth.handler(req))
-            : await app.auth.handler(req);
+            ? await signUpMutex.run("sign-up", () => auth.handler(req))
+            : await auth.handler(req);
       if (session && res.ok) app.signIn.endFor(session.user.id);
       reply.status(res.status);
       const cookies = res.headers.getSetCookie();

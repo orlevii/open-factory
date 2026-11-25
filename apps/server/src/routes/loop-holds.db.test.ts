@@ -125,6 +125,39 @@ describe("POST /api/loop-holds/:id/resume", () => {
     ).toBe(true);
   });
 
+  test("rows are handed over as they would have been sent: task comments as task_message, scheduled rows as scheduled", async () => {
+    await openHold(0);
+    const delivered = vi.spyOn(h.app.runtimes, "deliver").mockResolvedValue(undefined);
+    await resume(holdId);
+    await vi.waitFor(() => expect(delivered).toHaveBeenCalledTimes(1));
+    const row = delivered.mock.calls[0]?.[0];
+    if (!row) throw new Error("no row was handed over");
+    delivered.mockClear();
+    // The kind check constraint ties task and schedule columns to their kinds, so hand over kind-swapped copies.
+    h.app.router.handOffResumed([
+      { ...row, id: "c", kind: "task_comment" },
+      { ...row, id: "s", kind: "scheduled" },
+      row,
+    ]);
+    await vi.waitFor(() => expect(delivered).toHaveBeenCalledTimes(3));
+    expect(delivered.mock.calls.map(([r, sender, reason]) => [r.id, sender, reason])).toEqual([
+      ["c", "agent", "task_message"],
+      ["s", "agent", "scheduled"],
+      [row.id, "agent", "agent_message"],
+    ]);
+  });
+
+  test("a delivery failure leaves the row pending and the Resume succeeds", async () => {
+    await openHold(0);
+    const delivered = vi.spyOn(h.app.runtimes, "deliver").mockRejectedValue(new Error("boom"));
+    const res = await resume(holdId);
+    expect(res.statusCode).toBe(200);
+    await vi.waitFor(() => expect(delivered).toHaveBeenCalled());
+    const states =
+      await h.sql`select distinct state from messages where loop_hold_id = ${holdId} and kind <> 'system'`;
+    expect(states.map((r) => r.state)).toEqual(["pending"]);
+  });
+
   test("a second Resume is a 409 naming who and when; an unknown id is a 404; no session is a 401", async () => {
     await openHold(0);
     const first = await resume(holdId);
@@ -140,6 +173,8 @@ describe("POST /api/loop-holds/:id/resume", () => {
     expect(first.statusCode).toBe(200);
     expect((await resume("nope")).statusCode).toBe(404);
     expect((await resume(holdId, {})).statusCode).toBe(401);
+    // An agent's bearer token is not a session.
+    expect((await resume(holdId, { authorization: "Bearer not-a-session" })).statusCode).toBe(401);
   });
 
   test("the window restarts at the Resume: N more each way go through before the pair trips again", async () => {

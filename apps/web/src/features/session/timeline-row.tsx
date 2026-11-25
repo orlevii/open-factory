@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
+import { CONFIG_PAGE_COPY } from "@/features/config/messages";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { TaskBadge } from "@/features/tasks/task-badge";
@@ -272,10 +273,15 @@ function FixLink({
         Open Templates → Images
       </Link>
     );
-  // A template with errors, or a deleted one, is fixed on its page. So, for now, is the agent's own configuration:
-  // its page arrives with the form (I2 part C). The link says where it goes.
-  if (fix === "template" || fix === "config")
-    return <TemplateLink slug={slug} label={(t) => `Open template ${t}`} />;
+  // The agent's own configuration (a plugin that didn't install, an overlay that fails its schema).
+  if (fix === "config")
+    return (
+      <Link to="/agents/$slug/config" params={{ slug }} className={cls}>
+        {CONFIG_PAGE_COPY.openConfiguration}
+      </Link>
+    );
+  // A template with errors, or a deleted one, is fixed on its page.
+  if (fix === "template") return <TemplateLink slug={slug} label={(t) => `Open template ${t}`} />;
   const target = {
     credentials: { to: "/settings/credentials", label: "Credentials" },
     secrets: { to: "/settings/secrets", label: "Secrets" },

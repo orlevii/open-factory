@@ -192,6 +192,27 @@ test("admin frames invalidate their keys; build log batches don't", async () => 
   expect(keys()).toContain("templates");
 });
 
+test("config_changed invalidates the agent's and the template's configuration, and that template's agent pages", async () => {
+  const { qc } = await mounted();
+  const agentCfg = (template: string) => ({ template: { name: template } });
+  qc.setQueryData(["agent-config", "ana"], agentCfg("dev"));
+  qc.setQueryData(["agent-config", "bo"], agentCfg("ops"));
+  qc.setQueryData(["agent-config", "cy"], agentCfg("dev"));
+  qc.setQueryData(["template-config", "dev"], {});
+  qc.setQueryData(["template-config", "ops"], {});
+  const stale = (key: string[]) => qc.getQueryState(key)?.isInvalidated;
+  act(() => h.opts?.onMessage?.({ type: "config_changed", agent: "bo" }));
+  expect(stale(["agent-config", "bo"])).toBe(true);
+  expect(stale(["agent-config", "ana"])).toBe(false);
+  expect(stale(["template-config", "ops"])).toBe(false);
+  act(() => h.opts?.onMessage?.({ type: "config_changed", template: "dev" }));
+  expect(stale(["template-config", "dev"])).toBe(true);
+  // The agents on template dev (a template turning broken sends no per-agent frame); not ops's.
+  expect(stale(["agent-config", "ana"])).toBe(true);
+  expect(stale(["agent-config", "cy"])).toBe(true);
+  expect(stale(["template-config", "ops"])).toBe(false);
+});
+
 test("unmounting the layout flushes queued status frames and stops listening for visibilitychange", async () => {
   mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }) });
   const { unmount, queryClient: qc } = renderApp("/inbox", alice);

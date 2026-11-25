@@ -29,7 +29,7 @@ const newScheduleIntent = sheetIntent("new-schedule");
 
 /**
  * The one actions menu for an agent (U2 §8.4, U4 §6.5), in the session header, on a sidebar row and
- * on an Agents page row. Grouped: New task, New schedule · Edit, Usage, Open tasks, Agent details,
+ * on an Agents page row. Grouped: New task, New schedule · Edit, Configure, Usage, Open tasks, Agent details,
  * Compact…, Stop crons… · Reset persona…, Archive…, Restore, Terminate….
  * Compact… and Terminate… open their own overlays from the menu's ⋯ button, so the menu hands
  * focus over instead of returning it. Stop crons state belongs to the session (`stop`), which
@@ -94,6 +94,8 @@ export function AgentMenu({
   const endedInList = context === "list" && (terminated || (spawned && !live));
   const canCompact = session && live && agent.status !== "errored";
   const canEdit = !spawned && !archived && !endedInList;
+  // Archived agents too: their configuration stays editable and applies when restored (I2 §12.4).
+  const canConfigure = !spawned && !terminated && !endedInList;
   const canStopCrons = session && stop !== undefined && agent.crons.length > 0;
   const canTerminate = session && spawned && live;
   const canResetPersona = !spawned && !terminated;
@@ -149,6 +151,14 @@ export function AgentMenu({
         onSelect={() => openAfterClose(() => openSheet({ kind: "edit-agent", slug }))}
       >
         Edit
+      </AdaptiveMenuItem>,
+    );
+  if (canConfigure)
+    views.push(
+      <AdaptiveMenuItem key="configure" asChild>
+        <Link to="/agents/$slug/config" params={{ slug }}>
+          Configure
+        </Link>
       </AdaptiveMenuItem>,
     );
   views.push(

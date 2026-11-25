@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { secretNameSchema } from "./names.ts";
-import { templateYamlShape } from "./templates.ts";
+import { templateIssueSchema, templateYamlShape } from "./templates.ts";
 
 /** Overlay limits (spec §5.1). Templates get the same limits on these keys. */
 export const OVERLAY_LIMITS = {
@@ -145,7 +145,8 @@ export type AgentOverlay = z.infer<typeof agentOverlaySchema>;
 export const configDocSchema = z.object({
   template: z.record(z.string(), z.unknown()),
   settings: z.record(z.string(), z.unknown()),
-  mcp: z.object({ mcpServers: z.record(z.string(), z.unknown()) }),
+  // Loose: a template's mcp.json may carry other top-level keys, which a save must keep.
+  mcp: z.looseObject({ mcpServers: z.record(z.string(), z.unknown()) }),
 });
 
 /** A template or an effective config as three file-shaped parts (template.yaml, settings.json, mcp.json). */
@@ -154,3 +155,51 @@ export type ConfigDoc = {
   settings: Record<string, unknown>;
   mcp: { mcpServers: Record<string, unknown> };
 };
+
+/** The three files a template's configuration lives in, and the hashes the editor sends back (`null`: absent). */
+export const CONFIG_FILES = ["template.yaml", "settings.json", "mcp.json"] as const;
+export const configHashesSchema = z.object({
+  "template.yaml": z.string().nullable(),
+  "settings.json": z.string().nullable(),
+  "mcp.json": z.string().nullable(),
+});
+export type ConfigHashes = z.infer<typeof configHashesSchema>;
+
+/**
+ * `GET /api/templates/:name/config` (I2 §12.1). `doc` is null while the template has errors. `localSkills` is the
+ * template's own `skills/` folder names (the agent page lists them read-only). `cantStart` counts the live agents that
+ * can't start, which is all of them while the template has errors and none otherwise (spec §12.5).
+ */
+export const templateConfigResponseSchema = z.object({
+  doc: configDocSchema.nullable(),
+  hashes: configHashesSchema,
+  issues: z.array(templateIssueSchema),
+  localSkills: z.array(z.string()),
+  agents: z.object({
+    live: z.number().int(),
+    archived: z.number().int(),
+    cantStart: z.number().int(),
+  }),
+});
+export type TemplateConfigResponse = z.infer<typeof templateConfigResponseSchema>;
+
+export const putTemplateConfigBodySchema = z.object({
+  doc: configDocSchema,
+  baseHashes: configHashesSchema,
+});
+export type PutTemplateConfigBody = z.infer<typeof putTemplateConfigBodySchema>;
+
+/** The hashes after the save, and the issues of the template as written (warnings only: an error is a 400). */
+export const putTemplateConfigResponseSchema = z.object({
+  hashes: configHashesSchema,
+  issues: z.array(templateIssueSchema),
+});
+export type PutTemplateConfigResponse = z.infer<typeof putTemplateConfigResponseSchema>;
+
+/** `GET /api/host-skills` (I2 §12.1): the folders of the host skills dir that hold a `SKILL.md`. */
+export const HOST_SKILL_DESCRIPTION_MAX = 200;
+export const hostSkillsResponseSchema = z.object({
+  dir: z.string(),
+  skills: z.array(z.object({ name: z.string(), description: z.string() })),
+});
+export type HostSkillsResponse = z.infer<typeof hostSkillsResponseSchema>;

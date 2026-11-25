@@ -1,4 +1,4 @@
-import type { AgentDetail, ServerMessage } from "@open-factory/shared";
+import type { AgentConfigResponse, AgentDetail, ServerMessage } from "@open-factory/shared";
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect, useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
@@ -9,6 +9,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { OutputDialogHost } from "@/features/agents/show-output";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { onChatChanged } from "@/features/chat/use-chat";
+import { agentConfigQueryOptions, templateConfigQueryOptions } from "@/features/config/api";
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
@@ -122,6 +123,28 @@ function AppLayout() {
         if (m.type === "images_changed" || (m.type === "image_build" && !m.lines)) {
           void qc.invalidateQueries({ queryKey: ["images"] });
           void qc.invalidateQueries({ queryKey: ["templates"] });
+        }
+        // I2 §12.4: an open Configuration page (or template tab) refetches; nothing else reads these keys.
+        if (m.type === "config_changed") {
+          if (m.agent)
+            void qc.invalidateQueries({
+              queryKey: agentConfigQueryOptions(m.agent).queryKey,
+              exact: true,
+            });
+          if (m.template) {
+            const template = m.template;
+            void qc.invalidateQueries({
+              queryKey: templateConfigQueryOptions(template).queryKey,
+              exact: true,
+            });
+            // An open agent page on this template: it may have just turned broken (or fixed), which no per-agent
+            // frame reports. Only mounted queries refetch.
+            void qc.invalidateQueries({
+              queryKey: ["agent-config"],
+              predicate: (q) =>
+                (q.state.data as AgentConfigResponse | undefined)?.template.name === template,
+            });
+          }
         }
         if (m.type === "agent_status") {
           // Before the first frame for an agent, the cached list or detail (fetched over REST) tells

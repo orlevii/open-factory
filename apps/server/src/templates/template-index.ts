@@ -14,16 +14,20 @@ import {
 import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import {
+  CONFIG_FILES,
   type ConfigDoc,
+  type ConfigHashes,
   canonicalJson,
   isUserImageRef,
   LOCAL_SKILL_NAMES,
   NAME_PATTERN,
   TEMPLATE_FILES,
   type TemplateConfig,
+  type TemplateConfigResponse,
   type TemplateDetail,
   type TemplateFile,
   type TemplateIssue,
+  yamlPart,
 } from "@open-factory/shared";
 import { and, asc, count, eq, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
@@ -33,7 +37,9 @@ import { ApiError } from "../errors.ts";
 import { imageDir } from "../images/context.ts";
 import { avatarStat } from "./avatar.ts";
 import { KeyLock } from "./key-lock.ts";
+import { parseJson, parseYaml } from "./parse.ts";
 import { type ValidationContext, validateTemplate } from "./validate.ts";
+import { applyConfigToYaml } from "./yaml-write.ts";
 
 export type TemplateRow = typeof schema.templates.$inferSelect;
 
@@ -53,6 +59,9 @@ export type TemplateChange = {
   by: string;
 };
 export type TemplateChangeListener = (e: TemplateChange) => void | Promise<void>;
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
 
 const notFound = (name: string) =>
   new ApiError(404, "template_not_found", `Template ${name} not found.`);
@@ -395,10 +404,164 @@ export class TemplateIndex {
     return { hash: fileHash(Buffer.from(content)), issues: row?.issues ?? [] };
   }
 
+  /**
+   * I2 §12.1 `GET /api/templates/:name/config`. `doc` is the parsed configuration while the template has no errors (the
+   * derived `local_skill_names` never leaves: it is the separate `localSkills`). `cantStart` is every live agent while
+   * the template has errors (they can't start until it is fixed, spec §12.5) and none otherwise.
+   */
+  async readConfig(name: string): Promise<TemplateConfigResponse> {
+    const dir = this.folder(name);
+    if (!(await isDir(dir)) || !(await readOrNull(path.join(dir, "template.yaml")))) {
+      await this.deleteRow(name);
+      throw notFound(name);
+    }
+    const ctx = await this.context();
+    // Hashes and parse under one lock hold, so a save can't land between them.
+    const { hashes, full } = await this.locks.run(name, async () => ({
+      hashes: await this.configHashes(dir),
+      full: await this.indexLocked(name, ctx, FILE_CHANGE),
+    }));
+    const { row, doc } = full;
+    const rows = await this.db
+      .select({ archived: isNotNull(schema.agents.archivedAt) })
+      .from(schema.agents)
+      .where(
+        and(
+          eq(schema.agents.template, name),
+          eq(schema.agents.kind, "persistent"),
+          isNull(schema.agents.terminatedAt),
+        ),
+      );
+    const live = rows.filter((r) => !r.archived).length;
+    const local = doc.template[LOCAL_SKILL_NAMES];
+    return {
+      doc: row.valid ? { ...doc, template: yamlPart(doc.template) } : null,
+      hashes,
+      issues: row.issues,
+      localSkills: Array.isArray(local) ? (local as string[]) : [],
+      agents: { live, archived: rows.length - live, cantStart: row.valid ? 0 : live },
+    };
+  }
+
+  private async configHashes(dir: string): Promise<ConfigHashes> {
+    const [y, s, m] = await Promise.all(
+      CONFIG_FILES.map(async (f) => {
+        const buf = await readOrNull(path.join(dir, f));
+        return buf ? fileHash(buf) : null;
+      }),
+    );
+    return { "template.yaml": y ?? null, "settings.json": s ?? null, "mcp.json": m ?? null };
+  }
+
+  /**
+   * I2 §12.1 `PUT /api/templates/:name/config`. Under the template's lock: every base hash is checked (409
+   * `changed_on_disk` with today's hashes), the three new texts are built and the whole template is validated as it
+   * would be written (an error gives a 400 and nothing is written), then only the files whose content changed are
+   * written (temp + rename). The rescan after the lock fires the template change once. `by` is the caller's handle.
+   */
+  async writeConfig(
+    name: string,
+    doc: ConfigDoc,
+    baseHashes: ConfigHashes,
+    by: string,
+  ): Promise<{ hashes: ConfigHashes; issues: TemplateIssue[]; changed: boolean }> {
+    const dir = this.folder(name);
+    if (!(await isDir(dir))) throw notFound(name);
+    return this.locks.run(name, async () => {
+      const current = {
+        "template.yaml": await readOrNull(path.join(dir, "template.yaml")),
+        "settings.json": await readOrNull(path.join(dir, "settings.json")),
+        "mcp.json": await readOrNull(path.join(dir, "mcp.json")),
+      };
+      if (!current["template.yaml"]) throw notFound(name);
+      const hashes: ConfigHashes = {
+        "template.yaml": fileHash(current["template.yaml"]),
+        "settings.json": current["settings.json"] ? fileHash(current["settings.json"]) : null,
+        "mcp.json": current["mcp.json"] ? fileHash(current["mcp.json"]) : null,
+      };
+      if (CONFIG_FILES.some((f) => hashes[f] !== baseHashes[f]))
+        throw new ApiError(
+          409,
+          "changed_on_disk",
+          "Changed on disk since you opened it. Reload to see the changes.",
+          { currentHashes: hashes },
+        );
+
+      const yamlText = current["template.yaml"].toString("utf8");
+      const parsed = parseYaml(yamlText);
+      if (parsed.error)
+        throw new ApiError(400, "invalid_config", "The configuration has errors.", {
+          issues: [
+            {
+              severity: "error",
+              file: "template.yaml",
+              message: parsed.error.message,
+              ...(parsed.error.line ? { line: parsed.error.line } : {}),
+            } satisfies TemplateIssue,
+          ],
+        });
+      // `local_skill_names` is derived: it is never written to template.yaml, whatever the caller sent.
+      const next: Partial<Record<TemplateFile, string>> = {};
+      const yamlOut = applyConfigToYaml(yamlText, yamlPart(doc.template));
+      if (yamlOut !== yamlText) next["template.yaml"] = yamlOut;
+      const json = (file: "settings.json" | "mcp.json", want: unknown, empty: unknown) => {
+        const buf = current[file];
+        const have = buf ? parseJson(buf.toString("utf8")) : { value: empty };
+        // Top-level keys the form doesn't know (mcp.json's) are the file's own: they stay.
+        const merged =
+          file === "mcp.json" && isRecord(have.value) && isRecord(want)
+            ? { ...have.value, ...want }
+            : want;
+        if (!have.error && canonicalJson(have.value) === canonicalJson(merged)) return;
+        next[file] = `${JSON.stringify(merged, null, 2)}\n`;
+      };
+      json("settings.json", doc.settings, {});
+      json("mcp.json", doc.mcp, { mcpServers: {} });
+
+      const v = await validateTemplate(dir, name, await this.context(), next);
+      if (v.issues.some((i) => i.severity === "error"))
+        throw new ApiError(400, "invalid_config", "The configuration has errors.", {
+          issues: v.issues,
+        });
+
+      // All temps first, then the renames in sequence: a failed write leaves the template as it was.
+      const temps: [string, string][] = [];
+      let failure: unknown;
+      try {
+        for (const [file, content] of Object.entries(next)) {
+          const target = path.join(dir, file);
+          const tmp = `${target}.${randomBytes(4).toString("hex")}.tmp`;
+          temps.push([tmp, target]);
+          await writeFile(tmp, content);
+        }
+        // Renamed entries leave `temps`, so the cleanup below only removes what never got its turn.
+        for (let first = temps[0]; first; first = temps[0]) {
+          await rename(first[0], first[1]);
+          temps.shift();
+        }
+      } catch (err) {
+        failure = err;
+      } finally {
+        await Promise.all(temps.map(([tmp]) => rm(tmp, { force: true })));
+      }
+      // Even after a failed write the index must match the disk, and `by` is this caller's.
+      const row = await this.indexLocked(name, await this.context(), by).catch(() => undefined);
+      if (failure) throw failure;
+      const after = { ...hashes };
+      for (const [file, content] of Object.entries(next))
+        after[file as keyof ConfigHashes] = fileHash(Buffer.from(content));
+      return {
+        hashes: after,
+        issues: row?.row.issues ?? v.issues,
+        changed: Object.keys(next).length > 0,
+      };
+    });
+  }
+
   async validate(name: string, file: TemplateFile, content: string): Promise<TemplateIssue[]> {
     const dir = this.folder(name);
     if (!(await isDir(dir))) throw notFound(name);
-    return (await validateTemplate(dir, name, await this.context(), { file, content })).issues;
+    return (await validateTemplate(dir, name, await this.context(), { [file]: content })).issues;
   }
 
   async create(b: { name: string; displayName: string; description?: string }): Promise<void> {

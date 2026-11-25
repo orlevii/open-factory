@@ -16,6 +16,7 @@ import { AgentChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { CONFIG_PAGE_COPY } from "@/features/config/messages";
 import { schedulesListOptions } from "@/features/schedules/api";
 import { ScheduleTime } from "@/features/schedules/schedule-time";
 import { preloadSheet, sheetIntent } from "@/features/sheets/sheet-bodies";
@@ -454,6 +455,17 @@ function Runtime({ agent }: { agent: AgentSummary }) {
             {agent.template}
           </Link>
         </dd>
+        {/* A terminated agent has nothing to configure (AgentMenu hides Configure for it too). */}
+        {agent.status !== "terminated" && !agent.terminatedAt && (
+          <>
+            <dt className="text-muted-foreground">Configuration</dt>
+            <dd className="min-w-0">
+              <Link to="/agents/$slug/config" params={{ slug: agent.slug }} className={LINK_CLASS}>
+                {CONFIG_PAGE_COPY.openConfiguration}
+              </Link>
+            </dd>
+          </>
+        )}
         {agent.credential !== null && (
           <>
             <dt className="text-muted-foreground">Credential</dt>

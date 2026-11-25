@@ -1,10 +1,12 @@
 import {
+  type AgentModel,
   type AgentSummary,
   ApiError,
   type CreateAgentBody,
   type PatchAgentBody,
 } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import {
   type FormEvent,
@@ -38,6 +40,7 @@ import { agentsListQueryOptions, updateAgent } from "@/features/agents/api";
 import { ColourField } from "@/features/agents/colour-field";
 import { restoreAgent } from "@/features/agents/lifecycle";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
+import { CONFIG_PAGE_COPY, MODEL_SOURCE_COPY } from "@/features/config/messages";
 import { inboxQueryKey } from "@/features/inbox/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { projectsQueryOptions } from "@/features/settings/api";
@@ -155,10 +158,36 @@ export default function EditAgentSheet(props: BodyProps<Spec>) {
   if (agent.status === "terminated") return <Plain agent={agent}>This agent is terminated.</Plain>;
   if (agent.archivedAt) return <Archived agent={agent} />;
   // A fresh form per open (and per return from a state above), over the agent's draft.
-  return <EditAgentForm key={props.sheetId} {...props} agent={agent} />;
+  return <EditAgentForm key={props.sheetId} {...props} agent={agent} model={data.model} />;
 }
 
-function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: AgentSummary }) {
+/** "Model opus (this agent) · Open configuration" (spec §12.6): read-only, from the agent's detail. The link leaves the
+ *  page, which closes the sheet and keeps its draft. */
+function ModelSummary({ slug, model }: { slug: string; model: AgentModel }) {
+  return (
+    <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground [overflow-wrap:anywhere]">
+      {CONFIG_PAGE_COPY.model}{" "}
+      <span className="font-mono text-foreground">
+        {model.value ?? CONFIG_PAGE_COPY.modelDefault}
+      </span>
+      {MODEL_SOURCE_COPY[model.source]} ·{" "}
+      <Link
+        to="/agents/$slug/config"
+        params={{ slug }}
+        className="text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring"
+      >
+        {CONFIG_PAGE_COPY.openConfiguration}
+      </Link>
+    </p>
+  );
+}
+
+function EditAgentForm({
+  spec,
+  sheetId,
+  agent,
+  model,
+}: BodyProps<Spec> & { agent: AgentSummary; model: AgentModel }) {
   const qc = useQueryClient();
   const slug = agent.slug;
   const draftKey = `edit-agent:${slug}` as const;
@@ -463,6 +492,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
         {restartHelp && (
           <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">{restartHelp}</p>
         )}
+        <ModelSummary slug={slug} model={model} />
       </SheetBody>
       <SheetFormFooter
         submitLabel="Save changes"

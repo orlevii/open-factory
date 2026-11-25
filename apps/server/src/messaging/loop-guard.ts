@@ -46,7 +46,8 @@ export class LoopGuard {
 
   /**
    * Takes every pair's advisory lock once, in ascending key order, so two transactions with overlapping pair sets
-   * can't deadlock on each other. The caller passes every pair its transaction will insert into.
+   * can't deadlock on each other. The caller passes every pair its transaction will insert into. `offset 0` keeps
+   * the planner from folding the sorted subquery into the outer select, so the volatile lock call runs in key order.
    */
   async lockPairs(tx: Tx, pairs: PairKey[]): Promise<void> {
     if (!pairs.length) return;
@@ -58,7 +59,8 @@ export class LoopGuard {
       select pg_advisory_xact_lock(k) from (
         select distinct hashtextextended('loop:' || a || ':' || b, 0) as k
         from (values ${rows}) as p(a, b)
-      ) s order by k`);
+        order by k offset 0
+      ) s`);
   }
 
   async check(tx: Tx, from: string, to: string): Promise<GuardResult> {
@@ -84,14 +86,20 @@ export class LoopGuard {
       ) as since`);
     const since = new Date(w?.since as Date | string).toISOString();
 
+    // One arm per direction and sender column, each served by an existing index: agent-sent rows by
+    // `messages_from_agent_idx`; scheduled rows carry their author instead of a sender (`from_agent_id` is null).
+    const arm = (x: string, y: string) => sql`
+      select from_agent_id as s, created_at from messages
+        where from_agent_id = ${x} and to_agent_id = ${y} and created_at > ${since}::timestamptz
+          and kind in ('message','task_comment','scheduled') and state <> 'cancelled'
+      union all
+      select author_agent_id as s, created_at from messages
+        where kind = 'scheduled' and from_agent_id is null and author_agent_id = ${x} and to_agent_id = ${y}
+          and created_at > ${since}::timestamptz and state <> 'cancelled'`;
     const counted = await tx.execute<{ s: string; n: number; first: Date | string }>(sql`
-      select coalesce(m.from_agent_id, m.author_agent_id) as s, count(*)::int as n, min(m.created_at) as first
-      from messages m
-      where m.created_at > ${since}::timestamptz and m.kind in ('message','task_comment','scheduled')
-        and m.state <> 'cancelled'
-        and ((coalesce(m.from_agent_id, m.author_agent_id) = ${a} and m.to_agent_id = ${b})
-          or (coalesce(m.from_agent_id, m.author_agent_id) = ${b} and m.to_agent_id = ${a}))
-      group by 1`);
+      select s, count(*)::int as n, min(created_at) as first
+      from (${arm(a, b)} union all ${arm(b, a)}) m
+      group by s`);
     const of = (id: string) => counted.find((r) => r.s === id);
     const ab = (of(from)?.n ?? 0) + 1;
     const ba = of(to)?.n ?? 0;

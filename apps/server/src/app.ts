@@ -71,6 +71,7 @@ import { projectsRoutes } from "./routes/projects.ts";
 import { schedulesRoutes } from "./routes/schedules.ts";
 import { secretsRoutes } from "./routes/secrets.ts";
 import { settingsRoutes } from "./routes/settings.ts";
+import { setupRoutes } from "./routes/setup.ts";
 import { statusRoutes } from "./routes/status.ts";
 import { tasksRoutes } from "./routes/tasks.ts";
 import { templatesRoutes } from "./routes/templates.ts";
@@ -645,6 +646,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(templatesRoutes, { docker });
   await app.register(imagesRoutes, { docker });
   await app.register(inboxRoutes);
+  await app.register(setupRoutes, { db: deps.db });
   await app.register(tasksRoutes);
   await app.register(schedulesRoutes);
   await app.register(messagesRoutes);

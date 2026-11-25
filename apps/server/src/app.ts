@@ -362,6 +362,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     db: deps.db,
     store,
     schedules: scheduleStore,
+    loopGuard,
     runtimes,
     bus,
     log: app.log,
@@ -502,6 +503,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     runtimes,
     bus,
     log: app.log,
+    loopGuard,
   });
   app.decorate("tasks", tasks);
   // S7 §10.3: the spawned-agent sweep, started after boot reconciliation, stopped first on close.

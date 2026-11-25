@@ -24,7 +24,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { type ScheduleRow, schema } from "@open-factory/db";
-import { and, asc, eq, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Exec } from "../agents/event-store.ts";
 
@@ -170,7 +170,7 @@ export class ScheduleStore {
         ba: { slug: ba.slug, archivedAt: ba.archivedAt, terminatedAt: ba.terminatedAt },
         cuHandle: cu.handle,
         buHandle: bu.handle,
-        pending: sql<boolean>`exists (select 1 from ${messages} where ${messages.scheduleId} = ${schedules.id} and ${messages.state} = 'pending')`,
+        pending: sql<boolean>`exists (select 1 from ${messages} where ${messages.scheduleId} = ${schedules.id} and ${messages.state} in ('pending', 'loop_held'))`,
       })
       .from(schedules)
       .innerJoin(ta, eq(ta.id, schedules.targetAgentId))
@@ -286,6 +286,8 @@ export class ScheduleStore {
   async upsertFiring(
     tx: Exec,
     f: { schedule: ScheduleRow; due: Date; missed: number; late: boolean; now: Date },
+    /** Runs only on the insert path (no open row), before the insert; `{ holdId }` inserts the row `loop_held`. */
+    beforeInsert?: () => Promise<{ holdId: string } | undefined>,
   ): Promise<string | undefined> {
     const s = f.schedule;
     const [pending] = await tx
@@ -293,13 +295,14 @@ export class ScheduleStore {
         id: messages.id,
         seq: messages.deliveredEventSeq,
         firings: messages.firings,
+        state: messages.state,
       })
       .from(messages)
       .where(
         and(
           eq(messages.scheduleId, s.id),
           eq(messages.toAgentId, s.targetAgentId),
-          eq(messages.state, "pending"),
+          inArray(messages.state, ["pending", "loop_held"]),
         ),
       )
       .for("no key update");
@@ -316,8 +319,10 @@ export class ScheduleStore {
           late: f.late,
         })
         .where(eq(messages.id, pending.id));
-      return pending.id;
+      // A held row stays held (I8 §6.3): coalesced into, never handed over.
+      return pending.state === "loop_held" ? undefined : pending.id;
     }
+    const held = await beforeInsert?.();
     const id = randomUUID();
     await tx.insert(messages).values({
       id,
@@ -330,9 +335,10 @@ export class ScheduleStore {
       firings: f.missed,
       late: f.late,
       body: s.body,
+      ...(held ? { state: "loop_held" as const, loopHoldId: held.holdId } : {}),
       createdAt: f.now,
     });
-    return id;
+    return held ? undefined : id;
   }
 
   /** In its own statement after a failed firing transaction (§8.1 step 4): backoff computed in TypeScript. */

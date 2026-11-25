@@ -262,6 +262,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 delivered_to: r.deliveredTo,
                 mentioned_humans: r.mentionedHumans,
                 not_reached: r.notReached.map((n) => ({ ...n, detail: notReachedText(n) })),
+                held: r.held,
                 ...(r.note ? { note: r.note } : {}),
               };
             }),

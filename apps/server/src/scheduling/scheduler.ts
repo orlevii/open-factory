@@ -4,6 +4,7 @@ import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
+import { type GuardResult, type LoopGuard, pairOf } from "../messaging/loop-guard.ts";
 import { backoffMs, DUE_BATCH, LATE_MS, TICK_MAX_MS, TICK_MIN_MS } from "./limits.ts";
 import type { ScheduleStore } from "./schedule-store.ts";
 
@@ -13,6 +14,7 @@ export interface SchedulerDeps {
   db: Db;
   store: Pick<EventStore, "pendingJoined">;
   schedules: ScheduleStore;
+  loopGuard: LoopGuard;
   runtimes: Pick<AgentRuntimes, "deliver">;
   bus: Pick<EventBus, "publishAll">;
   log: RuntimeLog;
@@ -53,7 +55,7 @@ const isDeadlock = (err: unknown): boolean => {
   return e?.code === "40P01" || e?.cause?.code === "40P01";
 };
 
-type Outcome = { progress: boolean; handoff?: string };
+type Outcome = { progress: boolean; handoff?: string; guard?: GuardResult };
 
 /**
  * Factory schedules on a durable `next_run_at` and one in-process timer (S9 spec §7.3, §8). Each firing is one
@@ -200,6 +202,7 @@ export class Scheduler {
       try {
         const o = await this.fireOnce(id, targetAgentId);
         if (o.progress) this.d.bus.publishAll({ type: "schedules_changed" });
+        if (o.guard) this.d.loopGuard.afterCommit([o.guard]);
         return o;
       } catch (err) {
         lastErr = err;
@@ -271,14 +274,26 @@ export class Scheduler {
         return { progress: true };
       }
       await this.d.schedules.update(tx, row.id, { ...base, lastFiredAt: now });
-      const msg = await this.d.schedules.upsertFiring(tx, {
-        schedule: row,
-        due: f.due,
-        missed: f.missed,
-        late: f.late,
-        now,
-      });
-      return { progress: true, ...(msg ? { handoff: msg } : {}) };
+      // I8 §6.3: an agent-authored firing into another agent counts toward the pair; only a new row is checked.
+      const author = row.bodyAuthorAgentId;
+      let guard: GuardResult | undefined;
+      if (author && author !== row.targetAgentId)
+        await this.d.loopGuard.lockPairs(tx, [pairOf(author, row.targetAgentId)]);
+      const msg = await this.d.schedules.upsertFiring(
+        tx,
+        { schedule: row, due: f.due, missed: f.missed, late: f.late, now },
+        author && author !== row.targetAgentId
+          ? async () => {
+              guard = await this.d.loopGuard.check(tx, author, row.targetAgentId);
+              return guard.held ? { holdId: guard.holdId } : undefined;
+            }
+          : undefined,
+      );
+      return {
+        progress: true,
+        ...(msg ? { handoff: msg } : {}),
+        ...(guard?.held ? { guard } : {}),
+      };
     });
     return out;
   }

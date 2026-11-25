@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
+import { LoopGuard } from "../messaging/loop-guard.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
 import { ScheduleStore } from "./schedule-store.ts";
 import { Scheduler } from "./scheduler.ts";
@@ -95,6 +97,15 @@ test("two schedulers firing one schedule: one fires, the other skips it (SKIP LO
       db: h.db,
       store: h.app.store,
       schedules: new ScheduleStore(),
+      loopGuard: new LoopGuard({
+        settings: h.app.factorySettings,
+        store: h.app.store,
+        bus: h.app.bus,
+        runtimes: h.app.runtimes,
+        log: h.app.log,
+        clock: () => clock,
+        newId: randomUUID,
+      }),
       runtimes: h.app.runtimes,
       bus: h.app.bus,
       log: { debug() {}, info() {}, warn() {}, error() {} },

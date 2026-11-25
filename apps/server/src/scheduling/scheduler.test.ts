@@ -1,7 +1,9 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
-import { insertAgent, insertSchedule } from "../agents/testing/rows.ts";
+import { insertAgent, insertSchedule, insertScheduledMessage } from "../agents/testing/rows.ts";
+import { LoopGuard } from "../messaging/loop-guard.ts";
+import type { FactorySettings } from "../settings/factory-settings.ts";
 import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { ScheduleStore } from "./schedule-store.ts";
@@ -13,6 +15,7 @@ let sched: Scheduler;
 let clock: Date;
 let timers: { fn: () => void; ms: number; cleared: boolean }[];
 let frames: ServerMessage[];
+let holdSeq = 0;
 const deliver = vi.fn(async (..._a: unknown[]) => undefined);
 const silentLog = { debug() {}, info() {}, warn() {}, error() {} };
 const T0 = new Date("2026-11-20T10:00:00Z"); // Friday 11:00 Berlin
@@ -35,6 +38,7 @@ beforeEach(async () => {
   deliver.mockReset();
   deliver.mockResolvedValue(undefined);
   await t.sql`delete from messages`;
+  await t.sql`delete from loop_holds`;
   await t.sql`delete from schedules`;
   await t.sql`delete from agents`;
   await t.sql`delete from credentials`;
@@ -45,6 +49,18 @@ beforeEach(async () => {
     db: t.db,
     store: new EventStore(t.db),
     schedules: store,
+    loopGuard: new LoopGuard({
+      settings: {
+        loopGuardMessages: () => 2,
+        loopGuardWindowMs: () => 10 * 60_000,
+      } as FactorySettings,
+      store: { clock: () => clock } as never,
+      bus: { publishAll: () => {} },
+      runtimes: { adoptNotice: async () => {} },
+      log: silentLog as never,
+      clock: () => clock,
+      newId: () => `hold-${++holdSeq}`,
+    }),
     runtimes: { deliver: deliver as never },
     bus: { publishAll: (m) => void frames.push(m) },
     log: silentLog,
@@ -376,4 +392,86 @@ test("a rearm() during the tick's last earliest() read is not dropped: the timer
   });
   await sched.tick();
   expect(lastTimer()?.ms).toBe(20_000);
+});
+
+describe("loop guard on agent-authored schedules", () => {
+  const FIRE = new Date("2026-11-23T08:00:00Z");
+  /** dev and ceo exchanged messages: after dev's schedule fires into ceo, both directions exceed the limit of 2. */
+  async function tripPair() {
+    const at = new Date(FIRE.getTime() - 60_000).toISOString();
+    for (const [from, to, n] of [
+      ["dev", "ceo", 2],
+      ["ceo", "dev", 3],
+    ] as const)
+      for (let i = 0; i < n; i++)
+        await t.sql`insert into messages (id, kind, from_agent_id, to_agent_id, recipients, body, state, created_at)
+          values (${`m-${from}-${i}`}, 'message', ${from}, ${to}, ${[`@${to}`]}::text[], 'x', 'delivered', ${at})`;
+  }
+  const devSchedule = (over: Partial<Parameters<typeof insertSchedule>[1]> = {}) =>
+    sched1({ createdByAgentId: "dev", ...over });
+  const scheduled = () =>
+    t.sql`select id, state, firings, loop_hold_id from messages where kind = 'scheduled' order by created_at`;
+
+  test("a firing into a pair that tripped is inserted held, opens the hold, and is never handed over", async () => {
+    await tripPair();
+    await devSchedule();
+    clock = FIRE;
+    await sched.tick();
+    await sched.idle();
+    const [row, ...rest] = await scheduled();
+    expect(rest).toEqual([]);
+    expect(row).toMatchObject({ state: "loop_held", firings: 1 });
+    const [hold] = await t.sql`select id, resumed_at from loop_holds`;
+    expect(hold?.resumed_at).toBeNull();
+    expect(row?.loop_hold_id).toBe(hold?.id);
+    expect(deliver).not.toHaveBeenCalled();
+    expect((await schedRow()).next_run_at).toEqual(new Date("2026-11-24T08:00:00Z"));
+    expect(
+      await t.sql`select 1 from schedules where id = 's1' and last_fired_at is not null`,
+    ).toHaveLength(1);
+  });
+
+  test("a second firing while held updates that row in place and hands nothing over", async () => {
+    await tripPair();
+    await devSchedule({ cron: "0 8 * * *" });
+    clock = FIRE;
+    await sched.tick();
+    await sched.idle();
+    clock = new Date("2026-11-25T08:00:00Z"); // one day missed in between
+    await sched.tick();
+    await sched.idle();
+    const rows2 = await scheduled();
+    expect(rows2).toHaveLength(1);
+    expect(rows2[0]).toMatchObject({ state: "loop_held", firings: 3 });
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  test("a firing row already pending when the hold opened is still delivered and stays pending", async () => {
+    await tripPair();
+    await devSchedule();
+    await insertScheduledMessage(t.sql, {
+      id: "early",
+      toAgentId: "ceo",
+      scheduleId: "s1",
+      authorAgentId: "dev",
+      createdAt: new Date(FIRE.getTime() - 3_600_000),
+    });
+    await t.sql`insert into loop_holds (id, agent_a, agent_b, opened_at) values ('h0', 'ceo', 'dev', ${FIRE.toISOString()})`;
+    clock = FIRE;
+    await sched.tick();
+    await sched.idle();
+    expect(await scheduled()).toMatchObject([{ id: "early", state: "pending", firings: 2 }]);
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  test("a human-authored schedule is never checked", async () => {
+    await tripPair();
+    await sched1();
+    clock = FIRE;
+    await sched.tick();
+    await sched.idle();
+    expect(await scheduled()).toMatchObject([{ state: "pending" }]);
+    expect(await t.sql`select 1 from loop_holds`).toHaveLength(0);
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
 });

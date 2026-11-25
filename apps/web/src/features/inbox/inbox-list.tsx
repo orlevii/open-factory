@@ -14,6 +14,9 @@ import { EmptyState } from "@/components/empty-state";
 import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
 import { requestComposerFocus } from "@/features/session/session-commands";
+import { setupQueryOptions } from "@/features/setup/api";
+import { SetupBlock } from "@/features/setup/setup-steps";
+import type { SetupVisible } from "@/features/setup/use-setup-visible";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { onRowKeyDown } from "@/lib/row-nav";
 import { runInstantOn } from "@/lib/run-instant";
@@ -74,14 +77,19 @@ export function InboxList({
   selectedId,
   selectedChat,
   onSelect,
+  setup,
 }: {
+  /** Whether the first-run steps show, from the page (it is the one that watches for them leaving). */
+  setup: SetupVisible;
   selectedId?: string;
   /** The selected chat when it has nothing unread (a reload, Back): a read row that keeps its place. */
   selectedChat?: ChatRow | undefined;
   onSelect?: (id: string, replace: boolean) => void;
-} = {}) {
+}) {
   const q = useInbox();
   const qc = useQueryClient();
+  // Until the first-run answer is in, the list holds its empty line: never "Nothing in your inbox." first.
+  const setupPending = useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent }).isPending;
   const open = useOpenItem();
   const viewer = useQuery(sessionQueryOptions).data?.user.handle;
   const items = q.data ?? NO_ITEMS;
@@ -230,7 +238,15 @@ export function InboxList({
         }
       />
     ) : null;
-  if (rows.length === 0) return <EmptyState text="Nothing in your inbox." />;
+  // Below 1024 (no `onSelect`) the steps sit at the top of the list and replace the empty line.
+  const steps = setup.shown && !onSelect ? <SetupBlock blockProps={setup.blockProps} /> : null;
+  if (rows.length === 0)
+    return (
+      <>
+        {steps}
+        {!(setupPending || steps) && <EmptyState text="Nothing in your inbox." />}
+      </>
+    );
 
   const loadEarlier = () => {
     const last = items.at(-1)?.id;
@@ -240,52 +256,55 @@ export function InboxList({
   };
   return (
     <div className="grid gap-4">
-      <ul
-        ref={list}
-        aria-label="Inbox"
-        onKeyDown={onKeyDown}
-        onPointerOver={onPointerOver}
-        {...held.handlers}
-        onPointerLeave={() => {
-          clearTimeout(hover.current);
-          held.handlers.onPointerLeave();
-        }}
-        className="border-y border-border [overflow-anchor:auto]"
-      >
-        {rows.map((r) =>
-          r.kind === "chat" ? (
-            <ChatInboxRow
-              key={r.id}
-              row={r.chat}
-              now={now}
-              onOpen={onOpenChat}
-              selected={r.id === selectedId}
-              selectable={onSelect !== undefined}
-            />
-          ) : (
-            <InboxRow
-              key={r.id}
-              item={r.item}
-              now={now}
-              onOpen={onOpen}
-              selected={r.id === selectedId}
-              selectable={onSelect !== undefined}
-              viewer={viewer}
-            />
-          ),
+      {steps}
+      <div className="grid gap-4" {...setup.listProps}>
+        <ul
+          ref={list}
+          aria-label="Inbox"
+          onKeyDown={onKeyDown}
+          onPointerOver={onPointerOver}
+          {...held.handlers}
+          onPointerLeave={() => {
+            clearTimeout(hover.current);
+            held.handlers.onPointerLeave();
+          }}
+          className="border-y border-border [overflow-anchor:auto]"
+        >
+          {rows.map((r) =>
+            r.kind === "chat" ? (
+              <ChatInboxRow
+                key={r.id}
+                row={r.chat}
+                now={now}
+                onOpen={onOpenChat}
+                selected={r.id === selectedId}
+                selectable={onSelect !== undefined}
+              />
+            ) : (
+              <InboxRow
+                key={r.id}
+                item={r.item}
+                now={now}
+                onOpen={onOpen}
+                selected={r.id === selectedId}
+                selectable={onSelect !== undefined}
+                viewer={viewer}
+              />
+            ),
+          )}
+        </ul>
+        {q.isFetchNextPageError ? (
+          <ErrorLine text="Couldn't load earlier messages." onRetry={loadEarlier} autoFocus />
+        ) : (
+          q.hasNextPage && (
+            <div>
+              <Button variant="outline" onClick={loadEarlier} disabled={q.isFetchingNextPage}>
+                Load earlier
+              </Button>
+            </div>
+          )
         )}
-      </ul>
-      {q.isFetchNextPageError ? (
-        <ErrorLine text="Couldn't load earlier messages." onRetry={loadEarlier} autoFocus />
-      ) : (
-        q.hasNextPage && (
-          <div>
-            <Button variant="outline" onClick={loadEarlier} disabled={q.isFetchingNextPage}>
-              Load earlier
-            </Button>
-          </div>
-        )
-      )}
+      </div>
     </div>
   );
 }

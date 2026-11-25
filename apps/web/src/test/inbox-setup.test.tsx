@@ -144,26 +144,25 @@ test("an agent already exists: no steps, the usual pane and empty line", async (
   expect(block()).toBeNull();
 });
 
-test("first paint: with the setup answer still pending the empty line is never drawn, then the steps appear", async () => {
+test("first paint: the route waits for the setup answer, so the empty line never shows without the steps", async () => {
   boot({ hold: true });
   fakeMatchMedia.installWidth(1280);
-  const seen: string[] = [];
+  const alone: string[] = [];
   const watch = new MutationObserver(() => {
-    if (document.body.textContent?.includes(EMPTY)) seen.push(EMPTY);
+    if (document.body.textContent?.includes(EMPTY) && !block()) alone.push(EMPTY);
   });
   watch.observe(document.body, { subtree: true, childList: true, characterData: true });
   renderApp("/inbox", alice);
   await act(async () => {
     await new Promise((r) => setTimeout(r, 50));
   });
-  expect(block()).toBeNull();
   expect(screen.queryByText(EMPTY)).toBeNull();
+  expect(block()).toBeNull();
   await act(async () => release?.());
   expect(await screen.findByRole("region", { name: "Set up your factory" })).toBeVisible();
   expect(await screen.findByText(EMPTY)).toBeVisible();
   watch.disconnect();
-  // The empty line may only appear together with the steps (never alone, before them).
-  expect(block()).not.toBeNull();
+  expect(alone).toEqual([]);
 });
 
 test.each(["frame", "focus"] as const)(

@@ -1,4 +1,4 @@
-import { type FocusEvent, useLayoutEffect, useRef, useState } from "react";
+import { type FocusEvent, useCallback, useLayoutEffect, useRef, useState } from "react";
 
 export type SetupVisible = {
   /** The steps block is on screen. */
@@ -9,9 +9,15 @@ export type SetupVisible = {
     onPointerLeave(): void;
     onFocusCapture(): void;
     onBlurCapture(e: FocusEvent): void;
+    /** Leaving the DOM is leaving: no pointerleave or blur fires then, so this resets what they track. */
+    ref(el: HTMLElement | null): void;
   };
   /** For the block: where focus is, so it can be moved before the block goes. */
-  blockProps: { onFocusCapture(): void; onBlurCapture(e: FocusEvent): void };
+  blockProps: {
+    onFocusCapture(): void;
+    onBlurCapture(e: FocusEvent): void;
+    ref(el: HTMLElement | null): void;
+  };
 };
 
 /**
@@ -28,20 +34,35 @@ export function useSetupVisible(hasAgent: boolean | undefined): SetupVisible {
   const pointer = useRef(false);
   const focus = useRef(false);
   const focusInside = useRef(false);
+  const block = useRef<HTMLElement | null>(null);
   if (prev !== hasAgent) {
     setPrev(hasAgent);
     if (prev === false && hasAgent && (pointer.current || focus.current)) setHeld(true);
   }
   const shown = hasAgent === false || held;
 
+  // After every commit: with the block gone and focus having been in it, that focus is lost. If the block left
+  // because setup finished, move it to the first Inbox row (or the heading) before paint; if it left for
+  // another reason (the pane now shows an item) just forget it, or a later finish would steal focus.
   useLayoutEffect(() => {
-    if (shown || !focusInside.current) return;
+    if (block.current || !focusInside.current) return;
     focusInside.current = false;
+    if (shown) return;
     const row = document.querySelector<HTMLElement>("a[data-inbox-id]");
     const heading = document.querySelector<HTMLElement>("h1");
     if (heading && !row) heading.tabIndex = -1;
     (row ?? heading)?.focus();
-  }, [shown]);
+  });
+
+  const listRef = useCallback((el: HTMLElement | null) => {
+    if (el) return;
+    pointer.current = false;
+    focus.current = false;
+    setHeld(false);
+  }, []);
+  const blockRef = useCallback((el: HTMLElement | null) => {
+    block.current = el;
+  }, []);
 
   const leave = () => {
     if (!pointer.current && !focus.current) setHeld(false);
@@ -64,8 +85,10 @@ export function useSetupVisible(hasAgent: boolean | undefined): SetupVisible {
         focus.current = false;
         leave();
       },
+      ref: listRef,
     },
     blockProps: {
+      ref: blockRef,
       onFocusCapture() {
         focusInside.current = true;
       },

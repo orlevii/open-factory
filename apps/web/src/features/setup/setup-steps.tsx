@@ -57,7 +57,7 @@ export function SetupSteps({
                 onClick={step.open}
                 aria-label={`Step ${i + 1} of ${STEPS.length}, ${step.title}, ${done ? "done" : "not done"}`}
                 aria-describedby={`setup-step-${i}`}
-                className="flex min-h-14 w-full items-start gap-3 px-2 py-3 text-left transition-colors duration-150 hover:bg-accent focus-visible:outline-offset-[-2px] active:bg-accent"
+                className="flex min-h-14 w-full items-start gap-3 px-2 py-3 text-left of-row"
               >
                 <span
                   aria-hidden="true"

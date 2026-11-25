@@ -14,7 +14,6 @@ import { EmptyState } from "@/components/empty-state";
 import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
 import { requestComposerFocus } from "@/features/session/session-commands";
-import { setupQueryOptions } from "@/features/setup/api";
 import { SetupBlock } from "@/features/setup/setup-steps";
 import type { SetupVisible } from "@/features/setup/use-setup-visible";
 import { useDocumentVisible } from "@/hooks/use-document-visible";
@@ -88,8 +87,6 @@ export function InboxList({
 }) {
   const q = useInbox();
   const qc = useQueryClient();
-  // Until the first-run answer is in, the list holds its empty line: never "Nothing in your inbox." first.
-  const setupPending = useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent }).isPending;
   const open = useOpenItem();
   const viewer = useQuery(sessionQueryOptions).data?.user.handle;
   const items = q.data ?? NO_ITEMS;
@@ -244,7 +241,7 @@ export function InboxList({
     return (
       <>
         {steps}
-        {!(setupPending || steps) && <EmptyState text="Nothing in your inbox." />}
+        {!steps && <EmptyState text="Nothing in your inbox." />}
       </>
     );
 

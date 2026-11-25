@@ -380,8 +380,8 @@ export class EventStore {
   }
   /**
    * Boot (spec §5.7 step 6, §8): the live (not archived, not terminated), non-errored agents with deliverable pending items, by their oldest
-   * such item (FIFO across the restart). Deliverable: a message or a notice, or a member update older than the
-   * debounce (a young one waits for its timer; peer rows never wake anyone). `resume` when a factory-restarted notice
+   * such item (FIFO across the restart). Deliverable: a message, a notice or a member update (it waits only out
+   * its debounce while the agent runs; peer rows never wake anyone). `resume` when a factory-restarted notice
    * is among them.
    */
   async bootWakes(): Promise<{ id: string; slug: string; resume: boolean }[]> {
@@ -749,7 +749,7 @@ export class EventStore {
     await tx.execute(sql`
       update turns set task_id = (
         select min(task_id) from messages
-        where delivered_turn_id = ${turnId} and kind <> 'system'
+        where delivered_turn_id = ${turnId} and kind not in ('system', 'member_update', 'peer_joined', 'peer_left')
         having count(*) > 0 and count(*) = count(task_id) and count(distinct task_id) = 1
       )
       where id = ${turnId}`);

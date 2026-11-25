@@ -122,8 +122,8 @@ export interface RuntimeDeps {
    */
   defaultWarmWindowMinutes?: () => number;
   /**
-   * S6 §9.1: persists one forwarded item (the Router: a held `member_update` to the manager, the `errored` fact to the
-   * humans for a top-level agent, otherwise dropped). Awaited inside the report's job: a failed insert is a failed event
+   * S6 §9.1: persists one forwarded item (the Router: a `member_update` to the manager, the `errored` fact to the
+   * manager). Awaited inside the report's job: a failed insert is a failed event
    * write (§16). Only the hand-off to the manager is deferred. Tests that don't look at it pass `noForward`.
    */
   forward: (f: Forward) => Promise<void>;
@@ -544,8 +544,9 @@ export class AgentRuntime {
   private attempting: boolean;
   private attemptReason: WakeReason | undefined;
   private attemptBatchWritten = false;
-  // A human's message reached an errored agent whose failing process hadn't exited yet: attempt at that exit.
-  private attemptOwedAtExit = false;
+  // A human's message (or a report's update) reached an errored agent whose failing process hadn't exited yet: attempt
+  // at that exit, for this reason.
+  private attemptOwedAtExit: WakeReason | undefined;
   // S6 §9.1 (R4): `errored` is forwarded at most once per errored episode, which runs until the error clears (an
   // attempt succeeds or Start a new session). Loaded from `errored_reported`, which the Router sets durably.
   private erroredForwarded: boolean;
@@ -758,7 +759,7 @@ export class AgentRuntime {
    */
   private async wakeToDeliver(reason: WakeReason, o: { attempts: boolean; inline: boolean }) {
     if (o.attempts && this.messageStartsAttempt()) return this.beginAttempt(reason, o.inline);
-    if (o.attempts && this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
+    if (o.attempts && this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = reason;
     if (o.inline) await this.wakeInline(reason);
     else if (!this.proc) await this.wakeFromJob(reason);
   }
@@ -1648,7 +1649,7 @@ export class AgentRuntime {
       this.debounced = [];
       this.attempting = false;
       this.attemptReason = undefined;
-      this.attemptOwedAtExit = false;
+      this.attemptOwedAtExit = undefined;
       this.publishQueue();
       // A row committed after the transaction's reject-pending update but handed over during the provisional window
       // was only queued in memory: reject it in the DB too (spec §8, "Pending messages vs. rejection").
@@ -2503,7 +2504,7 @@ export class AgentRuntime {
     this.attempting = true;
     this.attemptReason = reason;
     this.attemptBatchWritten = false;
-    this.attemptOwedAtExit = false;
+    this.attemptOwedAtExit = undefined;
     await this.d.store.setAttempting(this.agent.id, true);
     this.publishStatus();
   }
@@ -3149,7 +3150,7 @@ export class AgentRuntime {
       case "turn_end": {
         const turnId = this.openTurnId;
         // I9 §4.8: whether this turn end settles the batches written before it began (see the close below).
-        const settles = !e.originKind || e.numTurns > 0;
+        const settles = !e.originKind || e.numTurns !== 0;
         // U3 §11.2: right after the turn_end row, in the same tick (no live patch in between), so the client clears its
         // live state first and the reset restores a block a self-started turn already began.
         const closing = sendersOf([...this.awaiting, ...this.absorbed]);
@@ -3181,8 +3182,8 @@ export class AgentRuntime {
             !e.originKind,
             endSeq,
           );
+          if (settles) this.awaiting = [];
         }
-        if (settles) this.awaiting = [];
         this.absorbed = []; // the stamp and the close committed: the batch is no longer working
         this.chatChanged(closing);
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
@@ -3361,7 +3362,7 @@ export class AgentRuntime {
     this.otherRestartCause = false;
     this.stopCronsPending = undefined; // the crons die with the process anyway (S9 §10.3)
     const attemptOwed = this.attemptOwedAtExit; // only this process's exit honours it
-    this.attemptOwedAtExit = false;
+    this.attemptOwedAtExit = undefined;
     if (this.escalationTimer) clearTimeout(this.escalationTimer);
     this.escalationTimer = undefined;
     // Spec §9.1: no recorded intent and not expected, whether or not the agent is errored or attempting.
@@ -3497,7 +3498,7 @@ export class AgentRuntime {
     } else if ((intent?.kind === "failed_start" || intent?.kind === "internal") && attemptOwed) {
       // A human's message arrived while the failing process was still exiting (spec §9.2 step 5).
       if (canAttempt && this.messageStartsAttempt() && this.hasDeliverable())
-        await this.beginAttempt("message", false);
+        await this.beginAttempt(attemptOwed, false);
     } else if (intent?.kind === "hibernate") {
       if (intent.reason !== "shutdown" && intent.reason !== "archived") {
         // Only an apply-restart (or Stop crons taking it over) restarts for config: a self-edit's wake, or crons it lost.

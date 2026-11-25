@@ -841,7 +841,7 @@ test("a batch write in flight and the termination both complete: no deadlock", a
   expect(w.docker.containersOf(w.id)).toEqual([]);
 });
 
-test("a provisional latch whose transaction fails: the held timer is re-armed and the update delivered", async () => {
+test("a provisional latch whose transaction fails: the debounce timer is re-armed and the update delivered", async () => {
   const w = await world({ memberUpdateDebounceMs: 60_000 });
   await w.idle();
   const proc = w.proc();

@@ -1057,3 +1057,23 @@ describe("persisted events stay the same", () => {
     expect(`${events.length} ${digest}`).toMatchSnapshot();
   });
 });
+
+test("a result without num_turns reports no turn count, an explicit 0 stays 0", () => {
+  const base = {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    terminal_reason: "completed",
+  };
+  const init = { type: "system", subtype: "init", session_id: "s-1", model: "m", cwd: "/w" };
+  const endOf = (line: unknown) => {
+    const s = createMapperState({ resumed: false });
+    mapEvents(init, s);
+    return ofType(mapEvents(line, s), "turn_end")[0];
+  };
+  const absent = endOf(base);
+  const zero = endOf({ ...base, num_turns: 0 });
+  expect(absent).toBeDefined();
+  expect(absent?.numTurns).toBeUndefined();
+  expect(zero?.numTurns).toBe(0);
+});

@@ -118,7 +118,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     cacheWriteTokens: z.number(),
     costUsd: z.number(),
     durationMs: z.number(),
-    numTurns: z.number(),
+    numTurns: z.number().optional(),
     apiErrorStatus: z.number().int().optional(),
   }),
   z.object({
@@ -142,7 +142,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     originKind: z.string().optional(),
     command: z.string().optional(),
     apiErrorStatus: z.number().optional(),
-    numTurns: z.number(),
+    numTurns: z.number().optional(),
   }),
   z.object({
     type: z.literal("error"),

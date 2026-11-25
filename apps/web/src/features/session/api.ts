@@ -1,5 +1,6 @@
 import {
   type AgentSummary,
+  ApiError,
   agentDetailSchema,
   agentListSchema,
   agentResponseSchema,
@@ -7,6 +8,7 @@ import {
   eventsPageSchema,
   messageLookupSchema,
   queueItemResponseSchema,
+  sendMessagesResponseSchema,
 } from "@open-factory/shared";
 import { type QueryClient, queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
@@ -82,24 +84,6 @@ export function fetchEvents(
 
 export const fetchMessage = (id: string) =>
   apiFetch(`/api/messages/${encodeURIComponent(id)}`, { schema: messageLookupSchema });
-
-/** U3 §13.2: `clientMessageId` makes a retry idempotent (the server answers a repeat with the original). */
-export const postMessage = (
-  slug: string,
-  body: string,
-  o: { urgent: boolean; clientMessageId?: string; attachments?: string[]; signal?: AbortSignal },
-) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/messages`, {
-    method: "POST",
-    body: {
-      body,
-      urgent: o.urgent,
-      ...(o.clientMessageId ? { clientMessageId: o.clientMessageId } : {}),
-      ...(o.attachments?.length ? { attachments: o.attachments } : {}),
-    },
-    schema: queueItemResponseSchema,
-    ...(o.signal ? { signal: o.signal } : {}),
-  }).then((r) => r.item);
 
 /** `POST /api/agents/:slug/input`: the raw text a human types into the session, exactly as typed (I1 §5.1).
  *  `clientMessageId` makes a retry idempotent. */

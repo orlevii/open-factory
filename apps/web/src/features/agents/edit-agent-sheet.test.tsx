@@ -294,7 +294,7 @@ test("on its own session, a display-name-only save toasts nothing", async () => 
     { extra: { ...sessionRoutes, "PATCH /api/agents/lead": saved(lead({ displayName: "Boss" })) } },
     { path: "/agents/lead" },
   );
-  expect(getSheetState().parent?.at).toBe("/agents/lead");
+  expect(getSheetState().parent?.at).toBe("/agents/lead/chat");
   await rename("Boss");
   await userEvent.click(saveButton());
   await waitFor(() => expect(getSheetState().parent).toBeUndefined());
@@ -730,15 +730,15 @@ test("Add project stacks over Edit agent", async () => {
 
 // --- Entry points ---
 
-test("/agents/lead/edit lands on /agents/lead with Edit agent open", async () => {
+test("/agents/lead/edit lands on the lead chat with Edit agent open", async () => {
   mockWorld({ agents: [lead()], extra: sessionRoutes });
   const { router } = renderApp("/agents/lead/edit", alice);
   await sheet();
-  expect(router.state.location.pathname).toBe("/agents/lead");
+  expect(router.state.location.pathname).toBe("/agents/lead/chat");
   expect(getSheetState().parent).toMatchObject({
     kind: "edit-agent",
     slug: "lead",
-    at: "/agents/lead",
+    at: "/agents/lead/chat",
   });
   expect(await screen.findByLabelText("Display name")).toHaveValue("Lead");
 });

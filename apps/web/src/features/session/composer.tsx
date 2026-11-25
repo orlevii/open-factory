@@ -1,5 +1,4 @@
 import { type AgentSummary, ApiError, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
 import {
@@ -16,18 +15,15 @@ import {
   type ComposerHandle,
   type ComposerNote,
   Composer as ComposerPrimitive,
-  type HintMode,
   NETWORK_ERROR,
   SubmitError,
   type SubmitOptions,
   UNCONFIRMED,
 } from "@/components/composer/composer";
 import { Button } from "@/components/ui/button";
-import { SESSION_AT_LABEL, useMentionSource } from "@/features/mentions/mention-source";
 import { readDraft, sessionDraftKey, writeDraft } from "@/lib/drafts";
-import { isCoarsePointer } from "@/lib/send-key";
-import { postInput, postInterrupt, postMessage } from "./api";
-import { commandsQueryOptions, useCommandSource } from "./commands";
+import { postInput, postInterrupt } from "./api";
+import { useCommandSource } from "./commands";
 import { LINK_CLASS } from "./message-block";
 import { registerComposerFocus, repinTimeline } from "./session-commands";
 import type { SendingBlock } from "./session-state";
@@ -124,7 +120,7 @@ type SessionComposerProps = {
   slug: string;
   agent: AgentSummary;
   /** The session's `stopEpoch`: Stop resets on every turn edge (U3 §6.1) and when a stop went
-   *  unconfirmed. Without one (the inbox pane, which holds no session state) the composer shows no Stop. */
+   *  unconfirmed. Without one the composer shows no Stop. */
   stopEpoch?: number;
   /** The session is still loading: typing works, sending waits. */
   waiting?: boolean;
@@ -142,10 +138,6 @@ type SessionComposerProps = {
   onTerminated?: (notice: string) => void;
   /** ↑ in an empty box: your last message's text from the loaded timeline (U3 §13.2). Stable. */
   recall?: () => string | undefined;
-  /** Where it stands. The session view's composer is raw: its text goes to Claude as typed (I1 §5.4),
-   *  with `/` commands and no `@` or files. Elsewhere (the inbox pane's reply) it sends a message, with
-   *  `@` and no `/`; a pasted or dropped file gets the "Files can be sent in an agent's session" note. */
-  context?: "session" | "inbox";
   /** Bottom-docked: its height lifts the toasts above it. */
   docked?: boolean;
 };
@@ -163,7 +155,6 @@ const IDENTITY_KEYS = [
   "onSent",
   "onTerminated",
   "recall",
-  "context",
   "docked",
 ] as const satisfies readonly Exclude<keyof SessionComposerProps, "agent">[];
 
@@ -200,10 +191,8 @@ export const Composer = memo(function SessionComposer({
   onSendFailed,
   landed = NO_LANDED,
   recall,
-  context = "inbox",
   docked = false,
 }: SessionComposerProps) {
-  const inSession = context === "session";
   const inner = useRef<ComposerHandle>(null);
   useImperativeHandle(
     ref,
@@ -224,29 +213,28 @@ export const Composer = memo(function SessionComposer({
   }, [landed]);
 
   const onSubmit = useCallback(
-    async (text: string, { urgent, clientMessageId }: SubmitOptions) => {
-      // Raw input goes as typed, its trailing whitespace trimmed (the server does the same); a message
-      // is trimmed at both ends, and may interrupt.
-      const body = inSession ? text.trimEnd() : text.trim();
+    async (text: string, { clientMessageId }: SubmitOptions) => {
+      // Raw input goes as typed, its trailing whitespace trimmed (the server does the same).
+      const body = text.trimEnd();
       onSending?.({
         clientMessageId,
         body,
-        urgent: inSession ? false : urgent,
-        ...(inSession ? { raw: true, at: new Date().toISOString() } : {}),
+        urgent: false,
+        raw: true,
+        at: new Date().toISOString(),
       });
       repinTimeline(slug); // sending follows the conversation again (U3 §8.1)
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
       try {
-        const item = await (inSession
-          ? postInput(slug, { text: body, clientMessageId }, abort.signal)
-          : postMessage(slug, body, { urgent, clientMessageId, signal: abort.signal }));
+        const item = await postInput(slug, { text: body, clientMessageId }, abort.signal);
         // The item echoes the id; filled in if a server leaves it out, so the block never stays behind.
-        onQueued?.(item.clientMessageId ? item : { ...item, clientMessageId });
+        if (item) onQueued?.(item.clientMessageId ? item : { ...item, clientMessageId });
         onSent?.();
       } catch (e) {
+        if (e instanceof SubmitError) throw e;
         if (e instanceof ApiError && e.code === "agent_start_failed") {
-          // 503: queued server-side; the queue frame shows "Not delivered yet: <reason>".
+          // 503 from /input: queued server-side; the queue frame shows "Not delivered yet: <reason>".
           onSendFailed?.(clientMessageId);
           onSent?.();
           return;
@@ -271,21 +259,17 @@ export const Composer = memo(function SessionComposer({
         clearTimeout(timer);
       }
     },
-    [slug, inSession, onSending, onQueued, onSent, onSendFailed, onTerminated],
+    [slug, onSending, onQueued, onSent, onSendFailed, onTerminated],
   );
   const onStop = useCallback(() => postInterrupt(slug), [slug]);
-  // `@` inserts a handle as plain text; the session never calls it a mention (Q23). The raw session
-  // has no `@`: what it sends is what Claude reads.
-  const at = useMentionSource(SESSION_AT_LABEL);
+  // The raw session has no `@` or files: what it sends is what Claude reads.
   const slash = useCommandSource(slug);
   // The session view prefetches the list; an opening menu fetches it if that hasn't (`watch`).
-  const completions = useMemo(() => (inSession ? { slash } : { at }), [at, slash, inSession]);
+  const completions = useMemo(() => ({ slash }), [slash]);
 
   // Messages still queue; only a new session delivers them (UI design §3.6).
   const waitsForNewSession =
     agent.status === "errored" && agent.errorKind === "resume_unrecoverable";
-  const hintMode: HintMode =
-    inSession || !agent.turnOpen ? "none" : isCoarsePointer() ? "coarse" : "working";
   // The raw session's one hint: where the text goes, and the way to the chat (one object per
   // inputs, so the composer's `memo` holds).
   const displayName = agent.displayName;
@@ -295,7 +279,7 @@ export const Composer = memo(function SessionComposer({
       text: (
         <>
           Goes to Claude as typed ·{" "}
-          <Link to="/agents/$slug" params={{ slug }} className={LINK_CLASS}>
+          <Link to="/agents/$slug/chat" params={{ slug }} className={LINK_CLASS}>
             Message {displayName} in Chat
           </Link>
         </>
@@ -303,13 +287,7 @@ export const Composer = memo(function SessionComposer({
     }),
     [slug, displayName],
   );
-  const note = waitsForNewSession
-    ? WAITS_NOTE
-    : inSession
-      ? agent.turnOpen
-        ? RAW_TURN_NOTE
-        : restNote
-      : undefined;
+  const note = waitsForNewSession ? WAITS_NOTE : agent.turnOpen ? RAW_TURN_NOTE : restNote;
   return (
     <ComposerPrimitive
       docked={docked}
@@ -318,23 +296,21 @@ export const Composer = memo(function SessionComposer({
       className="shrink-0 border-t border-border px-4 py-3 md:px-6"
       draftKey={sessionDraftKey(slug)}
       label={`Message to ${agent.displayName}`}
-      placeholder={
-        inSession ? "Raw input to Claude · / for commands" : `Message ${agent.displayName}`
-      }
-      turnPlaceholder={inSession ? undefined : `Sends after @${slug}'s current step`}
+      placeholder="Raw input to Claude · / for commands"
       onSubmit={onSubmit}
       validate={checkBody}
       waiting={waiting}
       landed={landed}
       turnOpen={agent.turnOpen}
+      stopVisible={agent.turnOpen}
       compacting={agent.compacting === true}
       stopEpoch={stopEpoch}
       onStop={stopEpoch === undefined ? undefined : onStop}
-      hintMode={hintMode}
+      hintMode="none"
       completions={completions}
       note={note}
-      reserveNote={inSession}
-      noFilesNote={inSession ? RAW_FILES_NOTE : undefined}
+      reserveNote
+      noFilesNote={RAW_FILES_NOTE}
       recall={recall}
     />
   );

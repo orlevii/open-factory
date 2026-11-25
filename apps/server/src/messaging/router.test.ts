@@ -36,9 +36,9 @@ async function startIdle(slug: string) {
   const { cookie } = await signUp(h.app, { handle: `h${slug}` });
   const res = await h.app.inject({
     method: "POST",
-    url: `/api/agents/${slug}/messages`,
+    url: `/api/messages`,
     headers: { cookie },
-    payload: { body: "hi" },
+    payload: { to: [slug], body: "hi" },
   });
   const p = proc(slug);
   if (!p) throw new Error(`${slug} not started: ${res.statusCode} ${res.body}`);
@@ -297,9 +297,9 @@ test("AC 6: a valid agent token on a REST route is 401", async () => {
   const auth = { authorization: `Bearer ${tokA}` };
   const send = await h.app.inject({
     method: "POST",
-    url: "/api/agents/bob/messages",
+    url: "/api/messages",
     headers: auth,
-    payload: { body: "x" },
+    payload: { to: ["bob"], body: "x" },
   });
   expect(send.statusCode).toBe(401);
   const list = await h.app.inject({ method: "GET", url: "/api/agents", headers: auth });
@@ -309,26 +309,32 @@ test("AC 6: a valid agent token on a REST route is 401", async () => {
   expect(await pendingOf("bob")).toEqual([]);
 });
 
-test("the human REST send resolves only agents: a user or an unknown name is 404, a reserved one 400; archived is 409", async () => {
+test("the human REST send resolves only agents: each refused target is its own result", async () => {
   const { cookie } = await signUp(h.app, { handle: "orla" });
   const post = (slug: string) =>
     h.app.inject({
       method: "POST",
-      url: `/api/agents/${slug}/messages`,
+      url: "/api/messages",
       headers: { cookie },
-      payload: { body: "x" },
+      payload: { to: [slug], body: "x" },
     });
-  for (const slug of ["orla", "nobody"]) {
+  for (const slug of ["orla", "nobody", "humans", "factory"]) {
     const r = await post(slug);
-    expect(r.statusCode).toBe(404);
-    expect(r.json().error.code).toBe("agent_not_found");
+    expect(r.statusCode).toBe(202);
+    expect(r.json().results).toEqual([
+      expect.objectContaining({ to: `@${slug}`, status: "refused", reason: expect.any(String) }),
+    ]);
   }
-  // `humans` and the other reserved names never reach the Router: the slug parameter refuses them (S4).
-  for (const slug of ["humans", "factory"]) expect((await post(slug)).statusCode).toBe(400);
   await h.app.agents.archive("bob");
   const r = await post("bob");
-  expect(r.statusCode).toBe(409);
-  expect(r.json().error.code).toBe("agent_archived");
+  expect(r.json().results).toEqual([
+    {
+      to: "@bob",
+      status: "refused",
+      reason: "@bob is archived and can't receive messages.",
+      code: "archived",
+    },
+  ]);
   expect(await pendingOf("bob")).toEqual([]);
   expect(await h.sql`select id from inbox_items`).toEqual([]);
 });
@@ -439,9 +445,9 @@ test("R4 (owner): a top-level agent's errored episode is one inbox item; a succe
   const retry = () =>
     h.app.inject({
       method: "POST",
-      url: "/api/agents/lead/messages",
+      url: "/api/messages",
       headers: { cookie },
-      payload: { body: "are you there" },
+      payload: { to: ["lead"], body: "are you there" },
     });
   await retry();
   (await nextAttempt(4))?.exit(1);
@@ -555,9 +561,9 @@ test("errored_reported clears with the error, so the next episode is reported", 
   const { cookie } = await signUp(h.app, { handle: "sam" });
   await h.app.inject({
     method: "POST",
-    url: "/api/agents/lead/messages",
+    url: "/api/messages",
     headers: { cookie },
-    payload: { body: "retry" },
+    payload: { to: ["lead"], body: "retry" },
   });
   proc("lead")?.emit(ev.session("sess-lead"), ev.turn(), ev.usage(), ev.end());
   await settle("lead");
@@ -836,6 +842,26 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     expect((await rowsOf("to-mixed"))[0]?.recipients).toEqual(["@bob"]);
   });
 
+  test("chat_changed goes to the human party of each row only", async () => {
+    const or = await signUp(h.app, { handle: "or" });
+    const sam = await signUp(h.app, { handle: "sam" });
+    const got: Record<string, ServerMessage[]> = { or: [], sam: [] };
+    h.app.bus.subscribeUser(or.user.id, (m) => got.or?.push(m));
+    h.app.bus.subscribeUser(sam.user.id, (m) => got.sam?.push(m));
+    await sendAs("ada", ["or"], "to-or");
+    expect(got.or).toContainEqual({ type: "chat_changed", agent: "ada" });
+    expect(got.sam).toEqual([]);
+    got.or = [];
+    await h.app.inject({
+      method: "POST",
+      url: "/api/messages",
+      headers: { cookie: sam.cookie },
+      payload: { to: ["bob"], body: "hi bob" },
+    });
+    expect(got.sam).toContainEqual({ type: "chat_changed", agent: "bob" });
+    expect(got.or.filter((m) => m.type === "chat_changed")).toEqual([]);
+  });
+
   test("one inbox item per human recipient; inbox_changed goes to those users only", async () => {
     const or = await signUp(h.app, { handle: "or" });
     const sam = await signUp(h.app, { handle: "sam" });
@@ -938,15 +964,21 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     }
   });
 
-  test("the human REST route keeps its response shape: 202 with the queue item", async () => {
+  test("the human REST route answers 202 with one result per recipient", async () => {
     const { cookie } = await signUp(h.app, { handle: "orla" });
     const res = await h.app.inject({
       method: "POST",
-      url: "/api/agents/bob/messages",
+      url: "/api/messages",
       headers: { cookie },
-      payload: { body: "shape" },
+      payload: { to: ["bob"], body: "shape" },
     });
     expect(res.statusCode).toBe(202);
-    expect(res.json().item).toMatchObject({ body: "shape" });
+    expect(res.json().results).toEqual([
+      expect.objectContaining({
+        to: "@bob",
+        status: "queued",
+        item: expect.objectContaining({ body: "shape" }),
+      }),
+    ]);
   });
 });

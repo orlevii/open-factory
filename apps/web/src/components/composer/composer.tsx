@@ -37,6 +37,7 @@ import {
   type UploadSummary,
 } from "./attachments";
 import { type CaretAnchor, CaretMenu, type CaretMenuHandle, caretAnchor } from "./caret-menu";
+import { Recipients } from "./recipients";
 import { StopButton, type StopHandle } from "./stop-button";
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
@@ -167,9 +168,13 @@ export type ComposerProps = {
   /** Called right after the box empties (its synchronous part runs first); resolve when the server
    *  took the text, reject with a `SubmitError` to put the text back with the reason. */
   onSubmit(text: string, o: SubmitOptions): Promise<void>;
+  /** A turn is open: the hint and the phone's placeholder. */
   turnOpen?: boolean;
   compacting?: boolean;
-  /** Stop resets on every change (a turn edge, an unconfirmed stop). Stop shows with `onStop`. */
+  /** Stop shows (left of Send) with `onStop` and a `stopEpoch`: the session's open turn, the chat's
+   *  turn that read your message. Esc stops it. */
+  stopVisible?: boolean;
+  /** Stop resets on every change (a turn edge, an unconfirmed stop). */
   stopEpoch?: number;
   onStop?(): Promise<unknown>;
   completions?: { slash?: CompletionSource; at?: CompletionSource };
@@ -180,6 +185,19 @@ export type ComposerProps = {
   attachments?: AttachmentStore;
   /** The note a pasted or dropped file gets where files can't go (default `FILES_NOTE`). */
   noFilesNote?: string;
+  /** Files can't go with this send: the paperclip is aria-disabled and says why on pressing it. */
+  attachBlocked?: string;
+  /** The agents you added to the send (slugs; the chat's own is `recipientsTo`): the "To:" row shows
+   *  with one. Backspace in an empty box selects the last, then removes it. */
+  recipients?: readonly string[];
+  /** The agent the chat is with, first in "To:". */
+  recipientsTo?: string;
+  /** A stable setter. */
+  onRecipientsChange?(next: readonly string[]): void;
+  /** The user edited the text: a note the caller holds goes (a stable callback). */
+  onEdit?(): void;
+  /** A note for the text as it stands (a leading `/` in the chat); cheap, it runs on every render. */
+  noteFor?(text: string): ComposerNote | undefined;
   /** ↑ in an empty box with the caret at 0: the text to fill it with (U3 §13.2), if any. */
   recall?(): string | undefined;
   /** Without one there is no hint line. */
@@ -236,10 +254,17 @@ export const Composer = memo(function Composer({
   onSubmit,
   turnOpen = false,
   compacting = false,
+  stopVisible = false,
   stopEpoch,
   onStop,
   preview = false,
   attachments,
+  attachBlocked,
+  recipients,
+  recipientsTo = "",
+  onRecipientsChange,
+  onEdit,
+  noteFor,
   recall,
   noFilesNote = FILES_NOTE,
   hintMode,
@@ -274,6 +299,21 @@ export const Composer = memo(function Composer({
     attachments?.summary ?? noUploads,
   );
   const [attachNote, setAttachNote] = useState<string | undefined>();
+  // The reason files can't go goes with the thing that caused it (adjusted in render, no effect).
+  const [blockedWas, setBlockedWas] = useState(attachBlocked);
+  if (blockedWas !== attachBlocked) {
+    setBlockedWas(attachBlocked);
+    if (attachNote !== undefined && attachNote === blockedWas) setAttachNote(undefined);
+  }
+  // The last added recipient chip is selected: the next Backspace in the empty box removes it.
+  const [chipSelected, setChipSelected] = useState(false);
+  const removeRecipient = useCallback(
+    (slug: string) => {
+      setChipSelected(false);
+      onRecipientsChange?.((recipientsRef.current ?? []).filter((r) => r !== slug));
+    },
+    [onRecipientsChange],
+  );
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   // dragenter/dragleave pairs over the frame and its children: the edge goes when the last one leaves.
@@ -296,6 +336,8 @@ export const Composer = memo(function Composer({
     },
     [draftKey],
   );
+  const recipientsRef = useRef(recipients);
+  recipientsRef.current = recipients;
   // Read when a submit settles, long after the render that started it.
   const landedRef = useRef(landed);
   useEffect(() => {
@@ -612,6 +654,21 @@ export const Composer = memo(function Composer({
       e.stopPropagation();
       return;
     }
+    // Backspace in an empty box: the last added recipient is selected, then removed.
+    if (
+      e.key === "Backspace" &&
+      recipients?.length &&
+      text === "" &&
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.shiftKey
+    ) {
+      e.preventDefault();
+      if (chipSelected) removeRecipient(recipients[recipients.length - 1] as string);
+      else setChipSelected(true);
+      return;
+    }
     // Recall (U3 §13.2): ↑ in an empty box with the caret at 0 fills it with your last message's text.
     if (
       recall &&
@@ -641,6 +698,10 @@ export const Composer = memo(function Composer({
   /** Files from a paste, a drop or the picker (U3 §13.5); past the limit the rest are left out. */
   const addFiles = (files: File[], folders = 0) => {
     if (!attachments) return;
+    if (attachBlocked !== undefined) {
+      setAttachNote(attachBlocked);
+      return;
+    }
     const took = files.length ? attachments.add(files) : 0;
     setAttachNote(folders > 0 ? NO_FOLDERS : took < files.length ? TOO_MANY : undefined);
   };
@@ -699,6 +760,7 @@ export const Composer = memo(function Composer({
     attachNote ? { kind: "refusal", text: attachNote } : undefined,
     slashNote,
     sentRefusal ? { kind: "refusal", text: sentRefusal } : undefined,
+    noteFor?.(text),
     pendingLabel && pending > 0
       ? { kind: "hint", text: <span role="status">{pendingLabel}</span> }
       : undefined,
@@ -770,6 +832,14 @@ export const Composer = memo(function Composer({
               className="pointer-events-none absolute -inset-px rounded-lg border border-foreground"
             />
           )}
+          {recipients && (
+            <Recipients
+              primaryName={recipientsTo}
+              recipients={recipients}
+              selected={chipSelected}
+              onRemove={removeRecipient}
+            />
+          )}
           {attachments && <AttachmentChips store={attachments} />}
           {view === "write" ? (
             <div className="flex min-w-0 items-start">
@@ -783,6 +853,8 @@ export const Composer = memo(function Composer({
                   setError(undefined);
                   setFilesNote(false);
                   setAttachNote(undefined);
+                  setChipSelected(false);
+                  onEdit?.();
                   setHeldShownFor(undefined);
                   setSentRefusal(undefined);
                   if (pasted.current) {
@@ -802,7 +874,10 @@ export const Composer = memo(function Composer({
                 aria-expanded={sources.length ? menuOpen : undefined}
                 aria-autocomplete={sources.length ? "list" : undefined}
                 onFocus={draft.bind.onFocus}
-                onBlur={draft.bind.onBlur}
+                onBlur={() => {
+                  draft.bind.onBlur();
+                  setChipSelected(false);
+                }}
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
                 placeholder={phone && turnOpen && turnPlaceholder ? turnPlaceholder : placeholder}
@@ -872,8 +947,13 @@ export const Composer = memo(function Composer({
                   variant="ghost"
                   size="icon"
                   aria-label="Attach files"
+                  aria-disabled={attachBlocked !== undefined || undefined}
                   className={cn("shrink-0 text-muted-foreground", phone && PHONE_ICON)}
-                  onClick={() => fileInput.current?.click()}
+                  onClick={() =>
+                    attachBlocked !== undefined
+                      ? setAttachNote(attachBlocked)
+                      : fileInput.current?.click()
+                  }
                 >
                   <Paperclip aria-hidden="true" />
                 </Button>
@@ -981,11 +1061,11 @@ export const Composer = memo(function Composer({
                       </span>
                     </span>
                   )}
-                  {turnOpen && stopEpoch !== undefined && (
+                  {stopVisible && stopEpoch !== undefined && (
                     <StopButton
                       ref={stopRef}
                       onStop={onStop}
-                      turnOpen={turnOpen}
+                      turnOpen={stopVisible}
                       turnEpoch={stopEpoch}
                       compacting={compacting}
                       onError={onStopError}

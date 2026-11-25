@@ -6,6 +6,8 @@ import {
   agentListSchema,
   agentResponseSchema,
   agentUsageSchema,
+  chatPageSchema,
+  chatQuerySchema,
   classifyInput,
   compactBodySchema,
   createAgentBodySchema,
@@ -17,7 +19,6 @@ import {
   patchAgentBodySchema,
   queueItemResponseSchema,
   resyncResponseSchema,
-  sendMessageBodySchema,
   slugSchema,
   stopCronsResponseSchema,
 } from "@open-factory/shared";
@@ -32,6 +33,7 @@ import {
   AgentTerminatedError,
   CommandsUnsupportedError,
   CompactingError,
+  InvalidCursorError,
   NoOpenTurnError,
   RecoveryRefusedError,
 } from "../agents/errors.ts";
@@ -42,6 +44,7 @@ import {
 } from "../agents/message-cancel.ts";
 import { requireUser } from "../auth/require-user.ts";
 import { localRuntimeAllowed } from "../config.ts";
+import { FieldError } from "../errors.ts";
 import { parseDays } from "./usage.ts";
 
 const slugParams = z.object({ slug: slugSchema });
@@ -75,6 +78,59 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       const u = await app.usage.agent(req.params.slug, parseDays(req.query));
       if (!u) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
       return u;
+    },
+  );
+
+  // I1 §6.3: this human's thread with the agent, with turn outcomes and the runtime's `working` fact.
+  app.get(
+    "/api/agents/:slug/chat",
+    {
+      schema: {
+        params: slugParams,
+        querystring: chatQuerySchema,
+        response: { 200: chatPageSchema },
+      },
+    },
+    async (req, reply) => {
+      const rt = await app.runtimes.bySlug(req.params.slug);
+      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const me = user(req);
+      const { before, around, limit } = req.query;
+      if (before !== undefined && around !== undefined)
+        return err(reply, 400, "validation_error", "before and around can't be combined");
+      // Read synchronously, before the query: a close that commits meanwhile has its outcome in the page or is
+      // not yet visible to either read, never both missing (§6.3 read order).
+      const working = rt.workingFor(me.id);
+      // The runtime's row can be stale (archived since): a rejected row's reason reads the stored one.
+      const row = (await app.store.agentBySlug(req.params.slug)) ?? rt.agent;
+      let slice: Awaited<ReturnType<typeof app.chat.page>>;
+      try {
+        slice = await app.chat.page(
+          {
+            agent: {
+              id: row.id,
+              slug: row.slug,
+              archivedAt: row.archivedAt,
+              terminatedAt: row.terminatedAt,
+            },
+            user: { id: me.id, handle: me.handle },
+          },
+          {
+            limit,
+            ...(before !== undefined ? { before } : {}),
+            ...(around !== undefined ? { around } : {}),
+          },
+        );
+      } catch (e) {
+        if (e instanceof InvalidCursorError) throw new FieldError("before", e.message);
+        throw e;
+      }
+      if (!slice)
+        return err(reply, 404, "message_not_found", `Message ${around} isn't in this chat`);
+      const answered = slice.entries.some(
+        (e) => e.kind === "turn_outcome" && e.key === working?.key,
+      );
+      return { ...slice, working: answered ? null : working };
     },
   );
 
@@ -199,51 +255,6 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       });
       if (!page) return err(reply, 404, "event_not_found", `Event ${around} isn't in this session`);
       return eventsPageSchema.parse(page);
-    },
-  );
-
-  app.post(
-    "/api/agents/:slug/messages",
-    { schema: { params: slugParams, body: sendMessageBodySchema } },
-    async (req, reply) => {
-      const u = user(req);
-      try {
-        // A human sender addresses agents only; the path's slug is the one recipient.
-        const {
-          results: [r],
-        } = await app.router.send(
-          { userId: u.id, handle: u.handle },
-          [req.params.slug],
-          req.body.body,
-          req.body.urgent,
-          {
-            ...(req.body.clientMessageId ? { clientMessageId: req.body.clientMessageId } : {}),
-            ...(req.body.attachments?.length ? { attachments: req.body.attachments } : {}),
-          },
-        );
-        if (!r) throw new Error("a send returned no result");
-        if (r.status === "refused") {
-          if (r.code === "invalid_attachment") return err(reply, 422, r.code, r.reason);
-          // The `[attached: …]` lines pushed the body over the limit the schema checks without them.
-          if (r.code === "too_large") return err(reply, 400, "validation_error", r.reason);
-          if (r.code === "archived") {
-            const e = new AgentArchivedError(req.params.slug);
-            return err(reply, 409, "agent_archived", e.message);
-          }
-          if (r.code === "terminated") return err(reply, 409, "agent_terminated", r.reason);
-          return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-        }
-        if (r.status === "start_failed") return err(reply, 503, "agent_start_failed", r.note);
-        return reply
-          .code(202)
-          .send(queueItemResponseSchema.parse({ item: "item" in r ? r.item : undefined }));
-      } catch (e) {
-        if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
-        if (e instanceof AgentTerminatedError)
-          return err(reply, 409, "agent_terminated", e.message);
-        if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
-        throw e;
-      }
     },
   );
 

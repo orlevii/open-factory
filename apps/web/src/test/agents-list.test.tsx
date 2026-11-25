@@ -57,7 +57,7 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
   );
   renderApp("/agents", alice);
   const row = await screen.findByRole("link", { name: /Dev agent/ });
-  expect(row).toHaveAttribute("href", "/agents/dev");
+  expect(row).toHaveAttribute("href", "/agents/dev/chat");
   expect(within(row).getByText("Working")).toBeInTheDocument();
   expect(within(row).getAllByText("@dev").length).toBeGreaterThan(0);
   expect(within(row).getByText("developer")).toBeInTheDocument();
@@ -277,7 +277,7 @@ test("each Agents row has a ⋯ beside its link that opens the agent's menu", as
   const more = await within(main).findByRole("button", { name: "Actions for Dev agent" });
   // A sibling of the row's link, never inside it.
   expect(more.closest("a")).toBeNull();
-  expect(more.closest("li")?.querySelector('a[href="/agents/dev"]')).not.toBeNull();
+  expect(more.closest("li")?.querySelector('a[href="/agents/dev/chat"]')).not.toBeNull();
   await userEvent.click(more);
   const menu = await screen.findByRole("menu");
   expect(menuLayout(menu)).toEqual([

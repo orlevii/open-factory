@@ -80,7 +80,8 @@ export const envelopeSchema = z.object({
 });
 export type Envelope = z.infer<typeof envelopeSchema>;
 
-export const INBOX_KINDS = ["message", "mention", "task_event"] as const;
+/** `notice` is a factory notice (an agent errored, ...); a chat message is the Chat's, never an item (I1 §6.7). */
+export const INBOX_KINDS = ["notice", "mention", "task_event"] as const;
 export const inboxItemSchema = z.object({
   id: z.string(),
   messageId: z.string(),
@@ -106,10 +107,6 @@ export const inboxItemSchema = z.object({
   ]),
 });
 export type InboxItem = z.infer<typeof inboxItemSchema>;
-export const inboxPageSchema = z.object({
-  items: z.array(inboxItemSchema),
-  nextCursor: z.string().nullable(),
-});
 export const inboxItemResponseSchema = z.object({ item: inboxItemSchema });
 export const readAllBodySchema = z.object({ upTo: z.string().min(1) });
 export const undoReadAllBodySchema = z.object({ readAt: z.string().min(1) });

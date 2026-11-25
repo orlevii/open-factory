@@ -105,36 +105,46 @@ test("a factory fact fans out one inbox item per existing user, delivered at onc
   });
 });
 
-test("inboxPage pages newest first with a cursor and links the sender's tool call", async () => {
+test("inboxPage pages newest first with a cursor; chat messages come back as chats, not items", async () => {
   await t.sql`delete from messages where to_all_humans or to_user_id is not null`;
-  const turn = await store.openTurn("a1", null);
-  const ev = await store.append("a1", turn, {
-    type: "tool_call",
-    toolUseId: "tu1",
-    name: "mcp__factory__send_message",
-    input: {},
-  } as never);
   const ids: string[] = [];
   for (let i = 0; i < 3; i++) {
     const { row } = await store.createHumanMessage({
-      kind: "message",
-      recipients: ["@or"],
-      fromAgentId: "a1",
-      to: { userId: "u1" },
+      kind: "system",
+      notice: "agent_errored",
+      subjectAgentId: "a1",
+      fromAgentId: null,
+      to: "all",
       body: `m${i}`,
       urgent: false,
-      fromToolUseId: i === 2 ? "tu1" : null,
     });
     ids.push(row?.id as string);
     await t.sql`update inbox_items set created_at = ${`2026-02-0${i + 1}T00:00:00Z`}::timestamptz where message_id = ${row?.id as string}`;
   }
+  await store.createHumanMessage({
+    kind: "message",
+    recipients: ["@or"],
+    fromAgentId: "a1",
+    to: { userId: "u1" },
+    body: "a chat message",
+    urgent: false,
+  });
   const p1 = await store.inboxPage("u1", undefined, 2);
   expect(p1.items.map((i) => i.messageId)).toEqual([ids[2], ids[1]]);
-  expect(p1.items[0]).toMatchObject({ to: "@or", link: { agentSlug: "dev", seq: ev.seq } });
   expect(p1.nextCursor).not.toBeNull();
+  expect(p1.items.every((i) => i.kind === "notice")).toBe(true); // a factory notice is `notice`, never `message`
+  expect(p1.chats).toEqual([
+    expect.objectContaining({
+      slug: "dev",
+      unread: 1,
+      latest: expect.objectContaining({ preview: "a chat message" }),
+    }),
+  ]);
   const p2 = await store.inboxPage("u1", p1.nextCursor ?? undefined, 2);
   expect(p2.items.map((i) => i.messageId)).toEqual([ids[0]]);
   expect(p2.nextCursor).toBeNull();
+  expect(p2.chats).toBeUndefined(); // only the first page carries the chats
+  expect([...p1.items, ...p2.items].some((i) => (i.kind as string) === "message")).toBe(false);
 });
 
 test("markPending clears delivered_event_seq; rejected is a state", async () => {
@@ -274,8 +284,22 @@ test("inbox preview is code-point safe", async () => {
     body: "😀".repeat(300),
     urgent: false,
   });
-  const preview = (await store.inboxPage("u1")).items[0]?.preview ?? "";
+  const preview = (await store.inboxPage("u1")).chats?.[0]?.latest.preview ?? "";
   expect(Array.from(preview)).toHaveLength(280);
+});
+
+test("inbox preview reads past 2000 characters, so a late-closing fence still renders", async () => {
+  await t.sql`delete from messages where to_user_id is not null or to_all_humans`;
+  await store.createHumanMessage({
+    kind: "message",
+    recipients: ["@or"],
+    fromAgentId: "a1",
+    to: { userId: "u1" },
+    body: `[${"w".repeat(2500)}](https://x.io)`,
+    urgent: false,
+  });
+  const preview = (await store.inboxPage("u1")).chats?.[0]?.latest.preview ?? "";
+  expect(preview).toBe("w".repeat(280)); // the link text, not "[www..." cut before its closing "](...)"
 });
 
 test("markRejected only touches pending rows", async () => {

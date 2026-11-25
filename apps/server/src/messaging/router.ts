@@ -1,5 +1,10 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
-import { type AgentStatus, MAX_BODY_BYTES, type QueueItem } from "@open-factory/shared";
+import {
+  type AgentStatus,
+  MAX_BODY_BYTES,
+  type QueueItem,
+  type RefusalCode,
+} from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { AgentStartError } from "../agents/errors.ts";
@@ -22,18 +27,6 @@ import { HUMANS_SEND_REFUSAL, resolveName } from "./principals.ts";
 export type Sender =
   | { agentId: string; toolUseId?: string | null }
   | { userId: string; handle: string };
-
-export type RefusalCode =
-  | "not_found"
-  | "reserved"
-  | "channel"
-  | "self"
-  | "archived"
-  | "terminated"
-  | "disabled"
-  | "human"
-  | "invalid_attachment"
-  | "too_large";
 
 /** One recipient's outcome (spec §4.4): each succeeds or fails alone. */
 export type RecipientResult =
@@ -275,6 +268,23 @@ export class Router {
 
     for (const w of written)
       if (w.target.user) this.d.bus.publishToUser(w.target.user.userId, { type: "inbox_changed" });
+    // I1 §6.5: the human party's chat with each agent on the other side changed.
+    if ("userId" in from) {
+      for (const w of written)
+        if (w.created && w.target.agent)
+          this.d.bus.publishToUser(from.userId, {
+            type: "chat_changed",
+            agent: w.target.agent.slug,
+          });
+    } else {
+      const me = await this.d.store.agentById(from.agentId);
+      for (const w of written)
+        if (me && w.target.user)
+          this.d.bus.publishToUser(w.target.user.userId, {
+            type: "chat_changed",
+            agent: me.slug,
+          });
+    }
 
     const outcome = new Map<Target, RecipientResult>();
     for (const w of written)

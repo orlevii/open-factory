@@ -87,11 +87,36 @@ test("recent agent senders come from the cached inbox", () => {
   const qc = new QueryClient();
   qc.setQueryData(["agents", "exclude"], [agent("a", "A"), agent("z", "Z")]);
   qc.setQueryData(["inbox"], {
-    pages: [{ items: [{ from: { kind: "agent", name: "z" } }], nextCursor: null }],
+    pages: [
+      {
+        items: [{ from: { kind: "agent", name: "z" }, createdAt: "2026-11-19T10:00:00Z" }],
+        nextCursor: null,
+      },
+    ],
     pageParams: [undefined],
   });
   const source = mentionSource(qc, "x");
   expect(source.items("").map((i) => i.id)).toEqual(["z", "a"]);
+});
+
+test("an agent whose unread chat is newer than the inbox items ranks first", () => {
+  const qc = new QueryClient();
+  qc.setQueryData(["agents", "exclude"], [agent("a", "A"), agent("m", "M"), agent("z", "Z")]);
+  qc.setQueryData(["inbox"], {
+    pages: [
+      {
+        chats: [{ agent: { slug: "m" }, latest: { createdAt: "2026-11-19T12:00:00Z" } }],
+        items: [{ from: { kind: "agent", name: "z" }, createdAt: "2026-11-19T10:00:00Z" }],
+        nextCursor: null,
+      },
+    ],
+    pageParams: [undefined],
+  });
+  expect(
+    mentionSource(qc, "x")
+      .items("")
+      .map((i) => i.id),
+  ).toEqual(["m", "z", "a"]);
 });
 
 test("accepting with the caret inside a handle replaces the whole handle", () => {

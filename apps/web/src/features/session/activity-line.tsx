@@ -111,17 +111,22 @@ export const ActivityLine = memo(function ActivityLine({
   activity,
   startedAt,
   count,
+  live = false,
 }: {
   activity: Activity;
   startedAt?: string;
+  /** The line appeared by a live frame: it fades in once. Decided at mount, never toggled after. */
+  live?: boolean;
   /** A fast counter after the label ("12 KB" of tool input), sampled by its own component. */
   count?: ReactNode;
 }) {
   const { prefix, target, code, path, mcp, suffix } = labelParts(activity);
   const full = `${prefix ?? ""}${target ?? ""}${suffix ?? ""}`;
+  const [fades] = useState(live);
   return (
     <p
       data-activity-line
+      {...(fades ? { "data-live": "" } : {})}
       className={`flex h-6 min-w-0 items-center ${ROW_GUTTER} text-[0.8125rem] leading-[1.125rem] text-muted-foreground`}
     >
       <span
@@ -215,9 +220,12 @@ export const TurnActivity = memo(function TurnActivity({
   startedAt,
   turnKey,
   compacting = false,
+  fade = false,
 }: {
   open: OpenTurnRows | undefined;
   live?: ActivityLive;
+  /** The turn opened while the view was open (not on load or a switch): the line fades in. */
+  fade?: boolean;
   startedAt?: string;
   turnKey: string;
   /** A compaction is running: the line reads "Compacting" whatever the rows say. */
@@ -233,6 +241,7 @@ export const TurnActivity = memo(function TurnActivity({
     <ActivityLine
       activity={shown}
       startedAt={startedAt}
+      live={fade}
       count={
         bytes === undefined ? undefined : (
           // Keyed by the call: a new tool's input starts its own counter at once.

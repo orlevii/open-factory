@@ -287,7 +287,7 @@ test("a server fields.slug error opens the address input with the error", async 
 test("success closes the sheet, clears the draft and navigates to the session", async () => {
   const { api, router } = await openLead({ extra: created() });
   await userEvent.click(createButton());
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead"));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead/chat"));
   expect(getSheetState().parent).toBeUndefined();
   expect(hasDraft("new-agent")).toBe(false);
   expect(notify).not.toHaveBeenCalled();
@@ -674,7 +674,7 @@ test("a late success toasts Open, doesn't navigate, and clears the draft when no
   expect(router.state.location.pathname).toBe("/agents");
   expect(hasDraft("new-agent")).toBe(false);
   await act(async () => toast?.action?.run());
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead"));
+  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead/chat"));
 });
 
 test("a late success keeps the draft of a New agent reopened and typed into meanwhile", async () => {

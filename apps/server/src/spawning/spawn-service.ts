@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
-import { sendMessageBodySchema } from "@open-factory/shared";
+import { sendMessagesBodySchema } from "@open-factory/shared";
 import { and, asc, count, eq, gt, isNull } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
@@ -71,7 +71,7 @@ export class SpawnService {
       return fail(`You can't spawn template ${args.template}.`);
     const desc = args.description.trim();
     if (!desc || desc.length > 500) return fail("Give a description of 1 to 500 characters.");
-    const body = sendMessageBodySchema.shape.body.safeParse(args.prompt);
+    const body = sendMessagesBodySchema.shape.body.safeParse(args.prompt);
     if (!body.success) return fail(body.error.issues[0]?.message ?? "The prompt is invalid.");
     const prompt = body.data;
     let tpl: Template;

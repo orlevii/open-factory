@@ -128,9 +128,9 @@ async function startIdle(
   const { cookie } = await signUp(t.app, { handle: `h-${slug}` });
   await t.app.inject({
     method: "POST",
-    url: `/api/agents/${slug}/messages`,
+    url: `/api/messages`,
     headers: { cookie },
-    payload: { body: "hi" },
+    payload: { to: [slug], body: "hi" },
   });
   const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
   if (!p) throw new Error(`${slug} not started`);

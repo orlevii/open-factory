@@ -19,7 +19,7 @@ describe("I1 §5.1: raw session input", () => {
     await s.seedAgent();
     or = { cookie: (await s.signUpUser({ handle: "orc" })).cookie };
     drv.commandList = list;
-    await call(or, "POST", "/api/agents/dev/messages", { body: "work", urgent: false });
+    await call(or, "POST", "/api/messages", { to: ["dev"], body: "work", urgent: false });
     drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
     await settled();
     await vi.waitFor(
@@ -216,7 +216,7 @@ describe("I1 §5.1: raw session input", () => {
     await s.seedAgent({ slug: "err" });
     const rt = await s.app.runtimes.bySlug("err");
     if (!rt) throw new Error("no runtime");
-    await call(or, "POST", "/api/agents/err/messages", { body: "hi", urgent: false });
+    await call(or, "POST", "/api/messages", { to: ["err"], body: "hi", urgent: false });
     const procOf = () => drv.starts.filter((p) => p.spec.agentId === rt.agent.id).at(-1);
     procOf()?.emit(...ev.fullTurn(), ev.turn());
     procOf()?.exit(137);

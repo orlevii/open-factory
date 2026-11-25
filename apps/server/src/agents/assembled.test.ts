@@ -48,9 +48,9 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
 
   const res = await t.app.inject({
     method: "POST",
-    url: "/api/agents/dev/messages",
+    url: "/api/messages",
     headers: { cookie },
-    payload: { body: "hello", urgent: false },
+    payload: { to: ["dev"], body: "hello", urgent: false },
   });
   expect(res.statusCode).toBe(202);
   await until(
@@ -109,9 +109,9 @@ test("server restart: graceful stop, then the next message resumes the same sess
   // the session cookie is still valid: sessions live in the same DB and the secret is the same
   const res = await next.app.inject({
     method: "POST",
-    url: "/api/agents/dev/messages",
+    url: "/api/messages",
     headers: { cookie },
-    payload: { body: "again", urgent: false },
+    payload: { to: ["dev"], body: "again", urgent: false },
   });
   expect(res.statusCode).toBe(202);
   await until(() => sessionStarts().length === 2);
@@ -139,9 +139,9 @@ const statusOf = async (app: FastifyInstance, c: string) =>
 const post = (app: FastifyInstance, c: string, body: string) =>
   app.inject({
     method: "POST",
-    url: "/api/agents/dev/messages",
+    url: "/api/messages",
     headers: { cookie: c },
-    payload: { body, urgent: false },
+    payload: { to: ["dev"], body, urgent: false },
   });
 
 test("assembled: app.close() with a live agent, reopen(): exactly one claude process per agent", async () => {

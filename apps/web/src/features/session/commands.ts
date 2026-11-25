@@ -53,6 +53,12 @@ function knownNames(data: AgentCommandsResponse): ReadonlySet<string> {
   return known;
 }
 
+/** Whether `name` is a command of this agent's list (or an alias); true while the list hasn't loaded,
+ *  since nothing says it isn't (the chat's note for a leading `/`). */
+export function knownCommand(data: AgentCommandsResponse | undefined, name: string): boolean {
+  return !data || knownNames(data).has(name.toLowerCase());
+}
+
 /** A command with more lines: refused in the slot, as the server would. */
 export const ONE_LINE = "A command must be one line.";
 export const EMPTY_COMMANDS = "No commands loaded yet. They appear after the agent starts.";

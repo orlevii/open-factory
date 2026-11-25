@@ -291,14 +291,14 @@ test("DELETE by the uploader while unsent removes row and file; a sent upload ca
   const b = (await upload("dev", Buffer.from("kept\n"), "kept.txt")).json();
   const sent = await t.app.inject({
     method: "POST",
-    url: "/api/agents/dev/messages",
+    url: "/api/messages",
     headers: { cookie: or },
-    payload: { body: "see attached" },
+    payload: { to: ["dev"], body: "see attached" },
   });
   expect(sent.statusCode).toBe(202);
   await t.db
     .update(schema.uploads)
-    .set({ messageId: sent.json().item.id })
+    .set({ messageId: sent.json().results[0].item.id })
     .where(eq(schema.uploads.id, b.uploadId));
   const refused = await del("dev", b.uploadId);
   expect(refused.statusCode).toBe(409);
@@ -314,13 +314,13 @@ test("the sweep deletes unsent uploads older than 24 hours, and only those", asy
   const oldSent = (await upload("ops", Buffer.from("old sent\n"), "old-sent.txt")).json();
   const msg = await t.app.inject({
     method: "POST",
-    url: "/api/agents/ops/messages",
+    url: "/api/messages",
     headers: { cookie: or },
-    payload: { body: "x" },
+    payload: { to: ["ops"], body: "x" },
   });
   await t.db
     .update(schema.uploads)
-    .set({ messageId: msg.json().item.id })
+    .set({ messageId: msg.json().results[0].item.id })
     .where(eq(schema.uploads.id, oldSent.uploadId));
   const longAgo = new Date(Date.now() - 25 * 3_600_000);
   for (const id of [old.uploadId, oldSent.uploadId])

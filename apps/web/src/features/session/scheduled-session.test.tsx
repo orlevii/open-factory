@@ -114,7 +114,7 @@ test("late and firings add the notes; an agent author links to its session", asy
   expect(container.textContent).toContain(
     "due Mon 23 Nov 09:00 UTC+01:00 · delivered late · covers 3 runs",
   );
-  expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/agents/lead");
+  expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/agents/lead/chat");
 });
 
 test("an ended agent author, named by byKind, still reads as an agent (a chip, not a plain handle)", async () => {
@@ -122,7 +122,7 @@ test("an ended agent author, named by byKind, still reads as an agent (a chip, n
   await screen.findByText("Scheduler");
   expect(screen.getByRole("link", { name: /gone-ab12/ })).toHaveAttribute(
     "href",
-    "/agents/gone-ab12",
+    "/agents/gone-ab12/chat",
   );
 });
 

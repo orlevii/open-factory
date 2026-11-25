@@ -76,7 +76,7 @@ async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
       json({ agents: [], more: false, running: { count: 1, max: 8 } }),
     ...extra,
   });
-  const app = renderApp(`/agents/${SLUG}`, alice);
+  const app = renderApp(`/agents/${SLUG}/session`, alice);
   await screen.findByText("history");
   return { api, state, app };
 }
@@ -137,7 +137,7 @@ test("the header keeps a spawned agent's ' · ab12' tail; the title says Termina
   const tail = within(h1).getByText("· ab12");
   expect(tail).toHaveAttribute("aria-hidden", "true");
   expect(tail).toHaveClass("shrink-0");
-  expect(document.title).toBe("Terminated · Tech Lead · ab12 · Open Factory");
+  expect(document.title).toBe("Terminated · Tech Lead · ab12 · Session · Open Factory");
 });
 
 test("the Terminate dialog: exact copy, Cancel focused; a failure stays open; success focuses Pin workspace", async () => {
@@ -223,7 +223,7 @@ test("Agent details: in the grace period, with Pin workspace; credential omitted
   expect(sentence()).toBe(
     "Terminated by @lead today at 14:32. Workspace will be deleted on Sun at 14:32 unless you pin it.",
   );
-  expect(within(panel).getByRole("link", { name: "Open @lead's session" })).toBeInTheDocument();
+  expect(within(panel).getByRole("link", { name: "Open @lead's chat" })).toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
   expect(panel.textContent).not.toContain("Credential");
   expect(panel.textContent).toContain("Spawned by");
@@ -440,7 +440,7 @@ test("a spawned agent's old edit URL lands on its session, with Edit agent sayin
   });
   const { router } = renderApp(`/agents/${SLUG}/edit`, alice);
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  expect(router.state.location.pathname).toBe(`/agents/${SLUG}`);
+  expect(router.state.location.pathname).toBe(`/agents/${SLUG}/chat`);
   expect(await within(dialog).findByText("Spawned agents can't be edited.")).toBeInTheDocument();
   expect(within(dialog).queryByRole("button", { name: /Save|Re-sync|Archive/ })).toBeNull();
   expect(within(dialog).queryByRole("textbox")).toBeNull();

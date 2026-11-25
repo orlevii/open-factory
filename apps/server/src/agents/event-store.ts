@@ -7,9 +7,11 @@ import {
   type Command,
   type ErrorKind,
   formatKey,
+  type InboxItem,
   type MessageAttachment,
   type MessageKind,
   parseCommands,
+  plainPreview,
   type SessionEvent,
   type TaskNotice,
   taskKey,
@@ -26,6 +28,7 @@ import {
   isNull,
   lt,
   lte,
+  ne,
   notInArray,
   or,
   type SQL,
@@ -40,7 +43,7 @@ import type { NoticeType } from "./notices.ts";
  * Only an instant `inboxPage` minted (UTC ISO, microseconds kept) is accepted, so nothing malformed reaches Postgres;
  * the round trip rejects calendar dates that don't exist (2026-02-31), and the year must be at least 1.
  */
-function isCursorInstant(at: string): boolean {
+export function isCursorInstant(at: string): boolean {
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,6})?Z$/.test(at)) return false;
   // Year 0000 parses in JavaScript but isn't a Postgres timestamp (1 BC is year 1 BC there).
   if (at.startsWith("0000")) return false;
@@ -90,10 +93,18 @@ export interface MessageLookup {
   late?: boolean;
   dueAt?: string;
 }
+/** One agent's unread messages to a user (I1 §6.7); the route adds the agent's summary. */
+/** How much of a message body `plainPreview` reads: generous, so a fence or link closing late still renders. */
+const PREVIEW_PREFIX = 20_000;
+export type UnreadChat = {
+  slug: string;
+  unread: number;
+  latest: { messageId: string; preview: string; createdAt: string; urgent: boolean };
+};
 export interface InboxEntry {
   id: string;
   messageId: string;
-  kind: "message" | "mention" | "task_event";
+  kind: InboxItem["kind"];
   read: boolean;
   from: { kind: "agent" | "human" | "factory"; name: string };
   about?: string;
@@ -221,20 +232,26 @@ export class EventStore {
       .set({ terminatedAt: now, terminatedBy: by, attempting: false, updatedAt: now })
       .where(eq(agents.id, agentId));
     await tx.delete(agentProjectGrants).where(eq(agentProjectGrants.agentId, agentId));
-    await this.rejectPending(agentId, tx);
+    const rejected = await this.rejectPending(agentId, tx);
     // S9 §10.1: a terminated target's schedules are soft-deleted in the same transaction, after the agent locks
     // (agents before schedules). Soft: delivered `scheduled` rows keep their schedule, and Restore refuses.
     await tx
       .update(schedules)
       .set({ deletedAt: now, nextRunAt: null, updatedAt: now })
       .where(and(eq(schedules.targetAgentId, agentId), isNull(schedules.deletedAt)));
+    return rejected;
   }
-  /** Every pending row addressed to the agent becomes `rejected` (a terminated agent receives nothing). */
-  async rejectPending(agentId: string, tx: Exec = this.db) {
-    await tx
+  /**
+   * Every pending row addressed to the agent becomes `rejected` (a terminated agent receives nothing). Resolves to the
+   * human senders of those rows, for their `chat_changed`.
+   */
+  async rejectPending(agentId: string, tx: Exec = this.db): Promise<string[]> {
+    const rows = await tx
       .update(messages)
       .set({ state: "rejected" })
-      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")));
+      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
+      .returning({ from: messages.fromUserId });
+    return [...new Set(rows.flatMap((r) => (r.from ? [r.from] : [])))];
   }
   /**
    * Whether the agent has its `terminated` event. The type is a literal, not a parameter, so even a generic plan
@@ -694,12 +711,18 @@ export class EventStore {
     await tx.insert(turns).values({ id, agentId, credentialId, startedAt: new Date() });
     return id;
   }
-  async closeTurn(turnId: string, d: TurnClose, tx: Exec = this.db) {
+  /**
+   * `endEventSeq` is the turn's `turn_end` seq for a normal close; otherwise (an exit, a boot close) the turn's last
+   * event seq, null when it has none (I1 §6.3).
+   */
+  async closeTurn(turnId: string, d: TurnClose, tx: Exec = this.db, endEventSeq?: number) {
     const u = d.usage;
     await tx
       .update(turns)
       .set({
         endedAt: new Date(),
+        endEventSeq:
+          endEventSeq ?? sql`(select max(seq) from session_events where turn_id = ${turnId})`,
         isError: d.isError,
         terminalReason: d.terminalReason ?? null,
         originKind: d.originKind ?? null,
@@ -736,25 +759,40 @@ export class EventStore {
     d: TurnClose,
     stampIds: string[],
     attribute: boolean,
+    endEventSeq?: number,
   ): Promise<void> {
     await this.db.transaction(async (tx) => {
       await this.setDeliveredTurn(stampIds, turnId, tx);
-      await this.closeTurn(turnId, d, tx);
+      await this.closeTurn(turnId, d, tx, endEventSeq);
       if (attribute) await this.attributeTask(turnId, tx);
     });
   }
 
   /**
    * Boot (spec §5.7 step 3): turns still open when the server stopped are closed as `factory_restarted`, errors.
+   * In the same transaction each agent's delivered, unstamped `message` rows written after its previous closed turn
+   * ended are stamped with its turn (I1 §6.3; older ones belong to no turn): the
+   * starting batch is stamped only at close, so a restart leaves it unstamped. Absorbed rows were stamped when written.
    * Returns the ids of the agents that had one.
    */
   async closeDanglingTurns(): Promise<string[]> {
-    const rows = await this.db
-      .update(turns)
-      .set({ endedAt: new Date(), isError: true, terminalReason: "factory_restarted" })
-      .where(isNull(turns.endedAt))
-      .returning({ agentId: turns.agentId });
-    return [...new Set(rows.map((r) => r.agentId))];
+    return this.db.transaction(async (tx) => {
+      const open = await tx
+        .select({ id: turns.id, agentId: turns.agentId })
+        .from(turns)
+        .where(isNull(turns.endedAt))
+        .for("update");
+      for (const t of open) {
+        await tx.execute(sql`
+          update messages set delivered_turn_id = ${t.id}
+          where to_agent_id = ${t.agentId} and kind = 'message' and state = 'delivered'
+            and delivered_turn_id is null and delivered_event_seq is not null
+            and delivered_event_seq > coalesce((select max(end_event_seq) from turns
+              where agent_id = ${t.agentId} and ended_at is not null and id <> ${t.id}), 0)`);
+        await this.closeTurn(t.id, { isError: true, terminalReason: "factory_restarted" }, tx);
+      }
+      return [...new Set(open.map((t) => t.agentId))];
+    });
   }
 
   // messages
@@ -1184,12 +1222,17 @@ export class EventStore {
       .returning({ id: messages.id });
     return rows.length > 0;
   }
-  /** The recipient was archived between the send check and the hand-off: the row tells the truth (spec §7.3). */
-  async markRejected(id: string, tx: Exec = this.db) {
-    await tx
+  /**
+   * The recipient was archived between the send check and the hand-off: the row tells the truth (spec §7.3). Resolves
+   * to the row's human sender when it changed, for their `chat_changed`.
+   */
+  async markRejected(id: string, tx: Exec = this.db): Promise<string | null> {
+    const [row] = await tx
       .update(messages)
       .set({ state: "rejected" })
-      .where(and(eq(messages.id, id), eq(messages.state, "pending")));
+      .where(and(eq(messages.id, id), eq(messages.state, "pending")))
+      .returning({ from: messages.fromUserId });
+    return row?.from ?? null;
   }
 
   /** One message with the events that show it on each side (spec §11); from and to rendered as in the inbox. */
@@ -1356,7 +1399,7 @@ export class EventStore {
       items.push({
         id: r.item.id,
         messageId: r.m.id,
-        kind: r.item.kind,
+        kind: r.item.kind === "message" ? "notice" : r.item.kind,
         read: r.item.readAt !== null,
         from: r.fromHandle
           ? { kind: "human", name: r.fromHandle }
@@ -1398,7 +1441,7 @@ export class EventStore {
     before?: string,
     limit = 50,
     o: { unread?: boolean } = {},
-  ): Promise<{ items: InboxEntry[]; nextCursor: string | null }> {
+  ): Promise<{ chats?: UnreadChat[]; items: InboxEntry[]; nextCursor: string | null }> {
     let cursor: SQL | undefined;
     if (before) {
       const [at, id] = Buffer.from(before, "base64url").toString().split("|");
@@ -1406,7 +1449,14 @@ export class EventStore {
       cursor = sql`(${inboxItems.createdAt}, ${inboxItems.id}) < (${at}::timestamptz, ${id})`;
     }
     const rows = await this.inboxRows(
-      and(eq(inboxItems.userId, userId), cursor, o.unread ? isNull(inboxItems.readAt) : undefined),
+      and(
+        eq(inboxItems.userId, userId),
+        // Chat messages are the Chat's (I1 §6.7): they come back as `chats`, never as items. A factory notice
+        // (`system`) has no chat: it is an item of kind `notice`.
+        ne(messages.kind, "message"),
+        cursor,
+        o.unread ? isNull(inboxItems.readAt) : undefined,
+      ),
     )
       .orderBy(desc(inboxItems.createdAt), desc(inboxItems.id))
       .limit(limit + 1);
@@ -1417,7 +1467,49 @@ export class EventStore {
       rows.length > limit && last
         ? Buffer.from(`${last.createdAtIso}|${last.item.id}`).toString("base64url")
         : null;
-    return { items, nextCursor };
+    // `chats` is unpaginated: only the first page carries it.
+    return { ...(before ? {} : { chats: await this.unreadChats(userId) }), items, nextCursor };
+  }
+
+  /**
+   * I1 §6.7: every agent with unread messages to the user, newest first: how many, and the newest one (its body cut
+   * to a plain-text preview). Unpaginated: one row per agent.
+   */
+  async unreadChats(userId: string): Promise<UnreadChat[]> {
+    const fa = alias(agents, "fa");
+    const unread = and(
+      eq(inboxItems.userId, userId),
+      isNull(inboxItems.readAt),
+      eq(inboxItems.kind, "message"),
+    );
+    const [counts, latest] = await Promise.all([
+      this.unreadByAgent(userId),
+      this.db
+        .selectDistinctOn([fa.slug], {
+          slug: fa.slug,
+          messageId: messages.id,
+          body: sql<string>`left(${messages.body}, ${PREVIEW_PREFIX})`,
+          urgent: messages.urgent,
+          createdAt: sql<string>`to_char(${inboxItems.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+        })
+        .from(inboxItems)
+        .innerJoin(messages, eq(messages.id, inboxItems.messageId))
+        .innerJoin(fa, eq(fa.id, messages.fromAgentId))
+        .where(unread)
+        .orderBy(fa.slug, desc(inboxItems.createdAt), desc(inboxItems.id)),
+    ]);
+    return latest
+      .map((r) => ({
+        slug: r.slug,
+        unread: counts[r.slug] ?? 0,
+        latest: {
+          messageId: r.messageId,
+          preview: Array.from(plainPreview(r.body)).slice(0, 280).join(""),
+          createdAt: r.createdAt,
+          urgent: r.urgent,
+        },
+      }))
+      .sort((a, b) => (a.latest.createdAt < b.latest.createdAt ? 1 : -1));
   }
 
   /** The item becomes read (idempotent: a read item keeps its first `read_at`, nothing is ever un-read here). */

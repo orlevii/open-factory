@@ -2,7 +2,7 @@ import {
   eventsQuerySchema,
   type ServerMessage,
   type SessionEvent,
-  sendMessageBodySchema,
+  sendMessagesBodySchema,
   taskCommentBodySchema,
 } from "@open-factory/shared";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
@@ -41,7 +41,7 @@ type Over = Record<string, unknown>;
 const item = (n: number, o: Over = {}) => ({
   id: `i${n}`,
   messageId: `m${n}`,
-  kind: "message",
+  kind: "notice",
   read: false,
   from: { kind: "agent", name: "dev" },
   to: "@alice",
@@ -119,7 +119,7 @@ const task = (o: Over = {}) => ({
 let api: MockApi;
 function setup(items: unknown[]) {
   api = mockApi({
-    "GET /api/inbox?": () => json({ items, nextCursor: null }),
+    "GET /api/inbox?": () => json({ chats: [], items, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: items.length, byAgent: {} }),
     "GET /api/agents/dev": () => json(agentDetail()),
     "GET /api/agents/dev/events?": validQuery(eventsQuerySchema, eventsRoute("dev")),
@@ -142,179 +142,6 @@ async function visit(path: string) {
   await waitFor(() => expect(document.querySelector("a[data-inbox-id]")).not.toBeNull());
   return app;
 }
-
-test("a message shows 7 rows around seq, the target highlighted and scrolled to its start; a reply goes to the sender and marks the item read", async () => {
-  setup([item(1)]);
-  api.on(
-    "POST /api/agents/dev/messages",
-    validBody(sendMessageBodySchema, (b) =>
-      json(
-        {
-          item: {
-            id: "q1",
-            kind: "message",
-            body: (b as { body: string }).body,
-            from: "@alice",
-            fromKind: "human",
-            createdAt: at(0),
-          },
-        },
-        202,
-      ),
-    ),
-  );
-  await visit("/inbox?item=i1");
-  const p = pane();
-  await waitFor(() => expect(within(p).getByText("dev event 42")).toBeInTheDocument());
-  for (let s = 39; s <= 45; s++) expect(within(p).getByText(`dev event ${s}`)).toBeInTheDocument();
-  const lit = p.querySelectorAll("[data-highlighted]");
-  expect(lit).toHaveLength(1);
-  expect(lit[0]).toHaveTextContent("dev event 42");
-  await waitFor(() =>
-    expect(
-      vi
-        .mocked(Element.prototype.scrollIntoView)
-        .mock.contexts.some((el) => el === lit[0] || (el as Element).contains?.(lit[0] as Node)),
-    ).toBe(true),
-  );
-  expect(vi.mocked(Element.prototype.scrollIntoView)).toHaveBeenCalledWith({ block: "start" });
-  // Excerpt rows are plain TimelineRows: no copy links.
-  expect(within(p).queryByRole("button", { name: /copy link/i })).toBeNull();
-
-  // Shown (within the dwell) isn't read yet; replying reads it at once.
-  expect(reads()).toHaveLength(0);
-  const box = await within(p).findByRole("combobox", { name: "Message to Dev agent" });
-  await userEvent.type(box, "On it");
-  fireEvent.click(within(p).getByRole("button", { name: "Send" }));
-  await waitFor(() =>
-    expect(
-      api.calls.find((c) => c.method === "POST" && c.url === "/api/agents/dev/messages")?.body,
-    ).toEqual({ body: "On it", urgent: false, clientMessageId: expect.any(String) }),
-  );
-  await waitFor(() => expect(reads().map((c) => c.url)).toEqual(["/api/inbox/i1/read"]));
-  // The session's composer, keys and reserved hint line included (U3 §6.2).
-  expect(p.querySelector("[data-composer-hint]")).not.toBeNull();
-});
-
-test("without seq the excerpt is the latest 7 events, with no highlight", async () => {
-  setup([item(1, { link: { kind: "session", agentSlug: "dev" } })]);
-  await visit("/inbox?item=i1");
-  const p = pane();
-  await waitFor(() => expect(within(p).getByText("dev event 100")).toBeInTheDocument());
-  for (let s = 94; s <= 100; s++) expect(within(p).getByText(`dev event ${s}`)).toBeInTheDocument();
-  expect(p.querySelector("[data-highlighted]")).toBeNull();
-  expect(
-    api.calls.filter((c) => c.url.startsWith("/api/agents/dev/events")).map((c) => c.url),
-  ).toEqual(["/api/agents/dev/events?limit=7"]);
-});
-
-test("a @factory message targets the subject agent", async () => {
-  setup([
-    item(1, {
-      from: { kind: "factory", name: "factory" },
-      about: "ops",
-      link: { kind: "session", agentSlug: "ops" },
-    }),
-  ]);
-  api.on("GET /api/agents/ops", () => json(agentDetail({ slug: "ops", displayName: "Ops" })));
-  api.on("GET /api/agents/ops/events?", validQuery(eventsQuerySchema, eventsRoute("ops")));
-  api.on(
-    "POST /api/agents/ops/messages",
-    validBody(sendMessageBodySchema, () =>
-      json(
-        {
-          item: { id: "q1", kind: "message", from: "@alice", fromKind: "human", createdAt: at(0) },
-        },
-        202,
-      ),
-    ),
-  );
-  await visit("/inbox?item=i1");
-  const p = pane();
-  await waitFor(() => expect(within(p).getByText("ops event 100")).toBeInTheDocument());
-  const box = await within(p).findByRole("combobox", { name: "Message to Ops" });
-  await userEvent.type(box, "Restarting you");
-  fireEvent.click(within(p).getByRole("button", { name: "Send" }));
-  await waitFor(() =>
-    expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/ops/messages")).toBe(
-      true,
-    ),
-  );
-  expect(api.calls.some((c) => c.url.startsWith("/api/agents/dev"))).toBe(false);
-});
-
-test("a terminated sender shows the read-only line; an archived one the archived line", async () => {
-  setup([
-    item(1),
-    item(2, {
-      from: { kind: "agent", name: "old" },
-      link: { kind: "session", agentSlug: "old", seq: 42 },
-    }),
-  ]);
-  api.on("GET /api/agents/dev", () => json(agentDetail({ status: "terminated" })));
-  api.on("GET /api/agents/old", () =>
-    json(agentDetail({ slug: "old", displayName: "Old", archivedAt: at(0) })),
-  );
-  api.on("GET /api/agents/old/events?", validQuery(eventsQuerySchema, eventsRoute("old")));
-  const app = await visit("/inbox?item=i1");
-  expect(
-    await within(pane()).findByText("This agent was terminated. Its session is read-only."),
-  ).toBeInTheDocument();
-  expect(within(pane()).queryByRole("textbox")).toBeNull();
-  await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
-  expect(await within(pane()).findByText(/This agent is archived\./)).toBeInTheDocument();
-  expect(within(pane()).queryByRole("textbox")).toBeNull();
-});
-
-test("an archived sender restores in place from the notice: Restore, then the reply composer", async () => {
-  setup([
-    item(1, {
-      from: { kind: "agent", name: "old" },
-      link: { kind: "session", agentSlug: "old", seq: 42 },
-    }),
-  ]);
-  let archived = true;
-  api.on("GET /api/agents/old", () =>
-    json(agentDetail({ slug: "old", displayName: "Old", archivedAt: archived ? at(0) : null })),
-  );
-  api.on("GET /api/agents/old/events?", validQuery(eventsQuerySchema, eventsRoute("old")));
-  api.on("POST /api/agents/old/unarchive", () => {
-    archived = false;
-    return json({ agent: agentDetail({ slug: "old", displayName: "Old" }).agent });
-  });
-  await visit("/inbox?item=i1");
-  const restore = await within(pane()).findByRole("button", { name: "Restore" });
-  expect(within(pane()).queryByRole("link", { name: "Restore it" })).toBeNull();
-  await userEvent.click(restore);
-  await waitFor(() => expect(within(pane()).queryByText(/This agent is archived\./)).toBeNull());
-  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/old/unarchive")).toBe(
-    true,
-  );
-  const box = await within(pane()).findByRole("combobox", { name: "Message to Old" });
-  // The focused Restore button went away with the notice: focus follows to the composer.
-  await waitFor(() => expect(box).toHaveFocus());
-});
-
-test("an archived sender's refused Restore says why in the pane", async () => {
-  setup([
-    item(1, {
-      from: { kind: "agent", name: "old" },
-      link: { kind: "session", agentSlug: "old", seq: 42 },
-    }),
-  ]);
-  api.on("GET /api/agents/old", () =>
-    json(agentDetail({ slug: "old", displayName: "Old", archivedAt: at(0) })),
-  );
-  api.on("GET /api/agents/old/events?", validQuery(eventsQuerySchema, eventsRoute("old")));
-  api.on("POST /api/agents/old/unarchive", () =>
-    json({ error: { code: "manager_archived", message: "Its manager @boss is archived." } }, 409),
-  );
-  await visit("/inbox?item=i1");
-  await userEvent.click(await within(pane()).findByRole("button", { name: "Restore" }));
-  expect(
-    await within(pane()).findByText("Couldn't restore @old: Its manager @boss is archived."),
-  ).toBeInTheDocument();
-});
 
 const mention = (n: number, commentId: string, from: Over) =>
   item(n, {
@@ -419,29 +246,6 @@ test("the mention reply is the shared composer: Write/Preview in its toolbar, no
   expect(box).toHaveValue("");
 });
 
-test("an agent message's reply has no files and no `/` commands: a pasted or dropped file gets the note", async () => {
-  setup([item(1)]);
-  await visit("/inbox?item=i1");
-  const p = pane();
-  const box = await within(p).findByRole("combobox", { name: "Message to Dev agent" });
-  expect(within(p).queryByRole("button", { name: "Attach files" })).toBeNull();
-  expect(within(p).queryByRole("button", { name: "Run a command" })).toBeNull();
-  expect(box).toHaveAttribute("placeholder", "Message Dev agent");
-  const file = new File(["x"], "shot.png", { type: "image/png" });
-  const pasted = fireEvent.paste(box, {
-    clipboardData: { files: [file], getData: () => "", types: ["Files"] },
-  });
-  expect(pasted).toBe(false);
-  expect(within(p).getByText("Files can be sent in an agent's session")).toBeInTheDocument();
-  const frame = box.closest("[data-composer-frame]") as HTMLElement;
-  fireEvent.drop(frame, { dataTransfer: { files: [file], types: ["Files"] } });
-  expect(p.querySelector("[data-upload-chip]")).toBeNull();
-  // Typing `/` opens no menu.
-  await userEvent.type(box, "/co");
-  expect(within(p).queryByRole("listbox")).toBeNull();
-  expect(api.calls.some((c) => c.url.includes("/uploads"))).toBe(false);
-});
-
 test("a task event shows the fact and Open task, with no composer", async () => {
   setup([
     item(1, {
@@ -482,12 +286,12 @@ test("a task event shows the fact and Open task, with no composer", async () => 
 });
 
 test("the composer sits below the body's scroller, which scrolls on its own", async () => {
-  setup([item(1)]);
+  setup([mention(1, "c4", { kind: "agent", name: "ada" })]);
   await visit("/inbox?item=i1");
   const p = pane();
-  const box = await within(p).findByRole("combobox", { name: "Message to Dev agent" });
+  const box = await within(p).findByRole("combobox", { name: "Comment" });
   const body = p.querySelector("[data-pane-body]") as HTMLElement;
-  const composer = box.closest("form") as HTMLElement;
+  const composer = box.closest("[data-pane-composer]") as HTMLElement;
   // jsdom has no layout: this guards the structure (the composer is outside the scroller and after
   // it, both in the pane's flex column); the pinning itself is a browser check.
   expect(body).not.toBeNull();
@@ -499,25 +303,44 @@ test("the composer sits below the body's scroller, which scrolls on its own", as
 });
 
 test("switching items shows skeletons, never the previous body", async () => {
-  setup([item(1), item(2, { link: { kind: "session", agentSlug: "dev", seq: 60 } })]);
+  setup([item(1), mention(2, "c4", { kind: "agent", name: "ada" })]);
   let release: () => void = () => {};
   const held = new Promise<void>((r) => {
     release = r;
   });
-  api.on("GET /api/agents/dev/events?around=60", async (b, u) => {
+  api.on("GET /api/tasks/T-7", async () => {
     await held;
-    return eventsRoute("dev")(b, u);
+    return json(task());
   });
   const app = await visit("/inbox?item=i1");
-  await waitFor(() => expect(within(pane()).getByText("dev event 42")).toBeInTheDocument());
+  await waitFor(() => expect(within(pane()).getByText("preview 1")).toBeInTheDocument());
   await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
   await waitFor(() => expect(pane().querySelector("[data-pane-skeleton]")).not.toBeNull());
-  expect(within(pane()).queryByText("dev event 42")).toBeNull();
+  expect(within(pane()).queryByText("preview 1")).toBeNull();
   release();
-  await waitFor(() => expect(within(pane()).getByText("dev event 60")).toBeInTheDocument());
+  await waitFor(() => expect(within(pane()).getByRole("heading", { name: "Seven" })).toBeVisible());
   expect(pane().querySelector("[data-pane-skeleton]")).toBeNull();
   // Two full-app route renders and a held fetch: past the default 5s when the suite runs in parallel.
 }, 15_000);
+
+test("a notice shows its text and a link to the session, and has no composer", async () => {
+  setup([
+    item(1, {
+      from: { kind: "factory", name: "factory" },
+      about: "dev",
+      preview: "Dev hit an error",
+    }),
+  ]);
+  await visit("/inbox?item=i1");
+  const p = pane();
+  expect(await within(p).findByText("Dev hit an error")).toBeInTheDocument();
+  expect(within(p).getByRole("link", { name: "Open in session" })).toHaveAttribute(
+    "href",
+    "/agents/dev/session?event=42",
+  );
+  expect(within(p).queryByRole("textbox")).toBeNull();
+  expect(within(p).queryByRole("combobox")).toBeNull();
+});
 
 test("?item= outside the loaded pages fetches the item and shows it", async () => {
   setup([item(1)]);
@@ -529,10 +352,10 @@ test("?item= outside the loaded pages fetches the item and shows it", async () =
   await waitFor(() =>
     expect(within(p).getByRole("link", { name: "Open in session" })).toHaveAttribute(
       "href",
-      "/agents/dev?event=42",
+      "/agents/dev/session?event=42",
     ),
   );
-  await waitFor(() => expect(within(p).getByText("dev event 42")).toBeInTheDocument());
+  await waitFor(() => expect(within(p).getByText("preview 9")).toBeInTheDocument());
   expect(api.calls.filter((c) => c.url === "/api/inbox/far")).toHaveLength(1);
   // The list's pages don't change.
   expect(document.querySelector('a[data-inbox-id="far"]')).toBeNull();
@@ -554,13 +377,13 @@ test("the selected row dropping out of the loaded pages keeps its header", async
   api.on("GET /api/inbox/i1", () => new Promise<Response>(() => {}));
   const app = await visit("/inbox?item=i1");
   const p = pane();
-  await waitFor(() => expect(within(p).getByText("dev event 42")).toBeInTheDocument());
+  await waitFor(() => expect(within(p).getByText("preview 1")).toBeInTheDocument());
   // A refetch drops i1 from the pages (it moved past the loaded window).
-  api.on("GET /api/inbox?", () => json({ items: [item(2)], nextCursor: null }));
+  api.on("GET /api/inbox?", () => json({ chats: [], items: [item(2)], nextCursor: null }));
   await app.queryClient.invalidateQueries({ queryKey: ["inbox"] });
   await waitFor(() => expect(document.querySelector('a[data-inbox-id="i1"]')).toBeNull());
   expect(within(p).getByRole("link", { name: "Open in session" })).toBeInTheDocument();
-  expect(within(p).getByText("dev event 42")).toBeInTheDocument();
+  expect(within(p).getByText("preview 1")).toBeInTheDocument();
   expect(within(p).queryByText("This item no longer exists.")).toBeNull();
   expect(api.calls.filter((c) => c.url === "/api/inbox/i1")).toHaveLength(1);
 });
@@ -592,13 +415,13 @@ test("a half-typed comment reply survives switching items; a posted one is clear
   await waitFor(() => expect(box()).toHaveValue("@ada "));
   await userEvent.type(box(), "half typed");
   await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
-  await waitFor(() => expect(within(pane()).getByText("dev event 42")).toBeInTheDocument());
+  await waitFor(() => expect(within(pane()).getByText("preview 2")).toBeInTheDocument());
   await app.router.navigate({ to: "/inbox", search: { item: "i1" } });
   await waitFor(() => expect(box()).toHaveValue("@ada half typed"));
   fireEvent.click(within(pane()).getByRole("button", { name: "Send" }));
   await waitFor(() => expect(box()).toHaveValue(""));
   await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
-  await waitFor(() => expect(within(pane()).getByText("dev event 42")).toBeInTheDocument());
+  await waitFor(() => expect(within(pane()).getByText("preview 2")).toBeInTheDocument());
   await app.router.navigate({ to: "/inbox", search: { item: "i1" } });
   // Nothing left over: only the prefill comes back.
   await waitFor(() => expect(box()).toHaveValue("@ada "));
@@ -612,49 +435,16 @@ test("a mention whose comment is gone says so", async () => {
 });
 
 test("moving on cancels the request for the item passed over", async () => {
-  setup([item(1), item(2, { link: { kind: "session", agentSlug: "dev", seq: 60 } })]);
-  // i1's excerpt never answers: it is still in flight when the selection moves on.
-  api.on("GET /api/agents/dev/events?around=42&limit=7", () => new Promise<Response>(() => {}));
+  setup([mention(1, "c4", { kind: "agent", name: "ada" }), item(2)]);
+  // The task never answers: it is still in flight when the selection moves on.
+  api.on("GET /api/tasks/T-7", () => new Promise<Response>(() => {}));
   const app = await visit("/inbox?item=i1");
   const signalOf = (part: string) =>
     (vi.mocked(fetch).mock.calls.find(([u]) => String(u).includes(part))?.[1] as RequestInit)
       ?.signal;
-  await waitFor(() => expect(signalOf("around=42")).toBeDefined());
-  expect(signalOf("around=42")?.aborted).toBe(false);
+  await waitFor(() => expect(signalOf("/api/tasks/T-7")).toBeDefined());
+  expect(signalOf("/api/tasks/T-7")?.aborted).toBe(false);
   await app.router.navigate({ to: "/inbox", search: { item: "i2" } });
-  await waitFor(() => expect(within(pane()).getByText("dev event 60")).toBeInTheDocument());
-  await waitFor(() => expect(signalOf("around=42")?.aborted).toBe(true));
-});
-
-test("the excerpt's speaker lines know the agent and you: its name on head text, 'You' on your message", async () => {
-  setup([item(1, { link: { kind: "session", agentSlug: "dev" } })]);
-  const ev = (seq: number, event: unknown): SessionEvent =>
-    ({ seq, agentSlug: "dev", turnId: "t1", at: at(seq), event }) as SessionEvent;
-  api.on("GET /api/agents/dev/events?", () =>
-    json(
-      page([
-        ev(1, { type: "assistant_text", text: "agent says" }),
-        ev(2, {
-          type: "message_in",
-          messages: [
-            {
-              id: "x1",
-              from: "@alice",
-              fromKind: "human",
-              kind: "message",
-              body: "I reply",
-              urgent: false,
-            },
-          ],
-        }),
-      ]),
-    ),
-  );
-  await visit("/inbox?item=i1");
-  const p = pane();
-  const text = await within(p).findByText("agent says");
-  const head = text.closest("div:has(> [data-speaker-line])") as HTMLElement;
-  expect(within(head).getByText("Dev agent")).toBeInTheDocument();
-  const mine = within(p).getByText("I reply").closest("[data-message-block]") as HTMLElement;
-  expect(await within(mine).findByText("You")).toBeInTheDocument();
+  await waitFor(() => expect(within(pane()).getByText("preview 2")).toBeInTheDocument());
+  await waitFor(() => expect(signalOf("/api/tasks/T-7")?.aborted).toBe(true));
 });

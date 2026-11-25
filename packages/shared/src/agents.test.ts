@@ -4,7 +4,7 @@ import {
   agentSummarySchema,
   patchAgentBodySchema,
   queueItemSchema,
-  sendMessageBodySchema,
+  sendMessagesBodySchema,
   spawnAgentToolSchema,
   terminateAgentToolSchema,
 } from "./agents.ts";
@@ -68,5 +68,7 @@ test("queue items accept the stopping wait reason and a client id", () => {
 });
 test("send body takes an optional clientMessageId", () => {
   const id = crypto.randomUUID();
-  expect(sendMessageBodySchema.parse({ body: "hi", clientMessageId: id }).clientMessageId).toBe(id);
+  expect(
+    sendMessagesBodySchema.parse({ to: ["dev"], body: "hi", clientMessageId: id }).clientMessageId,
+  ).toBe(id);
 });

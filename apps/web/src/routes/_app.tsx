@@ -72,9 +72,6 @@ function AppLayout() {
   const turnOpen = useRef(new Map<string, boolean>());
   const usageTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const opened = useRef(false);
-  // The socket outlives renders: it always calls the latest notifier.
-  const notifyRef = useRef(notify);
-  notifyRef.current = notify;
   useEffect(() => installShortcuts(), []);
   // A file dropped outside the composer never navigates away from the app (U3 §13.5).
   useEffect(() => installFileDropGuard(), []);
@@ -98,7 +95,7 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["inbox"] });
           void qc.invalidateQueries({ queryKey: ["inbox-unread"] });
           void qc.invalidateQueries({ queryKey: ["inbox-home"] });
-          notifyRef.current();
+          notify();
         }
         // I1: a chat on screen refreshes its newest page (one request in flight, one trailing).
         onChatChanged(qc, m);
@@ -211,7 +208,7 @@ function AppLayout() {
       clearTimeout(usageTimer.current);
       usageTimer.current = undefined;
     };
-  }, [qc, navigate]);
+  }, [qc, navigate, notify]);
   const hub = useMemo<WsHub>(
     () => ({
       send: (m) => conn.current?.send(m) ?? false,

@@ -22,7 +22,6 @@ import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
-import type { ComboOption } from "@/components/ui/combobox";
 import {
   Select,
   SelectContent,
@@ -34,12 +33,18 @@ import { SheetBody, SheetClose, SheetDescription, SheetFooter } from "@/componen
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
-import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
-import { useAgentFormState } from "@/features/agents/agent-form-state";
-import { agentsListQueryOptions, updateAgent } from "@/features/agents/api";
+import { PartialSaveError, useAgentFormState } from "@/features/agents/agent-form-state";
+import {
+  agentsListQueryOptions,
+  type ModelEffort,
+  saveModelEffort,
+  updateAgent,
+} from "@/features/agents/api";
 import { ColourField } from "@/features/agents/colour-field";
 import { restoreAgent } from "@/features/agents/lifecycle";
 import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
+import { ManagerCombobox } from "@/features/agents/manager-combobox";
+import { ModelEffortFields } from "@/features/agents/model-effort-fields";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import { inboxQueryKey } from "@/features/inbox/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
@@ -60,9 +65,6 @@ import { FORM_MSG } from "@/lib/form-messages.ts";
 
 type Spec = { kind: "edit-agent"; slug: string; at?: string };
 
-const NO_MANAGER: ComboOption[] = [
-  { value: "", label: "No manager (reports to the humans)", fixed: true },
-];
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
 const andList = (items: string[]) =>
   items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
@@ -249,19 +251,8 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   }, [activeAgents.data, slug]);
   const canManage = useMemo(() => {
     const excluded = new Set(excludedKey.split("\n"));
-    return (a: AgentOpt) => a.kind === "persistent" && !excluded.has(a.slug);
+    return (slug: string) => !excluded.has(slug);
   }, [excludedKey]);
-  // The saved manager may since have been archived: it stays, named as such.
-  const managerMissing =
-    values.reportsTo !== "" &&
-    activeAgents.data !== undefined &&
-    !activeAgents.data.some(
-      (a) => a.slug === values.reportsTo && !a.archivedAt && !a.terminatedAt && canManage(a),
-    );
-  const renderMissingManager = useMemo(
-    () => (managerMissing ? (m: string) => `@${m} (archived)` : undefined),
-    [managerMissing],
-  );
 
   const running = isRunning(agent);
   // A display name or description change also restarts the agent's live direct reports (their prompt names their
@@ -271,7 +262,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     .map((a) => `@${a.slug}`);
   // A colour change is identity only: it never restarts the agent (spec §11).
   const restartFields = changes.filter((f) => f !== "color");
-  const selfRestarts = running && restartFields.length > 0;
+  const selfRestarts = running && (restartFields.length > 0 || s.modelEffortChanged);
   const reportsRestart =
     runningReports.length > 0 && changes.some((f) => f === "displayName" || f === "description");
   // One short line on the reserved outcome line (§8); the detail is the static help below, which no edit changes.
@@ -294,17 +285,21 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     };
   }, []);
   const stillOpen = () => mounted.current && getSheetState().parent?.id === sheetId;
-  async function save(body: CreateAgentBody | PatchAgentBody): Promise<AgentSummary | undefined> {
+  async function save(
+    body: CreateAgentBody | PatchAgentBody,
+    modelEffort?: ModelEffort,
+  ): Promise<AgentSummary | undefined> {
     // A patch never names a template; a create body always does.
     if ("template" in body) return undefined;
     // A late result is judged against what was submitted (the draft now) and the session it was sent in.
     const snapshot = peekDraft(draftKey);
     const generation = draftGeneration();
-    const restartsNow = running && restartFields.length > 0;
-    const nameOnly = onlyDisplayName(body);
-    let saved: AgentSummary;
+    const restartsNow = running && (restartFields.length > 0 || modelEffort !== undefined);
+    const nameOnly = onlyDisplayName(body) && modelEffort === undefined;
+    const patched = Object.keys(body).length > 0;
+    let saved: AgentSummary = agent;
     try {
-      saved = await updateAgent(slug, body);
+      if (patched) saved = await updateAgent(slug, body);
     } catch (err) {
       // Dismissed (or the form replaced by another state) while saving: the error has no form to land in. The draft
       // is kept for "Open form".
@@ -317,14 +312,33 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     }
     // Nothing is written back after a sign-out: the result belongs to the old session.
     if (draftGeneration() !== generation) return undefined;
-    // The response is the saved agent: show it now; the lists and the detail's queue catch up in the background.
-    qc.setQueryData(agentDetailQueryOptions(slug).queryKey, (d) =>
-      d ? { ...d, agent: saved } : d,
-    );
-    void qc.invalidateQueries({ queryKey: ["agents"] });
-    void qc.invalidateQueries({ queryKey: ["agent", slug] });
-    // The Inbox chat rows carry the agent's colour.
-    void qc.invalidateQueries({ queryKey: inboxQueryKey });
+    if (patched) {
+      // The response is the saved agent: show it now; the lists and the detail's queue catch up in the background.
+      qc.setQueryData(agentDetailQueryOptions(slug).queryKey, (d) =>
+        d ? { ...d, agent: saved } : d,
+      );
+      void qc.invalidateQueries({ queryKey: ["agents"] });
+      void qc.invalidateQueries({ queryKey: ["agent", slug] });
+      // The Inbox chat rows carry the agent's colour.
+      void qc.invalidateQueries({ queryKey: inboxQueryKey });
+    }
+    // The second write. When it fails the first has landed, and the outcome says which part is saved.
+    if (modelEffort) {
+      try {
+        await saveModelEffort(qc, slug, modelEffort);
+      } catch (err) {
+        const why = err instanceof ApiError ? err.message : FORM_MSG.unreachable;
+        const message = patched
+          ? `Saved your changes, but not Model and Effort: ${why}`
+          : `Model and Effort weren't saved: ${why}`;
+        if (!stillOpen() && draftGeneration() === generation)
+          notify({
+            text: `@${slug}: ${message}`,
+            action: { label: "Open form", run: () => openSheet({ kind: "edit-agent", slug }) },
+          });
+        throw new PartialSaveError(patched ? saved : undefined, message);
+      }
+    }
     const late = !stillOpen();
     // Late: dismissed, or the sheet now shows another state the user is reading; it stays. A late success clears the
     // draft only if it still holds what was sent; this agent's Edit reopened on those untouched values closes. Edits
@@ -387,19 +401,14 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             help={staleNotes.reportsTo}
           >
             {(a) => (
-              <AgentCombobox
+              <ManagerCombobox
                 id={a.id}
                 aria-label="Manager"
-                scope="live"
-                order="tree"
-                fixed={NO_MANAGER}
-                filter={canManage}
-                disabled={!activeAgents.data}
-                value={shown.reportsTo || null}
-                renderValue={renderMissingManager}
+                canManage={canManage}
+                value={shown.reportsTo}
                 aria-invalid={a.invalid || undefined}
                 aria-describedby={a.describedBy}
-                onValueChange={(v) => set("reportsTo", v ?? "")}
+                onValueChange={(v) => set("reportsTo", v)}
               />
             )}
           </FieldShell>
@@ -477,6 +486,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
               />
             )}
           </FieldShell>
+          <ModelEffortFields {...s.modelEffort} />
         </fieldset>
         {restartHelp && (
           <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">{restartHelp}</p>

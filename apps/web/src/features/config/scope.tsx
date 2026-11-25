@@ -23,6 +23,10 @@ export type ConfigFormProps = {
   /** A functional update of the whole draft (`useConfigDraft().setDraft`). */
   onChange: ConfigUpdate;
   readOnly?: boolean;
+  /** Why the fields cannot be used yet ("Choose a template first"): they are read-only and their help says so. */
+  disabledReason?: string;
+  /** Replaces the form's section layout (a grid with 2rem between sections), for a scope around a few fields. */
+  className?: string;
   /** Server issues. A path a field owns lands on that field (or row); the rest go to the top block. */
   issues: readonly TemplateIssue[];
   /** Paths a rebase found changed on both sides: their fields read "Also changed elsewhere." */
@@ -43,6 +47,7 @@ type FieldIssues = { error?: string; warning?: string; items: Map<string, RowNot
 export type ConfigScope = {
   mode: ConfigMode;
   readOnly: boolean;
+  disabledReason?: string | undefined;
   value: unknown;
   base: ConfigDoc | null;
   inheritedLabel: string;
@@ -97,6 +102,8 @@ export function ConfigFormScope({
   templateName,
   onChange,
   readOnly = false,
+  disabledReason,
+  className = "grid min-w-0 gap-8",
   issues,
   conflicts,
   onShowRaw,
@@ -155,7 +162,8 @@ export function ConfigFormScope({
 
   const scope: ConfigScope = {
     mode,
-    readOnly,
+    readOnly: readOnly || disabledReason !== undefined,
+    disabledReason,
     value,
     base: mode === "agent" ? base : null,
     inheritedLabel: templateName ? `From template ${templateName}` : "From template",
@@ -168,7 +176,7 @@ export function ConfigFormScope({
   };
   return (
     <Scope value={scope}>
-      <div ref={root} className="grid min-w-0 gap-8">
+      <div ref={root} className={className}>
         {children}
       </div>
     </Scope>

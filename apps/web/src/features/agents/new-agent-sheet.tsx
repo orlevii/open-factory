@@ -26,7 +26,6 @@ import { flushSync } from "react-dom";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { Button } from "@/components/ui/button";
-import type { ComboOption } from "@/components/ui/combobox";
 import {
   Select,
   SelectContent,
@@ -39,11 +38,17 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { AddressLine } from "@/features/agents/address-line";
-import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
 import { useAgentFormState } from "@/features/agents/agent-form-state";
-import { agentsListQueryOptions, createAgent } from "@/features/agents/api";
+import {
+  agentsListQueryOptions,
+  createAgent,
+  type ModelEffort,
+  saveModelEffort,
+} from "@/features/agents/api";
 import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
 import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
+import { ManagerCombobox } from "@/features/agents/manager-combobox";
+import { ModelEffortFields } from "@/features/agents/model-effort-fields";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import {
   TemplateField,
@@ -73,13 +78,9 @@ import { FORM_MSG } from "@/lib/form-messages.ts";
 
 type Spec = { kind: "new-agent"; template?: string };
 
-const NO_MANAGER: ComboOption[] = [
-  { value: "", label: "No manager (reports to the humans)", fixed: true },
-];
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
 const EMPTY: ReadonlySet<string> = new Set();
 /** A spawned agent never manages. */
-const canManage = (a: AgentOpt) => a.kind === "persistent";
 const SHEET_CONTENT = "[data-slot=sheet-content], [data-slot=drawer-content]";
 // biome-ignore lint/suspicious/noThenProperty: ChildSpec's field, not a thenable
 const NEW_TEMPLATE = { kind: "new-template", then: "return" } as const;
@@ -247,7 +248,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   }
 
   const stillOpen = () => getSheetState().parent?.id === sheetId;
-  async function create(body: CreateAgentBody | PatchAgentBody) {
+  async function create(body: CreateAgentBody | PatchAgentBody, modelEffort?: ModelEffort) {
     // A create body always names its template; a patch never does.
     if (!("template" in body)) return;
     // A late result is judged against what was submitted (the draft now) and the session it was sent in.
@@ -276,6 +277,14 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     // An in-flight refetch must not land after this and put the stale `false` back.
     void qc.cancelQueries({ queryKey: setupQueryOptions.queryKey });
     qc.setQueryData(setupQueryOptions.queryKey, (d) => d && { ...d, hasAgent: true });
+    // The agent exists; its model and effort are a second write. A failure doesn't undo the first: it is said below.
+    let notSet: string | undefined;
+    if (modelEffort)
+      try {
+        await saveModelEffort(qc, agent.slug, modelEffort);
+      } catch (err) {
+        notSet = err instanceof ApiError ? err.message : FORM_MSG.unreachable;
+      }
     const open = stillOpen();
     // A late success clears the draft only if it still holds the submitted values; a New agent reopened on those
     // untouched values closes, so the same agent can't be created twice. Edits made since are kept.
@@ -288,11 +297,24 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       closeSheet();
     const go = () =>
       void router.navigate({ to: "/agents/$slug/chat", params: { slug: agent.slug } });
-    if (open) {
+    const created = `Created @${agent.slug}.`;
+    if (notSet) {
+      // Said in a toast either way: the sheet closes onto the session.
+      const configure = () =>
+        void router.navigate({ to: "/agents/$slug/config", params: { slug: agent.slug } });
+      if (open) {
+        closeSheet();
+        go();
+      }
+      notify({
+        text: `${created} Model and effort weren't set: ${notSet}`,
+        action: { label: "Open configuration", run: configure },
+      });
+    } else if (open) {
       closeSheet();
       go();
     } else {
-      notify({ text: `Created @${agent.slug}.`, action: { label: "Open", run: go } });
+      notify({ text: created, action: { label: "Open", run: go } });
     }
   }
 
@@ -370,18 +392,13 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
             help={staleNotes.reportsTo}
           >
             {(a) => (
-              <AgentCombobox
+              <ManagerCombobox
                 id={a.id}
                 aria-label="Manager"
-                scope="live"
-                order="tree"
-                fixed={NO_MANAGER}
-                filter={canManage}
-                disabled={!activeAgents.data}
-                value={shown.reportsTo || null}
+                value={shown.reportsTo}
                 aria-invalid={a.invalid || undefined}
                 aria-describedby={a.describedBy}
-                onValueChange={(v) => set("reportsTo", v ?? "")}
+                onValueChange={(v) => set("reportsTo", v)}
               />
             )}
           </FieldShell>
@@ -445,6 +462,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               onChange={s.setProjects}
               onAddProject={onAddProject}
             />
+            <ModelEffortFields {...s.modelEffort} />
           </MoreOptions>
           <FieldShell name="manageOrg" label="Can manage the org" help={MANAGE_ORG_HELP}>
             {(a) => (

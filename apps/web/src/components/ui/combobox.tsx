@@ -31,13 +31,14 @@ const itemKey = (o: ComboOption) => (o.fixed ? FIXED : "o:") + o.value
 function filter(value: string, search: string, keywords?: string[]) {
   if (value.startsWith(FIXED)) return 1
   const [label = "", ...rest] = keywords ?? []
-  const q = search.trim().toLowerCase()
+  // A handle is typed with its `@`: it never counts as part of the query.
+  const q = search.trim().replace(/^@/, "").toLowerCase()
   if (!q) return 0.5
   const name = label.toLowerCase()
   if (name === q) return 0.99
   if (name.startsWith(q)) return 0.9
   if (name.includes(q)) return 0.8
-  const fuzzy = defaultFilter(label, search, [])
+  const fuzzy = defaultFilter(label, q, [])
   if (fuzzy > 0) return fuzzy * 0.5
   return rest.some((k) => k.toLowerCase().includes(q)) ? 0.4 : 0
 }

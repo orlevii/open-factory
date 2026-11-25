@@ -71,10 +71,7 @@ test("the form renders the Model section with model and effort", () => {
   render(<Form start={{}} />);
   expect(screen.getByRole("heading", { level: 2, name: "Model" })).toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();
-  expect(screen.getByRole("combobox", { name: "Effort" })).toHaveTextContent(
-    "Inherit from template",
-  );
-  expect(screen.getByText("From template: high")).toBeInTheDocument();
+  expect(screen.getByRole("combobox", { name: "Effort" })).toHaveTextContent("Template's (high)");
 });
 
 test("an unknown settings key survives a form edit", async () => {

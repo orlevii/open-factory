@@ -51,6 +51,15 @@ function disableError(err: unknown, handle: string): string | undefined {
   if (err.code === "last_enabled_user") {
     return `@${handle} is the last enabled user. Enable someone else first.`;
   }
+  if (err.code === "manages_agents") {
+    const agents = Array.isArray(err.body.agents)
+      ? err.body.agents.filter((a): a is string => typeof a === "string")
+      : [];
+    const handles = agents.map((a) => `@${a}`);
+    const list =
+      handles.length > 1 ? `${handles.slice(0, -1).join(", ")} and ${handles.at(-1)}` : handles[0];
+    return `@${handle} manages ${list ?? "agents"}. Move ${handles.length === 1 ? "it" : "them"} to another manager first.`;
+  }
   return undefined;
 }
 

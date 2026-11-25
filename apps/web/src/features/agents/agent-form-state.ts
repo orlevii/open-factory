@@ -13,11 +13,14 @@ import { useQuery } from "@tanstack/react-query";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
-import { agentsListQueryOptions } from "@/features/agents/api";
+import { agentsListQueryOptions, type ModelEffort } from "@/features/agents/api";
+import { templateConfigQueryOptions } from "@/features/config/api";
+import { readAt, readString, setAt } from "@/features/config/tolerant";
 import {
   credentialsQueryOptions,
   projectsQueryOptions,
   secretsQueryOptions,
+  usersQueryOptions,
 } from "@/features/settings/api";
 import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
 import { mergeServer } from "@/features/sheets/merge-server";
@@ -50,12 +53,29 @@ export type Values = {
   credential: string;
   projects: string[];
   manageOrg: boolean;
+  /** This agent's own model and effort, "" to inherit the template's. */
+  model: string;
+  effort: string;
 };
 /** What a draft holds: the values and (New agent) the fields the user made theirs. */
 type Stored = Values & { touched: Touched };
 /** An edit draft also keeps the server copy it was edited against, so untouched fields follow the server later. */
 type EditDraft = { values: Stored; base: Stored };
 export type SubmitResult = "ok" | "invalid" | "failed" | "nothing";
+
+/**
+ * Edit agent saves in two writes (the agent, then its model and effort). When the second fails the first has landed:
+ * `agent` is what it saved (the form's base moves to it), and `message` says which part is saved.
+ */
+export class PartialSaveError extends Error {
+  constructor(
+    public readonly agent: AgentSummary | undefined,
+    message: string,
+  ) {
+    super(message);
+    this.name = "PartialSaveError";
+  }
+}
 /** The fields an edit can send, in the order a sentence names them. */
 export const PATCH_FIELDS = [
   "displayName",
@@ -80,8 +100,22 @@ const storedOf = (a: AgentSummary): Stored => ({
   credential: a.credential ?? "",
   projects: a.projects,
   manageOrg: a.manageOrg,
+  model: a.model.source === "agent" ? (a.model.value ?? "") : "",
+  effort: a.effort.source === "agent" ? (a.effort.value ?? "") : "",
   touched: {},
 });
+
+/** Model and effort as the config scope's overlay: only what this agent overrides. */
+const overlayOf = (v: ModelEffort): unknown => {
+  let o: unknown = {};
+  if (v.model) o = setAt(o, ["template", "model"], v.model);
+  if (v.effort) o = setAt(o, ["template", "effort"], v.effort);
+  return o;
+};
+const overrideOf = (o: unknown, field: keyof ModelEffort): string => {
+  const r = readString(readAt(o, ["template", field]));
+  return r.ok ? (r.value ?? "") : "";
+};
 
 const blank = (prefill?: { template?: string }): Stored => ({
   template: prefill?.template ?? "",
@@ -93,6 +127,8 @@ const blank = (prefill?: { template?: string }): Stored => ({
   credential: "",
   projects: [],
   manageOrg: false,
+  model: "",
+  effort: "",
   touched: {},
 });
 
@@ -185,6 +221,12 @@ export function useAgentFormState({
     retry: false,
   });
   const config: TemplateConfig | undefined = detail.data?.config;
+  // The template's own model and effort, for the inherit options: null while it loads, is broken or isn't chosen.
+  const templateDoc =
+    useQuery({
+      ...templateConfigQueryOptions(values.template),
+      enabled: values.template !== "",
+    }).data?.doc ?? null;
   // The last template that landed keeps prefilling while the next one loads, so switching
   // templates doesn't blank the fields in between.
   const [landed, setLanded] = useState(config);
@@ -201,16 +243,21 @@ export function useAgentFormState({
   const projectList = useQuery(projectsQueryOptions);
   const secrets = useQuery({ ...secretsQueryOptions, enabled: create });
   const me = useQuery(sessionQueryOptions).data?.user.handle;
+  const users = useQuery(usersQueryOptions);
 
   // References a restored draft (or an edit made earlier) holds that no longer point at anything read as empty, with
   // the reason under the field. Edit leaves a value alone while it is still the saved one: an archived manager stays.
   const staleNotes: Partial<Record<Field, string>> = {};
   // Compares with `base`, the server copy the values were edited against (possibly stale until the next refetch merges).
   const changed = (f: keyof Values) => create || !base || !same(values[f], base[f]);
+  // A manager is a live agent or an enabled user. Without the users list (loading, failed) a handle that is no agent
+  // can't be judged, so it stands.
   if (
     values.reportsTo &&
+    values.reportsTo !== me &&
     changed("reportsTo") &&
     activeAgents.data &&
+    users.data &&
     !activeAgents.data.some(
       (a) =>
         a.slug === values.reportsTo &&
@@ -218,7 +265,8 @@ export function useAgentFormState({
         !a.archivedAt &&
         !a.terminatedAt &&
         a.slug !== agent?.slug,
-    )
+    ) &&
+    !users.data.some((u) => u.handle === values.reportsTo && !u.disabledAt)
   )
     staleNotes.reportsTo = FORM_MSG.agentEnded;
   if (
@@ -266,6 +314,8 @@ export function useAgentFormState({
           values.touched.description || !templatePrefill
             ? base0.description
             : templatePrefill.description,
+        // New agent: the signed-in human manages it unless another manager was picked.
+        reportsTo: base0.reportsTo || me || "",
         credential: base0.credential || defaultCredential(),
         projects:
           values.touched.projects || !templatePrefill ? base0.projects : templatePrefill.projects,
@@ -339,18 +389,35 @@ export function useAgentFormState({
     o.clear();
   };
 
+  // Model and effort: the scope's overlay and its functional update, over the two stored strings.
+  const overlay = useMemo(
+    () => overlayOf({ model: shown.model, effort: shown.effort }),
+    [shown.model, shown.effort],
+  );
+  const setOverlay = (next: (prev: unknown) => unknown) => {
+    const result = next(overlayOf({ model: latest.current.model, effort: latest.current.effort }));
+    update({ model: overrideOf(result, "model"), effort: overrideOf(result, "effort") });
+    o.clear();
+  };
+  /** What a save writes to the agent's config: New agent, anything chosen; Edit, only a change. */
+  const modelEffortWrite = (): ModelEffort | undefined => {
+    const write = { model: shown.model, effort: shown.effort };
+    if (create) return write.model || write.effort ? write : undefined;
+    const b = base as Stored;
+    return write.model !== b.model || write.effort !== b.effort ? write : undefined;
+  };
+  const modelEffortChanged = !create && modelEffortWrite() !== undefined;
+
   function body(): CreateAgentBody | PatchAgentBody | null {
     const displayName = shown.displayName.trim();
     const description = shown.description.trim();
-    // New agent: the signed-in human manages it unless another manager was picked.
-    const reportsTo = shown.reportsTo || me || "";
     if (create) {
       return {
         template: shown.template,
         slug: shown.slug,
         displayName,
         description,
-        reportsTo,
+        reportsTo: shown.reportsTo,
         credential: shown.credential,
         ...(values.touched.projects ? { projects: shown.projects } : {}),
         ...(shown.manageOrg ? { manageOrg: true } : {}),
@@ -384,13 +451,16 @@ export function useAgentFormState({
   async function submit(
     onSubmit: (
       b: CreateAgentBody | PatchAgentBody,
+      modelEffort: ModelEffort | undefined,
     ) => Promise<AgentSummary | undefined> | Promise<void>,
   ): Promise<SubmitResult> {
     // A ref, not `pending`: a second Enter can arrive before the first one's state has rendered.
     if (inFlight.current || noCredentials) return "nothing";
     o.clear();
     if (!f.submit()) return "invalid";
-    const b = body();
+    const modelEffort = modelEffortWrite();
+    // Edit with only a model or effort change has no agent patch: an empty one.
+    const b = body() ?? (modelEffort ? {} : null);
     if (!b) {
       o.succeed("Nothing to save: no field changed.");
       return "nothing";
@@ -399,11 +469,17 @@ export function useAgentFormState({
     setPending(true);
     let saved: AgentSummary | undefined;
     try {
-      saved = (await onSubmit(b)) ?? undefined;
+      saved = (await onSubmit(b, modelEffort)) ?? undefined;
     } catch (err) {
       inFlight.current = false;
       // Re-enabled in the commit that focuses the field.
       setPending(false);
+      if (err instanceof PartialSaveError) {
+        // The agent part landed: it is the new base, so a retry sends only what is left.
+        if (err.agent) setBase(storedOf(err.agent));
+        o.fail(err.message);
+        return "failed";
+      }
       if (!(err instanceof ApiError)) o.fail(FORM_MSG.unreachable);
       else if (!f.server(err.body.fields as Record<string, string> | undefined)) {
         o.fail(err.message);
@@ -454,5 +530,12 @@ export function useAgentFormState({
     discard,
     staleNotes,
     changes,
+    modelEffort: {
+      value: overlay,
+      base: templateDoc,
+      onChange: setOverlay,
+      disabledReason: create && values.template === "" ? FORM_MSG.chooseTemplateFirst : undefined,
+    },
+    modelEffortChanged,
   };
 }

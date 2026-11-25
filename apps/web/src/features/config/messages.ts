@@ -28,7 +28,8 @@ export const CONFIG_FORM_MSG = {
 
 /** Labels and lines the spec fixes verbatim. Not field messages, so not bound by the 40-character rule. */
 export const CONFIG_COPY = {
-  inheritAgent: "Inherit from template",
+  /** An agent inherit option when no template doc is known; with one it names the value: Template's (opus). */
+  inheritAgent: "Template's",
   inheritTemplate: "Claude Code default",
   aliases: "Aliases",
   modelIds: "Model ids",

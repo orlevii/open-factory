@@ -284,6 +284,94 @@ test("a server fields.slug error opens the address input with the error", async 
   expect(field("Slug").value).toBe("team-lead");
 });
 
+const templateConfigRoute = () =>
+  json({
+    doc: { template: { model: "sonnet" }, settings: {}, mcp: { mcpServers: {} } },
+    hashes: { "template.yaml": "h", "settings.json": null, "mcp.json": null },
+    issues: [],
+    localSkills: [],
+    agents: { live: 0, archived: 0, cantStart: 0 },
+  });
+const newAgentConfig = (overlay: Record<string, unknown> = {}) => ({
+  overlay,
+  version: "v1",
+  template: { name: "lead", doc: null, valid: true },
+  merged: null,
+  issues: [],
+});
+const configPuts = (api: { calls: { method: string; url: string; body: unknown }[] }) =>
+  api.calls.filter((c) => c.method === "PUT" && c.url === "/api/agents/team-lead/config");
+
+test("Model and Effort sit under More options, off with 'Choose a template first' until a template is picked", async () => {
+  const { dialog } = await open();
+  await userEvent.click(more());
+  expect(field("Model")).toBeDisabled();
+  expect(field("Effort")).toBeDisabled();
+  expect(field("Model")).toHaveAccessibleDescription("Choose a template first");
+  expect(within(dialog).getAllByText("Choose a template first")).toHaveLength(2);
+});
+
+test("with a template, each inherit option names the template's value", async () => {
+  await openLead({ extra: { "GET /api/templates/lead/config": templateConfigRoute } });
+  await userEvent.click(more());
+  await vi.waitFor(() => expect(field("Model")).toHaveTextContent("Template's (sonnet)"));
+  expect(field("Model")).toBeEnabled();
+  expect(field("Effort")).toHaveTextContent("Template's (Claude Code default)");
+});
+
+test("a chosen model is written to the new agent's config after it is created", async () => {
+  const { api } = await openLead({
+    extra: {
+      ...created(),
+      "GET /api/templates/lead/config": templateConfigRoute,
+      "GET /api/agents/team-lead/config": () => json(newAgentConfig()),
+      "PUT /api/agents/team-lead/config": () =>
+        json({
+          ...newAgentConfig({ template: { model: "opus" } }),
+          changes: [],
+          restartChecked: false,
+          checked: "full",
+        }),
+    },
+  });
+  await userEvent.click(more());
+  await pickOption(field("Model"), "opus");
+  await userEvent.click(createButton());
+  await vi.waitFor(() => expect(configPuts(api)).toHaveLength(1));
+  expect(configPuts(api)[0]?.body).toEqual({
+    overlay: { template: { model: "opus" } },
+    baseVersion: "v1",
+  });
+  expect(posts(api)).toHaveLength(1);
+});
+
+test("an agent created with no model chosen makes no config write", async () => {
+  const { api, router } = await openLead({ extra: created() });
+  await userEvent.click(createButton());
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead/chat"));
+  expect(api.calls.some((c) => c.method === "PUT")).toBe(false);
+});
+
+test("if the config write fails, the agent still exists and a toast says Model and effort weren't set", async () => {
+  const { api, router } = await openLead({
+    extra: {
+      ...created(),
+      "GET /api/templates/lead/config": templateConfigRoute,
+      "GET /api/agents/team-lead/config": () => json(newAgentConfig()),
+      "PUT /api/agents/team-lead/config": () =>
+        json({ error: { code: "invalid_config", message: "The configuration has errors." } }, 400),
+    },
+  });
+  await userEvent.click(more());
+  await pickOption(field("Effort"), "high");
+  await userEvent.click(createButton());
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead/chat"));
+  expect(posts(api)).toHaveLength(1);
+  expect(vi.mocked(notify).mock.calls.map((c) => c[0].text)).toEqual([
+    "Created @team-lead. Model and effort weren't set: The configuration has errors.",
+  ]);
+});
+
 test("success closes the sheet, clears the draft and navigates to the session", async () => {
   const { api, router } = await openLead({ extra: created() });
   await userEvent.click(createButton());
@@ -369,7 +457,7 @@ test("a draft whose manager has ended clears it with the reason", async () => {
   expect(
     await within(dialog).findByText("That agent has ended; pick another."),
   ).toBeInTheDocument();
-  expect(field("Manager")).toHaveTextContent("No manager");
+  expect(field("Manager")).toHaveTextContent("You (Alice · @alice)");
 });
 
 test("focus on open: Template when none is chosen, Display name when one is", async () => {
@@ -590,10 +678,7 @@ test("the manager picker leaves out spawned agents", async () => {
   });
   const select = field("Manager");
   await vi.waitFor(() => expect(select).toBeEnabled());
-  expect((await comboOptionNames(select)).map((n) => n.replace(/@.*/, ""))).toEqual([
-    "No manager (reports to the humans)",
-    "CTO",
-  ]);
+  expect(await comboOptionNames(select)).toEqual(["You (Alice · @alice)", "CTO@cto"]);
 });
 
 test("projects: the template's set is checked, and a toggle changes it", async () => {
@@ -967,7 +1052,7 @@ test("the manager picker pads by depth, at most three levels, then marks deeper 
   await userEvent.click(select);
   const listbox = await screen.findByRole("listbox");
   const rows = chain.map((slug) => {
-    const item = within(listbox).getByRole("option", { name: new RegExp(`@${slug}`) });
+    const item = within(listbox).getByRole("option", { name: `${slug.toUpperCase()}@${slug}` });
     const name = item.querySelector<HTMLElement>("[style*=padding]");
     return [name?.style.paddingInlineStart, name?.textContent?.replace(/@.*/, "")];
   });

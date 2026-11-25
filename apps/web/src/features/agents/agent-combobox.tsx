@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { Combobox, type ComboOption } from "@/components/ui/combobox";
-import { useAgent } from "@/features/agents/use-agent-index";
 import { agentsListQueryOptions } from "@/features/session/api";
 
 /** The only fields the picker reads. Status frames change none of them, so the list isn't rebuilt. */
@@ -24,8 +23,6 @@ const liveByName = (data: AgentSummary[]): AgentOpt[] =>
     .filter(isLive)
     .map(project)
     .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.slug.localeCompare(b.slug));
-/** The server's order is the reporting tree's. */
-const liveInTree = (data: AgentSummary[]): AgentOpt[] => data.filter(isLive).map(project);
 const endedAll = (data: AgentSummary[]): AgentOpt[] => data.map(project);
 
 const NONE: AgentOpt[] = [];
@@ -37,31 +34,13 @@ const optionOf = (a: AgentOpt, group?: string): ComboOption => ({
   ...(group ? { group } : {}),
 });
 
-/** Reporting-line depth as padding: 0.75rem a level, three levels at most, then a `└ `. */
-function AgentRow({ slug, indent }: { slug: string; indent: boolean }) {
-  const depth = useAgent(slug)?.depth ?? 0;
-  const level = indent ? Math.min(depth, 3) : 0;
-  return (
-    <span
-      className="flex min-w-0 items-center gap-1"
-      style={{ paddingInlineStart: `${level * 0.75}rem` }}
-    >
-      {indent && depth > 3 && <span aria-hidden="true">└</span>}
-      <AgentChip slug={slug} badge showSlug />
-    </span>
-  );
-}
-// One renderer per variant, defined once: Combobox takes a single `renderOption`, not a closure per option.
 const renderPlain = (o: ComboOption): ReactNode =>
-  o.fixed ? o.label : <AgentRow slug={o.value} indent={false} />;
-const renderIndented = (o: ComboOption): ReactNode =>
-  o.fixed ? o.label : <AgentRow slug={o.value} indent />;
+  o.fixed ? o.label : <AgentChip slug={o.value} badge showSlug />;
 
 /**
  * A searchable agent pick (slug or name). `scope` "live" lists live agents; "live+ended" adds the ended
  * ones in a last "Ended" group (the ended list is fetched only then). A value that isn't listed shows as
- * `@slug` with its face. `filter` must be a stable function (memoize it). `order` "tree" keeps the
- * reporting tree's order and indents by depth; the default sorts by name.
+ * `@slug` with its face. `filter` must be a stable function (memoize it). Sorted by name.
  */
 export function AgentCombobox({
   value,
@@ -69,7 +48,6 @@ export function AgentCombobox({
   scope,
   fixed,
   filter,
-  order = "name",
   placeholder,
   renderValue: renderValueOverride,
   id,
@@ -86,7 +64,6 @@ export function AgentCombobox({
   scope: "live" | "live+ended";
   fixed?: ComboOption[];
   filter?: (a: AgentOpt) => boolean;
-  order?: "name" | "tree";
   placeholder?: string;
   /** Replaces the closed trigger's content. */
   renderValue?: (value: string) => ReactNode;
@@ -101,7 +78,7 @@ export function AgentCombobox({
 }) {
   const live = useQuery({
     ...agentsListQueryOptions("exclude"),
-    select: order === "tree" ? liveInTree : liveByName,
+    select: liveByName,
   });
   const endedList = useQuery({
     ...agentsListQueryOptions("only"),
@@ -148,7 +125,7 @@ export function AgentCombobox({
       disabled={disabled}
       pending={pending}
       triggerClassName={triggerClassName}
-      renderOption={order === "tree" ? renderIndented : renderPlain}
+      renderOption={renderPlain}
       renderValue={renderValue}
     />
   );

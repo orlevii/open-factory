@@ -140,10 +140,10 @@ test("the manager picker leaves out the agent and its descendants", async () => 
   await vi.waitFor(() => expect(select).toHaveTextContent("CTO"));
   // The closed trigger shows the name and @slug.
   expect(select).toHaveTextContent("@cto");
-  expect((await comboOptionNames(select)).map((n) => n.replace(/@.*/, ""))).toEqual([
-    "No manager (reports to the humans)",
-    "CTO",
-    "Other",
+  expect(await comboOptionNames(select)).toEqual([
+    "You (Alice · @alice)",
+    "CTO@cto",
+    "Other@other",
   ]);
 });
 
@@ -330,6 +330,134 @@ test("save over another page closes the sheet, clears the draft, sends the diff 
   expect(patches(api)).toEqual([{ displayName: "Boss" }]);
   expect(hasDraft("edit-agent:lead")).toBe(false);
   expect(vi.mocked(notify).mock.calls.map((c) => c[0].text)).toEqual(["Saved @lead."]);
+});
+
+// --- Model and effort ---
+
+const agentConfig = (overlay: Record<string, unknown> = {}, version = "v1") => ({
+  overlay,
+  version,
+  template: {
+    name: "lead",
+    doc: { template: { effort: "high" }, settings: {}, mcp: { mcpServers: {} } },
+    valid: true,
+  },
+  merged: { template: { effort: "high" }, settings: {}, mcp: { mcpServers: {} } },
+  issues: [],
+});
+const savedConfig = (overlay: Record<string, unknown>) => ({
+  ...agentConfig(overlay, "v2"),
+  changes: ["model: sonnet → opus"],
+  restartChecked: true,
+  checked: "full" as const,
+});
+const templateConfig = {
+  doc: { template: { effort: "high" }, settings: {}, mcp: { mcpServers: {} } },
+  hashes: { "template.yaml": "h", "settings.json": null, "mcp.json": null },
+  issues: [],
+  localSkills: [],
+  agents: { live: 1, archived: 0, cantStart: 0 },
+};
+const configRoutes = (overlay: Record<string, unknown> = {}) => ({
+  "GET /api/templates/lead/config": () => json(templateConfig),
+  "GET /api/agents/lead/config": () => json(agentConfig(overlay)),
+});
+const puts = (api: { calls: { method: string; url: string; body: unknown }[] }) =>
+  api.calls.filter((c) => c.method === "PUT" && c.url === "/api/agents/lead/config");
+
+test("Model and Effort show what the agent overrides, each inherit option naming the template's value", async () => {
+  await open({
+    agents: [
+      lead({
+        model: { value: "opus", source: "agent" },
+        effort: { value: "high", source: "template" },
+      }),
+    ],
+    extra: configRoutes({ template: { model: "opus" } }),
+  });
+  expect(field("Model")).toHaveTextContent("opus");
+  await vi.waitFor(() => expect(field("Effort")).toHaveTextContent("Template's (high)"));
+  await userEvent.click(field("Model"));
+  expect(
+    await screen.findByRole("option", { name: "Template's (Claude Code default)" }),
+  ).toBeVisible();
+});
+
+test("a model change alone is saved through the agent's config, keeping its other overlay keys, with no PATCH", async () => {
+  const overlay = { settings: { env: { A: "1" } } };
+  const { api } = await open({
+    extra: {
+      ...configRoutes(overlay),
+      "PUT /api/agents/lead/config": () =>
+        json(savedConfig({ ...overlay, template: { model: "opus" } })),
+    },
+  });
+  await pickOption(field("Model"), "opus");
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+  expect(puts(api).map((c) => c.body)).toEqual([
+    { overlay: { settings: { env: { A: "1" } }, template: { model: "opus" } }, baseVersion: "v1" },
+  ]);
+  expect(patches(api)).toEqual([]);
+});
+
+test("a running agent's model change says it restarts when idle", async () => {
+  await open({
+    agents: [lead({ status: "idle" })],
+    extra: configRoutes(),
+  });
+  await pickOption(field("Model"), "opus");
+  expect(await screen.findByText(SELF)).toBeInTheDocument();
+});
+
+test("when the config write fails after the agent saved, the outcome says which part was saved and a retry sends only the config", async () => {
+  let reject = true;
+  const { api } = await open({
+    extra: {
+      ...configRoutes(),
+      "PATCH /api/agents/lead": saved(lead({ displayName: "Boss" })),
+      "PUT /api/agents/lead/config": () =>
+        reject
+          ? json(
+              { error: { code: "invalid_config", message: "The configuration has errors." } },
+              400,
+            )
+          : json(savedConfig({ template: { model: "opus" } })),
+    },
+  });
+  await rename("Boss");
+  await pickOption(field("Model"), "opus");
+  await userEvent.click(saveButton());
+  expect(
+    await screen.findByText(
+      "Saved your changes, but not Model and Effort: The configuration has errors.",
+    ),
+  ).toBeInTheDocument();
+  // The sheet stays, with the model still chosen.
+  expect(getSheetState().parent).toBeDefined();
+  expect(field("Model")).toHaveTextContent("opus");
+  expect(patches(api)).toEqual([{ displayName: "Boss" }]);
+  reject = false;
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+  expect(patches(api)).toHaveLength(1);
+  expect(puts(api)).toHaveLength(2);
+});
+
+test("a config write that fails with nothing else saved says Model and Effort weren't saved", async () => {
+  await open({
+    extra: {
+      ...configRoutes(),
+      "PUT /api/agents/lead/config": () =>
+        json({ error: { code: "invalid_config", message: "The configuration has errors." } }, 400),
+    },
+  });
+  await pickOption(field("Model"), "opus");
+  await userEvent.click(saveButton());
+  expect(
+    await screen.findByText("Model and Effort weren't saved: The configuration has errors."),
+  ).toBeInTheDocument();
+  expect(getSheetState().parent).toBeDefined();
 });
 
 test("on its own session, a display-name-only save toasts nothing", async () => {

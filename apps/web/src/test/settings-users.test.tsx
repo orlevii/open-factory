@@ -189,6 +189,34 @@ test.each([
   expect(within(await userRow("alice")).getByRole("alert")).toHaveTextContent(sentence);
 });
 
+test("disabling a user who manages agents is refused, naming the agents to move", async () => {
+  world({
+    extra: {
+      "POST /api/users/u-alice/disable": () =>
+        json(
+          {
+            error: {
+              code: "manages_agents",
+              message: "server text",
+              agents: ["ada", "cto", "dev"],
+            },
+          },
+          409,
+        ),
+    },
+  });
+  renderApp("/settings/users", me);
+  const menu = await openMenu("alice");
+  await userEvent.click(within(menu).getByRole("menuitem", { name: "Disable…" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Disable @alice" }));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  expect(within(await userRow("alice")).getByRole("alert")).toHaveTextContent(
+    "@alice manages @ada, @cto and @dev. Move them to another manager first.",
+  );
+  expect(within(await userRow("alice")).queryByText("Disabled")).toBeNull();
+});
+
 test("Enable needs no confirmation and says so inline", async () => {
   const { state } = world({
     users: [ME, { ...ALICE, disabledAt: NOW.toISOString() }],

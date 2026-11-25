@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import { AgentChip, type ChipAgent } from "@/components/agent-chip";
+import { HumanAvatar } from "@/components/human-avatar";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { usersQueryOptions } from "@/features/settings/api";
 import type { Session } from "@/lib/auth-client";
@@ -246,21 +247,28 @@ function Speaker({ id, kind, self }: { id: string; kind?: SenderKind | undefined
         slugClassName={`font-normal ${SLUG_CLASS}`}
       />
     );
+  const name = s.userName(handle);
   if (s.selfHandle !== undefined && handle === s.selfHandle)
     return (
-      <span dir="auto" className={NAME_CLASS}>
-        You
+      <span className="flex min-w-0 items-center gap-1.5">
+        <HumanAvatar name={name ?? ""} />
+        <span dir="auto" className={NAME_CLASS}>
+          You
+        </span>
       </span>
     );
-  const name = s.userName(handle);
   if (!name)
     return (
-      <span dir="auto" className="min-w-0 truncate font-mono text-foreground">
-        @{handle}
+      <span className="flex min-w-0 items-center gap-1.5">
+        <HumanAvatar name="" />
+        <span dir="auto" className="min-w-0 truncate font-mono text-foreground">
+          @{handle}
+        </span>
       </span>
     );
   return (
     <span className="flex min-w-0 items-center gap-1.5">
+      <HumanAvatar name={name} />
       <span dir="auto" title={`${name} @${handle}`} className={`min-w-0 truncate ${NAME_CLASS}`}>
         {name}
       </span>

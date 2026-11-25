@@ -9,26 +9,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CONFIG_COPY } from "./messages";
 import { useFieldNote } from "./scope";
 import { OverrideAction, WrongType } from "./section";
 import { readString } from "./tolerant";
-import { INHERIT, useScalar } from "./use-scalar";
+import { INHERIT, inheritLabel, useScalar } from "./use-scalar";
 
 const KNOWN: ReadonlySet<string> = new Set<string>(EFFORTS);
 
 /** Effort (spec §12.3): inherit (or Claude Code default), then today's efforts. */
 export function EffortField() {
-  const { scope, own, inherited, inherits, overridden, set } = useScalar("effort");
+  const { scope, own, inherited, overridden, set } = useScalar("effort");
   const note = useFieldNote("effort");
   const trigger = useRef<HTMLButtonElement>(null);
   const r = readString(own);
   // An effort the picker can't show (a typo in Raw JSON) is edited there.
   if (!r.ok || (r.value !== undefined && !KNOWN.has(r.value)))
     return <WrongType field="effort" label="Effort" />;
-  const help = inherits
-    ? `From template: ${typeof inherited === "string" ? inherited : CONFIG_COPY.inheritTemplate}`
-    : undefined;
+  const help = scope.disabledReason;
 
   const inheritAgain = () => {
     flushSync(() => set(undefined));
@@ -63,9 +60,7 @@ export function EffortField() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={INHERIT}>
-              {scope.mode === "agent" ? CONFIG_COPY.inheritAgent : CONFIG_COPY.inheritTemplate}
-            </SelectItem>
+            <SelectItem value={INHERIT}>{inheritLabel(scope, inherited)}</SelectItem>
             {EFFORTS.map((e) => (
               <SelectItem key={e} value={e}>
                 {e}

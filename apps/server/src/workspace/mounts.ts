@@ -1,4 +1,4 @@
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
@@ -13,7 +13,9 @@ export function buildMounts(i: {
   workdir: string;
   grantedPaths: string[];
   hostSkillPaths: string[];
-  /** From the factory-owned template copy only (`FACTORY_HOME/state/agents/<slug>/template`). */
+  /** Real paths of the template's own skill folders (`resolveTemplateSkills`), mounted read-only. */
+  templateSkillPaths: string[];
+  /** From the effective config's `extraKnownMarketplaces`, which only the template declares. */
   declaredMarketplaceDirs: string[];
   pluginsDir: string;
   cliBundle: string;
@@ -22,6 +24,7 @@ export function buildMounts(i: {
     { source: i.workdir, target: i.workdir, readOnly: false },
     ...i.grantedPaths.map((p) => ({ source: p, target: p, readOnly: false })),
     ...i.hostSkillPaths.map((p) => ({ source: p, target: p, readOnly: true })),
+    ...i.templateSkillPaths.map((p) => ({ source: p, target: p, readOnly: true })),
     ...i.declaredMarketplaceDirs.map((p) => ({ source: p, target: p, readOnly: true })),
     { source: i.pluginsDir, target: i.pluginsDir, readOnly: true },
     { source: i.cliBundle, target: CLI_BUNDLE_TARGET, readOnly: true },
@@ -68,6 +71,9 @@ export interface MountCheckContext {
   workdir: string;
   grantedPaths: string[];
   hostSkillPaths: string[];
+  templateSkillPaths: string[];
+  /** `<FACTORY_HOME>/templates/<template>`: the only place a template skill may come from. */
+  templateDir: string;
   declaredMarketplaceDirs: string[];
   pluginsDir: string;
   cliBundle: string;
@@ -91,6 +97,29 @@ async function canon(p: string): Promise<string> {
   }
 }
 
+/** Spec §6.4: the template-skill exemption, by exact location. A declared path counts only when
+ *  `skills/` and the entry are real folders (`lstat`, so a link fails) and the path equals
+ *  `realpath(<template>/skills)/<name>` with `realpath(<template>/skills)` equal to
+ *  `realpath(<template>)/skills`. Anything else is not allowed, as it was not before. */
+async function validTemplateSkills(templateDir: string, declared: string[]): Promise<string[]> {
+  const skills = path.join(templateDir, "skills");
+  const isDir = async (p: string) => (await lstat(p).catch(() => undefined))?.isDirectory();
+  if (!declared.length || !(await isDir(skills))) return [];
+  let realSkills: string;
+  try {
+    realSkills = await realpath(skills);
+    if (realSkills !== path.join(await realpath(templateDir), "skills")) return [];
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const p of declared) {
+    if (p !== path.join(realSkills, path.basename(p)) || !(await isDir(p))) continue;
+    out.push(p);
+  }
+  return out;
+}
+
 const isUnder = (child: string, parent: string) =>
   child !== parent && child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
 
@@ -106,7 +135,8 @@ function userDbHome(): string | undefined {
 /**
  * Spec §11.4 (defence in depth): `realpath`s each source and refuses `/`, the host home,
  * FACTORY_HOME, FACTORY_HOME/state, a Docker socket, or an ancestor of any of them; anything under
- * FACTORY_HOME except this agent's workdir and its plugins dir; and anything that isn't exactly one
+ * FACTORY_HOME except this agent's workdir, its plugins dir and (read-only) a real template skill
+ * folder at exactly `<templates>/<template>/skills/<name>`; and anything that isn't exactly one
  * of the allowed kinds with the expected read-only flag and target.
  *
  * Returns the checked mounts with each source replaced by its realpath (and parity targets by the
@@ -132,10 +162,16 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
   const pluginsDir = await canon(ctx.pluginsDir);
   const kind = async (paths: string[], readOnly: boolean, parity = true) =>
     (await Promise.all(paths.map(canon))).map((p) => ({ path: p, readOnly, parity }));
+  const templateSkills = await validTemplateSkills(ctx.templateDir, ctx.templateSkillPaths);
+  // Where a template skill may never be, however it got here: the factory state, the agents' workdirs,
+  // and anything that contains them (their ancestors, FACTORY_HOME and the home among them).
+  const stateDir = await canon(path.join(ctx.factoryHome, "state"));
+  const agentsDir = await canon(path.join(ctx.factoryHome, "agents"));
   const allowed = [
     ...(await kind([ctx.workdir], false)),
     ...(await kind(ctx.grantedPaths, false)),
     ...(await kind([...ctx.hostSkillPaths, ...ctx.declaredMarketplaceDirs, ctx.pluginsDir], true)),
+    ...(await kind(templateSkills, true)),
     ...(await kind([ctx.cliBundle], true, false)),
   ];
 
@@ -155,7 +191,11 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
       if (real === f.path) throw refuse(`it is ${f.name}`);
       if (isUnder(f.path, real)) throw refuse(`it contains ${f.name}`);
     }
-    if (isUnder(real, factoryHome) && real !== workdir && real !== pluginsDir)
+    if (m.readOnly && templateSkills.includes(real)) {
+      for (const f of [stateDir, agentsDir, workdir])
+        if (real === f || isUnder(real, f) || isUnder(f, real))
+          throw refuse("it is inside the factory state or an agent's workdir");
+    } else if (isUnder(real, factoryHome) && real !== workdir && real !== pluginsDir)
       throw refuse("it is inside FACTORY_HOME and isn't this agent's workdir or plugins dir");
     const kinds = allowed.filter((a) => a.path === real);
     if (!kinds.length) throw refuse("it isn't one of the agent's allowed mounts");

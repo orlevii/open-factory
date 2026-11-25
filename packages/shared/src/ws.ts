@@ -104,6 +104,15 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("settings_changed") }),
   z.object({ type: z.literal("users_changed") }),
   z.object({ type: z.literal("images_changed") }),
+  /**
+   * I2 §7.2: an agent's effective config changed (one frame per affected agent), or a template's (one per template
+   * change). Names only: the change lines are in the agent's `config_changed` event.
+   */
+  z.object({
+    type: z.literal("config_changed"),
+    agent: z.string().optional(),
+    template: z.string().optional(),
+  }),
   z.object({
     type: z.literal("image_build"),
     name: z.string(),

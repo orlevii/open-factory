@@ -27,9 +27,10 @@ const page = (seqs: number[], hasMore = { before: false, after: false }): Events
   events: seqs.map(ev),
   hasMore,
 });
-const noRestart = { restartPending: false, restartWaitingOn: 0 } as const;
+const noRestart = { restartPending: false, restartWaitingOn: 0, restartChanges: [] };
 const detail: AgentDetail = {
   agent: agentSummary(),
+  model: { value: null, source: "default" },
   queue: [],
   lastSeq: 9,
 };
@@ -421,7 +422,12 @@ const loaded = (
   sessionReducer(initialSessionState, {
     type: "loaded",
     page: page(o.seqs ?? [7, 8, 9], { before: false, after: mode === "window" }),
-    detail: { agent: agentSummary(o.agent), queue: o.queue ?? [], lastSeq: 9 },
+    detail: {
+      agent: agentSummary(o.agent),
+      model: { value: null, source: "default" },
+      queue: o.queue ?? [],
+      lastSeq: 9,
+    },
     mode,
   });
 const frames = (events: SessionEvent[]) => ({
@@ -493,7 +499,12 @@ test("a loaded turn_end never flips turnOpen", () => {
   const s = sessionReducer(initialSessionState, {
     type: "loaded",
     page: { events: [sessionEvent(5, turnEnd())], hasMore: { before: false, after: false } },
-    detail: { agent: agentSummary({ turnOpen: true, turnStartedAt: at }), queue: [], lastSeq: 9 },
+    detail: {
+      agent: agentSummary({ turnOpen: true, turnStartedAt: at }),
+      model: { value: null, source: "default" },
+      queue: [],
+      lastSeq: 9,
+    },
     mode: "latest",
   });
   expect(s.agent?.turnOpen).toBe(true);
@@ -957,7 +968,12 @@ test("retired is seeded from loaded rows: a reset holding a block whose row is l
       events: [said(5, "Hi"), said(6, "Hello world", "m1", 1)],
       hasMore: { before: false, after: false },
     },
-    detail: { agent: agentSummary({ turnOpen: true, turnStartedAt: at }), queue: [], lastSeq: 6 },
+    detail: {
+      agent: agentSummary({ turnOpen: true, turnStartedAt: at }),
+      model: { value: null, source: "default" },
+      queue: [],
+      lastSeq: 6,
+    },
     mode: "latest",
   });
   expect([...s0.retired]).toEqual(["m1:1"]);

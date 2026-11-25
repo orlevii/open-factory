@@ -1,6 +1,7 @@
 import { neutraliseEnvelopeTags } from "@open-factory/harness";
 import {
   agentCommandsResponseSchema,
+  agentConfigResponseSchema,
   agentDetailSchema,
   agentListQuerySchema,
   agentListSchema,
@@ -17,8 +18,10 @@ import {
   MAX_BODY_BYTES,
   MAX_FOCUS_CHARS,
   patchAgentBodySchema,
+  putAgentConfigBodySchema,
+  putAgentConfigResponseSchema,
   queueItemResponseSchema,
-  resyncResponseSchema,
+  resetPersonaResponseSchema,
   slugSchema,
   stopCronsResponseSchema,
 } from "@open-factory/shared";
@@ -143,11 +146,12 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   app.get("/api/agents/:slug", { schema: { params: slugParams } }, async (req, reply) => {
     const rt = await app.runtimes.bySlug(req.params.slug);
     if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-    return agentDetailSchema.parse({
-      agent: await app.agents.summary(req.params.slug),
-      queue: rt.queueItems(),
-      lastSeq: await app.store.lastSeq(rt.agent.id),
-    });
+    const [agent, model, lastSeq] = await Promise.all([
+      app.agents.summary(req.params.slug),
+      app.agents.modelOf(req.params.slug),
+      app.store.lastSeq(rt.agent.id),
+    ]);
+    return agentDetailSchema.parse({ agent, model, queue: rt.queueItems(), lastSeq });
   });
 
   // U3 §13.3: the commands this agent may run (the allowed set the dispatch route enforces too).
@@ -157,7 +161,12 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const row = await app.store.agentBySlug(req.params.slug);
       if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-      return commandsResponse(await app.store.agentCommands(row.id), row.config.skills);
+      // The skills the next start would have, never `started`: a stored session list is the running process's own,
+      // so against `started` it could never be stale. Before the first start they are the list itself.
+      return commandsResponse(
+        await app.store.agentCommands(row.id),
+        await app.resolver.skillsOf(row, undefined),
+      );
     },
   );
 
@@ -173,10 +182,29 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => ({ agent: await app.agents.update(req.params.slug, req.body) }),
   );
 
+  // I2 §12.1: the agent's overlay over its template. The version is derived from the overlay, never stored.
+  app.get(
+    "/api/agents/:slug/config",
+    { schema: { params: slugParams, response: { 200: agentConfigResponseSchema } } },
+    async (req) => app.agents.getConfig(req.params.slug),
+  );
+
+  app.put(
+    "/api/agents/:slug/config",
+    {
+      schema: {
+        params: slugParams,
+        body: putAgentConfigBodySchema,
+        response: { 200: putAgentConfigResponseSchema },
+      },
+    },
+    async (req) => app.agents.putConfig(req.params.slug, req.body, `@${user(req).handle}`),
+  );
+
   app.post(
-    "/api/agents/:slug/resync",
-    { schema: { params: slugParams, response: { 200: resyncResponseSchema } } },
-    async (req) => app.agents.resync(req.params.slug),
+    "/api/agents/:slug/reset-persona",
+    { schema: { params: slugParams, response: { 200: resetPersonaResponseSchema } } },
+    async (req) => app.agents.resetPersona(req.params.slug, `@${user(req).handle}`),
   );
 
   app.post(
@@ -365,7 +393,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         return refuse("text", 400, "validation_error", "Input is larger than 64 KB.");
       const known = knownCommandNames(
         (await app.store.agentCommands(row.id))?.commands,
-        row.config.skills,
+        await app.resolver.skillsOf(row, rt.started),
       );
       const cls = classifyInput(text, known);
       if (cls.kind === "command") {

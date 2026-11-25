@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { sendMessagesBodySchema } from "@open-factory/shared";
 import { and, asc, count, eq, gt, isNull } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
+import type { ConfigResolver, Effective } from "../agents/config-resolver.ts";
 import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
+import { spawnerHolds } from "../agents/start.ts";
 import { type Config, localRuntimeAllowed } from "../config.ts";
 import { isSlugUnique } from "../db-errors.ts";
 import { FieldError } from "../errors.ts";
@@ -15,7 +15,6 @@ import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { Router } from "../messaging/router.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
-import { templateCopyDir } from "../workspace/paths.ts";
 import { PluginInstallError } from "../workspace/plugins.ts";
 import type { Workspace } from "../workspace/workspace.ts";
 import { droppedNote, type Inherited, inheritFrom, readDenyRules } from "./inherit.ts";
@@ -31,6 +30,8 @@ const SHUTTING_DOWN = "The factory is shutting down; spawn again after it restar
 const CANT_SPAWN = "You can't spawn agents.";
 const fail = (message: string): Refused => ({ ok: false, message });
 const taken = (slug: string) => fail(`@${slug} is taken; pick another suffix or leave it out.`);
+/** I2 §6.2: spawning follows the running process's config; a tool call always has one, so this is a guard. */
+const notRunning = (slug: string) => fail(`@${slug} isn't running.`);
 
 /**
  * `spawn_agent` (S7 §5.2): pre-checks without a lock, materialize outside any lock, then one locked transaction that
@@ -51,7 +52,9 @@ export class SpawnService {
       templates: TemplateIndex;
       workspace: Workspace;
       router: Pick<Router, "persistPeerEvents" | "handOffHeldRows" | "handOffBrief">;
-      runtimes: AgentRuntimes;
+      runtimes: Pick<AgentRuntimes, "startedOf">;
+      /** The spawner's current effective config, the other half of what it passes on (I2 §6.2). */
+      resolver: Pick<ConfigResolver, "effective">;
       config: Config;
       log: RuntimeLog;
       /** The closing latch (spec §5.2 step 1). */
@@ -66,9 +69,20 @@ export class SpawnService {
   async spawn(callerId: string, args: SpawnArgs, toolUseId: string | null): Promise<SpawnResult> {
     if (this.d.closing()) return fail(SHUTTING_DOWN);
     const caller = await this.d.store.agentById(callerId);
-    if (!caller || !maySpawn(caller)) return fail(CANT_SPAWN);
-    if (!caller.config.canSpawn.includes(args.template))
+    if (!caller) return fail(CANT_SPAWN);
+    // I2 §6.2: can_spawn and max_live_spawns are what the running process started with.
+    const started = this.d.runtimes.startedOf(caller.id);
+    if (!started) return notRunning(caller.slug);
+    if (!maySpawn(caller, started.config)) return fail(CANT_SPAWN);
+    if (!started.config.canSpawn.includes(args.template))
       return fail(`You can't spawn template ${args.template}.`);
+    let current: Effective;
+    try {
+      current = await this.d.resolver.effective(caller);
+    } catch (err) {
+      this.d.log.warn({ err, agent: caller.slug }, "resolving the spawner's config failed");
+      return fail(`Your configuration can't be read; ${askFor(caller)} to fix it.`);
+    }
     const desc = args.description.trim();
     if (!desc || desc.length > 500) return fail("Give a description of 1 to 500 characters.");
     const body = sendMessagesBodySchema.shape.body.safeParse(args.prompt);
@@ -81,7 +95,7 @@ export class SpawnService {
       return fail(`Template ${args.template} is missing or invalid; ${askFor(caller)} to fix it.`);
     }
     // Pre-checks without a lock (spec §5.2 step 2): nothing is materialized for a refused spawn.
-    const pre = await this.check(caller, tpl, this.d.db);
+    const pre = await this.check(caller, started, current, tpl, this.d.db);
     if (!pre.ok) return pre;
     for (let attempt = 0; attempt < (args.suffix !== undefined ? 1 : 5); attempt++) {
       const named = spawnSlug(args.template, args.suffix, this.d.random);
@@ -105,6 +119,7 @@ export class SpawnService {
       if (made !== "ok") return made;
       const done = await this.insert(
         caller,
+        current,
         named.slug,
         args.template,
         desc,
@@ -123,10 +138,13 @@ export class SpawnService {
 
   /**
    * The live count (§5.4), the hourly rate (§5.5) and the inheritance rule (§6) against the spawner's current state,
-   * read through `db` (the pool for the pre-check, the locked transaction for the re-check).
+   * read through `db` (the pool for the pre-check, the locked transaction for the re-check). The cap is `started`'s;
+   * what the child may hold is the stricter of `started` and `current` (I2 §6.2, `spawnerHolds`).
    */
   private async check(
     spawner: AgentRow,
+    started: Effective,
+    current: Effective,
     tpl: Template,
     db: Exec,
   ): Promise<{ ok: true; inherited: Granted } | Refused> {
@@ -142,7 +160,7 @@ export class SpawnService {
         ),
       )
       .orderBy(asc(agents.slug));
-    const max = spawner.config.maxLiveSpawns;
+    const max = started.config.maxLiveSpawns;
     if (live.length >= max)
       return fail(
         `You have ${live.length} live spawned agents (max ${max}): ${live.map((r) => `@${r.slug}`).join(", ")}. Terminate one first.`,
@@ -171,26 +189,13 @@ export class SpawnService {
       .from(schema.agentProjectGrants)
       .innerJoin(schema.projects, eq(schema.projects.id, schema.agentProjectGrants.projectId))
       .where(eq(schema.agentProjectGrants.agentId, spawner.id));
-    let deny: ReturnType<typeof readDenyRules>;
-    try {
-      const file = path.join(
-        templateCopyDir(this.d.config.factoryHome, spawner.slug),
-        "settings.json",
-      );
-      deny = readDenyRules(JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>);
-    } catch (err) {
-      this.d.log.warn({ err, agent: spawner.slug }, "reading the spawner's template copy failed");
-      return fail(`Your template copy can't be read; ${askFor(spawner)} to re-sync you.`);
-    }
     if (!spawner.credentialId) return fail(CANT_SPAWN);
     const inherited = inheritFrom(
       {
         runtime: spawner.runtime,
-        permissionMode: spawner.config.permissionMode,
         credentialId: spawner.credentialId,
         grants,
-        secrets: spawner.config.secrets,
-        deny,
+        ...spawnerHolds(current, started),
       },
       tpl.config,
       readDenyRules(tpl.tplSettings),
@@ -241,6 +246,7 @@ export class SpawnService {
   /** §5.2 step 4: one transaction under the spawner's row lock; a failed re-check removes the folder. */
   private async insert(
     caller: AgentRow,
+    current: Effective,
     slug: string,
     template: string,
     description: string,
@@ -268,11 +274,18 @@ export class SpawnService {
           .where(eq(schema.agents.id, caller.id))
           .for("no key update");
         if (this.d.closing()) return fail(SHUTTING_DOWN);
-        if (!spawner || !maySpawn(spawner)) return fail(CANT_SPAWN);
-        if (!spawner.config.canSpawn.includes(template))
+        if (!spawner) return fail(CANT_SPAWN);
+        // Re-read `started` too: the process may have exited or restarted on another config during materialize.
+        const started = this.d.runtimes.startedOf(spawner.id);
+        if (!started) return notRunning(spawner.slug);
+        if (!maySpawn(spawner, started.config)) return fail(CANT_SPAWN);
+        if (!started.config.canSpawn.includes(template))
           return fail(`You can't spawn template ${template}.`);
         // Re-read the credential and grants under the lock (an update during materialize must not be missed).
-        const c = await this.check(spawner, tpl, tx);
+        // `current` was resolved before materialize (a disk read, kept out of this transaction). An overlay save in
+        // between can make this row's grants and dropped note look one edit old, but that is never unsafe: the child's
+        // own start re-derives everything from its spawner (`deriveInheritance`, the stricter of started and current).
+        const c = await this.check(spawner, started, current, tpl, tx);
         if (!c.ok) return c;
         // Claim only once nothing can refuse any more: a refusal returns and commits, which would orphan the claim.
         if (!(await claimHandle(tx, slug, "agent"))) return "taken";
@@ -284,7 +297,8 @@ export class SpawnService {
             displayName: displayName(tpl, slug, template),
             description,
             template,
-            config: tpl.config,
+            // A spawned agent can't be configured: its overlay is always empty (I2 §6.1).
+            config: {},
             runtime: tpl.config.runtime,
             kind: "ephemeral",
             reportsTo: spawner.id,

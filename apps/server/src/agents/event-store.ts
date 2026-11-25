@@ -37,7 +37,7 @@ import {
 import { alias } from "drizzle-orm/pg-core";
 import { capPayload } from "./cap.ts";
 import { InvalidCursorError } from "./errors.ts";
-import type { NoticeType } from "./notices.ts";
+import { type NoticeType, parseConfigNotice, renderConfigNotice } from "./notices.ts";
 
 /**
  * Only an instant `inboxPage` minted (UTC ISO, microseconds kept) is accepted, so nothing malformed reaches Postgres;
@@ -407,7 +407,7 @@ export class EventStore {
   }
   private deliverableWhere(debounceMs: number) {
     const cutoff = new Date(Date.now() - debounceMs);
-    return sql`((${messages.kind} in ('message', 'task_assigned', 'task_comment', 'task_update', 'scheduled') or (${messages.kind} = 'system' and ${messages.notice} <> 'crons_stopped')) or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
+    return sql`((${messages.kind} in ('message', 'task_assigned', 'task_comment', 'task_update', 'scheduled') or (${messages.kind} = 'system' and ${messages.notice} not in ('crons_stopped', 'config_changed'))) or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
   }
   /** Live (not archived, not terminated), non-errored agents with at least one pending member update still inside the debounce window. */
   async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {
@@ -1112,28 +1112,68 @@ export class EventStore {
   }
   /**
    * A system notice from `@factory`. One pending notice of each type per agent: a second one replaces the pending
-   * one's body (same row); a written (delivered) one is never touched.
+   * one's body (same row); a written (delivered) one, or one in `inFlightIds`, is never touched.
+   *
+   * `config_changed` (I2 §7.3) merges instead: the pending body's lines and the new body's are united, sorted, instead
+   * of replaced (no other type's body has lines to unite), and the row's `createdAt` moves to now, because it now holds a change newer than any process already
+   * running (the runtime holds such rows for the next process). Serialised per agent and type, so two concurrent
+   * merges never create two rows.
    */
   async createNotice(
     m: { toAgentId: string; notice: NoticeType; body: string },
-    /** Ids written to a process but not yet marked delivered: never replaced. */
-    inFlightIds: string[] = [],
+    o: {
+      /** Ids written to a process but not yet marked delivered: never replaced or merged into. */
+      inFlightIds?: string[];
+    } = {},
   ): Promise<MessageRow> {
+    const inFlightIds = o.inFlightIds ?? [];
+    const pendingOne = and(
+      eq(messages.toAgentId, m.toAgentId),
+      eq(messages.kind, "system"),
+      eq(messages.notice, m.notice),
+      eq(messages.state, "pending"),
+      ...(inFlightIds.length ? [notInArray(messages.id, inFlightIds)] : []),
+    );
+    if (m.notice === "config_changed")
+      return this.db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${`notice:${m.notice}:${m.toAgentId}`}))`,
+        );
+        const [pending] = await tx
+          .select()
+          .from(messages)
+          .where(pendingOne)
+          .orderBy(asc(messages.createdAt), asc(messages.id))
+          .limit(1)
+          .for("update");
+        if (pending) {
+          const body = renderConfigNotice([
+            ...parseConfigNotice(pending.body),
+            ...parseConfigNotice(m.body),
+          ]);
+          const [row] = await tx
+            .update(messages)
+            .set({ body, createdAt: this.clock() })
+            .where(eq(messages.id, pending.id))
+            .returning();
+          if (!row) throw new Error("update returned no row");
+          return row;
+        }
+        return this.insertNotice(m, tx);
+      });
     const [existing] = await this.db
       .update(messages)
       .set({ body: m.body })
-      .where(
-        and(
-          eq(messages.toAgentId, m.toAgentId),
-          eq(messages.kind, "system"),
-          eq(messages.notice, m.notice),
-          eq(messages.state, "pending"),
-          ...(inFlightIds.length ? [notInArray(messages.id, inFlightIds)] : []),
-        ),
-      )
+      .where(pendingOne)
       .returning();
     if (existing) return existing;
-    const [row] = await this.db
+    return this.insertNotice(m, this.db);
+  }
+  private async insertNotice(
+    m: { toAgentId: string; notice: NoticeType; body: string },
+    tx: Exec,
+  ): Promise<MessageRow> {
+    const [row] = await tx
       .insert(messages)
       .values({
         id: randomUUID(),

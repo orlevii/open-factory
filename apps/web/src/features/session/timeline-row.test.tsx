@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { longPress } from "@/test/long-press";
 import { json, mockApi } from "@/test/mock-api";
 import { agentSummary, resetSeq, se } from "@/test/session-fixtures";
+import { ConfigChangedLine } from "./config-changed-line";
 import { groupWork, mergeFailures } from "./display-passes";
 import { rowMenuItems } from "./row-menu";
 import { buildRows, type Row } from "./rows";
@@ -173,45 +174,15 @@ test("timeline: a runtime error has no fix link but explains the gate in its Why
 });
 
 test("timeline: a spawned agent's error never links to the edit page (it can't be edited)", () => {
-  const err = (fix: "edit_agent" | "resync"): AnyEvent => ({
+  const err = (fix: "edit_agent" | "config"): AnyEvent => ({
     type: "error",
     source: "spawn",
     message: `failed (${fix})`,
     fix,
   });
-  const { els } = lines([err("edit_agent"), err("resync")], true);
+  const { els } = lines([err("edit_agent"), err("config")], true);
   expect(els).toHaveLength(2);
-  for (const el of els) expect(el.querySelector("a")).toBeNull();
-});
-
-test("timeline: the resync fix runs the agent's Re-sync in place and toasts its outcome", async () => {
-  const api = mockApi({
-    "POST /api/agents/dev/resync": () => json({ agent: agentSummary(), applied: "on_restart" }),
-  });
-  const { rows } = buildRows([
-    se({ type: "error", source: "spawn", message: "Re-sync @dev.", fix: "resync" }, null),
-  ]);
-  const row = rows[0] as Row;
-  render(
-    <QueryClientProvider client={new QueryClient()}>
-      <TimelineRow
-        slug="dev"
-        row={row}
-        expanded={new Set()}
-        toggle={() => {}}
-        rowProps={() => ({})}
-        failedIds={new Set()}
-        interruptedEnds={new Set()}
-      />
-    </QueryClientProvider>,
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Re-sync the agent" }));
-  await waitFor(() =>
-    expect(notify).toHaveBeenCalledWith({
-      text: "Re-synced. The changes apply when @dev restarts (when idle).",
-    }),
-  );
-  expect(api.calls.map((c) => `${c.method} ${c.url}`)).toEqual(["POST /api/agents/dev/resync"]);
+  for (const el of els) expect(el.querySelector("a, button")).toBeNull();
 });
 
 test("timeline: mcp_unavailable is a warning quiet line with the status in its detail", () => {
@@ -936,4 +907,40 @@ test("chrome outside a timeline row (no menu there) is not a long-press region",
   );
   expect(document.querySelector("[data-speaker-line]")).not.toBeNull();
   expect(document.querySelector("[data-longpress-region]")).toBeNull();
+});
+
+const MANY = Array.from({ length: 43 }, (_, i) => `added skill skill-${i}`);
+
+test("timeline: config_changed reads 'Configuration changed by x · N changes' and clamps its list to two lines", async () => {
+  const { texts, els } = lines([
+    { type: "config_changed", by: "@or", changes: MANY },
+    { type: "config_changed", by: "template dev", changes: ["model: sonnet → opus"] },
+    { type: "config_changed", by: "a file change in template dev", changes: ["image: a → b"] },
+  ]);
+  expect(texts[0]).toMatch(/^Configuration changed by @or · 43 changes/);
+  expect(texts[1]).toMatch(/^Configuration changed by template dev · 1 change(?!s)/);
+  expect(texts[2]).toMatch(/^Configuration changed by a file change in template dev · 1 change/);
+  const first = els[0] as HTMLElement;
+  // The shared Show all: the timeline's click capture anchors the row before it expands.
+  expect(within(first).getByRole("button", { name: "Show all" })).toHaveAttribute("data-expands");
+  // CSS clamps, nothing is measured: the clamp class is on the list, which holds every line.
+  const list = first.querySelector("[data-changes]") as HTMLElement;
+  expect(list).toHaveClass("line-clamp-2", "[overflow-wrap:anywhere]");
+  expect(list.textContent).toContain("added skill skill-42");
+  vi.useRealTimers();
+  await userEvent.click(within(first).getByRole("button", { name: "Show all" }));
+  const open = first.querySelector("[data-changes]") as HTMLElement;
+  expect(open).not.toHaveClass("line-clamp-2");
+  expect(open.querySelectorAll("li")).toHaveLength(43);
+  expect(open).toBe(list);
+  expect(within(first).queryByRole("button", { name: "Show all" })).toBeNull();
+  // One or two changes need no Show all.
+  expect(within(els[1] as HTMLElement).queryByRole("button", { name: "Show all" })).toBeNull();
+});
+
+test("timeline: the config_changed row keeps the roving tab stop it is given", () => {
+  const { container } = render(
+    <ConfigChangedLine by="@or" changes={["image: a → b"]} rowProps={{ tabIndex: 0 }} />,
+  );
+  expect(container.firstElementChild).toHaveAttribute("tabindex", "0");
 });

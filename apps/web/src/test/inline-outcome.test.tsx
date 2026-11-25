@@ -47,9 +47,9 @@ test("with no tone both regions are mounted and empty; pending goes in the statu
   const status = screen.getByRole("status");
   expect(status).toBeEmptyDOMElement();
   expect(screen.getByRole("alert")).toBeEmptyDOMElement();
-  rerender(<InlineOutcome tone="pending">Re-syncing…</InlineOutcome>);
+  rerender(<InlineOutcome tone="pending">Saving…</InlineOutcome>);
   expect(screen.getByRole("status")).toBe(status);
-  expect(status).toHaveTextContent("Re-syncing…");
+  expect(status).toHaveTextContent("Saving…");
 });
 
 test("a new focusKey moves focus to the line; the first render doesn't", () => {

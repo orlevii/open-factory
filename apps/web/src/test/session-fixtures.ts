@@ -34,11 +34,11 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   openTasks: 0,
   credential: "work",
   projects: [],
-  grantsOverridden: false,
   depth: 0,
   archivedAt: null,
   restartPending: false,
   restartWaitingOn: 0,
+  restartChanges: [],
   waitingOn: { tasks: [], crons: 0 },
   crons: [],
   cronZone: "UTC",
@@ -52,7 +52,12 @@ export const detail = (
   over: Partial<AgentSummary> = {},
   queue: AgentDetail["queue"] = [],
   lastSeq = 10,
-): AgentDetail => ({ agent: agentSummary(over), queue, lastSeq });
+): AgentDetail => ({
+  agent: agentSummary(over),
+  model: { value: null, source: "default" },
+  queue,
+  lastSeq,
+});
 
 export function conversation(): EventsPage {
   resetSeq();

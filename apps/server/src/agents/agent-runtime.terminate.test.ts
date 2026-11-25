@@ -19,6 +19,7 @@ import {
   RuntimeHarness,
   sendAs,
   silentLog,
+  testEffective,
 } from "./testing/runtime-harness.ts";
 import { RecordingSlots } from "./testing/slots.ts";
 
@@ -72,6 +73,7 @@ async function dockerRuntime(slots = new RecordingSlots()) {
   await h.makeRuntime({
     slots,
     docker: { containers: c.port, claudeBin: "/usr/local/bin/claude" },
+    nextImage: "open-factory-base:dev",
     spec: (a) => ({
       ...okSpec(a),
       runtime: "docker",
@@ -378,6 +380,8 @@ const MOUNT_CHECK: MountCheckContext = {
   workdir: "/nonexistent/of-test/workdir",
   grantedPaths: [],
   hostSkillPaths: [],
+  templateSkillPaths: [],
+  templateDir: "/nonexistent/of-test/home/templates/t",
   declaredMarketplaceDirs: [],
   pluginsDir: "/nonexistent/of-test/plugins",
   cliBundle: "/nonexistent/of-test/cli.mjs",
@@ -453,7 +457,12 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     forward: (f) => (router ? router.forward(f) : Promise.resolve()),
     maxRunningAgents: () => 1,
     memberUpdateDebounceMs: () => o.memberUpdateDebounceMs ?? 3_600_000,
-    docker: { containers, claudeBin: "/usr/local/bin/claude", defaultImage: IMAGE },
+    docker: {
+      containers,
+      claudeBin: "/usr/local/bin/claude",
+      defaultImage: IMAGE,
+      resolver: { effective: async () => testEffective({ runtime: "docker" }) },
+    },
   });
   router = new Router({
     db: h.t.db,

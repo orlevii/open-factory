@@ -253,7 +253,12 @@ test("intent prefetch has its own freshness window: hover, press and open fetch 
     "GET /api/credentials": () => json({ credentials: [] }),
     "GET /api/projects": () => json({ projects: [] }),
     "GET /api/agents/lead": () =>
-      json({ agent: agentSummary({ slug: "lead" }), queue: [], lastSeq: 0 }),
+      json({
+        agent: agentSummary({ slug: "lead" }),
+        model: { value: null, source: "default" },
+        queue: [],
+        lastSeq: 0,
+      }),
     "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
   });
   const qc = createQueryClient({ queries: { retry: false } });

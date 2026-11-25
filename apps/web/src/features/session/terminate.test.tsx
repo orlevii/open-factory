@@ -61,7 +61,13 @@ const terminated = (over: Partial<AgentSummary> = {}): AgentSummary =>
 async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
   const state = { agent: first };
   const api = mockApi({
-    [`GET /api/agents/${SLUG}`]: () => json({ agent: state.agent, queue: [], lastSeq: 1 }),
+    [`GET /api/agents/${SLUG}`]: () =>
+      json({
+        agent: state.agent,
+        model: { value: null, source: "default" },
+        queue: [],
+        lastSeq: 1,
+      }),
     [`GET /api/agents/${SLUG}/events?`]: () =>
       json({
         hasMore: { before: false, after: false },
@@ -433,7 +439,8 @@ test("an errored spawned agent: the recovery actions in the header, Terminate…
 
 test("a spawned agent's old edit URL lands on its session, with Edit agent saying it can't be edited", async () => {
   mockApi({
-    [`GET /api/agents/${SLUG}`]: () => json({ agent: spawned(), queue: [], lastSeq: 1 }),
+    [`GET /api/agents/${SLUG}`]: () =>
+      json({ agent: spawned(), model: { value: null, source: "default" }, queue: [], lastSeq: 1 }),
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [spawned()], running: { count: 1, max: 8 } }),
     "GET /api/templates": () => json({ templates: [] }),
@@ -442,6 +449,6 @@ test("a spawned agent's old edit URL lands on its session, with Edit agent sayin
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
   expect(router.state.location.pathname).toBe(`/agents/${SLUG}/chat`);
   expect(await within(dialog).findByText("Spawned agents can't be edited.")).toBeInTheDocument();
-  expect(within(dialog).queryByRole("button", { name: /Save|Re-sync|Archive/ })).toBeNull();
+  expect(within(dialog).queryByRole("button", { name: /Save|Archive/ })).toBeNull();
   expect(within(dialog).queryByRole("textbox")).toBeNull();
 });

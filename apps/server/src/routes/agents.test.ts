@@ -57,6 +57,7 @@ test("list and detail", async () => {
   });
   expect((await req("GET", "/api/agents/dev")).json()).toEqual({
     agent: expect.objectContaining({ slug: "dev" }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 0,
   });
@@ -143,7 +144,7 @@ test("compact is accepted and queued; validation errors are 400", async () => {
 test("start failure is that recipient's result with the fix text and the message stays queued", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
-    await t2.seedAgent({ config: { secrets: ["GH_TOKEN"] } });
+    await t2.seedAgent({ config: { template: { secrets: ["GH_TOKEN"] } } });
     const c2 = (await t2.signUpUser({ handle: "or2" })).cookie;
     const res = await t2.app.inject({
       method: "POST",
@@ -206,7 +207,7 @@ test("an archived agent refuses messages (as a result), compact and interrupt (4
   }
 });
 
-test("agent management routes: create, patch, resync, archive, unarchive, list filter, bad slugs", async () => {
+test("agent management routes: create, patch, reset-persona, archive, unarchive, list filter, bad slugs", async () => {
   const t2 = await makeTestApp({ harnessDriver: new FakeDriver() });
   try {
     const c2 = (await t2.signUpUser({ handle: "or4" })).cookie;
@@ -251,14 +252,15 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
       expect(rejected.statusCode).toBe(400);
       expect(rejected.json().error.code).toBe("validation_error");
     }
-    const rs = await call("POST", "/api/agents/boss/resync");
-    expect(rs.statusCode).toBe(200);
-    expect(rs.json().agent.slug).toBe("boss");
+    writeFileSync(path.join(t2.factoryHome, "agents/boss/AGENTS.md"), "edited");
+    const rp = await call("POST", "/api/agents/boss/reset-persona");
+    expect(rp.statusCode).toBe(200);
+    expect(rp.json()).toMatchObject({ applied: "now", backupDir: expect.any(String) });
+    expect(readFileSync(path.join(t2.factoryHome, "agents/boss/AGENTS.md"), "utf8")).toBe(
+      "# Lead\n",
+    );
 
     expect((await call("POST", "/api/agents/boss/archive")).statusCode).toBe(200);
-    expect((await call("POST", "/api/agents/boss/resync")).json().error.code).toBe(
-      "agent_archived",
-    );
     expect(
       (await call("GET", "/api/agents?ended=only"))
         .json()
@@ -273,7 +275,7 @@ test("agent management routes: create, patch, resync, archive, unarchive, list f
       ["GET", "/api/agents/..%2F..%2Fetc"],
       ["GET", "/api/agents/..%2F..%2Fetc/events"],
       ["PATCH", "/api/agents/..%2F..%2Fetc"],
-      ["POST", "/api/agents/..%2F..%2Fetc/resync"],
+      ["POST", "/api/agents/..%2F..%2Fetc/reset-persona"],
       ["POST", "/api/agents/..%2F..%2Fetc/archive"],
       ["POST", "/api/agents/..%2F..%2Fetc/unarchive"],
       ["POST", "/api/agents/..%2F..%2Fetc/compact"],
@@ -395,11 +397,11 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     }
   });
 
-  test("a spawned agent answers 409 ephemeral_agent to PATCH, resync, archive, unarchive", async () => {
+  test("a spawned agent answers 409 ephemeral_agent to PATCH, reset-persona, archive, unarchive", async () => {
     await child("boss-cc33");
     for (const [m, url, payload] of [
       ["PATCH", "", { description: "x" }],
-      ["POST", "/resync", undefined],
+      ["POST", "/reset-persona", undefined],
       ["POST", "/archive", undefined],
       ["POST", "/unarchive", undefined],
     ] as const) {
@@ -571,6 +573,9 @@ describe("S7: the ended list is bounded", () => {
       runtimes: s.app.runtimes,
       log: s.app.log,
       router: s.app.router,
+      store: s.app.store,
+      bus: s.app.bus,
+      configChanges: s.app.configChanges,
     });
     for (const ended of ["exclude", "only"] as const) {
       queries.length = 0;
@@ -799,7 +804,7 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
     const skill = path.join(s.config.hostSkillsDir, "research");
     mkdirSync(skill, { recursive: true });
     writeFileSync(path.join(skill, "SKILL.md"), "---\nname: research\ndescription: x\n---\n");
-    await s.seedAgent({ config: { skills: ["research"] } });
+    await s.seedAgent({ config: { template: { skills: ["research"] } } });
     cookie = (await s.signUpUser({ handle: "or13" })).cookie;
   });
   afterAll(() => s.close());
@@ -905,7 +910,7 @@ describe("U3 §13.3: stored commands and GET /api/agents/:slug/commands", () => 
     if (!agent) throw new Error("no agent");
     await s.db
       .update(schema.agents)
-      .set({ config: { ...agent.config, skills: ["research", "triage"] } });
+      .set({ config: { template: { skills: ["research", "triage"] } } });
     const body = (await get()).json();
     expect(body).toMatchObject({ source: "session", stale: true });
     // The session's list stays what the menu shows until the next start.

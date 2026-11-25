@@ -14,7 +14,8 @@ function sources(dir: string): string[] {
 }
 
 test("every server field message is at most 40 characters", () => {
-  for (const [k, m] of Object.entries(FIELD_MSG)) expect(m.length, k).toBeLessThanOrEqual(40);
+  for (const [k, m] of Object.entries(FIELD_MSG))
+    expect((typeof m === "function" ? m("GH_TOKEN") : m).length, k).toBeLessThanOrEqual(40);
 });
 
 test("no FieldError takes a template literal as its message", () => {

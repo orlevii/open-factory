@@ -10,6 +10,7 @@ import { createTestDatabase } from "@open-factory/db/testing";
 import { createClaudeDriver, localTransport } from "@open-factory/harness";
 import type { AnyEvent } from "@open-factory/shared";
 import { AgentRuntime } from "../src/agents/agent-runtime.ts";
+import { ConfigResolver } from "../src/agents/config-resolver.ts";
 import { EventBus } from "../src/agents/event-bus.ts";
 import { EventStore } from "../src/agents/event-store.ts";
 import { createPrepareStart } from "../src/agents/start.ts";
@@ -18,6 +19,7 @@ import { loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
 import { AgentTokens } from "../src/mcp/tokens.ts";
 import { Neighborhood } from "../src/messaging/neighborhood.ts";
+import { TemplateIndex } from "../src/templates/template-index.ts";
 import { claimTestHandle } from "../src/test/handles.ts";
 import { seedTestAgent } from "../src/test/helpers.ts";
 import { KeyedMutex } from "../src/workspace/lock.ts";
@@ -50,7 +52,7 @@ const workspace = new Workspace({
 const agent = await seedTestAgent(
   { db, config, vault, workspace },
   {
-    config: { model: "haiku" },
+    config: { template: { model: "haiku" } },
     ...(process.env.CLAUDE_CODE_OAUTH_TOKEN
       ? { credentialValue: process.env.CLAUDE_CODE_OAUTH_TOKEN }
       : {}),
@@ -61,6 +63,7 @@ const prepareStart = createPrepareStart({
   config,
   vault,
   workspace,
+  resolver: new ConfigResolver({ templates: new TemplateIndex({ db, config }) }),
   lock,
   neighborhood: new Neighborhood(db),
 });
@@ -89,7 +92,8 @@ const make = () =>
     store,
     bus,
     driver: createClaudeDriver({ log, transports: { local: localTransport } }),
-    prepareStart,
+    // A lone agent: no spawner, so no running config to read (I2 §6.2).
+    prepareStart: (a, extra) => prepareStart(a, { ...extra, loaded: () => undefined }),
     tokens: new AgentTokens(),
     log,
     slots: unlimitedSlots,

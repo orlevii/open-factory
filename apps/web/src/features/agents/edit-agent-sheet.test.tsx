@@ -384,17 +384,17 @@ test("a server projects error shows under Projects", async () => {
   expect(getSheetState().parent?.kind).toBe("edit-agent");
 });
 
-test("a toggle sends the project array; Use template default sends null", async () => {
-  const agent = lead({ grantsOverridden: true, projects: ["app", "docs"] });
+test("a toggle sends the project array", async () => {
+  const agent = lead({ projects: ["app", "docs"] });
   const { api } = await open({
     agents: [agent],
     extra: { "PATCH /api/agents/lead": saved(lead()) },
   });
   const group = screen.getByRole("group", { name: /Projects/ });
-  await userEvent.click(within(group).getByRole("button", { name: "Use template default" }));
+  await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
   await userEvent.click(saveButton());
   await waitFor(() => expect(getSheetState().parent).toBeUndefined());
-  expect(patches(api)).toEqual([{ projects: null }]);
+  expect(patches(api)).toEqual([{ projects: ["app"] }]);
 });
 
 // --- Dismissed while saving (break-ui M2) ---

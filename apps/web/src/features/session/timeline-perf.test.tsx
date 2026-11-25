@@ -162,7 +162,12 @@ const initial: SessionEvent[] = [
     ev(6 + i, { type: "assistant_text", text: `Text ${6 + i}` }),
   ),
 ];
-let detail: AgentDetail = { agent: agentSummary(), queue: [], lastSeq: 200 };
+let detail: AgentDetail = {
+  agent: agentSummary(),
+  model: { value: null, source: "default" },
+  queue: [],
+  lastSeq: 200,
+};
 
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
@@ -252,7 +257,12 @@ beforeEach(() => {
   passes.mergeErrors = false;
   passes.rebuild = false;
   vi.stubGlobal("fetch", () => new Promise(() => {})); // the sender lookups never settle
-  detail = { agent: agentSummary(), queue: [], lastSeq: 200 };
+  detail = {
+    agent: agentSummary(),
+    model: { value: null, source: "default" },
+    queue: [],
+    lastSeq: 200,
+  };
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -268,6 +278,7 @@ test("an agent_status frame renders no row and no markdown", async () => {
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
   });
   frame();
   expect(count.rows.size).toBe(0);
@@ -638,6 +649,7 @@ test("buildRows runs once per events change, not for status or queue frames; ope
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
   });
   frame();
   // The frame did reach the hook (a render that skipped it would prove nothing).
@@ -674,6 +686,7 @@ const renderSessionView = () =>
 test("SessionView: an Elapsed tick renders only Elapsed", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -691,6 +704,7 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     turnStartedAt: "2026-11-21T10:00:00.000Z",
   });
   frame();
@@ -716,6 +730,7 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
 test("SessionView: a live frame and an agent_status frame render the composer 0 times; a keystroke renders only the composer", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -733,6 +748,7 @@ test("SessionView: a live frame and an agent_status frame render the composer 0 
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     turnStartedAt: "2026-11-21T10:00:00.000Z",
   });
   frame();
@@ -758,6 +774,7 @@ test("SessionView: a status frame that opens the turn renders the composer once 
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
   });
   frame();
   expect(count.profiled.get("composer")).toBe(1);
@@ -793,6 +810,7 @@ const livePatch = (
 test("SessionView: a live frame re-renders only the live row, the activity line and the pill: no other TimelineItem, not the header, details, queue or composer", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -812,6 +830,7 @@ test("SessionView: a live frame re-renders only the live row, the activity line 
 test("SessionView: the persisted block retires the live one in one commit on the same DOM node, re-rendering only that row", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -838,6 +857,7 @@ test("SessionView: the persisted block retires the live one in one commit on the
 test("SessionView: the activity line reads live frames (text, then tool input), still rendering no other row", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -885,6 +905,7 @@ const prog = (id: string, toolUses: number) => ({
 test("SessionView: a progress frame re-renders only its subagent card; a text-only frame renders no card", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };

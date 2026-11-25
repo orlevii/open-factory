@@ -51,6 +51,7 @@ const frame = (over: Partial<Extract<ServerMessage, { type: "agent_status" }>>) 
     turnOpen: false,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     ...over,
   });
 const composer = () => screen.getByRole("combobox", { name: "Message to Dev agent" });

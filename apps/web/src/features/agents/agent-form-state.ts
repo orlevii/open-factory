@@ -45,8 +45,8 @@ export type Values = {
   credential: string;
   projects: string[];
 };
-/** What a draft holds: the values, whether the grants are the user's own, and (New agent) the fields the user made theirs. */
-type Stored = Values & { custom: boolean; touched: Touched };
+/** What a draft holds: the values and (New agent) the fields the user made theirs. */
+type Stored = Values & { touched: Touched };
 /** An edit draft also keeps the server copy it was edited against, so untouched fields follow the server later. */
 type EditDraft = { values: Stored; base: Stored };
 export type SubmitResult = "ok" | "invalid" | "failed" | "nothing";
@@ -70,7 +70,6 @@ const storedOf = (a: AgentSummary): Stored => ({
   reportsTo: a.reportsTo ?? "",
   credential: a.credential ?? "",
   projects: a.projects,
-  custom: a.grantsOverridden,
   touched: {},
 });
 
@@ -82,7 +81,6 @@ const blank = (prefill?: { template?: string }): Stored => ({
   reportsTo: "",
   credential: "",
   projects: [],
-  custom: false,
   touched: {},
 });
 
@@ -223,7 +221,7 @@ export function useAgentFormState({
   )
     staleNotes.credential = FORM_MSG.credentialDeleted;
   const goneProjects =
-    create && values.custom && projectList.data
+    create && values.touched.projects && projectList.data
       ? values.projects.filter((p) => !projectList.data?.some((x) => x.name === p))
       : [];
   if (goneProjects.length > 0) staleNotes.projects = FORM_MSG.projectsRemoved;
@@ -261,7 +259,8 @@ export function useAgentFormState({
             ? base0.description
             : templatePrefill.description,
         credential: base0.credential || defaultCredential(),
-        projects: values.custom || !templatePrefill ? base0.projects : templatePrefill.projects,
+        projects:
+          values.touched.projects || !templatePrefill ? base0.projects : templatePrefill.projects,
         slug: values.touched.slug || !slugFor ? base0.slug : slugFor(displayName),
       };
   // The detail lands asynchronously, so a field the user enters while it is still on the way is theirs as it stands:
@@ -337,24 +336,12 @@ export function useAgentFormState({
   };
 
   const setProjects = (next: string[]) => {
-    // Back to exactly the template's set is the template default again, not an override.
-    const sameAsTemplate =
-      config !== undefined &&
-      next.length === config.projects.length &&
-      config.projects.every((p) => next.includes(p));
     update({
       projects: next,
-      custom: !sameAsTemplate,
       ...(create && !latest.current.touched.projects
         ? { touched: { ...latest.current.touched, projects: true } }
         : {}),
     });
-    f.change("projects");
-    clearOutcome();
-  };
-  const applyTemplateDefault = () => {
-    // The template's set when it's known; the server resolves it either way (projects: null).
-    update({ custom: false, ...(config ? { projects: config.projects } : {}) });
     f.change("projects");
     clearOutcome();
   };
@@ -371,7 +358,7 @@ export function useAgentFormState({
         description,
         reportsTo,
         credential: shown.credential,
-        ...(values.custom ? { projects: shown.projects } : {}),
+        ...(values.touched.projects ? { projects: shown.projects } : {}),
       };
     }
     const b = base as Stored;
@@ -380,8 +367,7 @@ export function useAgentFormState({
     if (description !== b.description) patch.description = description;
     if (reportsTo !== (b.reportsTo || null)) patch.reportsTo = reportsTo;
     if (shown.credential !== b.credential) patch.credential = shown.credential;
-    if (values.custom !== b.custom || !same(shown.projects, b.projects))
-      patch.projects = values.custom ? shown.projects : null;
+    if (!same(shown.projects, b.projects)) patch.projects = shown.projects;
     return Object.keys(patch).length > 0 ? patch : null;
   }
 
@@ -459,12 +445,10 @@ export function useAgentFormState({
     errors: f.errors,
     attempt: f.attempt,
     touched: values.touched,
-    custom: values.custom,
     set,
     blur: f.blur,
     claim,
     setProjects,
-    applyTemplateDefault,
     submit,
     pending,
     slow,

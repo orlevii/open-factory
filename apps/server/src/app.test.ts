@@ -165,10 +165,13 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
   try {
     await t.seedAgent({
       slug: "lead",
-      config: { canSpawn: ["tech-lead", "developer"], maxLiveSpawns: 5 },
+      config: { template: { can_spawn: ["tech-lead", "developer"], max_live_spawns: 5 } },
     });
     await t.seedAgent({ slug: "solo" });
-    await t.seedAgent({ slug: "capped", config: { canSpawn: ["developer"], maxLiveSpawns: 0 } });
+    await t.seedAgent({
+      slug: "capped",
+      config: { template: { can_spawn: ["developer"], max_live_spawns: 0 } },
+    });
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
     const names = async (slug: string) => {
       const { token } = await startIdle(t, driver, slug);

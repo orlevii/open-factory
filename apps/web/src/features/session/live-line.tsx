@@ -1,4 +1,4 @@
-import { type AgentSummary, ApiError } from "@open-factory/shared";
+import { type AgentSummary, ApiError, summarizeChanges } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { Pin, PinOff } from "lucide-react";
 import { useState } from "react";
@@ -50,6 +50,16 @@ function terminatedText(agent: AgentSummary, now: Date): string {
   return parts.join(" · ");
 }
 
+/** I2 §7.3: what the pending restart applies, as at most three kinds; the full list is the title. */
+function restartFact(changes: string[]): LiveFact {
+  if (changes.length === 0) return { kind: "restart", text: "Restarts when idle" };
+  return {
+    kind: "restart",
+    text: `Restarts when idle to apply: ${summarizeChanges(changes)}`,
+    title: changes.join("\n"),
+  };
+}
+
 function queuedText(agent: AgentSummary, slotsMax?: number): string | null {
   if (agent.pulling) return "Pulling the image…";
   if (agent.status !== "queued" || !slotsMax) return null;
@@ -74,7 +84,7 @@ export function liveFact(
     };
   const queued = queuedText(agent, ctx.slotsMax);
   if (queued) return { kind: "queued", text: queued };
-  if (agent.restartPending) return { kind: "restart", text: "Restarts when idle" };
+  if (agent.restartPending) return restartFact(agent.restartChanges);
   const [first, ...rest] = agent.waitingOn.tasks;
   if (first)
     return {

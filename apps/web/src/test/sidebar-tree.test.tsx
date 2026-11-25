@@ -61,6 +61,7 @@ const frame = (agent: string, status: Frame["status"]): Frame => ({
   turnOpen: status === "working",
   restartPending: false,
   restartWaitingOn: 0,
+  restartChanges: [],
 });
 
 /** The tree's host: holds the active slug so a test can navigate. */

@@ -17,7 +17,7 @@ import { templateYamlSchema } from "@open-factory/shared";
 import { beforeEach, expect, test } from "vitest";
 import { KeyedMutex } from "./lock.ts";
 import { MountRefusedError } from "./mounts.ts";
-import { pluginsConfigDir, resyncRoot } from "./paths.ts";
+import { pluginsConfigDir } from "./paths.ts";
 import { UnsafePathError } from "./safe-fs.ts";
 import { Workspace } from "./workspace.ts";
 
@@ -28,7 +28,7 @@ let hostDir: string;
 let secretFile: string;
 let workdir: string;
 let ws: Workspace;
-let tpl: Parameters<Workspace["resync"]>[1];
+let tpl: Parameters<Workspace["materialize"]>[2];
 let prep: Parameters<Workspace["prepare"]>[0];
 let fake: FakeClaude;
 
@@ -67,7 +67,11 @@ beforeEach(async () => {
     displayName: "Lead",
     description: "d",
     template: "lead",
-    config,
+    effective: {
+      doc: { template: {}, settings: {}, mcp: { mcpServers: {} } },
+      config,
+      templatePlugins: [],
+    },
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
@@ -79,18 +83,11 @@ beforeEach(async () => {
     spawning: null,
     secretNames: config.secrets,
   };
-  await ws.materialize("lead", "lead", tpl, prep);
+  await ws.materialize("lead", "lead", tpl, { ...prep, config });
   workdir = ws.workdir("lead");
 });
 
 const prepareAgent = () => ws.prepare(prep);
-const resync = () => ws.resync("lead", tpl, { canWriteNow: true });
-async function findBackup(rel: string): Promise<string> {
-  const root = resyncRoot(home, "lead");
-  const [stamp] = await readdir(root);
-  if (!stamp) throw new Error("no backup");
-  return path.join(root, stamp, rel);
-}
 
 test("prepare fails closed when .claude-config is a symlink to a host dir", async () => {
   await rm(`${workdir}/.claude-config`, { recursive: true, force: true });
@@ -102,19 +99,6 @@ test("prepare fails closed when .claude-config is a symlink to a host dir", asyn
   expect(readdirSync(hostDir)).toEqual([]);
 });
 
-test("re-sync backup of AGENTS.md -> secret file holds a symlink, not the secret", async () => {
-  await rm(`${workdir}/AGENTS.md`);
-  await symlink(secretFile, `${workdir}/AGENTS.md`);
-  await resync();
-  const backup = await findBackup("AGENTS.md");
-  expect((await lstat(backup)).isSymbolicLink()).toBe(true); // a link, so no secret bytes were copied
-  expect(await readlink(backup)).toBe(secretFile);
-  // The template's AGENTS.md replaced the link; the secret was never written.
-  expect(lstatSync(`${workdir}/AGENTS.md`).isFile()).toBe(true);
-  expect(readFileSync(`${workdir}/AGENTS.md`, "utf8")).toBe("# Lead\n");
-  expect(readFileSync(secretFile, "utf8")).toBe("PRIVATE KEY");
-});
-
 test("projects/ as a symlink to a directory fails the start", async () => {
   await rm(`${workdir}/projects`, { recursive: true, force: true });
   await symlink(hostDir, `${workdir}/projects`);
@@ -122,11 +106,10 @@ test("projects/ as a symlink to a directory fails the start", async () => {
   expect(readdirSync(hostDir)).toEqual([]);
 });
 
-test(".claude as a symlink fails the start and the re-sync, writing nothing through it", async () => {
+test(".claude as a symlink fails the start, writing nothing through it", async () => {
   await rm(`${workdir}/.claude`, { recursive: true, force: true });
   await symlink(hostDir, `${workdir}/.claude`);
   await expect(prepareAgent()).rejects.toThrow(/is a symlink/);
-  await expect(resync()).rejects.toThrow(/is a symlink/);
   expect(readdirSync(hostDir)).toEqual([]);
 });
 
@@ -177,7 +160,14 @@ function withPlugins() {
       extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/mk" } } },
     },
   };
-  prep = { ...prep, config };
+  prep = {
+    ...prep,
+    effective: {
+      doc: { ...prep.effective.doc, settings: tpl.tplSettings },
+      config,
+      templatePlugins: [],
+    },
+  };
 }
 const pluginLog = (): { argv: string[]; env: string[]; cwd: string; configDir: string }[] => {
   try {
@@ -204,7 +194,7 @@ test("the install never sees the agent's config dir, cwd or settings (GIT_TRACE 
   mkdirSync(`${workdir}/.claude`, { recursive: true });
   await writeFile(`${workdir}/.claude/settings.json`, JSON.stringify(planted));
   withPlugins();
-  await resync();
+  await prepareAgent();
   const runs = pluginLog();
   expect(runs.length).toBeGreaterThan(0);
   for (const r of runs) {
@@ -229,7 +219,7 @@ test("the install never sees the agent's config dir, cwd or settings (GIT_TRACE 
 
 test("enabledPlugins and marketplaces come from plugins-config, not the agent's settings", async () => {
   withPlugins();
-  await resync();
+  await prepareAgent();
   await writeFile(
     `${workdir}/.claude-config/settings.json`,
     JSON.stringify({
@@ -255,7 +245,10 @@ test("a .claude-config/plugins symlink to a host dir is replaced, never followed
 
 // Spec §11.4 part 2: mounts come from factory-owned inputs only.
 const asDocker = () => {
-  prep = { ...prep, config: { ...prep.config, runtime: "docker" } };
+  prep = {
+    ...prep,
+    effective: { ...prep.effective, config: { ...prep.effective.config, runtime: "docker" } },
+  };
 };
 
 test("a marketplace path planted in the agent's config-dir settings never becomes a mount", async () => {
@@ -327,4 +320,14 @@ test("a granted project that contains FACTORY_HOME fails the Docker start", asyn
   await expect(prepareAgent()).rejects.toThrow(
     `Mount ${parent} isn't allowed: it contains FACTORY_HOME.`,
   );
+});
+
+test("a Docker start mounts each template skill read-only at its real path, and refuses a swapped-in link", async () => {
+  asDocker();
+  const real = realpathSync(path.join(home, "templates/lead/skills/local"));
+  const { mounts } = await prepareAgent();
+  expect(mounts).toContainEqual({ source: real, target: real, readOnly: true });
+  await rm(real, { recursive: true });
+  await symlink(hostDir, real);
+  await expect(prepareAgent()).rejects.toThrow("skills/local must be a folder, not a link.");
 });

@@ -101,6 +101,7 @@ test("an agent_status frame renders no markdown", async () => {
       turnOpen: true,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     });
     await new Promise((r) => requestAnimationFrame(() => r(undefined)));
   });

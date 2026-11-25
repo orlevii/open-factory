@@ -1,16 +1,17 @@
 import type { AnyEvent, SubagentProgress } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import { resyncAgent } from "@/features/agents/lifecycle";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { AgentText } from "./agent-text";
+import { agentDetailQueryOptions } from "./api";
 import { CommandBlock, CommandOutput } from "./command-rows";
 import { CompactionMarker } from "./compaction-marker";
+import { ConfigChangedLine } from "./config-changed-line";
 import { groupOpen } from "./display-passes";
 import { formatDuration, formatLastAt } from "./format";
 import { MessageBlock } from "./message-block";
@@ -211,12 +212,27 @@ function quietIcon(e: AnyEvent): ReactNode {
   return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;
 }
 
-function ResyncFix({ slug, className }: { slug: string; className: string }) {
-  const qc = useQueryClient();
-  return (
-    <button type="button" className={className} onClick={() => void resyncAgent(slug, qc)}>
-      Re-sync the agent
-    </button>
+const FIX_LINK =
+  "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+
+/**
+ * The agent's template page. The name comes from the session's own cached agent (no extra request once it is
+ * loaded); before that, or if it can't be read, the Templates list.
+ */
+function TemplateLink({ slug, label }: { slug: string; label: (template: string) => string }) {
+  const { data: template } = useQuery({
+    ...agentDetailQueryOptions(slug),
+    staleTime: Number.POSITIVE_INFINITY,
+    select: (d) => d.agent.template,
+  });
+  return template ? (
+    <Link to="/templates/$name" params={{ name: template }} className={FIX_LINK}>
+      {label(template)}
+    </Link>
+  ) : (
+    <Link to="/templates" className={FIX_LINK}>
+      Open Templates
+    </Link>
   );
 }
 
@@ -230,11 +246,10 @@ function FixLink({
   slug: string;
   spawned?: boolean;
 }) {
-  // A spawned agent can't be edited or re-synced (the server drops these fixes for it, spec §8):
+  // A spawned agent can't be edited or configured (the server drops these fixes for it, spec §8):
   // never link to an edit page that can only refuse.
-  if (spawned && (fix === "edit_agent" || fix === "resync")) return null;
-  const cls =
-    "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+  if (spawned && (fix === "edit_agent" || fix === "config")) return null;
+  const cls = FIX_LINK;
   // Opens Edit agent over the session (U4 §5.6).
   if (fix === "edit_agent")
     return (
@@ -257,8 +272,10 @@ function FixLink({
         Open Templates → Images
       </Link>
     );
-  // Runs the Re-sync action in place; its outcome toasts (U4 §6.5).
-  if (fix === "resync") return <ResyncFix slug={slug} className={cls} />;
+  // A template with errors, or a deleted one, is fixed on its page. So, for now, is the agent's own configuration:
+  // its page arrives with the form (I2 part C). The link says where it goes.
+  if (fix === "template" || fix === "config")
+    return <TemplateLink slug={slug} label={(t) => `Open template ${t}`} />;
   const target = {
     credentials: { to: "/settings/credentials", label: "Credentials" },
     secrets: { to: "/settings/secrets", label: "Secrets" },
@@ -548,6 +565,8 @@ export function TimelineRow(props: TimelineRowProps) {
     case "command_output":
       return <CommandOutput command={row.command} text={row.text} rowProps={rp} />;
     case "quiet":
+      if (row.event.type === "config_changed")
+        return <ConfigChangedLine by={row.event.by} changes={row.event.changes} rowProps={rp} />;
       return (
         <QuietLine rowProps={rp} icon={quietIcon(row.event)} detail={quietDetail(row.event)}>
           {quietText(row.event, interruptedEnds.has(row.seq))}

@@ -19,12 +19,14 @@ import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
+import { TemplateIndex } from "../templates/template-index.ts";
 import { claimTestHandle } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
+import { ConfigResolver, type Effective } from "./config-resolver.ts";
 import { AgentStartError, forSpawnedAgent } from "./errors.ts";
-import { createPrepareStart, deriveInheritance, type PrepareStart } from "./start.ts";
+import { createPrepareStart, deriveInheritance, type StartPreparer } from "./start.ts";
 
 const KEY = "k".repeat(40);
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -33,8 +35,12 @@ let repo: string;
 let hs: string;
 let workspace: Workspace;
 let lock: KeyedMutex;
-let prepareStart: PrepareStart;
+/** The real prepareStart with `loaded` bound, as `AgentRuntimes` binds it for every start. */
+let prepareStart: StartPreparer;
 let factoryConfig: Config;
+let resolver: ConfigResolver;
+/** Stands in for the runtimes' `started`: what a loaded spawner's process started with. */
+const loaded = new Map<string, Effective>();
 let agent: AgentRow;
 let seq = 0;
 const vault = new Vault(KEY);
@@ -43,6 +49,15 @@ beforeAll(async () => {
   t = await createTestDb();
 });
 afterAll(() => t.close());
+
+/** template.yaml as JSON (valid YAML), in this fixture's factory home. */
+function writeYaml(name: string, doc: Record<string, unknown>) {
+  const dir = path.join(home, "templates", name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "template.yaml"), JSON.stringify(doc));
+}
+const writeTemplateFile = (name: string, file: string, text: string) =>
+  writeFileSync(path.join(home, "templates", name, file), text);
 
 async function reload(id: string): Promise<AgentRow> {
   const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, id));
@@ -54,6 +69,8 @@ async function seedStartFixture() {
   seq += 1;
   await t.sql`delete from agent_project_grants`;
   await t.sql`delete from agents`;
+  await t.sql`delete from templates`;
+  loaded.clear();
   await t.sql`delete from credentials`;
   await t.sql`delete from secrets`;
   await t.sql`delete from projects`;
@@ -72,6 +89,14 @@ async function seedStartFixture() {
   const tdir = path.join(home, "templates/lead");
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Lead\n");
+  writeYaml("lead", {
+    name: "lead",
+    display_name: "Lead",
+    runtime: "local",
+    secrets: ["GH_TOKEN"],
+    skills: [],
+    plugins: [],
+  });
   await t.db.insert(schema.credentials).values({
     id: "c1",
     name: "work",
@@ -92,7 +117,7 @@ async function seedStartFixture() {
       slug,
       displayName: "Lead",
       template: "lead",
-      config,
+      config: {},
       runtime: "local",
       credentialId: "c1",
     })
@@ -133,11 +158,15 @@ async function seedStartFixture() {
     FACTORY_ALLOW_LOCAL_RUNTIME: "true",
     LOG_LEVEL: "silent",
   });
-  prepareStart = createPrepareStart({
+  resolver = new ConfigResolver({
+    templates: new TemplateIndex({ db: t.db, config: factoryConfig }),
+  });
+  const prepare = createPrepareStart({
     db: t.db,
     config: factoryConfig,
     vault,
     workspace,
+    resolver,
     lock,
     neighborhood: new Neighborhood(t.db),
     serverEnv: {
@@ -150,6 +179,7 @@ async function seedStartFixture() {
       CLAUDE_CODE_OAUTH_TOKEN: "server-own-token",
     },
   });
+  prepareStart = (a, extra) => prepare(a, { ...extra, loaded: (id) => loaded.get(id) });
 }
 beforeEach(seedStartFixture);
 
@@ -192,7 +222,7 @@ test("the manager is described in CLAUDE.md", async () => {
       slug: "boss",
       displayName: "The Boss",
       template: "lead",
-      config: agent.config,
+      config: {},
       runtime: "local",
       credentialId: "c1",
     })
@@ -270,15 +300,54 @@ test("prepare runs under the workspace lock for the agent's slug", async () => {
   expect(done).toBe(true);
 });
 
-test("an invalid stored config is an AgentStartError with the edit_agent fix", async () => {
+test("an invalid overlay is an AgentStartError with the config fix", async () => {
   await t.db
     .update(schema.agents)
     .set({ config: { name: 5 } as never })
     .where(eq(schema.agents.id, agent.id));
-  await expect(prepareStart(agent, { agentToken: "tok" })).rejects.toMatchObject({
+  await expect(prepareStart(await reload(agent.id), { agentToken: "tok" })).rejects.toMatchObject({
     name: "AgentStartError",
-    fix: "edit_agent",
+    message: `The configuration of @${agent.slug} is invalid. Fix it in Configuration.`,
+    fix: "config",
   });
+});
+
+test("an invalid or missing template fails the start with the template messages", async () => {
+  writeTemplateFile("lead", "template.yaml", "name: [");
+  await expect(prepareStart(agent, { agentToken: "tok" })).rejects.toMatchObject({
+    message: "Template lead has errors. Fix it in Templates.",
+    fix: "template",
+  });
+  rmSync(path.join(home, "templates/lead"), { recursive: true });
+  await expect(prepareStart(agent, { agentToken: "tok" })).rejects.toMatchObject({
+    message: "Template lead no longer exists.",
+    fix: undefined,
+  });
+});
+
+test("prepare writes the template plus the overlay: a deny rule appended and an mcp server added", async () => {
+  writeTemplateFile(
+    "lead",
+    "settings.json",
+    JSON.stringify({ permissions: { deny: ["Bash(rm:*)"] } }),
+  );
+  writeTemplateFile("lead", "mcp.json", JSON.stringify({ mcpServers: { a: { command: "a" } } }));
+  await t.db
+    .update(schema.agents)
+    .set({
+      config: {
+        settings: { permissions: { deny: ["WebFetch"] } },
+        mcp: { mcpServers: { b: { command: "b" } } },
+      },
+    })
+    .where(eq(schema.agents.id, agent.id));
+  const spec = await prepareStart(await reload(agent.id), { agentToken: "tok" });
+  const deny = settingsOf(agent.slug).permissions.deny;
+  expect(deny).toEqual(expect.arrayContaining(["Bash(rm:*)", "WebFetch"]));
+  expect(deny.indexOf("Bash(rm:*)")).toBeLessThan(deny.indexOf("WebFetch"));
+  const mcp = JSON.parse(readFileSync(path.join(spec.cwd, ".mcp.json"), "utf8"));
+  expect(Object.keys(mcp.mcpServers)).toEqual(["a", "b", "factory"]);
+  expect(spec.effective.config.secrets).toEqual(["GH_TOKEN"]);
 });
 
 test("prepare fails closed when .claude-config is a symlink to a host dir", async () => {
@@ -336,8 +405,7 @@ const readlinkOrNull = (p: string) => {
     return null;
   }
 };
-const leadTemplateSettings = () =>
-  path.join(home, "state/agents", agent.slug, "template/settings.json");
+const leadTemplateSettings = () => path.join(home, "templates/lead/settings.json");
 const md = (slug: string) =>
   readFileSync(path.join(workspace.workdir(slug), ".claude-config/CLAUDE.md"), "utf8");
 const settingsOf = (slug: string) =>
@@ -372,6 +440,21 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
   const tdir = path.join(home, "templates/dev");
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Dev\n");
+  writeYaml("dev", {
+    name: "dev",
+    display_name: "Dev",
+    runtime: "local",
+    secrets: ["GH_TOKEN", "NPM_TOKEN"],
+    projects: ["app"],
+    skills: [],
+    plugins: [],
+    ...over,
+  });
+  writeTemplateFile(
+    "dev",
+    "settings.json",
+    JSON.stringify({ permissions: { deny: ["Bash(curl:*)"] } }),
+  );
   const slug = `dev-ab${seq}`;
   await claimTestHandle(t.db, slug, "agent");
   const [row] = await t.db
@@ -382,7 +465,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
       displayName: "Dev · ab",
       description: "Builds the thing.",
       template: "dev",
-      config,
+      config: {},
       runtime: config.runtime,
       credentialId: "c1",
       kind: "ephemeral",
@@ -486,7 +569,8 @@ test("a refusal that became true fails the start closed with the refusal sentenc
 });
 
 test("bypass child of an auto spawner is refused at start", async () => {
-  const child = await seedChild({ permission_mode: "bypass" });
+  // A bypass template must be a Docker one to validate (permission_mode: bypass needs runtime: docker).
+  const child = await seedChild({ permission_mode: "bypass", runtime: "docker" });
   await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
     message:
       "Template dev runs without permission checks, which you don't have, so you can't spawn it.",
@@ -495,8 +579,15 @@ test("bypass child of an auto spawner is refused at start", async () => {
 });
 
 test.each([
-  ["its template copy is missing", async () => rmSync(leadTemplateSettings())],
-  ["its template copy isn't JSON", async () => writeFileSync(leadTemplateSettings(), "{")],
+  [
+    "its template is gone",
+    async () => rmSync(path.join(home, "templates/lead"), { recursive: true }),
+  ],
+  ["its settings.json isn't JSON", async () => writeFileSync(leadTemplateSettings(), "{")],
+  [
+    "its template.yaml isn't valid",
+    async () => writeTemplateFile("lead", "template.yaml", "name: ["),
+  ],
   [
     "it is archived",
     async () =>
@@ -506,7 +597,7 @@ test.each([
         .where(eq(schema.agents.id, agent.id)),
   ],
   [
-    "its config is invalid",
+    "its overlay is invalid",
     async () =>
       t.db
         .update(schema.agents)
@@ -532,14 +623,14 @@ test.each([
 test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quoted", async () => {
   await t.db
     .update(schema.agents)
-    .set({ config: { ...agent.config, canSpawn: ["dev"], maxLiveSpawns: 3 } })
+    .set({ config: { template: { can_spawn: ["dev"], max_live_spawns: 3 } } })
     .where(eq(schema.agents.id, agent.id));
   const child = await seedChild({ description: "ignored" });
   await t.db
     .update(schema.agents)
     .set({ description: 'Ship "it" <now>' })
     .where(eq(schema.agents.id, child.id));
-  await prepareStart(agent, { agentToken: "tok" });
+  await prepareStart(await reload(agent.id), { agentToken: "tok" });
   const lead = md(agent.slug);
   expect(lead).toContain("## Spawning");
   expect(lead).toContain("at most 3 live");
@@ -559,67 +650,42 @@ test("a persistent agent without can_spawn has no Spawning section", async () =>
   expect(md(agent.slug)).not.toContain("## Spawning");
 });
 
-const childCopy = (slug: string) => path.join(home, "state/agents", slug, "template/settings.json");
 const setConfig = (id: string, config: Record<string, unknown>) =>
   t.db
     .update(schema.agents)
     .set({ config: config as never })
     .where(eq(schema.agents.id, id));
 
-test.each([
-  [
-    "invalid config",
-    async (c: AgentRow) => setConfig(c.id, { name: 5 }),
-    (c: AgentRow) => `The saved configuration of @${c.slug} is invalid.`,
-  ],
-  [
-    "missing template copy",
-    async (c: AgentRow) => rmSync(childCopy(c.slug)),
-    (c: AgentRow) => `The template copy ${childCopy(c.slug)} is missing.`,
-  ],
-  [
-    "template copy not JSON",
-    async (c: AgentRow) => writeFileSync(childCopy(c.slug), "{"),
-    (c: AgentRow) => `The template copy ${childCopy(c.slug)} isn't valid JSON.`,
-  ],
-  [
-    "template copy not an object",
-    async (c: AgentRow) => writeFileSync(childCopy(c.slug), "[]"),
-    (c: AgentRow) => `The template copy ${childCopy(c.slug)} isn't a JSON object.`,
-  ],
-  [
-    "plugins need a re-sync",
-    async (c: AgentRow) => setConfig(c.id, { ...c.config, plugins: ["p@m"] }),
-    (c: AgentRow) => `The plugins of @${c.slug} aren't installed in the factory-managed location.`,
-  ],
-  [
-    "host skill missing",
-    async (c: AgentRow) => setConfig(c.id, { ...c.config, skills: ["nope"] }),
-    () => `Host skill nope is missing from ${hs}.`,
-  ],
-])(
-  "a spawned agent's start error (%s) reads '<diagnosis> Terminate it and spawn a new one.' with no fix",
-  async (_n, mutate, diagnosis) => {
-    const child = await seedChild();
-    await mutate(child);
-    const err = await prepareStart(child, { agentToken: "tok" }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(AgentStartError);
-    const spawned = forSpawnedAgent(err as AgentStartError);
-    expect(spawned.message).toBe(`${diagnosis(child)} Terminate it and spawn a new one.`);
-    expect(spawned.fix).toBeUndefined();
-  },
-);
+test("a spawned agent ignores its config: an invalid overlay doesn't stop its start", async () => {
+  const child = await seedChild();
+  await setConfig(child.id, { name: 5 });
+  const spec = await prepareStart(await reload(child.id), { agentToken: "tok" });
+  expect(spec.effective.config.name).toBe("dev");
+});
 
-test("a persistent agent's start errors keep their advice and fix", async () => {
+test("a persistent agent's start errors keep their advice and fix; a spawned one's drop the config fix", async () => {
   await setConfig(agent.id, { name: 5 });
-  const err = await prepareStart(agent, { agentToken: "tok" }).catch((e: unknown) => e);
+  const err = await prepareStart(await reload(agent.id), { agentToken: "tok" }).catch(
+    (e: unknown) => e,
+  );
   expect(err).toMatchObject({
-    message: `The saved configuration of @${agent.slug} is invalid. Edit the agent to fix it.`,
-    fix: "edit_agent",
+    message: `The configuration of @${agent.slug} is invalid. Fix it in Configuration.`,
+    fix: "config",
   });
   expect(forSpawnedAgent(err as AgentStartError).message).toBe(
-    `The saved configuration of @${agent.slug} is invalid. Terminate it and spawn a new one.`,
+    `The configuration of @${agent.slug} is invalid. Terminate it and spawn a new one.`,
   );
+});
+
+test("a spawned agent's start error from its template keeps the template fix", async () => {
+  const child = await seedChild();
+  writeTemplateFile("dev", "template.yaml", "name: [");
+  const err = await prepareStart(child, { agentToken: "tok" }).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(AgentStartError);
+  expect(forSpawnedAgent(err as AgentStartError)).toMatchObject({
+    message: "Template dev has errors. Fix it in Templates.",
+    fix: "template",
+  });
 });
 
 // The DB keeps a spawned row's reports_to set and pointing at a row (CHECK + FK), so these two are reached
@@ -633,9 +699,9 @@ test.each([
   try {
     await expect(
       deriveInheritance(
-        { db: t.db, config: factoryConfig, workspace },
+        { db: t.db, config: factoryConfig, resolver, loaded: () => undefined },
         { ...child, reportsTo },
-        templateYamlSchema.parse({ name: "dev", display_name: "Dev" }),
+        await resolver.effective(child),
       ),
     ).rejects.toMatchObject({
       name: "AgentStartError",
@@ -661,7 +727,7 @@ test.each([
     slug: `top-${seq}`,
     displayName: "Top",
     template: "lead",
-    config: agent.config,
+    config: {},
     runtime: "local",
     credentialId: "c1",
   });
@@ -686,4 +752,92 @@ test.each([
   } finally {
     prepare.mockRestore();
   }
+});
+
+// ---------- I2 §6.2: the stricter of the spawner's started and current config ----------
+
+test("a loaded spawner counts as started ∩ current for secrets and started ∪ current for deny rules", async () => {
+  const child = await seedChild();
+  loaded.set(agent.id, await resolver.effective(agent)); // secrets [GH_TOKEN], deny Bash(rm:*)
+  // The spawner's config moved on: it gained NPM_TOKEN and swapped its deny rule.
+  writeFileSync(leadTemplateSettings(), JSON.stringify({ permissions: { deny: ["WebFetch"] } }));
+  await t.db
+    .update(schema.agents)
+    .set({ config: { template: { secrets: ["NPM_TOKEN"] } } })
+    .where(eq(schema.agents.id, agent.id));
+  const spec = await prepareStart(child, { agentToken: "tok" });
+  expect(spec.env.GH_TOKEN).toBe("gh-1");
+  expect(spec.env.NPM_TOKEN).toBeUndefined(); // gained since it started: not yet held by the running process
+  const deny = settingsOf(child.slug).permissions.deny;
+  expect(deny).toEqual(expect.arrayContaining(["Bash(rm:*)", "WebFetch", "Bash(curl:*)"]));
+});
+
+test("a spawner that isn't loaded counts as its current config alone", async () => {
+  const child = await seedChild();
+  writeFileSync(leadTemplateSettings(), JSON.stringify({ permissions: { deny: ["WebFetch"] } }));
+  await t.db
+    .update(schema.agents)
+    .set({ config: { template: { secrets: ["NPM_TOKEN"] } } })
+    .where(eq(schema.agents.id, agent.id));
+  const spec = await prepareStart(child, { agentToken: "tok" });
+  expect(spec.env.GH_TOKEN).toBe("gh-1");
+  expect(spec.env.NPM_TOKEN).toBe("npm-1");
+  const deny = settingsOf(child.slug).permissions.deny;
+  expect(deny).toContain("WebFetch");
+  expect(deny).not.toContain("Bash(rm:*)");
+});
+
+test("spawning is computed from the effective config being prepared, not from started", async () => {
+  loaded.set(agent.id, await resolver.effective(agent)); // started with no can_spawn
+  await t.db
+    .update(schema.agents)
+    .set({ config: { template: { can_spawn: ["dev"] } } })
+    .where(eq(schema.agents.id, agent.id));
+  await prepareStart(await reload(agent.id), { agentToken: "tok" });
+  expect(md(agent.slug)).toContain("## Spawning");
+});
+
+test("a spawner that dropped a secret and a deny rule since it started: the child still gets neither secret, and keeps the deny rule", async () => {
+  const child = await seedChild();
+  loaded.set(agent.id, await resolver.effective(agent)); // started with GH_TOKEN and Bash(rm:*)
+  writeYaml("lead", { name: "lead", display_name: "Lead", runtime: "local", secrets: [] });
+  writeFileSync(leadTemplateSettings(), JSON.stringify({}));
+  const spec = await prepareStart(child, { agentToken: "tok" });
+  expect(spec.env.GH_TOKEN).toBeUndefined();
+  expect(spec.env.NPM_TOKEN).toBeUndefined();
+  expect(settingsOf(child.slug).permissions.deny).toContain("Bash(rm:*)");
+});
+
+test("the stricter permission mode of started and current counts: a spawner that was auto at start still refuses a bypass child", async () => {
+  const child = await seedChild({ permission_mode: "bypass", runtime: "docker" });
+  loaded.set(agent.id, await resolver.effective(agent)); // started in auto
+  // The template turns Docker to validate with bypass; the spawner keeps its row's local runtime (spec §6.6).
+  writeYaml("lead", {
+    name: "lead",
+    display_name: "Lead",
+    runtime: "docker",
+    permission_mode: "bypass",
+    secrets: ["GH_TOKEN"],
+  });
+  await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
+    message:
+      "Template dev runs without permission checks, which you don't have, so you can't spawn it.",
+  });
+  loaded.clear(); // not loaded: its current bypass mode alone counts
+  // The refusal is checked before the runtime: this harness has no Docker, so getting that far means it passed.
+  await expect(prepareStart(child, { agentToken: "tok" })).rejects.toMatchObject({
+    message: "The Docker runtime isn't configured on this factory.",
+  });
+});
+
+test("a spawner whose template is invalid fails the child's start generically, with no fix and no cause", async () => {
+  const child = await seedChild();
+  writeTemplateFile("lead", "template.yaml", "name: [");
+  const err = await prepareStart(child, { agentToken: "tok" }).catch((e: unknown) => e);
+  expect(err).toBeInstanceOf(AgentStartError);
+  expect(err).toMatchObject({
+    message: `The configuration of @${agent.slug}, which spawned @${child.slug}, can't be read, so @${child.slug} can't start.`,
+    fix: undefined,
+  });
+  expect((err as Error).message).not.toContain("Template lead");
 });

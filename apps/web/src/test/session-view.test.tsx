@@ -142,6 +142,7 @@ test("an open turn shows the activity line under the last row, above the queue; 
       turnOpen: false,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     }),
   );
   await vi.waitFor(() =>
@@ -161,6 +162,7 @@ test("an activity line that appears from a live frame fades in", async () => {
       turnOpen: true,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     }),
   );
   await vi.waitFor(() =>
@@ -679,6 +681,7 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
         turnOpen: false,
         restartPending: false,
         restartWaitingOn: 0,
+        restartChanges: [],
       }),
     );
   frame("idle");
@@ -734,6 +737,7 @@ test("restart pending arrives by frame; a frame clears it", async () => {
         turnOpen: true,
         restartPending,
         restartWaitingOn,
+        restartChanges: [],
       }),
     );
   frame(true, 2);
@@ -945,24 +949,31 @@ test("an error with fix edit_agent opens Edit agent", async () => {
   expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
 });
 
-test("an error with fix resync runs the agent's Re-sync in place", async () => {
+test("an error with fix config links to the template page until the config page exists", async () => {
   routes["/api/agents/dev/events?"] = errorPage({
     type: "error",
     source: "spawn",
-    message: "Re-sync @dev to reinstall its plugins into the factory-managed location.",
-    fix: "resync",
+    message: "Plugin x@y didn't install.",
+    fix: "config",
   });
-  let resynced = 0;
-  routes["/api/agents/dev/resync"] = () => {
-    resynced++;
-    return json({ agent: agentSummary(), applied: "now" });
-  };
   renderApp("/agents/dev/session", alice);
-  const fix = await screen.findByRole("button", { name: "Re-sync the agent" });
-  expect(screen.queryByRole("link", { name: "Re-sync the agent" })).not.toBeInTheDocument();
-  await userEvent.click(fix);
-  expect(await screen.findByText("Re-synced. Nothing differed.")).toBeInTheDocument();
-  expect(resynced).toBe(1);
+  expect(await screen.findByRole("link", { name: "Open template dev" })).toHaveAttribute(
+    "href",
+    "/templates/dev",
+  );
+  expect(screen.queryByRole("button", { name: "Edit the agent" })).not.toBeInTheDocument();
+});
+
+test("an error with fix template links to the agent's template page", async () => {
+  routes["/api/agents/dev/events?"] = errorPage({
+    type: "error",
+    source: "spawn",
+    message: "Template developer has errors. Fix it in Templates.",
+    fix: "template",
+  });
+  renderApp("/agents/dev/session", alice);
+  const link = await screen.findByRole("link", { name: "Open template dev" });
+  expect(link).toHaveAttribute("href", "/templates/dev");
 });
 
 test("a resume error no longer names the interim reset script", async () => {
@@ -1213,6 +1224,7 @@ test("a status-frame write to the detail cache never overwrites the session's li
       compacting: true,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     }),
   );
   const line = () => document.querySelector("[data-activity-line]");
@@ -1251,6 +1263,7 @@ test("a status flush into the detail cache keeps the open turn's elapsed timer",
       turnStartedAt: new Date(Date.now() - 5000).toISOString(),
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     }),
   );
   await vi.waitFor(() =>
@@ -1273,6 +1286,7 @@ test("a status flush into the detail cache keeps a running compaction", async ()
       compacting: true,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
     }),
   );
   const line = () => document.querySelector("[data-activity-line]")?.textContent ?? "";

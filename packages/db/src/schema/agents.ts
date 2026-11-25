@@ -1,4 +1,4 @@
-import type { Command, MessageAttachment, TemplateConfig } from "@open-factory/shared";
+import type { AgentOverlay, Command, MessageAttachment } from "@open-factory/shared";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
@@ -45,13 +45,12 @@ export const agents = pgTable(
     status: text("status").notNull().default("hibernated"),
     kind: text("kind").notNull().default("persistent"),
     template: text("template").notNull(),
-    config: jsonb("config").$type<TemplateConfig>().notNull(),
+    config: jsonb("config").$type<AgentOverlay>().notNull().default({}),
     runtime: text("runtime").notNull().$type<"local" | "docker">(),
     reportsTo: text("reports_to").references((): AnyPgColumn => agents.id, {
       onDelete: "restrict",
     }),
     credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
-    grantsOverridden: boolean("grants_overridden").notNull().default(false),
     lastError: text("last_error"),
     errorKind: text("error_kind"),
     attempting: boolean("attempting").notNull().default(false),

@@ -434,11 +434,9 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
             <ProjectGrantPicker
               projects={projects.data}
               value={shown.projects}
-              custom={s.custom}
               error={errors.projects}
               help={staleNotes.projects}
               onChange={s.setProjects}
-              onUseDefault={s.applyTemplateDefault}
               onAddProject={onAddProject}
             />
           </MoreOptions>

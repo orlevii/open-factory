@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { notices } from "./notices.ts";
+import { notices, parseConfigNotice, renderConfigNotice } from "./notices.ts";
 
 test("notice texts are literal and omit empty lists", () => {
   expect(
@@ -53,4 +53,25 @@ test("the self-compact continue notice has fixed texts", () => {
   expect(notices.compactContinue({ failed: true })).toBe(
     "Your /compact didn't run (see the Session). Continue where you left off.",
   );
+});
+
+test("the config_changed notice: a fixed header, one sorted line per change, parsed back", () => {
+  const body = notices.configChanged([
+    "model: sonnet → opus",
+    "added skill release",
+    "model: sonnet → opus",
+  ]);
+  expect(body).toBe("Your configuration changed:\n- added skill release\n- model: sonnet → opus");
+  expect(parseConfigNotice(body)).toEqual(["added skill release", "model: sonnet → opus"]);
+  // Merging is parse, union, render: the same lines twice give the same body.
+  const merged = renderConfigNotice([
+    ...parseConfigNotice(body),
+    ...parseConfigNotice(renderConfigNotice(["env LOG_LEVEL changed", "added skill release"])),
+  ]);
+  expect(merged).toBe(
+    "Your configuration changed:\n- added skill release\n- env LOG_LEVEL changed\n- model: sonnet → opus",
+  );
+  // A line break inside a line can't forge a second line, and empty lines are dropped.
+  expect(parseConfigNotice(renderConfigNotice(["a\n- b", "  "]))).toEqual(["a - b"]);
+  expect(renderConfigNotice([])).toBe("Your configuration changed:");
 });

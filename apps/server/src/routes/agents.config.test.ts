@@ -182,7 +182,7 @@ describe("PUT", () => {
   test("a spawned agent can't be configured", async () => {
     await t.seedAgent({ slug: "kid" });
     const [lead] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "dev"));
-    // A spawned agent always reports to its spawner (agents_ephemeral_manager).
+    // A spawned agent always reports to its spawner (agents_manager).
     await t.db
       .update(schema.agents)
       .set({ kind: "ephemeral", reportsTo: lead?.id, reportsToUser: null })

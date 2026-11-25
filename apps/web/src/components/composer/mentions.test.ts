@@ -46,6 +46,19 @@ test("an agent reporting to you counts as your report", () => {
   ]);
 });
 
+test("an agent managed by another human is not your report", () => {
+  const list = [
+    agent("a", "A"),
+    agent("mine", "Mine", { reportsTo: { kind: "user", handle: "or" } }),
+    agent("theirs", "Theirs", { reportsTo: { kind: "user", handle: "dana" } }),
+  ];
+  expect(rankMentions("", { agents: list, humans: [], me: "or" }).map((m) => m.handle)).toEqual([
+    "mine",
+    "a",
+    "theirs",
+  ]);
+});
+
 test("the query matches a handle or a name; prefix matches rank above the rest", () => {
   expect(handles("a")).toEqual(["alpha", "lead", "bravo", "dana"]);
   expect(handles("levi", [])).toEqual([]);

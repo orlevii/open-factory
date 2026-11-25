@@ -61,7 +61,7 @@ export const agents = pgTable(
     errorKind: text("error_kind"),
     attempting: boolean("attempting").notNull().default(false),
     /**
-     * S6 §9.1 (R4): the current errored episode's `errored` fact was forwarded (to the manager or the humans). Set once
+     * S6 §9.1 (R4): the current errored episode's `errored` fact was forwarded (to its manager). Set once
      * per episode; cleared with the error. Read at boot so a restart never reports one episode twice.
      */
     erroredReported: boolean("errored_reported").notNull().default(false),

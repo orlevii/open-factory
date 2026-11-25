@@ -215,7 +215,7 @@ export function InboxList({
 
   const onOpenUpdate = useCallback(
     (slug: string) => {
-      const row = byId(updateRowId(slug));
+      const row = latest.current.find((r) => r.id === updateRowId(slug));
       if (row?.kind === "update") openUpdate(row.chat);
     },
     [openUpdate],

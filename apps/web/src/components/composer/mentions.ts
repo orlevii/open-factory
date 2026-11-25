@@ -58,7 +58,7 @@ function matchClass(m: Mention, q: string): number {
 /**
  * U3 §13.4: live agents (archived and terminated ones never), and the enabled humans other than
  * you. Prefix matches first; within them your recent senders (newest first), then your reports
- * (the reporting line's roots, which answer to the humans, and any agent reporting to you), then
+ * (agents whose manager is your handle), then
  * everyone alphabetically by name.
  */
 export function rankMentions(
@@ -95,10 +95,9 @@ export function rankMentions(
       color: a.color,
     };
     const r = recentAt.get(a.slug);
-    // "Your reports": an agent whose manager is a human (any human) counts as yours, as does an agent whose
-    // manager is your handle.
+    // "Your reports": the agents whose manager is your handle.
     if (r !== undefined) add(m, 0, r);
-    else add(m, a.reportsTo.kind === "user" || a.reportsTo.handle === me ? 1 : 2);
+    else add(m, a.reportsTo.handle === me ? 1 : 2);
   }
   for (const h of humans) {
     if (h.disabledAt || h.handle === me) continue;

@@ -45,7 +45,7 @@ Environment variables (`npm start` loads `.env` if present):
 | `FACTORY_AGENT_HOST` | no | loopback, plus the Docker bridge gateway on Linux | comma-separated IP addresses the agent listener binds; replaces the default list. The only way to bind `0.0.0.0` or `::` |
 | `FACTORY_AGENT_URL` | no | `http://host.docker.internal:${FACTORY_AGENT_PORT}` | how containers reach the agent listener (`OPEN_FACTORY_URL` in the container). Local agents always use `http://127.0.0.1:${FACTORY_AGENT_PORT}` |
 
-The max running agents, the default warm window and the member update debounce are set in the app under Settings → Factory, not in the environment. `FACTORY_MAX_RUNNING_AGENTS` and `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` are no longer read; the server logs a warning at boot when either is still set.
+The default warm window and the member-update debounce are set in the app under Settings → Factory, not in the environment.
 
 ## Run an agent
 

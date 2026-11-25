@@ -20,7 +20,6 @@ test("a path no field owns maps to nothing", () => {
   // Permission rules and trust notes have no field: they reach the issues block.
   expect(fieldForPath("settings.permissions.allow.3")).toBeNull();
   expect(fieldForPath("settings.autoMode.environment.0")).toBeNull();
-  expect(fieldForPath("template.max_live_spawns")).toBeNull();
   expect(fieldForPath("")).toBeNull();
   expect(fieldForPath("template.modelx")).toBeNull();
 });

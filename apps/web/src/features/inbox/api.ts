@@ -68,6 +68,15 @@ const chatsOf = (d: { pages: { chats?: ChatRow[] | undefined }[] }): ChatRow[] =
 export const useInboxChats = () =>
   useInfiniteQuery({ ...inboxQueryOptions, select: chatsOf }).data ?? NO_CHATS;
 
+/** The unread member updates of your reports, one row per report (the first page carries them): a row's shape
+ *  is a chat row's. They are never fed to the notifier. */
+const updatesOf = (d: { pages: { updates?: ChatRow[] | undefined }[] }): ChatRow[] =>
+  d.pages[0]?.updates ?? NO_CHATS;
+export const useInboxUpdates = () =>
+  useInfiniteQuery({ ...inboxQueryOptions, select: updatesOf }).data ?? NO_CHATS;
+/** An update row's id in the list's rows (never a selection: it opens the report's session). */
+export const updateRowId = (slug: string) => `update:${slug}`;
+
 /** One item, for a `?item=` outside the loaded pages (the list's pages don't change). */
 export const inboxItemOptions = (id: string) =>
   queryOptions({
@@ -138,10 +147,10 @@ export const postReadAll = (upTo: string) =>
     body: { upTo },
     schema: readAllResponseSchema,
   });
-export const postReadFrom = (slug: string, upTo: string) =>
+export const postReadFrom = (slug: string, upTo: string, kind?: "member_update") =>
   apiFetch(`/api/inbox/read-from/${encodeURIComponent(slug)}`, {
     method: "POST",
-    body: { upTo },
+    body: kind ? { upTo, kind } : { upTo },
     schema: readFromResponseSchema,
   });
 export const postUndoReadAll = (readAt: string) =>
@@ -248,6 +257,23 @@ export function useInboxCache() {
             },
         );
       },
+      /** Opening an update row: the report's row leaves the list and the count drops by its updates. */
+      readUpdates(slug: string, n: number) {
+        qc.setQueryData<InfiniteData<Page>>(
+          inboxQueryKey,
+          (d) =>
+            d && {
+              ...d,
+              pages: d.pages.map((p) =>
+                p.updates ? { ...p, updates: p.updates.filter((u) => u.agent.slug !== slug) } : p,
+              ),
+            },
+        );
+        qc.setQueryData<Unread>(
+          unreadQueryKey,
+          (c) => c && { ...c, count: Math.max(0, c.count - n) },
+        );
+      },
       refetch() {
         for (const key of [inboxQueryKey, unreadQueryKey, homeInboxQueryKey])
           void qc.invalidateQueries({ queryKey: key });
@@ -268,6 +294,20 @@ export function useOpenItem() {
       const ids = new Set([item.id]);
       cache.setRead(ids, true, -1, [item]);
       postRead(item.id).catch(() => cache.setRead(ids, false, +1, [item]));
+    },
+    [cache],
+  );
+}
+
+/** Opening an update row reads the report's member updates up to its latest; a failure refetches. */
+export function useOpenUpdate() {
+  const cache = useInboxCache();
+  return useCallback(
+    (row: ChatRow) => {
+      cache.readUpdates(row.agent.slug, row.unread);
+      postReadFrom(row.agent.slug, row.latest.createdAt, "member_update").catch(() =>
+        cache.refetch(),
+      );
     },
     [cache],
   );

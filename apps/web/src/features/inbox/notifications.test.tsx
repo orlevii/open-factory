@@ -342,3 +342,24 @@ test("clicking a chat notification opens that chat on its newest message", async
   await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/ada/chat"));
   expect(app.router.state.location.search).toEqual({ message: "ada-m3" });
 });
+
+test("member updates in the inbox never notify, even in a hidden tab", async () => {
+  localStorage.setItem("of-notifications", "1");
+  stubNotification("granted");
+  let updates: ChatRow[] = [];
+  mockApi({
+    "GET /api/inbox/unread-count": () => json({ count: 0 }),
+    "GET /api/inbox?": () => json({ chats: [], updates, items: [], nextCursor: null }),
+  });
+  renderApp("/", alice);
+  await screen.findByRole("button", { name: /Alice/ });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  updates = [chatRow({ unread: 2 })];
+  act(() => ws.push({ type: "inbox_changed" }));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 100));
+  });
+  expect(shown).toEqual([]);
+});

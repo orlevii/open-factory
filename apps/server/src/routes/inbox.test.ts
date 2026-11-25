@@ -486,6 +486,7 @@ test("read-from with kind member_update marks one report's updates read and leav
   await updatesFrom("bob", 1);
   await callTool(url, tokA, "send_message", { to: ["@or"], body: "a chat message" });
   const upTo = (await get("/api/inbox")).json().updates[0].latest.createdAt;
+  const before = (await get("/api/inbox/unread-count")).json().count;
   const done = await h.app.inject({
     method: "POST",
     url: "/api/inbox/read-from/ada",
@@ -493,6 +494,7 @@ test("read-from with kind member_update marks one report's updates read and leav
     payload: { upTo, kind: "member_update" },
   });
   expect(done.json().marked).toBe(2);
+  expect((await get("/api/inbox/unread-count")).json().count).toBe(before - 2);
   const after = (await get("/api/inbox")).json();
   expect(after.updates.map((u: { agent: { slug: string } }) => u.agent.slug)).toEqual(["bob"]);
   expect(after.chats).toEqual([expect.objectContaining({ unread: 1 })]);

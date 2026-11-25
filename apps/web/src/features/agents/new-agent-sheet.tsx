@@ -444,18 +444,18 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               onChange={s.setProjects}
               onAddProject={onAddProject}
             />
-            <FieldShell name="manageOrg" label="Can manage the org" help={MANAGE_ORG_HELP}>
-              {(a) => (
-                <Switch
-                  id={a.id}
-                  className="justify-self-start"
-                  checked={shown.manageOrg}
-                  aria-describedby={a.describedBy}
-                  onCheckedChange={(v) => set("manageOrg", v)}
-                />
-              )}
-            </FieldShell>
           </MoreOptions>
+          <FieldShell name="manageOrg" label="Can manage the org" help={MANAGE_ORG_HELP}>
+            {(a) => (
+              <Switch
+                id={a.id}
+                className="justify-self-start"
+                checked={shown.manageOrg}
+                aria-describedby={a.describedBy}
+                onCheckedChange={(v) => set("manageOrg", v)}
+              />
+            )}
+          </FieldShell>
         </fieldset>
       </SheetBody>
       <SheetFormFooter

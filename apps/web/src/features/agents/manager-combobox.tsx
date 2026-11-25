@@ -149,9 +149,10 @@ export function ManagerCombobox({
       if (disabledHandles.has(v)) return `@${v} (disabled)`;
       if (live.data?.has(v) && (!canManage || canManage(v)))
         return <AgentChip slug={v} badge showSlug inline />;
-      return live.data ? `@${v} (archived)` : `@${v}`;
+      // Archived only once both lists have answered: a loading or failed list says nothing about the handle.
+      return live.data && users.data ? `@${v} (archived)` : `@${v}`;
     },
-    [peopleByHandle, disabledHandles, live.data, canManage],
+    [peopleByHandle, disabledHandles, live.data, users.data, canManage],
   );
 
   return (

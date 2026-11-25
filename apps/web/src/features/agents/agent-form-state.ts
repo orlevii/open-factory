@@ -354,6 +354,8 @@ export function useAgentFormState({
         return createAgentBodySchema.shape.description.safeParse(v.description).success
           ? undefined
           : FORM_MSG.descriptionLength;
+      case "reportsTo":
+        return v.reportsTo === "" ? FORM_MSG.chooseManager : undefined;
       case "credential":
         return v.credential === "" ? FORM_MSG.chooseCredential : undefined;
       default:

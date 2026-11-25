@@ -29,6 +29,7 @@ export const FORM_MSG = {
   chooseTemplateFirst: "Choose a template first",
   enterSlug: "Enter a slug.",
   chooseCredential: "Choose a credential.",
+  chooseManager: "Choose a manager.",
   taskKeys: "Use task keys, like T-41.",
   dependsSelf: "A task can't depend on itself.",
   replaceTokenFailed: "Couldn't replace the token.",

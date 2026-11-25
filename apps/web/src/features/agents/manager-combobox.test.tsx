@@ -151,6 +151,25 @@ test("Edit leaves the agent and its descendants out, and shows the saved human m
   ]);
 });
 
+test("a saved human manager shows as a plain handle, not archived, while the users list has failed", async () => {
+  const manager = await openEdit({
+    agents: [
+      agentSummary({
+        slug: "lead",
+        displayName: "Lead",
+        template: "lead",
+        status: "hibernated",
+        reportsTo: { kind: "user", handle: "bob" },
+      }),
+    ],
+    extra: {
+      "GET /api/users": () => json({ error: { code: "boom", message: "No." } }, 500),
+    },
+  });
+  await waitFor(() => expect(manager).toHaveTextContent("@bob"));
+  expect(manager).not.toHaveTextContent("archived");
+});
+
 test("a saved manager who has since been disabled stays shown, named as disabled", async () => {
   const manager = await openEdit({
     agents: [

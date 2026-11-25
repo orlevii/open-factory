@@ -389,6 +389,16 @@ test("success closes the sheet, clears the draft and navigates to the session", 
   });
 });
 
+test("without a signed-in handle and no manager picked, Create agent refuses with Choose a manager.", async () => {
+  const { api, queryClient, dialog } = await openLead({ extra: created() });
+  act(() =>
+    queryClient.setQueryData(["session"], { ...alice, user: { ...alice.user, handle: "" } }),
+  );
+  await userEvent.click(createButton());
+  expect(await within(dialog).findByText("Choose a manager.")).toBeInTheDocument();
+  expect(posts(api)).toHaveLength(0);
+});
+
 test("a created agent sets a cached setup answer's hasAgent without asking the server again", async () => {
   const { api, queryClient, router } = await openLead({ extra: created() });
   queryClient.setQueryData(["setup"], { hasCredential: true, hasTemplate: true, hasAgent: false });

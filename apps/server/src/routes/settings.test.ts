@@ -73,8 +73,8 @@ test("a hand-edited invalid stored key reads its default and the app still boots
     memberUpdateDebounceSeconds: 5,
   });
 });
-test("PATCH is strict: allowLocalRuntime or an unknown key is 400 invalid_settings", async () => {
-  for (const body of [{ allowLocalRuntime: false }, { nope: 1 }]) {
+test("PATCH is strict: allowLocalRuntime, defaultImage or an unknown key is 400 invalid_settings", async () => {
+  for (const body of [{ allowLocalRuntime: false }, { defaultImage: "x:1" }, { nope: 1 }]) {
     const r = await call("PATCH", body);
     expect(r.statusCode).toBe(400);
     expect(r.json().error.code).toBe("invalid_settings");

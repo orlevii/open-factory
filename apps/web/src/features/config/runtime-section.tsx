@@ -55,7 +55,9 @@ export function RuntimeSection() {
     : RUNTIME_COPY.runtimeNote;
   // A hand-written `local` on a factory that refuses it stays selected, with the reason as its error.
   const runtimeError =
-    runtime.error ?? (local && localRefused ? RUNTIME_COPY.localDisabled : undefined);
+    runtime.error && local && localRefused
+      ? `${runtime.error} ${RUNTIME_COPY.localDisabled}`
+      : (runtime.error ?? (local && localRefused ? RUNTIME_COPY.localDisabled : undefined));
   const permissionHelp = local
     ? switched
       ? RUNTIME_COPY.switchedToAuto
@@ -73,7 +75,7 @@ export function RuntimeSection() {
           error={runtimeError}
           warning={localRefused ? undefined : runtime.warning}
         >
-          {({ describedBy }) => (
+          {({ id, describedBy }) => (
             <SegmentedControl
               legend="Runtime"
               name={ids.runtime}
@@ -81,7 +83,11 @@ export function RuntimeSection() {
               describedBy={describedBy}
               options={RUNTIMES.map((o) =>
                 o.value === "local" && localRefused
-                  ? { ...o, unavailable: true, describedBy: "field-runtime-help" }
+                  ? {
+                      ...o,
+                      unavailable: true,
+                      describedBy: `${id}-${runtimeError ? "error" : "help"}`,
+                    }
                   : o,
               )}
               onChange={chooseRuntime}
@@ -142,7 +148,9 @@ export function RuntimeSection() {
                 {
                   value: "bypass",
                   label: "Bypass",
-                  ...(local ? { unavailable: true, describedBy: `${id}-help` } : {}),
+                  ...(local
+                    ? { unavailable: true, describedBy: `${id}-${runtimeError ? "error" : "help"}` }
+                    : {}),
                 },
               ]}
               onChange={(v) => {

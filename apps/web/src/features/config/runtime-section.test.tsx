@@ -1,3 +1,4 @@
+import type { TemplateIssue } from "@open-factory/shared";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -33,7 +34,9 @@ function factory(allowLocalRuntime: boolean) {
 function Form({
   template,
   onValue,
+  issues = [],
 }: {
+  issues?: TemplateIssue[];
   template: Record<string, unknown>;
   onValue?: (v: unknown) => void;
 }) {
@@ -43,7 +46,7 @@ function Form({
       <ConfigForm
         mode="template"
         value={value}
-        issues={[]}
+        issues={issues}
         onChange={(u) =>
           setValue((p: unknown) => {
             const n = u(p);
@@ -84,6 +87,20 @@ test("a stored Local on a factory that refuses it stays selected with its error"
   expect(document.getElementById("field-runtime-error")).toHaveTextContent(
     /Disabled on this factory/,
   );
+});
+
+test("when another runtime error replaces the help while Local is refused, the reason stays in the error that describes Local", async () => {
+  factory(false);
+  render(
+    <Form
+      template={{ runtime: "local" }}
+      issues={[
+        { severity: "error", file: "settings.json", path: "template.runtime", message: "Bad." },
+      ]}
+    />,
+  );
+  await waitFor(() => expect(local()).toHaveAttribute("aria-disabled", "true"));
+  expect(local()).toHaveAccessibleDescription(/Bad\. Disabled on this factory/);
 });
 
 test("picking Local while Bypass is selected switches to Auto with a note and disables Bypass", async () => {

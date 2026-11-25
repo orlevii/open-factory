@@ -634,7 +634,7 @@ export class AgentRuntime {
   private journalJson = "null"; // what was last written, without takenAt
   private snapshotTimer: ReturnType<typeof setTimeout> | undefined;
   private rateLimitedTurn = false; // a `rate_limited` event since the last turn end (spec §7.3)
-  /** The last turn end, delivery or start (spec §5.3: the least recently active is evicted first). */
+  /** The last turn end, delivery or start (spec §5.3). */
   lastActivityAt = Date.now();
   // S7 §10.3: the latest activity this runtime recorded (start, turn end, delivery); undefined until one happens. The
   // TTL check takes the later of it and the row's, so a lost `setLastActivity` write never gets an active agent reaped.

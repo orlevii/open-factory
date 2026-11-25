@@ -23,7 +23,7 @@ import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import type { PasswordHasher } from "./auth/options.ts";
-import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
+import { type Config, localRuntimeAllowed } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { ExpiryCheck } from "./credentials/expiry-check.ts";
 import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
@@ -169,8 +169,6 @@ export interface AppDeps {
   };
   /** Spawns the sign-in PTY bridge and the python3 probe (I3); the real `spawn` unless a test injects one. */
   signInSpawn?: typeof spawn;
-  /** Checked for the removed env vars (S10 Q6) to warn at boot; `process.env` when absent. */
-  env?: NodeJS.ProcessEnv;
   /** better-auth's scrypt when absent; tests inject a cheap one. */
   passwordHasher?: PasswordHasher;
 }
@@ -220,7 +218,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
   const settings = await FactorySettings.load(deps.db, app.log);
   app.decorate("factorySettings", settings);
-  for (const w of removedEnvWarnings(deps.env ?? process.env)) app.log.warn(w);
 
   const store = new EventStore(deps.db);
   const bus = new EventBus();
@@ -278,7 +275,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
     // S10 §8.2: read live; `settingsChanged()` below re-arms the runtimes' timers on a change.
     memberUpdateDebounceMs: settings.memberUpdateDebounceMs,
-    defaultWarmWindowMinutes: settings.defaultWarmWindowMinutes,
+    defaultWarmWindowMinutes: settings.warmWindowMinutes,
     // S6 §9.1: reports forward through the Router (built below; runtimes are created lazily, after it exists).
     forward: (f) => router.forward(f),
     localRuntimeAllowed: () => localRuntimeAllowed(config),

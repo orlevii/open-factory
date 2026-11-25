@@ -40,7 +40,7 @@ test("PATCH saves, publishes settings_changed and names the editor by handle", a
   expect(r.statusCode).toBe(200);
   expect(r.json()).toMatchObject({ warmWindowMinutes: 120, updatedBy: "@or" });
   expect(frames).toContainEqual({ type: "settings_changed" });
-  expect(h.app.factorySettings.defaultWarmWindowMinutes()).toBe(120);
+  expect(h.app.factorySettings.warmWindowMinutes()).toBe(120);
   const got = (await call("GET")).json() as FactorySettingsDto;
   expect(got).toMatchObject({ warmWindowMinutes: 120, updatedBy: "@or" });
   expect(typeof got.updatedAt).toBe("string");
@@ -55,15 +55,23 @@ test("PATCH of one key keeps the other, and both survive a restart", async () =>
   expect(restarted.app.factorySettings.get()).toMatchObject(expected);
 });
 
-test("a stored row of {} reads the defaults", async () => {
-  await h.sql`update factory_settings set settings = '{}'::jsonb`;
+test("a stored row missing a key reads that key's default", async () => {
+  await h.sql`update factory_settings set settings = '{"warmWindowMinutes": 90}'::jsonb`;
   const restarted = await h.reopen();
   expect(restarted.app.factorySettings.get()).toMatchObject({
-    warmWindowMinutes: 70,
+    warmWindowMinutes: 90,
     memberUpdateDebounceSeconds: 30,
   });
 });
 
+test("a hand-edited invalid stored key reads its default and the app still boots", async () => {
+  await h.sql`update factory_settings set settings = '{"warmWindowMinutes": 0, "memberUpdateDebounceSeconds": 5}'::jsonb`;
+  const restarted = await h.reopen();
+  expect(restarted.app.factorySettings.get()).toMatchObject({
+    warmWindowMinutes: 70,
+    memberUpdateDebounceSeconds: 5,
+  });
+});
 test("PATCH is strict: allowLocalRuntime or an unknown key is 400 invalid_settings", async () => {
   for (const body of [{ allowLocalRuntime: false }, { nope: 1 }]) {
     const r = await call("PATCH", body);
@@ -80,7 +88,7 @@ test("PATCH out of bounds is 400 with the field message", async () => {
     code: "invalid_settings",
     fields: { warmWindowMinutes: "Enter a whole number from 1 to 1440." },
   });
-  expect(h.app.factorySettings.defaultWarmWindowMinutes()).toBe(70);
+  expect(h.app.factorySettings.warmWindowMinutes()).toBe(70);
 });
 
 test.each([["2"], [null], [2.5]])(

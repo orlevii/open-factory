@@ -17,7 +17,7 @@ test("load reads the seeded row", async () => {
     updatedAt: null,
     updatedBy: null,
   });
-  expect(s.defaultWarmWindowMinutes()).toBe(70);
+  expect(s.warmWindowMinutes()).toBe(70);
   expect(s.memberUpdateDebounceMs()).toBe(30_000);
 });
 
@@ -30,7 +30,7 @@ test("update persists, swaps the copy and tells the listeners", async () => {
     s.onChange((prev, next) => seen.push({ prev, next }));
     await s.update({ memberUpdateDebounceSeconds: 0 }, user.id);
     expect(s.memberUpdateDebounceMs()).toBe(0);
-    expect(s.defaultWarmWindowMinutes()).toBe(70);
+    expect(s.warmWindowMinutes()).toBe(70);
     expect(s.get()).toMatchObject({ updatedBy: user.id });
     expect(s.get().updatedAt).toBeInstanceOf(Date);
     expect(seen).toEqual([
@@ -62,7 +62,7 @@ test("a listener that throws is logged; the update still completes and later lis
     });
     s.onChange((_prev, next) => seen.push(next.warmWindowMinutes));
     await s.update({ warmWindowMinutes: 3 }, user.id);
-    expect(s.defaultWarmWindowMinutes()).toBe(3);
+    expect(s.warmWindowMinutes()).toBe(3);
     expect(seen).toEqual([3]);
     expect(errors).toEqual([{ err: boom }]);
   } finally {

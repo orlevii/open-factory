@@ -98,25 +98,6 @@ const envSchema = z.object({
   FACTORY_TIMEZONE: zoneSchema.optional(),
 });
 
-/**
- * Env vars that were removed, with the boot warning each gets (S10 Q6, I5 Q11): nothing reads them, no shim (ADR 0028).
- * Boot only warns when one is still set; empty counts as unset, as in `loadConfig`.
- */
-const REMOVED_ENV: Record<string, string> = {
-  FACTORY_MAX_RUNNING_AGENTS:
-    "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
-  FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS:
-    "FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS is no longer read; set it in Settings → Factory.",
-  FACTORY_HOST_SKILLS_DIR:
-    "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder.",
-};
-
-export function removedEnvWarnings(env: NodeJS.ProcessEnv): string[] {
-  return Object.entries(REMOVED_ENV)
-    .filter(([k]) => env[k] !== undefined && env[k] !== "")
-    .map(([, warning]) => warning);
-}
-
 /** Where host skills are read from: `<FACTORY_HOST_CLAUDE_DIR>/skills` (I5 §5.2). */
 export function hostSkillsDirOf(c: Pick<Config, "hostClaudeDir">): string {
   return path.join(c.hostClaudeDir, "skills");

@@ -7,7 +7,6 @@ let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
 const driver = new FakeDriver();
 beforeAll(async () => {
-  // The earlier tests leave their processes running, so the restart tests get room under the default cap of 8.
   t = await makeTestApp({ harnessDriver: driver });
   cookie = (await t.signUpUser({ handle: "or" })).cookie;
 });

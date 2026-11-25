@@ -1,13 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import {
-  ConfigError,
-  loadConfig,
-  localRuntimeAllowed,
-  PLACEHOLDER_SECRET,
-  removedEnvWarnings,
-} from "./config.ts";
+import { ConfigError, loadConfig, localRuntimeAllowed, PLACEHOLDER_SECRET } from "./config.ts";
 
 const ok = { DATABASE_URL: "postgres://u:p@localhost:5432/db", FACTORY_SECRET_KEY: "x".repeat(32) };
 
@@ -153,32 +147,6 @@ describe("loadConfig", () => {
       );
     },
   );
-});
-
-describe("removedEnvWarnings", () => {
-  test("FACTORY_HOST_SKILLS_DIR names its replacement", () => {
-    expect(removedEnvWarnings({ FACTORY_HOST_SKILLS_DIR: "~/s" })).toEqual([
-      "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder.",
-    ]);
-  });
-  test("names each removed variable that is still set", () => {
-    expect(removedEnvWarnings({ FACTORY_MAX_RUNNING_AGENTS: "4" })).toEqual([
-      "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
-    ]);
-    expect(
-      removedEnvWarnings({
-        FACTORY_MAX_RUNNING_AGENTS: "4",
-        FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "0",
-      }),
-    ).toEqual([
-      "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
-      "FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS is no longer read; set it in Settings → Factory.",
-    ]);
-  });
-  test("unset or empty: no warning", () => {
-    expect(removedEnvWarnings(ok)).toEqual([]);
-    expect(removedEnvWarnings({ FACTORY_MAX_RUNNING_AGENTS: "" })).toEqual([]);
-  });
 });
 
 describe("FACTORY_TIMEZONE", () => {

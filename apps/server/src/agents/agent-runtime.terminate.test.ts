@@ -9,6 +9,7 @@ import type { MountCheckContext } from "../workspace/mounts.ts";
 import type { AgentRuntime, DockerDeps } from "./agent-runtime.ts";
 import { AgentTerminatedError } from "./errors.ts";
 import { EventBus } from "./event-bus.ts";
+import { liveCredentialId } from "./live-credential.ts";
 import { AgentRuntimes } from "./runtimes.ts";
 import type { PrepareStart } from "./start.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
@@ -564,12 +565,6 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
       w.proc().emit(...ev.fullTurn("sess-kid"));
       await w.settled();
     },
-    /** The spawner runs and holds the only slot (its process started, no session yet: not evictable). */
-    fillCap: async () => {
-      await w.sendHuman("keep busy", await load(leadId));
-      await w.settled();
-      expect(w.held(leadId)).toBe(1);
-    },
   };
   return w;
 }
@@ -597,14 +592,6 @@ const states: {
   stuck?: boolean;
 }[] = [
   { name: "hibernated", setup: async () => {} },
-  {
-    name: "queued (cap full)",
-    setup: async (w) => {
-      await w.fillCap();
-      await w.sendHuman("hi");
-      expect(w.runtimes.supervisor.isQueued(w.id)).toBe(true);
-    },
-  },
   {
     name: "pulling",
     setup: async (w) => {
@@ -745,7 +732,8 @@ async function lockWaiter() {
 
 test("a granted wake whose grant job is queued behind the termination starts nothing", async () => {
   const w = await world();
-  await w.fillCap();
+  const credential = liveCredentialId(w.rt.agent);
+  w.runtimes.supervisor.pause(credential, new Date(Date.now() + 3_600_000), true);
   await w.sendHuman("hi");
   expect(w.runtimes.supervisor.isQueued(w.id)).toBe(true);
   // Hold the child's job queue (a reload waiting on its row), so the grant job lands behind it.
@@ -760,8 +748,8 @@ test("a granted wake whose grant job is queued behind the termination starts not
     return original(agentId);
   });
   const reloading = w.rt.reload();
-  // The spawner goes: its slot is granted to the child, whose grant job queues behind the held reload.
-  await (await w.load(w.leadId)).stop();
+  // The pause ends: the child is granted its start, and its grant job queues behind the held reload.
+  w.runtimes.supervisor.onCredentialReset(credential);
   expect(w.held()).toBe(1);
   await w.terminate();
   gate.resolve();

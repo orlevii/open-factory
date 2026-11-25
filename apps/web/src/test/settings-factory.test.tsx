@@ -77,7 +77,7 @@ const WARM_HINT =
 const DEBOUNCE_HINT =
   "How long to collect status changes from an agent's reports before telling it (0–86400 seconds). 0 delivers each update at once.";
 
-test("the two fields carry their hints and suffixes, with the loaded values; there is no concurrency cap", async () => {
+test("the two fields carry their hints and suffixes, with the loaded values", async () => {
   world();
   renderApp("/settings/factory", alice);
   const warm = await field("Default warm window");
@@ -89,8 +89,6 @@ test("the two fields carry their hints and suffixes, with the loaded values; the
   const region = await factory();
   expect(within(region).getByText("min")).toBeInTheDocument();
   expect(within(region).getByText("seconds")).toBeInTheDocument();
-  expect(within(region).queryByLabelText("Concurrency cap")).not.toBeInTheDocument();
-  expect(within(region).queryByText(/\d+ (of \d+ )?running/)).not.toBeInTheDocument();
 });
 
 test.each([

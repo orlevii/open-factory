@@ -1,5 +1,5 @@
 import { type Db, schema } from "@open-factory/db";
-import { type FactorySettingsValues, factorySettingsValuesSchema } from "@open-factory/shared";
+import { type FactorySettingsValues, readFactorySettingsValues } from "@open-factory/shared";
 import { eq, sql } from "drizzle-orm";
 
 export type { FactorySettingsValues };
@@ -10,9 +10,9 @@ type Log = { error: (obj: object, msg: string) => void };
 
 const ROW_ID = 1;
 type Row = typeof schema.factorySettings.$inferSelect;
-/** The stored object read through the schema, so a missing key reads as its default. */
+/** The stored object read per key: a missing or invalid key reads as its default. */
 const fromRow = (r: Row): Current => ({
-  ...factorySettingsValuesSchema.parse(r.settings),
+  ...readFactorySettingsValues(r.settings),
   updatedAt: r.updatedAt,
   updatedBy: r.updatedBy,
 });
@@ -50,7 +50,7 @@ export class FactorySettings {
     return { ...this.current };
   }
 
-  readonly defaultWarmWindowMinutes = (): number => this.current.warmWindowMinutes;
+  readonly warmWindowMinutes = (): number => this.current.warmWindowMinutes;
   /** The setting is stored in seconds; every consumer reads milliseconds. */
   readonly memberUpdateDebounceMs = (): number => this.current.memberUpdateDebounceSeconds * 1000;
 

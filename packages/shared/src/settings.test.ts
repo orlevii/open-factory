@@ -22,7 +22,7 @@ test("a patch is partial and strict: a debounce of 0 is valid, allowLocalRuntime
   );
   expect(patchFactorySettingsSchema.safeParse({}).success).toBe(true);
   expect(patchFactorySettingsSchema.safeParse({ allowLocalRuntime: true }).success).toBe(false);
-  expect(patchFactorySettingsSchema.safeParse({ maxRunningAgents: 2 }).success).toBe(false);
+  expect(patchFactorySettingsSchema.safeParse({ nope: 2 }).success).toBe(false);
 });
 
 test("stored values read with a default for every missing key", () => {

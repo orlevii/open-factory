@@ -78,6 +78,26 @@ export const factorySettingsValuesSchema = z.object({
 });
 export type FactorySettingsValues = z.infer<typeof factorySettingsValuesSchema>;
 
+/**
+ * Reads the stored object key by key: a missing, hand-edited or out-of-range key reads as its default, so one bad
+ * key never stops the factory from booting. (PATCH stays strict.)
+ */
+export function readFactorySettingsValues(raw: unknown): FactorySettingsValues {
+  const stored: Record<string, unknown> =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const defaults = factorySettingsValuesSchema.parse({});
+  const read = (k: keyof FactorySettingsValues) => {
+    const r = factorySettingsValuesSchema.shape[k].safeParse(stored[k]);
+    return r.success ? r.data : defaults[k];
+  };
+  return {
+    warmWindowMinutes: read("warmWindowMinutes"),
+    memberUpdateDebounceSeconds: read("memberUpdateDebounceSeconds"),
+  };
+}
+
 export const factorySettingsSchema = factorySettingsValuesSchema.extend({
   allowLocalRuntime: z.boolean(),
   updatedAt: z.string().nullable(),

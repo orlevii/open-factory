@@ -124,6 +124,63 @@ test("titles by kind", () => {
   ).toBe("Factory about @ops");
 });
 
+test("credential titles: Credential expiring, then Credential expired once past", () => {
+  const cred = (expiresAt: string) =>
+    item(1, {
+      kind: "credential",
+      from: { kind: "factory", name: "factory" },
+      task: undefined,
+      credential: { name: "work", expiresAt, current: true },
+      link: { kind: "credential", name: "work" },
+    });
+  expect(notificationTitle(cred("2099-01-01T00:00:00Z"))).toBe("Credential expiring");
+  expect(notificationTitle(cred("2020-01-01T00:00:00Z"))).toBe("Credential expired");
+});
+
+test("an expired credential title does not depend on current", () => {
+  const signedInAgain = item(1, {
+    kind: "credential",
+    from: { kind: "factory", name: "factory" },
+    task: undefined,
+    credential: { name: "work", expiresAt: "2020-01-01T00:00:00Z", current: false },
+    link: { kind: "credential", name: "work" },
+  });
+  expect(notificationTitle(signedInAgain)).toBe("Credential expired");
+});
+
+test("a credential notification's click opens the credentials deep link", async () => {
+  localStorage.setItem("of-notifications", "1");
+  stubNotification("granted");
+  vi.spyOn(window, "focus").mockImplementation(() => {});
+  let items: InboxItem[] = [];
+  mockApi({
+    "GET /api/inbox/unread-count": () => json({ count: 0 }),
+    "GET /api/inbox?": () => json({ chats: [], items, nextCursor: null }),
+    "POST /api/inbox/i1/read": () => json({ ok: true }),
+    "GET /api/credentials": () => json({ credentials: [] }),
+  });
+  const app = renderApp("/", alice);
+  await screen.findByRole("button", { name: /Alice/ });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  items = [
+    item(1, {
+      kind: "credential",
+      from: { kind: "factory", name: "factory" },
+      task: undefined,
+      credential: { name: "work", expiresAt: "2099-01-01T00:00:00Z", current: true },
+      link: { kind: "credential", name: "work" },
+    }),
+  ];
+  act(() => ws.push({ type: "inbox_changed" }));
+  await waitFor(() => expect(shown).toHaveLength(1));
+  expect(shown[0]?.title).toBe("Credential expiring");
+  act(() => shown[0]?.n.onclick?.());
+  await waitFor(() => expect(app.router.state.location.pathname).toBe("/settings/credentials"));
+  expect(app.router.state.location.search).toEqual({ credential: "work" });
+});
+
 test("unsupported browsers: the hook says so", () => {
   vi.stubGlobal("Notification", undefined);
   const { result } = renderHook(() => useBrowserNotifications());

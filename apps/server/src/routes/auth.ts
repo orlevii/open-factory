@@ -26,6 +26,9 @@ export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
       // update-user runs under the sign-up mutex too, so a user claim is never reclaimed while another user's insert is in
       // flight. The mutex is in-process and assumes one server process (ADR 0013); a multi-instance deployment needs a
       // Postgres advisory lock here as well.
+      const signOut = request.method === "POST" && url.pathname === "/api/auth/sign-out";
+      // Resolved before forwarding: a successful sign-out deletes the session. Spec I3 §5.4. A lookup failure never fails the sign-out.
+      const session = signOut ? await app.auth.api.getSession({ headers }).catch(() => null) : null;
       const res =
         request.method === "POST" && url.pathname === "/api/auth/sign-up/email"
           ? await handleSignUp(
@@ -36,6 +39,7 @@ export async function authRoutes(app: FastifyInstance, { db }: { db: Db }) {
           : request.method === "POST" && url.pathname === "/api/auth/update-user"
             ? await signUpMutex.run("sign-up", () => app.auth.handler(req))
             : await app.auth.handler(req);
+      if (session && res.ok) app.signIn.endFor(session.user.id);
       reply.status(res.status);
       const cookies = res.headers.getSetCookie();
       res.headers.forEach((value, key) => {

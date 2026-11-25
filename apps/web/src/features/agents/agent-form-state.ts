@@ -4,6 +4,7 @@ import {
   type CreateAgentBody,
   type CredentialSummary,
   createAgentBodySchema,
+  MSG,
   type PatchAgentBody,
   slugSchema,
   type TemplateConfig,
@@ -225,7 +226,7 @@ export function useAgentFormState({
     credentials &&
     !credentials.some((c) => c.name === values.credential)
   )
-    staleNotes.credential = FORM_MSG.credentialDeleted;
+    staleNotes.credential = MSG.credentialDeleted;
   const goneProjects =
     create && values.touched.projects && projectList.data
       ? values.projects.filter((p) => !projectList.data?.some((x) => x.name === p))

@@ -1111,6 +1111,7 @@ function storingSecrets() {
 }
 async function addCredential(name: string, token = "sk-ant-oat-1") {
   const d = await child("Add credential");
+  await userEvent.click(await within(d).findByRole("radio", { name: "Paste a token" }));
   await userEvent.type(await within(d).findByLabelText("Name"), name);
   await userEvent.type(within(d).getByLabelText("Token"), token);
   await userEvent.click(within(d).getByRole("button", { name: "Verify and add" }));

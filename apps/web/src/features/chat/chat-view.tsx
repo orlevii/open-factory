@@ -25,13 +25,12 @@ import { JumpPill } from "@/features/session/jump-pill";
 import { registerTimelineRepin } from "@/features/session/session-commands";
 import { SpeakerProvider } from "@/features/session/speaker-line";
 import { useStickToBottom } from "@/features/session/stick-to-bottom";
-import { ARRIVAL_MS, arrive } from "@/features/session/timeline";
 import { useReadFrom } from "@/features/session/use-read-from";
-import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { sessionQueryOptions } from "@/lib/session";
 import { INBOX_DWELL_MS } from "@/lib/timing";
+import { arrive, useArrivalTint } from "@/lib/use-arrival";
 import { ChatComposer } from "./chat-composer";
-import { type Arrival, type CancelNote, ChatRow, rowGap } from "./chat-row";
+import { type CancelNote, ChatRow, rowGap } from "./chat-row";
 import { entryKey, keysOf } from "./chat-state";
 import { outcomeSentence, TurnLine } from "./turn-line";
 import { refreshChat, useChat, useWorkingKey } from "./use-chat";
@@ -204,7 +203,7 @@ function Thread({
     const hit = entries.find((e) => e.kind === "message" && e.id === messageId);
     return hit && entryKey(hit);
   }, [entries, messageId]);
-  const [arrival, setArrival] = useState<Arrival>();
+  const { arrival, start: startArrival, onArrivedEnd } = useArrivalTint();
   const centred = useRef(false);
   const restored = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after every content commit (the height changed)
@@ -218,7 +217,7 @@ function Thread({
       const row = el.querySelector<HTMLElement>(`[data-row="${CSS.escape(targetKey)}"]`);
       row?.scrollIntoView?.({ block: "center" });
       if (row) arrive(row);
-      setArrival("on");
+      startArrival();
       return;
     }
     // The pane: the first unread message at the top when what is unread is taller than the pane, else the bottom.
@@ -244,20 +243,6 @@ function Thread({
     // Pinned: the bottom, at once. Unpinned: the anchor row keeps its place (Load earlier included).
     stick.settle();
   }, [entries, working, loaded, targetKey, unreadKey, stick, slug, windowed]);
-  // The tint fades after 2s of visible time; hidden, the clock stops.
-  const visible = useDocumentVisible();
-  const arrivalLeft = useRef(ARRIVAL_MS);
-  useEffect(() => {
-    if (arrival !== "on" || !visible) return;
-    const start = Date.now();
-    const t = setTimeout(() => setArrival("fading"), arrivalLeft.current);
-    return () => {
-      clearTimeout(t);
-      arrivalLeft.current = Math.max(0, arrivalLeft.current - (Date.now() - start));
-    };
-  }, [arrival, visible]);
-  const onArrivedEnd = useCallback(() => setArrival(undefined), []);
-
   // Cancel and Undo of a held message of yours, in the row's place.
   const [notes, setNotes] = useState<ReadonlyMap<string, CancelNote>>(NO_NOTES);
   const setNote = useCallback((id: string, note: CancelNote | undefined) => {

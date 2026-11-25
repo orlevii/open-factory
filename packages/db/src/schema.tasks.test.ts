@@ -106,3 +106,21 @@ test("a message's comment must belong to its task (composite FK)", async () => {
     sql`insert into messages (id,kind,from_agent_id,task_id,comment_id,to_agent_id,body) values ('f1','task_comment','a2','t2','k1','a1','x')`,
   ).rejects.toThrow(/foreign key/i);
 });
+
+test("a credential notice: the credential inbox kind, and the notice cascades with its credential", async () => {
+  await sql`insert into credentials (id,name,kind,value_enc) values ('c9','unused','oauth_token','\\x00')`;
+  await ok(
+    sql`insert into messages (id,kind,notice,subject_credential_id,to_all_humans,body,state) values ('cn1','system','credential_expiring','c9',true,'work expires on 2027-11-12.','delivered') returning id`,
+  );
+  await ok(
+    sql`insert into inbox_items (id,user_id,kind,message_id) values ('ci1','u1','credential','cn1') returning id`,
+  );
+  await bad(
+    sql`insert into inbox_items (id,user_id,kind,message_id) values ('ci2','u1','bogus','cn1')`,
+  );
+  await sql`delete from credentials where id = 'c9'`;
+  const [m] = await sql`select count(*)::int as n from messages where subject_credential_id = 'c9'`;
+  const [i] = await sql`select count(*)::int as n from inbox_items where message_id = 'cn1'`;
+  expect(m?.n).toBe(0);
+  expect(i?.n).toBe(0);
+});

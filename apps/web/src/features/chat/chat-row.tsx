@@ -8,12 +8,11 @@ import { RowGutter, useRowLongPress } from "@/features/session/row-chrome";
 import { useSendPhase } from "@/features/session/send-phase";
 import { SpeakerLine } from "@/features/session/speaker-line";
 import { ROW_GUTTER } from "@/features/session/timeline-item";
+import type { Arrival } from "@/lib/use-arrival";
 import { AlsoTo } from "./also-to";
 import { ChatRowMenu, type MessageEntry } from "./chat-row-menu";
 import { entryKey, isSending } from "./chat-state";
 
-/** The deep-link tint's phase: shown, then fading until its `transitionend` (the session's rule). */
-export type Arrival = "on" | "fading";
 /** A message of yours the Chat shows as cancelled, in its place (I1 §6.4). */
 export type CancelNote = {
   error?: string;

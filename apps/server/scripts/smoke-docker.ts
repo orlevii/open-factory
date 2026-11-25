@@ -360,7 +360,7 @@ try {
   await conn.sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
 
   await step("0. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step("0. temp git repo registered as project smoke-repo", () =>
     app.projects.create({ name: "smoke-repo", hostPath: repoDir }),

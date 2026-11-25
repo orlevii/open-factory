@@ -9,6 +9,8 @@ export const credential = (name = "work", kind: "oauth_token" | "api_key" = "oau
   kind,
   lastVerifiedAt: "2026-11-19T08:00:00.000Z",
   lastError: null,
+  expiresAt: null,
+  rejected: false,
   usedBy: [],
   archivedUsedBy: [],
   rateLimit: null,

@@ -15,6 +15,7 @@ export function SheetFormFooter({
   left,
   submitClassName,
   outcome,
+  hideSubmit,
 }: {
   submitLabel: string;
   pendingLabel: string;
@@ -26,6 +27,8 @@ export function SheetFormFooter({
   submitClassName?: string;
   /** The reserved line above the buttons: errors, success and a muted notice that describes the submit button. */
   outcome: Outcome;
+  /** No primary at all, for a step the user can't take (DESIGN.md: never a dead primary). */
+  hideSubmit?: boolean;
 }) {
   const noticeId = useId();
   const mobile = useSheetMobile();
@@ -66,7 +69,7 @@ export function SheetFormFooter({
       </Button>
     </SheetClose>
   );
-  const submit = (
+  const submit = hideSubmit ? null : (
     <Button
       type="submit"
       aria-disabled={pending || undefined}

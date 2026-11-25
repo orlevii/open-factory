@@ -9,6 +9,61 @@ import { createInterface } from "node:readline";
 process.title = "claude";
 
 const argv0 = process.argv.slice(2);
+if (argv0[0] === "setup-token") {
+  const { SYNTHETIC_URL, SYNTHETIC_TOKEN } = await import("./synthetic-sign-in.mjs");
+  if (process.env.FAKE_CLAUDE_DIR)
+    writeFileSync(`${process.env.FAKE_CLAUDE_DIR}/setup-token.pid`, String(process.pid));
+  if (!process.stdin.isTTY) {
+    process.stderr.write("Raw mode is not supported\n");
+    process.exit(1);
+  }
+  process.stdin.setRawMode(true); // before the prompt is written: a client may answer as soon as it sees it
+  const ESC = "\x1b",
+    cols = process.stdout.columns || 80;
+  const cha = (words) => words.join(`${ESC}[9G`);
+  process.stdout.write(
+    `Welcome to Claude Code v0.0.0-fake\r\n\r\n${cha(["Browser", "didn't", "open?", "Use", "the", "url", "below", "to", "sign", "in", "(c", "to", "copy)"])}\r\n\r\n`,
+  );
+  process.stdout.write(
+    `${ESC}]8;;${SYNTHETIC_URL}${ESC}\\${SYNTHETIC_URL.slice(0, cols - 1)}${ESC}]8;;${ESC}\\\r\n\r\n`,
+  );
+  process.stdout.write(
+    "Hold Shift while selecting to use your terminal's native copy.\r\n\r\nPaste code here if prompted > ",
+  );
+  let buf = "";
+  process.stdin.on("data", (d) => {
+    const s = d.toString("utf8");
+    if (s !== "\r") {
+      buf += s;
+      process.stdout.write("*".repeat(s.length));
+      return;
+    }
+    process.stdin.pause();
+    if (buf === "bad") {
+      process.stdout.write("\r\nOAuth error: Invalid code\r\nPress Enter to retry.\r\n");
+      buf = "";
+      process.stdin.resume();
+      return;
+    }
+    const done = () => {
+      const lines = SYNTHETIC_TOKEN.match(new RegExp(`.{1,${cols}}`, "g")) ?? [];
+      process.stdout.write(
+        `\r\n\u2713 Long-lived authentication token created successfully!\r\n\rYour OAuth token (valid for 1 year):\r\r\n${lines.join("\r\n")}\r\rStore this token securely. You won't be able to see it again.\r\n`,
+      );
+      process.exit(0);
+    };
+    if (buf === "slow") setTimeout(done, 70_000);
+    else done();
+  });
+  // A CLI that outlives a terminal hangup (only the group kill can stop it), for transport tests.
+  if (process.env.FAKE_CLAUDE_STUBBORN) {
+    process.on("SIGHUP", () => {});
+    process.stdin.on("error", () => {});
+    process.stdout.on("error", () => {});
+    setInterval(() => {}, 60_000);
+  } else process.stdin.on("end", () => process.exit(1));
+  await new Promise(() => {}); // never falls through to the plugin block or the scenario code
+}
 if (argv0[0] === "plugin") {
   const cfg = process.env.CLAUDE_CONFIG_DIR;
   // Like Claude, apply `env` from the config-dir and project settings (S5 R1: that is how a planted

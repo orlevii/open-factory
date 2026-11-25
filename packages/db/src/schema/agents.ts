@@ -173,6 +173,13 @@ export const messages = pgTable(
     notice: text("notice"),
     fromAgentId: text("from_agent_id").references((): AnyPgColumn => agents.id),
     subjectAgentId: text("subject_agent_id").references((): AnyPgColumn => agents.id),
+    // I3: the credential a `system` notice is about; deleting the credential deletes its notices.
+    subjectCredentialId: text("subject_credential_id").references(
+      (): AnyPgColumn => credentials.id,
+      {
+        onDelete: "cascade",
+      },
+    ),
     toAgentId: text("to_agent_id").references(() => agents.id, { onDelete: "cascade" }),
     toUserId: text("to_user_id").references(() => users.id),
     toAllHumans: boolean("to_all_humans").notNull().default(false),
@@ -229,7 +236,7 @@ export const inboxItems = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    kind: text("kind").notNull().$type<"message" | "mention" | "task_event">(),
+    kind: text("kind").notNull().$type<"message" | "mention" | "task_event" | "credential">(),
     messageId: text("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),

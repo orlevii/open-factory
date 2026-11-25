@@ -555,7 +555,7 @@ try {
     patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 180 }),
   );
   await step("1. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step(`1. template msg (${LOCAL ? "local" : "docker"}, haiku) is valid`, async () => {
     writeTemplate("msg", {

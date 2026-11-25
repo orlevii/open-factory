@@ -14,8 +14,8 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import { readViewPosition, useRememberPosition } from "@/features/agents/view-memory";
-import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { runInstantOn } from "@/lib/run-instant";
+import { arrive, useArrivalTint } from "@/lib/use-arrival";
 import { childrenOf, groupOpen, heldSeqs, innerKey, isFold } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import { rowOf } from "./row-of";
@@ -24,7 +24,7 @@ import { registerTimelineRepin } from "./session-commands";
 import type { LiveText } from "./session-state";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
 import type { RowProgress } from "./timeline-item";
-import { type Arrival, rowGap, TimelineItem } from "./timeline-item";
+import { rowGap, TimelineItem } from "./timeline-item";
 
 const NO_KEYS: ReadonlySet<string> = new Set();
 const NO_TEXTS: readonly LiveText[] = [];
@@ -69,25 +69,6 @@ function useLiveRows(texts: readonly LiveText[], head: boolean, off: boolean): r
 }
 /** What a toggle that resizes the timeline calls first, and what re-pins it (U3 §8.1). */
 export type TimelineHandle = Pick<StickToBottom, "captureAnchor" | "expandAnchor" | "repin">;
-
-/** Visible time the deep-link tint holds before it fades (U3 §7.4, Q28). */
-export const ARRIVAL_MS = 2000;
-
-/** Focuses a deep-linked row without scrolling again. A programmatic focus after a mouse navigation
- *  may not match `:focus-visible`; the row then carries `data-focus-ring`, styled the same, until it
- *  loses focus ("ring = focus"). */
-export function arrive(row: HTMLElement) {
-  row.focus({ preventScroll: true });
-  let visible = false;
-  try {
-    visible = row.matches(":focus-visible");
-  } catch {
-    // An engine without :focus-visible: the stand-in ring.
-  }
-  if (visible) return;
-  row.setAttribute("data-focus-ring", "");
-  row.addEventListener("blur", () => row.removeAttribute("data-focus-ring"), { once: true });
-}
 
 const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]";
 
@@ -175,7 +156,7 @@ export function Timeline(props: {
   }, [rows, highlight, props.highlightMessageId]);
   const litKey = litPath?.[0];
   const arrivedKey = litPath?.at(-1);
-  const [arrival, setArrival] = useState<Arrival>();
+  const { arrival, start: startArrival, onArrivedEnd } = useArrivalTint();
 
   // Runs after every rows commit (the height changed).
   useLayoutEffect(() => {
@@ -212,7 +193,7 @@ export function Timeline(props: {
       );
       target?.scrollIntoView?.({ block: "center" });
       if (target) arrive(target);
-      setArrival("on");
+      startArrival();
       return;
     }
     if (!restored.current && rows.length > 0) {
@@ -227,22 +208,7 @@ export function Timeline(props: {
     // Pinned: the bottom, instantly (events arrive tens of times a minute). Unpinned: the anchor
     // row keeps its place, a Load earlier prepend included.
     stick.settle();
-  }, [rows, litPath, expanded, stick, props.slug, windowed]);
-
-  // The tint fades after 2s of visible time (U3 §7.4): hidden, the clock stops and keeps what's left.
-  // An effect runs after the row painted, so the 2s start from the first frame that shows it.
-  const visible = useDocumentVisible();
-  const arrivalLeft = useRef(ARRIVAL_MS);
-  useEffect(() => {
-    if (arrival !== "on" || !visible) return;
-    const start = Date.now();
-    const t = setTimeout(() => setArrival("fading"), arrivalLeft.current);
-    return () => {
-      clearTimeout(t);
-      arrivalLeft.current = Math.max(0, arrivalLeft.current - (Date.now() - start));
-    };
-  }, [arrival, visible]);
-  const onArrivedEnd = useCallback(() => setArrival(undefined), []);
+  }, [rows, litPath, expanded, stick, props.slug, windowed, startArrival]);
 
   const arrived = useMemo(
     () => arrivedSince(rows, seen?.seq, handedOff, seen?.live),

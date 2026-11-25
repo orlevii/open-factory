@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -19,6 +20,9 @@ import { ViewSwitch } from "@/features/agents/view-switch";
 import { ChatBody, type PaneOptions } from "@/features/chat/chat-view";
 import { formatInboxTime } from "@/features/session/format";
 import { StatusBadge } from "@/features/session/status-badge";
+import { formatExpiryDate } from "@/features/settings/sign-in/expiry";
+import { sheetIntent } from "@/features/sheets/sheet-bodies";
+import { openSheet } from "@/features/sheets/sheet-store";
 import { taskDetailOptions } from "@/features/tasks/api";
 import { CommentBlock } from "@/features/tasks/comment-block";
 import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/comment-composer";
@@ -31,6 +35,7 @@ import {
   inboxQueryOptions,
   useOpenItem,
 } from "./api";
+import { aboutOf } from "./credential-notice";
 
 /** Static plates where a pane body will be. */
 function ExcerptSkeleton() {
@@ -49,15 +54,16 @@ function ExcerptSkeleton() {
 
 /** The sender as the pane's header shows it: a 20px chip for an agent, otherwise the name. */
 function Sender({ item }: { item: InboxItem }) {
+  const about = aboutOf(item);
   if (item.from.kind === "agent") return <AgentChip slug={item.from.name} size={20} />;
   if (item.from.kind === "factory")
     return (
       <span className="truncate">
         Factory
-        {item.about && (
+        {about && (
           <span className="text-muted-foreground">
             {" "}
-            about <span className="font-mono">@{item.about}</span>
+            about <span className="font-mono">{about}</span>
           </span>
         )}
       </span>
@@ -67,10 +73,17 @@ function Sender({ item }: { item: InboxItem }) {
 
 /** The exact target, as the row links it. */
 function OpenLink({ item }: { item: InboxItem }) {
-  const link = item.link;
   return (
     <Button asChild variant="outline" size="sm" className="shrink-0">
-      {link.kind === "task" ? (
+      <OpenLinkTarget link={item.link} />
+    </Button>
+  );
+}
+
+function OpenLinkTarget({ link }: { link: InboxItem["link"] }) {
+  switch (link.kind) {
+    case "task":
+      return (
         <Link
           to="/tasks/$key"
           params={{ key: link.key }}
@@ -78,7 +91,9 @@ function OpenLink({ item }: { item: InboxItem }) {
         >
           Open task
         </Link>
-      ) : link.seq === undefined ? (
+      );
+    case "session":
+      return link.seq === undefined ? (
         <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }}>
           Open chat
         </Link>
@@ -90,9 +105,18 @@ function OpenLink({ item }: { item: InboxItem }) {
         >
           Open in session
         </Link>
-      )}
-    </Button>
-  );
+      );
+    case "credential":
+      return (
+        <Link to="/settings/credentials" search={{ credential: link.name }}>
+          Open credentials
+        </Link>
+      );
+    default: {
+      const unhandled: never = link;
+      return unhandled;
+    }
+  }
 }
 
 const BODY = "min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6";
@@ -165,6 +189,47 @@ function NoticeContent({ item }: { item: InboxItem }) {
       <p className="max-w-[52rem] text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
         {item.preview}
       </p>
+    </Body>
+  );
+}
+
+/** A credential's expiry: the live fact from `expiresAt` (not the stored body), then Sign in again. No reply. */
+function CredentialContent({
+  item,
+  link,
+}: {
+  item: InboxItem;
+  link: Extract<InboxItem["link"], { kind: "credential" }>;
+}) {
+  const { name } = link;
+  const intent = useMemo(
+    () => sheetIntent("sign-in-again", { kind: "sign-in-again", name }),
+    [name],
+  );
+  const credential = item.credential;
+  const at = credential?.expiresAt ? new Date(credential.expiresAt) : undefined;
+  // Read per render: the pane is not memoised.
+  const fact = at
+    ? `${name} ${at.getTime() <= Date.now() ? "expired" : "expires"} on ${formatExpiryDate(at)}.`
+    : item.preview;
+  return (
+    <Body>
+      <div className="grid max-w-[52rem] justify-items-start gap-3">
+        <p className="text-sm [overflow-wrap:anywhere]">{fact}</p>
+        {credential?.current === false ? (
+          <p className={muted}>Already signed in again.</p>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            {...intent}
+            onClick={() => openSheet({ kind: "sign-in-again", name })}
+          >
+            Sign in again
+          </Button>
+        )}
+      </div>
     </Body>
   );
 }
@@ -350,6 +415,23 @@ function TaskContent({
   );
 }
 
+/** The body by link kind; a new kind fails to compile here. */
+function PaneBody({ item }: { item: InboxItem }) {
+  const link = item.link;
+  switch (link.kind) {
+    case "session":
+      return <NoticeContent item={item} />;
+    case "task":
+      return <TaskContent item={item} link={link} />;
+    case "credential":
+      return <CredentialContent item={item} link={link} />;
+    default: {
+      const unhandled: never = link;
+      return unhandled;
+    }
+  }
+}
+
 function PaneItem({
   id,
   loaded,
@@ -390,10 +472,8 @@ function PaneItem({
         <Body>
           <ExcerptSkeleton />
         </Body>
-      ) : item.link.kind === "session" ? (
-        <NoticeContent key={item.id} item={item} />
       ) : (
-        <TaskContent key={item.id} item={item} link={item.link} />
+        <PaneBody key={item.id} item={item} />
       )}
     </>
   );

@@ -357,6 +357,17 @@
   outline-offset: -2px;
 }
 
+/* The credentials page's arrival (I3 §8.6) focuses the credential row (`[data-credential-row]`, tabindex -1) or
+   its Sign in again button (`[data-sign-in-again]`). Both take the same inset ring: the row on :focus-visible
+   or `data-focus-ring` (mouse arrival), the button on `data-focus-ring` only (its own :focus-visible ring
+   stays the global one). Scoped to these attributes so nothing else picks it up. */
+[data-credential-row]:focus-visible,
+[data-credential-row][data-focus-ring],
+[data-sign-in-again][data-focus-ring] {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
 /* A row's ⋯ sits flush with the log's right edge, which clips horizontally: its ring goes inset too,
    or its right side is cut off. */
 [data-row-menu]:focus-visible {

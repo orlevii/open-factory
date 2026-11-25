@@ -507,3 +507,92 @@ test("at 1024px and up a click selects the chat (?item=chat:<slug>) and marks no
   expect(rowOf("ada")).toHaveAttribute("aria-current", "true");
   expect(api.calls.filter((c) => c.method === "POST")).toEqual([]);
 });
+
+const credItem = (c: { name: string; expiresAt: string | null; current: boolean }, o = {}) =>
+  item(1, {
+    kind: "credential",
+    read: false,
+    from: { kind: "factory", name: "factory" },
+    to: "@alice",
+    credential: c,
+    link: { kind: "credential", name: c.name },
+    ...o,
+  });
+
+test("credential row: 'Factory about work' then the live state; the accessible name names the expiry", async () => {
+  // Now is 19 Nov 2026 15:00 local; 9 days on.
+  const expiresAt = new Date(2026, 10, 28, 12, 0).toISOString();
+  mockApi({
+    "GET /api/inbox?": () =>
+      json({
+        chats: [],
+        items: [credItem({ name: "work", expiresAt, current: true })],
+        nextCursor: null,
+      }),
+  });
+  renderApp("/inbox", alice);
+  const link = await screen.findByRole("link", {
+    name: "Unread, Factory, work expires in 9 days, 14:32",
+  });
+  expect(link).toHaveTextContent(/^Factory\s*about work/);
+  expect(link).toHaveTextContent("Expires in 9 days");
+  // The stored body ("preview 1") is not rendered or described: the live line is the only state.
+  expect(link).not.toHaveTextContent("preview 1");
+  expect(link).not.toHaveAttribute("aria-describedby");
+});
+
+test("credential row below 1024px links to /settings/credentials?credential=work", async () => {
+  fakeMatchMedia.installWidth(800);
+  const expiresAt = new Date(2026, 10, 28, 12, 0).toISOString();
+  mockApi({
+    "GET /api/inbox?": () =>
+      json({
+        chats: [],
+        items: [credItem({ name: "work", expiresAt, current: true })],
+        nextCursor: null,
+      }),
+  });
+  renderApp("/inbox", alice);
+  const link = await screen.findByRole("link", { name: /Factory, work expires/ });
+  expect(link).toHaveAttribute("href", "/settings/credentials?credential=work");
+});
+
+test("a credential that was signed in again reads 'Signed in again'; never a session link", async () => {
+  const expiresAt = new Date(2026, 10, 12).toISOString();
+  mockApi({
+    "GET /api/inbox?": () =>
+      json({
+        chats: [],
+        items: [credItem({ name: "work", expiresAt, current: false }, { read: true })],
+        nextCursor: null,
+      }),
+  });
+  renderApp("/inbox", alice);
+  const link = await screen.findByRole("link", { name: "Factory, work signed in again, 14:32" });
+  expect(link).toHaveTextContent("Signed in again");
+  expect(link.getAttribute("href")).not.toMatch(/\/agents\//);
+});
+
+test("the row's expiry text follows the now prop, not the wall clock (memo contract)", async () => {
+  const { InboxRow } = await import("./inbox-row");
+  const { render } = await import("@testing-library/react");
+  const { createMemoryHistory, createRootRoute, createRouter, RouterProvider } = await import(
+    "@tanstack/react-router"
+  );
+  const expiresAt = new Date(2026, 10, 28, 12, 0).toISOString();
+  const row = credItem({ name: "work", expiresAt, current: true }) as never;
+  const rows = (now: number) => <InboxRow item={row} now={now} onOpen={() => {}} />;
+  const router = createRouter({
+    routeTree: createRootRoute({ component: () => <ul>{rows(Date.UTC(2026, 10, 19, 12))}</ul> }),
+    history: createMemoryHistory(),
+  });
+  // The system clock stays on 19 Nov; the prop says 27 Nov.
+  const { findByText } = render(<RouterProvider router={router} />);
+  expect(await findByText("Expires in 9 days")).toBeInTheDocument();
+  const later = createRouter({
+    routeTree: createRootRoute({ component: () => <ul>{rows(Date.UTC(2026, 10, 27, 12))}</ul> }),
+    history: createMemoryHistory(),
+  });
+  const second = render(<RouterProvider router={later} />);
+  expect(await second.findByText("Expires tomorrow")).toBeInTheDocument();
+});

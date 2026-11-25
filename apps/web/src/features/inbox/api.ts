@@ -78,9 +78,21 @@ export const inboxItemOptions = (id: string) =>
       ),
   });
 
-/** Warms what the reading pane shows for `item`: its task (a notice has nothing to fetch). */
+/** Warms what the reading pane shows for `item`: its task (a notice or a credential has nothing to fetch). */
 export function prefetchPane(qc: QueryClient, item: InboxItem) {
-  if (item.link.kind === "task") void qc.prefetchQuery(taskDetailOptions(item.link.key));
+  const link = item.link;
+  switch (link.kind) {
+    case "task":
+      void qc.prefetchQuery(taskDetailOptions(link.key));
+      return;
+    case "session":
+    case "credential":
+      return;
+    default: {
+      const unhandled: never = link;
+      return unhandled;
+    }
+  }
 }
 
 /** Warms a chat row's pane: the chat's newest page. */

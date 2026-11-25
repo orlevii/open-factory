@@ -246,10 +246,10 @@ try {
 
   // 1. Credentials (each create runs the real verification turn).
   await step("1. credential smoke-a created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke-a", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke-a", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step("1. credential smoke-b created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke-b", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke-b", kind: "oauth_token", value: token, expiresAt: null }),
   );
   {
     // A made-up value, never the real one: verification must reject it and store nothing.
@@ -259,6 +259,7 @@ try {
         name: "smoke-bad",
         kind: "oauth_token",
         value: "sk-ant-oat01-smoke-invalid-value-0000000000",
+        expiresAt: null,
       });
     } catch (err) {
       code = err instanceof ApiError ? `${err.status} ${err.code}` : String(err);

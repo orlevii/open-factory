@@ -33,6 +33,8 @@ const cred = (o: Partial<CredentialSummary> = {}): CredentialSummary => ({
   kind: "oauth_token",
   lastVerifiedAt: hoursAgo(2),
   lastError: null,
+  expiresAt: null,
+  rejected: false,
   usedBy: [],
   archivedUsedBy: [],
   rateLimit: null,
@@ -92,7 +94,7 @@ const describedText = (el: HTMLElement) =>
     .map((id) => document.getElementById(id)?.textContent ?? "")
     .join(" ");
 
-test("add credential: kind radios, a password field, Verifying…, a rejected token under the field, then the row", async () => {
+test("add credential: method radios, a password field, Verifying…, a rejected token under the field, then the row", async () => {
   let release: (r: Response) => void = () => {};
   const { api, state } = world({
     extra: {
@@ -105,10 +107,11 @@ test("add credential: kind radios, a password field, Verifying…, a rejected to
   renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
+  expect(within(region).getByLabelText("Name")).toHaveFocus();
+  await userEvent.click(within(region).getByRole("radio", { name: "Paste a token" }));
+  expect(within(region).getByRole("radio", { name: "Paste a token" })).toBeChecked();
+  expect(within(region).getByRole("radio", { name: "Paste an API key" })).not.toBeChecked();
   const name = within(region).getByLabelText("Name");
-  expect(name).toHaveFocus();
-  expect(within(region).getByRole("radio", { name: /OAuth token/ })).toBeChecked();
-  expect(within(region).getByRole("radio", { name: "API key" })).not.toBeChecked();
   const token = within(region).getByLabelText("Token");
   expect(token).toHaveAttribute("type", "password");
   expect(token).toHaveAttribute("autocomplete", "new-password");
@@ -170,7 +173,7 @@ test("add credential: an unverifiable check is a warning, not a bad token", asyn
   const region = await section("Credentials");
   await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
   await userEvent.type(within(region).getByLabelText("Name"), "work");
-  await userEvent.click(within(region).getByRole("radio", { name: "API key" }));
+  await userEvent.click(within(region).getByRole("radio", { name: "Paste an API key" }));
   const key = within(region).getByLabelText("Key");
   await userEvent.type(key, "sk-ant");
   await userEvent.click(within(region).getByRole("button", { name: "Verify and add" }));
@@ -323,7 +326,7 @@ test("deleting an unused credential confirms, then calls DELETE", async () => {
   await userEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
   const dialog = screen.getByRole("alertdialog", { name: "Delete credential work?" });
   expect(dialog).toHaveTextContent(
-    "Its token is erased and can't be shown again. To use it later, create a new one with claude setup-token.",
+    "Its token is erased and can't be shown again. To use it later, add it again with Sign in with Claude.",
   );
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
   await userEvent.click(within(dialog).getByRole("button", { name: "Delete work" }));

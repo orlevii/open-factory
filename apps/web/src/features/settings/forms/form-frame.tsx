@@ -23,6 +23,7 @@ export function FormFrame({
   pending,
   outcome,
   autoFocusId,
+  autoFocus = true,
   reveal,
   left,
   ref,
@@ -38,6 +39,8 @@ export function FormFrame({
   outcome: Outcome;
   ref?: Ref<HTMLFormElement>;
   autoFocusId?: string;
+  /** False: no focus on mount (a restored sign-in moves focus itself, spec §8.2). */
+  autoFocus?: boolean;
   reveal?: boolean;
   /** Sheet frame only: a quiet note at the footer's left ("Draft restored · Discard"). */
   left?: ReactNode;
@@ -58,7 +61,7 @@ export function FormFrame({
   );
   // biome-ignore lint/correctness/useExhaustiveDependencies: focus once, when the form opens
   useEffect(() => {
-    if (frame !== "sheet") return;
+    if (frame !== "sheet" || !autoFocus) return;
     const t = setTimeout(() => {
       const el = form.current;
       if (!el) return;
@@ -85,6 +88,7 @@ export function FormFrame({
         outcome={outcome}
         ref={setForm}
         autoFocusId={autoFocusId}
+        autoFocus={autoFocus}
         reveal={reveal}
       >
         {children}

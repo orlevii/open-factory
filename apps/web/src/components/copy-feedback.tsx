@@ -15,7 +15,8 @@ const HOLD_MS = { copied: 1500, failed: 3000 } as const;
 export function useCopy(): {
   state: CopyState;
   instant: boolean;
-  copy(text: string, viaKeyboard: boolean): void;
+  /** Resolves true once the text is on the clipboard, so a caller can move focus on success (spec I3 §8.2). */
+  copy(text: string, viaKeyboard: boolean): Promise<boolean>;
 } {
   // `n` counts outcomes, so a copy within the hold restarts it (the state alone stays "copied").
   const [{ state, instant, n }, set] = useState<{
@@ -30,14 +31,13 @@ export function useCopy(): {
     return () => clearTimeout(t);
   }, [state, n]);
   const copy = useCallback((text: string, viaKeyboard: boolean) => {
-    const done = (next: CopyState) =>
+    const done = (next: CopyState) => {
       set((s) => ({ state: next, instant: viaKeyboard, n: s.n + 1 }));
+      return next === "copied";
+    };
     const write = navigator.clipboard?.writeText(text);
-    if (!write) {
-      done("failed");
-      return;
-    }
-    write.then(
+    if (!write) return Promise.resolve(done("failed"));
+    return write.then(
       () => done("copied"),
       () => done("failed"),
     );

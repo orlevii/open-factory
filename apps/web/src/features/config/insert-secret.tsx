@@ -4,7 +4,6 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { secretsQueryOptions } from "@/features/settings/api";
-import { openSheetForResult } from "@/features/sheets/sheet-store";
 import { CONFIG_COPY } from "./messages";
 
 /** Where a value's caret was when it was left: saved on blur (which also covers touch), in a ref, never in state. */
@@ -27,34 +26,37 @@ export function insertReference(
 
 /**
  * "Insert secret" (spec §12.2), the ghost action in a value's label row. It opens a popover from its trigger with the
- * factory's secrets and "Add secret", which opens the Add secret sheet and inserts the new name on return. The caller
- * inserts (`onPick`) and moves focus back into its value, so the popover doesn't return focus to this trigger then.
+ * factory's secrets and "Add secret", which the caller answers by expanding Add secret inline (`onAddSecret`, with the
+ * trigger to return focus to). The caller inserts (`onPick`) and moves focus into its value, so the popover doesn't
+ * return focus to this trigger then.
  */
 export function InsertSecret({
   label,
   onPick,
+  onAddSecret,
 }: {
   /** "Insert secret into header value 2": rows repeat, so each trigger names its value. */
   label: string;
-  /** A picked name. `fromSheet`: it came back from Add secret, whose close returns focus itself. */
-  onPick: (name: string, fromSheet: boolean) => void;
+  onPick: (name: string) => void;
+  onAddSecret: (trigger: HTMLElement | null) => void;
 }) {
+  const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const picked = useRef(false);
   const pick = (name: string) => {
     picked.current = true;
     setOpen(false);
-    onPick(name, false);
+    onPick(name);
   };
   const addSecret = () => {
     picked.current = true;
     setOpen(false);
-    openSheetForResult({ kind: "add-secret", name: "" }, (name) => onPick(name, true));
+    onAddSecret(trigger.current);
   };
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="ghost" size="xs" aria-label={label}>
+        <Button ref={trigger} type="button" variant="ghost" size="xs" aria-label={label}>
           {CONFIG_COPY.insertSecret}
         </Button>
       </PopoverTrigger>

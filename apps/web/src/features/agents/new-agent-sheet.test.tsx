@@ -2,14 +2,8 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
-import { clearDraft, hasDraft, resetDrafts } from "@/features/sheets/drafts";
-import {
-  closeSheet,
-  getSheetState,
-  openSheet,
-  resetSheets,
-  takeChildReturnFocus,
-} from "@/features/sheets/sheet-store";
+import { clearDraft, clearInlineDrafts, hasDraft, resetDrafts } from "@/features/sheets/drafts";
+import { closeSheet, getSheetState, openSheet, resetSheets } from "@/features/sheets/sheet-store";
 import {
   agentSummary,
   credential,
@@ -37,6 +31,7 @@ vi.mock("@/components/ui/toaster", async (orig) => ({
 beforeEach(() => {
   fakeMatchMedia.install(false);
   clearDraft("new-agent");
+  clearInlineDrafts("new-agent");
   vi.mocked(notify).mockClear();
 });
 afterEach(() => {
@@ -145,7 +140,7 @@ test("leaving an unchosen Credential for its own Add credential button doesn't f
   expect(trigger).not.toHaveAttribute("aria-invalid");
   act(() => trigger.focus());
   await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
-  await screen.findByRole("dialog", { name: "Add credential" });
+  await screen.findByRole("group", { name: "Add credential" });
   expect(trigger).not.toHaveAttribute("aria-invalid");
 });
 
@@ -588,7 +583,7 @@ test("leaving a changed Credential that is now gone for Add credential doesn't f
   await vi.waitFor(() => expect(field("Credential")).toHaveTextContent("Choose a credential"));
   act(() => field("Credential").focus());
   await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
-  await child("Add credential");
+  await inline("Add credential");
   // "Choose a credential." stays as More options' reason; the field's note line is what must stay empty.
   expect(dialog.querySelector("#field-credential-error")).not.toHaveAttribute("data-shown");
   expect(field("Credential")).not.toHaveAttribute("aria-invalid");
@@ -786,7 +781,7 @@ test("a late success over a New agent reopened on the sent values clears the dra
   expect(posts(api)).toHaveLength(1);
 });
 
-test("a late success over a reopened, untouched New agent keeps it open while a stacked child is on it", async () => {
+test("a late success over a reopened, untouched New agent keeps it open while a stacked New template is on it", async () => {
   const post = held();
   await openLead({ extra: { ...created(), "POST /api/agents": post.route } });
   await userEvent.clear(field("Display name"));
@@ -797,13 +792,12 @@ test("a late success over a reopened, untouched New agent keeps it open while a 
   act(() => openSheet({ kind: "new-agent" }));
   const parent = await sheet();
   expect(await screen.findByLabelText("Display name")).toHaveValue("Team Lead");
-  await userEvent.click(more());
-  await userEvent.click(within(parent).getByRole("button", { name: "Add credential" }));
-  await screen.findByRole("dialog", { name: "Add credential" });
+  await userEvent.click(within(parent).getByRole("button", { name: "New template" }));
+  await screen.findByRole("dialog", { name: "New template" });
   await act(async () => post.answer(json({ agent: agentSummary({ slug: "team-lead" }) }, 201)));
   await waitFor(() => expect(notify).toHaveBeenCalled());
   // The child (and whatever the user is typing in it) stays; the sent draft is still cleared.
-  expect(getSheetState().child?.kind).toBe("add-credential");
+  expect(getSheetState().child?.kind).toBe("new-template");
   expect(getSheetState().parent?.kind).toBe("new-agent");
   expect(hasDraft("new-agent")).toBe(false);
 });
@@ -1075,11 +1069,12 @@ test("the manager picker pads by depth, at most three levels, then marks deeper 
   ]);
 });
 
-// --- Stacked setup sheets (§7) ---
+// --- Inline prerequisites (spec §4.9) ---
 
 const child = (name: string) => screen.findByRole("dialog", { name });
-/** The parent sits under a modal child: its contents are aria-hidden, so queries reach them by id. */
-const parentField = (id: string) => document.getElementById(id) as HTMLElement;
+/** An inline prerequisite: a group, never a nested form. */
+const inline = (name: string) => screen.findByRole("group", { name });
+const noGroup = (name: string) => expect(screen.queryByRole("group", { name })).toBeNull();
 /** A GET that answers only when the test says so, with the list the test passes. */
 function heldList<T>(key: string) {
   const answers: ((r: Response) => void)[] = [];
@@ -1119,58 +1114,141 @@ function storingSecrets() {
     },
   };
 }
-async function addCredential(name: string, token = "sk-ant-oat-1") {
-  const d = await child("Add credential");
-  await userEvent.click(await within(d).findByRole("radio", { name: "Paste a token" }));
-  await userEvent.type(await within(d).findByLabelText("Name"), name);
-  await userEvent.type(within(d).getByLabelText("Token"), token);
-  await userEvent.click(within(d).getByRole("button", { name: "Verify and add" }));
-  return d;
+async function fillCredential(name: string, token = "sk-ant-oat-1") {
+  const g = await inline("Add credential");
+  await userEvent.click(await within(g).findByRole("radio", { name: "Paste a token" }));
+  await userEvent.type(await within(g).findByLabelText("Name"), name);
+  await userEvent.type(within(g).getByLabelText("Token"), token);
+  return g;
+}
+async function addCredential(name: string, token?: string) {
+  const g = await fillCredential(name, token);
+  await userEvent.click(within(g).getByRole("button", { name: "Verify and add" }));
+  return g;
 }
 async function openAddCredential(world: World = {}) {
   const r = await openLead(world);
   await userEvent.click(more());
-  await userEvent.click(within(r.dialog).getByRole("button", { name: "Add credential" }));
-  return r;
+  const trigger = within(r.dialog).getByRole("button", { name: "Add credential" });
+  await userEvent.click(trigger);
+  return { ...r, trigger };
 }
 
-test("Add credential opens a stacked sheet over New agent, which keeps its typed values", async () => {
+test("Add credential expands inline under the Credential field, a disclosure, and keeps the typed values", async () => {
   const { dialog } = await openLead();
   await userEvent.clear(field("Display name"));
   await userEvent.type(field("Display name"), "Mine");
   await userEvent.click(more());
   const add = within(dialog).getByRole("button", { name: "Add credential" });
-  expect(add).toHaveAttribute("type", "button");
+  expect(add).toHaveAttribute("aria-expanded", "false");
   await userEvent.click(add);
-  const d = await child("Add credential");
-  expect(d).toHaveAccessibleDescription(
-    "For New agent. Saved to Settings → Credentials; other agents can use it.",
+  const g = await inline("Add credential");
+  expect(add).toHaveAttribute("aria-expanded", "true");
+  expect(g.closest("form")).toBe(dialog.querySelector("form"));
+  expect(g.tagName).not.toBe("FORM");
+  expect(getSheetState().child).toBeUndefined();
+  expect(field("Display name").value).toBe("Mine");
+  await waitFor(() => expect(within(g).getByLabelText("Name")).toHaveFocus());
+  // Its buttons are secondary: Create agent stays the one primary.
+  expect(within(g).getByRole("button", { name: /Start sign-in|Verify and add/ })).toHaveAttribute(
+    "data-variant",
+    "outline",
   );
-  expect(getSheetState().child?.kind).toBe("add-credential");
-  expect((parentField("field-displayName") as HTMLInputElement).value).toBe("Mine");
 });
 
-test("Verify and add selects the new credential and focus lands on the Credential trigger", async () => {
+test("Enter in the credential's Name submits nothing of the agent form", async () => {
+  const { api } = await openAddCredential();
+  const g = await inline("Add credential");
+  await userEvent.type(within(g).getByLabelText("Name"), "prod{Enter}");
+  expect(posts(api)).toHaveLength(0);
+  expect(screen.getByRole("dialog", { name: "New agent" })).toBeInTheDocument();
+});
+
+test("Enter in the token submits only the credential", async () => {
   const { credentials, ...extra } = storing();
-  await openAddCredential({ credentials, extra });
+  const { api } = await openAddCredential({ credentials, extra });
+  const g = await fillCredential("prod");
+  await userEvent.type(within(g).getByLabelText("Token"), "{Enter}");
+  await posted(api, "/api/credentials");
+  expect(posts(api)).toHaveLength(0);
+  await waitFor(() => expect(field("Credential")).toHaveTextContent("prod"));
+});
+
+test("Escape collapses only the expansion: the sheet stays and focus returns to the trigger", async () => {
+  const { trigger } = await openAddCredential();
+  const g = await inline("Add credential");
+  await waitFor(() => expect(within(g).getByLabelText("Name")).toHaveFocus());
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => noGroup("Add credential"));
+  expect(screen.getByRole("dialog", { name: "New agent" })).toBeInTheDocument();
+  expect(getSheetState().parent?.kind).toBe("new-agent");
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await waitFor(() => expect(trigger).toHaveFocus());
+  // With the expansion gone, Escape closes the sheet as before.
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+});
+
+test("Escape does nothing while the credential is being verified", async () => {
+  const post = held();
+  const { api } = await openAddCredential({ extra: { "POST /api/credentials": post.route } });
+  const g = await addCredential("prod");
+  await posted(api, "/api/credentials");
+  await userEvent.keyboard("{Escape}");
+  expect(screen.getByRole("group", { name: "Add credential" })).toBeInTheDocument();
+  expect(getSheetState().parent?.kind).toBe("new-agent");
+  expect(g).toBeInTheDocument();
+  await act(async () => post.answer(json({ credential: credential("prod") }, 201)));
+  await waitFor(() => noGroup("Add credential"));
+});
+
+test("Create agent while the expansion is open and dirty focuses it and says to add or cancel it first", async () => {
+  const { api, dialog } = await openAddCredential({ extra: created() });
+  const g = await inline("Add credential");
+  await userEvent.type(within(g).getByLabelText("Name"), "prod");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
+  expect(posts(api)).toHaveLength(0);
+  expect(await within(g).findByText("Add the credential or cancel it first.")).toBeInTheDocument();
+  expect(g).toHaveFocus();
+  expect(g).toHaveAccessibleDescription("Add the credential or cancel it first.");
+  // Cancelled, nothing holds the agent back.
+  await userEvent.click(within(g).getByRole("button", { name: "Cancel" }));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
+  await posted(api, "/api/agents");
+});
+
+test("an open expansion nobody typed into doesn't hold Create agent back", async () => {
+  const { api, dialog } = await openAddCredential({ extra: created() });
+  await inline("Add credential");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
+  await posted(api, "/api/agents");
+});
+
+test("Verify and add selects the new credential, focuses the field and says Added <name>.", async () => {
+  const { credentials, ...extra } = storing();
+  const { dialog } = await openAddCredential({ credentials, extra });
   await addCredential("prod");
-  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  await waitFor(() => noGroup("Add credential"));
   expect(field("Credential")).toHaveTextContent("prod");
   await waitFor(() => expect(field("Credential")).toHaveFocus());
+  expect(within(dialog).getByText("Added prod.")).toBeInTheDocument();
+  // Picking another credential makes the note stale.
+  await pickOption(field("Credential"), /^work/);
+  expect(within(dialog).queryByText("Added prod.")).toBeNull();
 });
 
-test("the No Claude credential yet state offers Add credential", async () => {
+test("the No Claude credential yet state adds one inline and selects it", async () => {
   const { credentials, ...extra } = storing();
   credentials.length = 0;
   const { dialog } = await open({ credentials, extra });
   await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
   await addCredential("prod");
-  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  await waitFor(() => noGroup("Add credential"));
   expect(field("Credential")).toHaveTextContent("prod");
   expect(within(dialog).queryByText("No Claude credential yet.")).not.toBeInTheDocument();
 });
 
-test("a rejected token stays an inline error in the stacked sheet and nothing is stored", async () => {
+test("a rejected token stays an inline error in the expansion and nothing is stored", async () => {
   const { queryClient } = await openAddCredential({
     extra: {
       "POST /api/credentials": () =>
@@ -1180,9 +1258,9 @@ test("a rejected token stays an inline error in the stacked sheet and nothing is
         ),
     },
   });
-  const d = await addCredential("prod");
-  expect(await within(d).findByText("Claude rejected this token.")).toBeInTheDocument();
-  expect(getSheetState().child?.kind).toBe("add-credential");
+  const g = await addCredential("prod");
+  expect(await within(g).findByText("Claude rejected this token.")).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Add credential" })).toBeInTheDocument();
   expect(
     (queryClient.getQueryData(["credentials"]) as { name: string }[]).map((c) => c.name),
   ).toEqual(["work"]);
@@ -1197,7 +1275,7 @@ test("a credentials fetch already pending when the credential is added resolves 
   void r.queryClient.refetchQueries({ queryKey: ["credentials"] });
   await waitFor(() => expect(list.waiting).toBe(1));
   await addCredential("prod");
-  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  await waitFor(() => noGroup("Add credential"));
   await act(async () => list.answer([credential("work")]));
   const names = () =>
     (r.queryClient.getQueryData(["credentials"]) as { name: string }[]).map((c) => c.name);
@@ -1209,7 +1287,7 @@ test("a credentials fetch already pending when the credential is added resolves 
   expect(names()).toEqual(["work", "prod"]);
 });
 
-test("the parent closed while the child verifies: the late success updates the cache only", async () => {
+test("the sheet closed while the credential verifies: the late success updates the cache only", async () => {
   const post = held();
   const { queryClient, api } = await openAddCredential({
     extra: { "POST /api/credentials": post.route },
@@ -1227,7 +1305,7 @@ test("the parent closed while the child verifies: the late success updates the c
   expect(getSheetState()).toEqual({});
 });
 
-test("sign-out while a child is pending drops its late result", async () => {
+test("sign-out while a credential verifies drops its late result", async () => {
   const post = held();
   const { queryClient, api } = await openAddCredential({
     extra: { "POST /api/credentials": post.route },
@@ -1252,7 +1330,35 @@ test("sign-out while a child is pending drops its late result", async () => {
   expect(hasDraft("new-agent")).toBe(false);
 });
 
-test("Add project adds it to the grants as an override and focuses it", async () => {
+test("closing the sheet with Add credential open keeps its name and method, never the token", async () => {
+  const { api, dialog } = await openAddCredential();
+  const g = await inline("Add credential");
+  await userEvent.click(within(g).getByRole("radio", { name: "Paste an API key" }));
+  await userEvent.type(within(g).getByLabelText("Name"), "prod");
+  await userEvent.type(within(g).getByLabelText("Key"), "sk-ant-api03-SYNTHETIC");
+  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+  act(() => closeSheet());
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+  act(() => openSheet({ kind: "new-agent", template: "lead" }));
+  const again = await inline("Add credential");
+  expect(within(again).getByLabelText("Name")).toHaveValue("prod");
+  expect(within(again).getByRole("radio", { name: "Paste an API key" })).toBeChecked();
+  expect(within(again).getByLabelText("Key")).toHaveValue("");
+});
+
+test("Cancel in the expansion collapses it, forgets it and returns focus to the trigger", async () => {
+  const { trigger } = await openAddCredential();
+  const g = await inline("Add credential");
+  await userEvent.type(within(g).getByLabelText("Name"), "prod");
+  await userEvent.click(within(g).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => noGroup("Add credential"));
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await waitFor(() => expect(trigger).toHaveFocus());
+  await userEvent.click(trigger);
+  expect(within(await inline("Add credential")).getByLabelText("Name")).toHaveValue("");
+});
+
+test("Add project expands inline, adds it to the grants as an override and focuses it", async () => {
   const projects = [project("app"), project("docs")];
   const { dialog } = await openLead({
     projects,
@@ -1266,21 +1372,20 @@ test("Add project adds it to the grants as an override and focuses it", async ()
   await userEvent.click(more());
   const group = within(dialog).getByRole("group", { name: /Projects/ });
   const add = within(group).getByRole("button", { name: "Add project" });
-  expect(add).toHaveAttribute("type", "button");
+  expect(add).toHaveAttribute("aria-expanded", "false");
   await userEvent.click(add);
-  const d = await child("Add project");
-  expect(d).toHaveAccessibleDescription("For New agent.");
-  await userEvent.type(await within(d).findByLabelText("Name"), "web");
-  await userEvent.type(within(d).getByLabelText("Path"), "/src/web");
-  await userEvent.click(within(d).getByRole("button", { name: "Add project" }));
-  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  const g = await inline("Add project");
+  await userEvent.type(await within(g).findByLabelText("Name"), "web");
+  await userEvent.type(within(g).getByLabelText("Path"), "/src/web");
+  await userEvent.click(within(g).getByRole("button", { name: "Add project" }));
+  await waitFor(() => noGroup("Add project"));
   const web = await within(group).findByRole("checkbox", { name: /web/ });
   expect(web).toBeChecked();
   expect(within(group).getByRole("checkbox", { name: /app/ })).toBeChecked();
   await waitFor(() => expect(web).toHaveFocus());
 });
 
-test("Add secret opens prefilled with Value focused; success removes the warning and focuses Template", async () => {
+test("Add secret expands inline prefilled with Value focused; success removes the warning and focuses Template", async () => {
   const { dialog } = await openLead({
     details: { lead: templateDetail(templateConfig({ secrets: ["GH_TOKEN"] })) },
     ...storingSecrets(),
@@ -1290,17 +1395,15 @@ test("Add secret opens prefilled with Value focused; success removes the warning
       el?.tagName === "SPAN" &&
       el.textContent === "Secret GH_TOKEN isn't set. The agent won't start until you add it.",
   );
-  expect(within(dialog).queryByRole("link", { name: /add it/ })).not.toBeInTheDocument();
   const add = within(dialog).getByRole("button", { name: "Add secret" });
-  expect(add).toHaveAttribute("type", "button");
+  expect(add).toHaveAttribute("aria-expanded", "false");
   await userEvent.click(add);
-  const d = await child("Add secret");
-  expect(d).toHaveAccessibleDescription("For New agent.");
-  expect(await within(d).findByLabelText("Name")).toHaveValue("GH_TOKEN");
-  await waitFor(() => expect(within(d).getByLabelText("Value")).toHaveFocus());
-  await userEvent.type(within(d).getByLabelText("Value"), "ghp_1");
-  await userEvent.click(within(d).getByRole("button", { name: "Add secret" }));
-  await waitFor(() => expect(getSheetState().child).toBeUndefined());
+  const g = await inline("Add secret");
+  expect(within(g).getByLabelText("Name")).toHaveValue("GH_TOKEN");
+  await waitFor(() => expect(within(g).getByLabelText("Value")).toHaveFocus());
+  await userEvent.type(within(g).getByLabelText("Value"), "ghp_1");
+  await userEvent.click(within(g).getByRole("button", { name: "Add secret" }));
+  await waitFor(() => noGroup("Add secret"));
   expect(warning).not.toBeInTheDocument();
   expect(within(dialog).queryByText(/isn't set/)).not.toBeInTheDocument();
   await waitFor(() => expect(field("Template")).toHaveFocus());
@@ -1339,21 +1442,21 @@ test("New template (stacked) selects the new template", async () => {
   await waitFor(() => expect(field("Template")).toHaveFocus());
 });
 
-test("on a phone, Add secret focuses its drawer, and success focuses the parent's drawer", async () => {
+test("on a phone, Escape in an open Add secret collapses only it and the drawer stays", async () => {
   fakeMatchMedia.install(true);
   const { dialog } = await openLead({
     details: { lead: templateDetail(templateConfig({ secrets: ["GH_TOKEN"] })) },
     ...storingSecrets(),
   });
-  await userEvent.click(await within(dialog).findByRole("button", { name: "Add secret" }));
-  const d = await child("Add secret");
-  await within(d).findByLabelText("Value");
-  await waitFor(() => expect(d).toHaveFocus());
-  await userEvent.type(within(d).getByLabelText("Value"), "ghp_1");
-  await userEvent.click(within(d).getByRole("button", { name: "Add secret" }));
-  await waitFor(() => expect(getSheetState().child).toBeUndefined());
-  // jsdom never finishes Vaul's exit, so the drawer's close-autofocus can't run here: check the target it would take.
-  expect(takeChildReturnFocus()).toBe(dialog);
+  const trigger = await within(dialog).findByRole("button", { name: "Add secret" });
+  await userEvent.click(trigger);
+  const g = await inline("Add secret");
+  await waitFor(() => expect(within(g).getByLabelText("Value")).toHaveFocus());
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Add secret" })).toBeNull());
+  expect(getSheetState().parent?.kind).toBe("new-agent");
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await waitFor(() => expect(trigger).toHaveFocus());
 });
 
 test.each([

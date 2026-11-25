@@ -9,6 +9,7 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
+import { collapseEmbeddedOnEscape } from "@/components/forms/embedded";
 import { useLatchedMobile } from "@/hooks/use-latched-mobile";
 import { useStampedRef } from "@/lib/input-modality";
 import { cn } from "@/lib/utils";
@@ -72,6 +73,7 @@ export function FormDialog({
           aria-describedby={undefined}
           onOpenAutoFocus={onOpenAutoFocus}
           onCloseAutoFocus={onCloseAutoFocus}
+          onEscapeKeyDown={collapseEmbeddedOnEscape}
         >
           <div className="border-b px-4 py-3">
             <DialogPrimitive.Title className="font-heading text-base leading-5 font-semibold tracking-[-0.01em] [overflow-wrap:anywhere]">

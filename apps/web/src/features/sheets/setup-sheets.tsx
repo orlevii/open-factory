@@ -1,13 +1,8 @@
 import type { QueryKey } from "@tanstack/react-query";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import {
-  credentialsQueryOptions,
-  projectsQueryOptions,
-  secretsQueryOptions,
-} from "@/features/settings/api";
+import { credentialsQueryOptions, secretsQueryOptions } from "@/features/settings/api";
 import { AddCredentialForm } from "@/features/settings/forms/add-credential-form";
-import { AddProjectForm } from "@/features/settings/forms/add-project-form";
 import { AddSecretForm } from "@/features/settings/forms/add-secret-form";
 import { refreshList, withItem, writeToList } from "./add-to-list";
 import { draftGeneration } from "./drafts";
@@ -15,7 +10,7 @@ import type { BodyProps } from "./sheet-bodies";
 import { completeChild } from "./sheet-store";
 
 /**
- * The stacked Add credential, Add project and Add secret sheets (§7.1–§7.3): Settings' forms in the sheet frame.
+ * The top-level Add credential and Add secret sheets (a page opens them for a result): Settings' forms in the sheet frame.
  * On success the item joins its list's cache, then the parent gets the name (`completeChild` drops it when that
  * parent instance has closed, and closes this child when it is still the open one), then the list refetches.
  * Nothing at all happens after a sign-out (the draft generation moved): the item belongs to the old session.
@@ -44,19 +39,6 @@ export function AddCredentialSheet({ sheetId, close }: BodyProps<{ kind: "add-cr
       existing={names(credentials.data)}
       onCancel={close}
       onDone={(c) => void finish(credentialsQueryOptions.queryKey, c)}
-    />
-  );
-}
-
-export function AddProjectSheet({ sheetId, close }: BodyProps<{ kind: "add-project" }>) {
-  const projects = useQuery(projectsQueryOptions);
-  const finish = useFinish(sheetId);
-  return (
-    <AddProjectForm
-      frame="sheet"
-      existing={names(projects.data)}
-      onCancel={close}
-      onDone={(p) => void finish(projectsQueryOptions.queryKey, p)}
     />
   );
 }

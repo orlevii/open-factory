@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { type KeyboardEvent, memo, useCallback, useId, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -9,7 +10,13 @@ import { FormDialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Textarea } from "@/components/ui/textarea";
-import { returnFocusAfterChild } from "@/features/sheets/sheet-store";
+import { secretsQueryOptions } from "@/features/settings/api";
+import { AddSecretForm } from "@/features/settings/forms/add-secret-form";
+import {
+  type PrerequisiteGuards,
+  useInlineAdd,
+  usePrerequisiteGuards,
+} from "@/features/sheets/inline-add";
 import { type Caret, InsertSecret, insertReference } from "./insert-secret";
 import {
   checkName,
@@ -115,7 +122,10 @@ export function McpDialog({
     [knownSecrets, onAddSecret],
   );
 
+  const guards = usePrerequisiteGuards();
   const apply = () => {
+    // An open Add secret with input in it takes focus first.
+    if (guards.block()) return;
     flushSync(() => setTouched("all"));
     if (!fieldErrors.submit(KIND_FIELDS[d.kind])) return;
     if (errors.size > 0) {
@@ -248,6 +258,7 @@ export function McpDialog({
           onRemove={removePair}
           onTouch={touch}
           onSecret={onSecret}
+          guards={guards}
           onAdd={() => {
             const p = newPair();
             flushSync(() => setD((prev) => ({ ...prev, [list]: [...prev[list], p] })));
@@ -273,10 +284,12 @@ function Pairs({
   onRemove,
   onTouch,
   onSecret,
+  guards,
   onAdd,
 }: {
   which: PairList;
   pairs: readonly Pair[];
+  guards: PrerequisiteGuards;
   errors: ReadonlyMap<number, string>;
   touched: ReadonlySet<number> | "all";
   mode: ConfigMode;
@@ -316,6 +329,7 @@ function Pairs({
             onRemove={remove}
             onTouch={onTouch}
             onSecret={onSecret}
+            guards={guards}
           />
         ))}
       </div>
@@ -346,6 +360,7 @@ const PairRow = memo(function PairRow({
   onRemove,
   onTouch,
   onSecret,
+  guards,
 }: {
   which: PairList;
   pair: Pair;
@@ -356,23 +371,28 @@ const PairRow = memo(function PairRow({
   onRemove: (id: number, index: number) => void;
   onTouch: (id: number) => void;
   onSecret: (name: string) => boolean;
+  guards: PrerequisiteGuards;
 }) {
+  const secrets = useQuery(secretsQueryOptions);
   const caret = useRef<Caret | null>(null);
   const valueEl = useRef<HTMLInputElement>(null);
   const [note, setNote] = useState<string>();
   const n = `${NOUN[which]} ${index + 1}`;
   const base = `mcp-${which}-${pair.id}`;
 
-  const onPick = (name: string, fromSheet: boolean) => {
+  /** The reference into the value at the caret, and the note when the secret joins this server's list. */
+  const insert = (name: string) => {
     const r = insertReference(pair.value, name, caret.current);
-    flushSync(() => onPatch(which, pair.id, { value: r.value }));
+    onPatch(which, pair.id, { value: r.value });
     caret.current = { start: r.at, end: r.at };
     if (onSecret(name)) setNote(secretAddedNote(name, mode));
+  };
+  const secretAdd = useInlineAdd({ guards, noun: "secret" });
+  const onPick = (name: string) => {
+    flushSync(() => insert(name));
     const el = valueEl.current;
-    el?.setSelectionRange(r.at, r.at);
-    // From the sheet: its close hands focus back here, after the value rendered.
-    if (fromSheet) returnFocusAfterChild(() => valueEl.current);
-    else el?.focus();
+    el?.setSelectionRange(caret.current?.end ?? 0, caret.current?.end ?? 0);
+    el?.focus();
   };
 
   return (
@@ -397,7 +417,13 @@ const PairRow = memo(function PairRow({
         name={`${base}-value`}
         label="Value"
         help={note}
-        action={<InsertSecret label={`${CONFIG_COPY.insertSecret}, ${n}`} onPick={onPick} />}
+        action={
+          <InsertSecret
+            label={`${CONFIG_COPY.insertSecret}, ${n}`}
+            onPick={onPick}
+            onAddSecret={(trigger) => trigger && secretAdd.expand(trigger)}
+          />
+        }
       >
         {({ id, describedBy }) => (
           <Input
@@ -429,6 +455,30 @@ const PairRow = memo(function PairRow({
       >
         <X aria-hidden="true" />
       </Button>
+      {secretAdd.open ? (
+        <div className="@lg:col-span-3">
+          <AddSecretForm
+            frame="embedded"
+            embed={secretAdd.embed}
+            initialName=""
+            existing={(secrets.data ?? []).map((x) => x.name)}
+            onCancel={secretAdd.cancel}
+            onDone={(x) =>
+              void secretAdd
+                .finish(
+                  secretsQueryOptions.queryKey,
+                  x,
+                  () => insert(x.name),
+                  () => valueEl.current,
+                )
+                .then(() => {
+                  const at = caret.current?.end ?? 0;
+                  valueEl.current?.setSelectionRange(at, at);
+                })
+            }
+          />
+        </div>
+      ) : null}
     </div>
   );
 });

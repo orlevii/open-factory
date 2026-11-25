@@ -1,9 +1,9 @@
 import { type ConfigDoc, OVERLAY_LIMITS, type TemplateIssue } from "@open-factory/shared";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { completeChild, getSheetState, resetSheets } from "@/features/sheets/sheet-store";
+import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { installInputModality } from "@/lib/input-modality";
 import { doc, QueryWrap } from "@/test/config-harness";
 import { json, mockApi } from "@/test/mock-api";
@@ -269,7 +269,26 @@ test("Insert secret with no saved caret appends; a secret the template already l
   expect(screen.queryByText(/Adds GH_TOKEN/)).toBeNull();
 });
 
-test("Add secret opens the Add secret sheet and inserts the new name on return", async () => {
+const SECRET_ROUTES = {
+  "GET /api/secrets": () =>
+    json({ secrets: [{ name: "GH_TOKEN", updatedAt: "2026-11-01T00:00:00Z", usedBy: [] }] }),
+  "PUT /api/secrets/NEW_TOKEN": () =>
+    json({ secret: { name: "NEW_TOKEN", updatedAt: "2026-11-25T00:00:00Z", usedBy: [] } }),
+};
+async function openAddSecret() {
+  render(<Form start={{ mcp: { mcpServers: { gh: { command: "npx" } } } }} />);
+  await userEvent.click(screen.getByRole("button", { name: "gh" }));
+  await userEvent.click(screen.getByRole("button", { name: "Add variable" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Name, env variable 1" }), "TOKEN");
+  const trigger = screen.getByRole("button", { name: "Insert secret, env variable 1" });
+  await userEvent.click(trigger);
+  const pop = await screen.findByRole("dialog", { name: CONFIG_COPY.insertSecret });
+  await userEvent.click(within(pop).getByRole("button", { name: CONFIG_COPY.addSecret }));
+  return { trigger, group: await screen.findByRole("group", { name: "Add secret" }) };
+}
+
+test("Add secret expands inline in the dialog and inserts the new name on return", async () => {
+  mockApi(SECRET_ROUTES);
   const onValue = vi.fn();
   render(<Form start={{ mcp: { mcpServers: { gh: { command: "npx" } } } }} onValue={onValue} />);
   await userEvent.click(screen.getByRole("button", { name: "gh" }));
@@ -278,14 +297,47 @@ test("Add secret opens the Add secret sheet and inserts the new name on return",
   await userEvent.click(screen.getByRole("button", { name: "Insert secret, env variable 1" }));
   const pop = await screen.findByRole("dialog", { name: CONFIG_COPY.insertSecret });
   await userEvent.click(within(pop).getByRole("button", { name: CONFIG_COPY.addSecret }));
-  const sheet = getSheetState().parent;
-  expect(sheet).toMatchObject({ kind: "add-secret" });
-  act(() => completeChild(sheet?.id ?? -1, "NEW_TOKEN"));
-  expect(screen.getByRole("textbox", { name: "Value, env variable 1" })).toHaveValue(
-    `\${NEW_TOKEN}`,
-  );
+  const g = await screen.findByRole("group", { name: "Add secret" });
+  // In the dialog, not a stacked sheet.
+  expect(getSheetState()).toEqual({});
+  await userEvent.type(within(g).getByLabelText("Name"), "NEW_TOKEN");
+  await userEvent.type(within(g).getByLabelText("Value"), "ghp_1");
+  await userEvent.click(within(g).getByRole("button", { name: "Add secret" }));
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Add secret" })).toBeNull());
+  const value = screen.getByRole("textbox", { name: "Value, env variable 1" });
+  expect(value).toHaveValue(`\${NEW_TOKEN}`);
+  await waitFor(() => expect(value).toHaveFocus());
   expect(last(onValue)).toMatchObject({ template: { secrets: ["NEW_TOKEN"] } });
   expect(screen.getByText("Adds NEW_TOKEN to this agent's secrets.")).toBeInTheDocument();
+});
+
+test("Escape in the dialog's Add secret collapses only it: the dialog stays", async () => {
+  mockApi(SECRET_ROUTES);
+  const { trigger } = await openAddSecret();
+  await waitFor(() =>
+    expect(screen.getByLabelText("Name", { selector: "#field-secret-name" })).toHaveFocus(),
+  );
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Add secret" })).toBeNull());
+  expect(screen.getByRole("dialog", { name: "Edit gh" })).toBeInTheDocument();
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
+
+test("Apply changes while Add secret holds input focuses it and applies nothing", async () => {
+  mockApi(SECRET_ROUTES);
+  const onValue = vi.fn();
+  render(<Form start={{ mcp: { mcpServers: { gh: { command: "npx" } } } }} onValue={onValue} />);
+  await userEvent.click(screen.getByRole("button", { name: "gh" }));
+  await userEvent.click(screen.getByRole("button", { name: "Add variable" }));
+  await userEvent.click(screen.getByRole("button", { name: "Insert secret, env variable 1" }));
+  const pop = await screen.findByRole("dialog", { name: CONFIG_COPY.insertSecret });
+  await userEvent.click(within(pop).getByRole("button", { name: CONFIG_COPY.addSecret }));
+  const g = await screen.findByRole("group", { name: "Add secret" });
+  await userEvent.type(within(g).getByLabelText("Value"), "ghp_1");
+  await userEvent.click(screen.getByRole("button", { name: CONFIG_COPY.applyChanges }));
+  expect(onValue).not.toHaveBeenCalled();
+  expect(g).toHaveFocus();
+  expect(within(g).getByText("Add the secret or cancel it first.")).toBeInTheDocument();
 });
 
 test("Override copies the template's server into this agent's, whole, and opens it in the dialog", async () => {

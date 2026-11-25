@@ -5,8 +5,6 @@ import {
   type PatchAgentBody,
 } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
 import {
   type FormEvent,
   type ReactNode,
@@ -16,7 +14,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
@@ -48,18 +45,26 @@ import { ModelEffortFields } from "@/features/agents/model-effort-fields";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import { inboxQueryKey } from "@/features/inbox/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
-import { projectsQueryOptions } from "@/features/settings/api";
+import { credentialsQueryOptions, projectsQueryOptions } from "@/features/settings/api";
+import { AddCredentialForm } from "@/features/settings/forms/add-credential-form";
+import { AddProjectForm } from "@/features/settings/forms/add-project-form";
 import { BodySkeleton } from "@/features/sheets/body-skeleton";
-import { clearDraft, clearDraftIf, draftGeneration, peekDraft } from "@/features/sheets/drafts";
-import { SheetFormFooter } from "@/features/sheets/form-footer";
-import type { BodyProps } from "@/features/sheets/sheet-bodies";
 import {
-  closeSheet,
-  getSheetState,
-  openChildSheet,
-  openSheet,
-  returnFocusAfterChild,
-} from "@/features/sheets/sheet-store";
+  clearDraft,
+  clearDraftIf,
+  clearInlineDrafts,
+  draftGeneration,
+  inlineKey,
+  peekDraft,
+} from "@/features/sheets/drafts";
+import { SheetFormFooter } from "@/features/sheets/form-footer";
+import {
+  InlineAddTrigger,
+  useInlineAdd,
+  usePrerequisiteGuards,
+} from "@/features/sheets/inline-add";
+import type { BodyProps } from "@/features/sheets/sheet-bodies";
+import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { isMobileNow } from "@/hooks/use-mobile";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 
@@ -169,7 +174,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   const draftKey = `edit-agent:${slug}` as const;
   const form = useRef<HTMLFormElement>(null);
   const s = useAgentFormState({ mode: "edit", agent, draftKey, form });
-  const { values, shown, errors, set, blur, claim, pending, changes } = s;
+  const { shown, errors, set, blur, claim, pending, changes } = s;
   const { noCredentials, credentials, staleNotes } = s;
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
   const projects = useQuery(projectsQueryOptions);
@@ -190,42 +195,57 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     else el.querySelector<HTMLElement>("#field-displayName")?.focus({ preventScroll: true });
   }, []);
 
-  // A stacked child's result (§7): the served field takes the value before the child exits, and focus lands on it.
-  const serve = (write: () => void, find: () => HTMLElement | null | undefined) => {
-    flushSync(write);
-    find()?.scrollIntoView({ block: "nearest", behavior: "instant" });
-    returnFocusAfterChild(() =>
-      isMobileNow()
-        ? (form.current?.closest<HTMLElement>("[data-slot=drawer-content]") ?? null)
-        : (find() ?? null),
-    );
-  };
-  const onAddCredential = () =>
-    openChildSheet({ kind: "add-credential" }, (name) =>
-      serve(
-        () => set("credential", name),
-        () => form.current?.querySelector<HTMLElement>("#field-credential"),
-      ),
-    );
-  const onAddProject = () =>
-    openChildSheet({ kind: "add-project" }, (name) =>
-      serve(
-        () => s.setProjects([...latestShown.current.projects.filter((p) => p !== name), name]),
-        () => form.current?.querySelector<HTMLElement>(`[data-project="${CSS.escape(name)}"]`),
-      ),
-    );
-  const addCredential = (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      inForm
-      data-skip-validate
-      onClick={onAddCredential}
-    >
-      <Plus aria-hidden="true" data-icon="inline-start" />
-      Add credential
-    </Button>
+  const guards = usePrerequisiteGuards();
+  const credentialAdd = useInlineAdd({
+    draftKey: inlineKey(draftKey, "credential"),
+    guards,
+    noun: "credential",
+  });
+  const projectAdd = useInlineAdd({
+    draftKey: inlineKey(draftKey, "project"),
+    guards,
+    noun: "project",
+  });
+  // "Added <name>." under Credential, until the pick changes.
+  const [credentialNote, setCredentialNote] = useState<string>();
+  const addCredential = <InlineAddTrigger add={credentialAdd}>Add credential</InlineAddTrigger>;
+  const credentialForm = credentialAdd.open && (
+    <AddCredentialForm
+      key={credentialAdd.round}
+      frame="embedded"
+      embed={credentialAdd.embed}
+      existing={(credentials ?? []).map((c) => c.name)}
+      onCancel={credentialAdd.cancel}
+      onDone={(c) =>
+        void credentialAdd.finish(
+          credentialsQueryOptions.queryKey,
+          c,
+          () => {
+            set("credential", c.name);
+            setCredentialNote(`Added ${c.name}.`);
+          },
+          () => form.current?.querySelector<HTMLElement>("#field-credential"),
+        )
+      }
+    />
+  );
+  const projectForm = projectAdd.open && (
+    <AddProjectForm
+      key={projectAdd.round}
+      frame="embedded"
+      embed={projectAdd.embed}
+      existing={(projects.data ?? []).map((p) => p.name)}
+      onCancel={projectAdd.cancel}
+      onDone={(p) =>
+        void projectAdd.finish(
+          projectsQueryOptions.queryKey,
+          p,
+          () =>
+            s.setProjects([...latestShown.current.projects.filter((x) => x !== p.name), p.name]),
+          () => form.current?.querySelector<HTMLElement>(`[data-project="${CSS.escape(p.name)}"]`),
+        )
+      }
+    />
   );
 
   // Who can manage: persistent agents other than this one and everything under it (picking one would make a cycle).
@@ -345,16 +365,11 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     // made since are kept.
     if (!late) {
       clearDraft(draftKey);
+      clearInlineDrafts(draftKey);
       closeSheet();
     } else if (clearDraftIf(draftKey, snapshot)) {
       const parent = getSheetState().parent;
-      // Not while a stacked child the user opened on it is up: the child (and its input) stays.
-      if (
-        parent?.kind === "edit-agent" &&
-        parent.slug === slug &&
-        parent.id !== sheetId &&
-        !getSheetState().child
-      )
+      if (parent?.kind === "edit-agent" && parent.slug === slug && parent.id !== sheetId)
         closeSheet();
     }
     // Silent only when the session under the sheet already shows the result (its header shows the name).
@@ -368,6 +383,8 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (pending) return;
+    // An open inline form with input in it takes focus first: nothing is saved behind it.
+    if (guards.block()) return;
     void s.submit(save);
   }
 
@@ -429,23 +446,30 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             )}
           </FieldShell>
           {noCredentials ? (
-            <div className="flex min-h-7 items-center justify-between gap-2">
-              <p className="text-[0.8125rem] font-medium">Credential</p>
-              {addCredential}
+            <div>
+              <div className="flex min-h-7 items-center justify-between gap-2">
+                <p className="text-[0.8125rem] font-medium">Credential</p>
+                {addCredential}
+              </div>
+              {credentialForm}
             </div>
           ) : (
             <FieldShell
               name="credential"
               label="Credential"
               error={errors.credential}
-              help={staleNotes.credential}
+              help={staleNotes.credential ?? credentialNote}
               action={addCredential}
+              below={credentialForm}
             >
               {(a) => (
                 <Select
                   disabled={!credentials}
                   value={shown.credential}
-                  onValueChange={(v) => set("credential", v)}
+                  onValueChange={(v) => {
+                    set("credential", v);
+                    setCredentialNote(undefined);
+                  }}
                 >
                   <SelectTrigger
                     id={a.id}
@@ -473,7 +497,14 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             value={shown.projects}
             error={errors.projects}
             onChange={s.setProjects}
-            onAddProject={onAddProject}
+            add={
+              <div className="grid gap-0">
+                <div className="flex flex-wrap gap-2">
+                  <InlineAddTrigger add={projectAdd}>Add project</InlineAddTrigger>
+                </div>
+                {projectForm}
+              </div>
+            }
           />
           <FieldShell name="manageOrg" label="Can manage the org" help={MANAGE_ORG_HELP}>
             {(a) => (
@@ -497,7 +528,10 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
         pendingLabel="Saving…"
         pending={pending}
         restored={s.restored}
-        onDiscard={s.discard}
+        onDiscard={() => {
+          s.discard();
+          clearInlineDrafts(draftKey);
+        }}
         submitClassName="min-w-32"
         outcome={{ ...s.outcome, notice: restartNotice }}
       />

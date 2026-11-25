@@ -1,6 +1,7 @@
 import { XIcon } from "lucide-react";
 import { Dialog as SheetPrimitive } from "radix-ui";
 import * as React from "react";
+import { collapseEmbeddedOnEscape } from "@/components/forms/embedded";
 import { Button, COARSE_ICON_GROUP } from "@/components/ui/button";
 import {
   Drawer,
@@ -193,6 +194,7 @@ function SheetContent({
         }}
         onCloseAutoFocus={closeAutoFocus}
         onEscapeKeyDown={(e) => {
+          collapseEmbeddedOnEscape(e);
           onEscapeKeyDown?.(e);
           if (!e.defaultPrevented) stampPair(contentRef.current);
         }}

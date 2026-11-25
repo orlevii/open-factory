@@ -35,8 +35,8 @@ test("a child needs a parent (throws in tests) and there is never more than one"
   expect(() => openChildSheet({ kind: "add-credential" }, () => {})).toThrow();
   openSheet({ kind: "new-agent" });
   openChildSheet({ kind: "add-credential" }, () => {});
-  openChildSheet({ kind: "add-project" }, () => {});
-  expect(getSheetState().child).toMatchObject({ kind: "add-project" });
+  openChildSheet({ kind: "add-credential" }, () => {});
+  expect(getSheetState().child).toMatchObject({ kind: "add-credential" });
 });
 
 test("a child completes into its parent's callback and closes", () => {
@@ -62,16 +62,16 @@ test("a late child result reaches only the parent instance that opened it", () =
 test("closeSheet closes both; resetSheets drops pending callbacks", () => {
   const done = vi.fn();
   openSheet({ kind: "new-agent" });
-  openChildSheet({ kind: "add-project" }, done);
+  openChildSheet({ kind: "add-credential" }, done);
   const cid = childId();
   closeChildSheet();
   expect(getSheetState().child).toBeUndefined();
   expect(getSheetState().parent).toBeDefined();
-  openChildSheet({ kind: "add-project" }, done);
+  openChildSheet({ kind: "add-credential" }, done);
   closeSheet();
   expect(getSheetState()).toEqual({});
   openSheet({ kind: "new-agent" });
-  openChildSheet({ kind: "add-project" }, done);
+  openChildSheet({ kind: "add-credential" }, done);
   const id2 = childId();
   resetSheets();
   expect(getSheetState()).toEqual({});
@@ -83,7 +83,7 @@ test("closeSheet closes both; resetSheets drops pending callbacks", () => {
 test("child keeps the same parent reference; state is stable between reads", () => {
   openSheet({ kind: "new-agent" });
   const parent = getSheetState().parent;
-  openChildSheet({ kind: "add-project" }, () => {});
+  openChildSheet({ kind: "add-credential" }, () => {});
   expect(getSheetState().parent).toBe(parent);
   expect(getSheetState()).toBe(getSheetState());
 });

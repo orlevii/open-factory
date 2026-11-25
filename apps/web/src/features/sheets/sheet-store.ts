@@ -14,7 +14,6 @@ export type SheetSpec =
 /** A sheet stacked on top of a parent sheet, returning a name to it. */
 export type ChildSpec =
   | { kind: "add-credential" }
-  | { kind: "add-project" }
   | { kind: "add-secret"; name: string }
   | { kind: "new-template"; then: "return" };
 

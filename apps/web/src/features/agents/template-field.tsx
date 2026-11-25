@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { type InlineAdd, InlineAddTrigger } from "@/features/sheets/inline-add";
 
 export type TemplateOption = {
   name: string;
@@ -161,12 +162,15 @@ export function TemplateSummary({
   config,
   issues,
   missingSecrets,
-  onAddSecret,
+  addSecret,
+  secretForm,
 }: {
   config: TemplateConfig;
   issues: TemplateIssue[];
   missingSecrets: string[];
-  onAddSecret?(name: string): void;
+  /** The inline Add secret: each missing secret opens it with its name; `secretForm` is the open form. */
+  addSecret?: InlineAdd;
+  secretForm?: ReactNode;
 }) {
   const runtimeWarnings = issues
     .filter((i) => i.severity === "warning" && i.path === "runtime")
@@ -190,10 +194,10 @@ export function TemplateSummary({
         <Warning
           key={s}
           action={
-            onAddSecret && (
-              <Button type="button" variant="ghost" size="sm" inForm onClick={() => onAddSecret(s)}>
+            addSecret && (
+              <InlineAddTrigger add={addSecret} seed={{ name: s }}>
                 Add secret
-              </Button>
+              </InlineAddTrigger>
             )
           }
         >
@@ -202,6 +206,7 @@ export function TemplateSummary({
           agent won't start until you add it.
         </Warning>
       ))}
+      {secretForm}
     </div>
   );
 }

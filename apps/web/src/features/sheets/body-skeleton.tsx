@@ -14,7 +14,6 @@ const ROWS: Partial<Record<SheetKind, number>> = {
   "edit-schedule": 5,
   "new-template": 2,
   "add-credential": 3,
-  "add-project": 2,
   "add-skills": 3,
   "add-secret": 2,
   "sign-in-again": 2,

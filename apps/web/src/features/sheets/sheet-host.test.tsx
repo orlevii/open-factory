@@ -95,11 +95,6 @@ beforeEach(() => {
     prefetch: () => {},
     title: "Add secret",
   };
-  sheetBodies["add-project"] = {
-    load: async () => ({ default: StubChild as never }),
-    prefetch: () => {},
-    title: "Add project",
-  };
 });
 afterEach(() => {
   act(() => closeSheet());
@@ -137,13 +132,13 @@ test("the child sheet stacks over the parent; Esc closes only the child", async 
   await shell();
   act(() => openSheet({ kind: "new-task" }));
   await screen.findByRole("dialog", { name: "New task" });
-  act(() => openChildSheet({ kind: "add-project" }, () => {}));
-  const child = await screen.findByRole("dialog", { name: "Add project" });
+  act(() => openChildSheet({ kind: "add-secret", name: "" }, () => {}));
+  const child = await screen.findByRole("dialog", { name: "Add secret" });
   expect(await screen.findByText("child body")).toBeInTheDocument();
   expect(child).toHaveTextContent("child body");
   expect(screen.getByText("For New task.")).toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add project" })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add secret" })).toBeNull());
   expect(dialog()).toBeInTheDocument();
 });
 
@@ -249,9 +244,9 @@ test("edit-schedule prefetches the detail and the live agents only (edit mode ne
   ]);
 });
 
-test("add-project prefetch requests host info with the never-stale options", () => {
+test("New agent prefetch requests host info with the never-stale options", () => {
   const prefetchQuery = vi.fn(() => Promise.resolve());
-  restoreBodies["add-project"]?.prefetch({ prefetchQuery } as never, { kind: "add-project" });
+  restoreBodies["new-agent"]?.prefetch({ prefetchQuery } as never, { kind: "new-agent" });
   const opts = (
     prefetchQuery.mock.calls as unknown as [{ queryKey: unknown; staleTime?: number }][]
   ).map((c) => c[0]);

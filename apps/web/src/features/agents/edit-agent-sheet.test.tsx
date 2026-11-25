@@ -6,7 +6,13 @@ import { notify } from "@/components/ui/toaster";
 import { hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { FORM_MSG } from "@/lib/form-messages.ts";
-import { agentSummary, credential, mockWorld, type World } from "@/test/agent-screens-fixtures";
+import {
+  agentSummary,
+  credential,
+  mockWorld,
+  project,
+  type World,
+} from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -617,25 +623,6 @@ test("a late success over the same agent's Edit reopened on the sent values clea
   expect(patches(api)).toHaveLength(1);
 });
 
-test("a late success over the same agent's reopened, untouched Edit keeps it open while a stacked child is on it", async () => {
-  const patch = held();
-  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
-  await rename("Boss");
-  await userEvent.click(saveButton());
-  await screen.findByRole("button", { name: /Saving…/ });
-  act(() => closeSheet());
-  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
-  const parent = await sheet();
-  await vi.waitFor(() => expect(field("Display name")).toHaveValue("Boss"));
-  await userEvent.click(within(parent).getByRole("button", { name: "Add credential" }));
-  await screen.findByRole("dialog", { name: "Add credential" });
-  await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
-  await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved @lead." }));
-  expect(getSheetState().child?.kind).toBe("add-credential");
-  expect(getSheetState().parent?.kind).toBe("edit-agent");
-  expect(hasDraft("edit-agent:lead")).toBe(false);
-});
-
 test("a save landing after a sign-out neither toasts nor touches a draft", async () => {
   const patch = held();
   await open({ extra: { "PATCH /api/agents/lead": patch.route } });
@@ -869,15 +856,15 @@ test("focus on open goes to Display name", async () => {
   await waitFor(() => expect(field("Display name")).toHaveFocus());
 });
 
-test("Add credential stacks over Edit agent and names it", async () => {
-  await open();
-  await userEvent.click(screen.getByRole("button", { name: "Add credential" }));
-  const child = await screen.findByRole("dialog", { name: "Add credential" });
-  expect(
-    within(child).getByText(
-      "For Edit agent. Saved to Settings → Credentials; other agents can use it.",
-    ),
-  ).toBeInTheDocument();
+test("Add credential expands inline under Credential and nothing stacks", async () => {
+  const { dialog } = await open();
+  const add = within(dialog).getByRole("button", { name: "Add credential" });
+  expect(add).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(add);
+  const g = await screen.findByRole("group", { name: "Add credential" });
+  expect(add).toHaveAttribute("aria-expanded", "true");
+  expect(g.tagName).not.toBe("FORM");
+  expect(getSheetState().child).toBeUndefined();
 });
 
 test("leaving an unchosen Credential for its own Add credential button doesn't flag it", async () => {
@@ -889,14 +876,71 @@ test("leaving an unchosen Credential for its own Add credential button doesn't f
   expect(trigger).toHaveTextContent("Choose a credential");
   act(() => trigger.focus());
   await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
-  await screen.findByRole("dialog", { name: "Add credential" });
+  await screen.findByRole("group", { name: "Add credential" });
   expect(trigger).not.toHaveAttribute("aria-invalid");
 });
 
-test("Add project stacks over Edit agent", async () => {
-  await open();
-  await userEvent.click(screen.getByRole("button", { name: "Add project" }));
-  expect(await screen.findByRole("dialog", { name: "Add project" })).toBeInTheDocument();
+test("a pasted token added inline is selected, focused and noted, and Save sends it", async () => {
+  const credentials = [credential("work")];
+  const { dialog, api } = await open({
+    credentials,
+    extra: {
+      "POST /api/credentials": (body: unknown) => {
+        const c = credential((body as { name: string }).name);
+        credentials.push(c);
+        return json({ credential: c }, 201);
+      },
+      "PATCH /api/agents/lead": () => json({ agent: lead({ credential: "prod" }) }),
+    },
+  });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  const g = await screen.findByRole("group", { name: "Add credential" });
+  await userEvent.click(within(g).getByRole("radio", { name: "Paste a token" }));
+  await userEvent.type(within(g).getByLabelText("Name"), "prod");
+  await userEvent.type(within(g).getByLabelText("Token"), "sk-ant-oat-1");
+  await userEvent.click(within(g).getByRole("button", { name: "Verify and add" }));
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Add credential" })).toBeNull());
+  expect(field("Credential")).toHaveTextContent("prod");
+  await waitFor(() => expect(field("Credential")).toHaveFocus());
+  expect(within(dialog).getByText("Added prod.")).toBeInTheDocument();
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(patches(api)).toHaveLength(1));
+  expect(patches(api)[0]).toMatchObject({ credential: "prod" });
+});
+
+test("Save while Add credential is open and dirty focuses it instead of saving", async () => {
+  const { dialog, api } = await open();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  const g = await screen.findByRole("group", { name: "Add credential" });
+  await userEvent.type(within(g).getByLabelText("Name"), "prod");
+  await rename("Boss");
+  await userEvent.click(saveButton());
+  expect(patches(api)).toHaveLength(0);
+  expect(await within(g).findByText("Add the credential or cancel it first.")).toBeInTheDocument();
+  expect(g).toHaveFocus();
+});
+
+test("Add project expands inline and the new project joins the grants", async () => {
+  const projects = [project("app")];
+  const { dialog } = await open({
+    projects,
+    extra: {
+      "POST /api/projects": () => {
+        projects.push(project("web"));
+        return json({ project: project("web") }, 201);
+      },
+    },
+  });
+  const group = within(dialog).getByRole("group", { name: /Projects/ });
+  const add = within(group).getByRole("button", { name: "Add project" });
+  await userEvent.click(add);
+  const g = await screen.findByRole("group", { name: "Add project" });
+  await userEvent.type(within(g).getByLabelText("Name"), "web");
+  await userEvent.type(within(g).getByLabelText("Path"), "/src/web");
+  await userEvent.click(within(g).getByRole("button", { name: "Add project" }));
+  const web = await within(group).findByRole("checkbox", { name: /web/ });
+  expect(web).toBeChecked();
+  await waitFor(() => expect(web).toHaveFocus());
 });
 
 // --- Entry points ---

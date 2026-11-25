@@ -19,6 +19,8 @@ export const chatRowSchema = z.object({
     archivedAt: z.string().nullable(),
   }),
   unread: z.number().int().positive(),
+  /** The oldest unread message from this agent: where the chat opens, and a notification burst's tag. */
+  firstUnreadId: z.string(),
   latest: z.object({
     messageId: z.string(),
     preview: z.string().max(280),

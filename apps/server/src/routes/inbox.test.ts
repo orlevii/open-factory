@@ -1,3 +1,5 @@
+import { schema } from "@open-factory/db";
+import { asc } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
@@ -77,6 +79,7 @@ test("GET /api/inbox: agent messages are chats, not items; the preview is plain 
         createdAt: expect.any(String),
         urgent: true,
       },
+      firstUnreadId: expect.any(String),
     },
   ]);
   expect((await get("/api/inbox", {})).statusCode).toBe(401);
@@ -438,4 +441,74 @@ test("GET /api/inbox/:id: the owner's item equals the list entry; another user's
   expect((await get("/api/inbox/nope")).statusCode).toBe(404);
   expect((await get("/api/inbox/unread-count")).json()).toHaveProperty("count");
   expect((await get(`/api/inbox/${mine.id}`, {})).statusCode).toBe(401);
+});
+
+// ---- I8 PR 2: the notifier's query and the first unread message of a chat ----
+test("a chat row's firstUnreadId is the oldest unread message from that agent, and moves up as it is read", async () => {
+  for (const body of ["one", "two", "three"])
+    await callTool(url, tokA, "send_message", { to: ["@or"], body });
+  const rows = await h.db
+    .select()
+    .from(schema.inboxItems)
+    .orderBy(asc(schema.inboxItems.createdAt));
+  const mine = rows.filter((r) => r.kind === "message");
+  const first = async () => (await get("/api/inbox")).json().chats[0].firstUnreadId;
+  expect(await first()).toBe(mine[0]?.messageId);
+  await post(`/api/inbox/${mine[0]?.id}/read`);
+  expect(await first()).toBe(mine[1]?.messageId);
+});
+
+test("?unread=true&notify=true returns the chats and only mention, agent_errored, credential and loop_held items, newest first, capped at 200", async () => {
+  const { or, agent } = await actors();
+  const adaId = (await h.app.store.agentBySlug("ada"))?.id as string;
+  const notice = (n: string, body: string) =>
+    h.app.store.createHumanMessage({
+      kind: "system",
+      notice: n,
+      subjectAgentId: adaId,
+      to: "all",
+      body,
+      urgent: false,
+    });
+  await callTool(url, tokA, "send_message", { to: ["@or"], body: "a chat" });
+  await h.app.tasks.create(or, { title: "Plan", assignee: "ada" });
+  await h.app.tasks.comment(agent, "T-1", "@or ping");
+  await h.app.tasks.update(agent, "T-1", { status: "done" }); // a task_event: never notifies
+  await h.db
+    .insert(schema.credentials)
+    .values({ id: "c-work", name: "work", kind: "oauth_token", valueEnc: Buffer.from([0]) });
+  await h.app.store.createHumanMessage({
+    kind: "system",
+    notice: "credential_expiring",
+    subjectCredentialId: "c-work",
+    to: "all",
+    body: "work expires soon.",
+    urgent: false,
+    inboxKind: "credential",
+  });
+  await notice("agent_errored", "errored");
+  await notice("loop_held", "held");
+  await notice("plugin_not_loaded", "plugin"); // never notifies
+  const r = await get("/api/inbox?unread=true&notify=true");
+  expect(r.statusCode).toBe(200);
+  const page = r.json();
+  expect(page.chats).toHaveLength(1);
+  expect(page.items.map((i: { preview: string; kind: string }) => i.kind)).toEqual([
+    "notice",
+    "notice",
+    "credential",
+    "mention",
+  ]);
+  expect(page.items.map((i: { notice?: string }) => i.notice)).toEqual([
+    "loop_held",
+    "agent_errored",
+    undefined,
+    undefined,
+  ]);
+
+  // The cap is 200 whatever `limit` says.
+  for (let i = 0; i < 201; i += 1) await notice("agent_errored", `e${i}`);
+  const big = (await get("/api/inbox?unread=true&notify=true&limit=5")).json();
+  expect(big.items).toHaveLength(200);
+  expect(big.items[0].preview).toBe("e200");
 });

@@ -95,6 +95,8 @@ export const inboxItemSchema = z.object({
   createdAt: z.string(),
   /** The task a mention or task event is about, with its current title. */
   task: z.object({ key: z.string(), title: z.string() }).optional(),
+  /** An @factory notice's type (`agent_errored`, `loop_held`, ...), so the UI never parses the preview. */
+  notice: z.string().optional(),
   /** A task event's notice, so the UI never parses the preview. */
   fact: z.enum(["done", "cancelled"]).optional(),
   /** The credential a `credential` item is about. */

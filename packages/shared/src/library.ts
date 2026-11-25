@@ -123,6 +123,35 @@ export function pinOf(declaration: unknown): Pin {
   return COMMIT_SHA.test(ref) ? { kind: "commit", sha: ref } : { kind: "tag", name: ref };
 }
 
+/** The registry fields a declaration is built from. Structural: the DB's `MarketplaceRow` and the web's row both fit. */
+export type RegistryPin = {
+  name: string;
+  source: z.infer<typeof marketplaceSourceSchema>;
+  commit: string | null;
+  tags: Record<string, string>;
+};
+
+/**
+ * The ref a new or moved pin writes for a marketplace: the Library's commit, or, where Claude Code refuses commit pins,
+ * the newest recorded tag that points at that commit. Undefined when there is nothing to pin to (a marketplace Skills
+ * hasn't read, or an official one with no tag at its commit).
+ */
+export function pinRefFor(row: Pick<RegistryPin, "name" | "commit" | "tags">): string | undefined {
+  if (row.commit === null) return undefined;
+  if (acceptedPins(row.name).includes("commit")) return row.commit;
+  const tags = Object.entries(row.tags)
+    .filter(([, sha]) => sha === row.commit)
+    .map(([name]) => name)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return tags.at(-1);
+}
+
+/** The declaration a first pick writes for an undeclared marketplace: pinned by default; a folder is live. */
+export function declarationFor(row: RegistryPin): { source: Record<string, unknown> } {
+  if (row.source.source === "directory") return { source: row.source };
+  return { source: { ...row.source, ref: pinRefFor(row) } };
+}
+
 /** The enabled plugin keys of a config doc: the `enabledPlugins` entries set to `true` (spec §7.4). */
 export function effectivePlugins(doc: Pick<ConfigDoc, "settings">): string[] {
   const enabled = doc.settings.enabledPlugins;

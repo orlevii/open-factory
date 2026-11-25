@@ -536,14 +536,17 @@ try {
   );
   for (const slug of SLUGS) {
     await step(`1. agent ${slug} created (top level)`, () =>
-      app.agents.create({
-        template: "sched",
-        slug,
-        displayName: slug[0]?.toUpperCase() + slug.slice(1),
-        description: `Smoke scheduling agent ${slug}`,
-        reportsTo: null,
-        credential: "smoke",
-      }),
+      app.agents.create(
+        {
+          template: "sched",
+          slug,
+          displayName: slug[0]?.toUpperCase() + slug.slice(1),
+          description: `Smoke scheduling agent ${slug}`,
+          reportsTo: null,
+          credential: "smoke",
+        },
+        { kind: "human", handle: "or" },
+      ),
     );
     ids.set(
       slug,

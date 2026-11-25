@@ -5,6 +5,7 @@ import {
   checkGitUrl,
   checkPinRef,
   cutGraphemes,
+  declarationFor,
   effectivePlugins,
   MARKETPLACE_PATTERN,
   normalizeRepo,
@@ -12,6 +13,7 @@ import {
   PLUGIN_NAME_PATTERN,
   PLUGIN_REF_PATTERN,
   pinOf,
+  pinRefFor,
   RESERVED_MARKETPLACES,
   rowStateOf,
   skillDetailSchema,
@@ -261,5 +263,40 @@ describe("source responses", () => {
         found: [{ name: "a", description: "", pickable: false, reason: "other" }],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("pinRefFor and declarationFor", () => {
+  const C = "c".repeat(40);
+  const github = { source: "github", repo: "acme/plugins" } as const;
+
+  test("a commit-pinnable row pins to the Library's commit", () =>
+    expect(pinRefFor({ name: "acme", commit: C, tags: {} })).toBe(C));
+
+  test("the official marketplace pins to the newest tag at its commit", () =>
+    expect(
+      pinRefFor({
+        name: "claude-plugins-official",
+        commit: C,
+        tags: { "v1.2.0": C, "v1.10.0": C, "v2.0.0": "d".repeat(40) },
+      }),
+    ).toBe("v1.10.0"));
+
+  test.each([
+    ["no commit read", { name: "acme", commit: null, tags: {} }],
+    [
+      "no tag at the commit",
+      { name: "claude-plugins-official", commit: C, tags: { v1: "d".repeat(40) } },
+    ],
+  ])("there is nothing to pin to with %s", (_why, row) => expect(pinRefFor(row)).toBeUndefined());
+
+  test("a first pick declares the source at the pin", () =>
+    expect(declarationFor({ name: "acme", source: github, commit: C, tags: {} })).toEqual({
+      source: { ...github, ref: C },
+    }));
+
+  test("a folder marketplace is declared by its source alone, live", () => {
+    const source = { source: "directory", path: "/mk" } as const;
+    expect(declarationFor({ name: "local", source, commit: null, tags: {} })).toEqual({ source });
   });
 });

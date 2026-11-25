@@ -193,15 +193,18 @@ async function setup(o: {
   await t.app.secrets.put("FAKE_CLAUDE_SCENARIO", settings.scenario);
   await t.app.secrets.put("FAKE_CLAUDE_DIR", settings.dir);
   if (o.grant) await t.app.projects.create({ name: "app", hostPath: gitRepo() });
-  await t.app.agents.create({
-    template: "dock",
-    slug,
-    displayName: "Dock",
-    description: "",
-    reportsTo: null,
-    credential: "work",
-    ...(o.grant ? { projects: ["app"] } : {}),
-  });
+  await t.app.agents.create(
+    {
+      template: "dock",
+      slug,
+      displayName: "Dock",
+      description: "",
+      reportsTo: null,
+      credential: "work",
+      ...(o.grant ? { projects: ["app"] } : {}),
+    },
+    { kind: "human", handle: "or" },
+  );
   const fake = installFakeClaude({ workdir, scenario: o.scenario });
   expect(fake.bin).toBe(env.FACTORY_DOCKER_CLAUDE_BIN);
   const agentId = await idOf(t.db, slug);
@@ -246,15 +249,18 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
   await t.app.secrets.put("FAKE_CLAUDE_SCENARIO", fake.secrets.FAKE_CLAUDE_SCENARIO);
   await t.app.secrets.put("FAKE_CLAUDE_DIR", fake.secrets.FAKE_CLAUDE_DIR);
   await t.app.projects.create({ name: "app", hostPath: repo });
-  await t.app.agents.create({
-    template: "lead",
-    slug: "lead",
-    displayName: "Lead",
-    description: "",
-    reportsTo: null,
-    credential: "work",
-    projects: ["app"],
-  });
+  await t.app.agents.create(
+    {
+      template: "lead",
+      slug: "lead",
+      displayName: "Lead",
+      description: "",
+      reportsTo: null,
+      credential: "work",
+      projects: ["app"],
+    },
+    { kind: "human", handle: "or" },
+  );
   const leadId = await idOf(t.db, "lead");
   agentIds.add(leadId);
   // I2 §6.2: spawning follows the spawner's running process.
@@ -507,7 +513,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     // A new grant changes the mounts, so the spec hash: the next start re-creates the container.
     const repo = gitRepo();
     await w.app.projects.create({ name: "app", hostPath: repo });
-    await w.app.agents.update(w.slug, { projects: ["app"] });
+    await w.app.agents.update(w.slug, { projects: ["app"] }, { kind: "human", handle: "or" });
     await idle(w, "with a project");
     const next = await inspect(w);
     expect(next.Id).not.toBe(first.Id);
@@ -697,14 +703,17 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     hostFakes.push(local);
     const w = await setup({ scenario: LONG, local });
     writeTemplate(w.home, "loc", "runtime: local\n");
-    await w.app.agents.create({
-      template: "loc",
-      slug: "loc",
-      displayName: "Loc",
-      description: "",
-      reportsTo: null,
-      credential: "work",
-    });
+    await w.app.agents.create(
+      {
+        template: "loc",
+        slug: "loc",
+        displayName: "Loc",
+        description: "",
+        reportsTo: null,
+        credential: "work",
+      },
+      { kind: "human", handle: "or" },
+    );
     const locId = await idOf(w.t.db, "loc");
     await w.app.close();
 

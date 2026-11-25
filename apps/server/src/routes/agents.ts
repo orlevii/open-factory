@@ -1,5 +1,6 @@
 import { neutraliseEnvelopeTags } from "@open-factory/harness";
 import {
+  type Actor,
   agentCommandsResponseSchema,
   agentConfigResponseSchema,
   agentDetailSchema,
@@ -64,6 +65,10 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     if (!req.user) throw new Error("requireUser did not set request.user");
     return req.user;
   };
+  const human = (req: { user?: { id: string; handle: string } }): Actor => ({
+    kind: "human",
+    handle: user(req).handle,
+  });
 
   app.get(
     "/api/agents",
@@ -140,7 +145,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     "/api/agents",
     { schema: { body: createAgentBodySchema, response: { 201: agentResponseSchema } } },
-    async (req, reply) => reply.code(201).send({ agent: await app.agents.create(req.body) }),
+    async (req, reply) =>
+      reply.code(201).send({ agent: await app.agents.create(req.body, human(req)) }),
   );
 
   app.get("/api/agents/:slug", { schema: { params: slugParams } }, async (req, reply) => {
@@ -179,14 +185,14 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         response: { 200: agentResponseSchema },
       },
     },
-    async (req) => ({ agent: await app.agents.update(req.params.slug, req.body) }),
+    async (req) => ({ agent: await app.agents.update(req.params.slug, req.body, human(req)) }),
   );
 
   // I2 §12.1: the agent's overlay over its template. The version is derived from the overlay, never stored.
   app.get(
     "/api/agents/:slug/config",
     { schema: { params: slugParams, response: { 200: agentConfigResponseSchema } } },
-    async (req) => app.agents.getConfig(req.params.slug),
+    async (req) => app.configs.getConfig(req.params.slug),
   );
 
   app.put(
@@ -198,7 +204,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         response: { 200: putAgentConfigResponseSchema },
       },
     },
-    async (req) => app.agents.putConfig(req.params.slug, req.body, `@${user(req).handle}`),
+    async (req) =>
+      app.configs.saveOverlay(req.params.slug, req.body.overlay, req.body.baseVersion, human(req)),
   );
 
   app.post(
@@ -210,13 +217,13 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     "/api/agents/:slug/archive",
     { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
-    async (req) => ({ agent: await app.agents.archive(req.params.slug) }),
+    async (req) => ({ agent: await app.agents.archive(req.params.slug, human(req)) }),
   );
 
   app.post(
     "/api/agents/:slug/unarchive",
     { schema: { params: slugParams, response: { 200: agentResponseSchema } } },
-    async (req) => ({ agent: await app.agents.unarchive(req.params.slug) }),
+    async (req) => ({ agent: await app.agents.unarchive(req.params.slug, human(req)) }),
   );
 
   /** S7 §8: the one termination path, with the human as `by`. Idempotent: a terminated agent stays as it is. */

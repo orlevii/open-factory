@@ -1,4 +1,4 @@
-import { pinOf } from "@open-factory/shared";
+import { declarationFor, pinOf, pinRefFor } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from "react";
@@ -22,7 +22,7 @@ import type { AddSlot, RowNote } from "./config-list";
 import { FIELD_PATHS, MARKETPLACES_PATH } from "./fields";
 import { CONFIG_COPY, PLUGIN_COPY } from "./messages";
 import { PickAddMany, pickEmpty } from "./pick-add";
-import { PinControl, pinRefFor } from "./plugin-pin";
+import { PinControl } from "./plugin-pin";
 import { type ConfigScope, useConfigScope, useFieldNote } from "./scope";
 import { WrongType } from "./section";
 import { isRec, readAt } from "./tolerant";
@@ -65,12 +65,6 @@ const recAt = (root: unknown, path: readonly string[]): Rec | undefined => {
   const r = readAt(root, path);
   return r.ok && isRec(r.value) ? r.value : undefined;
 };
-
-/** The declaration a first pick writes for an undeclared marketplace: pinned by default; a folder is live. */
-function declarationFor(row: Row): Rec {
-  if (row.source.source === "directory") return { source: row.source };
-  return { source: { ...row.source, ref: pinRefFor(row) } };
-}
 
 /** Why a pick can't join the marketplace's declaration (or the one a template pick would write), or undefined. */
 function refusalFor(key: string, entry: Entry | undefined, row: Row | undefined, decl: unknown) {

@@ -121,3 +121,11 @@ export class StopCronsError extends ApiError {
     this.name = "StopCronsError";
   }
 }
+
+/** An agent actor asked for something only a human may do (spec §7.2): a 403 for REST, a tool error for MCP. */
+export class OrgRefusedError extends ApiError {
+  constructor(message: string) {
+    super(403, "org_refused", message);
+    this.name = "OrgRefusedError";
+  }
+}

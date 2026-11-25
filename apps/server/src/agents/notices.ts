@@ -4,10 +4,12 @@ export type NoticeType =
   | "factory_restarted"
   | "restart"
   | "restart_crons"
+  | "config_continue"
   | "rate_limit_reset"
   | "crons_stopped"
   | "compact_continue"
-  | "config_changed";
+  | "config_changed"
+  | "report_config_changed";
 
 /** I2 §7.3: the fixed first line of the `config_changed` notice; every following line is one change, as "- …". */
 export const CONFIG_NOTICE_HEADER = "Your configuration changed:";
@@ -16,11 +18,14 @@ export const CONFIG_NOTICE_HEADER = "Your configuration changed:";
  * I2 §7.3: the `config_changed` body, which `parseConfigNotice` reads back: the header, then each line once, sorted.
  * The lines are `describeChanges` output (secret-safe); a line break inside one is flattened so the body stays parseable.
  */
-export function renderConfigNotice(lines: readonly string[]): string {
+export function renderConfigNotice(
+  lines: readonly string[],
+  header: string = CONFIG_NOTICE_HEADER,
+): string {
   const items = [...new Set(lines.map((l) => l.replace(/\s*\n\s*/g, " ").trim()))]
     .filter(Boolean)
     .sort();
-  return [CONFIG_NOTICE_HEADER, ...items.map((l) => `- ${l}`)].join("\n");
+  return [header, ...items.map((l) => `- ${l}`)].join("\n");
 }
 
 /** The change lines of a `config_changed` body (`renderConfigNotice`'s inverse); anything else in it is ignored. */
@@ -78,6 +83,15 @@ export const notices = {
       "Recreate them if you still need them.",
     ].join(" ");
   },
+  /** I7 §9.5: the waking notice of a self-edit restart; `crons` empty when the crons_stopped notice already lists them. */
+  configContinue(i: { crons: string[] }): string {
+    return [
+      "Restarted to apply your config changes. Continue where you left off.",
+      ...(i.crons.length
+        ? [`These crons were stopped: ${i.crons.join("; ")}; recreate them if you still need them.`]
+        : []),
+    ].join(" ");
+  },
   /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). */
   cronsStopped(i: { by: string; crons: string[] }): string {
     return `${i.by} stopped your crons: ${i.crons.join("; ")}. Don't recreate them unless you are asked to.`;
@@ -90,6 +104,14 @@ export const notices = {
   },
   /** I2 §7.3: passive; one pending row accumulates every change (`EventStore.createNotice`'s merge mode). */
   configChanged: renderConfigNotice,
+  /**
+   * I7 §8.2: passive, to an agent's manager; one pending row per (manager, report) accumulates the lines, and the
+   * header names the latest actor. `by` is the actor's `@handle`, `report` the report's slug. The `config_changed` shape,
+   * so `parseConfigNotice` reads it back.
+   */
+  reportConfigChanged(i: { by: string; report: string; lines: readonly string[] }): string {
+    return renderConfigNotice(i.lines, `${i.by} changed @${i.report}'s configuration:`);
+  },
   /** `at` only when the reset time was exact. */
   rateLimitReset(i: { credential: string; at?: Date }): string {
     return `The rate limit on credential \`${i.credential}\` reset${i.at ? ` at ${hhmm(i.at)}` : ""}. Continue where you left off.`;

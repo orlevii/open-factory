@@ -67,6 +67,10 @@ export interface PrepareInput {
   inheritedDeny?: DenyRules;
   /** The secrets this start actually passes (a spawned agent's are intersected with its spawner's). */
   secretNames: string[];
+  /** The agent holds manage_org (I7 §10). */
+  manageOrg: boolean;
+  /** The slug of the agent that last wrote this agent's own description, or null (I7 §10). */
+  descriptionWrittenBy: string | null;
 }
 
 /** What `materialize` checks: the prepare input minus what only a start knows. */
@@ -83,6 +87,8 @@ export type MaterializeCheck = Omit<
   | "scheduling"
   | "inheritedDeny"
   | "secretNames"
+  | "manageOrg"
+  | "descriptionWrittenBy"
 > & { config: TemplateConfig };
 
 export interface TemplateSource {
@@ -320,6 +326,8 @@ export class Workspace {
         spawner: i.spawner,
         spawning: i.spawning,
         scheduling: i.scheduling ?? null,
+        manageOrg: i.manageOrg,
+        descriptionWrittenBy: i.descriptionWrittenBy,
       }),
     );
     // Spec §11.4: mounts come only from factory-owned inputs (the template folder and the overlay in the database).

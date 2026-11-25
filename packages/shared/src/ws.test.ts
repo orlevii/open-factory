@@ -129,3 +129,22 @@ test("library_changed carries the repo of a failed background add, and nothing e
     serverMessageSchema.parse({ type: "library_changed", addFailed: "acme/x", extra: 1 }),
   ).toEqual({ type: "library_changed", addFailed: "acme/x" });
 });
+
+test("org_action frames parse for the four actions and reject anything else", () => {
+  for (const action of ["agent_created", "agent_archived", "agent_unarchived", "template_created"])
+    expect(
+      serverMessageSchema.parse({ type: "org_action", action, by: "@hr", subject: "dev" }),
+    ).toEqual({ type: "org_action", action, by: "@hr", subject: "dev" });
+  expect(
+    serverMessageSchema.safeParse({
+      type: "org_action",
+      action: "agent_moved",
+      by: "@hr",
+      subject: "dev",
+    }).success,
+  ).toBe(false);
+  expect(
+    serverMessageSchema.safeParse({ type: "org_action", action: "agent_created", subject: "dev" })
+      .success,
+  ).toBe(false);
+});

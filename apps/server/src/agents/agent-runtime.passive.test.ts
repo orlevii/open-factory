@@ -5,6 +5,7 @@ import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
+import { notices } from "./notices.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { noForward, noopTokens, sendAs, testEffective } from "./testing/runtime-harness.ts";
@@ -141,4 +142,34 @@ test("the Reaper may reap a spawned agent whose only queued item is the passive 
   await store.createNotice({ toAgentId: id, notice: "restart", body: "x" });
   await rt.init();
   expect(await rt.reaperCheck(Date.now())).toBe(false);
+});
+
+test("a queued report_config_changed never wakes the manager: not deliverable, no boot wake", async () => {
+  await insertAgent(t.sql, { id: `rep${n}`, slug: `rep${n}`, reportsTo: id });
+  await store.createNotice({
+    toAgentId: id,
+    notice: "report_config_changed",
+    body: notices.reportConfigChanged({ by: "@hr", report: `rep${n}`, lines: ["added skill tdd"] }),
+    subjectAgentId: `rep${n}`,
+  });
+  await rt.init();
+  expect(rt.hasDeliverable()).toBe(false);
+  expect((await store.bootWakes(30_000)).map((w) => w.id)).not.toContain(id);
+});
+
+test("recordReportNotice on a running idle manager queues the notice without sending it", async () => {
+  await runIdle();
+  await insertAgent(t.sql, { id: `rep${n}`, slug: `rep${n}`, reportsTo: id });
+  await rt.recordReportNotice(`rep${n}`, "@hr", ["added skill tdd"]);
+  expect(driver.last.sent).toHaveLength(1); // only the boot batch
+  expect(rt.queueItems().map((q) => q.kind)).toEqual(["notice"]);
+  expect(rt.hibernatable()).toBe(true);
+  await send("hello again");
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  const batch = driver.last.sent[1] ?? [];
+  expect(batch.map((m) => [m.kind, m.from, m.body])).toEqual([
+    ["system", "@factory", `@hr changed @rep${n}'s configuration:\n- added skill tdd`],
+    ["message", "@or", "hello again"],
+  ]);
 });

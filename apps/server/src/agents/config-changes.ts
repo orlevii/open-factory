@@ -1,6 +1,8 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
+  type Actor,
   type AgentOverlay,
+  actorBy,
   agentOverlaySchema,
   type ConfigDoc,
   type ConfigSnapshot,
@@ -125,7 +127,13 @@ export class ConfigChanges {
       store: Pick<EventStore, "append">;
       runtimes: Pick<
         AgentRuntimes,
-        "get" | "recordConfigNotice" | "requestRestart" | "setNextImage" | "imageRef" | "startedOf"
+        | "get"
+        | "recordConfigNotice"
+        | "recordReportNotice"
+        | "requestRestart"
+        | "setNextImage"
+        | "imageRef"
+        | "startedOf"
       >;
       bus: Pick<EventBus, "publishAll">;
       log: Pick<RuntimeLog, "error">;
@@ -188,15 +196,18 @@ export class ConfigChanges {
    */
   async overlaySaved(
     agent: AgentRow,
-    by: string,
+    actor: Actor,
     before: ConfigDoc,
     after: ConfigDoc,
   ): Promise<{ changes: string[]; restartChecked: boolean }> {
     const { changes, restartChecked } = await this.apply(
       agent,
-      by,
+      actorBy(actor),
       await this.snapshot(before),
       await this.snapshot(after),
+      // An agent that edits its own configuration is woken by the restart it asked for (spec §9.5).
+      actor.kind === "agent" && actor.id === agent.id,
+      actor,
     );
     return { changes, restartChecked };
   }
@@ -267,6 +278,8 @@ export class ConfigChanges {
     by: string,
     before: ConfigSnapshot | null,
     after: ConfigSnapshot,
+    wake = false,
+    actor?: Actor,
   ): Promise<Applied> {
     const { runtimes } = this.d;
     const changes = before ? describeChanges(before, after) : [];
@@ -286,6 +299,14 @@ export class ConfigChanges {
       return { changes, restartChecked: false, done: this.settle(agent, work) };
 
     if (changes.length) work.push(runtimes.recordConfigNotice(agent.id, changes));
+    // I7 §8.2: an agent actor's change tells the agent's manager, unless the manager is the actor (it knows).
+    if (
+      changes.length &&
+      actor?.kind === "agent" &&
+      agent.reportsTo &&
+      agent.reportsTo !== actor.id
+    )
+      work.push(runtimes.recordReportNotice(agent.reportsTo, agent.id, by, changes));
     if (agent.runtime === "docker") {
       const config = configOf(after.doc, agent.runtime);
       runtimes.setNextImage(agent.id, config ? runtimes.imageRef(config) : undefined);
@@ -297,6 +318,7 @@ export class ConfigChanges {
       work.push(
         runtimes.requestRestart(agent.id, {
           current: () => this.d.agents.currentEffective(agent.id),
+          ...(wake ? { wake } : {}),
         }),
       );
     if (agent.kind === "persistent") {

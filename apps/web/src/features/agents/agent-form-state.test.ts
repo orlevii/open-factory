@@ -343,3 +343,15 @@ test("no restored banner when the draft equals the server copy", () => {
   const caught = mount(edit({ ...lead, displayName: "Server will catch up" }));
   expect(caught.result.current.restored).toBe(false);
 });
+
+test("manageOrg is an edit field: toggling it is the only change sent", async () => {
+  const { result } = mount(edit());
+  expect(result.current.changes).toEqual([]);
+  act(() => result.current.set("manageOrg", true));
+  expect(result.current.changes).toEqual(["manageOrg"]);
+  const send = vi.fn(async (b: CreateAgentBody | PatchAgentBody) => ({ ...lead, ...b }) as never);
+  await act(async () => {
+    await result.current.submit(send);
+  });
+  expect(send).toHaveBeenCalledWith({ manageOrg: true });
+});

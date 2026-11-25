@@ -315,24 +315,30 @@ try {
 
   // 4. Agents.
   const alpha = await step("4. agent smoke-alpha created from alpha with smoke-a", () =>
-    app.agents.create({
-      template: "alpha",
-      slug: "smoke-alpha",
-      displayName: "Smoke Alpha",
-      description: "Smoke agent alpha",
-      reportsTo: null,
-      credential: "smoke-a",
-    }),
+    app.agents.create(
+      {
+        template: "alpha",
+        slug: "smoke-alpha",
+        displayName: "Smoke Alpha",
+        description: "Smoke agent alpha",
+        reportsTo: null,
+        credential: "smoke-a",
+      },
+      { kind: "human", handle: "or" },
+    ),
   );
   await step("4. agent smoke-beta created from beta with smoke-b", () =>
-    app.agents.create({
-      template: "beta",
-      slug: "smoke-beta",
-      displayName: "Smoke Beta",
-      description: "Smoke agent beta",
-      reportsTo: "smoke-alpha",
-      credential: "smoke-b",
-    }),
+    app.agents.create(
+      {
+        template: "beta",
+        slug: "smoke-beta",
+        displayName: "Smoke Beta",
+        description: "Smoke agent beta",
+        reportsTo: "smoke-alpha",
+        credential: "smoke-b",
+      },
+      { kind: "human", handle: "or" },
+    ),
   );
   check(
     "4. smoke-alpha holds the template default grant smoke-repo",

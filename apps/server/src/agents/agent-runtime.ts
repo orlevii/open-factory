@@ -277,13 +277,16 @@ type Subject = NonNullable<Envelope["subject"]>;
 const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
 /**
  * S9 §10.3, I2 §7.3: a notice that never makes an agent wake, stay up or be kept alive by itself (`crons_stopped`: the
- * agent was stopped on purpose; `config_changed`: the change applies at the next start). It rides at the head of the
+ * agent was stopped on purpose; `config_changed`: the change applies at the next start; `report_config_changed`
+ * (I7 §8.2): a report's config change is information for a manager, never work). It rides at the head of the
  * next batch that has something else. The one predicate every place that counts a queued item as a reason to act uses.
  */
 const isPassive = (e: Entry): boolean =>
   e.kind === "message" &&
   e.row.kind === "system" &&
-  (e.row.notice === "crons_stopped" || e.row.notice === "config_changed");
+  (e.row.notice === "crons_stopped" ||
+    e.row.notice === "config_changed" ||
+    e.row.notice === "report_config_changed");
 const kindOf = (row: MessageRow): MessageKind => row.kind as MessageKind;
 /** Member updates and peer events: never written mid-turn, written with any batch written while no turn is open. */
 const isHeld = (e: Entry): e is MessageEntry =>
@@ -516,6 +519,7 @@ export class AgentRuntime {
   private provisionalLatches = 0;
   // What the first provisional latch held back, restored when the last one is undone.
   private restartPendingAtLatch = false;
+  private pendingWakeAtLatch = false;
   private lastError: string | undefined;
   private errorKind: ErrorKind | undefined;
   // Spec §9.2: an attempt to bring back interrupted work is in progress (persisted). `attemptReason` is its wake's
@@ -537,6 +541,12 @@ export class AgentRuntime {
   private submitted = 0;
   // Apply-restart (spec §13)
   private restartPending = false;
+  /**
+   * I7 §9.5: the pending restart is a self-edit's: its exit adds a waking `config_continue` notice and wakes the agent.
+   * Set only with `restartPending` (by `requestRestart`), kept by Stop crons' takeover, and consumed or cleared by
+   * every exit and every stop or takeover that clears `restartPending`, so a crash or archive never carries it.
+   */
+  private pendingWake = false;
   /** I2 §7.3: the change lines the pending restart applies (`restartChanges`); cleared on every exit and launch. */
   private pendingChanges = new Set<string>();
   /** I2 §7.2: the config lines of the pending restart, `describeChanges(started, current)`; replaced, never unioned. */
@@ -844,9 +854,14 @@ export class AgentRuntime {
    * Adds (or refreshes) a `@factory` notice. Call inside a job. A new notice goes ahead of every non-notice entry
    * (older pending messages, rolled-back batches); a replaced pending one only changes its body. Starts nothing.
    */
-  async addNotice(type: NoticeType, body: string) {
+  async addNotice(type: NoticeType, body: string, subjectAgentId?: string) {
     const row = await this.d.store.createNotice(
-      { toAgentId: this.agent.id, notice: type, body },
+      {
+        toAgentId: this.agent.id,
+        notice: type,
+        body,
+        ...(subjectAgentId ? { subjectAgentId } : {}),
+      },
       { inFlightIds: this.inFlight.flat().map((e) => e.row.id) },
     );
     this.placeNotice(row);
@@ -880,6 +895,24 @@ export class AgentRuntime {
     return this.run(async () => {
       if (this.terminationCommitted || !lines.length) return;
       await this.addNotice("config_changed", notices.configChanged(lines));
+    });
+  }
+
+  /**
+   * I7 §8.2: records an agent actor's change to one of this agent's reports in the one pending
+   * `report_config_changed` notice for that report (merged, sorted). Passive like `recordConfigNotice`. Never throws
+   * for a terminated agent.
+   */
+  recordReportNotice(reportId: string, by: string, lines: string[]): Promise<void> {
+    return this.run(async () => {
+      if (this.terminationCommitted || !lines.length) return;
+      const report = await this.d.store.agentById(reportId);
+      if (!report) return;
+      await this.addNotice(
+        "report_config_changed",
+        notices.reportConfigChanged({ by, report: report.slug, lines }),
+        reportId,
+      );
     });
   }
 
@@ -1095,7 +1128,7 @@ export class AgentRuntime {
         // `restart_crons` notice, and wakes only for non-passive items.
         a.reason = "crons_stopped";
         a.by = by;
-        this.restartPending = false;
+        this.restartPending = false; // `pendingWake` stays: the exit honours it (I7 §9.5)
         await this.addStopNotice(by);
         this.publishStatus();
         return { status: "stopped" as const };
@@ -1162,8 +1195,9 @@ export class AgentRuntime {
    * Applies config changes at the next safe moment: stop the process gracefully and resume the same session on
    * the next start, whose prepareStart reloads everything from the DB. A no-op when no process is running.
    * `changes` (I2 §7.3) are the lines the restart applies, shown as `restartChanges` until the process exits; callers
-   * that restart for other reasons (credential, grants, manager) pass none. `wake` is I7's (a waking self-restart
-   * notice) and is ignored in I2.
+   * that restart for other reasons (credential, grants, manager) pass none. `wake` is I7's self-edit (§9.5): when a restart ends up pending the
+   * agent is woken after it with `config_continue`, no human message needed; a `current` that finds no difference
+   * leaves neither.
    * `current` (I2 §7.2, I5 §8.2) reads the agent's effective doc and Library now (a fresh row through the resolver); undefined when it can't
    * be read. It is called here, in the job, so the decision always compares what the process started with against the
    * latest committed config, never against a doc a caller computed from rows read earlier: a request issued from stale
@@ -1193,6 +1227,7 @@ export class AgentRuntime {
       ) {
         // A cleared restart (stop, exit, takeover) leaves nothing of its causes behind.
         if (!this.restartPending) {
+          this.pendingWake = false;
           this.otherRestartCause = false;
           this.configChanges = [];
           this.pendingChanges.clear();
@@ -1205,6 +1240,7 @@ export class AgentRuntime {
           this.configChanges = describeChanges(this.started, now);
           if (!this.configChanges.length && !this.otherRestartCause) {
             this.restartPending = false;
+            this.pendingWake = false;
             this.publishStatus();
             return;
           }
@@ -1213,6 +1249,7 @@ export class AgentRuntime {
           for (const c of opts.changes ?? []) this.pendingChanges.add(c);
         }
         this.restartPending = true;
+        if (opts.wake) this.pendingWake = true;
         this.maybeRestart();
       }
       this.publishStatus();
@@ -1320,13 +1357,16 @@ export class AgentRuntime {
     if (!o.committed) {
       this.provisionalLatches += 1;
       this.restartPendingAtLatch ||= this.restartPending;
+      this.pendingWakeAtLatch ||= this.pendingWake;
     }
     this.terminated = true;
     this.restartPending = false;
+    this.pendingWake = false;
     if (o.committed && !this.terminationCommitted) {
       this.terminationCommitted = true;
       this.provisionalLatches = 0;
       this.restartPendingAtLatch = false;
+      this.pendingWakeAtLatch = false;
       const dropped = [...this.queue, ...this.held].flatMap((e) =>
         e.kind === "message" ? [e.row.id] : [],
       );
@@ -1364,13 +1404,17 @@ export class AgentRuntime {
     if (this.provisionalLatches > 0) return;
     this.terminated = false;
     const restart = this.restartPendingAtLatch;
+    const wake = this.pendingWakeAtLatch;
     this.restartPendingAtLatch = false;
+    this.pendingWakeAtLatch = false;
     this.updateHeldTimer();
     this.publishStatus();
     void this.run(async () => {
       if (this.terminated) return; // latched again meanwhile
-      if (restart && this.proc && this.proc !== this.deadProc && !this.stopping)
+      if (restart && this.proc && this.proc !== this.deadProc && !this.stopping) {
         this.restartPending = true;
+        this.pendingWake = wake;
+      }
       this.armOwedBound();
       if (this.proc) await this.flushOrStop("flush after a failed termination failed");
       else if (this.hasDeliverable()) await this.wakeFromJob("queued_items");
@@ -1973,10 +2017,12 @@ export class AgentRuntime {
     // inside prepareStart, and an apply-restart waiting for its moment is dropped.
     this.stopsInProgress += 1;
     this.restartPending = false;
+    this.pendingWake = false;
     this.publishStatus();
     try {
       const proc = await this.run(async () => {
         this.restartPending = false;
+        this.pendingWake = false;
         this.beginHibernate(this.archived ? "archived" : "shutdown", opts);
         this.publishStatus();
         // The stop under way is the one to wait for: this one, or a Restart's or a failed start's (each with its own
@@ -3159,6 +3205,8 @@ export class AgentRuntime {
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;
+    const wake = this.pendingWake; // honoured by a hibernate exit below; every other exit drops it
+    this.pendingWake = false;
     this.pendingChanges.clear();
     this.configChanges = [];
     this.otherRestartCause = false;
@@ -3263,7 +3311,7 @@ export class AgentRuntime {
       await this.append(null, e);
       if (terminating) await this.reportLostWork("terminated", lost);
       else if (intent?.kind === "hibernate") {
-        await this.recordLostWork(intent, Boolean(openTurnId));
+        await this.recordLostWork(intent, Boolean(openTurnId), wake);
         await this.append(null, {
           type: "hibernated",
           reason: intent.reason,
@@ -3304,12 +3352,13 @@ export class AgentRuntime {
       if (canAttempt && this.messageStartsAttempt() && this.hasDeliverable())
         await this.beginAttempt("message", false);
     } else if (intent?.kind === "hibernate") {
-      if (intent.reason !== "shutdown" && intent.reason !== "archived")
-        await this.wakeAfterExit(
-          intent.reason === "apply_changes" && intent.lost.crons.length
-            ? "apply_changes"
-            : "queued_items",
-        );
+      if (intent.reason !== "shutdown" && intent.reason !== "archived") {
+        // Only an apply-restart (or Stop crons taking it over) restarts for config: a self-edit's wake, or crons it lost.
+        const applies = intent.reason === "apply_changes" || intent.reason === "crons_stopped";
+        const configWake =
+          applies && (wake || (intent.reason === "apply_changes" && intent.lost.crons.length > 0));
+        await this.wakeAfterExit(configWake ? "apply_changes" : "queued_items");
+      }
     } else if (intent?.kind === "restart" && this.attempting && this.attemptReason) {
       // Restart or Start a new session: the attempt's wake; if none can start now, the attempt ends.
       const reason = this.attemptReason;
@@ -3325,6 +3374,7 @@ export class AgentRuntime {
   private async recordLostWork(
     intent: Extract<AfterExit, { kind: "hibernate" }>,
     turnWasOpen: boolean,
+    wake: boolean,
   ) {
     const { reason, lost } = intent;
     const anyLost = lost.tasks.length > 0 || lost.crons.length > 0;
@@ -3334,6 +3384,15 @@ export class AgentRuntime {
       await this.addNotice(
         "factory_restarted",
         notices.factoryRestarted({ tasks: lost.tasks.map((t) => t.description || t.taskId) }),
+      );
+    else if (wake && (reason === "apply_changes" || reason === "crons_stopped"))
+      // I7 §9.5: the self-edit's one waking notice, replacing `restart_crons`. After Stop crons took the hibernate
+      // over, the human's `crons_stopped` notice already lists them.
+      await this.addNotice(
+        "config_continue",
+        notices.configContinue({
+          crons: reason === "apply_changes" ? lost.crons.map((c) => c.humanSchedule) : [],
+        }),
       );
     else if (reason === "apply_changes" && lost.crons.length)
       await this.addNotice(
@@ -3568,6 +3627,7 @@ export class AgentRuntime {
       if (!final || this.afterExit?.kind !== "hibernate") return false;
       this.afterExit.reason = reason;
       this.restartPending = false;
+      this.pendingWake = false;
       return true;
     }
     if (reason === "warm_window" || reason === "freed_slot") {
@@ -3665,6 +3725,7 @@ export class AgentRuntime {
     this.deadProc = proc;
     this.afterExit = { kind: "internal" };
     this.restartPending = false;
+    this.pendingWake = false;
     this.d.log.error({ agent: this.agent.slug, pid: proc.pid }, "the process can't be stopped");
     // setErrored sets the in-memory truth first; the DB may be what failed.
     await this.setErrored(stopFailedMessage(proc.pid), "stop_failed").catch(() => {});

@@ -1,3 +1,5 @@
+export * from "./actor.ts";
+export * from "./agent-policy.ts";
 export * from "./agents.ts";
 export * from "./api-fetch.ts";
 export * from "./avatar.ts";
@@ -20,6 +22,7 @@ export * from "./messages.ts";
 export * from "./messaging.ts";
 export * from "./models.ts";
 export * from "./names.ts";
+export * from "./org-tools.ts";
 export * from "./preview.ts";
 export * from "./schedules.ts";
 export * from "./schemas.ts";

@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SheetBody, SheetClose, SheetDescription, SheetFooter } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
@@ -63,6 +64,9 @@ type Spec = { kind: "edit-agent"; slug: string; at?: string };
 const NO_MANAGER: ComboOption[] = [
   { value: "", label: "No manager (reports to the humans)", fixed: true },
 ];
+/** Spec §5.4, verbatim. */
+const MANAGE_ORG_HELP =
+  "Create templates and agents, edit configurations, archive. Can assign secrets and credentials to agents and read configuration values humans typed in; grant it like admin access and keep sensitive values in secrets. Can't change local-runtime agents or grant this permission.";
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
 const andList = (items: string[]) =>
   items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
@@ -488,6 +492,17 @@ function EditAgentForm({
             onChange={s.setProjects}
             onAddProject={onAddProject}
           />
+          <FieldShell name="manageOrg" label="Can manage the org" help={MANAGE_ORG_HELP}>
+            {(a) => (
+              <Switch
+                id={a.id}
+                className="justify-self-start"
+                checked={shown.manageOrg}
+                aria-describedby={a.describedBy}
+                onCheckedChange={(v) => set("manageOrg", v)}
+              />
+            )}
+          </FieldShell>
         </fieldset>
         {restartHelp && (
           <p className="text-[0.8125rem] leading-[1.125rem] text-muted-foreground">{restartHelp}</p>

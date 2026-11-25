@@ -303,7 +303,12 @@ test("a stale template dispatch arriving after an overlay save doesn't cancel th
   w.current.set(id, committed);
   // The overlay PUT's request, then the template dispatch that read the row before the PUT committed (its row still
   // holds the empty overlay, so its `after` equals what the process started with).
-  await w.changes.overlaySaved(await rowOf(id), "@or", started, committed);
+  await w.changes.overlaySaved(
+    await rowOf(id),
+    { kind: "human", handle: "or" },
+    started,
+    committed,
+  );
   await w.changes.templateChanged({ name: "t-race1", before: A, after: B, by: FILE_CHANGE });
   await rt?.settled();
   expect(w.reads()).toBe(2);
@@ -329,7 +334,7 @@ test("an overlay save built on a stale base arriving after a template change doe
   // An overlay revert whose base was read before the template change: its `after` equals what the process started on.
   await w.changes.overlaySaved(
     await rowOf(id),
-    "@or",
+    { kind: "human", handle: "or" },
     mergeConfig(A, { template: { model: "haiku" } }),
     started,
   );
@@ -346,7 +351,7 @@ test("an overlay save on an archived agent writes the event only; values never r
   const id = await agent({ archived: true });
   const out = await w.changes.overlaySaved(
     await rowOf(id),
-    "@or",
+    { kind: "human", handle: "or" },
     doc(),
     doc({}, { settings: { env: { GH: SECRET } } }),
   );

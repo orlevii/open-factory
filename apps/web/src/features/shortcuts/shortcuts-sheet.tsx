@@ -1,6 +1,6 @@
-import { Switch as SwitchPrimitive } from "radix-ui";
 import { Kbd } from "@/components/ui/kbd";
 import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { usePref } from "@/lib/prefs";
 import { SINGLE_KEYS_PREF } from "@/lib/shortcuts";
 import { setShortcutsSheetOpen, useShortcutsSheetOpen } from "./sheet-store";
@@ -52,14 +52,7 @@ export function ShortcutsSheet() {
         <SheetBody className="flex flex-col gap-6">
           <div className="flex items-center justify-between gap-3 text-sm">
             <span id="single-keys-label">Single-key shortcuts</span>
-            <SwitchPrimitive.Root
-              aria-labelledby="single-keys-label"
-              checked={on}
-              onCheckedChange={setOn}
-              className="relative h-5 w-9 shrink-0 rounded-full border bg-muted transition-colors data-[state=checked]:border-primary data-[state=checked]:bg-primary"
-            >
-              <SwitchPrimitive.Thumb className="block size-4 translate-x-0.5 rounded-full bg-background shadow-sm transition-transform data-[state=checked]:translate-x-[1.125rem]" />
-            </SwitchPrimitive.Root>
+            <Switch aria-labelledby="single-keys-label" checked={on} onCheckedChange={setOn} />
           </div>
           {GROUPS.map((g) => (
             <section key={g.title} aria-label={g.title} className="flex flex-col gap-2">

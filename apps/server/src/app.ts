@@ -15,8 +15,10 @@ import { AgentService } from "./agents/agent-service.ts";
 import { ChatStore } from "./agents/chat-store.ts";
 import { ConfigChanges, dbConfigChangeAgents } from "./agents/config-changes.ts";
 import { ConfigResolver } from "./agents/config-resolver.ts";
+import { ConfigService } from "./agents/config-service.ts";
 import { EventBus } from "./agents/event-bus.ts";
 import { EventStore } from "./agents/event-store.ts";
+import { PolicyInputs } from "./agents/policy-inputs.ts";
 import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
@@ -44,6 +46,7 @@ import { startAgentListener } from "./mcp/listener.ts";
 import { createFactoryMcp } from "./mcp/server.ts";
 import { AgentTokens } from "./mcp/tokens.ts";
 import { listPeersTool } from "./mcp/tools/list-peers.ts";
+import { type OrgToolDeps, orgTools } from "./mcp/tools/org-tools.ts";
 import { scheduleTools } from "./mcp/tools/schedule-tools.ts";
 import { sendCommandTool } from "./mcp/tools/send-command.ts";
 import { sendMessageTool } from "./mcp/tools/send-message.ts";
@@ -120,6 +123,7 @@ declare module "fastify" {
     /** I2 §7.2: the one change path for template changes and overlay saves. */
     configChanges: ConfigChanges;
     agents: AgentService;
+    configs: ConfigService;
     credentials: CredentialService;
     /** I3 §5.4: the in-memory "Sign in with Claude" attempts, one per user. */
     signIn: SignInAttempts;
@@ -356,6 +360,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("schedules", schedules);
   app.decorate("scheduler", scheduler);
+  const policy = new PolicyInputs({ db: deps.db, library });
   const agents = new AgentService({
     db: deps.db,
     templates,
@@ -369,8 +374,18 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     store,
     bus,
     configChanges,
+    policy,
     scheduling: schedules,
   });
+  const configs = new ConfigService({
+    db: deps.db,
+    templates,
+    runtimes,
+    resolver,
+    policy,
+    configChanges,
+  });
+  app.decorate("configs", configs);
   // The verifier's driver has no logger: process output can echo the credential under test.
   const verifier = new CredentialVerifier({
     driver: deps.harnessDriver ?? createClaudeDriver({ transports: { local: localTransport } }),
@@ -648,6 +663,16 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       terminator,
       tasks,
       schedules,
+      org: {
+        agents,
+        config: configs,
+        templates,
+        library,
+        plugins,
+        credentials,
+        secrets: app.secrets,
+        projects: app.projects,
+      },
       log: app.log,
     });
   } catch (err) {
@@ -714,6 +739,8 @@ async function listenForAgents(
     terminator: TerminatePort;
     tasks: TaskService;
     schedules: ScheduleService;
+    /** The services the org tools call; the caller's own row is `store.agentById`. */
+    org: Omit<OrgToolDeps, "loadAgent">;
     log: FastifyInstance["log"];
   },
 ) {
@@ -753,6 +780,9 @@ async function listenForAgents(
             })
           : []),
         listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
+        ...(caller.manageOrg
+          ? orgTools({ ...d.org, loadAgent: (id) => d.store.agentById(id) })
+          : []),
         ...(started && maySpawn(caller, started)
           ? [
               spawnAgentTool({

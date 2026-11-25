@@ -5,11 +5,12 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react"
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { Toaster } from "@/components/ui/toaster";
+import { Toaster, notify as toast } from "@/components/ui/toaster";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { onChatChanged } from "@/features/chat/use-chat";
 import { agentConfigQueryOptions, templateConfigQueryOptions } from "@/features/config/api";
 import { useInboxNotifier } from "@/features/inbox/notifications";
+import { createOrgToasts } from "@/features/org/org-toasts";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
 import { invalidateCommands } from "@/features/session/commands";
@@ -76,6 +77,7 @@ function AppLayout() {
   // A file dropped outside the composer never navigates away from the app (U3 §13.5).
   useEffect(() => installFileDropGuard(), []);
   useEffect(() => {
+    const orgToasts = createOrgToasts({ notify: toast, navigate: (to) => navigate({ to }) });
     const connection = connectWs({
       // A failed check (5xx, network) rejects; connectWs then keeps retrying instead of signing out.
       hasSession: async () => {
@@ -150,6 +152,19 @@ function AppLayout() {
             });
           }
         }
+        // I7: an agent changed the org: one merged toast per actor window; the lists it touched refetch.
+        if (m.type === "org_action") {
+          orgToasts.onOrgAction(m);
+          if (m.action === "template_created")
+            void qc.invalidateQueries(
+              { queryKey: ["templates"], exact: true },
+              { cancelRefetch: false },
+            );
+          else {
+            void qc.invalidateQueries({ queryKey: ["agents"] });
+            void qc.invalidateQueries({ queryKey: ["agent", m.subject] });
+          }
+        }
         if (m.type === "agent_status") {
           // Before the first frame for an agent, the cached list or detail (fetched over REST) tells
           // whether a turn was already open when the socket connected. The queued frame lands on a
@@ -184,6 +199,7 @@ function AppLayout() {
     const removeFlush = installStatusFrameFlush();
     return () => {
       removeFlush();
+      orgToasts.dispose();
       connection.close();
       conn.current = null;
       clearTimeout(usageTimer.current);

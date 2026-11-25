@@ -588,14 +588,17 @@ try {
     await step(
       `1. agent ${slug} created${reportsTo ? ` (reports to ${reportsTo})` : " (top level)"}`,
       () =>
-        app.agents.create({
-          template: "msg",
-          slug,
-          displayName: slug[0]?.toUpperCase() + slug.slice(1),
-          description: `Smoke messaging agent ${slug}`,
-          reportsTo,
-          credential: "smoke",
-        }),
+        app.agents.create(
+          {
+            template: "msg",
+            slug,
+            displayName: slug[0]?.toUpperCase() + slug.slice(1),
+            description: `Smoke messaging agent ${slug}`,
+            reportsTo,
+            credential: "smoke",
+          },
+          { kind: "human", handle: "or" },
+        ),
     );
     ids.set(
       slug,

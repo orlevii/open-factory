@@ -56,6 +56,17 @@ test("kind is persistent or ephemeral; new columns default", async () => {
   expect(l).toMatchObject({ workspace_pinned: false, workspace_deleted_at: null });
   expect(l?.last_activity_at).toBeInstanceOf(Date);
 });
+test("only a persistent agent can manage the org", async () => {
+  await expect(sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, manage_org)
+                   values ('e3','e3-abcd','E','t','{}','local','c1','ephemeral','lead', true)`).rejects.toMatchObject(
+    {
+      code: "23514",
+    },
+  );
+  await sql`update agents set manage_org = true where id = 'lead'`;
+  const [l] = await sql`select manage_org from agents where id = 'lead'`;
+  expect(l?.manage_org).toBe(true);
+});
 test("a kind='message' row needs its recipients; other kinds don't", async () => {
   await expect(sql`insert into messages (id, kind, from_agent_id, to_agent_id, body)
                    values ('r1','message','lead','lead','x')`).rejects.toMatchObject({

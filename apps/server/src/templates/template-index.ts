@@ -402,6 +402,50 @@ export class TemplateIndex {
     };
   }
 
+  /**
+   * What an agent's `get_template` shows (I7 §7.1): the four files read with `lstat` first (a link is reported, never
+   * followed), the issues, and the agents using it. Never the folder's host path.
+   */
+  async orgView(name: string): Promise<{
+    runtime: string | null;
+    files: Record<TemplateFile, { content: string; hash: string } | { error: string } | null>;
+    issues: TemplateIssue[];
+    agents: { live: string[]; archived: string[] };
+  }> {
+    const row = await this.scanOne(name);
+    if (!row) throw notFound(name);
+    const files = Object.fromEntries(
+      await Promise.all(
+        TEMPLATE_FILES.map(async (file) => {
+          const target = path.join(row.path, file);
+          const st = await lstat(target).catch(() => null);
+          if (!st) return [file, null] as const;
+          if (!st.isFile()) return [file, { error: `${file} is a link; ask a human.` }] as const;
+          const buf = await readOrNull(target);
+          return [
+            file,
+            buf ? { content: buf.toString("utf8"), hash: fileHash(buf) } : null,
+          ] as const;
+        }),
+      ),
+    ) as Record<TemplateFile, { content: string; hash: string } | { error: string } | null>;
+    const users = await this.db
+      .select({ slug: schema.agents.slug, archivedAt: schema.agents.archivedAt })
+      .from(schema.agents)
+      .where(and(eq(schema.agents.template, name), isNull(schema.agents.terminatedAt)));
+    const slugs = (archived: boolean) =>
+      users
+        .filter((u) => (u.archivedAt !== null) === archived)
+        .map((u) => u.slug)
+        .sort();
+    return {
+      runtime: row.config?.runtime ?? null,
+      files,
+      issues: row.issues,
+      agents: { live: slugs(false), archived: slugs(true) },
+    };
+  }
+
   async writeFile(
     name: string,
     file: TemplateFile,

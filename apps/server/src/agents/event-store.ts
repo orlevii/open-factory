@@ -100,6 +100,8 @@ export type UnreadChat = {
   slug: string;
   unread: number;
   latest: { messageId: string; preview: string; createdAt: string; urgent: boolean };
+  /** The oldest unread message from the agent. */
+  firstUnreadId: string;
 };
 export interface InboxEntry {
   id: string;
@@ -116,6 +118,8 @@ export interface InboxEntry {
   task?: { key: string; title: string };
   /** A task event's notice, so the UI never parses the preview. */
   fact?: "done" | "cancelled";
+  /** An @factory notice's type, so the UI never parses the preview. */
+  notice?: string;
   /** The credential a `credential` item is about; `current` while its expiry notice has not been re-armed. */
   credential?: { name: string; expiresAt: string | null; current: boolean };
   link:
@@ -1495,6 +1499,7 @@ export class EventStore {
         createdAt: r.item.createdAt.toISOString(),
         ...(task ? { task } : {}),
         ...(fact ? { fact } : {}),
+        ...(r.m.kind === "system" && r.m.notice ? { notice: r.m.notice } : {}),
         link:
           task && r.item.kind !== "message"
             ? {
@@ -1522,7 +1527,7 @@ export class EventStore {
     userId: string,
     before?: string,
     limit = 50,
-    o: { unread?: boolean } = {},
+    o: { unread?: boolean; notify?: boolean } = {},
   ): Promise<{ chats?: UnreadChat[]; items: InboxEntry[]; nextCursor: string | null }> {
     let cursor: SQL | undefined;
     if (before) {
@@ -1537,7 +1542,17 @@ export class EventStore {
         // (`system`) has no chat: it is an item of kind `notice`.
         ne(messages.kind, "message"),
         cursor,
-        o.unread ? isNull(inboxItems.readAt) : undefined,
+        o.unread || o.notify ? isNull(inboxItems.readAt) : undefined,
+        // What notifies (I8 §5.1): a mention, a credential, or an @factory error or held loop.
+        o.notify
+          ? or(
+              inArray(inboxItems.kind, ["mention", "credential"]),
+              and(
+                eq(messages.kind, "system"),
+                inArray(messages.notice, ["agent_errored", "loop_held"]),
+              ),
+            )
+          : undefined,
       ),
     )
       .orderBy(desc(inboxItems.createdAt), desc(inboxItems.id))
@@ -1564,7 +1579,7 @@ export class EventStore {
       isNull(inboxItems.readAt),
       eq(inboxItems.kind, "message"),
     );
-    const [counts, latest] = await Promise.all([
+    const [counts, latest, oldest] = await Promise.all([
       this.unreadByAgent(userId),
       this.db
         .selectDistinctOn([fa.slug], {
@@ -1579,11 +1594,20 @@ export class EventStore {
         .innerJoin(fa, eq(fa.id, messages.fromAgentId))
         .where(unread)
         .orderBy(fa.slug, desc(inboxItems.createdAt), desc(inboxItems.id)),
+      this.db
+        .selectDistinctOn([fa.slug], { slug: fa.slug, messageId: messages.id })
+        .from(inboxItems)
+        .innerJoin(messages, eq(messages.id, inboxItems.messageId))
+        .innerJoin(fa, eq(fa.id, messages.fromAgentId))
+        .where(unread)
+        .orderBy(fa.slug, asc(inboxItems.createdAt), asc(inboxItems.id)),
     ]);
+    const firstUnread = new Map(oldest.map((r) => [r.slug, r.messageId]));
     return latest
       .map((r) => ({
         slug: r.slug,
         unread: counts[r.slug] ?? 0,
+        firstUnreadId: firstUnread.get(r.slug) ?? r.messageId,
         latest: {
           messageId: r.messageId,
           preview: Array.from(plainPreview(r.body)).slice(0, 280).join(""),

@@ -19,7 +19,7 @@ afterEach(async () => {
 const MIN = 60_000;
 
 async function setup(factorySettings: {
-  defaultWarmWindowMinutes?: number;
+  warmWindowMinutes?: number;
   memberUpdateDebounceSeconds?: number;
 }) {
   const driver = new FakeDriver();
@@ -64,12 +64,12 @@ async function setup(factorySettings: {
 }
 
 test("lowering the default warm window over PATCH hibernates an idle agent already past it", async () => {
-  const s = await setup({ defaultWarmWindowMinutes: 70 });
+  const s = await setup({ warmWindowMinutes: 70 });
   const proc = await s.idle();
   await s.tick(2 * MIN);
   expect(proc.stopped).toBe(false);
 
-  await s.patch({ defaultWarmWindowMinutes: 1 });
+  await s.patch({ warmWindowMinutes: 1 });
 
   expect(proc.stopped).toBe(true);
   expect((await s.events()).at(-1)).toMatchObject({ type: "hibernated", reason: "warm_window" });

@@ -115,14 +115,14 @@ function EndedMoreLine() {
   );
 }
 
-/** "3 of 8 running", live from the `supervisor` frame; hidden on Ended and below md. */
+/** "3 running", live from the `supervisor` frame; hidden on Ended and below md. */
 function RunningCount() {
   // Filled by the list fetch on this page and by supervisor frames: no fetch of its own.
   const { data } = useQuery({ ...runningQueryOptions, enabled: false });
-  if (!data) return null;
+  if (!data?.count) return null;
   return (
     <span className="ml-2 text-[0.8125rem] leading-[1.125rem] whitespace-nowrap text-muted-foreground max-md:hidden">
-      {data.count} of {data.max} running
+      {data.count} running
     </span>
   );
 }

@@ -40,8 +40,6 @@ function hibernatedText(e: Extract<AnyEvent, { type: "hibernated" }>): string {
       return e.idleMinutes === undefined
         ? "Hibernated"
         : `Hibernated after ${plural(e.idleMinutes, "minute", "minutes")} idle`;
-    case "freed_slot":
-      return "Hibernated to free a slot";
     case "crons_stopped":
       return e.by ? `Hibernated: ${e.by} stopped its crons` : "Hibernated: its crons were stopped";
     case "apply_changes":

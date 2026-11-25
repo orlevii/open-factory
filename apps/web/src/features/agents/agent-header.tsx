@@ -35,7 +35,6 @@ export const AgentHeader = memo(function AgentHeader({
   view,
   panel,
   stop,
-  slotsMax,
   onPinOutcome,
   onAgent,
   onTerminateStart,
@@ -46,7 +45,6 @@ export const AgentHeader = memo(function AgentHeader({
   view: AgentView;
   panel: AgentDetailsPanel;
   stop: StopCrons;
-  slotsMax: number | undefined;
   onPinOutcome(o: PinOutcome | undefined): void;
   onAgent(a: AgentSummary): void;
   onTerminateStart(): void;
@@ -55,7 +53,7 @@ export const AgentHeader = memo(function AgentHeader({
   onLifecycle(): void;
 }) {
   const archived = agent.archivedAt !== null;
-  const fact = liveFact(agent, { slotsMax: slotsMax, now: new Date() });
+  const fact = liveFact(agent, { now: new Date() });
   // A third header action (Restart / Start a new session, or Pin) beside Agent details and ⋯, each a 40px box on
   // touch: below a 22rem header the avatar, the view switch and the details toggle give way (the ⋯ menu carries
   // both) so the row stays one line. 22rem is 352px at 100% text and 704px at 200%: a phone at either.

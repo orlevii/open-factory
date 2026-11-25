@@ -159,12 +159,8 @@ function Description({ text }: { text: string }) {
 }
 
 /** Why messages aren't going out right now (the header's wording, in full). */
-function detailText(agent: AgentSummary, slotsMax?: number): ReactNode {
+function detailText(agent: AgentSummary): ReactNode {
   if (agent.pulling) return "Pulling the image…";
-  if (agent.status === "queued" && slotsMax)
-    return slotsMax === 1
-      ? "Queued: the only slot is in use."
-      : `Queued: all ${slotsMax} slots are in use.`;
   if (agent.status === "rate_limited")
     return (
       <>
@@ -178,12 +174,10 @@ function detailText(agent: AgentSummary, slotsMax?: number): ReactNode {
 function Now({
   agent,
   stop,
-  slotsMax,
   onAgent,
 }: {
   agent: AgentSummary;
   stop: StopCrons;
-  slotsMax?: number;
   onAgent?: (a: AgentSummary) => void;
 }) {
   const terminated = agent.status === "terminated" || !!agent.terminatedAt;
@@ -215,7 +209,7 @@ function Now({
         key: "error",
         node: <span className="whitespace-pre-line text-destructive">{agent.lastError}</span>,
       });
-    const detail = detailText(agent, slotsMax);
+    const detail = detailText(agent);
     if (detail) rows.push({ key: "detail", node: <span>{detail}</span> });
     if (agent.restartPending) {
       const changes = agent.restartChanges;
@@ -525,15 +519,12 @@ export function AgentDetails({
   agent,
   stop,
   onClose,
-  slotsMax,
   onAgent,
 }: {
   agent: AgentSummary;
   stop: StopCrons;
   /** Shown in the sheet and drawer modes. */
   onClose?: (() => void) | undefined;
-  /** For the queued detail. */
-  slotsMax?: number | undefined;
   /** A fresh summary from a pin/unpin response. */
   onAgent?: ((a: AgentSummary) => void) | undefined;
 }) {
@@ -553,7 +544,7 @@ export function AgentDetails({
           <p className="font-mono [overflow-wrap:anywhere]">@{agent.slug}</p>
           {agent.description && <Description text={agent.description} />}
         </div>
-        <Now agent={agent} stop={stop} slotsMax={slotsMax} onAgent={onAgent} />
+        <Now agent={agent} stop={stop} onAgent={onAgent} />
         <Org agent={agent} />
         <Work agent={agent} onClose={onClose} />
         <Usage agent={agent} />

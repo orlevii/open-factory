@@ -5,9 +5,6 @@ import { factoryZoneDefault, zoneSchema } from "@open-factory/shared";
 import { z } from "zod";
 import { expandHome } from "./host-path.ts";
 
-/** The seeded `factory_settings.max_running_agents` (S10 §8.1); tests and runtime harnesses use it. */
-export const DEFAULT_MAX_RUNNING_AGENTS = 8;
-
 export const PLACEHOLDER_SECRET = "change-me-to-a-random-string-of-32-chars-or-more";
 
 export interface Config {

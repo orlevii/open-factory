@@ -154,7 +154,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [jumpN, setJumpN] = useState(0);
   // The live factory default, for the warm_window_minutes hint (Settings → Factory changes it).
-  const warmDefault = useQuery(factorySettingsQueryOptions).data?.defaultWarmWindowMinutes;
+  const warmDefault = useQuery(factorySettingsQueryOptions).data?.warmWindowMinutes;
   const refs = useRef<Partial<Record<TemplateFile, HTMLTextAreaElement | null>>>({});
   const editors = useRef<Partial<Record<TemplateFile, CodeEditorHandle | null>>>({});
   // Each file's EditorState (doc, selection, undo history), so a remounted tab gets it back.

@@ -17,9 +17,8 @@ beforeEach(() => {
   localStorage.clear();
   fakeMatchMedia.install(false);
   mockApi({
-    "GET /api/agents?ended=exclude": () => json({ agents: [], running: { count: 0, max: 8 } }),
-    "GET /api/agents?ended=only": () =>
-      json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?ended=exclude": () => json({ agents: [], running: { count: 0 } }),
+    "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 0 } }),
   });
 });
 afterEach(() => {

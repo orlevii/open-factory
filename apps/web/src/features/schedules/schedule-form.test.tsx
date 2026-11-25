@@ -30,7 +30,7 @@ const agents = () =>
       agentSummary({ slug: "kid", displayName: "Kid", kind: "ephemeral", reportsTo: "ceo" }),
     ],
     more: false,
-    running: { count: 0, max: 8 },
+    running: { count: 0 },
   });
 const base = () => ({
   "GET /api/agents?": agents,

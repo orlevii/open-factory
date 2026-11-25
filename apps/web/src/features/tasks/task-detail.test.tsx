@@ -88,7 +88,7 @@ const agents = () =>
       agentSummary({ slug: "qa", displayName: "QA" }),
     ],
     more: false,
-    running: { count: 0, max: 8 },
+    running: { count: 0 },
   });
 const world = (get: () => unknown = () => detail()) =>
   mockApi({

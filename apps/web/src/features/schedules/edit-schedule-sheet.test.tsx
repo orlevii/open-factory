@@ -58,7 +58,7 @@ const agents = () =>
   json({
     agents: [agentSummary({ slug: "ceo", displayName: "CEO" })],
     more: false,
-    running: { count: 0, max: 8 },
+    running: { count: 0 },
   });
 const detail = (s: unknown) => () => json({ schedule: s });
 const common = (s: unknown) => ({

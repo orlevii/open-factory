@@ -52,7 +52,7 @@ function base() {
   const api = mockApi({
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
     "GET /api/tasks?": () => json({ tasks: [], nextCursor: null }),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "POST /api/templates": () =>
       new Promise<Response>((r) => {
         release = r;

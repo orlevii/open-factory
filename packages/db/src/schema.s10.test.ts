@@ -24,12 +24,7 @@ afterAll(() => close());
 test("factory_settings is a seeded singleton", async () => {
   const rows = await sql`select * from factory_settings`;
   expect(rows).toHaveLength(1);
-  expect(rows[0]).toMatchObject({
-    id: 1,
-    max_running_agents: 8,
-    default_warm_window_minutes: 70,
-    member_update_debounce_seconds: 30,
-  });
+  expect(rows[0]).toMatchObject({ id: 1, settings: {} });
   await expect(sql`insert into factory_settings (id) values (2)`).rejects.toMatchObject({
     code: "23514",
   });

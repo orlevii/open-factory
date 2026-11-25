@@ -5,7 +5,7 @@ import {
   patchFactorySettingsSchema,
 } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { CodeText } from "@/components/code-text";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
@@ -14,57 +14,37 @@ import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { runningQueryOptions } from "@/features/session/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 import { factorySettingsQueryOptions, patchFactorySettings } from "./api";
 import { SettingsSection, smallClass } from "./shared";
 
-const FIELDS = [
-  "maxRunningAgents",
-  "defaultWarmWindowMinutes",
-  "memberUpdateDebounceSeconds",
-] as const;
+const FIELDS = ["warmWindowMinutes", "memberUpdateDebounceSeconds"] as const;
 type Field = (typeof FIELDS)[number];
 type Values = Record<Field, string>;
 
 const valuesOf = (s: FactorySettingsDto): Values => ({
-  maxRunningAgents: String(s.maxRunningAgents),
-  defaultWarmWindowMinutes: String(s.defaultWarmWindowMinutes),
+  warmWindowMinutes: String(s.warmWindowMinutes),
   memberUpdateDebounceSeconds: String(s.memberUpdateDebounceSeconds),
 });
 const same = (a: Values, b: Values) => FIELDS.every((f) => a[f] === b[f]);
 const toNumber = (s: string) => (s.trim() === "" ? Number.NaN : Number(s));
 
-/** The shared PATCH schema's sentence for the field ("Enter a whole number from 1 to 64."). */
+/** The shared PATCH schema's sentence for the field ("Enter a whole number from 1 to 1440."). */
 function check(f: Field, raw: string): string | undefined {
   const r = patchFactorySettingsSchema.shape[f].safeParse(toNumber(raw));
   return r.success ? undefined : r.error.issues[0]?.message;
 }
 
 const HINTS: Record<Field, string> = {
-  maxRunningAgents:
-    "Agents that can run at once (1–64). Lowering it never interrupts a turn; idle agents may hibernate sooner.",
-  defaultWarmWindowMinutes:
+  warmWindowMinutes:
     "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes.",
   memberUpdateDebounceSeconds:
-    "How long to collect status changes from an agent's reports before telling it (0–86400 s). 0 sends each change at once.",
+    "How long to collect status changes from an agent's reports before telling it (0–86400 seconds). 0 delivers each update at once.",
 };
 const LABELS: Record<Field, string> = {
-  maxRunningAgents: "Concurrency cap",
-  defaultWarmWindowMinutes: "Default warm window",
+  warmWindowMinutes: "Default warm window",
   memberUpdateDebounceSeconds: "Member-update debounce",
 };
-
-/** "3 of 8 running": the list fetch seeds it, `supervisor` frames keep it live. */
-function RunningCount() {
-  const { data } = useQuery(runningQueryOptions);
-  if (!data) return null;
-  return (
-    <span className={`${smallClass} whitespace-nowrap text-muted-foreground tabular-nums`}>
-      {data.count} of {data.max} running
-    </span>
-  );
-}
 
 /** Settings → Factory (spec §12.4): one form, validated on blur and on Save. */
 export function FactorySection() {
@@ -96,8 +76,7 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
     form,
     fields: FIELDS,
     checks: {
-      maxRunningAgents: () => check("maxRunningAgents", v.maxRunningAgents),
-      defaultWarmWindowMinutes: () => check("defaultWarmWindowMinutes", v.defaultWarmWindowMinutes),
+      warmWindowMinutes: () => check("warmWindowMinutes", v.warmWindowMinutes),
       memberUpdateDebounceSeconds: () =>
         check("memberUpdateDebounceSeconds", v.memberUpdateDebounceSeconds),
     },
@@ -162,7 +141,7 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
     }
   }
 
-  const numberField = (k: Field, suffix?: string, after?: ReactNode) => (
+  const numberField = (k: Field, suffix: string) => (
     <FieldShell name={k} label={LABELS[k]} error={f.errors[k]} help={HINTS[k]}>
       {(a) => (
         <div className="flex items-center gap-2">
@@ -183,12 +162,9 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
             }}
             onBlur={(e) => f.blur(k, e)}
           />
-          {suffix && (
-            <span aria-hidden="true" className={`${smallClass} text-muted-foreground`}>
-              {suffix}
-            </span>
-          )}
-          {after}
+          <span aria-hidden="true" className={`${smallClass} text-muted-foreground`}>
+            {suffix}
+          </span>
         </div>
       )}
     </FieldShell>
@@ -205,9 +181,8 @@ function FactoryForm({ server }: { server: FactorySettingsDto }) {
         </div>
       )}
       <fieldset disabled={pending} className="field-stack">
-        {numberField("maxRunningAgents", undefined, <RunningCount />)}
-        {numberField("defaultWarmWindowMinutes", "min")}
-        {numberField("memberUpdateDebounceSeconds", "s")}
+        {numberField("warmWindowMinutes", "min")}
+        {numberField("memberUpdateDebounceSeconds", "seconds")}
         <div className="grid gap-0.5">
           <p className="text-[0.8125rem] font-medium">
             {`Local runtime: ${server.allowLocalRuntime ? "Allowed" : "Not allowed"}`}

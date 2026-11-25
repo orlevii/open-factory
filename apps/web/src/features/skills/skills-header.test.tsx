@@ -51,7 +51,7 @@ function serve(state: { data: unknown }) {
   return mockApi({
     "GET /api/library/skills": () => json(state.data),
     "POST /api/library/check": () => json({}, 202),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/h", sep: "/" }),
   });
 }

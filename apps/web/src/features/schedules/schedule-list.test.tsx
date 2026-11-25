@@ -67,7 +67,7 @@ const agents = (_body?: unknown, url?: string) =>
       ? []
       : [agentSummary({ slug: "ceo" }), agentSummary({ slug: "dev", displayName: "Dev" })],
     more: false,
-    running: { count: 0, max: 8 },
+    running: { count: 0 },
   });
 
 test("a row is one button with a complete name; four lines carry the pattern, next run, first line and authors", async () => {
@@ -309,7 +309,7 @@ test("the target filter lists Any agent first, live agents, then an Ended group"
             ]
           : [agentSummary({ slug: "dev" })],
         more: false,
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
       }),
     "GET /api/schedules?": () => list([]),
   });

@@ -70,14 +70,13 @@ type Props = {
   agent?: AgentSummary;
   usage?: AgentUsageRow | null | undefined;
   onClose?: () => void;
-  slotsMax?: number;
   seed?: (qc: QueryClient) => void;
 };
 
-function Harness({ agent, onClose, slotsMax }: Omit<Props, "seed" | "usage">) {
+function Harness({ agent, onClose }: Omit<Props, "seed" | "usage">) {
   const a = agent ?? agentSummary();
   const stop: StopCrons = useStopCrons(a);
-  return <AgentDetails agent={a} stop={stop} onClose={onClose} slotsMax={slotsMax} />;
+  return <AgentDetails agent={a} stop={stop} onClose={onClose} />;
 }
 
 function setup(props: Props = {}) {
@@ -92,7 +91,7 @@ function setup(props: Props = {}) {
     component: () => (
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <Harness agent={props.agent} onClose={props.onClose} slotsMax={props.slotsMax} />
+          <Harness agent={props.agent} onClose={props.onClose} />
         </TooltipProvider>
       </QueryClientProvider>
     ),
@@ -213,22 +212,6 @@ test("Now: an agent pulling its image says so", async () => {
   expect(within(await section("Now")).getByText("Pulling the image…")).toBeInTheDocument();
 });
 
-test("Now: the queued detail waits for the cap, and reads in the singular for one slot", async () => {
-  const unknown = setup({ agent: agentSummary({ status: "queued" }) });
-  await screen.findByRole("heading", { name: "Agent details" });
-  expect(screen.queryByText(/Queued:/)).toBeNull();
-  unknown.unmount();
-  const many = setup({ agent: agentSummary({ status: "queued" }), slotsMax: 8 });
-  expect(
-    within(await section("Now")).getByText("Queued: all 8 slots are in use."),
-  ).toBeInTheDocument();
-  many.unmount();
-  setup({ agent: agentSummary({ status: "queued" }), slotsMax: 1 });
-  expect(
-    within(await section("Now")).getByText("Queued: the only slot is in use."),
-  ).toBeInTheDocument();
-});
-
 test("Now: the rate-limited detail names the credential and its reset time", async () => {
   const until = new Date(NOW.getTime() + 3_600_000);
   setup({
@@ -262,7 +245,6 @@ test("Now: a terminated agent shows no queued, paused or restart row (an end sta
       rateLimitedUntil: minutesAgo(-30),
       pulling: true,
     }),
-    slotsMax: 8,
   });
   const now = await section("Now");
   expect(now.textContent).not.toMatch(/Queued|Paused|Restarts when idle|Pulling/);

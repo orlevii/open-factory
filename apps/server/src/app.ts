@@ -281,8 +281,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     defaultWarmWindowMinutes: settings.defaultWarmWindowMinutes,
     // S6 §9.1: reports forward through the Router (built below; runtimes are created lazily, after it exists).
     forward: (f) => router.forward(f),
-    // S10 §8.2: the cap is read live; `capChanged()` below grants and publishes on a change.
-    maxRunningAgents: settings.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
     docker: {
@@ -301,9 +299,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       }),
   });
   settings.onChange((prev, next) => {
-    if (prev.maxRunningAgents !== next.maxRunningAgents) runtimes.supervisor.capChanged();
     if (
-      prev.defaultWarmWindowMinutes !== next.defaultWarmWindowMinutes ||
+      prev.warmWindowMinutes !== next.warmWindowMinutes ||
       prev.memberUpdateDebounceSeconds !== next.memberUpdateDebounceSeconds
     )
       void runtimes.settingsChanged();

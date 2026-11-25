@@ -73,24 +73,11 @@ test("boot warns when a removed env var is still set, and nothing reads it (S10 
         "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
       );
       expect(lines.join("")).not.toContain("FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS");
-      expect(t.app.runtimes.supervisor.running().max).toBe(8);
     } finally {
       await t.close();
     }
   } finally {
     vi.unstubAllEnvs();
-  }
-});
-
-test("the max running agents setting reaches the supervisor", async () => {
-  const t = await makeTestApp({
-    harnessDriver: new FakeDriver(),
-    factorySettings: { maxRunningAgents: 3 },
-  });
-  try {
-    expect(t.app.runtimes.supervisor.running().max).toBe(3);
-  } finally {
-    await t.close();
   }
 });
 

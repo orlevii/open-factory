@@ -19,11 +19,10 @@ function routes(taken: string[] = []) {
     "GET /api/agents?ended=exclude": () =>
       json({
         agents: taken.map((slug) => agentSummary({ slug })),
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
         more: false,
       }),
-    "GET /api/agents?ended=only": () =>
-      json({ agents: [], running: { count: 0, max: 8 }, more: false }),
+    "GET /api/agents?ended=only": () => json({ agents: [], running: { count: 0 }, more: false }),
     "GET /api/users": () => json({ users: [] }),
   });
 }

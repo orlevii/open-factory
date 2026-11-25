@@ -130,45 +130,6 @@ test("a mid-turn target gets the row written at once", async () => {
   expect(sent[0]?.body).toBe("mid-turn");
 });
 
-test("hibernated and queued at a cap of 1: the row waits and a second firing replaces it; it is delivered once with both firings", async () => {
-  await boot({ maxRunningAgents: 1 });
-  await h.seedAgent({ slug: "busy" });
-  await h.seedAgent({ slug: "ceo" });
-  const b = await h.app.store.createMessage({
-    from: { userId },
-    toAgentId: await idOf("busy"),
-    recipients: ["@test"],
-    body: "hold the slot",
-    urgent: false,
-  });
-  await (await h.app.runtimes.bySlug("busy"))?.deliver(await h.app.store.pendingRow(b.id), {
-    sender: "human",
-    fromLabel: "@or",
-  });
-  driver.starts.find((x) => x.spec.slug === "busy")?.emit(ev.session(), ev.turn());
-  await settle("busy");
-  await make("ceo", "v1");
-  await fireAt("2026-11-23T08:00:00Z");
-  await fireAt("2026-11-24T08:00:00Z");
-  await settle("ceo");
-  expect(driver.starts.filter((x) => x.spec.slug === "ceo")).toHaveLength(0);
-  expect(await rows()).toMatchObject([{ state: "pending", firings: 2 }]);
-  // the slot frees: the busy agent ends its turn and hibernates, and the queued target starts
-  const busy = driver.starts.find((x) => x.spec.slug === "busy");
-  busy?.emit(ev.usage(), ev.end());
-  await settle("busy");
-  await (await h.app.runtimes.bySlug("busy"))?.hibernate("freed_slot");
-  await settle("busy");
-  await settle("ceo");
-  const p = driver.starts.find((x) => x.spec.slug === "ceo");
-  expect(p).toBeDefined();
-  p?.emit(ev.session(), ev.turn());
-  await settle("ceo");
-  const sent = (p?.sent ?? []).flat().filter((m) => m.kind === "scheduled");
-  expect(sent).toHaveLength(1);
-  expect(sent[0]).toMatchObject({ firings: 2, body: "v1" });
-});
-
 test("a server stopped between commit and hand-off: boot wakes the target and delivers the row exactly once", async () => {
   await boot();
   await h.seedAgent({ slug: "ceo" });

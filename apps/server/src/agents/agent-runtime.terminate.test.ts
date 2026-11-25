@@ -120,7 +120,6 @@ test("a failed container removal keeps the slot (stop_failed) and forwards nothi
   await h.rt.terminateStop("@or");
   await h.rt.settled();
   expect(slots.events).not.toContainEqual(["release"]);
-  expect(slots.events.at(-1)).toEqual(["stop_failed"]);
   expect(h.rt.live().status).toBe("terminated");
   expect(h.forwarded).toEqual([]); // no errored fact
 });
@@ -358,7 +357,7 @@ test("a Docker agent without the Docker runtime configured: the cleanup fails (s
   await h.rt.reload();
   h.rt.markTerminated({ committed: true });
   await h.rt.terminateStop("@or");
-  expect(slots.events).toEqual([["stop_failed"]]);
+  expect(slots.events).toEqual([]);
   const [r] = await h.t.sql`select error_kind, runtime_journal from agents where id = ${h.agentId}`;
   expect(r).toEqual({ error_kind: "stop_failed", runtime_journal: { tasks: [], crons: [] } });
   expect(h.forwarded).toEqual([]);
@@ -458,7 +457,6 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     tokens: noopTokens,
     log: silentLog,
     forward: (f) => (router ? router.forward(f) : Promise.resolve()),
-    maxRunningAgents: () => 1,
     memberUpdateDebounceMs: () => o.memberUpdateDebounceMs ?? 3_600_000,
     docker: {
       containers,

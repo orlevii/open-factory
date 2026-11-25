@@ -119,9 +119,7 @@ test("an unknown server error is shown at form level", async () => {
 test("a successful sign-up refreshes the session and lands on the Inbox", async () => {
   auth.signUp.email.mockResolvedValue({ data: { user: alice.user }, error: null });
   auth.getSession.mockResolvedValue({ data: alice });
-  api.on("GET /api/agents?", () =>
-    json({ agents: [], more: false, running: { count: 0, max: 8 } }),
-  );
+  api.on("GET /api/agents?", () => json({ agents: [], more: false, running: { count: 0 } }));
   const { router } = renderApp("/sign-up", null);
   await screen.findByLabelText("Name");
   await fill(valid);

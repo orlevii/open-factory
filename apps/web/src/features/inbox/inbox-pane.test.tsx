@@ -93,7 +93,7 @@ beforeEach(() => {
       json({
         agents: [agentSummary(), agentSummary({ slug: "ops", displayName: "Ops agent" })],
         more: false,
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
       }),
   });
 });

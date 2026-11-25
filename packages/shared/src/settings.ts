@@ -61,15 +61,24 @@ export const patchProjectBodySchema = z.object({ hostPath: z.string().trim().min
 export const projectResponseSchema = z.object({ project: projectSummarySchema });
 
 export const FACTORY_BOUNDS = {
-  maxRunningAgents: [1, 64],
-  defaultWarmWindowMinutes: [1, 1440],
+  warmWindowMinutes: [1, 1440],
   memberUpdateDebounceSeconds: [0, 86_400],
 } as const;
 
-export const factorySettingsSchema = z.object({
-  maxRunningAgents: z.number().int(),
-  defaultWarmWindowMinutes: z.number().int(),
-  memberUpdateDebounceSeconds: z.number().int(),
+const bounded = ([lo, hi]: readonly [number, number]) => {
+  const msg = `Enter a whole number from ${lo} to ${hi}.`;
+  // The type error too (a string, null): every rejection of the field is the §12.10 sentence.
+  return z.number({ error: msg }).int(msg).min(lo, msg).max(hi, msg);
+};
+
+/** The values stored in `factory_settings.settings`; a missing key reads as its default. */
+export const factorySettingsValuesSchema = z.object({
+  warmWindowMinutes: bounded(FACTORY_BOUNDS.warmWindowMinutes).default(70),
+  memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds).default(30),
+});
+export type FactorySettingsValues = z.infer<typeof factorySettingsValuesSchema>;
+
+export const factorySettingsSchema = factorySettingsValuesSchema.extend({
   allowLocalRuntime: z.boolean(),
   updatedAt: z.string().nullable(),
   /** The @handle of the last editor. */
@@ -77,14 +86,8 @@ export const factorySettingsSchema = z.object({
 });
 export type FactorySettingsDto = z.infer<typeof factorySettingsSchema>;
 
-const bounded = ([lo, hi]: readonly [number, number]) => {
-  const msg = `Enter a whole number from ${lo} to ${hi}.`;
-  // The type error too (a string, null): every rejection of the field is the §12.10 sentence.
-  return z.number({ error: msg }).int(msg).min(lo, msg).max(hi, msg).optional();
-};
 export const patchFactorySettingsSchema = z.strictObject({
-  maxRunningAgents: bounded(FACTORY_BOUNDS.maxRunningAgents),
-  defaultWarmWindowMinutes: bounded(FACTORY_BOUNDS.defaultWarmWindowMinutes),
-  memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds),
+  warmWindowMinutes: bounded(FACTORY_BOUNDS.warmWindowMinutes).optional(),
+  memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds).optional(),
 });
 export type PatchFactorySettings = z.infer<typeof patchFactorySettingsSchema>;

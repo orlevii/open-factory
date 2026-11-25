@@ -59,7 +59,7 @@ async function open(
           agentSummary({ slug: "b", displayName: "Builder" }),
           agentSummary({ slug: "lead", displayName: "Lead" }),
         ],
-        running: { count: 1, max: 8 },
+        running: { count: 1 },
       }),
   });
   const r = renderApp("/agents/dev/session", alice);
@@ -120,7 +120,7 @@ test("AgentLink resolves an ended agent: terminated keeps its link and name, arc
             agentSummary({ slug: "old", displayName: "Old one", archivedAt: AT }),
           ],
           more: false,
-          running: { count: 1, max: 8 },
+          running: { count: 1 },
         }),
     },
   );
@@ -138,8 +138,7 @@ test("AgentLink: a slug in neither list is a link without a name when older ende
       messages: [env({ id: "m1", from: "gone-ab12", kind: "message", body: "from long ago" })],
     },
   ];
-  const endedList = (more: boolean) => () =>
-    json({ agents: [], more, running: { count: 1, max: 8 } });
+  const endedList = (more: boolean) => () => json({ agents: [], more, running: { count: 1 } });
   const api = await open(events, "from long ago", {
     "GET /api/agents?ended=only": endedList(true),
   });
@@ -159,8 +158,7 @@ test("AgentLink: links mounted over time share one ended-list fetch within its s
       messages: [env({ id, from: "gone-ab12", kind: "message", body })],
     }) as AnyEvent;
   const api = await open([msg("m1", "first from gone")], "first from gone", {
-    "GET /api/agents?ended=only": () =>
-      json({ agents: [], more: true, running: { count: 1, max: 8 } }),
+    "GET /api/agents?ended=only": () => json({ agents: [], more: true, running: { count: 1 } }),
   });
   const endedFetches = () => api.calls.filter((c) => c.url === "/api/agents?ended=only").length;
   await vi.waitFor(() => expect(endedFetches()).toBe(1));
@@ -190,8 +188,7 @@ test("AgentLink: an unknown slug is plain once both lists have loaded and nothin
     ],
     "from nobody",
     {
-      "GET /api/agents?ended=only": () =>
-        json({ agents: [], more: false, running: { count: 1, max: 8 } }),
+      "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 1 } }),
     },
   );
   await vi.waitFor(() => expect(screen.queryByRole("link", { name: /@nobody/ })).toBeNull());
@@ -474,7 +471,7 @@ const lookupWorld = (
     "GET /api/agents/dev/events?": () =>
       json({ hasMore: { before: false, after: false }, events: events.map((e) => se(e)) }),
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+      json({ agents: [agentSummary()], running: { count: 1 } }),
   });
 
 test("?message= for an unknown message falls back to the latest with a note", async () => {
@@ -488,7 +485,7 @@ test("?message= for an unknown message falls back to the latest with a note", as
         events: [se({ type: "assistant_text", text: "latest" })],
       }),
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+      json({ agents: [agentSummary()], running: { count: 1 } }),
   });
   renderApp("/agents/dev/session?message=gone", alice);
   expect(await screen.findByText("Message not found. Showing the latest.")).toBeInTheDocument();
@@ -509,7 +506,7 @@ test("?message= for a rejected message names who it wasn't delivered to", async 
     json({
       agents: [agentSummary({ slug: "b", displayName: "Builder", archivedAt: AT })],
       more: false,
-      running: { count: 1, max: 8 },
+      running: { count: 1 },
     }),
   );
   renderApp("/agents/dev/session?message=mid", alice);
@@ -560,7 +557,7 @@ test("?message= for a message rejected by a terminated recipient says it was ter
         }),
       ],
       more: false,
-      running: { count: 1, max: 8 },
+      running: { count: 1 },
     }),
   );
   renderApp("/agents/dev/session?message=mid", alice);
@@ -574,7 +571,7 @@ test("?message= for a message rejected by a terminated recipient says it was ter
 test.each([
   [
     "not among the newest ended agents",
-    () => json({ agents: [], more: true, running: { count: 1, max: 8 } }),
+    () => json({ agents: [], more: true, running: { count: 1 } }),
   ],
   ["the ended list failed", () => json({ error: { code: "internal", message: "x" } }, 500)],
 ])(
@@ -732,7 +729,7 @@ test("Load earlier does not announce an older send to the viewer", async () => {
     "GET /api/agents/dev/events?": () =>
       json({ hasMore: { before: true, after: false }, events: l }),
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+      json({ agents: [agentSummary()], running: { count: 1 } }),
   });
   renderApp("/agents/dev/session", alice);
   await screen.findByText("newest");
@@ -788,7 +785,7 @@ test("?message= highlights the row holding that envelope, not the event's first 
         ],
       }),
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+      json({ agents: [agentSummary()], running: { count: 1 } }),
   });
   renderApp("/agents/dev/session?message=second", alice);
   await screen.findByText("second body");
@@ -808,7 +805,7 @@ test("Agent details' manager is a link to its session", async () => {
     "GET /api/agents?ended=exclude": () =>
       json({
         agents: [agentSummary({ reportsTo: "lead", reports: 3 })],
-        running: { count: 1, max: 8 },
+        running: { count: 1 },
       }),
   });
   renderApp("/agents/dev/session", alice);
@@ -840,7 +837,7 @@ test("held updates show as quiet lines from the queue", async () => {
         events: [se({ type: "assistant_text", text: "x" })],
       }),
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+      json({ agents: [agentSummary()], running: { count: 1 } }),
   });
   renderApp("/agents/dev/session", alice);
   expect(
@@ -993,7 +990,7 @@ test("a pending task message shows its badge in the pending block", async () => 
         events: [se({ type: "assistant_text", text: "x" })],
       }),
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+      json({ agents: [agentSummary()], running: { count: 1 } }),
   });
   renderApp("/agents/dev/session", alice);
   const text = await screen.findByText("Pending brief");
@@ -1014,7 +1011,7 @@ test("Agent details' open tasks link goes to that agent's tasks", async () => {
         events: [se({ type: "assistant_text", text: "x" })],
       }),
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+      json({ agents: [agentSummary()], running: { count: 1 } }),
   });
   renderApp("/agents/dev/session", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Agent details" }));
@@ -1165,7 +1162,7 @@ test("the users list is fetched alongside the events, not after them (no name po
     "GET /api/agents/dev": () => json(detail()),
     "GET /api/agents/dev/events?": () => new Promise<Response>(() => {}),
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [agentSummary()], running: { count: 1, max: 8 } }),
+      json({ agents: [agentSummary()], running: { count: 1 } }),
   });
   renderApp("/agents/dev/session", alice);
   await vi.waitFor(() => expect(api.calls.some((c) => c.url === "/api/users")).toBe(true));

@@ -127,7 +127,7 @@ export const agentListSchema = z.object({
   agents: z.array(agentSummarySchema),
   /** `ended=only` (S7 §14): older ended agents exist beyond the newest 200 shown. */
   more: z.boolean().default(false),
-  running: z.object({ count: z.number().int().nonnegative(), max: z.number().int().positive() }),
+  running: z.object({ count: z.number().int().nonnegative() }),
 });
 /** The model an agent runs with and where it comes from (I2 §12.3): its own overlay, its template, or Claude's default. */
 export const agentModelSchema = z.object({

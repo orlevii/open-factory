@@ -1,25 +1,27 @@
 import { type Db, schema } from "@open-factory/db";
-import { eq } from "drizzle-orm";
+import { type FactorySettingsValues, factorySettingsValuesSchema } from "@open-factory/shared";
+import { eq, sql } from "drizzle-orm";
 
-export type FactorySettingsValues = {
-  maxRunningAgents: number;
-  defaultWarmWindowMinutes: number;
-  memberUpdateDebounceSeconds: number;
-};
+export type { FactorySettingsValues };
+
 type Current = FactorySettingsValues & { updatedAt: Date | null; updatedBy: string | null };
 type Listener = (prev: FactorySettingsValues, next: FactorySettingsValues) => void;
 type Log = { error: (obj: object, msg: string) => void };
 
 const ROW_ID = 1;
-const values = (c: Current): FactorySettingsValues => ({
-  maxRunningAgents: c.maxRunningAgents,
-  defaultWarmWindowMinutes: c.defaultWarmWindowMinutes,
-  memberUpdateDebounceSeconds: c.memberUpdateDebounceSeconds,
-});
-const fromRow = (r: Current): Current => ({
-  ...values(r),
+type Row = typeof schema.factorySettings.$inferSelect;
+/** The stored object read through the schema, so a missing key reads as its default. */
+const fromRow = (r: Row): Current => ({
+  ...factorySettingsValuesSchema.parse(r.settings),
   updatedAt: r.updatedAt,
   updatedBy: r.updatedBy,
+});
+const values = ({
+  warmWindowMinutes,
+  memberUpdateDebounceSeconds,
+}: Current): FactorySettingsValues => ({
+  warmWindowMinutes,
+  memberUpdateDebounceSeconds,
 });
 
 /**
@@ -48,19 +50,23 @@ export class FactorySettings {
     return { ...this.current };
   }
 
-  readonly maxRunningAgents = (): number => this.current.maxRunningAgents;
-  readonly defaultWarmWindowMinutes = (): number => this.current.defaultWarmWindowMinutes;
+  readonly defaultWarmWindowMinutes = (): number => this.current.warmWindowMinutes;
   /** The setting is stored in seconds; every consumer reads milliseconds. */
   readonly memberUpdateDebounceMs = (): number => this.current.memberUpdateDebounceSeconds * 1000;
 
   /**
-   * Writes the row, then swaps the copy (from what the row now holds), then calls the listeners. A listener that
+   * Merges the patch into the stored object (one statement, so concurrent patches of different keys both land), then
+   * swaps the copy (from what the row now holds), then calls the listeners. A listener that
    * throws is logged and never fails the update: the row and the copy have already changed.
    */
   async update(patch: Partial<FactorySettingsValues>, userId: string): Promise<void> {
     const [row] = await this.db
       .update(schema.factorySettings)
-      .set({ ...patch, updatedAt: new Date(), updatedBy: userId })
+      .set({
+        settings: sql`${schema.factorySettings.settings} || ${JSON.stringify(patch)}::jsonb`,
+        updatedAt: new Date(),
+        updatedBy: userId,
+      })
       .where(eq(schema.factorySettings.id, ROW_ID))
       .returning();
     if (!row) throw new Error("factory_settings has no row; run the migrations");

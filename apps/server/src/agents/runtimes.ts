@@ -6,7 +6,7 @@ import {
   errorKindSchema,
   type QueueItem,
 } from "@open-factory/shared";
-import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
+import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -41,8 +41,6 @@ export interface RuntimesDeps {
   forward: (f: Forward) => Promise<void>;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
-  /** The cap, read live (the `max_running_agents` factory setting); defaults to `DEFAULT_MAX_RUNNING_AGENTS`. */
-  maxRunningAgents?: () => number;
   /**
    * The local process journal (spec §12): snapshots and the verified reap. Only with the real driver: a fake
    * process's pid is not ours, and must never be journaled or signalled.
@@ -141,11 +139,10 @@ export class AgentRuntimes {
   private readonly byId = new Map<string, Promise<AgentRuntime>>();
   /** The runtimes whose init finished: the Supervisor's synchronous view. */
   private readonly loaded = new Map<string, AgentRuntime>();
-  /** The one owner of the cap; every runtime starts through it. */
+  /** The one owner of the running set; every runtime starts through it. */
   readonly supervisor: Supervisor;
   constructor(private readonly d: RuntimesDeps) {
     this.supervisor = new Supervisor({
-      max: d.maxRunningAgents ?? (() => DEFAULT_MAX_RUNNING_AGENTS),
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: d.bus,
       log: d.log,

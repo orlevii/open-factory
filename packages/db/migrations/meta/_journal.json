@@ -176,6 +176,13 @@
       "when": 1795601646708,
       "tag": "0024_secret_swarm",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795607656277,
+      "tag": "0025_tranquil_jetstream",
+      "breakpoints": true
     }
   ]
 }

@@ -188,7 +188,7 @@ describe("the Ended view (S7 UI design §3)", () => {
   const endedWorld = (agents: typeof ended, more = false) =>
     mockWorld({
       extra: {
-        "GET /api/agents?ended=only": () => json({ agents, more, running: { count: 0, max: 8 } }),
+        "GET /api/agents?ended=only": () => json({ agents, more, running: { count: 0 } }),
       },
     });
   const note = (row: HTMLElement) => row.querySelector("[data-agent-note]")?.textContent ?? null;
@@ -216,7 +216,7 @@ describe("the Ended view (S7 UI design §3)", () => {
     expect(within(d).getByText("Archived")).toBeInTheDocument();
     expect(a.querySelector("[data-status-dot]")).toBeNull();
     expect(screen.queryByText(/Showing the latest/)).toBeNull();
-    expect(screen.queryByText(/of 8 running/)).toBeNull();
+    expect(screen.queryByText(/\d+ running/)).toBeNull();
   });
 
   test("a workspace past its grace but not deleted yet is due for deletion, never 'kept until' a past day", async () => {

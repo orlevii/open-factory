@@ -1,7 +1,7 @@
 // Live scheduling check for S9 (spec §17.5). Not part of `pnpm test`. Phases: early (the first slice below), a (human
 // every-minute schedule, agent limits and cancel), b (restart with a one-shot due during the downtime: fires once, late),
-// c (replacement through a real path: a cap of 1 running agent), d (CronCreate pins, Stop crons, the passive
-// notice); `--phase=a,c` picks some, `--early` is the first slice only (schedule tool
+// d (CronCreate pins, Stop crons, the passive
+// notice); `--phase=a,d` picks some, `--early` is the first slice only (schedule tool
 // listing, a human-created one-shot waking a hibernated agent with the scheduled envelope, the agent's own
 // schedule_message / list_schedules calls, and a spawned agent that lists none of the three tools); without it the whole
 // script runs.
@@ -40,7 +40,7 @@ const EARLY = process.argv.includes("--early");
 /** `--phase=a,b` runs only those phases (each does its own setup, so each fits a tool call); none runs them all. */
 const PHASE_ARG = process.argv.find((a) => a.startsWith("--phase="))?.slice(8);
 const PHASES = new Set(
-  PHASE_ARG ? PHASE_ARG.split(",") : EARLY ? ["early"] : ["early", "a", "b", "c", "d"],
+  PHASE_ARG ? PHASE_ARG.split(",") : EARLY ? ["early"] : ["early", "a", "b", "d"],
 );
 const IMAGE = "open-factory-base:dev";
 const SLUGS = ["ceo", "dev"] as const;
@@ -380,7 +380,7 @@ async function signUp(handle: string, name: string, inviter?: { cookie: string }
   return { cookie, userId: me.id };
 }
 
-/** S10: the cap and the debounce are factory settings, set through the API after sign-up (no longer env vars). */
+/** S10: the debounce is a factory setting, set through the API after sign-up (no longer env vars). */
 async function patchFactorySettings(cookie: string, body: Record<string, number>) {
   const res = await app.inject({
     method: "PATCH",
@@ -423,7 +423,7 @@ async function finalChecks() {
 
 const hasFiring = (m: Envelope) => m.kind === "scheduled";
 
-/** Config for the run's (fixed) ports; the cap and the debounce are factory settings (patched after sign-up). */
+/** Config for the run's (fixed) ports; the debounce is a factory setting (patched after sign-up). */
 function makeConfig(ports: { port: number; agentPort: number }) {
   if (!tdb) throw new Error("no database");
   return loadConfig({
@@ -451,8 +451,6 @@ async function startApp(config: ReturnType<typeof loadConfig>) {
   appBuilt = true;
   await app.listen({ host: config.host, port: config.port });
 }
-/** The phases that need the cap of one run with it from the start. */
-const MAX_RUNNING = PHASES.has("c") || PHASES.has("d") ? 1 : 8;
 
 try {
   // 0. Setup (inside the try so a failure here still cleans up).
@@ -461,7 +459,7 @@ try {
   await migrate(tdb.url, MIGRATIONS_DIR);
   const config = makeConfig(ports);
   say(
-    `mode: ${LOCAL ? "local agents (FACTORY_ALLOW_LOCAL_RUNTIME=true)" : `Docker agents on ${IMAGE}`}; model haiku; phases ${[...PHASES].join(",")}; max running agents ${MAX_RUNNING}`,
+    `mode: ${LOCAL ? "local agents (FACTORY_ALLOW_LOCAL_RUNTIME=true)" : `Docker agents on ${IMAGE}`}; model haiku; phases ${[...PHASES].join(",")}`,
   );
   await step("0. setup: prerequisites", async () => {
     mkdirSync(hostSkillsDir, { recursive: true });
@@ -481,13 +479,8 @@ try {
     return { or, sam: await signUp("sam", "Sam", or) };
   });
   orCookie = users.or.cookie;
-  await step(
-    `1. factory settings: max running agents ${MAX_RUNNING}, member update debounce 180 s`,
-    () =>
-      patchFactorySettings(users.or.cookie, {
-        maxRunningAgents: MAX_RUNNING,
-        memberUpdateDebounceSeconds: 180,
-      }),
+  await step("1. factory settings: member update debounce 180 s", () =>
+    patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 180 }),
   );
   await step("1. credential created (live verification turn passed)", () =>
     app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
@@ -816,78 +809,6 @@ try {
       got.schedule.state === "done",
       JSON.stringify(got.schedule.state),
     );
-  }
-
-  if (PHASES.has("c")) {
-    // 6. Replacement through a real path: ceo holds the only slot, so dev stays queued while its schedule fires twice.
-    const from = await lastSeq("ceo");
-    const busy = await step("6. @or keeps ceo busy (a 170 s loop in the foreground)", () =>
-      tell(
-        "ceo",
-        "Run exactly this command in the foreground with the Bash tool, with timeout 200000: for i in $(seq 1 85); do sleep 2; done . Then say DONE. Use no other tool.",
-      ),
-    );
-    await step("6. ceo's turn is open", () =>
-      until(
-        "ceo's open turn",
-        async () => (await app.runtimes.bySlug("ceo"))?.live().turnOpen,
-        120_000,
-        1000,
-      ),
-    );
-    const s1 = await step("6. @or creates '* * * * *' for dev", async () => {
-      const r = await api("POST", "/api/schedules", {
-        target: "dev",
-        cron: "* * * * *",
-        timezone: "UTC",
-        body: `Reply with the single word REPLACED-${WORD}. Use no tools.`,
-      });
-      if (r.statusCode !== 201) throw new Error(`${r.statusCode} ${brief(r.body)}`);
-      return (r.json() as { schedule: { key: string } }).schedule;
-    });
-    const dump = async () => {
-      const r =
-        await conn.sql`select state, firings, late, created_at from messages where kind = 'scheduled' order by created_at`;
-      say(`    diagnostics: scheduled rows ${JSON.stringify(r)}`);
-      say(`    ceo: ${toolTrace(await since("ceo", from))}`);
-      say(
-        `    ceo status ${(await app.runtimes.bySlug("ceo"))?.live().status}; dev status ${(await app.runtimes.bySlug("dev"))?.live().status}`,
-      );
-    };
-    const row = await step("6. dev's pending row covers two firings", () =>
-      until(
-        "one pending scheduled row with firings = 2",
-        async () => {
-          const r =
-            await conn.sql`select id, firings from messages where kind = 'scheduled' and state = 'pending'`;
-          return r.length === 1 && r[0]?.firings === 2 ? r[0] : undefined;
-        },
-        200_000,
-        2000,
-      ).catch(async (e) => {
-        await dump();
-        throw e;
-      }),
-    );
-    const detail = (await api("GET", "/api/agents/dev")).json() as {
-      agent: { status: string };
-      queue: { scheduleKey?: string; firings?: number }[];
-    };
-    check(
-      "6. dev is queued (not started) and its queue item names the schedule with firings 2",
-      detail.agent.status === "queued" &&
-        detail.queue.some((q) => q.scheduleKey === s1.key && q.firings === 2),
-      JSON.stringify({
-        status: detail.agent.status,
-        queue: detail.queue.map((q) => ({ k: q.scheduleKey, f: q.firings })),
-      }),
-    );
-    check("6. still one pending row for the schedule", row !== undefined, JSON.stringify(row));
-    await step("6. the schedule is deleted", async () => {
-      const r = await api("DELETE", `/api/schedules/${s1.key}`);
-      if (r.statusCode !== 200) throw new Error(`${r.statusCode} ${brief(r.body)}`);
-    });
-    await step("6. ceo's turn ends", () => turnOf("ceo", busy, from, 300_000));
   }
 
   if (PHASES.has("d")) {

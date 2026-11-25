@@ -59,7 +59,7 @@ beforeEach(() => {
         return json({
           agents: [agentSummary(agent), OPS, QA, ...extraAgents],
           more: false,
-          running: { count: 0, max: 8 },
+          running: { count: 0 },
         });
       if (url === "/api/agents/dev/commands" && commands) return json(commands);
       return undefined;

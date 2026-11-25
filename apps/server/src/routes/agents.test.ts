@@ -56,7 +56,7 @@ test("list and detail", async () => {
   expect(list.json()).toEqual({
     agents: [expect.objectContaining({ slug: "dev", status: "hibernated", runtime: "local" })],
     more: false,
-    running: { count: 0, max: 8 },
+    running: { count: 0 },
   });
   expect((await req("GET", "/api/agents/dev")).json()).toEqual({
     agent: expect.objectContaining({ slug: "dev" }),

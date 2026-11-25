@@ -51,7 +51,7 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
     vi.fn(async () =>
       json({
         agents: [agentSummary({ status: "working", turnOpen: true, template: "developer" })],
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
       }),
     ),
   );
@@ -70,7 +70,7 @@ test("a pushed agent_status frame turns the row's Working into Idle", async () =
     vi.fn(async () =>
       json({
         agents: [agentSummary({ status: "working", turnOpen: true })],
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
       }),
     ),
   );
@@ -100,13 +100,13 @@ test("a failed list says so", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load agents.");
 });
 
-const listWith = (agents: ReturnType<typeof agentSummary>[], running = { count: 3, max: 8 }) =>
+const listWith = (agents: ReturnType<typeof agentSummary>[], running = { count: 3 }) =>
   mockWorld({
     agents,
     extra: { "GET /api/agents?ended=exclude": () => json({ agents, running }) },
   });
 
-test("Agents list: inline note priority, '3 of 8 running' before the radio pair, hidden on Ended", async () => {
+test("Agents list: inline note priority, '3 running' before the radio pair, hidden on Ended", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date(2026, 10, 19, 10, 0));
   const until = new Date(2026, 10, 19, 14, 30).toISOString();
@@ -161,15 +161,20 @@ test("Agents list: inline note priority, '3 of 8 running' before the radio pair,
   const busy = screen.getByRole("link", { name: /Busy/ });
   expect(within(busy).queryByRole("button")).toBeNull();
 
-  const count = screen.getByText("3 of 8 running");
+  const count = screen.getByText("3 running");
   const radios = screen.getByRole("group", { name: "Show" });
   expect(count.compareDocumentPosition(radios) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  act(() => pushFrame({ type: "supervisor", running: 4, max: 8 }));
-  expect(await screen.findByText("4 of 8 running")).toBeInTheDocument();
+  act(() => pushFrame({ type: "supervisor", running: 4 }));
+  expect(await screen.findByText("4 running")).toBeInTheDocument();
+
+  act(() => pushFrame({ type: "supervisor", running: 0 }));
+  await waitFor(() => expect(screen.queryByText(/running/)).not.toBeInTheDocument());
+  act(() => pushFrame({ type: "supervisor", running: 4 }));
+  expect(await screen.findByText("4 running")).toBeInTheDocument();
 
   await act(() => router.navigate({ to: "/agents", search: { ended: "only" } }));
   await screen.findByText("No ended agents.");
-  expect(screen.queryByText(/of 8 running/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/running/)).not.toBeInTheDocument();
   vi.useRealTimers();
 });
 
@@ -188,7 +193,7 @@ test("a terminated frame shows Terminated (no dot) at once, then the list refetc
       if (calls++ > 0) await held;
       return json({
         agents: calls > 1 ? [] : [agentSummary({ slug: "x-ab12", displayName: "X · ab12" })],
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
       });
     }),
   );
@@ -226,7 +231,7 @@ test("?focus scrolls that agent's row into view and marks it for the visit", asy
           agentSummary({ slug: "lead", displayName: "Lead agent" }),
           agentSummary({ slug: "other", displayName: "Other agent" }),
         ],
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
       }),
     ),
   );

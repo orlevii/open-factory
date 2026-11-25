@@ -28,7 +28,7 @@ test.each([
   ["/settings#nonsense", "/settings/credentials"],
   ["/settings?days=bogus", "/settings/credentials"],
 ])("%s → %s", async (from, to) => {
-  mockApi({ "GET /api/agents": () => json({ agents: [], running: { count: 0, max: 8 } }) });
+  mockApi({ "GET /api/agents": () => json({ agents: [], running: { count: 0 } }) });
   const { router } = renderApp(from, alice);
   await waitFor(() => expect(where(router)).toBe(to));
   await waitFor(() => expect(router.state.status).toBe("idle"));

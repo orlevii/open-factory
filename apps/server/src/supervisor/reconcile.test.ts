@@ -56,7 +56,7 @@ class Boot {
     error: (_: object, msg: string) => this.logs.push({ level: "error", msg }),
   };
   /** `dockerRuntime`: the runtimes get the Docker deps (a terminated Docker agent's removal goes through them). */
-  constructor(max = 8, o: { dockerRuntime?: boolean } = {}) {
+  constructor(o: { dockerRuntime?: boolean } = {}) {
     this.runtimes = new AgentRuntimes({
       tokens: noopTokens,
       forward: noForward,
@@ -65,7 +65,6 @@ class Boot {
       driver: this.driver,
       prepareStart: async (a) => okSpec(a),
       log: silentLog,
-      maxRunningAgents: () => max,
       ...(o.dockerRuntime
         ? {
             docker: {
@@ -374,12 +373,14 @@ test("a boot_resume still queued at shutdown never started: the next boot wakes 
   await openTurn(first);
   await pending(second, "b1");
   await openTurn(second);
-  const one = new Boot(1);
+  // The second agent's credential is paused, so its wake waits in the queue while the first one starts.
+  await store.pauseCredential(`cred-${second}`, new Date(Date.now() + 3_600_000), true);
+  const one = new Boot();
   boot = one;
   await one.run();
   await one.settleAll([first, second]);
   expect(one.startOrder()).toEqual([first]);
-  expect((await one.rt(second)).live().status).toBe("queued");
+  expect((await one.rt(second)).live().status).toBe("rate_limited");
   expect((await row(second)).attempting).toBe(true);
 
   // A graceful shutdown: the closing latch drops the queued wake before any process started.
@@ -388,6 +389,7 @@ test("a boot_resume still queued at shutdown never started: the next boot wakes 
   expect((await row(second)).attempting).toBe(false);
   expect((await row(first)).attempting).toBe(true); // its process ran: cut short for real
 
+  await t.sql`update credentials set rate_limited_until = null where id = ${`cred-${second}`}`;
   const two = new Boot();
   boot = two;
   await two.run();
@@ -401,35 +403,6 @@ test("a boot_resume still queued at shutdown never started: the next boot wakes 
     reason: "boot_resume",
   });
   expect((two.starts(second)[0] as FakeProcess).sent[0]?.[0]?.from).toBe("@factory");
-});
-
-test("agents with pending messages wake FIFO by oldest pending; errored ones don't", async () => {
-  const x = await agent();
-  const y = await agent();
-  const z = await agent();
-  const broken = await agent({ status: "errored" });
-  await t.sql`update agents set error_kind = 'crash', last_error = 'x' where id = ${broken}`;
-  await pending(broken, "first of all");
-  await pending(z, "z1");
-  await pending(x, "x1");
-  await pending(y, "y1");
-  await pending(z, "z2");
-  boot = new Boot(1);
-  await boot.run();
-  const ids = [x, y, z, broken];
-  await boot.settleAll(ids);
-  expect(boot.startOrder()).toEqual([z]);
-  expect((await boot.rt(x)).live().status).toBe("queued");
-  expect((await boot.rt(y)).live().status).toBe("queued");
-  // Each finished turn frees the one slot for the next in line (early hibernation, spec §5.3).
-  for (const id of [z, x]) {
-    const p = boot.starts(id).at(-1) as FakeProcess;
-    p.emit(...ev.fullTurn());
-    await boot.settleAll(ids);
-  }
-  expect(boot.startOrder()).toEqual([z, x, y]);
-  expect(await boot.runtimes.get(broken)).toBeUndefined(); // never loaded, never woken
-  expect(boot.starts(broken)).toHaveLength(0);
 });
 
 test("reset timers re-armed for future pauses; past ones cleared and owed notices created", async () => {
@@ -462,42 +435,6 @@ test("reset timers re-armed for future pauses; past ones cleared and owed notice
   expect(sup.paused(`cred-${past}`)).toBe(false);
   expect((await row(past)).rateLimitNoticeOwed).toBe(false);
   expect((await notices(past)).map((m) => m.notice)).toEqual(["rate_limit_reset"]);
-});
-
-test("a cap lowered at boot with more agents waking than slots starts the first in line and evicts for the rest", async () => {
-  const ids: string[] = [];
-  for (let i = 0; i < 5; i++) {
-    const id = await agent();
-    await pending(id, `m${i}`);
-    ids.push(id);
-  }
-  boot = new Boot(3);
-  await boot.run();
-  await boot.settleAll(ids);
-  const [a, b, c, d, e] = ids as [string, string, string, string, string];
-  // The first three in line hold the slots. Their grant jobs run concurrently, so the spawn order among them is the
-  // DB's, not the queue's: the queue order shows in who is still waiting.
-  expect([...boot.startOrder()].sort()).toEqual([a, b, c].sort());
-  expect((await boot.rt(d)).live().status).toBe("queued");
-  expect((await boot.rt(e)).live().status).toBe("queued");
-  const procs = [a, b, c].map((id) => boot?.starts(id)[0] as FakeProcess);
-  for (const p of procs) {
-    p.holdStop = true;
-    p.emit(...ev.fullTurn());
-  }
-  await boot.settleAll(ids);
-  // Two idle holders are hibernated for the two waiting; the slots go to the queue in FIFO order. One slot at a time,
-  // for the same reason as above.
-  const evicted = procs.filter((p) => p.stopped);
-  expect(evicted).toHaveLength(2);
-  evicted[0]?.releaseStop();
-  await boot.settleAll(ids);
-  expect(boot.startOrder().slice(3)).toEqual([d]);
-  expect((await boot.rt(e)).live().status).toBe("queued");
-  evicted[1]?.releaseStop();
-  await boot.settleAll(ids);
-  expect(boot.startOrder().slice(3)).toEqual([d, e]);
-  expect(boot.runtimes.supervisor.running()).toEqual({ count: 3, max: 3 });
 });
 
 test("a reap that fails keeps the agent's journal and doesn't wake it", async () => {
@@ -638,7 +575,7 @@ test("S7 §8: Docker unreachable at boot: the crash-window agent is stop_failed;
   await store.append(evented, null, { type: "terminated", by: "@lead" });
   // Long ago: past the stuck query's recent window, so only the container list can find it.
   await t.sql`update agents set terminated_at = now() - interval '30 days' where id = ${evented}`;
-  boot = new Boot(8, { dockerRuntime: true });
+  boot = new Boot({ dockerRuntime: true });
   const a = await dockerLeftover(boot, noEvent, true);
   const b = await dockerLeftover(boot, evented, false);
   boot.docker.down = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
@@ -673,7 +610,7 @@ test("S7 §10.3: the sweep finds a long-terminated agent's leftover container wi
   for (const id of [leaky, clean])
     await store.append(id, null, { type: "terminated", by: "@lead" });
   await t.sql`update agents set terminated_at = now() - interval '30 days' where id in (${leaky}, ${clean})`;
-  boot = new Boot(8, { dockerRuntime: true });
+  boot = new Boot({ dockerRuntime: true });
   const name = await dockerLeftover(boot, leaky, false);
   await boot.reaper().run();
   expect(boot.docker.containers.has(name)).toBe(false);

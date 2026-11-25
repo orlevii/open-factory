@@ -528,8 +528,7 @@ test("editor: the warm_window_minutes hint shows the live factory default", asyn
     "GET /api/templates/lead": () => json(detail()),
     "GET /api/settings/factory": () =>
       json({
-        maxRunningAgents: 8,
-        defaultWarmWindowMinutes: 45,
+        warmWindowMinutes: 45,
         memberUpdateDebounceSeconds: 60,
         allowLocalRuntime: false,
         updatedAt: null,

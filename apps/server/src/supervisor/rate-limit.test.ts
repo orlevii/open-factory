@@ -43,10 +43,9 @@ class World {
   prepareGate: Promise<void> | undefined;
   readonly log = { ...silentLog, warn: (_o: object, msg: string) => this.warns.push(msg) };
   readonly sup: Supervisor;
-  constructor(max: number) {
+  constructor() {
     const log = this.log;
     this.sup = new Supervisor({
-      max: () => max,
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: this.bus,
       log,
@@ -163,7 +162,7 @@ function rejected(resetsAt?: number): HarnessEvent {
 }
 
 async function agentsOnCredentials(...names: string[]) {
-  w = new World(8);
+  w = new World();
   const out: AgentRuntime[] = [];
   for (const name of names) out.push(await w.agentOn(name));
   return out;
@@ -323,7 +322,7 @@ test("an owed agent that hibernated is woken at reset with its notice", async ()
   await emitRejected(a); // inexact: the notice states no time
   w.proc(a).emit(ev.end({ isError: true }));
   await w.settleAll();
-  expect(await a.hibernate("freed_slot")).toBe(true);
+  expect(await a.hibernate("warm_window")).toBe(true);
   await w.settleAll();
   expect(status(a)).toBe("hibernated");
 
@@ -336,29 +335,6 @@ test("an owed agent that hibernated is woken at reset with its notice", async ()
     type: "process_started",
     reason: "rate_limit_reset",
   });
-});
-
-test("a paused idle agent is hibernatable and can be evicted", async () => {
-  w = new World(2);
-  const a = await w.agentOn("work");
-  const b = await w.agentOn("personal");
-  const c = await w.agentOn("personal");
-  await busy(a);
-  await emitRejected(a, { resetsAt: nowSec() + 3600 });
-  w.proc(a).emit(ev.end({ isError: true }));
-  await w.settleAll();
-  await send(a, "held");
-  expect(a.hibernatable()).toBe(true); // held deliveries don't pin a slot (D1)
-  await busy(b);
-  await send(c, "hi");
-  await w.settleAll();
-  expect(w.proc(a).stopped).toBe(true);
-  await w.until(() => started(c));
-  // a's held message is a queued wake that waits for the reset, keeping its place.
-  expect(status(a)).toBe("rate_limited");
-  expect(w.sup.isQueued(a.agent.id)).toBe(true);
-  expect(w.starts(a)).toHaveLength(1);
-  expect(w.sup.running()).toEqual({ count: 2, max: 2 });
 });
 
 test("a later event extends the window, never shortens it", async () => {

@@ -31,7 +31,7 @@ function agent(over: Partial<AgentSummary> = {}): AgentSummary {
   });
 }
 
-const ctx = { slotsMax: 8, now };
+const ctx = { now };
 const terminated = {
   status: "terminated" as const,
   terminatedAt: at(14, 32),
@@ -74,18 +74,15 @@ describe("liveFact priority", () => {
     ).toBeNull();
   });
 
-  test("queued with every slot taken", () => {
-    expect(liveFact(agent({ status: "queued" }), ctx)).toMatchObject({
+  test("a pulling agent says so", () => {
+    expect(liveFact(agent({ status: "queued", pulling: true }), ctx)).toMatchObject({
       kind: "queued",
-      text: "All 8 slots are in use.",
+      text: "Pulling the image…",
     });
-    expect(liveFact(agent({ status: "queued" }), { ...ctx, slotsMax: 1 })?.text).toBe(
-      "The only slot is in use.",
-    );
   });
 
-  test("queued while the cap is unknown says nothing", () => {
-    expect(liveFact(agent({ status: "queued" }), { now })).toBeNull();
+  test("queued with nothing to wait on says nothing", () => {
+    expect(liveFact(agent({ status: "queued" }), ctx)).toBeNull();
   });
 
   test("restart pending", () => {

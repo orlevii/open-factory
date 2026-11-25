@@ -186,7 +186,7 @@ test("an agent_status frame pushed through the ws onMessage updates the agent ro
     "GET /api/agents?": () =>
       json({
         agents: [agentSummary({ slug: "dev", displayName: "Dev agent", status: "working" })],
-        running: { count: 1, max: 8 },
+        running: { count: 1 },
       }),
   });
   renderApp("/agents", alice);
@@ -215,7 +215,7 @@ const liveAgents = () =>
           agentSummary({ slug: "dev", displayName: "Dev agent" }),
           agentSummary({ slug: "qa", displayName: "QA agent", reportsTo: "dev" }),
         ],
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
       }),
   });
 
@@ -271,7 +271,7 @@ test("the Agents row is not active while the agents list is still loading, then 
       await gate;
       return json({
         agents: [agentSummary({ slug: "dev", displayName: "Dev agent" })],
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
       });
     },
   });
@@ -324,7 +324,7 @@ test("collapsed rail: nav icons, a rule, Agents icon, then only active/unread/ba
           agentSummary({ slug: "dev", displayName: "Dev agent", status: "working" }),
           agentSummary({ slug: "idle", displayName: "Idle agent", status: "idle" }),
         ],
-        running: { count: 1, max: 8 },
+        running: { count: 1 },
       }),
   });
   renderApp("/inbox", alice);

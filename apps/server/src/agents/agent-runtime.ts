@@ -175,7 +175,6 @@ type CrashLive = { turnOpen: boolean; batchUnanswered: boolean; lost: LostWork }
 
 export type HibernateReason =
   | "warm_window"
-  | "freed_slot"
   | "apply_changes"
   | "shutdown"
   | "archived"
@@ -627,7 +626,6 @@ export class AgentRuntime {
   private warmArmedAt: number | undefined; // when the armed warm timer's window began (S10 §8.2)
   private cronExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   private cronExpiryAt: number | undefined;
-  private wasHibernatable = false;
   // runtime_journal (spec §12): the tasks/crons part and the local process part, merged into one write.
   private journalWork: LostWork = { tasks: [], crons: [] };
   private journalProc: ProcessPart | undefined;
@@ -1809,7 +1807,6 @@ export class AgentRuntime {
         `cleaning up a terminated agent failed${err instanceof Error ? `: ${err.message}` : ""}`,
       );
       await this.setErrored(stopFailedMessage(undefined), "stop_failed");
-      this.slots.stopFailed(this.agent.id);
       return false;
     }
     this.journalProc = undefined;
@@ -1969,11 +1966,6 @@ export class AgentRuntime {
     if (at === undefined) return false;
     // 0 means due at once, even for a row stamped a millisecond ahead (the store's stamps are strictly increasing).
     return this.dueAtTurnEnd || this.debounceMs() === 0 || Date.now() >= at;
-  }
-
-  /** A deliberate stop of the running process is under way: its slot is on its way back (spec §5.3). */
-  isStopping(): boolean {
-    return Boolean(this.proc) && this.stopping && !this.stopFailed();
   }
 
   /**
@@ -2554,7 +2546,6 @@ export class AgentRuntime {
       done = (await this.removeContainer()) ? { container: "removed" } : undefined;
       if (!done) {
         await this.setErrored(stopFailedMessage(undefined), "stop_failed");
-        this.slots.stopFailed(this.agent.id);
         return;
       }
     }
@@ -2840,7 +2831,6 @@ export class AgentRuntime {
       this.d.log.error({ err, agent: this.agent.slug }, "reaping the previous process failed");
       // The slot and the cleanup target first: a failing DB write below must not free the slot of a running process.
       this.keepSlotAfterFailedStart = true;
-      this.slots.stopFailed(this.agent.id);
       this.procRuntime = "local"; // Restart's cleanup reaps the journal again
       const message = previousProcessMessage(j?.claude?.pid);
       const logFailure = (e: unknown) =>
@@ -2949,7 +2939,6 @@ export class AgentRuntime {
       );
       // The slot and the cleanup target first: a failing DB write below must not free the slot of a running container.
       this.keepSlotAfterFailedStart = true;
-      this.slots.stopFailed(this.agent.id);
       this.procRuntime = "docker"; // Restart's cleanup stops (or removes) this container, whatever ran last
       // setErrored sets the in-memory truth first; the DB may be what failed.
       await this.setErrored(stopFailedMessage(undefined), "stop_failed").catch((e) =>
@@ -3547,8 +3536,7 @@ export class AgentRuntime {
   ) {
     const { reason, lost } = intent;
     const anyLost = lost.tasks.length > 0 || lost.crons.length > 0;
-    if (reason !== "warm_window" && reason !== "freed_slot")
-      await this.reportLostWork(reason, lost, intent.by);
+    if (reason !== "warm_window") await this.reportLostWork(reason, lost, intent.by);
     if (reason === "shutdown" && (turnWasOpen || anyLost))
       await this.addNotice(
         "factory_restarted",
@@ -3572,11 +3560,7 @@ export class AgentRuntime {
 
   /** Spec §9.4: `background_work_lost` when live tasks or crons died, forwarded to the manager (S6 §9.1) unless archived. */
   private async reportLostWork(
-    reason:
-      | "crash"
-      | "restart"
-      | "terminated"
-      | Exclude<HibernateReason, "warm_window" | "freed_slot">,
+    reason: "crash" | "restart" | "terminated" | Exclude<HibernateReason, "warm_window">,
     lost: LostWork,
     by?: string,
   ) {
@@ -3709,7 +3693,6 @@ export class AgentRuntime {
       const why = err instanceof Error ? `: ${err.message}` : "";
       this.d.log.error({ err, agent: this.agent.slug }, `${what}${why}`);
       await this.setErrored(stopFailedMessage(undefined), "stop_failed");
-      this.slots.stopFailed(this.agent.id);
       return false;
     }
     this.journalProc = undefined;
@@ -3799,7 +3782,7 @@ export class AgentRuntime {
       this.pendingWake = false;
       return true;
     }
-    if (reason === "warm_window" || reason === "freed_slot") {
+    if (reason === "warm_window") {
       if (!this.hibernatable()) return false;
     } else if (reason === "apply_changes" && this.busy()) return false; // crons don't block it (spec §6.5)
     const intent: AfterExit = { kind: "hibernate", reason, lost: this.lostSnapshot() };
@@ -3900,7 +3883,6 @@ export class AgentRuntime {
     await this.setErrored(stopFailedMessage(proc.pid), "stop_failed").catch(() => {});
     // Restart of a stop_failed agent makes one more escalation try (spec §9.6): don't cache this one.
     this.escalations.delete(proc);
-    this.slots.stopFailed(this.agent.id);
     this.publishStatus();
   }
 
@@ -3931,8 +3913,6 @@ export class AgentRuntime {
       this.warmArmedAt = Date.now();
       this.armWarmTimer(this.warmWindowMs());
     }
-    if (h && !this.wasHibernatable) this.slots.becameHibernatable(this.agent.id);
-    this.wasHibernatable = h;
     this.updateCronExpiry();
   }
 

@@ -13,8 +13,7 @@ const tok: Record<string, string> = {};
 
 beforeEach(async () => {
   drv = new FakeDriver();
-  // Earlier tests in a file leave processes running; the default cap of 8 would queue these starts.
-  h = await makeTestApp({ harnessDriver: drv, factorySettings: { maxRunningAgents: 50 } });
+  h = await makeTestApp({ harnessDriver: drv });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   cookie = (await signUp(h.app, { handle: "or" })).cookie;
   for (const slug of ["lead", "dev", "qa"]) {

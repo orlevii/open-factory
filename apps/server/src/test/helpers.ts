@@ -94,7 +94,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
     });
     const { db, sql, close: closeDb } = createDb(tdb.url);
     if (o.factorySettings && Object.keys(o.factorySettings).length > 0) {
-      await db.update(schema.factorySettings).set(o.factorySettings);
+      await db.update(schema.factorySettings).set({ settings: o.factorySettings });
     }
     const app = await buildApp(config, {
       db,

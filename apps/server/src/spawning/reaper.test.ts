@@ -5,6 +5,7 @@ import { type AgentRow, schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
+import { liveCredentialId } from "../agents/live-credential.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { sendAs } from "../agents/testing/runtime-harness.ts";
@@ -45,13 +46,10 @@ interface Child {
   proc: FakeProcess;
 }
 
-/** A spawner `lead` that may spawn `dev` (local), one running slot, and a reaper on the injected clock. */
-async function setup(o: { maxRunning?: number } = {}) {
+/** A spawner `lead` that may spawn `dev` (local), and a reaper on the injected clock. */
+async function setup() {
   const driver = new FakeDriver();
-  t = await makeTestApp({
-    harnessDriver: driver,
-    factorySettings: { maxRunningAgents: o.maxRunning ?? 1 },
-  });
+  t = await makeTestApp({ harnessDriver: driver });
   const app = t;
   writeTemplate(app.factoryHome, "dev", "name: dev\ndisplay_name: Dev\nruntime: local\n");
   const lead = await app.seedAgent({
@@ -186,11 +184,12 @@ const neverReaped: [string, (s: S) => Promise<Child>][] = [
     "queued",
     async (s) => {
       const c = await s.spawnHibernated("q");
-      // The spawner takes the only slot (started, no session yet: not evictable); the child's wake waits for it.
-      const lead = await s.t.app.runtimes.load(s.lead.id);
-      if (!lead) throw new Error("no lead runtime");
-      await s.human(lead, "keep busy");
-      await lead.settled();
+      // The child's credential is rate-limit paused, so its wake waits in the queue.
+      s.t.app.runtimes.supervisor.pause(
+        liveCredentialId(c.rt.agent),
+        new Date(Date.now() + 3_600_000),
+        true,
+      );
       await s.human(c.rt, "hi");
       expect(s.t.app.runtimes.supervisor.isQueued(c.id)).toBe(true);
       return c;
@@ -456,7 +455,7 @@ test("a failing deletion is logged and retried by the next run", async () => {
 });
 
 test("stuck: a terminated stop_failed child is force-removed and its slot released; skipped while its stop is in progress", async () => {
-  const s = await setup({ maxRunning: 2 });
+  const s = await setup();
   const release = vi.spyOn(s.t.app.runtimes.supervisor, "release");
   const releasesOf = (id: string) => release.mock.calls.filter(([a]) => a === id).length;
 

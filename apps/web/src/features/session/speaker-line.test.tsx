@@ -229,7 +229,7 @@ test("the provider reads your handle itself, and asks for the ended list only on
         });
       return Promise.resolve(
         new Response(
-          JSON.stringify({ agents: [], users: [], more: false, running: { count: 0, max: 8 } }),
+          JSON.stringify({ agents: [], users: [], more: false, running: { count: 0 } }),
           {
             headers: { "content-type": "application/json" },
           },
@@ -256,7 +256,7 @@ test("the provider reads your handle itself, and asks for the ended list only on
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(calls).not.toContain("/api/agents?ended=only");
     release(
-      new Response(JSON.stringify({ agents: [], running: { count: 0, max: 8 } }), {
+      new Response(JSON.stringify({ agents: [], running: { count: 0 } }), {
         headers: { "content-type": "application/json" },
       }),
     );

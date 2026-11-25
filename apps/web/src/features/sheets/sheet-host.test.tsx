@@ -78,9 +78,8 @@ beforeEach(() => {
   localStorage.clear();
   fakeMatchMedia.install(false);
   mockApi({
-    "GET /api/agents?ended=exclude": () => json({ agents: [], running: { count: 0, max: 8 } }),
-    "GET /api/agents?ended=only": () =>
-      json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?ended=exclude": () => json({ agents: [], running: { count: 0 } }),
+    "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 0 } }),
   });
   gate = Promise.resolve();
   sheetBodies["new-task"] = {
@@ -272,7 +271,7 @@ test("intent prefetch has its own freshness window: hover, press and open fetch 
         queue: [],
         lastSeq: 0,
       }),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
   });
   const qc = createQueryClient({ queries: { retry: false } });
   const prefetch = restoreBodies["edit-agent"]?.prefetch;

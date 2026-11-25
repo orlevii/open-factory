@@ -60,20 +60,11 @@ function restartFact(changes: string[]): LiveFact {
   };
 }
 
-function queuedText(agent: AgentSummary, slotsMax?: number): string | null {
-  if (agent.pulling) return "Pulling the image…";
-  if (agent.status !== "queued" || !slotsMax) return null;
-  return slotsMax === 1 ? "The only slot is in use." : `All ${slotsMax} slots are in use.`;
-}
-
 /**
  * The one fact the session header shows beside the status badge (U2 §8.2), the first that applies.
  * Rate-limited has none (the badge carries its reset time). Times are absolute, never ticking.
  */
-export function liveFact(
-  agent: AgentSummary,
-  ctx: { slotsMax?: number; now: Date },
-): LiveFact | null {
+export function liveFact(agent: AgentSummary, ctx: { now: Date }): LiveFact | null {
   if (agent.status === "terminated" || agent.terminatedAt)
     return { kind: "terminated", text: terminatedText(agent, ctx.now) };
   if (agent.status === "errored" && agent.lastError)
@@ -82,8 +73,7 @@ export function liveFact(
       text: firstLine(agent.lastError),
       title: agent.lastError,
     };
-  const queued = queuedText(agent, ctx.slotsMax);
-  if (queued) return { kind: "queued", text: queued };
+  if (agent.pulling) return { kind: "queued", text: "Pulling the image…" };
   if (agent.restartPending) return restartFact(agent.restartChanges);
   const [first, ...rest] = agent.waitingOn.tasks;
   if (first)

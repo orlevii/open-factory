@@ -47,7 +47,7 @@ let api: MockApi;
 beforeEach(() => {
   api = mockApi({
     "GET /api/tasks?": () => json({ tasks: KEYS.map(summary), nextCursor: null }),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
   });
   for (const n of KEYS) api.on(`GET /api/tasks/T-${n}`, () => json(detail(n)));
 });

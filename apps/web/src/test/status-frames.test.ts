@@ -100,10 +100,10 @@ test("cached detail is patched once per slug; an uncached detail is invalidated"
 
 test("the newest supervisor frame sets the running count", () => {
   applyStatusFrames(qc, [
-    { type: "supervisor", running: 1, max: 8 },
-    { type: "supervisor", running: 3, max: 8 },
+    { type: "supervisor", running: 1 },
+    { type: "supervisor", running: 3 },
   ]);
-  expect(qc.getQueryData(runningQueryKey)).toEqual({ count: 3, max: 8 });
+  expect(qc.getQueryData(runningQueryKey)).toEqual({ count: 3 });
 });
 
 test("other message types are ignored", () => {

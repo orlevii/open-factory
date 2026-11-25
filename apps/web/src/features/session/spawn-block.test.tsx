@@ -41,10 +41,9 @@ async function open(events: AnyEvent[], firstText: string | RegExp) {
             reportsTo: "lead",
           }),
         ],
-        running: { count: 1, max: 8 },
+        running: { count: 1 },
       }),
-    "GET /api/agents?ended=only": () =>
-      json({ agents: [], more: false, running: { count: 1, max: 8 } }),
+    "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 1 } }),
   });
   renderApp("/agents/lead/session", alice);
   await screen.findByText(firstText);

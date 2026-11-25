@@ -20,7 +20,7 @@ test.each([
     "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
     "GET /api/tasks?": () => json({ tasks: [], nextCursor: null }),
     "GET /api/schedules": () => json({ schedules: [], more: false }),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
   });
   renderApp(path, alice);
   expect(await screen.findByRole("heading", { level: 1, name: title })).toBeInTheDocument();
@@ -29,7 +29,7 @@ test.each([
 
 test("/agents with no agents: No agents yet. and a primary Create your first agent, even with nothing set up", async () => {
   mockApi({
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "GET /api/credentials": () => json({ credentials: [] }),
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
   });

@@ -594,7 +594,7 @@ test("projects: a live spawned grantee is named through its spawner in Remove's 
             { ...agentRow("lead"), kind: "persistent", reportsTo: null },
             { ...agentRow("tech-lead-ab12"), kind: "ephemeral", reportsTo: "lead" },
           ],
-          running: { count: 0, max: 8 },
+          running: { count: 0 },
         }),
     },
   });
@@ -962,8 +962,7 @@ test.each([
       "GET /api/invites": () => json({ invites: [] }),
       "GET /api/settings/factory": () =>
         json({
-          maxRunningAgents: 8,
-          defaultWarmWindowMinutes: 70,
+          warmWindowMinutes: 70,
           memberUpdateDebounceSeconds: 30,
           allowLocalRuntime: false,
           updatedAt: null,

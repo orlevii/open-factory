@@ -41,7 +41,7 @@ const agents = () =>
   json({
     agents: [agentSummary({ slug: "dev", displayName: "Dev" })],
     more: false,
-    running: { count: 0, max: 8 },
+    running: { count: 0 },
   });
 const summary = (n: number, status = "open") => ({
   key: `T-${n}`,
@@ -289,7 +289,7 @@ test("arrow keys in the Assignee picker don't assign; Enter does", async () => {
           agentSummary({ slug: "qa", displayName: "QA" }),
         ],
         more: false,
-        running: { count: 0, max: 8 },
+        running: { count: 0 },
       }),
   });
   renderApp("/tasks/new", alice);
@@ -544,7 +544,7 @@ test("a stale assignee blocks the submit until another is picked; Unassigned goe
         ? json({
             agents: [agentSummary({ slug: "ada", displayName: "Ada" })],
             more: false,
-            running: { count: 0, max: 8 },
+            running: { count: 0 },
           })
         : agents(),
     "POST /api/tasks": () => json({ task: detail(42) }, 201),

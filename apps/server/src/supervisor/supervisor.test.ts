@@ -41,10 +41,9 @@ class World {
   /** Agents moved to another credential (several agents sharing one). */
   readonly credentials = new Map<string, string>();
   readonly sup: Supervisor;
-  constructor(max: number) {
+  constructor() {
     this.bus.subscribeAll((m) => this.frames.push(m));
     this.sup = new Supervisor({
-      max: () => max,
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: this.bus,
       log: silentLog,
@@ -127,10 +126,6 @@ const stopped = (rt: AgentRuntime) => w.starts(rt).some((p) => p.stopped);
 const lastEvent = async (rt: AgentRuntime) =>
   (await store.after(rt.agent.id, 0, 1000)).at(-1)?.event;
 
-async function three(max = 2) {
-  w = new World(max);
-  return [await w.agent(), await w.agent(), await w.agent()] as const;
-}
 /** Started and mid-turn. */
 async function busy(rt: AgentRuntime) {
   await send(rt, "work");
@@ -151,229 +146,46 @@ function endTurnAndExit(rt: AgentRuntime) {
   p.exit(0);
 }
 
-test("third wake queues while two agents are mid-turn, starts when one exits", async () => {
-  const [a, b, c] = await three();
-  await busy(a);
-  await busy(b);
-  await send(c, "hi");
-  expect(status(c)).toBe("queued");
-  expect(started(c)).toBe(false);
-  endTurnAndExit(a);
-  await w.settleAll();
-  expect(started(c)).toBe(true);
-  expect(
-    w
-      .proc(c)
-      .sent.flat()
-      .map((m) => m.body),
-  ).toEqual(["hi"]);
-  expect(w.sup.isQueued(c.agent.id)).toBe(false);
-  expect(w.sup.running()).toEqual({ count: 2, max: 2 });
-});
-
-test("with two idle-warm agents, the least recently active hibernates to free a slot", async () => {
-  const [a, b, c] = await three();
-  await idleAt(a, 1000);
-  await idleAt(b, 2000);
-  await send(c, "hi");
-  await w.settleAll();
-  expect(await lastEvent(a)).toMatchObject({ type: "hibernated", reason: "freed_slot" });
-  expect(stopped(b)).toBe(false);
-  expect(started(c)).toBe(true);
-  expect(w.sup.running()).toEqual({ count: 2, max: 2 });
-});
-
-test("never evicts a busy, pinned or mid-turn agent", async () => {
-  const [a, b, c] = await three(3);
-  const d = await w.agent();
-  await busy(a); // mid-turn
-  await idleAt(b, 1000);
-  w.proc(b).emit(ev.background([{ taskId: "t1" }])); // a live non-ambient task
-  await idleAt(c, 1000);
-  w.proc(c).emit(ev.cron("c1")); // pinned
-  await w.settleAll();
-  await send(d, "hi");
-  await w.settleAll();
-  expect([stopped(a), stopped(b), stopped(c)]).toEqual([false, false, false]);
-  expect(started(d)).toBe(false);
-  expect(status(d)).toBe("queued");
-  // Once one of them becomes hibernatable, it is the one that goes.
-  w.proc(b).emit(ev.background([]));
-  await w.settleAll();
-  expect(stopped(b)).toBe(true);
-  expect(started(d)).toBe(true);
-});
-
-test("never evicts two agents for one queued entry", async () => {
-  const [a, b, c] = await three();
-  await idleAt(a, 1000);
-  await idleAt(b, 2000);
-  w.proc(a).holdStop = true; // a's stop grace is still running
-  await send(c, "hi");
-  await w.settleAll();
-  expect(stopped(a)).toBe(true);
-  // b turns hibernatable again while a's eviction is still on its way: it is not asked to go too.
-  await send(b, "more");
-  w.proc(b).emit(ev.turn(), ev.end());
-  await w.settleAll();
-  expect(b.hibernatable()).toBe(true);
-  expect(stopped(b)).toBe(false);
-  w.proc(a).releaseStop();
-  await w.settleAll();
-  expect(started(c)).toBe(true);
-  expect(stopped(b)).toBe(false);
-});
-
-test("a cap lowered by config at boot with more queued than slots evicts only as many as the queue needs", async () => {
-  // Five agents were warm before the restart; the cap is now 3. Boot wakes each with pending work.
-  w = new World(3);
-  const rts: AgentRuntime[] = [];
-  for (const x of ["a", "b", "c", "d", "e"]) rts.push(await w.agent({ pending: [`${x}1`] }));
-  const [a, b, c, d, e] = rts as [
-    AgentRuntime,
-    AgentRuntime,
-    AgentRuntime,
-    AgentRuntime,
-    AgentRuntime,
-  ];
-  // Not inline: the answer is never "granted", the grant job starts the agent in its own turn.
-  expect(rts.map((rt) => w.sup.requestWake(rt.agent.id, "boot", false))).toEqual(
-    Array(5).fill("queued"),
-  );
-  await w.settleAll();
-  expect(rts.map(started)).toEqual([true, true, true, false, false]);
-  expect([status(d), status(e)]).toEqual(["queued", "queued"]);
-  // All three finish their turn while the evictions are still stopping: two go, the third keeps running.
-  for (const [i, rt] of [a, b, c].entries()) {
-    w.proc(rt).holdStop = true;
-    rt.lastActivityAt = i;
-    w.proc(rt).emit(...ev.fullTurn());
-    await w.settleAll();
-  }
-  expect([a, b, c].map(stopped)).toEqual([true, true, false]);
-  expect([a.isStopping(), b.isStopping(), c.hibernatable()]).toEqual([true, true, true]);
-  // The freed slots go to the queue in FIFO order. One at a time: two slots freed together start d and e in two
-  // concurrent grant jobs, whose spawn order is up to the DB, not the queue.
-  w.proc(a).releaseStop();
-  await w.settleAll();
-  expect([started(d), started(e)]).toEqual([true, false]);
-  expect(status(e)).toBe("queued");
-  w.proc(b).releaseStop();
-  await w.settleAll();
-  const order = w.driver.starts.map((p) => p.spec.agentId);
-  expect(order.slice(3)).toEqual([d.agent.id, e.agent.id]);
-  expect(stopped(c)).toBe(false);
-  expect(w.sup.running()).toEqual({ count: 3, max: 3 });
-});
-
-test("entries that become eligible together evict as many holders at once", async () => {
-  w = new World(2);
+test("dedupe: a second request while a wake waits keeps one entry, and one start delivers both", async () => {
+  w = new World();
   const a = await w.agent();
-  const b = await w.agent();
-  const c = await w.agent();
-  const d = await w.agent();
-  await idleAt(a, 1000);
-  await idleAt(b, 2000);
-  for (const rt of [c, d]) w.credentials.set(rt.agent.id, "shared");
-  w.pause("shared");
-  await send(c, "c1");
-  await send(d, "d1");
+  w.pause(liveCredentialId(a.agent));
+  await send(a, "a1");
+  await send(a, "a2");
+  expect(w.sup.isQueued(a.agent.id)).toBe(true);
+  expect(started(a)).toBe(false);
+  w.sup.onCredentialReset(liveCredentialId(a.agent));
   await w.settleAll();
-  expect([status(c), status(d)]).toEqual(["rate_limited", "rate_limited"]);
-  expect([stopped(a), stopped(b)]).toEqual([false, false]); // paused entries never evict
-  w.proc(a).holdStop = true;
-  w.proc(b).holdStop = true;
-  w.sup.onCredentialReset("shared"); // one evict() call for both entries
-  await w.settleAll();
-  expect([stopped(a), stopped(b)]).toEqual([true, true]);
-  w.proc(a).releaseStop();
-  w.proc(b).releaseStop();
-  await w.settleAll();
-  expect([started(c), started(d)]).toEqual([true, true]);
-});
-
-test("a holder already stopping for another reason counts as a slot on its way", async () => {
-  w = new World(2);
-  const a = await w.agent();
-  const b = await w.agent();
-  const c = await w.agent();
-  await idleAt(a, 2000);
-  await idleAt(b, 1000);
-  w.proc(a).holdStop = true;
-  expect(await a.hibernate("warm_window")).toBe(true);
-  expect(a.isStopping()).toBe(true);
-  await send(c, "hi");
-  await w.settleAll();
-  expect(status(c)).toBe("queued");
-  expect(stopped(b)).toBe(false); // b is less recently active, but a's slot is already coming back
-  w.proc(a).releaseStop();
-  await w.settleAll();
-  expect(await lastEvent(a)).toMatchObject({ type: "hibernated", reason: "warm_window" });
-  expect(started(c)).toBe(true);
-  expect(stopped(b)).toBe(false);
-});
-
-test("a victim that refuses is replaced by the next candidate", async () => {
-  const [a, b, c] = await three();
-  await idleAt(a, 1000);
-  await idleAt(b, 2000);
-  // A message reaches a between the pick and its hibernate job: a re-checks in its job and refuses.
-  const original = a.hibernate.bind(a);
-  const meanwhile = await humanRow(store, a, {
-    fromUserId: "u1",
-    body: "meanwhile",
-    urgent: false,
-  });
-  vi.spyOn(a, "hibernate").mockImplementationOnce((reason) => {
-    void deliverHuman(a, meanwhile); // enqueued ahead of the hibernate job
-    return original(reason);
-  });
-  await send(c, "hi");
-  await w.settleAll();
-  expect(a.hibernate).toHaveBeenCalledWith("freed_slot");
-  expect(stopped(a)).toBe(false);
+  expect(w.starts(a)).toHaveLength(1);
   expect(
     w
       .proc(a)
       .sent.flat()
       .map((m) => m.body),
-  ).toContain("meanwhile");
-  expect(await lastEvent(b)).toMatchObject({ type: "hibernated", reason: "freed_slot" });
-  expect(started(c)).toBe(true);
+  ).toEqual(["a1", "a2"]);
+  expect(w.sup.isQueued(a.agent.id)).toBe(false);
 });
 
-test("dedupe: a second request keeps the original place", async () => {
-  w = new World(1);
-  const a = await w.agent();
-  const b = await w.agent();
-  const c = await w.agent();
-  await busy(a);
-  await send(b, "b1");
-  await send(c, "c1");
-  await send(b, "b2"); // b keeps its place ahead of c
-  expect([status(b), status(c)]).toEqual(["queued", "queued"]);
-  endTurnAndExit(a);
-  await w.settleAll();
-  expect(started(b)).toBe(true);
-  expect(started(c)).toBe(false);
-  expect(w.starts(b)).toHaveLength(1);
-  expect(
-    w
-      .proc(b)
-      .sent.flat()
-      .map((m) => m.body),
-  ).toEqual(["b1", "b2"]);
-  expect(w.sup.isQueued(b.agent.id)).toBe(false);
-  expect(w.sup.isQueued(c.agent.id)).toBe(true);
+test("more agents than the old cap of 8 all start, and none is hibernated to make room", async () => {
+  w = new World();
+  const agents: AgentRuntime[] = [];
+  for (let i = 0; i < 10; i++) agents.push(await w.agent());
+  for (const rt of agents) await busy(rt);
+  expect(agents.map(status)).toEqual(agents.map(() => "working"));
+  expect(w.sup.running()).toEqual({ count: 10 });
+  for (const rt of agents) expect(stopped(rt)).toBe(false);
+  for (const rt of agents) {
+    const events = (await store.after(rt.agent.id, 0, 1000)).map((e) => e.event.type);
+    expect(events).not.toContain("hibernated");
+  }
 });
 
 test("granted state closes the double-start window", async () => {
-  w = new World(1);
-  const a = await w.agent();
+  w = new World();
   const b = await w.agent();
-  await busy(a);
+  w.pause(liveCredentialId(b.agent));
   await send(b, "one");
-  // When a's exit hands the slot to b, a send to b lands ahead of b's grant job.
+  // When the reset hands b its start, a send to b lands ahead of b's grant job.
   const original = b.grant.bind(b);
   let sendDuringGrant: Promise<unknown> | undefined;
   let statusWhileGranted: string | undefined;
@@ -382,16 +194,17 @@ test("granted state closes the double-start window", async () => {
     sendDuringGrant = send(b, "two");
     return original(reason);
   });
-  endTurnAndExit(a);
+  const framesBefore = w.frames.length;
+  w.sup.onCredentialReset(liveCredentialId(b.agent));
   await w.settleAll();
   await sendDuringGrant;
   await w.settleAll();
   expect(b.grant).toHaveBeenCalledTimes(1);
   // Granted counts as waiting: never a hibernated flicker between queued and working.
   expect(statusWhileGranted).toBe("queued");
-  const bStatuses = w.frames.flatMap((f) =>
-    f.type === "agent_status" && f.agent === b.agent.slug ? [f.status] : [],
-  );
+  const bStatuses = w.frames
+    .slice(framesBefore)
+    .flatMap((f) => (f.type === "agent_status" && f.agent === b.agent.slug ? [f.status] : []));
   expect(bStatuses).not.toContain("hibernated");
   expect(w.starts(b)).toHaveLength(1);
   expect(
@@ -401,26 +214,24 @@ test("granted state closes the double-start window", async () => {
       .map((m) => m.body),
   ).toEqual(["one", "two"]);
   expect(w.sup.isQueued(b.agent.id)).toBe(false); // the send saw the grant: no second entry
-  expect(w.sup.running()).toEqual({ count: 1, max: 1 });
+  expect(w.sup.running()).toEqual({ count: 1 });
 });
 
 test("an entry that can never start is dropped at once (archived while queued)", async () => {
-  w = new World(1);
-  const a = await w.agent();
+  w = new World();
   const b = await w.agent();
-  await busy(a);
+  w.pause(liveCredentialId(b.agent));
   await send(b, "b1");
-  expect(status(b)).toBe("queued");
+  expect(w.sup.isQueued(b.agent.id)).toBe(true);
   b.markArchived();
   expect(w.sup.isQueued(b.agent.id)).toBe(false);
-  expect(status(b)).toBe("hibernated");
-  endTurnAndExit(a);
+  w.sup.onCredentialReset(liveCredentialId(b.agent));
   await w.settleAll();
   expect(started(b)).toBe(false);
 });
 
 test("no grant without a deliverable item", async () => {
-  w = new World(1);
+  w = new World();
   const a = await w.agent();
   expect(w.sup.requestWake(a.agent.id, "boot", false)).toBe("dropped");
   expect(w.sup.requestWake(a.agent.id, "queued_items", true)).toBe("dropped");
@@ -431,7 +242,7 @@ test("no grant without a deliverable item", async () => {
 });
 
 test("an errored agent wakes only for crash recovery, restart, reset or a human's message", async () => {
-  w = new World(2);
+  w = new World();
   const a = await w.agent({ pending: ["x"], status: "errored" });
   for (const r of ["boot", "boot_resume", "queued_items", "rate_limit_reset"] as const)
     expect(w.sup.requestWake(a.agent.id, r, false)).toBe("dropped");
@@ -442,7 +253,7 @@ test("an errored agent wakes only for crash recovery, restart, reset or a human'
 });
 
 test("stop_failed and resume_unrecoverable agents are dropped except for Restart or Start a new session", async () => {
-  w = new World(2);
+  w = new World();
   const a = await w.agent({ pending: ["x"], status: "errored", errorKind: "stop_failed" });
   const b = await w.agent({ pending: ["x"], status: "errored", errorKind: "resume_unrecoverable" });
   for (const r of ["message", "crash_recovery", "reset"] as const)
@@ -455,159 +266,112 @@ test("stop_failed and resume_unrecoverable agents are dropped except for Restart
   expect(w.sup.running().count).toBe(0);
 });
 
-test("a freed_slot victim whose stop fails keeps its slot and the next victim is asked", async () => {
-  const [a, b, c] = await three();
-  await idleAt(a, 1000);
-  await idleAt(b, 2000);
-  const p = w.proc(a);
-  p.stopResult = { code: null, signal: null, timedOut: true };
-  p.emitExitOnStop = false;
-  p.forceKill = async () => {
-    throw new Error("EPERM");
-  };
-  await send(c, "hi");
-  await w.settleAll();
-  expect(a.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
-  expect(await lastEvent(b)).toMatchObject({ type: "hibernated", reason: "freed_slot" });
-  expect(started(c)).toBe(true);
-  expect(w.sup.running()).toEqual({ count: 2, max: 2 }); // a still holds its slot
-});
-
-test("a paused credential's entry is skipped without losing its place", async () => {
-  w = new World(1);
-  const a = await w.agent();
+test("a paused credential's wakes wait while other agents start; a reset starts each of them once", async () => {
+  w = new World();
   const b = await w.agent();
   const c = await w.agent();
-  await busy(a);
-  w.pause(liveCredentialId(b.agent));
+  const d = await w.agent();
+  w.credentials.set(b.agent.id, "shared");
+  w.credentials.set(d.agent.id, "shared");
+  w.pause("shared");
+  await send(d, "d1");
   await send(b, "b1");
   await send(c, "c1");
-  expect(w.sup.isQueued(b.agent.id)).toBe(true);
-  endTurnAndExit(a);
-  await w.settleAll();
   expect(started(c)).toBe(true);
-  expect(started(b)).toBe(false);
-  w.sup.onCredentialReset(liveCredentialId(b.agent));
+  expect([started(b), started(d)]).toEqual([false, false]);
+  expect([w.sup.isQueued(d.agent.id), w.sup.isQueued(b.agent.id)]).toEqual([true, true]);
+  w.sup.onCredentialReset("shared");
   await w.settleAll();
-  expect(started(b)).toBe(false); // still no free slot
-  const d = await w.agent();
-  await send(d, "d1"); // queued behind b
-  w.proc(c).emit(ev.session(), ev.turn());
-  endTurnAndExit(c);
-  await w.settleAll();
-  expect(started(b)).toBe(true);
-  expect(started(d)).toBe(false);
+  expect([w.starts(b).length, w.starts(c).length, w.starts(d).length]).toEqual([1, 1, 1]);
 });
 
 test("a grant whose credential was paused since goes back to its place", async () => {
-  w = new World(1);
-  const a = await w.agent();
+  w = new World();
   const b = await w.agent();
-  const c = await w.agent();
-  await busy(a);
+  w.pause(liveCredentialId(b.agent));
   await send(b, "b1");
-  await send(c, "c1");
   // The pause lands between the grant (bookkeeping) and b's grant job.
   const original = b.grant.bind(b);
   vi.spyOn(b, "grant").mockImplementationOnce((reason) => {
     w.pause(liveCredentialId(b.agent));
     return original(reason);
   });
-  endTurnAndExit(a);
+  w.sup.onCredentialReset(liveCredentialId(b.agent));
   await w.settleAll();
   expect(started(b)).toBe(false);
-  expect(started(c)).toBe(true);
   expect(w.sup.isQueued(b.agent.id)).toBe(true);
-  expect(w.sup.running().count).toBe(1);
+  expect(w.sup.running().count).toBe(0);
 });
 
 test("after close(), sends, warm timers and resets start nothing", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   try {
-    w = new World(2);
+    w = new World();
     const a = await w.agent();
-    const b = await w.agent();
     const c = await w.agent();
     await idleAt(a, Date.now()); // its warm timer is armed
-    await idleAt(b, 1000);
-    w.proc(b).holdStop = true;
-    await send(c, "queued"); // b is evicted for c; its stop grace is still running
-    await w.settleAll();
-    expect(stopped(b)).toBe(true);
-    expect(status(c)).toBe("queued");
+    w.pause(liveCredentialId(c.agent));
+    await send(c, "queued");
+    expect(status(c)).toBe("rate_limited");
+    expect(w.sup.isQueued(c.agent.id)).toBe(true);
     w.sup.close();
     expect(w.sup.closing()).toBe(true);
     expect(w.sup.isQueued(c.agent.id)).toBe(false);
-    expect(status(c)).toBe("hibernated");
     expect(w.sup.requestWake(c.agent.id, "message", true)).toBe("dropped");
-    w.proc(b).releaseStop(); // the freed slot goes to nobody
     await send(c, "after close");
     w.sup.onCredentialReset(liveCredentialId(c.agent));
     await vi.advanceTimersByTimeAsync(71 * 60_000);
     await w.settleAll();
     expect(started(c)).toBe(false);
     expect(stopped(a)).toBe(false); // the latch cleared its warm timer
-    expect(w.driver.starts).toHaveLength(2);
-    expect(w.sup.running()).toEqual({ count: 1, max: 2 });
+    expect(w.driver.starts).toHaveLength(1);
+    expect(w.sup.running()).toEqual({ count: 1 });
   } finally {
     vi.useRealTimers();
   }
 });
 
 test("running counts are published as supervisor frames", async () => {
-  w = new World(2);
+  w = new World();
   const a = await w.agent();
   await busy(a);
   endTurnAndExit(a);
   await w.settleAll();
   const frames = w.frames.filter((f) => f.type === "supervisor");
   expect(frames).toEqual([
-    { type: "supervisor", running: 1, max: 2 },
-    { type: "supervisor", running: 0, max: 2 },
+    { type: "supervisor", running: 1 },
+    { type: "supervisor", running: 0 },
   ]);
 });
 
-test("capChanged after close publishes nothing", async () => {
-  w = new World(2);
-  w.sup.close();
-  const before = w.frames.length;
-  w.sup.capChanged();
-  expect(w.frames).toHaveLength(before);
-});
-
 test("a restart wake takes over a queued entry whose reason no longer wakes the agent", async () => {
-  w = new World(1);
-  const a = await w.agent();
+  w = new World();
   const b = await w.agent({ pending: ["x"], status: "errored", errorKind: "crash" });
-  const c = await w.agent();
-  await busy(a);
+  w.pause(liveCredentialId(b.agent));
   expect(w.sup.requestWake(b.agent.id, "message", false)).toBe("queued");
-  await send(c, "c1");
   await b.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
-  expect(status(b)).toBe("queued"); // the entry kept its place, ahead of c, and is now the restart's wake
-  endTurnAndExit(a);
+  expect(status(b)).toBe("rate_limited"); // the entry kept its place and is now the restart's wake
+  w.sup.onCredentialReset(liveCredentialId(b.agent));
   await w.settleAll();
   expect(started(b)).toBe(true);
-  expect(started(c)).toBe(false);
   expect(
     (await store.after(b.agent.id, 0, 1000)).filter((e) => e.event.type === "process_started"),
   ).toMatchObject([{ event: { reason: "restart" } }]);
 });
 
-test("a slot granted for an older request before Restart began starts the restart", async () => {
-  w = new World(1);
-  const a = await w.agent();
+test("a start granted for an older request before Restart began starts the restart", async () => {
+  w = new World();
   const b = await w.agent({ pending: ["x"], status: "errored", errorKind: "crash" });
-  await busy(a);
+  w.pause(liveCredentialId(b.agent));
   expect(w.sup.requestWake(b.agent.id, "message", false)).toBe("queued");
-  // a's exit grants b its slot for "message"; Restart lands ahead of b's grant job.
+  // The reset grants b its start for "message"; Restart lands ahead of b's grant job.
   const original = b.grant.bind(b);
   let restarting: Promise<unknown> | undefined;
   vi.spyOn(b, "grant").mockImplementationOnce((reason) => {
     restarting = b.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
     return original(reason);
   });
-  endTurnAndExit(a);
+  w.sup.onCredentialReset(liveCredentialId(b.agent));
   await w.settleAll();
   await restarting;
   await w.settleAll();

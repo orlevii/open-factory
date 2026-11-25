@@ -48,7 +48,7 @@ const agents = (_body?: unknown, url?: string) =>
       ? [agentSummary({ slug: "old", displayName: "Old", terminatedAt: "2026-11-01T00:00:00Z" })]
       : [agentSummary({ slug: "dev" }), agentSummary({ slug: "lead", displayName: "Lead" })],
     more: false,
-    running: { count: 0, max: 8 },
+    running: { count: 0 },
   });
 const tasksUrls = (api: ReturnType<typeof mockApi>) =>
   api.calls.filter((c) => c.url.startsWith("/api/tasks?")).map((c) => c.url);

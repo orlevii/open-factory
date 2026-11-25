@@ -25,8 +25,7 @@ test("GET returns the defaults and the env-only local runtime flag", async () =>
   const r = await call("GET");
   expect(r.statusCode).toBe(200);
   expect(r.json()).toEqual({
-    maxRunningAgents: 8,
-    defaultWarmWindowMinutes: 70,
+    warmWindowMinutes: 70,
     memberUpdateDebounceSeconds: 30,
     allowLocalRuntime: true,
     updatedAt: null,
@@ -37,18 +36,32 @@ test("GET returns the defaults and the env-only local runtime flag", async () =>
 test("PATCH saves, publishes settings_changed and names the editor by handle", async () => {
   const frames: ServerMessage[] = [];
   h.app.bus.subscribeAll((m) => frames.push(m));
-  const r = await call("PATCH", { maxRunningAgents: 2 });
+  const r = await call("PATCH", { warmWindowMinutes: 120 });
   expect(r.statusCode).toBe(200);
-  expect(r.json()).toMatchObject({ maxRunningAgents: 2, updatedBy: "@or" });
+  expect(r.json()).toMatchObject({ warmWindowMinutes: 120, updatedBy: "@or" });
   expect(frames).toContainEqual({ type: "settings_changed" });
-  expect(h.app.factorySettings.maxRunningAgents()).toBe(2);
+  expect(h.app.factorySettings.defaultWarmWindowMinutes()).toBe(120);
   const got = (await call("GET")).json() as FactorySettingsDto;
-  expect(got).toMatchObject({
-    maxRunningAgents: 2,
-    defaultWarmWindowMinutes: 70,
-    updatedBy: "@or",
-  });
+  expect(got).toMatchObject({ warmWindowMinutes: 120, updatedBy: "@or" });
   expect(typeof got.updatedAt).toBe("string");
+});
+
+test("PATCH of one key keeps the other, and both survive a restart", async () => {
+  await call("PATCH", { warmWindowMinutes: 120 });
+  await call("PATCH", { memberUpdateDebounceSeconds: 5 });
+  const expected = { warmWindowMinutes: 120, memberUpdateDebounceSeconds: 5 };
+  expect((await call("GET")).json()).toMatchObject(expected);
+  const restarted = await h.reopen();
+  expect(restarted.app.factorySettings.get()).toMatchObject(expected);
+});
+
+test("a stored row of {} reads the defaults", async () => {
+  await h.sql`update factory_settings set settings = '{}'::jsonb`;
+  const restarted = await h.reopen();
+  expect(restarted.app.factorySettings.get()).toMatchObject({
+    warmWindowMinutes: 70,
+    memberUpdateDebounceSeconds: 30,
+  });
 });
 
 test("PATCH is strict: allowLocalRuntime or an unknown key is 400 invalid_settings", async () => {
@@ -61,23 +74,23 @@ test("PATCH is strict: allowLocalRuntime or an unknown key is 400 invalid_settin
 });
 
 test("PATCH out of bounds is 400 with the field message", async () => {
-  const r = await call("PATCH", { maxRunningAgents: 65 });
+  const r = await call("PATCH", { warmWindowMinutes: 1441 });
   expect(r.statusCode).toBe(400);
   expect(r.json().error).toMatchObject({
     code: "invalid_settings",
-    fields: { maxRunningAgents: "Enter a whole number from 1 to 64." },
+    fields: { warmWindowMinutes: "Enter a whole number from 1 to 1440." },
   });
-  expect(h.app.factorySettings.maxRunningAgents()).toBe(8);
+  expect(h.app.factorySettings.defaultWarmWindowMinutes()).toBe(70);
 });
 
 test.each([["2"], [null], [2.5]])(
   "PATCH with a wrong-type value (%j) is 400 with the field message",
   async (value) => {
-    const r = await call("PATCH", { maxRunningAgents: value });
+    const r = await call("PATCH", { warmWindowMinutes: value });
     expect(r.statusCode).toBe(400);
     expect(r.json().error).toMatchObject({
       code: "invalid_settings",
-      fields: { maxRunningAgents: "Enter a whole number from 1 to 64." },
+      fields: { warmWindowMinutes: "Enter a whole number from 1 to 1440." },
     });
   },
 );
@@ -88,7 +101,7 @@ test("an empty PATCH returns the settings without writing or publishing", async 
   for (const payload of [{}, undefined]) {
     const r = await call("PATCH", payload);
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toMatchObject({ maxRunningAgents: 8, updatedAt: null, updatedBy: null });
+    expect(r.json()).toMatchObject({ warmWindowMinutes: 70, updatedAt: null, updatedBy: null });
   }
   expect(frames).not.toContainEqual({ type: "settings_changed" });
   expect(h.app.factorySettings.get().updatedAt).toBeNull();
@@ -96,7 +109,7 @@ test("an empty PATCH returns the settings without writing or publishing", async 
 
 test.each([
   ["GET", undefined],
-  ["PATCH", { maxRunningAgents: 2 }],
+  ["PATCH", { warmWindowMinutes: 2 }],
 ] as const)(
   "%s needs a human session: no auth and a live agent token both get 401",
   async (method, payload) => {

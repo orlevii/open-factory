@@ -404,7 +404,7 @@ async function signUp(handle: string, name: string) {
   return { cookie, userId: me.id };
 }
 
-/** S10: the cap and the debounce are factory settings, set through the API after sign-up (no longer env vars). */
+/** S10: the debounce is a factory setting, set through the API after sign-up (no longer env vars). */
 async function patchFactorySettings(cookie: string, body: Record<string, number>) {
   const res = await app.inject({
     method: "PATCH",

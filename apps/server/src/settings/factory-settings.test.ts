@@ -12,13 +12,11 @@ afterEach(() => db.close());
 test("load reads the seeded row", async () => {
   const s = await FactorySettings.load(db.db);
   expect(s.get()).toEqual({
-    maxRunningAgents: 8,
-    defaultWarmWindowMinutes: 70,
+    warmWindowMinutes: 70,
     memberUpdateDebounceSeconds: 30,
     updatedAt: null,
     updatedBy: null,
   });
-  expect(s.maxRunningAgents()).toBe(8);
   expect(s.defaultWarmWindowMinutes()).toBe(70);
   expect(s.memberUpdateDebounceMs()).toBe(30_000);
 });
@@ -30,25 +28,19 @@ test("update persists, swaps the copy and tells the listeners", async () => {
     const s = await FactorySettings.load(t.db);
     const seen: unknown[] = [];
     s.onChange((prev, next) => seen.push({ prev, next }));
-    await s.update({ maxRunningAgents: 2, memberUpdateDebounceSeconds: 0 }, user.id);
-    expect(s.maxRunningAgents()).toBe(2);
+    await s.update({ memberUpdateDebounceSeconds: 0 }, user.id);
     expect(s.memberUpdateDebounceMs()).toBe(0);
     expect(s.defaultWarmWindowMinutes()).toBe(70);
     expect(s.get()).toMatchObject({ updatedBy: user.id });
     expect(s.get().updatedAt).toBeInstanceOf(Date);
     expect(seen).toEqual([
       {
-        prev: {
-          maxRunningAgents: 8,
-          defaultWarmWindowMinutes: 70,
-          memberUpdateDebounceSeconds: 30,
-        },
-        next: { maxRunningAgents: 2, defaultWarmWindowMinutes: 70, memberUpdateDebounceSeconds: 0 },
+        prev: { warmWindowMinutes: 70, memberUpdateDebounceSeconds: 30 },
+        next: { warmWindowMinutes: 70, memberUpdateDebounceSeconds: 0 },
       },
     ]);
     const reloaded = await FactorySettings.load(t.db);
     expect(reloaded.get()).toMatchObject({
-      maxRunningAgents: 2,
       memberUpdateDebounceSeconds: 0,
       updatedBy: user.id,
     });
@@ -68,9 +60,9 @@ test("a listener that throws is logged; the update still completes and later lis
     s.onChange(() => {
       throw boom;
     });
-    s.onChange((_prev, next) => seen.push(next.maxRunningAgents));
-    await s.update({ maxRunningAgents: 3 }, user.id);
-    expect(s.maxRunningAgents()).toBe(3);
+    s.onChange((_prev, next) => seen.push(next.warmWindowMinutes));
+    await s.update({ warmWindowMinutes: 3 }, user.id);
+    expect(s.defaultWarmWindowMinutes()).toBe(3);
     expect(seen).toEqual([3]);
     expect(errors).toEqual([{ err: boom }]);
   } finally {

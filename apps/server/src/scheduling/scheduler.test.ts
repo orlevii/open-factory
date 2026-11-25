@@ -54,7 +54,7 @@ beforeEach(async () => {
         loopGuardMessages: () => 2,
         loopGuardWindowMs: () => 10 * 60_000,
       } as FactorySettings,
-      store: { clock: () => clock } as never,
+      store: Object.assign(new EventStore(t.db), { clock: () => clock }),
       bus: { publishAll: () => {} },
       runtimes: { adoptNotice: async () => {} },
       log: silentLog as never,

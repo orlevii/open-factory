@@ -358,6 +358,25 @@ describe("symlinks inside .git that branch -D would follow", () => {
     expect(readFileSync(path.join(victim, "keep"), "utf8")).toBe("secret");
   });
 
+  it("keeps the branch when the repository has a reftable folder (branch writes go elsewhere)", async () => {
+    addWorktree("keep", { commits: 0, push: true });
+    mkdirSync(path.join(repo, ".git/reftable"));
+    const r = await cleanupProject(project(), SLUG);
+    keptWithError(r);
+  });
+
+  it("keeps the branch when packed-refs is a symlink, and the outside file is untouched", async () => {
+    addWorktree("keep", { commits: 0, push: true });
+    const target = path.join(victim, "packed");
+    writeFileSync(target, "# pack-refs with: peeled fully-peeled sorted \n");
+    const packed = path.join(repo, ".git/packed-refs");
+    rmSync(packed, { force: true });
+    symlinkSync(target, packed);
+    const r = await cleanupProject(project(), SLUG);
+    keptWithError(r);
+    expect(readFileSync(target, "utf8")).toBe("# pack-refs with: peeled fully-peeled sorted \n");
+  });
+
   it("keeps the branch when config is a symlink, and the outside file is untouched", async () => {
     addWorktree("keep", { commits: 0, push: true });
     const target = path.join(victim, "cfg");

@@ -86,6 +86,8 @@ async function isRealDir(p: string): Promise<boolean> {
  */
 async function branchPathsPlain(common: string, branch: string): Promise<boolean> {
   const parts = branch.split("/");
+  // A reftable repo writes branch changes under <common>/reftable; this guard only knows the files backend.
+  if (await lstatOrNull(path.join(common, "reftable"))) return false;
   const chains = [
     ["config"],
     ["packed-refs"],

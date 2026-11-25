@@ -176,6 +176,13 @@
       "when": 1795572389979,
       "tag": "0024_whole_gorgon",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795574101929,
+      "tag": "0025_green_nicolaos",
+      "breakpoints": true
     }
   ]
 }

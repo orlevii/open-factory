@@ -1,0 +1,1 @@
+CREATE INDEX "messages_loop_hold_idx" ON "messages" USING btree ("loop_hold_id") WHERE "messages"."loop_hold_id" is not null;

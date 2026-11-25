@@ -242,6 +242,8 @@ export const messages = pgTable(
     index("messages_chat_out_idx")
       .on(t.toUserId, t.fromAgentId, t.createdAt)
       .where(sql`${t.kind} = 'message'`),
+    // I8: Resume's flip and the inbox's hold counts look rows up by hold.
+    index("messages_loop_hold_idx").on(t.loopHoldId).where(sql`${t.loopHoldId} is not null`),
     check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipients} IS NOT NULL`),
   ],
 );

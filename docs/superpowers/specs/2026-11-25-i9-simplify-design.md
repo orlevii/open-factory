@@ -2,7 +2,7 @@
 
 Task: a v0.0.2 cleanup pass after I1–I8 merged to `main`. Mostly removals and UI fixes, plus one delivery bug and one model change (a human can be a manager). Decisions: ADR 0028 (pre-release, no compatibility). Amends ADR 0004 (reporting line), ADR 0008 (warm/hibernate, the cap), ADR 0024 (skills and plugins: plugins removed), DESIGN.md "Overlays" and "Empty states".
 
-Every decision below was settled with the owner in a grilling session on 2026-11-25 (Q1–Q40; Q13 revised by the owner). The UI decisions were then reviewed through three lenses (impeccable with taste-skill's general rules; Emil Kowalski's design-engineering and Apple design; break-ui), and Q33–Q40 settled what the reviews changed. Nothing here keeps old shapes alive: schema changes ship as the generated migration only; **reset local data** if a migration refuses a non-empty table (the new `reports_to` check will).
+Every decision below was settled with the owner in a grilling session on 2026-11-25 (Q1–Q40; Q13 revised by the owner). The UI decisions were then reviewed through three lenses (impeccable; Emil Kowalski's design-engineering and Apple design; break-ui), and Q33–Q40 settled what the reviews changed. Nothing here keeps old shapes alive: schema changes ship as the generated migration only; **reset local data** if a migration refuses a non-empty table (the new `reports_to` check will).
 
 ## 1. Goal
 
@@ -41,7 +41,7 @@ Make the product smaller and more honest:
 
 One PR, branch `v002-simplify`, worktree `.worktrees/v002-simplify`, from `origin/main`. Implemented task by task with per-task review and targeted tests (`pnpm test:related` / `pnpm test:fast`); the full `pnpm test` before push.
 
-**UI work** (§4.2, §4.3, §4.6, §4.7, §4.9) is designed and reviewed against: the local `impeccable` skill; Emil Kowalski's skills (`emil-design-eng`, `break-ui`, `apple-design`, from github.com/emilkowalski/skills); and the general rules of taste-skill (github.com/Leonxlnx/taste-skill): one system (one button pair, one card style, at most two boxes deep), buttons as verb + object, no filler copy, 44px targets on mobile, nothing moves on scroll, accessibility. Taste-skill's page plans, photo rules and gate scripts target marketing sites and don't apply. Every UI change is checked in a real browser at 1440, 1024 and 390, light and dark.
+**UI work** (§4.2, §4.3, §4.6, §4.7, §4.9) is designed and reviewed against the local `impeccable` skill and Emil Kowalski's skills (`emil-design-eng`, `break-ui`, `apple-design`, from github.com/emilkowalski/skills). The owner verifies the UI in a browser after implementation.
 
 ## 4. Design
 

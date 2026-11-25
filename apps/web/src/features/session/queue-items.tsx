@@ -1,6 +1,6 @@
 import type { AgentSummary, QueueItem } from "@open-factory/shared";
 import { Clock } from "lucide-react";
-import { memo, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import { TaskBadge } from "@/features/tasks/task-badge";
@@ -8,6 +8,7 @@ import { focusComposer } from "./composer";
 import { formatResetTime } from "./format";
 import { MessageBlock } from "./message-block";
 import { QuietLine } from "./quiet-line";
+import { useSendPhase } from "./send-phase";
 import { type CancelledEntry, NO_CANCELLED, queueView, type SendingBlock } from "./session-state";
 import { resetPhrase } from "./status-badge";
 import { ROW_GUTTER } from "./timeline-item";
@@ -27,17 +28,13 @@ const messageReason = (q: QueueItem, fallback: string | undefined) =>
 /** Cancel is for a plain message or a command you sent: never another sender's, a task comment or a
  *  scheduled row (U3 §6.4, §13.3, Q26, Q39, D2). */
 const cancellable = (q: QueueItem, self: string | undefined) =>
-  (q.kind === "message" || q.kind === "command") &&
+  (q.kind === "message" || q.kind === "raw") &&
   self !== undefined &&
   q.from === `@${self}` &&
   q.taskKey === undefined &&
   q.scheduleKey === undefined;
 
 const NO_SENDING: readonly SendingBlock[] = [];
-/** U3 §13.2: "Sending…" only when the POST is slow (no flash under this). */
-const SLOW_SEND_MS = 400;
-/** A queue item younger than this (since its send) doesn't say "Not delivered yet". */
-const YOUNG_ITEM_MS = 300;
 
 /** More queued messages than this fold: the first `FOLD_SHOWN` show, then "+N more queued" (U3 §7.6). */
 const FOLD_OVER = 3;
@@ -217,22 +214,16 @@ export const QueueItems = memo(function QueueItems({
           )}
         </OutgoingMessage>
       );
-    if (q.kind === "command")
-      return (
-        <CommandItem
-          key={q.id}
-          item={q}
-          error={v.error}
-          onCancel={onCancel && cancellable(q, self) ? onCancel : undefined}
-        />
-      );
+    // A raw item is a block at the timeline's tail (`rawTailRows`), not a line here.
+    if (q.kind === "raw") return null;
     return (
       <QuietLine key={q.id} icon={<Clock aria-hidden="true" />}>
         Compact queued until the turn ends{q.focus ? `: ${q.focus}` : ""}
       </QuietLine>
     );
   });
-  for (const b of sending)
+  for (const b of sending) {
+    if (b.raw) continue;
     out.push(
       <OutgoingMessage key={b.clientMessageId} sending>
         {(_young, slow) => (
@@ -255,53 +246,9 @@ export const QueueItems = memo(function QueueItems({
         )}
       </OutgoingMessage>,
     );
+  }
   return <>{out}</>;
 });
-
-/** A held command (U3 §13.3, Q39): one truncated line, "`/code-review` waits for the turn to end:
- *  src/", the whole command in its title, and Cancel on your own (no Undo: it lives in memory). */
-function CommandItem({
-  item,
-  error,
-  onCancel,
-}: {
-  item: QueueItem;
-  error?: string;
-  onCancel?: (item: QueueItem) => void;
-}) {
-  const body = item.body ?? "";
-  const space = body.indexOf(" ");
-  const name = space < 0 ? body : body.slice(0, space);
-  const args = space < 0 ? "" : body.slice(space + 1);
-  return (
-    <div data-command-item className={`pt-3 ${ROW_GUTTER}`}>
-      <div className="flex min-w-0 items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-        <Clock aria-hidden="true" className="size-3.5 shrink-0" />
-        <span title={body} className="min-w-0 truncate">
-          <span className="font-mono text-foreground">{name}</span> waits for the turn to end
-          {args ? `: ${args}` : ""}
-        </span>
-        {onCancel && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            data-cancel-for={item.id}
-            className="ml-auto shrink-0"
-            onClick={() => onCancel(item)}
-          >
-            Cancel
-          </Button>
-        )}
-      </div>
-      {error && (
-        <div className="pt-1">
-          <InlineOutcome tone="error">Couldn't cancel: {error}</InlineOutcome>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * A queued message, or a send in flight (U3 §13.2). The same component under the same key for both,
@@ -326,23 +273,11 @@ function OutgoingMessage({
     const el = wrap.current;
     (el?.querySelector<HTMLElement>("[data-cancel-for]") ?? el)?.focus({ preventScroll: true });
   }, [focusFirst]);
-  const [sentAt] = useState(() => (sending ? Date.now() : undefined));
-  const [slow, setSlow] = useState(false);
-  const [grown, setGrown] = useState(sentAt === undefined);
-  useEffect(() => {
-    if (!sending) return;
-    const t = setTimeout(() => setSlow(true), SLOW_SEND_MS);
-    return () => clearTimeout(t);
-  }, [sending]);
-  useEffect(() => {
-    if (sending || grown || sentAt === undefined) return;
-    const t = setTimeout(() => setGrown(true), Math.max(0, sentAt + YOUNG_ITEM_MS - Date.now()));
-    return () => clearTimeout(t);
-  }, [sending, grown, sentAt]);
+  const { young, slow } = useSendPhase(sending);
   return (
     // A card spans the column like the delivered card that replaces it (U3 §7.5): no right gutter.
     <div ref={wrap} {...(focusFirst ? { tabIndex: -1 } : {})} className="pt-3">
-      {children(!grown, sending && slow)}
+      {children(young, slow)}
     </div>
   );
 }
@@ -362,7 +297,7 @@ function CancelledLine({
 }) {
   const failed = entry.error !== undefined;
   // A command is cancelled for good: it lived in memory, so there is nothing to restore (Q39).
-  const isCommand = entry.item.kind === "command";
+  const isCommand = entry.item.kind === "raw";
   // The line going under the focus (Undo brought the message back, or a rollback did): focus lands on
   // that message's Cancel, else the composer, never <body>. The cleanup runs before the node is removed.
   const wrap = useRef<HTMLDivElement>(null);

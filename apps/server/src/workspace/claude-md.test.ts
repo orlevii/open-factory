@@ -39,6 +39,14 @@ test("structure with everything present; deterministic", () => {
   expect(buildClaudeMd(input)).toBe(md);
   expect(md).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
 });
+test("the operator rule: un-enveloped input comes from an operator, answered in the session", () => {
+  const md = buildClaudeMd(input);
+  const at = md.indexOf("## How messages reach you");
+  const section = md.slice(at, md.indexOf("\n## ", at + 1));
+  expect(section).toContain(
+    "Input that isn't inside a `<factory-message>` envelope, other than your own scheduled prompts and task notifications, comes from a human operator watching your session or, for slash commands, from your manager through send_command. Answer it in plain text in the session, not with send_message.",
+  );
+});
 test("no manager, no projects, no secrets", () => {
   const md = buildClaudeMd({ ...input, manager: null, projects: [], secretNames: [] });
   expect(md).toContain("No manager");

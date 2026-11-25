@@ -90,6 +90,8 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   agentStatusFrameSchema,
   liveFrameSchema,
   z.object({ type: z.literal("resync"), agent: z.string() }),
+  /** I1 §5.3: the agent's stored command list changed (named apart from Claude's own `system/commands_changed`). */
+  z.object({ type: z.literal("agent_commands_changed"), agent: z.string() }),
   z.object({ type: z.literal("supervisor"), running: z.number().int(), max: z.number().int() }),
   z.object({ type: z.literal("inbox_changed") }),
   /** S8: after any task commit (create, change, comment); the list and an open detail page refetch when their key is listed. */

@@ -36,6 +36,7 @@ import { childrenOf } from "./display-passes";
 import { canPin, LiveLine, liveFact, PinButton, type PinOutcome } from "./live-line";
 import { parseSendResults } from "./outgoing-message";
 import { QueueItems } from "./queue-items";
+import { rawTailRows } from "./raw-tail";
 import { RecoveryActions } from "./recovery-actions";
 import type { Row } from "./rows";
 import type { CancelledEntry } from "./session-state";
@@ -73,7 +74,7 @@ export function SessionView({
     (item: QueueItem) => {
       const body = item.body ?? "";
       // A command never comes back as text: Enter would send it as a message (U3 §13.3).
-      const inBox = item.kind !== "command" && (composerRef.current?.putBackIfEmpty(body) ?? false);
+      const inBox = item.kind !== "raw" && (composerRef.current?.putBackIfEmpty(body) ?? false);
       cancelItem(
         item,
         inBox,
@@ -215,6 +216,10 @@ export function SessionView({
         />
       ) : null,
     [queue, sending, agent, cancelled, self, onCancel, onUndo],
+  );
+  const pendingRows = useMemo(
+    () => rawTailRows(queue, sending, cancelled, self, onCancel),
+    [queue, sending, cancelled, self, onCancel],
   );
   const { onQueued, onSending, onSendFailed, clearCancelled } = s;
   // ↑ recall reads the loaded timeline when the key is pressed, so a new event never renders the composer.
@@ -372,6 +377,7 @@ export function SessionView({
               liveTexts={s.state.live.texts}
               subagents={s.state.live.subagents}
               textHead={s.textHead}
+              pendingRows={pendingRows}
               footer={
                 <>
                   {s.rows.length === 0 &&

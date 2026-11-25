@@ -199,6 +199,8 @@ export function useSession(slug: string, eventSeq?: number, message?: string) {
     () =>
       ws.listen((m) => {
         if (!("agent" in m) || m.agent !== slug) return; // other agents never touch this state
+        // The command list is the global handler's (`invalidateCommands`): no state, no commit.
+        if (m.type === "agent_commands_changed") return;
         queue.current.push(m);
         if (scheduled.current) return;
         if (document.hidden) {

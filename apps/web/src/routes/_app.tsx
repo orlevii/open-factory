@@ -11,6 +11,7 @@ import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/s
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
+import { invalidateCommands } from "@/features/session/commands";
 import { dropUploadsExcept } from "@/features/session/uploads";
 import { preloadAllSheets } from "@/features/sheets/sheet-bodies";
 import { SheetHost } from "@/features/sheets/sheet-host";
@@ -91,6 +92,8 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["inbox-home"] });
           notifyRef.current();
         }
+        // I1: an agent started, so its `/` list is stale (an open menu fetches it again).
+        invalidateCommands(qc, m);
         // S8: the list, an open detail page and the agents' open-task counts refetch (only mounted ones fetch).
         if (m.type === "tasks_changed") {
           void qc.invalidateQueries({ queryKey: ["tasks"] });

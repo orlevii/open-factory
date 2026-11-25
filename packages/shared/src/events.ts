@@ -97,6 +97,14 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     error: z.string(),
   }),
   z.object({ type: z.literal("model_fallback"), message: z.string() }),
+  /** I1 §5.1: raw input written to Claude as typed (text or a slash command); the audit record of who sent it. */
+  z.object({
+    type: z.literal("operator_input"),
+    text: z.string(),
+    by: z.string(),
+    clientMessageId: z.string().optional(),
+    entryId: z.string(),
+  }),
   /** U3 §13.3: the text a local command (`/context`, `/usage` and its aliases) printed. */
   z.object({ type: z.literal("command_output"), command: z.string(), text: z.string() }),
   z.object({
@@ -176,13 +184,13 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
         "spawned",
         "task_message",
         "scheduled",
-        "command",
+        "raw",
       ])
       .optional(),
   }),
   z.object({
     type: z.literal("control"),
-    cmd: z.enum(["compact", "interrupt", "clear", "restart", "command"]),
+    cmd: z.enum(["compact", "interrupt", "clear", "restart"]),
     arg: z.string().optional(),
     by: z.string(),
   }),

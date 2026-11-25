@@ -101,6 +101,20 @@ export const postMessage = (
     ...(o.signal ? { signal: o.signal } : {}),
   }).then((r) => r.item);
 
+/** `POST /api/agents/:slug/input`: the raw text a human types into the session, exactly as typed (I1 §5.1).
+ *  `clientMessageId` makes a retry idempotent. */
+export const postInput = (
+  slug: string,
+  body: { text: string; clientMessageId: string },
+  signal?: AbortSignal,
+) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/input`, {
+    method: "POST",
+    body,
+    schema: queueItemResponseSchema,
+    ...(signal ? { signal } : {}),
+  }).then((r) => r.item);
+
 /** U3 §6.4: withdraw a held message you sent; resolves to the cancelled item. */
 export const cancelQueued = (slug: string, messageId: string) =>
   apiFetch(`/api/agents/${encodeURIComponent(slug)}/queue/${encodeURIComponent(messageId)}`, {

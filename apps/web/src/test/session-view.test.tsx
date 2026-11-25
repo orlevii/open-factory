@@ -535,7 +535,7 @@ const accepted = (body: string) => () =>
     {
       item: {
         id: "q9",
-        kind: "message",
+        kind: "raw",
         body,
         urgent: false,
         from: "@alice",
@@ -546,9 +546,9 @@ const accepted = (body: string) => () =>
     202,
   );
 
-test("disconnected: an accepted message shows as queued at once", async () => {
+test("disconnected: an accepted raw input shows as queued at once", async () => {
   ws.connects = false;
-  routes["/api/agents/dev/messages"] = accepted("offline hello");
+  routes["/api/agents/dev/input"] = accepted("offline hello");
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   await userEvent.type(screen.getByRole("combobox", { name: /Message to/ }), "offline hello");
@@ -556,12 +556,12 @@ test("disconnected: an accepted message shows as queued at once", async () => {
   const log = screen.getByRole("log", { name: "Session" });
   expect(await within(log).findByText("offline hello")).toBeInTheDocument();
   // Not at once: an item younger than 300ms doesn't say so (U3 §13.2).
-  expect(within(log).queryByText("Not delivered yet")).toBeNull();
-  expect(await within(log).findByText("Not delivered yet")).toBeInTheDocument();
+  expect(within(log).queryByText("Runs after the current turn.")).toBeNull();
+  expect(await within(log).findByText("Runs after the current turn.")).toBeInTheDocument();
 });
 
 test("connected: the 202's item replaces the Sending block, once (U3 §13.2)", async () => {
-  routes["/api/agents/dev/messages"] = accepted("online hello");
+  routes["/api/agents/dev/input"] = accepted("online hello");
   renderApp("/agents/dev", alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));

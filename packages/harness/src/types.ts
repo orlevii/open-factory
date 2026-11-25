@@ -71,8 +71,8 @@ export interface HarnessProcess {
   commands?(): Promise<Command[] | undefined>;
   /** The Claude Code version `initialize` reported, once it answered. */
   readonly claudeCodeVersion?: string | undefined;
-  /** U3 §13.3: writes `text` (a raw `/name args`) as one user line. The caller validates it. */
-  command?(text: string): Promise<void>;
+  /** I1 §5.1: writes `text` as one user line, no envelope. The caller classifies and neutralises it. */
+  raw?(text: string): Promise<void>;
   stop(opts?: { graceMs?: number; termWaitMs?: number }): Promise<ExitInfo>;
   /** SIGKILL-equivalent, for a process that outlived stop(). */
   forceKill(): Promise<void>;

@@ -322,3 +322,13 @@ test("a reset marks the view caught up: replayed rows before it don't fade", asy
   });
   expect(hook.result.current.state.liveAfter).toBe(6);
 });
+
+test("agent_commands_changed is skipped: no flush, no render", async () => {
+  const { push, renders } = await setup();
+  const before = renders();
+  push({ type: "agent_commands_changed", agent: "dev" });
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  expect(renders()).toBe(before);
+});

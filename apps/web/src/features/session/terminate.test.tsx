@@ -197,7 +197,7 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
 
 test("a send that races the termination says so", async () => {
   const { state } = await open(spawned(), {
-    [`POST /api/agents/${SLUG}/messages`]: () => {
+    [`POST /api/agents/${SLUG}/input`]: () => {
       state.agent = terminated();
       return json(
         { error: { code: "agent_terminated", message: `@${SLUG} was terminated.` } },

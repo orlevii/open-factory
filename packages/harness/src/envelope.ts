@@ -12,7 +12,7 @@ const attr = (s: string) =>
 const TAG = /<(\s*\/?\s*)factory-message/gi;
 
 /** Only the envelope tag is neutralised in a body; everything else reaches the model unchanged. */
-const body = (s: string) => s.replace(TAG, "&lt;$1factory-message");
+export const neutraliseEnvelopeTags = (s: string) => s.replace(TAG, "&lt;$1factory-message");
 
 /** Bodies are already escaped (groupEnvelopes is the one owner), so this writes `m.body` as given. */
 function one(m: FactoryMessage): string {
@@ -44,7 +44,9 @@ export const QUOTE_CAP = 2000;
  * line prefixed. The neutralising is idempotent, so groupEnvelopes escaping the stored body again changes nothing.
  */
 export function quoteReported(intro: string, text: string): string {
-  const capped = body(text.length > QUOTE_CAP ? `${text.slice(0, QUOTE_CAP)}[truncated]` : text);
+  const capped = neutraliseEnvelopeTags(
+    text.length > QUOTE_CAP ? `${text.slice(0, QUOTE_CAP)}[truncated]` : text,
+  );
   return [intro, ...capped.split("\n").map((l) => `> ${l}`)].join("\n");
 }
 
@@ -119,7 +121,7 @@ function single(r: BatchRow): FactoryMessage {
     kind: r.kind,
     ...(r.to?.length ? { to: r.to } : {}),
     urgent: r.urgent,
-    body: body(r.body),
+    body: neutraliseEnvelopeTags(r.body),
     ...(r.about ? { about: r.about } : {}),
     ...(r.fact ? { fact: r.fact } : {}),
     ...(r.subject ? { subject: r.subject } : {}),
@@ -141,7 +143,7 @@ function merge(run: BatchRow[]): FactoryMessage {
     fromKind: first.fromKind,
     kind: first.kind,
     urgent: run.some((r) => r.urgent),
-    body: run.map((r) => body(r.body)).join("\n\n"),
+    body: run.map((r) => neutraliseEnvelopeTags(r.body)).join("\n\n"),
     ...(first.about ? { about: first.about } : {}),
     ...(first.fact ? { fact: first.fact } : {}),
     ...(first.subject ? { subject: first.subject } : {}),

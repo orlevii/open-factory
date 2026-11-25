@@ -11,7 +11,7 @@ const PREFIX = "of-draft:v1:";
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const THROTTLE_MS = 150;
 
-export const agentDraftKey = (slug: string) => `agent:${slug}`;
+export const sessionDraftKey = (slug: string) => `session:${slug}`;
 export const taskDraftKey = (taskKey: string) => `task:${taskKey}`;
 
 /** The text of a stored value, or "" when it is absent, unreadable or expired. */
@@ -106,16 +106,8 @@ export interface DraftHandle {
 
 type SetText = (v: string | ((cur: string) => string)) => void;
 
-/** `stored` turns the box's text into what is written (command mode stores `/name args`, U3 §13.3);
- *  read when a write happens, so it may read refs. */
-export function useDraft(
-  key: string,
-  stored?: (text: string) => string,
-): [string, SetText, DraftHandle] {
+export function useDraft(key: string): [string, SetText, DraftHandle] {
   const [text, setState] = useState(() => readDraft(key));
-  const storedRef = useRef(stored);
-  storedRef.current = stored;
-  const out = useCallback((t: string) => storedRef.current?.(t) ?? t, []);
   const [shownKey, setShownKey] = useState(key);
   // The box as last set (state may not have committed yet), and the sends still in flight.
   const textRef = useRef(text);
@@ -145,10 +137,10 @@ export function useDraft(
     if (!focused.current) return;
     pending.current = {
       key: keyRef.current,
-      text: joined([...held.current, out(textRef.current)]),
+      text: joined([...held.current, textRef.current]),
     };
     timer.current ??= setTimeout(flush, THROTTLE_MS);
-  }, [flush, out]);
+  }, [flush]);
 
   const setText = useCallback<SetText>(
     (v) => {
@@ -165,7 +157,7 @@ export function useDraft(
     keyRef.current = key;
     const onStorage = (e: StorageEvent) => {
       if (e.key !== PREFIX + key || focused.current) return;
-      const mine = joined([...held.current, out(textRef.current)]);
+      const mine = joined([...held.current, textRef.current]);
       if (mine !== textOf(e.oldValue).text) return;
       const next = textOf(e.newValue).text;
       textRef.current = next;
@@ -179,7 +171,7 @@ export function useDraft(
       window.removeEventListener("pagehide", flush);
       flush();
     };
-  }, [key, flush, out]);
+  }, [key, flush]);
 
   const handle = useMemo<DraftHandle>(
     () => ({
@@ -197,7 +189,7 @@ export function useDraft(
       persist() {
         pending.current = {
           key: keyRef.current,
-          text: joined([...held.current, out(textRef.current)]),
+          text: joined([...held.current, textRef.current]),
         };
         flush();
       },
@@ -211,7 +203,7 @@ export function useDraft(
         },
       },
     }),
-    [flush, out],
+    [flush],
   );
 
   return [text, setText, handle];

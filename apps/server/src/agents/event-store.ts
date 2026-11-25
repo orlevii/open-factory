@@ -62,6 +62,7 @@ const {
   tasks,
   schedules,
   users,
+  loopHolds,
 } = schema;
 type MessageRow = typeof messages.$inferSelect;
 /** The one joined row shape the queue and the runtime use (spec §7.3): the row plus who sent it and what it is about. */
@@ -103,6 +104,7 @@ export type UnreadChat = {
   /** The oldest unread message from the agent. */
   firstUnreadId: string;
 };
+type LoopHoldInfo = NonNullable<InboxItem["loopHold"]>;
 export interface InboxEntry {
   id: string;
   messageId: string;
@@ -122,6 +124,8 @@ export interface InboxEntry {
   notice?: string;
   /** The credential a `credential` item is about; `current` while its expiry notice has not been re-armed. */
   credential?: { name: string; expiresAt: string | null; current: boolean };
+  /** A `loop_held` notice's hold (I8 §6.4). */
+  loopHold?: InboxItem["loopHold"];
   link:
     | { kind: "session"; agentSlug: string; seq?: number }
     | { kind: "task"; key: string; commentId?: string }
@@ -1461,6 +1465,7 @@ export class EventStore {
     page: Awaited<ReturnType<EventStore["inboxRows"]>>,
   ): Promise<InboxEntry[]> {
     const senders = await this.senderEvents(page.map((r) => r.m));
+    const holds = await this.loopHoldsOf(page.map((r) => r.m));
     const items: InboxEntry[] = [];
     for (const r of page) {
       // I3 §5.8: a credential notice is built first, so it never reaches the session link with an empty slug.
@@ -1516,6 +1521,9 @@ export class EventStore {
         ...(task ? { task } : {}),
         ...(fact ? { fact } : {}),
         ...(r.m.kind === "system" && r.m.notice ? { notice: r.m.notice } : {}),
+        ...(r.m.notice === "loop_held" && r.m.loopHoldId && holds.get(r.m.loopHoldId)
+          ? { loopHold: holds.get(r.m.loopHoldId) }
+          : {}),
         link:
           task && r.item.kind !== "message"
             ? {
@@ -1527,6 +1535,54 @@ export class EventStore {
       });
     }
     return items;
+  }
+
+  /** I8 §6.4: the hold each `loop_held` notice is about, with its agents' live status and its rows' counts. */
+  private async loopHoldsOf(ms: MessageRow[]): Promise<Map<string, LoopHoldInfo>> {
+    const ids = [
+      ...new Set(
+        ms.flatMap((m) => (m.notice === "loop_held" && m.loopHoldId ? [m.loopHoldId] : [])),
+      ),
+    ];
+    const out = new Map<string, LoopHoldInfo>();
+    if (!ids.length) return out;
+    const aa = alias(agents, "aa");
+    const ab = alias(agents, "ab");
+    const rb = alias(users, "rb");
+    const rows = await this.db
+      .select({
+        id: loopHolds.id,
+        aSlug: aa.slug,
+        aEnded: sql<
+          string | null
+        >`case when ${aa.terminatedAt} is not null then 'terminated' when ${aa.archivedAt} is not null then 'archived' end`,
+        bSlug: ab.slug,
+        bEnded: sql<
+          string | null
+        >`case when ${ab.terminatedAt} is not null then 'terminated' when ${ab.archivedAt} is not null then 'archived' end`,
+        resumedAt: loopHolds.resumedAt,
+        resumedBy: rb.handle,
+        waiting: sql<number>`(select count(*)::int from messages m where m.loop_hold_id = ${loopHolds.id} and m.state = 'loop_held')`,
+        sentOn: sql<number>`(select count(*)::int from messages m where m.loop_hold_id = ${loopHolds.id} and m.kind <> 'system' and m.state not in ('loop_held', 'rejected'))`,
+      })
+      .from(loopHolds)
+      .innerJoin(aa, eq(aa.id, loopHolds.agentA))
+      .innerJoin(ab, eq(ab.id, loopHolds.agentB))
+      .leftJoin(rb, eq(rb.id, loopHolds.resumedBy))
+      .where(inArray(loopHolds.id, ids));
+    for (const r of rows)
+      out.set(r.id, {
+        id: r.id,
+        agents: [
+          { slug: r.aSlug, status: (r.aEnded as "terminated" | "archived" | null) ?? "live" },
+          { slug: r.bSlug, status: (r.bEnded as "terminated" | "archived" | null) ?? "live" },
+        ],
+        waiting: r.waiting,
+        sentOn: r.sentOn,
+        resumedAt: r.resumedAt?.toISOString() ?? null,
+        resumedBy: r.resumedBy ? `@${r.resumedBy}` : null,
+      });
+    return out;
   }
 
   /** One item of the user's inbox, or null when it does not exist or belongs to someone else. */

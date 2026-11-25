@@ -686,6 +686,33 @@ export class Router {
     for (const row of rows) this.handOffHeld(row);
   }
 
+  /**
+   * I8 §6.6: rows a human's Resume turned from `loop_held` to pending, handed over in the order given (`created_at`)
+   * once boot is done and unless shutdown has begun; never awaited. Delivered as the original insert would have:
+   * `agent_message`, `task_message` or `scheduled`. A failure is logged and the row stays pending.
+   */
+  handOffResumed(rows: PendingRow[]): void {
+    void this.booted.then(
+      async () => {
+        for (const row of rows) {
+          if (this.closed) return;
+          const reason =
+            row.kind === "task_comment"
+              ? "task_message"
+              : row.kind === "scheduled"
+                ? "scheduled"
+                : "agent_message";
+          try {
+            await this.d.runtimes.deliver(row, "agent", reason);
+          } catch (err) {
+            this.d.log.info({ err, message: row.id }, "a resumed message stays pending");
+          }
+        }
+      },
+      () => {}, // shutting down before boot finished: the rows are pending for the next boot
+    );
+  }
+
   private async notify(
     tx: Tx,
     subject: { id: string; slug: string; displayName: string },

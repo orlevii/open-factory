@@ -56,6 +56,7 @@ import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
 import { taskTools } from "./mcp/tools/task-tools.ts";
 import { type TerminatePort, terminateAgentTool } from "./mcp/tools/terminate-agent.ts";
 import { LoopGuard } from "./messaging/loop-guard.ts";
+import { LoopResume } from "./messaging/loop-resume.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
 import { ProjectService } from "./projects/project-service.ts";
@@ -67,6 +68,7 @@ import { hostRoutes } from "./routes/host.ts";
 import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { libraryRoutes } from "./routes/library.ts";
+import { loopHoldsRoutes } from "./routes/loop-holds.ts";
 import { meRoutes } from "./routes/me.ts";
 import { messagesRoutes } from "./routes/messages.ts";
 import { projectsRoutes } from "./routes/projects.ts";
@@ -666,6 +668,9 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(templatesRoutes, { docker });
   await app.register(imagesRoutes, { docker });
   await app.register(inboxRoutes);
+  await app.register(loopHoldsRoutes, {
+    resume: new LoopResume({ store, guard: loopGuard, router, bus }),
+  });
   await app.register(tasksRoutes);
   await app.register(schedulesRoutes);
   await app.register(messagesRoutes);

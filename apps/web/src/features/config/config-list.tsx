@@ -52,6 +52,11 @@ type Props = {
   onInput: () => void;
   /** A picker in place of the add input (skills, secrets, templates): it calls `add` with the picked value. */
   renderAdd?: (a: AddSlot) => ReactNode;
+  /**
+   * A ghost action in the label row instead of the add input (agent mode: the "This agent" row; template mode: the
+   * list's own label row, beside the legend): rows append below it, so it never moves. Takes the slot because the picker needs the field's wiring.
+   */
+  labelAction?: (a: AddSlot) => ReactNode;
   /** Read-only rows above the groups (a template's own skills). */
   lead?: ReactNode;
   /** A row's text from its value ("Available as $GH_TOKEN"). A stable function: rows are memoised. */
@@ -63,7 +68,10 @@ export type AddSlot = {
   id: string;
   describedBy?: string;
   invalid: boolean;
-  add: (value: string) => void;
+  /** Adds `value` (duplicates and the list's check refused). `scroll: false` leaves the page where it is (a popover open). */
+  add: (value: string, opts?: { scroll?: boolean }) => void;
+  /** Scrolls a row of this agent into view (a picker does it once it closes). */
+  reveal: (value: string) => void;
 };
 
 export type RowNote = { message: string; severity: "error" | "warning" };
@@ -169,6 +177,7 @@ export function ConfigList({
   onReject,
   onInput,
   renderAdd,
+  labelAction,
   lead,
   format,
 }: Props) {
@@ -210,7 +219,10 @@ export function ConfigList({
     [onRemove],
   );
 
-  const commit = (raw: string): boolean => {
+  const reveal = (value: string) =>
+    rows.current.get(`o:${value}`)?.scrollIntoView({ block: "nearest" });
+
+  const commit = (raw: string, { scroll = true }: { scroll?: boolean } = {}): boolean => {
     const v = raw.trim();
     if (!v) return false;
     const at = tplIndex.get(v);
@@ -227,7 +239,7 @@ export function ConfigList({
       return false;
     }
     flushSync(() => onAdd(v));
-    rows.current.get(`o:${v}`)?.scrollIntoView({ block: "nearest" });
+    if (scroll) reveal(v);
     return true;
   };
   const add = () => {
@@ -264,84 +276,103 @@ export function ConfigList({
   );
 
   return (
-    <FieldShell name={name} label={label} legend help={help} error={error} warning={warning}>
-      {({ id, describedBy, invalid }) => (
-        <div className="grid gap-2">
-          {lead}
-          {inherited ? (
-            <div className="grid gap-1">
-              <p id={`${groupId}-tpl`} className="text-[0.8125rem] text-muted-foreground">
-                {inheritedLabel} · {tplCount}
-              </p>
-              <ul aria-labelledby={`${groupId}-tpl`} className="grid">
-                {shownTpl.map((v, i) => (
-                  <Row
-                    key={tplKeys[i]}
-                    rowKey={tplKeys[i] as string}
-                    value={v}
-                    index={i}
-                    noun={noun}
-                    mono={mono}
-                    format={format}
-                    register={register}
-                  />
-                ))}
-              </ul>
-              {collapsible ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="justify-self-start"
-                  aria-expanded={expanded}
-                  onClick={toggle}
-                >
-                  {expanded ? CONFIG_COPY.showFewer : `Show all ${tplCount}`}
+    <FieldShell
+      name={name}
+      label={label}
+      legend
+      help={help}
+      error={error}
+      warning={warning}
+      legendAction={
+        !readOnly && labelAction && !inherited
+          ? (a) => labelAction({ ...a, add: commit, reveal })
+          : undefined
+      }
+    >
+      {({ id, describedBy, invalid }) => {
+        const slot: AddSlot = { id, describedBy, invalid, add: commit, reveal };
+        const action = readOnly || !inherited ? null : labelAction?.(slot);
+        return (
+          <div className="grid gap-2">
+            {lead}
+            {inherited ? (
+              <div className="grid gap-1">
+                <p id={`${groupId}-tpl`} className="text-[0.8125rem] text-muted-foreground">
+                  {inheritedLabel} · {tplCount}
+                </p>
+                <ul aria-labelledby={`${groupId}-tpl`} className="grid">
+                  {shownTpl.map((v, i) => (
+                    <Row
+                      key={tplKeys[i]}
+                      rowKey={tplKeys[i] as string}
+                      value={v}
+                      index={i}
+                      noun={noun}
+                      mono={mono}
+                      format={format}
+                      register={register}
+                    />
+                  ))}
+                </ul>
+                {collapsible ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="justify-self-start"
+                    aria-expanded={expanded}
+                    onClick={toggle}
+                  >
+                    {expanded ? CONFIG_COPY.showFewer : `Show all ${tplCount}`}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {inherited ? (
+              <div className="grid gap-1">
+                <div className="flex min-h-7 items-center justify-between gap-2">
+                  <p id={`${groupId}-own`} className="text-[0.8125rem] text-muted-foreground">
+                    {CONFIG_COPY.thisAgent} · {own.length}
+                  </p>
+                  {action}
+                </div>
+                {ownList}
+              </div>
+            ) : (
+              ownList
+            )}
+            {readOnly || labelAction ? null : renderAdd ? (
+              renderAdd(slot)
+            ) : (
+              <div className="flex items-center gap-2">
+                <Input
+                  ref={input}
+                  id={id}
+                  value={text}
+                  placeholder={placeholder}
+                  aria-label={`Add ${noun}`}
+                  aria-describedby={describedBy}
+                  aria-invalid={invalid || undefined}
+                  className={cn(mono && "font-mono")}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                    setText(e.target.value);
+                    onInput();
+                  }}
+                  onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      add();
+                    }
+                  }}
+                />
+                <Button type="button" variant="ghost" inForm onClick={add}>
+                  Add
                 </Button>
-              ) : null}
-            </div>
-          ) : null}
-          {inherited ? (
-            <div className="grid gap-1">
-              <p id={`${groupId}-own`} className="text-[0.8125rem] text-muted-foreground">
-                {CONFIG_COPY.thisAgent} · {own.length}
-              </p>
-              {ownList}
-            </div>
-          ) : (
-            ownList
-          )}
-          {readOnly ? null : renderAdd ? (
-            renderAdd({ id, describedBy, invalid, add: commit })
-          ) : (
-            <div className="flex items-center gap-2">
-              <Input
-                ref={input}
-                id={id}
-                value={text}
-                placeholder={placeholder}
-                aria-label={`Add ${noun}`}
-                aria-describedby={describedBy}
-                aria-invalid={invalid || undefined}
-                className={cn(mono && "font-mono")}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  setText(e.target.value);
-                  onInput();
-                }}
-                onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    add();
-                  }
-                }}
-              />
-              <Button type="button" variant="ghost" inForm onClick={add}>
-                Add
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
+              </div>
+            )}
+          </div>
+        );
+      }}
     </FieldShell>
   );
 }

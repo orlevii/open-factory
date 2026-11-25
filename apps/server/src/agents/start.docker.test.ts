@@ -26,6 +26,7 @@ import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
 import { claimTestHandle, claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { hostOnlyLibrary } from "../test/library.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
@@ -154,9 +155,10 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
   if (!agent) throw new Error("seed failed");
   const lock = new KeyedMutex();
   const fake = createFakeClaude({ scenario });
+  const library = hostOnlyLibrary(hs, home);
   const workspace = new Workspace({
     factoryHome: home,
-    hostSkillsDir: hs,
+    library,
     claudeBin: fake.bin,
     cliBundle,
     lock,
@@ -203,7 +205,8 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     vault,
     workspace,
     resolver: new ConfigResolver({
-      templates: new TemplateIndex({ db: t.db, config: factoryConfig }),
+      templates: new TemplateIndex({ db: t.db, config: factoryConfig, library }),
+      library,
     }),
     lock,
     containers,
@@ -224,7 +227,8 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
       claudeBin: factoryConfig.dockerClaudeBin,
       defaultImage: IMAGE,
       resolver: new ConfigResolver({
-        templates: new TemplateIndex({ db: t.db, config: factoryConfig }),
+        templates: new TemplateIndex({ db: t.db, config: factoryConfig, library }),
+        library,
       }),
     },
   });

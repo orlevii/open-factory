@@ -379,7 +379,7 @@ const IMAGE = "open-factory-base:test";
 const MOUNT_CHECK: MountCheckContext = {
   workdir: "/nonexistent/of-test/workdir",
   grantedPaths: [],
-  hostSkillPaths: [],
+  skillPaths: [],
   templateSkillPaths: [],
   templateDir: "/nonexistent/of-test/home/templates/t",
   declaredMarketplaceDirs: [],

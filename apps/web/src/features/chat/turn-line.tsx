@@ -2,8 +2,8 @@ import type { ChatEntry } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { Check, CircleAlert, Square } from "lucide-react";
 import { memo, useState } from "react";
+import { Elapsed } from "@/components/elapsed";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { Elapsed } from "@/features/session/activity-line";
 import { formatTime } from "@/features/session/format";
 import { ROW_GUTTER } from "@/features/session/timeline-item";
 

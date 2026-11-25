@@ -1,16 +1,13 @@
 import { ApiError } from "@open-factory/shared";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 import { ResourceNotFound } from "@/components/route-states";
-import {
-  agentConfigQueryOptions,
-  hostSkillsQueryOptions,
-  templateConfigQueryOptions,
-} from "@/features/config/api";
+import { agentConfigQueryOptions, templateConfigQueryOptions } from "@/features/config/api";
 import { AgentConfigPage } from "@/features/config/config-page";
 import { noAgentLine } from "@/features/config/messages";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { secretsQueryOptions } from "@/features/settings/api";
 import { templatesQueryOptions } from "@/features/templates/api";
+import { libraryQueryOptions } from "@/lib/library";
 
 // `$slug_` keeps this page out of the session view's layout: it's a sibling of Usage, not a child.
 export const Route = createFileRoute("/_app/agents/$slug_/config")({
@@ -31,7 +28,7 @@ export const Route = createFileRoute("/_app/agents/$slug_/config")({
       // Anything else: the page shows the error line.
     }
     // The pickers' lists: started now, never waited on.
-    void qc.prefetchQuery(hostSkillsQueryOptions);
+    void qc.prefetchQuery(libraryQueryOptions);
     void qc.prefetchQuery(secretsQueryOptions);
     void qc.prefetchQuery(templatesQueryOptions);
   },

@@ -110,6 +110,7 @@ describe("GO_TO", () => {
       tasks: "/tasks",
       templates: "/templates",
       images: "/templates/images",
+      skills: "/skills",
       schedules: "/schedules",
       usage: "/usage",
       "settings-credentials": "/settings/credentials",

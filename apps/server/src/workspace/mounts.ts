@@ -1,7 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import type { Mount } from "@open-factory/harness";
+import { canon, forbiddenSet, isUnder } from "../library/forbidden.ts";
 import { WorkspaceError } from "./safe-fs.ts";
 
 /** The CLI bundle's fixed in-container path: the one mount whose target isn't its source (spec §11.6). */
@@ -12,7 +12,8 @@ export const CLI_BUNDLE_TARGET = "/opt/factory/bin/open-factory";
 export function buildMounts(i: {
   workdir: string;
   grantedPaths: string[];
-  hostSkillPaths: string[];
+  /** Real paths of every registered skill folder, mounted read-only. */
+  skillPaths: string[];
   /** Real paths of the template's own skill folders (`resolveTemplateSkills`), mounted read-only. */
   templateSkillPaths: string[];
   /** From the effective config's `extraKnownMarketplaces`, which only the template declares. */
@@ -23,7 +24,7 @@ export function buildMounts(i: {
   const all: Mount[] = [
     { source: i.workdir, target: i.workdir, readOnly: false },
     ...i.grantedPaths.map((p) => ({ source: p, target: p, readOnly: false })),
-    ...i.hostSkillPaths.map((p) => ({ source: p, target: p, readOnly: true })),
+    ...i.skillPaths.map((p) => ({ source: p, target: p, readOnly: true })),
     ...i.templateSkillPaths.map((p) => ({ source: p, target: p, readOnly: true })),
     ...i.declaredMarketplaceDirs.map((p) => ({ source: p, target: p, readOnly: true })),
     { source: i.pluginsDir, target: i.pluginsDir, readOnly: true },
@@ -70,7 +71,7 @@ export class MountRefusedError extends WorkspaceError {
 export interface MountCheckContext {
   workdir: string;
   grantedPaths: string[];
-  hostSkillPaths: string[];
+  skillPaths: string[];
   templateSkillPaths: string[];
   /** `<FACTORY_HOME>/templates/<template>`: the only place a template skill may come from. */
   templateDir: string;
@@ -80,21 +81,6 @@ export interface MountCheckContext {
   factoryHome: string;
   home: string;
   dockerSockets: string[];
-}
-
-/** Canonical form of a path the factory names. A missing tail keeps its spelling under the
- *  canonical form of its deepest existing ancestor (a not-yet-created socket still compares right). */
-async function canon(p: string): Promise<string> {
-  const abs = path.resolve(p);
-  const tail: string[] = [];
-  for (let dir = abs; ; dir = path.dirname(dir)) {
-    try {
-      return path.join(await realpath(dir), ...tail.reverse());
-    } catch {
-      if (dir === path.dirname(dir)) return abs;
-      tail.push(path.basename(dir));
-    }
-  }
 }
 
 /** Spec §6.4: the template-skill exemption, by exact location. A declared path counts only when
@@ -120,15 +106,28 @@ async function validTemplateSkills(templateDir: string, declared: string[]): Pro
   return out;
 }
 
-const isUnder = (child: string, parent: string) =>
-  child !== parent && child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
+const NOT_ALLOWED_IN_FACTORY_HOME =
+  "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or the plugin store";
 
-/** The account's home from the user database, which `$HOME` can't override. */
-function userDbHome(): string | undefined {
+/** Spec §6.5: the GitHub skill class. `real` equals `join(realpath(<FH>/state/library/github), <id>,
+ *  <sha>[, <name>])`, with every component from `<FH>/state` down a real directory (`lstat`, so a
+ *  link fails). `factoryHome` is canonical. */
+async function isGithubSkill(factoryHome: string, real: string): Promise<boolean> {
+  const github = path.join(factoryHome, "state/library/github");
+  const rel = path.relative(github, real);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return false;
+  const parts = rel.split(path.sep);
+  if (parts.length < 2 || parts.length > 3) return false;
   try {
-    return os.userInfo().homedir || undefined;
+    if ((await realpath(github)) !== github) return false;
+    let dir = path.join(factoryHome, "state");
+    for (const part of [undefined, "library", "github", ...parts]) {
+      dir = part ? path.join(dir, part) : dir;
+      if (!(await lstat(dir)).isDirectory()) return false;
+    }
+    return true;
   } catch {
-    return undefined;
+    return false;
   }
 }
 
@@ -136,7 +135,8 @@ function userDbHome(): string | undefined {
  * Spec §11.4 (defence in depth): `realpath`s each source and refuses `/`, the host home,
  * FACTORY_HOME, FACTORY_HOME/state, a Docker socket, or an ancestor of any of them; anything under
  * FACTORY_HOME except this agent's workdir, its plugins dir and (read-only) a real template skill
- * folder at exactly `<templates>/<template>/skills/<name>`; and anything that isn't exactly one
+ * folder at exactly `<templates>/<template>/skills/<name>` or (read-only) a GitHub skill checkout at
+ * exactly `<FH>/state/library/github/<id>/<sha>[/<name>]`; and anything that isn't exactly one
  * of the allowed kinds with the expected read-only flag and target.
  *
  * Returns the checked mounts with each source replaced by its realpath (and parity targets by the
@@ -147,17 +147,14 @@ function userDbHome(): string | undefined {
  */
 export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Promise<Mount[]> {
   const factoryHome = await canon(ctx.factoryHome);
-  const forbidden: { path: string; name: string }[] = [];
-  const forbid = async (p: string, name: string) => {
-    // Both spellings: the raw path is what a mount of an unresolvable or linked path would name.
-    for (const q of new Set([path.resolve(p), await canon(p)])) forbidden.push({ path: q, name });
-  };
-  for (const h of new Set([ctx.home, userDbHome()]))
-    if (h) await forbid(h, "the host home directory");
-  await forbid(ctx.factoryHome, "FACTORY_HOME");
-  await forbid(path.join(ctx.factoryHome, "state"), "the factory state directory");
-  for (const s of ctx.dockerSockets) await forbid(s, "a Docker socket");
+  const forbidden = await forbiddenSet(ctx);
 
+  const githubRoots = [
+    ...new Set([
+      path.join(path.resolve(ctx.factoryHome), "state/library/github"),
+      path.join(factoryHome, "state/library/github"),
+    ]),
+  ];
   const workdir = await canon(ctx.workdir);
   const pluginsDir = await canon(ctx.pluginsDir);
   const kind = async (paths: string[], readOnly: boolean, parity = true) =>
@@ -170,7 +167,7 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
   const allowed = [
     ...(await kind([ctx.workdir], false)),
     ...(await kind(ctx.grantedPaths, false)),
-    ...(await kind([...ctx.hostSkillPaths, ...ctx.declaredMarketplaceDirs, ctx.pluginsDir], true)),
+    ...(await kind([...ctx.skillPaths, ...ctx.declaredMarketplaceDirs, ctx.pluginsDir], true)),
     ...(await kind(templateSkills, true)),
     ...(await kind([ctx.cliBundle], true, false)),
   ];
@@ -187,6 +184,11 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
       throw refuse(`it can't be resolved (${(err as NodeJS.ErrnoException).code ?? "error"})`);
     }
     if (real === path.parse(real).root) throw refuse("it is the filesystem root");
+    // A source named inside the GitHub store must still be a checkout there once resolved: a link
+    // swapped in for the store, an id or a sha resolves elsewhere and a declared path alone can't excuse it.
+    const isGithub = m.readOnly && (await isGithubSkill(factoryHome, real));
+    if (githubRoots.some((r) => m.source === r || isUnder(m.source, r)) && !isGithub)
+      throw refuse(NOT_ALLOWED_IN_FACTORY_HOME);
     for (const f of forbidden) {
       if (real === f.path) throw refuse(`it is ${f.name}`);
       if (isUnder(f.path, real)) throw refuse(`it contains ${f.name}`);
@@ -195,8 +197,8 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
       for (const f of [stateDir, agentsDir, workdir])
         if (real === f || isUnder(real, f) || isUnder(f, real))
           throw refuse("it is inside the factory state or an agent's workdir");
-    } else if (isUnder(real, factoryHome) && real !== workdir && real !== pluginsDir)
-      throw refuse("it is inside FACTORY_HOME and isn't this agent's workdir or plugins dir");
+    } else if (isUnder(real, factoryHome) && real !== workdir && real !== pluginsDir && !isGithub)
+      throw refuse(NOT_ALLOWED_IN_FACTORY_HOME);
     const kinds = allowed.filter((a) => a.path === real);
     if (!kinds.length) throw refuse("it isn't one of the agent's allowed mounts");
     const sameFlag = kinds.filter((a) => a.readOnly === m.readOnly);

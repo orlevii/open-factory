@@ -14,7 +14,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import { type AppDeps, buildApp, loggerOptions } from "../app.ts";
 import type { PasswordHasher } from "../auth/options.ts";
-import { type Config, loadConfig } from "../config.ts";
+import { type Config, hostSkillsDirOf, loadConfig } from "../config.ts";
 import type { Vault } from "../crypto/vault.ts";
 import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { hashToken } from "../users/invites.ts";
@@ -67,7 +67,8 @@ export const testPasswordHasher: PasswordHasher = {
 export async function makeTestApp(opts: TestAppOptions = {}) {
   const tdb = await createMigratedTestDatabase();
   const factoryHome = realpathSync(mkdtempSync(path.join(tmpdir(), "of-home-")));
-  const hostSkillsDir = mkdtempSync(path.join(tmpdir(), "of-skills-"));
+  const hostClaudeDir = mkdtempSync(path.join(tmpdir(), "of-claude-"));
+  mkdirSync(path.join(hostClaudeDir, "skills"));
   const build = async (o: TestAppOptions) => {
     const config = loadConfig({
       DATABASE_URL: tdb.url,
@@ -75,7 +76,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       PORT: "3000",
       LOG_LEVEL: "silent",
       FACTORY_HOME: factoryHome,
-      FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+      FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
       FACTORY_ALLOW_LOCAL_RUNTIME: "true",
       // Every app binds a real agent listener: let the OS pick the port so test files can run in parallel.
       FACTORY_AGENT_PORT: "0",
@@ -112,6 +113,8 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
   return {
     ...first,
     factoryHome,
+    /** Where host skills are read from: `<config.hostClaudeDir>/skills`. */
+    hostSkillsDir: hostSkillsDirOf(first.config),
     seedAgent: (o?: SeedAgentOptions) =>
       seedTestAgent(
         {

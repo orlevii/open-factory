@@ -70,8 +70,77 @@ const withoutKeys = (r: Rec, keys: readonly string[]): Rec =>
 const PERMISSION_LISTS = ["allow", "deny"] as const;
 const AUTO_LISTS = ["environment", "soft_deny", "hard_deny"] as const;
 
-/** One line per change between two effective configs, sorted. `[]` when nothing a running agent sees changed. */
-export function describeChanges(a: ConfigDoc, b: ConfigDoc): string[] {
+/** What the Library resolved a config's skills and plugins to (spec §8.1): name or key → ref. */
+export interface Library {
+  /** name → "host" | "folder" | "template" | "github:<sha>" | "missing" */
+  skills: Record<string, string>;
+  /** key → "<version>/<gitCommitSha7>" | "missing" */
+  plugins: Record<string, string>;
+}
+
+/** A merged doc with what the Library resolved it to: the unit `describeChanges` compares. */
+export interface ConfigSnapshot {
+  doc: ConfigDoc;
+  library: Library;
+}
+
+const MISSING = "missing";
+const short = (sha: string): string => sha.slice(0, 7);
+const SOURCE_LABEL: Record<string, string> = {
+  host: "the host",
+  folder: "a folder",
+  template: "the template",
+  github: "GitHub",
+};
+const kindOfRef = (ref: string): string => ref.split(":", 1)[0] ?? ref;
+
+function skillLines(a: Record<string, string>, b: Record<string, string>): string[] {
+  const out: string[] = [];
+  for (const [name, before] of Object.entries(a)) {
+    const after = b[name];
+    // Only names both sides resolved: a skill that is listed or dropped is the doc's line, and one that
+    // can't be resolved fails its own start, so it is no reason to restart a running agent.
+    if (after === undefined || after === before || before === MISSING || after === MISSING)
+      continue;
+    if (kindOfRef(before) !== kindOfRef(after)) {
+      out.push(
+        `skill ${oneLine(name)} now from ${SOURCE_LABEL[kindOfRef(after)] ?? "another source"}`,
+      );
+    } else if (after.startsWith("github:")) {
+      out.push(
+        `skill ${oneLine(name)} updated ${short(before.slice(7))} → ${short(after.slice(7))}`,
+      );
+    }
+  }
+  return out;
+}
+
+const HEX_VERSION = /^[0-9a-f]{7,40}$/;
+const versionOf = (ref: string): string => ref.split("/", 1)[0] ?? ref;
+
+function pluginLines(a: Record<string, string>, b: Record<string, string>): string[] {
+  const out: string[] = [];
+  for (const [key, before] of Object.entries(a)) {
+    const after = b[key];
+    if (after === undefined || after === before || before === MISSING || after === MISSING)
+      continue;
+    const [from, to] = [versionOf(before), versionOf(after)];
+    // A version that is a commit hash shows as "commit 0120fb8 → 9a8b7c6".
+    const hex = HEX_VERSION.test(from) && HEX_VERSION.test(to);
+    out.push(
+      hex
+        ? `plugin ${oneLine(key)} updated commit ${short(from)} → ${short(to)}`
+        : `plugin ${oneLine(key)} updated ${oneLine(from)} → ${oneLine(to)}`,
+    );
+  }
+  return out;
+}
+
+/**
+ * The doc-only part of `describeChanges`: what two merged docs differ in. The web's pre-save summary uses it, since
+ * the browser has no Library. One line per change, sorted.
+ */
+export function describeDocChanges(a: ConfigDoc, b: ConfigDoc): string[] {
   const out: string[] = [];
   const ta = rec(a.template);
   const tb = rec(b.template);
@@ -122,11 +191,25 @@ export function describeChanges(a: ConfigDoc, b: ConfigDoc): string[] {
   return out.sort();
 }
 
+/**
+ * One line per change between two effective configs, sorted (spec §8.2): the doc's lines plus what the Library
+ * resolved differently (a repin, an update). `[]` when nothing a running agent sees changed.
+ */
+export function describeChanges(a: ConfigSnapshot, b: ConfigSnapshot): string[] {
+  return [
+    ...describeDocChanges(a.doc, b.doc),
+    ...skillLines(a.library.skills, b.library.skills),
+    ...pluginLines(a.library.plugins, b.library.plugins),
+  ].sort();
+}
+
 type Kind = { test: RegExp; label: string; plural?: string };
 /** Collections show a count ("2 rules"); scalars show only their name. */
 const KINDS: readonly Kind[] = [
   { test: /^(added|removed) skill /, label: "skill", plural: "skills" },
   { test: /^(added|removed) plugin /, label: "plugin", plural: "plugins" },
+  { test: /^skill \S+ (updated|now from) /, label: "skill", plural: "skills" },
+  { test: /^plugin \S+ updated /, label: "plugin", plural: "plugins" },
   { test: /^(added|removed) secret /, label: "secret", plural: "secrets" },
   { test: /^(added|removed) (allow|deny) rule/, label: "rule", plural: "rules" },
   { test: /^(added|removed) trust note/, label: "trust note", plural: "trust notes" },

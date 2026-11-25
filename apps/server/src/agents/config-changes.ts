@@ -3,7 +3,9 @@ import {
   type AgentOverlay,
   agentOverlaySchema,
   type ConfigDoc,
+  type ConfigSnapshot,
   describeChanges,
+  type Library,
   mergeConfig,
 } from "@open-factory/shared";
 import { and, asc, eq, isNull } from "drizzle-orm";
@@ -48,11 +50,14 @@ export interface ConfigChangeAgents {
   liveOfTemplate(template: string): Promise<AgentRow[]>;
   /** A spawner's live spawned children's ids. */
   liveChildren(spawnerId: string): Promise<string[]>;
+  /** Every agent that is neither archived nor terminated (persistent or spawned), by slug: what a library change checks. */
+  allLive(): Promise<AgentRow[]>;
   /**
-   * The agent's effective doc now: its row read fresh, then the resolver. Undefined when it can't be resolved (gone, a
-   * missing or broken template, an invalid overlay). The runtime calls it inside its job to decide a restart.
+   * The agent's effective doc and Library now: its row read fresh, then the resolver. Undefined when it can't be
+   * resolved (gone, a missing or broken template, an invalid overlay). The runtime calls it inside its job to decide a
+   * restart.
    */
-  currentDoc(agentId: string): Promise<ConfigDoc | undefined>;
+  currentEffective(agentId: string): Promise<ConfigSnapshot | undefined>;
 }
 
 export function dbConfigChangeAgents(
@@ -86,11 +91,18 @@ export function dbConfigChangeAgents(
           )
           .orderBy(asc(schema.agents.id))
       ).map((r) => r.id),
-    currentDoc: async (agentId) => {
+    allLive: () =>
+      db
+        .select()
+        .from(schema.agents)
+        .where(and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt)))
+        .orderBy(asc(schema.agents.slug)),
+    currentEffective: async (agentId) => {
       const [row] = await db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
       if (!row) return undefined;
       try {
-        return (await resolver.effective(row)).doc;
+        const { doc, library } = await resolver.effective(row);
+        return { doc, library };
       } catch (err) {
         if (err instanceof AgentStartError) return undefined;
         throw err;
@@ -117,8 +129,16 @@ export class ConfigChanges {
       >;
       bus: Pick<EventBus, "publishAll">;
       log: Pick<RuntimeLog, "error">;
+      /** What the Library resolves a merged doc to (spec §8.1), for both sides of a comparison. */
+      resolver: Pick<ConfigResolver, "libraryOf">;
+      /** A library change rescans the templates, so their stored issues don't go stale (spec §8.2). */
+      templates: { scan(): Promise<unknown> };
     },
   ) {}
+
+  private async snapshot(doc: ConfigDoc): Promise<ConfigSnapshot> {
+    return { doc, library: await this.d.resolver.libraryOf(doc) };
+  }
 
   /**
    * A template's last valid parse moved (spec §7.1). Every agent of that template that is neither archived nor
@@ -129,7 +149,11 @@ export class ConfigChanges {
     // The template's own views (its issues, "Used by") refresh on every change, even one no agent sees.
     this.d.bus.publishAll({ type: "config_changed", template: e.name });
     // Nothing that reaches an agent moved (only keys like `description` or `projects`): no agent can differ.
-    if (e.before && !describeChanges(e.before, e.after).length) return;
+    if (
+      e.before &&
+      !describeChanges(await this.snapshot(e.before), await this.snapshot(e.after)).length
+    )
+      return;
     const rows = await this.d.agents.liveOfTemplate(e.name);
     const by = templateBy(e);
     const done: Promise<void>[] = [];
@@ -144,8 +168,8 @@ export class ConfigChanges {
         const r = await this.apply(
           agent,
           by,
-          e.before ? mergeConfig(e.before, overlay) : null,
-          mergeConfig(e.after, overlay),
+          e.before ? await this.snapshot(mergeConfig(e.before, overlay)) : null,
+          await this.snapshot(mergeConfig(e.after, overlay)),
         );
         done.push(r.done);
       } catch (err) {
@@ -168,15 +192,89 @@ export class ConfigChanges {
     before: ConfigDoc,
     after: ConfigDoc,
   ): Promise<{ changes: string[]; restartChecked: boolean }> {
-    const { changes, restartChecked } = await this.apply(agent, by, before, after);
+    const { changes, restartChecked } = await this.apply(
+      agent,
+      by,
+      await this.snapshot(before),
+      await this.snapshot(after),
+    );
     return { changes, restartChecked };
+  }
+
+  /**
+   * What the Library resolves these skill names to right now. The caller of `libraryChanged` takes it before it mutates
+   * the Library and passes it back as `before`, so an agent with no running process can still say what changed.
+   */
+  async captureLibrary(skills: string[]): Promise<Library> {
+    return this.d.resolver.libraryOf({
+      template: { skills },
+      settings: {},
+      mcp: { mcpServers: {} },
+    });
+  }
+
+  /**
+   * The Library moved (spec §8.3): a GitHub update, an Undo that restores a name, a marketplace or plugin update. Called
+   * after the Library and store locks are released. The templates are rescanned first, so a skill that went missing
+   * shows as an issue. Then every non-archived, non-terminated agent that uses one of the names gets
+   * `apply(agent, by, before, now)`: `before` is what its process started with when it runs, else its effective config
+   * now with the changed names' refs replaced by `e.before` (captured by the caller before the mutation); `now` is a
+   * fresh resolve. The event, the passive notice and, for a running agent, the restart check follow I2 §7.3.
+   */
+  async libraryChanged(e: {
+    skills?: string[];
+    plugins?: string[];
+    by: string;
+    before?: Library;
+  }): Promise<void> {
+    try {
+      await this.d.templates.scan();
+    } catch (err) {
+      this.d.log.error({ err }, "rescanning templates after a library change failed");
+    }
+    const skills = new Set(e.skills);
+    const plugins = new Set(e.plugins);
+    const uses = (l: Library) =>
+      Object.keys(l.skills).some((n) => skills.has(n)) ||
+      Object.keys(l.plugins).some((k) => plugins.has(k));
+    const pick = (
+      now: Record<string, string>,
+      was: Record<string, string> | undefined,
+      names: Set<string>,
+    ) =>
+      Object.fromEntries(
+        Object.entries(now).map(([n, ref]) => [n, names.has(n) ? (was?.[n] ?? ref) : ref]),
+      );
+    const done: Promise<void>[] = [];
+    for (const agent of await this.d.agents.allLive()) {
+      try {
+        const started = this.d.runtimes.startedOf(agent.id);
+        const now = await this.d.agents.currentEffective(agent.id);
+        if (!now) continue;
+        if (!uses(started ? started.library : now.library)) continue;
+        const before: ConfigSnapshot = started
+          ? { doc: started.doc, library: started.library }
+          : {
+              doc: now.doc,
+              library: {
+                skills: pick(now.library.skills, e.before?.skills, skills),
+                plugins: pick(now.library.plugins, e.before?.plugins, plugins),
+              },
+            };
+        const r = await this.apply(agent, e.by, before, now);
+        done.push(r.done);
+      } catch (err) {
+        this.d.log.error({ err, agent: agent.slug }, "applying a library change failed");
+      }
+    }
+    await Promise.all(done);
   }
 
   private async apply(
     agent: AgentRow,
     by: string,
-    before: ConfigDoc | null,
-    after: ConfigDoc,
+    before: ConfigSnapshot | null,
+    after: ConfigSnapshot,
   ): Promise<Applied> {
     const { runtimes } = this.d;
     const changes = before ? describeChanges(before, after) : [];
@@ -197,7 +295,7 @@ export class ConfigChanges {
 
     if (changes.length) work.push(runtimes.recordConfigNotice(agent.id, changes));
     if (agent.runtime === "docker") {
-      const config = configOf(after, agent.runtime);
+      const config = configOf(after.doc, agent.runtime);
       runtimes.setNextImage(agent.id, config ? runtimes.imageRef(config) : undefined);
     }
     // Decided inside the runtime's job, against a fresh `started` and the config re-read there: `after` was computed
@@ -205,12 +303,14 @@ export class ConfigChanges {
     const restartChecked = Boolean(rt?.hasProcess());
     if (restartChecked)
       work.push(
-        runtimes.requestRestart(agent.id, { current: () => this.d.agents.currentDoc(agent.id) }),
+        runtimes.requestRestart(agent.id, {
+          current: () => this.d.agents.currentEffective(agent.id),
+        }),
       );
     if (agent.kind === "persistent") {
       // With no previous doc, compare against what the running process started with.
-      const was = before ?? runtimes.startedOf(agent.id)?.doc;
-      if (was && inheritedChanged(was, after)) work.push(this.restartChildren(agent.id));
+      const was = before?.doc ?? runtimes.startedOf(agent.id)?.doc;
+      if (was && inheritedChanged(was, after.doc)) work.push(this.restartChildren(agent.id));
     }
     return { changes, restartChecked, done: this.settle(agent, work) };
   }

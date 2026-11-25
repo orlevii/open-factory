@@ -42,7 +42,7 @@ beforeEach(() => {
   ctx = {
     workdir,
     grantedPaths: [],
-    hostSkillPaths: [],
+    skillPaths: [],
     templateSkillPaths: [],
     templateDir: path.join(factoryHome, "templates/t"),
     declaredMarketplaceDirs: [],

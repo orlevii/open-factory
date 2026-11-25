@@ -350,8 +350,9 @@
 
 /* Timeline rows take the focus ring inset (DESIGN.md → Rows), so it never spills over a neighbour.
    A deep-linked row focused after a mouse navigation may not match :focus-visible; it carries
-   `data-focus-ring` until blur, drawn the same ("ring = focus", U3 §7.4). */
-[data-row]:focus-visible,
+   `data-focus-ring` until blur, drawn the same ("ring = focus", U3 §7.4). A schedule's key button draws its ring
+   on its own `::after` (the row-wide overlay), so it is left out of the :focus-visible rule or it would show two. */
+[data-row]:not([data-schedule-key]):focus-visible,
 [data-row][data-focus-ring] {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
@@ -990,4 +991,13 @@
   .form-outcome-line {
     opacity: 0;
   }
+}
+
+/* The sticky page footer (features/config/page-footer.tsx) must not cover a control scrolled into view or focused.
+   The margin sits on what the footer's siblings contain, not as a root scroll-padding: padding would apply to the
+   footer's own buttons too (they sit inside the padded band) and make focusing them scroll the page by half its
+   height. The footer reports its height on the root. */
+:has(> [data-slot="page-footer"][data-sticky]) > :not([data-slot="page-footer"]),
+:has(> [data-slot="page-footer"][data-sticky]) > :not([data-slot="page-footer"]) * {
+  scroll-margin-bottom: var(--page-footer-height, 0px);
 }

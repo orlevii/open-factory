@@ -15,6 +15,11 @@ type Props = {
   legend?: boolean;
   /** A control at the end of the label row (a ghost "Add credential"); single-input fields only. */
   action?: ReactNode;
+  /**
+   * A control at the end of a group's legend row (template mode's "Add skill"). Takes the same wiring as `children`;
+   * the group is still named by the label alone.
+   */
+  legendAction?: (a: { id: string; describedBy?: string; invalid: boolean }) => ReactNode;
   /** Rendered after the note line (a summary under a group). */
   below?: ReactNode;
   /** Extra persistent ids, appended to the visible note's id. */
@@ -34,6 +39,7 @@ export function FieldShell({
   warning,
   legend,
   action,
+  legendAction,
   below,
   describedBy: extra,
   hideLabel,
@@ -51,16 +57,29 @@ export function FieldShell({
     </>
   );
   if (legend) {
+    const legendEnd = legendAction?.({ id, describedBy, invalid: Boolean(error) });
     return (
       <fieldset
         data-field=""
         className="grid min-w-0 gap-1.5"
         aria-describedby={describedBy}
         aria-invalid={error ? true : undefined}
+        aria-labelledby={legendEnd ? `${id}-legend` : undefined}
       >
-        <legend id={`${id}-legend`} className="text-[0.8125rem] font-medium">
-          {label}
-        </legend>
+        {legendEnd ? (
+          <legend className="w-full">
+            <span className="flex min-h-7 items-center justify-between gap-2">
+              <span id={`${id}-legend`} className="text-[0.8125rem] font-medium">
+                {label}
+              </span>
+              {legendEnd}
+            </span>
+          </legend>
+        ) : (
+          <legend id={`${id}-legend`} className="text-[0.8125rem] font-medium">
+            {label}
+          </legend>
+        )}
         {body}
         {tail}
       </fieldset>

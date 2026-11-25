@@ -38,11 +38,21 @@ export function PageFooter({
   // A ref callback with a cleanup (React 19): the observer lives exactly as long as the element.
   const measure = useCallback(
     (el: HTMLDivElement | null) => {
-      if (!el || !onHeight) return;
-      onHeight(el.offsetHeight);
-      const ro = new ResizeObserver(() => onHeight(el.offsetHeight));
+      if (!el) return;
+      // The sticky bar's height is the bottom scroll margin of the controls beside it (styles.css), so one scrolled into
+      // view or focused clears the bar (WCAG 2.4.11). Custom properties inherit, so the root carries it.
+      const root = document.documentElement.style;
+      const report = () => {
+        root.setProperty("--page-footer-height", `${el.offsetHeight}px`);
+        onHeight?.(el.offsetHeight);
+      };
+      report();
+      const ro = new ResizeObserver(report);
       ro.observe(el);
-      return () => ro.disconnect();
+      return () => {
+        ro.disconnect();
+        root.removeProperty("--page-footer-height");
+      };
     },
     [onHeight],
   );
@@ -53,7 +63,7 @@ export function PageFooter({
       data-slot="page-footer"
       data-sticky={sticky ? "" : undefined}
       className={cn(
-        "z-10 grid gap-2 border-t border-border bg-card py-3",
+        "z-10 grid grid-cols-[minmax(0,1fr)] gap-2 border-t border-border bg-card py-3",
         sticky && "sticky bottom-0",
       )}
     >
@@ -62,7 +72,7 @@ export function PageFooter({
         pending={pending ? CONFIG_PAGE_COPY.saving : undefined}
         noticeId={noticeId}
       />
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <Button
           type="button"
           variant="ghost"

@@ -13,7 +13,12 @@ function List() {
       <ul aria-label="rows" onKeyDown={onRowKeyDown}>
         {["a", "b", "c"].map((n) => (
           <li key={n}>
-            <a href={`#${n}`} className="of-row" aria-current={n === "b" ? "true" : undefined}>
+            <a
+              href={`#${n}`}
+              data-row=""
+              className="of-row"
+              aria-current={n === "b" ? "true" : undefined}
+            >
               {n}
             </a>
           </li>
@@ -57,4 +62,53 @@ test("j and k do nothing with the single-key switch off", async () => {
   await user.keyboard("{ArrowDown}");
   expect(screen.getByRole("link", { name: "b" })).toHaveFocus();
   uninstall();
+});
+
+test("j and k move across anchor and button rows alike, and skip elements without data-row", async () => {
+  const user = userEvent.setup();
+  render(
+    <ul aria-label="mixed" onKeyDown={onRowKeyDown}>
+      <li>
+        <button type="button" data-row="">
+          header
+        </button>
+      </li>
+      <li>
+        <a href="#x" data-row="">
+          docs page
+        </a>
+        <button type="button">menu</button>
+      </li>
+      <li>
+        <button type="button" data-row="">
+          row
+        </button>
+      </li>
+    </ul>,
+  );
+  screen.getByRole("button", { name: "header" }).focus();
+  await user.keyboard("j");
+  expect(screen.getByRole("link", { name: "docs page" })).toHaveFocus();
+  await user.keyboard("j");
+  expect(screen.getByRole("button", { name: "row" })).toHaveFocus();
+  await user.keyboard("k");
+  await user.keyboard("k");
+  expect(screen.getByRole("button", { name: "header" })).toHaveFocus();
+});
+
+test("a key pressed on a control that is not a row does not move focus", async () => {
+  const user = userEvent.setup();
+  render(
+    <ul aria-label="mixed" onKeyDown={onRowKeyDown}>
+      <li>
+        <button type="button" data-row="">
+          row
+        </button>
+        <button type="button">menu</button>
+      </li>
+    </ul>,
+  );
+  screen.getByRole("button", { name: "menu" }).focus();
+  await user.keyboard("j");
+  expect(screen.getByRole("button", { name: "menu" })).toHaveFocus();
 });

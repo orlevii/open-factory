@@ -5,6 +5,7 @@ export type DraftKey =
   | "new-task"
   | "new-schedule"
   | "new-template"
+  | "add-skills"
   | `edit-agent:${string}`
   | `edit-schedule:${string}`;
 

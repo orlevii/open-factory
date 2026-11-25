@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { imageStatusSchema } from "./images.ts";
+import { PLUGIN_REF_PATTERN } from "./library.ts";
 import { MSG } from "./messages.ts";
 import { modelSchema } from "./models.ts";
 import { hostSkillSchema, nameSchema, secretNameSchema } from "./names.ts";
@@ -10,9 +11,8 @@ export type TemplateFile = (typeof TEMPLATE_FILES)[number];
 export const templateFileSchema = z.enum(TEMPLATE_FILES);
 
 /** A plugin reference, `name@marketplace`. The form checks it with the same pattern. */
-export const PLUGIN_REF = /^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/;
 export const PLUGIN_REF_MSG = "Use name@marketplace.";
-const pluginRef = z.string().regex(PLUGIN_REF, PLUGIN_REF_MSG);
+const pluginRef = z.string().regex(PLUGIN_REF_PATTERN, PLUGIN_REF_MSG);
 
 // The Docker image reference grammar (distribution/reference): `[registry[:port]/]path[:tag][@algo:hex]`.
 const domainPart = "(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])";

@@ -8,6 +8,8 @@ export type Notification = {
   text: string;
   action?: { label: string; run(): void };
   undo?: () => Promise<void>;
+  /** How long it stays, when it must match a window the server enforces (an Undo window); otherwise by text length. */
+  durationMs?: number;
 };
 
 /** Sonner's container label (it appends the hotkey hint, so select by prefix); the release check and the tests select by it, never by Sonner's default. */
@@ -103,11 +105,11 @@ function hold(n: Notification) {
   });
 }
 
-function show({ text, action, undo }: Notification) {
+function show({ text, action, undo, durationMs }: Notification) {
   let undone = false;
   const label = undo ? "Undo" : action?.label;
   toast(text, {
-    duration: toastDuration(text),
+    duration: durationMs ?? toastDuration(text),
     action:
       label === undefined
         ? undefined

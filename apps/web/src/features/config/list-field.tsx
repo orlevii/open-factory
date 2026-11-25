@@ -32,6 +32,7 @@ export function ListField({
   check,
   rowCheck,
   renderAdd,
+  labelAction,
   lead,
   format,
 }: {
@@ -45,6 +46,7 @@ export function ListField({
   /** A client rule for rows already in the list (a name Raw JSON added): a failing row gets an error note. Stable. */
   rowCheck?: (value: string) => string | undefined;
   renderAdd?: (a: AddSlot) => ReactNode;
+  labelAction?: (a: AddSlot) => ReactNode;
   lead?: ReactNode;
   format?: (value: string) => ReactNode;
 }) {
@@ -107,6 +109,7 @@ export function ListField({
       onReject={(m) => fieldErrors.set(field, m)}
       onInput={() => fieldErrors.change(field)}
       renderAdd={renderAdd}
+      labelAction={labelAction}
       lead={lead}
       format={format}
     />

@@ -17,6 +17,7 @@ import { createPrepareStart } from "../src/agents/start.ts";
 import { unlimitedSlots } from "../src/agents/testing/unlimited-slots.ts";
 import { loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
+import { LibraryIndex } from "../src/library/library-index.ts";
 import { AgentTokens } from "../src/mcp/tokens.ts";
 import { Neighborhood } from "../src/messaging/neighborhood.ts";
 import { TemplateIndex } from "../src/templates/template-index.ts";
@@ -42,9 +43,16 @@ await claimTestHandle(db, "smoke", "user");
 await sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
 const vault = new Vault(config.secretKey);
 const lock = new KeyedMutex();
+const library = new LibraryIndex({
+  db,
+  hostClaudeDir: config.hostClaudeDir,
+  factoryHome: config.factoryHome,
+  templates: () => templates,
+});
+const templates: TemplateIndex = new TemplateIndex({ db, config, library });
 const workspace = new Workspace({
   factoryHome: config.factoryHome,
-  hostSkillsDir: config.hostSkillsDir,
+  library,
   claudeBin: config.claudeBin,
   cliBundle: config.cliBundle,
   lock,
@@ -63,7 +71,7 @@ const prepareStart = createPrepareStart({
   config,
   vault,
   workspace,
-  resolver: new ConfigResolver({ templates: new TemplateIndex({ db, config }) }),
+  resolver: new ConfigResolver({ templates, library }),
   lock,
   neighborhood: new Neighborhood(db),
 });

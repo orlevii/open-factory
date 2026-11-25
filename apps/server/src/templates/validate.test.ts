@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { emptyDoc } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import {
   overlayIssues,
   overlaySchemaIssues,
@@ -12,14 +13,17 @@ import {
   validateTemplate,
 } from "./validate.ts";
 
-const hostSkills = mkdtempSync(path.join(tmpdir(), "skills-"));
-mkdirSync(path.join(hostSkills, "grilling"));
+const claude = mkdtempSync(path.join(tmpdir(), "claude-"));
+writeHostSkill(claude, "grilling");
+// A host skill whose SKILL.md names another skill, so the Library calls it unusable.
+mkdirSync(path.join(claude, "skills", "renamed"));
+writeFileSync(path.join(claude, "skills", "renamed", "SKILL.md"), "---\nname: other\n---\n");
 const ctx: ValidationContext = {
   projects: new Set(["app"]),
   secrets: new Set(["GH_TOKEN"]),
   templates: new Set(["tech-lead", "dev"]),
   userImages: new Set(["smoke"]),
-  hostSkillsDir: hostSkills,
+  library: hostOnlyLibrary(claude, claude),
   localRuntimeAllowed: true,
 };
 
@@ -62,12 +66,17 @@ test.each([
     /doesn't match the folder/,
   ],
   [
-    "unknown host skill",
+    "a skill that hasn't been added",
     { "template.yaml": "name: tech-lead\ndisplay_name: X\nskills: [nope]\n" },
-    /Host skill nope/,
+    /^Skill nope hasn't been added in Skills\.$/,
   ],
   [
-    "host skill vs local skill",
+    "an unusable skill",
+    { "template.yaml": "name: tech-lead\ndisplay_name: X\nskills: [renamed]\n" },
+    /^Skill renamed is unusable: SKILL\.md names it other\.$/,
+  ],
+  [
+    "a Library skill vs a template skill",
     {
       "template.yaml": "name: tech-lead\ndisplay_name: X\nskills: [grilling]\n",
       "skills/grilling/SKILL.md": "x",
@@ -411,6 +420,34 @@ test("overlayIssues rebases a list index to the overlay", async () => {
   };
   const issues = await overlayIssues(base, { template: { skills: ["nope"] } }, ctx);
   expect(issues.map((i) => i.path)).toEqual(["template.skills.0"]);
+});
+
+test("a skill the Library lists but can't find in its folder is missing, whatever the reason", async () => {
+  const library = {
+    resolveSkill: async (name: string) =>
+      name === "gone"
+        ? { ok: false as const, reason: "missing" as const, detail: "Fetch again" }
+        : { ok: false as const, reason: "not_added" as const },
+  };
+  const doc = { ...baseDoc(), template: { name: "dev", display_name: "Dev", skills: ["gone"] } };
+  const issues = await validateEffective(doc, { ...ctx, library }, "human");
+  expect(issues.map((i) => [i.path, i.message])).toEqual([
+    ["template.skills.0", "Skill gone is missing from its folder."],
+  ]);
+});
+
+test("a template skill with a Library skill's name is a collision in an overlay, and only that", async () => {
+  const dir = tpl({ ...base, "skills/grilling/SKILL.md": "x", "skills/mine/SKILL.md": "x" });
+  const issues = await overlayIssues(
+    { ...baseDoc(), template: { name: "dev", display_name: "Dev", skills: [] } },
+    { template: { skills: ["grilling", "mine", "nope"] } },
+    { ...ctx, templateDir: dir },
+  );
+  expect(issues.map((i) => [i.path, i.message])).toEqual([
+    ["template.skills.0", "Skill grilling has the same name as a template skill in skills/."],
+    ["template.skills.1", "Skill mine has the same name as a template skill in skills/."],
+    ["template.skills.2", "Skill nope hasn't been added in Skills."],
+  ]);
 });
 
 test("overlayIssues reports nothing that already fails on the base", async () => {

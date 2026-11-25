@@ -1,5 +1,5 @@
 import type { AgentRow } from "@open-factory/db";
-import type { AnyEvent, ConfigDoc, ServerMessage } from "@open-factory/shared";
+import type { AnyEvent, ConfigDoc, ConfigSnapshot, ServerMessage } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { FILE_CHANGE } from "../templates/template-index.ts";
 import { ConfigChanges } from "./config-changes.ts";
@@ -61,14 +61,27 @@ type Rt = {
   stuck?: boolean;
 };
 
+/** What the Library resolves a doc to in these tests: `refs[name]`, "host" for a name it doesn't list. */
+const resolvedTo =
+  (refs: Record<string, string>) =>
+  async (d: ConfigDoc): Promise<ConfigSnapshot["library"]> => {
+    const listed = Array.isArray(d.template.skills) ? (d.template.skills as string[]) : [];
+    return { skills: Object.fromEntries(listed.map((n) => [n, refs[n] ?? "host"])), plugins: {} };
+  };
+
 function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } = {}) {
   const runtimes = new Map<string, Rt>();
   const appendedToStore: { agentId: string; event: AnyEvent }[] = [];
   const notices: { id: string; lines: string[] }[] = [];
   /** `current` is what the request's re-read returned (absent for a restart with no config check). */
-  const restarts: { id: string; current?: ConfigDoc | undefined }[] = [];
-  /** What `currentDoc` reads for an agent now (its fresh row through the resolver). */
-  const fresh = new Map<string, ConfigDoc>();
+  const restarts: { id: string; current?: ConfigSnapshot | undefined }[] = [];
+  /** What `currentEffective` reads for an agent now (its fresh row through the resolver). */
+  const fresh = new Map<string, ConfigSnapshot>();
+  /** What a running agent's process started with (`startedOf`). */
+  const started = new Map<string, Effective>();
+  /** The Library's resolution of each skill name now. */
+  const refs: Record<string, string> = {};
+  let scans = 0;
   const nextImage = new Map<string, string | undefined>();
   const frames: ServerMessage[] = [];
   const logged: unknown[] = [];
@@ -78,7 +91,14 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
     agents: {
       liveOfTemplate: async () => o.agents ?? [],
       liveChildren: async (id) => o.children?.[id] ?? [],
-      currentDoc: async (id) => fresh.get(id),
+      allLive: async () => o.agents ?? [],
+      currentEffective: async (id) => fresh.get(id),
+    },
+    resolver: { libraryOf: (d: ConfigDoc) => resolvedTo(refs)(d) },
+    templates: {
+      scan: async () => {
+        scans += 1;
+      },
     },
     store: {
       append: async (agentId: string, _turn: string | null, event: AnyEvent) => {
@@ -104,7 +124,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
       },
       requestRestart: async (
         id: string,
-        opts?: { current?: () => Promise<ConfigDoc | undefined> },
+        opts?: { current?: () => Promise<ConfigSnapshot | undefined> },
       ) => {
         if (stuckOf(id)) return never;
         restarts.push(opts?.current ? { id, current: await opts.current() } : { id });
@@ -112,7 +132,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
       setNextImage: (id: string, ref: string | undefined) => void nextImage.set(id, ref),
       imageRef: (c: { runtime: string; image?: string }) =>
         c.runtime === "docker" ? (c.image ?? "img:default") : undefined,
-      startedOf: (): Effective | undefined => undefined,
+      startedOf: (id: string): Effective | undefined => started.get(id),
     },
     bus: { publishAll: (m: ServerMessage) => void frames.push(m) },
     log: { error: (obj: unknown) => void logged.push(obj) },
@@ -122,7 +142,20 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
     runtimes.set(a.id, rt);
     return rt;
   };
-  return { changes, load, appendedToStore, notices, restarts, fresh, nextImage, frames, logged };
+  return {
+    changes,
+    load,
+    appendedToStore,
+    notices,
+    restarts,
+    fresh,
+    started,
+    refs,
+    scans: () => scans,
+    nextImage,
+    frames,
+    logged,
+  };
 }
 
 test("a new skill: every live agent of the template, persistent and spawned, gets the event and the notice; only running ones get the restart check", async () => {
@@ -136,7 +169,10 @@ test("a new skill: every live agent of the template, persistent and spawned, get
   const after = doc({ skills: ["tdd", "release"] });
   // What the runtime's job will read: newer than this change's `after` (an overlay save landed since).
   const latest = doc({ skills: ["tdd", "release"], model: "opus" });
-  w.fresh.set(running.id, latest);
+  w.fresh.set(running.id, {
+    doc: latest,
+    library: { skills: { tdd: "host", release: "host" }, plugins: {} },
+  });
   await w.changes.templateChanged({ name: "dev", before, after, by: FILE_CHANGE });
 
   const by = "a file change in template dev";
@@ -151,7 +187,12 @@ test("a new skill: every live agent of the template, persistent and spawned, get
   ]);
   expect(w.notices.map((x) => x.id).sort()).toEqual([running.id, idle.id, spawned.id].sort());
   // Decided in the runtime's job, which re-reads that agent's config there rather than trusting this change's `after`.
-  expect(w.restarts).toEqual([{ id: running.id, current: latest }]);
+  expect(w.restarts).toEqual([
+    {
+      id: running.id,
+      current: { doc: latest, library: { skills: { tdd: "host", release: "host" }, plugins: {} } },
+    },
+  ]);
   expect(w.frames).toEqual([
     { type: "config_changed", template: "dev" },
     { type: "config_changed", agent: running.slug },
@@ -201,12 +242,17 @@ test("before: null writes no event or notice but still runs the restart check", 
   const rt = w.load(running, true);
   w.load(idle, false);
   const after = doc({ skills: ["release"] });
-  w.fresh.set(running.id, after);
+  w.fresh.set(running.id, { doc: after, library: { skills: { release: "host" }, plugins: {} } });
   await w.changes.templateChanged({ name: "dev", before: null, after, by: FILE_CHANGE });
   expect(rt.appended).toEqual([]);
   expect(w.appendedToStore).toEqual([]);
   expect(w.notices).toEqual([]);
-  expect(w.restarts).toEqual([{ id: running.id, current: after }]);
+  expect(w.restarts).toEqual([
+    {
+      id: running.id,
+      current: { doc: after, library: { skills: { release: "host" }, plugins: {} } },
+    },
+  ]);
   expect(w.frames).toEqual([{ type: "config_changed", template: "dev" }]);
 });
 
@@ -320,4 +366,97 @@ test("secret safety: no env value, MCP URL or command reaches an event, a notice
     "env GH changed",
     "settings key hooks changed",
   ]);
+});
+
+const startedWith = (d: ConfigDoc, skills: Record<string, string>): Effective =>
+  ({
+    doc: d,
+    config: {},
+    templatePlugins: [],
+    templateSkills: [],
+    library: { skills, plugins: {} },
+  }) as never;
+const GH = (c: string) => `github:${c.repeat(40)}`;
+
+test("a library change rescans the templates, then restarts only a running agent that uses the skill, against started.library", async () => {
+  const d = doc({ skills: ["tdd"] });
+  const user = row();
+  const other = row();
+  const idle = row();
+  const w = world({ agents: [user, other, idle] });
+  const rtUser = w.load(user, true);
+  const rtOther = w.load(other, true);
+  w.load(idle, false);
+  w.started.set(user.id, startedWith(d, { tdd: GH("a") }));
+  w.started.set(other.id, startedWith(doc({ skills: ["release"] }), { release: GH("d") }));
+  w.fresh.set(user.id, { doc: d, library: { skills: { tdd: GH("b") }, plugins: {} } });
+  // The bystander's own skill changed too, but it isn't among the names this change is about.
+  w.fresh.set(other.id, { doc: d, library: { skills: { release: GH("c") }, plugins: {} } });
+  await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
+
+  expect(w.scans()).toBe(1);
+  expect(rtUser.appended).toEqual([
+    { by: "orlevi", changes: ["skill tdd updated aaaaaaa → bbbbbbb"] },
+  ]);
+  expect(w.notices).toEqual([{ id: user.id, lines: ["skill tdd updated aaaaaaa → bbbbbbb"] }]);
+  expect(w.restarts.map((r) => r.id)).toEqual([user.id]);
+  expect(rtOther.appended).toEqual([]);
+  expect(w.appendedToStore).toEqual([]);
+});
+
+test("a library change that resolves to what the process started with writes nothing and restarts nothing", async () => {
+  const d = doc({ skills: ["tdd"] });
+  const a = row();
+  const w = world({ agents: [a] });
+  const rt = w.load(a, true);
+  w.started.set(a.id, startedWith(d, { tdd: GH("a") }));
+  w.fresh.set(a.id, { doc: d, library: { skills: { tdd: GH("a") }, plugins: {} } });
+  await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
+  expect([rt.appended, w.notices, w.restarts]).toEqual([[], [], []]);
+});
+
+test("an agent with no running process still gets the event, from the Library captured before the change", async () => {
+  const d = doc({ skills: ["tdd", "release"] });
+  const idle = row();
+  const unrelated = row();
+  const w = world({ agents: [idle, unrelated] });
+  const rt = w.load(idle, false);
+  w.load(unrelated, false);
+  w.fresh.set(idle.id, {
+    doc: d,
+    library: { skills: { tdd: GH("b"), release: GH("r") }, plugins: {} },
+  });
+  w.fresh.set(unrelated.id, {
+    doc: doc({ skills: ["release"] }),
+    library: { skills: { release: GH("r") }, plugins: {} },
+  });
+  const before = { skills: { tdd: GH("a") }, plugins: {} };
+  await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi", before });
+  const line = "skill tdd updated aaaaaaa → bbbbbbb";
+  expect(rt.appended).toEqual([{ by: "orlevi", changes: [line] }]);
+  expect(w.notices).toEqual([{ id: idle.id, lines: [line] }]);
+  // Nothing is running, so there is no restart check; the next start reads the new pin.
+  expect(w.restarts).toEqual([]);
+  expect(w.scans()).toBe(1);
+});
+
+test("without a captured before, an agent with no process has nothing to compare and gets no event", async () => {
+  const a = row();
+  const w = world({ agents: [a] });
+  const rt = w.load(a, false);
+  w.fresh.set(a.id, {
+    doc: doc({ skills: ["tdd"] }),
+    library: { skills: { tdd: GH("b") }, plugins: {} },
+  });
+  await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
+  expect([rt.appended, w.notices, w.restarts, w.appendedToStore]).toEqual([[], [], [], []]);
+});
+
+test("captureLibrary asks the Library for exactly the given names", async () => {
+  const w = world();
+  w.refs.tdd = GH("e");
+  expect(await w.changes.captureLibrary(["tdd", "x"])).toEqual({
+    skills: { tdd: GH("e"), x: "host" },
+    plugins: {},
+  });
 });

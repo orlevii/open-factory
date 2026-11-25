@@ -15,6 +15,8 @@ const ANT = "sk-ant-api03-Zx9QkLmNoPqRsTuVwXyZ0123456789";
 const GHP = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
 const USER_URL = `https://user:${GHP}@mcp.acme.dev/v1/stream?key=${ANT}`;
 
+const NO_USE = { templates: 0, agents: 0 };
+
 let off = () => {};
 beforeEach(() => {
   off = installInputModality();
@@ -22,12 +24,45 @@ beforeEach(() => {
   mockApi({
     "GET /api/secrets": () =>
       json({ secrets: [{ name: "GH_TOKEN", updatedAt: "2026-11-01T00:00:00Z", usedBy: [] }] }),
-    "GET /api/host-skills": () =>
+    "GET /api/library/skills": () =>
       json({
-        dir: "/skills",
-        skills: [
-          { name: "release", description: "Cut a release." },
-          { name: "review", description: "Review a PR." },
+        hostDir: "/skills",
+        groups: [
+          {
+            group: "host",
+            kind: "host",
+            skills: [
+              { name: "release", description: "Cut a release.", state: "ok", usedBy: NO_USE },
+              { name: "review", description: "Review a PR.", state: "ok", usedBy: NO_USE },
+              {
+                name: "shadowed",
+                description: "Hidden by a source.",
+                state: "hidden",
+                stateDetail: "the name is used by acme/x",
+                usedBy: NO_USE,
+              },
+            ],
+          },
+          {
+            group: "source:s1",
+            kind: "source",
+            source: {
+              id: "s1",
+              kind: "github",
+              path: null,
+              repo: "acme/x",
+              subpath: "",
+              branch: "main",
+              pin: "a".repeat(40),
+              state: "ready",
+              skillCount: 1,
+              since: null,
+              checking: null,
+              update: false,
+              checkFailed: false,
+            },
+            skills: [{ name: "from-github", description: "", state: "ok", usedBy: NO_USE }],
+          },
         ],
       }),
     "GET /api/templates": () => json({ dir: "/t", templates: [] }),
@@ -379,26 +414,6 @@ test("from secrets: rows read 'Available as $NAME'; a picked secret is added", a
   await userEvent.click(screen.getByRole("combobox", { name: "Add secret to environment" }));
   await userEvent.click(await screen.findByRole("option", { name: "GH_TOKEN" }));
   expect(last(onValue)).toEqual({ template: { secrets: ["NPM_TOKEN", "GH_TOKEN"] } });
-});
-
-test("skills: host skills from a picker; template-local skills read-only", async () => {
-  const onValue = vi.fn();
-  render(
-    <Form
-      start={{}}
-      base={doc({ skills: ["review"] })}
-      localSkills={["deploy"]}
-      onValue={onValue}
-    />,
-  );
-  expect(screen.getByRole("list", { name: CONFIG_COPY.templateSkill })).toHaveTextContent(
-    "deployTemplate skill",
-  );
-  await userEvent.click(screen.getByRole("combobox", { name: "Add skill" }));
-  // "review" is already the template's: not offered again.
-  expect(screen.queryByRole("option", { name: /review/ })).toBeNull();
-  await userEvent.click(await screen.findByRole("option", { name: /release/ }));
-  expect(last(onValue)).toEqual({ template: { skills: ["release"] } });
 });
 
 test("plugins are checked as name@marketplace; the help names settings.json per mode", async () => {

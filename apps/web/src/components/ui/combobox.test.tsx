@@ -1,3 +1,4 @@
+import * as React from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -252,4 +253,88 @@ test("the current value's row says it is selected to a screen reader, not only w
   const row = await screen.findByRole("option", { name: /^Beta/ });
   expect(row).toHaveAccessibleName("Beta, selected");
   expect(screen.getByRole("option", { name: "Alpha" })).toBeInTheDocument();
+});
+
+function multi() {
+  const announce = vi.fn();
+  const onValueChange = vi.fn();
+  const options: ComboOption[] = [
+    { value: "tdd", label: "tdd" },
+    { value: "review", label: "review" },
+    { value: "debug", label: "debug" },
+  ];
+  function Host({ names }: { names: string[] }) {
+    const added = React.useMemo(() => new Set(names), [names.join("\0")]);
+    return (
+      <Combobox
+        value=""
+        onValueChange={(v) => {
+          onValueChange(v);
+          setNames((n) => [...n, v]);
+        }}
+        options={options}
+        aria-label="Skills"
+        multiple={{ added, announce }}
+        trigger={<button type="button">Add skill</button>}
+      />
+    );
+  }
+  let setNames: React.Dispatch<React.SetStateAction<string[]>> = () => {};
+  function Wrap() {
+    const [names, set] = React.useState<string[]>([]);
+    setNames = set;
+    return <Host names={names} />;
+  }
+  render(<Wrap />);
+  return { announce, onValueChange };
+}
+
+test("multi: Enter adds, stays open, marks Added, moves the highlight, announces", async () => {
+  const { announce, onValueChange } = multi();
+  await userEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  const list = await screen.findByRole("listbox");
+  expect(list).not.toHaveAttribute("aria-multiselectable");
+  await userEvent.keyboard("{Enter}");
+  expect(onValueChange).toHaveBeenCalledWith("tdd");
+  expect(announce).toHaveBeenCalledWith("Added tdd");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  const [first] = screen.getAllByRole("option");
+  expect(first).toHaveAttribute("aria-disabled", "true");
+  expect(first).toHaveTextContent("Added");
+  expect(highlighted()).toHaveTextContent("review");
+  await userEvent.keyboard("{Enter}");
+  expect(announce).toHaveBeenLastCalledWith("Added review");
+});
+
+test("multi: options added before the popover opens are left out", async () => {
+  multi();
+  await userEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("{Enter}{Escape}");
+  await userEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  await screen.findByRole("listbox");
+  expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["review", "debug"]);
+});
+
+test("multi with a caller trigger: the first pick keeps the popover's horizontal place", async () => {
+  multi();
+  const trigger = screen.getByRole("button", { name: "Add skill" });
+  vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(rect(300, 0, 100, 32));
+  await userEvent.click(trigger);
+  await screen.findByRole("listbox");
+  const c = content() as HTMLElement;
+  const wrapper = c.parentElement as HTMLElement;
+  await vi.waitFor(() => expect(translateX(wrapper)).toBe("300"));
+  // Collision shift had moved the open popover 60px left; the first pick locks it where it is.
+  vi.spyOn(c, "getBoundingClientRect").mockReturnValue(rect(240, 36, 384, 330));
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(translateX(wrapper)).toBe("240"));
+});
+
+test("multi: a filter with no match says so, instead of the empty-list text", async () => {
+  multi();
+  await userEvent.click(screen.getByRole("button", { name: "Add skill" }));
+  await screen.findByRole("listbox");
+  await userEvent.keyboard("zzz");
+  expect(screen.getByText("No matches.")).toBeInTheDocument();
 });

@@ -18,6 +18,7 @@ import {
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { resolveImage } from "../images/resolve.ts";
+import { type LibraryIndex, skillProblem } from "../library/library-index.ts";
 import { parseJson, parseYaml } from "./parse.ts";
 
 export interface ValidationContext {
@@ -26,7 +27,8 @@ export interface ValidationContext {
   templates: Set<string>;
   /** Names whose `images/<name>/Dockerfile` exists. */
   userImages: Set<string>;
-  hostSkillsDir: string;
+  /** Where every listed skill is resolved (spec §6.6). */
+  library: Pick<LibraryIndex, "resolveSkill">;
   /** `localRuntimeAllowed(config)`: the one gate rule. */
   localRuntimeAllowed: boolean;
 }
@@ -134,14 +136,13 @@ export async function validateEffective(
 
     const localSkills = await localSkillNames(ctx.templateDir, issues);
     for (const [i, n] of config.skills.entries()) {
-      if (!(await isDir(path.join(ctx.hostSkillsDir, n))))
-        t("error", ["skills", i], `Host skill ${n} is missing from ${ctx.hostSkillsDir}.`);
-      if (localSkills.has(n))
-        t(
-          "error",
-          ["skills", i],
-          `Host skill ${n} has the same name as a template skill in skills/.`,
-        );
+      // A name that is also a template skill is a collision whether or not the Library has it (spec §5.2).
+      if (localSkills.has(n)) {
+        t("error", ["skills", i], `Skill ${n} has the same name as a template skill in skills/.`);
+        continue;
+      }
+      const found = await ctx.library.resolveSkill(n);
+      if (!found.ok) t("error", ["skills", i], skillProblem(n, found));
     }
     const image = config.image ? resolveImage(config.image, "") : undefined;
     if (image?.kind === "user" && !ctx.userImages.has(image.name))

@@ -1,6 +1,7 @@
 import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { HOST_SKILL_PATTERN, NAME_PATTERN } from "@open-factory/shared";
+import { NAME_PATTERN } from "@open-factory/shared";
+import { type LibraryIndex, skillProblem } from "../library/library-index.ts";
 import { SafeFs, UnsafePathError, WorkspaceError } from "./safe-fs.ts";
 
 export { WorkspaceError };
@@ -13,20 +14,29 @@ async function isDir(p: string): Promise<boolean> {
   }
 }
 
-export async function resolveHostSkills(
-  hostSkillsDir: string,
+/**
+ * Resolves the listed Library skills to their recorded real folders (spec §6.4). A name that doesn't resolve fails the
+ * start with §6.6's message for the reason. The fix is `template` when the template itself lists the name
+ * (`templateListed`), else `config` (I2 §6.5).
+ */
+export async function resolveSkills(
+  lib: Pick<LibraryIndex, "resolveSkill">,
   names: string[],
-): Promise<{ name: string; dir: string; realDir: string }[]> {
-  const out: { name: string; dir: string; realDir: string }[] = [];
+  templateListed: string[] = [],
+): Promise<{ name: string; dir: string }[]> {
+  const out: { name: string; dir: string }[] = [];
   for (const name of names) {
-    const dir = path.join(hostSkillsDir, name);
-    if (!HOST_SKILL_PATTERN.test(name) || !(await isDir(dir))) {
+    const r = await lib.resolveSkill(name);
+    if (!r.ok) {
+      const diagnosis = skillProblem(name, r);
+      const inTemplate = templateListed.includes(name);
       throw new WorkspaceError(
-        `Host skill ${name} is missing from ${hostSkillsDir}.`,
-        "edit_agent",
+        `${diagnosis} Fix it in ${inTemplate ? "Templates" : "Configuration"}.`,
+        inTemplate ? "template" : "config",
+        diagnosis,
       );
     }
-    out.push({ name, dir, realDir: await realpath(dir) });
+    out.push({ name, dir: r.dir });
   }
   return out;
 }
@@ -94,27 +104,33 @@ async function syncLinks(
     if (!st?.isSymbolicLink()) continue;
     if (opts.onlyUnder) {
       const to = await readlink(path.join(parent, name));
-      if (!opts.onlyUnder.some((u) => to.startsWith(path.resolve(u) + path.sep))) continue;
+      if (
+        !opts.onlyUnder.some(
+          (u) => to === path.resolve(u) || to.startsWith(path.resolve(u) + path.sep),
+        )
+      )
+        continue;
     }
     if (write) await safe.removeLink(rel);
   }
 }
 
-/** Links the host skills and the template's own skills into `.claude/skills/` (spec §6.4). One
- *  sync covers both prefixes, so a removed skill's link goes while the agent's own real folders stay. */
+/** Links the Library skills and the template's own skills into `.claude/skills/` (spec §6.4). One sync covers every
+ *  prefix (`prefixes` from `LibraryIndex.linkPrefixes`, plus the template's `skills/`), so a removed skill's link goes
+ *  while the agent's own real folders stay. Links point at the real folder. */
 export async function linkSkills(
   workdir: string,
-  host: { dir: string; skills: { name: string; dir: string }[] },
+  library: { name: string; dir: string }[],
   template: { templateDir: string; skills: { name: string; realDir: string }[] },
-  opts?: { checkOnly?: boolean },
+  opts: { checkOnly?: boolean; prefixes: string[] },
 ): Promise<void> {
   const parentRel = path.join(".claude", "skills");
   const parent = path.join(workdir, parentRel);
-  // One link per name: a template skill would silently replace the host skill the config lists.
-  const hostNames = new Set(host.skills.map((s) => s.name));
-  const clash = template.skills.find((s) => hostNames.has(s.name));
+  // One link per name: a template skill would silently replace the Library skill the config lists.
+  const libraryNames = new Set(library.map((s) => s.name));
+  const clash = template.skills.find((s) => libraryNames.has(s.name));
   if (clash) {
-    const diagnosis = `Skill ${clash.name} is both a host skill and a template skill.`;
+    const diagnosis = `Skill ${clash.name} is both a Library skill and a template skill.`;
     throw new WorkspaceError(`${diagnosis} Fix it in Configuration.`, "config", diagnosis);
   }
   let realTemplate: string;
@@ -128,10 +144,10 @@ export async function linkSkills(
     workdir,
     parentRel,
     [
-      ...host.skills.map((s) => ({
+      ...library.map((s) => ({
         name: s.name,
         target: s.dir,
-        notLinkMessage: `${path.join(parent, s.name)} isn't a link to the host skill; move it away.`,
+        notLinkMessage: `${path.join(parent, s.name)} isn't a link to the skill; move it away.`,
       })),
       ...template.skills.map((s) => ({
         name: s.name,
@@ -140,8 +156,8 @@ export async function linkSkills(
       })),
     ],
     {
-      ...opts,
-      onlyUnder: [host.dir, path.join(realTemplate, "skills")],
+      ...(opts.checkOnly ? { checkOnly: true } : {}),
+      onlyUnder: [...opts.prefixes, path.join(realTemplate, "skills")],
     },
   );
 }

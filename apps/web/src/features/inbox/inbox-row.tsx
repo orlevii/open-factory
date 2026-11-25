@@ -162,6 +162,7 @@ export const InboxRow = memo(function InboxRow({
   const preview = useMemo(() => previewOf(item.preview), [item.preview]);
   const common: RowCommon = {
     "data-inbox-id": item.id,
+    "data-row": "",
     "aria-label": labelOf(item, time, now),
     "aria-describedby": hasPreview ? previewId : undefined,
     "aria-current": selected ? ("true" as const) : undefined,

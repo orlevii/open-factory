@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConfigDoc } from "./config.ts";
-import { describeChanges, summarizeChanges } from "./config-changes.ts";
+import { describeChanges, describeDocChanges, summarizeChanges } from "./config-changes.ts";
 
 const doc = (
   p: {
@@ -14,9 +14,9 @@ const doc = (
   mcp: { mcpServers: p.mcp ?? {} },
 });
 const diff = (a: Parameters<typeof doc>[0], b: Parameters<typeof doc>[0]) =>
-  describeChanges(doc(a), doc(b));
+  describeDocChanges(doc(a), doc(b));
 
-describe("describeChanges", () => {
+describe("describeDocChanges", () => {
   it("shows model and effort values", () => {
     expect(diff({ template: { model: "sonnet" } }, { template: { model: "opus" } })).toEqual([
       "model: sonnet → opus",
@@ -197,7 +197,7 @@ describe("describeChanges", () => {
       settings: { env: { A: "1" }, permissions: { allow: ["R"] } },
       mcp: { s: { command: "c" } },
     });
-    expect(describeChanges(d, structuredClone(d))).toEqual([]);
+    expect(describeDocChanges(d, structuredClone(d))).toEqual([]);
   });
 
   it("is sorted and stable", () => {
@@ -206,9 +206,9 @@ describe("describeChanges", () => {
       template: { model: "m", skills: ["z", "a"] },
       settings: { env: { B: "1", A: "1" } },
     });
-    const lines = describeChanges(a, b);
+    const lines = describeDocChanges(a, b);
     expect(lines).toEqual([...lines].sort());
-    expect(describeChanges(a, b)).toEqual(lines);
+    expect(describeDocChanges(a, b)).toEqual(lines);
   });
 
   it("keeps a rule with a newline on one line", () => {
@@ -256,4 +256,73 @@ describe("summarizeChanges", () => {
     ).toBe("can spawn, template skills, 1 template skill"));
 
   it("is empty for no lines", () => expect(summarizeChanges([])).toBe(""));
+});
+
+describe("describeChanges with the Library", () => {
+  const side = (
+    skills: Record<string, string>,
+    plugins: Record<string, string> = {},
+    d = doc(),
+  ) => ({ doc: d, library: { skills, plugins } });
+  const sha = (c: string) => `github:${c.repeat(40)}`;
+
+  it("shows a repin of a GitHub skill with short hashes", () => {
+    expect(describeChanges(side({ x: sha("a") }), side({ x: sha("e") }))).toEqual([
+      "skill x updated aaaaaaa → eeeeeee",
+    ]);
+  });
+
+  it("shows a change of source kind", () => {
+    expect(describeChanges(side({ x: "host" }), side({ x: sha("a") }))).toEqual([
+      "skill x now from GitHub",
+    ]);
+    expect(describeChanges(side({ x: sha("a") }), side({ x: "folder" }))).toEqual([
+      "skill x now from a folder",
+    ]);
+  });
+
+  it("a library-only difference is non-empty while the docs are equal", () => {
+    const same = doc({ template: { skills: ["x"] } });
+    expect(describeDocChanges(same, same)).toEqual([]);
+    expect(
+      describeChanges(side({ x: sha("a") }, {}, same), side({ x: sha("b") }, {}, same)),
+    ).not.toEqual([]);
+  });
+
+  it("an unchanged ref, a skill that can't be resolved on a side and a one-sided name show nothing", () => {
+    expect(describeChanges(side({ x: sha("a") }), side({ x: sha("a") }))).toEqual([]);
+    expect(describeChanges(side({ x: sha("a") }), side({ x: "missing" }))).toEqual([]);
+    expect(describeChanges(side({ x: "missing" }), side({ x: sha("a") }))).toEqual([]);
+    expect(describeChanges(side({}), side({ x: sha("a") }))).toEqual([]);
+  });
+
+  it("merges the doc's lines with the library's, sorted", () => {
+    const lines = describeChanges(
+      side({ x: sha("a") }, {}, doc({ template: { model: "a" } })),
+      side({ x: sha("b") }, {}, doc({ template: { model: "b" } })),
+    );
+    expect(lines).toEqual(["model: a → b", "skill x updated aaaaaaa → bbbbbbb"]);
+  });
+
+  it("shows a plugin update, and a hex version as a commit", () => {
+    expect(
+      describeChanges(side({}, { "p@m": "1.2.0/abc1234" }), side({}, { "p@m": "1.3.0/def5678" })),
+    ).toEqual(["plugin p@m updated 1.2.0 → 1.3.0"]);
+    expect(
+      describeChanges(
+        side({}, { "p@m": "0120fb8aaaa/abc1234" }),
+        side({}, { "p@m": "9a8b7c6bbbb/def5678" }),
+      ),
+    ).toEqual(["plugin p@m updated commit 0120fb8 → 9a8b7c6"]);
+  });
+
+  it("summarizes library lines under skills and plugins", () => {
+    expect(
+      summarizeChanges([
+        "skill x updated aaaaaaa → bbbbbbb",
+        "skill y now from GitHub",
+        "plugin p@m updated 1 → 2",
+      ]),
+    ).toBe("2 skills, 1 plugin");
+  });
 });

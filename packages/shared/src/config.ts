@@ -195,11 +195,3 @@ export const putTemplateConfigResponseSchema = z.object({
   issues: z.array(templateIssueSchema),
 });
 export type PutTemplateConfigResponse = z.infer<typeof putTemplateConfigResponseSchema>;
-
-/** `GET /api/host-skills` (I2 §12.1): the folders of the host skills dir that hold a `SKILL.md`. */
-export const HOST_SKILL_DESCRIPTION_MAX = 200;
-export const hostSkillsResponseSchema = z.object({
-  dir: z.string(),
-  skills: z.array(z.object({ name: z.string(), description: z.string() })),
-});
-export type HostSkillsResponse = z.infer<typeof hostSkillsResponseSchema>;

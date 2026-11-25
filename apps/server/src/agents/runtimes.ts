@@ -2,7 +2,7 @@ import type { AgentRow } from "@open-factory/db";
 import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
 import {
   type AgentStatus,
-  type ConfigDoc,
+  type ConfigSnapshot,
   errorKindSchema,
   type QueueItem,
 } from "@open-factory/shared";
@@ -298,6 +298,11 @@ export class AgentRuntimes {
     if (rt) rt.nextImage = ref;
   }
 
+  /** What every loaded runtime's running process started with (the Library sweep reads its cache directories). */
+  allStarted(): Effective[] {
+    return [...this.loaded.values()].flatMap((rt) => (rt.started ? [rt.started] : []));
+  }
+
   /** I2 §6.2: what a loaded runtime's running process started with; undefined when not loaded or not running. */
   startedOf(agentId: string): Effective | undefined {
     return this.loaded.get(agentId)?.started;
@@ -431,7 +436,7 @@ export class AgentRuntimes {
     opts: {
       changes?: string[];
       wake?: boolean;
-      current?: () => Promise<ConfigDoc | undefined>;
+      current?: () => Promise<ConfigSnapshot | undefined>;
     } = {},
   ): Promise<void> {
     await (await this.get(agentId))?.requestRestart(opts);

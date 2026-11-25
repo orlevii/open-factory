@@ -1,6 +1,6 @@
 import { memo, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Elapsed } from "@/components/elapsed";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { useDocumentVisible } from "@/hooks/use-document-visible";
 import {
   type Activity,
   type ActivityLive,
@@ -11,42 +11,11 @@ import {
   mcpParts,
   WORKING,
 } from "./activity";
-import { formatBytes, formatDuration } from "./format";
+import { formatBytes } from "./format";
 import type { OpenTurnRows } from "./rows";
 import { ROW_GUTTER } from "./timeline-item";
 import { McpName } from "./tools/mcp-name";
 import { useSampled } from "./use-sampled";
-
-/** Time elapsed since `since`, ticking on whole seconds; paused while the tab is hidden and recomputed
- *  at once when it returns (or `since` changes), never as a second render on mount. Its own state, so
- *  nothing else re-renders per tick. An unparseable `since` renders nothing (never "NaNs"). */
-export const Elapsed = memo(function Elapsed({ since }: { since: string }) {
-  const visible = useDocumentVisible();
-  const start = Date.parse(since);
-  const valid = !Number.isNaN(start);
-  const [now, setNow] = useState(Date.now);
-  // What the state was last computed for: the mount's initial state already is, so no catch-up render.
-  const synced = useRef({ visible, start });
-  useEffect(() => {
-    if (!visible || !valid) {
-      synced.current.visible = visible;
-      return;
-    }
-    if (synced.current.visible !== visible || synced.current.start !== start) setNow(Date.now());
-    synced.current = { visible, start };
-    let timer: ReturnType<typeof setTimeout>;
-    const tick = () => {
-      const t = Date.now();
-      setNow(t);
-      timer = setTimeout(tick, 1000 - (Math.max(0, t - start) % 1000));
-    };
-    const t0 = Date.now();
-    timer = setTimeout(tick, 1000 - (Math.max(0, t0 - start) % 1000));
-    return () => clearTimeout(timer);
-  }, [visible, start, valid]);
-  if (!valid) return null;
-  return <span className="shrink-0 tabular-nums">{formatDuration(now - start)}</span>;
-});
 
 const VERB: Partial<Record<string, string>> = {
   Bash: "Running",

@@ -15,6 +15,7 @@ import path from "node:path";
 import { createFakeClaude, type FakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { beforeEach, expect, test } from "vitest";
+import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import { KeyedMutex } from "./lock.ts";
 import { MountRefusedError } from "./mounts.ts";
 import { pluginsConfigDir } from "./paths.ts";
@@ -37,8 +38,9 @@ beforeEach(async () => {
   hostDir = tmp("host-");
   secretFile = path.join(tmp("secret-"), "id_ed25519");
   writeFileSync(secretFile, "PRIVATE KEY");
-  const hs = tmp("hs-");
-  mkdirSync(path.join(hs, "grilling"));
+  const claude = tmp("claude-");
+  const hs = path.join(claude, "skills");
+  writeHostSkill(claude, "grilling");
   const repo = tmp("repo-");
   const tdir = path.join(home, "templates/lead");
   mkdirSync(path.join(tdir, "skills/local"), { recursive: true });
@@ -56,7 +58,7 @@ beforeEach(async () => {
   writeFileSync(cliBundle, "//");
   ws = new Workspace({
     factoryHome: home,
-    hostSkillsDir: hs,
+    library: hostOnlyLibrary(claude, home),
     claudeBin: fake.bin,
     cliBundle,
     lock: new KeyedMutex(),
@@ -71,6 +73,8 @@ beforeEach(async () => {
       doc: { template: {}, settings: {}, mcp: { mcpServers: {} } },
       config,
       templatePlugins: [],
+      templateSkills: [],
+      library: { skills: {}, plugins: {} },
     },
     manager: null,
     grants: [{ name: "app", hostPath: repo }],
@@ -166,6 +170,8 @@ function withPlugins() {
       doc: { ...prep.effective.doc, settings: tpl.tplSettings },
       config,
       templatePlugins: [],
+      templateSkills: [],
+      library: { skills: {}, plugins: {} },
     },
   };
 }
@@ -297,7 +303,7 @@ test("a granted project inside FACTORY_HOME fails the Docker start", async () =>
   asDocker();
   await expect(prepareAgent()).rejects.toBeInstanceOf(MountRefusedError);
   await expect(prepareAgent()).rejects.toThrow(
-    `Mount ${other} isn't allowed: it is inside FACTORY_HOME and isn't this agent's workdir or plugins dir.`,
+    `Mount ${other} isn't allowed: it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or the plugin store.`,
   );
 });
 

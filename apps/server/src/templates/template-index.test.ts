@@ -11,21 +11,24 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
-import { type ConfigDoc, describeChanges } from "@open-factory/shared";
+import { type ConfigDoc, describeDocChanges } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { loadConfig } from "../config.ts";
 import { ApiError } from "../errors.ts";
+import type { LibraryIndex } from "../library/library-index.ts";
 import { claimTestHandle } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import { configDocHash, type TemplateChange, TemplateIndex } from "./template-index.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let idx: TemplateIndex;
 let home: string;
 let cfg: ReturnType<typeof loadConfig>;
-const hostSkills = mkdtempSync(path.join(tmpdir(), "hs-"));
-for (const n of ["tdd", "release"]) mkdirSync(path.join(hostSkills, n));
+const hostClaude = mkdtempSync(path.join(tmpdir(), "hs-"));
+for (const n of ["tdd", "release"]) writeHostSkill(hostClaude, n);
+let library: LibraryIndex;
 const SECRET = "sk-ant-oat01-SECRETSHAPED0123456789";
 const events: TemplateChange[] = [];
 const eventsFor = (name: string) => events.filter((e) => e.name === name);
@@ -40,9 +43,10 @@ beforeAll(async () => {
     DATABASE_URL: t.url,
     FACTORY_SECRET_KEY: "k".repeat(40),
     FACTORY_HOME: home,
-    FACTORY_HOST_SKILLS_DIR: hostSkills,
+    FACTORY_HOST_CLAUDE_DIR: hostClaude,
   });
-  idx = new TemplateIndex({ db: t.db, config: cfg });
+  library = hostOnlyLibrary(hostClaude, home);
+  idx = new TemplateIndex({ db: t.db, config: cfg, library });
   idx.onChange((e) => {
     events.push(e);
   });
@@ -247,7 +251,7 @@ test("I2 §7.2: adding a skills/ folder fires onChange once; the diff says added
   expect(e).toHaveLength(2);
   const [, change] = e;
   if (!change?.before) throw new Error("no before");
-  expect(describeChanges(change.before, change.after)).toEqual(["added template skill x"]);
+  expect(describeDocChanges(change.before, change.after)).toEqual(["added template skill x"]);
   // The resolver's strict parse still accepts the doc (the key is stripped).
   expect((await idx.loadValid("cd-ls")).doc.template.local_skill_names).toEqual(["x"]);
 });
@@ -333,7 +337,7 @@ test("a write through the API reports its author; scanOne never awaits listeners
   const gate = new Promise<void>((r) => {
     release = r;
   });
-  const slow = new TemplateIndex({ db: t.db, config: cfg });
+  const slow = new TemplateIndex({ db: t.db, config: cfg, library });
   const slowSeen: TemplateChange[] = [];
   slow.onChange(async (e) => {
     started = true;
@@ -361,7 +365,7 @@ test("a write through the API reports its author; scanOne never awaits listeners
 test("a failing listener is logged and does not stop the next one", async () => {
   const logged: unknown[] = [];
   const log = { error: (...a: unknown[]) => void logged.push(a) };
-  const own = new TemplateIndex({ db: t.db, config: cfg, log: log as never });
+  const own = new TemplateIndex({ db: t.db, config: cfg, library, log: log as never });
   const seen: string[] = [];
   own.onChange(() => {
     throw new Error("listener boom");

@@ -130,6 +130,13 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     description: (spec: { name: string }) => spec.name,
     descriptionClass: "font-mono",
   },
+  "add-skills": {
+    load: () => import("@/features/skills/add-skills-sheet"),
+    prefetch(qc) {
+      warm(qc, hostQueryOptions);
+    },
+    title: "Add skills",
+  },
   "edit-schedule": {
     load: () => import("@/features/schedules/edit-schedule-sheet"),
     prefetch(qc, spec: { key: string }) {

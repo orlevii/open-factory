@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactElement, type ReactNode, useMemo, useRef, useState } from "react";
 import { Combobox, type ComboOption } from "@/components/ui/combobox";
 import type { AddSlot } from "./config-list";
 
@@ -48,3 +48,67 @@ export function PickAdd({
 /** The empty text of a picker over a query: loading, failed, or nothing left to add. */
 export const pickEmpty = (q: { isPending: boolean; isError: boolean }, none: string): string =>
   q.isError ? "Couldn't load the list." : q.isPending ? "Loading…" : none;
+
+/**
+ * A list's multi-pick add (skills): a caller trigger opens a Combobox that stays open across picks. A pick adds
+ * through the list's own add without scrolling the page; the last added row scrolls into view once the popover
+ * closes. "Added <name>" is announced from a polite live region next to the trigger, outside the popover, so it
+ * survives the close.
+ */
+export function PickAddMany({
+  slot,
+  label,
+  options,
+  emptyText,
+  renderOption,
+  renderGroup,
+  footer,
+  picked,
+  trigger,
+}: {
+  slot: AddSlot;
+  label: string;
+  options: ComboOption[];
+  emptyText: string;
+  renderOption?: (o: ComboOption) => ReactNode;
+  renderGroup?: (group: string) => ReactNode;
+  footer?: ReactNode;
+  /** Every name already in the list (this agent's and the template's). */
+  picked: readonly string[];
+  trigger: ReactElement;
+}) {
+  // `picked` may be a fresh array each render (the draft is read tolerantly): its joined names are the key.
+  const key = picked.join("\0");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the primitive form of `picked`
+  const added = useMemo(() => new Set(picked), [key]);
+  const [said, setSaid] = useState("");
+  const multiple = useMemo(() => ({ added, announce: setSaid }), [added]);
+  const last = useRef<string>(undefined);
+  return (
+    <>
+      <Combobox
+        value=""
+        onValueChange={(v) => {
+          last.current = v;
+          slot.add(v, { scroll: false });
+        }}
+        options={options}
+        emptyText={emptyText}
+        aria-label={label}
+        renderOption={renderOption}
+        renderGroup={renderGroup}
+        footer={footer}
+        multiple={multiple}
+        trigger={trigger}
+        onOpen={() => setSaid("")}
+        onClose={() => {
+          if (last.current !== undefined) slot.reveal(last.current);
+          last.current = undefined;
+        }}
+      />
+      <span role="status" className="sr-only">
+        {said}
+      </span>
+    </>
+  );
+}

@@ -425,3 +425,19 @@ test("phone: closing a long-pressed row's drawer returns focus to the row's ⋯,
     window.matchMedia = original;
   }
 });
+
+test("j and k move between the schedules' row buttons", async () => {
+  mockApi({
+    "GET /api/agents?": agents,
+    "GET /api/schedules?": () => list([sched(1), sched(2), sched(3)]),
+  });
+  renderApp("/schedules", alice);
+  const first = await screen.findByRole("button", { name: /^S-1,/ });
+  first.focus();
+  fireEvent.keyDown(first, { key: "j" });
+  expect(screen.getByRole("button", { name: /^S-2,/ })).toHaveFocus();
+  fireEvent.keyDown(screen.getByRole("button", { name: /^S-2,/ }), { key: "j" });
+  expect(screen.getByRole("button", { name: /^S-3,/ })).toHaveFocus();
+  fireEvent.keyDown(screen.getByRole("button", { name: /^S-3,/ }), { key: "k" });
+  expect(screen.getByRole("button", { name: /^S-2,/ })).toHaveFocus();
+});

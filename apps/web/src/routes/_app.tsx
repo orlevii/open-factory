@@ -20,6 +20,7 @@ import { SheetHost } from "@/features/sheets/sheet-host";
 import { GlobalShortcuts } from "@/features/shortcuts/global-shortcuts";
 import { useConnectionLost } from "@/lib/connection";
 import { installFileDropGuard } from "@/lib/file-drop";
+import { invalidateLibrary, onLibraryChanged } from "@/lib/library";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { installShortcuts } from "@/lib/shortcuts";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
@@ -104,6 +105,8 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["agents"] });
           void qc.invalidateQueries({ queryKey: ["agent"] });
         }
+        // I5: the Skills views refetch once per 250 ms window (only mounted ones fetch).
+        if (m.type === "library_changed") onLibraryChanged(qc, m);
         // S9: the Schedules page, an open edit page and the agents' schedule counts refetch (only mounted ones fetch).
         if (m.type === "schedules_changed") {
           void qc.invalidateQueries({ queryKey: ["schedules"] });
@@ -126,6 +129,8 @@ function AppLayout() {
         }
         // I2 §12.4: an open Configuration page (or template tab) refetches; nothing else reads these keys.
         if (m.type === "config_changed") {
+          // I5 §9.5: a template or agent change moves the Skills lists and used-by counts.
+          invalidateLibrary(qc);
           if (m.agent)
             void qc.invalidateQueries({
               queryKey: agentConfigQueryOptions(m.agent).queryKey,

@@ -18,9 +18,16 @@ const baseDoc = (): ConfigDoc => ({
   mcp: { mcpServers: { a: { command: "secret-cmd", args: ["--token", "s3cr3t"] } } },
 });
 
+const stubLibrary = {
+  resolveSkill: async (name: string) =>
+    name === "tdd"
+      ? { ok: true as const, name, dir: "/x/tdd", ref: "github:abc" }
+      : { ok: false as const, reason: "not_added" as const },
+};
+
 type Fake = { loadValid: (name: string) => Promise<{ doc: ConfigDoc }> };
 const resolverWith = (load: Fake["loadValid"]) =>
-  new ConfigResolver({ templates: { loadValid: load } as never });
+  new ConfigResolver({ templates: { loadValid: load } as never, library: stubLibrary });
 const resolverFor = (doc: ConfigDoc = baseDoc()) => resolverWith(async () => ({ doc }));
 
 const agent = (over: Omit<Partial<AgentRow>, "config"> & { config?: unknown } = {}): AgentRow =>
@@ -53,6 +60,13 @@ describe("ConfigResolver.effective", () => {
     expect(e.doc).toEqual(baseDoc());
     expect(e.config.skills).toEqual(["grilling"]);
     expect(e.config.maxLiveSpawns).toBe(2);
+  });
+
+  test("records the Library's ref of each listed skill, and missing for one that doesn't resolve", async () => {
+    const doc = baseDoc();
+    doc.template.skills = ["tdd", "grilling"];
+    const e = await resolverFor(doc).effective(agent());
+    expect(e.library).toEqual({ skills: { tdd: "github:abc", grilling: "missing" }, plugins: {} });
   });
 
   test("merges the overlay into the template, settings and mcp", async () => {

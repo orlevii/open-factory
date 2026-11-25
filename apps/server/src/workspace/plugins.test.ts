@@ -14,15 +14,10 @@ import { createFakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { AgentStartError } from "../agents/errors.ts";
+import { hostOnlyLibrary } from "../test/library.ts";
 import { KeyedMutex } from "./lock.ts";
 import { pluginsConfigDir } from "./paths.ts";
-import {
-  capOutput,
-  installPlugins,
-  marketplaceSourceArg,
-  PluginInstallError,
-  redactOutput,
-} from "./plugins.ts";
+import { installPlugins, marketplaceSourceArg, PluginInstallError } from "./plugins.ts";
 import { WorkspaceError } from "./safe-fs.ts";
 import { Workspace } from "./workspace.ts";
 
@@ -78,33 +73,13 @@ test("the install budget is enforced", async () => {
     }),
   ).rejects.toThrow("Plugin install took longer than 4 minutes.");
 });
-test("source args and redaction", () => {
+test("marketplace source args", () => {
   expect(marketplaceSourceArg({ source: { source: "git", url: "https://h/r.git" } })).toBe(
     "https://h/r.git",
   );
   expect(marketplaceSourceArg({ source: { source: "github", repo: "o/r" } })).toBe("o/r");
-  expect(redactOutput("clone https://user:pw@host/x sk-ant-oat01-abc")).toBe(
-    "clone https://[redacted]@host/x [redacted]",
-  );
 });
 
-test("redaction covers tokens, bearer, query secrets and userinfo with @", () => {
-  expect(redactOutput("https://u:p@ss@h/x")).toBe("https://[redacted]@h/x");
-  expect(redactOutput("ssh://git:pw@h/x")).toBe("ssh://[redacted]@h/x");
-  const out = redactOutput(
-    "ghp_abcDEF123 github_pat_11AA_bb glpat-xyz_1-2 Authorization: Bearer abc.def?x=1 u?access_token=zzz&password=hunter2&token=t1",
-  );
-  for (const secret of [
-    "ghp_abcDEF123",
-    "github_pat_11AA_bb",
-    "glpat-xyz_1-2",
-    "abc.def",
-    "zzz",
-    "hunter2",
-    "t1",
-  ])
-    expect(out).not.toContain(secret);
-});
 test("failure message and output are redacted; timeouts say so; dash-leading args refused", async () => {
   const fake = createFakeClaude({
     scenario: "reply",
@@ -149,7 +124,7 @@ test("failure message and output are redacted; timeouts say so; dash-leading arg
 // Spec §11.7: plugins live in the factory-owned plugins-config/, linked into the agent's config dir.
 async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {}) {
   const home = realpathSync(mkdtempSync(path.join(tmpdir(), "of-plug-")));
-  const hs = mkdtempSync(path.join(tmpdir(), "hs-"));
+  const claude = mkdtempSync(path.join(tmpdir(), "claude-"));
   const tdir = path.join(home, "templates/lead");
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Lead\n");
@@ -162,7 +137,7 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
   const fake = createFakeClaude({ scenario: "reply", env: fakeEnv });
   const ws = new Workspace({
     factoryHome: home,
-    hostSkillsDir: hs,
+    library: hostOnlyLibrary(claude, home),
     claudeBin: fake.bin,
     cliBundle: "/nonexistent/open-factory.js",
     lock: new KeyedMutex(),
@@ -178,6 +153,8 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
       doc: { template: {}, settings: tplSettings, mcp: tpl.tplMcp },
       config,
       templatePlugins: [],
+      templateSkills: [],
+      library: { skills: {}, plugins: {} },
     },
     manager: null,
     grants: [],
@@ -212,6 +189,8 @@ async function setupAgent(plugins: string[], fakeEnv: Record<string, string> = {
       ...prep.effective,
       config: { ...prep.effective.config, plugins: list },
       templatePlugins: fromTemplate,
+      templateSkills: [],
+      library: { skills: {}, plugins: {} },
     },
   });
   return { home, ws, tpl, prep, workdir, pluginRuns, pluginLog, withPlugins };
@@ -334,6 +313,8 @@ test("a failure with no output still says why, redacted", async () => {
         },
         config: { ...prep.effective.config, plugins: ["b@mk2"] },
         templatePlugins: [],
+        templateSkills: [],
+        library: { skills: {}, plugins: {} },
       },
     })
     .catch((e) => e);
@@ -353,10 +334,6 @@ test("a failed install's output is the last 20 lines, at most 4 KB", async () =>
   expect(Buffer.byteLength(err.detail)).toBeLessThanOrEqual(4096);
   expect(err.detail).toContain("line 59 ");
   expect(err.detail).not.toContain("line 10 ");
-  const few = Array.from({ length: 30 }, (_, i) => `short ${i}`).join("\n");
-  expect(capOutput(few).split("\n")).toHaveLength(20);
-  expect(capOutput(few)).toContain("short 29");
-  expect(capOutput(few)).not.toContain("short 9\n");
 });
 
 test("a real plugins folder is refused, never moved aside", async () => {

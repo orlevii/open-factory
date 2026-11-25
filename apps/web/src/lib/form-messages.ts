@@ -45,4 +45,16 @@ export const FORM_MSG = {
   restartsReports: "Saving restarts its reports when idle.",
   restartsBoth: "Saving restarts it and its reports.",
   signInOtherPanel: "Another sign-in is open; Start ends it.",
+  loadSkills: "Couldn't load skills.",
+  pickAtLeastOne: "Pick at least one skill.",
+  sourceChanged: "The source changed. Find skills again.",
+  checkFailed: "Couldn't check for updates.",
+  noSourcesToCheck: "No sources to check.",
+  noMatches: "No matches.",
+  noneAddable: "None of these can be added.",
+  noMoreSkills: "No more skills to add.",
+  selectAll: "Select all",
+  selectNone: "Select none",
+  // The label of the row action, which is also the server's `stateDetail` for a cache that needs a fetch (no code yet).
+  fetchAgain: "Fetch again",
 } as const;

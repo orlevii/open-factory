@@ -35,11 +35,6 @@ export interface Config {
   factoryTimezone: string;
 }
 
-/** The one gate rule (spec §13): start, validator, live status and Restart all ask this. */
-export function localRuntimeAllowed(c: Pick<Config, "allowLocalRuntime">): boolean {
-  return c.allowLocalRuntime;
-}
-
 /** Shown wherever the gate is off (validator warning, live status, Restart's 409). */
 export const LOCAL_RUNTIME_DISABLED = "The local runtime is disabled on this factory.";
 /** The start failure: the same gate, with the fix. */

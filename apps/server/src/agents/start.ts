@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import type { AgentRuntimeSpec } from "@open-factory/harness";
 import { asc, eq, inArray } from "drizzle-orm";
-import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
+import { type Config, LOCAL_RUNTIME_START_MESSAGE } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -162,7 +162,7 @@ export async function deriveInheritance(
     },
     effective.config,
     readDenyRules(effective.doc.settings),
-    { localRuntimeAllowed: localRuntimeAllowed(d.config) },
+    { localRuntimeAllowed: d.config.allowLocalRuntime },
   );
   // A refusal is the spawn-time sentence; no fix, since configuring a spawned agent can't lift it.
   if (!inherited.ok) throw new AgentStartError(inherited.refusal);
@@ -195,7 +195,7 @@ export function createPrepareStart(d: {
       if (!agent) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
       if (agent.archivedAt) throw new AgentArchivedError(agent.slug);
       // The local gate fails closed before anything else: no prepare, no mounts, no process (spec §13).
-      if (agent.runtime === "local" && !localRuntimeAllowed(d.config))
+      if (agent.runtime === "local" && !d.config.allowLocalRuntime)
         throw new AgentStartError(LOCAL_RUNTIME_START_MESSAGE, "runtime");
       const effective = await d.resolver.effective(agent);
       const config = effective.config;

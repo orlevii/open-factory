@@ -27,7 +27,7 @@ export interface ValidationContext {
   templates: Set<string>;
   /** Where every listed skill is resolved (spec §6.6). */
   library: Pick<LibraryIndex, "resolveSkill">;
-  /** `localRuntimeAllowed(config)`: the one gate rule. */
+  /** `config.allowLocalRuntime`: the one gate rule. */
   localRuntimeAllowed: boolean;
 }
 

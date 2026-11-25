@@ -590,7 +590,7 @@ describe("SignInAttempts", () => {
     expect(s.view("u1")?.url).toBe(URL_);
     const e = await s.wait("u1", a.attemptId).catch((x) => x);
     expect(e.extra.attempt.url).toBeUndefined();
-    expect(e.extra.attempt.codeDeadline).toBeDefined();
+    expect(e.extra.attempt.codeDeadline).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/);
     const sub = store();
     const b = await sub.s.start("u1", {});
     const submitted = sub.s.submit("u1", b.attemptId, { code: CODE, name: "work" });

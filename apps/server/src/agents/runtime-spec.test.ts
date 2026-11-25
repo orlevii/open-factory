@@ -51,32 +51,39 @@ test("env is the allowlist plus config dir, credential, secrets and git identity
   });
 });
 
-test("secrets can never override PATH, the credential var, the config dir or the git identity", () => {
-  const env = buildAgentEnv(
-    serverEnv,
-    {
-      configDir: "/c",
-      slug: "a1",
-      credential: { kind: "oauth_token", value: "factory-token" },
-      agentToken: "t",
-      secrets: {
-        PATH: "/evil",
-        ANTHROPIC_API_KEY: "evil-key",
-        CLAUDE_CODE_OAUTH_TOKEN: "evil-token",
-        CLAUDE_CONFIG_DIR: "/evil",
-        GIT_AUTHOR_NAME: "evil",
-        GH_TOKEN: "gh",
-      },
-    },
-    "local",
-  );
-  expect(env.PATH).toBe("/usr/bin");
-  expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("factory-token");
-  expect(env.CLAUDE_CONFIG_DIR).toBe("/c");
-  expect(env.GIT_AUTHOR_NAME).toBe("a1");
-  expect(env.GH_TOKEN).toBe("gh");
+test.each([
+  ["PATH", "/usr/bin"],
+  ["CLAUDE_CODE_OAUTH_TOKEN", "factory-token"],
+  ["CLAUDE_CONFIG_DIR", "/c"],
+  ["GIT_AUTHOR_NAME", "a1"],
+  ["OPEN_FACTORY_AGENT_TOKEN", "t"],
+  ["DISABLE_AUTOUPDATER", "1"],
   // a secret named like the other credential var is not a way to set two credentials
-  expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+  ["ANTHROPIC_API_KEY", undefined],
+  ["DISABLE_UPDATES", undefined],
+] as const)("a secret named %s can't override the factory's value", (name, expected) => {
+  for (const runtime of ["local", "docker"] as const) {
+    const env = buildAgentEnv(
+      serverEnv,
+      {
+        configDir: "/c",
+        slug: "a1",
+        credential: { kind: "oauth_token", value: "factory-token" },
+        agentToken: "t",
+        secrets: { [name]: "evil" },
+      },
+      runtime,
+    );
+    // A container gets none of the host's env (its image supplies PATH), so the secret must not land there either.
+    const want = name === "PATH" && runtime === "docker" ? undefined : expected;
+    if (want === undefined) expect(env, runtime).not.toHaveProperty(name);
+    else expect(env[name], runtime).toBe(want);
+  }
+});
+
+test("a secret with a name the factory doesn't own is passed through", () => {
+  const env = buildAgentEnv(serverEnv, { ...extra, secrets: { GH_TOKEN: "gh" } }, "local");
+  expect(env.GH_TOKEN).toBe("gh");
 });
 
 test("api_key credentials set ANTHROPIC_API_KEY and never the OAuth var", () => {
@@ -254,23 +261,6 @@ test("model and effort are omitted when the snapshot sets none", () => {
   expect(spec).not.toHaveProperty("effort");
 });
 
-test("the agent token is the one variable S6 adds, and a secret can't override it", () => {
-  for (const runtime of ["local", "docker"] as const) {
-    const env = buildAgentEnv(
-      serverEnv,
-      {
-        configDir: "/w/.claude-config",
-        slug: "dev",
-        credential: { kind: "oauth_token", value: "cred" },
-        secrets: { OPEN_FACTORY_AGENT_TOKEN: "evil" },
-        agentToken: "tok",
-      },
-      runtime,
-    );
-    expect(env.OPEN_FACTORY_AGENT_TOKEN).toBe("tok");
-  }
-});
-
 test.each([
   ["oauth_token", "local"],
   ["api_key", "docker"],
@@ -291,14 +281,4 @@ test.each([
     expect(isFactoryEnvName(k), k).toBe(true);
   for (const k of Object.keys(env).filter((k) => k !== "GH_TOKEN" && !(k in serverEnv)))
     expect(isFactoryEnvName(k), k).toBe(true);
-});
-
-test("Claude Code never updates itself: DISABLE_AUTOUPDATER is always on and a secret can't switch updates off the factory's way", () => {
-  const env = buildAgentEnv(
-    serverEnv,
-    { ...extra, secrets: { DISABLE_UPDATES: "1", DISABLE_AUTOUPDATER: "0" } },
-    "local",
-  );
-  expect(env.DISABLE_AUTOUPDATER).toBe("1");
-  expect(env).not.toHaveProperty("DISABLE_UPDATES");
 });

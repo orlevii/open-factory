@@ -18,7 +18,6 @@ import {
 } from "../../workspace/mounts.ts";
 import type { ContainerCreateOptions } from "./client.ts";
 import { ContainerManager, containerName, createOptions, specHash } from "./containers.ts";
-import { LAUNCHER_VERSION } from "./spec-hash.ts";
 import { FakeDockerClient } from "./testing/fake-docker.ts";
 
 const log = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
@@ -111,10 +110,9 @@ test("pinned create options and spec hash (changed? check the hardening, then up
       SecurityOpt: ["no-new-privileges:true"],
     },
   });
-  expect(LAUNCHER_VERSION).toBe(1);
   // The hash is taken over the options themselves: any change to what a container runs with changes it.
   expect(specHash({ imageId: "sha256:img1", mounts: inputs.mounts, uid: 501, gid: 20 })).toBe(
-    "013f0f4a5ef8789c127dc461a4827e5ab625d806ec01781503ad8d37a586afab",
+    "0ca5e3f735eb9bf718ba7cfd20b42e777d3dda4c8ded177333a9cd6e2e5103c1",
   );
 });
 

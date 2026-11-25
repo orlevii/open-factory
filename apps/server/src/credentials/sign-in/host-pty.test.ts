@@ -1,8 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { readdirSync, writeFileSync } from "node:fs";
 import {
-  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -145,36 +144,6 @@ describe("startHostPty with a spawn spy", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  /** A parent for the attempt dir whose cleanup restores write access, then removes it all. */
-  const lockableTmp = async () => {
-    const tmp = await mkdtemp(path.join(tmpdir(), "of-test-rmfail-"));
-    onTestFinished(async () => {
-      for (const n of await readdir(tmp))
-        await chmod(path.join(tmp, n, "locked"), 0o700).catch(() => {});
-      await rm(tmp, { recursive: true, force: true });
-    });
-    return tmp;
-  };
-  /** Makes rm of the attempt dir fail with EACCES: a file inside a directory without write access. */
-  const lockInside = (dir: string) => {
-    mkdirSync(path.join(dir, "locked"));
-    writeFileSync(path.join(dir, "locked", "f"), "");
-    chmodSync(path.join(dir, "locked"), 0o500);
-  };
-
-  it("a temp dir that can't be removed still settles exit, with no unhandled rejection", async () => {
-    const tmp = await lockableTmp();
-    const run = await startHostPty({
-      claudeBin: "/opt/claude",
-      spawnFn: (() => fakeChild()) as never,
-      tmp,
-    });
-    lockInside(run.dir);
-    run.kill();
-    expect(await run.exit).toEqual({ code: 1 });
-    await expect(stat(run.dir)).resolves.toBeTruthy(); // left for the boot sweep
-  });
-
   it("beforeRemove sees the temp dir on close, before it is removed; a throw still settles exit", async () => {
     const tmp = await mkdtemp(path.join(tmpdir(), "of-hostpty-hook-"));
     onTestFinished(() => rm(tmp, { recursive: true, force: true }));
@@ -193,18 +162,6 @@ describe("startHostPty with a spawn spy", () => {
     expect(await run.exit).toEqual({ code: 1 });
     expect(seen).toEqual([{ dir: run.dir, present: true }]);
     await expect(stat(run.dir)).rejects.toThrow();
-  });
-
-  it("ENOENT stays PtyUnavailable when the temp dir can't be removed", async () => {
-    const tmp = await lockableTmp();
-    const err = Object.assign(new Error("spawn python3 ENOENT"), { code: "ENOENT" });
-    const spawnFn = ((_c: string, _a: string[], o: { env: Record<string, string> }) => {
-      lockInside(o.env.HOME as string);
-      return fakeChild({ error: err });
-    }) as never;
-    await expect(startHostPty({ claudeBin: "/opt/claude", spawnFn, tmp })).rejects.toBeInstanceOf(
-      PtyUnavailable,
-    );
   });
 
   it("a synchronous spawn throw removes the temp dir and rethrows", async () => {

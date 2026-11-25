@@ -46,7 +46,7 @@ export interface RuntimesDeps {
    * process's pid is not ours, and must never be journaled or signalled.
    */
   journal?: ProcessJournal;
-  /** The local gate, read live (`() => localRuntimeAllowed(config)`). */
+  /** The local gate, read live (`() => config.allowLocalRuntime`). */
   localRuntimeAllowed?: () => boolean;
   /**
    * The Docker runtime (spec §11): the one ContainerManager built in buildApp (never a second one), the in-container

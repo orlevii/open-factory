@@ -29,7 +29,7 @@ type RestartAgentDeps = {
   runtimes: AgentRuntimes;
   resolver: Pick<ConfigResolver, "effective">;
   router: Pick<Router, "send">;
-  /** The local gate, read live (`() => localRuntimeAllowed(config)`). */
+  /** The local gate, read live (`() => config.allowLocalRuntime`). */
   localRuntimeAllowed(): boolean;
 };
 

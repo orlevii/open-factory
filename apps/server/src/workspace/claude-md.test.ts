@@ -137,6 +137,12 @@ test("Messaging section names the factory tools and the rules once; the report l
   expect(full).toContain("member_update` envelopes, batched");
 });
 
+test("only a manager is told how to read re and re_from on its reports' updates", () => {
+  const rule = "So check `re_from` before you treat an update as an answer to you.";
+  expect(buildClaudeMd({ ...input, reports: [] })).not.toContain(rule);
+  expect(buildClaudeMd({ ...input, reports: many.slice(0, 1) })).toContain(rule);
+});
+
 test.each([
   [30, "batched every 30 seconds; they may arrive mid-turn"],
   [1, "batched every 1 second; they may arrive mid-turn"],

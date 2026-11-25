@@ -5,7 +5,7 @@ import { insertAgent } from "../agents/testing/rows.ts";
 import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { SpawnCleanup } from "./cleanup.ts";
-import { GitMissingError, GitTooOldError } from "./git.ts";
+import { GitError, GitMissingError, GitTooOldError } from "./git.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
@@ -58,6 +58,18 @@ beforeAll(async () => {
     terminatedAt: new Date(),
   });
   await insertAgent(t.sql, {
+    id: "dead",
+    slug: "dead",
+    reportsTo: "boss",
+    terminatedAt: new Date(),
+  });
+  await insertAgent(t.sql, {
+    id: "orphan2",
+    slug: "dev-ef56",
+    reportsTo: "dead",
+    terminatedAt: new Date(),
+  });
+  await insertAgent(t.sql, {
     id: "orphan",
     slug: "dev-cd34",
     reportsTo: "gone",
@@ -69,7 +81,7 @@ beforeEach(async () => {
   await t.sql`delete from messages`;
   await t.sql`delete from session_events`;
   await t.sql`delete from projects`;
-  await t.sql`insert into projects (id, name, host_path) values ('p1', 'web', '/srv/web'), ('p2', 'docs', '/srv/docs')`;
+  await t.sql`insert into projects (id, name, host_path) values ('p1', 'web', '/srv/web'), ('p2', 'docs', '/srv/docs'), ('p3', 'zed', '/srv/zed')`;
   published.length = 0;
   adopted.length = 0;
   for (const f of Object.values(log)) f.mockClear();
@@ -82,7 +94,11 @@ describe("SpawnCleanup.run", () => {
       seen.push(`${p.name}:${p.hostPath}:${slug}`);
       return null;
     }).run(await agentRow("dev"));
-    expect(seen).toEqual(["docs:/srv/docs:dev-ab12", "web:/srv/web:dev-ab12"]);
+    expect(seen).toEqual([
+      "docs:/srv/docs:dev-ab12",
+      "web:/srv/web:dev-ab12",
+      "zed:/srv/zed:dev-ab12",
+    ]);
   });
 
   test("a kept branch records the event, tells the humans and the live manager", async () => {
@@ -103,8 +119,11 @@ describe("SpawnCleanup.run", () => {
     expect(adopted).toEqual([{ agent: "boss", row: mgr?.id }]);
   });
 
-  test("a terminated or archived manager gets nothing", async () => {
-    await make(async () => kept).run(await agentRow("orphan"));
+  test.each([
+    ["archived", "orphan"],
+    ["terminated", "orphan2"],
+  ])("a %s manager gets nothing", async (_state, id) => {
+    await make(async () => kept).run(await agentRow(id));
     const rows = await notices();
     expect(rows.map((r) => r.to_agent_id)).toEqual([null]);
     expect(adopted).toEqual([]);
@@ -132,7 +151,7 @@ describe("SpawnCleanup.run", () => {
     );
     await make(async (p) => {
       if (p.name === "docs") throw err;
-      return removedOnly;
+      return p.name === "web" ? removedOnly : null;
     }).run(await agentRow("dev"));
     const [ev] = await events("dev");
     expect(ev?.payload).toEqual({
@@ -165,26 +184,58 @@ describe("SpawnCleanup.run", () => {
     expect(error.length).toBeLessThan(160);
   });
 
+  test("an escaped GitError names the subcommand and nothing else", async () => {
+    await make(async (p) => {
+      if (p.name === "docs")
+        throw new GitError(
+          ["worktree", "list", "--porcelain", "-z"],
+          "fatal: not a git repository: /srv/x/.git",
+          128,
+        );
+      return null;
+    }).run(await agentRow("dev"));
+    const [ev] = await events("dev");
+    const projects = (ev?.payload as { projects: ProjectResult[] } | undefined)?.projects ?? [];
+    expect(projects[0]?.error).toBe("couldn't clean up: git worktree failed");
+    const [n] = await notices();
+    expect(n?.body).toBe(
+      "Couldn't fully clean up @dev-ab12's worktrees.\ndocs: couldn't clean up: git worktree failed",
+    );
+  });
+
+  test("an error mentioning a path with spaces leaks no fragment of it", async () => {
+    await make(async () => {
+      throw new Error("cannot open /Users/me/My Projects/secret thing/x");
+    }).run(await agentRow("dev"));
+    const [ev] = await events("dev");
+    const projects = (ev?.payload as { projects: ProjectResult[] } | undefined)?.projects ?? [];
+    const error = projects[0]?.error ?? "";
+    for (const bit of ["Users", "Projects", "secret", "/"]) expect(error).not.toContain(bit);
+  });
+
   test.each([
     [
       new GitMissingError(),
       "Couldn't clean up worktrees: git isn't installed on the factory host.",
+      "missing",
     ],
     [
       new GitTooOldError("2.39.0"),
       "Couldn't clean up worktrees: git 2.44 or newer is needed on the factory host.",
+      "too_old",
     ],
-  ])("%s is one host line, and the scan stops", async (e, line) => {
+  ])("%s is one host line, and the scan stops", async (e, line, host) => {
     const calls: string[] = [];
     await make(async (p) => {
       calls.push(p.name);
       if (p.name === "web") throw e;
-      return removedOnly;
+      return p.name === "docs" ? removedOnly : null;
     }).run(await agentRow("dev"));
-    expect(calls).toEqual(["docs", "web"]);
+    expect(calls).toEqual(["docs", "web"]); // "zed" sorts after "web" and is never called
     const [n] = await notices();
     expect(n?.body).toBe(["Couldn't fully clean up @dev-ab12's worktrees.", line].join("\n"));
-    expect(await events("dev")).toHaveLength(1);
+    const [ev] = await events("dev");
+    expect(ev?.payload).toEqual({ projects: [removedOnly], host });
   });
 
   test("the host line alone still records the event, so a retry doesn't tell twice", async () => {
@@ -193,6 +244,8 @@ describe("SpawnCleanup.run", () => {
     });
     await run.run(await agentRow("dev"));
     await run.run(await agentRow("dev"));
+    const [ev] = await events("dev");
+    expect(ev?.payload).toEqual({ projects: [], host: "missing" });
     expect(await events("dev")).toHaveLength(1);
     expect(await notices()).toHaveLength(2); // one human, one manager: not four
   });

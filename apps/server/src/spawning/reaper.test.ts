@@ -12,6 +12,7 @@ import { sendAs } from "../agents/testing/runtime-harness.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { asRunning } from "../test/running.ts";
 import { agentStateDir } from "../workspace/paths.ts";
+import { SafeFs } from "../workspace/safe-fs.ts";
 import { SWEEP_INTERVAL_MS } from "./lifecycle.ts";
 import { Reaper } from "./reaper.ts";
 
@@ -538,30 +539,22 @@ test("a retried deletion doesn't clean up or tell twice", async () => {
   await projectWithWorktree(s, c.slug);
   await s.t.app.terminator.terminate(c.id, "@or");
   await c.rt.settled();
-  const ws = s.t.app.workspace;
-  const original = ws.deleteWorkspace.bind(ws);
   // The folder removal fails after the cleanup ran, as the reaper's retry path assumes.
-  vi.spyOn(ws, "deleteWorkspace").mockImplementationOnce(async (slug, a, _m, before) =>
-    original(
-      slug,
-      a,
-      async () => {},
-      async () => {
-        await before();
-        throw new Error("EBUSY");
-      },
-    ),
-  );
+  const removeAll = vi
+    .spyOn(SafeFs.prototype, "removeAll")
+    .mockRejectedValueOnce(new Error("EBUSY"));
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   now += SWEEP_INTERVAL_MS;
   await s.reaper.run();
+  removeAll.mockRestore();
   expect(await cleanupEvents(s, c.id)).toHaveLength(1);
   const notices = await s.t.db
     .select()
     .from(schema.messages)
     .where(eq(schema.messages.notice, "worktrees_kept"));
   expect(notices).toHaveLength(2);
+  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(false);
 });
 
 test("a failing deletion is logged and retried by the next run", async () => {

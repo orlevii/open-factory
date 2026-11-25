@@ -171,6 +171,7 @@ describe("event schemas", () => {
           },
         ],
       },
+      { type: "workspace_cleanup", projects: [], host: "too_old" },
     ];
     for (const s of samples) expect(anyEventSchema.parse(s)).toEqual(s);
   });

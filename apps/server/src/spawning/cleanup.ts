@@ -78,7 +78,9 @@ function short(e: unknown): string {
   const code = (e as NodeJS.ErrnoException | undefined)?.code;
   if (typeof code === "string" && /^[A-Z0-9_]{2,30}$/.test(code)) return code;
   if (e instanceof Error) {
-    const line = (e.message.split("\n")[0] ?? "").replace(/(?:\/[^\s'"`:,;]*)+/g, "<path>").trim();
+    const line = (e.message.split("\n")[0] ?? "").trim();
+    // A path may contain spaces, so redacting only its first word would leak the rest: say nothing specific.
+    if (line.includes("/") || line.includes("\\")) return "unexpected error";
     return line.length > 100 ? `${line.slice(0, 100)}…` : line || "unexpected error";
   }
   return "unexpected error";
@@ -146,7 +148,11 @@ export class SpawnCleanup {
 
       // The agent is terminated and its journal is empty (the reaper skips agents with one): the single writer.
       // Written even for the host line alone, so a retried sweep doesn't tell twice.
-      await this.d.store.append(agent.id, null, { type: "workspace_cleanup", projects: results });
+      await this.d.store.append(agent.id, null, {
+        type: "workspace_cleanup",
+        projects: results,
+        ...(host ? { host } : {}),
+      });
 
       const body = noticeBody(agent.slug, results, host);
       if (body === null) return;

@@ -300,7 +300,12 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("plugin_not_loaded"), key: z.string(), pin: z.string() }),
   z.object({ type: z.literal("interrupt_unconfirmed") }),
   /** A terminated spawned agent's worktrees, cleaned up just before its workspace was deleted (I8 spec §7.5). At most one per agent. */
-  z.object({ type: z.literal("workspace_cleanup"), projects: z.array(projectResultSchema) }),
+  z.object({
+    type: z.literal("workspace_cleanup"),
+    projects: z.array(projectResultSchema),
+    /** Set when git is unavailable on the factory host, so no project could be checked (the host line of the notice). */
+    host: z.enum(["missing", "too_old"]).optional(),
+  }),
 ]);
 export type FactoryEvent = z.infer<typeof factoryEventSchema>;
 

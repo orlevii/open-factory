@@ -110,14 +110,15 @@ function env(repo: string): NodeJS.ProcessEnv {
   };
 }
 
-function run(repo: string, args: string[], timeoutMs: number): Promise<string> {
+// `prefix` is the fixed flags; a GitError carries only the caller's `args`, so its subcommand is args[0].
+function run(repo: string, prefix: string[], args: string[], timeoutMs: number): Promise<string> {
   const childEnv = env(repo);
   // An empty PATH makes the spawn look in the current directory (the repo): there is no git to run.
   if (!childEnv.PATH) return Promise.reject(new GitMissingError());
   return new Promise<string>((resolve, reject) =>
     execFile(
       "git",
-      args,
+      [...prefix, ...args],
       { cwd: repo, env: childEnv, timeout: timeoutMs, maxBuffer: 1 << 20, shell: false },
       (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException).code === "ENOENT")
@@ -138,7 +139,7 @@ let versionChecked = false;
 // call outside the allowlist; only a success is memoised.
 async function checkVersion(repo: string, timeoutMs: number): Promise<void> {
   if (versionChecked) return;
-  const out = await run(repo, [...BASE, "--version"], timeoutMs);
+  const out = await run(repo, BASE, ["--version"], timeoutMs);
   const m = /git version (\d+)\.(\d+)/.exec(out);
   const found = m?.[0].replace("git version ", "") ?? out.trim();
   if (!m || Number(m[1]) < 2 || (Number(m[1]) === 2 && Number(m[2]) < 44))
@@ -155,11 +156,11 @@ export async function git(
   assertAllowed(args);
   await checkVersion(repo, timeoutMs);
   try {
-    return await run(repo, [...BASE, ...args], timeoutMs);
+    return await run(repo, BASE, args, timeoutMs);
   } catch (e) {
     if (e instanceof GitError && /detected dubious ownership/.test(e.stderr))
       // D7: the exact repo path for this one call; never "*", never written to any config.
-      return run(repo, [...BASE, "-c", `safe.directory=${repo}`, ...args], timeoutMs);
+      return run(repo, [...BASE, "-c", `safe.directory=${repo}`], args, timeoutMs);
     throw e;
   }
 }

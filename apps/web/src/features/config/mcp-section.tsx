@@ -253,7 +253,7 @@ function McpField() {
           key={v.name}
           data-mcp-row={v.name}
           tabIndex={-1}
-          className="rounded-md outline-none"
+          className="rounded-md outline-none" // ui-contract:allow programmatic focus target, not interactive
           {...(arrivedName === v.name && arrival
             ? {
                 "data-arrived": arrival === "fading" ? "fading" : "",

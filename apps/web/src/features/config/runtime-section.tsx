@@ -137,7 +137,7 @@ export function RuntimeSection() {
           error={mode.error}
           warning={mode.warning}
         >
-          {({ id, describedBy }) => (
+          {({ describedBy }) => (
             <SegmentedControl
               legend="Permission mode"
               name={ids.permission}
@@ -148,9 +148,7 @@ export function RuntimeSection() {
                 {
                   value: "bypass",
                   label: "Bypass",
-                  ...(local
-                    ? { unavailable: true, describedBy: `${id}-${runtimeError ? "error" : "help"}` }
-                    : {}),
+                  ...(local ? { unavailable: true, describedBy } : {}),
                 },
               ]}
               onChange={(v) => {

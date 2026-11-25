@@ -62,11 +62,14 @@ test("rebase makes the given values the untouched baseline", () => {
   expect(hasDraft("new-task")).toBe(true);
 });
 
-test("clearDraft removes one key", () => {
+test("clearDraft removes one key and leaves the others", () => {
   const a = renderHook(() => useSheetDraft("new-agent", initial));
+  const b = renderHook(() => useSheetDraft("new-task", initial));
   act(() => a.result.current.save({ name: "x" }));
+  act(() => b.result.current.save({ name: "y" }));
   clearDraft("new-agent");
   expect(hasDraft("new-agent")).toBe(false);
+  expect(hasDraft("new-task")).toBe(true);
 });
 
 test("clearDraftIf clears only a draft that still equals the snapshot", () => {

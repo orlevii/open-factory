@@ -164,9 +164,23 @@ test("a hand-typed reserved name is refused with the reserved message, nothing s
   const name = within(d).getByLabelText("Name");
   await userEvent.clear(name);
   await userEvent.type(name, "images");
-  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
+  await userEvent.tab();
+  // On blur, before any submit.
   expect(await within(d).findByText("That name is reserved.")).toBeInTheDocument();
+  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
   expect(api.calls.some((c) => c.method === "POST")).toBe(false);
+});
+
+test("blur validates a typed name, not while typing", async () => {
+  mockApi({ "GET /api/templates": list() });
+  mount();
+  const d = await dialog();
+  await userEvent.click(within(d).getByRole("button", { name: "Change" }));
+  const name = within(d).getByLabelText("Name");
+  await userEvent.type(name, "Bad Name");
+  expect(within(d).queryByText(MSG.startLetter)).not.toBeInTheDocument();
+  await userEvent.tab();
+  expect(await within(d).findByText(MSG.startLetter)).toBeInTheDocument();
 });
 
 test("a late failure goes to onLateError instead of the form", async () => {

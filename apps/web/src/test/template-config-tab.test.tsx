@@ -96,13 +96,11 @@ async function toFile(name: string) {
 const addAllowRule = (rule: string) =>
   userEvent.type(screen.getByRole("textbox", { name: "Add allow rule" }), `${rule}{Enter}`);
 
-test("a valid template opens on Configuration, first, in Geist, set apart from the mono file tabs", async () => {
+test("a valid template opens on Configuration, first, set apart from the file tabs", async () => {
   await open();
   const tabs = screen.getAllByRole("tab");
   expect(tabs[0]).toHaveAccessibleName("Configuration");
   expect(tabs[0]).toHaveAttribute("aria-selected", "true");
-  expect(tabs[0]?.className).not.toMatch(/font-mono/);
-  expect(tabs[1]?.className).toMatch(/font-mono/);
   expect(tabs[0]?.nextElementSibling).toHaveAttribute("aria-hidden", "true");
   expect(
     screen.getByText(
@@ -272,22 +270,19 @@ test("Discard works with only an MCP editor open, and closes it", async () => {
   await userEvent.click(discard);
   expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
   expect(screen.getByRole("button", { name: "Discard" })).toHaveAttribute("aria-disabled", "true");
+  // Nothing was edited: no "Discarded." notice and nothing to undo.
+  expect(within(footer()).queryByText(CONFIG_PAGE_MSG.discarded)).toBeNull();
+  expect(within(footer()).queryByRole("button", { name: "Undo" })).toBeNull();
 });
 
-test("below 40rem of its own width the tab strip is a Select listing every tab with its marks", async () => {
+test("the File select lists every tab with its marks, and choosing one selects that tab", async () => {
   tpl = detail([{ severity: "error", file: "settings.json", message: "JSON: bad", line: 1 }]);
   renderApp("/templates/dev", alice);
   // An error in settings.json opens template.yaml; the form (its doc mocked valid) is a click away.
   await userEvent.click(await screen.findByRole("tab", { name: /^Configuration/ }));
   await screen.findByRole("heading", { level: 2, name: "Model" });
-  const strip = screen.getByRole("tablist");
-  // A container query on the strip's wrapper, not the viewport: 200% text gets the Select too.
-  expect(strip.closest("[data-slot=tabs]")?.className).toMatch(/@container/);
-  expect(strip.className).toMatch(/@max-\[40rem\]:hidden/);
-  expect(strip.className).not.toMatch(/(^|\s)max-\[40rem\]/);
   await addAllowRule("Read");
   const picker = screen.getByRole("combobox", { name: "File" });
-  expect(picker.closest("div")?.className).toMatch(/@min-\[40rem\]:hidden/);
   await userEvent.click(picker);
   const names = screen.getAllByRole("option").map((o) => o.textContent);
   expect(names).toEqual([

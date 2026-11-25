@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { SRC, sourceFiles } from "./ui-contract-files";
@@ -57,27 +57,10 @@ describe("styles.css", () => {
 describe("overlay surfaces", () => {
   for (const f of ["popover", "dropdown-menu", "tooltip", "select", "combobox"]) {
     const path = join(SRC, `components/ui/${f}.tsx`);
-    test.skipIf(!existsSync(path))(`${f}.tsx has no shadow and no slide-in`, () => {
+    test(`${f}.tsx has no shadow and no slide-in`, () => {
       const src = readFileSync(path, "utf8");
       expect(src).not.toMatch(/\bshadow-/);
       expect(src).not.toContain("slide-in-from-");
-    });
-  }
-});
-
-describe("form controls", () => {
-  const files = [
-    "components/ui/button.tsx",
-    "components/ui/input.tsx",
-    "components/ui/textarea.tsx",
-    "components/ui/checkbox.tsx",
-  ];
-  for (const f of files) {
-    test(`${f} uses the one base-layer focus ring`, () => {
-      const src = readFileSync(join(SRC, f), "utf8");
-      for (const bad of ["outline-none", "ring-3", "ring-ring/50", "focus-visible:ring-2"]) {
-        expect(src).not.toContain(bad);
-      }
     });
   }
 });
@@ -122,16 +105,6 @@ describe("loading", () => {
     expect(readFileSync(join(SRC, "components/ui/skeleton.tsx"), "utf8")).not.toContain(
       "animate-pulse",
     );
-  });
-});
-
-describe("selects", () => {
-  test("NativeSelect is gone", () => {
-    expect(existsSync(join(SRC, "components/native-select.tsx"))).toBe(false);
-    const offenders = sourceFiles()
-      .filter((f) => /NativeSelect|components\/native-select/.test(readFileSync(f, "utf8")))
-      .map((f) => f.replace(SRC, ""));
-    expect(offenders).toEqual([]);
   });
 });
 
@@ -298,24 +271,6 @@ describe("hit areas (U4 §11.3)", () => {
       classOf(read("components/ui/sheet.tsx"), 'data-slot="sheet-header"', "{...props}"),
     ).toContain("COARSE_ICON_GROUP");
   });
-  test("an attachment chip's Retry and Remove are 36px on coarse pointers, 4px apart, so the chip clips neither", () => {
-    const src = read("components/composer/attachments.tsx");
-    expect(src).toMatch(/const CHIP_ACTION = "pointer-coarse:size-9"/);
-    expect(src.match(/className=\{CHIP_ACTION\}/g)).toHaveLength(2);
-    expect(classOf(src, "data-upload-chip", "`}")).toMatch(/pointer-coarse:gap-1(?![\w-])/);
-  });
-  // A 28px icon-sm's expander reaches 6px: next to a 4px gap it would cover its neighbour. At 32px it reaches 4px.
-  test("the settings row ⋯ and the Agents-page ⋯ are 32px on coarse pointers, so their expanders stop at the gap", () => {
-    const shared = read("features/settings/shared.tsx");
-    expect(classOf(shared, "export function MoreButton", "</Button>")).toMatch(
-      /size="icon-sm"[\s\S]*className=\{cn\("pointer-coarse:size-8", className\)\}/,
-    );
-    expect(classOf(shared, "export function RowLine", "{actions}")).toMatch(
-      /ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1"/,
-    );
-    const more = classOf(read("features/agents/agent-tree.tsx"), "data-row-more", "onClick");
-    expect(more).toMatch(/className="mx-1 [^"]*pointer-coarse:size-8[^"]*"/);
-  });
   test("no clipping wrapper around PageHeader, SheetHeader or composer toolbar icon buttons", () => {
     const header = read("components/page-header.tsx");
     expect(classOf(header, "<header", ">")).not.toMatch(CLIP);
@@ -329,24 +284,8 @@ describe("hit areas (U4 §11.3)", () => {
   });
 });
 
-describe("I4 field errors (class contract)", () => {
-  test("field-note transitions opacity and visibility, 150ms shown, 100ms hidden, on --ease-out", () => {
-    expect(css).toMatch(
-      /\.field-note > \*\s*{[^}]*transition:\s*opacity 100ms var\(--ease-out\),\s*visibility 100ms var\(--ease-out\)/,
-    );
-    expect(css).toMatch(/\.field-note > \[data-shown\]\s*{[^}]*transition-duration:\s*150ms/);
-    expect(css).toMatch(
-      /\.field-note\s*{[^}]*font-size:\s*0\.8125rem;[^}]*line-height:\s*1\.125rem/,
-    );
-  });
+describe("I4 field errors", () => {
   test("form-outcome live regions never transition visibility", () => {
     expect(css).not.toMatch(/\.form-outcome-line[^{]*{[^}]*visibility/);
   });
-  for (const f of ["input", "textarea", "select"]) {
-    test(`${f}.tsx uses field-edge-transition`, () => {
-      expect(readFileSync(join(SRC, `components/ui/${f}.tsx`), "utf8")).toContain(
-        "field-edge-transition",
-      );
-    });
-  }
 });

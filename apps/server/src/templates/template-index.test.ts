@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -17,7 +18,7 @@ import { loadConfig } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { claimTestHandle } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
-import { configDocHash, fileHash, type TemplateChange, TemplateIndex } from "./template-index.ts";
+import { configDocHash, type TemplateChange, TemplateIndex } from "./template-index.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let idx: TemplateIndex;
@@ -118,8 +119,14 @@ test("content hash covers skills/ and files/", async () => {
   const before = (await idx.scanOne("h1"))?.contentHash;
   mkdirSync(path.join(home, "templates/h1/files"), { recursive: true });
   writeFileSync(path.join(home, "templates/h1/files/x.txt"), "x");
-  expect((await idx.scanOne("h1"))?.contentHash).not.toBe(before);
-  expect(fileHash(Buffer.from("a"))).toHaveLength(64);
+  const withFiles = (await idx.scanOne("h1"))?.contentHash;
+  expect(withFiles).not.toBe(before);
+  mkdirSync(path.join(home, "templates/h1/skills/x"), { recursive: true });
+  writeFileSync(path.join(home, "templates/h1/skills/x/SKILL.md"), "# x\n");
+  const withSkill = (await idx.scanOne("h1"))?.contentHash;
+  expect(withSkill).not.toBe(withFiles);
+  writeFileSync(path.join(home, "templates/h1/skills/x/SKILL.md"), "# y\n");
+  expect((await idx.scanOne("h1"))?.contentHash).not.toBe(withSkill);
 });
 
 test("create round-trips long and special-character descriptions", async () => {
@@ -170,12 +177,26 @@ test("scan prunes a row whose folder vanished; remove of a gone folder drops the
   expect(await hasRow("gone2")).toBe(false);
 });
 
-test("a folder that fails to index is skipped without pruning the others", async () => {
+test("a folder that fails to index is skipped without pruning the others or its own row", async () => {
   await idx.create({ name: "ok1", displayName: "O" });
-  mkdirSync(path.join(home, "templates/Bad_Name"));
-  writeFileSync(path.join(home, "templates/Bad_Name/template.yaml"), "name: x\n");
-  expect((await idx.scan()).map((r) => r.name)).toContain("ok1");
-  expect((await idx.scan()).map((r) => r.name)).not.toContain("Bad_Name");
+  await idx.create({ name: "flaky1", displayName: "F" });
+  expect((await idx.scan()).map((r) => r.name)).toContain("flaky1");
+  const hasRow = async (n: string) =>
+    (await t.db.select().from(schema.templates).where(eq(schema.templates.name, n))).length > 0;
+  expect(await hasRow("flaky1")).toBe(true);
+  // A valid-named folder whose indexing throws (an unreadable file).
+  const unreadable = path.join(home, "templates/flaky1/AGENTS.md");
+  chmodSync(unreadable, 0o000);
+  try {
+    const names = (await idx.scan()).map((r) => r.name);
+    expect(names).toContain("ok1");
+    expect(names).not.toContain("flaky1");
+    // Its previous row stays until the folder is gone.
+    expect(await hasRow("flaky1")).toBe(true);
+  } finally {
+    chmodSync(unreadable, 0o644);
+  }
+  expect((await idx.scan()).map((r) => r.name)).toContain("flaky1");
 });
 
 test("a user image counts only as a direct child of images/: a link leaving it doesn't validate", async () => {

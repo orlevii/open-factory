@@ -48,5 +48,6 @@ test("names and secret names", () => {
   ])
     expect(secretNameSchema.safeParse(bad).success).toBe(false);
   expect(isReservedSecretName("TMPDIR")).toBe(true);
+  expect(isReservedSecretName("OPEN_FACTORY_AGENT_TOKEN")).toBe(true);
   expect(isReservedSecretName("GH_TOKEN")).toBe(false);
 });

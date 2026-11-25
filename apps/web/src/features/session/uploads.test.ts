@@ -255,6 +255,7 @@ const att = (uploadId: string, name = "a.png"): MessageAttachment => ({
   uploadId,
   name,
   kind: "image",
+  bytes: 120,
 });
 const ID = "0b6f1c1e-6a4e-4c1a-9a43-1d1f6f8f2a10";
 

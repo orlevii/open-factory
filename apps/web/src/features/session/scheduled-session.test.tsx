@@ -12,7 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
-import { resetSeq, se } from "@/test/session-fixtures";
+import { envelope, resetSeq, se } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
 import { buildRows } from "./rows";
 import { buildSpeakerIndex, SpeakerContext } from "./speaker-line";
@@ -31,11 +31,7 @@ function inRouter(ui: React.ReactNode) {
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
-    routeTree: root.addChildren([
-      stub("/schedules/$key"),
-      stub("/agents/$slug"),
-      stub("/tasks/$key"),
-    ]),
+    routeTree: root.addChildren([stub("/agents/$slug"), stub("/tasks/$key")]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   return render(
@@ -48,7 +44,7 @@ function inRouter(ui: React.ReactNode) {
 const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
   type: "message_in",
   messages: [
-    {
+    envelope({
       id: "m1",
       from: "@scheduler",
       fromKind: "factory",
@@ -60,7 +56,7 @@ const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
       byKind: "human",
       due: "2026-11-23T09:00:00+01:00",
       ...o,
-    },
+    }),
   ],
 });
 const speakers = buildSpeakerIndex({
@@ -133,7 +129,7 @@ test("a human author stays a plain handle even when the list is not loaded", asy
   expect(screen.queryByRole("link", { name: /@or/ })).toBeNull();
 });
 
-test("a pending scheduled item shows in the dashed block with the badge and 'covers 3 runs'", async () => {
+test("a pending scheduled item shows the badge and 'covers 3 runs'", async () => {
   const item: QueueItem = {
     id: "q1",
     kind: "message",
@@ -150,7 +146,6 @@ test("a pending scheduled item shows in the dashed block with the badge and 'cov
   expect(await screen.findByRole("button", { name: "Schedule S-5" })).toBeInTheDocument();
   expect(container.textContent).toContain("Scheduler");
   expect(container.textContent).toContain("covers 3 runs");
-  expect(container.querySelector(".border-dashed")).not.toBeNull();
 });
 
 test("the three quiet lines read as specified, from the events' `by` and `durable`", async () => {

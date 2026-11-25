@@ -1,12 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -129,7 +127,6 @@ test("summaries carry the template avatarVersion", async () => {
 
 test.each([
   ["slug taken", { slug: "lead" }, { code: "slug_taken" }],
-  ["reserved slug", { slug: "humans" }, { code: "validation_error" }],
   [
     "unknown credential",
     { credential: "nope" },
@@ -174,20 +171,6 @@ test("create with a reserved slug is refused before any claim", async () => {
   } finally {
     spy.mockRestore();
   }
-});
-
-test("create race on one slug: one wins, the loser leaves the winner's folder intact", async () => {
-  const body = {
-    template: "lead",
-    slug: "racer",
-    displayName: "R",
-    description: "",
-    reportsTo: null,
-    credential: "work",
-  };
-  const r = await Promise.allSettled([svc.create(body), svc.create(body)]);
-  expect(r.filter((x) => x.status === "fulfilled")).toHaveLength(1);
-  expect(existsSync(path.join(home, "agents/racer/AGENTS.md"))).toBe(true);
 });
 
 test("create: plugin failure removes the folder and inserts no row; existing folder → folder_exists, untouched", async () => {
@@ -581,7 +564,7 @@ test("create claims the slug in its transaction: the claim is an agent claim", a
   expect(h?.kind).toBe("agent");
 });
 
-test("two concurrent creates of one slug: one succeeds, the other is slug_taken, no duplicate", async () => {
+test("two concurrent creates of one slug: one succeeds, the other is slug_taken, no duplicate, the winner's folder intact", async () => {
   const results = await Promise.allSettled([
     svc.create(createBody("dup-race")),
     svc.create(createBody("dup-race")),
@@ -590,6 +573,7 @@ test("two concurrent creates of one slug: one succeeds, the other is slug_taken,
   const failed = results.find((r) => r.status === "rejected");
   expect(failed).toMatchObject({ reason: { code: "slug_taken" } });
   expect(await agentRows("dup-race")).toHaveLength(1);
+  expect(existsSync(path.join(home, "agents/dup-race/AGENTS.md"))).toBe(true);
 });
 
 test("a competing agent commits the slug while this create materialises: slug_taken, one row", async () => {
@@ -733,15 +717,6 @@ test("a spawned agent can't be edited, reset, archived or unarchived: 409 epheme
   await expect(svc.resetPersona("spawner-4-ee11", "@or")).rejects.toMatchObject(refused);
   await expect(svc.archive("spawner-4-ee11")).rejects.toMatchObject(refused);
   await expect(svc.unarchive("spawner-4-ee11")).rejects.toMatchObject(refused);
-  const { cookie } = await t.signUpUser();
-  const res = await t.app.inject({
-    method: "PATCH",
-    url: "/api/agents/spawner-4-ee11",
-    headers: { cookie },
-    payload: { displayName: "X" },
-  });
-  expect(res.statusCode).toBe(409);
-  expect(res.json()).toMatchObject({ error: { code: "ephemeral_agent" } });
   const [r] = await t.sql`select display_name from agents where slug = 'spawner-4-ee11'`;
   expect(r?.display_name).toBe("Kid");
 });

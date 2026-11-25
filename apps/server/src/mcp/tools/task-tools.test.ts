@@ -42,22 +42,8 @@ const names = async (who: string) =>
     .map((t) => t.name)
     .sort();
 
-test("every agent lists the five task tools; a spawner has two more", async () => {
-  // S9: persistent agents also list the three schedule tools.
-  const base = [
-    "cancel_schedule",
-    "comment_task",
-    "create_task",
-    "get_task",
-    "list_peers",
-    "list_schedules",
-    "list_tasks",
-    "schedule_message",
-    "send_command",
-    "send_message",
-    "update_task",
-  ];
-  expect(await names("qa")).toEqual(base);
+test("a spawner lists the spawn tools only while its process runs with them", async () => {
+  const base = await names("qa"); // the full base list is asserted in app.test.ts
   // I2 §6.2: the spawn tools follow the config the running process started with.
   await h.sql`update agents set config = '{"template":{"can_spawn":["test"],"max_live_spawns":3}}'::jsonb where slug = 'lead'`;
   const lead = await h.app.store.agentBySlug("lead");
@@ -148,6 +134,9 @@ test("list_tasks: defaults, filters and the more note", async () => {
   expect(await keys("qa", { created_by: "lead" })).toEqual(["T-1"]);
   const cut = await call("qa", "list_tasks", { limit: 1 });
   expect(cut.json.more).toBe(true);
+  expect(cut.json.note).toBe(
+    "Showing the 1 most recently updated; pass a larger limit (max 200) or narrow the filter.",
+  );
   expect((await call("qa", "list_tasks", {})).json).toMatchObject({ more: false });
 });
 
@@ -199,13 +188,4 @@ test("dependencies and links come back through get_task", async () => {
   expect((await call("qa", "get_task", { id: "1" })).json.blocks).toEqual([
     { key: "T-2", title: "Two", status: "open" },
   ]);
-});
-
-test("list_tasks carries the more note whenever it is cut, naming the limit", async () => {
-  for (const t of ["a", "b", "c"]) await call("lead", "create_task", { title: t });
-  const cut = await call("qa", "list_tasks", { limit: 2 });
-  expect(cut.json.more).toBe(true);
-  expect(cut.json.note).toBe(
-    "Showing the 2 most recently updated; pass a larger limit (max 200) or narrow the filter.",
-  );
 });

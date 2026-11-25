@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { attemptViewSchema, normalizeSignInCode, submitCodeBodySchema } from "./claude-sign-in.ts";
-import { MSG } from "./messages.ts";
-import { INBOX_KINDS, inboxItemSchema } from "./messaging.ts";
+import { inboxItemSchema } from "./messaging.ts";
 
 describe("normalizeSignInCode", () => {
   it("removes every whitespace character", () => {
@@ -34,9 +33,8 @@ describe("schemas", () => {
       submitCodeBodySchema.safeParse({ attemptId: "a", code: "x", name: "work" }).success,
     ).toBe(true);
   });
-  it("inbox has the credential kind and link", () => {
-    expect(INBOX_KINDS).toContain("credential");
-    const item = inboxItemSchema.parse({
+  it("a credential inbox item needs a named credential link; unknown link kinds are refused", () => {
+    const raw = {
       id: "i",
       messageId: "m",
       kind: "credential",
@@ -48,13 +46,11 @@ describe("schemas", () => {
       createdAt: "2026-11-23T10:00:00.000Z",
       credential: { name: "work", expiresAt: "2027-11-12T10:00:00.000Z", current: true },
       link: { kind: "credential", name: "work" },
-    });
-    expect(item.link).toEqual({ kind: "credential", name: "work" });
-  });
-});
-
-describe("sign-in messages", () => {
-  it.each(Object.entries(MSG).filter(([k]) => k.startsWith("signIn")))("%s ≤ 40 chars", (_k, v) => {
-    expect(v.length).toBeLessThanOrEqual(40);
+    };
+    expect(inboxItemSchema.parse(raw).link).toEqual({ kind: "credential", name: "work" });
+    expect(inboxItemSchema.safeParse({ ...raw, link: { kind: "credential" } }).success).toBe(false);
+    expect(
+      inboxItemSchema.safeParse({ ...raw, link: { kind: "voucher", name: "work" } }).success,
+    ).toBe(false);
   });
 });

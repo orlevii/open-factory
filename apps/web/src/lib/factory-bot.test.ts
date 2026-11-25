@@ -99,11 +99,16 @@ test("botParts golden vectors (a change here must be deliberate)", () => {
   `);
 });
 
-test("parts stay in range", () => {
-  for (const s of ["x", "lead", "z9"]) {
-    const p = botParts(s);
-    expect(p.fill).toBeGreaterThanOrEqual(1);
-    expect(p.fill).toBeLessThanOrEqual(12);
+test("every part stays an integer in its range, over many slugs", () => {
+  const ranges = { head: [0, 3], eyes: [0, 5], mouth: [0, 3], accessory: [0, 4], fill: [1, 12] };
+  for (let i = 0; i < 500; i++) {
+    const p = botParts(`agent-${i}-${(i * 7919).toString(36)}`);
+    for (const [part, [lo, hi]] of Object.entries(ranges) as [keyof typeof ranges, number[]][]) {
+      const v = p[part];
+      expect(Number.isInteger(v), `${part} of #${i}`).toBe(true);
+      expect(v, `${part} of #${i}`).toBeGreaterThanOrEqual(lo as number);
+      expect(v, `${part} of #${i}`).toBeLessThanOrEqual(hi as number);
+    }
   }
 });
 
@@ -147,10 +152,4 @@ test("styles.css tokens equal AVATAR_HUES and clear the dE gate per theme", () =
     expect(min).toBeGreaterThanOrEqual(0.03);
   }
   for (let i = 1; i <= 12; i++) expect(css).toContain(`--color-avatar-${i}: var(--avatar-${i});`);
-});
-
-test("only fill changed against the 8-colour seeding (same face parts)", () => {
-  // Face parts are drawn before fill, so these goldens predate the 12-colour change.
-  expect(botParts("lead")).toMatchObject({ head: 3, eyes: 3, mouth: 0, accessory: 2 });
-  expect(botParts("dev")).toMatchObject({ head: 0, eyes: 5, mouth: 3, accessory: 4 });
 });

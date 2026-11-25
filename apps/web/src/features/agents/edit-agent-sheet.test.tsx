@@ -93,21 +93,20 @@ async function rename(to: string) {
 
 // --- The body ---
 
-test("header Edit agent, a wrapping @slug · Template description, every field and no template or slug input", async () => {
+test("header Edit agent, an @slug · Template description, every field and no template or slug input", async () => {
   const { dialog } = await open(
     {
       agents: [lead({ slug: "a-very-long-agent-slug-that-wraps", template: "lead" })],
     },
     { slug: "a-very-long-agent-slug-that-wraps" },
   );
-  const description = within(dialog).getByText(
-    (_c, el) =>
-      el?.getAttribute("data-slot") === "sheet-description" &&
-      el.textContent === "@a-very-long-agent-slug-that-wraps · Template lead",
-  );
-  expect(description.className).not.toMatch(/truncate/);
-  expect(description.className).toMatch(/overflow-wrap:anywhere/);
-  expect(within(description).getByText("lead")).toHaveClass("font-mono");
+  expect(
+    within(dialog).getByText(
+      (_c, el) =>
+        el?.getAttribute("data-slot") === "sheet-description" &&
+        el.textContent === "@a-very-long-agent-slug-that-wraps · Template lead",
+    ),
+  ).toBeInTheDocument();
   expect(field("Display name")).toHaveValue("Lead");
   expect(field("Manager")).toBeInTheDocument();
   expect(field("Description")).toHaveValue("Leads");
@@ -170,9 +169,8 @@ test("the manager picker leaves out the agent and its descendants", async () => 
   await open({ agents });
   const select = field("Manager");
   await vi.waitFor(() => expect(select).toHaveTextContent("CTO"));
-  // The closed trigger shows the name and @slug, without the item's indent.
+  // The closed trigger shows the name and @slug.
   expect(select).toHaveTextContent("@cto");
-  expect(select.querySelector("[style*=padding]")).toBeNull();
   expect((await comboOptionNames(select)).map((n) => n.replace(/@.*/, ""))).toEqual([
     "No manager (reports to the humans)",
     "CTO",
@@ -812,11 +810,14 @@ test("a saved colour invalidates the inbox list so chat rows recolour", async ()
     agents: [lead({ status: "idle" })],
     extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 4 })) },
   });
-  const spy = vi.spyOn(queryClient, "invalidateQueries");
+  // A cached inbox list (inactive here, as when the sheet is over /agents): the save must mark it stale.
+  const inboxKey = ["inbox", "list"];
+  queryClient.setQueryData(inboxKey, { chats: [], items: [], nextCursor: null });
+  expect(queryClient.getQueryState(inboxKey)?.isInvalidated).toBe(false);
   await userEvent.click(radio("Teal"));
   await userEvent.click(saveButton());
   await waitFor(() => expect(notify).toHaveBeenCalledOnce());
-  expect(spy).toHaveBeenCalledWith({ queryKey: ["inbox"] });
+  expect(queryClient.getQueryState(inboxKey)?.isInvalidated).toBe(true);
 });
 
 test("arrow keys move and select, Home and End jump, roving tabindex follows", async () => {

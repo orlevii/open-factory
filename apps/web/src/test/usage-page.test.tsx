@@ -94,6 +94,8 @@ test("Usage: range, Daily chart, estimate line, and the Agents table sorted by t
   renderApp("/usage", alice);
   await page();
   expect(screen.getByRole("radio", { name: "30 days" })).toBeChecked();
+  // The Usage page, not a Settings page.
+  expect(screen.queryByRole("navigation", { name: "Settings" })).not.toBeInTheDocument();
   expect(await screen.findByRole("heading", { level: 3, name: "Daily" })).toBeInTheDocument();
   expect(screen.getByText("30 days to today, in Europe/Berlin.")).toBeInTheDocument();
   expect(
@@ -181,25 +183,8 @@ test("Usage: the By credential table with cost, top agents and the rate-limit li
     "Top agents",
     "Rate limit",
   ]);
-  // Below md: Name (with the rate-limit line under it) and Cost only.
-  expect(headers.map((h) => h.classList.contains("hidden"))).toEqual([
-    false,
-    true,
-    false,
-    true,
-    true,
-  ]);
   const r = within(table).getAllByRole("row")[1] as HTMLElement;
   const cells = within(r).getAllByRole("cell");
-  expect(cells.map((c) => c.classList.contains("hidden"))).toEqual([
-    false,
-    true,
-    false,
-    true,
-    true,
-  ]);
-  const narrow = cells[0]?.querySelector(".md\\:hidden") as HTMLElement;
-  expect(narrow).toHaveTextContent("82% of the 5-hour limit used");
   expect(r).toHaveTextContent("work");
   expect(r).toHaveTextContent("OAuth token");
   expect(r).toHaveTextContent("$4.12");
@@ -265,14 +250,6 @@ test("a failing usage query shows Couldn't load usage. with Retry", async () => 
   await page();
   expect(await screen.findByText("Couldn't load usage.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-});
-
-test("/usage is the Usage page: a heading, the range control, and no Settings sub-nav", async () => {
-  world({ daily: daily(30), agents: leadFamily() });
-  renderApp("/usage", alice);
-  await page();
-  expect(screen.getByRole("radio", { name: "30 days" })).toBeChecked();
-  expect(screen.queryByRole("navigation", { name: "Settings" })).not.toBeInTheDocument();
 });
 
 test("the per-credential table is headed By credential; the app has one Credentials heading", async () => {

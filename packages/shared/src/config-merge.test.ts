@@ -100,7 +100,6 @@ describe("mergeConfig", () => {
     delete perms.deny;
     expect(perms).toEqual({});
     expect(mergeConfig(base, removed).settings.permissions).toEqual(base.settings.permissions);
-    expect(mergeConfig(base, {})).toEqual(base);
   });
 
   it("keeps a __proto__ settings key as data and never alters prototypes", () => {

@@ -26,15 +26,6 @@ test("FieldShell wires label, help and error; error replaces help", () => {
   expect(screen.getByLabelText("Slug")).toBeInvalid();
 });
 
-test("FieldShell legend renders a fieldset", () => {
-  render(
-    <FieldShell name="projects" label="Projects" legend>
-      {() => <span>body</span>}
-    </FieldShell>,
-  );
-  expect(screen.getByRole("group", { name: "Projects" })).toBeInTheDocument();
-});
-
 test("FieldShell legend is invalid with an error, and its label may carry a marker", () => {
   render(
     <FieldShell

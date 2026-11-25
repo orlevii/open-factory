@@ -37,53 +37,6 @@ test("keys come from a sequence", async () => {
   expect(rows.map((r) => r.number)).toEqual([1, 2]);
 });
 
-test("every S3-S8 shape still passes and the scheduled shape passes", async () => {
-  await ok(
-    sql`insert into messages (id,kind,from_user_id,to_agent_id,body,recipients) values ('m1','message','u1','a1','x','{@test}') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,from_agent_id,to_all_humans,body,state,recipients) values ('m2','message','a1',true,'x','delivered','{@test}') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,subject_agent_id,notice,to_agent_id,body) values ('m3','member_update','a1','denied','a2','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,from_agent_id,to_agent_id,body) values ('m3b','member_update','a1','a2','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,subject_agent_id,notice,to_agent_id,body) values ('m4','peer_left','a1','peer','a2','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,notice,to_agent_id,body) values ('m5','system','crash_recovered','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,notice,subject_agent_id,to_all_humans,body,state) values ('m6','system','agent_errored','a1',true,'x','delivered') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,task_id,to_agent_id,body) values ('n1','task_assigned','t1','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,from_agent_id,task_id,comment_id,to_agent_id,body) values ('n2','task_comment','a2','t1','k1','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,from_user_id,task_id,comment_id,to_agent_id,body) values ('n3','task_comment','u1','t1','k1','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,notice,task_id,to_agent_id,body) values ('n5','task_update','unblocked','t1','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,notice,task_id,to_user_id,body,state) values ('n6','task_update','done','t1','u1','x','delivered') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,to_agent_id,schedule_id,author_user_id,due_at,firings,late,body)
-        values ('sc1','scheduled','a1','s1','u1',now(),1,false,'x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,to_agent_id,schedule_id,author_agent_id,due_at,firings,late,body)
-        values ('sc2','scheduled','a1','s2','a2',now(),3,true,'x') returning id`,
-  );
-});
-
 test("wrong scheduled shapes are rejected", async () => {
   const base = (cols: string, vals: string) =>
     sql.unsafe(

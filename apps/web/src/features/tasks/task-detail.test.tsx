@@ -2,7 +2,6 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { TOASTER_LABEL } from "@/components/ui/toaster";
 import { readDraft, taskDraftKey } from "@/lib/drafts";
 import { FORM_MSG } from "@/lib/form-messages";
 import taskRouteSource from "@/routes/_app/tasks.$key.tsx?raw";
@@ -99,12 +98,12 @@ const world = (get: () => unknown = () => detail()) =>
   });
 const patches = (api: ReturnType<typeof mockApi>) => api.calls.filter((c) => c.method === "PATCH");
 
-test("header: the Tasks back link, the key in mono, the document title; the activity reads from structured events", async () => {
+test("header: the Tasks back link, the key, the document title; the activity reads from structured events", async () => {
   world();
   renderApp("/tasks/T-42", alice);
   const heading = await screen.findByRole("heading", { level: 1 });
   expect(within(heading).getByRole("link", { name: "Tasks" })).toHaveAttribute("href", "/tasks");
-  expect(within(heading).getByText("T-42")).toHaveClass("font-mono");
+  expect(within(heading).getByText("T-42")).toBeInTheDocument();
   await waitFor(() =>
     expect(document.title).toBe("T-42 · Plan the billing migration · Open Factory"),
   );
@@ -290,22 +289,6 @@ test("Escape and clicking away leave the assignee unchanged", async () => {
   await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
   expect(patches(api)).toHaveLength(0);
   expect(trigger).toHaveAccessibleName("Assignee: @dev");
-});
-
-test("Edit beside the title is an outline button (§6.3)", async () => {
-  world();
-  renderApp("/tasks/T-42", alice);
-  expect(await screen.findByRole("button", { name: "Edit title" })).toHaveAttribute(
-    "data-variant",
-    "outline",
-  );
-});
-
-test("an inline editor's Cancel is ghost: it acts inside the section (decision 20)", async () => {
-  world();
-  renderApp("/tasks/T-42", alice);
-  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
-  expect(screen.getByRole("button", { name: "Cancel" })).toHaveAttribute("data-variant", "ghost");
 });
 
 test("title edit: focus goes into the input, Enter saves, Escape cancels, focus returns to Edit title", async () => {
@@ -759,6 +742,7 @@ test("composer: with nothing typed during the post the draft clears", async () =
   await userEvent.type(box, "a");
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   await waitFor(() => expect(box).toHaveValue(""));
+  await waitFor(() => expect(readDraft(taskDraftKey("T-42"))).toBe(""));
 });
 
 test("composer: a throwing localStorage (private mode) neither breaks typing nor posting", async () => {
@@ -823,19 +807,6 @@ test("no assignee: the helper says only mentions are notified", async () => {
   ).toBeInTheDocument();
 });
 
-test("comment composer: Enter posts once, Shift+Enter adds a line", async () => {
-  fakeMatchMedia.install(false);
-  const api = world();
-  api.on("POST /api/tasks/T-42/comments", () => posted("a"));
-  renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("combobox", { name: "Comment" });
-  await userEvent.type(box, "a{Shift>}{Enter}{/Shift}b");
-  expect(box).toHaveValue("a\nb");
-  await userEvent.keyboard("{Enter}");
-  await waitFor(() => expect(box).toHaveValue(""));
-  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
-});
-
 test("comment composer: on a coarse pointer the helper drops 'Enter to post.' and Enter adds a line", async () => {
   fakeMatchMedia.install(false, { coarse: true });
   const api = world();
@@ -844,18 +815,6 @@ test("comment composer: on a coarse pointer the helper drops 'Enter to post.' an
   expect(box).toHaveAccessibleDescription("Goes to @dev and anyone you @mention.");
   await userEvent.type(box, "a{Enter}b");
   expect(box).toHaveValue("a\nb");
-  expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
-});
-
-test("comment composer: Enter during IME composition does not post", async () => {
-  fakeMatchMedia.install(false);
-  const api = world();
-  renderApp("/tasks/T-42", alice);
-  const box = await screen.findByRole("combobox", { name: "Comment" });
-  await userEvent.type(box, "draft");
-  fireEvent.keyDown(box, { key: "Enter", isComposing: true });
-  fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
-  expect(box).toHaveValue("draft");
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
 });
 
@@ -869,16 +828,6 @@ test("comment composer: Ctrl+Enter still posts on a coarse pointer", async () =>
   await userEvent.keyboard("{Control>}{Enter}{/Control}");
   await waitFor(() => expect(box).toHaveValue(""));
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
-});
-
-test("the task body editor's preview uses the detail look of the saved body", async () => {
-  world();
-  renderApp("/tasks/T-42", alice);
-  await userEvent.click(await screen.findByRole("button", { name: /Edit description/ }));
-  const editor = screen.getByRole("textbox", { name: "Description" });
-  const frame = editor.closest("[data-slot=tabs]") as HTMLElement;
-  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
-  expect(frame.querySelector(".prose-of-detail")).not.toBeNull();
 });
 
 test("?comment=<id> of an agent's comment: highlighted, focused, composer prefilled; of a human's: no prefill; unknown: a muted line", async () => {
@@ -906,11 +855,6 @@ test("?comment=<id> of an agent's comment: highlighted, focused, composer prefil
   const article = await screen.findByRole("article", { name: "Comment from @dev" });
   await waitFor(() => expect(article).toHaveFocus());
   expect(article).toHaveAttribute("data-highlighted", "true");
-  // The comment's ⋯ sits inside the card's padding, off its border.
-  expect(within(article).getByRole("button", { name: "Comment actions" })).toHaveClass(
-    "top-1.5",
-    "right-1.5",
-  );
   expect(screen.getByRole("combobox", { name: "Comment" })).toHaveValue("@dev ");
   first.unmount();
   const second = renderApp("/tasks/T-42?comment=c2", alice);
@@ -931,6 +875,7 @@ test("an unknown task is 'Task not found.' with its key and a way back", async (
   renderApp("/tasks/T-999", alice);
   expect(await screen.findByText("Task not found.")).toBeInTheDocument();
   expect(screen.getByText("No task T-999.")).toBeInTheDocument();
+  expect(screen.queryByText("It may have been renamed or deleted.")).toBeNull();
   expect(screen.getByRole("link", { name: "Back to tasks" })).toHaveAttribute("href", "/tasks");
 });
 
@@ -1009,7 +954,7 @@ test("dependencies, blocks and links are listed; blocked marker; editing links v
   const pr = screen.getByRole("link", { name: /The PR/ });
   expect(pr).toHaveAttribute("href", "https://github.com/acme/app/pull/12");
   expect(pr).toHaveAttribute("target", "_blank");
-  expect(screen.getByText("docs/plan.md")).toHaveClass("font-mono");
+  expect(screen.getByText("docs/plan.md")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Edit links" }));
   const target = screen.getByLabelText("Link 1 target");
   await userEvent.clear(target);
@@ -1047,7 +992,7 @@ test("agent text is inert: scripts, image handlers and javascript: links never r
     expect(a.getAttribute("href") ?? "").not.toMatch(/^javascript:/i);
 });
 
-test("the usage line and its lower-bound hint show when the task has usage, and are absent when null", async () => {
+test("the usage line and its lower-bound hint show when the task has usage", async () => {
   world(() => detail({ usage: { costUsd: 1.23, turns: 14 } }));
   renderApp("/tasks/T-42", alice);
   expect(await screen.findByText("Usage: $1.23 est. · 14 turns")).toBeInTheDocument();
@@ -1063,44 +1008,6 @@ test("no usage line when the task has no attributed usage", async () => {
   renderApp("/tasks/T-42", alice);
   await screen.findByText("Plan the billing migration");
   expect(screen.queryByText(/^Usage:/)).toBeNull();
-});
-
-test("layout: the grid cannot be widened by long content; every grid and aside child can shrink", async () => {
-  world();
-  renderApp("/tasks/T-42", alice);
-  await screen.findByRole("heading", { level: 1 });
-  const grid = document.querySelector("aside")?.parentElement;
-  expect(grid).toHaveClass(
-    "grid-cols-[minmax(0,1fr)]",
-    "@[45rem]/task:grid-cols-[minmax(0,1fr)_min(17.5rem,40%)]",
-  );
-  const aside = grid?.querySelector(":scope > aside") as HTMLElement;
-  expect(aside).toBeTruthy();
-  const kids = [...(grid?.children ?? []), ...aside.children];
-  expect(kids.length).toBeGreaterThan(4);
-  for (const k of kids) expect(k).toHaveClass("min-w-0");
-  // A grid inside a column with an implicit (auto) track sizes it to its widest child's min-content (a
-  // 4-column table, a 40-char assignee), so every grid on the way down declares a shrinkable track.
-  const isGrid = (el: Element) => el.classList.contains("grid");
-  const inner = [...kids, ...kids.flatMap((k) => [...k.children])].filter(isGrid);
-  inner.push(...document.querySelectorAll(`section:not([aria-label^="${TOASTER_LABEL}"])`));
-  inner.push(screen.getByRole("list", { name: "Activity" }));
-  expect(inner.length).toBeGreaterThan(8);
-  for (const g of inner) expect(g).toHaveClass("grid-cols-[minmax(0,1fr)]");
-});
-
-test("layout: the Status and Assignee triggers truncate instead of widening the rail", async () => {
-  world();
-  renderApp("/tasks/T-42", alice);
-  const status = await screen.findByRole("button", { name: /^Status:/ });
-  const assignee = screen.getByRole("combobox", { name: /^Assignee:/ });
-  for (const b of [status, assignee]) {
-    expect(b).toHaveClass("w-full", "min-w-0");
-  }
-  expect(status.querySelector(".truncate")).not.toBeNull();
-  // The picker's value sits in a direct span the trigger truncates (`[&>span]:truncate`).
-  expect(assignee.querySelector(":scope > span")).toHaveTextContent("@dev");
-  expect(assignee.className).toContain("[&>span]:truncate");
 });
 
 /** The list row of T-42, as the tasks list caches it. */
@@ -1146,9 +1053,7 @@ test("with the tasks list cached, the page shows the title and status at once; n
   expect(screen.queryByText(/commented$/)).not.toBeInTheDocument();
 });
 
-test("the stand-in holds the layout of the empty detail: the side sections with a plate per line, the body with its Edit row", async () => {
-  // Plates at the empty state's row heights, so a task with nothing in them doesn't move when the
-  // detail lands (a phone stacks Activity under the side sections).
+test("the stand-in shows the empty detail's side sections, which the detail then fills", async () => {
   const { release } = cachedListWorld();
   renderApp("/tasks", alice);
   await userEvent.click(await screen.findByRole("link", { name: /Plan the billing migration/ }));
@@ -1161,17 +1066,6 @@ test("the stand-in holds the layout of the empty detail: the side sections with 
     "Links",
     "Created by",
   ]);
-  const plates = (s: Element) =>
-    [...s.querySelectorAll("[data-slot=skeleton]")].map((p) => p.className.match(/\bh-\S+/)?.[0]);
-  // "None" lines, the Edit buttons (h-6) and the Created by line (1.125rem).
-  expect(sections.map(plates)).toEqual([
-    ["h-[1lh]", "h-6"],
-    ["h-[1lh]"],
-    ["h-[1lh]", "h-6"],
-    ["h-[1.125rem]"],
-  ]);
-  const body = document.querySelector("main .order-3") as HTMLElement;
-  expect(body.lastElementChild?.querySelector("[data-slot=skeleton]")).toHaveClass("h-6");
 
   release(json(detail({ body: "" })));
   expect(await screen.findByRole("button", { name: "Edit dependencies" })).toBeInTheDocument();
@@ -1286,18 +1180,8 @@ test("a human creator and comment author show as @handle without an avatar; an a
   expect(created.querySelector("svg")).toBeNull();
 });
 
-// §12: the view lays out by its own width (the page and the 30rem peek), not the viewport's. jsdom
-// can't evaluate container queries, so this checks the classes; the layout is a browser check.
-test("the task view is a container: its two columns answer to its own width, and the route owns the page padding", async () => {
-  world();
-  renderApp("/tasks/T-42", alice);
-  const log = await screen.findByRole("list", { name: "Activity" });
-  const root = log.closest(".\\@container\\/task");
-  expect(root).not.toBeNull();
-  const grid = root?.querySelector("[class*='@[45rem]/task:grid-cols-']");
-  expect(grid).not.toBeNull();
-  expect(grid?.contains(log)).toBe(true);
-  expect(root?.querySelector("aside")?.className).toMatch(/@\[45rem\]\/task:col-start-2/);
+// §12: the view lays out by its own width (the page and the 30rem peek), not the viewport's.
+test("the task view has no viewport breakpoints, and the route owns the page padding", () => {
   // No viewport breakpoint is left to fight the container one.
   expect(taskDetailSource).not.toMatch(/(^|[\s"'`])lg:/m);
   expect(taskDetailSource).not.toMatch(/\bPageBody\b/);

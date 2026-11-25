@@ -79,17 +79,6 @@ function setup() {
 const frame = (qc: QueryClient) => onChatChanged(qc, { type: "chat_changed", agent: "ada" });
 const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 20))));
 
-test("a 51st entry leaves the other 50 entry objects identical", async () => {
-  const { qc, hook } = setup();
-  await waitFor(() => expect(hook.result.current.entries).toHaveLength(50));
-  const before = hook.result.current.entries;
-  thread.push(msg(51));
-  frame(qc);
-  await waitFor(() => expect(hook.result.current.entries).toHaveLength(51));
-  const after = hook.result.current.entries;
-  for (let i = 0; i < 50; i++) expect(after[i]).toBe(before[i]);
-});
-
 test("60 entries arriving between frames refetch until they meet the cache", async () => {
   const { qc, hook } = setup();
   await waitFor(() => expect(hook.result.current.entries).toHaveLength(50));

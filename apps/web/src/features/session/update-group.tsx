@@ -17,21 +17,18 @@ export const decodeFactBody = (body: string) =>
   body.replace(/&lt;(\s*\/?\s*factory-message)/gi, "<$1");
 
 type Item =
-  | { type: "part"; id: string; body: string; createdAt?: string }
+  | { type: "part"; id: string; body: string; createdAt: string }
   | { type: "fact"; id: string; fact: string; body: string };
 
-/** A group's parts in order: a report's own text (its `parts`, or the body as one part for an
- *  update from before parts existed) and the factory's facts about it. */
+/** A group's parts in order: a report's own text (its `parts`) and the factory's facts about it. */
 function itemsOf(envelopes: Envelope[]): Item[] {
   return envelopes.flatMap((e): Item[] => {
     const fact = e.fact;
     // Facts of one code merge into one envelope: one line per part, never only the first.
     if (e.from === "@factory" && fact) {
-      const bodies = e.parts?.length ? e.parts : [{ id: e.id, body: e.body }];
-      return bodies.map((p) => ({ type: "fact", id: p.id, fact, body: decodeFactBody(p.body) }));
+      return e.parts.map((p) => ({ type: "fact", id: p.id, fact, body: decodeFactBody(p.body) }));
     }
-    const parts = e.parts?.length ? e.parts : [{ id: e.id, body: e.body, createdAt: undefined }];
-    return parts.map((p) => ({ type: "part", ...p }));
+    return e.parts.map((p) => ({ type: "part", ...p }));
   });
 }
 

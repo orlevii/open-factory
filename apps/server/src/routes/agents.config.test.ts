@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { overlayVersion } from "@open-factory/shared";
@@ -32,25 +32,36 @@ const reset = async (slug = "dev") => {
 };
 
 describe("GET", () => {
-  test("an empty overlay: its version, the template's doc and the merged doc", async () => {
+  test("an empty overlay: its version, the template's doc, and the merged doc equal to it", async () => {
     await reset();
     const r = await get();
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toMatchObject({
+    const body = r.json();
+    expect(body).toMatchObject({
       overlay: {},
       version: overlayVersion({}),
       template: { name: "test", valid: true, doc: expect.any(Object) },
-      merged: expect.any(Object),
       issues: [],
     });
+    expect(Object.keys(body.template.doc.template).length).toBeGreaterThan(0);
+    expect(body.merged).toEqual(body.template.doc);
   });
 
   test("local_skill_names never leaves the server", async () => {
-    const tplSkills = path.join(t.factoryHome, "templates", "test", "skills", "release");
+    const skillsDir = path.join(t.factoryHome, "templates", "test", "skills");
+    const tplSkills = path.join(skillsDir, "release");
     mkdirSync(tplSkills, { recursive: true });
     writeFileSync(path.join(tplSkills, "SKILL.md"), "---\nname: release\n---\n");
-    const r = await get();
-    expect(JSON.stringify(r.json())).not.toContain("local_skill_names");
+    try {
+      // Positive control: the server's own doc does carry the derived key, so its absence below means it was stripped.
+      const internal = await t.app.templates.loadValid("test");
+      expect(internal.doc.template.local_skill_names).toEqual(["release"]);
+      const r = await get();
+      expect(r.statusCode).toBe(200);
+      expect(JSON.stringify(r.json())).not.toContain("local_skill_names");
+    } finally {
+      rmSync(skillsDir, { recursive: true, force: true });
+    }
   });
 
   test("an unknown agent is 404", async () => {

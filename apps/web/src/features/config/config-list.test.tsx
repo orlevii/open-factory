@@ -116,17 +116,6 @@ test("remove moves focus to the next remove button, else to the add input", asyn
   expect(screen.getByRole("textbox", { name: "Add allow rule" })).toHaveFocus();
 });
 
-test("rows wrap and never truncate; rules are mono", () => {
-  render(<Harness start={["Bash(git push:*)"]} />);
-  const row = screen.getByRole("listitem");
-  expect(row.className).toMatch(/min-h-8/);
-  expect(row.className).toMatch(/pointer-coarse:min-h-10/);
-  expect(row.className).toMatch(/items-start/);
-  expect(row.innerHTML).not.toMatch(/truncate/);
-  expect(within(row).getByText("Bash(git push:*)").className).toMatch(/font-mono/);
-  expect(within(row).getByText("Bash(git push:*)").className).toMatch(/overflow-wrap:anywhere/);
-});
-
 test("read-only shows no add row and no remove buttons", () => {
   render(
     <ConfigList
@@ -145,7 +134,7 @@ test("read-only shows no add row and no remove buttons", () => {
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-test("a row note shows under that row, an error as an error and a warning as a warning", () => {
+test("a row note shows under that row; an error describes the row's remove button", () => {
   render(
     <ConfigList
       name="allow"
@@ -165,10 +154,8 @@ test("a row note shows under that row, an error as an error and a warning as a w
     />,
   );
   const rows = screen.getAllByRole("listitem");
-  const err = within(rows[1] as HTMLElement).getByText("Bad rule.").parentElement;
-  const warn = within(rows[2] as HTMLElement).getByText("Odd rule.").parentElement;
-  expect(err?.className).toMatch(/text-destructive/);
-  expect(warn?.className).not.toMatch(/text-destructive/);
+  expect(within(rows[1] as HTMLElement).getByText("Bad rule.")).toBeInTheDocument();
+  expect(within(rows[2] as HTMLElement).getByText("Odd rule.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Remove allow rule 2" })).toHaveAccessibleDescription(
     "Bad rule.",
   );

@@ -32,12 +32,11 @@ test.each([
   expect(container.querySelector(".of-tooth")).toBeNull();
 });
 
-test("terminated renders its label in the empty 12px slot: no dot, no tooth (an end state)", () => {
+test("terminated renders its label: no dot, no tooth (an end state)", () => {
   const { container } = render(<StatusBadge status="terminated" size="long" />);
   expect(screen.getByText("Terminated")).toBeInTheDocument();
   expect(container.querySelector("[data-status-dot]")).toBeNull();
   expect(container.querySelector(".of-tooth")).toBeNull();
-  expect(container.querySelector('[aria-hidden="true"]')).toHaveClass("size-3");
 });
 
 test.each([

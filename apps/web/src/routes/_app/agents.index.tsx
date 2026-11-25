@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
 import { useMemo } from "react";
 import { z } from "zod";
@@ -16,23 +16,13 @@ import { agentsUsageQuery } from "@/features/usage/api";
 const newAgentIntent = sheetIntent("new-agent");
 
 export const Route = createFileRoute("/_app/agents/")({
-  // Unknown values fall back to the default view rather than an error page, and unknown keys (an
-  // old bookmark's `justArchived`) are dropped: `z.object` strips them (never `.strict()`).
+  // Unknown values fall back to the default view rather than an error page, and unknown keys are
+  // dropped: `z.object` strips them (never `.strict()`).
   validateSearch: z.object({
     ended: z.literal("only").optional().catch(undefined),
-    /** S4's bookmark: redirected to `ended=only` (S7 UI design §3). */
-    archived: z.literal("only").optional().catch(undefined),
     /** Agent details' "All N reports": the row to scroll to and mark (the page acts on it, U2 §8.3). */
     focus: z.string().min(1).optional().catch(undefined),
   }),
-  beforeLoad: ({ search }) => {
-    if (search.archived)
-      throw redirect({
-        to: "/agents",
-        search: { ended: "only" },
-        replace: true,
-      });
-  },
   component: AgentsPage,
 });
 

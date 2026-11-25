@@ -91,13 +91,20 @@ test("the status lists live crons: a one-shot with nextFireAt, a recurring one w
   expect(rt.waitingOn().crons).toBe(2);
 });
 
-test("a deleted cron and a one-shot after its firing turn disappear", async () => {
+test("a deleted cron disappears at once; a one-shot disappears after its cron turn ends", async () => {
   await started();
-  driver.last.emit(ev.cron("r1"), ev.cron("o1", { recurring: false }));
+  driver.last.emit(ev.cron("r1"), ev.cron("o1", { recurring: false, inMs: -1_000 }));
   await rt.settled();
   driver.last.emit({ type: "cron_deleted", cronId: "r1" });
   await rt.settled();
   expect(rt.live().crons.map((c) => c.cronId)).toEqual(["o1"]);
+  // The one-shot's time has passed, but it stays until a cron turn ends.
+  driver.last.emit(ev.end());
+  await rt.settled();
+  expect(rt.live().crons.map((c) => c.cronId)).toEqual(["o1"]);
+  driver.last.emit(ev.turn(), ev.end({ originKind: "cron" }));
+  await rt.settled();
+  expect(rt.live().crons).toEqual([]);
 });
 
 test("cronZone is UTC for a Docker agent and the server's zone for a local one", async () => {

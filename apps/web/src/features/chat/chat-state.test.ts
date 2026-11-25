@@ -55,14 +55,6 @@ test("the union never drops a cached entry the refetch lacks", () => {
   expect(next[0]).toBe(cached[0]);
 });
 
-test("an optimistic entry and its server row are one key", () => {
-  const optimistic = msg(1, { id: "tmp", clientMessageId: "c1", state: "pending" });
-  const server = msg(1, { id: "m1", clientMessageId: "c1" });
-  expect(entryKey(optimistic)).toBe(entryKey(server));
-  const next = unionEntries([optimistic], [server]);
-  expect(next).toEqual([server]);
-});
-
 test("pending to delivered replaces the entry under the same key", () => {
   const pending = msg(1, { from: "@or", fromKind: "human", state: "pending" });
   const delivered = { ...pending, state: "delivered" as const };

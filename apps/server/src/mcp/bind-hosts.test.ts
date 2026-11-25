@@ -112,18 +112,19 @@ test("an override address allows its interface's network, not a /32", () => {
     lo: [{ address: "127.0.0.1", family: "IPv4", internal: true, cidr: "127.0.0.1/8" }],
     docker0: [{ address: "172.17.0.1", family: "IPv4", internal: false, cidr: "172.17.0.1/16" }],
   } as never;
-  expect(
-    resolveAgentBindHosts({
-      ...base,
-      platform: "linux",
-      override: ["127.0.0.1", "172.17.0.1"],
-      interfaces: nets,
-    }),
-  ).toEqual({
+  const resolved = resolveAgentBindHosts({
+    ...base,
+    platform: "linux",
+    override: ["127.0.0.1", "172.17.0.1"],
+    interfaces: nets,
+  });
+  expect(resolved).toEqual({
     hosts: ["127.0.0.1", "172.17.0.1"],
     optionalHosts: [],
     allowedSources: ["127.0.0.0/8", "::1/128", "172.17.0.0/16"],
   });
+  expect(resolved.allowedSources.some((c) => inCidr("172.17.99.99", c))).toBe(true);
+  expect(resolved.allowedSources.some((c) => inCidr("172.18.0.1", c))).toBe(false);
 });
 test("an explicit 0.0.0.0 override accepts any source and warns once", () => {
   warn.length = 0;
@@ -201,20 +202,6 @@ test("a wildcard next to another address, or a duplicate, is a config error", ()
       resolveAgentBindHosts({ ...base, platform: "linux", override, interfaces: ifaces() }),
     ).toThrow(/FACTORY_AGENT_HOST/);
   }
-});
-test("a non-loopback override address contributes its interface network", () => {
-  const nets = {
-    eth0: [{ address: "10.20.30.5", family: "IPv4", internal: false, cidr: "10.20.30.5/24" }],
-  } as never;
-  const { allowedSources } = resolveAgentBindHosts({
-    ...base,
-    platform: "linux",
-    override: ["127.0.0.1", "10.20.30.5"],
-    interfaces: nets,
-  });
-  expect(allowedSources).toContain("10.20.30.0/24");
-  expect(allowedSources.some((c) => inCidr("10.20.30.99", c))).toBe(true);
-  expect(allowedSources.some((c) => inCidr("10.20.31.1", c))).toBe(false);
 });
 test("inCidr handles IPv4-mapped addresses and rejects dotted-tail lookalikes", () => {
   expect(inCidr("::ffff:172.17.0.9", "172.17.0.0/16")).toBe(true);

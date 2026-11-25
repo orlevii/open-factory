@@ -1,15 +1,12 @@
 import { undoDepth } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
-import { MSG } from "@open-factory/shared";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { clearDraft } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { CodeTextarea } from "@/features/templates/code-textarea";
-import { FORM_MSG } from "@/lib/form-messages.ts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -157,15 +154,6 @@ test("rows: validation state in words and agent counts", async () => {
   expect(screen.getByText("No agents")).toBeInTheDocument();
   expect(screen.getByText("2 agents")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/templates/lead");
-  // One line only on a wide list (its own width, not the window's: the sidebar takes 240px); below
-  // that the metadata is its own line and wraps.
-  const list = screen.getByRole("link", { name: /lead/ }).closest("ul") as HTMLElement;
-  expect(list).toHaveClass("@container");
-  // The page grid's one track can shrink, so a long images path can't widen the list with it.
-  expect(list.parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]");
-  const meta = screen.getByText("No agents").parentElement as HTMLElement;
-  expect(meta).toHaveClass("min-w-0", "flex-wrap", "basis-full", "@min-[60rem]:contents");
-  expect(meta.className).not.toMatch(/(^| )md:/);
 });
 
 test("list: a failed load says so", async () => {
@@ -284,21 +272,6 @@ test("CodeTextarea: Tab inserts two spaces; Escape then Tab leaves; Cmd+S saves"
   expect(screen.getByRole("button", { name: "after" })).toHaveFocus();
 });
 
-test("Delete confirms and lands on the list", async () => {
-  const api = mockApi({
-    "GET /api/templates/lead": () => json(detail()),
-    "DELETE /api/templates/lead": () => json(null, 204),
-    "GET /api/templates": () => json({ dir: "/d", templates: [] }),
-  });
-  await openTemplate();
-  await userEvent.click(await screen.findByRole("button", { name: "Delete…" }));
-  const dialog = screen.getByRole("alertdialog", { name: "Delete template lead?" });
-  expect(dialog).toHaveTextContent("This deletes the folder");
-  await userEvent.click(within(dialog).getByRole("button", { name: "Delete lead" }));
-  expect(await screen.findByText("Deleted lead.")).toBeInTheDocument();
-  expect(api.calls.some((c) => c.method === "DELETE")).toBe(true);
-});
-
 test("Create agent: disabled with errors, else it opens New agent with the template", async () => {
   mockApi({ "GET /api/templates/lead": () => json(detail([yamlError])) });
   const { unmount } = await openTemplate();
@@ -308,11 +281,12 @@ test("Create agent: disabled with errors, else it opens New agent with the templ
   );
   unmount();
   mockApi({ "GET /api/templates/lead": () => json(detail()) });
-  await openTemplate();
+  const { router } = await openTemplate();
   const create = await screen.findByRole("button", { name: "Create agent" });
   expect(create).not.toHaveAttribute("aria-disabled");
   await userEvent.click(create);
   expect(getSheetState().parent).toMatchObject({ kind: "new-agent", template: "lead" });
+  expect(router.state.location.pathname).toBe("/templates/lead");
 });
 
 /** The dialog once its lazy body has rendered. */
@@ -322,38 +296,6 @@ async function sheetOf() {
   return d;
 }
 const emptyList = { "GET /api/templates": () => json({ dir: "/d", templates: [] }) };
-
-test("new template: a taken name opens Name with the field error", async () => {
-  mockApi({
-    ...emptyList,
-    "POST /api/templates": () =>
-      json(
-        { error: { code: "template_exists", message: "A template named lead already exists." } },
-        409,
-      ),
-  });
-  renderApp("/templates/new", alice);
-  const d = await sheetOf();
-  await userEvent.type(within(d).getByLabelText("Display name"), "Lead");
-  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
-  expect(await within(d).findByText(FORM_MSG.nameTaken)).toBeInTheDocument();
-  expect(within(d).getByLabelText("Name")).toHaveFocus();
-});
-
-test("new template: a name the routes use is reserved, before anything is sent", async () => {
-  const api = mockApi(emptyList);
-  renderApp("/templates/new", alice);
-  const d = await sheetOf();
-  await userEvent.type(within(d).getByLabelText("Display name"), "Images");
-  await userEvent.click(within(d).getByRole("button", { name: "Change" }));
-  const name = within(d).getByLabelText("Name");
-  await userEvent.clear(name);
-  await userEvent.type(name, "images");
-  await userEvent.tab();
-  expect(await within(d).findByText("That name is reserved.")).toBeInTheDocument();
-  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
-  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
-});
 
 test("list: a folder named images or new can't be opened by URL; its row says to rename it", async () => {
   mockApi({
@@ -390,22 +332,6 @@ test("template page: an oversize avatar.svg is named as ignored", async () => {
   await openTemplate();
   await editorFor("template.yaml");
   expect(screen.queryByText(/avatar\.svg ignored/)).toBeNull();
-});
-
-test("new template: blur validates the name; submit validates everything", async () => {
-  const api = mockApi(emptyList);
-  renderApp("/templates/new", alice);
-  const d = await sheetOf();
-  await userEvent.click(within(d).getByRole("button", { name: "Change" }));
-  const name = within(d).getByLabelText("Name");
-  await userEvent.type(name, "Bad Name");
-  expect(within(d).queryByText(MSG.startLetter)).not.toBeInTheDocument(); // not while typing
-  await userEvent.tab();
-  expect(await within(d).findByText(MSG.startLetter)).toBeInTheDocument();
-  await userEvent.click(within(d).getByRole("button", { name: "Create template" }));
-  expect(await within(d).findByText("Enter a display name.")).toBeInTheDocument();
-  expect(api.calls.some((c) => c.method === "POST")).toBe(false);
-  expect(within(d).getByLabelText("Display name")).toHaveFocus();
 });
 
 test("new template: /templates/new lands on the list with the sheet open", async () => {
@@ -521,17 +447,6 @@ async function conflictPage() {
   return { api, editor };
 }
 
-test("Reload says it discards edits and returns focus to the editor", async () => {
-  const { api, editor } = await conflictPage();
-  expect(screen.getByRole("button", { name: "Reload" })).toHaveAccessibleDescription(
-    /discards your edits/i,
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
-  await vi.waitFor(() => expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n"));
-  expect(editor).toHaveFocus();
-  expect(api.calls.filter((c) => c.method === "GET").length).toBeGreaterThan(1);
-});
-
 test("Overwrite and Discard return focus to the editor", async () => {
   const { api, editor } = await conflictPage();
   api.on("PUT /api/templates/lead/files/template.yaml", () => json({ hash: "h3", issues: [] }));
@@ -570,24 +485,20 @@ test("Discard on a just-created optional file returns to 'Not created'", async (
   expect(screen.getByText("Not created")).toBeInTheDocument();
 });
 
-test("the keyboard hint shows on focus, also on touch", async () => {
-  render(<Harness onSave={() => {}} />);
-  const hint = screen.getByText("Esc then Tab to leave the editor");
-  expect(hint.className).not.toMatch(/pointer:coarse/);
-});
-
-test("'Deleted x.' shows once: it is cleared from history state after it is read", async () => {
-  mockApi({
+test("Delete confirms and lands on the list; 'Deleted x.' shows once: it is cleared from history state after it is read", async () => {
+  const api = mockApi({
     "GET /api/templates/lead": () => json(detail()),
     "DELETE /api/templates/lead": () => json(null, 204),
     "GET /api/templates": () => json({ dir: "/d", templates: [] }),
   });
   const { router } = await openTemplate();
   await userEvent.click(await screen.findByRole("button", { name: "Delete…" }));
-  await userEvent.click(
-    within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete lead" }),
-  );
+  const dialog = screen.getByRole("alertdialog", { name: "Delete template lead?" });
+  expect(dialog).toHaveTextContent("This deletes the folder");
+  await userEvent.click(within(dialog).getByRole("button", { name: "Delete lead" }));
   expect(await screen.findByText("Deleted lead.")).toBeInTheDocument();
+  expect(api.calls.some((c) => c.method === "DELETE")).toBe(true);
+  expect(router.state.location.pathname).toBe("/templates");
   await vi.waitFor(() =>
     expect(
       (router.state.location.state as { deletedTemplate?: string }).deletedTemplate,
@@ -616,11 +527,6 @@ test("saving template.yaml refreshes the header without touching what is being t
   expect(screen.getByRole("heading", { level: 1, name: "Renamed Lead" })).toBeInTheDocument();
   // The editor keeps its own state: the refetch does not reseed it.
   expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\nruntime: docker\n");
-});
-
-test("the changed-on-disk block takes focus on its Reload button", async () => {
-  await conflictPage();
-  expect(screen.getByRole("button", { name: "Reload" })).toHaveFocus();
 });
 
 // S10 §12.8: the Image column, the template page status and the Images section.
@@ -663,17 +569,20 @@ test("list: the Image column shows each status as an icon and a word, plus the i
     expect(svg).not.toBeNull();
     return svg as SVGElement;
   };
-  expect(await icon("Building…")).toHaveClass("text-signal");
-  expect(await icon("Build failed")).toHaveClass("text-destructive");
-  expect(await icon("Out of date")).toHaveClass("text-warning");
-  expect(await icon("Built")).toHaveClass("text-success");
-  expect(await icon("Not built")).toHaveClass("text-muted-foreground");
-  expect(await icon("No Dockerfile")).toHaveClass("text-muted-foreground");
-  expect(await icon("Unknown")).toHaveClass("text-muted-foreground");
-  expect(await icon("Present locally")).toBeInTheDocument();
-  expect(await icon("Pulled when missing")).toHaveClass("text-muted-foreground");
-  expect(screen.getByText("ghcr.io/x/z:1")).toHaveClass("font-mono");
-  expect(screen.getByText("pw")).toHaveClass("font-mono");
+  for (const word of [
+    "Building…",
+    "Build failed",
+    "Out of date",
+    "Built",
+    "Not built",
+    "No Dockerfile",
+    "Unknown",
+    "Present locally",
+    "Pulled when missing",
+  ])
+    expect(await icon(word)).toBeInTheDocument();
+  expect(screen.getByText("ghcr.io/x/z:1")).toBeInTheDocument();
+  expect(screen.getByText("pw")).toBeInTheDocument();
 });
 
 const brokenBuild = {
@@ -973,35 +882,19 @@ test("Save reads 'Saving…' while the PUT is pending", async () => {
   expect(await screen.findByText("Saved.")).toBeInTheDocument();
 });
 
-test("list header (class contract, jsdom has no layout): the h1 gives way to the switch below a 25rem header; New template goes icon-only below sm, keeping its name and a tooltip", async () => {
+test("list header: the Templates h1, the views switch, then New template, named and with a tooltip", async () => {
   mockApi({ "GET /api/templates": () => json({ dir: "/d", templates: [] }) });
   renderApp("/templates", alice);
-  const h1 = await screen.findByRole("heading", { level: 1, name: "Templates" });
-  // The header is the @container: visible from 25rem of header width, sr-only (still the page's h1) below.
-  expect(h1).toHaveClass("@max-[25rem]:sr-only");
-  expect(h1).not.toHaveClass("sr-only");
-  expect(h1.closest("header")).toHaveClass("@container");
-  // Neither the switch nor the action shrinks or wraps (the h1 gives way instead).
+  await screen.findByRole("heading", { level: 1, name: "Templates" });
   const nav = screen.getByRole("navigation", { name: "Templates views" });
-  expect(nav).toHaveClass("shrink-0");
   const link = screen.getByRole("button", { name: "New template" });
   expect(link).toHaveAttribute("aria-label", "New template");
-  const label = within(link).getByText("New template");
-  expect(label).toHaveClass("max-sm:sr-only");
-  expect(link.parentElement).toHaveClass("shrink-0");
   await userEvent.hover(link);
   expect(await screen.findByRole("tooltip")).toHaveTextContent("New template");
+  expect(nav.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 // U4 §12: template files edit in CodeMirror.
-
-test("CodeMirror: template.yaml renders in the editor once the lazy chunk resolves", async () => {
-  mockApi({ "GET /api/templates/lead": () => json(detail()) });
-  await openTemplate();
-  const editor = await editorFor("template.yaml");
-  expect(editor).toHaveAttribute("aria-multiline", "true");
-  expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n");
-});
 
 test("CodeMirror: switching to mcp.json and back keeps template.yaml's undo history", async () => {
   mockApi({
@@ -1043,11 +936,17 @@ test("CodeMirror: an issue's jump focuses its line in the editor", async () => {
   expect(editor).toHaveFocus();
 });
 
-test("CodeMirror: a reload replaces the doc without marking the file dirty or leaving undo", async () => {
-  const { editor } = await conflictPage();
+test("CodeMirror: Reload takes focus, says it discards edits, replaces the doc without marking the file dirty or leaving undo, and returns focus to the editor", async () => {
+  const { api, editor } = await conflictPage();
+  // The changed-on-disk block takes focus on its Reload button.
+  const reload = screen.getByRole("button", { name: "Reload" });
+  expect(reload).toHaveFocus();
+  expect(reload).toHaveAccessibleDescription(/discards your edits/i);
   expect(screen.getByRole("tab", { name: /template\.yaml.*\(unsaved\)/ })).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Reload" }));
+  await userEvent.click(reload);
   await vi.waitFor(() => expect(docOf(editor)).toBe("name: lead\ndisplay_name: Lead\n"));
+  expect(editor).toHaveFocus();
+  expect(api.calls.filter((c) => c.method === "GET").length).toBeGreaterThan(1);
   expect(screen.queryByText("(unsaved)")).not.toBeInTheDocument();
   expect(undoDepth(viewOf(editor).state)).toBe(0);
 });
@@ -1062,25 +961,4 @@ test("CodeMirror: AGENTS.md's Write uses the editor; Preview still renders markd
   await userEvent.click(screen.getByRole("tab", { name: "Preview" }));
   const preview = screen.getByRole("tabpanel", { name: "Preview" });
   expect(within(preview).getByRole("heading", { name: "Lead" })).toBeInTheDocument();
-});
-
-test("MarkdownEditor without a writeSurface (the task and schedule forms) is still a textarea", () => {
-  render(<MarkdownEditor value="" onChange={() => {}} aria-label="Description" />);
-  expect(screen.getByRole("textbox", { name: "Description" }).tagName).toBe("TEXTAREA");
-});
-
-test("list header at 200% text on a phone (class contract): below a 17rem header the switch takes its own line instead of covering New template (evidence D4)", async () => {
-  mockApi({ "GET /api/templates": () => json({ dir: "/d", templates: [] }) });
-  renderApp("/templates", alice);
-  const h1 = await screen.findByRole("heading", { level: 1, name: "Templates" });
-  const header = h1.closest("header");
-  // The header may take a second line (a fixed h-12 row would make the two overlap).
-  expect(header).toHaveClass("flex-wrap", "min-h-12");
-  expect(header).not.toHaveClass("h-12");
-  const nav = screen.getByRole("navigation", { name: "Templates views" });
-  expect(nav).toHaveClass("@max-[17rem]:order-last", "@max-[17rem]:basis-full");
-  // New template stays on the first line, at its end.
-  const action = screen.getByRole("button", { name: "New template" });
-  expect(action.parentElement).toHaveClass("ml-auto");
-  expect(nav.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });

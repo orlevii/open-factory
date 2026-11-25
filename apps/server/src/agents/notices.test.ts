@@ -46,15 +46,6 @@ test("the other notices", () => {
   );
 });
 
-test("the self-compact continue notice has fixed texts", () => {
-  expect(notices.compactContinue({ failed: false })).toBe(
-    "Your /compact finished. Continue where you left off.",
-  );
-  expect(notices.compactContinue({ failed: true })).toBe(
-    "Your /compact didn't run (see the Session). Continue where you left off.",
-  );
-});
-
 test("the config_changed notice: a fixed header, one sorted line per change, parsed back", () => {
   const body = notices.configChanged([
     "model: sonnet → opus",

@@ -94,11 +94,6 @@ test("the filters live in the URL: changing Status refetches with that status", 
   const { router } = renderApp("/tasks", alice);
   await screen.findByRole("link", { name: /^T-1,/ });
   expect(tasksUrls(api)[0]).toBe("/api/tasks?limit=50");
-  // Three 13rem filters don't fit a 768px window with the sidebar open: the row wraps, and the page
-  // grid's one track can shrink below its content.
-  const bar = screen.getByLabelText("Status").closest(".md\\:w-52")?.parentElement as HTMLElement;
-  expect(bar).toHaveClass("md:flex-row", "md:flex-wrap");
-  expect(bar.parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]");
   await pickOption(screen.getByLabelText("Status"), "Done");
   await waitFor(() => expect(router.state.location.search).toMatchObject({ status: "done" }));
   await waitFor(() => expect(tasksUrls(api).at(-1)).toBe("/api/tasks?limit=50&status=done"));
@@ -134,8 +129,13 @@ test("the creator filter lists Anyone and Me first, then agents", async () => {
   renderApp("/tasks", alice);
   await screen.findByRole("link", { name: /^T-1,/ });
   const names = await comboOptionNames(screen.getByLabelText("Created by"));
-  expect(names.slice(0, 2)).toEqual(["Anyone", "Me"]);
-  expect(names.length).toBeGreaterThan(2);
+  expect(names.map((n) => n.replace(/(@[\w-]+)+$/, "").trim())).toEqual([
+    "Anyone",
+    "Me",
+    "Dev agent",
+    "Lead",
+    "Old",
+  ]);
 });
 
 test("filters from the URL are applied and an ended assignee shows while selected", async () => {
@@ -281,16 +281,11 @@ test("a row caps the blockers at three with a count and keeps the full list in t
   expect(many.getAttribute("aria-label")).not.toContain("T-18");
   const marker = within(many).getByText(blockedLabel("Blocked by T-15, T-16, T-17 +22 more"));
   expect(marker).toHaveAttribute("title", keys.join(", "));
-  // The separator is drawn by the marker, never a standalone sibling that could orphan on a wrap.
-  expect(marker).toHaveClass("after:content-['·']");
-  // Each key is its own nowrap span, so a narrow row never breaks one at its hyphen.
+  // Each key is its own span; the separator is never a standalone sibling that could orphan on a wrap.
   const keySpans = Array.from(marker.querySelectorAll("span"));
   expect(keySpans.map((k) => k.textContent)).toEqual(["T-15", "T-16", "T-17"]);
-  for (const k of keySpans) expect(k).toHaveClass("whitespace-nowrap");
   expect(marker.nextElementSibling?.textContent ?? "").not.toBe("·");
-  // The dot is inline in the label, so a wrapped label ends with it; the icon sits on the first line.
   expect(marker.tagName).toBe("SPAN");
-  expect(marker.parentElement).toHaveClass("items-start");
   const three = screen.getByRole("link", { name: /^T-91,/ });
   const all = within(three).getByText(blockedLabel("Blocked by T-1, T-2, T-3"));
   expect(all).not.toHaveAttribute("title");

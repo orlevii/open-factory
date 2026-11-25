@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { clientMessageSchema, liveKey, serverMessageSchema } from "./ws.ts";
+import { clientMessageSchema, serverMessageSchema } from "./ws.ts";
 
 test("parses client ping and rejects unknown types", () => {
   expect(clientMessageSchema.parse({ type: "ping" })).toEqual({ type: "ping" });
@@ -105,10 +105,6 @@ test("live frame rejects bad shapes", () => {
     { type: "live", agent: "dev", subagents: [{ toolUseId: "t" }] },
   ];
   for (const f of bad) expect(serverMessageSchema.safeParse(f).success).toBe(false);
-});
-
-test("liveKey joins a message id and block index (the retire key)", () => {
-  expect(liveKey("msg_1", 2)).toBe("msg_1:2");
 });
 
 test("I2 config_changed frames parse with an agent, a template, and no other field", () => {

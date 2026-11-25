@@ -145,18 +145,21 @@ test("below 768, ] opens the drawer and closes it again; other keys stay blocked
 
 test("the overlay sits below the header: Stop and the toggle stay clickable", async () => {
   vi.unstubAllGlobals();
-  mockApi({
+  const api = mockApi({
     "GET /api/agents/dev": () => json(detail({ status: "working", turnOpen: true })),
     "GET /api/agents/dev/events?": () => json(conversation()),
+    "POST /api/agents/dev/interrupt": () => json({}, 202),
   });
   await visit(900);
   await userEvent.click(toggle());
   await waitFor(() => expect(modeOf(container())).toBe("overlay"));
   const sheet = container() as HTMLElement;
-  expect(sheet).toHaveClass("top-12");
   expect(sheet).not.toHaveAttribute("aria-modal");
-  // Still in the accessibility tree (a modal would hide the page behind).
-  expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+  // Still in the accessibility tree and clickable (a modal would hide the page behind).
+  await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+  await waitFor(() =>
+    expect(api.calls.filter((c) => c.url === "/api/agents/dev/interrupt")).toHaveLength(1),
+  );
   await userEvent.click(toggle());
   await waitFor(() => expect(container()).toBeNull());
 });

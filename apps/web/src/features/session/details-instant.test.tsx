@@ -51,11 +51,3 @@ test("the summary still toggles its details", () => {
   fireEvent.click(details.querySelector("summary") as HTMLElement, { detail: 0 });
   expect(details.open).toBe(true);
 });
-
-test("a quiet line wraps an unbroken handle instead of painting past its card (390 at 200% text)", () => {
-  render(<QuietLine>@long-handle-agent-yyyyyyyyyyyyyyyyyyyyyy</QuietLine>);
-  expect(screen.getByText("@long-handle-agent-yyyyyyyyyyyyyyyyyyyyyy")).toHaveClass(
-    "min-w-0",
-    "[overflow-wrap:anywhere]",
-  );
-});

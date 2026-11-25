@@ -106,26 +106,26 @@ test("the running count is live from the supervisor frame", async () => {
   expect(await within(region).findByText("3 of 8 running")).toBeInTheDocument();
 });
 
-test("the local runtime row is read-only with how to change it", async () => {
-  world();
-  renderApp("/settings/factory", alice);
-  const region = await factory();
-  expect(await within(region).findByText("Local runtime: Not allowed")).toBeInTheDocument();
-  expect(
-    within(region).getByText(
-      (_, el) =>
-        el?.tagName === "P" &&
-        el.textContent ===
-          "Set FACTORY_ALLOW_LOCAL_RUNTIME on the server and restart to change it.",
-    ),
-  ).toBeInTheDocument();
-});
-
-test("allowed local runtime reads Allowed", async () => {
-  world({}, settings({ allowLocalRuntime: true }));
-  renderApp("/settings/factory", alice);
-  expect(await within(await factory()).findByText("Local runtime: Allowed")).toBeInTheDocument();
-});
+test.each([
+  [false, "Not allowed"],
+  [true, "Allowed"],
+])(
+  "the local runtime row (allowLocalRuntime %s) reads %s, read-only with how to change it",
+  async (allowed, label) => {
+    world({}, settings({ allowLocalRuntime: allowed }));
+    renderApp("/settings/factory", alice);
+    const region = await factory();
+    expect(await within(region).findByText(`Local runtime: ${label}`)).toBeInTheDocument();
+    expect(
+      within(region).getByText(
+        (_, el) =>
+          el?.tagName === "P" &&
+          el.textContent ===
+            "Set FACTORY_ALLOW_LOCAL_RUNTIME on the server and restart to change it.",
+      ),
+    ).toBeInTheDocument();
+  },
+);
 
 test("blur validates the cap; editing clears the error", async () => {
   world();

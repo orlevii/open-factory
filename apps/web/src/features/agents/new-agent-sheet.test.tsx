@@ -245,11 +245,6 @@ test("the template summary shows the template's description in full", async () =
   expect(await within(dialog).findByText(long)).toBeInTheDocument();
 });
 
-test("the address follows the display name; a taken one gets a suffix", async () => {
-  const { dialog } = await openLead({ agents: [agentSummary({ slug: "team-lead" })] });
-  await vi.waitFor(() => expect(within(dialog).getByText("@team-lead-2")).toBeInTheDocument());
-});
-
 test("submit with an empty derived slug opens the address input, focused, with its error", async () => {
   const { api } = await openLead();
   await userEvent.clear(field("Display name"));
@@ -478,6 +473,16 @@ test("a failing submit with no credential chosen opens More options every time, 
   expect(posts(api)).toHaveLength(0);
 });
 
+test("Change is a skip control: pressing it doesn't validate the Display name being left", async () => {
+  const { dialog } = await open();
+  const name = field("Display name");
+  await userEvent.clear(name);
+  expect(name).toHaveFocus();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Change" }));
+  expect(within(dialog).queryByText("Enter a display name.")).toBeNull();
+  expect(name).not.toHaveAttribute("aria-invalid");
+});
+
 test("tabbing through untouched fields shows nothing", async () => {
   const { dialog } = await open();
   await vi.waitFor(() => expect(field("Template")).toHaveFocus());
@@ -654,9 +659,12 @@ test("projects: the template's set is checked, and a toggle changes it", async (
   await openLead();
   await userEvent.click(more());
   const group = screen.getByRole("group", { name: /Projects/ });
+  // The lead template grants app, not docs.
+  expect(within(group).getByRole("checkbox", { name: /app/ })).toBeChecked();
   expect(within(group).getByRole("checkbox", { name: /docs/ })).not.toBeChecked();
   await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
   expect(within(group).getByRole("checkbox", { name: /docs/ })).toBeChecked();
+  expect(within(group).getByRole("checkbox", { name: /app/ })).toBeChecked();
 });
 
 // --- Dismissed while creating (break-ui M2) ---
@@ -859,23 +867,6 @@ test("the sidebar + opens New agent", async () => {
   await sheet();
 });
 
-test("the Agents header opens New agent", async () => {
-  mockWorld({ agents: [agentSummary({ slug: "dev" })] });
-  renderApp("/agents", alice);
-  const main = await screen.findByRole("main");
-  await userEvent.click(await within(main).findByRole("button", { name: "New agent" }));
-  await sheet();
-});
-
-test("the Agents empty state opens New agent", async () => {
-  mockWorld({ agents: [], credentials: [], templates: [] });
-  renderApp("/agents", alice);
-  const main = await screen.findByRole("main");
-  expect(await within(main).findByText("No agents yet.")).toBeInTheDocument();
-  await userEvent.click(within(main).getByRole("button", { name: "Create your first agent" }));
-  await sheet();
-});
-
 test("the palette's New agent opens the sheet", async () => {
   mockWorld();
   renderApp("/inbox", alice);
@@ -885,15 +876,6 @@ test("the palette's New agent opens the sheet", async () => {
   const actions = within(palette).getByRole("group", { name: "Actions" });
   await userEvent.click(within(actions).getByRole("option", { name: "New agent" }));
   await sheet();
-});
-
-test("the template editor's Create agent opens New agent with that template", async () => {
-  mockWorld({ extra: { "GET /api/templates/lead": () => json(templateDetail(templateConfig())) } });
-  const { router } = renderApp("/templates/lead", alice);
-  await userEvent.click(await screen.findByRole("button", { name: "Create agent" }));
-  await sheet();
-  expect(getSheetState().parent).toMatchObject({ kind: "new-agent", template: "lead" });
-  expect(router.state.location.pathname).toBe("/templates/lead");
 });
 
 // --- Carried over from the New agent page ---

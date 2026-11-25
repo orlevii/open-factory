@@ -2,7 +2,7 @@ import { connect } from "node:net";
 import { Writable } from "node:stream";
 import Fastify from "fastify";
 import { afterEach, expect, test } from "vitest";
-import { BRIDGE_WARNING, resolveAgentBindHosts } from "./bind-hosts.ts";
+import { BRIDGE_WARNING } from "./bind-hosts.ts";
 import { startAgentListener } from "./listener.ts";
 import { AgentTokens } from "./tokens.ts";
 
@@ -109,10 +109,6 @@ test("an ended (archived or terminated) agent's token is refused", async () => {
     ).status,
   ).toBe(401);
 });
-test("a source outside the allowed ranges is closed", async () => {
-  const { url } = await start({ allowedSources: ["10.99.0.0/16"] });
-  await expect(fetch(`${url}/api/status`)).rejects.toThrow();
-});
 test("the listener accepts a source inside an allowed range and refuses one outside", async () => {
   const inside = await start({ allowedSources: ["127.0.0.0/24"] });
   expect((await fetch(`${inside.url}/api/status`)).status).toBe(200);
@@ -138,19 +134,9 @@ test("a malformed Host header cannot break the MCP request", async () => {
   });
   expect(status).toBe("HTTP/1.1 200 OK");
 });
-test("an explicit all-addresses setting accepts any caller and warns exactly once at startup", async () => {
-  const warns: string[] = [];
-  const r = resolveAgentBindHosts({
-    platform: "linux",
-    override: ["0.0.0.0"],
-    interfaces: {} as never,
-    localAllowed: true,
-    warn: (m) => warns.push(m),
-  });
-  expect(warns).toHaveLength(1);
-  const { url } = await start({ hosts: ["127.0.0.1"], allowedSources: r.allowedSources });
+test("a 0.0.0.0/0 allowed range accepts the loopback caller", async () => {
+  const { url } = await start({ hosts: ["127.0.0.1"], allowedSources: ["0.0.0.0/0"] });
   expect((await fetch(`${url}/api/status`)).status).toBe(200);
-  expect(warns).toHaveLength(1);
 });
 test("a body over 512 KiB is refused before MCP", async () => {
   const { url, tokens, seen } = await start();

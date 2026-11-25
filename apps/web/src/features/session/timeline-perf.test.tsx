@@ -10,7 +10,7 @@ import { enqueueStatusFrame } from "@/features/agents/status-frames";
 import { WsContext, type WsHub } from "@/lib/ws-context";
 import { longPress } from "@/test/long-press";
 import { renderInRouter } from "@/test/render-in-router";
-import { agentSummary } from "@/test/session-fixtures";
+import { agentSummary, envelope } from "@/test/session-fixtures";
 import type { Row } from "./rows";
 import { SessionView } from "./session-view";
 import { Timeline } from "./timeline";
@@ -150,7 +150,14 @@ const initial: SessionEvent[] = [
     {
       type: "message_in",
       messages: [
-        { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "Hello" },
+        envelope({
+          id: "m1",
+          from: "@or",
+          fromKind: "human",
+          kind: "message",
+          urgent: false,
+          body: "Hello",
+        }),
       ],
     },
     null,
@@ -630,6 +637,8 @@ test("itemPropsEqual: unrelated keys and fresh but equal sets are not a change",
   expect(itemPropsEqual(props(), props({ failedIds: new Set(["x"]) }))).toBe(true);
   expect(itemPropsEqual(props(), props({ row: { ...parent } }))).toBe(false);
   expect(itemPropsEqual(props(), props({ lit: true }))).toBe(false);
+  expect(itemPropsEqual(props(), props({ live: true }))).toBe(false);
+  expect(itemPropsEqual(props({ live: true }), props({ live: false }))).toBe(false);
   // The deep-link tint's phase reaches only the item holding it.
   expect(itemPropsEqual(props(), props({ arrivedKey: "4", arrival: "on" }))).toBe(false);
   expect(
@@ -962,7 +971,8 @@ test("200 rows at rest mount no menu root and read no phone or pointer query (me
   }) as typeof window.matchMedia;
   try {
     await setup();
-    expect(document.querySelectorAll("[data-row-menu]").length).toBeGreaterThan(190);
+    expect(document.querySelectorAll("[data-row-menu]")).toHaveLength(198);
+    expect(document.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(198);
     expect(document.querySelector('[data-slot="dropdown-menu-trigger"]')).toBeNull();
     expect(document.querySelector('[data-slot="drawer-content"]')).toBeNull();
     const menuQueries = [...reads.keys()].filter(

@@ -76,6 +76,7 @@ export class CredentialVerifier {
             kind: "message",
             urgent: false,
             body: PROMPT,
+            parts: [{ id: "verify", body: PROMPT, createdAt: new Date().toISOString() }],
           },
         ])
         .catch(() => {});

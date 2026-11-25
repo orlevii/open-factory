@@ -136,7 +136,7 @@ test("an unknown value renders @slug with a face", async () => {
   world();
   const { trigger } = setup({ start: "ghost" });
   expect(trigger).toHaveTextContent("@ghost");
-  expect(trigger.querySelector("svg, img, [data-slot=avatar]")).not.toBeNull();
+  expect(trigger.querySelector("[data-agent-avatar]")).not.toBeNull();
 });
 
 test("a null value shows the placeholder", async () => {

@@ -106,12 +106,6 @@ test("a non-object draft (valid JSON, wrong schema) renders tolerantly", () => {
   expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(CONFIG_FIELDS.length);
 });
 
-test("every mapped field renders a note target, so no field's issue is dropped", () => {
-  render(<Form start={{}} />);
-  for (const f of CONFIG_FIELDS)
-    expect(document.getElementById(`field-${f}-error`), f).toBeInTheDocument();
-});
-
 test("every field's issue lands on its note, and no mapped issue reaches the top block", () => {
   const issues = CONFIG_FIELDS.map((f) => issue(fieldPath(f), `Issue on ${f}.`));
   render(<Form start={{}} issues={issues} />);

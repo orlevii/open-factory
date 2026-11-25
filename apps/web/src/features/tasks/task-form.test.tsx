@@ -226,12 +226,18 @@ test("a server field error lands under its field; another failure is one alert l
 });
 
 test("Close dismisses the sheet without a dialog and keeps the draft", async () => {
+  const confirm = vi.spyOn(window, "confirm");
   mockApi(base);
   const { router } = renderApp("/tasks/new", alice);
   await userEvent.type(await screen.findByLabelText("Title"), "Keep me");
   await userEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1) as HTMLElement);
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
   expect(router.state.location.pathname).toBe("/tasks");
+  expect(confirm).not.toHaveBeenCalled();
+  confirm.mockRestore();
+  act(() => openSheet({ kind: "new-task" }));
+  expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
+  expect(screen.getByLabelText("Title")).toHaveValue("Keep me");
 });
 
 test("fields run Title, Assignee, Description; More options is closed", async () => {
@@ -252,19 +258,6 @@ test("fields run Title, Assignee, Description; More options is closed", async ()
     "false",
   );
   expect(screen.queryByLabelText("Depends on")).toBeNull();
-});
-
-test("a dependency error after submit opens More options itself", async () => {
-  mockApi(base);
-  renderApp("/tasks/new", alice);
-  await userEvent.type(await screen.findByLabelText("Title"), "Plan");
-  await openMore();
-  await userEvent.type(await screen.findByLabelText("Depends on"), "banana");
-  await userEvent.click(screen.getByRole("button", { name: "More options" }));
-  expect(screen.queryByLabelText("Depends on")).toBeNull();
-  await userEvent.click(screen.getByRole("button", { name: "Create task" }));
-  expect(await screen.findByText("Use task keys, like T-41.")).toBeInTheDocument();
-  expect(screen.getByLabelText("Depends on")).toHaveFocus();
 });
 
 test("Enter in a field while a create is pending posts once", async () => {
@@ -524,24 +517,6 @@ test("an over-long description marks the editor, returns to Write and focuses th
   expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
 });
 
-test("a stale assignee says the agent has ended", async () => {
-  mockApi({
-    ...base,
-    "GET /api/agents?": (_b, url) =>
-      url.includes("ended=only")
-        ? json({
-            agents: [agentSummary({ slug: "ada", displayName: "Ada" })],
-            more: false,
-            running: { count: 0, max: 8 },
-          })
-        : agents(),
-  });
-  renderApp("/tasks", alice);
-  act(() => openSheet({ kind: "new-task", assignee: "ada" }));
-  expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
-  expect(await assigneeField()).toHaveAttribute("aria-invalid", "true");
-});
-
 test("a failed dependency lookup on submit is the outcome line", async () => {
   const api = mockApi({
     ...base,
@@ -577,6 +552,7 @@ test("a stale assignee blocks the submit until another is picked; Unassigned goe
   renderApp("/tasks", alice);
   act(() => openSheet({ kind: "new-task", assignee: "ada" }));
   expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
+  expect(await assigneeField()).toHaveAttribute("aria-invalid", "true");
   await userEvent.type(screen.getByLabelText("Title"), "Plan");
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
   const field = await assigneeField();

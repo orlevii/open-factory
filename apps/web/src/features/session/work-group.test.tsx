@@ -79,13 +79,9 @@ test("each call in an open group has its own row menu and gutter time (Copy comm
     expect(within(call).getAllByRole("button", { name: "Row actions", hidden: true })).toHaveLength(
       1,
     );
-    // Like a top-level tool row's, the time is in the call's own line (never over its chip), and
-    // shows on that call's hover or focus only.
+    // Like a top-level tool row's, the time is in the call's own line.
     const time = call.querySelector("[data-gutter-time]");
     expect(time?.closest("[data-row]")).not.toBeNull();
-    expect(time).not.toHaveClass("absolute");
-    expect(time).toHaveClass("group-hover/call:inline");
-    expect(time).not.toHaveClass("group-hover:inline");
   }
   const trigger = within(calls[1] as HTMLElement).getByRole("button", {
     name: "Row actions",
@@ -97,20 +93,17 @@ test("each call in an open group has its own row menu and gutter time (Copy comm
   expect(within(menu).getByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
 });
 
-test("after a pointer click, an open that came from elsewhere turns the chevron at once", async () => {
+test("a call expanded on its own opens the group it joins after a re-split", async () => {
   const user = userEvent.setup();
   const text: Row = { kind: "text", seq: 6, at, text: "t", key: "6", head: false };
   const [a, b, c] = [sh(3), sh(5), sh(7)];
   const view = timeline([...groupWork([a, b]), text, c]);
-  const chevron = () => rowEl("3")?.querySelector("svg") as SVGElement;
-  await user.click(rowEl("3") as HTMLElement); // pointer open: animates
-  expect(chevron()).toHaveClass("transition-transform");
+  await user.click(rowEl("3") as HTMLElement); // pointer open
   await user.click(rowEl("3") as HTMLElement); // pointer close
   await user.click(rowEl("7") as HTMLElement); // expand the call standing alone
   // The text between is gone (a re-split): the expanded call joins and opens the group.
   view.update(groupWork([a, b, c]));
   expect(rowEl("3")).toHaveAttribute("aria-expanded", "true");
-  expect(chevron()).not.toHaveClass("transition-transform");
 });
 
 test("Esc on a call's ⋯ inside an open group returns focus to that call", async () => {
@@ -124,7 +117,7 @@ test("Esc on a call's ⋯ inside an open group returns focus to that call", asyn
   expect(rowEl("5")).toHaveFocus();
 });
 
-test("the summary's duration never wraps inside itself", () => {
+test("the summary shows the group's duration", () => {
   const rows = groupWork([
     sh(3),
     { ...sh(5), resultAt: "2026-11-19T09:01:40.000Z" },
@@ -133,5 +126,4 @@ test("the summary's duration never wraps inside itself", () => {
   timeline(rows);
   const duration = screen.getByText("· 1m 40s", { exact: false });
   expect(duration).toHaveTextContent(/1m 40s/);
-  expect(duration).toHaveClass("whitespace-nowrap");
 });

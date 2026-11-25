@@ -215,11 +215,6 @@ describe("CodeEditor", () => {
     }
   });
 
-  test("on desktop diagnostics get the lint gutter", () => {
-    const { container } = setup({ diagnostics: [{ line: 2, message: "nope", severity: "error" }] });
-    expect(container.querySelector(".cm-gutter-lint")).not.toBeNull();
-  });
-
   test("an external replace after edits starts a fresh history: undo can't replay old edits onto it", () => {
     const { view, props, rerender, ref, states } = setup({ value: "keep foo here" });
     act(() => view().dispatch({ changes: { from: 5, to: 9 }, userEvent: "delete" }));

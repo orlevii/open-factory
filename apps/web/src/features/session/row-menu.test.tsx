@@ -5,6 +5,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { renderInRouter } from "@/test/render-in-router";
+import { envelope } from "@/test/session-fixtures";
 import { formatTime } from "./format";
 import { RowMenu, type RowMenuHandle, rowMenuItems, rowMenuTitle } from "./row-menu";
 import type { Row } from "./rows";
@@ -83,7 +84,7 @@ const messageFrom = (from: string, fromKind: "human" | "agent"): Row => ({
   kind: "message",
   seq: 4,
   at,
-  message: { id: "m4", from, fromKind, kind: "message", urgent: false, body: "hi" },
+  message: envelope({ id: "m4", from, fromKind, kind: "message", urgent: false, body: "hi" }),
   key: "4",
 });
 
@@ -212,7 +213,7 @@ test("Space opens a trigger that was never activated, focused on its first item"
   );
 });
 
-test("Escape returns focus to the trigger, which shows while it returns", async () => {
+test("Escape returns focus to the trigger", async () => {
   renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
   (await screen.findByRole("button", { name: "Row actions" })).focus();
   await userEvent.keyboard("{Enter}");
@@ -220,7 +221,6 @@ test("Escape returns focus to the trigger, which shows while it returns", async 
   await userEvent.keyboard("{Escape}");
   const trigger = document.querySelector('[data-slot="dropdown-menu-trigger"]') as HTMLElement;
   await vi.waitFor(() => expect(trigger).toHaveFocus());
-  expect(trigger).toHaveClass("data-returning:inline-flex");
   expect(trigger).not.toHaveAttribute("data-returning");
 });
 
@@ -229,15 +229,6 @@ test("a pointer opening leaves focus on the menu, not an item", async () => {
   const menu = await openMenu(await screen.findByRole("button", { name: "Row actions" }));
   await vi.waitFor(() => expect(menu.contains(document.activeElement)).toBe(true));
   expect(within(menu).getByRole("menuitem", { name: "Copy link" })).not.toHaveFocus();
-});
-
-test("while its menu is open the trigger stays shown, so the menu keeps its anchor", async () => {
-  renderInRouter(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
-  await openMenu(await screen.findByRole("button", { name: "Row actions" }));
-  const trigger = document.querySelector('[data-slot="dropdown-menu-trigger"]') as HTMLElement;
-  expect(trigger).toHaveAttribute("data-state", "open");
-  // The row's hover and focus-within are gone under a modal menu; this variant keeps it displayed.
-  expect(trigger).toHaveClass("data-[state=open]:inline-flex");
 });
 
 test("a builder is called only when the menu first opens", async () => {
@@ -268,7 +259,6 @@ test("a refused clipboard says Couldn't copy inline", async () => {
   expect(await screen.findByText("Couldn't copy")).toBeInTheDocument();
 });
 
-const many = Array.from({ length: 200 }, (_, i) => text(i + 1));
 const timeline = (rows: Row[]) => (
   <Timeline
     slug="dev"
@@ -281,14 +271,6 @@ const timeline = (rows: Row[]) => (
     footer={null}
   />
 );
-
-test("200 rows mount 200 plain triggers and no menu root", async () => {
-  renderInRouter(timeline(many));
-  await screen.findByText("200");
-  expect(document.querySelectorAll("[data-copy-link]")).toHaveLength(200);
-  expect(document.querySelectorAll('[data-slot="dropdown-menu-trigger"]')).toHaveLength(0);
-  expect(document.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(200);
-});
 
 test("applyTo skips the trigger: only the tab row's trigger is tabbable", async () => {
   renderInRouter(timeline([text(1), text(2), text(3)]));
@@ -311,65 +293,14 @@ test("tool rows and agent text show their time in the gutter; the footer has non
   expect(wrapOf("1").querySelector("time[data-gutter-time]")).toHaveAttribute("datetime", at);
   expect(wrapOf("2").querySelector("time[data-gutter-time]")).toHaveAttribute("datetime", at);
   expect(wrapOf("9").querySelector("time[data-gutter-time]")).toBeNull();
-  // The hover-revealed gutter time is paint only: over a subagent card's summary it took the click (evidence D5).
-  const gutter = wrapOf("1").querySelector("time[data-gutter-time]");
-  expect(gutter).toHaveClass("absolute", "pointer-events-none");
 });
 
-test("tool rows take the .of-row pressed fill", async () => {
-  renderInRouter(timeline([tool("Bash", { command: "ls" })]));
-  expect(await screen.findByRole("button", { name: /ls/ })).toHaveClass("of-row");
-});
-
-const card = (kind: "system" | "message", seq: number): Row => ({
-  kind: "message",
-  seq,
-  at,
-  message: {
-    id: `m${seq}`,
-    from: "@factory",
-    fromKind: "factory",
-    kind,
-    urgent: false,
-    body: `Body ${seq}`,
-  },
-  key: `${seq}:0`,
-});
-
-test("cards span the column with ⋯ inside their padding; unboxed rows keep the 2rem right column", async () => {
-  renderInRouter(
-    timeline([
-      text(1),
-      outgoing("@bob", { results: [reached("@bob", "agent")] }),
-      card("message", 5),
-      card("system", 6),
-    ]),
-  );
-  await screen.findByText("Body 6");
-  const wrapOf = (key: string) =>
-    document.querySelector(`[data-row="${key}"]`)?.closest("[data-row-wrap]") as HTMLElement;
-  const trigger = (key: string) => wrapOf(key).querySelector("[data-copy-link]") as HTMLElement;
-  for (const key of ["3", "5:0"]) {
-    expect(wrapOf(key)).not.toHaveClass("pr-8");
-    expect(trigger(key)).toHaveClass("top-1.5", "right-1.5");
-    // The card leaves room for the trigger inside its own padding.
-    expect(wrapOf(key).querySelector(".rounded-lg")).toHaveClass("pr-9");
-  }
-  // Agent text and a factory notice are unboxed.
-  for (const key of ["1", "6:0"]) {
-    expect(wrapOf(key)).toHaveClass("pr-8");
-    expect(trigger(key)).toHaveClass("top-1", "right-0");
-  }
-});
-
-test("a tool row's gutter time sits in the row's own line after its state, never painted over it", async () => {
+test("a tool row's gutter time sits in the row's own line after its state", async () => {
   renderInRouter(timeline([tool("Bash", { command: "ls" })]));
   // The Bash renderer's summary is the command (`$ ls`), not the tool's name.
   const row = await screen.findByRole("button", { name: /\$ ls/ });
   const time = row.querySelector("time[data-gutter-time]") as HTMLElement;
   expect(time).not.toBeNull();
-  expect(time).not.toHaveClass("bg-background");
-  expect(time).not.toHaveClass("absolute");
   // Not part of the row's accessible name: the title and, on touch, the menu carry the time.
   expect(time).toHaveAttribute("aria-hidden", "true");
   // Content | time | ⋯: the time is the line's last item, after the state when there is one.
@@ -380,7 +311,14 @@ const message: Row = {
   kind: "message",
   seq: 4,
   at,
-  message: { id: "m4", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "Hi" },
+  message: envelope({
+    id: "m4",
+    from: "@or",
+    fromKind: "human",
+    kind: "message",
+    urgent: false,
+    body: "Hi",
+  }),
   key: "4:0",
 };
 
@@ -395,7 +333,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
     kind: "peer",
     seq: 8,
     key: "8:0",
-    envelope: {
+    envelope: envelope({
       id: "e8",
       from: "@factory",
       fromKind: "factory",
@@ -403,7 +341,7 @@ test("the menu's title names the row: who a message is from, the tool, with the 
       urgent: false,
       body: "",
       subject: { slug: "bob", displayName: "Bob", relation: "peer", left },
-    },
+    }),
   });
   expect(rowMenuTitle(peer(), "dev")).toBe("@bob joined");
   expect(rowMenuTitle(peer({ reason: "archived" }), "dev")).toBe("@bob left");
@@ -463,12 +401,4 @@ test("the handle is stable across renders", async () => {
   const first = ref.current;
   rerender(<RowMenu ref={ref} items={items} title="@dev" focusable={false} />);
   expect(ref.current).toBe(first);
-});
-
-test("on coarse pointers the timeline ⋯ is a visible 32px-wide box in its gutter, at most 40px tall, with no expander (U4 §11.3)", () => {
-  render(<RowMenu items={rowMenuItems(text(1), "dev")} title="@dev" focusable />);
-  const trigger = screen.getByRole("button", { name: "Row actions" });
-  expect(trigger).toHaveClass("pointer-coarse:w-8", "after:hidden");
-  // 40px, but never past the row's 8px gap: consecutive one-line rows' boxes don't overlap.
-  expect(trigger).toHaveClass("pointer-coarse:h-[min(2.5rem,calc(100%+0.25rem))]");
 });

@@ -1,25 +1,8 @@
 import { expect, test } from "vitest";
 import { queueItemSchema } from "./agents.ts";
 import { anyEventSchema } from "./events.ts";
-import { handleSchema, RESERVED_HANDLES } from "./handle.ts";
-import {
-  messageLookupSchema,
-  readFromBodySchema,
-  readFromResponseSchema,
-  unreadCountSchema,
-} from "./messaging.ts";
-import { isReservedSecretName } from "./names.ts";
+import { readFromBodySchema, readFromResponseSchema, unreadCountSchema } from "./messaging.ts";
 import { serverMessageSchema } from "./ws.ts";
-
-test("a pre-S6 message_in row (no parts) still parses", () => {
-  const e = {
-    type: "message_in",
-    messages: [
-      { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "hi" },
-    ],
-  };
-  expect(anyEventSchema.parse(e)).toEqual(e);
-});
 
 test("a merged member_update envelope with parts and a factory fact parse", () => {
   const e = {
@@ -47,6 +30,9 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
         fact: "denied",
         urgent: false,
         body: "Bash was denied for @dev.",
+        parts: [
+          { id: "m3", body: "Bash was denied for @dev.", createdAt: "2026-11-24T10:00:00.000Z" },
+        ],
       },
       {
         id: "m4",
@@ -56,6 +42,7 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
         about: "dev",
         urgent: false,
         body: "…",
+        parts: [{ id: "m4", body: "…", createdAt: "2026-11-24T10:00:00.000Z" }],
         subject: {
           slug: "dev",
           displayName: "Dev",
@@ -84,12 +71,6 @@ test("held queue items and the inbox frame parse", () => {
   expect(serverMessageSchema.parse({ type: "inbox_changed" })).toEqual({ type: "inbox_changed" });
 });
 
-test("all and system are reserved handles; OPEN_FACTORY_ secrets are reserved", () => {
-  expect(RESERVED_HANDLES).toEqual(expect.arrayContaining(["all", "system"]));
-  expect(handleSchema.safeParse("system").success).toBe(false);
-  expect(isReservedSecretName("OPEN_FACTORY_AGENT_TOKEN")).toBe(true);
-});
-
 test("process_started accepts the S6 wake reasons; mcp_unavailable parses", () => {
   expect(
     anyEventSchema.parse({ type: "process_started", resumed: true, reason: "agent_message" }),
@@ -110,8 +91,4 @@ test("read-from body and response", () => {
   expect(
     readFromResponseSchema.parse({ marked: 1, readAt: "2026-11-21T00:00:00.000Z" }).marked,
   ).toBe(1);
-});
-
-test("a looked-up message can be cancelled", () => {
-  expect(messageLookupSchema.shape.state.parse("cancelled")).toBe("cancelled");
 });

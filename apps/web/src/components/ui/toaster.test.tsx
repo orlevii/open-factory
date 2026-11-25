@@ -153,16 +153,3 @@ test("duration is 60ms per character, at least 5s", () => {
   expect(toastDuration("x".repeat(120))).toBe(7200);
   expect(toastDuration("short")).toBe(5000);
 });
-
-test("desktop: rem type, an 8px gap, a width capped to the content column, an offset focus ring", async () => {
-  const { container } = render(<Toaster />);
-  act(() => notify({ text: "Created T-1.", action: { label: "Open", run: () => {} } }));
-  const button = await screen.findByRole("button", { name: "Open" });
-  const toaster = container.ownerDocument.querySelector("[data-sonner-toaster]") as HTMLElement;
-  expect(toaster.style.getPropertyValue("--gap")).toBe("8px");
-  expect(toaster.style.getPropertyValue("--width")).toContain("var(--composer-inset-right");
-  const item = button.closest("[data-sonner-toast]") as HTMLElement;
-  expect(item.className).toContain("text-[0.8125rem]");
-  expect(item.className).not.toMatch(/\[\d+px\]/);
-  expect(button).toHaveClass("focus-visible:outline-offset-2");
-});

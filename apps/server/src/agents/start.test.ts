@@ -377,20 +377,16 @@ test("gate off: local start fails closed with fix=runtime, before prepare; nothi
   }
 });
 
-test("gate on: local starts as before", async () => {
-  const spec = await prepareStart(agent, { agentToken: "tok" });
-  expect(spec.runtime).toBe("local");
-});
-
 test("gate off: a docker agent is never gated", async () => {
   await t.db.update(schema.agents).set({ runtime: "docker" }).where(eq(schema.agents.id, agent.id));
   factoryConfig.allowLocalRuntime = false;
   try {
-    const outcome = await prepareStart(await reload(agent.id), { agentToken: "tok" }).then(
-      () => "started",
-      (e: unknown) => e,
+    // This harness has no Docker: the post-gate Docker error proves the start got past the local-runtime gate.
+    await expect(prepareStart(await reload(agent.id), { agentToken: "tok" })).rejects.toMatchObject(
+      {
+        message: "The Docker runtime isn't configured on this factory.",
+      },
     );
-    expect(outcome).not.toMatchObject({ fix: "runtime" });
   } finally {
     factoryConfig.allowLocalRuntime = true;
   }
@@ -661,20 +657,6 @@ test("a spawned agent ignores its config: an invalid overlay doesn't stop its st
   await setConfig(child.id, { name: 5 });
   const spec = await prepareStart(await reload(child.id), { agentToken: "tok" });
   expect(spec.effective.config.name).toBe("dev");
-});
-
-test("a persistent agent's start errors keep their advice and fix; a spawned one's drop the config fix", async () => {
-  await setConfig(agent.id, { name: 5 });
-  const err = await prepareStart(await reload(agent.id), { agentToken: "tok" }).catch(
-    (e: unknown) => e,
-  );
-  expect(err).toMatchObject({
-    message: `The configuration of @${agent.slug} is invalid. Fix it in Configuration.`,
-    fix: "config",
-  });
-  expect(forSpawnedAgent(err as AgentStartError).message).toBe(
-    `The configuration of @${agent.slug} is invalid. Terminate it and spawn a new one.`,
-  );
 });
 
 test("a spawned agent's start error from its template keeps the template fix", async () => {

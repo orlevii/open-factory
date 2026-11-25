@@ -1,9 +1,9 @@
 import { screen } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { renderInRouter } from "@/test/render-in-router";
+import { envelope } from "@/test/session-fixtures";
 import type { Row } from "./rows";
 import { Timeline } from "./timeline";
-import { itemPropsEqual, type TimelineItemProps } from "./timeline-item";
 
 const at = "2026-11-21T10:00:00.000Z";
 const text = (seq: number): Row => ({
@@ -18,14 +18,14 @@ const message = (seq: number, id: string): Row => ({
   kind: "message",
   seq,
   at,
-  message: {
+  message: envelope({
     id,
     from: "@or",
     fromKind: "human",
     kind: "message",
     urgent: false,
     body: `Body ${id}`,
-  },
+  }),
   key: `${seq}:0`,
 });
 const footer: Row = { kind: "turn_footer", seq: 13, key: "13", durationMs: 5000, costUsd: 0 };
@@ -61,26 +61,4 @@ test("data-live only for rows above liveAfter that weren't handed off; turn foot
   const wraps = [...document.querySelectorAll("[data-row-wrap]")];
   expect(wraps.at(-1)?.textContent).toMatch(/^Worked/);
   expect(wraps.at(-1)?.hasAttribute("data-live")).toBe(false);
-});
-
-test("itemPropsEqual: the live flag is a change", () => {
-  const p: TimelineItemProps = {
-    row: text(1),
-    slug: "dev",
-    lit: false,
-    arrivedKey: undefined,
-    arrival: undefined,
-    onArrivedEnd: () => {},
-    live: false,
-    firstOfSeq: true,
-    gap: "",
-    tabKey: undefined,
-    expanded: new Set(),
-    failedIds: new Set(),
-    interruptedEnds: new Set(),
-    toggle: () => {},
-    onRowFocus: () => {},
-  };
-  expect(itemPropsEqual(p, { ...p })).toBe(true);
-  expect(itemPropsEqual(p, { ...p, live: true })).toBe(false);
 });

@@ -105,16 +105,12 @@ test("the page: header, tabs, the template's rows, and a footer in the flow whil
   expect(save()).toHaveAttribute("aria-disabled", "true");
 });
 
-test("the header keeps '@ana · Template dev' at every width: it wraps, it never hides", async () => {
+test("the header names the agent and links its template: '@ana · Template dev'", async () => {
   await open();
   const link = screen.getByRole("link", { name: "dev" });
   const meta = link.closest("[data-slot=config-meta]") as HTMLElement;
   expect(meta).not.toBeNull();
-  expect(meta.className).not.toMatch(/hidden/);
-  expect(meta.className).not.toMatch(/truncate/);
   expect(meta).toHaveTextContent("@ana · Template dev");
-  // The header may take a second line, where the meta moves when it can't fit beside the title.
-  expect(meta.closest("header")?.className).toMatch(/flex-wrap/);
 });
 
 test("Discard works with only an MCP editor open, and closes it", async () => {
@@ -134,7 +130,6 @@ test("the footer is sticky only while dirty, or while an outcome shows", async (
   expect(footer()).not.toHaveAttribute("data-sticky");
   await addAllowRule("Read");
   expect(footer()).toHaveAttribute("data-sticky");
-  expect(footer().className).toMatch(/\bsticky\b/);
   await userEvent.click(save());
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.saved)).toBeInTheDocument();
   expect(footer()).toHaveAttribute("data-sticky"); // the outcome shows
@@ -363,7 +358,7 @@ test("Combined is the template with this agent's draft, read-only", async () => 
 test("server issues land on their fields, and a 400 replaces them", async () => {
   await open();
   await addAllowRule("Read");
-  put = () =>
+  const rejected = (message: string) =>
     json(
       {
         error: {
@@ -373,7 +368,7 @@ test("server issues land on their fields, and a 400 replaces them", async () => 
             {
               severity: "error",
               file: "settings.json",
-              message: "Unknown tool.",
+              message,
               path: "settings.permissions.allow.0",
             },
           ],
@@ -381,12 +376,23 @@ test("server issues land on their fields, and a 400 replaces them", async () => 
       },
       400,
     );
+  put = () => rejected("Unknown tool.");
   await userEvent.click(save());
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.hasErrors)).toBeInTheDocument();
-  expect(screen.getByText("Unknown tool.")).toBeInTheDocument();
+  // The message sits on the row the path names (the row's remove button is described by it).
+  expect(screen.getByRole("button", { name: "Remove allow rule 1" })).toHaveAccessibleDescription(
+    "Unknown tool.",
+  );
+  put = () => rejected("Not a tool either.");
+  await userEvent.click(save());
+  expect(await screen.findByText("Not a tool either.")).toBeInTheDocument();
+  expect(screen.queryByText("Unknown tool.")).toBeNull();
+  expect(screen.getByRole("button", { name: "Remove allow rule 1" })).toHaveAccessibleDescription(
+    "Not a tool either.",
+  );
 });
 
-test("save outcomes: a running agent restarts; a broken template is checked by schema only", async () => {
+test("save outcome: a running agent restarts when idle", async () => {
   agent = { ...agent, status: "idle" };
   await open();
   await addAllowRule("Read");

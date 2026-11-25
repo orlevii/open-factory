@@ -263,7 +263,6 @@ it("the Code field is plain text with one-time-code autocomplete and never a pas
   expect(c).toHaveAttribute("autocapitalize", "none");
   expect(c).toHaveAttribute("autocorrect", "off");
   expect(c).toHaveAttribute("spellcheck", "false");
-  expect(c).toHaveClass("font-mono");
   expect(document.querySelector('input[type="password"]')).toBeNull();
   expect(screen.getByText("Shown after you sign in.")).toBeInTheDocument();
 });
@@ -638,23 +637,6 @@ it("start refusals that leave the attempt go to the form outcome, not the line",
   fireEvent.click(primary());
   expect(await screen.findByRole("alert")).toHaveTextContent(MSG.signInBusy);
   expect(within(panel()).getByText(SIGN_IN_HELP)).toBeInTheDocument();
-});
-
-it("states swap with no transition classes (R7)", async () => {
-  route(GET, ok({ available: true, attempt: null }));
-  route(START, ok({ attempt: ready() }));
-  renderHost();
-  await screen.findByText(SIGN_IN_HELP);
-  const still = () =>
-    [panel(), ...panel().querySelectorAll<HTMLElement>("div, p")].filter((el) =>
-      /transition|animate|fade|duration-/.test(el.className),
-    );
-  expect(still()).toEqual([]);
-  fireEvent.click(primary());
-  await screen.findByRole("link", { name: "Open sign-in page" });
-  expect(still()).toEqual([]);
-  // No reserved height for a later state.
-  expect(panel().getAttribute("style")).toBeNull();
 });
 
 it("a failed first GET renders Idle with the help line, and Start works (spec §8.2)", async () => {

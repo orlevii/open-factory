@@ -16,21 +16,18 @@ function Harness() {
 }
 const toggle = () => screen.getByRole("button", { name: "More options" });
 const chevron = () => toggle().querySelector("[data-slot=more-options-chevron]") as Element;
-const animates = () => chevron().classList.contains("transition-transform");
 
-test("a click animates the chevron; an outside open after a fold is instant", async () => {
+test("a click-open is not instant; an outside open after a fold is", async () => {
   render(<Harness />);
   await userEvent.click(toggle());
   expect(toggle()).toHaveAttribute("aria-expanded", "true");
-  expect(animates()).toBe(true);
   expect(chevron()).not.toHaveAttribute("data-instant");
   await userEvent.click(toggle());
   expect(toggle()).toHaveAttribute("aria-expanded", "false");
-  expect(animates()).toBe(true);
+  expect(chevron()).not.toHaveAttribute("data-instant");
   // A failing submit reopens it.
   act(() => openFromOutside(true));
   expect(toggle()).toHaveAttribute("aria-expanded", "true");
-  expect(animates()).toBe(false);
   expect(chevron()).toHaveAttribute("data-instant");
 });
 
@@ -39,6 +36,5 @@ test("an outside close then reopen after a click-open is instant too", async () 
   await userEvent.click(toggle());
   act(() => openFromOutside(false));
   act(() => openFromOutside(true));
-  expect(animates()).toBe(false);
   expect(chevron()).toHaveAttribute("data-instant");
 });

@@ -89,7 +89,6 @@ function world(
         ensureImage: async (ref: string) => {
           pulled.push(ref);
         },
-        hasImage: async () => true,
         stopIfRunning: async () => true,
         forceRemove: async () => true,
         remove: async () => true,

@@ -124,11 +124,6 @@ export class ContainerManager {
     await this.docker.pull(ref, signal);
   }
 
-  /** Whether the image tag exists locally (a user image is never pulled). */
-  async hasImage(ref: string): Promise<boolean> {
-    return (await this.docker.imageId(ref)) !== undefined;
-  }
-
   /** Stops the agent's container when it runs (bounded). True when it was running. */
   async stopIfRunning(agentId: string, slug: string): Promise<boolean> {
     const c = await this.ours(agentId, slug);

@@ -57,7 +57,7 @@ export interface RuntimesDeps {
   docker?: {
     containers: Pick<
       ContainerManager,
-      "ensure" | "ensureImage" | "hasImage" | "stopIfRunning" | "forceRemove" | "remove"
+      "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove" | "remove"
     >;
     claudeBin: string;
     defaultImage: string;

@@ -250,6 +250,22 @@ test("an agent can be created under, and moved to, a human; an unknown or disabl
   expect((await rowOf("target"))?.reportsToUser).toBe("u-or");
 });
 
+test("an agent can't report to itself, and a write that finds its human manager disabled refuses", async () => {
+  await svc.create(body("self-mgr"), human);
+  await expect(svc.update("self-mgr", { reportsTo: "self-mgr" }, human)).rejects.toMatchObject({
+    code: "validation_error",
+    extra: { fields: { reportsTo: expect.any(String) } },
+  });
+  // Resolution passed (the user was enabled), then a disable committed before the write: the write refuses.
+  await seedTestUser(t.db, { handle: "late", name: "Late" });
+  const plan = await svc.planUpdate("self-mgr", { reportsTo: "late" }, human);
+  await t.sql`update users set disabled_at = now() where handle = 'late'`;
+  await expect(t.db.transaction((tx) => plan.write(tx))).rejects.toMatchObject({
+    code: "validation_error",
+  });
+  expect((await rowOf("self-mgr"))?.reportsToUser).toBe("u-or");
+});
+
 test("model and effort come from the agent's overlay, else its template, else neither", async () => {
   const dir = path.join(home, "templates", "modeled");
   mkdirSync(dir, { recursive: true });

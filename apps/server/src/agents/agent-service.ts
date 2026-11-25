@@ -526,6 +526,17 @@ export class AgentService {
     return c.id;
   }
 
+  /** In the write transaction: a human manager is still enabled (FOR SHARE serializes with a disable). */
+  private async assertUserEnabled(tx: Tx, manager: Manager | undefined) {
+    if (manager?.kind !== "user") return;
+    const rows = await tx
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(and(eq(schema.users.id, manager.id), isNull(schema.users.disabledAt)))
+      .for("share");
+    if (!rows.length) throw new FieldError("reportsTo", FIELD_MSG.chooseManager);
+  }
+
   /** The manager a handle names: an active persistent agent or an enabled user; anything else is a field error. */
   private async resolveManager(handle: string): Promise<Manager> {
     const refuse = () => new FieldError("reportsTo", FIELD_MSG.chooseManager);
@@ -653,6 +664,7 @@ export class AgentService {
     try {
       await db.transaction(async (tx) => {
         if (!(await claimHandle(tx, b.slug, "agent"))) throw slugTaken();
+        await this.assertUserEnabled(tx, manager);
         await tx.insert(schema.agents).values({
           id,
           slug: b.slug,
@@ -761,6 +773,7 @@ export class AgentService {
     const currentGrants = await this.grantNames(row.id);
     const changed = { feeds: false, text: false };
     let moved: { to: string } | undefined;
+    let movedTo: Manager | undefined;
     const set: Partial<typeof schema.agents.$inferInsert> = {};
 
     if (b.displayName !== undefined && b.displayName !== row.displayName) {
@@ -796,6 +809,7 @@ export class AgentService {
         set.reportsTo = manager.kind === "agent" ? manager.row.id : null;
         set.reportsToUser = manager.kind === "user" ? manager.id : null;
         moved = { to: manager.kind === "agent" ? manager.row.slug : manager.handle };
+        movedTo = manager;
         changed.feeds = true;
       }
     }
@@ -813,6 +827,7 @@ export class AgentService {
     return {
       row,
       write: async (tx) => {
+        await this.assertUserEnabled(tx, movedTo);
         if (Object.keys(set).length)
           await tx.update(schema.agents).set(set).where(eq(schema.agents.id, row.id));
         if (newGrants) await this.replaceGrants(tx, row.id, newGrants);

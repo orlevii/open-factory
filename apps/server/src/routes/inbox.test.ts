@@ -497,3 +497,20 @@ test("read-from with kind member_update marks one report's updates read and leav
   expect(after.updates.map((u: { agent: { slug: string } }) => u.agent.slug)).toEqual(["bob"]);
   expect(after.chats).toEqual([expect.objectContaining({ unread: 1 })]);
 });
+
+test("read-from with the default kind leaves the human manager's errored notice about that agent unread", async () => {
+  await h.sql`update agents set reports_to_user = ${orId} where slug = 'ada'`;
+  const ada = await h.app.store.agentBySlug("ada");
+  if (!ada) throw new Error("seed");
+  await h.app.router.forward({ agentId: ada.id, fact: "errored", body: "@ada is errored." });
+  const upTo = "2999-01-01T00:00:00.000000Z";
+  const done = await h.app.inject({
+    method: "POST",
+    url: "/api/inbox/read-from/ada",
+    headers: { cookie },
+    payload: { upTo },
+  });
+  expect(done.json().marked).toBe(0);
+  const items = (await get("/api/inbox")).json().items;
+  expect(items).toEqual([expect.objectContaining({ kind: "notice", read: false })]);
+});

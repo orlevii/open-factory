@@ -145,8 +145,27 @@ test("an errored manager starts one attempt for the update, as a human's message
   await tick(DEBOUNCE + 500);
   expect(h.driver.starts).toHaveLength(1);
   expect(updatesWritten()).toEqual(["report is blocked"]);
+  // The attempt is recorded as made for the member update, not for a human's message.
+  const started = (await h.store.after(h.agentId, 0, 100)).flatMap((e) =>
+    e.event.type === "process_started" ? [e.event.reason] : [],
+  );
+  expect(started.at(-1)).toBe("member_updates");
   // The attempt's turn ends: the error clears.
   h.driver.last.emit(...ev.fullTurn("sess-1"));
+  await h.rt.settled();
+  expect(h.rt.statusFrame().status).toBe("idle");
+});
+
+test("a turn end with no open turn leaves the written batch awaiting: the manager still reads as working", async () => {
+  await h.makeRuntime({ memberUpdateDebounceMs: 0 });
+  await idle();
+  await update("now");
+  await tick(0);
+  expect(updatesWritten()).toEqual(["now"]);
+  h.driver.last.emit(ev.end());
+  await h.rt.settled();
+  expect(h.rt.statusFrame().status).toBe("working");
+  h.driver.last.emit(ev.turn(), ev.usage(), ev.end());
   await h.rt.settled();
   expect(h.rt.statusFrame().status).toBe("idle");
 });

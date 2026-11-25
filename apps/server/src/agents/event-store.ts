@@ -1703,7 +1703,11 @@ export class EventStore {
             this.db
               .select({ id: messages.id })
               .from(messages)
-              .where(or(eq(messages.fromAgentId, agent.id), eq(messages.subjectAgentId, agent.id))),
+              .where(
+                kind === "member_update"
+                  ? or(eq(messages.fromAgentId, agent.id), eq(messages.subjectAgentId, agent.id))
+                  : eq(messages.fromAgentId, agent.id),
+              ),
           ),
         ),
       )

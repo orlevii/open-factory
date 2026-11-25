@@ -71,7 +71,7 @@ export const managerRefSchema = z
   .string()
   .trim()
   .transform((s) => (s.startsWith("@") ? s.slice(1) : s))
-  .pipe(z.string().min(1, MSG.managerRequired).max(40, MSG.managerRequired));
+  .pipe(z.string().min(1, MSG.managerRequired).max(40, MSG.managerUnknown));
 
 export const agentSummarySchema = z.object({
   slug: z.string(),

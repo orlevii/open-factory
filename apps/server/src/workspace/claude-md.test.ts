@@ -389,3 +389,26 @@ test("S9: a spawned agent's Scheduling section is only the CronCreate bullet", (
     buildClaudeMd({ ...input, scheduling: { zone: "UTC", maxSchedules: 20, minGapMinutes: 15 } }),
   ).toContain("use UTC unless");
 });
+
+test("worktree line: a persistent agent's worktrees go under .worktrees/.agents/<slug>, with no spawned note", () => {
+  const md = buildClaudeMd(input);
+  expect(md).toContain(
+    "- To change code in a project, create your own git worktree under `<repo>/.worktrees/.agents/lead/<branch>` instead of editing the main checkout, so you never disturb the humans' or other agents' work.",
+  );
+  expect(md).not.toContain("They are removed a few days after you are terminated");
+  expect(md).not.toContain("<slug>-<branch>");
+});
+
+test("worktree line: a spawned agent's line adds the removal and push sentence", () => {
+  const md = buildClaudeMd({
+    ...input,
+    slug: "tl-ab12",
+    kind: "ephemeral",
+    spawner: { slug: "lead" },
+    scheduling: null,
+  });
+  expect(md).toContain(
+    "- To change code in a project, create your own git worktree under `<repo>/.worktrees/.agents/tl-ab12/<branch>` instead of editing the main checkout, so you never disturb the humans' or other agents' work. They are removed a few days after you are terminated, with any uncommitted changes; a branch checked out there is kept unless every commit on it is already pushed or merged, so push what you want to keep.",
+  );
+  expect(md).not.toContain("<slug>-<branch>");
+});

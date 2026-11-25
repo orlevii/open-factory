@@ -169,6 +169,13 @@
       "when": 1795552400506,
       "tag": "0023_chemical_nova",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795572389979,
+      "tag": "0024_whole_gorgon",
+      "breakpoints": true
     }
   ]
 }

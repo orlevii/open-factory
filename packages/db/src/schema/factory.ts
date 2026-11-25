@@ -115,6 +115,8 @@ export const factorySettings = pgTable(
     maxRunningAgents: integer("max_running_agents").notNull().default(8),
     defaultWarmWindowMinutes: integer("default_warm_window_minutes").notNull().default(70),
     memberUpdateDebounceSeconds: integer("member_update_debounce_seconds").notNull().default(30),
+    loopGuardMessages: integer("loop_guard_messages").notNull().default(10),
+    loopGuardWindowMinutes: integer("loop_guard_window_minutes").notNull().default(10),
     updatedAt: ts("updated_at"),
     updatedBy: text("updated_by").references(() => users.id),
   },

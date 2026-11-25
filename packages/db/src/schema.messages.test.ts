@@ -113,3 +113,32 @@ test("inbox_items is unique per user and message", async () => {
     sql`insert into inbox_items (id,user_id,kind,message_id) values ('i2','u1','message','3')`,
   ).rejects.toThrow(/unique/i);
 });
+
+test("a loop_held message row inserts, pointing at its open loop hold", async () => {
+  await sql`insert into loop_holds (id,agent_a,agent_b,opened_at) values ('h1','a1','a2',now())`;
+  await ok(
+    sql`insert into messages (id,kind,from_agent_id,to_agent_id,body,recipients,state,loop_hold_id)
+        values ('lh1','message','a1','a2','x','{@test}','loop_held','h1') returning id`,
+  );
+});
+
+test("a pair has at most one open loop hold", async () => {
+  await expect(
+    sql`insert into loop_holds (id,agent_a,agent_b,opened_at) values ('h2','a1','a2',now())`,
+  ).rejects.toThrow(/unique/i);
+});
+
+test("loop holds store the pair in agent order", async () => {
+  await bad(
+    sql`insert into loop_holds (id,agent_a,agent_b,opened_at) values ('h3','a2','a1',now())`,
+  );
+});
+
+test("a schedule has one pending or loop_held row per agent, not two", async () => {
+  await sql`insert into messages (id,kind,to_agent_id,schedule_id,author_user_id,due_at,firings,late,body)
+      values ('sp1','scheduled','a2','s2','u1',now(),1,false,'x')`;
+  await expect(
+    sql`insert into messages (id,kind,to_agent_id,schedule_id,author_user_id,due_at,firings,late,body,state)
+        values ('sp2','scheduled','a2','s2','u1',now(),2,false,'x','loop_held')`,
+  ).rejects.toThrow(/unique/i);
+});

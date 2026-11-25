@@ -220,11 +220,6 @@ export class ClaudeProcess implements HarnessProcess {
       }).catch(() => {});
       return true;
     }
-    if (line.type === "system" && line.subtype === "commands_changed") {
-      // The spike never saw it fire; the runtime reads `commands()` once per start, so a later change isn't stored.
-      const list = commandsOf(line, this.log);
-      if (list) this.commandList = Promise.resolve(list);
-    }
     return false;
   }
 

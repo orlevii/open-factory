@@ -11,12 +11,11 @@ import { useSendPhase } from "./send-phase";
 import { type CancelledEntry, NO_CANCELLED, queueView, type SendingBlock } from "./session-state";
 import { resetPhrase } from "./status-badge";
 import { ROW_GUTTER } from "./timeline-item";
-import { attachmentsSentWith } from "./uploads";
 
 /** Why queued messages aren't out yet (S5 UI design §3.6), or the error that holds them. */
 function heldReason(agent: AgentSummary): string | undefined {
   if (agent.status === "rate_limited") return `rate-limited${resetPhrase(agent)?.joined ?? ""}`;
-  if (agent.status === "queued") return "waiting for a free slot";
+  if (agent.status === "queued") return "waiting to start";
   return agent.lastError;
 }
 
@@ -107,8 +106,6 @@ export const QueueItems = memo(function QueueItems({
                 body={q.body ?? ""}
                 urgent={q.urgent}
                 brief
-                // This tab's send with files: its chips, and its `[attached: …]` lines hidden.
-                attachments={attachmentsSentWith(q.clientMessageId)}
                 slug={agent.slug}
                 // The reason once, on the first held block; the rest only say they wait (U3 §7.6).
                 {...(young

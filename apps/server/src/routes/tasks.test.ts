@@ -189,7 +189,7 @@ test("paging: newest updated first, a cursor, an invalid cursor is 400 on before
   expect(p2.nextCursor).toBeNull();
   const bad = await call("GET", "/api/tasks?before=garbage");
   expect(bad.statusCode).toBe(400);
-  expect(bad.json().error.fields.before).toBeDefined();
+  expect(bad.json().error.fields.before).toEqual(expect.any(String));
 });
 
 test("GET detail: activity oldest first with comments and history interleaved; blocks lists dependents with blocked", async () => {

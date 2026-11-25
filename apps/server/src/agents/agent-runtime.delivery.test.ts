@@ -12,7 +12,7 @@ import { liveCredentialId } from "./live-credential.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { noForward, noopTokens, sendAs, testEffective } from "./testing/runtime-harness.ts";
-import { unlimitedSlots } from "./testing/unlimited-slots.ts";
+import { RecordingSlots } from "./testing/slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
@@ -73,7 +73,7 @@ async function makeRuntime(
       };
     },
     log: silentLog,
-    slots: unlimitedSlots,
+    slots: new RecordingSlots(),
     ...(opts.realHold ? {} : { holdTimeoutMs: 200 }),
   });
   await rt.init();

@@ -8,7 +8,7 @@ import { liveCredentialId } from "./live-credential.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { sendAs, testEffective } from "./testing/runtime-harness.ts";
-import { unlimitedSlots } from "./testing/unlimited-slots.ts";
+import { RecordingSlots } from "./testing/slots.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
@@ -69,7 +69,7 @@ async function make(o: { spawned?: boolean; archived?: boolean; terminated?: boo
       effective: testEffective(),
     }),
     log: { debug() {}, info() {}, warn() {}, error() {} },
-    slots: unlimitedSlots,
+    slots: new RecordingSlots(),
   });
   await rt.init();
 }

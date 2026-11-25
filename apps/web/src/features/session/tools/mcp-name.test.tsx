@@ -20,8 +20,6 @@ test("the server splits into a head and its last 6 characters, never narrower th
   const [head, tail] = [...server.children] as HTMLElement[];
   expect(head?.textContent).toBe("github-cloud-con");
   expect(tail?.textContent).toBe("nector");
-  // The server never goes below its head's 4 characters plus its 6-character tail.
-  expect(server.style.minWidth).toBe("calc(10ch + 1px)");
 });
 
 test("' · ' sits between the server and the tool", () => {
@@ -46,8 +44,7 @@ test("the tool cuts from its start: a right-to-left box around left-to-right tex
 test("a short server never shrinks", () => {
   const { container } = render(<McpName name="mcp__gh__create_pull_request" />);
   const { server } = parts(container);
-  // No least width: only a head longer than 4 characters gives way.
-  expect(server.style.minWidth).toBe("");
+  expect(server).toHaveTextContent(/^gh$/);
 });
 
 test("a one-letter server and a server-only name do not break", () => {

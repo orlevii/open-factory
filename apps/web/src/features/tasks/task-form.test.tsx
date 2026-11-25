@@ -25,6 +25,12 @@ afterEach(() => {
   closeSheet();
   vi.unstubAllGlobals();
 });
+const renderNewTask = async () => {
+  const app = renderApp("/tasks", alice);
+  await screen.findByRole("heading", { level: 1, name: "Tasks" });
+  act(() => openSheet({ kind: "new-task" }));
+  return app;
+};
 /** The sheet's Assignee picker; the Tasks list behind it has a filter by the same name. */
 const assigneeField = async () =>
   within(await screen.findByRole("dialog", { name: "New task" })).findByLabelText("Assignee");
@@ -69,7 +75,7 @@ const base = {
 
 test("validates on leave, not while typing; typing clears the error", async () => {
   mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   const title = await screen.findByLabelText("Title");
   // Leaving a field never edited says nothing.
   await userEvent.click(title);
@@ -100,7 +106,7 @@ test("validates on leave, not while typing; typing clears the error", async () =
 
 test("submit checks everything again and focuses the first invalid field", async () => {
   const api = mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.click(await screen.findByRole("button", { name: "Create task" }));
   expect(await screen.findByText("Enter a title.")).toBeInTheDocument();
   expect(screen.getByLabelText("Title")).toHaveFocus();
@@ -118,7 +124,7 @@ test("dependency keys resolve in one request on leave and show as a summary; err
         nextCursor: null,
       }),
   });
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await openMore();
   const deps = await screen.findByLabelText("Depends on");
   await userEvent.type(deps, "T-41, T-44");
@@ -146,7 +152,7 @@ test("dependency keys resolve in one request on leave and show as a summary; err
 
 test("links: add and remove rows; a javascript: target is refused on leave", async () => {
   mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await openMore();
   await userEvent.click(await screen.findByRole("button", { name: "Add link" }));
   const target = screen.getByLabelText("Link 1 target");
@@ -170,7 +176,7 @@ test("creating sends the task, closes the sheet and toasts; the button reads Cre
       return json({ task: detail(42) }, 201);
     },
   });
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "  Plan  ");
   await pickComboOption(await assigneeField(), /Dev\s*@dev/);
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
@@ -208,7 +214,7 @@ test("a server field error lands under its field; another failure is one alert l
           )
         : json({ error: { code: "internal_error", message: "Internal error" } }, 500),
   });
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Plan");
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
   expect(
@@ -228,7 +234,7 @@ test("a server field error lands under its field; another failure is one alert l
 test("Close dismisses the sheet without a dialog and keeps the draft", async () => {
   const confirm = vi.spyOn(window, "confirm");
   mockApi(base);
-  const { router } = renderApp("/tasks/new", alice);
+  const { router } = await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Keep me");
   await userEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1) as HTMLElement);
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
@@ -242,7 +248,7 @@ test("Close dismisses the sheet without a dialog and keeps the draft", async () 
 
 test("fields run Title, Assignee, Description; More options is closed", async () => {
   mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await screen.findByLabelText("Title");
   const order = ["Title", "Assignee", "Description"].map((n) =>
     document.querySelector(
@@ -270,7 +276,7 @@ test("Enter in a field while a create is pending posts once", async () => {
       return json({ task: detail(42) }, 201);
     },
   });
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   const title = await screen.findByLabelText("Title");
   await userEvent.type(title, "Plan{Enter}{Enter}");
   await waitFor(() => expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1));
@@ -292,7 +298,7 @@ test("arrow keys in the Assignee picker don't assign; Enter does", async () => {
         running: { count: 0 },
       }),
   });
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   const trigger = await assigneeField();
   expect(trigger).toHaveTextContent("Unassigned");
   await userEvent.click(trigger);
@@ -310,7 +316,7 @@ const badRequest = (fields: Record<string, string>) =>
 
 test("bad keys on submit with More options folded by the user: it opens and Depends on takes focus", async () => {
   const api = mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Plan");
   await openMore();
   await userEvent.type(screen.getByLabelText("Depends on"), "banana");
@@ -325,7 +331,7 @@ test("bad keys on submit with More options folded by the user: it opens and Depe
 
 test("a bad link on a second submit reopens More options the user folded again", async () => {
   mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Plan");
   await openMore();
   await userEvent.click(screen.getByRole("button", { name: "Add link" }));
@@ -345,7 +351,7 @@ test("a server links error with no rows is the outcome line; with rows, the firs
     ...base,
     "POST /api/tasks": () => badRequest({ links: "Too many links." }),
   });
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Plan");
   await userEvent.click(screen.getByRole("button", { name: "Create task" }));
   await waitFor(() => expect(outcomeAlert()).toHaveTextContent("Too many links."));
@@ -365,7 +371,7 @@ test("a server links error with no rows is the outcome line; with rows, the firs
 
 test("a row added while links are flagged shows nothing until it is blurred", async () => {
   mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await openMore();
   await userEvent.click(screen.getByRole("button", { name: "Add link" }));
   await userEvent.type(screen.getByLabelText("Link 1 target"), "javascript:x");
@@ -381,7 +387,7 @@ test("a row added while links are flagged shows nothing until it is blurred", as
 
 test("a bad link in a row never blurred blocks the submit and takes focus", async () => {
   const api = mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Plan");
   await openMore();
   await userEvent.click(screen.getByRole("button", { name: "Add link" }));
@@ -395,7 +401,7 @@ test("a bad link in a row never blurred blocks the submit and takes focus", asyn
 
 test("after Discard the hidden error layer still holds the old text and nothing is shown (D2); More options folds", async () => {
   mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Description"), "Notes");
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New task" })).toBeNull());
@@ -419,7 +425,7 @@ test("after Discard the hidden error layer still holds the old text and nothing 
 
 test("clicking More options after clearing Title doesn't validate Title", async () => {
   mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   const title = await screen.findByLabelText("Title");
   await userEvent.type(title, "x");
   await userEvent.clear(title);
@@ -438,7 +444,7 @@ test("a dependency lookup that returns after the keys changed is dropped", async
       return json({ tasks: url.includes("keys=") ? [summary(41)] : [], nextCursor: null });
     },
   });
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await openMore();
   const deps = screen.getByLabelText("Depends on");
   await userEvent.type(deps, "T-99");
@@ -464,7 +470,7 @@ test("a server dependency error survives tabbing out of the unchanged field", as
       json({ tasks: url.includes("keys=") ? [summary(41)] : [], nextCursor: null }),
     "POST /api/tasks": () => badRequest({ dependsOn: cycle }),
   });
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Plan");
   await openMore();
   await userEvent.type(screen.getByLabelText("Depends on"), "T-41");
@@ -484,7 +490,7 @@ test("a server dependency error survives tabbing out of the unchanged field", as
 
 test("a valid first link and a bad second: submit focuses the second and the first shows nothing", async () => {
   const api = mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Plan");
   await openMore();
   await userEvent.click(screen.getByRole("button", { name: "Add link" }));
@@ -500,7 +506,7 @@ test("a valid first link and a bad second: submit focuses the second and the fir
 
 test("an over-long description marks the editor, returns to Write and focuses the textarea", async () => {
   const api = mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Plan");
   fireEvent.change(screen.getByLabelText("Description"), {
     target: { value: "a".repeat(64 * 1024 + 1) },
@@ -525,7 +531,7 @@ test("a failed dependency lookup on submit is the outcome line", async () => {
         ? json({ error: { code: "internal_error", message: "boom" } }, 500)
         : json({ tasks: [], nextCursor: null }),
   });
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   await userEvent.type(await screen.findByLabelText("Title"), "Plan");
   await openMore();
   await userEvent.type(screen.getByLabelText("Depends on"), "T-41");
@@ -572,7 +578,7 @@ test("a stale assignee blocks the submit until another is picked; Unassigned goe
 
 test("moving from an edited, invalid Description to More options by keyboard doesn't validate it", async () => {
   mockApi(base);
-  renderApp("/tasks/new", alice);
+  await renderNewTask();
   const body = await screen.findByLabelText("Description");
   act(() => body.focus());
   fireEvent.change(body, { target: { value: "x".repeat(70_000) } });

@@ -3,6 +3,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
+import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
 import { hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { FORM_MSG } from "@/lib/form-messages.ts";
@@ -945,19 +946,6 @@ test("Add project expands inline and the new project joins the grants", async ()
 
 // --- Entry points ---
 
-test("/agents/lead/edit lands on the lead chat with Edit agent open", async () => {
-  mockWorld({ agents: [lead()], extra: sessionRoutes });
-  const { router } = renderApp("/agents/lead/edit", alice);
-  await sheet();
-  expect(router.state.location.pathname).toBe("/agents/lead/chat");
-  expect(getSheetState().parent).toMatchObject({
-    kind: "edit-agent",
-    slug: "lead",
-    at: "/agents/lead/chat",
-  });
-  expect(await screen.findByLabelText("Display name")).toHaveValue("Lead");
-});
-
 // --- Colour (I2 §12.6) ---
 
 const radio = (name: string) => screen.getByRole("radio", { name });
@@ -1030,16 +1018,13 @@ test("a running agent's colour with another field still restarts", async () => {
   expect(screen.getByText(SELF)).toBeInTheDocument();
 });
 
-const MANAGE_HELP =
-  "Lets this agent create and arrange other agents: ask it in Chat to build the rest of your team. Create templates and agents, edit configurations, archive. Can assign secrets and credentials to agents and read configuration values humans typed in; grant it like admin access and keep sensitive values in secrets. Can't change local-runtime agents or grant this permission.";
-
 test("Can manage the org: a switch described by the spec's help, and its change is sent", async () => {
   const { api } = await open({
     extra: { "PATCH /api/agents/lead": saved(lead({ manageOrg: true })) },
   });
   const sw = screen.getByRole("switch", { name: "Can manage the org" });
   expect(sw).not.toBeChecked();
-  expect(sw).toHaveAccessibleDescription(MANAGE_HELP);
+  expect(sw).toHaveAccessibleDescription(MANAGE_ORG_HELP);
   await userEvent.click(sw);
   await userEvent.click(saveButton());
   await waitFor(() => expect(patches(api)).toEqual([{ manageOrg: true }]));

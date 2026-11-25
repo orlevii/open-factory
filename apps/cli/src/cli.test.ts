@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { makeTestApp, signUp } from "../../server/src/test/helpers.ts";
-import { run } from "./commands.ts";
+import { CLI_VERSION, run } from "./commands.ts";
 import { readConfig, writeConfig } from "./config-store.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -152,6 +152,6 @@ test("help and --version", async () => {
   expect(h.out.join("\n")).toMatch(/login[\s\S]*logout[\s\S]*status/);
   h.out.length = 0;
   expect(await run(["--version"], h.io)).toBe(0);
-  expect(h.out).toEqual(["0.1.0"]);
+  expect(h.out).toEqual([CLI_VERSION]);
   expect(await run(["nope"], h.io)).toBe(1);
 });

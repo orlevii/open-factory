@@ -149,12 +149,6 @@ export const CLAUDE_BUILTINS: readonly ClaudeBuiltin[] = [
     aliases: [],
   },
   {
-    name: "agents",
-    description: "(removed) Ask Claude to create/manage subagents, or edit .claude/agents/",
-    argumentHint: "",
-    aliases: [],
-  },
-  {
     name: "auto-mode-setup",
     description: "Teach auto mode about your environment, plus optional rule tweaks",
     argumentHint:

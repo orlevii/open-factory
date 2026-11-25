@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { clearDraft } from "@/features/sheets/drafts";
-import { closeSheet } from "@/features/sheets/sheet-store";
+import { closeSheet, openSheet } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -22,6 +22,13 @@ afterEach(() => {
   act(() => closeSheet());
   vi.unstubAllGlobals();
 });
+
+const renderNewSchedule = async () => {
+  const app = renderApp("/schedules", alice);
+  await screen.findByRole("heading", { level: 1, name: "Schedules" });
+  act(() => openSheet({ kind: "new-schedule" }));
+  return app;
+};
 
 const agents = () =>
   json({
@@ -73,7 +80,7 @@ async function chooseCustom() {
 
 async function openNew() {
   const api = mockApi({ ...base(), "POST /api/schedules": () => json({ schedule: item }, 201) });
-  renderApp("/schedules/new", alice);
+  await renderNewSchedule();
   await screen.findByRole("dialog", { name: "New schedule" });
   await screen.findByRole("combobox", { name: "Repeats" });
   return api;
@@ -183,7 +190,7 @@ test("a server failure with no field says so above the buttons, and Create stays
     "POST /api/schedules": () =>
       json({ error: { code: "internal_error", message: "Database is down" } }, 500),
   });
-  renderApp("/schedules/new", alice);
+  await renderNewSchedule();
   await screen.findByRole("dialog", { name: "New schedule" });
   await pick("ceo");
   await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Weekdays at 09:00");
@@ -252,7 +259,7 @@ test("a server field error maps to its field", async () => {
         400,
       ),
   });
-  renderApp("/schedules/new", alice);
+  await renderNewSchedule();
   await screen.findByRole("dialog", { name: "New schedule" });
   await screen.findByRole("combobox", { name: "Repeats" });
   await pick("ceo");

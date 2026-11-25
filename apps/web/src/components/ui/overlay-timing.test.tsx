@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { AlertDialog as AlertDialogPrimitive } from "radix-ui";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
 import {
@@ -7,7 +8,6 @@ import {
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "./alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./dropdown-menu";
 import { Popover, PopoverContent, PopoverDescription, PopoverTitle, PopoverTrigger } from "./popover";
@@ -111,7 +111,7 @@ test("PopoverTitle and PopoverDescription name and describe the content", async 
 test("AlertDialog content and overlay are stamped per opening, not per mount", async () => {
   render(
     <AlertDialog>
-      <AlertDialogTrigger>Open</AlertDialogTrigger>
+      <AlertDialogPrimitive.Trigger>Open</AlertDialogPrimitive.Trigger>
       <AlertDialogContent>
         <AlertDialogTitle>Delete?</AlertDialogTitle>
         <AlertDialogCancel>Cancel</AlertDialogCancel>

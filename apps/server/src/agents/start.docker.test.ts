@@ -440,34 +440,21 @@ test("the closing latch aborts an in-flight pull; nothing starts", async () => {
   expect(w.docker.ops()).not.toContain("prepare");
 });
 
-test("an image removed after it was seen goes back through the pull instead of failing", async () => {
+test("an image removed after it was seen fails that start, and the next wake pulls it again", async () => {
   const w = await setup();
   await idleAgent(w);
   expect(await w.rt.hibernate("warm_window")).toBe(true);
   await until(() => expect(w.rt.live().status).toBe("hibernated"));
   w.docker.images.clear(); // `docker rmi` while the factory runs
-  await send(w, "after rmi"); // no 503: the wake is re-queued behind the pull
-  await until(() => expect(w.rt.live().status).toBe("idle"));
-  expect(w.docker.ops().filter((o) => o === "pull")).toHaveLength(1);
-  expect((await events(w)).map((e) => e.type)).not.toContain("error");
-});
-
-test("an image still missing after the re-pull fails the start (no loop)", async () => {
-  const w = await setup();
-  await idleAgent(w);
-  expect(await w.rt.hibernate("warm_window")).toBe(true);
-  await until(() => expect(w.rt.live().status).toBe("hibernated"));
-  w.docker.images.clear();
   const pull = vi.spyOn(w.docker, "pull").mockResolvedValue(undefined); // "succeeds", but no image
-  await send(w, "after rmi");
+  await expect(send(w, "after rmi")).rejects.toThrow(`The image ${IMAGE} isn't available locally.`);
   await until(() => expect(w.rt.live().status).toBe("errored"));
   expect(w.rt.live()).toMatchObject({
     errorKind: "start",
     lastError: `The image ${IMAGE} isn't available locally.`,
   });
-  expect(pull).toHaveBeenCalledTimes(1);
   await until(() => expect(w.runtimes.supervisor.running().count).toBe(0));
-  // The second miss forgot the image too: a human's retry pulls it for real and starts.
+  // The image was forgotten: a human's retry pulls it for real and starts.
   pull.mockRestore();
   await send(w, "retry");
   await until(() => expect(w.rt.live().status).toBe("idle"));

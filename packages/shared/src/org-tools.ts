@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { MAX_BODY_BYTES } from "./agents.ts";
 import { agentOverlaySchema } from "./config.ts";
-import { createTemplateBodySchema, TEMPLATE_FILES, templateFileSchema } from "./templates.ts";
+import { createTemplateBodySchema, templateFileSchema } from "./templates.ts";
 
 /**
  * MCP inputs of the org tools (I7 spec §7.1; snake_case like the task tools). Names stay loose strings: the services
@@ -110,6 +110,3 @@ export const writeTemplateFileToolSchema = z
         message: "AGENTS.md is at most 256 KiB.",
       });
   });
-
-/** The files `get_template` returns and `write_template_file` accepts. */
-export const ORG_TEMPLATE_FILES = TEMPLATE_FILES;

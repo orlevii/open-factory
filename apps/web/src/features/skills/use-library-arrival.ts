@@ -7,10 +7,6 @@ import { libraryQueryOptions } from "@/lib/library";
 import { arrive, useArrivalTint } from "@/lib/use-arrival";
 import { PEEK_KINDS, type PeekTarget, parsePeekKey, peekKeyOf } from "./use-peek";
 
-/** The router state that lands an item's peek on its view (spec §10.7). The router types its history state as closed, so
- *  this is the one cast; `peekKeyFromState` below parses it back. */
-export const arrivalState = (peek: PeekTarget) => ({ peek }) as never;
-
 const arrivalSchema = z.object({
   peek: z.object({ kind: z.enum(PEEK_KINDS), id: z.string() }),
 });

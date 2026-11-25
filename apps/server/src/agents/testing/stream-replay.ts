@@ -7,8 +7,7 @@ import type { RuntimeHarness } from "./runtime-harness.ts";
  * Test support only (U3 §11.4): replays a recorded Claude Code stream (the redacted spike traces in
  * `packages/harness/fixtures/u3/`) through the real mapper into a runtime over the fake driver, line by line, so
  * the runtime's live loop, retirement and ends run as they would on a real process. The fixture replay test uses it
- * with fake timers (a `pace` that flushes the 50ms coalescer); a measurement can use `atSpeed` to play a trace in
- * real time, or faster.
+ * with fake timers (a `pace` that flushes the 50ms coalescer).
  */
 
 /** One record of a spike trace: `dir` "in" is what the driver wrote to stdin, "out" a stdout line. */
@@ -112,11 +111,3 @@ export async function replayTrace(
   if (held.length) h.driver.last.emitAt(lineNo, ...held);
   await h.rt.settled();
 }
-
-/** A `pace` that waits the trace's own gaps in real time, divided by `speed` (2 plays twice as fast). */
-export const atSpeed =
-  (speed: number) =>
-  (line: TraceLine, prev: TraceLine | undefined): Promise<void> => {
-    const ms = prev ? Math.max(0, (line.t - prev.t) / speed) : 0;
-    return new Promise((r) => setTimeout(r, ms));
-  };

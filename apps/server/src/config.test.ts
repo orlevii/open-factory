@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { ConfigError, loadConfig, localRuntimeAllowed, PLACEHOLDER_SECRET } from "./config.ts";
+import { ConfigError, loadConfig, PLACEHOLDER_SECRET } from "./config.ts";
 
 const ok = { DATABASE_URL: "postgres://u:p@localhost:5432/db", FACTORY_SECRET_KEY: "x".repeat(32) };
 
@@ -64,10 +64,6 @@ describe("loadConfig", () => {
   test("FACTORY_ALLOW_LOCAL_RUNTIME only accepts true/false", () => {
     expect(loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "true" }).allowLocalRuntime).toBe(true);
     expect(() => loadConfig({ ...ok, FACTORY_ALLOW_LOCAL_RUNTIME: "yes" })).toThrow(ConfigError);
-  });
-  test("localRuntimeAllowed follows allowLocalRuntime", () => {
-    expect(localRuntimeAllowed({ allowLocalRuntime: true })).toBe(true);
-    expect(localRuntimeAllowed({ allowLocalRuntime: false })).toBe(false);
   });
   test("reports every problem at once", () => {
     let err: unknown;

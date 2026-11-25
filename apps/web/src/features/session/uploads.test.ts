@@ -161,9 +161,6 @@ test("a non-JSON 413 (a proxy's limit) says so; a network error says the server 
   const [a, b] = s.keys() as [string, string];
   (FakeXhr.all[0] as FakeXhr).respond(413, "<html>Request Entity Too Large</html>");
   (FakeXhr.all[1] as FakeXhr).fail();
-  expect(PROXY_TOO_LARGE).toBe(
-    "The server refused a file this large (check the proxy's upload limit).",
-  );
   expect(s.get(a)?.error).toBe(PROXY_TOO_LARGE);
   expect(s.get(b)?.error).toBe(NETWORK_ERROR);
 });

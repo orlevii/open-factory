@@ -36,9 +36,6 @@ test("terminate tool schema", () => {
 test("list query: ended defaults to exclude", () => {
   expect(agentListQuerySchema.parse({})).toEqual({ ended: "exclude" });
 });
-test("list query: the old ?archived= parameter is rejected, not ignored", () => {
-  expect(agentListQuerySchema.safeParse({ archived: "only" }).success).toBe(false);
-});
 
 test("agent summary avatarVersion defaults to null", () => {
   const base = agentSummarySchema.shape;

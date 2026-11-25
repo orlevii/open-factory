@@ -22,7 +22,6 @@ import { formatInboxTime } from "@/features/session/format";
 import { StatusBadge } from "@/features/session/status-badge";
 import { formatExpiryDate } from "@/features/settings/sign-in/expiry";
 import { SetupBlock } from "@/features/setup/setup-steps";
-import type { SetupVisible } from "@/features/setup/use-setup-visible";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { taskDetailOptions } from "@/features/tasks/api";
@@ -567,10 +566,10 @@ function ChatPane({ slug, rested }: { slug: string; rested: boolean }) {
 export function InboxPane({
   selectedId,
   item,
-  setup,
+  showSetup,
 }: {
   /** Whether the first-run steps show: they take the pane while nothing is selected. */
-  setup: SetupVisible;
+  showSetup: boolean;
   selectedId: string | undefined;
   /** The selected row from the loaded pages, when it is there. */
   item: InboxItem | undefined;
@@ -580,9 +579,9 @@ export function InboxPane({
   return (
     <section aria-label="Reading pane" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {selectedId === undefined ? (
-        setup.shown ? (
+        showSetup ? (
           <div className="max-w-[40rem] px-4 py-6 md:px-6">
-            <SetupBlock blockProps={setup.blockProps} />
+            <SetupBlock />
           </div>
         ) : (
           <p className="px-4 py-6 text-sm text-muted-foreground md:px-6">No item selected.</p>

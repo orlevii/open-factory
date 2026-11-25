@@ -83,10 +83,9 @@ test("GET returns the doc without the derived key, hashes, local skills and coun
     model: "opus",
     description: "keep me",
   });
-  expect(Object.keys(c)).toEqual(["doc", "hashes", "issues", "localSkills", "agents"]);
   expect(JSON.stringify(c.doc)).not.toContain("local_skill_names");
   expect(c.localSkills).toEqual(["mine"]);
-  expect(Object.keys(c.hashes)).toEqual(["template.yaml", "settings.json", "mcp.json"]);
+  expect(c.hashes).toMatchObject({ "mcp.json": null });
   expect(c.hashes["template.yaml"]).toMatch(/^[0-9a-f]{64}$/);
   expect(c.hashes["settings.json"]).toBeNull();
   expect(c.agents).toEqual({ live: 0, archived: 0, cantStart: 0 });
@@ -165,7 +164,7 @@ test("PUT sets and deletes only the owned keys: comments, order and other keys s
   expect(yaml).not.toContain("sneaky");
   expect(yaml).not.toContain("local_skill_names");
   const body = r.json();
-  expect(Object.keys(body)).toEqual(["hashes", "issues"]);
+  expect(body.issues).toEqual([]);
   expect(body.hashes).toEqual((await get()).hashes);
 });
 

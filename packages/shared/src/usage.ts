@@ -82,4 +82,3 @@ export type AgentUsage = z.infer<typeof agentUsageSchema>;
 export const taskUsageSchema = z
   .object({ costUsd: z.number(), turns: z.number().int() })
   .nullable();
-export type TaskUsage = z.infer<typeof taskUsageSchema>;

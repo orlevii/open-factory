@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vi
 import { CAP_BYTES } from "./cap.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
-import { unlimitedSlots } from "./testing/unlimited-slots.ts";
+import { RecordingSlots } from "./testing/slots.ts";
 
 const h = new RuntimeHarness();
 beforeAll(() => h.setup());
@@ -166,7 +166,7 @@ test("lost background work is forwarded with its descriptions quoted", async () 
 
 test("a recoverable crash whose attempt can't begin (closing) is errored, not crashed", async () => {
   let closing = false;
-  await h.makeRuntime({ slots: { ...unlimitedSlots, closing: () => closing } });
+  await h.makeRuntime({ slots: Object.assign(new RecordingSlots(), { closing: () => closing }) });
   await idle();
   closing = true;
   h.driver.last.emit(ev.turn());
@@ -178,7 +178,7 @@ test("a recoverable crash whose attempt can't begin (closing) is errored, not cr
 
 test("a crash recovery whose wake is dropped ends its attempt errored, reported once", async () => {
   let wake: "granted" | "dropped" = "granted";
-  await h.makeRuntime({ slots: { ...unlimitedSlots, requestWake: () => wake } });
+  await h.makeRuntime({ slots: Object.assign(new RecordingSlots(), { requestWake: () => wake }) });
   await idle();
   wake = "dropped";
   h.driver.last.emit(ev.turn());

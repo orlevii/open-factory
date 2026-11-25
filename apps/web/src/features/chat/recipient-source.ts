@@ -1,6 +1,11 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { CompletionItem, CompletionSource } from "@/components/composer/composer";
-import { type MentionAgent, mentionOpensAt, rankMentions } from "@/components/composer/mentions";
+import {
+  type Mention,
+  type MentionAgent,
+  mentionOpensAt,
+  rankMentions,
+} from "@/components/composer/mentions";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { MAX_RECIPIENTS } from "@/lib/drafts";
 
@@ -39,7 +44,10 @@ export function recipientSource(qc: QueryClient, h: Held): CompletionSource {
         humans: [],
         me: undefined,
       })
-        .filter((m) => m.kind === "agent" && !skip.has(m.handle))
+        .filter(
+          (m): m is Extract<Mention, { kind: "agent" }> =>
+            m.kind === "agent" && !skip.has(m.handle),
+        )
         .map(
           (m): CompletionItem => ({
             id: m.handle,
@@ -48,9 +56,9 @@ export function recipientSource(qc: QueryClient, h: Held): CompletionSource {
             group: "agents",
             avatar: {
               slug: m.handle,
-              ...(m.kind === "agent"
-                ? { template: m.template, avatarVersion: m.avatarVersion, color: m.color }
-                : {}),
+              template: m.template,
+              avatarVersion: m.avatarVersion,
+              color: m.color,
             },
           }),
         );

@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
+import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
 import { clearDraft, clearInlineDrafts, hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet, resetSheets } from "@/features/sheets/sheet-store";
 import {
@@ -868,26 +869,12 @@ test("a late failure toasts the error with Open form, which reopens the kept dra
 
 // --- Entry points ---
 
-test("/agents/new?template=x lands on /agents with New agent open", async () => {
+test("a sheet opened for a template prefills from it", async () => {
   mockWorld();
-  const { router } = renderApp("/agents/new?template=lead", alice);
+  renderApp("/agents", alice);
+  act(() => openSheet({ kind: "new-agent", template: "lead" }));
   await sheet();
-  expect(router.state.location.pathname).toBe("/agents");
-  expect(getSheetState().parent).toMatchObject({
-    kind: "new-agent",
-    template: "lead",
-    at: "/agents",
-  });
   await vi.waitFor(() => expect(field("Display name").value).toBe("Team Lead"));
-});
-
-test("/agents/new with no template opens it unchosen", async () => {
-  mockWorld();
-  const { router } = renderApp("/agents/new", alice);
-  await sheet();
-  expect(router.state.location.pathname).toBe("/agents");
-  expect(getSheetState().parent).toEqual(expect.objectContaining({ kind: "new-agent" }));
-  expect(getSheetState().parent).not.toHaveProperty("template");
 });
 
 test("the sidebar + opens New agent", async () => {
@@ -960,14 +947,11 @@ test("a touched Projects group sends its set", async () => {
   expect(posts(api)[0]?.body).toHaveProperty("projects", expect.arrayContaining(["docs"]));
 });
 
-const MANAGE_HELP =
-  "Lets this agent create and arrange other agents: ask it in Chat to build the rest of your team. Create templates and agents, edit configurations, archive. Can assign secrets and credentials to agents and read configuration values humans typed in; grant it like admin access and keep sensitive values in secrets. Can't change local-runtime agents or grant this permission.";
-
 test("Can manage the org: a switch, off, described by the lead and the spec's help", async () => {
   const { dialog } = await openLead();
   const sw = within(dialog).getByRole("switch", { name: "Can manage the org" });
   expect(sw).not.toBeChecked();
-  expect(sw).toHaveAccessibleDescription(MANAGE_HELP);
+  expect(sw).toHaveAccessibleDescription(MANAGE_ORG_HELP);
 });
 
 test("Can manage the org: switched on, the create posts manageOrg true", async () => {
@@ -1039,7 +1023,7 @@ test("the template prefill never overwrites a field the user is in or has typed 
   expect(field("Description").value).toBe("Mine");
 });
 
-test("the manager picker pads by depth, at most three levels, then marks deeper ones with └", async () => {
+test("the manager picker marks agents deeper than three levels with └", async () => {
   const chain = ["a", "b", "c", "d", "e"];
   await openLead({
     agents: chain.map((slug, depth) =>
@@ -1057,16 +1041,9 @@ test("the manager picker pads by depth, at most three levels, then marks deeper 
   const listbox = await screen.findByRole("listbox");
   const rows = chain.map((slug) => {
     const item = within(listbox).getByRole("option", { name: `${slug.toUpperCase()}@${slug}` });
-    const name = item.querySelector<HTMLElement>("[style*=padding]");
-    return [name?.style.paddingInlineStart, name?.textContent?.replace(/@.*/, "")];
+    return item.textContent?.replace(/@.*/, "");
   });
-  expect(rows).toEqual([
-    ["0rem", "A"],
-    ["0.75rem", "B"],
-    ["1.5rem", "C"],
-    ["2.25rem", "D"],
-    ["2.25rem", "└E"],
-  ]);
+  expect(rows).toEqual(["A", "B", "C", "D", "└E"]);
 });
 
 // --- Inline prerequisites (spec §4.9) ---

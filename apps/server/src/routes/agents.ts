@@ -50,7 +50,6 @@ import {
 } from "../agents/message-cancel.ts";
 import { restartChanges, restartRuntimeAllowed } from "../agents/restart-changes.ts";
 import { requireUser } from "../auth/require-user.ts";
-import { localRuntimeAllowed } from "../config.ts";
 import { FieldError } from "../errors.ts";
 import { parseDays } from "./usage.ts";
 
@@ -479,7 +478,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
           force: req.body?.force ?? false,
           changes: await restartChanges(app, row),
           // A Restart certain to fail isn't offered (spec §13).
-          runtimeAllowed: restartRuntimeAllowed(row, localRuntimeAllowed(app.config)),
+          runtimeAllowed: restartRuntimeAllowed(row, app.config.allowLocalRuntime),
         });
         return reply.code(202).send({ status: outcome.status });
       } catch (e) {

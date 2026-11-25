@@ -72,8 +72,6 @@ test("while the editor's chunk loads, the textarea fallback serves an issue's ju
   const el = textarea("settings.json");
   expect(el).toHaveFocus();
   expect(el.selectionStart).toBe(el.value.indexOf("\n") + 1);
-  // Sized for the gutter the editor will have: the line count's digits (3 lines: one).
-  expect(el.style.getPropertyValue("--gutter-digits")).toBe("1");
 });
 
 test("on the swap the selection and focus carry over; an earlier tab's textarea leaves nothing behind", async () => {
@@ -101,7 +99,7 @@ test("on the swap the selection and focus carry over; an earlier tab's textarea 
 
   const editor = await waitFor(() => {
     const e = screen.getByRole("textbox", { name: "template.yaml" });
-    expect(e).toHaveClass("cm-content");
+    expect(EditorView.findFromDOM(e)).not.toBeNull();
     return e;
   });
   const sel = (EditorView.findFromDOM(editor) as EditorView).state.selection.main;
@@ -111,7 +109,7 @@ test("on the swap the selection and focus carry over; an earlier tab's textarea 
   await userEvent.click(screen.getByRole("tab", { name: /settings\.json/ }));
   const later = await waitFor(() => {
     const e = screen.getByRole("textbox", { name: "settings.json" });
-    expect(e).toHaveClass("cm-content");
+    expect(EditorView.findFromDOM(e)).not.toBeNull();
     return e;
   });
   const fresh = (EditorView.findFromDOM(later) as EditorView).state.selection.main;

@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@balena/dockerignore": "1.0.2",
     "@fastify/static": "^10.1.11",
     "@fastify/websocket": "^11.3.7",
     "@modelcontextprotocol/server": "2.4.0",
@@ -28,7 +27,6 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "sign-in:record": "node --import tsx scripts/sign-in-record.ts",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts"
   }
 }

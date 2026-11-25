@@ -4,9 +4,10 @@ import { renderInRouter } from "@/test/render-in-router";
 import { BlockedMarker, StatusLabel } from "./status-label";
 import { TaskBadge } from "./task-badge";
 
-/** The marker's label span, matched on its whole text (the keys are separate spans, so getByText(string) can't). */
+/** The marker's label, matched on its whole text (the keys are separate spans, so getByText(string) can't);
+ *  the wrapper that also holds the icon is excluded. */
 const blockedLabel = (text: string) => (_: string, el: Element | null) =>
-  !!el && el.classList.contains("min-w-0") && el.textContent === text;
+  !!el && el.textContent === text && el.children.length > 0 && !el.querySelector("svg");
 
 test("a linked badge: key, separator, title; its name is 'Task T-42: Plan the billing migration'", async () => {
   renderInRouter(<TaskBadge taskKey="T-42" title="Plan the billing migration" link />);

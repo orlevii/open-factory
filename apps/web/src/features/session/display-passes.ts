@@ -29,7 +29,7 @@ export const innerKey = (key: string) => `c:${key}`;
 export const groupOpen = (g: FoldRow, expanded: ReadonlySet<string>): boolean =>
   expanded.has(g.key) || g.children.some((c) => expanded.has(c.key));
 
-const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
+const SUBAGENT_TOOLS = new Set(["Agent"]);
 
 /** Calls that fold: settled or running, never failed or denied, and not a subagent (U3 §9.4). Factory
  *  blocks are rows of their own kinds, so they end a run too. */

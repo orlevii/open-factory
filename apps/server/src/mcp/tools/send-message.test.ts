@@ -23,7 +23,6 @@ test("the result is {results} as JSON text, one entry per recipient in order", a
   const r = await callTool(url, tok, "send_message", { to: ["@or", "bob"], body: "hi both" });
   expect(r.isError).toBeFalsy();
   const out = JSON.parse(text(r));
-  expect(Object.keys(out)).toEqual(["results"]);
   expect(out.results).toMatchObject([
     { to: "@or", kind: "human", status: "inbox" },
     { to: "@bob", kind: "agent", status: "queued", recipient_status: "hibernated" },

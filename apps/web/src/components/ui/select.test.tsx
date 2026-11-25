@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
-import { ALL, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./select";
 
 let off = () => {};
 beforeEach(() => {
@@ -10,13 +10,13 @@ beforeEach(() => {
 });
 afterEach(() => off());
 
-test("keyboard selection calls onValueChange; the sentinel stands for 'all'", async () => {
+test("keyboard selection calls onValueChange", async () => {
   const onChange = vi.fn();
   render(
-    <Select value={ALL} onValueChange={onChange}>
+    <Select value="all" onValueChange={onChange}>
       <SelectTrigger aria-label="Agent"><SelectValue /></SelectTrigger>
       <SelectContent>
-        <SelectItem value={ALL}>All agents</SelectItem>
+        <SelectItem value="all">All agents</SelectItem>
         <SelectItem value="dev-001" textValue="dev-001">Developer One (@dev-001)</SelectItem>
       </SelectContent>
     </Select>,

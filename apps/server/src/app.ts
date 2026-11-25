@@ -24,7 +24,7 @@ import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import type { PasswordHasher } from "./auth/options.ts";
-import { type Config, localRuntimeAllowed } from "./config.ts";
+import type { Config } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { ExpiryCheck } from "./credentials/expiry-check.ts";
 import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
@@ -283,7 +283,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     defaultWarmWindowMinutes: settings.warmWindowMinutes,
     // S6 §9.1: reports forward through the Router (built below; runtimes are created lazily, after it exists).
     forward: (f) => router.forward(f),
-    localRuntimeAllowed: () => localRuntimeAllowed(config),
+    localRuntimeAllowed: () => config.allowLocalRuntime,
     // The same ContainerManager the exec transport stops containers with.
     docker: {
       containers,
@@ -699,7 +699,7 @@ async function listenForAgents(
       ? { bridge: await bridgeInfo(d.docker) }
       : {}),
     interfaces: os.networkInterfaces(),
-    localAllowed: localRuntimeAllowed(config),
+    localAllowed: config.allowLocalRuntime,
     warn: (msg) => d.log.warn(msg),
   });
   const mcp = createFactoryMcp({
@@ -729,7 +729,7 @@ async function listenForAgents(
                 runtimes: d.runtimes,
                 resolver: d.resolver,
                 router: d.router,
-                localRuntimeAllowed: () => localRuntimeAllowed(config),
+                localRuntimeAllowed: () => config.allowLocalRuntime,
               }),
               ...scheduleTools({
                 schedules: d.schedules,

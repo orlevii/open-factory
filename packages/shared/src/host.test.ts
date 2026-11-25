@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { hostInfoSchema, isHostPathShape } from "./host.ts";
+import { isHostPathShape } from "./host.ts";
 
 test.each([
   ["/a", true],
@@ -12,9 +12,3 @@ test.each([
   ["", false],
   ["C:\\x", false],
 ])("isHostPathShape(%j) is %s", (p, ok) => expect(isHostPathShape(p)).toBe(ok));
-
-test("hostInfoSchema accepts any platform string", () => {
-  expect(
-    hostInfoSchema.parse({ platform: "freebsd", hostname: "h", home: "/home/x" }).platform,
-  ).toBe("freebsd");
-});

@@ -425,7 +425,7 @@ export function uploadsFor(user: string | undefined, slug: string): UploadStore 
 }
 
 /** A user change: every other user's uploads are aborted (beforeunload disarms) and forgotten, with their
- *  chips, thumbnails and remembered sends. */
+ *  chips and thumbnails. */
 export function dropUploadsExcept(user: string | undefined) {
   const keep = `${user ?? ""}:`;
   for (const [k, s] of stores)
@@ -433,23 +433,13 @@ export function dropUploadsExcept(user: string | undefined) {
       s.abortAll();
       stores.delete(k);
     }
-  if (user === undefined) sent.clear();
 }
 
 /** Sign-out: nothing of this user's files stays in memory. */
 export function resetUploads() {
   for (const s of stores.values()) s.abortAll();
   stores.clear();
-  sent.clear();
 }
-
-// This tab's sends with files, by `clientMessageId`: their queue items show the chips too.
-const sent = new Map<string, readonly MessageAttachment[]>();
-export const rememberSent = (clientMessageId: string, a: readonly MessageAttachment[]) => {
-  if (a.length) sent.set(clientMessageId, a);
-};
-export const attachmentsSentWith = (clientMessageId: string | undefined) =>
-  clientMessageId ? sent.get(clientMessageId) : undefined;
 
 const ATTACHED = /^\[attached: \.factory\/uploads\/\d{8}-([0-9a-f-]{36})-[A-Za-z0-9._-]+\]$/;
 /**

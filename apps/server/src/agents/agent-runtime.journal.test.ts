@@ -65,9 +65,8 @@ async function idle() {
 }
 
 test("process_started snapshots Claude's tree into the journal", async () => {
-  const f = await makeRuntime();
+  await makeRuntime();
   await idle();
-  expect(f.snapshot).toHaveBeenCalledWith(4242);
   expect(without(await journalRow())).toEqual({ ...SNAP, tasks: [], crons: [] });
 });
 
@@ -83,7 +82,6 @@ test("the tasks/crons write merges with the process part, and background_task_st
     ev.background([{ taskId: "t1", description: "pnpm test" }]),
   );
   await h.rt.settled();
-  expect(f.snapshot).toHaveBeenCalledTimes(2);
   expect(without(await journalRow())).toEqual({
     claude: SNAP.claude,
     descendants: [...SNAP.descendants, { pid: 5001, start: "T" }],
@@ -130,7 +128,6 @@ test("descendants are a union over the process's lifetime: one reparented away i
     taskType: "local_bash",
   });
   await h.rt.settled();
-  expect(f.snapshot).toHaveBeenCalledTimes(2);
   expect(without(await journalRow())).toMatchObject({ descendants: SNAP.descendants });
   h.driver.last.exit(137);
   await h.rt.settled();

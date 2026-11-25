@@ -3,7 +3,6 @@ import { Link, Navigate } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { setupQueryOptions } from "@/features/setup/api";
-import { useSetupVisible } from "@/features/setup/use-setup-visible";
 import { chatSlugOf, type InboxItem, isFullWidthNotice, useLoadedItem, usePaneItem } from "./api";
 import { InboxPane } from "./inbox-pane";
 
@@ -54,14 +53,13 @@ function TargetNavigate({ link }: { link: InboxItem["link"] }) {
 
 function Resolved({ id }: { id: string }) {
   const { item, gone, failed } = usePaneItem(id, useLoadedItem(id));
-  const hasAgent = useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent }).data;
-  const setup = useSetupVisible(hasAgent);
+  const showSetup = useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent }).data === false;
   if (item) {
     if (!isFullWidthNotice(item)) return <TargetNavigate link={item.link} />;
     return (
       <div className="flex h-svh min-h-0 flex-col">
         <BackBar />
-        <InboxPane setup={setup} selectedId={id} item={item} />
+        <InboxPane showSetup={showSetup} selectedId={id} item={item} />
       </div>
     );
   }

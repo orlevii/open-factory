@@ -18,5 +18,5 @@ became `/spike/work` and the home dir `/home/user` (also inside streamed `text_d
 | `partial-interrupt-mid-text` | An interrupt while text is streaming |
 | `partial-subagent` | A background (`isAsync`, `status: "async_launched"`) Agent launch with partial messages |
 | `partial-thinking-summaries-forward-subagent` | Thinking summaries, and a foreground Agent result with `totalToolUseCount`, `totalTokens`, `totalDurationMs` |
-| `control-initialize-commands` | Lines 1-2 of the spike trace: the `initialize` `control_request` and its `control_response` with 57 `commands` (`builtin`, `aliases`) and `claude_code_version` (U3 §13.3) |
+| `control-initialize-commands` | Lines 1-2 of the spike trace: the `initialize` `control_request` and its `control_response` with 56 `commands` (`builtin`, `aliases`) and `claude_code_version` (U3 §13.3) |
 | `slash-local-commands` | Lines 28-39 of `slash-raw-skills-and-builtins`: raw `/context`, `/cost` and `/usage`, each a `<synthetic>` assistant line and a `result` with `local_command` and the printed `result` text |

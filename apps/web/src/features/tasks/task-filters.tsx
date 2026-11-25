@@ -11,8 +11,6 @@ import {
 import { AgentCombobox } from "@/features/agents/agent-combobox";
 import type { TaskFilters } from "./api";
 
-export const DEFAULT_FILTERS: TaskFilters = { status: "open_in_progress" };
-
 const STATUS_OPTIONS = [
   ["open_in_progress", "Open and in progress"],
   ["open", "Open"],

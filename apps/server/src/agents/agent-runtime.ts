@@ -107,7 +107,7 @@ export interface RuntimeDeps {
    * the cleanup can reap what a dead process left. Absent with a fake driver: a fake pid is not ours to journal.
    */
   journal?: { snapshot(claudePid: number): Promise<ProcessPart> };
-  /** The local gate (`localRuntimeAllowed(config)`), read live because it can change; defaults to allowed. */
+  /** The local gate (`config.allowLocalRuntime`), read live because it can change; defaults to allowed. */
   localRuntimeAllowed?: () => boolean;
   /** The Docker launcher (spec §10 step 4, §11): the one ContainerManager and the in-container Claude path. */
   docker?: DockerDeps;
@@ -607,8 +607,6 @@ export class AgentRuntime {
   private runningImage: string | undefined; // Docker: the image the live process was started from
   // A start whose container couldn't be stopped (spec §9.6): stop_failed, and startNow must not give the slot back.
   private keepSlotAfterFailedStart = false;
-  // `ensure` found the image gone once since the last launch: the wake went back through the pull (spec §11.2).
-  private imageRequeued = false;
   private readonly slots: SlotPort;
   private failingProc: HarnessProcess | undefined; // a start that failed (spawn/resume error) and is being stopped
   private liveTasks = new Map<string, LiveTask>(); // startedAt = first seen in a `background_tasks` set
@@ -2648,16 +2646,12 @@ export class AgentRuntime {
       requeue = !(await this.launch(reason, () => {
         launched = true;
       }));
-    } catch (err) {
-      this.imageRequeued = false; // this wake ended: the next one may re-pull a vanished image once again
-      throw err;
     } finally {
       this.starting = false;
       // A container that couldn't be stopped keeps the slot (stop_failed, spec §9.6).
       if (!launched && !this.keepSlotAfterFailedStart) this.slots.release(this.agent.id);
     }
-    // A pause that landed after the grant (spec §5.2), or an image that went missing (spec §11.2, through the pull):
-    // back to the queue (a granted entry keeps its place).
+    // A pause that landed after the grant (spec §5.2): back to the queue (a granted entry keeps its place).
     if (requeue && !this.keepSlotAfterFailedStart) {
       this.requestWake(reason, false);
       this.publishStatus();
@@ -2720,7 +2714,6 @@ export class AgentRuntime {
     let container: (EnsureResult & { image: string }) | undefined;
     if (spec.runtime === "docker") {
       container = await this.ensureContainer(spec, dockerLaunch);
-      if (!container) return false;
       spec = {
         ...spec,
         docker: { containerId: container.containerId, claudeBin: this.dockerDeps().claudeBin },
@@ -2754,7 +2747,6 @@ export class AgentRuntime {
     this.otherRestartCause = false;
     this.procCredentialId = credentialId; // what prepareStart launched on, not the row (a spawned agent's differs)
     this.procRuntime = spec.runtime;
-    this.imageRequeued = false;
     this.sessionStarted = false;
     this.stopping = false; // only reached with no stop() in progress: this is a fresh start after it completed
     this.afterExit = undefined;
@@ -2881,7 +2873,7 @@ export class AgentRuntime {
   private async ensureContainer(
     spec: AgentRuntimeSpec,
     launch: PreparedSpec["launch"],
-  ): Promise<(EnsureResult & { image: string }) | undefined> {
+  ): Promise<EnsureResult & { image: string }> {
     // Invariants, outside the Docker error mapping: a programming error must not read as a Docker fault.
     const docker = this.dockerDeps();
     if (!launch) throw new Error("a Docker start was prepared without its launch");
@@ -2895,16 +2887,9 @@ export class AgentRuntime {
       });
       return { ...r, image: launch.image };
     } catch (err) {
-      // Removed after it was seen (spec §11.2): forget it and send the wake back through the pull, once per launch.
-      // `ensure` throws this before any create or start, so there is no container to stop.
-      if (err instanceof ImageMissingError) {
-        // Always forgotten, so whichever wake comes next checks and pulls it again.
-        docker.onImageMissing?.(err.image);
-        if (!this.imageRequeued) {
-          this.imageRequeued = true;
-          return undefined;
-        }
-      }
+      // Removed after the pull check (spec §11.2): the start fails, and the image is forgotten so the next wake
+      // checks and pulls it again.
+      if (err instanceof ImageMissingError) docker.onImageMissing?.(err.image);
       // A mount refused by the re-check keeps its own message ("Mount <path> isn't allowed: <reason>.").
       const startErr =
         err instanceof WorkspaceError

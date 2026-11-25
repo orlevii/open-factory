@@ -1,7 +1,0 @@
-0.0s spawn pid=99646 args=--model haiku
-0.0s -> raw not-json
-0.3s exit code=1 sig=null
-2.0s -> {"type":"bogus"}
-4.0s -> {"type":"user","message":{"role":"user","content":"Reply with OK."}}
-64.0s step error: timeout waiting {"type":"result"}
-64.0s close stdin

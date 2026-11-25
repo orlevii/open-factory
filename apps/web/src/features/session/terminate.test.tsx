@@ -2,7 +2,7 @@ import type { AgentSummary, ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { resetSheets } from "@/features/sheets/sheet-store";
+import { openSheet, resetSheets } from "@/features/sheets/sheet-store";
 import { type Handler, json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, resetSeq, se } from "@/test/session-fixtures";
@@ -433,15 +433,16 @@ test("an errored spawned agent: the recovery actions in the header, Terminate…
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 });
 
-test("a spawned agent's old edit URL lands on its session, with Edit agent saying it can't be edited", async () => {
+test("Edit agent on a spawned agent says it can't be edited", async () => {
   mockApi({
     [`GET /api/agents/${SLUG}`]: () => json({ agent: spawned(), queue: [], lastSeq: 1 }),
     "GET /api/agents?ended=exclude": () => json({ agents: [spawned()], running: { count: 1 } }),
     "GET /api/templates": () => json({ templates: [] }),
   });
-  const { router } = renderApp(`/agents/${SLUG}/edit`, alice);
+  renderApp(`/agents/${SLUG}/chat`, alice);
+  await screen.findByRole("heading", { level: 1 });
+  act(() => openSheet({ kind: "edit-agent", slug: SLUG }));
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
-  expect(router.state.location.pathname).toBe(`/agents/${SLUG}/chat`);
   expect(await within(dialog).findByText("Spawned agents can't be edited.")).toBeInTheDocument();
   expect(within(dialog).queryByRole("button", { name: /Save|Archive/ })).toBeNull();
   expect(within(dialog).queryByRole("textbox")).toBeNull();

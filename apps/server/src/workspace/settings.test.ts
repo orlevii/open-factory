@@ -9,23 +9,15 @@ const base = {
   mcpUrl: "http://127.0.0.1:3001/mcp",
 };
 
-test("rebuild: the template base is kept, and the plugin keys a human wrote pass through unchanged", () => {
+test("rebuild: the template's hooks and permissions are kept, and the factory's own are merged in", () => {
   const s = buildSettings({
     ...base,
     tpl: {
       hooks: { Stop: [] },
       permissions: { deny: ["Bash(curl:*)"], additionalDirectories: ["/data"] },
-      extraKnownMarketplaces: { m: { source: { source: "directory", path: "/new" } } },
-      enabledPlugins: { "x@m": true },
-      syncClaudeAiPlugins: true,
     },
   });
   expect(s.hooks).toEqual({ Stop: [] });
-  expect(s.enabledPlugins).toEqual({ "x@m": true });
-  expect(s.extraKnownMarketplaces).toEqual({
-    m: { source: { source: "directory", path: "/new" } },
-  });
-  expect(s.syncClaudeAiPlugins).toBe(true);
   expect(s.permissions).toEqual({
     deny: ["Bash(curl:*)", "SendMessage", "ListAgents"],
     defaultMode: "auto",

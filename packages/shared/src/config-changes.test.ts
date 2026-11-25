@@ -45,12 +45,6 @@ describe("describeDocChanges", () => {
     ).toEqual(["added skill release", "removed secret GH_TOKEN", "removed skill tdd"]);
   });
 
-  it("reports a plugin key a human wrote in settings like any other settings key", () => {
-    expect(diff({ settings: {} }, { settings: { enabledPlugins: { "a@m": true } } })).toEqual([
-      "settings key enabledPlugins changed",
-    ]);
-  });
-
   it("shows can spawn and template skill changes", () => {
     expect(
       diff(

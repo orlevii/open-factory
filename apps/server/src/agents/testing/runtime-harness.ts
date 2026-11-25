@@ -10,7 +10,7 @@ import { EventStore, type PendingRow } from "../event-store.ts";
 import type { PreparedSpec } from "../start.ts";
 import { FakeDriver } from "./fake-driver.ts";
 import { insertAgent } from "./rows.ts";
-import { unlimitedSlots } from "./unlimited-slots.ts";
+import { RecordingSlots } from "./slots.ts";
 
 /** A human's committed message row for `rt`, as the Router writes it before the hand-off (S6 §7.3). */
 export function humanRow(
@@ -240,7 +240,7 @@ export class RuntimeHarness {
         this.forwarded.push(f);
       },
       holdTimeoutMs: opts.holdTimeoutMs ?? 200,
-      slots: opts.slots ?? unlimitedSlots,
+      slots: opts.slots ?? new RecordingSlots(),
       ...(opts.cleanup ? { cleanup: opts.cleanup } : {}),
       ...(opts.journal ? { journal: opts.journal } : {}),
       ...(opts.docker ? { docker: opts.docker } : {}),

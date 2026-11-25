@@ -412,7 +412,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     const pinned = await call("PUT", "/api/agents/boss-dd44/workspace-pin");
     expect(pinned.statusCode).toBe(200);
     expect(pinned.json().agent).toMatchObject({ workspacePinned: true });
-    expect(pinned.json().agent.workspaceGraceEndsAt).toBeDefined();
+    expect(pinned.json().agent.workspaceGraceEndsAt).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/);
     const unpinned = await call("DELETE", "/api/agents/boss-dd44/workspace-pin");
     expect(unpinned.statusCode).toBe(200);
     expect(unpinned.json().agent).toMatchObject({ workspacePinned: false });
@@ -424,7 +424,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
       expect(res.json().error.code, m).toBe("workspace_deleted");
     }
     const a = (await call("GET", "/api/agents/boss-dd44")).json().agent;
-    expect(a.workspaceDeletedAt).toBeDefined();
+    expect(a.workspaceDeletedAt).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/);
     expect(a.workspaceGraceEndsAt).toBeUndefined();
     expect((await call("PUT", "/api/agents/nope/workspace-pin")).statusCode).toBe(404);
   });

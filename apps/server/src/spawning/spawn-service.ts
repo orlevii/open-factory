@@ -7,7 +7,7 @@ import type { ConfigResolver, Effective } from "../agents/config-resolver.ts";
 import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { spawnerHolds } from "../agents/start.ts";
-import { type Config, localRuntimeAllowed } from "../config.ts";
+import type { Config } from "../config.ts";
 import { isSlugUnique } from "../db-errors.ts";
 import { FieldError } from "../errors.ts";
 import type { SpawnArgs, SpawnResult } from "../mcp/tools/spawn-agent.ts";
@@ -161,7 +161,7 @@ export class SpawnService {
       },
       tpl.config,
       readDenyRules(tpl.tplSettings),
-      { localRuntimeAllowed: localRuntimeAllowed(this.d.config) },
+      { localRuntimeAllowed: this.d.config.allowLocalRuntime },
     );
     if (!inherited.ok) return fail(inherited.refusal);
     return { ok: true, inherited };

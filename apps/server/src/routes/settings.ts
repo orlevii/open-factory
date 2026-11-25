@@ -8,7 +8,6 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { requireUser } from "../auth/require-user.ts";
-import { localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
 
 /** S10 §8.3: the factory settings, human session only; the local runtime flag is env-only (Q7) and read-only here. */
@@ -71,7 +70,7 @@ async function dto(app: FastifyInstance, db: Db): Promise<FactorySettingsDto> {
     memberUpdateDebounceSeconds: s.memberUpdateDebounceSeconds,
     loopGuardMessages: s.loopGuardMessages,
     loopGuardWindowMinutes: s.loopGuardWindowMinutes,
-    allowLocalRuntime: localRuntimeAllowed(app.config),
+    allowLocalRuntime: app.config.allowLocalRuntime,
     defaultImage: app.config.defaultImage,
     updatedAt: s.updatedAt?.toISOString() ?? null,
     updatedBy: editor ? `@${editor.handle}` : null,

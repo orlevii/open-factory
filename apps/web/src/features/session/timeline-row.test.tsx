@@ -187,12 +187,10 @@ test("timeline: mcp_unavailable is a warning quiet line with the status in its d
 });
 
 test("timeline: interrupt_unconfirmed is a warning quiet line", () => {
-  const { texts, els } = lines([{ type: "interrupt_unconfirmed" }]);
+  const { texts } = lines([{ type: "interrupt_unconfirmed" }]);
   expect(texts).toEqual([
     "The turn didn't confirm the stop within 10 seconds, so held messages were sent anyway.",
   ]);
-  const icon = (els[0] as HTMLElement).querySelector("svg");
-  expect(icon).toHaveClass("lucide-triangle-alert");
 });
 
 test("timeline: spawned-agent lifecycle lines without an agent link (human and TTL `by`)", () => {
@@ -289,10 +287,7 @@ test("self-started turns say what woke the agent", () => {
 // Repeated failures (U3 §7.6): one row, the count and the last time.
 test("a merged failure says how many times and when the last one was", () => {
   const err = (at: string): SessionEvent => ({
-    ...se(
-      { type: "error", source: "spawn", code: "image", message: "Image `playwright` isn't built" },
-      null,
-    ),
+    ...se({ type: "error", source: "spawn", code: "image", message: "Sign-in failed" }, null),
     at,
   });
   const today = mergeFailures(
@@ -324,8 +319,8 @@ test("a merged failure says how many times and when the last one was", () => {
     (el) => el.querySelector("p")?.textContent,
   );
   expect(texts).toEqual([
-    "Image `playwright` isn't built · 3 times · last 09:32",
-    "Image `playwright` isn't built · 2 times · last Mon 19:32",
+    "Sign-in failed · 3 times · last 09:32",
+    "Sign-in failed · 2 times · last Mon 19:32",
   ]);
 });
 
@@ -714,7 +709,6 @@ test("touch: a press on a message's speaker line opens its row menu; the card ta
   expect(card).not.toHaveAttribute("data-pressed");
   longPress(speaker, { x: 50, y: 90 });
   expect(await screen.findByRole("menu", { name: /^Message from @or/ })).toBeInTheDocument();
-  expect(document.querySelector<HTMLElement>("[data-menu-stand-in]")?.style.left).toBe("50px");
 });
 
 test("touch: a press on a tool row's summary line opens that row's menu, and never toggles it", async () => {

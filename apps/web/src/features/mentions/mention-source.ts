@@ -98,9 +98,6 @@ export function mentionSource(qc: QueryClient, label: string): CompletionSource 
   };
 }
 
-/** The session's `@` button label: session copy never says "mention" (Q23). */
-export const SESSION_AT_LABEL = "Insert an agent's handle";
-
 /** One `@` source per query client: identity-stable, so it never breaks the composer's `memo`. */
 export function useMentionSource(label: string): CompletionSource {
   const qc = useQueryClient();

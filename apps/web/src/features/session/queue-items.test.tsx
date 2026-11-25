@@ -38,7 +38,7 @@ test("the first held message says why; the rest only that they aren't delivered 
     />,
   );
   const blocks = document.querySelectorAll("[data-message-block]");
-  expect(blocks[0]).toHaveTextContent("Not delivered yet: waiting for a free slot");
+  expect(blocks[0]).toHaveTextContent("Not delivered yet: waiting to start");
   expect(blocks[1]?.textContent).toContain("Not delivered yet");
   expect(blocks[1]?.textContent).not.toContain("Not delivered yet:");
 });

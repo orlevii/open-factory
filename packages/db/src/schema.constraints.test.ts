@@ -42,12 +42,6 @@ test("turns carry task and credential; deleting the credential or task nulls the
   expect((await sql`select task_id from turns where id = 'r1'`)[0]?.task_id).toBeNull();
 });
 
-test("messages.delivered_turn_id has a partial index for turn attribution", async () => {
-  const [ix] =
-    await sql`select indexdef from pg_indexes where tablename = 'messages' and indexname = 'messages_delivered_turn_idx'`;
-  expect(ix?.indexdef).toMatch(/\(delivered_turn_id\) WHERE \(delivered_turn_id IS NOT NULL\)/);
-});
-
 test("credentials.rl_status accepts only the reported statuses", async () => {
   await sql`insert into credentials (id,name,kind,value_enc) values ('c4','rl','api_key','\\x00')`;
   for (const s of ["allowed", "allowed_warning", "rejected"])

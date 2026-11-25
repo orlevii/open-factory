@@ -77,7 +77,7 @@ test("a tool call pairs with its result; nested work goes under its parent", () 
   seq = 0;
   const rows = rowsOf([
     e({ type: "turn_started" }),
-    e({ type: "tool_call", toolUseId: "p", name: "Task", input: { description: "research" } }),
+    e({ type: "tool_call", toolUseId: "p", name: "Agent", input: { description: "research" } }),
     e({
       type: "tool_call",
       toolUseId: "c",
@@ -176,7 +176,7 @@ test("an orphan result with a known parent nests under that parent", () => {
   seq = 0;
   const rows = rowsOf([
     e({ type: "turn_started" }),
-    e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
+    e({ type: "tool_call", toolUseId: "p", name: "Agent", input: {} }),
     e({
       type: "tool_result",
       toolUseId: "gone",
@@ -236,7 +236,7 @@ test("a denial whose toolUseId matches a loaded call attaches to it; an unpaired
 test("a denial pairs with a nested call too", () => {
   seq = 0;
   const rows = rowsOf([
-    e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
+    e({ type: "tool_call", toolUseId: "p", name: "Agent", input: {} }),
     e({ type: "tool_call", toolUseId: "c", name: "Bash", input: {}, parentToolUseId: "p" }),
     e({
       type: "permission_denied",
@@ -292,7 +292,7 @@ test("spawn_agent and terminate_agent calls with the right shape pair with their
     }),
     e({ type: "tool_call", toolUseId: "t3", name: "mcp__factory__terminate_agent", input: {} }),
     // Nested inside a subagent, it stays nested.
-    e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
+    e({ type: "tool_call", toolUseId: "p", name: "Agent", input: {} }),
     e({
       type: "tool_call",
       toolUseId: "s3",
@@ -413,7 +413,7 @@ test("a later result, denial or truncated replaces the tool row but keeps its un
   seq = 0;
   const base = [
     e({ type: "turn_started" }),
-    e({ type: "tool_call", toolUseId: "p", name: "Task", input: {} }),
+    e({ type: "tool_call", toolUseId: "p", name: "Agent", input: {} }),
     e({ type: "tool_call", toolUseId: "c", name: "Bash", input: {}, parentToolUseId: "p" }),
     e({ type: "tool_result", toolUseId: "c", content: "x", isError: false, parentToolUseId: "p" }),
     e({ type: "assistant_text", text: "sub", parentToolUseId: "p" }),
@@ -423,7 +423,7 @@ test("a later result, denial or truncated replaces the tool row but keeps its un
     e({ type: "tool_result", toolUseId: "p", content: "done", isError: false }),
     e({
       type: "permission_denied",
-      toolName: "Task",
+      toolName: "Agent",
       toolUseId: "p",
       reasonType: "rule",
       reason: "no",

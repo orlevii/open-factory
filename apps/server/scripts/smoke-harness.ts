@@ -15,7 +15,7 @@ import { EventBus } from "../src/agents/event-bus.ts";
 import { EventStore } from "../src/agents/event-store.ts";
 import { PolicyInputs } from "../src/agents/policy-inputs.ts";
 import { createPrepareStart } from "../src/agents/start.ts";
-import { unlimitedSlots } from "../src/agents/testing/unlimited-slots.ts";
+import { RecordingSlots } from "../src/agents/testing/slots.ts";
 import { loadConfig } from "../src/config.ts";
 import { Vault } from "../src/crypto/vault.ts";
 import { LibraryIndex } from "../src/library/library-index.ts";
@@ -110,7 +110,7 @@ const make = () =>
     prepareStart: (a, extra) => prepareStart(a, { ...extra, loaded: () => undefined }),
     tokens: new AgentTokens(),
     log,
-    slots: unlimitedSlots,
+    slots: new RecordingSlots(),
     forward: async () => {}, // a lone agent: nothing to forward to
   });
 let rt = make();

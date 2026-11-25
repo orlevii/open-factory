@@ -452,10 +452,7 @@ function AgentConfigEditor({
         activationMode="manual"
         className="min-w-0 gap-4"
       >
-        <TabsList
-          variant="line"
-          className="h-auto! min-h-9 w-full justify-start gap-1 rounded-none border-b p-0"
-        >
+        <TabsList className="h-auto! min-h-9 w-full justify-start gap-1 rounded-none border-b p-0">
           <TabsTrigger value="config" className={TAB}>
             {CONFIG_PAGE_COPY.tabForm}
           </TabsTrigger>

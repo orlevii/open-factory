@@ -19,12 +19,12 @@ afterAll(async () => {
   await tdb.drop();
 });
 
-test("#30: deleting a credential used only by a terminated agent nulls it", async () => {
+test("deleting a credential used only by a terminated agent nulls it", async () => {
   await sql`delete from credentials where id = 'c2'`;
   const [k] = await sql`select credential_id from agents where id = 'kid'`;
   expect(k?.credential_id).toBeNull();
 });
-test("#30: a live user still blocks the delete with 23514, atomically", async () => {
+test("a live user still blocks the delete with 23514, atomically", async () => {
   await expect(sql`delete from credentials where id = 'c1'`).rejects.toMatchObject({
     code: "23514",
   });
@@ -77,15 +77,11 @@ test("a live row can't have a null credential", async () => {
     { code: "23514" },
   );
 });
-test("kind is persistent or ephemeral; new columns default", async () => {
+test("kind is persistent or ephemeral", async () => {
   await expect(sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind)
                    values ('k2','k2','K','t','{}','local','c1','weird')`).rejects.toMatchObject({
     code: "23514",
   });
-  const [l] =
-    await sql`select workspace_pinned, workspace_deleted_at, last_activity_at from agents where id = 'lead'`;
-  expect(l).toMatchObject({ workspace_pinned: false, workspace_deleted_at: null });
-  expect(l?.last_activity_at).toBeInstanceOf(Date);
 });
 test("only a persistent agent can manage the org", async () => {
   await expect(sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, manage_org)

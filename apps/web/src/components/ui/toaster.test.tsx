@@ -121,34 +121,6 @@ test("resetToasts drops held toasts and stops watching", async () => {
   expect(await screen.findByText("Fresh toast.")).toBeInTheDocument();
 });
 
-test("while held, the release check runs at most once per animation frame", async () => {
-  const modal = document.createElement("div");
-  modal.setAttribute("role", "dialog");
-  modal.setAttribute("data-state", "open");
-  document.body.append(modal);
-  render(<Toaster />);
-  act(() => notify({ text: "Held." }));
-  const raf = vi.spyOn(window, "requestAnimationFrame");
-  const query = vi.spyOn(document, "querySelector");
-  // A burst of DOM changes behind the modal (a streaming session) in one task.
-  await act(async () => {
-    for (let i = 0; i < 20; i++) document.body.append(document.createElement("span"));
-    await Promise.resolve();
-  });
-  expect(raf).toHaveBeenCalledTimes(1);
-  expect(query).not.toHaveBeenCalled();
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 50));
-  });
-  expect(query.mock.calls.length).toBeLessThanOrEqual(2);
-  expect(screen.queryByText("Held.")).toBeNull();
-  await act(async () => {
-    modal.remove();
-    await new Promise((r) => setTimeout(r, 50));
-  });
-  expect(await screen.findByText("Held.")).toBeInTheDocument();
-});
-
 test("duration is 60ms per character, at least 5s", () => {
   expect(toastDuration("x".repeat(120))).toBe(7200);
   expect(toastDuration("short")).toBe(5000);

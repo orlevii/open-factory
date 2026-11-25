@@ -3,7 +3,7 @@ import type { Command } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { commandList, commandsResponse } from "./commands.ts";
 
-/** The spike's `initialize` list (57 entries: two project skills, the rest built-in). */
+/** The spike's `initialize` list (56 entries: two project skills, the rest built-in). */
 const spikeList = (): Command[] => {
   const url = new URL(
     "../../../../packages/harness/fixtures/u3/control-initialize-commands.jsonl",
@@ -25,8 +25,8 @@ test("nothing stored: the built-ins and the template's skills", () => {
     "/clear isn't available: each agent keeps one session.",
   );
   expect(byName(list, "research")).toEqual({ name: "research", description: "", argumentHint: "" });
-  // 55 built-ins, but `__remote-workflow` is outside the name format and dropped, as the harness drops it.
-  expect(list).toHaveLength(55);
+  // 54 built-ins, but `__remote-workflow` is outside the name format and dropped, as the harness drops it.
+  expect(list).toHaveLength(54);
 });
 
 test("stored: the stored list, the denylist flagged, nothing dropped", () => {

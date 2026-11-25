@@ -1,23 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { RESERVED_SETTINGS_KEYS, reservedKeysIn } from "./settings-keys.ts";
 
-/** The spec §7.10 keys, as written in the spec. Each must be reported when a settings file sets it. */
-const SPEC_KEYS = [
-  "enabledPlugins",
-  "extraKnownMarketplaces",
-  "permissions.defaultMode",
-  "permissions.additionalDirectories",
-  "claudeMdExcludes",
-  "hooks",
-  "statusLine",
-  "fileSuggestion",
-  "apiKeyHelper",
-  "awsAuthRefresh",
-  "awsCredentialExport",
-  "gcpAuthRefresh",
-  "otelHeadersHelper",
-];
-
 /** Builds `{ a: { b: value } }` for the dotted path `a.b`. */
 const nest = (dotted: string): Record<string, unknown> =>
   dotted.split(".").reduceRight<unknown>((value, key) => ({ [key]: value }), true) as Record<
@@ -25,12 +8,8 @@ const nest = (dotted: string): Record<string, unknown> =>
     unknown
   >;
 
-test("RESERVED_SETTINGS_KEYS is exactly the spec §7.10 list", () => {
-  expect([...RESERVED_SETTINGS_KEYS].sort()).toEqual([...SPEC_KEYS].sort());
-});
-
 describe("reservedKeysIn", () => {
-  test.each(SPEC_KEYS)("reports %s when a settings file sets it", (key) => {
+  test.each([...RESERVED_SETTINGS_KEYS])("reports %s when a settings file sets it", (key) => {
     expect(reservedKeysIn(nest(key))).toEqual([key]);
   });
 

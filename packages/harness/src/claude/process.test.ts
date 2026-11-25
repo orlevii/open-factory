@@ -358,8 +358,8 @@ describe("commands", () => {
     expect(typeof init.request_id).toBe("string");
     t.emitStdout(initAnswer(init.request_id));
     const list = await p.commands();
-    // 57 in the trace; `__remote-workflow` (a refused built-in) fails the name format and is dropped.
-    expect(list).toHaveLength(56);
+    // 56 in the trace; `__remote-workflow` (a refused built-in) fails the name format and is dropped.
+    expect(list).toHaveLength(55);
     expect(list?.find((c) => c.name === "__remote-workflow")).toBeUndefined();
     expect(list?.find((c) => c.name === "spike-echo")).toEqual({
       name: "spike-echo",
@@ -448,7 +448,7 @@ describe("commands", () => {
     await tick();
     expect(settled).toBe(false);
     t.emitStdout(initAnswer(init.request_id));
-    expect(await list).toHaveLength(56);
+    expect(await list).toHaveLength(55);
   });
 
   test("an inbound control_request from Claude is answered with an error", async () => {

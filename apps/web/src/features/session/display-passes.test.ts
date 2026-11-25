@@ -18,8 +18,8 @@ const failed = (seq: number, at?: string) =>
     {
       type: "error",
       source: "spawn",
-      code: "image_not_built",
-      message: "Image `playwright` isn't built",
+      code: "authentication_failed",
+      message: "Sign-in failed",
     },
     at,
   );

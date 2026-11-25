@@ -39,7 +39,7 @@ import type { FastifyBaseLogger } from "fastify";
 import { stringify } from "yaml";
 import { OrgRefusedError } from "../agents/errors.ts";
 import type { PolicyInputs } from "../agents/policy-inputs.ts";
-import { type Config, localRuntimeAllowed } from "../config.ts";
+import type { Config } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
 import { avatarStat } from "./avatar.ts";
@@ -193,7 +193,7 @@ export class TemplateIndex {
       secrets: new Set(secrets.map((s) => s.name)),
       templates: new Set(templates),
       library: this.library,
-      localRuntimeAllowed: localRuntimeAllowed(this.config),
+      localRuntimeAllowed: this.config.allowLocalRuntime,
     };
   }
 

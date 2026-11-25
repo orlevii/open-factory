@@ -15,7 +15,7 @@ import {
   sendAs,
   silentLog,
 } from "./testing/runtime-harness.ts";
-import { unlimitedSlots } from "./testing/unlimited-slots.ts";
+import { RecordingSlots } from "./testing/slots.ts";
 
 const h = new RuntimeHarness();
 let t: RuntimeHarness["t"];
@@ -284,7 +284,7 @@ test("the runtime does not hold the slug lock around prepareStart (the real one 
     bus,
     driver,
     log: silentLog,
-    slots: unlimitedSlots,
+    slots: new RecordingSlots(),
     prepareStart: (a) => lock.run(a.slug, async () => okSpec(a)),
   });
   await rt.init();
@@ -477,7 +477,7 @@ test("pending after a failed start, then delivered as one turn on the next start
     driver,
     prepareStart: async (a) => okSpec(a),
     log: silentLog,
-    slots: unlimitedSlots,
+    slots: new RecordingSlots(),
   });
   await rt.init();
   expect(rt.queueItems().map((q) => q.body)).toEqual(["hello"]);

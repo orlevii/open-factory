@@ -1,6 +1,5 @@
 import type { AgentSummary } from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
-import { SelectItem } from "@/components/ui/select";
 import { agentsQueryOptions } from "@/features/session/api";
 
 type Agents = AgentSummary[];
@@ -25,17 +24,3 @@ export function useAssignableAgents() {
 export const Slug = ({ slug }: { slug: string }) => (
   <span className="text-muted-foreground font-mono">@{slug}</span>
 );
-
-/** An agent as a select option: the name, then a muted mono `@slug`. Shown in the closed trigger too. */
-export function AgentItem({ agent }: { agent: { slug: string; displayName: string } }) {
-  return (
-    <SelectItem value={agent.slug} textValue={agent.slug}>
-      {agent.displayName && (
-        <>
-          <span>{agent.displayName}</span>{" "}
-        </>
-      )}
-      <Slug slug={agent.slug} />
-    </SelectItem>
-  );
-}

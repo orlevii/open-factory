@@ -187,4 +187,3 @@ export const putTemplateConfigResponseSchema = z.object({
   hashes: configHashesSchema,
   issues: z.array(templateIssueSchema),
 });
-export type PutTemplateConfigResponse = z.infer<typeof putTemplateConfigResponseSchema>;

@@ -4,7 +4,6 @@ import { useId } from "react";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet, openSheetForResult } from "@/features/sheets/sheet-store";
 import { useSetup } from "./api";
-import type { SetupVisible } from "./use-setup-visible";
 
 const noop = () => {};
 // biome-ignore lint/suspicious/noThenProperty: SheetSpec's field, not a thenable
@@ -35,16 +34,10 @@ const STEPS = [
 
 /** The first-run steps (I8 §4.3): three rows that open the sheets that do each one. Order never changes and
  *  a done step stays clickable. */
-export function SetupSteps({
-  status,
-  blockProps,
-}: {
-  status: SetupStatus;
-  blockProps?: SetupVisible["blockProps"];
-}) {
+export function SetupSteps({ status }: { status: SetupStatus }) {
   const id = useId();
   return (
-    <section aria-labelledby={`${id}-h`} {...blockProps}>
+    <section aria-labelledby={`${id}-h`}>
       <h2 id={`${id}-h`} className="font-heading text-[1rem] leading-[1.25rem] font-semibold">
         Set up your factory
       </h2>
@@ -90,7 +83,7 @@ export function SetupSteps({
 }
 
 /** The block with the whole status, for the places that render it. Only this reads more than `hasAgent`. */
-export function SetupBlock({ blockProps }: { blockProps?: SetupVisible["blockProps"] }) {
+export function SetupBlock() {
   const status = useSetup().data;
-  return status ? <SetupSteps status={status} blockProps={blockProps} /> : null;
+  return status ? <SetupSteps status={status} /> : null;
 }

@@ -78,12 +78,6 @@ function useShapeKey(): string | undefined {
   return useQuery({ ...agentsListQueryOptions("exclude"), select: shapeKeyOf }).data;
 }
 
-/** The live agents' tree shape. Identity-stable across status frames. */
-export function useAgentTreeShape(): TreeNode[] {
-  const key = useShapeKey();
-  return useMemo(() => (key ? buildTree(parseShape(key)) : []), [key]);
-}
-
 /** Mounts its Radix tooltip only while a pointer is over it, so rows carry no tooltip root at rest.
  *  It unmounts on pointer leave, not on close: Radix closes on pointer down, and dropping the trigger
  *  then would swallow the click meant for the row's link. */

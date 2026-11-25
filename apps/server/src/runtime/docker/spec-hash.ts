@@ -2,9 +2,6 @@ import { createHash } from "node:crypto";
 import type { Mount } from "@open-factory/harness";
 import type { ContainerCreateOptions } from "./client.ts";
 
-/** Hashed with the options; bump only to force a re-create when nothing in the options changed. */
-export const LAUNCHER_VERSION = 1;
-
 export const EXTRA_HOSTS = ["host.docker.internal:host-gateway"];
 export const SECURITY_OPT = ["no-new-privileges:true"];
 export const TMPFS: Record<string, string> = { "/run/open-factory": "" };
@@ -58,12 +55,10 @@ function stableJson(v: unknown): string {
 
 /**
  * Spec §11.2: sha256 over the create options derived from the image id, the mounts and HOST_UID/HOST_GID (and so
- * also the extra hosts, the security options and the tmpfs) plus `LAUNCHER_VERSION`. Only these inputs are read, so
+ * also the extra hosts, the security options and the tmpfs). Only these inputs are read, so
  * nothing else a caller passes (secrets, the credential, a slug) can re-create a container.
  */
 export function specHash(i: SpecInputs): string {
   const spec = containerSpec({ imageId: i.imageId, mounts: i.mounts, uid: i.uid, gid: i.gid });
-  return createHash("sha256")
-    .update(stableJson({ launcher: LAUNCHER_VERSION, spec }))
-    .digest("hex");
+  return createHash("sha256").update(stableJson(spec)).digest("hex");
 }

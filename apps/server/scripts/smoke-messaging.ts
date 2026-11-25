@@ -6,7 +6,8 @@
 // credential and is never printed: everything this script prints goes through `redact`.
 // Uses a throwaway database and a temp FACTORY_HOME; the human server and the agent listener listen on loopback
 // (Docker Desktop reaches loopback at host.docker.internal; on plain Linux the listener adds the bridge gateway).
-// Model: haiku. A member update debounce of 180 s (factory settings) so an idle manager's batch can't split.
+// Model: haiku. A member update debounce of 20 s (factory settings): long enough for a short report turn to land in one
+// batch, short enough to reach a manager in the middle of a 60 s Bash call.
 // Org: `lead` (top) with reports `ada` and `bob`; humans `or` and `sam`.
 import { randomBytes } from "node:crypto";
 import {
@@ -372,12 +373,7 @@ async function quiet(slugs: Slug[]) {
       for (const s of slugs) {
         const rt = await app.runtimes.bySlug(s);
         const l = rt?.live();
-        if (
-          l?.turnOpen ||
-          l?.status === "working" ||
-          (rt?.queueItems().filter((i) => i.kind !== "held").length ?? 0) > 0
-        )
-          busy.push(s);
+        if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
       if (busy.length) since0 = 0;
       else if (!since0) since0 = Date.now();
@@ -522,7 +518,7 @@ try {
     NODE_ENV: "development",
   });
   say(
-    `mode: ${LOCAL ? "local agents (FACTORY_ALLOW_LOCAL_RUNTIME=true)" : `Docker agents on ${IMAGE}`}; model haiku; debounce 180 s`,
+    `mode: ${LOCAL ? "local agents (FACTORY_ALLOW_LOCAL_RUNTIME=true)" : `Docker agents on ${IMAGE}`}; model haiku; debounce 20 s`,
   );
   await step("0. setup: prerequisites", async () => {
     mkdirSync(hostSkillsDir, { recursive: true });
@@ -552,8 +548,8 @@ try {
     return { or, sam: await signUp("sam", "Sam", or) };
   });
   orUser = { userId: users.or.userId, handle: "or" };
-  await step("1. factory settings: member update debounce 180 s", () =>
-    patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 180 }),
+  await step("1. factory settings: member update debounce 20 s", () =>
+    patchFactorySettings(users.or.cookie, { memberUpdateDebounceSeconds: 20 }),
   );
   await step("1. credential created (live verification turn passed)", () =>
     app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
@@ -714,11 +710,12 @@ try {
     quiet(["ada", "bob"]),
   );
 
-  // 3. AC2: lead mid-turn while ada narrates and answers → one batched member_update group after lead's turn.
+  // 3. I9 AC14: lead mid-turn while ada narrates and answers → ada's updates reach lead's running turn as one batched
+  // member_update group once the debounce has passed, before that turn ends.
   // Claude Code's Bash tool blocks a bare `sleep N` in the foreground, so the long command is a perl sleep.
-  const lead3 = await send("lead", LONG_BASH(40));
-  const sleeping = await step("3. lead's 40 s Bash is running", () =>
-    longBash("lead", lead3.from, 40),
+  const lead3 = await send("lead", LONG_BASH(60));
+  const sleeping = await step("3. lead's 60 s Bash is running", () =>
+    longBash("lead", lead3.from, 60),
   );
   const ada3 = await send(
     "ada",
@@ -733,50 +730,30 @@ try {
   const ada3End = ada3Turn.at(-1);
   const leadSleepEnd = leadSleepTurn.at(-1);
   check(
-    "3. ada's turn ended before lead's turn (so its updates were pending at lead's turn boundary)",
+    "3. ada's turn ended before lead's turn",
     Boolean(ada3End && leadSleepEnd && ada3End.at < leadSleepEnd.at),
     `ada turn_end ${ada3End?.at}; lead turn_end ${leadSleepEnd?.at}; ada text: ${brief(textOf(ada3Turn), 200)}`,
   );
   const midTurn = envelopes(leadSleepTurn).slice(1);
-  check(
-    "3. AC2: nothing was written into lead's turn while it ran",
-    midTurn.length === 0,
-    midTurn.flatMap((x) => x.envs.map(envBrief)).join(" ; ") ||
-      `sleep call at seq ${sleeping.seq}; one message_in in the turn`,
-  );
-  const leadEndSeq = leadSleepEnd?.seq ?? 0;
-  const updateTurn = await step("3. lead receives a batch after its turn and finishes it", () =>
-    until(
-      "lead's update turn",
-      async () => {
-        const es = await since("lead", leadEndSeq);
-        return es.some((e) => e.event.type === "turn_end" && !e.event.originKind) ? es : undefined;
-      },
-      120_000,
-    ),
-  );
-  await sleep(15_000); // a second (wrong) batch would show up here
-  const after3 = await since("lead", leadEndSeq);
-  const batches3 = envelopes(after3);
-  const adaGroups = batches3.flatMap((b) =>
+  const adaGroups = midTurn.flatMap((b) =>
     b.envs.filter((m) => m.kind === "member_update" && m.from === "ada"),
   );
   const group = adaGroups[0];
   check(
-    "3. AC2: exactly one message_in after lead's turn, with one member_update group from ada",
-    batches3.length === 1 && adaGroups.length === 1,
-    `${batches3.length} message_in: ${batches3.flatMap((b) => b.envs.map(envBrief)).join(" ; ")}`,
+    "3. AC14: one message_in written into lead's running turn, with one member_update group from ada",
+    midTurn.length === 1 && adaGroups.length === 1,
+    `${midTurn.length} message_in in the turn (sleep call at seq ${sleeping.seq}): ${midTurn.flatMap((b) => b.envs.map(envBrief)).join(" ; ")}`,
   );
   const partsText = (group?.parts ?? []).map((p) => p.body).join("\n");
   check(
-    "3. AC2: the group holds ada's narration and answer (text only: no tool call, result or thinking)",
+    "3. AC14: the group holds ada's narration and answer (text only: no tool call, result or thinking)",
     Boolean(group) &&
       (group?.parts?.length ?? 0) >= 1 &&
       /42/.test(partsText || group?.body || "") &&
       !/tool_use|tool_result|thinking/.test(partsText),
     `parts: ${(group?.parts ?? []).map((p) => brief(p.body, 100)).join(" | ") || brief(group?.body ?? "", 200)}`,
   );
-  say(`    lead's update turn: ${brief(textOf(updateTurn), 200)}`);
+  say(`    lead's turn after the updates: ${brief(textOf(leadSleepTurn), 200)}`);
 
   // 4. AC3: an urgent message from ada interrupts lead's long Bash.
   await step("3. lead is quiet before step 4", () => quiet(["lead", "ada"]));

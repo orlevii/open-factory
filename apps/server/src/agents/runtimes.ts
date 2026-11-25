@@ -336,17 +336,20 @@ export class AgentRuntimes {
     return rt;
   }
 
-  /** S6 §8: hands a committed held row (member update, peer event) to its recipient; never awaited, never throws. */
-  deliverHeld(row: PendingRow): void {
+  /** S6 §8: hands a committed member update or peer event to its recipient; never awaited, never throws. */
+  receive(row: PendingRow): void {
     const to = row.toAgentId;
     if (!to) {
-      this.d.log.error({ message: row.id }, "a held row has no agent recipient");
+      this.d.log.error({ message: row.id }, "a member update or peer event has no agent recipient");
       return;
     }
     void this.load(to)
-      .then((rt) => rt?.receiveHeld(row))
+      .then((rt) => rt?.receive(row))
       .catch((err: unknown) =>
-        this.d.log.error({ err, agentId: to, message: row.id }, "delivering a held row failed"),
+        this.d.log.error(
+          { err, agentId: to, message: row.id },
+          "handing over a member update or peer event failed",
+        ),
       );
   }
 
@@ -385,7 +388,7 @@ export class AgentRuntimes {
 
   /**
    * S10 §8.2: the default warm window or the member-update debounce changed. Every loaded runtime re-arms its warm and
-   * held-update timers in its own job queue; a failure is logged, never thrown.
+   * member-update timers in its own job queue; a failure is logged, never thrown.
    */
   async settingsChanged(): Promise<void> {
     await Promise.all(

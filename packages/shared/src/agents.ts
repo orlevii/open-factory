@@ -99,14 +99,11 @@ export type AgentSummary = z.infer<typeof agentSummarySchema>;
 
 export const queueItemSchema = z.object({
   id: z.string(),
-  kind: z.enum(["message", "compact", "notice", "held", "raw"]),
+  kind: z.enum(["message", "compact", "notice", "raw"]),
   body: z.string().optional(),
-  count: z.number().int().positive().optional(),
-  about: z.string().optional(),
+  /** S9: a scheduled row's due time. */
   dueAt: z.string().optional(),
-  waitReason: z
-    .enum(["turn", "window", "starting", "errored", "rate_limited", "ride_along", "stopping"])
-    .optional(),
+  waitReason: z.enum(["turn", "stopping"]).optional(),
   clientMessageId: z.string().uuid().optional(),
   focus: z.string().optional(),
   urgent: z.boolean().optional(),

@@ -815,40 +815,6 @@ test("Agent details' manager is a link to its session", async () => {
   );
 });
 
-test("held updates show as quiet lines from the queue", async () => {
-  mockApi({
-    "GET /api/agents/dev": () =>
-      json(
-        detail({}, [
-          {
-            id: "h1",
-            kind: "held",
-            from: "b",
-            fromKind: "agent",
-            count: 2,
-            waitReason: "turn",
-            createdAt: AT,
-          },
-        ]),
-      ),
-    "GET /api/agents/dev/events?": () =>
-      json({
-        hasMore: { before: false, after: false },
-        events: [se({ type: "assistant_text", text: "x" })],
-      }),
-    "GET /api/agents?ended=exclude": () =>
-      json({ agents: [agentSummary()], running: { count: 1 } }),
-  });
-  renderApp("/agents/dev/session", alice);
-  expect(
-    await screen.findByText(
-      (_, el) =>
-        el?.textContent === "2 updates from @b waiting for this turn to end" &&
-        el.tagName === "SPAN",
-    ),
-  ).toBeInTheDocument();
-});
-
 test("the announcer re-announces a second send to this human (the live text changes)", async () => {
   await open([{ type: "assistant_text", text: "history" }], "history");
   const push = (event: AnyEvent) =>

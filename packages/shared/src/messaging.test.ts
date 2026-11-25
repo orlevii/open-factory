@@ -1,8 +1,6 @@
 import { expect, test } from "vitest";
-import { queueItemSchema } from "./agents.ts";
 import { anyEventSchema } from "./events.ts";
 import { readFromBodySchema, readFromResponseSchema, unreadCountSchema } from "./messaging.ts";
-import { serverMessageSchema } from "./ws.ts";
 
 test("a merged member_update envelope with parts and a factory fact parse", () => {
   const e = {
@@ -53,22 +51,6 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
     ],
   };
   expect(anyEventSchema.parse(e)).toEqual(e);
-});
-
-test("held queue items and the inbox frame parse", () => {
-  expect(
-    queueItemSchema.parse({
-      id: "m1",
-      kind: "held",
-      from: "@dev",
-      fromKind: "agent",
-      count: 3,
-      waitReason: "window",
-      dueAt: "2026-11-19T10:00:30.000Z",
-      createdAt: "2026-11-19T10:00:00.000Z",
-    }).kind,
-  ).toBe("held");
-  expect(serverMessageSchema.parse({ type: "inbox_changed" })).toEqual({ type: "inbox_changed" });
 });
 
 test("process_started accepts the S6 wake reasons; mcp_unavailable parses", () => {

@@ -149,17 +149,22 @@ test("workingFor is set from the batch write, before turn_started (cold start)",
   expect(h.rt.workingFor("u2")).toBeNull(); // another user's batch is not yours
 });
 
-test("the key survives turn_started and a cron turn starting meanwhile", async () => {
+test("the key survives turn_started and a zero-turn self-started result; a cron turn's end settles it", async () => {
   await idle();
   const m = await h.send("hello");
   const before = h.rt.workingFor("u1");
-  h.driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "cron" }));
+  expect(before?.key).toBe(m.id);
+  // An orphan report after a resume: no model call, so it can't have read the batch.
+  h.driver.last.emit(ev.turn(), ev.end({ originKind: "task-notification", numTurns: 0 }));
   await h.rt.settled();
   expect(h.rt.workingFor("u1")).toEqual(before);
   h.driver.last.emit(ev.turn());
   await h.rt.settled();
   expect(h.rt.workingFor("u1")).toEqual(before);
-  expect(before?.key).toBe(m.id);
+  // I9 §4.8: Claude took the batch into the cron turn; its end settles it.
+  h.driver.last.emit(ev.usage(), ev.end({ originKind: "cron" }));
+  await h.rt.settled();
+  expect(h.rt.workingFor("u1")).toBeNull();
 });
 
 test("a batch with two of your messages keys on the first; another user's batch is null for you", async () => {

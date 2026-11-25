@@ -85,7 +85,6 @@ class Boot {
       containers: this.containers,
       supervisor: this.runtimes.supervisor,
       runtimes: this.runtimes,
-      memberUpdateDebounceMs: () => 30_000,
       forward: async (f) => {
         this.forwarded.push(f);
       },
@@ -497,7 +496,7 @@ test("S7 §12: a terminated agent's leftovers are removed and reaped; it is neve
   await store.pauseCredential(`cred-${id}`, new Date(Date.now() - 60_000), false);
   // Rows that raced in during the crash window: a message and a young member update.
   await pending(id, "raced in");
-  await store.createHeld({ kind: "member_update", toAgentId: id, fromAgentId: live, body: "b" });
+  await store.createOrgRow({ kind: "member_update", toAgentId: id, fromAgentId: live, body: "b" });
   boot = new Boot();
   putContainer(boot, "term-running", id, true);
   putContainer(boot, "term-stopped", id, false);
@@ -670,25 +669,23 @@ test("S7 §8: a runtime loaded for a terminated agent rejects rows still pending
   expect(boot.starts(id)).toHaveLength(0);
 });
 
-test("S6 §17.2: boot wakes only for due member updates and loads agents with young ones, whose timer wakes them", async () => {
+test("I9 §4.8: boot re-arms the debounce of pending member updates: a due one is delivered at once, a young one when its window ends", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], now: Date.now() + 60_000 });
   try {
     const report = await agent();
     const young = await agent();
     const due = await agent();
     const update = (to: string) =>
-      store.createHeld({ kind: "member_update", toAgentId: to, fromAgentId: report, body: "b" });
+      store.createOrgRow({ kind: "member_update", toAgentId: to, fromAgentId: report, body: "b" });
     await update(due);
     vi.setSystemTime(Date.now() + 31_000);
     await update(young);
     boot = new Boot();
     await boot.run();
+    await vi.advanceTimersByTimeAsync(0);
     await boot.settleAll([young, due]);
     expect(boot.startOrder()).toEqual([due]);
-    const rt = await boot.runtimes.get(young);
-    expect(rt?.queueItems()).toEqual([
-      expect.objectContaining({ kind: "held", waitReason: "window", count: 1 }),
-    ]);
+    expect(boot.starts(due)[0]?.sent[0]?.map((m) => m.kind)).toEqual(["member_update"]);
     await vi.advanceTimersByTimeAsync(29_000);
     await boot.settleAll([young]);
     expect(boot.starts(young)).toHaveLength(0);

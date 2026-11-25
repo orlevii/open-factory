@@ -25,7 +25,6 @@ import {
   factoryZoneDefault,
   formatOffsetIso,
   type HarnessEvent,
-  HELD_KINDS,
   type LiveCron as LiveCronView,
   type LiveFrame,
   liveKey,
@@ -273,39 +272,41 @@ const RAW_RETRIES_KEPT = 200;
 type Subject = NonNullable<Envelope["subject"]>;
 
 const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
+const isPeer = (e: MessageEntry) => e.row.kind === "peer_joined" || e.row.kind === "peer_left";
 /**
- * S9 §10.3, I2 §7.3: a notice that never makes an agent wake, stay up or be kept alive by itself (`crons_stopped`: the
- * agent was stopped on purpose; `config_changed`: the change applies at the next start; `report_config_changed`
- * (I7 §8.2): a report's config change is information for a manager, never work). It rides at the head of the
- * next batch that has something else. The one predicate every place that counts a queued item as a reason to act uses.
+ * S9 §10.3, I2 §7.3, I9 §4.8: a queued item that never makes an agent wake, stay up or be kept alive by itself
+ * (`crons_stopped`: the agent was stopped on purpose; `config_changed`: the change applies at the next start;
+ * `report_config_changed` (I7 §8.2): a report's config change is information for a manager, never work; a peer event:
+ * the neighborhood changed). It rides along with the next batch that has something else. The one predicate every
+ * place that counts a queued item as a reason to act uses.
  */
 const isPassive = (e: Entry): boolean =>
   e.kind === "message" &&
-  e.row.kind === "system" &&
-  (e.row.notice === "crons_stopped" ||
-    e.row.notice === "config_changed" ||
-    e.row.notice === "report_config_changed");
+  (isPeer(e) ||
+    (e.row.kind === "system" &&
+      (e.row.notice === "crons_stopped" ||
+        e.row.notice === "config_changed" ||
+        e.row.notice === "report_config_changed")));
 const kindOf = (row: MessageRow): MessageKind => row.kind as MessageKind;
-/** Member updates and peer events: never written mid-turn, written with any batch written while no turn is open. */
-const isHeld = (e: Entry): e is MessageEntry =>
-  e.kind === "message" && HELD_KINDS.includes(kindOf(e.row));
-const isUpdate = (e: MessageEntry) => e.row.kind === "member_update";
-const isPeer = (e: MessageEntry) => e.row.kind === "peer_joined" || e.row.kind === "peer_left";
 const byCreated = (a: MessageEntry, b: MessageEntry) =>
   a.row.createdAt.getTime() - b.row.createdAt.getTime() || a.row.id.localeCompare(b.row.id);
 const DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS = 30_000;
 /** setTimeout's largest delay; anything above it fires after 1 ms. */
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
-/** The only reasons that wake an errored agent (spec §5.2, §9.2); `message` is a human's (notices never wake). */
+/**
+ * The only reasons that wake an errored agent (spec §5.2, §9.2); `message` is a human's and `member_updates` a report's
+ * (I9 §4.8), each one attempt (notices never wake).
+ */
 const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
   "crash_recovery",
   "restart",
   "reset",
   "message",
+  "member_updates",
 ]);
 
-/** The entry for a joined row (spec §7.3, §8.4); one shape for `init()`, `receiveHeld` and the deliveries. */
+/** The entry for a joined row (spec §7.3, §8.4); one shape for `init()`, `receive` and the deliveries. */
 function entryOf(r: PendingRow): MessageEntry {
   const { fromHandle, fromSlug, subjectSlug, subjectDisplayName, ...row } = r;
   let from: string;
@@ -483,20 +484,18 @@ export class AgentRuntime {
   private procCredentialId: string | undefined;
   private lastUsage: Extract<HarnessEvent, { type: "usage" }> | undefined;
   private queue: Entry[] = [];
-  // S6 §8.1: pending member updates and peer events, in (created_at, id) order; never written while a turn is open.
-  private held: MessageEntry[] = [];
+  /**
+   * I9 §4.8: member updates handed over and still inside the debounce, in (created_at, id) order. When the oldest is
+   * due they all enter `queue` as one batch and are delivered like a message; nothing else reads them.
+   */
+  private debounced: MessageEntry[] = [];
+  private debounceTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly seen = new Set<string>(); // every row id this runtime loaded or was handed (S6 §7.3)
   private inFlight: MessageEntry[][] = []; // written, waiting for session_started
-  private awaiting: WrittenBatch[] = []; // written with no open turn, waiting for a user-initiated turn_end
+  private awaiting: WrittenBatch[] = []; // written with no open turn, settled at the next turn_end
   private absorbed: WrittenBatch[] = []; // written into the open turn (already stamped with it)
   /** An exit's snapshot of `awaiting` and `absorbed` until its close settles, so `workingFor` never goes blank (I1 §6.3). */
   private closing: WrittenBatch[] | undefined;
-  private awaitingKinds: MessageKind[][] = []; // the kinds of each `awaiting` batch (an update-only turn, S6 §8.1)
-  private turnKinds: MessageKind[] = []; // kinds written into the open turn (absorbed)
-  // S6 §8.1: rows pending when a turn (not update-only) ended are due at once; cleared when held is written.
-  private dueAtTurnEnd = false;
-  private heldTimer: ReturnType<typeof setTimeout> | undefined;
-  private heldFiredFor: number | undefined; // the due time the held timer last fired for: never fired twice
   private compactInFlight = false;
   /** A manual `compact_failed` arrived while `compactInFlight`: whether Claude then sends the compact's own
    *  `turn_end{command: "compact"}` is unverified, so the next origin-less `turn_end` also ends the compact. */
@@ -662,39 +661,106 @@ export class AgentRuntime {
       // S7 §8: a terminated agent receives nothing. A row still pending to it (one that raced in during a crash window)
       // is rejected, never queued.
       this.chatChanged(await this.d.store.rejectPending(this.agent.id));
-      this.updateHeldTimer();
       return;
     }
     const pending = (await this.d.store.pendingQueue(this.agent.id)).map(entryOf);
     for (const e of pending) this.seen.add(e.row.id);
-    this.queue = pending.filter((e) => !isHeld(e));
-    this.held = pending.filter(isHeld).sort(byCreated);
-    // Not a job, so the end-of-job hook doesn't cover it (S6 §8.2): arms the timer for young updates.
-    this.updateHeldTimer();
+    // I9 §4.8, boot: pending member updates wait out their debounce again (the timer re-arms from the oldest, firing at
+    // once when it is past). An errored agent's ride along with its recovery instead: loading it never starts an attempt.
+    const debounce = (e: MessageEntry) => e.row.kind === "member_update" && !this.errored;
+    this.queue = pending.filter((e) => !debounce(e));
+    this.debounced = pending.filter(debounce).sort(byCreated);
+    // Not a job, so the end-of-job hook doesn't cover it.
+    this.armDebounceTimer();
   }
 
   /**
-   * S6 §8: a held row (member update, peer event) handed over after its commit. Inserted in (created_at, id) order
-   * unless this runtime already has it; never written while a turn is open (the flush decides).
+   * S6 §8, I9 §4.8: a member update or a peer event handed over after its commit, unless this runtime already has it.
+   * An update waits out the debounce (`deliverDebounced`); a peer event is a passive item that rides along with the next
+   * batch. Terminated (committed): the row is rejected. Archived: it just stays pending (spec §16's `rejected` rule is
+   * about send_message, Router-side). A provisional latch keeps it unwritten (S7 §8 step 1).
    */
-  receiveHeld(row: PendingRow): Promise<void> {
+  receive(row: PendingRow): Promise<void> {
     return this.run(async () => {
-      // Terminated (committed): the row is rejected. Archived: it just stays pending (spec §16's `rejected` rule is
-      // about send_message, Router-side). A provisional latch keeps it held, unwritten (S7 §8 step 1).
       if (this.terminationCommitted) {
         if (!this.seen.has(row.id)) await this.d.store.markRejected(row.id);
         return;
       }
-      if (!this.seen.has(row.id) && !this.archived) {
-        const entry = entryOf(row);
-        if (!isHeld(entry)) throw new Error(`message ${row.id} isn't a held kind`);
-        this.seen.add(row.id);
-        this.held = [...this.held, entry].sort(byCreated);
+      if (this.seen.has(row.id) || this.archived) return;
+      const entry = entryOf(row);
+      this.seen.add(row.id);
+      if (row.kind === "member_update") this.debounced = [...this.debounced, entry].sort(byCreated);
+      else {
+        this.insertByCreated(entry);
         this.publishQueue();
       }
-      await this.flushOrStop("flush after a held delivery failed");
-      this.publishStatus();
     });
+  }
+
+  /**
+   * I9 §4.8: the debounce of the oldest pending update has passed. Every pending update enters the queue as one batch
+   * and is delivered as a report's message is: a wake (an errored agent makes one attempt, as for a human's message),
+   * written mid-turn at the next tool boundary like any queued message.
+   */
+  private async deliverDebounced() {
+    if (this.terminated || this.archived || !this.debounceDue()) return;
+    for (const e of this.debounced.splice(0)) this.insertByCreated(e);
+    this.publishQueue();
+    await this.wakeToDeliver("member_updates", { attempts: true, inline: false });
+    await this.flushOrStop("flush of member updates failed");
+    this.publishStatus();
+  }
+
+  /** Whether the oldest pending update's debounce has passed (0: at once, even for a row stamped ahead). */
+  private debounceDue(): boolean {
+    const oldest = this.debounced[0];
+    if (!oldest) return false;
+    const debounce = this.debounceMs();
+    return debounce === 0 || Date.now() >= oldest.row.createdAt.getTime() + debounce;
+  }
+
+  /**
+   * I9 §4.8: one timer per runtime at the oldest pending update's due time, re-evaluated at the end of every job (and
+   * by `init()`, the closing latch, archive and termination). Never throws.
+   */
+  private armDebounceTimer() {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    this.debounceTimer = undefined;
+    const oldest = this.debounced[0];
+    if (!oldest || this.noStart || this.archived || this.terminated) return;
+    // 0 means at once, even for a row stamped a millisecond ahead (the store's stamps are strictly increasing).
+    const debounce = this.debounceMs();
+    const dueIn = debounce === 0 ? 0 : oldest.row.createdAt.getTime() + debounce - Date.now();
+    const timer: ReturnType<typeof setTimeout> = setTimeout(
+      () => {
+        void this.run(async () => {
+          if (this.debounceTimer !== timer) return;
+          this.debounceTimer = undefined;
+          await this.deliverDebounced();
+        }).catch((err) =>
+          this.d.log.error({ err, agent: this.agent.slug }, "delivering member updates failed"),
+        );
+      },
+      // Above setTimeout's maximum the delay overflows to 1 ms and the timer would spin: an early fire finds nothing
+      // due and the end of its job re-arms for the rest (config caps the window at a day; this is the backstop).
+      Math.min(Math.max(0, dueIn), MAX_TIMER_DELAY_MS),
+    );
+    this.debounceTimer = timer;
+  }
+
+  private debounceMs(): number {
+    return this.d.memberUpdateDebounceMs?.() ?? DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS;
+  }
+
+  /**
+   * The wake of a delivery from inside a job. `attempts`: an errored agent makes one attempt (spec §9.2), or one at
+   * its failing process's exit. `inline` for an API job (an immediate start failure rejects the call).
+   */
+  private async wakeToDeliver(reason: WakeReason, o: { attempts: boolean; inline: boolean }) {
+    if (o.attempts && this.messageStartsAttempt()) return this.beginAttempt(reason, o.inline);
+    if (o.attempts && this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
+    if (o.inline) await this.wakeInline(reason);
+    else if (!this.proc) await this.wakeFromJob(reason);
   }
 
   // ---------- public API (each runs as a job) ----------
@@ -750,14 +816,10 @@ export class AgentRuntime {
       // A provisional latch (S7 §8 step 1): queued and seen, but no wake, interrupt or flush. If the termination
       // fails, `unmarkTerminated` delivers it; if it commits, the transaction rejected it.
       if (this.terminated) return this.itemOf(entry ?? entryOf(row));
-      if (o.sender === "human") {
-        // A human's message to an errored agent is one attempt (spec §9.2); notices never wake one.
-        if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
-        else {
-          if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
-          await this.wakeInline("message");
-        }
-      } else await this.wakeInline(o.reason ?? "agent_message");
+      // A human's message to an errored agent is one attempt (spec §9.2); notices never wake one.
+      if (o.sender === "human")
+        await this.wakeToDeliver("message", { attempts: true, inline: true });
+      else await this.wakeInline(o.reason ?? "agent_message");
       if (row.urgent) await this.urgentInterrupt(o.fromLabel);
       await this.flush();
       return this.itemOf(entry ?? entryOf(row));
@@ -855,11 +917,7 @@ export class AgentRuntime {
       this.insertByCreated(entryOf(row));
       this.publishQueue();
       this.chatChanged([userId]);
-      if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
-      else {
-        if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
-        await this.wakeInline("message");
-      }
+      await this.wakeToDeliver("message", { attempts: true, inline: true });
       await this.flush();
     });
   }
@@ -1472,9 +1530,8 @@ export class AgentRuntime {
     if (!this.openTurnId && this.awaiting.length) {
       const batches = this.awaiting;
       this.awaiting = [];
-      this.awaitingKinds = [];
       await this.d.store.markPending(batches.flatMap((b) => b.ids));
-      this.requeue(batches.flatMap((b) => b.entries));
+      this.queue.unshift(...batches.flatMap((b) => b.entries));
     }
     await this.addNotice(
       "restart_applied",
@@ -1584,11 +1641,11 @@ export class AgentRuntime {
       this.provisionalLatches = 0;
       this.restartPendingAtLatch = false;
       this.pendingWakeAtLatch = false;
-      const dropped = [...this.queue, ...this.held].flatMap((e) =>
+      const dropped = [...this.queue, ...this.debounced].flatMap((e) =>
         e.kind === "message" ? [e.row.id] : [],
       );
       this.queue = [];
-      this.held = [];
+      this.debounced = [];
       this.attempting = false;
       this.attemptReason = undefined;
       this.attemptOwedAtExit = false;
@@ -1604,7 +1661,7 @@ export class AgentRuntime {
     }
     this.clearOwedBound();
     this.updateWarmTimer();
-    this.updateHeldTimer();
+    this.armDebounceTimer();
     this.publishStatus();
   }
 
@@ -1624,7 +1681,7 @@ export class AgentRuntime {
     const wake = this.pendingWakeAtLatch;
     this.restartPendingAtLatch = false;
     this.pendingWakeAtLatch = false;
-    this.updateHeldTimer();
+    this.armDebounceTimer();
     this.publishStatus();
     void this.run(async () => {
       if (this.terminated) return; // latched again meanwhile
@@ -1716,11 +1773,11 @@ export class AgentRuntime {
       this.stopsInProgress > 0 ||
       this.slots.isQueued(this.agent.id) ||
       this.credentialPaused() ||
-      // Rows waiting for delivery to an agent that would be woken for them (a message, a notice, a compact, or a held
-      // member update, which wakes it once due): the termination would reject them, so wait for the delivery. Peer
-      // events alone never wake an agent and don't hold it; an errored agent's rows wait for a human's Restart, and an
-      // errored agent is reaped (spec §10.3).
-      ((this.queue.some((e) => !isPassive(e)) || this.held.some(isUpdate)) &&
+      // Rows waiting for delivery to an agent that would be woken for them (a message, a notice, a compact, or a
+      // member update in its debounce, which wakes it once due): the termination would reject them, so wait for the
+      // delivery. Passive items alone (peer events) never wake an agent and don't hold it; an errored agent's rows wait
+      // for a human's Restart, and an errored agent is reaped (spec §10.3).
+      ((this.queue.some((e) => !isPassive(e)) || this.debounced.length > 0) &&
         this.acceptsWake("queued_items"))
     );
   }
@@ -1829,14 +1886,14 @@ export class AgentRuntime {
   /** Synchronous: the archive route calls it before it stops the process, so no new send gets in. */
   markArchived(): void {
     this.archived = true;
-    this.updateHeldTimer();
+    this.armDebounceTimer();
   }
 
   /** The closing latch (spec §5.6). Synchronous: a start already inside prepareStart re-checks it before the launch. */
   setNoStart(): void {
     this.noStart = true;
     this.updateWarmTimer();
-    this.updateHeldTimer();
+    this.armDebounceTimer();
     this.clearOwedBound();
   }
 
@@ -1926,16 +1983,16 @@ export class AgentRuntime {
   }
 
   /**
-   * A wake is only granted with something to write (spec §5.2): a pending message or notice, a queued compact, or
-   * held member updates that are due (S6 §8.3). Young updates and peer events alone are not.
+   * A wake is only granted with something to write (spec §5.2): a pending message, notice, member update past its
+   * debounce, or a queued compact. Updates still inside the debounce and passive items alone are not.
    */
   hasDeliverable(): boolean {
-    return this.queue.some((e) => !isPassive(e)) || this.heldDue();
+    return this.queue.some((e) => !isPassive(e));
   }
 
   /**
-   * S6 §8.1: held rows are never written while a turn is open: an open turn, a written batch awaiting its turn
-   * (`openTurnId` stays unset until `turn_started`), an urgent hold, a compact in flight, or a stop under way.
+   * A turn is open or about to be: an open turn, a written batch awaiting its turn (`openTurnId` stays unset until
+   * `turn_started`), an urgent hold, a compact in flight, or a stop under way.
    */
   private turnOpen(): boolean {
     return Boolean(
@@ -1947,25 +2004,6 @@ export class AgentRuntime {
         this.rawInFlight ||
         this.stopping,
     );
-  }
-
-  /** When the window of the oldest pending member update ends; undefined without one (peer events are never due). */
-  private heldDueAt(): number | undefined {
-    const oldest = this.held.find(isUpdate);
-    if (!oldest) return undefined;
-    return oldest.row.createdAt.getTime() + this.debounceMs();
-  }
-
-  private debounceMs(): number {
-    return this.d.memberUpdateDebounceMs?.() ?? DEFAULT_MEMBER_UPDATE_DEBOUNCE_MS;
-  }
-
-  /** S6 §8.1: due at the turn boundary (unless that turn was update-only) or once the window has passed. */
-  private heldDue(): boolean {
-    const at = this.heldDueAt();
-    if (at === undefined) return false;
-    // 0 means due at once, even for a row stamped a millisecond ahead (the store's stamps are strictly increasing).
-    return this.dueAtTurnEnd || this.debounceMs() === 0 || Date.now() >= at;
   }
 
   /**
@@ -2146,7 +2184,7 @@ export class AgentRuntime {
 
   /**
    * Spec §6.3: running and started, not busy or pinned, no restart or stop under way, not errored, and nothing
-   * deliverable queued unless the credential is paused (held deliveries wait for the reset wake).
+   * deliverable queued unless the credential is paused (queued deliveries wait for the reset wake).
    */
   hibernatable(): boolean {
     const proc = this.proc;
@@ -2173,50 +2211,7 @@ export class AgentRuntime {
   }
 
   queueItems(): QueueItem[] {
-    return [...this.queue.map((e) => this.itemOf(e)), ...this.heldItems()];
-  }
-
-  /** S6 §8: one `held` line per group (a report's updates, or the peer events about one agent), with why it waits. */
-  private heldItems(): QueueItem[] {
-    const groups = new Map<string, MessageEntry[]>();
-    for (const e of this.held) {
-      const key = `${isPeer(e) ? "peer" : "update"}:${e.groupKey ?? e.from}`;
-      const g = groups.get(key);
-      if (g) g.push(e);
-      else groups.set(key, [e]);
-    }
-    const due = this.heldDue();
-    const dueAt = this.heldDueAt();
-    const why = (g: MessageEntry[]): NonNullable<QueueItem["waitReason"]> => {
-      // Peer events only ride along with something else (UI §2.6: always the "N peer changes waiting" line), so a
-      // peer group is "ride_along" whatever the agent is doing; every other group has updates, so `dueAt` is set.
-      if (g.every(isPeer) || dueAt === undefined) return "ride_along";
-      if (this.errored && !this.attempting) return "errored";
-      if (this.credentialPaused()) return "rate_limited";
-      if (this.proc && this.turnOpen()) return "turn";
-      if (due && !this.proc) return "starting";
-      return "window";
-    };
-    const items: QueueItem[] = [];
-    for (const g of groups.values()) {
-      const [first] = g;
-      if (!first) continue;
-      const waitReason = why(g);
-      items.push({
-        id: first.row.id,
-        kind: "held",
-        from: first.from,
-        fromKind: first.fromKind,
-        count: g.length,
-        createdAt: first.row.createdAt.toISOString(),
-        ...(first.about ? { about: first.about } : {}),
-        waitReason,
-        ...(waitReason === "window" && dueAt !== undefined
-          ? { dueAt: new Date(dueAt).toISOString() }
-          : {}),
-      });
-    }
-    return items;
+    return this.queue.map((e) => this.itemOf(e));
   }
 
   /**
@@ -2277,7 +2272,7 @@ export class AgentRuntime {
       } finally {
         this.updateWarmTimer(); // every input change re-evaluates the warm timer (spec §6.3)
         this.updateSnapshotTimer();
-        this.updateHeldTimer(); // and the held deliveries' due time (S6 §8.2)
+        this.armDebounceTimer(); // and the member updates' due time (I9 §4.8)
       }
     });
   }
@@ -2342,7 +2337,7 @@ export class AgentRuntime {
     return e.kind === "message"
       ? {
           id: e.row.id,
-          kind: e.row.kind === "system" ? "notice" : "message",
+          kind: e.row.kind === "system" || isPeer(e) ? "notice" : "message",
           body: e.row.body,
           urgent: e.row.urgent,
           from: e.from,
@@ -3134,7 +3129,6 @@ export class AgentRuntime {
         this.clearOwedBound(); // the bound only runs while no turn is open
         this.openTurnId = await this.d.store.openTurn(this.agent.id, this.procCredentialId ?? null);
         this.lastUsage = undefined;
-        this.turnKinds = [];
         this.absorbed = [];
         this.turnStartedAt = (await this.append(this.openTurnId, e)).at;
         this.chatChanged(sendersOf(this.awaiting));
@@ -3154,12 +3148,8 @@ export class AgentRuntime {
         break;
       case "turn_end": {
         const turnId = this.openTurnId;
-        // S6 §8.1 (R5): what this turn ran, derived from its batch's rows: the batches it consumed and those it
-        // absorbed. Self-started turns (task notifications, crons) are never update-only.
-        const ran = [...(!e.originKind ? this.awaitingKinds.flat() : []), ...this.turnKinds];
-        const updateOnly =
-          !e.originKind && ran.length > 0 && ran.every((k) => HELD_KINDS.includes(k));
-        this.turnKinds = [];
+        // I9 §4.8: whether this turn end settles the batches written before it began (see the close below).
+        const settles = !e.originKind || e.numTurns > 0;
         // U3 §11.2: right after the turn_end row, in the same tick (no live patch in between), so the client clears its
         // live state first and the reset restores a block a self-started turn already began.
         const closing = sendersOf([...this.awaiting, ...this.absorbed]);
@@ -3175,21 +3165,24 @@ export class AgentRuntime {
             originKind: e.originKind,
             usage: this.lastUsage,
           };
-          // S10 §5.2 (F1): a message-started turn stamps its starting batch before the close, in the close's
-          // transaction, so `attributeTask` sees it. A self-started turn (cron, task notification) never consumes
-          // `awaiting` and isn't attributed.
-          if (!e.originKind) {
-            await this.d.store.closeTurnWith(
-              turnId,
-              close,
-              this.awaiting.flatMap((b) => b.ids),
-              true,
-              endSeq,
-            );
-            this.awaiting = [];
-            this.awaitingKinds = [];
-          } else await this.d.store.closeTurnWith(turnId, close, [], false, endSeq);
+          // S10 §5.2 (F1): the turn stamps the batches written before it began before the close, in the close's
+          // transaction, so `attributeTask` sees them. I9 §4.8: every turn end settles them, a self-started one's (cron,
+          // `/loop`, task notification, subagent hand-back) too: Claude takes an idle-written batch into whatever turn it
+          // starts next, and a batch left waiting for an origin-less turn end would hold the barrier forever (no
+          // delivery, "working", never hibernating). The trade-off: a batch written just after a self-started turn's
+          // last tool boundary runs as its own next turn, so its stamp lands on the self-started turn and its own turn
+          // is unattributed. That needs a write racing that boundary and stays within the neighbouring turn. The one
+          // self-started turn known to read nothing is left out: a zero-turn result (`numTurns: 0`, no model call, the
+          // orphan report after a resume) can't have taken a batch in. A self-started turn is never attributed.
+          await this.d.store.closeTurnWith(
+            turnId,
+            close,
+            settles ? this.awaiting.flatMap((b) => b.ids) : [],
+            !e.originKind,
+            endSeq,
+          );
         }
+        if (settles) this.awaiting = [];
         this.absorbed = []; // the stamp and the close committed: the batch is no longer working
         this.chatChanged(closing);
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
@@ -3197,8 +3190,6 @@ export class AgentRuntime {
           await this.attemptSucceeded();
         this.openTurnId = undefined;
         this.turnStartedAt = undefined;
-        // Held rows pending at this turn boundary are due at once, unless the turn only read updates (S6 §8.1).
-        this.dueAtTurnEnd = this.held.some(isUpdate) && !updateOnly;
         this.lastActivityAt = Date.now();
         this.persistActivity(); // the turn_end event and the turn row are written (S7 §10.2)
         await this.oweNoticeIfCutOff();
@@ -3395,9 +3386,9 @@ export class AgentRuntime {
     const rolledBack = this.inFlight.splice(0);
     const openTurnId = this.openTurnId;
     const usage = this.lastUsage;
-    // Unconfirmed batches re-enter the head in their original order (spec §8.3 rule 7); held rows go back to held.
-    // A terminated agent's are rejected below instead (S7 §8 step 4).
-    if (!terminating) this.requeue(rolledBack.flat());
+    // Unconfirmed batches re-enter the head in their original order (spec §8.3 rule 7). A terminated agent's are
+    // rejected below instead (S7 §8 step 4).
+    if (!terminating) this.queue.unshift(...rolledBack.flat());
     // Notices go ahead of rolled-back batches (spec §9.5); a stable partition keeps each group in order.
     this.queue = [...this.queue.filter(isNotice), ...this.queue.filter((e) => !isNotice(e))];
     this.openTurnId = undefined;
@@ -3416,8 +3407,6 @@ export class AgentRuntime {
     const closingBatches = [...this.awaiting, ...this.absorbed];
     const credentialId = this.procCredentialId ?? null; // cleared below, the close still records it
     this.awaiting = [];
-    this.awaitingKinds = [];
-    this.turnKinds = [];
     this.absorbed = [];
     if (this.proc === proc) {
       this.proc = undefined;
@@ -3943,7 +3932,7 @@ export class AgentRuntime {
   /**
    * S10 §8.2: the default warm window or the member-update debounce changed. A started config that omits the window
    * re-arms its armed warm timer from when it was armed (firing at once when that is past); one that holds a window
-   * keeps it. The held-update timer re-arms from the recomputed due time (and again at the end of the job).
+   * keeps it. The member-update timer re-arms from the recomputed due time at the end of the job.
    */
   async settingsChanged(): Promise<void> {
     await this.run(async () => {
@@ -3953,7 +3942,6 @@ export class AgentRuntime {
         const armedAt = this.warmArmedAt ?? Date.now();
         this.armWarmTimer(armedAt + this.warmWindowMs() - Date.now());
       }
-      this.updateHeldTimer();
     });
   }
 
@@ -4200,11 +4188,8 @@ export class AgentRuntime {
       // I2 §7.3: a config notice newer than this process stays queued for the next one (it is passive, see below).
       const kept = run.filter((e) => this.forNextProcess(e));
       const batch = run.filter((e) => !kept.includes(e));
-      // S6 §8.1: a batch written while no turn is open carries every held row, due or not.
-      if (!this.turnOpen()) batch.push(...this.held.splice(0));
-      // S9 §10.3: a passive notice alone is never written; it waits for a batch with something else. A compact or a
-      // command queued behind it goes ahead (flush otherwise cuts a batch at the first non-message entry). Held rows
-      // are never passive, so here `batch` is still a part of `run`.
+      // S9 §10.3: a passive item alone is never written; it waits for a batch with something else. A compact or a
+      // command queued behind it goes ahead (flush otherwise cuts a batch at the first non-message entry).
       if (batch.every(isPassive)) {
         this.queue.unshift(...run);
         const at = this.queue.findIndex((e) => e.kind !== "message");
@@ -4223,16 +4208,6 @@ export class AgentRuntime {
       }
       if (!written) break; // a rejected write leaves the batch at the head: stop, don't spin
     }
-    // Due held rows on their own, only while no turn is open (S6 §8.1).
-    if (
-      this.proc &&
-      !this.stopping &&
-      !this.restartNowPending &&
-      !this.credentialPaused() &&
-      !this.turnOpen() &&
-      this.heldDue()
-    )
-      await this.writeBatch(this.held.splice(0));
   }
 
   /**
@@ -4282,71 +4257,6 @@ export class AgentRuntime {
     );
   }
 
-  /**
-   * Every path that returns written entries (a rejected write, a failed transaction, the `exited` rollback)
-   * re-partitions them by kind (S6 §8.1): the FIFO queue's at its head in their order, held rows back into `held`.
-   */
-  private requeue(entries: MessageEntry[]) {
-    this.queue.unshift(...entries.filter((e) => !isHeld(e)));
-    const held = entries.filter(isHeld);
-    if (held.length) this.held = [...held, ...this.held].sort(byCreated);
-  }
-
-  /**
-   * S6 §8.2: one timer per runtime, a derived cache of the held rows, re-evaluated at the end of every job (and by
-   * `init()`, the closing latch and archive). It arms for the next due time; once due, a running process flushes
-   * (the flush writes only while no turn is open; otherwise the turn end does), and with none it requests a
-   * `member_updates` wake when one is accepted. Once due it fires only while that action can be taken, and it is
-   * marked as fired for that due time only when the action was taken (a flush, or a wake that was requested), so a
-   * write that keeps failing or a wake the Supervisor dropped never spins, while a manager that couldn't be woken
-   * (errored, rate-limited, starting) gets its wake as soon as it can be (S6 §8.2, §16). Never throws.
-   */
-  private updateHeldTimer() {
-    if (this.heldTimer) clearTimeout(this.heldTimer);
-    this.heldTimer = undefined;
-    const at = this.heldDueAt();
-    if (at === undefined || this.noStart || this.archived || this.terminated) return;
-    const dueIn = this.dueAtTurnEnd ? 0 : at - Date.now();
-    if (dueIn <= 0 && (this.heldFiredFor === at || !this.heldActionable())) return;
-    const timer: ReturnType<typeof setTimeout> = setTimeout(
-      () => {
-        void this.run(async () => {
-          if (this.heldTimer !== timer) return;
-          this.heldTimer = undefined;
-          const due = this.heldDueAt();
-          // Not actionable now (a turn open, paused, errored...): unmarked, so the end of the job that changes that
-          // re-arms it.
-          if (due === undefined || !this.heldDue() || !this.heldActionable()) return;
-          this.heldFiredFor = due;
-          if (this.proc) await this.flushOrStop("flush of due member updates failed");
-          else await this.wakeFromJob("member_updates");
-          this.publishStatus();
-        }).catch((err) =>
-          this.d.log.error({ err, agent: this.agent.slug }, "held delivery job failed"),
-        );
-      },
-      // Above setTimeout's maximum the delay overflows to 1 ms and the timer would spin: an early fire finds nothing
-      // due and the end of its job re-arms for the rest (config caps the window at a day; this is the backstop).
-      Math.min(Math.max(0, dueIn), MAX_TIMER_DELAY_MS),
-    );
-    this.heldTimer = timer;
-  }
-
-  /**
-   * Whether the held timer can act now: with a process, flush (no turn open, not paused; otherwise the turn end or the
-   * reset flushes); without one, request a `member_updates` wake the runtime accepts and nothing else is waking it.
-   */
-  private heldActionable(): boolean {
-    if (this.proc) return !this.turnOpen() && !this.credentialPaused();
-    return !(
-      this.starting ||
-      this.stopsInProgress > 0 ||
-      this.slots.closing() ||
-      this.slots.isQueued(this.agent.id) ||
-      !this.acceptsWake("member_updates")
-    );
-  }
-
   /** Re-reads every `scheduled` entry of `batch` in place; entries whose row is no longer pending are removed. */
   private async refreshScheduled(batch: MessageEntry[]): Promise<void> {
     for (let i = batch.length - 1; i >= 0; i--) {
@@ -4362,7 +4272,7 @@ export class AgentRuntime {
   private async writeBatch(batch: MessageEntry[]): Promise<boolean> {
     const proc = this.proc;
     if (!proc) {
-      this.requeue(batch);
+      this.queue.unshift(...batch);
       return false;
     }
     // S9 §8.2 rule 2: a scheduled entry may be stale (loaded by `init()`, or handed over behind a slow start): render the
@@ -4370,7 +4280,7 @@ export class AgentRuntime {
     try {
       await this.refreshScheduled(batch);
     } catch (err) {
-      this.requeue(batch);
+      this.queue.unshift(...batch);
       throw err;
     }
     if (!batch.length) return true;
@@ -4380,7 +4290,7 @@ export class AgentRuntime {
       envelopes = toEnvelopes(batch); // inside the try: a throw here must not lose the batch
       await proc.send(envelopes);
     } catch (err) {
-      this.requeue(batch);
+      this.queue.unshift(...batch);
       await this.append(null, {
         type: "delivery_failed",
         messageIds: ids,
@@ -4413,10 +4323,9 @@ export class AgentRuntime {
     } catch (err) {
       // Claude has the batch but nothing recorded it: keep the rows pending at the head (re-sent on the next start,
       // so it may be seen twice) and let the caller stop the process (spec §11).
-      this.requeue(batch);
+      this.queue.unshift(...batch);
       throw err;
     }
-    if (batch.some(isHeld)) this.dueAtTurnEnd = false;
     this.d.bus.publish(this.agent.slug, {
       type: "session_event",
       agent: this.agent.slug,
@@ -4427,15 +4336,9 @@ export class AgentRuntime {
     this.persistActivity();
     if (this.attempting) this.attemptBatchWritten = true;
     if (!this.sessionStarted) this.inFlight.push(batch);
-    const kinds = batch.map((e) => kindOf(e.row));
     const written = writtenBatch(batch, new Date().toISOString());
-    if (!turnAtWrite) {
-      this.awaiting.push(written);
-      this.awaitingKinds.push(kinds);
-    } else {
-      this.absorbed.push(written);
-      this.turnKinds.push(...kinds);
-    }
+    if (!turnAtWrite) this.awaiting.push(written);
+    else this.absorbed.push(written);
     this.publishQueue();
     this.chatChanged(sendersOf([written]));
     return true;

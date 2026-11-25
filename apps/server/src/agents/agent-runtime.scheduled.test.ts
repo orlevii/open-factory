@@ -139,7 +139,7 @@ test("to an errored agent the row stays pending and nothing starts", async () =>
 
 test("bootWakes counts a scheduled row", async () => {
   await scheduled();
-  const wakes = await store.bootWakes(30_000);
+  const wakes = await store.bootWakes();
   expect(wakes.map((w) => w.id)).toContain(agentId);
 });
 

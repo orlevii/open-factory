@@ -36,7 +36,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   const driver = new FakeDriver();
   t = await makeTestApp({
     harnessDriver: driver,
-    // Held updates are due at once, so a batch of them is written without waiting on a clock.
+    // A debounce of 0: member updates go out at once, without waiting on a clock.
     factorySettings: { memberUpdateDebounceSeconds: 0 },
   });
   const h = t;

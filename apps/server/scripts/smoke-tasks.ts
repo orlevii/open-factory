@@ -323,12 +323,7 @@ async function quiet(slugs: Slug[]) {
       for (const s of slugs) {
         const rt = await app.runtimes.bySlug(s);
         const l = rt?.live();
-        if (
-          l?.turnOpen ||
-          l?.status === "working" ||
-          (rt?.queueItems().filter((i) => i.kind !== "held").length ?? 0) > 0
-        )
-          busy.push(s);
+        if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
       if (busy.length) since0 = 0;
       else if (!since0) since0 = Date.now();

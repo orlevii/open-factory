@@ -14,7 +14,7 @@ export type WakeReason =
   | "queued_items"
   | "apply_changes"
   | "task_message" // a task message (S8 §7.4); never wakes an errored agent
-  | "member_updates" // held member updates became due (S6 spec §8.2); never wakes an errored agent
+  | "member_updates" // member updates passed their debounce (I9 §4.8); an errored agent makes one attempt
   | "agent_message"; // another agent's message (S6 spec §7.3); never wakes an errored agent
 
 /** The seam between an `AgentRuntime` and the Supervisor that owns the running set (spec §5.2, §5.5). */

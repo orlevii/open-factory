@@ -123,7 +123,7 @@ test("a human's task comment to an errored agent starts an attempt with the mess
 
 test("boot wakes an agent whose only pending row is a task row", async () => {
   await update();
-  const wakes = await h.app.store.bootWakes(30_000);
+  const wakes = await h.app.store.bootWakes();
   expect(wakes.map((w) => w.slug)).toEqual(["dev"]);
 });
 

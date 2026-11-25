@@ -494,20 +494,20 @@ test("pending after a failed start, then delivered as one turn on the next start
   expect(rt.live().status).toBe("idle");
 });
 
-test("status: working while a batch awaits its turn, through an origin-tagged turn, then idle", async () => {
+test("status: working while a batch awaits its turn, through a zero-turn self-started result, then idle at the end of the self-started turn that read it", async () => {
   await send("boot");
   driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
   await rt.settled();
   expect(rt.live()).toMatchObject({ status: "idle", turnOpen: false });
   await send("x"); // written with no open turn: awaiting
   expect(rt.live()).toMatchObject({ status: "working", turnOpen: false });
-  driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
+  driver.last.emit(ev.turn(), ev.end({ originKind: "task-notification", numTurns: 0 }));
   await rt.settled();
   expect(rt.live()).toMatchObject({ status: "working", turnOpen: false });
   driver.last.emit(ev.turn());
   await rt.settled();
   expect(rt.live()).toMatchObject({ status: "working", turnOpen: true });
-  driver.last.emit(ev.usage(), ev.end());
+  driver.last.emit(ev.usage(), ev.end({ originKind: "task-notification" }));
   await rt.settled();
   expect(rt.live()).toMatchObject({ status: "idle", turnOpen: false });
   const statuses = frames.filter((f) => f.type === "agent_status").map((f) => f.status);

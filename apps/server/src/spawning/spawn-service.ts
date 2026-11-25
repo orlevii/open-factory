@@ -49,7 +49,7 @@ export class SpawnService {
       store: EventStore;
       templates: TemplateIndex;
       workspace: Workspace;
-      router: Pick<Router, "persistPeerEvents" | "handOffHeldRows" | "handOffBrief">;
+      router: Pick<Router, "persistPeerEvents" | "handOffRows" | "handOffBrief">;
       runtimes: Pick<AgentRuntimes, "startedOf">;
       /** The spawner's current effective config, the other half of what it passes on (I2 §6.2). */
       resolver: Pick<ConfigResolver, "effective">;
@@ -315,7 +315,7 @@ export class SpawnService {
     }
     // §5.2 step 5: the status before the hand-off; both hand-offs are enqueued after boot, never awaited.
     const status = await router.handOffBrief(out.brief, out.child);
-    router.handOffHeldRows(out.peers);
+    router.handOffRows(out.peers);
     const note = droppedNote(out.inherited.dropped);
     return { ok: true, slug, agentId: id, status, ...(note ? { note } : {}) };
   }

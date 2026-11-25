@@ -266,6 +266,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     lock,
     containers,
     neighborhood,
+    memberUpdateDebounceMs: settings.memberUpdateDebounceMs,
   });
   const runtimes = new AgentRuntimes({
     store,
@@ -613,7 +614,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       containers,
       supervisor: runtimes.supervisor,
       runtimes,
-      memberUpdateDebounceMs: settings.memberUpdateDebounceMs,
       forward: (f) => router.forward(f),
       log: app.log,
     });

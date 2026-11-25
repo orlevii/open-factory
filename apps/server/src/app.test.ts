@@ -207,16 +207,15 @@ test("the member update debounce setting reaches the runtimes: 0 writes a member
     const dev = await t.seedAgent({ slug: "dev" });
     await t.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
     const { proc } = await startIdle(t, driver, "lead");
-    const row = await t.app.store.createHeld({
+    const row = await t.app.store.createOrgRow({
       kind: "member_update",
       toAgentId: lead.id,
       fromAgentId: dev.id,
       body: "progress",
     });
     const rt = await t.app.runtimes.bySlug("lead");
-    await rt?.receiveHeld(row);
-    await rt?.settled();
-    expect(proc.sent.flat().map((m) => m.body)).toContain("progress");
+    await rt?.receive(row);
+    await vi.waitFor(() => expect(proc.sent.flat().map((m) => m.body)).toContain("progress"));
   } finally {
     await t.close();
   }

@@ -19,6 +19,7 @@ const input: ClaudeMdInput = {
   scheduling: { zone: "Europe/Berlin", maxSchedules: 20, minGapMinutes: 15 },
   manageOrg: false,
   descriptionWrittenBy: null,
+  memberUpdateSeconds: 30,
 };
 const base = input;
 const sections = (md: string) => md.split("\n").filter((l) => l.startsWith("#"));
@@ -129,6 +130,15 @@ test("Messaging section names the factory tools and the rules once; manager/repo
   const full = buildClaudeMd({ ...input, reports: many.slice(0, 1) });
   expect(full).toContain("forwarded to your manager");
   expect(full).toContain("member_update` envelopes, batched");
+});
+
+test.each([
+  [30, "batched every 30 seconds; they may arrive mid-turn"],
+  [1, "batched every 1 second; they may arrive mid-turn"],
+  [0, "delivered as they come; they may arrive mid-turn"],
+])("a manager is told the update cadence of a %i s debounce", (seconds, text) => {
+  const md = buildClaudeMd({ ...input, reports: many.slice(0, 1), memberUpdateSeconds: seconds });
+  expect(md).toContain(`\`member_update\` envelopes, ${text}.`);
 });
 
 test("same inputs give byte-identical output; no timestamps", () => {

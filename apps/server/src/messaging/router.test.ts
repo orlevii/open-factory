@@ -194,7 +194,7 @@ test("after close() no hand-off runs: rows committed during shutdown stay pendin
   const lead = await h.app.store.agentBySlug("lead");
   if (!a || !lead) throw new Error("seed");
   const delivered = vi.spyOn(h.app.runtimes, "deliver");
-  const held = vi.spyOn(h.app.runtimes, "deliverHeld");
+  const held = vi.spyOn(h.app.runtimes, "receive");
   const r = await router.send({ agentId: a.id }, ["bob"], "during shutdown", false);
   expect(r.results).toMatchObject([{ to: "@bob", status: "queued" }]);
   await router.forward({ agentId: a.id, body: "halfway" });
@@ -287,7 +287,7 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
   expect(all.peers.find((x: { handle: string }) => x.handle === "@ada")).toBeUndefined();
 });
 
-test("Router.forward: a report's text goes to its manager as a held member_update; a top-level agent's errored goes to the humans once", async () => {
+test("Router.forward: a report's text goes to its manager as a member_update; a top-level agent's errored goes to the humans once", async () => {
   await signUp(h.app, { handle: "or" });
   const a = await h.app.store.agentBySlug("ada");
   const lead = await h.app.store.agentBySlug("lead");
@@ -395,10 +395,10 @@ test("R4 (owner): a top-level agent's errored episode is one inbox item; a succe
   ).toHaveLength(2);
 });
 
-test("a report's top-level text is persisted for its manager and handed over as a held row", async () => {
+test("a report's top-level text is persisted for its manager and handed over to its runtime", async () => {
   await startIdle("lead");
   await startIdle("ada");
-  const handed = vi.spyOn(h.app.runtimes, "deliverHeld");
+  const handed = vi.spyOn(h.app.runtimes, "receive");
   proc("ada")?.emit(ev.turn(), ev.text("halfway there"), ev.usage(), ev.end());
   await settle("ada", "lead");
   const lead = await h.app.store.agentBySlug("lead");
@@ -423,20 +423,20 @@ test("a recipient whose init fails after the commit doesn't fail the sender's ca
   expect((await pendingOf("bob")).map((x) => x.state)).toEqual(["pending"]);
 });
 
-test("deliverHeld: a recipient that fails to load is logged, never thrown or unhandled", async () => {
+test("receive: a recipient that fails to load is logged, never thrown or unhandled", async () => {
   const error = vi.spyOn(h.app.log, "error").mockImplementation(() => undefined);
   vi.spyOn(h.app.runtimes, "load").mockRejectedValue(new Error("load failed"));
   const unhandled = vi.fn();
   process.on("unhandledRejection", unhandled);
   try {
     const row = { id: "m1", toAgentId: "ag1" } as unknown as Parameters<
-      typeof h.app.runtimes.deliverHeld
+      typeof h.app.runtimes.receive
     >[0];
-    expect(() => h.app.runtimes.deliverHeld(row)).not.toThrow();
+    expect(() => h.app.runtimes.receive(row)).not.toThrow();
     await vi.waitFor(() =>
       expect(error).toHaveBeenCalledWith(
         expect.objectContaining({ agentId: "ag1", message: "m1" }),
-        "delivering a held row failed",
+        "handing over a member update or peer event failed",
       ),
     );
     await new Promise((r) => setImmediate(r));
@@ -611,7 +611,7 @@ test("persistPeerEvents runs in the caller's transaction: it sees a child insert
 });
 
 test("persistPeerEvents: excludeManager skips the spawner; the rows commit with the caller and are handed off after", async () => {
-  const deliverHeld = vi.spyOn(h.app.runtimes, "deliverHeld");
+  const handOver = vi.spyOn(h.app.runtimes, "receive");
   const rows = await h.db.transaction(async (tx) => {
     const kid = await insertKid(tx, "kid-ab12");
     return h.app.router.persistPeerEvents(
@@ -622,10 +622,10 @@ test("persistPeerEvents: excludeManager skips the spawner; the rows commit with 
       { excludeManager: true },
     );
   });
-  expect(deliverHeld).not.toHaveBeenCalled();
+  expect(handOver).not.toHaveBeenCalled();
   expect((await heldRows()).map((r) => r.to)).toEqual(["ada", "bob"]);
-  h.app.router.handOffHeldRows(rows);
-  await vi.waitFor(() => expect(deliverHeld).toHaveBeenCalledTimes(2));
+  h.app.router.handOffRows(rows);
+  await vi.waitFor(() => expect(handOver).toHaveBeenCalledTimes(2));
 });
 
 test("persistPeerEvents: archived and terminated recipients get nothing; the terminated body names who", async () => {

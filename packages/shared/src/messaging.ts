@@ -12,7 +12,6 @@ export const MESSAGE_KINDS = [
   "scheduled",
 ] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
-export const HELD_KINDS: readonly MessageKind[] = ["member_update", "peer_joined", "peer_left"];
 export const FACT_CODES = [
   "turn_failed",
   "denied",

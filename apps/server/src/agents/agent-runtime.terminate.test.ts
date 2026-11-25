@@ -239,7 +239,7 @@ test("unmarking with a running process flushes what arrived during the window", 
   expect(h.driver.last.sent.flat().map((m) => m.body)).toEqual(["hi", "queued meanwhile"]);
 });
 
-test("a committed latch rejects an arriving row; a held row is rejected too", async () => {
+test("a committed latch rejects an arriving row; an arriving member update is rejected too", async () => {
   await h.makeRuntime();
   h.rt.markTerminated({ committed: true });
   const row = await h.row("too late");
@@ -248,15 +248,15 @@ test("a committed latch rejects an arriving row; a held row is rejected too", as
   );
   expect(await stateOf(row.id)).toBe("rejected");
   expect(h.rt.queueItems()).toEqual([]);
-  const held = await h.store.createHeld({
+  const update = await h.store.createOrgRow({
     kind: "member_update",
     toAgentId: h.agentId,
     subjectAgentId: h.agentId,
     notice: "errored",
     body: "x",
   });
-  await h.receive(held);
-  expect(await stateOf(held.id)).toBe("rejected");
+  await h.receive(update);
+  expect(await stateOf(update.id)).toBe("rejected");
   expect(h.driver.starts).toHaveLength(0);
 });
 
@@ -847,13 +847,13 @@ test("a provisional latch whose transaction fails: the held timer is re-armed an
   const proc = w.proc();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   // A member update to the child, held in its debounce window: the held timer is armed for its end.
-  const update = await h.store.createHeld({
+  const update = await h.store.createOrgRow({
     kind: "member_update",
     toAgentId: w.id,
     fromAgentId: w.leadId,
     body: "an update",
   });
-  await w.rt.receiveHeld(update);
+  await w.rt.receive(update);
   await w.settled();
   const hold = holdTermination({ fail: new Error("the database went away") });
   const terminating = w.terminate();

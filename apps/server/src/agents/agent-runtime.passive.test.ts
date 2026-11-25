@@ -82,10 +82,10 @@ test("only the passive notice queued: not deliverable, no boot wake", async () =
   await notice();
   await rt.init();
   expect(rt.hasDeliverable()).toBe(false);
-  expect((await store.bootWakes(30_000)).map((w) => w.id)).not.toContain(id);
+  expect((await store.bootWakes()).map((w) => w.id)).not.toContain(id);
   // a real notice still counts
   await store.createNotice({ toAgentId: id, notice: "restart", body: "x" });
-  expect((await store.bootWakes(30_000)).map((w) => w.id)).toContain(id);
+  expect((await store.bootWakes()).map((w) => w.id)).toContain(id);
 });
 
 test("a running idle process is never sent the passive notice alone; the exit doesn't wake it for it", async () => {
@@ -153,7 +153,7 @@ test("a queued report_config_changed never wakes the manager: not deliverable, n
   });
   await rt.init();
   expect(rt.hasDeliverable()).toBe(false);
-  expect((await store.bootWakes(30_000)).map((w) => w.id)).not.toContain(id);
+  expect((await store.bootWakes()).map((w) => w.id)).not.toContain(id);
 });
 
 test("recordReportNotice on a running idle manager queues the notice without sending it", async () => {

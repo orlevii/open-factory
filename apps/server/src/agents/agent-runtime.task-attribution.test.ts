@@ -5,7 +5,8 @@ import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
 
 // S10 spec §5.2, AC 2, V4: a turn is attributed to task T only when it ends normally (turn_end without originKind)
-// and every delivered non-system message stamped to it carries T. Exit and boot closes stay unattributed.
+// and every delivered non-system message stamped to it carries T. Exit and boot closes stay unattributed. I9 §4.8:
+// every turn end, a self-started one's too, stamps the batches written before it began.
 
 const h = new RuntimeHarness();
 beforeAll(() => h.setup());
@@ -126,19 +127,16 @@ test("a mid-turn absorbed task message of the same task: the task, both batches 
   expect(await deliveredTurn(second.id)).toBe(turn?.id);
 });
 
-test("a cron turn ends while a task batch awaits: the batch stays unstamped, the cron turn NULL; the batch's own turn gets the task", async () => {
+test("a cron turn ends while a task batch awaits: the batch is stamped to it (settled at any turn end) and the cron turn stays NULL", async () => {
   await idle();
   const t1 = await newTask();
   const m = await sendTask(t1); // written, awaiting its turn
   h.driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "cron" }));
   await h.rt.settled();
-  expect(await lastTurnTask()).toBeNull();
-  expect(await deliveredTurn(m.id)).toBeNull();
-  h.driver.last.emit(ev.turn(), ev.usage(), ev.end());
-  await h.rt.settled();
-  const turn = (await turnRows()).at(-1);
-  expect(turn?.task_id).toBe(t1);
-  expect(await deliveredTurn(m.id)).toBe(turn?.id);
+  const cronTurn = (await turnRows()).at(-1);
+  expect(cronTurn?.task_id).toBeNull();
+  expect(await deliveredTurn(m.id)).toBe(cronTurn?.id);
+  expect(h.rt.statusFrame().status).toBe("idle");
 });
 
 test("a process exit with an open turn and an awaiting task batch: the batch is stamped and the task attributed (I1 §6.3)", async () => {

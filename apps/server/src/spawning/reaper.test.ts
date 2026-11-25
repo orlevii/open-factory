@@ -274,25 +274,25 @@ test("a lost activity write never gets a recently active child reaped", async ()
   expect(c.rt.isTerminated()).toBe(false);
 });
 
-test("a held member update waiting for its window keeps the child; a held peer event alone doesn't", async () => {
+test("a member update inside its debounce keeps the child; a peer event alone doesn't", async () => {
   const s = await setup();
   const a = await s.spawnHibernated("hu");
   const b = await s.spawnHibernated("hp");
-  const update = await s.t.app.store.createHeld({
+  const update = await s.t.app.store.createOrgRow({
     kind: "member_update",
     toAgentId: a.id,
     fromAgentId: s.lead.id,
     body: "an update",
   });
-  await a.rt.receiveHeld(update);
-  const peer = await s.t.app.store.createHeld({
+  await a.rt.receive(update);
+  const peer = await s.t.app.store.createOrgRow({
     kind: "peer_joined",
     toAgentId: b.id,
     subjectAgentId: a.id,
     notice: "peer",
     body: "joined",
   });
-  await b.rt.receiveHeld(peer);
+  await b.rt.receive(peer);
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   expect(await s.terminatedBy(a.id)).toBeNull();

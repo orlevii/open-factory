@@ -384,8 +384,8 @@ export class EventStore {
    * debounce (a young one waits for its timer; peer rows never wake anyone). `resume` when a factory-restarted notice
    * is among them.
    */
-  async bootWakes(debounceMs: number): Promise<{ id: string; slug: string; resume: boolean }[]> {
-    const deliverable = this.deliverableWhere(debounceMs);
+  async bootWakes(): Promise<{ id: string; slug: string; resume: boolean }[]> {
+    const deliverable = this.deliverableWhere();
     const rows = await this.db
       .select({
         id: agents.id,
@@ -408,13 +408,12 @@ export class EventStore {
       .orderBy(sql`min(${messages.createdAt})`, asc(agents.id));
     return rows.map((r) => ({ ...r, resume: Boolean(r.resume) }));
   }
-  private deliverableWhere(debounceMs: number) {
-    const cutoff = new Date(Date.now() - debounceMs);
-    return sql`((${messages.kind} in ('message', 'task_assigned', 'task_comment', 'task_update', 'scheduled') or (${messages.kind} = 'system' and ${messages.notice} not in ('crons_stopped', 'config_changed', 'report_config_changed'))) or (${messages.kind} = 'member_update' and ${messages.createdAt} <= ${cutoff.toISOString()}::timestamptz))`;
+  /** Pending rows that wake an agent at boot; member updates don't: their runtime's debounce timer does (I9 §4.8). */
+  private deliverableWhere() {
+    return sql`(${messages.kind} in ('message', 'task_assigned', 'task_comment', 'task_update', 'scheduled') or (${messages.kind} = 'system' and ${messages.notice} not in ('crons_stopped', 'config_changed', 'report_config_changed')))`;
   }
-  /** Live (not archived, not terminated), non-errored agents with at least one pending member update still inside the debounce window. */
-  async agentsWithYoungUpdates(debounceMs: number): Promise<string[]> {
-    const cutoff = new Date(Date.now() - debounceMs);
+  /** Live (not archived, not terminated), non-errored agents with at least one pending member update. */
+  async agentsWithPendingUpdates(): Promise<string[]> {
     const rows = await this.db
       .selectDistinct({ id: messages.toAgentId })
       .from(messages)
@@ -423,7 +422,6 @@ export class EventStore {
         and(
           eq(messages.kind, "member_update"),
           eq(messages.state, "pending"),
-          sql`${messages.createdAt} > ${cutoff.toISOString()}::timestamptz`,
           isNull(agents.archivedAt),
           isNull(agents.terminatedAt),
           sql`${agents.status} <> 'errored'`,
@@ -888,8 +886,8 @@ export class EventStore {
       (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id),
     );
   }
-  /** A held peer or member-update row, pending until the runtime renders it (spec §8). Returns the joined row. */
-  async createHeld(
+  /** A member update or peer event (the org's rows about an agent's neighbours), pending until written (spec §8). Returns the joined row. */
+  async createOrgRow(
     m: {
       kind: "member_update" | "peer_joined" | "peer_left";
       toAgentId: string;

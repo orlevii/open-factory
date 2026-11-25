@@ -54,6 +54,8 @@ export interface PrepareInput {
   manageOrg: boolean;
   /** The slug of the agent that last wrote this agent's own description, or null (I7 §10). */
   descriptionWrittenBy: string | null;
+  /** The member-update debounce in seconds at this start (I9 §4.8). */
+  memberUpdateSeconds: number;
 }
 
 /** What `materialize` checks: the prepare input minus what only a start knows. */
@@ -72,6 +74,7 @@ export type MaterializeCheck = Omit<
   | "secretNames"
   | "manageOrg"
   | "descriptionWrittenBy"
+  | "memberUpdateSeconds"
 > & { config: TemplateConfig };
 
 export interface TemplateSource {
@@ -292,6 +295,7 @@ export class Workspace {
         scheduling: i.scheduling ?? null,
         manageOrg: i.manageOrg,
         descriptionWrittenBy: i.descriptionWrittenBy,
+        memberUpdateSeconds: i.memberUpdateSeconds,
       }),
     );
     // Spec §11.4: mounts come only from factory-owned inputs (the template folder and the overlay in the database).

@@ -284,7 +284,7 @@ test("rows handed over during the provisional window are rejected once it commit
       body: "late",
       urgent: false,
     });
-    const held = await t.app.store.createHeld({
+    const held = await t.app.store.createOrgRow({
       kind: "member_update",
       toAgentId: child.id,
       fromAgentId: lead.id,
@@ -292,7 +292,7 @@ test("rows handed over during the provisional window are rejected once it commit
     });
     ids.push(direct.id, held.id);
     await child.rt.deliver(direct, { sender: "human", fromLabel: `@${user.handle}` });
-    await child.rt.receiveHeld(held);
+    await child.rt.receive(held);
   }).release();
   await t.app.terminator.terminate(child.id, "@or");
   expect(ids).toHaveLength(2);

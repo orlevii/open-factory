@@ -157,7 +157,7 @@ test("a server stopped between commit and hand-off: boot wakes the target and de
   expect(handedOver).toBe(0);
   expect(driver.starts).toHaveLength(0);
   // the next boot: bootWakes counts the scheduled row and wakes the target
-  const wakes = await h.app.store.bootWakes(30_000);
+  const wakes = await h.app.store.bootWakes();
   expect(wakes.map((w) => w.slug)).toEqual(["ceo"]);
   await (await h.app.runtimes.bySlug("ceo"))?.bootWake("boot");
   await settle("ceo");

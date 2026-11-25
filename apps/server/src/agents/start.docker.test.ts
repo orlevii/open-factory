@@ -214,6 +214,7 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     lock,
     containers,
     neighborhood: new Neighborhood(t.db),
+    memberUpdateDebounceMs: () => 30_000,
   });
   const runtimes = new AgentRuntimes({
     tokens: noopTokens,

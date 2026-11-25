@@ -175,6 +175,7 @@ async function seedStartFixture() {
     resolver,
     lock,
     neighborhood: new Neighborhood(t.db),
+    memberUpdateDebounceMs: () => 30_000,
     serverEnv: {
       PATH: "/usr/bin",
       HOME: "/home/u",

@@ -183,6 +183,8 @@ export function createPrepareStart(d: {
   /** The one ContainerManager (built in buildApp). Docker starts fail without it. */
   containers?: Pick<ContainerManager, "stopIfRunning">;
   neighborhood: Neighborhood;
+  /** The member-update debounce, read live (the factory setting); CLAUDE.md states it (I9 §4.8). */
+  memberUpdateDebounceMs: () => number;
   serverEnv?: NodeJS.ProcessEnv;
 }): PrepareStart {
   const serverEnv = d.serverEnv ?? process.env;
@@ -349,6 +351,7 @@ export function createPrepareStart(d: {
           secretNames,
           manageOrg: agent.manageOrg,
           descriptionWrittenBy: writtenBy(agent) ?? null,
+          memberUpdateSeconds: Math.round(d.memberUpdateDebounceMs() / 1000),
           ...(spawned ? { inheritedDeny: spawned.inherited.deny } : {}),
           mcpUrl:
             config.runtime === "docker"

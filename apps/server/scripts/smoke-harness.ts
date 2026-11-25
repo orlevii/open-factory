@@ -79,6 +79,7 @@ const prepareStart = createPrepareStart({
   resolver: new ConfigResolver({ templates, library }),
   lock,
   neighborhood: new Neighborhood(db),
+  memberUpdateDebounceMs: () => 30_000,
 });
 const store = new EventStore(db);
 const bus = new EventBus();

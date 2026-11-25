@@ -85,6 +85,7 @@ beforeEach(async () => {
     secretNames: config.secrets,
     manageOrg: false,
     descriptionWrittenBy: null,
+    memberUpdateSeconds: 30,
   };
   await ws.materialize("lead", "lead", tpl, { ...prep, config });
   workdir = ws.workdir("lead");

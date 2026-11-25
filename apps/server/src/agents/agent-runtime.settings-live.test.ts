@@ -112,9 +112,9 @@ test("a snapshot that holds 70 keeps its window", async () => {
   expect(h.driver.last.stopped).toBe(true);
 });
 
-/** Hands a held member update to the runtime; returns its creation stamp (t0 of its debounce window). */
+/** Hands a member update to the runtime; returns its creation stamp (t0 of its debounce window). */
 async function update(body: string): Promise<number> {
-  const row = await h.store.createHeld({
+  const row = await h.store.createOrgRow({
     kind: "member_update",
     toAgentId: h.agentId,
     fromAgentId: REPORT,
@@ -128,7 +128,7 @@ const tickTo = (at: number) => tick(at - Date.now());
 const updateWritten = () =>
   h.driver.starts.some((p) => p.sent.flat().some((m) => m.kind === "member_update"));
 
-test("lowering the debounce delivers a held update from its creation time", async () => {
+test("lowering the debounce delivers a pending update from its creation time", async () => {
   await h.makeRuntime({ ...getters });
   await idle();
   const t0 = await update("u");
@@ -140,7 +140,7 @@ test("lowering the debounce delivers a held update from its creation time", asyn
   expect(updateWritten()).toBe(true);
 });
 
-test("a debounce of 0 delivers a held update at once", async () => {
+test("a debounce of 0 delivers a pending update at once", async () => {
   await h.makeRuntime({ ...getters });
   await idle();
   const t0 = await update("u");

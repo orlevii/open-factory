@@ -73,6 +73,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
     secretNames: config.secrets,
     manageOrg: false,
     descriptionWrittenBy: null,
+    memberUpdateSeconds: 30,
   };
   return { home, hs, claude, repo, ws, tpl, prep };
 }

@@ -75,16 +75,16 @@ test("lowering the default warm window over PATCH hibernates an idle agent alrea
   expect((await s.events()).at(-1)).toMatchObject({ type: "hibernated", reason: "warm_window" });
 });
 
-test("a debounce of 0 over PATCH delivers a held member update at once", async () => {
+test("a debounce of 0 over PATCH delivers a pending member update at once", async () => {
   const s = await setup({ memberUpdateDebounceSeconds: 30 });
   const proc = await s.idle();
-  const row = await s.app.app.store.createHeld({
+  const row = await s.app.app.store.createOrgRow({
     kind: "member_update",
     toAgentId: s.lead.id,
     fromAgentId: s.dev.id,
     body: "progress",
   });
-  await s.rt.receiveHeld(row);
+  await s.rt.receive(row);
   await s.tick(1_000);
   const written = () => proc.sent.flat().some((m) => m.body === "progress");
   expect(written()).toBe(false);

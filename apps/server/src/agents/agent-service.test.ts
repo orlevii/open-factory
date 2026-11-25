@@ -18,7 +18,7 @@ import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
 import * as principals from "../messaging/principals.ts";
 import { ContainerManager } from "../runtime/docker/containers.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
+import { claimTestHandleSql, seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import type { AgentService } from "./agent-service.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
@@ -48,6 +48,7 @@ beforeAll(async () => {
   fake = createFakeClaude({ scenario: "reply" });
   t = await makeTestApp({ env: { FACTORY_CLAUDE_BIN: fake.bin } });
   home = t.factoryHome;
+  await seedTestUser(t.db);
   svc = t.app.agents;
   runtimes = t.app.runtimes;
   const repo = mkdtempSync(path.join(tmpdir(), "repo-"));
@@ -60,24 +61,6 @@ beforeAll(async () => {
     valueEnc: t.app.vault.seal("tok", `credentials:${credId}`),
   });
   writeTemplate("lead", yaml("lead"));
-  // The template's marketplace must be registered in Skills (spec §7.4).
-  await t.db.insert(schema.marketplaces).values({
-    name: "mk",
-    source: { source: "directory", path: "/mk" },
-    tags: {},
-    state: "ready",
-    startedAt: new Date(),
-    addedBy: "@or",
-    addedAt: new Date(),
-  });
-  writeTemplate("plugged", yaml("plugged"));
-  writeFileSync(
-    path.join(home, "templates/plugged/settings.json"),
-    JSON.stringify({
-      extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/mk" } } },
-      enabledPlugins: { "p@mk": true },
-    }),
-  );
   writeTemplate("broken", "name: broken\nruntime: nonsense\n");
 });
 afterAll(() => t.close());
@@ -89,7 +72,7 @@ test("create: layout on disk, rows, grants default; then summary in tree order",
       slug: "lead",
       displayName: "Lead",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
     },
     { kind: "human", handle: "or" },
@@ -162,7 +145,7 @@ test.each([
         slug: "x-new",
         displayName: "X",
         description: "",
-        reportsTo: null,
+        reportsTo: "or",
         credential: "work",
         ...patch,
       },
@@ -182,7 +165,7 @@ test("create with a reserved slug is refused before any claim", async () => {
             slug,
             displayName: "X",
             description: "",
-            reportsTo: null,
+            reportsTo: "or",
             credential: "work",
           },
           { kind: "human", handle: "or" },
@@ -194,21 +177,7 @@ test("create with a reserved slug is refused before any claim", async () => {
   }
 });
 
-test("create: a template with a plugin installs nothing and runs no claude; an existing folder → folder_exists, untouched", async () => {
-  await svc.create(
-    {
-      template: "plugged",
-      slug: "plug",
-      displayName: "P",
-      description: "",
-      reportsTo: null,
-      credential: "work",
-    },
-    { kind: "human", handle: "or" },
-  );
-  expect(existsSync(path.join(home, "agents/plug"))).toBe(true);
-  expect(existsSync(path.join(home, "state/agents/plug/plugins"))).toBe(false);
-  expect(existsSync(path.join(fake.dir, "plugin.log"))).toBe(false);
+test("create: an existing folder → folder_exists, untouched", async () => {
   mkdirSync(path.join(home, "agents/occupied"), { recursive: true });
   writeFileSync(path.join(home, "agents/occupied/keep.txt"), "k");
   await expect(
@@ -218,7 +187,7 @@ test("create: a template with a plugin installs nothing and runs no claude; an e
         slug: "occupied",
         displayName: "O",
         description: "",
-        reportsTo: null,
+        reportsTo: "or",
         credential: "work",
       },
       { kind: "human", handle: "or" },
@@ -273,7 +242,7 @@ test("the agents_color CHECK rejects 13 and 0 on its own row", async () => {
       slug: "colour-check",
       displayName: "C",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
     },
     { kind: "human", handle: "or" },
@@ -291,7 +260,7 @@ test("projects: duplicate names are deduped (order kept) on create and PATCH", a
       slug: "dupe",
       displayName: "D",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
       projects: ["app", "app"],
     },
@@ -313,7 +282,7 @@ async function makeStageAgent(slug: string) {
       slug,
       displayName: slug,
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
     },
     { kind: "human", handle: "or" },
@@ -419,7 +388,7 @@ test("reset persona of a Docker agent stages while its container runs, or when D
       slug: "dock-p",
       displayName: "Dock",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
     },
     { kind: "human", handle: "or" },
@@ -556,7 +525,7 @@ test("archive hides and allows PATCH; unarchive restores", async () => {
 });
 
 test("unarchive is refused while the manager is archived", async () => {
-  await svc.update("dev-1", { reportsTo: null }, { kind: "human", handle: "or" });
+  await svc.update("dev-1", { reportsTo: "or" }, { kind: "human", handle: "or" });
   await svc.create(
     {
       template: "lead",
@@ -585,7 +554,7 @@ test("create refuses a slug that is a human handle", async () => {
         slug: "sam",
         displayName: "Sam",
         description: "",
-        reportsTo: null,
+        reportsTo: "or",
         credential: "work",
       },
       { kind: "human", handle: "or" },
@@ -598,7 +567,7 @@ const createBody = (slug: string) => ({
   slug,
   displayName: slug,
   description: "",
-  reportsTo: null,
+  reportsTo: "or",
   credential: "work",
 });
 const agentRows = async (slug: string) =>
@@ -634,8 +603,8 @@ test("two concurrent creates of one slug: one succeeds, the other is slug_taken,
 test("a competing agent commits the slug while this create materialises: slug_taken, one row", async () => {
   const spy = vi.spyOn(t.app.workspace, "materialize").mockImplementationOnce(async () => {
     await claimTestHandleSql(t.sql, "late-dup", "agent");
-    await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
-                select 'late-dup-id', 'late-dup', 'x', 'lead', config, 'local', credential_id from agents where slug = 'lead'`;
+    await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
+                select 'late-dup-id', 'late-dup', 'x', 'lead', config, 'local', credential_id, reports_to_user from agents where slug = 'lead'`;
   });
   await expect(
     svc.create(createBody("late-dup"), { kind: "human", handle: "or" }),
@@ -651,7 +620,7 @@ async function createSpawner(slug: string) {
       slug,
       displayName: slug,
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
     },
     { kind: "human", handle: "or" },
@@ -798,8 +767,8 @@ test("a spawned agent can't be a manager on create or edit", async () => {
   const id = await createSpawner("spawner-5");
   await insertChild(t.sql, id, "spawner-5-ff11");
   const field = {
-    message: "Choose an active agent.",
-    extra: { fields: { reportsTo: "Choose an active agent." } },
+    message: FIELD_MSG.chooseManager,
+    extra: { fields: { reportsTo: FIELD_MSG.chooseManager } },
   };
   await expect(
     svc.create(

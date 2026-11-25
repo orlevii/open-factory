@@ -123,12 +123,6 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["users"] });
           void qc.invalidateQueries({ queryKey: ["invites"] });
         }
-        // Only a build's start and end frames (no `lines`) change a status; the 250 ms log batches
-        // in between would refetch the list and every open template several times a second.
-        if (m.type === "images_changed" || (m.type === "image_build" && !m.lines)) {
-          void qc.invalidateQueries({ queryKey: ["images"] });
-          void qc.invalidateQueries({ queryKey: ["templates"] });
-        }
         // I2 §12.4: an open Configuration page (or template tab) refetches; nothing else reads these keys.
         if (m.type === "config_changed") {
           // I5 §9.5: a template or agent change moves the Skills lists and used-by counts.

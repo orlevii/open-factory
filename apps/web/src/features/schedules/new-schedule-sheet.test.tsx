@@ -32,7 +32,7 @@ const agents = (url?: string) =>
   json({
     agents: url?.includes("ended=only") ? [gone] : live,
     more: false,
-    running: { count: 0, max: 8 },
+    running: { count: 0 },
   });
 const item = {
   key: "S-8",

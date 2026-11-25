@@ -20,7 +20,7 @@ export class TerminateService implements TerminatePort {
       db: Db;
       store: EventStore;
       runtimes: AgentRuntimes;
-      router: Pick<Router, "snapshot" | "persistPeerEvents" | "handOffHeldRows">;
+      router: Pick<Router, "snapshot" | "persistPeerEvents" | "handOffRows">;
       log: RuntimeLog;
     },
   ) {}
@@ -121,7 +121,7 @@ export class TerminateService implements TerminatePort {
         return [];
       }),
     );
-    this.d.router.handOffHeldRows(peerRows);
+    this.d.router.handOffRows(peerRows);
     // §8 step 3: the stop and the container removal continue in the background; the status frame reports their end.
     void rt
       .terminateStop(by)

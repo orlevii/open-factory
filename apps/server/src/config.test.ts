@@ -1,13 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import {
-  ConfigError,
-  loadConfig,
-  localRuntimeAllowed,
-  PLACEHOLDER_SECRET,
-  removedEnvWarnings,
-} from "./config.ts";
+import { ConfigError, loadConfig, localRuntimeAllowed, PLACEHOLDER_SECRET } from "./config.ts";
 
 const ok = { DATABASE_URL: "postgres://u:p@localhost:5432/db", FACTORY_SECRET_KEY: "x".repeat(32) };
 
@@ -60,12 +54,6 @@ describe("loadConfig", () => {
     expect(o.agentPort).toBe(0);
     expect(o.agentHosts).toEqual(["127.0.0.1", "10.0.0.5"]);
     expect(o.agentUrl).toBe("http://factory:9000");
-  });
-  test("FACTORY_MAX_SPAWNS_PER_HOUR defaults to 20 and is at least 1", () => {
-    expect(loadConfig(ok).maxSpawnsPerHour).toBe(20);
-    expect(loadConfig({ ...ok, FACTORY_MAX_SPAWNS_PER_HOUR: "3" }).maxSpawnsPerHour).toBe(3);
-    expect(() => loadConfig({ ...ok, FACTORY_MAX_SPAWNS_PER_HOUR: "0" })).toThrow(ConfigError);
-    expect(() => loadConfig({ ...ok, FACTORY_MAX_SPAWNS_PER_HOUR: "1.5" })).toThrow(ConfigError);
   });
   test("FACTORY_AGENT_PORT can't be PORT (unless 0, any free port)", () => {
     expect(() => loadConfig({ ...ok, PORT: "4000", FACTORY_AGENT_PORT: "4000" })).toThrow(
@@ -159,32 +147,6 @@ describe("loadConfig", () => {
       );
     },
   );
-});
-
-describe("removedEnvWarnings", () => {
-  test("FACTORY_HOST_SKILLS_DIR names its replacement", () => {
-    expect(removedEnvWarnings({ FACTORY_HOST_SKILLS_DIR: "~/s" })).toEqual([
-      "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder.",
-    ]);
-  });
-  test("names each removed variable that is still set", () => {
-    expect(removedEnvWarnings({ FACTORY_MAX_RUNNING_AGENTS: "4" })).toEqual([
-      "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
-    ]);
-    expect(
-      removedEnvWarnings({
-        FACTORY_MAX_RUNNING_AGENTS: "4",
-        FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "0",
-      }),
-    ).toEqual([
-      "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
-      "FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS is no longer read; set it in Settings → Factory.",
-    ]);
-  });
-  test("unset or empty: no warning", () => {
-    expect(removedEnvWarnings(ok)).toEqual([]);
-    expect(removedEnvWarnings({ FACTORY_MAX_RUNNING_AGENTS: "" })).toEqual([]);
-  });
 });
 
 describe("FACTORY_TIMEZONE", () => {

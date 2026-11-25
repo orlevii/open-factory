@@ -40,8 +40,6 @@ function hibernatedText(e: Extract<AnyEvent, { type: "hibernated" }>): string {
       return e.idleMinutes === undefined
         ? "Hibernated"
         : `Hibernated after ${plural(e.idleMinutes, "minute", "minutes")} idle`;
-    case "freed_slot":
-      return "Hibernated to free a slot";
     case "crons_stopped":
       return e.by ? `Hibernated: ${e.by} stopped its crons` : "Hibernated: its crons were stopped";
     case "apply_changes":
@@ -175,12 +173,6 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
       );
     case "mcp_unavailable":
       return "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive.";
-    case "plugin_not_loaded":
-      return (
-        <>
-          Plugin <Mono>{e.key}</Mono> didn't load. Claude Code's output is in the session log.
-        </>
-      );
     case "interrupt_unconfirmed":
       return "The turn didn't confirm the stop within 10 seconds, so held messages were sent anyway.";
     default:
@@ -200,7 +192,6 @@ function quietDetail(e: AnyEvent): string | undefined {
   return undefined;
 }
 
-// `plugin_not_loaded` is deliberately not here: it gets its own CircleAlert in `quietIcon` (spec §7.3 step 8).
 const WARN = new Set([
   "delivery_failed",
   "compact_failed",
@@ -215,7 +206,6 @@ function quietIcon(e: AnyEvent): ReactNode {
   // One crash is red once: the unexpected exit, never a separate crimson error row.
   if (e.type === "exited" && !e.expected)
     return <CircleAlert aria-hidden="true" className="text-destructive" />;
-  if (e.type === "plugin_not_loaded") return <CircleAlert aria-hidden="true" />;
   if (e.type === "spawned") return <GitFork aria-hidden="true" />;
   if (e.type === "terminated") return <CircleX aria-hidden="true" />;
   return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;
@@ -274,14 +264,7 @@ function FixLink({
   // Nothing to link to: an operator has to allow the local runtime (S5 UI design §3.2). The row
   // explains how, as Agent details' Runtime row does.
   if (fix === "runtime") return <LocalRuntimeWhy />;
-  // An unbuilt user image is built in Templates → Images (spec §10.1).
-  if (fix === "image")
-    return (
-      <Link to="/templates/images" className={cls}>
-        Open Templates → Images
-      </Link>
-    );
-  // The agent's own configuration (a plugin that didn't install, an overlay that fails its schema).
+  // The agent's own configuration (an overlay that fails its schema).
   if (fix === "config")
     return (
       <Link to="/agents/$slug/config" params={{ slug }} className={cls}>

@@ -5,7 +5,6 @@ import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { focusComposer } from "./composer";
-import { formatResetTime } from "./format";
 import { MessageBlock } from "./message-block";
 import { QuietLine } from "./quiet-line";
 import { useSendPhase } from "./send-phase";
@@ -40,47 +39,6 @@ const NO_SENDING: readonly SendingBlock[] = [];
 const FOLD_OVER = 3;
 const FOLD_SHOWN = 2;
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
-/** One quiet line per held group (S6 UI design §2.6): fixed text, nothing ticks, outside any live
- *  region. `rate_limited` reuses S5's reset phrase; a window shows its fixed `dueAt`. */
-function HeldLine({ item, agent }: { item: QueueItem; agent: AgentSummary }) {
-  // A group's `from` is its first row's sender, which can be "@factory" for a fact about the report:
-  // the report named by `about` is who the updates are from.
-  const who = (item.about ?? item.from).replace(/^@/, "");
-  const count = plural(item.count ?? 1, "update", "updates");
-  const tail = (() => {
-    switch (item.waitReason) {
-      case "turn":
-        return " waiting for this turn to end";
-      case "window": {
-        const due = item.dueAt ? new Date(item.dueAt) : undefined;
-        return due && !Number.isNaN(due.getTime())
-          ? `, delivered by ${formatResetTime(due, new Date())}`
-          : "";
-      }
-      case "starting":
-        return " waiting for this agent to start";
-      case "errored":
-        return " held until this agent is restarted";
-      case "rate_limited": {
-        const phrase = resetPhrase(agent)?.bare;
-        return phrase ? ` held ${phrase}` : " held";
-      }
-      default:
-        return "";
-    }
-  })();
-  // Window without a due time, or a reason this client doesn't know: still say they are waiting.
-  const text = tail.startsWith(" held") || tail.startsWith(" waiting") ? tail : ` waiting${tail}`;
-  return (
-    <QuietLine icon={<Clock aria-hidden="true" />}>
-      {count} from <span className="font-mono">@{who}</span>
-      {text}
-    </QuietLine>
-  );
-}
-
 /** Pending items, drawn only from `queue` frames (never inferred), at full opacity, with the lines of
  *  the ones you cancelled in their place (U3 §6.4). */
 export const QueueItems = memo(function QueueItems({
@@ -108,16 +66,9 @@ export const QueueItems = memo(function QueueItems({
   // revealed, which takes the focus from it.
   const [unfolded, setUnfolded] = useState(false);
   const [revealFrom, setRevealFrom] = useState<string>();
-  let peerChanges = 0;
-  let firstPeer: QueueItem | undefined;
   let blocks = 0;
-  for (const v of view) {
-    if (v.kind !== "item") continue;
-    if (v.item.kind === "message" || v.item.kind === "notice") blocks++;
-    if (v.item.kind !== "held" || v.item.waitReason !== "ride_along") continue;
-    peerChanges += v.item.count ?? 1;
-    firstPeer ??= v.item;
-  }
+  for (const v of view)
+    if (v.kind === "item" && (v.item.kind === "message" || v.item.kind === "notice")) blocks++;
   const folded = !unfolded && blocks > FOLD_OVER;
   let block = 0;
   // One array: a send and the queue item that replaces it share a key, so the node stays (§8.3).
@@ -141,16 +92,6 @@ export const QueueItems = memo(function QueueItems({
           </button>
         </div>
       ) : null;
-    if (q.kind === "held")
-      return q.waitReason === "ride_along" ? (
-        q === firstPeer && (
-          <QuietLine key={q.id} icon={<Clock aria-hidden="true" />}>
-            {plural(peerChanges, "peer change", "peer changes")} waiting
-          </QuietLine>
-        )
-      ) : (
-        <HeldLine key={q.id} item={q} agent={agent} />
-      );
     if (q.kind === "message" || q.kind === "notice")
       return (
         <OutgoingMessage

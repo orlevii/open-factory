@@ -323,12 +323,7 @@ async function quiet(slugs: Slug[]) {
       for (const s of slugs) {
         const rt = await app.runtimes.bySlug(s);
         const l = rt?.live();
-        if (
-          l?.turnOpen ||
-          l?.status === "working" ||
-          (rt?.queueItems().filter((i) => i.kind !== "held").length ?? 0) > 0
-        )
-          busy.push(s);
+        if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
       if (busy.length) since0 = 0;
       else if (!since0) since0 = Date.now();
@@ -385,7 +380,7 @@ async function signUp(handle: string, name: string, inviter?: { cookie: string }
   return { cookie, userId: me.id };
 }
 
-/** S10: the cap and the debounce are factory settings, set through the API after sign-up (no longer env vars). */
+/** S10: the debounce is a factory setting, set through the API after sign-up (no longer env vars). */
 async function patchFactorySettings(cookie: string, body: Record<string, number>) {
   const res = await app.inject({
     method: "PATCH",
@@ -509,7 +504,7 @@ try {
           slug,
           displayName: slug[0]?.toUpperCase() + slug.slice(1),
           description: `Smoke tasks agent ${slug}`,
-          reportsTo: null,
+          reportsTo: "or",
           credential: "smoke",
         },
         { kind: "human", handle: "or" },

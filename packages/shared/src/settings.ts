@@ -61,36 +61,63 @@ export const patchProjectBodySchema = z.object({ hostPath: z.string().trim().min
 export const projectResponseSchema = z.object({ project: projectSummarySchema });
 
 export const FACTORY_BOUNDS = {
-  maxRunningAgents: [1, 64],
-  defaultWarmWindowMinutes: [1, 1440],
+  warmWindowMinutes: [1, 1440],
   memberUpdateDebounceSeconds: [0, 86_400],
   loopGuardMessages: [2, 1000],
   loopGuardWindowMinutes: [1, 1440],
 } as const;
 
-export const factorySettingsSchema = z.object({
-  maxRunningAgents: z.number().int(),
-  defaultWarmWindowMinutes: z.number().int(),
-  memberUpdateDebounceSeconds: z.number().int(),
-  loopGuardMessages: z.number().int(),
-  loopGuardWindowMinutes: z.number().int(),
+const bounded = ([lo, hi]: readonly [number, number]) => {
+  const msg = `Enter a whole number from ${lo} to ${hi}.`;
+  // The type error too (a string, null): every rejection of the field is the §12.10 sentence.
+  return z.number({ error: msg }).int(msg).min(lo, msg).max(hi, msg);
+};
+
+/** The values stored in `factory_settings.settings`; a missing key reads as its default. */
+export const factorySettingsValuesSchema = z.object({
+  warmWindowMinutes: bounded(FACTORY_BOUNDS.warmWindowMinutes).default(70),
+  memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds).default(30),
+  loopGuardMessages: bounded(FACTORY_BOUNDS.loopGuardMessages).default(10),
+  loopGuardWindowMinutes: bounded(FACTORY_BOUNDS.loopGuardWindowMinutes).default(10),
+});
+export type FactorySettingsValues = z.infer<typeof factorySettingsValuesSchema>;
+
+/**
+ * Reads the stored object key by key: a missing, hand-edited or out-of-range key reads as its default, so one bad
+ * key never stops the factory from booting. (PATCH stays strict.)
+ */
+export function readFactorySettingsValues(raw: unknown): FactorySettingsValues {
+  const stored: Record<string, unknown> =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const defaults = factorySettingsValuesSchema.parse({});
+  const read = (k: keyof FactorySettingsValues) => {
+    const r = factorySettingsValuesSchema.shape[k].safeParse(stored[k]);
+    return r.success ? r.data : defaults[k];
+  };
+  return {
+    warmWindowMinutes: read("warmWindowMinutes"),
+    memberUpdateDebounceSeconds: read("memberUpdateDebounceSeconds"),
+    loopGuardMessages: read("loopGuardMessages"),
+    loopGuardWindowMinutes: read("loopGuardWindowMinutes"),
+  };
+}
+
+export const factorySettingsSchema = factorySettingsValuesSchema.extend({
   allowLocalRuntime: z.boolean(),
+  /** `FACTORY_DEFAULT_IMAGE`: the image a template with no `image:` uses. Read-only. */
+  defaultImage: z.string(),
   updatedAt: z.string().nullable(),
   /** The @handle of the last editor. */
   updatedBy: z.string().nullable(),
 });
 export type FactorySettingsDto = z.infer<typeof factorySettingsSchema>;
 
-const bounded = ([lo, hi]: readonly [number, number]) => {
-  const msg = `Enter a whole number from ${lo} to ${hi}.`;
-  // The type error too (a string, null): every rejection of the field is the §12.10 sentence.
-  return z.number({ error: msg }).int(msg).min(lo, msg).max(hi, msg).optional();
-};
 export const patchFactorySettingsSchema = z.strictObject({
-  maxRunningAgents: bounded(FACTORY_BOUNDS.maxRunningAgents),
-  defaultWarmWindowMinutes: bounded(FACTORY_BOUNDS.defaultWarmWindowMinutes),
-  memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds),
-  loopGuardMessages: bounded(FACTORY_BOUNDS.loopGuardMessages),
-  loopGuardWindowMinutes: bounded(FACTORY_BOUNDS.loopGuardWindowMinutes),
+  warmWindowMinutes: bounded(FACTORY_BOUNDS.warmWindowMinutes).optional(),
+  memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds).optional(),
+  loopGuardMessages: bounded(FACTORY_BOUNDS.loopGuardMessages).optional(),
+  loopGuardWindowMinutes: bounded(FACTORY_BOUNDS.loopGuardWindowMinutes).optional(),
 });
 export type PatchFactorySettings = z.infer<typeof patchFactorySettingsSchema>;

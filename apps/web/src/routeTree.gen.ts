@@ -29,14 +29,11 @@ import { Route as AppSettingsProjectsRouteImport } from './routes/_app/settings.
 import { Route as AppSettingsSecretsRouteImport } from './routes/_app/settings.secrets'
 import { Route as AppSettingsUsersRouteImport } from './routes/_app/settings.users'
 import { Route as AppSkillsIndexRouteImport } from './routes/_app/skills.index'
-import { Route as AppSkillsMarketplacesRouteImport } from './routes/_app/skills.marketplaces'
-import { Route as AppSkillsPluginsRouteImport } from './routes/_app/skills.plugins'
 import { Route as AppTasksIndexRouteImport } from './routes/_app/tasks.index'
 import { Route as AppTasksKeyRouteImport } from './routes/_app/tasks.$key'
 import { Route as AppTasksNewRouteImport } from './routes/_app/tasks.new'
 import { Route as AppTemplatesIndexRouteImport } from './routes/_app/templates.index'
 import { Route as AppTemplatesNameRouteImport } from './routes/_app/templates.$name'
-import { Route as AppTemplatesImagesRouteImport } from './routes/_app/templates.images'
 import { Route as AppTemplatesNewRouteImport } from './routes/_app/templates.new'
 import { Route as AppAgentsSlugIndexRouteImport } from './routes/_app/agents.$slug.index'
 import { Route as AppAgentsSlugChatRouteImport } from './routes/_app/agents.$slug.chat'
@@ -144,16 +141,6 @@ const AppSkillsIndexRoute = AppSkillsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppSkillsRoute,
 } as any)
-const AppSkillsMarketplacesRoute = AppSkillsMarketplacesRouteImport.update({
-  id: '/marketplaces',
-  path: '/marketplaces',
-  getParentRoute: () => AppSkillsRoute,
-} as any)
-const AppSkillsPluginsRoute = AppSkillsPluginsRouteImport.update({
-  id: '/plugins',
-  path: '/plugins',
-  getParentRoute: () => AppSkillsRoute,
-} as any)
 const AppTasksIndexRoute = AppTasksIndexRouteImport.update({
   id: '/tasks/',
   path: '/tasks/',
@@ -177,11 +164,6 @@ const AppTemplatesIndexRoute = AppTemplatesIndexRouteImport.update({
 const AppTemplatesNameRoute = AppTemplatesNameRouteImport.update({
   id: '/templates/$name',
   path: '/templates/$name',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppTemplatesImagesRoute = AppTemplatesImagesRouteImport.update({
-  id: '/templates/images',
-  path: '/templates/images',
   getParentRoute: () => AppRoute,
 } as any)
 const AppTemplatesNewRoute = AppTemplatesNewRouteImport.update({
@@ -236,12 +218,9 @@ export interface FileRoutesByFullPath {
   '/settings/projects': typeof AppSettingsProjectsRoute
   '/settings/secrets': typeof AppSettingsSecretsRoute
   '/settings/users': typeof AppSettingsUsersRoute
-  '/skills/marketplaces': typeof AppSkillsMarketplacesRoute
-  '/skills/plugins': typeof AppSkillsPluginsRoute
   '/tasks/$key': typeof AppTasksKeyRoute
   '/tasks/new': typeof AppTasksNewRoute
   '/templates/$name': typeof AppTemplatesNameRoute
-  '/templates/images': typeof AppTemplatesImagesRoute
   '/templates/new': typeof AppTemplatesNewRoute
   '/agents/': typeof AppAgentsIndexRoute
   '/schedules/': typeof AppSchedulesIndexRoute
@@ -269,12 +248,9 @@ export interface FileRoutesByTo {
   '/settings/projects': typeof AppSettingsProjectsRoute
   '/settings/secrets': typeof AppSettingsSecretsRoute
   '/settings/users': typeof AppSettingsUsersRoute
-  '/skills/marketplaces': typeof AppSkillsMarketplacesRoute
-  '/skills/plugins': typeof AppSkillsPluginsRoute
   '/tasks/$key': typeof AppTasksKeyRoute
   '/tasks/new': typeof AppTasksNewRoute
   '/templates/$name': typeof AppTemplatesNameRoute
-  '/templates/images': typeof AppTemplatesImagesRoute
   '/templates/new': typeof AppTemplatesNewRoute
   '/agents': typeof AppAgentsIndexRoute
   '/schedules': typeof AppSchedulesIndexRoute
@@ -307,12 +283,9 @@ export interface FileRoutesById {
   '/_app/settings/projects': typeof AppSettingsProjectsRoute
   '/_app/settings/secrets': typeof AppSettingsSecretsRoute
   '/_app/settings/users': typeof AppSettingsUsersRoute
-  '/_app/skills/marketplaces': typeof AppSkillsMarketplacesRoute
-  '/_app/skills/plugins': typeof AppSkillsPluginsRoute
   '/_app/tasks/$key': typeof AppTasksKeyRoute
   '/_app/tasks/new': typeof AppTasksNewRoute
   '/_app/templates/$name': typeof AppTemplatesNameRoute
-  '/_app/templates/images': typeof AppTemplatesImagesRoute
   '/_app/templates/new': typeof AppTemplatesNewRoute
   '/_app/agents/': typeof AppAgentsIndexRoute
   '/_app/schedules/': typeof AppSchedulesIndexRoute
@@ -345,12 +318,9 @@ export interface FileRouteTypes {
     | '/settings/projects'
     | '/settings/secrets'
     | '/settings/users'
-    | '/skills/marketplaces'
-    | '/skills/plugins'
     | '/tasks/$key'
     | '/tasks/new'
     | '/templates/$name'
-    | '/templates/images'
     | '/templates/new'
     | '/agents/'
     | '/schedules/'
@@ -378,12 +348,9 @@ export interface FileRouteTypes {
     | '/settings/projects'
     | '/settings/secrets'
     | '/settings/users'
-    | '/skills/marketplaces'
-    | '/skills/plugins'
     | '/tasks/$key'
     | '/tasks/new'
     | '/templates/$name'
-    | '/templates/images'
     | '/templates/new'
     | '/agents'
     | '/schedules'
@@ -415,12 +382,9 @@ export interface FileRouteTypes {
     | '/_app/settings/projects'
     | '/_app/settings/secrets'
     | '/_app/settings/users'
-    | '/_app/skills/marketplaces'
-    | '/_app/skills/plugins'
     | '/_app/tasks/$key'
     | '/_app/tasks/new'
     | '/_app/templates/$name'
-    | '/_app/templates/images'
     | '/_app/templates/new'
     | '/_app/agents/'
     | '/_app/schedules/'
@@ -584,20 +548,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSkillsIndexRouteImport
       parentRoute: typeof AppSkillsRoute
     }
-    '/_app/skills/marketplaces': {
-      id: '/_app/skills/marketplaces'
-      path: '/marketplaces'
-      fullPath: '/skills/marketplaces'
-      preLoaderRoute: typeof AppSkillsMarketplacesRouteImport
-      parentRoute: typeof AppSkillsRoute
-    }
-    '/_app/skills/plugins': {
-      id: '/_app/skills/plugins'
-      path: '/plugins'
-      fullPath: '/skills/plugins'
-      preLoaderRoute: typeof AppSkillsPluginsRouteImport
-      parentRoute: typeof AppSkillsRoute
-    }
     '/_app/tasks/': {
       id: '/_app/tasks/'
       path: '/tasks'
@@ -631,13 +581,6 @@ declare module '@tanstack/react-router' {
       path: '/templates/$name'
       fullPath: '/templates/$name'
       preLoaderRoute: typeof AppTemplatesNameRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/templates/images': {
-      id: '/_app/templates/images'
-      path: '/templates/images'
-      fullPath: '/templates/images'
-      preLoaderRoute: typeof AppTemplatesImagesRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/templates/new': {
@@ -715,14 +658,10 @@ const AppSettingsRouteWithChildren = AppSettingsRoute._addFileChildren(
 )
 
 interface AppSkillsRouteChildren {
-  AppSkillsMarketplacesRoute: typeof AppSkillsMarketplacesRoute
-  AppSkillsPluginsRoute: typeof AppSkillsPluginsRoute
   AppSkillsIndexRoute: typeof AppSkillsIndexRoute
 }
 
 const AppSkillsRouteChildren: AppSkillsRouteChildren = {
-  AppSkillsMarketplacesRoute: AppSkillsMarketplacesRoute,
-  AppSkillsPluginsRoute: AppSkillsPluginsRoute,
   AppSkillsIndexRoute: AppSkillsIndexRoute,
 }
 
@@ -758,7 +697,6 @@ interface AppRouteChildren {
   AppTasksKeyRoute: typeof AppTasksKeyRoute
   AppTasksNewRoute: typeof AppTasksNewRoute
   AppTemplatesNameRoute: typeof AppTemplatesNameRoute
-  AppTemplatesImagesRoute: typeof AppTemplatesImagesRoute
   AppTemplatesNewRoute: typeof AppTemplatesNewRoute
   AppAgentsIndexRoute: typeof AppAgentsIndexRoute
   AppSchedulesIndexRoute: typeof AppSchedulesIndexRoute
@@ -781,7 +719,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppTasksKeyRoute: AppTasksKeyRoute,
   AppTasksNewRoute: AppTasksNewRoute,
   AppTemplatesNameRoute: AppTemplatesNameRoute,
-  AppTemplatesImagesRoute: AppTemplatesImagesRoute,
   AppTemplatesNewRoute: AppTemplatesNewRoute,
   AppAgentsIndexRoute: AppAgentsIndexRoute,
   AppSchedulesIndexRoute: AppSchedulesIndexRoute,

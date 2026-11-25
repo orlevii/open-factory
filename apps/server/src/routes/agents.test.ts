@@ -12,7 +12,7 @@ import { AgentEndedError } from "../agents/message-cancel.ts";
 import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
+import { claimTestHandleSql, seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { png } from "../uploads/fixtures.ts";
 
@@ -56,11 +56,10 @@ test("list and detail", async () => {
   expect(list.json()).toEqual({
     agents: [expect.objectContaining({ slug: "dev", status: "hibernated", runtime: "local" })],
     more: false,
-    running: { count: 0, max: 8 },
+    running: { count: 0 },
   });
   expect((await req("GET", "/api/agents/dev")).json()).toEqual({
     agent: expect.objectContaining({ slug: "dev" }),
-    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 0,
   });
@@ -211,13 +210,44 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
       slug: "boss",
       displayName: "Boss",
       description: "",
-      reportsTo: null,
+      reportsTo: "or4",
       credential: "work",
     };
 
     const created = await call("POST", "/api/agents", body);
     expect(created.statusCode).toBe(201);
-    expect(created.json().agent).toMatchObject({ slug: "boss", credential: "work" });
+    expect(created.json().agent).toMatchObject({
+      slug: "boss",
+      credential: "work",
+      reportsTo: { kind: "user", handle: "or4" },
+    });
+    // The manager is required, and has to be an agent or a person who exists: a 400 on the field, nothing created.
+    for (const reportsTo of [null, "", "ghost"]) {
+      const refused = await call("POST", "/api/agents", { ...body, slug: "nobody", reportsTo });
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json().error.fields).toHaveProperty("reportsTo");
+    }
+    expect((await call("GET", "/api/agents/nobody")).statusCode).toBe(404);
+    // A disabled person and a spawned agent are not managers either: 400 on the field.
+    await seedTestUser(t2.db, { handle: "off", name: "Off" });
+    await t2.sql`update users set disabled_at = now() where handle = 'off'`;
+    await t2.sql`insert into handles (handle, kind) values ('boss-kid1', 'agent')`;
+    await t2.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
+      select 'boss-kid1-id', 'boss-kid1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id
+      from agents where slug = 'boss'`;
+    for (const reportsTo of ["off", "boss-kid1"]) {
+      const refused = await call("POST", "/api/agents", { ...body, slug: "nobody", reportsTo });
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json().error.fields).toHaveProperty("reportsTo");
+      const patch = await call("PATCH", "/api/agents/boss", { reportsTo });
+      expect(patch.statusCode).toBe(400);
+      expect(patch.json().error.fields).toHaveProperty("reportsTo");
+    }
+    expect((await call("PATCH", "/api/agents/boss", { reportsTo: "boss" })).statusCode).toBe(400);
+    await t2.sql`delete from agents where id = 'boss-kid1-id'`;
+    // A leading @ is fine on an edit too.
+    const moved = await call("PATCH", "/api/agents/boss", { reportsTo: "@or4" });
+    expect(moved.json().agent.reportsTo).toEqual({ kind: "user", handle: "or4" });
     const bad = await call("POST", "/api/agents", { ...body, slug: "Bad Slug" });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error.fields).toHaveProperty("slug");
@@ -336,7 +366,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
         slug: "boss-aa11",
         status: "terminated",
         depth: 0,
-        reportsTo: "boss",
+        reportsTo: { kind: "agent", handle: "boss" },
       }),
     ]);
     expect(ended.more).toBe(false);
@@ -480,8 +510,8 @@ describe("S7: the ended list is bounded", () => {
   const archived = async (n: number, from = 0) => {
     await s.sql`insert into handles (handle, kind)
       select 'old-' || i, 'agent' from generate_series(${from}::int, ${from + n - 1}::int) i on conflict do nothing`;
-    return s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, archived_at)
-      select gen_random_uuid(), 'old-' || i, 'Old', template, config, runtime, credential_id,
+    return s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user, archived_at)
+      select gen_random_uuid(), 'old-' || i, 'Old', template, config, runtime, credential_id, reports_to_user,
              now() - make_interval(hours => 1 + i)
       from agents, generate_series(${from}::int, ${from + n - 1}::int) i where slug = 'boss'`;
   };
@@ -531,13 +561,12 @@ describe("S7: the ended list is bounded", () => {
       workspace: s.app.workspace,
       lock: s.app.workspaceLock,
       runtimes: s.app.runtimes,
-      resolver: s.app.resolver,
       log: s.app.log,
       router: s.app.router,
       store: s.app.store,
       bus: s.app.bus,
       configChanges: s.app.configChanges,
-      policy: new PolicyInputs({ db, library: s.app.library }),
+      policy: new PolicyInputs({ db }),
     });
     for (const ended of ["exclude", "only"] as const) {
       queries.length = 0;

@@ -19,7 +19,7 @@ export function NumberField({
   unit,
   fallback,
 }: {
-  field: "warmWindow" | "maxLiveSpawns";
+  field: "warmWindow";
   label: string;
   /** "minutes": the help reads "From template: 70 minutes". */
   unit?: string;

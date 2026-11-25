@@ -157,6 +157,7 @@ describe("secondary buttons", () => {
     "features/session/agent-details.tsx": 1, // Edit agent: the details footer's standalone action
     "components/composer/stop-button.tsx": 1, // Stop: the composer's one control on the running turn (U3 §6.1)
     "features/settings/credentials-section.tsx": 1, // Verify
+    "features/settings/forms/form-frame.tsx": 1, // an inline prerequisite's submit: secondary, so Create agent stays the one primary
     "features/tasks/task-detail.tsx": 1, // Edit beside the title
     "features/tasks/task-list.tsx": 1, // Load more
     "features/tasks/status-menu.tsx": 1, // a select-like field trigger, not an action
@@ -225,10 +226,6 @@ describe("hit areas (U4 §11.3)", () => {
   const FORM: [string, string][] = [
     ["features/agents/address-line.tsx", "Change"],
     ["features/agents/template-field.tsx", "New template"],
-    ["features/agents/template-field.tsx", "Add secret"],
-    ["features/agents/new-agent-sheet.tsx", "Add credential"],
-    ["features/agents/edit-agent-sheet.tsx", "Add credential"],
-    ["features/agents/project-grant-picker.tsx", "Add project"],
     ["features/schedules/repeats-field.tsx", "Cron help"],
     ["features/sheets/more-options.tsx", "More options"],
     ["features/sheets/form-footer.tsx", "Discard"],

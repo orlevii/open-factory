@@ -9,7 +9,6 @@ export const CONFIG_FIELD_MSG = {
   modelDash: MODEL_MSG.dash,
   enterModel: "Enter a model.",
   warmWindowRange: "Use 1 to 1,440 minutes.",
-  maxLiveSpawnsRange: "Use 0 to 50.",
   envName: CONFIG_MSG.envName,
   factoryEnv: CONFIG_MSG.factoryEnv,
   factoryServer: CONFIG_MSG.factoryServer,
@@ -21,15 +20,10 @@ export const CONFIG_FIELD_MSG = {
   headerName: "Use a valid header name.",
 } as const;
 
-/** Form-level messages the page shows (I4 rules: at most 40 characters). */
-export const CONFIG_FORM_MSG = {
-  /** Save while an MCP server editor is open (`onEditorOpenChange(true)`): its edits aren't in the draft yet. */
-  finishServer: "Finish editing the server first.",
-} as const;
-
 /** Labels and lines the spec fixes verbatim. Not field messages, so not bound by the 40-character rule. */
 export const CONFIG_COPY = {
-  inheritAgent: "Inherit from template",
+  /** An agent inherit option when no template doc is known; with one it names the value: Template's (opus). */
+  inheritAgent: "Template's",
   inheritTemplate: "Claude Code default",
   aliases: "Aliases",
   modelIds: "Model ids",
@@ -39,33 +33,16 @@ export const CONFIG_COPY = {
   showInRaw: "Show in Raw JSON",
   showFewer: "Show fewer",
   issuesHeading: "Issues the form can't show",
-  rulesHelp: "Like Bash(git push:*).",
-  notesHelp: "Facts that help auto mode decide, like 'deploys go through CI'.",
   templateSkill: "Template skill",
   allSkillsAdded: "Every skill is already added.",
   noSkills: "No skills in Skills yet.",
-  addPlugin: "Add plugin",
-  allPluginsAdded: "Every plugin is already added.",
-  addMarketplacesInSkills: "Add marketplaces in Skills",
-  pinned: "Pinned",
-  changePin: "Change pin",
-  newerInSkills: "Newer in Skills:",
-  localLive: "Local folder, live",
-  useLatestItem: "Use Latest, auto-update…",
-  useLatest: "Use Latest",
-  view: "View",
-  notReadYet: "Contents not read yet",
-  couldntLoadDiff: "Couldn't load what changes.",
-  retry: "Retry",
-  noChangesShown: "Nothing in what Skills can read changes.",
-  pinningFromLatest:
-    "Latest follows whatever the marketplace holds now, so there is nothing to compare.",
   insertSecret: "Insert secret",
   secretsLoading: "Loading…",
   secretsLoadError: "Couldn't load secrets.",
   noSecrets: "No secrets yet.",
   addSecret: "Add secret",
   addServer: "Add server",
+  applyChanges: "Apply changes",
   override: "Override",
   overridden: "Replaced by this agent",
   kindCommand: "Command",
@@ -73,41 +50,7 @@ export const CONFIG_COPY = {
   urlUnreadable: "URL not shown",
   argsHelp: "One per line.",
   envHelp: "Saved as text in settings.json. Not for secrets.",
-  done: "Done",
   cancel: "Cancel",
-} as const;
-
-/** The Plugins picker's lines (spec §10.5). */
-export const PLUGIN_COPY = {
-  noPlugins: (template: string) => `No plugins in ${template}'s marketplaces.`,
-  onlyFrom: (template: string) =>
-    `Only plugins from ${template}'s marketplaces. Add more in the template.`,
-  leftOut: (n: number) =>
-    `${n} ${n === 1 ? "plugin" : "plugins"} can't be used here: refused source.`,
-  cantPin: (key: string, mkt: string) =>
-    `${key} can't be pinned. Switch ${mkt} to Latest to add it.`,
-  tagOnly: (mkt: string) =>
-    `${mkt} can only be pinned to a tag. Fetch a tag in Skills, or use Latest.`,
-  notRead: (mkt: string) => `Skills hasn't read ${mkt} yet.`,
-  cantPinOption: "Can't be pinned",
-  pinTo: (ref: string, newest: boolean) => `Pin to ${ref}${newest ? " (newest in Skills)" : ""}…`,
-  pinHeading: (mkt: string, ref: string) => `Pin ${mkt} to ${ref}`,
-  pinPrimary: (ref: string) => `Pin to ${ref}`,
-  latestHeading: (mkt: string) => `Use Latest for ${mkt}`,
-  latestAdd: "Use Latest and add",
-  latestRisk: (mkt: string) =>
-    `Latest runs ${mkt}'s newest code at each restart, without review, with each agent's workspace and credentials in reach.`,
-  running: (version: string) => `running ${version}`,
-  needs: (n: number) => `Needs ${n} from the image`,
-  remove: (key: string) => `Remove ${key}`,
-  cantPinFirst: (key: string, mkt: string) =>
-    `${key} can't be pinned. Add another ${mkt} plugin first, then switch ${mkt} to Latest.`,
-  noPluginsInSkills: "No plugins in Skills yet.",
-  theTemplate: "the template",
-  runsCodeChanged: "Runs code changed",
-  loadingDiff: "Loading what changes",
-  notInCatalog: (at: string) => `Not in the catalog at ${at}`,
-  newSince: (at: string) => `New since ${at}`,
 } as const;
 
 /** "Adds GH_TOKEN to this agent's secrets." (spec §12.2), shown under the value an Insert secret filled. */
@@ -153,16 +96,6 @@ export const CONFIG_PAGE_COPY = {
   spawnedLead: "Spawned agents use their template's configuration",
   spawnedPlus: ", plus",
   spawnedLimits: "'s deny rules and secret limits.",
-  /** Edit agent's model summary (spec §12.6): "Model opus (this agent) · Open configuration". */
-  model: "Model",
-  modelDefault: "Claude Code default",
-} as const;
-
-/** Where the model comes from, after its value in Edit agent's summary. */
-export const MODEL_SOURCE_COPY = {
-  agent: " (this agent)",
-  template: " (from template)",
-  default: "",
 } as const;
 
 /** "Saved. Restarts @ana when idle.": only when the restart notice would have shown (running, with changes). */
@@ -209,3 +142,20 @@ export const openFileLabel = (file: string) => `Open ${file}`;
 /** On the form while a config file tab has unsaved edits (R2). */
 export const fileHasEdits = (file: string) =>
   `${file} has unsaved edits. Save or discard them first.`;
+
+/** The Runtime section's notes (spec §2.3). The wording of the local-runtime reason matches Agent details. */
+export const RUNTIME_COPY = {
+  runtimeNote: "Applies to new agents",
+  localDisabled: "Disabled on this factory: set `FACTORY_ALLOW_LOCAL_RUNTIME` on the server",
+  imageNote: "Applies at each agent's next start",
+  imageNotUsed: "Not used by Local agents",
+  permissionNote: "Applies at each agent's next start",
+  bypassNeedsDocker: "Bypass needs Docker",
+  switchedToAuto: "Set to Auto: Bypass needs Docker",
+} as const;
+
+/** Empty uses the factory's default image: named once it is known, never as a placeholder. */
+export const imageNote = (defaultImage: string | undefined) =>
+  defaultImage
+    ? `${RUNTIME_COPY.imageNote}. Empty uses \`${defaultImage}\``
+    : RUNTIME_COPY.imageNote;

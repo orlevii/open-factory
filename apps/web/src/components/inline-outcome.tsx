@@ -1,5 +1,6 @@
 import { CircleAlert, CircleCheck } from "lucide-react";
 import { type ReactNode, useEffect, useRef } from "react";
+import { ROW_GRID } from "@/components/row-grid";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -14,6 +15,7 @@ export function InlineOutcome({
   undo,
   focusOnMount,
   focusKey,
+  inRows,
 }: {
   tone?: "success" | "error" | "pending";
   children?: ReactNode;
@@ -22,6 +24,8 @@ export function InlineOutcome({
   /** Each new non-undefined value moves focus to Undo, or to the line itself: for an outcome
    *  that replaced the control that had focus. */
   focusKey?: unknown;
+  /** On the inbox rows' grid: the icon in the dot column, the text aligned with the rows' text. */
+  inRows?: boolean;
 }) {
   const lineRef = useRef<HTMLDivElement>(null);
   const undoRef = useRef<HTMLButtonElement>(null);
@@ -35,28 +39,42 @@ export function InlineOutcome({
     lastKey.current = focusKey;
     if (focusKey !== undefined) (undoRef.current ?? lineRef.current)?.focus();
   }, [focusKey]);
+  const mark = inRows ? "justify-self-center" : "";
+  const text = (
+    <span className={`min-w-0 ${tone === "error" ? "text-destructive" : "text-muted-foreground"}`}>
+      {children}
+    </span>
+  );
+  const undoButton = undo && (
+    <Button ref={undoRef} type="button" variant="ghost" size="xs" onClick={undo}>
+      Undo
+    </Button>
+  );
   const line = tone && (
     <div
       ref={lineRef}
       tabIndex={-1}
-      className="flex items-center gap-x-1.5 text-[0.8125rem] leading-[1.125rem] outline-none" // ui-contract:allow programmatic focus target, not interactive
+      className={`${inRows ? `grid ${ROW_GRID} items-center` : "flex items-center gap-x-1.5"} text-[0.8125rem] leading-[1.125rem] outline-none`} // ui-contract:allow programmatic focus target, not interactive
     >
       {tone === "success" && (
-        <CircleCheck aria-hidden="true" className="size-3.5 shrink-0 text-success" />
+        <CircleCheck aria-hidden="true" className={`size-3.5 shrink-0 text-success ${mark}`} />
       )}
       {tone === "error" && (
-        <CircleAlert aria-hidden="true" className="size-3.5 shrink-0 text-destructive" />
+        <CircleAlert aria-hidden="true" className={`size-3.5 shrink-0 text-destructive ${mark}`} />
       )}
-      {tone === "pending" && <Spinner size="text" className="shrink-0 text-muted-foreground" />}
-      <span
-        className={`min-w-0 ${tone === "error" ? "text-destructive" : "text-muted-foreground"}`}
-      >
-        {children}
-      </span>
-      {undo && (
-        <Button ref={undoRef} type="button" variant="ghost" size="xs" onClick={undo}>
-          Undo
-        </Button>
+      {tone === "pending" && (
+        <Spinner size="text" className={`shrink-0 text-muted-foreground ${mark}`} />
+      )}
+      {inRows ? (
+        <div className="flex min-w-0 items-center gap-x-1.5">
+          {text}
+          {undoButton}
+        </div>
+      ) : (
+        <>
+          {text}
+          {undoButton}
+        </>
       )}
     </div>
   );

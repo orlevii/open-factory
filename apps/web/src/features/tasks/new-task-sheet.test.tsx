@@ -28,7 +28,7 @@ const agents =
         agentSummary({ slug: s, displayName: s[0]?.toUpperCase() + s.slice(1) }),
       ),
       more: false,
-      running: { count: 0, max: 8 },
+      running: { count: 0 },
     });
 /** Live agents, and the ended list (`?ended=only`) apart. */
 const liveEnded = (live: string[], ended: string[]) => (_b: unknown, url?: string) =>

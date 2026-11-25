@@ -31,7 +31,8 @@ export async function comboOptionNames(trigger: HTMLElement): Promise<string[]> 
   await screen.findByRole("listbox");
   const names = Array.from(document.querySelectorAll("[role=option]")).map((o) => {
     const copy = o.cloneNode(true) as HTMLElement;
-    for (const sr of copy.querySelectorAll(".sr-only")) sr.remove();
+    // The ", selected" mark and a human's initials: neither is part of the label.
+    for (const sr of copy.querySelectorAll(".sr-only, [data-human-avatar]")) sr.remove();
     return (copy.textContent ?? "").replace(/\s+/g, " ").trim();
   });
   await userEvent.keyboard("{Escape}");

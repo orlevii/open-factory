@@ -54,10 +54,3 @@ test("bypass uses --dangerously-skip-permissions and no --permission-mode", () =
   expect(a).not.toContain("--permission-mode");
   expect(a).toContain("--include-partial-messages");
 });
-
-test("--settings carries the inline JSON only when settingsJson is set", () => {
-  const json = '{"enabledPlugins":{"p@m":true}}';
-  const withSettings = buildClaudeArgs(spec({ settingsJson: json }), {});
-  expect(withSettings.slice(withSettings.indexOf("--settings"))).toEqual(["--settings", json]);
-  expect(buildClaudeArgs(spec(), {})).not.toContain("--settings");
-});

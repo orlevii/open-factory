@@ -26,12 +26,12 @@ afterEach(() => {
 const frame = (m: ServerMessage) => act(() => h.opts?.onMessage?.(m));
 
 const settings = (o: Partial<FactorySettingsDto> = {}): FactorySettingsDto => ({
-  maxRunningAgents: 8,
-  defaultWarmWindowMinutes: 70,
+  warmWindowMinutes: 70,
   memberUpdateDebounceSeconds: 30,
   loopGuardMessages: 10,
   loopGuardWindowMinutes: 10,
   allowLocalRuntime: false,
+  defaultImage: "ghcr.io/x/base:latest",
   updatedAt: null,
   updatedBy: null,
   ...o,
@@ -60,7 +60,7 @@ function world(extra: Record<string, Handler> = {}, initial = settings()) {
           turns: 0,
         },
       }),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 2, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 2 } }),
     "GET /api/settings/factory": () => json(state.settings),
     "PATCH /api/settings/factory": (body) => {
       state.settings = { ...state.settings, ...(body as Partial<FactorySettingsDto>) };
@@ -75,8 +75,6 @@ const factory = () => screen.findByRole("region", { name: "Factory" });
 const field = async (label: string) =>
   within(await factory()).findByLabelText<HTMLInputElement>(label);
 
-const CAP_HINT =
-  "Agents that can run at once (1–64). Lowering it never interrupts a turn; idle agents may hibernate sooner.";
 const WARM_HINT =
   "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes.";
 const LIMIT_HINT =
@@ -84,23 +82,20 @@ const LIMIT_HINT =
 const WINDOW_HINT =
   "How far back the limit counts. A human message to either agent starts a new window (1–1440 min).";
 const DEBOUNCE_HINT =
-  "How long to collect status changes from an agent's reports before telling it (0–86400 s). 0 sends each change at once.";
+  "How long to collect status changes from an agent's reports before telling it (0–86400 seconds). 0 delivers each update at once.";
 
-test("the concurrency, warm window and debounce fields carry their hints and suffixes, with the loaded values", async () => {
+test("the warm window, debounce and loop guard fields carry their hints and suffixes, with the loaded values", async () => {
   world();
   renderApp("/settings/factory", alice);
-  const cap = await field("Concurrency cap");
   const warm = await field("Default warm window");
   const debounce = await field("Member-update debounce");
-  await waitFor(() => expect(cap).toHaveValue(8));
-  expect(warm).toHaveValue(70);
+  await waitFor(() => expect(warm).toHaveValue(70));
   expect(debounce).toHaveValue(30);
-  expect(cap).toHaveAccessibleDescription(CAP_HINT);
   expect(warm).toHaveAccessibleDescription(WARM_HINT);
   expect(debounce).toHaveAccessibleDescription(DEBOUNCE_HINT);
   const region = await factory();
   expect(within(region).getAllByText("min")).toHaveLength(2);
-  expect(within(region).getByText("s")).toBeInTheDocument();
+  expect(within(region).getByText("seconds")).toBeInTheDocument();
 });
 
 test("the loop guard fields carry their labels, suffixes and hints, with the loaded values", async () => {
@@ -128,15 +123,6 @@ test("the loop guard window validates on blur with the shared bounds sentence", 
   expect(window).toHaveAttribute("aria-invalid", "true");
 });
 
-test("the running count is live from the supervisor frame", async () => {
-  world();
-  renderApp("/settings/factory", alice);
-  const region = await factory();
-  expect(await within(region).findByText("2 of 8 running")).toBeInTheDocument();
-  await frame({ type: "supervisor", running: 3, max: 8 });
-  expect(await within(region).findByText("3 of 8 running")).toBeInTheDocument();
-});
-
 test.each([
   [false, "Not allowed"],
   [true, "Allowed"],
@@ -158,21 +144,21 @@ test.each([
   },
 );
 
-test("blur validates the cap; editing clears the error", async () => {
+test("blur validates the warm window; editing clears the error", async () => {
   world();
   const user = userEvent.setup();
   renderApp("/settings/factory", alice);
-  const cap = await field("Concurrency cap");
-  await waitFor(() => expect(cap).toHaveValue(8));
-  await user.clear(cap);
-  await user.type(cap, "0");
+  const warm = await field("Default warm window");
+  await waitFor(() => expect(warm).toHaveValue(70));
+  await user.clear(warm);
+  await user.type(warm, "0");
   // Never while typing.
-  expect(screen.queryByText("Enter a whole number from 1 to 64.")).not.toBeInTheDocument();
+  expect(screen.queryByText("Enter a whole number from 1 to 1440.")).not.toBeInTheDocument();
   await user.tab();
-  expect(cap).toHaveAccessibleDescription("Enter a whole number from 1 to 64.");
-  expect(cap).toHaveAttribute("aria-invalid", "true");
-  await user.type(cap, "5");
-  expect(cap).toHaveAccessibleDescription(CAP_HINT);
+  expect(warm).toHaveAccessibleDescription("Enter a whole number from 1 to 1440.");
+  expect(warm).toHaveAttribute("aria-invalid", "true");
+  await user.type(warm, "5");
+  expect(warm).toHaveAccessibleDescription(WARM_HINT);
 });
 
 test("Save validates first and focuses the invalid field without sending", async () => {
@@ -204,7 +190,7 @@ test("Save sends only the changed fields and shows Saved.", async () => {
   const save = within(region).getByRole("button", { name: "Save" });
   expect(saved.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(api.calls.filter((c) => c.method === "PATCH").map((c) => c.body)).toEqual([
-    { defaultWarmWindowMinutes: 120 },
+    { warmWindowMinutes: 120 },
   ]);
   expect(warm).toHaveValue(120);
   // Our own save's frame is not a conflict.
@@ -216,25 +202,6 @@ test("Save sends only the changed fields and shows Saved.", async () => {
   // Editing again clears the outcome.
   await user.type(warm, "1");
   expect(within(region).queryByText("Saved.")).not.toBeInTheDocument();
-});
-
-test("blur on an unchanged number field shows nothing, even when its value fails the check", async () => {
-  // A stored cap outside today's bounds (1–64): only a change makes leaving the field validate.
-  world({}, settings({ maxRunningAgents: 100 }));
-  const user = userEvent.setup();
-  renderApp("/settings/factory", alice);
-  const cap = await field("Concurrency cap");
-  await waitFor(() => expect(cap).toHaveValue(100));
-  await user.click(cap);
-  await user.tab();
-  expect(cap).not.toHaveAttribute("aria-invalid");
-  expect(cap).toHaveAccessibleDescription(CAP_HINT);
-  // The same value typed back in is a change: now the leave flags it.
-  await user.clear(cap);
-  await user.type(cap, "100");
-  await user.tab();
-  expect(cap).toHaveAttribute("aria-invalid", "true");
-  expect(cap).not.toHaveAccessibleDescription(CAP_HINT);
 });
 
 test("a failed save says so in an alert", async () => {
@@ -259,8 +226,8 @@ test("a server 400 maps to its field", async () => {
         {
           error: {
             code: "invalid_settings",
-            message: "Enter a whole number from 1 to 64.",
-            fields: { maxRunningAgents: "Enter a whole number from 1 to 64." },
+            message: "Enter a whole number from 1 to 1440.",
+            fields: { warmWindowMinutes: "Enter a whole number from 1 to 1440." },
           },
         },
         400,
@@ -268,36 +235,36 @@ test("a server 400 maps to its field", async () => {
   });
   const user = userEvent.setup();
   renderApp("/settings/factory", alice);
-  const cap = await field("Concurrency cap");
-  await waitFor(() => expect(cap).toHaveValue(8));
-  await user.clear(cap);
-  await user.type(cap, "12");
+  const warm = await field("Default warm window");
+  await waitFor(() => expect(warm).toHaveValue(70));
+  await user.clear(warm);
+  await user.type(warm, "120");
   await user.click(within(await factory()).getByRole("button", { name: "Save" }));
   await waitFor(() =>
-    expect(cap).toHaveAccessibleDescription("Enter a whole number from 1 to 64."),
+    expect(warm).toHaveAccessibleDescription("Enter a whole number from 1 to 1440."),
   );
-  await waitFor(() => expect(cap).toHaveFocus());
+  await waitFor(() => expect(warm).toHaveFocus());
 });
 
 test("a settings_changed frame while dirty shows the conflict notice; Reload takes the new values", async () => {
   const { state } = world();
   const user = userEvent.setup();
   renderApp("/settings/factory", alice);
-  const cap = await field("Concurrency cap");
-  await waitFor(() => expect(cap).toHaveValue(8));
-  await user.clear(cap);
-  await user.type(cap, "10");
-  state.settings = settings({ maxRunningAgents: 12, defaultWarmWindowMinutes: 90 });
+  const warm = await field("Default warm window");
+  await waitFor(() => expect(warm).toHaveValue(70));
+  await user.clear(warm);
+  await user.type(warm, "100");
+  state.settings = settings({ warmWindowMinutes: 90, memberUpdateDebounceSeconds: 5 });
   await frame({ type: "settings_changed" });
   const region = await factory();
   expect(
     await within(region).findByText("These settings were changed elsewhere."),
   ).toBeInTheDocument();
   // The edit is kept until Reload.
-  expect(cap).toHaveValue(10);
+  expect(warm).toHaveValue(100);
   await user.click(within(region).getByRole("button", { name: "Reload" }));
-  expect(cap).toHaveValue(12);
-  expect(await field("Default warm window")).toHaveValue(90);
+  expect(warm).toHaveValue(90);
+  expect(await field("Member-update debounce")).toHaveValue(5);
   expect(screen.queryByText("These settings were changed elsewhere.")).not.toBeInTheDocument();
 });
 
@@ -333,7 +300,7 @@ test("our own save's echo arriving before the PATCH resolves is no conflict", as
   // The refetch lands (with our saved values) while the PATCH is still pending.
   await waitFor(() =>
     expect(queryClient.getQueryData(factorySettingsQueryOptions.queryKey)).toMatchObject({
-      defaultWarmWindowMinutes: 120,
+      warmWindowMinutes: 120,
     }),
   );
   await act(async () => release());
@@ -347,11 +314,11 @@ test("the conflict notice clears when the server goes back to the loaded values"
   const { state } = world();
   const user = userEvent.setup();
   renderApp("/settings/factory", alice);
-  const cap = await field("Concurrency cap");
-  await waitFor(() => expect(cap).toHaveValue(8));
-  await user.clear(cap);
-  await user.type(cap, "10");
-  state.settings = settings({ maxRunningAgents: 12 });
+  const warm = await field("Default warm window");
+  await waitFor(() => expect(warm).toHaveValue(70));
+  await user.clear(warm);
+  await user.type(warm, "100");
+  state.settings = settings({ warmWindowMinutes: 90 });
   await frame({ type: "settings_changed" });
   const region = await factory();
   expect(
@@ -364,17 +331,17 @@ test("the conflict notice clears when the server goes back to the loaded values"
       within(region).queryByText("These settings were changed elsewhere."),
     ).not.toBeInTheDocument(),
   );
-  expect(cap).toHaveValue(10);
+  expect(warm).toHaveValue(100);
 });
 
 test("a settings_changed frame on a clean form just takes the new values", async () => {
   const { state } = world();
   renderApp("/settings/factory", alice);
-  const cap = await field("Concurrency cap");
-  await waitFor(() => expect(cap).toHaveValue(8));
-  state.settings = settings({ maxRunningAgents: 4 });
+  const warm = await field("Default warm window");
+  await waitFor(() => expect(warm).toHaveValue(70));
+  state.settings = settings({ warmWindowMinutes: 45 });
   await frame({ type: "settings_changed" });
-  await waitFor(() => expect(cap).toHaveValue(4));
+  await waitFor(() => expect(warm).toHaveValue(45));
   expect(screen.queryByText("These settings were changed elsewhere.")).not.toBeInTheDocument();
 });
 

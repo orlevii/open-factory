@@ -7,6 +7,7 @@ import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { ApiError } from "../errors.ts";
+import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import type { ConfigService } from "./config-service.ts";
 import { OrgRefusedError } from "./errors.ts";
@@ -17,7 +18,7 @@ let home: string;
 const human: Actor = { kind: "human", handle: "or" };
 let hr: Actor;
 
-function writeTemplate(name: string, runtime: "docker" | "local", settings: object = {}) {
+function writeTemplate(name: string, runtime: "docker" | "local") {
   const d = path.join(home, "templates", name);
   mkdirSync(d, { recursive: true });
   writeFileSync(
@@ -25,14 +26,14 @@ function writeTemplate(name: string, runtime: "docker" | "local", settings: obje
     `name: ${name}\ndisplay_name: ${name}\nruntime: ${runtime}\n`,
   );
   writeFileSync(path.join(d, "AGENTS.md"), `# ${name}\n`);
-  writeFileSync(path.join(d, "settings.json"), JSON.stringify(settings));
+  writeFileSync(path.join(d, "settings.json"), JSON.stringify({}));
 }
 const body = (slug: string, template = "dev") => ({
   template,
   slug,
   displayName: slug,
   description: "",
-  reportsTo: null,
+  reportsTo: "or",
   credential: "work",
 });
 const rowOf = async (slug: string) => {
@@ -49,6 +50,7 @@ beforeAll(async () => {
   t = await makeTestApp({
     env: { FACTORY_CLAUDE_BIN: createFakeClaude({ scenario: "reply" }).bin },
   });
+  await seedTestUser(t.db);
   home = t.factoryHome;
   cfg = t.app.configs;
   const credId = randomUUID();
@@ -58,19 +60,7 @@ beforeAll(async () => {
     kind: "oauth_token",
     valueEnc: t.app.vault.seal("tok", `credentials:${credId}`),
   });
-  await t.db.insert(schema.marketplaces).values({
-    name: "acme",
-    source: { source: "github", repo: "acme/plugins" },
-    state: "ready",
-    commit: "a".repeat(40),
-    tags: {},
-    startedAt: new Date(),
-    addedBy: "@or",
-    addedAt: new Date(),
-  });
-  writeTemplate("dev", "docker", {
-    extraKnownMarketplaces: { acme: { source: { source: "github", repo: "acme/plugins" } } },
-  });
+  writeTemplate("dev", "docker");
   writeTemplate("localtpl", "local");
   const svc = t.app.agents;
   await svc.create(body("hr-bot"), human);
@@ -114,20 +104,14 @@ test("an agent can't remove an overlay deny rule, and nothing is written", async
   await t.db.update(schema.agents).set({ config: {} }).where(eq(schema.agents.slug, "dev"));
 });
 
-test("an agent can't enable a plugin from a marketplace the template follows at Latest", async () => {
-  const overlay = { settings: { enabledPlugins: { "x@acme": true } } };
-  const err = await refusal(cfg.saveOverlay("dev", overlay, await versionOf("dev"), hr));
-  expect(err).toMatchObject({ status: 400, code: "invalid_config" });
-  expect(JSON.stringify(err.extra)).toContain(
-    "Plugin x@acme follows the latest acme; only a human can add it.",
-  );
-  expect((await rowOf("dev")).config).toEqual({});
-});
-
 test("a spawned target is refused: Spawned agents can't be edited", async () => {
   await t.db
     .update(schema.agents)
-    .set({ kind: "ephemeral", reportsTo: hr.kind === "agent" ? hr.id : null })
+    .set({
+      kind: "ephemeral",
+      reportsTo: hr.kind === "agent" ? hr.id : null,
+      reportsToUser: null,
+    })
     .where(eq(schema.agents.slug, "loc"));
   try {
     await expect(cfg.saveOverlay("loc", {}, "x", human)).rejects.toMatchObject({
@@ -138,7 +122,7 @@ test("a spawned target is refused: Spawned agents can't be edited", async () => 
   } finally {
     await t.db
       .update(schema.agents)
-      .set({ kind: "persistent", reportsTo: null })
+      .set({ kind: "persistent", reportsTo: null, reportsToUser: "u-or" })
       .where(eq(schema.agents.slug, "loc"));
   }
 });

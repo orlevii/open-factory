@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { claimTestHandleSql } from "../../test/handles.ts";
+import { claimTestHandleSql, testManagerUserIdSql } from "../../test/handles.ts";
 
 /** A minimal agent row (plus a credential row with a dummy blob) for tests that don't start real agents. */
 export async function insertAgent(
@@ -13,6 +13,8 @@ export async function insertAgent(
     warmWindowMinutes?: number;
     displayName?: string;
     reportsTo?: string | null;
+    /** A persistent agent without a `reportsTo` reports to this user; the oldest user when omitted. */
+    reportsToUser?: string;
     archived?: boolean;
     archivedAt?: Date | string | null;
     errorKind?: string | null;
@@ -26,10 +28,15 @@ export async function insertAgent(
   await sql`insert into credentials (id, name, kind, value_enc)
             values (${credId}, ${`cred-${a.id}`}, 'oauth_token', ${Buffer.from("dummy")})`;
   await claimTestHandleSql(sql, a.slug, "agent");
-  await sql`insert into agents (id, slug, display_name, session_id, status, template, config, runtime, credential_id, reports_to, archived_at, error_kind, kind, terminated_at, terminated_by)
+  const kind = a.kind ?? (a.terminatedAt ? "ephemeral" : "persistent");
+  const reportsToUser =
+    kind === "persistent" && !a.reportsTo
+      ? (a.reportsToUser ?? (await testManagerUserIdSql(sql)))
+      : null;
+  await sql`insert into agents (id, slug, display_name, session_id, status, template, config, runtime, credential_id, reports_to, reports_to_user, archived_at, error_kind, kind, terminated_at, terminated_by)
             values (${a.id}, ${a.slug}, ${a.displayName ?? "Dev agent"}, ${a.sessionId ?? null}, ${a.status ?? "hibernated"},
                     'test', ${JSON.stringify(a.warmWindowMinutes !== undefined ? { template: { warm_window_minutes: a.warmWindowMinutes } } : {})}::jsonb, 'local', ${credId},
-                    ${a.reportsTo ?? null}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${a.kind ?? (a.terminatedAt ? "ephemeral" : "persistent")}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, ${a.terminatedAt ? "@factory" : null})`;
+                    ${a.reportsTo ?? null}, ${reportsToUser}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${kind}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, ${a.terminatedAt ? "@factory" : null})`;
 }
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);

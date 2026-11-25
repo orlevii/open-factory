@@ -28,7 +28,7 @@ function SkillsPage() {
   };
   return (
     <>
-      <SkillsHeader view="skills" onAdd={() => openSheet({ kind: "add-skills" })} />
+      <SkillsHeader onAdd={() => openSheet({ kind: "add-skills" })} />
       <PageBody>
         {/* At 54rem of container the list keeps 30rem clear of an open peek. */}
         <div className="@container">

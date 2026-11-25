@@ -60,40 +60,6 @@ test("a FACTORY_AGENT_URL on the human port logs the upgrade warning", async () 
   expect(quiet.join("")).not.toContain(AGENT_URL_ON_HUMAN_PORT_WARNING);
 });
 
-test("boot warns when a removed env var is still set, and nothing reads it (S10 Q6)", async () => {
-  vi.stubEnv("FACTORY_MAX_RUNNING_AGENTS", "2");
-  const lines: string[] = [];
-  try {
-    const t = await makeTestApp({
-      harnessDriver: new FakeDriver(),
-      logStream: { write: (l) => void lines.push(l) },
-    });
-    try {
-      expect(lines.join("")).toContain(
-        "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
-      );
-      expect(lines.join("")).not.toContain("FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS");
-      expect(t.app.runtimes.supervisor.running().max).toBe(8);
-    } finally {
-      await t.close();
-    }
-  } finally {
-    vi.unstubAllEnvs();
-  }
-});
-
-test("the max running agents setting reaches the supervisor", async () => {
-  const t = await makeTestApp({
-    harnessDriver: new FakeDriver(),
-    factorySettings: { maxRunningAgents: 3 },
-  });
-  try {
-    expect(t.app.runtimes.supervisor.running().max).toBe(3);
-  } finally {
-    await t.close();
-  }
-});
-
 /** Starts `slug` with a human message and an idle first turn; returns its live token. */
 async function startIdle(
   t: Awaited<ReturnType<typeof makeTestApp>>,
@@ -141,12 +107,12 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
   try {
     await t.seedAgent({
       slug: "lead",
-      config: { template: { can_spawn: ["tech-lead", "developer"], max_live_spawns: 5 } },
+      config: { template: { can_spawn: ["tech-lead", "developer"] } },
     });
     await t.seedAgent({ slug: "solo" });
     await t.seedAgent({
-      slug: "capped",
-      config: { template: { can_spawn: ["developer"], max_live_spawns: 0 } },
+      slug: "second",
+      config: { template: { can_spawn: ["developer"] } },
     });
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
     const names = async (slug: string) => {
@@ -165,7 +131,9 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
       lead.find((x) => x.name === "spawn_agent")?.inputSchema.properties.template?.enum,
     ).toEqual(["tech-lead", "developer"]);
     expect((await names("solo")).map((x) => x.name).sort()).toEqual(PERSISTENT_TOOLS);
-    expect((await names("capped")).map((x) => x.name).sort()).toEqual(PERSISTENT_TOOLS);
+    expect((await names("second")).map((x) => x.name).sort()).toEqual(
+      [...PERSISTENT_TOOLS, "spawn_agent", "terminate_agent"].sort(),
+    );
     // A spawned agent never spawns (depth one), even when its template has can_spawn.
     const tplDir = path.join(t.factoryHome, "templates", "developer");
     mkdirSync(tplDir, { recursive: true });
@@ -237,18 +205,17 @@ test("the member update debounce setting reaches the runtimes: 0 writes a member
   try {
     const lead = await t.seedAgent({ slug: "lead" });
     const dev = await t.seedAgent({ slug: "dev" });
-    await t.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
+    await t.sql`update agents set reports_to = ${lead.id}, reports_to_user = null where id = ${dev.id}`;
     const { proc } = await startIdle(t, driver, "lead");
-    const row = await t.app.store.createHeld({
+    const row = await t.app.store.createOrgRow({
       kind: "member_update",
       toAgentId: lead.id,
       fromAgentId: dev.id,
       body: "progress",
     });
     const rt = await t.app.runtimes.bySlug("lead");
-    await rt?.receiveHeld(row);
-    await rt?.settled();
-    expect(proc.sent.flat().map((m) => m.body)).toContain("progress");
+    await rt?.receive(row);
+    await vi.waitFor(() => expect(proc.sent.flat().map((m) => m.body)).toContain("progress"));
   } finally {
     await t.close();
   }

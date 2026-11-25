@@ -19,7 +19,7 @@ export interface ReconcileDeps {
     | "clearRuntimeJournals"
     | "pausedCredentials"
     | "bootWakes"
-    | "agentsWithYoungUpdates"
+    | "agentsWithPendingUpdates"
     | "setErrored"
     | "rejectPendingToTerminated"
     | "clearStaleWriteMarks"
@@ -30,8 +30,6 @@ export interface ReconcileDeps {
   containers?: Pick<ContainerManager, "listOurs" | "stopListed" | "removeListed">;
   supervisor: Pick<Supervisor, "pause">;
   runtimes: Pick<AgentRuntimes, "bySlug" | "load">;
-  /** A member update younger than this is not yet deliverable (spec §8); read live (S10 §8.2). */
-  memberUpdateDebounceMs: () => number;
   /**
    * S6 §9.1: the Router's `forward`. Rows are persisted here; their hand-off to a manager waits for `bootDone()`, which
    * runs once this function has returned.
@@ -160,7 +158,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   for (const p of await d.store.pausedCredentials()) d.supervisor.pause(p.id, p.until, p.exact);
   // Then the wakes, by each agent's oldest pending item, one at a time so the queue keeps that order. Each runtime is
   // loaded first: the Supervisor only wakes a loaded runtime.
-  for (const w of await d.store.bootWakes(d.memberUpdateDebounceMs())) {
+  for (const w of await d.store.bootWakes()) {
     if (reapFailed.has(w.id)) continue;
     try {
       const rt = await d.runtimes.bySlug(w.slug);
@@ -169,14 +167,14 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
       d.log.error({ err, agent: w.slug }, "boot wake failed");
     }
   }
-  // S6 §8.2: an agent whose member updates are all still inside the window isn't woken, but its runtime is loaded so
-  // `init()` arms the debounce timer that wakes it once the oldest is due (spec §17.2 "arms timers for young ones").
-  for (const id of await d.store.agentsWithYoungUpdates(d.memberUpdateDebounceMs())) {
+  // I9 §4.8: pending member updates never wake an agent here; its runtime is loaded so `init()` re-arms the debounce
+  // timer from the oldest, which delivers them (at once when already due).
+  for (const id of await d.store.agentsWithPendingUpdates()) {
     if (reapFailed.has(id)) continue;
     try {
       await d.runtimes.load(id);
     } catch (err) {
-      d.log.error({ err, agent: id }, "loading an agent with held updates failed");
+      d.log.error({ err, agent: id }, "loading an agent with pending member updates failed");
     }
   }
 }

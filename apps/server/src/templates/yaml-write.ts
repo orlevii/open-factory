@@ -17,11 +17,12 @@ export const FORM_OWNED_KEYS = [
   "model",
   "effort",
   "warm_window_minutes",
-  "max_live_spawns",
   "skills",
-  "plugins",
   "can_spawn",
   "secrets",
+  "runtime",
+  "image",
+  "permission_mode",
 ] as const;
 
 /**

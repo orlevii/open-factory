@@ -26,7 +26,7 @@ beforeEach(async () => {
   ids.sam = u2.user.id;
   h.app.bus.subscribeUser(u2.user.id, (m) => frames.push(m));
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
 });
 afterEach(() => h.close());
 
@@ -189,7 +189,7 @@ test("assignee rules: ended, human, unknown, me", async () => {
     "reserved",
   );
   const spawned = await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, terminated_at = now(), terminated_by = '@or' where id = ${spawned.id}`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null, terminated_at = now(), terminated_by = '@or' where id = ${spawned.id}`;
   expect((await fails(h.app.tasks.create(or, { title: "t", assignee: "kid" }))).message).toBe(
     "@kid was terminated and can't be assigned tasks.",
   );

@@ -65,7 +65,7 @@ async function open(
       json(library([hostGroup(), sourceGroup(source("s1", { pin: PIN }), [skill("review")])])),
     "GET /api/library/skills/source%3As1/review": () => json(skillDetail),
     "GET /api/library/sources/s1": () => json(sourceDetail),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
     ...extra,
   });
@@ -262,7 +262,7 @@ test.each(FROM_CASES)("the From line of a %s skill reads '%s'", async (_n, group
   mockApi({
     "GET /api/library/skills": () => json(library([listed])),
     [`GET /api/library/skills/${group}/lint`]: () => json(detail(group, "lint")),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
   });
   const user = userEvent.setup();
@@ -279,7 +279,7 @@ test("when the list no longer holds the skill's source, the From line keeps its 
     "GET /api/library/skills": () => json(state.listed),
     "GET /api/library/skills/source%3As1/review": () => json(base),
     "GET /api/library/sources/s1": () => json(sourceDetail),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
   });
   const user = userEvent.setup();
@@ -308,7 +308,7 @@ test.each([
     "GET /api/library/sources/s1": () => json({ ...sourceDetail, pin }),
     "GET /api/library/skills/source%3As1/review/file?": () =>
       json({ path: "notes.txt", text: "hello" }),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
   });
   const user = userEvent.setup();

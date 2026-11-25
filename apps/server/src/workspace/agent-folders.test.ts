@@ -15,12 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { FACTORY_ENV_NAMES, RESERVED_SETTINGS_KEYS } from "@open-factory/shared";
 import { beforeEach, describe, expect, test } from "vitest";
-import {
-  checkAgentFrontmatter,
-  checkProjectSettings,
-  checkSkillPlugins,
-  scrubAgentFolders,
-} from "./agent-folders.ts";
+import { checkAgentFrontmatter, checkProjectSettings, scrubAgentFolders } from "./agent-folders.ts";
 
 let wd: string;
 beforeEach(() => {
@@ -267,41 +262,6 @@ describe("checkAgentFrontmatter", () => {
   test("a file too large to check fails closed", async () => {
     put(".claude/agents/big.md", `---\nname: a\n---\n${"x".repeat(300 * 1024)}`);
     await expect(checkAgentFrontmatter(wd, new Set())).rejects.toThrow(/larger than 256 KB/);
-  });
-});
-
-describe("checkSkillPlugins", () => {
-  test("a link the agent made to a folder holding .claude-plugin/ fails", async () => {
-    const plugin = outside();
-    mkdirSync(path.join(plugin, ".claude-plugin"));
-    mkdirSync(path.join(wd, ".claude/skills"), { recursive: true });
-    symlinkSync(plugin, path.join(wd, ".claude/skills/x"));
-    await expect(checkSkillPlugins(wd)).rejects.toThrow(
-      "skills/x is a plugin, so it can't load as a skill; move it away.",
-    );
-  });
-
-  test("a folder the agent wrote with .claude-plugin/ fails, and plain skills and files pass", async () => {
-    put(".claude/skills/ok/SKILL.md", "x");
-    put(".claude/skills/README.md", "x");
-    await checkSkillPlugins(wd);
-    put(".claude/skills/p/.claude-plugin/plugin.json", "{}");
-    await expect(checkSkillPlugins(wd)).rejects.toThrow("skills/p is a plugin");
-  });
-
-  test("an entry that can't be inspected fails rather than counting as no plugin", async () => {
-    if (process.getuid?.() === 0) return;
-    put(".claude/skills/locked/SKILL.md", "x");
-    chmodSync(path.join(wd, ".claude/skills/locked"), 0o000);
-    try {
-      await expect(checkSkillPlugins(wd)).rejects.toThrow(/EACCES/);
-    } finally {
-      chmodSync(path.join(wd, ".claude/skills/locked"), 0o700);
-    }
-  });
-
-  test("no skills folder is fine", async () => {
-    await checkSkillPlugins(wd);
   });
 });
 

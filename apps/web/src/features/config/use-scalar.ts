@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { type ConfigField, FIELD_PATHS } from "./fields";
-import { useConfigScope } from "./scope";
+import { CONFIG_COPY } from "./messages";
+import { type ConfigScope, useConfigScope } from "./scope";
 import { readAt } from "./tolerant";
 
 /** The inherit item of a scalar Select: Radix forbids "" as an item value. */
@@ -28,4 +29,17 @@ export function useScalar(field: ConfigField) {
     overridden: s.mode === "agent" && own.ok && own.value !== undefined,
     set,
   };
+}
+
+/**
+ * The inherit option of a scalar Select, naming its own value: "Template's (opus)", "Template's (high)", "Template's
+ * (Claude Code default)" when the template sets none. Template mode has no layer above it: "Claude Code default".
+ * Without a template doc (none chosen yet, or it is broken) there is no value to name: "Template's".
+ */
+export function inheritLabel(s: ConfigScope, inherited: unknown): string {
+  if (s.mode === "template") return CONFIG_COPY.inheritTemplate;
+  if (s.base === null) return CONFIG_COPY.inheritAgent;
+  const value =
+    typeof inherited === "string" && inherited !== "" ? inherited : CONFIG_COPY.inheritTemplate;
+  return `${CONFIG_COPY.inheritAgent} (${value})`;
 }

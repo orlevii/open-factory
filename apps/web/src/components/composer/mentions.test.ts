@@ -7,7 +7,7 @@ const agent = (slug: string, displayName: string, over: Partial<MentionAgent> = 
   ({
     slug,
     displayName,
-    reportsTo: "lead",
+    reportsTo: { kind: "agent", handle: "lead" },
     template: "t",
     avatarVersion: null,
     archivedAt: null,
@@ -16,7 +16,7 @@ const agent = (slug: string, displayName: string, over: Partial<MentionAgent> = 
 
 const agents = [
   agent("zed", "Zed"),
-  agent("lead", "Lead", { reportsTo: null }),
+  agent("lead", "Lead", { reportsTo: { kind: "user", handle: "or" } }),
   agent("alpha", "Alpha"),
   agent("bravo", "Bravo"),
   agent("gone", "Gone", { terminatedAt: "2026-01-01T00:00:00Z" }),
@@ -39,10 +39,23 @@ test("without recent senders your reports lead, then everyone by name", () => {
 });
 
 test("an agent reporting to you counts as your report", () => {
-  const list = [agent("a", "A"), agent("b", "B", { reportsTo: "or" })];
+  const list = [agent("a", "A"), agent("b", "B", { reportsTo: { kind: "agent", handle: "or" } })];
   expect(rankMentions("", { agents: list, humans: [], me: "or" }).map((m) => m.handle)).toEqual([
     "b",
     "a",
+  ]);
+});
+
+test("an agent managed by another human is not your report", () => {
+  const list = [
+    agent("a", "A"),
+    agent("mine", "Mine", { reportsTo: { kind: "user", handle: "or" } }),
+    agent("theirs", "Theirs", { reportsTo: { kind: "user", handle: "dana" } }),
+  ];
+  expect(rankMentions("", { agents: list, humans: [], me: "or" }).map((m) => m.handle)).toEqual([
+    "mine",
+    "a",
+    "theirs",
   ]);
 });
 

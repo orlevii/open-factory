@@ -57,7 +57,7 @@ const row = (o: Partial<AgentRow> = {}): AgentRow => {
 type Rt = {
   running: boolean;
   appended: { by: string; changes: string[] }[];
-  /** When set, the runtime's jobs never finish (a start stuck installing a plugin). */
+  /** When set, the runtime's jobs never finish (a start that never finishes). */
   stuck?: boolean;
 };
 
@@ -66,7 +66,7 @@ const resolvedTo =
   (refs: Record<string, string>) =>
   async (d: ConfigDoc): Promise<ConfigSnapshot["library"]> => {
     const listed = Array.isArray(d.template.skills) ? (d.template.skills as string[]) : [];
-    return { skills: Object.fromEntries(listed.map((n) => [n, refs[n] ?? "host"])), plugins: {} };
+    return { skills: Object.fromEntries(listed.map((n) => [n, refs[n] ?? "host"])) };
   };
 
 function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } = {}) {
@@ -176,7 +176,7 @@ test("a new skill: every live agent of the template, persistent and spawned, get
   const latest = doc({ skills: ["tdd", "release"], model: "opus" });
   w.fresh.set(running.id, {
     doc: latest,
-    library: { skills: { tdd: "host", release: "host" }, plugins: {} },
+    library: { skills: { tdd: "host", release: "host" } },
   });
   await w.changes.templateChanged({ name: "dev", before, after, by: FILE_CHANGE });
 
@@ -195,7 +195,7 @@ test("a new skill: every live agent of the template, persistent and spawned, get
   expect(w.restarts).toEqual([
     {
       id: running.id,
-      current: { doc: latest, library: { skills: { tdd: "host", release: "host" }, plugins: {} } },
+      current: { doc: latest, library: { skills: { tdd: "host", release: "host" } } },
     },
   ]);
   expect(w.frames).toEqual([
@@ -247,7 +247,7 @@ test("before: null writes no event or notice but still runs the restart check", 
   const rt = w.load(running, true);
   w.load(idle, false);
   const after = doc({ skills: ["release"] });
-  w.fresh.set(running.id, { doc: after, library: { skills: { release: "host" }, plugins: {} } });
+  w.fresh.set(running.id, { doc: after, library: { skills: { release: "host" } } });
   await w.changes.templateChanged({ name: "dev", before: null, after, by: FILE_CHANGE });
   expect(rt.appended).toEqual([]);
   expect(w.appendedToStore).toEqual([]);
@@ -255,7 +255,7 @@ test("before: null writes no event or notice but still runs the restart check", 
   expect(w.restarts).toEqual([
     {
       id: running.id,
-      current: { doc: after, library: { skills: { release: "host" }, plugins: {} } },
+      current: { doc: after, library: { skills: { release: "host" } } },
     },
   ]);
   expect(w.frames).toEqual([{ type: "config_changed", template: "dev" }]);
@@ -347,7 +347,7 @@ test("nextImage is refreshed with the image the new config resolves to", async (
   expect(w.nextImage.get(a.id)).toBe("img:new");
 });
 
-test("overlaySaved never waits on the runtime's queue (a start installing a plugin)", async () => {
+test("overlaySaved never waits on the runtime's queue (a start in progress)", async () => {
   const a = row();
   const w = world();
   w.load(a, true, true);
@@ -406,7 +406,7 @@ const startedWith = (d: ConfigDoc, skills: Record<string, string>): Effective =>
     doc: d,
     config: {},
     templateSkills: [],
-    library: { skills, plugins: {} },
+    library: { skills },
   }) as never;
 const GH = (c: string) => `github:${c.repeat(40)}`;
 
@@ -421,9 +421,9 @@ test("a library change rescans the templates, then restarts only a running agent
   w.load(idle, false);
   w.started.set(user.id, startedWith(d, { tdd: GH("a") }));
   w.started.set(other.id, startedWith(doc({ skills: ["release"] }), { release: GH("d") }));
-  w.fresh.set(user.id, { doc: d, library: { skills: { tdd: GH("b") }, plugins: {} } });
+  w.fresh.set(user.id, { doc: d, library: { skills: { tdd: GH("b") } } });
   // The bystander's own skill changed too, but it isn't among the names this change is about.
-  w.fresh.set(other.id, { doc: d, library: { skills: { release: GH("c") }, plugins: {} } });
+  w.fresh.set(other.id, { doc: d, library: { skills: { release: GH("c") } } });
   await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
 
   expect(w.scans()).toBe(1);
@@ -442,7 +442,7 @@ test("a library change that resolves to what the process started with writes not
   const w = world({ agents: [a] });
   const rt = w.load(a, true);
   w.started.set(a.id, startedWith(d, { tdd: GH("a") }));
-  w.fresh.set(a.id, { doc: d, library: { skills: { tdd: GH("a") }, plugins: {} } });
+  w.fresh.set(a.id, { doc: d, library: { skills: { tdd: GH("a") } } });
   await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
   expect([rt.appended, w.notices, w.restarts]).toEqual([[], [], []]);
 });
@@ -456,13 +456,13 @@ test("an agent with no running process still gets the event, from the Library ca
   w.load(unrelated, false);
   w.fresh.set(idle.id, {
     doc: d,
-    library: { skills: { tdd: GH("b"), release: GH("r") }, plugins: {} },
+    library: { skills: { tdd: GH("b"), release: GH("r") } },
   });
   w.fresh.set(unrelated.id, {
     doc: doc({ skills: ["release"] }),
-    library: { skills: { release: GH("r") }, plugins: {} },
+    library: { skills: { release: GH("r") } },
   });
-  const before = { skills: { tdd: GH("a") }, plugins: {} };
+  const before = { skills: { tdd: GH("a") } };
   await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi", before });
   const line = "skill tdd updated aaaaaaa → bbbbbbb";
   expect(rt.appended).toEqual([{ by: "orlevi", changes: [line] }]);
@@ -478,7 +478,7 @@ test("without a captured before, an agent with no process has nothing to compare
   const rt = w.load(a, false);
   w.fresh.set(a.id, {
     doc: doc({ skills: ["tdd"] }),
-    library: { skills: { tdd: GH("b") }, plugins: {} },
+    library: { skills: { tdd: GH("b") } },
   });
   await w.changes.libraryChanged({ skills: ["tdd"], by: "orlevi" });
   expect([rt.appended, w.notices, w.restarts, w.appendedToStore]).toEqual([[], [], [], []]);
@@ -489,6 +489,5 @@ test("captureLibrary asks the Library for exactly the given names", async () => 
   w.refs.tdd = GH("e");
   expect(await w.changes.captureLibrary(["tdd", "x"])).toEqual({
     skills: { tdd: GH("e"), x: "host" },
-    plugins: {},
   });
 });

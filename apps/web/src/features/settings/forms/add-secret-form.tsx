@@ -5,7 +5,13 @@ import { useOutcome } from "@/components/forms/form-outcome";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { putSecret } from "@/features/settings/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
-import { FormFrame, type FormFrameKind } from "./form-frame";
+import {
+  type EmbedProps,
+  FormFrame,
+  type FormFrameKind,
+  useEmbedDirty,
+  useEmbedDraft,
+} from "./form-frame";
 import { ValueField } from "./shared";
 
 type Field = "name" | "value";
@@ -15,20 +21,23 @@ export function AddSecretForm({
   frame,
   initialName,
   existing,
+  embed,
   onDone,
   onCancel,
 }: {
   frame: FormFrameKind;
   initialName: string;
   existing: string[];
+  /** The frame `embedded` only: what its host gives an inline prerequisite. */
+  embed?: EmbedProps;
   onDone(s: SecretSummary): void;
   onCancel(): void;
 }) {
-  const [name, setName] = useState(initialName);
+  const [name, setName] = useState(embed?.start.name ?? initialName);
   const [value, setValue] = useState("");
   const o = useOutcome();
   const [pending, setPending] = useState(false);
-  const formRef = useRef<HTMLFormElement>(null);
+  const formRef = useRef<HTMLElement>(null);
 
   const f = useFieldErrors({
     form: formRef,
@@ -57,6 +66,9 @@ export function AddSecretForm({
     f.change("name");
   };
 
+  useEmbedDraft(embed, { name });
+  useEmbedDirty(embed, name !== initialName || value !== "");
+
   async function submit() {
     o.clear();
     if (!f.submit()) return;
@@ -84,6 +96,7 @@ export function AddSecretForm({
       pendingLabel="Adding…"
       pending={pending}
       outcome={o.outcome}
+      embed={embed}
       ref={formRef}
       autoFocusId={initialName ? "field-secret-value" : undefined}
       reveal={Boolean(initialName)}

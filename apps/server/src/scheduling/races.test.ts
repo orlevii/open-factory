@@ -18,7 +18,7 @@ beforeEach(async () => {
   userId = (await signUp(h.app, { handle: "or" })).user.id;
   await h.seedAgent({ slug: "lead" });
   await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = (select id from agents where slug = 'lead') where slug = 'kid'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = (select id from agents where slug = 'lead'), reports_to_user = null where slug = 'kid'`;
 });
 afterEach(() => h.close());
 

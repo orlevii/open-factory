@@ -42,7 +42,7 @@ const spawned = (over: Partial<AgentSummary> = {}): AgentSummary =>
     displayName: "Tech Lead · ab12",
     kind: "ephemeral",
     template: "tech-lead",
-    reportsTo: "lead",
+    reportsTo: { kind: "agent", handle: "lead" },
     depth: 1,
     ...over,
   });
@@ -64,7 +64,6 @@ async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
     [`GET /api/agents/${SLUG}`]: () =>
       json({
         agent: state.agent,
-        model: { value: null, source: "default" },
         queue: [],
         lastSeq: 1,
       }),
@@ -76,10 +75,9 @@ async function open(first: AgentSummary, extra: Record<string, Handler> = {}) {
     "GET /api/agents?ended=exclude": () =>
       json({
         agents: [agentSummary({ slug: "lead", displayName: "Lead" }), state.agent],
-        running: { count: 1, max: 8 },
+        running: { count: 1 },
       }),
-    "GET /api/agents?ended=only": () =>
-      json({ agents: [], more: false, running: { count: 1, max: 8 } }),
+    "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 1 } }),
     ...extra,
   });
   const app = renderApp(`/agents/${SLUG}/session`, alice);
@@ -437,10 +435,8 @@ test("an errored spawned agent: the recovery actions in the header, Terminate…
 
 test("a spawned agent's old edit URL lands on its session, with Edit agent saying it can't be edited", async () => {
   mockApi({
-    [`GET /api/agents/${SLUG}`]: () =>
-      json({ agent: spawned(), model: { value: null, source: "default" }, queue: [], lastSeq: 1 }),
-    "GET /api/agents?ended=exclude": () =>
-      json({ agents: [spawned()], running: { count: 1, max: 8 } }),
+    [`GET /api/agents/${SLUG}`]: () => json({ agent: spawned(), queue: [], lastSeq: 1 }),
+    "GET /api/agents?ended=exclude": () => json({ agents: [spawned()], running: { count: 1 } }),
     "GET /api/templates": () => json({ templates: [] }),
   });
   const { router } = renderApp(`/agents/${SLUG}/edit`, alice);

@@ -44,7 +44,6 @@ during the S0 spikes, for the S3 harness driver tests.
 | `factory-mcp-and-project-symlink-edits` | Fake factory MCP (`spikes/fake-factory-mcp.mjs`) via `.mcp.json`, project symlinked at `./projects/demo`, `autoMode.environment` set | MCP calls approved by the classifier; Edit through the symlink denied with `decision_reason_type:"safetyCheck"` (outside working dirs) |
 | `project-edits-with-additional-directories` | Same, plus `permissions.additionalDirectories: [<repo>]` | Edit/Write through the symlink approved |
 | `config-dir-pickup` | Fresh `CLAUDE_CONFIG_DIR` with an installed plugin, global `CLAUDE.md`, `autoMode.hard_deny`; workdir with `AGENTS.md` and a symlinked skill | All picked up (see `system/init` `skills`/`plugins`); canary denied |
-| `docker-config-dir-pickup-marketplace-unmounted` | Same inside `open-factory-base:dev`, directory marketplace not mounted | Plugin silently missing; everything else picked up |
 | `docker-exec-sigkill` | `docker exec -i` into a long-lived container, background tasks, `pkill -KILL claude` | Shells survive inside the container under `tini` |
 | `docker-exec-resume-orphans` | `--resume` via a new `docker exec` | Same orphan notifications as the local runtime |
 | `docker-stop-sigterm` | `docker run -i … claude`, then `docker stop` | `tini` forwards SIGTERM; tasks stopped, exit 143 |
@@ -68,8 +67,6 @@ Produced with a small shell driver (one stream-json user line on stdin, `env -i`
 | File | How it was produced | Shows |
 |---|---|---|
 | `mcp-project-without-enable-all` | Workdir `.mcp.json` with one stdio server, **no** `enableAllProjectMcpServers`; asked to call its tool | `system/init.mcp_servers: [{name:"proj", status:"connected", source:"project"}]`, the tool is callable. Also: no host skills or plugins in `system/init` (only built-ins) |
-| `mcp-plugin-and-project` | A directory-marketplace plugin with its own `.mcp.json`, declared through `--settings` (Claude Code installs it at start; the factory runs no `claude plugin` command), plus the workdir `.mcp.json` | Both servers load: `plugin:vplug:plugsrv` (`source:"plugin"`) and `proj` (`source:"project"`) |
-| `mcp-strict-drops-plugin-servers` | Same, with `--mcp-config <workdir>/.mcp.json --strict-mcp-config` | Only `proj` (`source:"dynamic"`); the plugin still loads but **its MCP server is dropped** |
 | `mcp-http-env-header` (S6) | A raw Node HTTP MCP server (no SDK) named `factory` in a project `.mcp.json` with `"headers": {"Authorization": "Bearer ${OPEN_FACTORY_AGENT_TOKEN}"}`, the variable set in the process env; one "call whoami" turn on haiku. `.server.txt` is the server side | `system/init` `mcp_servers:[{name:"factory",status:"connected",source:"project"}]`; every request carries the expanded token; a `GET /mcp` stream attempt that Claude tolerates failing; `tools/call` carries `params._meta["claudecode/toolUseId"]` equal to the stream's `tool_use` id |
 | `permission-mode-flag-overrides-dontask` | Config-dir `settings.json` `permissions.defaultMode:"dontAsk"`, CLI `--permission-mode auto` | `system/init.permissionMode:"auto"` (without the flag it is `dontAsk`) |
 | `permission-deny-rules` | `permissions.deny: ["Bash(curl:*)", "Read(./secret.txt)"]`; asked to curl and to read the file | Bash: `system/permission_denied{decision_reason_type:"subcommandResults", message}` (no `decision_reason`). Read: **no system event**, only an error `tool_result` ("File is in a directory that is denied by your permission settings.") and an entry in `result.permission_denials[]` |
@@ -82,9 +79,7 @@ Produced with a small shell driver (one stream-json user line on stdin, `env -i`
 | `session-state-changed-background` (S5) | `CLAUDE_CODE_SDK_READS_SESSION_STATE=1`; a `run_in_background` Bash `sleep 8 && echo done`, stdin kept open, closed after 40 s | `system/session_state_changed{state:"running"}` before each `system/init` and `{state:"idle"}` right after each `result`: it went **`idle` at 3.4 s while the background task was still live** (it ended at 11 s), then `running` again for the notification turn, emitted just after the empty `background_tasks_changed`. So it is a turn signal, not a busy signal (#24). The mapper drops it. |
 | `rate-limit-event-rejected` (S5, **synthetic, unverified**) | Built from the Agent SDK's documented shape: `rate-limit-event-allowed` with its `rate_limit_event` replaced by `status:"rejected"`, then `result{is_error:true, terminal_reason:"api_error", api_error_status:429}`. | Replace with a real trace when one is captured (#43). |
 
-Not captured as traces, checked by hand: a plugin installed in the config dir but absent from `enabledPlugins` does not load (nor its MCP server). The factory runs no `claude plugin` command: Claude Code installs the declared plugins itself at start, into `CLAUDE_CODE_PLUGIN_CACHE_DIR`, and `plugins/installed_plugins.json` there records absolute `installPath`s. A successful verification-style "Reply OK." turn on haiku costs about $0.002 and takes 3-5 s.
-
-**S5 implementation gate (Claude Code 2.1.327, haiku, `CLAUDE_CODE_OAUTH_TOKEN`).** A plugin installed into a factory-owned plugins dir loaded locally and read-only in Docker (`open-factory-base:dev`, `no-new-privileges`), with the plugins dir file count unchanged. One earlier read-only run did not list the plugin and did not reproduce in 7 repeats, so the start treats a plugin missing from `system/init` as a visible problem (`plugin_not_loaded`), not as success. The current flow is in the I5 spec, §7.3: Claude Code installs at start and the factory only reads the result.
+Not captured as traces: a successful verification-style "Reply OK." turn on haiku costs about $0.002 and takes 3-5 s.
 
 ### Verified in S6 implementation
 
@@ -113,7 +108,7 @@ Live gate V1/V2 (Claude Code 2.1.327, haiku, `--permission-mode auto`, `CLAUDE_C
 - **V1 (harness crons map as S0 recorded): confirmed.** The real mapper turns each trace into `cron_created` (`recurring` true or false), a `turn_end` with `originKind: "cron"` for the firing, and `cron_deleted` for the recurring cron after `CronDelete`; the one-shot gets no deletion event. `CronCreate`'s `tool_use_result` is `{id, humanSchedule, recurring, durable, nextFireAt}` (`nextFireAt` in epoch milliseconds, a float for the recurring one).
 - **V2 (does a `durable: true` cron survive a resume): negative.** The model passed `durable: true` in the `CronCreate` input (checked in the `tool_use` block), but the tool's result reported `durable: false`, no `.claude/scheduled_tasks.json` (nor a `.claude` directory) was written in the working directory, and after stopping the process and resuming the session with `--resume` across the job's fire time (waited 200 s) no `DURABLEFIRED` turn, no `command_lifecycle` and no cron turn appeared. In this headless stream-json mode the flag is ignored, so no cron outlives its process and the durable-cron cleanup (spec §10.4's fallback) is not needed.
 
-Live check `pnpm smoke:scheduling` (Docker agents on `open-factory-base:dev`, haiku, Claude Code 2.1.327), run in phases, all passing: the first slice (the three schedule tools listed by `system/init`, a human one-shot waking hibernated ceo with a `scheduled` envelope `schedule="S-1" by="@or"`, ceo acting on the body with `schedule_message` twice and no recreation of the fired one-shot, a spawned agent listing none of the three); phase a (a human `* * * * *` schedule, the 15-minute sentence for an agent's `*/5`, `cancel_schedule`); phase b (the server down more than a minute past a one-shot's time: one envelope with `late="true"`); phase c (`FACTORY_MAX_RUNNING_AGENTS=1`, since replaced by the max running agents factory setting; re-run in S10 with the setting and passing: dev stays queued while its schedule fires twice, one pending row with `firings=2`); phase d (`CronCreate` keeps ceo up past its 1-minute warm window, Stop crons hibernates it with `crons_stopped` by `@or`, the next batch starts with the passive notice). Two live details worth keeping: Claude Code refuses a standalone `sleep 170` (use a loop of short sleeps to keep an agent busy), and `CronCreate`'s result text says "Session-only (not written to disk, dies when Claude exits)".
+Live check `pnpm smoke:scheduling` (Docker agents on `open-factory-base:dev`, haiku, Claude Code 2.1.327), run in phases, all passing: the first slice (the three schedule tools listed by `system/init`, a human one-shot waking hibernated ceo with a `scheduled` envelope `schedule="S-1" by="@or"`, ceo acting on the body with `schedule_message` twice and no recreation of the fired one-shot, a spawned agent listing none of the three); phase a (a human `* * * * *` schedule, the 15-minute sentence for an agent's `*/5`, `cancel_schedule`); phase b (the server down more than a minute past a one-shot's time: one envelope with `late="true"`); phase c (max running agents set to 1: dev stays queued while its schedule fires twice, one pending row with `firings=2`); phase d (`CronCreate` keeps ceo up past its 1-minute warm window, Stop crons hibernates it with `crons_stopped` by `@or`, the next batch starts with the passive notice). Two live details worth keeping: Claude Code refuses a standalone `sleep 170` (use a loop of short sleeps to keep an agent busy), and `CronCreate`'s result text says "Session-only (not written to disk, dies when Claude exits)".
 
 ### Verified in S10 implementation
 
@@ -126,53 +121,6 @@ Live gates V1, V2, V3 and V5 (Claude Code 2.1.327, Docker 29.9.3, dockerode 5.0.
 
 ```json
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1795209600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.01,"resetsAt":1795209600,"status":"allowed"},"seven_day":{"utilization":0.26,"resetsAt":1795590000,"status":"allowed"}}},"uuid":"REDACTED","session_id":"REDACTED"}
-```
-
-Live check `pnpm smoke:images` (Docker 29.9.3, Claude Code 2.1.327 in `open-factory-base:dev`, haiku, Docker agent on a user image, a throwaway database and `FACTORY_HOME`, only real routes over a real socket and the built CLI with a real bearer token), all passing. Redacted output (the evidence lines shortened):
-
-```text
-PASS 0. setup: prerequisites (CLI bundle, agent CLI bundle, local base image)
-PASS 1. first user @or signs up without an invite (bootstrap) → 200
-PASS 1. POST /api/credentials smoke (oauth_token, verified live) → 201
-    imageStatus: {"kind":"user","name":"smoke","status":"not_built"}
-PASS 1. template smoke-tpl (runtime docker, image smoke, haiku) is valid, image not_built
-PASS 1. POST /api/agents smoke (template smoke-tpl) → 201
-PASS 2. message smoke before the build → 202
-PASS 2. the start fails: error event (source spawn)
-PASS 2. the error has fix "image" and the exact "isn't built" message
-    fix=image; message=Image `smoke` isn't built. Build it in Templates → Images, or run `open-factory images build smoke`.
-PASS 2. no pull ran (no `pulling image` server log line)
-PASS 3. @or signs in; bearer from the set-auth-token header
-PASS 3. `open-factory images build smoke` (built CLI, bearer) exits 0
-PASS 3. the build log streamed to stdout
-    21 lines; first: Step 1/4 : FROM ghcr.io/orlevii/open-factory/base:latest; last 3: Successfully tagged open-factory-user/smoke:latest | Base image ghcr.io/orlevii/open-factory/base:latest: ghcr.io/orlevii/open-factory/base@sha256:d47a2f37… | Built smoke
-PASS 3. docker image inspect open-factory-user/smoke:latest has io.open-factory.context-hash
-PASS 3. GET /api/images → smoke built
-PASS 4. POST /api/agents/smoke/restart → 202
-PASS 4. message smoke after the build → 202
-PASS 4. smoke's turn for that message ends
-PASS 4. smoke answers
-    answer: PELICAN
-PASS 4. the container label io.open-factory.image = open-factory-user/smoke:latest
-PASS 4. GET /api/agents/smoke/usage?days=7 → turns ≥ 1
-    status 200; total {"costUsd":0.001877,"inputTokens":2,"outputTokens":7,"cacheWriteTokens":8787,"cacheReadTokens":11586,"turns":1}
-PASS 4. the turn row has credential_id set (credential smoke)
-PASS 4. GET /api/usage/credentials?days=7 shows smoke with a rateLimit (V5 in situ)
-    rateLimit {"status":"allowed","type":"five_hour","utilization":0.01,"resetsAt":"2026-11-20T21:20:00.000Z","observedAt":"2026-11-20T20:13:59.853Z"}
-PASS 5. touch images/smoke/new.txt → GET /api/images → out_of_date
-PASS 6. `images build local --no-pull` (FROM open-factory-base:dev) exits 0
-PASS 6. `images build local` without --no-pull exits 1 with the "couldn't be pulled" sentence
-    exit 1; stderr: Build of local failed: Base image open-factory-base:dev couldn't be pulled. If it's local-only, run `open-factory images build local --no-pull`.
-PASS 7. POST /api/invites → 201 with a link
-PASS 7. sign-up without an invite → 403 invite_required
-PASS 7. sign-up @sam with the invite → 200
-PASS 7. reusing the invite → 403 invite_invalid
-PASS 7. @sam signs in (bearer)
-PASS 7. @sam's bearer works before disable (GET /api/me → 200)
-PASS 7. @or disables @sam → 200
-PASS 7. @sam's bearer after disable → 401
-
-Smoke passed.
 ```
 
 V5 in situ: the mapper's `utilization` (0.01) is the five-hour window's, matching the live `rate_limit_event`. Two live details worth keeping: a message sent while the image isn't built stays queued through the failed start and is delivered with the next message after the build and Restart (one batch, one turn), and the "no pull" check reads the server's `pulling image` log line (the Supervisor still marks the wake `pulling` for the moment the local image check takes).

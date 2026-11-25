@@ -15,7 +15,7 @@ beforeEach(async () => {
   const u = await signUp(h.app, { handle: "or" });
   or = { kind: "user", userId: u.user.id, handle: "or" };
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
 });
 afterEach(() => h.close());
 
@@ -138,7 +138,7 @@ test("shutdown begun: the change commits, nothing is handed over", async () => {
 
 test("a terminated caller whose request is already past the listener is refused", async () => {
   const kid = await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = ${kid.id}`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null where id = ${kid.id}`;
   const as: Actor = { kind: "agent", agentId: kid.id, slug: "kid" };
   await h.app.tasks.create(as, { title: "t" });
   await h.sql`update agents set terminated_at = now(), terminated_by = '@or' where id = ${kid.id}`;
@@ -154,7 +154,7 @@ test("a terminated caller whose request is already past the listener is refused"
 
 test("a spawner terminating its child: pending task rows are rejected, the task keeps the ended assignee, the spawner may still change it", async () => {
   const kid = await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = ${kid.id}`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null where id = ${kid.id}`;
   const spy = vi.spyOn(h.app.router, "handOffTaskRows").mockImplementation(() => {});
   await h.app.tasks.create(or, { title: "t", assignee: "kid" });
   spy.mockRestore();

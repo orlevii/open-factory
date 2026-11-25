@@ -97,7 +97,7 @@ test("mentions in code create nothing", async () => {
 
 test("not_reached: unknown, reserved, terminated and archived, in order", async () => {
   const spawned = await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, terminated_at = now(), terminated_by = '@or' where id = ${spawned.id}`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null, terminated_at = now(), terminated_by = '@or' where id = ${spawned.id}`;
   await h.sql`update agents set archived_at = now() where slug = 'qa'`;
   const r = await h.app.tasks.comment(or, "T-1", "@nobody @me @kid @qa done?");
   expect(r.notReached).toEqual([

@@ -5,7 +5,6 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
-  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -21,7 +20,7 @@ import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
-import { claimTestHandle } from "../test/handles.ts";
+import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
@@ -121,20 +120,20 @@ async function seedStartFixture() {
       config: {},
       runtime: "local",
       credentialId: "c1",
+      reportsToUser: await testManagerUserId(t.db),
     })
     .returning();
   if (!row) throw new Error("seed failed");
   agent = row;
   await t.db.insert(schema.agentProjectGrants).values({ agentId: agent.id, projectId: "p1" });
   lock = new KeyedMutex();
-  const fake = createFakeClaude({ scenario: "reply" });
+  const _fake = createFakeClaude({ scenario: "reply" });
   const cliBundle = path.join(mkdtempSync(path.join(tmpdir(), "cli-")), "open-factory.js");
   writeFileSync(cliBundle, "//");
   const library = hostOnlyLibrary(hs, home);
   workspace = new Workspace({
     factoryHome: home,
     library,
-    claudeBin: fake.bin,
     cliBundle,
     lock,
   });
@@ -149,7 +148,7 @@ async function seedStartFixture() {
       description: "",
       template: "lead",
       config,
-      manager: null,
+      manager: { kind: "user" as const, handle: "or", name: "Or" },
       grants,
     },
   );
@@ -165,7 +164,7 @@ async function seedStartFixture() {
       db: t.db,
       config: factoryConfig,
       library,
-      policy: new PolicyInputs({ db: t.db, library }),
+      policy: new PolicyInputs({ db: t.db }),
     }),
     library,
   });
@@ -177,6 +176,7 @@ async function seedStartFixture() {
     resolver,
     lock,
     neighborhood: new Neighborhood(t.db),
+    memberUpdateDebounceMs: () => 30_000,
     serverEnv: {
       PATH: "/usr/bin",
       HOME: "/home/u",
@@ -202,14 +202,9 @@ test("assembles the spec: env has the decrypted credential and secret; files pre
   expect(existsSync(path.join(spec.cwd, "projects/app"))).toBe(true);
 });
 
-test("the spec carries the plugin settings as --settings, the plugins dir env and the closure to check", async () => {
+test("the agent's env switches Claude Code's self-update off", async () => {
   const spec = await prepareStart(agent, { agentToken: "tok" });
-  expect(spec.env.CLAUDE_CODE_PLUGIN_CACHE_DIR).toBe(
-    path.join(realpathSync(home), "state/agents", agent.slug, "plugins"),
-  );
   expect(spec.env.DISABLE_AUTOUPDATER).toBe("1");
-  expect(JSON.parse(spec.settingsJson ?? "")).toMatchObject({ syncClaudeAiPlugins: false });
-  expect(spec.plugins).toEqual([]);
 });
 
 test("the child env is an allowlist: server secrets and own credentials never reach the agent", async () => {
@@ -243,9 +238,10 @@ test("the manager is described in CLAUDE.md", async () => {
       config: {},
       runtime: "local",
       credentialId: "c1",
+      reportsToUser: await testManagerUserId(t.db),
     })
     .returning();
-  await t.sql`update agents set reports_to = ${mgr[0]?.id ?? ""} where id = ${agent.id}`;
+  await t.sql`update agents set reports_to = ${mgr[0]?.id ?? ""}, reports_to_user = null where id = ${agent.id}`;
   const spec = await prepareStart(agent, { agentToken: "tok" }); // stale row: prepareStart must reload
   const md = await import("node:fs").then((fs) =>
     fs.readFileSync(path.join(spec.cwd, ".claude-config/CLAUDE.md"), "utf8"),
@@ -265,9 +261,10 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
       config: {},
       runtime: "local",
       credentialId: "c1",
+      reportsToUser: await testManagerUserId(t.db),
     })
     .returning();
-  await t.sql`update agents set reports_to = ${mgr?.id ?? ""} where id = ${agent.id}`;
+  await t.sql`update agents set reports_to = ${mgr?.id ?? ""}, reports_to_user = null where id = ${agent.id}`;
   const sibling = { template: "lead", config: {}, runtime: "local" as const, credentialId: "c1" };
   await t.db.insert(schema.agents).values([
     {
@@ -550,7 +547,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
       description: "Builds the thing.",
       template: "dev",
       config,
-      manager: { slug: agent.slug, displayName: "Lead" },
+      manager: { kind: "agent", slug: agent.slug, displayName: "Lead" },
       grants: [{ name: "app", hostPath: repo }],
     },
   );
@@ -684,7 +681,7 @@ test.each([
 test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quoted", async () => {
   await t.db
     .update(schema.agents)
-    .set({ config: { template: { can_spawn: ["dev"], max_live_spawns: 3 } } })
+    .set({ config: { template: { can_spawn: ["dev"] } } })
     .where(eq(schema.agents.id, agent.id));
   const child = await seedChild({ description: "ignored" });
   await t.db
@@ -694,8 +691,6 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
   const lead = md(agent.slug);
   expect(lead).toContain("## Spawning");
-  expect(lead).toContain("at most 3 live");
-  expect(lead).toContain(`${factoryConfig.maxSpawnsPerHour} per hour`);
   expect(lead).toContain(`- @${child.slug} (Dev · ab), written by @${agent.slug}: "Ship 'it' now"`);
   await prepareStart(child, { agentToken: "tok" });
   const own = md(child.slug);
@@ -777,12 +772,14 @@ test.each([
     config: {},
     runtime: "local",
     credentialId: "c1",
+    reportsToUser: await testManagerUserId(t.db),
   });
   await t.db
     .update(schema.agents)
     .set({
       kind: "ephemeral",
       reportsTo: `top-${seq}`,
+      reportsToUser: null,
       terminatedAt: new Date(),
       terminatedBy: "@factory",
       credentialId: keepCredential ? "c1" : null,

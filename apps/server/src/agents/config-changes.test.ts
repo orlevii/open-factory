@@ -1,13 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
-  type ConfigDoc,
-  describeChanges,
-  effectivePlugins,
-  mergeConfig,
-  pinOf,
-} from "@open-factory/shared";
+import { type ConfigDoc, describeChanges, mergeConfig } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { loadConfig } from "../config.ts";
 import { FILE_CHANGE, TemplateIndex } from "../templates/template-index.ts";
@@ -67,7 +61,7 @@ const echoResolver: Pick<ConfigResolver, "effective"> = {
   effective: async (row) => ({ ...testEffective(), doc: { ...doc(), settings: row.config } }),
 };
 
-const NO_LIBRARY = { skills: {}, plugins: {} };
+const NO_LIBRARY = { skills: {} };
 const snap = (d: ConfigDoc) => ({ doc: d, library: NO_LIBRARY });
 /** A config check that reads `d` (what the runtime's job sees when it re-reads the agent). */
 const at = (d: ConfigDoc | undefined) => ({ current: async () => (d ? snap(d) : undefined) });
@@ -365,84 +359,21 @@ test("an overlay save on an archived agent writes the event only; values never r
   expect(JSON.stringify(all)).not.toContain(SECRET);
 });
 
-const COMMIT_A = "a".repeat(40);
-const COMMIT_B = "b".repeat(40);
-/** The pin each enabled plugin of a doc resolves to, as `ConfigResolver.libraryOf` reads it from the declaration. */
-const pinsOf = (d: ConfigDoc) => {
-  const markets = (d.settings.extraKnownMarketplaces ?? {}) as Record<string, unknown>;
-  return {
-    skills: {},
-    plugins: Object.fromEntries(
-      effectivePlugins(d).map((k) => {
-        const pin = pinOf(markets[k.slice(k.indexOf("@") + 1)]);
-        return [k, pin.kind === "commit" ? `commit:${pin.sha}` : pin.kind];
-      }),
-    ),
-  };
-};
-const pluginDoc = (ref?: string) =>
-  doc(
-    {},
-    {
-      settings: {
-        extraKnownMarketplaces: {
-          acme: { source: { source: "github", repo: "o/acme", ...(ref ? { ref } : {}) } },
-        },
-        enabledPlugins: { "x@acme": true },
-      },
-    },
-  );
-
-test("a template save that moves a pin writes the repin line and restarts that template's running agent", async () => {
-  const before = pluginDoc(COMMIT_A);
-  const after = pluginDoc(COMMIT_B);
-  const w = world(before, pinsOf(before), pinsOf);
-  const running = await agent();
-  const idle = await agent();
-  for (const id of [running, idle])
-    await h.t.sql`update agents set template = 't-pin' where id = ${id}`;
-  const rt = await w.runBusy(running);
-  w.current.set(running, after);
-  // The re-read inside the restart check resolves the library from the new declaration.
-  w.setLibrary(pinsOf(after));
-  await w.changes.templateChanged({ name: "t-pin", before, after, by: FILE_CHANGE });
-  await rt?.settled();
-
-  const line = "plugin x@acme repinned aaaaaaa → bbbbbbb";
-  for (const id of [running, idle])
-    expect((await events(id)).map((e) => e.payload)).toEqual([
-      { by: "a file change in template t-pin", changes: [line] },
-    ]);
-  expect(rt?.live()).toMatchObject({ restartPending: true, restartChanges: [line] });
-});
-
-test("a template save that switches a pin to Latest says so", async () => {
-  const before = pluginDoc(COMMIT_A);
-  const after = pluginDoc();
-  const w = world(before, pinsOf(before), pinsOf);
-  const id = await agent();
-  await h.t.sql`update agents set template = 't-latest' where id = ${id}`;
-  await w.changes.templateChanged({ name: "t-latest", before, after, by: FILE_CHANGE });
-  expect((await events(id)).map((e) => e.payload.changes)).toEqual([
-    ["plugin x@acme now follows the latest acme"],
-  ]);
-});
-
 const GH = (c: string) => `github:${c.repeat(40)}`;
 
 test("a GitHub update writes config_changed for every agent using the skill and requests a restart only for the running one, compared against started.library", async () => {
   const d = doc({ skills: ["tdd"] });
-  const w = world(d, { skills: { tdd: GH("a") }, plugins: {} });
+  const w = world(d, { skills: { tdd: GH("a") } });
   const user = await agent();
   const bystander = await agent();
   const rt = await w.runBusy(user);
   w.current.set(user, d);
   w.current.set(bystander, d);
-  w.setLibrary({ skills: { tdd: GH("b") }, plugins: {} });
+  w.setLibrary({ skills: { tdd: GH("b") } });
   await w.changes.libraryChanged({
     skills: ["tdd"],
     by: "orlevi",
-    before: { skills: { tdd: GH("a") }, plugins: {} },
+    before: { skills: { tdd: GH("a") } },
   });
   await rt?.settled();
 
@@ -478,7 +409,7 @@ test("a template whose skill became missing shows the issue after libraryChanged
     db: h.t.db,
     config: cfg,
     library,
-    policy: new PolicyInputs({ db: h.t.db, library }),
+    policy: new PolicyInputs({ db: h.t.db }),
   });
   await templates.scan();
   const problem = "Skill tdd is missing from its folder.";

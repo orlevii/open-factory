@@ -17,6 +17,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { OrgRefusedError } from "../agents/errors.ts";
 import { PolicyInputs } from "../agents/policy-inputs.ts";
+import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { fileHash, type TemplateIndex } from "./template-index.ts";
 
@@ -48,7 +49,7 @@ const idOf = async (slug: string) => {
   if (!r) throw new Error(`no agent ${slug}`);
   return r.id;
 };
-const agentOn = async (slug: string, template: string, reportsTo: string | null = null) => {
+const agentOn = async (slug: string, template: string, reportsTo = "or") => {
   await t.app.agents.create(
     { template, slug, displayName: slug, description: "", reportsTo, credential: "work" },
     human,
@@ -61,6 +62,7 @@ beforeAll(async () => {
   });
   home = t.factoryHome;
   idx = t.app.templates;
+  await seedTestUser(t.db);
   mkdtempSync(path.join(tmpdir(), "repo-"));
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
@@ -215,32 +217,6 @@ test("an agent write to a template with an archived local agent is refused (R9)"
     idx.writeFile("haslocal", "AGENTS.md", "# x\n", hashOf("haslocal", "AGENTS.md"), hr),
   ).rejects.toThrow(new OrgRefusedError(LOCAL_RUNTIME_REFUSAL));
   await idx.writeFile("haslocal", "AGENTS.md", "# x\n", hashOf("haslocal", "AGENTS.md"), human);
-});
-
-test("an agent write adding a plugin under a Latest declaration is refused (rule 5)", async () => {
-  const settings = {
-    extraKnownMarketplaces: { acme: { source: { source: "github", repo: "acme/plugins" } } },
-  };
-  writeTemplate("plug", { "settings.json": JSON.stringify(settings) });
-  await idx.scan();
-  await expect(
-    idx.writeFile(
-      "plug",
-      "settings.json",
-      JSON.stringify({ ...settings, enabledPlugins: { "fmt@acme": true } }),
-      hashOf("plug", "settings.json"),
-      hr,
-    ),
-  ).rejects.toMatchObject({
-    code: "invalid_config",
-    extra: {
-      issues: [
-        expect.objectContaining({
-          message: "Plugin fmt@acme follows the latest acme; only a human can add it.",
-        }),
-      ],
-    },
-  });
 });
 
 test("an agent can drop a can_spawn entry that names a missing template, but not add a local one", async () => {

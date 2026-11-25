@@ -1,10 +1,14 @@
-import type { ConfigDoc, TemplateConfig, TemplateIssue } from "@open-factory/shared";
+import type {
+  ConfigDoc,
+  FactorySettingsValues,
+  TemplateConfig,
+  TemplateIssue,
+} from "@open-factory/shared";
 import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
   customType,
-  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -112,11 +116,8 @@ export const factorySettings = pgTable(
   "factory_settings",
   {
     id: smallint("id").primaryKey(),
-    maxRunningAgents: integer("max_running_agents").notNull().default(8),
-    defaultWarmWindowMinutes: integer("default_warm_window_minutes").notNull().default(70),
-    memberUpdateDebounceSeconds: integer("member_update_debounce_seconds").notNull().default(30),
-    loopGuardMessages: integer("loop_guard_messages").notNull().default(10),
-    loopGuardWindowMinutes: integer("loop_guard_window_minutes").notNull().default(10),
+    /** The factory's values (`factorySettingsValuesSchema`); a missing key reads as its default. */
+    settings: jsonb("settings").$type<Partial<FactorySettingsValues>>().notNull().default({}),
     updatedAt: ts("updated_at"),
     updatedBy: text("updated_by").references(() => users.id),
   },

@@ -193,9 +193,9 @@ test.each([
         await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
         await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
         await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
-        await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
-                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`} from agents where id = ${id}`;
-        await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
+        await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
+                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to_user from agents where id = ${id}`;
+        await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`}, reports_to_user = null where id = ${id}`;
       },
     });
     await rt.reload();
@@ -221,9 +221,9 @@ test("a spawned agent keeps other fixes (secrets) unchanged", async () => {
     seed: async (id) => {
       await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
       await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
-      await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
-                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`} from agents where id = ${id}`;
-      await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
+      await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
+                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to_user from agents where id = ${id}`;
+      await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`}, reports_to_user = null where id = ${id}`;
     },
   });
   await rt.reload();
@@ -494,20 +494,20 @@ test("pending after a failed start, then delivered as one turn on the next start
   expect(rt.live().status).toBe("idle");
 });
 
-test("status: working while a batch awaits its turn, through an origin-tagged turn, then idle", async () => {
+test("status: working while a batch awaits its turn, through a zero-turn self-started result, then idle at the end of the self-started turn that read it", async () => {
   await send("boot");
   driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
   await rt.settled();
   expect(rt.live()).toMatchObject({ status: "idle", turnOpen: false });
   await send("x"); // written with no open turn: awaiting
   expect(rt.live()).toMatchObject({ status: "working", turnOpen: false });
-  driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
+  driver.last.emit(ev.turn(), ev.end({ originKind: "task-notification", numTurns: 0 }));
   await rt.settled();
   expect(rt.live()).toMatchObject({ status: "working", turnOpen: false });
   driver.last.emit(ev.turn());
   await rt.settled();
   expect(rt.live()).toMatchObject({ status: "working", turnOpen: true });
-  driver.last.emit(ev.usage(), ev.end());
+  driver.last.emit(ev.usage(), ev.end({ originKind: "task-notification" }));
   await rt.settled();
   expect(rt.live()).toMatchObject({ status: "idle", turnOpen: false });
   const statuses = frames.filter((f) => f.type === "agent_status").map((f) => f.status);

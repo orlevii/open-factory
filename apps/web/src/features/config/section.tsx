@@ -6,14 +6,25 @@ import { fieldPath } from "./fields";
 import { CONFIG_COPY, CONFIG_FIELD_MSG } from "./messages";
 import { useConfigScope } from "./scope";
 
-/** One form section (spec §12.2): an h2, then its fields in an I4 `field-stack`. */
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+/** One form section (spec §12.2): an h2, then its fields in an I4 `field-stack`. `action` sits on the heading line. */
+export function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   const id = useId();
   return (
     <section aria-labelledby={id} className="grid gap-3">
-      <h2 id={id} className="text-[0.9375rem] font-medium">
-        {title}
-      </h2>
+      <div className="flex min-h-7 items-center justify-between gap-2">
+        <h2 id={id} className="text-[0.9375rem] font-medium">
+          {title}
+        </h2>
+        {action}
+      </div>
       <div className="field-stack">{children}</div>
     </section>
   );

@@ -20,7 +20,6 @@ import type { EventBus } from "../../agents/event-bus.ts";
 import type { CredentialService } from "../../credentials/credential-service.ts";
 import { ApiError } from "../../errors.ts";
 import type { LibraryIndex } from "../../library/library-index.ts";
-import type { PluginsIndex } from "../../library/plugins-index.ts";
 import type { ProjectService } from "../../projects/project-service.ts";
 import type { SecretService } from "../../secrets/secret-service.ts";
 import type { TemplateIndex } from "../../templates/template-index.ts";
@@ -39,7 +38,6 @@ export type OrgToolDeps = {
   config: ConfigService;
   templates: TemplateIndex;
   library: LibraryIndex;
-  plugins: PluginsIndex;
   credentials: CredentialService;
   secrets: SecretService;
   projects: ProjectService;
@@ -81,10 +79,6 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         return toolErrorOf(err);
       }
     };
-  /** `"me"` and an omitted manager are the caller; null is top level. */
-  const managerOf = (actor: AgentActor, m: string | null | undefined): string | null =>
-    m === null ? null : m === undefined || bare(m) === "me" ? actor.slug : bare(m);
-
   const tool = <S extends z.ZodType>(
     name: string,
     description: string,
@@ -169,7 +163,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     ),
     tool(
       "get_agent",
-      "Read an agent: its identity, manager, credential and projects by name, its overlay with overlay_hash (pass it back as base_hash to change config), its effective configuration (references, never values), plugins and issues.",
+      "Read an agent: its identity, manager, credential and projects by name, its overlay with overlay_hash (pass it back as base_hash to change config), its effective configuration (references, never values) and issues.",
       getAgentToolSchema,
       async ({ slug }) => {
         const s = bare(slug);
@@ -180,7 +174,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           description: a.description,
           kind: a.kind,
           template: a.template,
-          manager: a.reportsTo,
+          reports_to: `@${a.reportsTo.handle}`,
           credential: a.credential,
           projects: a.projects,
           manage_org: a.manageOrg,
@@ -189,14 +183,13 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           overlay: cfg.overlay,
           overlay_hash: cfg.version,
           effective: cfg.merged,
-          plugins: cfg.plugins,
           issues: cfg.issues,
         };
       },
     ),
     tool(
       "create_agent",
-      'Create a persistent agent from a template, the way a human does in New agent. The manager defaults to you ("me"); null makes it top level. It never gets manage_org.',
+      "Create a persistent agent from a template, the way a human does in New agent. reports_to is required: an agent or a person, as @handle. It never gets manage_org.",
       createAgentToolSchema,
       async (a, actor) => {
         const slug = bare(a.name);
@@ -206,7 +199,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
             slug,
             displayName: a.display_name,
             description: a.description,
-            reportsTo: managerOf(actor, a.manager),
+            reportsTo: bare(a.reports_to),
             credential: a.credential.trim(),
             ...(a.projects ? { projects: a.projects } : {}),
             ...(a.config ? { config: a.config } : {}),
@@ -230,7 +223,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         const patch: PatchAgentBody = {
           ...(a.display_name !== undefined ? { displayName: a.display_name } : {}),
           ...(a.description !== undefined ? { description: a.description } : {}),
-          ...(a.manager !== undefined ? { reportsTo: managerOf(actor, a.manager) } : {}),
+          ...(a.reports_to !== undefined ? { reportsTo: bare(a.reports_to) } : {}),
           ...(a.credential !== undefined ? { credential: a.credential.trim() } : {}),
           ...(a.projects !== undefined ? { projects: a.projects } : {}),
         };
@@ -244,7 +237,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         const fields: string[] = [
           ...(r.agent.displayName !== before.displayName ? ["display_name"] : []),
           ...(r.agent.description !== before.description ? ["description"] : []),
-          ...(r.agent.reportsTo !== before.reportsTo ? ["manager"] : []),
+          ...(r.agent.reportsTo.handle !== before.reportsTo.handle ? ["reports_to"] : []),
           ...(r.agent.credential !== before.credential ? ["credential"] : []),
           ...(same(r.agent.projects, before.projects) ? [] : ["projects"]),
         ];
@@ -284,14 +277,10 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     ),
     tool(
       "list_library",
-      "List the Library's skills, the plugins of its registered marketplaces (with whether a pin can hold them) and the marketplaces. Narrow with query.",
+      "List the Library's skills. Narrow with query.",
       listLibraryToolSchema,
       async ({ query }) => {
-        const [groups, listed, registry] = await Promise.all([
-          d.library.skills(),
-          d.plugins.list(),
-          d.library.marketplaces(),
-        ]);
+        const groups = await d.library.skills();
         const skills = groups.flatMap((g) => {
           const source =
             g.kind === "host"
@@ -312,33 +301,9 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
               state: s.state,
             }));
         });
-        const plugins = listed.marketplaces.flatMap((m) =>
-          m.plugins
-            .filter((p) => matches(query, p.name, p.description))
-            .map((p) => ({
-              key: p.key,
-              version: p.version ?? null,
-              marketplace: m.name,
-              pinnable: p.pinnable,
-              state: p.state,
-              contents: p.contentsSummary,
-            })),
-        );
-        const marketplaces = registry
-          .filter((r) => matches(query, r.name))
-          .map((r) => ({
-            name: r.name,
-            kind: r.source.source,
-            pin: r.source.source === "directory" ? null : shortPin(r.commit),
-          }));
-        const more =
-          skills.length > LIBRARY_LIST_MAX ||
-          plugins.length > LIBRARY_LIST_MAX ||
-          marketplaces.length > LIBRARY_LIST_MAX;
+        const more = skills.length > LIBRARY_LIST_MAX;
         return {
           skills: skills.slice(0, LIBRARY_LIST_MAX),
-          plugins: plugins.slice(0, LIBRARY_LIST_MAX),
-          marketplaces: marketplaces.slice(0, LIBRARY_LIST_MAX),
           ...(more
             ? {
                 more: true,

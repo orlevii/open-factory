@@ -67,7 +67,7 @@ export function SpawnedConfig({ agent, merged }: { agent: AgentSummary; merged: 
     () => (merged === null ? null : `${JSON.stringify(merged, null, 2)}\n`),
     [merged],
   );
-  const spawner = agent.reportsTo;
+  const spawner = agent.reportsTo.kind === "agent" ? agent.reportsTo.handle : null;
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
       <p className="text-sm leading-5">

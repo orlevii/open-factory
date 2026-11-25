@@ -19,7 +19,7 @@ vi.mock("@/lib/ws", () => ({
 beforeEach(() => fakeMatchMedia.install(false));
 afterEach(() => vi.restoreAllMocks());
 
-const agents = () => json({ agents: [], more: false, running: { count: 0, max: 8 } });
+const agents = () => json({ agents: [], more: false, running: { count: 0 } });
 const api = (data: unknown) =>
   mockApi({
     "GET /api/library/skills": () => json(data),

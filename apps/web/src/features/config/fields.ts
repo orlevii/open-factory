@@ -3,15 +3,13 @@
  * Overlay and doc paths share one shape (`template.*`, `settings.*`, `mcp.mcpServers.*`), so one table serves both modes.
  */
 export const CONFIG_FIELDS = [
+  "runtime",
+  "image",
+  "permissionMode",
   "model",
   "effort",
   "warmWindow",
-  "maxLiveSpawns",
   "skills",
-  "plugins",
-  "allow",
-  "deny",
-  "trustNotes",
   "env",
   "envSecrets",
   "canSpawn",
@@ -20,28 +18,22 @@ export const CONFIG_FIELDS = [
 export type ConfigField = (typeof CONFIG_FIELDS)[number];
 
 export const FIELD_PATHS: Readonly<Record<ConfigField, readonly string[]>> = {
+  runtime: ["template", "runtime"],
+  image: ["template", "image"],
+  permissionMode: ["template", "permission_mode"],
   model: ["template", "model"],
   effort: ["template", "effort"],
   warmWindow: ["template", "warm_window_minutes"],
-  maxLiveSpawns: ["template", "max_live_spawns"],
   skills: ["template", "skills"],
-  plugins: ["settings", "enabledPlugins"],
-  allow: ["settings", "permissions", "allow"],
-  deny: ["settings", "permissions", "deny"],
-  trustNotes: ["settings", "autoMode", "environment"],
   env: ["settings", "env"],
   envSecrets: ["template", "secrets"],
   canSpawn: ["template", "can_spawn"],
   mcp: ["mcp", "mcpServers"],
 };
 
-/** The declarations of the plugins' marketplaces: their pins sit in the Plugins field's groups, so its issues land there. */
-export const MARKETPLACES_PATH = ["settings", "extraKnownMarketplaces"] as const;
-
-const BY_PATH = new Map<string, ConfigField>([
-  ...CONFIG_FIELDS.map((f) => [FIELD_PATHS[f].join("."), f] as const),
-  [MARKETPLACES_PATH.join("."), "plugins"],
-]);
+const BY_PATH = new Map<string, ConfigField>(
+  CONFIG_FIELDS.map((f) => [FIELD_PATHS[f].join("."), f] as const),
+);
 
 /**
  * The field an issue path belongs to, and the rest of the path under it (the item). `settings.permissions.allow.3` →

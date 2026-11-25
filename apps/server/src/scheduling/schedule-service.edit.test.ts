@@ -212,7 +212,7 @@ test("a human-created schedule's restore isn't bound by an agent's limit", async
 
 test("restore is refused when the target ended", async () => {
   await insertAgent(t.sql, { id: "kid", slug: "kid" });
-  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'kid'`;
+  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo', reports_to_user = null where id = 'kid'`;
   const s = await mk({ target: "kid" });
   await svc.remove(or, s.key);
   await t.sql`update agents set terminated_at = now(), terminated_by = '@or' where id = 'kid'`;

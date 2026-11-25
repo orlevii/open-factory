@@ -26,7 +26,7 @@ const task = (key: string, title: string, status: TaskSummary["status"] = "open"
 
 const live = [
   agentSummary({ slug: "dev", displayName: "Dev agent" }),
-  agentSummary({ slug: "devops", displayName: "Ops", reportsTo: "dev" }),
+  agentSummary({ slug: "devops", displayName: "Ops", reportsTo: { kind: "agent", handle: "dev" } }),
 ];
 const ended = [
   agentSummary({
@@ -42,9 +42,8 @@ beforeEach(() => {
   localStorage.clear();
   search = () => json({ tasks: [], nextCursor: null });
   api = mockApi({
-    "GET /api/agents?ended=exclude": () => json({ agents: live, running: { count: 0, max: 8 } }),
-    "GET /api/agents?ended=only": () =>
-      json({ agents: ended, more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?ended=exclude": () => json({ agents: live, running: { count: 0 } }),
+    "GET /api/agents?ended=only": () => json({ agents: ended, more: false, running: { count: 0 } }),
     "GET /api/tasks?": validQuery(taskListQuerySchema, (_b, url) => {
       const q = new URL(url, "http://x").searchParams;
       if (q.get("keys"))
@@ -241,7 +240,7 @@ test("in the Session the palette offers 'Open chat' and not 'Open session'; it g
   await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
 });
 
-test("Go to includes Skills, Usage and each Settings page; Images links /templates/images", async () => {
+test("Go to includes Skills, Usage and each Settings page", async () => {
   const { dialog, router } = await openFromInput();
   const goTo = within(dialog).getByRole("group", { name: "Go to" });
   const names = within(goTo)
@@ -264,9 +263,6 @@ test("Go to includes Skills, Usage and each Settings page; Images links /templat
     ]),
   );
   expect(new Set(names).size).toBe(names.length);
-  await userEvent.click(within(goTo).getByRole("option", { name: "Images" }));
-  await waitFor(() => expect(router.state.location.pathname).toBe("/templates/images"));
-  expect(router.state.location.hash).toBe("");
 });
 
 test("the Search row opens it and shows the platform key hint", async () => {
@@ -331,16 +327,14 @@ test("a short query renders a capped agent list, keeping every strong match", as
   const many = Array.from({ length: 80 }, (_, i) =>
     agentSummary({ slug: `agent-${i}`, displayName: `Agent ${i}` }),
   );
-  api.on("GET /api/agents?ended=exclude", () =>
-    json({ agents: many, running: { count: 0, max: 8 } }),
-  );
+  api.on("GET /api/agents?ended=exclude", () => json({ agents: many, running: { count: 0 } }));
   api.on("GET /api/agents?ended=only", () =>
     json({
       agents: [
         agentSummary({ slug: "g", displayName: "Gee", terminatedAt: "2026-11-01T00:00:00.000Z" }),
       ],
       more: false,
-      running: { count: 0, max: 8 },
+      running: { count: 0 },
     }),
   );
   const { dialog, input } = await openFromInput();
@@ -355,7 +349,7 @@ test("a short query renders a capped agent list, keeping every strong match", as
 
 test("the ended-more note is shown outside the list box", async () => {
   api.on("GET /api/agents?ended=only", () =>
-    json({ agents: ended, more: true, running: { count: 0, max: 8 } }),
+    json({ agents: ended, more: true, running: { count: 0 } }),
   );
   const { dialog, input } = await openFromInput();
   await userEvent.type(input, "dev");
@@ -397,9 +391,13 @@ test("ties keep the sidebar tree's order, not the server's", async () => {
       agents: [
         agentSummary({ slug: "zed-x", displayName: "Zed" }),
         agentSummary({ slug: "amy-x", displayName: "Amy" }),
-        agentSummary({ slug: "kid-x", displayName: "Kid", reportsTo: "zed-x" }),
+        agentSummary({
+          slug: "kid-x",
+          displayName: "Kid",
+          reportsTo: { kind: "agent", handle: "zed-x" },
+        }),
       ],
-      running: { count: 0, max: 8 },
+      running: { count: 0 },
     }),
   );
   const { dialog, input } = await openFromInput();

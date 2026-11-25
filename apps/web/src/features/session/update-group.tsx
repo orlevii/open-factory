@@ -191,7 +191,6 @@ export function PeerLine({
           {who} left: terminated {terminatedPhrase(s.left.by)}
         </>
       );
-    else if (s.left.to === null) what = <>{who} left: now reports to the humans</>;
     else
       what = (
         <>

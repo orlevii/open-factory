@@ -39,13 +39,7 @@ test("subscribe frames and new server frames parse", () => {
 });
 
 test("S10 frames parse", () => {
-  for (const f of [
-    { type: "settings_changed" },
-    { type: "users_changed" },
-    { type: "images_changed" },
-    { type: "image_build", name: "pw", state: "building" },
-    { type: "image_build", name: "pw", state: "failed", lines: ["x"] },
-  ])
+  for (const f of [{ type: "settings_changed" }, { type: "users_changed" }])
     expect(serverMessageSchema.parse(f).type).toBe(f.type);
 });
 

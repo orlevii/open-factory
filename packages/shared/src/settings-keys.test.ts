@@ -5,8 +5,6 @@ import { RESERVED_SETTINGS_KEYS, reservedKeysIn } from "./settings-keys.ts";
 const SPEC_KEYS = [
   "enabledPlugins",
   "extraKnownMarketplaces",
-  "syncClaudeAiPlugins",
-  "strictKnownMarketplaces",
   "permissions.defaultMode",
   "permissions.additionalDirectories",
   "claudeMdExcludes",

@@ -9,7 +9,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { schema } from "@open-factory/db";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
 
@@ -40,44 +39,6 @@ test("list rescans; summaries carry counts and optional fields for unparseable t
     warnings: 0,
     agentCount: 0,
   });
-});
-
-test("a summary counts the plugins the template enables, and a template with none counts 0", async () => {
-  await h.db.insert(schema.marketplaces).values({
-    name: "local",
-    source: { source: "directory", path: "/mk" },
-    tags: {},
-    state: "ready",
-    startedAt: new Date(),
-    addedBy: "@or",
-    addedAt: new Date(),
-  });
-  const dir = path.join(h.factoryHome, "templates/plugs");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "template.yaml"), "name: plugs\ndisplay_name: Plugs\n");
-  writeFileSync(path.join(dir, "AGENTS.md"), "# P\n");
-  writeFileSync(
-    path.join(dir, "settings.json"),
-    JSON.stringify({
-      extraKnownMarketplaces: { local: { source: { source: "directory", path: "/mk" } } },
-      enabledPlugins: { "a@local": true, "b@local": true, "c@local": false },
-    }),
-  );
-  const templates = (await get("/api/templates")).json().templates as {
-    name: string;
-    pluginCount: number;
-  }[];
-  // `c` is turned off, which is an error: the count is of the last valid parse, so fix the file.
-  expect(templates.find((t) => t.name === "plugs")?.pluginCount).toBe(0);
-  writeFileSync(
-    path.join(dir, "settings.json"),
-    JSON.stringify({
-      extraKnownMarketplaces: { local: { source: { source: "directory", path: "/mk" } } },
-      enabledPlugins: { "a@local": true, "b@local": true },
-    }),
-  );
-  const fixed = (await get("/api/templates")).json().templates as typeof templates;
-  expect(fixed.find((t) => t.name === "plugs")?.pluginCount).toBe(2);
 });
 
 test("traversal and bad names never reach the filesystem", async () => {
@@ -155,7 +116,7 @@ test("validate reports a YAML syntax error with its file and line and writes not
 });
 
 test("the names the web routes use are reserved: POST rejects them; a folder on disk with one still lists", async () => {
-  for (const name of ["images", "new"]) {
+  for (const name of ["new"]) {
     const r = await post("/api/templates", { name, displayName: "X" });
     expect(r.statusCode).toBe(400);
     expect(r.json().error).toMatchObject({
@@ -165,7 +126,7 @@ test("the names the web routes use are reserved: POST rejects them; a folder on 
     });
   }
   // Made on disk (an agent, a shell): the list and its detail don't crash on it.
-  for (const name of ["images", "new"]) {
+  for (const name of ["new"]) {
     mkdirSync(path.join(h.factoryHome, `templates/${name}`), { recursive: true });
     writeFileSync(
       path.join(h.factoryHome, `templates/${name}/template.yaml`),
@@ -175,9 +136,9 @@ test("the names the web routes use are reserved: POST rejects them; a folder on 
   const list = await get("/api/templates");
   expect(list.statusCode).toBe(200);
   const names = list.json().templates.map((t: { name: string }) => t.name);
-  expect(names).toEqual(expect.arrayContaining(["images", "new"]));
-  expect((await get("/api/templates/images")).statusCode).toBe(200);
-  for (const name of ["images", "new"])
+  expect(names).toEqual(expect.arrayContaining(["new"]));
+  expect((await get("/api/templates/new")).statusCode).toBe(200);
+  for (const name of ["new"])
     rmSync(path.join(h.factoryHome, `templates/${name}`), { recursive: true, force: true });
 });
 

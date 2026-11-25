@@ -56,7 +56,7 @@ function boot(opts: { items?: boolean; hold?: boolean } = {}) {
     "GET /api/inbox?": () => json({ chats: [], items: withItem ? [item] : [], nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: 0, byAgent: {} }),
     "GET /api/inbox/i1": () => json(item),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "POST /api/inbox/i1/read": () => json({ ok: true }),
     "GET /api/setup": async () => {
       await gate;

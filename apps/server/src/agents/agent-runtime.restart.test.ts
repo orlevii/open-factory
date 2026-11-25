@@ -460,7 +460,7 @@ test("config_changed is passive: it never wakes a hibernated agent, at runtime o
   expect(driver.starts).toHaveLength(0);
   expect(rt.hasDeliverable()).toBe(false);
   expect(rt.queueItems().map((i) => i.kind)).toEqual(["notice"]);
-  expect((await store.bootWakes(0)).map((w) => w.id)).not.toContain(agentId);
+  expect((await store.bootWakes()).map((w) => w.id)).not.toContain(agentId);
   // A message wakes it; the notice rides at the head of that first batch.
   await send("hi");
   expect(batches(driver.last)).toEqual([[CONFIG, "hi"]]);

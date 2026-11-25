@@ -1,13 +1,12 @@
 import type { ProjectSummary } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
+import type { ReactNode } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { MiddleTruncate } from "@/components/middle-truncate";
-import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 
 /** The projects an agent is granted: a checkbox group (Radix checkboxes) on `FieldShell legend`. With
- *  `onAddProject` (a sheet that can stack Add project), a ghost "Add project" sits under the list; without it,
+ *  `add` (the inline Add project), it sits under the list; without it,
  *  the empty state links to Settings. */
 export function ProjectGrantPicker({
   projects,
@@ -15,7 +14,7 @@ export function ProjectGrantPicker({
   error,
   help,
   onChange,
-  onAddProject,
+  add,
 }: {
   projects: ProjectSummary[] | undefined;
   value: string[];
@@ -24,40 +23,18 @@ export function ProjectGrantPicker({
   /** The note's muted line (chosen projects that were removed since). */
   help?: string;
   onChange: (next: string[]) => void;
-  onAddProject?: () => void;
+  /** The Add project disclosure and its inline form (a sheet that hosts them); without it, the empty state links to Settings. */
+  add?: ReactNode;
 }) {
   return (
-    <FieldShell
-      name="projects"
-      label="Projects"
-      legend
-      error={error}
-      help={help}
-      below={
-        onAddProject && (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              inForm
-              data-skip-validate
-              onClick={onAddProject}
-            >
-              <Plus aria-hidden="true" data-icon="inline-start" />
-              Add project
-            </Button>
-          </div>
-        )
-      }
-    >
+    <FieldShell name="projects" label="Projects" legend error={error} help={help} below={add}>
       {() => (
         <>
           {!projects && <p className="text-[0.8125rem] text-muted-foreground">Loading…</p>}
           {projects && projects.length === 0 && (
             <p className="text-[0.8125rem] text-muted-foreground">
               No projects yet.
-              {!onAddProject && (
+              {!add && (
                 <>
                   {" "}
                   <Link

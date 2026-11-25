@@ -9,8 +9,8 @@ import {
   realpathSync,
   writeFileSync,
 } from "node:fs";
-import { rm, symlink, writeFile } from "node:fs/promises";
-import os, { tmpdir } from "node:os";
+import { rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { createFakeClaude, type FakeClaude } from "@open-factory/harness/testing";
 import { templateYamlSchema } from "@open-factory/shared";
@@ -30,7 +30,7 @@ let workdir: string;
 let ws: Workspace;
 let tpl: Parameters<Workspace["materialize"]>[2];
 let prep: Parameters<Workspace["prepare"]>[0];
-let fake: FakeClaude;
+let _fake: FakeClaude;
 
 beforeEach(async () => {
   home = tmp("of-hard-");
@@ -38,7 +38,7 @@ beforeEach(async () => {
   secretFile = path.join(tmp("secret-"), "id_ed25519");
   writeFileSync(secretFile, "PRIVATE KEY");
   const claude = tmp("claude-");
-  const hs = path.join(claude, "skills");
+  const _hs = path.join(claude, "skills");
   writeHostSkill(claude, "grilling");
   const repo = tmp("repo-");
   const tdir = path.join(home, "templates/lead");
@@ -52,13 +52,12 @@ beforeEach(async () => {
     skills: ["grilling"],
     projects: ["app"],
   });
-  fake = createFakeClaude({ scenario: "reply" });
+  _fake = createFakeClaude({ scenario: "reply" });
   const cliBundle = path.join(tmp("cli-"), "open-factory.js");
   writeFileSync(cliBundle, "//");
   ws = new Workspace({
     factoryHome: home,
     library: hostOnlyLibrary(claude, home),
-    claudeBin: fake.bin,
     cliBundle,
     lock: new KeyedMutex(),
   });
@@ -72,9 +71,9 @@ beforeEach(async () => {
       doc: { template: {}, settings: {}, mcp: { mcpServers: {} } },
       config,
       templateSkills: [],
-      library: { skills: {}, plugins: {} },
+      library: { skills: {} },
     },
-    manager: null,
+    manager: { kind: "user" as const, handle: "or", name: "Or" },
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
     reports: [],
@@ -82,10 +81,11 @@ beforeEach(async () => {
     mcpUrl: "http://127.0.0.1:3001/mcp",
     kind: "persistent" as const,
     spawner: null,
-    spawning: null,
+    spawning: false,
     secretNames: config.secrets,
     manageOrg: false,
     descriptionWrittenBy: null,
+    memberUpdateSeconds: 30,
   };
   await ws.materialize("lead", "lead", tpl, { ...prep, config });
   workdir = ws.workdir("lead");
@@ -120,7 +120,7 @@ test(".claude as a symlink fails the start, writing nothing through it", async (
 test("a settings.json symlink to a host file is neither read nor written through", async () => {
   const hostJson = path.join(hostDir, "settings.json");
   const hostContent = JSON.stringify({
-    extraKnownMarketplaces: { leak: { source: { source: "directory", path: "/leak" } } },
+    leak: "/leak",
   });
   writeFileSync(hostJson, hostContent);
   await rm(`${workdir}/.claude-config/settings.json`, { force: true });
@@ -153,42 +153,6 @@ test("create's rollback never follows a link inside the workdir", async () => {
   expect(readdirSync(hostDir)).toEqual(["keep"]);
 });
 
-test("plugin keys planted in the agent's own settings never reach the settings the factory writes", async () => {
-  await writeFile(
-    `${workdir}/.claude-config/settings.json`,
-    JSON.stringify({
-      enabledPlugins: { "evil@m": true },
-      extraKnownMarketplaces: { evil: { source: { source: "directory", path: "/evil" } } },
-    }),
-  );
-  await prepareAgent();
-  const s = JSON.parse(readFileSync(`${workdir}/.claude-config/settings.json`, "utf8"));
-  expect(s).not.toHaveProperty("enabledPlugins");
-  expect(s).not.toHaveProperty("extraKnownMarketplaces");
-});
-
-test("an agent-planted plugin in its plugins dir is switched off, and a link planted there is never read through", async () => {
-  const dir = path.join(home, "state/agents/lead/plugins");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    path.join(hostDir, "installed_plugins.json"),
-    JSON.stringify({ version: 2, plugins: { "evil@m": [{ installPath: hostDir }] } }),
-  );
-  await symlink(
-    path.join(hostDir, "installed_plugins.json"),
-    path.join(dir, "installed_plugins.json"),
-  );
-  const linked = await prepareAgent();
-  expect(JSON.parse(linked.plugins.settingsJson).enabledPlugins).not.toHaveProperty("evil@m");
-  await rm(path.join(dir, "installed_plugins.json"));
-  writeFileSync(
-    path.join(dir, "installed_plugins.json"),
-    JSON.stringify({ version: 2, plugins: { "evil@m": [{ installPath: hostDir }] } }),
-  );
-  const own = await prepareAgent();
-  expect(JSON.parse(own.plugins.settingsJson).enabledPlugins["evil@m"]).toBe(false);
-});
-
 // Spec §11.4 part 2: mounts come from factory-owned inputs only.
 const asDocker = () => {
   prep = {
@@ -197,36 +161,10 @@ const asDocker = () => {
   };
 };
 
-test("a marketplace path planted in the agent's config-dir settings never becomes a mount", async () => {
-  await writeFile(
-    `${workdir}/.claude-config/settings.json`,
-    JSON.stringify({
-      extraKnownMarketplaces: { x: { source: { source: "directory", path: os.homedir() } } },
-    }),
-  );
-  const { mounts } = await prepareAgent();
-  expect(mounts.map((m) => m.source)).not.toContain(os.homedir());
-  asDocker();
-  await expect(prepareAgent()).resolves.toMatchObject({ workdir });
-});
-
-test("a marketplace path planted in the old .factory/template copy never becomes a mount", async () => {
-  mkdirSync(`${workdir}/.factory/template`, { recursive: true });
-  writeFileSync(
-    `${workdir}/.factory/template/settings.json`,
-    JSON.stringify({
-      extraKnownMarketplaces: { x: { source: { source: "directory", path: os.homedir() } } },
-    }),
-  );
-  const { mounts } = await prepareAgent();
-  expect(mounts.map((m) => m.source)).not.toContain(os.homedir());
-});
-
-test("a Docker start's mounts pass checkMounts: the agent's plugins dir writable, the CLI bundle read-only", async () => {
+test("a Docker start's mounts pass checkMounts: the workdir writable, the CLI bundle read-only", async () => {
   asDocker();
   const { mounts } = await prepareAgent();
-  const plugins = path.join(home, "state/agents/lead/plugins");
-  expect(mounts).toContainEqual({ source: plugins, target: plugins, readOnly: false });
+  expect(mounts).toContainEqual({ source: workdir, target: workdir, readOnly: false });
   expect(mounts.find((m) => m.target === "/opt/factory/bin/open-factory")).toMatchObject({
     readOnly: true,
   });
@@ -240,7 +178,7 @@ test("a granted project inside FACTORY_HOME fails the Docker start", async () =>
   asDocker();
   await expect(prepareAgent()).rejects.toBeInstanceOf(MountRefusedError);
   await expect(prepareAgent()).rejects.toThrow(
-    `Mount ${other} isn't allowed: it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or this agent's plugins dir.`,
+    `Mount ${other} isn't allowed: it is inside FACTORY_HOME and isn't this agent's workdir or a registered skill.`,
   );
 });
 

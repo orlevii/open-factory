@@ -78,7 +78,7 @@ beforeEach(() => {
         usage: null,
       }),
     // The agents list loads once (sidebar, chips).
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
   });
   for (const i of items) api.on(`POST /api/inbox/${i.id}/read`, () => json({ ok: true }));
 });

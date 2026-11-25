@@ -21,7 +21,7 @@ import { TimelineRow } from "./timeline-row";
 beforeEach(() => {
   resetSeq();
   mockApi({
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
   });
 });
 afterEach(() => vi.unstubAllGlobals());

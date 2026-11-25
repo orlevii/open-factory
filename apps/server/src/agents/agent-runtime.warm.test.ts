@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
-import { RecordingSlots } from "./testing/slots.ts";
 
 const h = new RuntimeHarness();
 beforeAll(() => h.setup());
@@ -197,21 +196,6 @@ test("lastActivityAt moves on start, delivery and turn end", async () => {
   expect(h.rt.lastActivityAt).toBe(t0 + 10_000);
 });
 
-test("the Supervisor hears each false-to-true hibernatable edge once", async () => {
-  const slots = new RecordingSlots();
-  await h.makeRuntime({ slots, warmWindowMinutes: 1 });
-  await idle();
-  h.driver.last.emit(ev.background([]));
-  await h.rt.settled();
-  expect(slots.events.filter((e) => e[0] === "hibernatable")).toHaveLength(1);
-  h.driver.last.emit(ev.turn());
-  await h.rt.settled();
-  expect(h.rt.hibernatable()).toBe(false);
-  h.driver.last.emit(ev.end());
-  await h.rt.settled();
-  expect(slots.events.filter((e) => e[0] === "hibernatable")).toHaveLength(2);
-});
-
 test("a message arriving resets the warm window", async () => {
   await idle();
   await vi.advanceTimersByTimeAsync(50_000);
@@ -275,19 +259,19 @@ test("a shutdown of an idle agent leaves no notice", async () => {
   expect(await types()).not.toContain("background_work_lost");
 });
 
-test("a freed_slot victim that received a message meanwhile refuses", async () => {
+test("a warm-window hibernation of an agent that received a message meanwhile refuses", async () => {
   await idle();
   await h.send("meanwhile"); // written with no open turn: awaiting its turn
-  expect(await h.rt.hibernate("freed_slot")).toBe(false);
+  expect(await h.rt.hibernate("warm_window")).toBe(false);
   expect(h.driver.last.stopped).toBe(false);
   h.driver.last.emit(ev.turn(), ev.end());
   await h.rt.settled();
-  expect(await h.rt.hibernate("freed_slot")).toBe(true);
+  expect(await h.rt.hibernate("warm_window")).toBe(true);
   await h.rt.settled();
   expect(h.driver.last.stopped).toBe(true);
   expect((await h.store.after(h.agentId, 0, 1000)).at(-1)?.event).toMatchObject({
     type: "hibernated",
-    reason: "freed_slot",
+    reason: "warm_window",
   });
 });
 

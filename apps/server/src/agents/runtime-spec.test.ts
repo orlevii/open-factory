@@ -2,8 +2,6 @@ import { isFactoryEnvName, templateYamlSchema } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { buildAgentEnv, buildRuntimeSpec } from "./runtime-spec.ts";
 
-const PLUGINS = { dir: "/fh/state/agents/lead/plugins", latest: false, remote: false };
-
 const serverEnv = {
   PATH: "/usr/bin",
   HOME: "/home/u",
@@ -30,7 +28,6 @@ test("env is the allowlist plus config dir, credential, secrets and git identity
       credential: { kind: "oauth_token", value: "agent-token" },
       secrets: { GH_TOKEN: "gh" },
       agentToken: "t",
-      plugins: PLUGINS,
     },
     "local",
   );
@@ -43,7 +40,6 @@ test("env is the allowlist plus config dir, credential, secrets and git identity
     TERM: "xterm",
     TMPDIR: "/tmp",
     CLAUDE_CONFIG_DIR: "/w/.claude-config",
-    CLAUDE_CODE_PLUGIN_CACHE_DIR: PLUGINS.dir,
     DISABLE_AUTOUPDATER: "1",
     CLAUDE_CODE_OAUTH_TOKEN: "agent-token",
     GH_TOKEN: "gh",
@@ -63,7 +59,6 @@ test("secrets can never override PATH, the credential var, the config dir or the
       slug: "a1",
       credential: { kind: "oauth_token", value: "factory-token" },
       agentToken: "t",
-      plugins: PLUGINS,
       secrets: {
         PATH: "/evil",
         ANTHROPIC_API_KEY: "evil-key",
@@ -93,7 +88,6 @@ test("api_key credentials set ANTHROPIC_API_KEY and never the OAuth var", () => 
       credential: { kind: "api_key", value: "k" },
       secrets: {},
       agentToken: "t",
-      plugins: PLUGINS,
     },
     "local",
   );
@@ -113,7 +107,6 @@ test("the server's own ANTHROPIC_*/CLAUDE_* never leak; exactly one credential v
         credential: { kind, value: "agent" },
         secrets: {},
         agentToken: "t",
-        plugins: PLUGINS,
       },
       "local",
     );
@@ -135,7 +128,6 @@ test("two agents with different credentials get their own values", () => {
       credential: { kind: "oauth_token", value: "A" },
       secrets: {},
       agentToken: "t",
-      plugins: PLUGINS,
     },
     "local",
   );
@@ -147,7 +139,6 @@ test("two agents with different credentials get their own values", () => {
       credential: { kind: "oauth_token", value: "B" },
       secrets: {},
       agentToken: "t",
-      plugins: PLUGINS,
     },
     "local",
   );
@@ -160,7 +151,6 @@ const extra = {
   credential: { kind: "oauth_token" as const, value: "agent-token" },
   secrets: { GH_TOKEN: "gh" },
   agentToken: "t",
-  plugins: PLUGINS,
 };
 
 test.each(["local", "docker"] as const)("%s: server-only vars never leak", (rt) => {
@@ -199,7 +189,6 @@ test("docker: no host PATH/HOME/USER/SHELL; OPEN_FACTORY_URL set", () => {
   expect(Object.keys(env).sort()).toEqual(
     [
       "CLAUDE_CODE_OAUTH_TOKEN",
-      "CLAUDE_CODE_PLUGIN_CACHE_DIR",
       "CLAUDE_CONFIG_DIR",
       "DISABLE_AUTOUPDATER",
       "GH_TOKEN",
@@ -235,7 +224,6 @@ test("runtime spec from the snapshot", () => {
       claudeBin: "claude",
       config,
       mounts: [],
-      settingsJson: '{"enabledPlugins":{}}',
     }),
   ).toEqual({
     agentId: "1",
@@ -247,7 +235,6 @@ test("runtime spec from the snapshot", () => {
     model: "haiku",
     effort: "high",
     permissionMode: "auto",
-    settingsJson: '{"enabledPlugins":{}}',
     mounts: [],
   });
 });
@@ -262,7 +249,6 @@ test("model and effort are omitted when the snapshot sets none", () => {
     claudeBin: "claude",
     config,
     mounts: [],
-    settingsJson: "{}",
   });
   expect(spec).not.toHaveProperty("model");
   expect(spec).not.toHaveProperty("effort");
@@ -278,7 +264,6 @@ test("the agent token is the one variable S6 adds, and a secret can't override i
         credential: { kind: "oauth_token", value: "cred" },
         secrets: { OPEN_FACTORY_AGENT_TOKEN: "evil" },
         agentToken: "tok",
-        plugins: PLUGINS,
       },
       runtime,
     );
@@ -299,7 +284,6 @@ test.each([
       secrets: { GH_TOKEN: "gh" },
       agentUrl: "http://host:1",
       agentToken: "t",
-      plugins: PLUGINS,
     },
     runtime,
   );
@@ -309,34 +293,12 @@ test.each([
     expect(isFactoryEnvName(k), k).toBe(true);
 });
 
-test("the plugin env: the dir and no self-update always, plugin auto-update only for Latest, sync only for a remote marketplace", () => {
-  const env = (plugins: Partial<typeof PLUGINS>, secrets: Record<string, string> = {}) =>
-    buildAgentEnv(serverEnv, { ...extra, secrets, plugins: { ...PLUGINS, ...plugins } }, "local");
-  const quiet = env({});
-  expect(quiet.CLAUDE_CODE_PLUGIN_CACHE_DIR).toBe(PLUGINS.dir);
-  expect(quiet.DISABLE_AUTOUPDATER).toBe("1");
-  expect(quiet).not.toHaveProperty("FORCE_AUTOUPDATE_PLUGINS");
-  expect(quiet).not.toHaveProperty("CLAUDE_CODE_SYNC_PLUGIN_INSTALL");
-  expect(env({ latest: true }).FORCE_AUTOUPDATE_PLUGINS).toBe("1");
-  expect(env({ remote: true }).CLAUDE_CODE_SYNC_PLUGIN_INSTALL).toBe("1");
-  // A secret of the same name can't switch either on (or off).
-  const loud = env(
-    {},
-    {
-      FORCE_AUTOUPDATE_PLUGINS: "1",
-      CLAUDE_CODE_SYNC_PLUGIN_INSTALL: "1",
-      CLAUDE_CODE_PLUGIN_SEED_DIR: "/x",
-      CLAUDE_CODE_PLUGIN_DIRS: "/x",
-      DISABLE_UPDATES: "1",
-    },
+test("Claude Code never updates itself: DISABLE_AUTOUPDATER is always on and a secret can't switch updates off the factory's way", () => {
+  const env = buildAgentEnv(
+    serverEnv,
+    { ...extra, secrets: { DISABLE_UPDATES: "1", DISABLE_AUTOUPDATER: "0" } },
+    "local",
   );
-  for (const k of [
-    "FORCE_AUTOUPDATE_PLUGINS",
-    "CLAUDE_CODE_SYNC_PLUGIN_INSTALL",
-    "CLAUDE_CODE_PLUGIN_SEED_DIR",
-    "CLAUDE_CODE_PLUGIN_DIRS",
-    "DISABLE_UPDATES",
-  ])
-    expect(loud).not.toHaveProperty(k);
-  expect(loud.DISABLE_AUTOUPDATER).toBe("1");
+  expect(env.DISABLE_AUTOUPDATER).toBe("1");
+  expect(env).not.toHaveProperty("DISABLE_UPDATES");
 });

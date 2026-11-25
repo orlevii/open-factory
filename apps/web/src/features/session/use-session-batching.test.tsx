@@ -17,7 +17,6 @@ const ev = (seq: number): SessionEvent => ({
 });
 const detail: AgentDetail = {
   agent: agentSummary(),
-  model: { value: null, source: "default" },
   queue: [],
   lastSeq: 4,
 };

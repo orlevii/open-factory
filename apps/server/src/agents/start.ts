@@ -4,13 +4,13 @@ import type { AgentRuntimeSpec } from "@open-factory/harness";
 import { asc, eq, inArray } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
-import { resolveImage } from "../images/resolve.ts";
 import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError } from "../runtime/docker/errors.ts";
 import { MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "../scheduling/limits.ts";
 import { type DenyRules, type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
 import { maySpawn } from "../spawning/may-spawn.ts";
+import type { ManagerRef } from "../workspace/claude-md.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import type { MountCheckContext } from "../workspace/mounts.ts";
@@ -38,10 +38,6 @@ export type PreparedSpec = AgentRuntimeSpec & {
   credentialId: string;
   /** The config this start prepared; the runtime keeps it as `started` (spec §6.2). It holds env values: never log it. */
   effective: Effective;
-  /** The plugins this start expects Claude Code to load, each with its pin; the runtime checks the first `init` (spec §7.3 step 8). */
-  plugins: { key: string; pin: string }[];
-  /** Where a plugin Claude Code reports may live: the agent's plugins dir and the registered directory marketplaces. */
-  pluginRoots?: string[];
 };
 
 /** I2 §6.2: a loaded runtime's `started` config (what its running process started with); undefined when none runs. */
@@ -188,6 +184,8 @@ export function createPrepareStart(d: {
   /** The one ContainerManager (built in buildApp). Docker starts fail without it. */
   containers?: Pick<ContainerManager, "stopIfRunning">;
   neighborhood: Neighborhood;
+  /** The member-update debounce, read live (the factory setting); CLAUDE.md states it (I9 §4.8). */
+  memberUpdateDebounceMs: () => number;
   serverEnv?: NodeJS.ProcessEnv;
 }): PrepareStart {
   const serverEnv = d.serverEnv ?? process.env;
@@ -264,18 +262,26 @@ export function createPrepareStart(d: {
         }
       }
 
-      let manager: { slug: string; displayName: string } | null = null;
+      let manager: ManagerRef | undefined;
       if (agent.reportsTo) {
         const [m] = await d.db
           .select({ slug: schema.agents.slug, displayName: schema.agents.displayName })
           .from(schema.agents)
           .where(eq(schema.agents.id, agent.reportsTo));
-        manager = m ?? null;
+        if (m) manager = { kind: "agent", ...m };
+      } else if (agent.reportsToUser) {
+        const [u] = await d.db
+          .select({ handle: schema.users.handle, name: schema.users.name })
+          .from(schema.users)
+          .where(eq(schema.users.id, agent.reportsToUser));
+        if (u) manager = { kind: "user", ...u };
       }
+      if (!manager)
+        throw new AgentStartError(`@${agent.slug}'s manager no longer exists, so it can't start.`);
       const hood = await d.neighborhood.of(agent.id);
       // A spawned entry's manager is its spawner: this agent (a report) or this agent's manager (a peer).
       const slugs = new Map([[agent.id, agent.slug]]);
-      if (agent.reportsTo && manager) slugs.set(agent.reportsTo, manager.slug);
+      if (agent.reportsTo && manager.kind === "agent") slugs.set(agent.reportsTo, manager.slug);
       // The writer of a description is `description_by` joined to its slug (I7 §10), so a rename keeps the quoting.
       const writerIds = [
         ...new Set(
@@ -342,9 +348,7 @@ export function createPrepareStart(d: {
           humans: await d.neighborhood.humans(),
           kind: spawned ? "ephemeral" : "persistent",
           spawner: spawned ? { slug: spawned.spawner.slug } : null,
-          spawning: maySpawn(agent, config)
-            ? { maxLive: config.maxLiveSpawns, perHour: d.config.maxSpawnsPerHour }
-            : null,
+          spawning: maySpawn(agent, config),
           // S9 §10.5: only persistent agents hold the schedule tools.
           scheduling: spawned
             ? null
@@ -356,6 +360,7 @@ export function createPrepareStart(d: {
           secretNames,
           manageOrg: agent.manageOrg,
           descriptionWrittenBy: writtenBy(agent) ?? null,
+          memberUpdateSeconds: Math.round(d.memberUpdateDebounceMs() / 1000),
           ...(spawned ? { inheritedDeny: spawned.inherited.deny } : {}),
           mcpUrl:
             config.runtime === "docker"
@@ -386,29 +391,23 @@ export function createPrepareStart(d: {
             secrets,
             agentUrl: d.config.agentUrl,
             agentToken,
-            plugins: prepared.plugins,
           },
           config.runtime,
         ),
         claudeBin: d.config.claudeBin,
         config,
         mounts: prepared.mounts,
-        settingsJson: prepared.plugins.settingsJson,
       });
-      const plugins = prepared.plugins.expected;
-      const pluginRoots = [prepared.plugins.dir, ...prepared.plugins.marketplaceDirs];
       return docker && prepared.mountCheck
         ? {
             ...spec,
             credentialId,
             effective,
-            plugins,
-            pluginRoots,
             launch: {
-              image: resolveImage(config.image, d.config.defaultImage).tag,
+              image: config.image ?? d.config.defaultImage,
               mountCheck: prepared.mountCheck,
             },
           }
-        : { ...spec, credentialId, effective, plugins, pluginRoots };
+        : { ...spec, credentialId, effective };
     });
 }

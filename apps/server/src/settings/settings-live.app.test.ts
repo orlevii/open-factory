@@ -19,7 +19,7 @@ afterEach(async () => {
 const MIN = 60_000;
 
 async function setup(factorySettings: {
-  defaultWarmWindowMinutes?: number;
+  warmWindowMinutes?: number;
   memberUpdateDebounceSeconds?: number;
 }) {
   const driver = new FakeDriver();
@@ -28,7 +28,7 @@ async function setup(factorySettings: {
   const or = await signUp(app.app, { handle: "or" });
   const lead = await app.seedAgent({ slug: "lead" });
   const dev = await app.seedAgent({ slug: "dev" });
-  await app.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
+  await app.sql`update agents set reports_to = ${lead.id}, reports_to_user = null where id = ${dev.id}`;
   const loaded = await app.app.runtimes.load(lead.id);
   if (!loaded) throw new Error("no runtime for lead");
   const rt: AgentRuntime = loaded;
@@ -64,27 +64,27 @@ async function setup(factorySettings: {
 }
 
 test("lowering the default warm window over PATCH hibernates an idle agent already past it", async () => {
-  const s = await setup({ defaultWarmWindowMinutes: 70 });
+  const s = await setup({ warmWindowMinutes: 70 });
   const proc = await s.idle();
   await s.tick(2 * MIN);
   expect(proc.stopped).toBe(false);
 
-  await s.patch({ defaultWarmWindowMinutes: 1 });
+  await s.patch({ warmWindowMinutes: 1 });
 
   expect(proc.stopped).toBe(true);
   expect((await s.events()).at(-1)).toMatchObject({ type: "hibernated", reason: "warm_window" });
 });
 
-test("a debounce of 0 over PATCH delivers a held member update at once", async () => {
+test("a debounce of 0 over PATCH delivers a pending member update at once", async () => {
   const s = await setup({ memberUpdateDebounceSeconds: 30 });
   const proc = await s.idle();
-  const row = await s.app.app.store.createHeld({
+  const row = await s.app.app.store.createOrgRow({
     kind: "member_update",
     toAgentId: s.lead.id,
     fromAgentId: s.dev.id,
     body: "progress",
   });
-  await s.rt.receiveHeld(row);
+  await s.rt.receive(row);
   await s.tick(1_000);
   const written = () => proc.sent.flat().some((m) => m.body === "progress");
   expect(written()).toBe(false);

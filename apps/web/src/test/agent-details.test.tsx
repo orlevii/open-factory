@@ -70,14 +70,13 @@ type Props = {
   agent?: AgentSummary;
   usage?: AgentUsageRow | null | undefined;
   onClose?: () => void;
-  slotsMax?: number;
   seed?: (qc: QueryClient) => void;
 };
 
-function Harness({ agent, onClose, slotsMax }: Omit<Props, "seed" | "usage">) {
+function Harness({ agent, onClose }: Omit<Props, "seed" | "usage">) {
   const a = agent ?? agentSummary();
   const stop: StopCrons = useStopCrons(a);
-  return <AgentDetails agent={a} stop={stop} onClose={onClose} slotsMax={slotsMax} />;
+  return <AgentDetails agent={a} stop={stop} onClose={onClose} />;
 }
 
 function setup(props: Props = {}) {
@@ -92,7 +91,7 @@ function setup(props: Props = {}) {
     component: () => (
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <Harness agent={props.agent} onClose={props.onClose} slotsMax={props.slotsMax} />
+          <Harness agent={props.agent} onClose={props.onClose} />
         </TooltipProvider>
       </QueryClientProvider>
     ),
@@ -181,14 +180,14 @@ test("Now: a pending restart names what it applies, with the full list below", a
   const restartChanges = [
     "model: sonnet → opus",
     "added skill release",
-    "added plugin x@y",
+    "added secret GH_TOKEN",
     "env LOG_LEVEL changed",
     "MCP server github added",
   ];
   setup({ agent: agentSummary({ restartPending: true, restartChanges }) });
   const now = within(await section("Now"));
   expect(now.getByText(/Restarts when idle to apply:/, { exact: false }).textContent).toContain(
-    "model, 1 skill, 1 plugin and 2 more",
+    "model, 1 skill, 1 secret and 2 more",
   );
   for (const c of restartChanges) expect(now.getByText(c)).toBeInTheDocument();
 });
@@ -211,22 +210,6 @@ test("Now: restart pending explains itself with Why", async () => {
 test("Now: an agent pulling its image says so", async () => {
   setup({ agent: agentSummary({ pulling: true }) });
   expect(within(await section("Now")).getByText("Pulling the image…")).toBeInTheDocument();
-});
-
-test("Now: the queued detail waits for the cap, and reads in the singular for one slot", async () => {
-  const unknown = setup({ agent: agentSummary({ status: "queued" }) });
-  await screen.findByRole("heading", { name: "Agent details" });
-  expect(screen.queryByText(/Queued:/)).toBeNull();
-  unknown.unmount();
-  const many = setup({ agent: agentSummary({ status: "queued" }), slotsMax: 8 });
-  expect(
-    within(await section("Now")).getByText("Queued: all 8 slots are in use."),
-  ).toBeInTheDocument();
-  many.unmount();
-  setup({ agent: agentSummary({ status: "queued" }), slotsMax: 1 });
-  expect(
-    within(await section("Now")).getByText("Queued: the only slot is in use."),
-  ).toBeInTheDocument();
 });
 
 test("Now: the rate-limited detail names the credential and its reset time", async () => {
@@ -262,7 +245,6 @@ test("Now: a terminated agent shows no queued, paused or restart row (an end sta
       rateLimitedUntil: minutesAgo(-30),
       pulling: true,
     }),
-    slotsMax: 8,
   });
   const now = await section("Now");
   expect(now.textContent).not.toMatch(/Queued|Paused|Restarts when idle|Pulling/);
@@ -270,9 +252,18 @@ test("Now: a terminated agent shows no queued, paused or restart row (an end sta
 
 test("Org: the manager, up to 8 reports, and All N reports to the Agents page", async () => {
   const reports = Array.from({ length: 10 }, (_, i) =>
-    agentSummary({ slug: `r${i}`, displayName: `Report ${i}`, reportsTo: "lead" }),
+    agentSummary({
+      slug: `r${i}`,
+      displayName: `Report ${i}`,
+      reportsTo: { kind: "agent", handle: "lead" },
+    }),
   );
-  const lead = agentSummary({ slug: "lead", displayName: "Lead", reportsTo: "boss", reports: 10 });
+  const lead = agentSummary({
+    slug: "lead",
+    displayName: "Lead",
+    reportsTo: { kind: "agent", handle: "boss" },
+    reports: 10,
+  });
   setup({
     agent: lead,
     seed: (qc) =>
@@ -292,7 +283,11 @@ test("Org: the manager, up to 8 reports, and All N reports to the Agents page", 
 });
 
 test("Org: no link to all reports when they all fit", async () => {
-  const r = agentSummary({ slug: "r", displayName: "Report", reportsTo: "lead" });
+  const r = agentSummary({
+    slug: "r",
+    displayName: "Report",
+    reportsTo: { kind: "agent", handle: "lead" },
+  });
   const lead = agentSummary({ slug: "lead", reports: 1 });
   setup({ agent: lead, seed: (qc) => qc.setQueryData(["agents", "exclude"], [lead, r]) });
   const org = within(await section("Org"));
@@ -416,10 +411,138 @@ test("Runtime: template, credential and projects; Unsandboxed only for a local a
   expect(rt.getByText("web")).toBeInTheDocument();
   expect(rt.getByText("Unsandboxed")).toBeInTheDocument();
   first.unmount();
-  setup({ agent: agentSummary({ runtime: "docker", image: "node:22" }) });
+  setup({
+    agent: agentSummary({ runtime: "docker", image: { running: "node:22", next: "node:22" } }),
+  });
   const docker = within(await section("Runtime"));
   expect(docker.getByText("node:22")).toBeInTheDocument();
   expect(docker.queryByText("Unsandboxed")).toBeNull();
+});
+
+test("Org: a human manager shows their initials avatar, name and handle, not a link", async () => {
+  setup({
+    agent: agentSummary({ reportsTo: { kind: "user", handle: "or" } }),
+    seed: (qc) =>
+      qc.setQueryData(
+        ["users"],
+        [
+          {
+            id: "u1",
+            name: "Or Levi",
+            handle: "or",
+            email: "or@example.com",
+            createdAt: "2026-11-01T00:00:00.000Z",
+            disabledAt: null,
+          },
+        ],
+      ),
+  });
+  const org = await section("Org");
+  expect(within(org).getByText("Or Levi")).toBeInTheDocument();
+  expect(within(org).getByText("@or")).toBeInTheDocument();
+  expect(org.querySelector("[data-human-avatar]")).toHaveTextContent("OL");
+  expect(within(org).queryByRole("link")).toBeNull();
+});
+
+/** The text of a Runtime row's value. */
+const rowValue = (rt: HTMLElement, label: string) =>
+  within(rt)
+    .getByText(label, { selector: "dt" })
+    .nextElementSibling?.textContent?.replace(/\s+/g, " ")
+    .trim();
+
+test.each([
+  [{ value: "opus", source: "agent" as const }, "opus (agent)"],
+  [{ value: "sonnet", source: "template" as const }, "sonnet"],
+  [{ value: null, source: null }, "Claude Code default"],
+])("Runtime: the Model row shows %j as %s", async (model, text) => {
+  setup({ agent: agentSummary({ model }) });
+  expect(rowValue(await section("Runtime"), "Model")).toBe(text);
+});
+
+test("Runtime: the Effort row shows its own value and source, apart from the model's", async () => {
+  setup({
+    agent: agentSummary({
+      model: { value: "opus", source: "agent" },
+      effort: { value: "high", source: "template" },
+    }),
+  });
+  const rt = await section("Runtime");
+  expect(rowValue(rt, "Effort")).toBe("high");
+  expect(rowValue(rt, "Model")).toBe("opus (agent)");
+});
+
+test("Runtime: a pending restart marks only the row it changes with 'after this turn'", async () => {
+  setup({
+    agent: agentSummary({
+      model: { value: "opus", source: "agent" },
+      effort: { value: "high", source: "template" },
+      restartPending: true,
+      restartChanges: ["model: sonnet → opus"],
+    }),
+  });
+  const rt = await section("Runtime");
+  expect(rowValue(rt, "Model")).toBe("opus (agent) · after this turn");
+  expect(rowValue(rt, "Effort")).toBe("high");
+});
+
+test("Runtime: no restart pending, no 'after this turn'", async () => {
+  setup({
+    agent: agentSummary({
+      model: { value: "opus", source: "agent" },
+      restartPending: false,
+      restartChanges: ["model: sonnet → opus"],
+    }),
+  });
+  expect(rowValue(await section("Runtime"), "Model")).toBe("opus (agent)");
+});
+
+test("Runtime: a Docker agent's Image row is the running image, and 'Next start' only when the config resolves to another", async () => {
+  const first = setup({
+    agent: agentSummary({
+      runtime: "docker",
+      image: { running: "ghcr.io/acme/dev:1", next: "ghcr.io/acme/dev:1" },
+    }),
+  });
+  expect(rowValue(await section("Runtime"), "Image")).not.toContain("Next start");
+  first.unmount();
+  const second = setup({
+    agent: agentSummary({
+      runtime: "docker",
+      image: { running: "ghcr.io/acme/dev:1", next: "ghcr.io/acme/dev:2" },
+    }),
+  });
+  const rt = await section("Runtime");
+  expect(rowValue(rt, "Image")).toContain("ghcr.io/acme/dev:1");
+  expect(rowValue(rt, "Image")).toMatch(/Next start:\s*ghcr\.io\/acme\/dev:2/);
+  second.unmount();
+  // Nothing running: the image the next start uses is the one shown.
+  setup({
+    agent: agentSummary({
+      runtime: "docker",
+      image: { running: null, next: "ghcr.io/acme/dev:2" },
+    }),
+  });
+  const idle = await section("Runtime");
+  expect(rowValue(idle, "Image")).toContain("ghcr.io/acme/dev:2");
+  expect(rowValue(idle, "Image")).not.toContain("Next start");
+});
+
+test("Runtime: the image's Copy button copies the whole reference", async () => {
+  const writeText = vi.fn(async () => {});
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+  setup({
+    agent: agentSummary({
+      runtime: "docker",
+      image: { running: "registry.example.com/team/some/very/long/path/dev:2026-11-25", next: "x" },
+    }),
+  });
+  const rt = within(await section("Runtime"));
+  await userEvent.click(rt.getByRole("button", { name: /^Copy image / }));
+  expect(writeText).toHaveBeenCalledWith(
+    "registry.example.com/team/some/very/long/path/dev:2026-11-25",
+  );
+  expect(await rt.findByRole("button", { name: "Copied" })).toBeInTheDocument();
 });
 
 test("Runtime: a Configuration row opens the agent's Configuration page", async () => {
@@ -466,12 +589,14 @@ test("Runtime: a disabled local runtime explains itself in a Why popover (distin
   expect(screen.getByRole("button", { name: "Why does it restart?" })).toBeInTheDocument();
 });
 
-test("Org: a spawned agent says 'Spawned by'; a root has No manager", async () => {
-  const first = setup({ agent: agentSummary({ kind: "ephemeral", reportsTo: "lead" }) });
+test("Org: a spawned agent says 'Spawned by'; a human-managed agent names the human", async () => {
+  const first = setup({
+    agent: agentSummary({ kind: "ephemeral", reportsTo: { kind: "agent", handle: "lead" } }),
+  });
   expect(within(await section("Org")).getByText("Spawned by")).toBeInTheDocument();
   first.unmount();
-  setup({ agent: agentSummary({ reportsTo: null }) });
-  expect(within(await section("Org")).getByText("No manager")).toBeInTheDocument();
+  setup({ agent: agentSummary({ reportsTo: { kind: "user", handle: "or" } }) });
+  expect(within(await section("Org")).getByText("@or")).toBeInTheDocument();
 });
 
 test("Edit agent is an outline button for a persistent, unarchived agent only, and opens the sheet", async () => {

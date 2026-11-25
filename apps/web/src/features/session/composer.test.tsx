@@ -290,7 +290,7 @@ function Session({ agent }: { agent: AgentSummary }) {
     sessionReducer(initialSessionState, {
       type: "loaded",
       page: { events: [], hasMore: { before: false, after: false } },
-      detail: { agent, model: { value: null, source: "default" }, queue: [], lastSeq: 0 },
+      detail: { agent, queue: [], lastSeq: 0 },
       mode: "latest",
     }),
   );

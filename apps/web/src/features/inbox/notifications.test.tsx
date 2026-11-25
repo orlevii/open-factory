@@ -341,7 +341,7 @@ test("task events and other facts never notify", async () => {
       item({ kind: "task_event", fact: "done" }),
       item({
         kind: "notice",
-        notice: "plugin_not_loaded",
+        notice: "factory_restarted",
         from: { kind: "factory", name: "factory" },
         task: undefined,
         link: { kind: "session", agentSlug: "dev" },
@@ -539,4 +539,25 @@ test("the item is absent when the browser has no Notification API", async () => 
   await userEvent.click(await screen.findByRole("button", { name: /Alice/ }));
   await screen.findByRole("menuitemradio", { name: "Light" });
   expect(screen.queryByRole("menuitemcheckbox", { name: "Browser notifications" })).toBeNull();
+});
+
+test("member updates in the inbox never notify, even in a hidden tab", async () => {
+  localStorage.setItem("of-notifications", "1");
+  stubNotification("granted");
+  let updates: ChatRow[] = [];
+  mockApi({
+    "GET /api/inbox/unread-count": () => json({ count: 0 }),
+    "GET /api/inbox?": () => json({ chats: [], updates, items: [], nextCursor: null }),
+  });
+  renderApp("/", alice);
+  await screen.findByRole("button", { name: /Alice/ });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  updates = [chatRow({ unread: 2 })];
+  act(() => ws.push({ type: "inbox_changed" }));
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 100));
+  });
+  expect(shown).toEqual([]);
 });

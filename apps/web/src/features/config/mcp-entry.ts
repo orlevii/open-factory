@@ -165,3 +165,10 @@ export function pairErrors(kind: "env" | "header", ps: readonly Pair[]): Map<num
   }
   return out;
 }
+
+/** Where focus goes when an edit opens: the first field that fails its check, else Name. */
+export function firstInvalidField(d: ServerDraft, taken: ReadonlySet<string>): EditorField {
+  if (checkName(d.name, taken)) return "mcp-name";
+  if (d.kind === "command") return d.command.trim() ? "mcp-name" : "mcp-command";
+  return checkUrl(d.url) ? "mcp-url" : "mcp-name";
+}

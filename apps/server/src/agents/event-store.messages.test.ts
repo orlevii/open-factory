@@ -35,7 +35,7 @@ test("pendingQueue names agent senders and subjects; notices first", async () =>
     body: "hi",
     urgent: false,
   });
-  const h = await store.createHeld({
+  const h = await store.createOrgRow({
     kind: "member_update",
     toAgentId: "a2",
     fromAgentId: "a1",
@@ -53,7 +53,7 @@ test("pendingQueue names agent senders and subjects; notices first", async () =>
   ]);
   expect(h).toMatchObject({ kind: "member_update", fromSlug: "dev", subjectSlug: null });
   expect(await store.pendingRow(h.id)).toEqual(q[2]);
-  const fact = await store.createHeld({
+  const fact = await store.createOrgRow({
     kind: "member_update",
     toAgentId: "a2",
     subjectAgentId: "a1",
@@ -67,22 +67,27 @@ test("pendingQueue names agent senders and subjects; notices first", async () =>
   });
 });
 
-test("bootWakes ignores young updates and peer rows", async () => {
-  await store.createHeld({ kind: "member_update", toAgentId: "a3", fromAgentId: "a1", body: "y" });
-  await store.createHeld({
+test("boot wakes no agent for member updates or peer rows; an agent with a pending update, old or young, is listed to load", async () => {
+  await store.createOrgRow({
+    kind: "member_update",
+    toAgentId: "a3",
+    fromAgentId: "a1",
+    body: "y",
+  });
+  await store.createOrgRow({
     kind: "peer_joined",
     toAgentId: "a4",
     subjectAgentId: "a1",
     notice: "peer",
     body: "p",
   });
-  const wakes = (await store.bootWakes(30_000)).map((w) => w.id);
+  await t.sql`update messages set created_at = now() - interval '1 day' where to_agent_id = 'a3'`;
+  const wakes = (await store.bootWakes()).map((w) => w.id);
   expect(wakes).not.toContain("a3");
   expect(wakes).not.toContain("a4");
-  expect(await store.agentsWithYoungUpdates(30_000)).toContain("a3");
-  await t.sql`update messages set created_at = now() - interval '1 minute' where to_agent_id = 'a3'`;
-  expect((await store.bootWakes(30_000)).map((w) => w.id)).toContain("a3");
-  expect(await store.agentsWithYoungUpdates(30_000)).not.toContain("a3");
+  const loads = await store.agentsWithPendingUpdates();
+  expect(loads).toContain("a3");
+  expect(loads).not.toContain("a4");
 });
 
 test("a factory fact fans out one inbox item per existing user, delivered at once", async () => {
@@ -318,7 +323,7 @@ test("markRejected only touches pending rows", async () => {
 test("bootWakes orders by deliverable rows only", async () => {
   await insertAgent(t.sql, { id: "a5", slug: "e" });
   await insertAgent(t.sql, { id: "a6", slug: "f" });
-  const peer = await store.createHeld({
+  const peer = await store.createOrgRow({
     kind: "peer_joined",
     toAgentId: "a5",
     subjectAgentId: "a1",
@@ -342,9 +347,7 @@ test("bootWakes orders by deliverable rows only", async () => {
   await at(peer.id, "2020-01-01T00:00:00Z");
   await at(m6.id, "2020-06-01T00:00:00Z");
   await at(m5.id, "2020-07-01T00:00:00Z");
-  const order = (await store.bootWakes(30_000))
-    .map((w) => w.id)
-    .filter((i) => i === "a5" || i === "a6");
+  const order = (await store.bootWakes()).map((w) => w.id).filter((i) => i === "a5" || i === "a6");
   expect(order).toEqual(["a6", "a5"]);
 });
 

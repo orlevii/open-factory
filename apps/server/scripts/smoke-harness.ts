@@ -54,12 +54,11 @@ const templates: TemplateIndex = new TemplateIndex({
   db,
   config,
   library,
-  policy: new PolicyInputs({ db, library }),
+  policy: new PolicyInputs({ db }),
 });
 const workspace = new Workspace({
   factoryHome: config.factoryHome,
   library,
-  claudeBin: config.claudeBin,
   cliBundle: config.cliBundle,
   lock,
 });
@@ -80,6 +79,7 @@ const prepareStart = createPrepareStart({
   resolver: new ConfigResolver({ templates, library }),
   lock,
   neighborhood: new Neighborhood(db),
+  memberUpdateDebounceMs: () => 30_000,
 });
 const store = new EventStore(db);
 const bus = new EventBus();

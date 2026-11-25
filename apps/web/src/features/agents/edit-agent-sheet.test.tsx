@@ -6,7 +6,13 @@ import { notify } from "@/components/ui/toaster";
 import { hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { FORM_MSG } from "@/lib/form-messages.ts";
-import { agentSummary, credential, mockWorld, type World } from "@/test/agent-screens-fixtures";
+import {
+  agentSummary,
+  credential,
+  mockWorld,
+  project,
+  type World,
+} from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
@@ -118,63 +124,32 @@ test("header Edit agent, an @slug · Template description, every field and no te
   expect(footerClose(dialog)).toBeInTheDocument();
 });
 
-test("the model summary row ends the form and opens the Configuration page, keeping the draft", async () => {
-  const detailWith = (model: { value: string | null; source: string }) => () =>
-    json({ agent: lead(), model, queue: [], lastSeq: 0 });
-  const { router, dialog } = await open({
-    extra: { "GET /api/agents/lead": detailWith({ value: "opus", source: "agent" }) },
-  });
-  const row = within(dialog)
-    .getByText(/^Model/)
-    .closest("p") as HTMLElement;
-  expect(row).toHaveTextContent("Model opus (this agent) · Open configuration");
-  // The last row of the form, after Projects.
-  const body = dialog.querySelector("[data-slot=sheet-body]") as HTMLElement;
-  expect(body.lastElementChild?.contains(row)).toBe(true);
-  const link = within(row).getByRole("link", { name: "Open configuration" });
-  expect(link).toHaveAttribute("href", "/agents/lead/config");
-  await userEvent.type(field("Display name"), "!");
-  await userEvent.click(link);
-  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/lead/config"));
-  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
-  expect(hasDraft("edit-agent:lead")).toBe(true);
-});
-
-test("the model summary says where the model comes from", async () => {
-  const { dialog } = await open({
-    extra: {
-      "GET /api/agents/lead": () =>
-        json({
-          agent: lead(),
-          model: { value: "sonnet", source: "template" },
-          queue: [],
-          lastSeq: 0,
-        }),
-    },
-  });
-  expect(
-    within(dialog)
-      .getByText(/^Model/)
-      .closest("p"),
-  ).toHaveTextContent("Model sonnet (from template) · Open configuration");
-});
-
 test("the manager picker leaves out the agent and its descendants", async () => {
   const agents = [
     agentSummary({ slug: "cto", displayName: "CTO" }),
-    lead({ reportsTo: "cto", depth: 1 }),
-    agentSummary({ slug: "dev-1", displayName: "Dev", reportsTo: "lead", depth: 2 }),
-    agentSummary({ slug: "other", displayName: "Other", reportsTo: "cto", depth: 1 }),
+    lead({ reportsTo: { kind: "agent", handle: "cto" }, depth: 1 }),
+    agentSummary({
+      slug: "dev-1",
+      displayName: "Dev",
+      reportsTo: { kind: "agent", handle: "lead" },
+      depth: 2,
+    }),
+    agentSummary({
+      slug: "other",
+      displayName: "Other",
+      reportsTo: { kind: "agent", handle: "cto" },
+      depth: 1,
+    }),
   ];
   await open({ agents });
   const select = field("Manager");
   await vi.waitFor(() => expect(select).toHaveTextContent("CTO"));
   // The closed trigger shows the name and @slug.
   expect(select).toHaveTextContent("@cto");
-  expect((await comboOptionNames(select)).map((n) => n.replace(/@.*/, ""))).toEqual([
-    "No manager (reports to the humans)",
-    "CTO",
-    "Other",
+  expect(await comboOptionNames(select)).toEqual([
+    "You (Alice · @alice)",
+    "CTO@cto",
+    "Other@other",
   ]);
 });
 
@@ -205,9 +180,24 @@ test("the restart help is there before any edit and unchanged by one, so nothing
   const { dialog } = await open({
     agents: [
       lead({ status: "working" }),
-      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "working", depth: 1 }),
-      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "idle", depth: 1 }),
-      agentSummary({ slug: "dev-3", reportsTo: "lead", status: "hibernated", depth: 1 }),
+      agentSummary({
+        slug: "dev-1",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "working",
+        depth: 1,
+      }),
+      agentSummary({
+        slug: "dev-2",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "idle",
+        depth: 1,
+      }),
+      agentSummary({
+        slug: "dev-3",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "hibernated",
+        depth: 1,
+      }),
     ],
     credentials: [credential("work"), credential("prod")],
   });
@@ -254,8 +244,18 @@ test("a text change restarts the running direct reports too", async () => {
   await open({
     agents: [
       lead({ status: "idle" }),
-      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "working", depth: 1 }),
-      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "hibernated", depth: 1 }),
+      agentSummary({
+        slug: "dev-1",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "working",
+        depth: 1,
+      }),
+      agentSummary({
+        slug: "dev-2",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "hibernated",
+        depth: 1,
+      }),
     ],
     credentials: [credential("work"), credential("prod")],
   });
@@ -275,8 +275,18 @@ test("a stopped agent's text change still restarts its running reports", async (
   await open({
     agents: [
       lead(),
-      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "idle", depth: 1 }),
-      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "working", depth: 1 }),
+      agentSummary({
+        slug: "dev-1",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "idle",
+        depth: 1,
+      }),
+      agentSummary({
+        slug: "dev-2",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "working",
+        depth: 1,
+      }),
     ],
   });
   expect(
@@ -326,6 +336,134 @@ test("save over another page closes the sheet, clears the draft, sends the diff 
   expect(patches(api)).toEqual([{ displayName: "Boss" }]);
   expect(hasDraft("edit-agent:lead")).toBe(false);
   expect(vi.mocked(notify).mock.calls.map((c) => c[0].text)).toEqual(["Saved @lead."]);
+});
+
+// --- Model and effort ---
+
+const agentConfig = (overlay: Record<string, unknown> = {}, version = "v1") => ({
+  overlay,
+  version,
+  template: {
+    name: "lead",
+    doc: { template: { effort: "high" }, settings: {}, mcp: { mcpServers: {} } },
+    valid: true,
+  },
+  merged: { template: { effort: "high" }, settings: {}, mcp: { mcpServers: {} } },
+  issues: [],
+});
+const savedConfig = (overlay: Record<string, unknown>) => ({
+  ...agentConfig(overlay, "v2"),
+  changes: ["model: sonnet → opus"],
+  restartChecked: true,
+  checked: "full" as const,
+});
+const templateConfig = {
+  doc: { template: { effort: "high" }, settings: {}, mcp: { mcpServers: {} } },
+  hashes: { "template.yaml": "h", "settings.json": null, "mcp.json": null },
+  issues: [],
+  localSkills: [],
+  agents: { live: 1, archived: 0, cantStart: 0 },
+};
+const configRoutes = (overlay: Record<string, unknown> = {}) => ({
+  "GET /api/templates/lead/config": () => json(templateConfig),
+  "GET /api/agents/lead/config": () => json(agentConfig(overlay)),
+});
+const puts = (api: { calls: { method: string; url: string; body: unknown }[] }) =>
+  api.calls.filter((c) => c.method === "PUT" && c.url === "/api/agents/lead/config");
+
+test("Model and Effort show what the agent overrides, each inherit option naming the template's value", async () => {
+  await open({
+    agents: [
+      lead({
+        model: { value: "opus", source: "agent" },
+        effort: { value: "high", source: "template" },
+      }),
+    ],
+    extra: configRoutes({ template: { model: "opus" } }),
+  });
+  expect(field("Model")).toHaveTextContent("opus");
+  await vi.waitFor(() => expect(field("Effort")).toHaveTextContent("Template's (high)"));
+  await userEvent.click(field("Model"));
+  expect(
+    await screen.findByRole("option", { name: "Template's (Claude Code default)" }),
+  ).toBeVisible();
+});
+
+test("a model change alone is saved through the agent's config, keeping its other overlay keys, with no PATCH", async () => {
+  const overlay = { settings: { env: { A: "1" } } };
+  const { api } = await open({
+    extra: {
+      ...configRoutes(overlay),
+      "PUT /api/agents/lead/config": () =>
+        json(savedConfig({ ...overlay, template: { model: "opus" } })),
+    },
+  });
+  await pickOption(field("Model"), "opus");
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+  expect(puts(api).map((c) => c.body)).toEqual([
+    { overlay: { settings: { env: { A: "1" } }, template: { model: "opus" } }, baseVersion: "v1" },
+  ]);
+  expect(patches(api)).toEqual([]);
+});
+
+test("a running agent's model change says it restarts when idle", async () => {
+  await open({
+    agents: [lead({ status: "idle" })],
+    extra: configRoutes(),
+  });
+  await pickOption(field("Model"), "opus");
+  expect(await screen.findByText(SELF)).toBeInTheDocument();
+});
+
+test("when the config write fails after the agent saved, the outcome says which part was saved and a retry sends only the config", async () => {
+  let reject = true;
+  const { api } = await open({
+    extra: {
+      ...configRoutes(),
+      "PATCH /api/agents/lead": saved(lead({ displayName: "Boss" })),
+      "PUT /api/agents/lead/config": () =>
+        reject
+          ? json(
+              { error: { code: "invalid_config", message: "The configuration has errors." } },
+              400,
+            )
+          : json(savedConfig({ template: { model: "opus" } })),
+    },
+  });
+  await rename("Boss");
+  await pickOption(field("Model"), "opus");
+  await userEvent.click(saveButton());
+  expect(
+    await screen.findByText(
+      "Saved your changes, but not Model and Effort: The configuration has errors.",
+    ),
+  ).toBeInTheDocument();
+  // The sheet stays, with the model still chosen.
+  expect(getSheetState().parent).toBeDefined();
+  expect(field("Model")).toHaveTextContent("opus");
+  expect(patches(api)).toEqual([{ displayName: "Boss" }]);
+  reject = false;
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+  expect(patches(api)).toHaveLength(1);
+  expect(puts(api)).toHaveLength(2);
+});
+
+test("a config write that fails with nothing else saved says Model and Effort weren't saved", async () => {
+  await open({
+    extra: {
+      ...configRoutes(),
+      "PUT /api/agents/lead/config": () =>
+        json({ error: { code: "invalid_config", message: "The configuration has errors." } }, 400),
+    },
+  });
+  await pickOption(field("Model"), "opus");
+  await userEvent.click(saveButton());
+  expect(
+    await screen.findByText("Model and Effort weren't saved: The configuration has errors."),
+  ).toBeInTheDocument();
+  expect(getSheetState().parent).toBeDefined();
 });
 
 test("on its own session, a display-name-only save toasts nothing", async () => {
@@ -483,25 +621,6 @@ test("a late success over the same agent's Edit reopened on the sent values clea
   expect(hasDraft("edit-agent:lead")).toBe(false);
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull());
   expect(patches(api)).toHaveLength(1);
-});
-
-test("a late success over the same agent's reopened, untouched Edit keeps it open while a stacked child is on it", async () => {
-  const patch = held();
-  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
-  await rename("Boss");
-  await userEvent.click(saveButton());
-  await screen.findByRole("button", { name: /Saving…/ });
-  act(() => closeSheet());
-  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
-  const parent = await sheet();
-  await vi.waitFor(() => expect(field("Display name")).toHaveValue("Boss"));
-  await userEvent.click(within(parent).getByRole("button", { name: "Add credential" }));
-  await screen.findByRole("dialog", { name: "Add credential" });
-  await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
-  await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved @lead." }));
-  expect(getSheetState().child?.kind).toBe("add-credential");
-  expect(getSheetState().parent?.kind).toBe("edit-agent");
-  expect(hasDraft("edit-agent:lead")).toBe(false);
 });
 
 test("a save landing after a sign-out neither toasts nor touches a draft", async () => {
@@ -737,15 +856,15 @@ test("focus on open goes to Display name", async () => {
   await waitFor(() => expect(field("Display name")).toHaveFocus());
 });
 
-test("Add credential stacks over Edit agent and names it", async () => {
-  await open();
-  await userEvent.click(screen.getByRole("button", { name: "Add credential" }));
-  const child = await screen.findByRole("dialog", { name: "Add credential" });
-  expect(
-    within(child).getByText(
-      "For Edit agent. Saved to Settings → Credentials; other agents can use it.",
-    ),
-  ).toBeInTheDocument();
+test("Add credential expands inline under Credential and nothing stacks", async () => {
+  const { dialog } = await open();
+  const add = within(dialog).getByRole("button", { name: "Add credential" });
+  expect(add).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(add);
+  const g = await screen.findByRole("group", { name: "Add credential" });
+  expect(add).toHaveAttribute("aria-expanded", "true");
+  expect(g.tagName).not.toBe("FORM");
+  expect(getSheetState().child).toBeUndefined();
 });
 
 test("leaving an unchosen Credential for its own Add credential button doesn't flag it", async () => {
@@ -757,14 +876,71 @@ test("leaving an unchosen Credential for its own Add credential button doesn't f
   expect(trigger).toHaveTextContent("Choose a credential");
   act(() => trigger.focus());
   await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
-  await screen.findByRole("dialog", { name: "Add credential" });
+  await screen.findByRole("group", { name: "Add credential" });
   expect(trigger).not.toHaveAttribute("aria-invalid");
 });
 
-test("Add project stacks over Edit agent", async () => {
-  await open();
-  await userEvent.click(screen.getByRole("button", { name: "Add project" }));
-  expect(await screen.findByRole("dialog", { name: "Add project" })).toBeInTheDocument();
+test("a pasted token added inline is selected, focused and noted, and Save sends it", async () => {
+  const credentials = [credential("work")];
+  const { dialog, api } = await open({
+    credentials,
+    extra: {
+      "POST /api/credentials": (body: unknown) => {
+        const c = credential((body as { name: string }).name);
+        credentials.push(c);
+        return json({ credential: c }, 201);
+      },
+      "PATCH /api/agents/lead": () => json({ agent: lead({ credential: "prod" }) }),
+    },
+  });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  const g = await screen.findByRole("group", { name: "Add credential" });
+  await userEvent.click(within(g).getByRole("radio", { name: "Paste a token" }));
+  await userEvent.type(within(g).getByLabelText("Name"), "prod");
+  await userEvent.type(within(g).getByLabelText("Token"), "sk-ant-oat-1");
+  await userEvent.click(within(g).getByRole("button", { name: "Verify and add" }));
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Add credential" })).toBeNull());
+  expect(field("Credential")).toHaveTextContent("prod");
+  await waitFor(() => expect(field("Credential")).toHaveFocus());
+  expect(within(dialog).getByText("Added prod.")).toBeInTheDocument();
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(patches(api)).toHaveLength(1));
+  expect(patches(api)[0]).toMatchObject({ credential: "prod" });
+});
+
+test("Save while Add credential is open and dirty focuses it instead of saving", async () => {
+  const { dialog, api } = await open();
+  await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
+  const g = await screen.findByRole("group", { name: "Add credential" });
+  await userEvent.type(within(g).getByLabelText("Name"), "prod");
+  await rename("Boss");
+  await userEvent.click(saveButton());
+  expect(patches(api)).toHaveLength(0);
+  expect(await within(g).findByText("Add the credential or cancel it first.")).toBeInTheDocument();
+  expect(g).toHaveFocus();
+});
+
+test("Add project expands inline and the new project joins the grants", async () => {
+  const projects = [project("app")];
+  const { dialog } = await open({
+    projects,
+    extra: {
+      "POST /api/projects": () => {
+        projects.push(project("web"));
+        return json({ project: project("web") }, 201);
+      },
+    },
+  });
+  const group = within(dialog).getByRole("group", { name: /Projects/ });
+  const add = within(group).getByRole("button", { name: "Add project" });
+  await userEvent.click(add);
+  const g = await screen.findByRole("group", { name: "Add project" });
+  await userEvent.type(within(g).getByLabelText("Name"), "web");
+  await userEvent.type(within(g).getByLabelText("Path"), "/src/web");
+  await userEvent.click(within(g).getByRole("button", { name: "Add project" }));
+  const web = await within(group).findByRole("checkbox", { name: /web/ });
+  expect(web).toBeChecked();
+  await waitFor(() => expect(web).toHaveFocus());
 });
 
 // --- Entry points ---

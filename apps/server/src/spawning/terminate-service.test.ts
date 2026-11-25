@@ -44,13 +44,16 @@ async function setup() {
   );
   const lead = await app.seedAgent({
     slug: "lead",
-    config: { template: { can_spawn: ["dev"], max_live_spawns: 5 } },
+    config: { template: { can_spawn: ["dev"] } },
   });
   // I2 §6.2: spawning follows the spawner's running process.
   await asRunning(app.app, lead);
   await app.db.insert(schema.agentProjectGrants).values({ agentId: lead.id, projectId });
   const pm = await app.seedAgent({ slug: "pm" });
-  await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
+  await app.db
+    .update(schema.agents)
+    .set({ reportsTo: lead.id, reportsToUser: null })
+    .where(eq(schema.agents.id, pm.id));
   return { t: app, driver, lead, pm };
 }
 
@@ -284,7 +287,7 @@ test("rows handed over during the provisional window are rejected once it commit
       body: "late",
       urgent: false,
     });
-    const held = await t.app.store.createHeld({
+    const held = await t.app.store.createOrgRow({
       kind: "member_update",
       toAgentId: child.id,
       fromAgentId: lead.id,
@@ -292,7 +295,7 @@ test("rows handed over during the provisional window are rejected once it commit
     });
     ids.push(direct.id, held.id);
     await child.rt.deliver(direct, { sender: "human", fromLabel: `@${user.handle}` });
-    await child.rt.receiveHeld(held);
+    await child.rt.receive(held);
   }).release();
   await t.app.terminator.terminate(child.id, "@or");
   expect(ids).toHaveLength(2);

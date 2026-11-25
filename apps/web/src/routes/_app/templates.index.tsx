@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, redirect, useLocation, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { PageBody } from "@/components/page-header";
@@ -8,10 +8,6 @@ import { TemplateList } from "@/features/templates/template-list";
 import { TemplatesHeader } from "@/features/templates/templates-header";
 
 export const Route = createFileRoute("/_app/templates/")({
-  // Images was a section here (`/templates#images`); old bookmarks and links land on its view.
-  beforeLoad: ({ location }) => {
-    if (location.hash === "images") throw redirect({ to: "/templates/images", replace: true });
-  },
   component: TemplatesPage,
 });
 

@@ -78,9 +78,8 @@ beforeEach(() => {
   localStorage.clear();
   fakeMatchMedia.install(false);
   mockApi({
-    "GET /api/agents?ended=exclude": () => json({ agents: [], running: { count: 0, max: 8 } }),
-    "GET /api/agents?ended=only": () =>
-      json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?ended=exclude": () => json({ agents: [], running: { count: 0 } }),
+    "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 0 } }),
   });
   gate = Promise.resolve();
   sheetBodies["new-task"] = {
@@ -95,11 +94,6 @@ beforeEach(() => {
     load: async () => ({ default: StubChild as never }),
     prefetch: () => {},
     title: "Add secret",
-  };
-  sheetBodies["add-project"] = {
-    load: async () => ({ default: StubChild as never }),
-    prefetch: () => {},
-    title: "Add project",
   };
 });
 afterEach(() => {
@@ -138,13 +132,13 @@ test("the child sheet stacks over the parent; Esc closes only the child", async 
   await shell();
   act(() => openSheet({ kind: "new-task" }));
   await screen.findByRole("dialog", { name: "New task" });
-  act(() => openChildSheet({ kind: "add-project" }, () => {}));
-  const child = await screen.findByRole("dialog", { name: "Add project" });
+  act(() => openChildSheet({ kind: "add-secret", name: "" }, () => {}));
+  const child = await screen.findByRole("dialog", { name: "Add secret" });
   expect(await screen.findByText("child body")).toBeInTheDocument();
   expect(child).toHaveTextContent("child body");
   expect(screen.getByText("For New task.")).toBeInTheDocument();
   await userEvent.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add project" })).toBeNull());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add secret" })).toBeNull());
   expect(dialog()).toBeInTheDocument();
 });
 
@@ -250,9 +244,9 @@ test("edit-schedule prefetches the detail and the live agents only (edit mode ne
   ]);
 });
 
-test("add-project prefetch requests host info with the never-stale options", () => {
+test("New agent prefetch requests host info with the never-stale options", () => {
   const prefetchQuery = vi.fn(() => Promise.resolve());
-  restoreBodies["add-project"]?.prefetch({ prefetchQuery } as never, { kind: "add-project" });
+  restoreBodies["new-agent"]?.prefetch({ prefetchQuery } as never, { kind: "new-agent" });
   const opts = (
     prefetchQuery.mock.calls as unknown as [{ queryKey: unknown; staleTime?: number }][]
   ).map((c) => c[0]);
@@ -268,11 +262,10 @@ test("intent prefetch has its own freshness window: hover, press and open fetch 
     "GET /api/agents/lead": () =>
       json({
         agent: agentSummary({ slug: "lead" }),
-        model: { value: null, source: "default" },
         queue: [],
         lastSeq: 0,
       }),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
   });
   const qc = createQueryClient({ queries: { retry: false } });
   const prefetch = restoreBodies["edit-agent"]?.prefetch;

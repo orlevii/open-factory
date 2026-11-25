@@ -3,18 +3,13 @@ import { isFactoryEnvName } from "./config.ts";
 /**
  * Settings keys that are factory-owned or that run a command (spec §7.10). The start check refuses them in
  * agent-writable project and local settings. I2 hands this same constant to I7 as the `agent` policy's
- * default-deny list, so the two can't drift; any change here changes I7's policy too.
+ * default-deny list, so the two can't drift; any change here changes I7's policy too. The plugin keys stay here: plugins
+ * bring hooks and MCP servers, so an agent must not switch them on in its own settings. A human-written template
+ * `settings.json` still passes them through untouched.
  */
-/** The plugin keys: the factory passes its own with `--settings` and drops these from a template's settings. */
-export const PLUGIN_SETTINGS_KEYS = [
+export const RESERVED_SETTINGS_KEYS: readonly string[] = [
   "enabledPlugins",
   "extraKnownMarketplaces",
-  "syncClaudeAiPlugins",
-] as const;
-
-export const RESERVED_SETTINGS_KEYS: readonly string[] = [
-  ...PLUGIN_SETTINGS_KEYS,
-  "strictKnownMarketplaces",
   "permissions.defaultMode",
   "permissions.additionalDirectories",
   "claudeMdExcludes",

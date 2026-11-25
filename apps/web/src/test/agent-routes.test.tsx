@@ -54,8 +54,7 @@ beforeEach(() => {
   const routes: Record<string, () => Response> = {
     "/api/agents/dev": () => json(detail()),
     "/api/agents/dev/events?": () => json(conversation()),
-    "/api/agents?": () =>
-      json({ agents: [agentSummary()], more: false, running: { count: 0, max: 8 } }),
+    "/api/agents?": () => json({ agents: [agentSummary()], more: false, running: { count: 0 } }),
   };
   vi.stubGlobal(
     "fetch",

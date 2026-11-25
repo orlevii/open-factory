@@ -1,5 +1,5 @@
-import type { AgentConfigResponse, ConfigDoc, TemplateIssue } from "@open-factory/shared";
-import { modelSchema } from "@open-factory/shared";
+import type { ConfigDoc, TemplateIssue } from "@open-factory/shared";
+import { imageRefSchema, modelSchema } from "@open-factory/shared";
 import { createContext, type ReactNode, use, useCallback, useMemo, useRef } from "react";
 import { type FieldErrors, useFieldErrors } from "@/components/forms/use-field-errors";
 import type { RowNote } from "./config-list";
@@ -20,11 +20,13 @@ export type ConfigFormProps = {
   base?: ConfigDoc | null;
   /** Agent mode: the template's name, for "From template dev · 40". */
   templateName?: string;
-  /** Agent mode: what the agent's merged config runs as plugins (pin, and the version the running process loaded). */
-  runningPlugins?: AgentConfigResponse["plugins"];
   /** A functional update of the whole draft (`useConfigDraft().setDraft`). */
   onChange: ConfigUpdate;
   readOnly?: boolean;
+  /** Why the fields cannot be used yet ("Choose a template first"): they are read-only and their help says so. */
+  disabledReason?: string;
+  /** Replaces the form's section layout (a grid with 2rem between sections), for a scope around a few fields. */
+  className?: string;
   /** Server issues. A path a field owns lands on that field (or row); the rest go to the top block. */
   issues: readonly TemplateIssue[];
   /** Paths a rebase found changed on both sides: their fields read "Also changed elsewhere." */
@@ -32,11 +34,6 @@ export type ConfigFormProps = {
   onShowRaw?: (at: RawTarget) => void;
   /** The template's own `skills/` folders (from the template config API), listed read-only as "Template skill". */
   localSkills?: readonly string[];
-  /**
-   * An MCP server editor opened (true) or closed (false). Its edits reach the draft only on Done, so the page refuses
-   * Save while one is open, with `CONFIG_FORM_MSG.finishServer`. A form unmounted with an editor open reports false.
-   */
-  onEditorOpenChange?: (open: boolean) => void;
 };
 
 /** A field's own issue, and the notes on its items (the path under the field: a list index, or an entry name and below), with their severity. */
@@ -45,20 +42,16 @@ type FieldIssues = { error?: string; warning?: string; items: Map<string, RowNot
 export type ConfigScope = {
   mode: ConfigMode;
   readOnly: boolean;
+  disabledReason?: string | undefined;
   value: unknown;
   base: ConfigDoc | null;
   inheritedLabel: string;
-  /** The template's name (agent mode), for the plugin picker's lines. */
-  templateName: string | undefined;
-  /** Plugin key → the version the running process loaded. */
-  running: ReadonlyMap<string, string>;
   /** Set the value at a path from its previous value, keeping every other key. Stable while `onChange` is. */
   update: (path: readonly string[], next: (prev: unknown) => unknown) => void;
   byField: ReadonlyMap<ConfigField, FieldIssues>;
   conflicts: ReadonlySet<ConfigField>;
   fieldErrors: FieldErrors<ConfigField>;
   onShowRaw?: (at: RawTarget) => void;
-  onEditorOpenChange?: (open: boolean) => void;
 };
 
 const Scope = createContext<ConfigScope | null>(null);
@@ -76,7 +69,6 @@ const keepNothing = () => false;
 
 const NUMBER_RANGE = {
   warmWindow: { min: 1, max: 1440, message: CONFIG_FIELD_MSG.warmWindowRange },
-  maxLiveSpawns: { min: 0, max: 50, message: CONFIG_FIELD_MSG.maxLiveSpawnsRange },
 } as const;
 
 function numberCheck(value: unknown, f: keyof typeof NUMBER_RANGE): string | undefined {
@@ -93,6 +85,14 @@ function modelCheck(value: unknown): string | undefined {
   return p.success ? undefined : p.error.issues[0]?.message;
 }
 
+/** The image field's client check: a Docker reference, or empty (the factory default). */
+function imageCheck(value: unknown): string | undefined {
+  const r = readString(readAt(value, FIELD_PATHS.image));
+  if (!r.ok || r.value === undefined || r.value === "") return undefined;
+  const p = imageRefSchema.safeParse(r.value);
+  return p.success ? undefined : p.error.issues[0]?.message;
+}
+
 /**
  * The form's shared state for its fields: the tolerant value, the inherited base, issues grouped by field once per
  * change (L2), and the field errors (L4). Sections (this task's Model; C3's others) read it with `useConfigScope`.
@@ -104,11 +104,11 @@ export function ConfigFormScope({
   templateName,
   onChange,
   readOnly = false,
+  disabledReason,
+  className = "grid min-w-0 gap-8",
   issues,
   conflicts,
   onShowRaw,
-  onEditorOpenChange,
-  runningPlugins,
   children,
 }: ConfigFormProps & { children: ReactNode }) {
   const root = useRef<HTMLDivElement>(null);
@@ -117,7 +117,7 @@ export function ConfigFormScope({
     checks: {
       model: () => modelCheck(value),
       warmWindow: () => numberCheck(value, "warmWindow"),
-      maxLiveSpawns: () => numberCheck(value, "maxLiveSpawns"),
+      image: () => imageCheck(value),
     },
     fields: CONFIG_FIELDS,
   });
@@ -162,34 +162,22 @@ export function ConfigFormScope({
     [conflicts],
   );
 
-  const running = useMemo(
-    () =>
-      new Map(
-        (runningPlugins ?? []).flatMap((p) =>
-          p.loaded === undefined ? [] : [[p.key, p.loaded] as const],
-        ),
-      ),
-    [runningPlugins],
-  );
-
   const scope: ConfigScope = {
     mode,
-    readOnly,
+    readOnly: readOnly || disabledReason !== undefined,
+    disabledReason,
     value,
     base: mode === "agent" ? base : null,
     inheritedLabel: templateName ? `From template ${templateName}` : "From template",
-    templateName,
-    running,
     update,
     byField,
     conflicts: conflictFields,
     fieldErrors,
     onShowRaw,
-    onEditorOpenChange,
   };
   return (
     <Scope value={scope}>
-      <div ref={root} className="grid min-w-0 gap-8">
+      <div ref={root} className={className}>
         {children}
       </div>
     </Scope>

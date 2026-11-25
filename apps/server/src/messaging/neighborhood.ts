@@ -1,12 +1,12 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { Exec } from "../agents/event-store.ts";
 
 /** An agent that is neither archived nor terminated. */
 export const liveAgent = and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt));
 
 /**
- * Who an agent can see: manager, peers (same manager; top-level agents are peers) and reports. Live agents only. Reads
+ * Who an agent can see: manager (an agent; a human manager is none of the agents), peers (same manager, agent or human) and reports. Live agents only. Reads
  * run in `tx` when given (S7 §5.7: inside a spawn or terminate transaction).
  */
 export class Neighborhood {
@@ -32,9 +32,12 @@ export class Neighborhood {
             .where(and(eq(schema.agents.id, self.reportsTo), live))
         )[0] ?? null)
       : null;
+    // I9 §4.5: peers share the manager, an agent or a human.
     const sameManager = self.reportsTo
       ? eq(schema.agents.reportsTo, self.reportsTo)
-      : isNull(schema.agents.reportsTo);
+      : self.reportsToUser
+        ? eq(schema.agents.reportsToUser, self.reportsToUser)
+        : sql`false`;
     const peers = (
       await tx
         .select()

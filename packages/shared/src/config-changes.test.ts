@@ -30,29 +30,24 @@ describe("describeDocChanges", () => {
     expect(
       diff({ template: { warm_window_minutes: 70 } }, { template: { warm_window_minutes: 30 } }),
     ).toEqual(["warm window: 70 → 30 min"]);
-    expect(
-      diff({ template: { max_live_spawns: 5 } }, { template: { max_live_spawns: 1 } }),
-    ).toEqual(["max live spawns: 5 → 1"]);
   });
 
-  it("names added and removed skills, plugins and secrets", () => {
+  it("names added and removed skills and secrets", () => {
     expect(
       diff(
         {
           template: { skills: ["tdd"], secrets: ["GH_TOKEN"] },
-          settings: { enabledPlugins: { "a@m": true, "old@m": true } },
         },
         {
           template: { skills: ["release"], secrets: [] },
-          settings: { enabledPlugins: { "a@m": true, "x@y": true, "off@m": false } },
         },
       ),
-    ).toEqual([
-      "added plugin x@y",
-      "added skill release",
-      "removed plugin old@m",
-      "removed secret GH_TOKEN",
-      "removed skill tdd",
+    ).toEqual(["added skill release", "removed secret GH_TOKEN", "removed skill tdd"]);
+  });
+
+  it("reports a plugin key a human wrote in settings like any other settings key", () => {
+    expect(diff({ settings: {} }, { settings: { enabledPlugins: { "a@m": true } } })).toEqual([
+      "settings key enabledPlugins changed",
     ]);
   });
 
@@ -239,14 +234,13 @@ describe("summarizeChanges", () => {
     expect(
       summarizeChanges([
         "added allow rule `a`",
-        "added plugin p",
         "added secret S",
         "added skill s",
         "effort: a → b",
         "env A changed",
         "image: a → b",
       ]),
-    ).toBe("1 rule, 1 plugin, 1 secret and 4 more"));
+    ).toBe("1 rule, 1 secret, 1 skill and 3 more"));
 
   it("keeps multi-word scalar labels whole", () =>
     expect(
@@ -266,11 +260,7 @@ describe("summarizeChanges", () => {
 });
 
 describe("describeChanges with the Library", () => {
-  const side = (
-    skills: Record<string, string>,
-    plugins: Record<string, string> = {},
-    d = doc(),
-  ) => ({ doc: d, library: { skills, plugins } });
+  const side = (skills: Record<string, string>, d = doc()) => ({ doc: d, library: { skills } });
   const sha = (c: string) => `github:${c.repeat(40)}`;
 
   it("shows a repin of a GitHub skill with short hashes", () => {
@@ -291,9 +281,9 @@ describe("describeChanges with the Library", () => {
   it("a library-only difference is non-empty while the docs are equal", () => {
     const same = doc({ template: { skills: ["x"] } });
     expect(describeDocChanges(same, same)).toEqual([]);
-    expect(
-      describeChanges(side({ x: sha("a") }, {}, same), side({ x: sha("b") }, {}, same)),
-    ).not.toEqual([]);
+    expect(describeChanges(side({ x: sha("a") }, same), side({ x: sha("b") }, same))).not.toEqual(
+      [],
+    );
   });
 
   it("an unchanged ref, a skill that can't be resolved on a side and a one-sided name show nothing", () => {
@@ -305,67 +295,15 @@ describe("describeChanges with the Library", () => {
 
   it("merges the doc's lines with the library's, sorted", () => {
     const lines = describeChanges(
-      side({ x: sha("a") }, {}, doc({ template: { model: "a" } })),
-      side({ x: sha("b") }, {}, doc({ template: { model: "b" } })),
+      side({ x: sha("a") }, doc({ template: { model: "a" } })),
+      side({ x: sha("b") }, doc({ template: { model: "b" } })),
     );
     expect(lines).toEqual(["model: a → b", "skill x updated aaaaaaa → bbbbbbb"]);
   });
 
-  const sha40 = (c: string) => `commit:${c.repeat(40)}`;
-
-  it("shows a repin by short commit, and a tag by name", () => {
-    expect(
-      describeChanges(side({}, { "p@acme": sha40("a") }), side({}, { "p@acme": sha40("e") })),
-    ).toEqual(["plugin p@acme repinned aaaaaaa → eeeeeee"]);
-    expect(
-      describeChanges(side({}, { "p@acme": "tag:v1" }), side({}, { "p@acme": "tag:v2" })),
-    ).toEqual(["plugin p@acme repinned v1 → v2"]);
-    expect(
-      describeChanges(side({}, { "p@acme": sha40("a") }), side({}, { "p@acme": "tag:v2" })),
-    ).toEqual(["plugin p@acme repinned aaaaaaa → v2"]);
-  });
-
-  it("shows a pin changing to Latest and back", () => {
-    expect(
-      describeChanges(side({}, { "p@acme": sha40("a") }), side({}, { "p@acme": "latest" })),
-    ).toEqual(["plugin p@acme now follows the latest acme"]);
-    expect(
-      describeChanges(side({}, { "p@acme": "latest" }), side({}, { "p@acme": sha40("a") })),
-    ).toEqual(["plugin p@acme pinned to aaaaaaa"]);
-    expect(
-      describeChanges(side({}, { "p@acme": "latest" }), side({}, { "p@acme": "tag:v1" })),
-    ).toEqual(["plugin p@acme pinned to v1"]);
-  });
-
-  it("a pin written into a declaration is not also a settings key line", () => {
-    const decl = (ref?: string) =>
-      doc({
-        settings: {
-          extraKnownMarketplaces: {
-            acme: { source: { source: "github", repo: "a/b", ...(ref ? { ref } : {}) } },
-          },
-        },
-      });
-    expect(describeDocChanges(decl(), decl("v1"))).toEqual([]);
-  });
-
-  it("shows nothing for an unchanged pin, a missing side or a one-sided key", () => {
-    expect(
-      describeChanges(side({}, { "p@m": sha40("a") }), side({}, { "p@m": sha40("a") })),
-    ).toEqual([]);
-    expect(
-      describeChanges(side({}, { "p@m": "missing" }), side({}, { "p@m": sha40("a") })),
-    ).toEqual([]);
-    expect(describeChanges(side({}, {}), side({}, { "p@m": sha40("a") }))).toEqual([]);
-  });
-
-  it("summarizes library lines under skills and plugins", () => {
-    expect(
-      summarizeChanges([
-        "skill x updated aaaaaaa → bbbbbbb",
-        "skill y now from GitHub",
-        "plugin p@m repinned aaaaaaa → bbbbbbb",
-      ]),
-    ).toBe("2 skills, 1 plugin");
+  it("summarizes library lines under skills", () => {
+    expect(summarizeChanges(["skill x updated aaaaaaa → bbbbbbb", "skill y now from GitHub"])).toBe(
+      "2 skills",
+    );
   });
 });

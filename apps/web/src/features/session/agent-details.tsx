@@ -1,7 +1,12 @@
-import { type AgentSummary, type AgentsUsage, summarizeChanges } from "@open-factory/shared";
+import {
+  type AgentSummary,
+  type AgentsUsage,
+  summarizeChanges,
+  type UserAdminItem,
+} from "@open-factory/shared";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { RotateCw, X } from "lucide-react";
+import { Copy, RotateCw, X } from "lucide-react";
 import {
   type ReactNode,
   type RefObject,
@@ -13,12 +18,16 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { AgentChip } from "@/components/agent-chip";
+import { CopyFailed, CopyIcon, useCopy } from "@/components/copy-feedback";
+import { HumanAvatar } from "@/components/human-avatar";
+import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { closeInstantly, Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { CONFIG_PAGE_COPY } from "@/features/config/messages";
 import { schedulesListOptions } from "@/features/schedules/api";
 import { ScheduleTime } from "@/features/schedules/schedule-time";
+import { usersQueryOptions } from "@/features/settings/api";
 import { preloadSheet, sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { agentTasksOptions } from "@/features/tasks/api";
@@ -159,12 +168,8 @@ function Description({ text }: { text: string }) {
 }
 
 /** Why messages aren't going out right now (the header's wording, in full). */
-function detailText(agent: AgentSummary, slotsMax?: number): ReactNode {
+function detailText(agent: AgentSummary): ReactNode {
   if (agent.pulling) return "Pulling the image…";
-  if (agent.status === "queued" && slotsMax)
-    return slotsMax === 1
-      ? "Queued: the only slot is in use."
-      : `Queued: all ${slotsMax} slots are in use.`;
   if (agent.status === "rate_limited")
     return (
       <>
@@ -178,12 +183,10 @@ function detailText(agent: AgentSummary, slotsMax?: number): ReactNode {
 function Now({
   agent,
   stop,
-  slotsMax,
   onAgent,
 }: {
   agent: AgentSummary;
   stop: StopCrons;
-  slotsMax?: number;
   onAgent?: (a: AgentSummary) => void;
 }) {
   const terminated = agent.status === "terminated" || !!agent.terminatedAt;
@@ -215,7 +218,7 @@ function Now({
         key: "error",
         node: <span className="whitespace-pre-line text-destructive">{agent.lastError}</span>,
       });
-    const detail = detailText(agent, slotsMax);
+    const detail = detailText(agent);
     if (detail) rows.push({ key: "detail", node: <span>{detail}</span> });
     if (agent.restartPending) {
       const changes = agent.restartChanges;
@@ -272,9 +275,29 @@ function Now({
   );
 }
 
+/** A human manager: the initials avatar, their name when the users list has it, and the handle. */
+function Human({ handle }: { handle: string }) {
+  const select = useCallback(
+    (users: UserAdminItem[]) => users.find((u) => u.handle === handle)?.name,
+    [handle],
+  );
+  const name = useQuery({ ...usersQueryOptions, select }).data;
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <HumanAvatar name={name ?? ""} size={16} />
+      {name && <span className="min-w-0 truncate">{name}</span>}
+      <span className="min-w-0 truncate font-mono text-muted-foreground">@{handle}</span>
+    </span>
+  );
+}
+
 function Org({ agent }: { agent: AgentSummary }) {
   const slug = agent.slug;
-  const select = useCallback((l: AgentSummary[]) => l.filter((a) => a.reportsTo === slug), [slug]);
+  const select = useCallback(
+    (l: AgentSummary[]) =>
+      l.filter((a) => a.reportsTo.kind === "agent" && a.reportsTo.handle === slug),
+    [slug],
+  );
   // A cache read for the reports shown; the list is the sidebar's, never fetched from here.
   const reports = useQuery({
     ...agentsListQueryOptions("exclude"),
@@ -288,10 +311,10 @@ function Org({ agent }: { agent: AgentSummary }) {
         <span className="text-muted-foreground">
           {agent.kind === "ephemeral" ? "Spawned by" : "Reports to"}
         </span>
-        {agent.reportsTo ? (
-          <AgentChip slug={agent.reportsTo} link size={16} />
+        {agent.reportsTo.kind === "agent" ? (
+          <AgentChip slug={agent.reportsTo.handle} link size={16} />
         ) : (
-          <span>No manager</span>
+          <Human handle={agent.reportsTo.handle} />
         )}
       </div>
       {agent.reports > 0 && (
@@ -443,7 +466,57 @@ function Usage({ agent }: { agent: AgentSummary }) {
   );
 }
 
+/**
+ * A resolved model or effort, as stored (an alias or an id): "opus (agent)" when this agent overrides it, the
+ * template's value bare, "Claude Code default" when nothing sets it. "· after this turn" while a restart that applies
+ * it is pending: the running process still has the old one.
+ */
+function ConfigValue({ resolved, pending }: { resolved: AgentSummary["model"]; pending: boolean }) {
+  return (
+    <>
+      {resolved.value === null ? (
+        "Claude Code default"
+      ) : (
+        <>
+          <span className="font-mono [overflow-wrap:anywhere]">{resolved.value}</span>
+          {resolved.source === "agent" && <span className="text-muted-foreground"> (agent)</span>}
+        </>
+      )}
+      {pending && <span className="text-muted-foreground"> · after this turn</span>}
+    </>
+  );
+}
+
+/** An image reference: mono, truncated in the middle (the registry and the tag both stay), with a Copy button. */
+function ImageRef({ reference }: { reference: string }) {
+  const { state, instant, copy } = useCopy();
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <span title={reference} className="flex min-w-0 font-mono">
+        <MiddleTruncate text={reference} keepEnd />
+      </span>
+      {state === "failed" && <CopyFailed />}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={state === "copied" ? "Copied" : `Copy image ${reference}`}
+        onClick={(e) => void copy(reference, e.detail === 0)}
+      >
+        <CopyIcon
+          state={state}
+          instant={instant}
+          idle={<Copy aria-hidden="true" className="size-3.5" />}
+        />
+      </Button>
+    </span>
+  );
+}
+
 function Runtime({ agent }: { agent: AgentSummary }) {
+  // The restart that is pending applies these lines ("model: sonnet → opus"); a row says so only for its own.
+  const pendingFor = (field: "model" | "effort") =>
+    agent.restartPending && agent.restartChanges.some((l) => l.startsWith(field));
   return (
     <Section title="Runtime">
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
@@ -474,12 +547,28 @@ function Runtime({ agent }: { agent: AgentSummary }) {
             <dd className="min-w-0 truncate font-mono">{agent.credential}</dd>
           </>
         )}
-        {agent.runtime === "docker" && (
+        <dt className="text-muted-foreground">Model</dt>
+        <dd className="min-w-0">
+          <ConfigValue resolved={agent.model} pending={pendingFor("model")} />
+        </dd>
+        <dt className="text-muted-foreground">Effort</dt>
+        <dd className="min-w-0">
+          <ConfigValue resolved={agent.effort} pending={pendingFor("effort")} />
+        </dd>
+        {agent.runtime === "docker" && agent.image && (
           <>
             <dt className="text-muted-foreground">Image</dt>
-            <dd className="min-w-0">
-              <span className="font-mono [overflow-wrap:anywhere]">{agent.image ?? "Docker"}</span>
-              {agent.pulling && " (pulling)"}
+            <dd className="grid min-w-0 gap-0.5">
+              <ImageRef reference={agent.image.running ?? agent.image.next} />
+              {agent.pulling && <span className="text-muted-foreground">Pulling…</span>}
+              {agent.image.running !== null && agent.image.running !== agent.image.next && (
+                <span className="flex min-w-0 items-center gap-1 text-muted-foreground">
+                  <span className="shrink-0">Next start:</span>
+                  <span className="flex min-w-0 font-mono">
+                    <MiddleTruncate text={agent.image.next} keepEnd />
+                  </span>
+                </span>
+              )}
             </dd>
           </>
         )}
@@ -523,15 +612,12 @@ export function AgentDetails({
   agent,
   stop,
   onClose,
-  slotsMax,
   onAgent,
 }: {
   agent: AgentSummary;
   stop: StopCrons;
   /** Shown in the sheet and drawer modes. */
   onClose?: (() => void) | undefined;
-  /** For the queued detail. */
-  slotsMax?: number | undefined;
   /** A fresh summary from a pin/unpin response. */
   onAgent?: ((a: AgentSummary) => void) | undefined;
 }) {
@@ -551,7 +637,7 @@ export function AgentDetails({
           <p className="font-mono [overflow-wrap:anywhere]">@{agent.slug}</p>
           {agent.description && <Description text={agent.description} />}
         </div>
-        <Now agent={agent} stop={stop} slotsMax={slotsMax} onAgent={onAgent} />
+        <Now agent={agent} stop={stop} onAgent={onAgent} />
         <Org agent={agent} />
         <Work agent={agent} onClose={onClose} />
         <Usage agent={agent} />

@@ -92,7 +92,7 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("resync"), agent: z.string() }),
   /** I1 §5.3: the agent's stored command list changed (named apart from Claude's own `system/commands_changed`). */
   z.object({ type: z.literal("agent_commands_changed"), agent: z.string() }),
-  z.object({ type: z.literal("supervisor"), running: z.number().int(), max: z.number().int() }),
+  z.object({ type: z.literal("supervisor"), running: z.number().int() }),
   z.object({ type: z.literal("inbox_changed") }),
   /** I1 §6.5: per user; their chat with this agent (a message created or changed state, a batch written, a turn started or closed). */
   z.object({ type: z.literal("chat_changed"), agent: z.string() }),
@@ -103,9 +103,8 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   /** S10: factory settings, users and invites, and the images list changed. */
   z.object({ type: z.literal("settings_changed") }),
   z.object({ type: z.literal("users_changed") }),
-  z.object({ type: z.literal("images_changed") }),
   /**
-   * I5 §9.5: the Library (skill sources, marketplaces, plugins) changed; the Library pages refetch. `addFailed` is
+   * I5 §9.5: the Library (skill sources) changed; the Library pages refetch. `addFailed` is
    * the repo of a background GitHub add that failed and whose row was removed: the spec (§10.4) asks for a toast
    * but has no frame for it, so this one optional field carries it.
    */
@@ -128,12 +127,6 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
     action: z.enum(["agent_created", "agent_archived", "agent_unarchived", "template_created"]),
     by: z.string(),
     subject: z.string(),
-  }),
-  z.object({
-    type: z.literal("image_build"),
-    name: z.string(),
-    state: z.enum(["building", "succeeded", "failed"]),
-    lines: z.array(z.string()).optional(),
   }),
 ]);
 export type ServerMessage = z.infer<typeof serverMessageSchema>;

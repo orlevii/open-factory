@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { installInputModality } from "@/lib/input-modality";
-import { doc, ScopeHarness } from "@/test/config-harness";
+import { doc, QueryWrap, ScopeHarness } from "@/test/config-harness";
 import { CONFIG_FIELD_MSG } from "./messages";
 import { ModelField } from "./model-field";
 import { ConfigFormScope } from "./scope";
@@ -21,23 +21,51 @@ async function pick(name: string) {
   await userEvent.click(await screen.findByRole("option", { name }));
 }
 
-test("agent mode: inherit first, the inherited value in the help line, then the groups and Custom", async () => {
+test("agent mode: inherit first, naming the template's model, then the groups and Custom", async () => {
   render(
     <ScopeHarness start={{}} base={doc({ model: "claude-sonnet-5-5[1m]" })}>
       <ModelField />
     </ScopeHarness>,
   );
-  expect(trigger()).toHaveTextContent("Inherit from template");
-  expect(screen.getByText("From template: claude-sonnet-5-5[1m]")).toBeInTheDocument();
+  expect(trigger()).toHaveTextContent("Template's (claude-sonnet-5-5[1m])");
   await userEvent.click(trigger());
   const box = await screen.findByRole("listbox");
   expect(
     within(box)
       .getAllByRole("option")
       .map((o) => o.textContent),
-  ).toEqual(["Inherit from template", ...MODEL_ALIASES, ...MODEL_IDS, "Custom…"]);
+  ).toEqual(["Template's (claude-sonnet-5-5[1m])", ...MODEL_ALIASES, ...MODEL_IDS, "Custom…"]);
   expect(within(box).getByText("Aliases")).toBeInTheDocument();
   expect(within(box).getByText("Model ids")).toBeInTheDocument();
+});
+
+test("the inherit option says Claude Code default when the template sets no model", () => {
+  render(
+    <ScopeHarness start={{}} base={doc()}>
+      <ModelField />
+    </ScopeHarness>,
+  );
+  expect(trigger()).toHaveTextContent("Template's (Claude Code default)");
+});
+
+test("without a template doc the inherit option names no value and the field says why it is off", () => {
+  render(
+    <QueryWrap>
+      <ConfigFormScope
+        mode="agent"
+        value={{}}
+        base={null}
+        disabledReason="Choose a template first"
+        issues={[]}
+        onChange={() => {}}
+      >
+        <ModelField />
+      </ConfigFormScope>
+    </QueryWrap>,
+  );
+  expect(trigger()).toHaveTextContent(/^Template's$/);
+  expect(trigger()).toBeDisabled();
+  expect(trigger()).toHaveAccessibleDescription("Choose a template first");
 });
 
 test("template mode: the first item is Claude Code default, with no inherited help", () => {
@@ -63,7 +91,7 @@ test("picking a model overrides it: 'This agent' and 'Use template's' clear the 
   expect(screen.getByText("This agent")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Use template's model" }));
   expect(onValue).toHaveBeenLastCalledWith({});
-  expect(trigger()).toHaveTextContent("Inherit from template");
+  expect(trigger()).toHaveTextContent("Template's (sonnet)");
   expect(trigger()).toHaveFocus();
 });
 
@@ -174,7 +202,7 @@ test("Custom closes when the model changes from outside (a Raw edit, a Discard)"
   await pick("Custom…");
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
   expect(screen.queryByRole("textbox", { name: "Custom model" })).toBeNull();
-  expect(trigger()).toHaveTextContent("Inherit from template");
+  expect(trigger()).toHaveTextContent("Template's (Claude Code default)");
 });
 
 test("typing a listed value in Custom keeps Custom open", async () => {

@@ -18,8 +18,8 @@ test("agent tables exist; seq is unique per agent; deleting an agent cascades", 
   await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('other','agent')`;
   await sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1', 'main', 'oauth_token', ${Buffer.from("x")})`;
-  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
-    values ('a1', 'dev', 'Dev agent', 'dev', '{}', 'local', 'c1'), ('a2', 'other', 'Other', 'dev', '{}', 'local', 'c1')`;
+  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
+    values ('a1', 'dev', 'Dev agent', 'dev', '{}', 'local', 'c1', 'u1'), ('a2', 'other', 'Other', 'dev', '{}', 'local', 'c1', 'u1')`;
   const [a] = await sql`
     select status, description, session_id, kind, reports_to, archived_at
     from agents where id = 'a1'`;
@@ -51,8 +51,8 @@ test("0003: system rows need no user and a notice; user rows need a user and no 
   await sql`insert into handles (handle, kind) values ('al','user'),('third','agent')`;
   await sql`insert into users (id, name, email, handle) values ('u2', 'Al', 'al@x.io', 'al')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c2', 'two', 'oauth_token', ${Buffer.from("x")})`;
-  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
-    values ('a3', 'third', 'Third', 'dev', '{}', 'local', 'c2')`;
+  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
+    values ('a3', 'third', 'Third', 'dev', '{}', 'local', 'c2', 'u1')`;
   await sql`insert into messages (id, kind, from_user_id, to_agent_id, body, notice) values ('n1','system',null,'a3','x','crash')`;
   await expect(
     sql`insert into messages (id, kind, from_user_id, to_agent_id, body) values ('n2','system',null,'a3','x')`,

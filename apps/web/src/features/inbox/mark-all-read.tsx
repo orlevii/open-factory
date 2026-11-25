@@ -140,6 +140,7 @@ export function MarkAllReadOutcome({
   if (o?.tone === "success") lastReadAt.current = o.readAt;
   return (
     <InlineOutcome
+      inRows
       tone={o?.tone}
       focusKey={o?.key}
       {...(o?.tone === "success" ? { undo: () => state.undo(o.readAt, o.covered) } : {})}

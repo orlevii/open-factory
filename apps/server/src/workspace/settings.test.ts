@@ -9,7 +9,7 @@ const base = {
   mcpUrl: "http://127.0.0.1:3001/mcp",
 };
 
-test("rebuild: the template base is kept and no plugin key reaches the workdir settings", () => {
+test("rebuild: the template base is kept, and the plugin keys a human wrote pass through unchanged", () => {
   const s = buildSettings({
     ...base,
     tpl: {
@@ -21,9 +21,11 @@ test("rebuild: the template base is kept and no plugin key reaches the workdir s
     },
   });
   expect(s.hooks).toEqual({ Stop: [] });
-  expect(s).not.toHaveProperty("enabledPlugins");
-  expect(s).not.toHaveProperty("extraKnownMarketplaces");
-  expect(s).not.toHaveProperty("syncClaudeAiPlugins");
+  expect(s.enabledPlugins).toEqual({ "x@m": true });
+  expect(s.extraKnownMarketplaces).toEqual({
+    m: { source: { source: "directory", path: "/new" } },
+  });
+  expect(s.syncClaudeAiPlugins).toBe(true);
   expect(s.permissions).toEqual({
     deny: ["Bash(curl:*)", "SendMessage", "ListAgents"],
     defaultMode: "auto",

@@ -6,8 +6,6 @@ import {
   agentOverlaySchema,
   agentPolicyIssues,
   type ConfigDoc,
-  effectivePlugins,
-  emptyDoc,
   LOCAL_RUNTIME_REFUSAL,
   mergeConfig,
   overlayVersion,
@@ -21,11 +19,9 @@ import { ApiError } from "../errors.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { overlayIssues, overlaySchemaIssues } from "../templates/validate.ts";
 import type { ConfigChanges } from "./config-changes.ts";
-import type { ConfigResolver } from "./config-resolver.ts";
 import { OrgRefusedError } from "./errors.ts";
 import type { Tx } from "./event-store.ts";
 import type { PolicyInputs } from "./policy-inputs.ts";
-import type { AgentRuntimes } from "./runtimes.ts";
 
 type Base = { doc: ConfigDoc; dir: string } | null;
 
@@ -43,8 +39,6 @@ export class ConfigService {
     private readonly d: {
       db: Db;
       templates: TemplateIndex;
-      runtimes: Pick<AgentRuntimes, "loadedPluginsOf">;
-      resolver: Pick<ConfigResolver, "libraryOf">;
       policy: PolicyInputs;
       configChanges: Pick<ConfigChanges, "overlaySaved">;
     },
@@ -105,12 +99,12 @@ export class ConfigService {
     return this.configView(row, overlay, base, await this.configIssues(row, overlay, base));
   }
 
-  private async configView(
+  private configView(
     row: AgentRow,
     overlay: Record<string, unknown>,
     base: { doc: ConfigDoc } | null,
     issues: AgentConfigResponse["issues"],
-  ): Promise<AgentConfigResponse> {
+  ): AgentConfigResponse {
     const parsed = agentOverlaySchema.safeParse(overlay);
     const merged = base && parsed.success ? mergeConfig(base.doc, parsed.data) : null;
     return {
@@ -122,26 +116,8 @@ export class ConfigService {
         valid: base !== null,
       },
       merged: merged ? this.forEditing(merged) : null,
-      plugins: merged ? await this.pluginsOf(row.id, merged) : [],
       issues,
     };
-  }
-
-  /**
-   * Each plugin the config would run (enabled keys and the dependencies the Library read) with its pin, and the
-   * version it loaded at when the running process's first `init` listed it (spec §7.3 step 8, §8.1).
-   */
-  private async pluginsOf(
-    agentId: string,
-    merged: ConfigDoc,
-  ): Promise<AgentConfigResponse["plugins"]> {
-    const loaded = this.d.runtimes.loadedPluginsOf(agentId) ?? {};
-    const { plugins } = await this.d.resolver.libraryOf(merged);
-    return Object.entries(plugins).map(([key, pin]) => ({
-      key,
-      pin,
-      ...(Object.hasOwn(loaded, key) ? { loaded: loaded[key] as string } : {}),
-    }));
   }
 
   /** A stale `baseVersion`: a human reopens the editor; an agent is told to read the agent again (spec §7.5). */
@@ -153,38 +129,14 @@ export class ConfigService {
       : new ApiError(409, "config_changed", "Changed since you opened it.");
   }
 
-  /**
-   * The agent policy's issues for an overlay save (spec §6.2): `before` is the stored overlay, `declaredBy` the
-   * template. With no valid template nothing is declared, so any plugin the save adds is refused.
-   */
-  private async policyIssues(
-    row: AgentRow,
-    overlay: AgentOverlay,
-    base: Base,
-  ): Promise<TemplateIssue[]> {
+  /** The agent policy's issues for an overlay save (spec §6.2): `before` is the stored overlay. */
+  private policyIssues(row: AgentRow, overlay: AgentOverlay): TemplateIssue[] {
     const stored = agentOverlaySchema.safeParse(this.overlayOf(row));
-    const before = stored.success ? stored.data : {};
-    const declaredBy = base?.doc ?? emptyDoc();
-    const issues = agentPolicyIssues({
+    return agentPolicyIssues({
       target: "overlay",
-      before,
+      before: stored.success ? stored.data : {},
       after: overlay,
-      declaredBy,
-      plugins: await this.d.policy.plugins(base ? [base.doc] : []),
     });
-    if (base) return issues;
-    // No valid template declares anything, so a plugin the save adds is refused outright.
-    const had = new Set(effectivePlugins({ settings: before.settings ?? {} }));
-    for (const key of effectivePlugins({ settings: overlay.settings ?? {} }).filter(
-      (k) => !had.has(k),
-    ))
-      issues.push({
-        severity: "error",
-        file: "settings.json",
-        path: `settings.enabledPlugins.${key}`,
-        message: `Plugin ${key} has no valid template to declare it; ask a human.`,
-      });
-    return issues;
   }
 
   /** Rule 8: an agent never reaches a local runtime, as the target or through a `can_spawn` name. */
@@ -225,7 +177,7 @@ export class ConfigService {
     const base = await this.templateBase(row.template);
     const issues = await this.configIssues(row, overlayInput, base);
     if (parsed.success && actor.kind === "agent")
-      issues.push(...(await this.policyIssues(row, parsed.data, base)));
+      issues.push(...this.policyIssues(row, parsed.data));
     if (!parsed.success || issues.some((i) => i.severity === "error"))
       throw new ApiError(400, "invalid_config", "The configuration has errors.", { issues });
     const overlay = parsed.data;
@@ -255,7 +207,7 @@ export class ConfigService {
           );
         }
         return {
-          ...(await this.configView({ ...row, config: overlay }, overlay, base, issues)),
+          ...this.configView({ ...row, config: overlay }, overlay, base, issues),
           ...applied,
           checked: base ? "full" : "schema",
         };

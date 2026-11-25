@@ -1,5 +1,5 @@
 import type { AgentDetail, AgentSummary } from "@open-factory/shared";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useRouterState } from "@tanstack/react-router";
 import {
   createContext,
@@ -23,7 +23,7 @@ import {
   AgentDetailsSheet,
   useAgentDetailsPanel,
 } from "@/features/session/agent-details";
-import { agentDetailQueryOptions, runningQueryOptions } from "@/features/session/api";
+import { agentDetailQueryOptions } from "@/features/session/api";
 import type { PinOutcome } from "@/features/session/live-line";
 import { CronsStopLayer, useStopCrons } from "@/features/session/stop-crons";
 import { AgentHeader } from "./agent-header";
@@ -86,9 +86,6 @@ export function AgentLayout({
   const panel = useAgentDetailsPanel(slug);
   const [sheetHost, setSheetHost] = useState<HTMLDivElement | null>(null);
   useEffect(() => rememberAgent(slug), [slug]);
-  // The slot cap for "Queued: all 8 slots are in use." (only fetched once the agent is queued).
-  const running = useQuery({ ...runningQueryOptions, enabled: agent?.status === "queued" });
-  const slotsMax = running.data?.max;
   // The header's actions report here, in a notice row under it: a Pin outcome.
   const [pinOutcome, setPinOutcome] = useState<PinOutcome>();
   const [raceNotice, setRaceNotice] = useState<string>();
@@ -151,15 +148,7 @@ export function AgentLayout({
 
   const inflow = panel.mode === "inflow" && panel.open;
   const details = (onClose?: () => void) =>
-    agent ? (
-      <AgentDetails
-        agent={agent}
-        stop={stop}
-        slotsMax={slotsMax}
-        onAgent={onAgent}
-        onClose={onClose}
-      />
-    ) : null;
+    agent ? <AgentDetails agent={agent} stop={stop} onAgent={onAgent} onClose={onClose} /> : null;
   const closePanel = panel.setOpen;
   const closeSheet = useCallback(() => closePanel(false), [closePanel]);
   const terminated = status === "terminated";
@@ -183,7 +172,6 @@ export function AgentLayout({
                 view={view}
                 panel={panel}
                 stop={stop}
-                slotsMax={slotsMax}
                 onPinOutcome={setPinOutcome}
                 onAgent={onAgent}
                 onTerminateStart={onTerminateStart}

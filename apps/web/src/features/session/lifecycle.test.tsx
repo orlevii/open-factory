@@ -26,7 +26,7 @@ const world = (over: Partial<AgentSummary> = {}, queue: QueueItem[] = []) => {
     "GET /api/agents/dev": () => json(detail(over, queue)),
     "GET /api/agents/dev/events?": () => json(conversation()),
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [detail(over).agent], running: { count: 8, max: 8 } }),
+      json({ agents: [detail(over).agent], running: { count: 8 } }),
   });
 };
 beforeEach(() => {
@@ -236,16 +236,12 @@ test("announcer and document title follow status frames; a no-op until change sa
   expect(document.title).toBe("Errored · Dev agent · Session · Open Factory");
 });
 
-test("header: the queued fact uses the slot cap from the agents list; Pulling the image… wins", async () => {
+test("header: a pulling agent says Pulling the image…", async () => {
   world({ status: "queued", runtime: "docker" });
   await open();
   const header = screen.getByRole("banner");
-  expect(await within(header).findByText("All 8 slots are in use.")).toBeInTheDocument();
-  push({ type: "supervisor", running: 6, max: 6 });
-  expect(await within(header).findByText("All 6 slots are in use.")).toBeInTheDocument();
   frame({ status: "queued", pulling: true });
   expect(await within(header).findByText("Pulling the image…")).toBeInTheDocument();
-  expect(within(header).queryByText(/slots are in use/)).not.toBeInTheDocument();
 });
 
 test("queued blocks: rate-limited (fallback) and waiting for a free slot", async () => {

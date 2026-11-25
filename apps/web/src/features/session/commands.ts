@@ -82,8 +82,8 @@ export function slashOpensAt(text: string, caret: number) {
   return m ? { query: m[1] ?? "", from: 0 } : undefined;
 }
 
-/** A skill's description ends in its source tag ("(project)", "(plugin)"…), which the row leaves out. */
-const SOURCE_TAG = /\s*\((?:project|plugin|personal|user|workflow|dynamic workflow)[^)]*\)\s*$/i;
+/** A skill's description ends in its source tag ("(project)", "(personal)"…), which the row leaves out. */
+const SOURCE_TAG = /\s*\((?:project|personal|user|workflow|dynamic workflow)[^)]*\)\s*$/i;
 
 /** The built-ins that run a factory flow (Compact), not a raw command. */
 const FACTORY = new Set(["compact"]);
@@ -94,7 +94,7 @@ export type RankedCommand = {
   alias?: string;
   /** The query is this name or alias in full: Enter then sends the text as typed. */
   exact?: boolean;
-  /** A name-prefix or exact match (of the name, the part after a plugin's `:`, or an alias): the only
+  /** A name-prefix or exact match (of the name, the part after a namespace's `:`, or an alias): the only
    *  rows Enter accepts. */
   prefix: boolean;
 };

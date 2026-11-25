@@ -44,9 +44,8 @@ Environment variables (`npm start` loads `.env` if present):
 | `FACTORY_AGENT_PORT` | no | `PORT + 1` | port of the agent listener, the separate surface agents call (see "Agent listener") |
 | `FACTORY_AGENT_HOST` | no | loopback, plus the Docker bridge gateway on Linux | comma-separated IP addresses the agent listener binds; replaces the default list. The only way to bind `0.0.0.0` or `::` |
 | `FACTORY_AGENT_URL` | no | `http://host.docker.internal:${FACTORY_AGENT_PORT}` | how containers reach the agent listener (`OPEN_FACTORY_URL` in the container). Local agents always use `http://127.0.0.1:${FACTORY_AGENT_PORT}` |
-| `FACTORY_MAX_SPAWNS_PER_HOUR` | no | `20` | most agents one agent may spawn in a rolling hour, terminated ones included, minimum 1; see "Spawning" |
 
-The max running agents, the default warm window and the member update debounce are set in the app under Settings → Factory, not in the environment. `FACTORY_MAX_RUNNING_AGENTS` and `FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS` are no longer read; the server logs a warning at boot when either is still set.
+The default warm window and the member-update debounce are set in the app under Settings → Factory, not in the environment.
 
 ## Run an agent
 
@@ -60,24 +59,16 @@ An agent that is idle is hibernated: its process is stopped (a Docker agent's co
 
 ## Docker runtime
 
-Docker is the default runtime for new templates. Each agent gets one container, created on its first wake, stopped when it hibernates and started again on the next wake. Claude Code runs inside it as a non-root `agent` user, with only the agent's working directory, the projects it was granted and its skills and plugins mounted. Files the agent writes in a granted repo are owned by your host user.
+Docker is the default runtime for new templates. Each agent gets one container, created on its first wake, stopped when it hibernates and started again on the next wake. Claude Code runs inside it as a non-root `agent` user, with only the agent's working directory, the projects it was granted and its skills mounted. Files the agent writes in a granted repo are owned by your host user.
 
-- **Image.** A template's `image:` wins, otherwise `FACTORY_DEFAULT_IMAGE` (`ghcr.io/orlevii/open-factory/base:latest`, see the [base image](images/base/README.md)). A bare name such as `image: playwright` is a user image (below); anything with a registry, a path or a tag (`ghcr.io/you/img:1`, `node:24-slim`) is a registry image. For development, build the image locally and set `FACTORY_DEFAULT_IMAGE=open-factory-base:dev`.
-- **Pulls are explicit.** For a registry image, the factory pulls only when it is missing locally, once per image reference, when an agent wakes. It never updates a tag that is already present; pull a newer image yourself when you want one. While it pulls, the agent shows as queued ("Pulling the image..."). A user image is never pulled: an agent whose user image isn't built fails to start and says how to build it.
-- **No sudo.** Containers run with `no-new-privileges`, so `agent` cannot become root. If an agent needs system packages, add a user image `FROM` the base image and set its name as the template's `image:`.
+- **Image.** A template's `image:` wins, otherwise `FACTORY_DEFAULT_IMAGE` (`ghcr.io/orlevii/open-factory/base:latest`, see the [base image](images/base/README.md)). The factory runs images, it never builds them: the value is any Docker reference, used as written (a bare name such as `playwright` is a local Docker tag). For development, build the image locally and set `FACTORY_DEFAULT_IMAGE=open-factory-base:dev`.
+- **Pulls are explicit.** The factory pulls an image only when it is missing locally, once per image reference, when an agent wakes. It never updates a tag that is already present; pull a newer image yourself when you want one. While it pulls, the agent shows as queued ("Pulling the image..."). An image that is missing and can't be pulled fails the start: "Image `<ref>` isn't available locally and couldn't be pulled."
+- **No sudo.** Containers run with `no-new-privileges`, so `agent` cannot become root. If an agent needs system packages, build your own image `FROM` the base image with `docker build`, and set it as the template's `image:`.
 - **Re-creation wipes `/home/agent`.** The container is removed and re-created on a wake when its grants (mounts) or its image changed. Shell history, `gh` login state, `known_hosts` and caches in `/home/agent` are lost. Keep credentials in secrets, and the working directory is never affected.
 - **Reaching the factory.** Containers call the factory's agent listener at `FACTORY_AGENT_URL` (`http://host.docker.internal:<agent port>` by default). See "Agent listener" for Linux, compose, rootless Docker and firewalls.
 - **CLI bundle.** The bundled CLI is mounted into containers, so run `pnpm build` first; a Docker agent will not start without it.
 
 `pnpm smoke:docker` is a live check, not part of `pnpm test`: it runs a real Claude in a real container (build the image as `open-factory-base:dev` first) and needs an OAuth token in `~/.open-factory-spike/oauth-token`.
-
-### User images
-
-A user image is a folder `${FACTORY_HOME}/images/<name>/` with a `Dockerfile` (and anything it copies; `.dockerignore` is honoured). A template with `image: <name>` uses `open-factory-user/<name>:latest`, which the factory builds and never pulls. Build it in **Templates → Images** or with `open-factory images build <name>`; builds pull a newer base image by default (`--no-pull` skips that, CLI only). Agents use a rebuilt image from their next start. Status comes from the image's Docker labels: "Out of date" once a file in the folder has changed since the build.
-
-**Upgrading from an earlier version.** A bare name used to mean a Docker Hub image. A template with `image: ubuntu` (or any other bare name) is now invalid unless `${FACTORY_HOME}/images/ubuntu/` exists, and an agent created from it fails to start with an image error. Write the Docker Hub name in full instead: `image: docker.io/library/ubuntu`.
-
-`pnpm smoke:images` is a live check, not part of `pnpm test`: it builds a user image through the API and the CLI, starts a Docker agent on it with a real Claude (haiku), and checks the image was never pulled. It needs Postgres, Docker, a real `claude` on the PATH, an OAuth token in `~/.open-factory-spike/oauth-token`, `pnpm build` (the CLI bundle) and `open-factory-base:dev` for its local-base step, and uses a throwaway database and `FACTORY_HOME`.
 
 ## Agent listener
 
@@ -130,9 +121,8 @@ Template settings apply as written: templates are authored by the factory's oper
 
 An agent can spawn a fresh agent for one piece of work with `spawn_agent` (template, optional suffix, description, brief) and end it with `terminate_agent`. The call returns at once. The spawned agent reports to its spawner, gets the brief as its first message, and its text reaches the spawner as updates. It is named `<template>-<suffix>` (four random letters when no suffix is given), and slugs are never reused.
 
-- **Who can spawn.** Only persistent agents whose template lists `can_spawn` (the templates they may spawn from) and has `max_live_spawns` above 0 (default 5). Only those agents get the two tools. Spawned agents can't spawn, can't be edited and can't be anyone's manager. A spawner with live spawned agents can't be archived until they are terminated.
-- **Inheritance.** A spawned agent never holds anything its spawner lacks. It uses its spawner's credential; it gets the projects its template asks for that the spawner is granted, and the secrets its template asks for that the spawner also has; its deny rules are its template's plus its spawner's. A spawner in Docker can't spawn a local agent, an `auto` spawner can't spawn a `bypass` one, and no local agent is spawned while the local runtime is off. When a spawner's credential or project grants change, its live spawned agents follow (and restart). `spawn_agent` returns a `note` naming whatever was not passed on. MCP servers, plugins, skills, the image and the model come from the spawned agent's own template.
-- **Limits.** At most `max_live_spawns` live spawned agents per spawner (hibernated and errored ones count), and at most `FACTORY_MAX_SPAWNS_PER_HOUR` (20) spawns per spawner in any rolling hour, terminated ones included. Over either limit the call fails and says what to do.
+- **Who can spawn.** Only persistent agents whose template lists `can_spawn` (the templates they may spawn from). Only those agents get the two tools. Spawned agents can't spawn, can't be edited and can't be anyone's manager. A spawner with live spawned agents can't be archived until they are terminated.
+- **Inheritance.** A spawned agent never holds anything its spawner lacks. It uses its spawner's credential; it gets the projects its template asks for that the spawner is granted, and the secrets its template asks for that the spawner also has; its deny rules are its template's plus its spawner's. A spawner in Docker can't spawn a local agent, an `auto` spawner can't spawn a `bypass` one, and no local agent is spawned while the local runtime is off. When a spawner's credential or project grants change, its live spawned agents follow (and restart). `spawn_agent` returns a `note` naming whatever was not passed on. MCP servers, skills, the image and the model come from the spawned agent's own template.
 - **TTL.** A spawned agent with no activity for 3 days (no turn ended, no process started, nothing delivered) is terminated by the factory. Only an agent with no running process and no queued wake is terminated; one waiting on a rate-limit reset is skipped. This is a fixed rule that counts wall-clock time: after the factory has been down or asleep for 3 days or more, idle spawned agents are terminated on the first sweep (every 10 minutes, and once at boot).
 - **Terminate.** The spawner, a human (**Terminate** in the UI, `POST /api/agents/<slug>/terminate`) or the TTL ends a spawned agent from any state: its process stops, its container is removed, its pending messages are rejected and its session becomes read-only. Persistent agents are archived, not terminated.
 - **Workspace grace and pinning.** A terminated agent's working directory (its files and Claude session files) is deleted 3 days after it was terminated, another fixed wall-clock rule. Its session stays readable in the UI. **Pin** on a terminated agent (`PUT /api/agents/<slug>/workspace-pin`, `DELETE` to unpin) keeps the working directory until you unpin it; unpinning after the 3 days deletes it at the next sweep.
@@ -167,11 +157,7 @@ Behind a reverse proxy, login rate limiting and session IP addresses see the pro
 
 ```
 node apps/cli/dist/open-factory.js login|status|logout|help
-node apps/cli/dist/open-factory.js images
-node apps/cli/dist/open-factory.js images build (<name>|--all) [--no-pull]
 ```
-
-`images` lists the user images with their status; `images build` builds one, or with `--all` every image that isn't up to date (folders without a `Dockerfile` are skipped). See "User images".
 
 Config lives at `${XDG_CONFIG_HOME:-~/.config}/open-factory/cli.json` (mode 0600). `OPEN_FACTORY_URL` and `OPEN_FACTORY_TOKEN` override the file.
 

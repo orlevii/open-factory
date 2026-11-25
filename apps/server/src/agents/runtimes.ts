@@ -6,8 +6,7 @@ import {
   errorKindSchema,
   type QueueItem,
 } from "@open-factory/shared";
-import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
-import { resolveImage, USER_TAG_PREFIX, userNameOfTag } from "../images/resolve.ts";
+import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -42,8 +41,6 @@ export interface RuntimesDeps {
   forward: (f: Forward) => Promise<void>;
   /** The server's own env; only its PATH and HOME reach the version check. */
   serverEnv?: NodeJS.ProcessEnv;
-  /** The cap, read live (the `max_running_agents` factory setting); defaults to `DEFAULT_MAX_RUNNING_AGENTS`. */
-  maxRunningAgents?: () => number;
   /**
    * The local process journal (spec §12): snapshots and the verified reap. Only with the real driver: a fake
    * process's pid is not ours, and must never be journaled or signalled.
@@ -58,7 +55,7 @@ export interface RuntimesDeps {
   docker?: {
     containers: Pick<
       ContainerManager,
-      "ensure" | "ensureImage" | "hasImage" | "stopIfRunning" | "forceRemove" | "remove"
+      "ensure" | "ensureImage" | "stopIfRunning" | "forceRemove" | "remove"
     >;
     claudeBin: string;
     defaultImage: string;
@@ -142,11 +139,10 @@ export class AgentRuntimes {
   private readonly byId = new Map<string, Promise<AgentRuntime>>();
   /** The runtimes whose init finished: the Supervisor's synchronous view. */
   private readonly loaded = new Map<string, AgentRuntime>();
-  /** The one owner of the cap; every runtime starts through it. */
+  /** The one owner of the running set; every runtime starts through it. */
   readonly supervisor: Supervisor;
   constructor(private readonly d: RuntimesDeps) {
     this.supervisor = new Supervisor({
-      max: d.maxRunningAgents ?? (() => DEFAULT_MAX_RUNNING_AGENTS),
       runtimes: { get: (id) => this.loaded.get(id), all: () => this.loaded.values() },
       bus: d.bus,
       log: d.log,
@@ -171,21 +167,14 @@ export class AgentRuntimes {
       },
       ensure: async (ref: string, signal: AbortSignal) => {
         try {
-          if (ref.startsWith(USER_TAG_PREFIX)) {
-            // Spec §10.1: a user image is built by the factory, never pulled. This keys on the tag prefix, so a
-            // registry template that literally names `open-factory-user/<x>:latest` is never pulled either; that
-            // namespace is the factory's own local one, so nothing is lost.
-            if (!(await docker.containers.hasImage(ref)))
-              throw new AgentStartError(
-                `Image \`${userNameOfTag(ref)}\` isn't built. Build it in Templates \u2192 Images, or run \`open-factory images build ${userNameOfTag(ref)}\`.`,
-                "image",
-              );
-            return;
-          }
           await docker.containers.ensureImage(ref, signal);
         } catch (err) {
-          // The registry's error stays verbatim (spec §11.2); only an unreachable daemon is named as such.
-          throw dockerUnreachable(err) ? dockerStartError(err) : err;
+          // The registry's own error goes to the log (the Supervisor warns with it); the start fails with the same
+          // words whatever the cause. Only an unreachable daemon is named as such.
+          if (dockerUnreachable(err)) throw dockerStartError(err);
+          throw new AgentStartError(
+            `Image \`${ref}\` isn't available locally and couldn't be pulled.`,
+          );
         }
       },
     };
@@ -275,13 +264,15 @@ export class AgentRuntimes {
   /** I2 §6.2: the Docker image reference a config resolves to (what `setNextImage` takes); undefined for a local one. */
   imageRef(config: Pick<Effective["config"], "runtime" | "image">): string | undefined {
     if (config.runtime !== "docker" || !this.d.docker) return undefined;
-    return resolveImage(config.image, this.d.docker.defaultImage).tag;
+    return config.image ?? this.d.docker.defaultImage;
   }
 
   /** I2 §6.2: a loaded runtime's next image (`ConfigChanges` refreshes it on every change); a no-op when not loaded. */
   setNextImage(agentId: string, ref: string | undefined): void {
     const rt = this.loaded.get(agentId);
-    if (rt) rt.nextImage = ref;
+    if (!rt || rt.nextImage === ref) return;
+    rt.nextImage = ref;
+    rt.publishStatus(); // the Image row shows it before any restart
   }
 
   /** What every loaded runtime's running process started with (the Library sweep reads its cache directories). */
@@ -292,11 +283,6 @@ export class AgentRuntimes {
   /** I2 §6.2: what a loaded runtime's running process started with; undefined when not loaded or not running. */
   startedOf(agentId: string): Effective | undefined {
     return this.loaded.get(agentId)?.started;
-  }
-
-  /** The version of each plugin a loaded runtime's running process listed at its first `init` (spec §7.3 step 8). */
-  loadedPluginsOf(agentId: string): Record<string, string> | undefined {
-    return this.loaded.get(agentId)?.loadedPlugins;
   }
 
   /**
@@ -350,17 +336,20 @@ export class AgentRuntimes {
     return rt;
   }
 
-  /** S6 §8: hands a committed held row (member update, peer event) to its recipient; never awaited, never throws. */
-  deliverHeld(row: PendingRow): void {
+  /** S6 §8: hands a committed member update or peer event to its recipient; never awaited, never throws. */
+  receive(row: PendingRow): void {
     const to = row.toAgentId;
     if (!to) {
-      this.d.log.error({ message: row.id }, "a held row has no agent recipient");
+      this.d.log.error({ message: row.id }, "a member update or peer event has no agent recipient");
       return;
     }
     void this.load(to)
-      .then((rt) => rt?.receiveHeld(row))
+      .then((rt) => rt?.receive(row))
       .catch((err: unknown) =>
-        this.d.log.error({ err, agentId: to, message: row.id }, "delivering a held row failed"),
+        this.d.log.error(
+          { err, agentId: to, message: row.id },
+          "handing over a member update or peer event failed",
+        ),
       );
   }
 
@@ -399,7 +388,7 @@ export class AgentRuntimes {
 
   /**
    * S10 §8.2: the default warm window or the member-update debounce changed. Every loaded runtime re-arms its warm and
-   * held-update timers in its own job queue; a failure is logged, never thrown.
+   * member-update timers in its own job queue; a failure is logged, never thrown.
    */
   async settingsChanged(): Promise<void> {
     await Promise.all(

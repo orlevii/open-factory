@@ -67,9 +67,10 @@ test("your own message says 'You', without the handle", async () => {
   const l = line();
   expect(within(l).getByText("You")).toHaveAttribute("dir", "auto");
   expect(within(l).queryByText("@alice")).toBeNull();
+  expect(l.querySelector("[data-human-avatar]")).toHaveTextContent("A");
 });
 
-test("a human: the name from the users list and the muted handle, no avatar; else the handle", async () => {
+test("a human: an initials avatar, the name from the users list and the muted handle; else a glyph and the handle", async () => {
   await show(
     <>
       <SpeakerLine from="@or" fromKind="human" at={AT} />
@@ -79,8 +80,9 @@ test("a human: the name from the users list and the muted handle, no avatar; els
   const [known, unknown] = [...document.querySelectorAll<HTMLElement>("[data-speaker-line]")];
   expect(within(known as HTMLElement).getByText("Or Levi")).toHaveAttribute("dir", "auto");
   expect(within(known as HTMLElement).getAllByText("@or").length).toBeGreaterThan(0);
-  expect(known?.querySelector("svg,img")).toBeNull();
+  expect(known?.querySelector("[data-human-avatar]")).toHaveTextContent("OL");
   expect(within(unknown as HTMLElement).getByText("@stranger")).toBeInTheDocument();
+  expect(unknown?.querySelector("[data-human-avatar] svg")).not.toBeNull();
 });
 
 test("an outgoing card reads 'Name → Recipient': You for you, an agent as a link", async () => {
@@ -229,7 +231,7 @@ test("the provider reads your handle itself, and asks for the ended list only on
         });
       return Promise.resolve(
         new Response(
-          JSON.stringify({ agents: [], users: [], more: false, running: { count: 0, max: 8 } }),
+          JSON.stringify({ agents: [], users: [], more: false, running: { count: 0 } }),
           {
             headers: { "content-type": "application/json" },
           },
@@ -256,7 +258,7 @@ test("the provider reads your handle itself, and asks for the ended list only on
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(calls).not.toContain("/api/agents?ended=only");
     release(
-      new Response(JSON.stringify({ agents: [], running: { count: 0, max: 8 } }), {
+      new Response(JSON.stringify({ agents: [], running: { count: 0 } }), {
         headers: { "content-type": "application/json" },
       }),
     );

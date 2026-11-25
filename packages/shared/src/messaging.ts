@@ -12,7 +12,6 @@ export const MESSAGE_KINDS = [
   "scheduled",
 ] as const;
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
-export const HELD_KINDS: readonly MessageKind[] = ["member_update", "peer_joined", "peer_left"];
 export const FACT_CODES = [
   "turn_failed",
   "denied",
@@ -30,7 +29,7 @@ export const subjectSchema = z.object({
   left: z
     .union([
       z.object({ reason: z.literal("archived") }),
-      z.object({ reason: z.literal("moved"), to: z.string().nullable() }),
+      z.object({ reason: z.literal("moved"), to: z.string() }),
       z.object({ reason: z.literal("terminated"), by: z.string() }),
     ])
     .optional(),
@@ -141,7 +140,11 @@ export const unreadCountSchema = z.object({
   count: z.number().int().nonnegative(),
   byAgent: z.record(z.string(), z.number().int().nonnegative()).default({}),
 });
-export const readFromBodySchema = z.object({ upTo: z.string().min(1) });
+export const readFromBodySchema = z.object({
+  upTo: z.string().min(1),
+  /** Chat messages (the default) or a report's member updates (I9 §4.5). */
+  kind: z.enum(["message", "member_update"]).default("message"),
+});
 export const readFromResponseSchema = z.object({ marked: z.number().int(), readAt: z.string() });
 export const eventRefSchema = z.object({ agentSlug: z.string(), seq: z.number().int() });
 export const messageLookupSchema = z.object({

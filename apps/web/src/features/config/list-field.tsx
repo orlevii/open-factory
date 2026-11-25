@@ -7,10 +7,7 @@ import { WrongType } from "./section";
 import { readAt, readList } from "./tolerant";
 
 /** The list fields: each binds one union list of the draft to a `ConfigList`. */
-export type ListFieldId = Extract<
-  ConfigField,
-  "skills" | "allow" | "deny" | "trustNotes" | "envSecrets" | "canSpawn"
->;
+export type ListFieldId = Extract<ConfigField, "skills" | "envSecrets" | "canSpawn">;
 
 const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const NO_ROWS: ReadonlyMap<number, RowNote> = new Map();
@@ -19,7 +16,7 @@ const INDEX = /^\d+$/;
 /**
  * A list field of the form (spec §12.2). Agent mode shows the template's items read-only in their own group and this
  * agent's items (the overlay's) as editable rows; template mode shows the template's as editable rows. A value that
- * isn't a list of strings reads "Edit this in Raw JSON.". Issues on an item (`settings.permissions.allow.3`) show
+ * isn't a list of strings reads "Edit this in Raw JSON.". Issues on an item (`template.can_spawn.3`) show
  * under that row.
  */
 export function ListField({
@@ -27,7 +24,6 @@ export function ListField({
   label,
   noun,
   mono,
-  help,
   placeholder,
   check,
   rowCheck,
@@ -40,7 +36,6 @@ export function ListField({
   label: string;
   noun: string;
   mono?: boolean;
-  help?: string;
   placeholder?: string;
   check?: (value: string) => string | undefined;
   /** A client rule for rows already in the list (a name Raw JSON added): a failing row gets an error note. Stable. */
@@ -94,7 +89,6 @@ export function ListField({
       label={label}
       noun={noun}
       mono={mono}
-      help={help}
       placeholder={placeholder}
       check={check}
       own={own.items}

@@ -51,7 +51,7 @@ const NO_SPAWNERS = new Map<string, string>();
 const toSpawners = (agents: AgentSummary[]) =>
   new Map(
     agents.flatMap((a) =>
-      a.kind === "ephemeral" && a.reportsTo ? [[a.slug, a.reportsTo]] : [],
+      a.kind === "ephemeral" && a.reportsTo.kind === "agent" ? [[a.slug, a.reportsTo.handle]] : [],
     ) as [string, string][],
   );
 

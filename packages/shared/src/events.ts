@@ -17,17 +17,6 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     cwd: z.string(),
     claudeCodeVersion: z.string(),
     mcpServers: z.array(z.object({ name: z.string(), status: z.string() })).optional(),
-    /** The first `init`'s loaded plugins (spec §7.3 step 8); absent when the init carries none. */
-    plugins: z
-      .array(
-        z.object({
-          name: z.string(),
-          path: z.string(),
-          source: z.string(),
-          version: z.string().optional(),
-        }),
-      )
-      .optional(),
   }),
   z.object({ type: z.literal("turn_started") }),
   z.object({
@@ -129,7 +118,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     cacheWriteTokens: z.number(),
     costUsd: z.number(),
     durationMs: z.number(),
-    numTurns: z.number(),
+    numTurns: z.number().optional(),
     apiErrorStatus: z.number().int().optional(),
   }),
   z.object({
@@ -153,7 +142,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     originKind: z.string().optional(),
     command: z.string().optional(),
     apiErrorStatus: z.number().optional(),
-    numTurns: z.number(),
+    numTurns: z.number().optional(),
   }),
   z.object({
     type: z.literal("error"),
@@ -162,16 +151,7 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
     detail: z.string().optional(),
     code: z.string().optional(),
     fix: z
-      .enum([
-        "credentials",
-        "secrets",
-        "projects",
-        "edit_agent",
-        "runtime",
-        "image",
-        "template",
-        "config",
-      ])
+      .enum(["credentials", "secrets", "projects", "edit_agent", "runtime", "template", "config"])
       .optional(),
   }),
   z.object({
@@ -279,8 +259,6 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("rate_limit_reset"), credential: z.string() }),
   z.object({ type: z.literal("mcp_unavailable"), status: z.string() }),
-  /** A plugin of the agent's closure that isn't in the first `init` (spec §7.3 step 8). `pin` is as `Effective.library.plugins`. */
-  z.object({ type: z.literal("plugin_not_loaded"), key: z.string(), pin: z.string() }),
   z.object({ type: z.literal("interrupt_unconfirmed") }),
 ]);
 export type FactoryEvent = z.infer<typeof factoryEventSchema>;

@@ -28,9 +28,12 @@ import {
   type InboxItem,
   prefetchChat,
   prefetchPane,
+  updateRowId,
   useInbox,
   useInboxChats,
+  useInboxUpdates,
   useOpenItem,
+  useOpenUpdate,
 } from "./api";
 import { ChatInboxRow } from "./chat-row";
 import { InboxRow } from "./inbox-row";
@@ -42,12 +45,13 @@ const plainClick = (e: MouseEvent) =>
 /** A row of the list: an unread chat or an item, in one order by time. */
 type Row =
   | { kind: "chat"; id: string; at: string; chat: ChatRow }
+  | { kind: "update"; id: string; at: string; chat: ChatRow }
   | { kind: "item"; id: string; at: string; item: InboxItem };
 
 const rowKey = (r: Row) => r.id;
 /** A row the live list dropped, still on screen while held: read, with no count. */
 const asRead = (r: Row): Row =>
-  r.kind === "chat"
+  r.kind !== "item"
     ? { ...r, chat: { ...r.chat, unread: 0 } }
     : { ...r, item: { ...r.item, read: true } };
 const NO_ITEMS: InboxItem[] = [];
@@ -56,12 +60,25 @@ const NO_ITEMS: InboxItem[] = [];
  * The chats and the items by time, newest first. While more pages exist, a chat older than the oldest
  * loaded item waits until a page reaches its time (I1 §6.7).
  */
-function interleave(chats: readonly ChatRow[], items: readonly InboxItem[], more: boolean): Row[] {
+function interleave(
+  chats: readonly ChatRow[],
+  updates: readonly ChatRow[],
+  items: readonly InboxItem[],
+  more: boolean,
+): Row[] {
   const oldest = more ? items.at(-1)?.createdAt : undefined;
   const rows: Row[] = [];
   for (const chat of chats)
     if (oldest === undefined || chat.latest.createdAt >= oldest)
       rows.push({ kind: "chat", id: chatRowId(chat.agent.slug), at: chat.latest.createdAt, chat });
+  for (const chat of updates)
+    if (oldest === undefined || chat.latest.createdAt >= oldest)
+      rows.push({
+        kind: "update",
+        id: updateRowId(chat.agent.slug),
+        at: chat.latest.createdAt,
+        chat,
+      });
   for (const item of items) rows.push({ kind: "item", id: item.id, at: item.createdAt, item });
   return rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 }
@@ -92,6 +109,8 @@ export function InboxList({
   const items = q.data ?? NO_ITEMS;
   const loaded = q.data !== undefined;
   const chats = useInboxChats();
+  const updates = useInboxUpdates();
+  const openUpdate = useOpenUpdate();
   const visible = useDocumentVisible();
   const list = useRef<HTMLUListElement>(null);
   // The rows' times are relative to the minute: a number, so a selection doesn't re-render every row.
@@ -121,8 +140,19 @@ export function InboxList({
     const fallback = lastSelected.current ?? selectedChat;
     if (selectedSlug && !inList && fallback?.agent.slug === selectedSlug)
       shown.push({ ...fallback, unread: 0 });
-    return interleave(shown, items, q.hasNextPage);
-  }, [chats, items, q.hasNextPage, visible, cap, selectedId, selectedSlug, inList, selectedChat]);
+    return interleave(shown, updates, items, q.hasNextPage);
+  }, [
+    chats,
+    updates,
+    items,
+    q.hasNextPage,
+    visible,
+    cap,
+    selectedId,
+    selectedSlug,
+    inList,
+    selectedChat,
+  ]);
   const held = useHeldList(live, rowKey, asRead, selectedId);
   const rows = held.rows;
 
@@ -139,7 +169,7 @@ export function InboxList({
     (id: string | undefined) => {
       const n = id ? latest.current.find((r) => r.id === id) : undefined;
       if (n?.kind === "item") prefetchPane(qc, n.item);
-      else if (n) prefetchChat(qc, n.chat.agent.slug);
+      else if (n?.kind === "chat") prefetchChat(qc, n.chat.agent.slug);
     },
     [qc],
   );
@@ -181,6 +211,14 @@ export function InboxList({
       }
     },
     [onSelect],
+  );
+
+  const onOpenUpdate = useCallback(
+    (slug: string) => {
+      const row = latest.current.find((r) => r.id === updateRowId(slug));
+      if (row?.kind === "update") openUpdate(row.chat);
+    },
+    [openUpdate],
   );
 
   const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
@@ -227,6 +265,7 @@ export function InboxList({
   if (!loaded)
     return q.isError ? (
       <ErrorLine
+        inRows
         text="Couldn't load the inbox."
         onRetry={() =>
           void q.refetch().then((r) => {
@@ -241,7 +280,7 @@ export function InboxList({
     return (
       <>
         {steps}
-        {!steps && <EmptyState text="Nothing in your inbox." />}
+        {!steps && <EmptyState inRows text="Nothing in your inbox." />}
       </>
     );
 
@@ -268,7 +307,17 @@ export function InboxList({
           className="border-y border-border [overflow-anchor:auto]"
         >
           {rows.map((r) =>
-            r.kind === "chat" ? (
+            r.kind === "update" ? (
+              <ChatInboxRow
+                key={r.id}
+                row={r.chat}
+                now={now}
+                onOpen={onOpenUpdate}
+                selected={false}
+                selectable={false}
+                updates
+              />
+            ) : r.kind === "chat" ? (
               <ChatInboxRow
                 key={r.id}
                 row={r.chat}
@@ -291,7 +340,12 @@ export function InboxList({
           )}
         </ul>
         {q.isFetchNextPageError ? (
-          <ErrorLine text="Couldn't load earlier messages." onRetry={loadEarlier} autoFocus />
+          <ErrorLine
+            inRows
+            text="Couldn't load earlier messages."
+            onRetry={loadEarlier}
+            autoFocus
+          />
         ) : (
           q.hasNextPage && (
             <div>

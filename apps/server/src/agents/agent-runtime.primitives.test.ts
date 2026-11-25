@@ -87,7 +87,7 @@ test("a grant for a running agent never releases the slot its process holds", as
   await h.makeRuntime({ slots });
   await idle();
   await h.rt.grant("boot");
-  expect(slots.events.filter((e) => e[0] !== "hibernatable")).toEqual([["request", "message"]]);
+  expect(slots.events).toEqual([["request", "message"]]);
   expect(h.driver.starts).toHaveLength(1);
 });
 

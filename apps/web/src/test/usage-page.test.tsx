@@ -52,7 +52,7 @@ type World = {
 function world(w: World = {}) {
   const api = mockApi({
     "GET /api/credentials": () => json({ credentials: [] }),
-    "GET /api/agents": () => json({ agents: [], running: { count: 0, max: 8 } }),
+    "GET /api/agents": () => json({ agents: [], running: { count: 0 } }),
     "GET /api/usage/daily?": () =>
       json({ timezone: "Europe/Berlin", days: w.daily ?? daily(30, 0, 0) }),
     "GET /api/usage/agents?": () => json({ agents: w.agents ?? [] }),

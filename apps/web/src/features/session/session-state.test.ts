@@ -30,7 +30,6 @@ const page = (seqs: number[], hasMore = { before: false, after: false }): Events
 const noRestart = { restartPending: false, restartWaitingOn: 0, restartChanges: [] };
 const detail: AgentDetail = {
   agent: agentSummary(),
-  model: { value: null, source: "default" },
   queue: [],
   lastSeq: 9,
 };
@@ -424,7 +423,6 @@ const loaded = (
     page: page(o.seqs ?? [7, 8, 9], { before: false, after: mode === "window" }),
     detail: {
       agent: agentSummary(o.agent),
-      model: { value: null, source: "default" },
       queue: o.queue ?? [],
       lastSeq: 9,
     },
@@ -501,7 +499,6 @@ test("a loaded turn_end never flips turnOpen", () => {
     page: { events: [sessionEvent(5, turnEnd())], hasMore: { before: false, after: false } },
     detail: {
       agent: agentSummary({ turnOpen: true, turnStartedAt: at }),
-      model: { value: null, source: "default" },
       queue: [],
       lastSeq: 9,
     },
@@ -970,7 +967,6 @@ test("retired is seeded from loaded rows: a reset holding a block whose row is l
     },
     detail: {
       agent: agentSummary({ turnOpen: true, turnStartedAt: at }),
-      model: { value: null, source: "default" },
       queue: [],
       lastSeq: 6,
     },

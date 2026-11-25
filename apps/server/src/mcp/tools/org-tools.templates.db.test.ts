@@ -5,6 +5,7 @@ import { schema } from "@open-factory/db";
 import type { Actor } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { seedTestUser } from "../../test/handles.ts";
 import { makeTestApp } from "../../test/helpers.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
@@ -41,6 +42,7 @@ const hashOf = async (who: string, name: string, file: string) =>
 
 beforeAll(async () => {
   t = await makeTestApp();
+  await seedTestUser(t.db);
   url = `http://127.0.0.1:${t.app.agentListener.port}`;
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
@@ -70,7 +72,7 @@ beforeAll(async () => {
       slug: "hr-bot",
       displayName: "hr-bot",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
     },
     human,
@@ -82,7 +84,7 @@ beforeAll(async () => {
       slug: "plain",
       displayName: "plain",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
     },
     human,

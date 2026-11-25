@@ -94,8 +94,7 @@ export function applyStatusFrames(qc: QueryClient, frames: ServerMessage[]): voi
     if (m.type === "agent_status") patches.set(m.agent, patchOf(m));
     else if (m.type === "supervisor") supervisor = m;
   }
-  if (supervisor)
-    qc.setQueryData(runningQueryKey, { count: supervisor.running, max: supervisor.max });
+  if (supervisor) qc.setQueryData(runningQueryKey, { count: supervisor.running });
   if (patches.size === 0) return;
 
   // Lists are keyed by the archived filter (["agents", "exclude"] ...): read them once, before the

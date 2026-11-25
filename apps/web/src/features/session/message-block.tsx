@@ -133,8 +133,8 @@ export function MessageBlock(props: {
   at?: string;
   /** Held, not delivered yet: `reason` follows "Not delivered yet:"; `text` replaces the whole line. */
   queued?: { reason?: string; text?: string };
-  /** Not delivered; a string is the line's text (the Chat's rejected row), else "Not delivered". */
-  failed?: boolean | string;
+  /** Not delivered. */
+  failed?: boolean;
   /** S8: the task badge of a task message, after the sender. */
   badge?: ReactNode;
   /** S9: a scheduled message: sender "Scheduler", the schedule badge, who wrote it, and the notes. */
@@ -236,9 +236,7 @@ export function MessageBlock(props: {
         </span>
       )}
       {badge}
-      {urgent && !system && (
-        <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
-      )}
+      {urgent && !system && <UrgentBadge />}
     </>
   );
   return (
@@ -280,7 +278,7 @@ export function MessageBlock(props: {
       )}
       {failed && (
         <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-          {typeof failed === "string" ? failed : "Not delivered"}
+          Not delivered
         </p>
       )}
       {/* One wrapper either way, so a send becoming its queued item keeps the parsed body. The prose
@@ -299,6 +297,10 @@ export function MessageBlock(props: {
   );
 }
 
+export function UrgentBadge() {
+  return <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>;
+}
+
 /** The upload's same-origin, authenticated URL (the session cookie; never an external host). */
 export const uploadUrl = (slug: string, uploadId: string) =>
   `/api/agents/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(uploadId)}`;
@@ -309,7 +311,7 @@ export const AUTO_PREVIEW_BYTES = 1024 * 1024;
 
 /** A message's files (U3 §13.5): each a chip opening the file; an image previews through the
  *  authenticated same-origin GET. The name is a text node, never HTML. */
-function AttachmentList({
+export function AttachmentList({
   slug,
   attachments,
 }: {
@@ -487,16 +489,18 @@ const CLAMP_LINES = 40;
 export function ClampedMarkdown({
   source,
   limit = CLAMP_LINES,
+  variant = "detail",
 }: {
   source: string;
   limit?: number;
+  variant?: "default" | "detail";
 }) {
   const [all, setAll] = useState(false);
   const clamped = useMemo(() => clampSource(source, limit), [source, limit]);
-  if (all || clamped === undefined) return <Markdown source={source} variant="detail" />;
+  if (all || clamped === undefined) return <Markdown source={source} variant={variant} />;
   return (
     <>
-      <Markdown source={clamped} variant="detail" />
+      <Markdown source={clamped} variant={variant} />
       <ShowAll onShow={() => setAll(true)} />
     </>
   );

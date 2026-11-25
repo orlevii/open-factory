@@ -90,7 +90,7 @@ async function open(
     "GET /api/library/skills": () => json(data),
     "GET /api/library/sources/skills": () => json(view),
     "GET /api/library/sources/other": () => json(detail("other", { skills: ["lint"] })),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
   });
   extra(mocks);

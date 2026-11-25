@@ -14,10 +14,10 @@ export type WakeReason =
   | "queued_items"
   | "apply_changes"
   | "task_message" // a task message (S8 §7.4); never wakes an errored agent
-  | "member_updates" // held member updates became due (S6 spec §8.2); never wakes an errored agent
+  | "member_updates" // member updates passed their debounce (I9 §4.8); an errored agent makes one attempt
   | "agent_message"; // another agent's message (S6 spec §7.3); never wakes an errored agent
 
-/** The seam between an `AgentRuntime` and the Supervisor that owns the cap (spec §5.2, §5.5). */
+/** The seam between an `AgentRuntime` and the Supervisor that owns the running set (spec §5.2, §5.5). */
 export interface SlotPort {
   /** Synchronous. "granted": the caller may startNow inline in its own job. "queued": a grant job will come later. "dropped": not eligible. */
   requestWake(
@@ -26,9 +26,6 @@ export interface SlotPort {
     inline: boolean,
   ): "granted" | "queued" | "dropped";
   release(agentId: string): void;
-  becameHibernatable(agentId: string): void;
-  /** The agent's stop failed even after escalation (spec §9.6): it keeps its slot but is no longer on its way out. */
-  stopFailed(agentId: string): void;
   closing(): boolean;
   /** The agent waits for a start: a wake queue entry or a granted slot (the `queued` status input, spec §5.4). */
   isQueued(agentId: string): boolean;

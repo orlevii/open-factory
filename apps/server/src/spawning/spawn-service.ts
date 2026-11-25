@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { sendMessagesBodySchema } from "@open-factory/shared";
-import { and, asc, count, eq, gt, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { ConfigResolver, Effective } from "../agents/config-resolver.ts";
 import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
@@ -24,7 +24,6 @@ type Template = Awaited<ReturnType<TemplateIndex["loadValid"]>>;
 type Granted = Extract<Inherited, { ok: true }>;
 type Refused = { ok: false; message: string };
 
-const HOUR_MS = 3_600_000;
 const SHUTTING_DOWN = "The factory is shutting down; spawn again after it restarts.";
 const CANT_SPAWN = "You can't spawn agents.";
 const fail = (message: string): Refused => ({ ok: false, message });
@@ -37,10 +36,6 @@ const notRunning = (slug: string) => fail(`@${slug} isn't running.`);
  * re-checks everything and writes the child, its grants, its brief, its `spawned` event and the peer rows. A spawned
  * agent never holds anything its spawner lacks (§6, `inheritFrom`).
  */
-/** Who an agent that can't fix a problem itself goes to: its manager, or else a person (spec §4.5). */
-const askFor = (agent: Pick<AgentRow, "reportsTo">) =>
-  agent.reportsTo ? "ask your manager" : "ask a human (list_peers lists them)";
-
 export class SpawnService {
   private readonly now: () => number;
 
@@ -50,7 +45,7 @@ export class SpawnService {
       store: EventStore;
       templates: TemplateIndex;
       workspace: Workspace;
-      router: Pick<Router, "persistPeerEvents" | "handOffHeldRows" | "handOffBrief">;
+      router: Pick<Router, "persistPeerEvents" | "handOffRows" | "handOffBrief">;
       runtimes: Pick<AgentRuntimes, "startedOf">;
       /** The spawner's current effective config, the other half of what it passes on (I2 §6.2). */
       resolver: Pick<ConfigResolver, "effective">;
@@ -69,7 +64,7 @@ export class SpawnService {
     if (this.d.closing()) return fail(SHUTTING_DOWN);
     const caller = await this.d.store.agentById(callerId);
     if (!caller) return fail(CANT_SPAWN);
-    // I2 §6.2: can_spawn and max_live_spawns are what the running process started with.
+    // I2 §6.2: can_spawn is what the running process started with.
     const started = this.d.runtimes.startedOf(caller.id);
     if (!started) return notRunning(caller.slug);
     if (!maySpawn(caller, started.config)) return fail(CANT_SPAWN);
@@ -80,7 +75,7 @@ export class SpawnService {
       current = await this.d.resolver.effective(caller);
     } catch (err) {
       this.d.log.warn({ err, agent: caller.slug }, "resolving the spawner's config failed");
-      return fail(`Your configuration can't be read; ${askFor(caller)} to fix it.`);
+      return fail(`Your configuration can't be read; ask your manager to fix it.`);
     }
     const desc = args.description.trim();
     if (!desc || desc.length > 500) return fail("Give a description of 1 to 500 characters.");
@@ -91,7 +86,7 @@ export class SpawnService {
     try {
       tpl = await this.d.templates.loadValid(args.template);
     } catch {
-      return fail(`Template ${args.template} is missing or invalid; ${askFor(caller)} to fix it.`);
+      return fail(`Template ${args.template} is missing or invalid; ask your manager to fix it.`);
     }
     // Pre-checks without a lock (spec §5.2 step 2): nothing is materialized for a refused spawn.
     const pre = await this.check(caller, started, current, tpl, this.d.db);
@@ -136,9 +131,9 @@ export class SpawnService {
   }
 
   /**
-   * The live count (§5.4), the hourly rate (§5.5) and the inheritance rule (§6) against the spawner's current state,
-   * read through `db` (the pool for the pre-check, the locked transaction for the re-check). The cap is `started`'s;
-   * what the child may hold is the stricter of `started` and `current` (I2 §6.2, `spawnerHolds`).
+   * The inheritance rule (§6) against the spawner's current state, read through `db` (the pool for the pre-check, the
+   * locked transaction for the re-check). What the child may hold is the stricter of `started` and `current` (I2 §6.2,
+   * `spawnerHolds`).
    */
   private async check(
     spawner: AgentRow,
@@ -147,38 +142,6 @@ export class SpawnService {
     tpl: Template,
     db: Exec,
   ): Promise<{ ok: true; inherited: Granted } | Refused> {
-    const { agents } = schema;
-    const live = await db
-      .select({ slug: agents.slug })
-      .from(agents)
-      .where(
-        and(
-          eq(agents.reportsTo, spawner.id),
-          eq(agents.kind, "ephemeral"),
-          isNull(agents.terminatedAt),
-        ),
-      )
-      .orderBy(asc(agents.slug));
-    const max = started.config.maxLiveSpawns;
-    if (live.length >= max)
-      return fail(
-        `You have ${live.length} live spawned agents (max ${max}): ${live.map((r) => `@${r.slug}`).join(", ")}. Terminate one first.`,
-      );
-    const [recent] = await db
-      .select({ n: count() })
-      .from(agents)
-      .where(
-        and(
-          eq(agents.reportsTo, spawner.id),
-          eq(agents.kind, "ephemeral"),
-          gt(agents.createdAt, new Date(this.now() - HOUR_MS)),
-        ),
-      );
-    const cap = this.d.config.maxSpawnsPerHour;
-    if ((recent?.n ?? 0) >= cap)
-      return fail(
-        `You've spawned ${cap} agents in the last hour; ${askFor(spawner)} if you need more.`,
-      );
     const grants = await db
       .select({
         id: schema.projects.id,
@@ -222,7 +185,7 @@ export class SpawnService {
           description,
           template,
           config: tpl.config,
-          manager: { slug: caller.slug, displayName: caller.displayName },
+          manager: { kind: "agent", slug: caller.slug, displayName: caller.displayName },
           grants: inherited.grants.map((g) => ({ name: g.name, hostPath: g.hostPath })),
         }),
       );
@@ -233,7 +196,7 @@ export class SpawnService {
       await this.discard(slug);
       if (err instanceof WorkspaceError || err instanceof FieldError) return fail(err.message);
       this.d.log.error({ err, agent: slug }, "materializing a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
+      return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
     }
   }
 
@@ -335,7 +298,7 @@ export class SpawnService {
       }
       await this.discard(slug);
       this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
+      return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
     }
     if (out === "taken") {
       // A user's claim leaves our folder orphaned; an agent's claim means a winner owns it.
@@ -348,7 +311,7 @@ export class SpawnService {
     }
     // §5.2 step 5: the status before the hand-off; both hand-offs are enqueued after boot, never awaited.
     const status = await router.handOffBrief(out.brief, out.child);
-    router.handOffHeldRows(out.peers);
+    router.handOffRows(out.peers);
     const note = droppedNote(out.inherited.dropped);
     return { ok: true, slug, agentId: id, status, ...(note ? { note } : {}) };
   }

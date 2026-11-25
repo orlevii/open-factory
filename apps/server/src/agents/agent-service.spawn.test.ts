@@ -5,6 +5,7 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
+import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { asRunning } from "../test/running.ts";
 import { ev, FakeDriver, type FakeProcess } from "./testing/fake-driver.ts";
@@ -34,6 +35,7 @@ const leadYaml = (projects: string[]) =>
 async function setup() {
   const driver = new FakeDriver();
   t = await makeTestApp({ harnessDriver: driver });
+  await seedTestUser(t.db);
   const app = t;
   const project = async (name: string) => {
     const id = randomUUID();
@@ -66,7 +68,7 @@ async function setup() {
       slug: "lead",
       displayName: "Lead",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
     },
     { kind: "human", handle: "or" },

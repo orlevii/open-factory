@@ -82,7 +82,6 @@ describe("event schemas", () => {
       { type: "error", source: "api", message: "x", code: "authentication_failed" },
       { type: "error", source: "spawn", message: "x", fix: "secrets" },
       { type: "error", source: "spawn", message: "x", fix: "runtime" },
-      { type: "error", source: "spawn", message: "m", fix: "image" },
       { type: "turn_end", isError: true, numTurns: 1, apiErrorStatus: 401 },
       {
         type: "message_in",

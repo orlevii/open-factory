@@ -54,7 +54,7 @@ export type PeerChange =
   | { kind: "spawned" }
   | { kind: "left"; reason: "archived"; by?: string }
   | { kind: "left"; reason: "terminated"; by: string }
-  | { kind: "moved"; to: string | null; by?: string };
+  | { kind: "moved"; to: string; by?: string };
 
 /** The subject's manager and peers before a change; recipients of `left`/`moved` come from it. */
 export type NeighborhoodSnapshot = { managerId: string | null; peerIds: string[] };
@@ -519,10 +519,12 @@ export class Router {
   }
 
   /**
-   * Spec §9.1: one forwarded item of a report, persisted before this resolves (the report's job awaits it, §16). With
-   * a manager, a held `member_update` (the report's text as itself; a fact as `@factory` about it), handed over once
-   * boot is done and never awaited. A top-level agent's `errored` goes to every human's inbox; anything else of a
-   * top-level agent stays in its session. The manager is read from the database: a change moves future rows only.
+   * Spec §9.1: one forwarded item of a report, persisted before this resolves (the report's job awaits it, §16). The
+   * manager is read from the database (a change moves future rows only). A manager agent gets a `member_update` (the
+   * report's text as itself; a fact as `@factory` about it), handed over once boot is done and never awaited; the
+   * manager's runtime delivers it after the debounce, like a message (I9 §4.8). A human manager gets the same as a
+   * `member_update` inbox item of their own, and an `errored` fact as an `agent_errored` notice: to that user only,
+   * never to the other humans (I9 §4.5).
    */
   async forward(f: Forward): Promise<void> {
     const agent = await this.d.store.agentById(f.agentId);
@@ -543,17 +545,18 @@ export class Router {
       if (f.fact === "errored") await this.d.store.setErroredReported(f.agentId, tx);
       return persisted;
     });
-    if (out?.held) this.handOffHeld(out.held);
-    if (out?.inbox) this.d.bus.publishAll({ type: "inbox_changed" });
+    if (out?.update) this.handOff(out.update);
+    for (const userId of out?.userIds ?? [])
+      this.d.bus.publishToUser(userId, { type: "inbox_changed" });
   }
 
   private async persistForward(
     agent: NonNullable<Awaited<ReturnType<EventStore["agentById"]>>>,
     f: Forward,
     tx: Tx,
-  ): Promise<{ held?: PendingRow; inbox?: true } | undefined> {
+  ): Promise<{ update?: PendingRow; userIds?: string[] } | undefined> {
     if (agent.reportsTo) {
-      const held = await this.d.store.createHeld(
+      const update = await this.d.store.createOrgRow(
         {
           kind: "member_update",
           toAgentId: agent.reportsTo,
@@ -562,22 +565,38 @@ export class Router {
         },
         tx,
       );
-      return { held };
+      return { update };
     }
-    if (f.fact !== "errored") return undefined;
-    await this.d.store.createHumanMessage(
-      {
-        kind: "system",
-        fromAgentId: null,
-        notice: "agent_errored",
-        subjectAgentId: f.agentId,
-        to: "all",
-        body: f.body,
-        urgent: false,
-      },
-      tx,
-    );
-    return { inbox: true };
+    if (!agent.reportsToUser) return undefined;
+    const to = { userId: agent.reportsToUser };
+    const { userIds } =
+      f.fact === "errored"
+        ? await this.d.store.createHumanMessage(
+            {
+              kind: "system",
+              fromAgentId: null,
+              notice: "agent_errored",
+              subjectAgentId: f.agentId,
+              to,
+              body: f.body,
+              urgent: false,
+            },
+            tx,
+          )
+        : await this.d.store.createHumanMessage(
+            {
+              kind: "member_update",
+              inboxKind: "member_update",
+              ...(f.fact
+                ? { subjectAgentId: f.agentId, notice: f.fact }
+                : { fromAgentId: f.agentId }),
+              to,
+              body: f.body,
+              urgent: false,
+            },
+            tx,
+          );
+    return { userIds };
   }
 
   /**
@@ -590,7 +609,7 @@ export class Router {
   }
 
   /**
-   * S6 spec §10.2: held `peer_joined`/`peer_left` rows for everyone whose neighborhood changed, persisted and then
+   * S6 spec §10.2: `peer_joined`/`peer_left` rows for everyone whose neighborhood changed, persisted and then
    * handed over once boot is done, never awaited. A thin wrapper over `persistPeerEvents` in its own transaction.
    */
   async peerEvents(
@@ -601,12 +620,12 @@ export class Router {
     const rows = await this.d.db.transaction((tx) =>
       this.persistPeerEvents(tx, subjectId, change, before),
     );
-    this.handOffHeldRows(rows);
+    this.handOffRows(rows);
   }
 
   /**
    * S7 §9.1: the rows of a peer event, written in the caller's transaction (which may hold the uncommitted subject)
-   * and returned for `handOffHeldRows` after the commit. Recipients are the subject's peers (notice `peer`) and its
+   * and returned for `handOffRows` after the commit. Recipients are the subject's peers (notice `peer`) and its
    * manager (notice `report`), bodies by `peerBody`. `joined`/`spawned` read the neighborhood now (call it after the
    * change); `left` and `moved` notify the `before` snapshot, and `moved` also announces the join to the new
    * neighborhood. Only live recipients get a row; the subject itself gets nothing, and the manager nothing when
@@ -681,9 +700,9 @@ export class Router {
     return status;
   }
 
-  /** Hands committed held rows over (after the caller's commit), once boot is done; never awaited. */
-  handOffHeldRows(rows: PendingRow[]): void {
-    for (const row of rows) this.handOffHeld(row);
+  /** Hands committed member updates and peer events over (after the caller's commit), once boot is done; never awaited. */
+  handOffRows(rows: PendingRow[]): void {
+    for (const row of rows) this.handOff(row);
   }
 
   /**
@@ -732,7 +751,7 @@ export class Router {
       const to = await this.d.store.agentById(t.id, tx);
       if (!to || to.archivedAt || to.terminatedAt || to.id === subject.id) continue;
       rows.push(
-        await this.d.store.createHeld(
+        await this.d.store.createOrgRow(
           {
             kind,
             toAgentId: to.id,
@@ -754,11 +773,11 @@ export class Router {
     return rows;
   }
 
-  /** A held row's hand-off, once boot is done and unless shutdown has begun (the row then waits for the next boot). */
-  private handOffHeld(row: PendingRow): void {
+  /** A member update's or peer event's hand-off, once boot is done and unless shutdown has begun (the row then waits for the next boot). */
+  private handOff(row: PendingRow): void {
     void this.booted.then(
       () => {
-        if (!this.closed) this.d.runtimes.deliverHeld(row);
+        if (!this.closed) this.d.runtimes.receive(row);
       },
       () => {}, // shutting down before boot finished: the row is pending for the next boot
     );

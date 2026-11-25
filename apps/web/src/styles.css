@@ -364,6 +364,8 @@
    stays the global one). Scoped to these attributes so nothing else picks it up. */
 [data-credential-row]:focus-visible,
 [data-credential-row][data-focus-ring],
+[data-mcp-row]:focus-visible,
+[data-mcp-row][data-focus-ring],
 [data-sign-in-again][data-focus-ring] {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
@@ -454,14 +456,16 @@
 }
 
 /* I4 (spec §5): one reserved note line. The type sits on the cell, so 1lh is one note line. */
-.field-note {
+.field-note,
+.slot-swap {
   display: grid;
   min-width: 0;
   min-height: 1lh;
   font-size: 0.8125rem;
   line-height: 1.125rem;
 }
-.field-note > * {
+.field-note > *,
+.slot-swap > * {
   grid-area: 1 / 1;
   min-width: 0;
   opacity: 0;
@@ -470,10 +474,17 @@
     opacity 100ms var(--ease-out),
     visibility 100ms var(--ease-out);
 }
-.field-note > [data-shown] {
+.field-note > [data-shown],
+.slot-swap > [data-shown] {
   opacity: 1;
   visibility: visible;
   transition-duration: 150ms;
+}
+/* A layer that mounts shown (a status arriving) fades in rather than appearing. */
+.slot-swap > [data-shown] {
+  @starting-style {
+    opacity: 0;
+  }
 }
 .field-stack {
   display: grid;

@@ -18,7 +18,7 @@ import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { loadConfig } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
-import { claimTestHandle } from "../test/handles.ts";
+import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import { configDocHash, type TemplateChange, TemplateIndex } from "./template-index.ts";
@@ -52,7 +52,7 @@ beforeAll(async () => {
     db: t.db,
     config: cfg,
     library,
-    policy: new PolicyInputs({ db: t.db, library }),
+    policy: new PolicyInputs({ db: t.db }),
   });
   idx.onChange((e) => {
     events.push(e);
@@ -213,21 +213,6 @@ test("a folder that fails to index is skipped without pruning the others or its 
   expect((await idx.scan()).map((r) => r.name)).toContain("flaky1");
 });
 
-test("a user image counts only as a direct child of images/: a link leaving it doesn't validate", async () => {
-  const outside = mkdtempSync(path.join(tmpdir(), "of-outside-"));
-  writeFileSync(path.join(outside, "Dockerfile"), "FROM scratch\n");
-  mkdirSync(path.join(home, "images/real"), { recursive: true });
-  writeFileSync(path.join(home, "images/real/Dockerfile"), "FROM scratch\n");
-  symlinkSync(outside, path.join(home, "images/evil"));
-  try {
-    const ctx = await idx.context();
-    expect(ctx.userImages.has("real")).toBe(true);
-    expect(ctx.userImages.has("evil")).toBe(false);
-  } finally {
-    await rm(outside, { recursive: true, force: true });
-  }
-});
-
 test("a change to skills fires onChange once, with before and after", async () => {
   await idx.create({ name: "cd1", displayName: "C" }, human);
   await idx.scanOne("cd1");
@@ -351,7 +336,7 @@ test("a write through the API reports its author; scanOne never awaits listeners
     db: t.db,
     config: cfg,
     library,
-    policy: new PolicyInputs({ db: t.db, library }),
+    policy: new PolicyInputs({ db: t.db }),
   });
   const slowSeen: TemplateChange[] = [];
   slow.onChange(async (e) => {
@@ -381,7 +366,7 @@ test("a failing listener is logged and does not stop the next one", async () => 
     db: t.db,
     config: cfg,
     library,
-    policy: new PolicyInputs({ db: t.db, library }),
+    policy: new PolicyInputs({ db: t.db }),
     log: log as never,
   });
   const seen: string[] = [];
@@ -437,6 +422,7 @@ async function seedUser(
         template: "mgr-template",
         runtime: "local",
         credentialId: mgrCred,
+        reportsToUser: await testManagerUserId(t.db),
       })
       .returning({ id: schema.agents.id });
     await t.db.insert(schema.agents).values({
@@ -459,6 +445,7 @@ async function seedUser(
     template: o.template,
     runtime: "local",
     credentialId,
+    reportsToUser: await testManagerUserId(t.db),
     ...(o.archived ? { archivedAt: new Date() } : {}),
   });
 }

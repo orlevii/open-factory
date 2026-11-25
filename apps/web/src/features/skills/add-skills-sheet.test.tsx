@@ -96,7 +96,7 @@ type Handler = Parameters<typeof mockApi>[0][string];
 async function open(routes: Record<string, Handler> = {}, groups = [hostGroup([skill("lint")])]) {
   const mocks = mockApi({
     "GET /api/library/skills": () => json(library(groups)),
-    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
+    "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
     "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/me", sep: "/" }),
     ...routes,
   });

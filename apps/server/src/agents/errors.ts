@@ -6,7 +6,6 @@ export type StartFix =
   | "projects"
   | "edit_agent"
   | "runtime"
-  | "image"
   | "template"
   | "config";
 
@@ -17,7 +16,7 @@ export class AgentStartError extends Error {
     message: string,
     readonly fix?: StartFix,
     diagnosis?: string,
-    /** Redacted, capped output that explains the failure (a plugin install's); goes into the error event's `detail`. */
+    /** Redacted, capped output that explains the failure (a failed command's); goes into the error event's `detail`. */
     readonly detail?: string,
   ) {
     super(message);

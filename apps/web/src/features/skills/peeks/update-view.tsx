@@ -3,7 +3,6 @@ import { ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
 import type { z } from "zod";
 import { UntrustedCode, UntrustedProse } from "@/components/untrusted-text";
-import { PLUGIN_COPY } from "@/features/config/messages";
 import { TimeAgo } from "@/features/settings/shared";
 import { SkeletonRows } from "./sections";
 
@@ -33,7 +32,7 @@ export function DiffLine({ sign, text }: { sign: "+" | "−"; text: string }) {
 export const hookText = (h: { event: string; matcher: string; command: string }) =>
   `${h.event}${h.matcher ? ` (${h.matcher})` : ""}: ${h.command}`;
 
-/** The name of a changed skill or plugin, with "Runs code changed" when its executable parts moved. */
+/** The name of a changed skill, with "Runs code changed" when its executable parts moved. */
 export function ChangedHeader({
   name,
   runsCodeChanged,
@@ -46,7 +45,7 @@ export function ChangedHeader({
       <span className="font-mono">
         <UntrustedProse text={name} />
       </span>
-      {runsCodeChanged && <span className="font-medium">{PLUGIN_COPY.runsCodeChanged}</span>}
+      {runsCodeChanged && <span className="font-medium">Runs code changed</span>}
     </div>
   );
 }

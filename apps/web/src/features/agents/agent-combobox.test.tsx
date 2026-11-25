@@ -38,9 +38,9 @@ const archived = agentSummary({
 function world(live = many) {
   return mockApi({
     "GET /api/agents?ended=exclude": () =>
-      json({ agents: [...live, archived], more: false, running: { count: 0, max: 8 } }),
+      json({ agents: [...live, archived], more: false, running: { count: 0 } }),
     "GET /api/agents?ended=only": () =>
-      json({ agents: [ended], more: false, running: { count: 0, max: 8 } }),
+      json({ agents: [ended], more: false, running: { count: 0 } }),
   });
 }
 

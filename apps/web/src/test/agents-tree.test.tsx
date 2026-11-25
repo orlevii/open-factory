@@ -33,7 +33,7 @@ const tree = [
     slug: "dev-1",
     displayName: "Developer",
     template: "developer",
-    reportsTo: "lead",
+    reportsTo: { kind: "agent", handle: "lead" },
     depth: 1,
     restartPending: true,
     restartWaitingOn: 1,
@@ -134,7 +134,7 @@ test("ended view: a report whose manager isn't listed isn't indented but names i
       agentSummary({
         slug: "old",
         displayName: "Old one",
-        reportsTo: "lead",
+        reportsTo: { kind: "agent", handle: "lead" },
         depth: 1,
         archivedAt: "2026-11-01",
       }),
@@ -157,7 +157,7 @@ describe("the Ended view (S7 UI design §3)", () => {
     agentSummary({
       kind: "ephemeral",
       status: "terminated",
-      reportsTo: "lead",
+      reportsTo: { kind: "agent", handle: "lead" },
       depth: 1,
       template: "tech-lead",
       terminatedAt: at(19),
@@ -188,7 +188,7 @@ describe("the Ended view (S7 UI design §3)", () => {
   const endedWorld = (agents: typeof ended, more = false) =>
     mockWorld({
       extra: {
-        "GET /api/agents?ended=only": () => json({ agents, more, running: { count: 0, max: 8 } }),
+        "GET /api/agents?ended=only": () => json({ agents, more, running: { count: 0 } }),
       },
     });
   const note = (row: HTMLElement) => row.querySelector("[data-agent-note]")?.textContent ?? null;
@@ -216,7 +216,7 @@ describe("the Ended view (S7 UI design §3)", () => {
     expect(within(d).getByText("Archived")).toBeInTheDocument();
     expect(a.querySelector("[data-status-dot]")).toBeNull();
     expect(screen.queryByText(/Showing the latest/)).toBeNull();
-    expect(screen.queryByText(/of 8 running/)).toBeNull();
+    expect(screen.queryByText(/\d+ running/)).toBeNull();
   });
 
   test("a workspace past its grace but not deleted yet is due for deletion, never 'kept until' a past day", async () => {
@@ -277,7 +277,12 @@ describe("usage in the tree (S10 §12.1)", () => {
     mockWorld({
       agents: [
         agentSummary({ slug: "lead", displayName: "Team Lead" }),
-        agentSummary({ slug: "dev-1", displayName: "Developer", reportsTo: "lead", depth: 1 }),
+        agentSummary({
+          slug: "dev-1",
+          displayName: "Developer",
+          reportsTo: { kind: "agent", handle: "lead" },
+          depth: 1,
+        }),
         agentSummary({ slug: "idle", displayName: "Idle one" }),
       ],
       extra: {
@@ -390,11 +395,11 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
     mockWorld({
       agents: [
         A("root"),
-        A("a", { reportsTo: "root" }),
-        A("a1", { reportsTo: "a" }),
-        A("a2", { reportsTo: "a" }),
-        A("b", { reportsTo: "root" }),
-        A("b1", { reportsTo: "b" }),
+        A("a", { reportsTo: { kind: "agent", handle: "root" } }),
+        A("a1", { reportsTo: { kind: "agent", handle: "a" } }),
+        A("a2", { reportsTo: { kind: "agent", handle: "a" } }),
+        A("b", { reportsTo: { kind: "agent", handle: "root" } }),
+        A("b1", { reportsTo: { kind: "agent", handle: "b" } }),
       ],
     });
     renderApp("/agents", alice);
@@ -417,7 +422,10 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
 
   test("rows deeper than the cap show a depth marker", async () => {
     const chain = Array.from({ length: 12 }, (_, i) =>
-      A(i === 0 ? "n0" : `n${i}`, i === 0 ? {} : { reportsTo: `n${i - 1}` }),
+      A(
+        i === 0 ? "n0" : `n${i}`,
+        i === 0 ? {} : { reportsTo: { kind: "agent", handle: `n${i - 1}` } },
+      ),
     );
     mockWorld({ agents: chain });
     renderApp("/agents", alice);

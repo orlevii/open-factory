@@ -2,8 +2,7 @@
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { MarketplaceRow } from "@open-factory/db";
-import { emptyDoc, FACTORY_ENV_NAMES, PLUGIN_ENV_NAMES } from "@open-factory/shared";
+import { emptyDoc, FACTORY_ENV_NAMES } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import {
@@ -20,88 +19,11 @@ writeHostSkill(claude, "grilling");
 mkdirSync(path.join(claude, "skills", "renamed"));
 writeFileSync(path.join(claude, "skills", "renamed", "SKILL.md"), "---\nname: other\n---\n");
 
-// The Library's registered marketplaces, as checkouts of one catalog: `acme` at a commit and a tag, `local` as a folder.
-const COMMIT = "a".repeat(40);
-const TAG_COMMIT = "b".repeat(40);
-const OTHER_COMMIT = "c".repeat(40);
-const CATALOG = {
-  name: "acme",
-  plugins: [
-    { name: "rel", source: "./plugins/rel" },
-    { name: "held", source: { source: "github", repo: "o/held", sha: COMMIT } },
-    { name: "free", source: { source: "github", repo: "o/free" } },
-    { name: "cmd", source: { source: "command", command: "x" } },
-    { name: "ranged", source: "./plugins/ranged" },
-    { name: "needs-free", source: "./plugins/needs-free" },
-    { name: "needs-held", source: "./plugins/needs-held" },
-    { name: "cycle-a", source: "./plugins/cycle-a" },
-    { name: "cycle-b", source: "./plugins/cycle-b" },
-  ],
-};
-// Plugin manifests of the relative plugins above: dependencies a pin may or may not hold.
-const MANIFESTS: Record<string, unknown[]> = {
-  ranged: [{ name: "held", version: "^1.0.0" }],
-  "needs-free": ["free"],
-  "needs-held": ["held", "rel"],
-  "cycle-a": ["cycle-b"],
-  "cycle-b": ["cycle-a", "needs-held"],
-};
-const writeCatalog = (dir: string, catalog = CATALOG) => {
-  mkdirSync(path.join(dir, ".claude-plugin"), { recursive: true });
-  writeFileSync(path.join(dir, ".claude-plugin", "marketplace.json"), JSON.stringify(catalog));
-  for (const [plugin, dependencies] of Object.entries(MANIFESTS)) {
-    const at = path.join(dir, "plugins", plugin, ".claude-plugin");
-    mkdirSync(at, { recursive: true });
-    writeFileSync(path.join(at, "plugin.json"), JSON.stringify({ name: plugin, dependencies }));
-  }
-};
-const registryHome = mkdtempSync(path.join(tmpdir(), "of-reg-"));
-const checkout = (name: string, sha: string) =>
-  path.join(registryHome, "state", "library", "marketplaces", name, sha);
-for (const [name, sha] of [
-  ["acme", COMMIT],
-  ["acme", TAG_COMMIT],
-  ["claude-plugins-official", COMMIT],
-] as const)
-  writeCatalog(checkout(name, sha));
-const localDir = mkdtempSync(path.join(tmpdir(), "of-local-mk-"));
-writeCatalog(localDir);
-const row = (
-  name: string,
-  source: MarketplaceRow["source"],
-  over: Partial<MarketplaceRow> = {},
-): MarketplaceRow => ({
-  name,
-  source,
-  branch: "main",
-  commit: COMMIT,
-  committedAt: null,
-  subject: null,
-  updateCommit: null,
-  updateAt: null,
-  updateSubject: null,
-  checkedAt: null,
-  checkError: null,
-  tags: {},
-  state: "ready",
-  startedAt: new Date(0),
-  addedBy: "@or",
-  addedAt: new Date(0),
-  deletedAt: null,
-  ...over,
-});
-const ACME = { source: "github", repo: "o/acme" } as const;
-const registry = [
-  row("acme", ACME, { tags: { v1: TAG_COMMIT } }),
-  row("claude-plugins-official", { source: "github", repo: "anthropics/claude-plugins-official" }),
-  row("local", { source: "directory", path: localDir }, { commit: null }),
-];
 const ctx: ValidationContext = {
   projects: new Set(["app"]),
   secrets: new Set(["GH_TOKEN"]),
   templates: new Set(["tech-lead", "dev"]),
-  userImages: new Set(["smoke"]),
-  library: hostOnlyLibrary(claude, registryHome, [], registry),
+  library: hostOnlyLibrary(claude, claude),
   localRuntimeAllowed: true,
 };
 
@@ -187,18 +109,6 @@ test.each([
   ["mcp without mcpServers", { "mcp.json": "{}" }, /mcpServers/],
   ["reserved mcp server", { "mcp.json": '{"mcpServers":{"factory":{}}}' }, /factory/],
   ["reserved files entry", { "files/CLAUDE.md": "x" }, /files\/CLAUDE\.md/],
-  [
-    "bad marketplace source",
-    {
-      "settings.json": '{"extraKnownMarketplaces":{"m":{"source":{"source":"npm","package":"x"}}}}',
-    },
-    /source/,
-  ],
-  [
-    "plugins in template.yaml",
-    { "template.yaml": "name: tech-lead\ndisplay_name: X\nplugins: [p@m]\n" },
-    /^Unknown field plugins\.$/,
-  ],
 ])("error: %s", async (_n, files, re) => {
   const dir = tpl(
     Object.fromEntries(
@@ -258,188 +168,17 @@ test("override substitutes unsaved content for one file", async () => {
   expect(r.issues.map((i) => i.message)).toContainEqual(expect.stringMatching(/web/));
 });
 
-// Plugin declarations and pins (spec §7.4).
-const declare = (name: string, source: Record<string, unknown>, plugins: string[] = []) => ({
-  "settings.json": JSON.stringify({
-    extraKnownMarketplaces: { [name]: { source } },
-    ...(plugins.length
-      ? { enabledPlugins: Object.fromEntries(plugins.map((k) => [k, true])) }
-      : {}),
-  }),
-});
 const issuesOf = async (files: Record<string, string>) =>
   (await validateTemplate(tpl({ ...base, ...files }), "tech-lead", ctx)).issues;
-const messages = (issues: { message: string }[]) => issues.map((i) => i.message);
+const _messages = (issues: { message: string }[]) => issues.map((i) => i.message);
 
-test("a pinned declaration of a registered marketplace is clean", async () => {
-  expect(
-    await issuesOf(declare("acme", { ...ACME, ref: TAG_COMMIT }, ["rel@acme", "held@acme"])),
-  ).toEqual([]);
-  expect(await issuesOf(declare("acme", { ...ACME, ref: "v1" }, ["rel@acme"]))).toEqual([]);
-});
-
-test("a directory marketplace is live: no pin and no Latest warning", async () => {
-  expect(
-    await issuesOf(declare("local", { source: "directory", path: localDir }, ["free@local"])),
-  ).toEqual([]);
-});
-
-test.each([
-  ["a branch ref", "refs/heads/main"],
-  ["a range of dots", "a..b"],
-  ["a ref with a space", "v 1"],
-])("%s is refused as a pin", async (_n, ref) => {
-  expect(messages(await issuesOf(declare("acme", { ...ACME, ref })))).toContain(
-    "Pin acme to a commit or a tag.",
-  );
-});
-
-test("a ref that isn't a string is refused as a pin", async () => {
-  expect(messages(await issuesOf(declare("acme", { ...ACME, ref: 7 })))).toContain(
-    "Pin acme to a commit or a tag.",
-  );
-});
-
-test("a commit pin on the official marketplace is refused by Claude Code", async () => {
-  const official = { source: "github", repo: "anthropics/claude-plugins-official" };
-  expect(
-    messages(await issuesOf(declare("claude-plugins-official", { ...official, ref: COMMIT }))),
-  ).toContain("Claude Code can't pin claude-plugins-official to a commit; use a tag or Latest.");
-  expect(
-    await issuesOf(declare("claude-plugins-official", official, ["rel@claude-plugins-official"])),
-  ).toEqual([
-    expect.objectContaining({
-      severity: "warning",
-      message:
-        "Plugin rel@claude-plugins-official follows the latest claude-plugins-official: new code runs at each restart without review.",
-    }),
-  ]);
-});
-
-test("a tag Skills hasn't read is a warning, and so is a commit it hasn't", async () => {
-  const unread = await issuesOf(declare("acme", { ...ACME, ref: "v2" }));
-  expect(unread).toEqual([
-    expect.objectContaining({
-      severity: "warning",
-      message: "Skills hasn't read acme at v2; fetch it in Skills.",
-    }),
-  ]);
-  expect(messages(await issuesOf(declare("acme", { ...ACME, ref: OTHER_COMMIT })))).toContain(
-    "Skills hasn't read acme at ccccccc; fetch it in Skills.",
-  );
-});
-
-test("an unregistered marketplace names the fix: Add from this template", async () => {
-  const issues = await issuesOf(declare("elsewhere", { source: "github", repo: "o/else" }));
-  expect(issues).toEqual([
-    expect.objectContaining({
-      severity: "error",
-      message: "Marketplace elsewhere hasn't been added. Add it in Skills.",
-      action: "add_from_template",
-    }),
-  ]);
-});
-
-test("a source that differs from the one in Skills is an error, whatever the ref", async () => {
-  const issues = await issuesOf(declare("acme", { source: "github", repo: "o/other", ref: "v1" }));
-  expect(messages(issues)).toEqual(["Marketplace acme's source differs from the one in Skills."]);
-});
-
-test("a path on a git marketplace and a ref on a folder are refused", async () => {
-  expect(messages(await issuesOf(declare("acme", { ...ACME, path: "p" })))).toContain(
-    "Marketplace acme: path isn't supported.",
-  );
-  expect(
-    messages(await issuesOf(declare("local", { source: "directory", path: localDir, ref: "v1" }))),
-  ).toContain("Marketplace local: a folder is read live; remove ref.");
-});
-
-test.each([
-  ["false", false, "Remove the plugin instead of turning it off."],
-  ["a string", "yes", "Use true, or remove the plugin."],
-])("an enabledPlugins value of %s is an error", async (_n, value, message) => {
-  const files = declare("acme", { ...ACME, ref: "v1" });
-  files["settings.json"] = JSON.stringify({
-    extraKnownMarketplaces: { acme: { source: { ...ACME, ref: "v1" } } },
-    enabledPlugins: { "rel@acme": value },
+test("plugin keys a human wrote in settings.json are accepted as they are", async () => {
+  const settings = JSON.stringify({
+    enabledPlugins: { "p@m": true, "q@m": false },
+    extraKnownMarketplaces: { m: { source: { source: "github", repo: "o/m" } } },
+    syncClaudeAiPlugins: true,
   });
-  expect(messages(await issuesOf(files))).toEqual([message]);
-});
-
-test("a plugin from an undeclared marketplace is an error", async () => {
-  const issues = await issuesOf({ "settings.json": '{"enabledPlugins":{"p@m":true}}' });
-  expect(issues).toEqual([
-    expect.objectContaining({
-      severity: "error",
-      message: "Marketplace m isn't declared in settings.json.",
-      path: "settings.enabledPlugins.p@m",
-    }),
-  ]);
-});
-
-test.each(["constructor", "toString"])(
-  "plugin from inherited name %s has no marketplace",
-  async (m) => {
-    const issues = await issuesOf({ "settings.json": `{"enabledPlugins":{"x@${m}":true}}` });
-    expect(messages(issues)).toEqual([`Marketplace ${m} isn't declared in settings.json.`]);
-  },
-);
-
-test("a key that isn't name@marketplace is refused without echoing it", async () => {
-  const secret = "sk-ant-SECRET0123456789";
-  const issues = await issuesOf({
-    "settings.json": JSON.stringify({ enabledPlugins: { [secret]: true } }),
-  });
-  expect(messages(issues)).toEqual(["Use name@marketplace."]);
-  expect(JSON.stringify(issues)).not.toContain(secret);
-});
-
-test("syncClaudeAiPlugins in a template is an error", async () => {
-  expect(messages(await issuesOf({ "settings.json": '{"syncClaudeAiPlugins":true}' }))).toEqual([
-    "The factory sets syncClaudeAiPlugins.",
-  ]);
-});
-
-test("a plugin whose catalog entry uses a refused source is an error", async () => {
-  const issues = await issuesOf(declare("acme", { ...ACME, ref: "v1" }, ["cmd@acme"]));
-  expect(messages(issues)).toEqual([
-    "Plugin cmd@acme uses a command source, which Open Factory doesn't install.",
-  ]);
-});
-
-test("an unpinnable plugin under a pinned declaration says to switch to Latest", async () => {
-  const issues = await issuesOf(declare("acme", { ...ACME, ref: "v1" }, ["free@acme"]));
-  expect(messages(issues)).toEqual(["free@acme can't be pinned. Switch acme to Latest to add it."]);
-});
-
-test("a plugin with a ranged dependency under a pinned declaration says to switch to Latest", async () => {
-  const issues = await issuesOf(declare("acme", { ...ACME, ref: "v1" }, ["ranged@acme"]));
-  expect(messages(issues)).toEqual([
-    "ranged@acme can't be pinned. Switch acme to Latest to add it.",
-  ]);
-});
-
-test("a plugin whose dependency isn't held by a pin can't be pinned; held and cyclic dependencies can", async () => {
-  const pinned = { ...ACME, ref: "v1" };
-  expect(
-    messages(await issuesOf(declare("acme", pinned, ["needs-free@acme", "needs-held@acme"]))),
-  ).toEqual(["needs-free@acme can't be pinned. Switch acme to Latest to add it."]);
-  // cycle-a -> cycle-b -> (cycle-a, needs-held): ends, and every dependency is held.
-  expect(messages(await issuesOf(declare("acme", pinned, ["cycle-a@acme"])))).toEqual([]);
-});
-
-test("Latest is a warning for each plugin that follows it, and lets an unpinnable plugin in", async () => {
-  const issues = await issuesOf(declare("acme", ACME, ["free@acme", "rel@acme"]));
-  expect(issues.map((i) => [i.severity, i.message])).toEqual([
-    [
-      "warning",
-      "Plugin free@acme follows the latest acme: new code runs at each restart without review.",
-    ],
-    [
-      "warning",
-      "Plugin rel@acme follows the latest acme: new code runs at each restart without review.",
-    ],
-  ]);
+  expect(await issuesOf({ "settings.json": settings })).toEqual([]);
 });
 
 test("reserved files entries match case-insensitively", async () => {
@@ -467,22 +206,7 @@ test("gate off: validator warns on runtime: local", async () => {
   ).toEqual([]);
 });
 
-test("a bare image name without images/<name>/Dockerfile is an error naming the escape", async () => {
-  const yaml = "name: tech-lead\ndisplay_name: Tech Lead\nruntime: docker\nimage: ubuntu\n";
-  const r = await validateTemplate(tpl({ ...base, "template.yaml": yaml }), "tech-lead", ctx);
-  expect(r.issues).toEqual([
-    {
-      severity: "error",
-      file: "template.yaml",
-      message:
-        "No user image \u2018ubuntu\u2019 (images/ubuntu/Dockerfile). For a Docker Hub image, write docker.io/library/ubuntu.",
-      line: 4,
-      path: "template.image",
-    },
-  ]);
-});
-
-test("a bare image name with its Dockerfile, and a registry reference, are fine", async () => {
+test("a template image is any Docker reference: a bare local tag or a registry one", async () => {
   for (const image of ["smoke", "docker.io/library/ubuntu"]) {
     const yaml = `name: tech-lead\ndisplay_name: Tech Lead\nruntime: docker\nimage: ${image}\n`;
     const r = await validateTemplate(tpl({ ...base, "template.yaml": yaml }), "tech-lead", ctx);
@@ -612,44 +336,6 @@ test("validateEffective roots paths at template., settings. and mcp.", () => {
   });
 });
 
-test("an overlay plugin whose marketplace the template doesn't declare", async () => {
-  const issues = await overlayIssues(
-    baseDoc(),
-    { settings: { enabledPlugins: { "p@acme": true } } },
-    ctx,
-  );
-  expect(issues).toEqual([
-    expect.objectContaining({
-      severity: "error",
-      message: "Marketplace acme isn't declared by template dev.",
-      path: "settings.enabledPlugins.p@acme",
-    }),
-  ]);
-});
-
-test("an overlay plugin from a marketplace the template declares runs at the template's pin", async () => {
-  const doc = {
-    ...baseDoc(),
-    settings: { extraKnownMarketplaces: { acme: { source: { ...ACME, ref: "v1" } } } },
-  };
-  expect(
-    await overlayIssues(doc, { settings: { enabledPlugins: { "rel@acme": true } } }, ctx),
-  ).toEqual([]);
-  expect(
-    messages(
-      await overlayIssues(doc, { settings: { enabledPlugins: { "free@acme": true } } }, ctx),
-    ),
-  ).toEqual(["free@acme can't be pinned. Switch acme to Latest to add it."]);
-  expect(
-    messages(
-      await overlayIssues(doc, { settings: { enabledPlugins: { "rel@acme": false } } }, ctx),
-    ),
-  ).toEqual(["Remove the plugin instead of turning it off."]);
-  expect(
-    messages(await overlayIssues(doc, { settings: { syncClaudeAiPlugins: true } }, ctx)),
-  ).toEqual(["The factory sets syncClaudeAiPlugins."]);
-});
-
 test("overlayIssues rebases a list index to the overlay", async () => {
   const base = {
     ...baseDoc(),
@@ -661,9 +347,6 @@ test("overlayIssues rebases a list index to the overlay", async () => {
 
 test("a skill the Library lists but can't find in its folder is missing, whatever the reason", async () => {
   const library = {
-    marketplaces: () => ctx.library.marketplaces(),
-    marketplaceDir: ctx.library.marketplaceDir.bind(ctx.library),
-    catalogAt: ctx.library.catalogAt.bind(ctx.library),
     resolveSkill: async (name: string) =>
       name === "gone"
         ? { ok: false as const, reason: "missing" as const, detail: "Fetch again" }
@@ -696,9 +379,13 @@ test("overlayIssues reports nothing that already fails on the base", async () =>
 });
 
 test("overlayIssues includes the overlay schema's issues", async () => {
-  const issues = await overlayIssues(baseDoc(), { settings: { extraKnownMarketplaces: {} } }, ctx);
+  const issues = await overlayIssues(
+    baseDoc(),
+    { settings: { permissions: { defaultMode: "auto" } } },
+    ctx,
+  );
   expect(issues).toContainEqual(
-    expect.objectContaining({ severity: "error", path: "settings.extraKnownMarketplaces" }),
+    expect.objectContaining({ severity: "error", path: "settings.permissions.defaultMode" }),
   );
 });
 
@@ -735,7 +422,6 @@ test("overlaySchemaIssues carries paths and constant messages, never a value or 
     "long item": { template: { skills: [`${secret}${"a".repeat(1001)}`] } },
     "bad env name": { settings: { env: { [secret]: secret, ANTHROPIC_API_KEY: secret } } },
     "default mode": { settings: { permissions: { defaultMode: secret } } },
-    marketplaces: { settings: { extraKnownMarketplaces: { [secret]: secret } } },
     "reserved server": { mcp: { mcpServers: { factory: { command: secret, args: [secret] } } } },
     "unknown mcp key": { mcp: { [secret]: 1 } },
   };
@@ -762,9 +448,9 @@ test("validateEffective never echoes an env name that fails the name rule", asyn
   expect(JSON.stringify(issues)).not.toContain("sk-ant");
 });
 
-// Spec §7.3 step 4: the plugin env is the factory's. No template, overlay or secret can set it (a project's own
+// Claude Code's update switches are the factory's. No template, overlay or secret can set them (a project's own
 // settings `env` is refused at the start: workspace/agent-folders.test.ts runs every name in FACTORY_ENV_NAMES).
-test.each(PLUGIN_ENV_NAMES)(
+test.each(["DISABLE_AUTOUPDATER", "DISABLE_UPDATES"])(
   "%s is a factory env name no template, overlay or secret can set",
   async (name) => {
     expect(FACTORY_ENV_NAMES).toContain(name);

@@ -55,6 +55,8 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
       warm(qc, agentsListQueryOptions("exclude"));
       warm(qc, agentsListQueryOptions("only"));
       warm(qc, usersQueryOptions);
+      // The inline Add project reads host info: constant, so direct (`warm` would cap its staleTime at 10s).
+      void qc.prefetchQuery(hostQueryOptions);
       if (spec.template) warm(qc, { ...templateQueryOptions(spec.template), retry: false });
     },
     title: "New agent",
@@ -66,6 +68,7 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
       warm(qc, agentsListQueryOptions("exclude"));
       warm(qc, credentialsQueryOptions);
       warm(qc, projectsQueryOptions);
+      void qc.prefetchQuery(hostQueryOptions);
     },
     title: "Edit agent",
   },
@@ -103,15 +106,6 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     title: "Add credential",
     note: "Saved to Settings → Credentials; other agents can use it.",
   },
-  "add-project": {
-    load: () => import("./setup-sheets").then((m) => ({ default: m.AddProjectSheet })),
-    prefetch(qc) {
-      warm(qc, projectsQueryOptions);
-      // Direct, not through `warm`: host info is constant, and `warm` would cap its staleTime at 10s.
-      void qc.prefetchQuery(hostQueryOptions);
-    },
-    title: "Add project",
-  },
   "add-secret": {
     load: () => import("./setup-sheets").then((m) => ({ default: m.AddSecretSheet })),
     prefetch(qc) {
@@ -136,13 +130,6 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
       warm(qc, hostQueryOptions);
     },
     title: "Add skills",
-  },
-  "add-marketplace": {
-    load: () => import("@/features/skills/add-marketplace-sheet"),
-    prefetch(qc) {
-      warm(qc, hostQueryOptions);
-    },
-    title: "Add marketplace",
   },
   "edit-schedule": {
     load: () => import("@/features/schedules/edit-schedule-sheet"),

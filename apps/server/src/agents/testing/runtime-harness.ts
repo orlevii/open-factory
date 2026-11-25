@@ -70,11 +70,10 @@ export const testEffective = (config: Partial<TemplateConfig> = {}): Effective =
     localSkills: true,
     secrets: [],
     canSpawn: [],
-    maxLiveSpawns: 5,
     ...config,
   },
   templateSkills: [],
-  library: { skills: {}, plugins: {} },
+  library: { skills: {} },
 });
 
 /**
@@ -99,7 +98,6 @@ export const okSpec = (
   permissionMode: "auto",
   mounts: [],
   effective: testEffective(config),
-  plugins: [],
 });
 
 /**
@@ -266,9 +264,9 @@ export class RuntimeHarness {
   row = (body: string, urgent = false) =>
     humanRow(this.store, this.rt, { fromUserId: "u1", body, urgent });
 
-  /** Hands a held row (member update, peer event) to the runtime and waits for its jobs. */
+  /** Hands a member update or peer event to the runtime, as the Router does, and waits for its jobs. */
   receive = async (row: PendingRow) => {
-    await this.rt.receiveHeld(row);
+    await this.rt.receive(row);
     await this.rt.settled();
   };
 }

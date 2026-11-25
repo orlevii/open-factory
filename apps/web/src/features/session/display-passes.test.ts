@@ -12,7 +12,7 @@ const ev = (seq: number, event: AnyEvent, at = "2026-11-19T19:00:00.000Z"): Sess
   at,
   event,
 });
-const unbuilt = (seq: number, at?: string) =>
+const failed = (seq: number, at?: string) =>
   ev(
     seq,
     {
@@ -20,7 +20,6 @@ const unbuilt = (seq: number, at?: string) =>
       source: "spawn",
       code: "image_not_built",
       message: "Image `playwright` isn't built",
-      fix: "image",
     },
     at,
   );
@@ -28,9 +27,9 @@ const rows = (events: SessionEvent[]) => buildRows(events).rows;
 
 test("three adjacent identical failures are one row keyed by the first, with count, lastAt and seqs", () => {
   const raw = rows([
-    unbuilt(1, "2026-11-19T19:00:00.000Z"),
-    unbuilt(2, "2026-11-19T19:10:00.000Z"),
-    unbuilt(3, "2026-11-19T19:32:00.000Z"),
+    failed(1, "2026-11-19T19:00:00.000Z"),
+    failed(2, "2026-11-19T19:10:00.000Z"),
+    failed(3, "2026-11-19T19:32:00.000Z"),
   ]);
   const out = mergeFailures(raw);
   expect(out).toHaveLength(1);
@@ -49,16 +48,16 @@ test("three adjacent identical failures are one row keyed by the first, with cou
 
 test("a different row between two failures, or a different code, source or message, never merges", () => {
   expect(
-    mergeFailures(
-      rows([unbuilt(1), ev(2, { type: "assistant_text", text: "hm" }), unbuilt(3)]),
-    ).map((r) => r.key),
+    mergeFailures(rows([failed(1), ev(2, { type: "assistant_text", text: "hm" }), failed(3)])).map(
+      (r) => r.key,
+    ),
   ).toEqual(["1", "2", "3"]);
   const other = (seq: number, o: Record<string, unknown>) =>
-    ev(seq, { ...(unbuilt(seq).event as object), ...o } as AnyEvent);
+    ev(seq, { ...(failed(seq).event as object), ...o } as AnyEvent);
   expect(
     mergeFailures(
       rows([
-        unbuilt(1),
+        failed(1),
         other(2, { code: "other" }),
         other(3, { source: "resume" }),
         other(4, { message: "x" }),
@@ -68,13 +67,13 @@ test("a different row between two failures, or a different code, source or messa
 });
 
 test("a pass with nothing to merge returns its input", () => {
-  const raw = rows([unbuilt(1), ev(2, { type: "assistant_text", text: "hm" })]);
+  const raw = rows([failed(1), ev(2, { type: "assistant_text", text: "hm" })]);
   expect(runDisplayPasses(raw)).toBe(raw);
 });
 
 test("targetRowKey sends any merged seq to the merged row", () => {
   const merged = mergeFailures(
-    rows([ev(1, { type: "assistant_text", text: "a" }), unbuilt(2), unbuilt(3), unbuilt(4)]).concat(
+    rows([ev(1, { type: "assistant_text", text: "a" }), failed(2), failed(3), failed(4)]).concat(
       rows([ev(5, { type: "assistant_text", text: "b" })]),
     ),
   );
@@ -84,7 +83,7 @@ test("targetRowKey sends any merged seq to the merged row", () => {
 
 test("a merged row stays the same object while nothing changes, and a new repeat keeps its key", () => {
   // Events are immutable and kept, as in the session's map: the same objects every build.
-  const events = [unbuilt(1), unbuilt(2), unbuilt(3)];
+  const events = [failed(1), failed(2), failed(3)];
   const first = stabilizeRows([], runDisplayPasses(rows(events.slice(0, 2))));
   const again = stabilizeRows(first, runDisplayPasses(rows(events.slice(0, 2))));
   expect(again[0]).toBe(first[0]);

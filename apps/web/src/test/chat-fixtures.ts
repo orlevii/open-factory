@@ -65,7 +65,7 @@ export function stubChatApi(stub: Stub) {
         return json({
           agents: [agentSummary(stub.agent)],
           more: false,
-          running: { count: 0, max: 8 },
+          running: { count: 0 },
         });
       return json({ error: { code: "not_found" } }, 404);
     }),

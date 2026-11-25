@@ -1,29 +1,31 @@
 import { type Db, schema } from "@open-factory/db";
-import { eq } from "drizzle-orm";
+import { type FactorySettingsValues, readFactorySettingsValues } from "@open-factory/shared";
+import { eq, sql } from "drizzle-orm";
 
-export type FactorySettingsValues = {
-  maxRunningAgents: number;
-  defaultWarmWindowMinutes: number;
-  memberUpdateDebounceSeconds: number;
-  loopGuardMessages: number;
-  loopGuardWindowMinutes: number;
-};
+export type { FactorySettingsValues };
+
 type Current = FactorySettingsValues & { updatedAt: Date | null; updatedBy: string | null };
 type Listener = (prev: FactorySettingsValues, next: FactorySettingsValues) => void;
 type Log = { error: (obj: object, msg: string) => void };
 
 const ROW_ID = 1;
-const values = (c: Current): FactorySettingsValues => ({
-  maxRunningAgents: c.maxRunningAgents,
-  defaultWarmWindowMinutes: c.defaultWarmWindowMinutes,
-  memberUpdateDebounceSeconds: c.memberUpdateDebounceSeconds,
-  loopGuardMessages: c.loopGuardMessages,
-  loopGuardWindowMinutes: c.loopGuardWindowMinutes,
-});
-const fromRow = (r: Current): Current => ({
-  ...values(r),
+type Row = typeof schema.factorySettings.$inferSelect;
+/** The stored object read per key: a missing or invalid key reads as its default. */
+const fromRow = (r: Row): Current => ({
+  ...readFactorySettingsValues(r.settings),
   updatedAt: r.updatedAt,
   updatedBy: r.updatedBy,
+});
+const values = ({
+  warmWindowMinutes,
+  memberUpdateDebounceSeconds,
+  loopGuardMessages,
+  loopGuardWindowMinutes,
+}: Current): FactorySettingsValues => ({
+  warmWindowMinutes,
+  memberUpdateDebounceSeconds,
+  loopGuardMessages,
+  loopGuardWindowMinutes,
 });
 
 /**
@@ -52,8 +54,7 @@ export class FactorySettings {
     return { ...this.current };
   }
 
-  readonly maxRunningAgents = (): number => this.current.maxRunningAgents;
-  readonly defaultWarmWindowMinutes = (): number => this.current.defaultWarmWindowMinutes;
+  readonly warmWindowMinutes = (): number => this.current.warmWindowMinutes;
   /** The setting is stored in seconds; every consumer reads milliseconds. */
   readonly memberUpdateDebounceMs = (): number => this.current.memberUpdateDebounceSeconds * 1000;
 
@@ -63,13 +64,18 @@ export class FactorySettings {
   readonly loopGuardWindowMs = (): number => this.current.loopGuardWindowMinutes * 60_000;
 
   /**
-   * Writes the row, then swaps the copy (from what the row now holds), then calls the listeners. A listener that
+   * Merges the patch into the stored object (one statement, so concurrent patches of different keys both land), then
+   * swaps the copy (from what the row now holds), then calls the listeners. A listener that
    * throws is logged and never fails the update: the row and the copy have already changed.
    */
   async update(patch: Partial<FactorySettingsValues>, userId: string): Promise<void> {
     const [row] = await this.db
       .update(schema.factorySettings)
-      .set({ ...patch, updatedAt: new Date(), updatedBy: userId })
+      .set({
+        settings: sql`${schema.factorySettings.settings} || ${JSON.stringify(patch)}::jsonb`,
+        updatedAt: new Date(),
+        updatedBy: userId,
+      })
       .where(eq(schema.factorySettings.id, ROW_ID))
       .returning();
     if (!row) throw new Error("factory_settings has no row; run the migrations");

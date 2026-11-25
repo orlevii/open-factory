@@ -24,7 +24,7 @@ export const project = (name: string, hostPath = `/src/${name}`) => ({
   templates: [],
 });
 
-export const templateSummary = (name: string, errors = 0, pluginCount = 0) => ({
+export const templateSummary = (name: string, errors = 0) => ({
   name,
   displayName: name,
   description: "",
@@ -32,7 +32,6 @@ export const templateSummary = (name: string, errors = 0, pluginCount = 0) => ({
   errors,
   warnings: 0,
   agentCount: 0,
-  pluginCount,
 });
 
 export const templateConfig = (over: Partial<TemplateConfig> = {}): TemplateConfig => ({
@@ -46,7 +45,6 @@ export const templateConfig = (over: Partial<TemplateConfig> = {}): TemplateConf
   localSkills: true,
   secrets: [],
   canSpawn: [],
-  maxLiveSpawns: 5,
   ...over,
 });
 
@@ -78,9 +76,8 @@ export interface World {
 export function mockWorld(w: World = {}): MockApi {
   const agents = w.agents ?? [];
   const routes: Record<string, Handler> = {
-    "GET /api/agents?ended=exclude": () => json({ agents, running: { count: 0, max: 8 } }),
-    "GET /api/agents?ended=only": () =>
-      json({ agents: w.archived ?? [], running: { count: 0, max: 8 } }),
+    "GET /api/agents?ended=exclude": () => json({ agents, running: { count: 0 } }),
+    "GET /api/agents?ended=only": () => json({ agents: w.archived ?? [], running: { count: 0 } }),
     "GET /api/credentials": () => json({ credentials: w.credentials ?? [credential()] }),
     "GET /api/templates": () =>
       json({ dir: "/h/of/templates", templates: w.templates ?? [templateSummary("lead")] }),
@@ -92,8 +89,7 @@ export function mockWorld(w: World = {}): MockApi {
   for (const [name, d] of Object.entries(details))
     routes[`GET /api/templates/${name}`] = () => json(d);
   for (const a of [...agents, ...(w.archived ?? [])]) {
-    routes[`GET /api/agents/${a.slug}`] = () =>
-      json({ agent: a, model: { value: null, source: "default" }, queue: [], lastSeq: 0 });
+    routes[`GET /api/agents/${a.slug}`] = () => json({ agent: a, queue: [], lastSeq: 0 });
   }
   return mockApi({ ...routes, ...w.extra });
 }

@@ -20,7 +20,7 @@ beforeEach(async () => {
     ids[slug] = (await h.seedAgent({ slug })).id;
     tok[slug] = h.app.agentTokens.mint(ids[slug] as string).token;
   }
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
 });
 afterEach(() => h.close());
 
@@ -45,7 +45,7 @@ const names = async (who: string) =>
 test("a spawner lists the spawn tools only while its process runs with them", async () => {
   const base = await names("qa"); // the full base list is asserted in app.test.ts
   // I2 §6.2: the spawn tools follow the config the running process started with.
-  await h.sql`update agents set config = '{"template":{"can_spawn":["test"],"max_live_spawns":3}}'::jsonb where slug = 'lead'`;
+  await h.sql`update agents set config = '{"template":{"can_spawn":["test"]}}'::jsonb where slug = 'lead'`;
   const lead = await h.app.store.agentBySlug("lead");
   if (!lead) throw new Error("no lead");
   expect(await names("lead")).toEqual(base);

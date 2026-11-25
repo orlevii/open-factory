@@ -48,9 +48,12 @@ export const agents = pgTable(
     template: text("template").notNull(),
     config: jsonb("config").$type<AgentOverlay>().notNull().default({}),
     runtime: text("runtime").notNull().$type<"local" | "docker">(),
+    /** The manager when it is an agent (an ephemeral agent's spawner). Exactly one of this and `reportsToUser` is set. */
     reportsTo: text("reports_to").references((): AnyPgColumn => agents.id, {
       onDelete: "restrict",
     }),
+    /** I9 §4.5: the manager when it is a human (persistent agents only). */
+    reportsToUser: text("reports_to_user").references(() => users.id, { onDelete: "restrict" }),
     credentialId: text("credential_id").references(() => credentials.id, { onDelete: "set null" }),
     /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto (seeded from the slug). Identity, not overlay. */
     color: smallint("color"),
@@ -58,7 +61,7 @@ export const agents = pgTable(
     errorKind: text("error_kind"),
     attempting: boolean("attempting").notNull().default(false),
     /**
-     * S6 §9.1 (R4): the current errored episode's `errored` fact was forwarded (to the manager or the humans). Set once
+     * S6 §9.1 (R4): the current errored episode's `errored` fact was forwarded (to its manager). Set once
      * per episode; cleared with the error. Read at boot so a restart never reports one episode twice.
      */
     erroredReported: boolean("errored_reported").notNull().default(false),
@@ -97,7 +100,12 @@ export const agents = pgTable(
       sql`${t.kind} = 'ephemeral' OR (${t.terminatedAt} IS NULL AND ${t.terminatedBy} IS NULL)`,
     ),
     check("agents_manage_org_persistent", sql`NOT ${t.manageOrg} OR ${t.kind} = 'persistent'`),
-    check("agents_ephemeral_manager", sql`${t.kind} = 'persistent' OR ${t.reportsTo} IS NOT NULL`),
+    // I9 §4.5: an ephemeral agent reports to its spawner agent; a persistent one to exactly one agent or one human.
+    check(
+      "agents_manager",
+      sql`(${t.kind} = 'ephemeral' AND ${t.reportsTo} IS NOT NULL AND ${t.reportsToUser} IS NULL)
+        OR (${t.kind} = 'persistent' AND num_nonnulls(${t.reportsTo}, ${t.reportsToUser}) = 1)`,
+    ),
     index("agents_spawned_idx").on(t.reportsTo, t.createdAt).where(sql`${t.kind} = 'ephemeral'`),
     // The Ended list (Task 16): newest end first, limit 200.
     index("agents_ended_idx")
@@ -276,7 +284,9 @@ export const inboxItems = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    kind: text("kind").notNull().$type<"message" | "mention" | "task_event" | "credential">(),
+    kind: text("kind")
+      .notNull()
+      .$type<"message" | "mention" | "task_event" | "credential" | "member_update">(),
     messageId: text("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),

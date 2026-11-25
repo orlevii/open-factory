@@ -242,8 +242,6 @@ test("Docker: the stored file is under the workdir mount the container sees and 
     grantedPaths: [],
     skillPaths: [],
     templateSkillPaths: [],
-    declaredMarketplaceDirs: [],
-    pluginsDir: "/host/plugins",
     cliBundle: "/host/cli",
   });
   const spec = buildRuntimeSpec({
@@ -252,7 +250,6 @@ test("Docker: the stored file is under the workdir mount the container sees and 
     workdir: wd,
     env: {},
     claudeBin: "/usr/local/bin/claude",
-    settingsJson: "{}",
     config: { runtime: "docker", permissionMode: "auto" } as Parameters<
       typeof buildRuntimeSpec
     >[0]["config"],

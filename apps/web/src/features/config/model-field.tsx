@@ -16,7 +16,7 @@ import { CONFIG_COPY } from "./messages";
 import { useFieldNote } from "./scope";
 import { OverrideAction, WrongType } from "./section";
 import { readString } from "./tolerant";
-import { INHERIT, useScalar } from "./use-scalar";
+import { INHERIT, inheritLabel, useScalar } from "./use-scalar";
 
 const CUSTOM = "__custom";
 /** `customAt.draft` once something was typed: the model value alone then says whether Custom still applies. */
@@ -25,7 +25,7 @@ const KNOWN: ReadonlySet<string> = new Set<string>([...MODEL_ALIASES, ...MODEL_I
 
 /** The model picker (spec §12.3): inherit, the aliases, the model ids, then Custom… with a checked mono input. */
 export function ModelField() {
-  const { scope, own, inherited, inherits, overridden, set } = useScalar("model");
+  const { scope, own, inherited, overridden, set } = useScalar("model");
   const note = useFieldNote("model");
   // Where Custom… was opened: the model then (or as last typed), and, until something is typed, the draft itself.
   // Custom stays shown only while the draft still matches, so a Discard, an Undo or a Raw edit closes it, with no
@@ -47,9 +47,7 @@ export function ModelField() {
       customAt.model === model &&
       (customAt.draft === TYPED || customAt.draft === scope.value));
   const selected = showCustom ? CUSTOM : (model ?? INHERIT);
-  const help = inherits
-    ? `From template: ${typeof inherited === "string" ? inherited : CONFIG_COPY.inheritTemplate}`
-    : undefined;
+  const help = scope.disabledReason;
   const { fieldErrors, readOnly } = scope;
 
   const choose = (v: string) => {
@@ -102,9 +100,7 @@ export function ModelField() {
                 custom.current?.focus();
               }}
             >
-              <SelectItem value={INHERIT}>
-                {scope.mode === "agent" ? CONFIG_COPY.inheritAgent : CONFIG_COPY.inheritTemplate}
-              </SelectItem>
+              <SelectItem value={INHERIT}>{inheritLabel(scope, inherited)}</SelectItem>
               <SelectGroup>
                 <SelectLabel>{CONFIG_COPY.aliases}</SelectLabel>
                 {MODEL_ALIASES.map((m) => (

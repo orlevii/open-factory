@@ -35,11 +35,9 @@ function deferred() {
 }
 
 /** An app with projects app/web/docs, secrets GH_TOKEN/NPM_TOKEN, a spawner `lead` (grants app, web; secret GH_TOKEN). */
-async function setup(
-  o: { env?: Record<string, string>; lead?: { max_live_spawns?: number } } = {},
-) {
+async function setup() {
   const driver = new FakeDriver();
-  t = await makeTestApp({ harnessDriver: driver, ...(o.env ? { env: o.env } : {}) });
+  t = await makeTestApp({ harnessDriver: driver });
   const app = t;
   const ids: Record<string, string> = {};
   for (const name of ["app", "web", "docs"]) {
@@ -67,9 +65,7 @@ async function setup(
     config: {
       template: {
         can_spawn: ["tech-lead", "dev"],
-        max_live_spawns: 5,
         secrets: ["GH_TOKEN"],
-        ...o.lead,
       },
     },
   });
@@ -80,7 +76,10 @@ async function setup(
     { agentId: lead.id, projectId: ids.web as string },
   ]);
   const pm = await app.seedAgent({ slug: "pm" });
-  await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
+  await app.db
+    .update(schema.agents)
+    .set({ reportsTo: lead.id, reportsToUser: null })
+    .where(eq(schema.agents.id, pm.id));
   return { t: app, driver, lead, pm };
 }
 
@@ -122,7 +121,7 @@ async function messagesTo(app: T, agentId: string) {
 const folders = (app: T) => readdirSync(path.join(app.factoryHome, "agents")).sort();
 const agentCount = async (app: T) => (await app.db.select().from(schema.agents)).length;
 
-/** A spawned child row inserted directly (no folder): for the live count and the rate. */
+/** A spawned child row inserted directly (no folder): seeds children to show a spawn isn't refused for them. */
 async function seedChild(app: T, lead: AgentRow, slug: string, o: { terminated?: boolean } = {}) {
   await claimTestHandle(app.db, slug, "agent");
   await app.db.insert(schema.agents).values({
@@ -180,65 +179,6 @@ test("spawn: child row, grants ∩, brief, spawned event, peer rows (spawner exc
   expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-x1", "AGENTS.md"))).toBe(true);
 });
 
-// AC 10: spawn never installs; Claude Code does, at each agent's first start, into that agent's own plugins dir.
-test("three spawns of a template with a plugin return without an install; each start gets its own plugins dir", async () => {
-  const { t, driver, lead } = await setup();
-  const mk = mkdtempSync(path.join(tmpdir(), "of-mk-"));
-  mkdirSync(path.join(mk, ".claude-plugin"), { recursive: true });
-  writeFileSync(
-    path.join(mk, ".claude-plugin", "marketplace.json"),
-    JSON.stringify({ name: "mk", plugins: [{ name: "p", source: "./plugins/p" }] }),
-  );
-  mkdirSync(path.join(mk, "plugins/p/.claude-plugin"), { recursive: true });
-  writeFileSync(
-    path.join(mk, "plugins/p/.claude-plugin/plugin.json"),
-    JSON.stringify({ name: "p", version: "1.0.0" }),
-  );
-  await t.db.insert(schema.marketplaces).values({
-    name: "mk",
-    source: { source: "directory", path: mk },
-    tags: {},
-    state: "ready",
-    startedAt: new Date(),
-    addedBy: "@or",
-    addedAt: new Date(),
-  });
-  writeTemplate(t.factoryHome, "plugged", "name: plugged\ndisplay_name: P\nruntime: local\n");
-  writeFileSync(
-    path.join(t.factoryHome, "templates/plugged/settings.json"),
-    JSON.stringify({
-      extraKnownMarketplaces: { mk: { source: { source: "directory", path: mk } } },
-      enabledPlugins: { "p@mk": true },
-    }),
-  );
-  await t.db
-    .update(schema.agents)
-    .set({ config: { template: { can_spawn: ["plugged"], max_live_spawns: 5 } } })
-    .where(eq(schema.agents.id, lead.id));
-  // `can_spawn` is what the running process started with, so start it again on the new row.
-  await asRunning(t.app, lead);
-  const slugs: string[] = [];
-  for (const suffix of ["a", "b", "c"]) {
-    const r = await t.app.spawner.spawn(lead.id, args({ template: "plugged", suffix }), null);
-    expect(r).toMatchObject({ ok: true });
-    if (r.ok) slugs.push(r.slug);
-    // Spawn installed nothing: no plugins dir exists before the first start.
-    expect(
-      existsSync(path.join(t.factoryHome, "state/agents", slugs.at(-1) ?? "", "plugins")),
-    ).toBe(false);
-  }
-  await vi.waitFor(() => expect(driver.starts.length).toBeGreaterThanOrEqual(3));
-  const dirs = driver.starts.map((p) => p.spec.env.CLAUDE_CODE_PLUGIN_CACHE_DIR);
-  expect(new Set(dirs).size).toBe(dirs.length);
-  for (const slug of slugs) {
-    const start = driver.starts.find((p) => p.spec.slug === slug);
-    expect(start?.spec.env.CLAUDE_CODE_PLUGIN_CACHE_DIR).toMatch(
-      new RegExp(`state/agents/${slug}/plugins$`),
-    );
-    expect(JSON.parse(start?.spec.settingsJson ?? "{}").enabledPlugins["p@mk"]).toBe(true);
-  }
-});
-
 test("a random suffix is 4 letters and the display name carries it", async () => {
   const { t, lead } = await setup();
   const r = await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null);
@@ -249,9 +189,8 @@ test("a random suffix is 4 letters and the display name carries it", async () =>
   expect(child?.displayName).toBe(`Dev · ${r.slug.slice(4)}`);
 });
 
-test("refusals spend nothing: template not allowed, taken explicit suffix, over max_live, rate, inheritance, shutdown", async () => {
-  const s = await setup({ env: { FACTORY_MAX_SPAWNS_PER_HOUR: "3" } });
-  const { t, lead } = s;
+test("refusals spend nothing: template not allowed, taken explicit suffix, inheritance, shutdown", async () => {
+  const { t, lead } = await setup();
   writeTemplate(t.factoryHome, "other", "name: other\ndisplay_name: Other\nruntime: local\n");
   await t.seedAgent({ slug: "tech-lead-taken" });
   const solo = await t.seedAgent({ slug: "solo" });
@@ -302,25 +241,6 @@ test("refusals spend nothing: template not allowed, taken explicit suffix, over 
   await t.db.update(schema.agents).set({ runtime: "local" }).where(eq(schema.agents.id, lead.id));
   await unchanged();
 
-  // The rate: terminated children count.
-  for (const slug of ["dev-r1", "dev-r2", "dev-r3"])
-    await seedChild(t, lead, slug, { terminated: true });
-  const afterRate = { folders: folders(t), agents: await agentCount(t) };
-  expect(await spawn({})).toEqual({
-    ok: false,
-    message:
-      "You've spawned 3 agents in the last hour; ask a human (list_peers lists them) if you need more.",
-  });
-  expect(folders(t)).toEqual(afterRate.folders);
-  expect(await agentCount(t)).toBe(afterRate.agents);
-  // An hour later they no longer count (injected clock).
-  const later = new SpawnService({
-    ...serviceDeps(t),
-    now: () => Date.now() + 3_600_000 + 1000,
-  });
-  const ok = await later.spawn(lead.id, args({ suffix: "later" }), null);
-  expect(ok).toMatchObject({ ok: true, slug: "tech-lead-later" });
-
   // Shutdown.
   const closing = new SpawnService({ ...serviceDeps(t), closing: () => true });
   const n = { folders: folders(t), agents: await agentCount(t) };
@@ -332,18 +252,23 @@ test("refusals spend nothing: template not allowed, taken explicit suffix, over 
   expect(await agentCount(t)).toBe(n.agents);
 });
 
-test("over max_live_spawns: the sentence lists the live children; terminated ones don't count", async () => {
-  const { t, lead } = await setup({ lead: { max_live_spawns: 2 } });
-  await seedChild(t, lead, "dev-b");
-  await seedChild(t, lead, "dev-a");
-  await seedChild(t, lead, "dev-gone", { terminated: true });
-  const before = { folders: folders(t), agents: await agentCount(t) };
-  expect(await t.app.spawner.spawn(lead.id, args(), null)).toEqual({
-    ok: false,
-    message: "You have 2 live spawned agents (max 2): @dev-a, @dev-b. Terminate one first.",
+test("a spawner is never refused for its live children: a spawn past five live children succeeds", async () => {
+  const { t, lead } = await setup();
+  for (const slug of ["dev-a", "dev-b", "dev-c", "dev-d", "dev-e", "dev-f"])
+    await seedChild(t, lead, slug);
+  expect(await t.app.spawner.spawn(lead.id, args({ suffix: "more" }), null)).toMatchObject({
+    ok: true,
+    slug: "tech-lead-more",
   });
-  expect(folders(t)).toEqual(before.folders);
-  expect(await agentCount(t)).toBe(before.agents);
+});
+
+test("a spawner is never refused for how many it spawned in an hour: a twenty-second spawn succeeds", async () => {
+  const { t, lead } = await setup();
+  for (let i = 0; i < 21; i++) await seedChild(t, lead, `dev-h${i}`, { terminated: true });
+  expect(await t.app.spawner.spawn(lead.id, args({ suffix: "more" }), null)).toMatchObject({
+    ok: true,
+    slug: "tech-lead-more",
+  });
 });
 
 test("an ephemeral caller can't spawn, whatever its template says", async () => {
@@ -395,36 +320,12 @@ function gateMaterialize(app: T) {
   };
 }
 
-test("two parallel spawns at max_live_spawns-1: exactly one wins and the loser's folder is removed", async () => {
-  const { t, lead } = await setup({ lead: { max_live_spawns: 2 } });
-  await seedChild(t, lead, "dev-old");
-  const before = folders(t);
-  const g = gateMaterialize(t);
-  const both = Promise.all([
-    t.app.spawner.spawn(lead.id, args({ suffix: "one" }), null),
-    t.app.spawner.spawn(lead.id, args({ suffix: "two" }), null),
-  ]);
-  await g.waitFor(2);
-  g.gate.resolve();
-  const rs = await both;
-  const won = rs.filter((r) => r.ok);
-  const lost = rs.filter((r) => !r.ok);
-  expect(won).toHaveLength(1);
-  expect(lost).toEqual([
-    {
-      ok: false,
-      message: expect.stringMatching(
-        /^You have 2 live spawned agents \(max 2\): @dev-old, @tech-lead-(one|two)\. Terminate one first\.$/,
-      ),
-    },
-  ]);
-  const winner = won[0]?.ok ? won[0].slug : "";
-  expect(folders(t)).toEqual([...before, winner].sort());
-});
-
 test("a spawn racing an archive of its spawner: the archive refuses or the spawn refuses, never an archived spawner with a live child", async () => {
   const { t, lead, pm } = await setup();
-  await t.db.update(schema.agents).set({ reportsTo: null }).where(eq(schema.agents.id, pm.id));
+  await t.db
+    .update(schema.agents)
+    .set({ reportsTo: null, reportsToUser: lead.reportsToUser })
+    .where(eq(schema.agents.id, pm.id));
   const g = gateMaterialize(t);
   const spawning = t.app.spawner.spawn(lead.id, args({ suffix: "race" }), null);
   await g.waitFor(1);
@@ -439,7 +340,7 @@ test("a spawn racing an archive of its spawner: the archive refuses or the spawn
   vi.restoreAllMocks();
   const lead2 = await t.seedAgent({
     slug: "lead2",
-    config: { template: { can_spawn: ["dev"], max_live_spawns: 5 } },
+    config: { template: { can_spawn: ["dev"] } },
   });
   await asRunning(t.app, lead2);
   const r = await t.app.spawner.spawn(lead2.id, args({ template: "dev", suffix: "k" }), null);
@@ -589,7 +490,7 @@ test("a template that is missing or invalid on disk is refused before anything i
   const before = folders(t);
   expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({
     ok: false,
-    message: "Template dev is missing or invalid; ask a human (list_peers lists them) to fix it.",
+    message: "Template dev is missing or invalid; ask your manager to fix it.",
   });
   expect(folders(t)).toEqual(before);
 });
@@ -600,15 +501,15 @@ test("I2 §6.2: a spawner whose current config can't be read refuses before anyt
   const before = folders(t);
   expect(await t.app.spawner.spawn(lead.id, args(), null)).toEqual({
     ok: false,
-    message: "Your configuration can't be read; ask a human (list_peers lists them) to fix it.",
+    message: "Your configuration can't be read; ask your manager to fix it.",
   });
   expect(folders(t)).toEqual(before);
 });
 
-test("I2 §6.2: the cap and allowlist are started's; secrets are the stricter of started and current", async () => {
+test("I2 §6.2: the allowlist is started's; secrets are the stricter of started and current", async () => {
   const { t, lead } = await setup();
   // The current overlay drops tech-lead and GH_TOKEN; the running process still started with both.
-  await t.sql`update agents set config = '{"template":{"can_spawn":["dev"],"max_live_spawns":5}}'::jsonb where id = ${lead.id}`;
+  await t.sql`update agents set config = '{"template":{"can_spawn":["dev"]}}'::jsonb where id = ${lead.id}`;
   const r = await t.app.spawner.spawn(lead.id, args({ suffix: "s1" }), null);
   if (!r.ok) throw new Error(r.message);
   // tech-lead lists GH_TOKEN and NPM_TOKEN; the spawner now holds neither (current ∩ started).
@@ -626,7 +527,7 @@ test("I2 §6.2: the cap and allowlist are started's; secrets are the stricter of
 test("a caller with a manager is told to ask its manager", async () => {
   const { t, lead } = await setup();
   const boss = await t.seedAgent({ slug: "boss" });
-  await t.sql`update agents set reports_to = ${boss.id} where id = ${lead.id}`;
+  await t.sql`update agents set reports_to = ${boss.id}, reports_to_user = null where id = ${lead.id}`;
   writeTemplate(t.factoryHome, "dev", "name: dev\nruntime: nonsense\n");
   expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({
     ok: false,

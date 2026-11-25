@@ -5,9 +5,6 @@ import { factoryZoneDefault, zoneSchema } from "@open-factory/shared";
 import { z } from "zod";
 import { expandHome } from "./host-path.ts";
 
-/** The seeded `factory_settings.max_running_agents` (S10 §8.1); tests and runtime harnesses use it. */
-export const DEFAULT_MAX_RUNNING_AGENTS = 8;
-
 export const PLACEHOLDER_SECRET = "change-me-to-a-random-string-of-32-chars-or-more";
 
 export interface Config {
@@ -34,8 +31,6 @@ export interface Config {
   agentPort: number;
   /** `FACTORY_AGENT_HOST`: replaces the default bind list when set. */
   agentHosts: string[] | undefined;
-  /** `FACTORY_MAX_SPAWNS_PER_HOUR`: children per spawner created in the last 60 minutes (S7 §5.5). */
-  maxSpawnsPerHour: number;
   /** `FACTORY_TIMEZONE` (S9): the zone agent-created schedules default to, named in the generated CLAUDE.md. */
   factoryTimezone: string;
 }
@@ -100,32 +95,8 @@ const envSchema = z.object({
     .max(65535)
     .optional(),
   FACTORY_AGENT_HOST: z.string().optional(),
-  FACTORY_MAX_SPAWNS_PER_HOUR: z.coerce
-    .number({ message: "must be a whole number" })
-    .int()
-    .min(1)
-    .default(20),
   FACTORY_TIMEZONE: zoneSchema.optional(),
 });
-
-/**
- * Env vars that were removed, with the boot warning each gets (S10 Q6, I5 Q11): nothing reads them, no shim (ADR 0028).
- * Boot only warns when one is still set; empty counts as unset, as in `loadConfig`.
- */
-const REMOVED_ENV: Record<string, string> = {
-  FACTORY_MAX_RUNNING_AGENTS:
-    "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
-  FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS:
-    "FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS is no longer read; set it in Settings → Factory.",
-  FACTORY_HOST_SKILLS_DIR:
-    "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder.",
-};
-
-export function removedEnvWarnings(env: NodeJS.ProcessEnv): string[] {
-  return Object.entries(REMOVED_ENV)
-    .filter(([k]) => env[k] !== undefined && env[k] !== "")
-    .map(([, warning]) => warning);
-}
 
 /** Where host skills are read from: `<FACTORY_HOST_CLAUDE_DIR>/skills` (I5 §5.2). */
 export function hostSkillsDirOf(c: Pick<Config, "hostClaudeDir">): string {
@@ -188,7 +159,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     ),
     agentPort,
     agentHosts: agentHosts?.length ? agentHosts : undefined,
-    maxSpawnsPerHour: e.FACTORY_MAX_SPAWNS_PER_HOUR,
     factoryTimezone: e.FACTORY_TIMEZONE ?? factoryZoneDefault(),
   };
 }

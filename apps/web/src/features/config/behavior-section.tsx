@@ -13,10 +13,9 @@ import { readAt, readList } from "./tolerant";
 
 /** What applies when nothing sets them: the runtime's warm window and the template schema's default. */
 const WARM_WINDOW_DEFAULT = 70;
-const MAX_LIVE_SPAWNS_DEFAULT = 5;
 const NONE: readonly string[] = [];
 
-/** Spec §12.2 section 6: warm window, spawnable templates (a multi-select of template names), max live spawns. */
+/** Spec §12.2 section 6: warm window and spawnable templates (a multi-select of template names). */
 export function BehaviorSection() {
   return (
     <Section title="Behavior">
@@ -32,11 +31,6 @@ export function BehaviorSection() {
         noun="spawnable template"
         mono
         renderAdd={(slot) => <TemplatePicker slot={slot} />}
-      />
-      <NumberField
-        field="maxLiveSpawns"
-        label="Max live spawns"
-        fallback={MAX_LIVE_SPAWNS_DEFAULT}
       />
     </Section>
   );

@@ -59,7 +59,6 @@ const summaryOf = (t: TemplateDetail): TemplateList["templates"][number] => ({
   errors: t.issues.filter((i) => i.severity === "error").length,
   warnings: t.issues.filter((i) => i.severity === "warning").length,
   agentCount: 0,
-  pluginCount: 0,
 });
 
 function check(field: Field, v: { displayName: string; name: string; description: string }) {
@@ -115,7 +114,7 @@ export function NewTemplateForm({
 
   const derived = useMemo(() => deriveSlug(v.displayName, taken), [v.displayName, taken]);
   const name = v.revealed ? v.name : derived;
-  // The reserved names are in `taken`, so "Images" derives images-2: only a hand-typed one is reserved.
+  // The reserved names are in `taken`, so "New" derives new-2: only a hand-typed one is reserved.
 
   // The latest values, so two updates in one event never build on a stale closure.
   const latest = useRef(v);

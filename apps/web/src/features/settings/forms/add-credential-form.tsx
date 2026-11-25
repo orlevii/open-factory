@@ -19,7 +19,13 @@ import { SignInPanel } from "@/features/settings/sign-in/sign-in-panel";
 import { useSignIn } from "@/features/settings/sign-in/use-sign-in";
 import { setupQueryOptions } from "@/features/setup/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
-import { FormFrame, type FormFrameKind } from "./form-frame";
+import {
+  type EmbedProps,
+  FormFrame,
+  type FormFrameKind,
+  useEmbedDirty,
+  useEmbedDraft,
+} from "./form-frame";
 import { enterValueMessage, TokenField, valueNoun, verdictOf } from "./shared";
 
 const cap = (s: string) => s[0]?.toUpperCase() + s.slice(1);
@@ -47,17 +53,22 @@ const formView = (d: { available: boolean; attempt: AttemptView | null }) => ({
 export function AddCredentialForm({
   frame,
   existing,
+  embed,
   onDone,
   onCancel,
 }: {
   frame: FormFrameKind;
   existing: string[];
+  /** The frame `embedded` only: what its host gives an inline prerequisite. */
+  embed?: EmbedProps;
   onDone(c: CredentialSummary): void;
   onCancel(): void;
 }) {
   const qc = useQueryClient();
-  const [name, setName] = useState("");
-  const [chosen, setChosen] = useState<Method>();
+  const [name, setName] = useState(embed?.start.name ?? "");
+  const [chosen, setChosen] = useState<Method | undefined>(
+    METHODS.find((m) => m.value === embed?.start.method)?.value,
+  );
   // Each paste method keeps its own value across switches.
   const [values, setValues] = useState<Record<PasteMethod, string>>({
     paste_token: "",
@@ -67,7 +78,7 @@ export function AddCredentialForm({
   const [warning, setWarning] = useState<string>();
   const o = useOutcome();
   const [pending, setPending] = useState(false);
-  const formRef = useRef<HTMLFormElement>(null);
+  const formRef = useRef<HTMLElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
   // `restoring` decides the mount focus; `available` the Method. Read here, before the checks that use the Method.
   const { data: view } = useQuery({ ...signInQueryOptions, select: formView });
@@ -148,6 +159,15 @@ export function AddCredentialForm({
         ? "Start again"
         : "Start sign-in";
   const signInPending = signingIn && s.pendingLabel !== undefined;
+  // A closed sheet keeps the name and the method, never the token.
+  useEmbedDraft(embed, { name, method: chosen ?? "" });
+  useEmbedDirty(
+    embed,
+    name !== "" ||
+      values.paste_token !== "" ||
+      values.api_key !== "" ||
+      (signingIn && s.phase !== "idle" && s.phase !== "loading"),
+  );
 
   return (
     <FormFrame
@@ -161,6 +181,7 @@ export function AddCredentialForm({
       outcome={o.outcome}
       // A restored attempt moves focus itself (to Open sign-in page), so the frame's mount focus stays off.
       autoFocus={!restoring}
+      embed={embed}
       ref={formRef}
     >
       <FormField
@@ -216,7 +237,7 @@ export function AddCredentialForm({
         )}
       </FieldShell>
       {method === "sign_in" ? (
-        <SignInPanel s={s} frame={frame} codeRef={codeRef} />
+        <SignInPanel s={s} frame={frame === "inline" ? "inline" : "sheet"} codeRef={codeRef} />
       ) : (
         <TokenField
           key={method}

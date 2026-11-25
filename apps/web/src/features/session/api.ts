@@ -14,7 +14,7 @@ import {
 import { type QueryClient, queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
 
-type Running = { count: number; max: number };
+type Running = { count: number };
 const fetchList = (ended: "exclude" | "only") =>
   apiFetch(`/api/agents?ended=${ended}`, { schema: agentListSchema });
 
@@ -41,7 +41,7 @@ export const endedMoreQueryOptions = queryOptions<boolean>({
   staleTime: Number.POSITIVE_INFINITY,
 });
 
-/** Running agents and the cap, live from the `supervisor` frame (folded in by status-frames.ts). */
+/** Running agents, live from the `supervisor` frame (folded in by status-frames.ts). */
 export const runningQueryKey = ["supervisor"] as const;
 export const runningQueryOptions = queryOptions({
   queryKey: runningQueryKey,

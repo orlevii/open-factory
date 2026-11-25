@@ -13,8 +13,7 @@ const tok: Record<string, string> = {};
 
 beforeEach(async () => {
   drv = new FakeDriver();
-  // Earlier tests in a file leave processes running; the default cap of 8 would queue these starts.
-  h = await makeTestApp({ harnessDriver: drv, factorySettings: { maxRunningAgents: 50 } });
+  h = await makeTestApp({ harnessDriver: drv });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   cookie = (await signUp(h.app, { handle: "or" })).cookie;
   for (const slug of ["lead", "dev", "qa"]) {
@@ -24,8 +23,8 @@ beforeEach(async () => {
   // A spawned report of lead, and dev and kid are lead's reports.
   ids.kid = (await h.seedAgent({ slug: "kid" })).id;
   tok.kid = h.app.agentTokens.mint(ids.kid as string).token;
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where slug = 'kid'`;
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'kid'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
 });
 afterEach(() => h.close());
 

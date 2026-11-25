@@ -22,7 +22,6 @@ import {
   type ConfigDoc,
   type ConfigHashes,
   canonicalJson,
-  isUserImageRef,
   LOCAL_RUNTIME_REFUSAL,
   LOCAL_SKILL_NAMES,
   NAME_PATTERN,
@@ -42,7 +41,6 @@ import { OrgRefusedError } from "../agents/errors.ts";
 import type { PolicyInputs } from "../agents/policy-inputs.ts";
 import { type Config, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
-import { imageDir } from "../images/context.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
 import { avatarStat } from "./avatar.ts";
 import { KeyLock } from "./key-lock.ts";
@@ -128,14 +126,8 @@ export class TemplateIndex {
   readonly dir: string;
   private readonly db: Db;
   private readonly config: Config;
-  private readonly library: Pick<
-    LibraryIndex,
-    "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt"
-  >;
-  private readonly policy: Pick<
-    PolicyInputs,
-    "plugins" | "templateRuntimes" | "templateHasLocalAgents"
-  >;
+  private readonly library: Pick<LibraryIndex, "resolveSkill">;
+  private readonly policy: Pick<PolicyInputs, "templateRuntimes" | "templateHasLocalAgents">;
   private readonly log: Pick<FastifyBaseLogger, "error"> | undefined;
   private readonly listeners: TemplateChangeListener[] = [];
   /**
@@ -152,9 +144,9 @@ export class TemplateIndex {
     db: Db;
     config: Config;
     /** Skills are validated through the Library (spec §6.6). */
-    library: Pick<LibraryIndex, "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt">;
-    /** What the agent policy reads (spec §7.3a): the Library's plugins, other templates' runtimes, local agents. */
-    policy: Pick<PolicyInputs, "plugins" | "templateRuntimes" | "templateHasLocalAgents">;
+    library: Pick<LibraryIndex, "resolveSkill">;
+    /** What the agent policy reads (spec §7.3a): other templates' runtimes, local agents. */
+    policy: Pick<PolicyInputs, "templateRuntimes" | "templateHasLocalAgents">;
     log?: Pick<FastifyBaseLogger, "error">;
   }) {
     this.db = d.db;
@@ -190,41 +182,16 @@ export class TemplateIndex {
     return out.sort();
   }
 
-  /**
-   * Names of `<factoryHome>/images/<name>/` folders that hold a Dockerfile, by the builder's rule: the folder's
-   * real path is a direct child of images/ (`imageDir`), so a link leaving images/ never validates.
-   */
-  private async userImages(): Promise<string[]> {
-    const root = path.join(this.config.factoryHome, "images");
-    let entries: Dirent[];
-    try {
-      entries = await readdir(root, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-    const out: string[] = [];
-    for (const e of entries) {
-      if (!isUserImageRef(e.name)) continue;
-      try {
-        const dir = await imageDir(root, e.name);
-        if ((await stat(path.join(dir, "Dockerfile"))).isFile()) out.push(e.name);
-      } catch {}
-    }
-    return out;
-  }
-
   async context(): Promise<ValidationContext> {
-    const [projects, secrets, templates, userImages] = await Promise.all([
+    const [projects, secrets, templates] = await Promise.all([
       this.db.select({ name: schema.projects.name }).from(schema.projects),
       this.db.select({ name: schema.secrets.name }).from(schema.secrets),
       this.names(),
-      this.userImages(),
     ]);
     return {
       projects: new Set(projects.map((p) => p.name)),
       secrets: new Set(secrets.map((s) => s.name)),
       templates: new Set(templates),
-      userImages: new Set(userImages),
       library: this.library,
       localRuntimeAllowed: localRuntimeAllowed(this.config),
     };
@@ -558,7 +525,7 @@ export class TemplateIndex {
   /**
    * The agent rules over a change from `before` to `after` of template `name`. A local runtime is refused outright
    * (`OrgRefusedError`) when `before` is local or has local agents, or when the change adds a `can_spawn` entry that
-   * is local or missing (rule 8): entries `before` already had don't count, so an agent can still repair a broken
+   * is local or missing (rule 7): entries `before` already had don't count, so an agent can still repair a broken
    * template (spec §7.3a). A copy (`copying`) adds every entry to a new template. Anything else the policy objects
    * to is returned. Reads only.
    */
@@ -589,7 +556,6 @@ export class TemplateIndex {
         image: typeof y.image === "string" ? y.image : null,
         permission_mode: typeof y.permission_mode === "string" ? y.permission_mode : "auto",
       },
-      plugins: await this.policy.plugins([after]),
     });
   }
 

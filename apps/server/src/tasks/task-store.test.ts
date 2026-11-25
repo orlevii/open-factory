@@ -17,8 +17,8 @@ beforeAll(async () => {
   await t.sql`insert into users (id,name,email,handle) values (${ids.or},'Or','or@x.io','or')`;
   await t.sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
   for (const slug of ["lead", "dev", "kid"]) await claimTestHandleSql(t.sql, slug, "agent");
-  await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,credential_id) values
-    (${ids.lead},'lead','Lead','t','{}','local','persistent',null,'c1')`;
+  await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,reports_to_user,credential_id) values
+    (${ids.lead},'lead','Lead','t','{}','local','persistent',null,${ids.or},'c1')`;
   await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,credential_id) values
     (${ids.dev},'dev','Dev','t','{}','local','persistent',${ids.lead},'c1'),
     (${ids.kid},'kid','Kid','t','{}','local','ephemeral',${ids.dev},'c1')`;

@@ -48,9 +48,24 @@ vi.mock("@/features/inbox/api", async (orig) => {
 
 const agents = (over: Partial<Record<string, Partial<AgentSummary>>> = {}) => [
   agentSummary({ slug: "a", displayName: "Alpha", ...over.a }),
-  agentSummary({ slug: "b", displayName: "Bravo", reportsTo: "a", ...over.b }),
-  agentSummary({ slug: "c", displayName: "Charlie", reportsTo: "b", ...over.c }),
-  agentSummary({ slug: "s", displayName: "Sierra", reportsTo: "b", ...over.s }),
+  agentSummary({
+    slug: "b",
+    displayName: "Bravo",
+    reportsTo: { kind: "agent", handle: "a" },
+    ...over.b,
+  }),
+  agentSummary({
+    slug: "c",
+    displayName: "Charlie",
+    reportsTo: { kind: "agent", handle: "b" },
+    ...over.c,
+  }),
+  agentSummary({
+    slug: "s",
+    displayName: "Sierra",
+    reportsTo: { kind: "agent", handle: "b" },
+    ...over.s,
+  }),
 ];
 
 type Frame = Extract<ServerMessage, { type: "agent_status" }>;
@@ -474,7 +489,7 @@ test("an agent dropped while its menu is open and then back doesn't reopen it; f
   act(() => {
     qc.setQueryData(
       ["agents", "exclude"],
-      agents({ b: { reportsTo: null } }).filter((a) => a.slug !== "a"),
+      agents({ b: { reportsTo: { kind: "user", handle: "or" } } }).filter((a) => a.slug !== "a"),
     );
   });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());

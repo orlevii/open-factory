@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { type Db, schema } from "@open-factory/db";
+import type { Db } from "@open-factory/db";
 import { createClaudeDriver, type HarnessDriver, localTransport } from "@open-factory/harness";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
@@ -24,7 +24,7 @@ import { AgentRuntimes } from "./agents/runtimes.ts";
 import { createPrepareStart } from "./agents/start.ts";
 import { type Auth, createAuth } from "./auth/auth.ts";
 import type { PasswordHasher } from "./auth/options.ts";
-import { type Config, localRuntimeAllowed, removedEnvWarnings } from "./config.ts";
+import { type Config, localRuntimeAllowed } from "./config.ts";
 import { CredentialService } from "./credentials/credential-service.ts";
 import { ExpiryCheck } from "./credentials/expiry-check.ts";
 import { SignInAttempts } from "./credentials/sign-in/attempts.ts";
@@ -33,14 +33,8 @@ import { runSetupToken } from "./credentials/sign-in/setup-token.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
-import { ImageBuilder } from "./images/builder.ts";
-import { checkImageClaudeVersion } from "./library/claude-flags.ts";
-import { HostPlugins } from "./library/host-plugins.ts";
 import { LibraryIndex } from "./library/library-index.ts";
-import { LibrarySweep, marketplaceDirsInUse, skillDirsInUse } from "./library/library-sweep.ts";
-import { dbMarketplacesStore, MarketplacesService } from "./library/marketplaces-service.ts";
-import { declaredRefs, marketplaceUsers } from "./library/plugin-usage.ts";
-import { PluginsIndex } from "./library/plugins-index.ts";
+import { LibrarySweep, skillDirsInUse } from "./library/library-sweep.ts";
 import { dbSourcesStore, SourcesService } from "./library/sources-service.ts";
 import { bridgeInfo, resolveAgentBindHosts } from "./mcp/bind-hosts.ts";
 import { startAgentListener } from "./mcp/listener.ts";
@@ -65,7 +59,6 @@ import { authRoutes } from "./routes/auth.ts";
 import { claudeSignInRoutes } from "./routes/claude-sign-in.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
 import { hostRoutes } from "./routes/host.ts";
-import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { libraryRoutes } from "./routes/library.ts";
 import { loopHoldsRoutes } from "./routes/loop-holds.ts";
@@ -144,7 +137,6 @@ declare module "fastify" {
     terminator: TerminateService;
     tasks: TaskService;
     usage: UsageService;
-    images: ImageBuilder;
     invites: InviteService;
     userAdmin: UserAdminService;
     factorySettings: FactorySettings;
@@ -157,12 +149,6 @@ declare module "fastify" {
     library: LibraryIndex;
     /** I5 §9.2: skill sources (preview, add, check, update, remove, Undo). */
     skillSources: SourcesService;
-    /** I5 §7.1, §9.3: the marketplace registry (preview, add, check, update, fetch, remove, Undo). */
-    marketplaces: MarketplacesService;
-    /** I5 §9.1: the Plugins view (catalogs, contents, diffs, external reads). */
-    plugins: PluginsIndex;
-    /** I5 §7.6: plugins installed on the host, and Add its marketplace. */
-    hostPlugins: HostPlugins;
   }
 }
 
@@ -187,8 +173,6 @@ export interface AppDeps {
   };
   /** Spawns the sign-in PTY bridge and the python3 probe (I3); the real `spawn` unless a test injects one. */
   signInSpawn?: typeof spawn;
-  /** Checked for the removed env vars (S10 Q6) to warn at boot; `process.env` when absent. */
-  env?: NodeJS.ProcessEnv;
   /** better-auth's scrypt when absent; tests inject a cheap one. */
   passwordHasher?: PasswordHasher;
 }
@@ -234,12 +218,10 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   config.factoryHome = await realpath(config.factoryHome);
   await mkdir(path.join(config.factoryHome, "agents"), { recursive: true });
   await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
-  await mkdir(path.join(config.factoryHome, "images"), { recursive: true });
 
   // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
   const settings = await FactorySettings.load(deps.db, app.log);
   app.decorate("factorySettings", settings);
-  for (const w of removedEnvWarnings(deps.env ?? process.env)) app.log.warn(w);
 
   const store = new EventStore(deps.db);
   const bus = new EventBus();
@@ -257,7 +239,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const workspace = new Workspace({
     factoryHome: config.factoryHome,
     library,
-    claudeBin: config.claudeBin,
     cliBundle: config.cliBundle,
     lock,
     log: app.log,
@@ -267,12 +248,11 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const containers = new ContainerManager({
     docker,
     log: app.log,
-    checkImage: checkImageClaudeVersion,
   });
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
-  const policy = new PolicyInputs({ db: deps.db, library });
+  const policy = new PolicyInputs({ db: deps.db });
   const templates: TemplateIndex = new TemplateIndex({
     db: deps.db,
     config,
@@ -290,6 +270,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     lock,
     containers,
     neighborhood,
+    memberUpdateDebounceMs: settings.memberUpdateDebounceMs,
   });
   const runtimes = new AgentRuntimes({
     store,
@@ -299,11 +280,9 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     log: app.log,
     // S10 §8.2: read live; `settingsChanged()` below re-arms the runtimes' timers on a change.
     memberUpdateDebounceMs: settings.memberUpdateDebounceMs,
-    defaultWarmWindowMinutes: settings.defaultWarmWindowMinutes,
+    defaultWarmWindowMinutes: settings.warmWindowMinutes,
     // S6 §9.1: reports forward through the Router (built below; runtimes are created lazily, after it exists).
     forward: (f) => router.forward(f),
-    // S10 §8.2: the cap is read live; `capChanged()` below grants and publishes on a change.
-    maxRunningAgents: settings.maxRunningAgents,
     localRuntimeAllowed: () => localRuntimeAllowed(config),
     // The same ContainerManager the exec transport stops containers with.
     docker: {
@@ -322,9 +301,8 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       }),
   });
   settings.onChange((prev, next) => {
-    if (prev.maxRunningAgents !== next.maxRunningAgents) runtimes.supervisor.capChanged();
     if (
-      prev.defaultWarmWindowMinutes !== next.defaultWarmWindowMinutes ||
+      prev.warmWindowMinutes !== next.warmWindowMinutes ||
       prev.memberUpdateDebounceSeconds !== next.memberUpdateDebounceSeconds
     )
       void runtimes.settingsChanged();
@@ -392,7 +370,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     workspace,
     lock,
     runtimes,
-    resolver,
     log: app.log,
     containers,
     router,
@@ -405,8 +382,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const configs = new ConfigService({
     db: deps.db,
     templates,
-    runtimes,
-    resolver,
     policy,
     configChanges,
   });
@@ -447,16 +422,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate(
     "usage",
     new UsageService({ db: deps.db, now: clock, timezone: () => config.factoryTimezone }),
-  );
-  app.decorate(
-    "images",
-    new ImageBuilder({
-      docker,
-      imagesRoot: path.join(config.factoryHome, "images"),
-      bus,
-      now: clock,
-      log: app.log,
-    }),
   );
   app.decorate(
     "invites",
@@ -563,54 +528,13 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     onLibraryChanged: (e) => configChanges.libraryChanged(e),
     log: (message, err) => app.log.error({ err }, message),
   });
-  // The directories a loaded runtime's `started.library` still references: GitHub skill caches and marketplace
-  // checkouts at a pinned commit or tag (spec §9.4). Purge keeps them and retries on the next timer.
-  const libraryDirsInUse = async (): Promise<string[]> => [
-    ...(await skillDirsInUse(skillSources.githubRoot, runtimes.allStarted())),
-    ...marketplaceDirsInUse(marketplaces.root, runtimes.allStarted(), await marketplaces.rows()),
-  ];
-  // A marketplace write moves only the Library's commit: it never calls the config change flow and restarts no
-  // agent (spec §8.3), so its only hook is the `library_changed` frame.
-  const marketplaces: MarketplacesService = new MarketplacesService({
-    store: dbMarketplacesStore(deps.db),
-    usedBy: async (name) => marketplaceUsers(await library.declarations(), name),
-    inUse: libraryDirsInUse,
-    declaredRefs: async () => declaredRefs(await library.declarations()),
-    factoryHome: config.factoryHome,
-    forbidden: {
-      home: os.homedir(),
-      factoryHome: config.factoryHome,
-      dockerSockets: dockerSocketPaths(process.env, os.homedir()),
-    },
-    githubUrl: config.githubUrl,
-    publish: libraryChanged,
-    purgeAfter: (ms) => librarySweep.purgeAfter(ms),
-    log: (message, err) => app.log.error({ err }, message),
-  });
-  const hostPlugins = new HostPlugins({
-    hostClaudeDir: config.hostClaudeDir,
-    registered: async () => (await library.marketplaces()).map((r) => r.name),
-    marketplaces,
-    forbidden: {
-      home: os.homedir(),
-      factoryHome: config.factoryHome,
-      dockerSockets: dockerSocketPaths(process.env, os.homedir()),
-    },
-    log: (message, err) => app.log.error({ err }, message),
-  });
-  const plugins = new PluginsIndex({
-    library,
-    marketplaces,
-    host: hostPlugins,
-    factoryHome: config.factoryHome,
-    githubUrl: config.githubUrl,
-    publish: libraryChanged,
-    log: (message, err) => app.log.error({ err }, message),
-  });
+  // The directories a loaded runtime's `started.library` still references: GitHub skill caches (spec §9.4). Purge
+  // keeps them and retries on the next timer.
+  const libraryDirsInUse = async (): Promise<string[]> =>
+    skillDirsInUse(skillSources.githubRoot, runtimes.allStarted());
   const librarySweep = new LibrarySweep({
     sources: skillSources,
     store: sourcesStore,
-    marketplaces,
     factoryHome: config.factoryHome,
     inUse: libraryDirsInUse,
     publish: libraryChanged,
@@ -618,9 +542,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("library", library);
   app.decorate("skillSources", skillSources);
-  app.decorate("marketplaces", marketplaces);
-  app.decorate("hostPlugins", hostPlugins);
-  app.decorate("plugins", plugins);
   let agentListener: { port: number; close(): Promise<void> } | undefined;
   // Stop agents before the DB closes (index.ts closes the DB after app.close()).
   app.addHook("onClose", async () => {
@@ -644,7 +565,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     await expiryCheck.idle();
     await scheduler.idle();
     await skillSources.idle();
-    await marketplaces.idle();
   });
 
   if (new URL(config.agentUrl).port === String(config.port)) {
@@ -666,8 +586,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(settingsRoutes, { db: deps.db });
   await app.register(secretsRoutes);
   await app.register(projectsRoutes);
-  await app.register(templatesRoutes, { docker });
-  await app.register(imagesRoutes, { docker });
+  await app.register(templatesRoutes);
   await app.register(inboxRoutes);
   await app.register(setupRoutes, { db: deps.db });
   await app.register(loopHoldsRoutes, {
@@ -698,7 +617,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
         config: configs,
         templates,
         library,
-        plugins,
         credentials,
         secrets: app.secrets,
         projects: app.projects,
@@ -722,7 +640,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       containers,
       supervisor: runtimes.supervisor,
       runtimes,
-      memberUpdateDebounceMs: settings.memberUpdateDebounceMs,
       forward: (f) => router.forward(f),
       log: app.log,
     });

@@ -64,44 +64,6 @@ describe("GET", () => {
     }
   });
 
-  test("plugins: each key with its pin, and the loaded version once the running process's init listed it", async () => {
-    await reset();
-    const settings = path.join(t.factoryHome, "templates", "test", "settings.json");
-    const mk = path.join(t.factoryHome, "mk-live");
-    mkdirSync(path.join(mk, ".claude-plugin"), { recursive: true });
-    writeFileSync(
-      path.join(mk, ".claude-plugin", "marketplace.json"),
-      JSON.stringify({ name: "mk", plugins: [{ name: "p", source: "./plugins/p" }] }),
-    );
-    await t.db.insert(schema.marketplaces).values({
-      name: "mk",
-      source: { source: "directory", path: mk },
-      tags: {},
-      state: "ready",
-      startedAt: new Date(),
-      addedBy: "@or",
-      addedAt: new Date(),
-    });
-    writeFileSync(
-      settings,
-      JSON.stringify({
-        extraKnownMarketplaces: { mk: { source: { source: "directory", path: mk } } },
-        enabledPlugins: { "p@mk": true },
-      }),
-    );
-    try {
-      expect((await get()).json().plugins).toEqual([{ key: "p@mk", pin: "live" }]);
-      const rt = await t.app.runtimes.bySlug("dev");
-      if (!rt) throw new Error("no runtime");
-      rt.loadedPlugins = { "p@mk": "1.0.0" };
-      expect((await get()).json().plugins).toEqual([{ key: "p@mk", pin: "live", loaded: "1.0.0" }]);
-      rt.loadedPlugins = {};
-    } finally {
-      rmSync(settings, { force: true });
-      await t.db.delete(schema.marketplaces).where(eq(schema.marketplaces.name, "mk"));
-    }
-  });
-
   test("an unknown agent is 404", async () => {
     expect((await get("nope")).statusCode).toBe(404);
   });
@@ -220,31 +182,13 @@ describe("PUT", () => {
   test("a spawned agent can't be configured", async () => {
     await t.seedAgent({ slug: "kid" });
     const [lead] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "dev"));
-    // A spawned agent always reports to its spawner (agents_ephemeral_manager).
+    // A spawned agent always reports to its spawner (agents_manager).
     await t.db
       .update(schema.agents)
-      .set({ kind: "ephemeral", reportsTo: lead?.id })
+      .set({ kind: "ephemeral", reportsTo: lead?.id, reportsToUser: null })
       .where(eq(schema.agents.slug, "kid"));
     const r = await put({}, overlayVersion({}), "kid");
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("ephemeral_agent");
-  });
-});
-
-describe("agent detail model", () => {
-  test("default, then the agent's own", async () => {
-    await reset();
-    expect((await call("GET", "/api/agents/dev")).json().model).toEqual({
-      value: null,
-      source: "default",
-    });
-    await t.db
-      .update(schema.agents)
-      .set({ config: { template: { model: "opus" } } })
-      .where(eq(schema.agents.slug, "dev"));
-    expect((await call("GET", "/api/agents/dev")).json().model).toEqual({
-      value: "opus",
-      source: "agent",
-    });
   });
 });

@@ -10,7 +10,7 @@ web
 
 - **Primary:** a single developer, or a small team, running AI agent "teammates" on their own machine or one server. They know terminals, editors, git and CI well, and they already work in tools like GitHub, Linear and VS Code.
 - **Situation:** the web app stays open in a browser tab next to the editor for hours, day and night. They create a task, hand it to a persistent team lead, and then watch agents spawn helpers, write specs and plans, and open PRs. Most of the time goes to two things: watching a live agent session and working through the inbox.
-- **Job:** define agents (templates with a persona, skills, MCP servers, plugins and a model), arrange them in a reporting line, give them work, and see exactly what each one is doing without babysitting it.
+- **Job:** define agents (templates with a persona, skills, MCP servers and a model), arrange them in a reporting line, give them work, and see exactly what each one is doing without babysitting it.
 - **Secondary audience:** developers evaluating the project, who reach it through the GitHub repository and the docs. They decide whether to self-host it.
 
 ## Product Purpose

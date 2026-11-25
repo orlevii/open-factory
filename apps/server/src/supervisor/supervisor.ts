@@ -2,11 +2,10 @@ import type { AgentRuntime, RuntimeLog } from "../agents/agent-runtime.ts";
 import { AgentStartError, type StartFix } from "../agents/errors.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore } from "../agents/event-store.ts";
-import { USER_TAG_PREFIX } from "../images/resolve.ts";
 import type { CredentialPause, SlotPort, WakeReason } from "./slots.ts";
 
 /**
- * A wake waiting for a slot (spec §5.2). At most one per agent; `requestedAt` is its FIFO place. `pulling` names the
+ * A wake waiting to start (spec §5.2): for its image to be pulled or its credential's pause to end. At most one per agent; `requestedAt` is its FIFO place. `pulling` names the
  * image a Docker agent's wake waits for (spec §11.2): the entry keeps its place but isn't eligible until it resolves.
  */
 type Entry = { agentId: string; reason: WakeReason; requestedAt: number; pulling?: string };
@@ -18,8 +17,6 @@ type Pause = { until: number; exact: boolean; timer?: ReturnType<typeof setTimeo
 const MAX_TIMER_MS = 2_147_483_647;
 
 export interface SupervisorDeps {
-  /** The cap, read live (S10 §8.2: the `max_running_agents` factory setting); `capChanged()` follows a change. */
-  max: () => number;
   /** The loaded runtimes. `all()` is for the closing latch and credential re-checks. */
   runtimes: { get(id: string): AgentRuntime | undefined; all(): Iterable<AgentRuntime> };
   bus: EventBus;
@@ -31,7 +28,7 @@ export interface SupervisorDeps {
   load(slug: string): Promise<AgentRuntime | undefined>;
   /**
    * Docker images (spec §11.2): `refOf` is the image a Docker agent starts from (undefined for a local agent);
-   * `ensure` pulls it only when it is missing locally, and rejects with the registry's error.
+   * `ensure` pulls it only when it is missing locally, and rejects with the start error a failed pull is.
    */
   images?: {
     refOf(agentId: string): string | undefined;
@@ -40,7 +37,8 @@ export interface SupervisorDeps {
 }
 
 /**
- * The one owner of the cap (spec §5): slots, the FIFO wake queue, early hibernation and the closing latch.
+ * The one owner of the running set (spec §5): the agents holding a process, the FIFO wake queue (image pulls, credential
+ * pauses) and the closing latch. There is no concurrency cap: an eligible wake starts at once.
  * Every method is synchronous bookkeeping; work on an agent is only ever enqueued as that agent's job, never
  * awaited, so a call from inside another agent's job can't deadlock (spec §5.5).
  */
@@ -49,7 +47,6 @@ export class Supervisor implements SlotPort {
   /** Slots handed over whose grant job hasn't run yet; the entry is kept to restore its place on a pause. */
   private readonly granted = new Map<string, Entry>();
   private queue: Entry[] = [];
-  private readonly pendingEvictions = new Set<string>();
   /** Paused credentials by id; an entry lasts until its reset has run, so nothing starts in between. */
   private readonly pauses = new Map<string, Pause>();
   private closed = false;
@@ -86,7 +83,7 @@ export class Supervisor implements SlotPort {
       return "queued";
     }
     if (at !== -1 && this.queue[at]?.pulling) return "queued";
-    if (!this.pausedFor(agentId) && this.holders.size < this.d.max()) {
+    if (!this.pausedFor(agentId)) {
       const entry = at === -1 ? this.entry(agentId, reason) : this.queue.splice(at, 1)[0];
       if (!entry) return "dropped";
       if (inline) {
@@ -102,37 +99,17 @@ export class Supervisor implements SlotPort {
       this.queue.push(this.entry(agentId, reason));
       rt.publishStatus();
     }
-    this.evict();
     return "queued";
   }
 
   release(agentId: string): void {
     if (!this.holders.has(agentId)) return;
     this.holders.delete(agentId);
-    this.pendingEvictions.delete(agentId);
     const granted = this.granted.get(agentId);
     this.granted.delete(agentId);
     // A grant refused for a credential paused since it was granted goes back to its place (spec §5.2).
     if (granted && !this.closed && this.pausedFor(agentId)) this.requeue(granted);
     this.publish();
-    this.pump();
-  }
-
-  /** Never throws: it runs in the `finally` of every runtime job. */
-  becameHibernatable(_agentId: string): void {
-    try {
-      this.evict();
-    } catch (err) {
-      this.d.log.error({ err }, "eviction check failed");
-    }
-  }
-
-  /**
-   * A stop that failed even after escalation (spec §9.6): the holder keeps its slot (a process may still run), but
-   * it is no longer a slot on its way back, so an eviction it was counted as is picked again.
-   */
-  stopFailed(agentId: string): void {
-    if (this.pendingEvictions.delete(agentId)) this.evict();
   }
 
   closing(): boolean {
@@ -145,7 +122,6 @@ export class Supervisor implements SlotPort {
     this.closed = true;
     this.closingSignal.abort(new Error("The factory is shutting down."));
     const dropped = this.queue.splice(0);
-    this.pendingEvictions.clear();
     // Reset timers too (spec §5.6): the columns and owed flags are durable, boot re-arms them.
     for (const p of this.pauses.values()) clearTimeout(p.timer);
     for (const rt of this.d.runtimes.all()) rt.setNoStart();
@@ -160,8 +136,8 @@ export class Supervisor implements SlotPort {
     }
   }
 
-  running(): { count: number; max: number } {
-    return { count: this.holders.size, max: this.d.max() };
+  running(): { count: number } {
+    return { count: this.holders.size };
   }
 
   /**
@@ -178,10 +154,9 @@ export class Supervisor implements SlotPort {
     return false;
   }
 
-  /** A user image (S10 §10.1) is only checked, never pulled, so its wait isn't shown as pulling. */
+  /** Whether the agent's wake is waiting on its image's check-and-pull. */
   isPulling(agentId: string): boolean {
-    const ref = this.queue.find((e) => e.agentId === agentId)?.pulling;
-    return ref !== undefined && !ref.startsWith(USER_TAG_PREFIX);
+    return this.queue.find((e) => e.agentId === agentId)?.pulling !== undefined;
   }
 
   /** `ensure` found the image gone (removed after it was seen): the next wake checks and pulls again. */
@@ -218,17 +193,6 @@ export class Supervisor implements SlotPort {
     this.pauses.set(credentialId, p);
     this.armReset(credentialId, p);
     for (const rt of this.onCredential(credentialId)) rt.recheck();
-  }
-
-  /**
-   * The cap changed (S10 §8.2): a raise grants queued wakes at once (FIFO); a lower stops no one, but while wakes
-   * are queued, idle hibernatable holders may hibernate early (`freed_slot`). Then the new max is published.
-   */
-  capChanged(): void {
-    if (this.closed) return;
-    this.pump();
-    this.evict();
-    this.publish();
   }
 
   /** Grants what became eligible outside a slot change (an agent moved off a paused credential, spec §5.2). */
@@ -393,16 +357,13 @@ export class Supervisor implements SlotPort {
     return this.pausedFor(e.agentId) ? "paused" : "yes";
   }
 
-  /** Grants free slots to the first eligible entries, in FIFO order; then evicts for what is still waiting. */
+  /** Starts the first eligible entries, in FIFO order. */
   private pump() {
     if (this.closed) return;
-    while (this.holders.size < this.d.max()) {
-      const next = this.firstEligible();
-      if (!next) break;
+    for (let next = this.firstEligible(); next; next = this.firstEligible()) {
       const rt = this.d.runtimes.get(next.agentId);
       if (rt) this.grantTo(rt, next);
     }
-    this.evict();
   }
 
   /** Removes and returns the first eligible entry; drops the ones that can never start; paused ones keep their place. */
@@ -420,56 +381,7 @@ export class Supervisor implements SlotPort {
     return undefined;
   }
 
-  /**
-   * Early hibernation (spec §5.3): while more entries are eligible than slots free or already on their way
-   * (evictions asked for, holders stopping for another reason), ask the least recently active hibernatable holder
-   * to go. Free slots are counted too, so a caller that didn't pump first can't over-evict.
-   */
-  private evict() {
-    if (this.closed) return;
-    const eligible = this.queue.filter((e) => this.eligibility(e) === "yes").length;
-    const free = Math.max(0, this.d.max() - this.holders.size);
-    let stopping = 0;
-    for (const id of this.holders)
-      if (!this.pendingEvictions.has(id) && this.d.runtimes.get(id)?.isStopping()) stopping += 1;
-    while (eligible > free + this.pendingEvictions.size + stopping) {
-      const victim = this.pickVictim();
-      if (!victim) return;
-      this.pendingEvictions.add(victim.agent.id);
-      this.askToHibernate(victim);
-    }
-  }
-
-  private pickVictim(): AgentRuntime | undefined {
-    let best: AgentRuntime | undefined;
-    for (const id of this.holders) {
-      if (this.pendingEvictions.has(id) || this.granted.has(id)) continue;
-      const rt = this.d.runtimes.get(id);
-      if (!rt?.hibernatable()) continue;
-      if (!best || rt.lastActivityAt < best.lastActivityAt) best = rt;
-    }
-    return best;
-  }
-
-  /** The victim re-checks in its own job; a refusal (a message arrived meanwhile) frees the pick for another. */
-  private askToHibernate(rt: AgentRuntime) {
-    const id = rt.agent.id;
-    const refused = () => {
-      if (!this.pendingEvictions.delete(id)) return;
-      this.evict();
-    };
-    void rt.hibernate("freed_slot").then(
-      (ok) => {
-        if (!ok) refused();
-      },
-      (err) => {
-        this.d.log.error({ err, agent: rt.agent.slug }, "freed_slot hibernate failed");
-        refused();
-      },
-    );
-  }
-
   private publish() {
-    this.d.bus.publishAll({ type: "supervisor", running: this.holders.size, max: this.d.max() });
+    this.d.bus.publishAll({ type: "supervisor", running: this.holders.size });
   }
 }

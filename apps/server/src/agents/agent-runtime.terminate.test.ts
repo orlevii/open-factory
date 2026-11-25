@@ -9,6 +9,7 @@ import type { MountCheckContext } from "../workspace/mounts.ts";
 import type { AgentRuntime, DockerDeps } from "./agent-runtime.ts";
 import { AgentTerminatedError } from "./errors.ts";
 import { EventBus } from "./event-bus.ts";
+import { liveCredentialId } from "./live-credential.ts";
 import { AgentRuntimes } from "./runtimes.ts";
 import type { PrepareStart } from "./start.ts";
 import { ev, FakeDriver } from "./testing/fake-driver.ts";
@@ -120,7 +121,6 @@ test("a failed container removal keeps the slot (stop_failed) and forwards nothi
   await h.rt.terminateStop("@or");
   await h.rt.settled();
   expect(slots.events).not.toContainEqual(["release"]);
-  expect(slots.events.at(-1)).toEqual(["stop_failed"]);
   expect(h.rt.live().status).toBe("terminated");
   expect(h.forwarded).toEqual([]); // no errored fact
 });
@@ -239,7 +239,7 @@ test("unmarking with a running process flushes what arrived during the window", 
   expect(h.driver.last.sent.flat().map((m) => m.body)).toEqual(["hi", "queued meanwhile"]);
 });
 
-test("a committed latch rejects an arriving row; a held row is rejected too", async () => {
+test("a committed latch rejects an arriving row; an arriving member update is rejected too", async () => {
   await h.makeRuntime();
   h.rt.markTerminated({ committed: true });
   const row = await h.row("too late");
@@ -248,15 +248,15 @@ test("a committed latch rejects an arriving row; a held row is rejected too", as
   );
   expect(await stateOf(row.id)).toBe("rejected");
   expect(h.rt.queueItems()).toEqual([]);
-  const held = await h.store.createHeld({
+  const update = await h.store.createOrgRow({
     kind: "member_update",
     toAgentId: h.agentId,
     subjectAgentId: h.agentId,
     notice: "errored",
     body: "x",
   });
-  await h.receive(held);
-  expect(await stateOf(held.id)).toBe("rejected");
+  await h.receive(update);
+  expect(await stateOf(update.id)).toBe("rejected");
   expect(h.driver.starts).toHaveLength(0);
 });
 
@@ -288,7 +288,7 @@ test("reload never clears the latch", async () => {
 test("reload latches a row terminated elsewhere", async () => {
   await h.makeRuntime();
   await h.t
-    .sql`update agents set kind = 'ephemeral', reports_to = ${h.agentId}, terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
+    .sql`update agents set kind = 'ephemeral', reports_to = ${h.agentId}, reports_to_user = null, terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
   await h.rt.reload();
   expect(h.rt.isTerminated()).toBe(true);
   expect(h.rt.live().status).toBe("terminated");
@@ -358,7 +358,7 @@ test("a Docker agent without the Docker runtime configured: the cleanup fails (s
   await h.rt.reload();
   h.rt.markTerminated({ committed: true });
   await h.rt.terminateStop("@or");
-  expect(slots.events).toEqual([["stop_failed"]]);
+  expect(slots.events).toEqual([]);
   const [r] = await h.t.sql`select error_kind, runtime_journal from agents where id = ${h.agentId}`;
   expect(r).toEqual({ error_kind: "stop_failed", runtime_journal: { tasks: [], crons: [] } });
   expect(h.forwarded).toEqual([]);
@@ -377,14 +377,11 @@ function deferred(): Deferred {
 
 const IMAGE = "open-factory-base:test";
 const MOUNT_CHECK: MountCheckContext = {
-  slug: "lead",
   workdir: "/nonexistent/of-test/workdir",
   grantedPaths: [],
   skillPaths: [],
   templateSkillPaths: [],
   templateDir: "/nonexistent/of-test/home/templates/t",
-  declaredMarketplaceDirs: [],
-  pluginsDir: "/nonexistent/of-test/plugins",
   cliBundle: "/nonexistent/of-test/cli.mjs",
   factoryHome: "/nonexistent/of-test/home",
   home: "/nonexistent/of-test/user",
@@ -434,7 +431,6 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     log: silentLog,
     uid: 501,
     gid: 20,
-    checkImage: async () => {},
   });
   const prepareEntered = deferred();
   const gates = {
@@ -462,7 +458,6 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     tokens: noopTokens,
     log: silentLog,
     forward: (f) => (router ? router.forward(f) : Promise.resolve()),
-    maxRunningAgents: () => 1,
     memberUpdateDebounceMs: () => o.memberUpdateDebounceMs ?? 3_600_000,
     docker: {
       containers,
@@ -571,12 +566,6 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
       w.proc().emit(...ev.fullTurn("sess-kid"));
       await w.settled();
     },
-    /** The spawner runs and holds the only slot (its process started, no session yet: not evictable). */
-    fillCap: async () => {
-      await w.sendHuman("keep busy", await load(leadId));
-      await w.settled();
-      expect(w.held(leadId)).toBe(1);
-    },
   };
   return w;
 }
@@ -604,14 +593,6 @@ const states: {
   stuck?: boolean;
 }[] = [
   { name: "hibernated", setup: async () => {} },
-  {
-    name: "queued (cap full)",
-    setup: async (w) => {
-      await w.fillCap();
-      await w.sendHuman("hi");
-      expect(w.runtimes.supervisor.isQueued(w.id)).toBe(true);
-    },
-  },
   {
     name: "pulling",
     setup: async (w) => {
@@ -752,7 +733,8 @@ async function lockWaiter() {
 
 test("a granted wake whose grant job is queued behind the termination starts nothing", async () => {
   const w = await world();
-  await w.fillCap();
+  const credential = liveCredentialId(w.rt.agent);
+  w.runtimes.supervisor.pause(credential, new Date(Date.now() + 3_600_000), true);
   await w.sendHuman("hi");
   expect(w.runtimes.supervisor.isQueued(w.id)).toBe(true);
   // Hold the child's job queue (a reload waiting on its row), so the grant job lands behind it.
@@ -767,8 +749,8 @@ test("a granted wake whose grant job is queued behind the termination starts not
     return original(agentId);
   });
   const reloading = w.rt.reload();
-  // The spawner goes: its slot is granted to the child, whose grant job queues behind the held reload.
-  await (await w.load(w.leadId)).stop();
+  // The pause ends: the child is granted its start, and its grant job queues behind the held reload.
+  w.runtimes.supervisor.onCredentialReset(credential);
   expect(w.held()).toBe(1);
   await w.terminate();
   gate.resolve();
@@ -860,19 +842,19 @@ test("a batch write in flight and the termination both complete: no deadlock", a
   expect(w.docker.containersOf(w.id)).toEqual([]);
 });
 
-test("a provisional latch whose transaction fails: the held timer is re-armed and the update delivered", async () => {
+test("a provisional latch whose transaction fails: the debounce timer is re-armed and the update delivered", async () => {
   const w = await world({ memberUpdateDebounceMs: 60_000 });
   await w.idle();
   const proc = w.proc();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   // A member update to the child, held in its debounce window: the held timer is armed for its end.
-  const update = await h.store.createHeld({
+  const update = await h.store.createOrgRow({
     kind: "member_update",
     toAgentId: w.id,
     fromAgentId: w.leadId,
     body: "an update",
   });
-  await w.rt.receiveHeld(update);
+  await w.rt.receive(update);
   await w.settled();
   const hold = holdTermination({ fail: new Error("the database went away") });
   const terminating = w.terminate();

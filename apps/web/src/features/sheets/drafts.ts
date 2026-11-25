@@ -6,7 +6,7 @@ export type DraftKey =
   | "new-schedule"
   | "new-template"
   | "add-skills"
-  | "add-marketplace"
+  | `inline:${string}`
   | `edit-agent:${string}`
   | `edit-schedule:${string}`;
 
@@ -66,6 +66,12 @@ export function useSheetDraft<T>(
 }
 
 export const hasDraft = (key: DraftKey) => drafts.has(key);
+/** An inline prerequisite's draft key under its sheet's key: ends with the sheet's own draft. */
+export const inlineKey = (parent: DraftKey, kind: string): DraftKey => `inline:${parent}:${kind}`;
+/** A sheet that finished (created or saved) drops the drafts of the prerequisites it hosted. */
+export function clearInlineDrafts(parent: DraftKey) {
+  for (const k of [...drafts.keys()]) if (k.startsWith(`inline:${parent}:`)) drafts.delete(k);
+}
 export const clearDraft = (key: DraftKey) => void drafts.delete(key);
 /** A copy of the draft as it is now (`undefined` when there is none): the snapshot a submit is judged against later. */
 export const peekDraft = (key: DraftKey): unknown =>

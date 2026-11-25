@@ -2,6 +2,7 @@ import { z } from "zod";
 import { avatarColorSchema } from "./avatar.ts";
 import { configDocSchema } from "./config.ts";
 import { sessionEventSchema } from "./events.ts";
+import { MSG } from "./messages.ts";
 import { nameSchema, slugSchema } from "./names.ts";
 import { liveCronSchema } from "./schedules.ts";
 import { templateIssueSchema } from "./templates.ts";
@@ -43,7 +44,8 @@ export const agentLiveShape = {
   rateLimitExact: z.boolean().optional(),
   runtimeDisabled: z.string().optional(),
   errorKind: errorKindSchema.optional(),
-  image: z.string().optional(),
+  /** Docker agents: the image of the live process (null when none runs) and the one the config resolves to now. */
+  image: z.object({ running: z.string().nullable(), next: z.string() }).optional(),
   pulling: z.boolean().optional(),
   /** U3: when the open turn started (ISO), so the UI can time it. */
   turnStartedAt: z.string().optional(),
@@ -52,6 +54,24 @@ export const agentLiveShape = {
   /** I2 §7.3: the config change lines a pending restart applies (empty when none is pending). */
   restartChanges: z.array(z.string()),
 };
+
+/** I9 §4.5: who an agent reports to; never null. A persistent agent's manager is an agent or a human, an ephemeral agent's its spawner. `handle` is bare. */
+export const reportsToSchema = z.object({ kind: z.enum(["agent", "user"]), handle: z.string() });
+export type ReportsTo = z.infer<typeof reportsToSchema>;
+
+/** I9 §4.6: a resolved config value and where it comes from: the agent's own overlay, its template, or neither (Claude Code's default). */
+export const resolvedValueSchema = z.object({
+  value: z.string().nullable(),
+  source: z.enum(["agent", "template"]).nullable(),
+});
+export type ResolvedValue = z.infer<typeof resolvedValueSchema>;
+
+/** `"@handle"` of an agent or a person; the leading `@` is optional and dropped. Whether it exists is the service's to judge. */
+export const managerRefSchema = z
+  .string()
+  .trim()
+  .transform((s) => (s.startsWith("@") ? s.slice(1) : s))
+  .pipe(z.string().min(1, MSG.managerRequired).max(40, MSG.managerUnknown));
 
 export const agentSummarySchema = z.object({
   slug: z.string(),
@@ -63,7 +83,9 @@ export const agentSummarySchema = z.object({
   lastError: z.string().optional(),
   kind: z.enum(["persistent", "ephemeral"]),
   template: z.string(),
-  reportsTo: z.string().nullable(),
+  reportsTo: reportsToSchema,
+  model: resolvedValueSchema,
+  effort: resolvedValueSchema,
   reports: z.number().int().nonnegative().default(0),
   /** S8: open and in-progress tasks assigned to it (the session strip's link). */
   openTasks: z.number().int().nonnegative().default(0),
@@ -98,14 +120,11 @@ export type AgentSummary = z.infer<typeof agentSummarySchema>;
 
 export const queueItemSchema = z.object({
   id: z.string(),
-  kind: z.enum(["message", "compact", "notice", "held", "raw"]),
+  kind: z.enum(["message", "compact", "notice", "raw"]),
   body: z.string().optional(),
-  count: z.number().int().positive().optional(),
-  about: z.string().optional(),
+  /** S9: a scheduled row's due time. */
   dueAt: z.string().optional(),
-  waitReason: z
-    .enum(["turn", "window", "starting", "errored", "rate_limited", "ride_along", "stopping"])
-    .optional(),
+  waitReason: z.enum(["turn", "stopping"]).optional(),
   clientMessageId: z.string().uuid().optional(),
   focus: z.string().optional(),
   urgent: z.boolean().optional(),
@@ -126,18 +145,10 @@ export const agentListSchema = z.object({
   agents: z.array(agentSummarySchema),
   /** `ended=only` (S7 §14): older ended agents exist beyond the newest 200 shown. */
   more: z.boolean().default(false),
-  running: z.object({ count: z.number().int().nonnegative(), max: z.number().int().positive() }),
+  running: z.object({ count: z.number().int().nonnegative() }),
 });
-/** The model an agent runs with and where it comes from (I2 §12.3): its own overlay, its template, or Claude's default. */
-export const agentModelSchema = z.object({
-  value: z.string().nullable(),
-  source: z.enum(["agent", "template", "default"]),
-});
-export type AgentModel = z.infer<typeof agentModelSchema>;
-
 export const agentDetailSchema = z.object({
   agent: agentSummarySchema,
-  model: agentModelSchema,
   queue: z.array(queueItemSchema),
   lastSeq: z.number().int().nonnegative(),
 });
@@ -247,7 +258,7 @@ export const createAgentBodySchema = z.object({
   slug: slugSchema,
   displayName: z.string().trim().min(1, "Enter a display name.").max(80),
   description: z.string().trim().max(500),
-  reportsTo: slugSchema.nullable(),
+  reportsTo: managerRefSchema,
   credential: nameSchema,
   projects: z.array(nameSchema).optional(),
   manageOrg: z.boolean().optional(),
@@ -257,7 +268,7 @@ export const patchAgentBodySchema = z
   .strictObject({
     displayName: z.string().trim().min(1, "Enter a display name.").max(80),
     description: z.string().trim().max(500),
-    reportsTo: slugSchema.nullable(),
+    reportsTo: managerRefSchema,
     credential: nameSchema,
     projects: z.array(nameSchema),
     color: avatarColorSchema.nullable(),
@@ -283,12 +294,6 @@ export const agentConfigResponseSchema = z.object({
     valid: z.boolean(),
   }),
   merged: configDocSchema.nullable(),
-  /**
-   * What the merged config runs as plugins: each key with its pin (`commit:<sha>`, `tag:<name>`, `latest`, `live`,
-   * `missing`), and `loaded`, the version the running process's first `init` listed (spec §7.3 step 8). Empty while
-   * `merged` is null.
-   */
-  plugins: z.array(z.object({ key: z.string(), pin: z.string(), loaded: z.string().optional() })),
   issues: z.array(templateIssueSchema),
 });
 export type AgentConfigResponse = z.infer<typeof agentConfigResponseSchema>;

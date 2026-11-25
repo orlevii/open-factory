@@ -209,13 +209,11 @@ test("timed-out stop escalates (forceKill, stop_escalated); a failed escalation 
   p.forceKill = async () => {
     throw new Error("EPERM");
   };
-  await h.rt.hibernate("freed_slot");
+  await h.rt.hibernate("warm_window");
   await h.rt.settled();
   expect(h.rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
   expect(await row()).toMatchObject({ status: "errored", error_kind: "stop_failed" });
   expect(slots.events.filter((e) => e[0] === "release")).toHaveLength(0);
-  expect(slots.events.at(-1)).toEqual(["stop_failed"]);
-  expect(h.rt.isStopping()).toBe(false);
   expect(h.rt.acceptsWake("message")).toBe(false);
   expect(h.rt.acceptsWake("restart")).toBe(true);
   await h.send("x");
@@ -394,7 +392,7 @@ test("Restart of a stop_failed agent with no process: one more cleanup; a failur
   await h.rt.settled();
   expect(cleanup).toHaveBeenCalledTimes(2);
   expect(h.rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
-  expect(slots.events).toEqual([["stop_failed"]]);
+  expect(slots.events).toEqual([]);
   expect(h.driver.starts).toHaveLength(1);
   expect(await row()).toMatchObject({ error_kind: "stop_failed", attempting: false });
 

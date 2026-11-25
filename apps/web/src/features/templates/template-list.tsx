@@ -2,7 +2,6 @@ import { isReservedTemplateName, type templateSummarySchema } from "@open-factor
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, TriangleAlert } from "lucide-react";
 import type { z } from "zod";
-import { ImageStatusLabel } from "./image-status";
 
 type Summary = z.infer<typeof templateSummarySchema>;
 
@@ -76,15 +75,6 @@ export function TemplateList({ dir, templates }: { dir: string; templates: Summa
                 {t.runtime && (
                   <span className="@min-[60rem]:shrink-0">
                     {t.runtime === "docker" ? "Docker" : "Local"}
-                  </span>
-                )}
-                {t.imageStatus && (
-                  <span className="flex min-w-0 items-center gap-1.5 @min-[60rem]:shrink-0">
-                    <ImageStatusLabel status={t.imageStatus.status} />
-                    {/* On one line the cell doesn't shrink, so a long registry ref is capped here. */}
-                    <span className="min-w-0 truncate font-mono @min-[60rem]:max-w-56">
-                      {t.imageStatus.name}
-                    </span>
                   </span>
                 )}
                 <span className="@min-[60rem]:shrink-0">

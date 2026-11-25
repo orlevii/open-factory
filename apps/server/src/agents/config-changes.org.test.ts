@@ -42,7 +42,7 @@ function world(live: AgentRow[] = []) {
       allLive: async () => [],
       currentEffective: async () => undefined,
     },
-    resolver: { libraryOf: async () => ({ skills: {}, plugins: {} }) },
+    resolver: { libraryOf: async () => ({ skills: {} }) },
     templates: { scan: async () => {} },
     store: {
       append: async (_id: string, _turn: string | null, event: AnyEvent) => {

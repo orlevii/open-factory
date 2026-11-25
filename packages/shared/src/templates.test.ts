@@ -14,7 +14,6 @@ test("defaults and camelCase output", () => {
     localSkills: true,
     secrets: [],
     canSpawn: [],
-    maxLiveSpawns: 5,
   });
   expect(templateConfigSchema.parse(c)).toEqual(c);
 });
@@ -30,10 +29,13 @@ test("strict: unknown keys and bad values are errors", () => {
     templateYamlSchema.safeParse({ name: "x1", display_name: "X", skills: [".."] }).success,
   ).toBe(false);
   expect(
-    templateYamlSchema.safeParse({ name: "x1", display_name: "X", plugins: ["p@mk"] }).success,
-  ).toBe(false);
-  expect(
     templateYamlSchema.safeParse({ name: "x1", display_name: "X", secrets: ["PATH"] }).success,
+  ).toBe(false);
+});
+
+test("max_live_spawns is refused in template.yaml: the spawn limits are gone", () => {
+  expect(
+    templateYamlSchema.safeParse({ name: "x1", display_name: "X", max_live_spawns: 3 }).success,
   ).toBe(false);
 });
 
@@ -93,14 +95,6 @@ test("image: only a Docker image reference", () => {
   const base = templateYamlSchema.parse({ name: "tl", display_name: "T" });
   expect(templateConfigSchema.safeParse({ ...base, image: "x/../y" }).success).toBe(false);
   expect(templateConfigSchema.safeParse({ ...base, image: "x/y:1" }).success).toBe(true);
-});
-
-test("image: the open-factory-user/ tag is refused, pointing to the bare name", () => {
-  const r = imageRefSchema.safeParse("open-factory-user/playwright:latest");
-  expect(r.success).toBe(false);
-  expect(r.error?.issues[0]?.message).toBe("Use the bare name playwright for a user image.");
-  expect(imageRefSchema.safeParse("playwright").success).toBe(true);
-  expect(imageRefSchema.safeParse("ghcr.io/open-factory-user/x:1").success).toBe(true);
 });
 
 test("warm_window_minutes has no default and is kept when set", () => {

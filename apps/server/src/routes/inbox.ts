@@ -47,26 +47,29 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
           { unread: req.query.unread === "true", notify },
         );
         // The chat rows carry their agent's summary fields (I1 §6.7). The response schema validates and serializes it.
-        const { chats: unread, ...rest } = page;
-        const chats = await Promise.all(
-          (unread ?? []).map(async ({ slug, ...rest }) => {
-            const a = await app.agents.summary(slug);
-            return {
-              ...rest,
-              agent: {
-                slug: a.slug,
-                displayName: a.displayName,
-                template: a.template,
-                avatarVersion: a.avatarVersion,
-                color: a.color,
-                kind: a.kind,
-                status: a.status,
-                archivedAt: a.archivedAt,
-              },
-            };
-          }),
-        );
-        return unread ? { ...rest, chats } : rest;
+        const { chats: unread, updates: unreadUpdates, ...rest } = page;
+        const withAgent = (rows: typeof unread) =>
+          Promise.all(
+            (rows ?? []).map(async ({ slug, ...row }) => {
+              const a = await app.agents.summary(slug);
+              return {
+                ...row,
+                agent: {
+                  slug: a.slug,
+                  displayName: a.displayName,
+                  template: a.template,
+                  avatarVersion: a.avatarVersion,
+                  color: a.color,
+                  kind: a.kind,
+                  status: a.status,
+                  archivedAt: a.archivedAt,
+                },
+              };
+            }),
+          );
+        if (!unread) return rest;
+        const [chats, updates] = await Promise.all([withAgent(unread), withAgent(unreadUpdates)]);
+        return { ...rest, chats, updates };
       } catch (err) {
         if (err instanceof InvalidCursorError) throw new FieldError("before", err.message);
         throw err;
@@ -116,7 +119,12 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req) => {
       const userId = userOf(req);
       try {
-        const r = await app.store.markReadFrom(userId, req.params.slug, req.body.upTo);
+        const r = await app.store.markReadFrom(
+          userId,
+          req.params.slug,
+          req.body.upTo,
+          req.body.kind,
+        );
         if (!r) throw new ApiError(404, "agent_not_found", "No such agent");
         if (r.marked) app.bus.publishToUser(userId, { type: "inbox_changed" });
         return r;

@@ -199,7 +199,7 @@ test("a caller terminated meanwhile is refused", async () => {
 });
 
 test("a spawned agent can be a target", async () => {
-  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'dev'`;
+  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo', reports_to_user = null where id = 'dev'`;
   const { item } = await svc.create(or, { target: "dev", ...weekday });
   expect(item.target.slug).toBe("dev");
 });
@@ -241,7 +241,7 @@ test("two concurrent creates by one agent at 19 are serialised by its row lock: 
 
 test("A schedules for B while B schedules for A: no deadlock escapes, both succeed", async () => {
   await insertAgent(t.sql, { id: "kid", slug: "kid" });
-  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'kid'`;
+  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo', reports_to_user = null where id = 'kid'`;
   for (let i = 0; i < 15; i++) {
     const res = await Promise.all([
       svc.create(agent("ceo"), { target: "dev", ...weekday }),
@@ -253,7 +253,7 @@ test("A schedules for B while B schedules for A: no deadlock escapes, both succe
 });
 
 test("a spawned agent can't create schedules even when called directly (Q12)", async () => {
-  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'dev'`;
+  await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo', reports_to_user = null where id = 'dev'`;
   await expect(svc.create(agent("dev"), { target: "ceo", ...weekday })).rejects.toMatchObject({
     code: "forbidden",
     message: "Spawned agents can't schedule messages.",

@@ -155,22 +155,6 @@ function system(e: Json, s: MapperState): HarnessEvent[] {
                 })),
               }
             : {}),
-          ...(Array.isArray(e.plugins)
-            ? {
-                plugins: e.plugins.flatMap((p: Json) =>
-                  typeof p?.source === "string"
-                    ? [
-                        {
-                          name: String(p.name ?? ""),
-                          path: String(p.path ?? ""),
-                          source: p.source,
-                          ...(typeof p.version === "string" ? { version: p.version } : {}),
-                        },
-                      ]
-                    : [],
-                ),
-              }
-            : {}),
         });
       }
       out.push({ type: "turn_started" });
@@ -536,7 +520,7 @@ function usageOf(e: Json, s: MapperState): HarnessEvent {
     cacheWriteTokens: sum("cacheCreationInputTokens"),
     costUsd: Math.max(0, cost),
     durationMs: Number(e.duration_ms ?? 0),
-    numTurns: Number(e.num_turns ?? 0),
+    ...(typeof e.num_turns === "number" ? { numTurns: e.num_turns } : {}),
   };
 }
 
@@ -585,7 +569,7 @@ function result(e: Json, s: MapperState): HarnessEvent[] {
     ...(originKind ? { originKind } : {}),
     ...(e.local_command ? { command: String(e.local_command) } : {}),
     ...(typeof e.api_error_status === "number" ? { apiErrorStatus: e.api_error_status } : {}),
-    numTurns: Number(e.num_turns ?? 0),
+    ...(typeof e.num_turns === "number" ? { numTurns: e.num_turns } : {}),
   });
   s.cronWakeupPending = false;
   if (e.local_command === "compact") s.manualCompactPending = false;

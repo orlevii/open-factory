@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Drawer as Vaul } from "vaul";
+import { collapseEmbeddedOnEscape } from "@/components/forms/embedded";
 import { stampInstant, useStampedRef } from "@/lib/input-modality";
 import { cn } from "@/lib/utils";
 
@@ -28,7 +29,7 @@ function Drawer({ direction = "bottom", autoFocus = true, stacked = false, onRel
   );
 }
 
-function DrawerContent({ className, children, onOpenAutoFocus, ref, ...props }: React.ComponentProps<typeof Vaul.Content>) {
+function DrawerContent({ className, children, onOpenAutoFocus, onEscapeKeyDown, ref, ...props }: React.ComponentProps<typeof Vaul.Content>) {
   const { direction, released, stacked } = React.useContext(Ctx);
   const stampedRef = useStampedRef(ref);
   return (
@@ -40,6 +41,10 @@ function DrawerContent({ className, children, onOpenAutoFocus, ref, ...props }: 
         ref={stampedRef}
         data-released={released ? "" : undefined}
         tabIndex={-1}
+        onEscapeKeyDown={(e) => {
+          collapseEmbeddedOnEscape(e);
+          onEscapeKeyDown?.(e);
+        }}
         onOpenAutoFocus={(e) => {
           onOpenAutoFocus?.(e);
           if (e.defaultPrevented) return;

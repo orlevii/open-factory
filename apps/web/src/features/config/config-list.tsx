@@ -33,16 +33,15 @@ type Props = {
   inherited?: readonly string[];
   /** "From template dev". */
   inheritedLabel?: string;
-  /** Rules, names and commands are mono; prose (trust notes) is Geist. */
+  /** Rules, names and commands are mono; prose is Geist. */
   mono?: boolean;
   readOnly?: boolean;
-  help?: string;
   error?: string;
   warning?: string;
-  /** Notes for single rows (a server issue on `…allow.3`), by index in `own`. */
+  /** Notes for single rows (a server issue on a row), by index in `own`. */
   rowNotes?: ReadonlyMap<number, RowNote>;
   placeholder?: string;
-  /** A rule for one new item (a plugin's `name@marketplace`); its message goes to `onReject`. */
+  /** A rule for one new item (an item's own format); its message goes to `onReject`. */
   check?: (value: string) => string | undefined;
   onAdd: (value: string) => void;
   onRemove: (index: number) => void;
@@ -156,7 +155,7 @@ const Row = memo(function Row({
   );
 });
 
-/** Every list on the Configuration form (spec §12.2): rules, notes, skills, plugins, secrets, spawnable templates. */
+/** Every list on the Configuration form (spec §12.2): rules, notes, skills, secrets, spawnable templates. */
 export function ConfigList({
   name,
   label,
@@ -166,7 +165,6 @@ export function ConfigList({
   inheritedLabel = "From template",
   mono,
   readOnly,
-  help,
   error,
   warning,
   rowNotes,
@@ -280,7 +278,6 @@ export function ConfigList({
       name={name}
       label={label}
       legend
-      help={help}
       error={error}
       warning={warning}
       legendAction={

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { imageStatusSchema } from "./images.ts";
 import { MSG } from "./messages.ts";
 import { modelSchema } from "./models.ts";
 import { hostSkillSchema, nameSchema, secretNameSchema } from "./names.ts";
@@ -18,22 +17,11 @@ const IMAGE_REF = new RegExp(
     // Only the digest Docker accepts: a malformed one is a validation error, not a Docker 400.
     "(?:@sha256:[0-9a-f]{64})?$",
 );
-const USER_TAG_PREFIX = "open-factory-user/";
-/**
- * An image reference only (no `..`, whitespace, `?` or `#`): it reaches Docker API paths that aren't encoded.
- * A built user image is named by its bare folder name, never by its `open-factory-user/` tag (spec §10.1),
- * so the tag can't bypass the no-pull rule.
- */
+/** An image reference only (no `..`, whitespace, `?` or `#`): it reaches Docker API paths that aren't encoded. */
 export const imageRefSchema = z
   .string()
   .max(255)
-  .regex(IMAGE_REF, "Use a Docker image reference, like ghcr.io/org/image:tag.")
-  .refine((v) => !v.startsWith(USER_TAG_PREFIX), {
-    error: (iss) => {
-      const name = String(iss.input).slice(USER_TAG_PREFIX.length).split(/[:@]/)[0];
-      return `Use the bare name ${name} for a user image.`;
-    },
-  });
+  .regex(IMAGE_REF, "Use a Docker image reference, like ghcr.io/org/image:tag.");
 
 export const templateConfigSchema = z.object({
   name: nameSchema,
@@ -49,7 +37,6 @@ export const templateConfigSchema = z.object({
   localSkills: z.boolean(),
   secrets: z.array(secretNameSchema),
   canSpawn: z.array(nameSchema),
-  maxLiveSpawns: z.number().int().min(0).max(50),
   warmWindowMinutes: z.number().int().min(1).max(1440).optional(),
 });
 export type TemplateConfig = z.infer<typeof templateConfigSchema>;
@@ -72,7 +59,6 @@ export const templateYamlShape = {
   local_skills: z.boolean().optional(),
   secrets: z.array(secretNameSchema).max(200).optional(),
   can_spawn: z.array(nameSchema).max(200).optional(),
-  max_live_spawns: z.number().int().min(0).max(50).optional(),
   warm_window_minutes: z.number().int().min(1).max(1440).optional(),
 };
 
@@ -88,7 +74,6 @@ export const templateYamlSchema = z
     local_skills: templateYamlShape.local_skills.default(true),
     secrets: templateYamlShape.secrets.default([]),
     can_spawn: templateYamlShape.can_spawn.default([]),
-    max_live_spawns: templateYamlShape.max_live_spawns.default(5),
   })
   .transform(
     (y): TemplateConfig => ({
@@ -105,7 +90,6 @@ export const templateYamlSchema = z
       localSkills: y.local_skills,
       secrets: y.secrets,
       canSpawn: y.can_spawn,
-      maxLiveSpawns: y.max_live_spawns,
       ...(y.warm_window_minutes !== undefined ? { warmWindowMinutes: y.warm_window_minutes } : {}),
     }),
   );
@@ -117,8 +101,6 @@ export const templateIssueSchema = z.object({
   line: z.number().int().positive().optional(),
   column: z.number().int().positive().optional(),
   path: z.string().optional(),
-  /** A fix the page offers on the issue: open Add marketplace prefilled from the declaration (spec §7.4). */
-  action: z.literal("add_from_template").optional(),
 });
 export type TemplateIssue = z.infer<typeof templateIssueSchema>;
 
@@ -130,9 +112,6 @@ export const templateSummarySchema = z.object({
   errors: z.number().int(),
   warnings: z.number().int(),
   agentCount: z.number().int(),
-  /** The plugins its `settings.json` enables (`effectivePlugins`). */
-  pluginCount: z.number().int().nonnegative(),
-  imageStatus: imageStatusSchema.optional(),
 });
 export const templatesListSchema = z.object({
   dir: z.string(),
@@ -150,15 +129,14 @@ export const templateDetailSchema = z.object({
   files: z.array(templateFileStateSchema),
   issues: z.array(templateIssueSchema),
   agents: z.array(z.string()),
-  imageStatus: imageStatusSchema.optional(),
   /** U2 §15.3: the folder's `avatar.svg` version (null when absent or rejected) and whether it is over 256 KB. */
   avatar: z.object({ version: z.string().nullable(), tooLarge: z.boolean() }),
 });
 export type TemplateDetail = z.infer<typeof templateDetailSchema>;
 export const templateDetailResponseSchema = z.object({ template: templateDetailSchema });
-/** U2 §14: the web's static routes beside `/templates/$name` (`/templates/new`, `/templates/images`). A template
- *  with one of these names would be unreachable by URL, so creation refuses them. */
-export const RESERVED_TEMPLATE_NAMES: readonly string[] = ["new", "images"];
+/** U2 §14: the web's static route beside `/templates/$name` (`/templates/new`). A template
+ *  with this name would be unreachable by URL, so creation refuses it. */
+export const RESERVED_TEMPLATE_NAMES: readonly string[] = ["new"];
 export const isReservedTemplateName = (name: string) => RESERVED_TEMPLATE_NAMES.includes(name);
 export const createTemplateBodySchema = z.object({
   name: nameSchema.refine((n) => !isReservedTemplateName(n), MSG.nameReserved),

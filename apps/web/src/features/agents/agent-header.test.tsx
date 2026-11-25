@@ -27,7 +27,7 @@ beforeEach(() => {
       if (url.startsWith("/api/agents/dev/events")) return json(conversation());
       if (url === "/api/agents/dev") return json(detail(agent));
       if (url.startsWith("/api/agents?"))
-        return json({ agents: [detail(agent).agent], more: false, running: { count: 0, max: 8 } });
+        return json({ agents: [detail(agent).agent], more: false, running: { count: 0 } });
       return new Response(JSON.stringify({ error: { code: "not_found" } }), { status: 404 });
     }),
   );

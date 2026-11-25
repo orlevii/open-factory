@@ -24,7 +24,7 @@ export function peerBody(
   const { left } = change;
   if (left.reason === "terminated") return `${who} left: terminated ${terminatedBy(left.by)}.`;
   if (left.reason === "archived") return `${who} left: archived${by}.`;
-  return `${who} left: now reports to ${left.to ? `@${left.to}` : "the humans"}${by}.`;
+  return `${who} left: now reports to @${left.to}${by}.`;
 }
 
 /** The TTL sweep's `terminated_by` (S7 §10.3). */
@@ -39,7 +39,7 @@ function terminatedBy(by: string): string {
 
 /** Anchored at the end: the display name before it is human text and may contain anything. */
 const LEFT =
-  / left: (?:(archived)|now reports to (?:@([^\s.]+)|(the humans))|terminated (?:by (@[^\s.]+)|(after 3 days without activity)))(?:, by (?:@[^\s.]+))?\.$/;
+  / left: (?:(archived)|now reports to @([^\s.]+)|terminated (?:by (@[^\s.]+)|(after 3 days without activity)))(?:, by (?:@[^\s.]+))?\.$/;
 
 /**
  * How the subject left, read back from a `peer_left` body written by `peerBody`; undefined for any other text. A
@@ -49,7 +49,7 @@ export function peerLeftOf(body: string): PeerLeft | undefined {
   const m = LEFT.exec(body);
   if (!m) return undefined;
   if (m[1]) return { reason: "archived" };
-  if (m[4]) return { reason: "terminated", by: m[4] };
-  if (m[5]) return { reason: "terminated", by: FACTORY };
-  return { reason: "moved", to: m[2] ?? null };
+  if (m[3]) return { reason: "terminated", by: m[3] };
+  if (m[4]) return { reason: "terminated", by: FACTORY };
+  return { reason: "moved", to: m[2] as string };
 }

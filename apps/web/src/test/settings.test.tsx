@@ -591,10 +591,14 @@ test("projects: a live spawned grantee is named through its spawner in Remove's 
       "GET /api/agents?ended=exclude": () =>
         json({
           agents: [
-            { ...agentRow("lead"), kind: "persistent", reportsTo: null },
-            { ...agentRow("tech-lead-ab12"), kind: "ephemeral", reportsTo: "lead" },
+            { ...agentRow("lead"), kind: "persistent", reportsTo: { kind: "user", handle: "or" } },
+            {
+              ...agentRow("tech-lead-ab12"),
+              kind: "ephemeral",
+              reportsTo: { kind: "agent", handle: "lead" },
+            },
           ],
-          running: { count: 0, max: 8 },
+          running: { count: 0 },
         }),
     },
   });
@@ -962,12 +966,12 @@ test.each([
       "GET /api/invites": () => json({ invites: [] }),
       "GET /api/settings/factory": () =>
         json({
-          maxRunningAgents: 8,
-          defaultWarmWindowMinutes: 70,
+          warmWindowMinutes: 70,
           memberUpdateDebounceSeconds: 30,
           loopGuardMessages: 10,
           loopGuardWindowMinutes: 10,
           allowLocalRuntime: false,
+          defaultImage: "ghcr.io/x/base:latest",
           updatedAt: null,
           updatedBy: null,
         }),

@@ -4,7 +4,6 @@ import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import {
   type Actor,
-  type AgentModel,
   type AgentOverlay,
   type AgentSummary,
   actorBy,
@@ -16,6 +15,8 @@ import {
   nameSchema,
   type PatchAgentBody,
   type PutAgentConfigResponse,
+  type ReportsTo,
+  type ResolvedValue,
   slugSchema,
   touchesLocalRuntime,
   treeOrder,
@@ -37,7 +38,6 @@ import type { KeyedMutex } from "../workspace/lock.ts";
 import type { MaterializeCheck, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
 import type { ConfigChanges } from "./config-changes.ts";
-import type { ConfigResolver } from "./config-resolver.ts";
 import type { OverlayPlan } from "./config-service.ts";
 import { OrgRefusedError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
@@ -54,6 +54,19 @@ export type UpdatePlan = {
 
 /** A subject with no neighbours to leave behind (a join reads the neighbourhood after the change). */
 const noPeers = { managerId: null, peerIds: [] };
+
+type Managers = { agents: Map<string, string>; users: Map<string, string> };
+
+/** The row's manager as the DTO says it: an agent's slug or a user's handle (a spawned agent's is its spawner). */
+function reportsToOf(r: AgentRow, m: Managers): ReportsTo {
+  if (r.reportsTo) return { kind: "agent", handle: m.agents.get(r.reportsTo) ?? "" };
+  return { kind: "user", handle: m.users.get(r.reportsToUser ?? "") ?? "" };
+}
+
+/** A resolved manager: an active persistent agent, or an enabled user. */
+type Manager =
+  | { kind: "agent"; row: AgentRow }
+  | { kind: "user"; id: string; handle: string; name: string };
 
 const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
 
@@ -124,8 +137,6 @@ export class AgentService {
       workspace: Workspace;
       lock: KeyedMutex;
       runtimes: AgentRuntimes;
-      /** `GET …/config` reads each plugin's pin through the Library resolve (spec §8.1). */
-      resolver: Pick<ConfigResolver, "libraryOf">;
       log: RuntimeLog;
       /** The one ContainerManager: a running container counts as a process for the persona-reset gate (spec §11.4). */
       containers?: Pick<ContainerManager, "isRunning">;
@@ -196,12 +207,12 @@ export class AgentService {
       .select()
       .from(schema.agents)
       .where(and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt)));
-    const slugOf = await this.slugsOf(rows);
+    const managers = await this.managersOf(rows);
     const order = treeOrder(
       rows.map((r) => ({
         slug: r.slug,
         displayName: r.displayName,
-        reportsTo: r.reportsTo ? (slugOf.get(r.reportsTo) ?? null) : null,
+        reportsTo: reportsToOf(r, managers),
       })),
     );
     const bySlug = new Map(rows.map((r) => [r.slug, r]));
@@ -211,19 +222,65 @@ export class AgentService {
         if (!row) throw new Error("tree order returned an unknown slug");
         return { row, depth };
       }),
-      slugOf,
+      managers,
     );
   }
 
-  /** The managers' slugs of `rows`, read for those managers only. */
-  private async slugsOf(rows: AgentRow[]): Promise<Map<string, string>> {
-    const ids = [...new Set(rows.flatMap((r) => (r.reportsTo ? [r.reportsTo] : [])))];
-    if (ids.length === 0) return new Map();
-    const managers = await this.d.db
-      .select({ id: schema.agents.id, slug: schema.agents.slug })
-      .from(schema.agents)
-      .where(inArray(schema.agents.id, ids));
-    return new Map(managers.map((m) => [m.id, m.slug]));
+  /** The managers' handles of `rows`, agents and users, read for those managers only. */
+  private async managersOf(rows: AgentRow[]): Promise<Managers> {
+    const agentIds = [...new Set(rows.flatMap((r) => (r.reportsTo ? [r.reportsTo] : [])))];
+    const userIds = [...new Set(rows.flatMap((r) => (r.reportsToUser ? [r.reportsToUser] : [])))];
+    const [agents, users] = await Promise.all([
+      agentIds.length
+        ? this.d.db
+            .select({ id: schema.agents.id, handle: schema.agents.slug })
+            .from(schema.agents)
+            .where(inArray(schema.agents.id, agentIds))
+        : [],
+      userIds.length
+        ? this.d.db
+            .select({ id: schema.users.id, handle: schema.users.handle })
+            .from(schema.users)
+            .where(inArray(schema.users.id, userIds))
+        : [],
+    ]);
+    return {
+      agents: new Map(agents.map((m) => [m.id, m.handle])),
+      users: new Map(users.map((m) => [m.id, m.handle])),
+    };
+  }
+
+  /** I9 §4.6: each shown agent's model and effort, from its overlay, else the template's last valid doc, else neither. */
+  private async resolvedConfig(
+    rows: AgentRow[],
+  ): Promise<Map<string, { model: ResolvedValue; effort: ResolvedValue }>> {
+    const docs = new Map(
+      await Promise.all(
+        [...new Set(rows.map((r) => r.template))].map(
+          async (t) => [t, await this.d.templates.lastValid(t)] as const,
+        ),
+      ),
+    );
+    const pick = (own: unknown, base: unknown): ResolvedValue =>
+      typeof own === "string" && own
+        ? { value: own, source: "agent" }
+        : typeof base === "string" && base
+          ? { value: base, source: "template" }
+          : { value: null, source: null };
+    return new Map(
+      rows.map((r) => {
+        const own = agentOverlaySchema.safeParse(this.overlayOf(r));
+        const mine = own.success ? own.data.template : undefined;
+        const theirs = docs.get(r.template)?.template;
+        return [
+          r.id,
+          {
+            model: pick(mine?.model, theirs?.model),
+            effort: pick(mine?.effort, theirs?.effort),
+          },
+        ];
+      }),
+    );
   }
 
   /**
@@ -232,12 +289,13 @@ export class AgentService {
    */
   private async summarize(
     shown: { row: AgentRow; depth: number }[],
-    managerSlugs?: Map<string, string>,
+    knownManagers?: Managers,
   ): Promise<AgentSummary[]> {
     const { db } = this.d;
     if (shown.length === 0) return [];
     const rows = shown.map((s) => s.row);
-    const slugOf = managerSlugs ?? (await this.slugsOf(rows));
+    const managers = knownManagers ?? (await this.managersOf(rows));
+    const resolved = await this.resolvedConfig(rows);
     const liveIds = rows.filter((r) => !r.archivedAt && !r.terminatedAt).map((r) => r.id);
     const reportCount = new Map<string, number>();
     if (liveIds.length > 0)
@@ -323,7 +381,9 @@ export class AgentService {
         kind: r.kind as "persistent" | "ephemeral",
         template: r.template,
         runtime: r.runtime,
-        reportsTo: r.reportsTo ? (slugOf.get(r.reportsTo) ?? null) : null,
+        reportsTo: reportsToOf(r, managers),
+        model: resolved.get(r.id)?.model ?? { value: null, source: null },
+        effort: resolved.get(r.id)?.effort ?? { value: null, source: null },
         reports: reportCount.get(r.id) ?? 0,
         openTasks: openTasks.get(r.id) ?? 0,
         scheduleCount: scheduleCount.get(r.id) ?? 0,
@@ -465,21 +525,43 @@ export class AgentService {
     return c.id;
   }
 
-  private async activeManager(slug: string): Promise<AgentRow> {
+  /** In the write transaction: a human manager is still enabled (FOR SHARE serializes with a disable). */
+  private async assertUserEnabled(tx: Tx, manager: Manager | undefined) {
+    if (manager?.kind !== "user") return;
+    const rows = await tx
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(and(eq(schema.users.id, manager.id), isNull(schema.users.disabledAt)))
+      .for("share");
+    if (!rows.length) throw new FieldError("reportsTo", FIELD_MSG.chooseManager);
+  }
+
+  /** The manager a handle names: an active persistent agent or an enabled user; anything else is a field error. */
+  private async resolveManager(handle: string): Promise<Manager> {
+    const refuse = () => new FieldError("reportsTo", FIELD_MSG.chooseManager);
+    const kind = await handleKind(this.d.db, handle);
+    if (kind === "user") {
+      const [u] = await this.d.db
+        .select({ id: schema.users.id, handle: schema.users.handle, name: schema.users.name })
+        .from(schema.users)
+        .where(and(eq(schema.users.handle, handle), isNull(schema.users.disabledAt)));
+      if (!u) throw refuse();
+      return { kind: "user", ...u };
+    }
     const [m] = await this.d.db
       .select()
       .from(schema.agents)
       .where(
         and(
-          eq(schema.agents.slug, slug),
+          eq(schema.agents.slug, handle),
           eq(schema.agents.kind, "persistent"),
           isNull(schema.agents.archivedAt),
           isNull(schema.agents.terminatedAt),
         ),
       );
     // S7 §9.3: no spawned managers, so reports never hang under an agent that gets terminated.
-    if (!m) throw new FieldError("reportsTo", FIELD_MSG.chooseManager);
-    return m;
+    if (!m) throw refuse();
+    return { kind: "agent", row: m };
   }
 
   /** Registered projects by name, in the order given; the first unknown name is a field error. */
@@ -552,7 +634,7 @@ export class AgentService {
     // Re-check under the lock against the template as just parsed: last_valid may have moved since the pre-check.
     if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor, tpl.config.runtime);
     const credentialId = await this.credentialId(b.credential);
-    const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
+    const manager = await this.resolveManager(b.reportsTo);
     const projects = await this.projectRows(b.projects ?? tpl.config.projects);
     const config = b.config ? await this.checkedOverlay(b.config, tpl, actor) : {};
 
@@ -562,7 +644,10 @@ export class AgentService {
       description: b.description,
       template: b.template,
       config: tpl.config,
-      manager: manager ? { slug: manager.slug, displayName: manager.displayName } : null,
+      manager:
+        manager.kind === "agent"
+          ? { kind: "agent", slug: manager.row.slug, displayName: manager.row.displayName }
+          : { kind: "user", handle: manager.handle, name: manager.name },
       grants: projects.map((p) => ({ name: p.name, hostPath: p.hostPath })),
     };
     try {
@@ -578,6 +663,7 @@ export class AgentService {
     try {
       await db.transaction(async (tx) => {
         if (!(await claimHandle(tx, b.slug, "agent"))) throw slugTaken();
+        await this.assertUserEnabled(tx, manager);
         await tx.insert(schema.agents).values({
           id,
           slug: b.slug,
@@ -588,7 +674,8 @@ export class AgentService {
           // I2 §5.1: the overlay starts empty (the agent runs the live template) unless the creator gave one.
           config,
           runtime: tpl.config.runtime,
-          reportsTo: manager?.id ?? null,
+          reportsTo: manager.kind === "agent" ? manager.row.id : null,
+          reportsToUser: manager.kind === "user" ? manager.id : null,
           credentialId,
           manageOrg: b.manageOrg ?? false,
         });
@@ -626,13 +713,7 @@ export class AgentService {
             agentRuntimes: [tpl.config.runtime],
           })),
           ...(actor.kind === "agent"
-            ? agentPolicyIssues({
-                target: "overlay",
-                before: {},
-                after: parsed.data,
-                declaredBy: tpl.doc,
-                plugins: await this.d.policy.plugins([tpl.doc]),
-              })
+            ? agentPolicyIssues({ target: "overlay", before: {}, after: parsed.data })
             : []),
         ]
       : overlaySchemaIssues(config);
@@ -690,7 +771,8 @@ export class AgentService {
     this.assertNotLocal(actor, { agentRuntime: row.runtime });
     const currentGrants = await this.grantNames(row.id);
     const changed = { feeds: false, text: false };
-    let moved: { to: string | null } | undefined;
+    let moved: { to: string } | undefined;
+    let movedTo: Manager | undefined;
     const set: Partial<typeof schema.agents.$inferInsert> = {};
 
     if (b.displayName !== undefined && b.displayName !== row.displayName) {
@@ -716,11 +798,17 @@ export class AgentService {
       }
     }
     if (b.reportsTo !== undefined) {
-      const manager = b.reportsTo ? await this.activeManager(b.reportsTo) : null;
-      if (manager) await this.assertNoCycle(row.id, manager);
-      if ((manager?.id ?? null) !== row.reportsTo) {
-        set.reportsTo = manager?.id ?? null;
-        moved = { to: manager?.slug ?? null };
+      const manager = await this.resolveManager(b.reportsTo);
+      if (manager.kind === "agent") await this.assertNoCycle(row.id, manager.row);
+      const same =
+        manager.kind === "agent"
+          ? manager.row.id === row.reportsTo
+          : manager.id === row.reportsToUser;
+      if (!same) {
+        set.reportsTo = manager.kind === "agent" ? manager.row.id : null;
+        set.reportsToUser = manager.kind === "user" ? manager.id : null;
+        moved = { to: manager.kind === "agent" ? manager.row.slug : manager.handle };
+        movedTo = manager;
         changed.feeds = true;
       }
     }
@@ -738,6 +826,7 @@ export class AgentService {
     return {
       row,
       write: async (tx) => {
+        await this.assertUserEnabled(tx, movedTo);
         if (Object.keys(set).length)
           await tx.update(schema.agents).set(set).where(eq(schema.agents.id, row.id));
         if (newGrants) await this.replaceGrants(tx, row.id, newGrants);
@@ -901,18 +990,6 @@ export class AgentService {
   /** The overlay as stored; one that fails its schema (an agent made before I2) is kept as is for the editor to fix. */
   private overlayOf(row: AgentRow): Record<string, unknown> {
     return row.config as Record<string, unknown>;
-  }
-
-  /** I2 §12.3: the model the agent runs with and where it comes from, read from the rows (no disk, no scan). */
-  async modelOf(slug: string): Promise<AgentModel> {
-    const row = await this.rowBySlug(slug);
-    const own = agentOverlaySchema.safeParse(this.overlayOf(row));
-    const mine = own.success ? own.data.template?.model : undefined;
-    if (mine) return { value: mine, source: "agent" };
-    const doc = await this.d.templates.lastValid(row.template);
-    const theirs = doc?.template.model;
-    if (typeof theirs === "string" && theirs) return { value: theirs, source: "template" };
-    return { value: null, source: "default" };
   }
 
   async archive(slug: string, actor: Actor): Promise<AgentSummary> {

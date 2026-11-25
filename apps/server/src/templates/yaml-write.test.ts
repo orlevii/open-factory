@@ -18,6 +18,7 @@ test("comments, key order and display_name survive a set of the owned keys", () 
     model: "sonnet",
     skills: ["tdd", "release"],
     secrets: ["GH_TOKEN"],
+    runtime: "docker",
   });
   expect(out).toContain("# The dev template.");
   expect(out).toMatch(/display_name: Dev +# shown in the UI/);
@@ -29,14 +30,51 @@ test("comments, key order and display_name survive a set of the owned keys", () 
   expect(out).toMatch(/secrets: \[ ?GH_TOKEN ?\]/);
 });
 
+test("runtime, image and permission mode are written in place and appended, with comments kept", () => {
+  const out = applyConfigToYaml(SRC, {
+    model: "opus",
+    skills: ["tdd"],
+    secrets: ["GH_TOKEN"],
+    runtime: "local",
+    image: "my/img:1",
+    permission_mode: "bypass",
+  });
+  expect(out).toContain("# The dev template.");
+  expect(out).toContain("model: opus # pinned");
+  expect(out).toMatch(/runtime: local\n/);
+  expect(parse(out)).toMatchObject({
+    runtime: "local",
+    image: "my/img:1",
+    permission_mode: "bypass",
+    custom_key: "keep me",
+  });
+});
+
+test("clearing the image removes the key", () => {
+  const src = `${SRC}image: my/img:1 # pinned\n`;
+  const out = applyConfigToYaml(src, {
+    model: "opus",
+    skills: ["tdd"],
+    secrets: ["GH_TOKEN"],
+    runtime: "docker",
+  });
+  expect(parse(out)).not.toHaveProperty("image");
+  expect(out).toContain("# The dev template.");
+});
+
 test("an unchanged doc returns the text byte for byte", () => {
-  expect(applyConfigToYaml(SRC, { model: "opus", skills: ["tdd"], secrets: ["GH_TOKEN"] })).toBe(
-    SRC,
-  );
+  expect(
+    applyConfigToYaml(SRC, {
+      model: "opus",
+      skills: ["tdd"],
+      secrets: ["GH_TOKEN"],
+      runtime: "docker",
+    }),
+  ).toBe(SRC);
 });
 
 test("an owned key absent from the doc is removed, and only that key", () => {
-  const out = applyConfigToYaml(SRC, { skills: ["tdd"], secrets: ["GH_TOKEN"] });
+  const out = applyConfigToYaml(SRC, { skills: ["tdd"], secrets: ["GH_TOKEN"], runtime: "docker" });
   expect(out).not.toContain("model");
   expect(out.replace(/ +# shown/, "   # shown").replace("[ GH_TOKEN ]", "[GH_TOKEN]")).toBe(
     SRC.replace("model: opus # pinned\n", ""),
@@ -48,7 +86,8 @@ test("keys the form doesn't own are neither written nor removed, whatever the do
     model: "opus",
     skills: ["tdd"],
     secrets: ["GH_TOKEN"],
-    runtime: "local",
+    runtime: "docker",
+    name: "other",
     custom_key: "changed",
     sneaky: 1,
   });

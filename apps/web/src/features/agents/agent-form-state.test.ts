@@ -3,9 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { useAgentFormState } from "@/features/agents/agent-form-state";
+import { PartialSaveError, useAgentFormState } from "@/features/agents/agent-form-state";
 import { resetDrafts } from "@/features/sheets/drafts";
+import { sessionQueryOptions } from "@/lib/session";
 import { agentSummary, mockWorld } from "@/test/agent-screens-fixtures";
+import { json } from "@/test/mock-api";
+import { alice } from "@/test/render-app";
 
 beforeEach(() => {
   resetDrafts();
@@ -15,6 +18,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 function wrapper() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(sessionQueryOptions.queryKey, alice);
   return ({ children }: { children: ReactNode }) =>
     createElement(QueryClientProvider, { client }, children);
 }
@@ -91,14 +95,17 @@ test("New agent: the template fills untouched fields, and the slug is not prefil
     await result.current.submit(onSubmit);
   });
   // Untouched grants are left to the template.
-  expect(onSubmit).toHaveBeenCalledWith({
-    template: "lead",
-    slug: "mine",
-    displayName: "Mine",
-    description: "Leads the team",
-    reportsTo: null,
-    credential: "work",
-  });
+  expect(onSubmit).toHaveBeenCalledWith(
+    {
+      template: "lead",
+      slug: "mine",
+      displayName: "Mine",
+      description: "Leads the team",
+      reportsTo: "alice",
+      credential: "work",
+    },
+    undefined,
+  );
 });
 
 test("Edit: the body is the diff from the saved agent, and no change is nothing to save", async () => {
@@ -119,7 +126,7 @@ test("Edit: the body is the diff from the saved agent, and no change is nothing 
   });
   expect(r).toBe("ok");
   expect(onSubmit).toHaveBeenCalledOnce();
-  expect(onSubmit).toHaveBeenCalledWith({ displayName: "Boss" });
+  expect(onSubmit).toHaveBeenCalledWith({ displayName: "Boss" }, undefined);
   // The sheet closes and toasts; no inline success line.
   expect(result.current.outcome.success).toBeUndefined();
   expect(result.current.outcome.error).toBeUndefined();
@@ -254,7 +261,7 @@ test("a live refetch updates untouched fields and keeps edited ones", () => {
   const onSubmit = vi.fn(async () => lead);
   return act(async () => {
     await result.current.submit(onSubmit);
-    expect(onSubmit).toHaveBeenCalledWith({ displayName: "Mine" });
+    expect(onSubmit).toHaveBeenCalledWith({ displayName: "Mine" }, undefined);
   });
 });
 
@@ -369,5 +376,97 @@ test("manageOrg is an edit field: toggling it is the only change sent", async ()
   await act(async () => {
     await result.current.submit(send);
   });
-  expect(send).toHaveBeenCalledWith({ manageOrg: true });
+  expect(send).toHaveBeenCalledWith({ manageOrg: true }, undefined);
+});
+
+const withModel =
+  (model: string, effort = "") =>
+  (_prev: unknown) => ({
+    template: { ...(model ? { model } : {}), ...(effort ? { effort } : {}) },
+  });
+
+test("Edit: a model override alone is a config write with no agent patch; undoing it is nothing to save", async () => {
+  const { result } = mount(edit());
+  act(() => result.current.modelEffort.onChange(withModel("opus")));
+  expect(result.current.modelEffortChanged).toBe(true);
+  const send = vi.fn(async (_b: CreateAgentBody | PatchAgentBody, _m?: unknown) => lead);
+  await act(async () => {
+    await result.current.submit(send);
+  });
+  expect(send).toHaveBeenCalledWith({}, { model: "opus", effort: "" });
+  act(() => result.current.modelEffort.onChange(withModel("")));
+  expect(result.current.modelEffortChanged).toBe(false);
+});
+
+test("Edit: an agent's own model starts as the override, and inheriting again writes an empty one", async () => {
+  const own = agentSummary({
+    slug: "lead",
+    model: { value: "opus", source: "agent" },
+    effort: { value: "high", source: "template" },
+  });
+  const { result } = mount(edit(own));
+  // Only what the agent overrides: the template's effort is inherited, not copied.
+  expect(result.current.modelEffort.value).toEqual({ template: { model: "opus" } });
+  act(() => result.current.modelEffort.onChange(withModel("")));
+  const send = vi.fn(async (_b: CreateAgentBody | PatchAgentBody, _m?: unknown) => own);
+  await act(async () => {
+    await result.current.submit(send);
+  });
+  expect(send).toHaveBeenCalledWith({}, { model: "", effort: "" });
+});
+
+test("Edit: when the config write fails after the agent saved, the outcome says so and a retry sends only the config", async () => {
+  const { result } = mount(edit());
+  act(() => result.current.set("displayName", "Boss"));
+  act(() => result.current.modelEffort.onChange(withModel("opus")));
+  const saved = { ...lead, displayName: "Boss" };
+  const partial = vi.fn(async () => {
+    throw new PartialSaveError(saved, "Saved your changes, but not Model and Effort: Changed.");
+  });
+  let r: string | undefined;
+  await act(async () => {
+    r = await result.current.submit(partial);
+  });
+  expect(r).toBe("failed");
+  expect(result.current.outcome.error).toBe(
+    "Saved your changes, but not Model and Effort: Changed.",
+  );
+  const retry = vi.fn(async (_b: CreateAgentBody | PatchAgentBody, _m?: unknown) => saved);
+  await act(async () => {
+    await result.current.submit(retry);
+  });
+  expect(retry).toHaveBeenCalledWith({}, { model: "opus", effort: "" });
+});
+
+test("New agent: model and effort are off until a template is chosen, then inherit the template's", async () => {
+  mockWorld({
+    extra: {
+      "GET /api/templates/lead/config": () =>
+        json({
+          doc: { template: { model: "opus" }, settings: {}, mcp: { mcpServers: {} } },
+          hashes: { "template.yaml": "h", "settings.json": null, "mcp.json": null },
+          issues: [],
+          localSkills: [],
+          agents: { live: 0, archived: 0, cantStart: 0 },
+        }),
+    },
+  });
+  const { result } = mount(create());
+  expect(result.current.modelEffort.disabledReason).toBe("Choose a template first");
+  act(() => result.current.set("template", "lead"));
+  expect(result.current.modelEffort.disabledReason).toBeUndefined();
+  await waitFor(() => expect(result.current.modelEffort.base?.template.model).toBe("opus"));
+  // Nothing chosen: nothing is written to the new agent's config.
+  act(() => result.current.set("slug", "mine"));
+  await waitFor(() => expect(result.current.shown.displayName).toBe("Team Lead"));
+  const onSubmit = vi.fn(async (_b: CreateAgentBody | PatchAgentBody, _m?: unknown) => undefined);
+  await act(async () => {
+    await result.current.submit(onSubmit);
+  });
+  expect(onSubmit.mock.lastCall?.[1]).toBeUndefined();
+  act(() => result.current.modelEffort.onChange(withModel("haiku", "low")));
+  await act(async () => {
+    await result.current.submit(onSubmit);
+  });
+  expect(onSubmit.mock.lastCall?.[1]).toEqual({ model: "haiku", effort: "low" });
 });

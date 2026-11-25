@@ -10,7 +10,10 @@ export function buildTree(rows: TreeRow[]): TreeNode[] {
   const order = treeOrder(rows);
   const parents = new Set(rows.map((r) => r.slug));
   const parentOf = new Map(
-    rows.map((r) => [r.slug, r.reportsTo && parents.has(r.reportsTo) ? r.reportsTo : null]),
+    rows.map((r) => [
+      r.slug,
+      r.reportsTo.kind === "agent" && parents.has(r.reportsTo.handle) ? r.reportsTo.handle : null,
+    ]),
   );
   const withChildren = new Set<string>();
   for (const p of parentOf.values()) if (p) withChildren.add(p);

@@ -67,12 +67,12 @@ async function dto(app: FastifyInstance, db: Db): Promise<FactorySettingsDto> {
         .where(eq(schema.users.id, s.updatedBy))
     : [];
   return {
-    maxRunningAgents: s.maxRunningAgents,
-    defaultWarmWindowMinutes: s.defaultWarmWindowMinutes,
+    warmWindowMinutes: s.warmWindowMinutes,
     memberUpdateDebounceSeconds: s.memberUpdateDebounceSeconds,
     loopGuardMessages: s.loopGuardMessages,
     loopGuardWindowMinutes: s.loopGuardWindowMinutes,
     allowLocalRuntime: localRuntimeAllowed(app.config),
+    defaultImage: app.config.defaultImage,
     updatedAt: s.updatedAt?.toISOString() ?? null,
     updatedBy: editor ? `@${editor.handle}` : null,
   };

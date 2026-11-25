@@ -17,14 +17,14 @@ test("bodies match the spec's wording", () => {
     peerBody(dev, "peer", { kind: "peer_left", left: { reason: "moved", to: "lead" } }, "qa"),
   ).toBe("@dev (Developer) left: now reports to @lead.");
   expect(
-    peerBody(dev, "report", { kind: "peer_left", left: { reason: "moved", to: null } }, "lead"),
-  ).toBe("@dev (Developer) left: now reports to the humans.");
+    peerBody(dev, "report", { kind: "peer_left", left: { reason: "moved", to: "or" } }, "lead"),
+  ).toBe("@dev (Developer) left: now reports to @or.");
 });
 
 test.each<PeerBodyEvent & { kind: "peer_left" }>([
   { kind: "peer_left", left: { reason: "archived" } },
   { kind: "peer_left", left: { reason: "moved", to: "lead-2" } },
-  { kind: "peer_left", left: { reason: "moved", to: null } },
+  { kind: "peer_left", left: { reason: "moved", to: "or" } },
 ])("peerLeftOf reads back what peerBody wrote: %j", (change) => {
   expect(peerLeftOf(peerBody(dev, "peer", change, "lead"))).toEqual(change.left);
 });
@@ -118,7 +118,7 @@ test.each<[string, PeerBodyEvent]>([
 test.each<PeerBodyEvent & { kind: "peer_left" }>([
   { kind: "peer_left", left: { reason: "archived" }, by: "@hr" },
   { kind: "peer_left", left: { reason: "moved", to: "lead-2" }, by: "@hr" },
-  { kind: "peer_left", left: { reason: "moved", to: null }, by: "@hr" },
+  { kind: "peer_left", left: { reason: "moved", to: "or" }, by: "@hr" },
 ])("peerLeftOf reads back a body with the actor suffix, unchanged: %j", (change) => {
   expect(peerLeftOf(peerBody(dev, "peer", change, "lead"))).toEqual(change.left);
 });

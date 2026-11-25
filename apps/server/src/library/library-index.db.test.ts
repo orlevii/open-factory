@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { schema } from "@open-factory/db";
 import type { ConfigDoc } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandle } from "../test/handles.ts";
+import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { LibraryIndex } from "./library-index.ts";
 
@@ -46,6 +46,7 @@ test("the database store reads live sources and live agents, and usedBy counts t
       config: o.config ?? {},
       runtime: "local",
       credentialId: cred?.id,
+      reportsToUser: await testManagerUserId(db),
       archivedAt: o.archivedAt,
     });
   };

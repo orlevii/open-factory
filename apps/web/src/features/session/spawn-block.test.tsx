@@ -38,13 +38,12 @@ async function open(events: AnyEvent[], firstText: string | RegExp) {
             slug: "tech-lead-ab12",
             displayName: "Tech Lead · ab12",
             kind: "ephemeral",
-            reportsTo: "lead",
+            reportsTo: { kind: "agent", handle: "lead" },
           }),
         ],
-        running: { count: 1, max: 8 },
+        running: { count: 1 },
       }),
-    "GET /api/agents?ended=only": () =>
-      json({ agents: [], more: false, running: { count: 1, max: 8 } }),
+    "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 1 } }),
   });
   renderApp("/agents/lead/session", alice);
   await screen.findByText(firstText);

@@ -65,11 +65,13 @@ const shapeKeyOf = (list: AgentSummary[]) =>
   JSON.stringify(list.map((a) => [a.slug, a.displayName, a.reportsTo]));
 
 const parseShape = (key: string): TreeRow[] =>
-  (JSON.parse(key) as [string, string, string | null][]).map(([slug, displayName, reportsTo]) => ({
-    slug,
-    displayName,
-    reportsTo,
-  }));
+  (JSON.parse(key) as [string, string, TreeRow["reportsTo"]][]).map(
+    ([slug, displayName, reportsTo]) => ({
+      slug,
+      displayName,
+      reportsTo,
+    }),
+  );
 
 /** The shape key, or undefined while the live list loads. */
 function useShapeKey(): string | undefined {

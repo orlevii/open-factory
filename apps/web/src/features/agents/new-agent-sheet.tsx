@@ -12,7 +12,6 @@ import {
   useSuspenseQuery,
 } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
 import {
   type FormEvent,
   type ReactNode,
@@ -25,8 +24,6 @@ import {
 import { flushSync } from "react-dom";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
-import { Button } from "@/components/ui/button";
-import type { ComboOption } from "@/components/ui/combobox";
 import {
   Select,
   SelectContent,
@@ -39,11 +36,17 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { AddressLine } from "@/features/agents/address-line";
-import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
 import { useAgentFormState } from "@/features/agents/agent-form-state";
-import { agentsListQueryOptions, createAgent } from "@/features/agents/api";
+import {
+  agentsListQueryOptions,
+  createAgent,
+  type ModelEffort,
+  saveModelEffort,
+} from "@/features/agents/api";
 import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
 import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
+import { ManagerCombobox } from "@/features/agents/manager-combobox";
+import { ModelEffortFields } from "@/features/agents/model-effort-fields";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import {
   TemplateField,
@@ -53,11 +56,27 @@ import {
 import {
   credentialsQueryOptions,
   projectsQueryOptions,
+  secretsQueryOptions,
   usersQueryOptions,
 } from "@/features/settings/api";
+import { AddCredentialForm } from "@/features/settings/forms/add-credential-form";
+import { AddProjectForm } from "@/features/settings/forms/add-project-form";
+import { AddSecretForm } from "@/features/settings/forms/add-secret-form";
 import { setupQueryOptions } from "@/features/setup/api";
-import { clearDraft, clearDraftIf, draftGeneration, peekDraft } from "@/features/sheets/drafts";
+import {
+  clearDraft,
+  clearDraftIf,
+  clearInlineDrafts,
+  draftGeneration,
+  inlineKey,
+  peekDraft,
+} from "@/features/sheets/drafts";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
+import {
+  InlineAddTrigger,
+  useInlineAdd,
+  usePrerequisiteGuards,
+} from "@/features/sheets/inline-add";
 import { MoreOptions } from "@/features/sheets/more-options";
 import type { BodyProps } from "@/features/sheets/sheet-bodies";
 import {
@@ -73,13 +92,9 @@ import { FORM_MSG } from "@/lib/form-messages.ts";
 
 type Spec = { kind: "new-agent"; template?: string };
 
-const NO_MANAGER: ComboOption[] = [
-  { value: "", label: "No manager (reports to the humans)", fixed: true },
-];
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
 const EMPTY: ReadonlySet<string> = new Set();
 /** A spawned agent never manages. */
-const canManage = (a: AgentOpt) => a.kind === "persistent";
 const SHEET_CONTENT = "[data-slot=sheet-content], [data-slot=drawer-content]";
 // biome-ignore lint/suspicious/noThenProperty: ChildSpec's field, not a thenable
 const NEW_TEMPLATE = { kind: "new-template", then: "return" } as const;
@@ -120,16 +135,16 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     slugFor,
     form,
   });
-  const { values, shown, errors, set, blur, claim, pending, config, pluginCount } = s;
+  const { values, shown, errors, set, blur, claim, pending, config } = s;
   const { missingSecrets, noCredentials, credentials, staleNotes } = s;
   const detail = useQuery({
     ...templateQueryOptions(values.template),
     enabled: values.template !== "",
     retry: false,
   });
-  const activeAgents = useQuery(agentsListQueryOptions("exclude"));
   const projects = useQuery(projectsQueryOptions);
-  // The latest shown values, for a stacked child's result that lands after this render.
+  const secrets = useQuery(secretsQueryOptions);
+  // The latest shown values, for an inline form's result that lands after this render.
   const latestShown = useRef(shown);
   useLayoutEffect(() => {
     latestShown.current = shown;
@@ -147,38 +162,83 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
         : (find() ?? null),
     );
   };
+  const guards = usePrerequisiteGuards();
+  const credentialAdd = useInlineAdd({
+    draftKey: inlineKey("new-agent", "credential"),
+    guards,
+    noun: "credential",
+  });
+  const projectAdd = useInlineAdd({
+    draftKey: inlineKey("new-agent", "project"),
+    guards,
+    noun: "project",
+  });
+  const secretAdd = useInlineAdd({
+    draftKey: inlineKey("new-agent", "secret"),
+    guards,
+    noun: "secret",
+  });
+  // "Added <name>." under Credential, until the pick changes.
+  const [credentialNote, setCredentialNote] = useState<string>();
   const byId = (id: string) => () => form.current?.querySelector<HTMLElement>(`#${id}`);
-  const onAddCredential = () =>
-    openChildSheet({ kind: "add-credential" }, (name) =>
-      serve(() => set("credential", name), byId("field-credential")),
-    );
-  const onAddProject = () =>
-    openChildSheet({ kind: "add-project" }, (name) =>
-      serve(
-        // Joins the grant set as an override (setProjects).
-        () => s.setProjects([...latestShown.current.projects.filter((p) => p !== name), name]),
-        () => form.current?.querySelector<HTMLElement>(`[data-project="${CSS.escape(name)}"]`),
-      ),
-    );
-  // The warning disappears with the secrets cache; Template is the field it served.
-  const onAddSecret = (name: string) =>
-    openChildSheet({ kind: "add-secret", name }, () => serve(() => {}, byId("field-template")));
   const onNewTemplate = () =>
     openChildSheet(NEW_TEMPLATE, (name) =>
       serve(() => set("template", name), byId("field-template")),
     );
-  const addCredential = (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      inForm
-      data-skip-validate
-      onClick={onAddCredential}
-    >
-      <Plus aria-hidden="true" data-icon="inline-start" />
-      Add credential
-    </Button>
+  const addCredential = <InlineAddTrigger add={credentialAdd}>Add credential</InlineAddTrigger>;
+  const credentialForm = credentialAdd.open && (
+    <AddCredentialForm
+      key={credentialAdd.round}
+      frame="embedded"
+      embed={credentialAdd.embed}
+      existing={(credentials ?? []).map((c) => c.name)}
+      onCancel={credentialAdd.cancel}
+      onDone={(c) =>
+        void credentialAdd.finish(
+          credentialsQueryOptions.queryKey,
+          c,
+          () => {
+            set("credential", c.name);
+            setCredentialNote(`Added ${c.name}.`);
+          },
+          byId("field-credential"),
+        )
+      }
+    />
+  );
+  const projectForm = projectAdd.open && (
+    <AddProjectForm
+      key={projectAdd.round}
+      frame="embedded"
+      embed={projectAdd.embed}
+      existing={(projects.data ?? []).map((p) => p.name)}
+      onCancel={projectAdd.cancel}
+      onDone={(p) =>
+        void projectAdd.finish(
+          projectsQueryOptions.queryKey,
+          p,
+          // Joins the grant set as an override (setProjects).
+          () =>
+            s.setProjects([...latestShown.current.projects.filter((x) => x !== p.name), p.name]),
+          () => form.current?.querySelector<HTMLElement>(`[data-project="${CSS.escape(p.name)}"]`),
+        )
+      }
+    />
+  );
+  const secretNames = (secrets.data ?? []).map((x) => x.name);
+  const secretForm = secretAdd.open && (
+    <AddSecretForm
+      key={secretAdd.round}
+      frame="embedded"
+      embed={secretAdd.embed}
+      initialName={secretAdd.embed.start.name ?? ""}
+      existing={secretNames}
+      onCancel={secretAdd.cancel}
+      // The warning goes with the secrets cache; Template is the field it served.
+      onDone={(x) =>
+        void secretAdd.finish(secretsQueryOptions.queryKey, x, () => {}, byId("field-template"))
+      }
+    />
   );
 
   // An unknown or broken template name counts as none (the field shows it unchosen).
@@ -231,8 +291,11 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   // While a field inside has an error, every focus request (a failing submit, a mapped server error) reopens it, even
   // over the user's fold (§6.5).
   const inner = (["description", "credential", "projects"] as const).filter((f) => errors[f]);
+  // An open inline form lives in here: it keeps it open, and brings it back open with a restored draft.
+  const inlineOpen = credentialAdd.open || projectAdd.open;
   const autoKey = [
     reasonKey,
+    inlineOpen ? "inline" : "",
     staleNotes.credential || staleNotes.projects ? "stale" : "",
     inner.length > 0 ? `errors:${inner.join(",")}` : "",
     inner.length > 0 ? `attempt:${s.attempt}` : "",
@@ -247,7 +310,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   }
 
   const stillOpen = () => getSheetState().parent?.id === sheetId;
-  async function create(body: CreateAgentBody | PatchAgentBody) {
+  async function create(body: CreateAgentBody | PatchAgentBody, modelEffort?: ModelEffort) {
     // A create body always names its template; a patch never does.
     if (!("template" in body)) return;
     // A late result is judged against what was submitted (the draft now) and the session it was sent in.
@@ -276,11 +339,21 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     // An in-flight refetch must not land after this and put the stale `false` back.
     void qc.cancelQueries({ queryKey: setupQueryOptions.queryKey });
     qc.setQueryData(setupQueryOptions.queryKey, (d) => d && { ...d, hasAgent: true });
+    // The agent exists; its model and effort are a second write. A failure doesn't undo the first: it is said below.
+    let notSet: string | undefined;
+    if (modelEffort)
+      try {
+        await saveModelEffort(qc, agent.slug, modelEffort);
+      } catch (err) {
+        notSet = err instanceof ApiError ? err.message : FORM_MSG.unreachable;
+      }
     const open = stillOpen();
     // A late success clears the draft only if it still holds the submitted values; a New agent reopened on those
     // untouched values closes, so the same agent can't be created twice. Edits made since are kept.
-    if (open) clearDraft("new-agent");
-    else if (
+    if (open) {
+      clearDraft("new-agent");
+      clearInlineDrafts("new-agent");
+    } else if (
       clearDraftIf("new-agent", snapshot) &&
       getSheetState().parent?.kind === "new-agent" &&
       !getSheetState().child // a stacked child the user opened on it (and its input) stays
@@ -288,11 +361,24 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       closeSheet();
     const go = () =>
       void router.navigate({ to: "/agents/$slug/chat", params: { slug: agent.slug } });
-    if (open) {
+    const created = `Created @${agent.slug}.`;
+    if (notSet) {
+      // Said in a toast either way: the sheet closes onto the session.
+      const configure = () =>
+        void router.navigate({ to: "/agents/$slug/config", params: { slug: agent.slug } });
+      if (open) {
+        closeSheet();
+        go();
+      }
+      notify({
+        text: `${created} Model and effort weren't set: ${notSet}`,
+        action: { label: "Open configuration", run: configure },
+      });
+    } else if (open) {
       closeSheet();
       go();
     } else {
-      notify({ text: `Created @${agent.slug}.`, action: { label: "Open", run: go } });
+      notify({ text: created, action: { label: "Open", run: go } });
     }
   }
 
@@ -303,6 +389,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (pending || queued) return;
+    // An open inline form with input in it takes focus first: the agent isn't created behind it.
+    if (guards.block()) return;
     if (waitForTaken) setQueued(true);
     else run();
   }
@@ -331,10 +419,10 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
             {config && (
               <TemplateSummary
                 config={config}
-                pluginCount={pluginCount}
                 issues={detail.data?.issues ?? []}
                 missingSecrets={missingSecrets}
-                onAddSecret={onAddSecret}
+                addSecret={secretAdd}
+                secretForm={secretForm}
               />
             )}
           </TemplateField>
@@ -371,18 +459,13 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
             help={staleNotes.reportsTo}
           >
             {(a) => (
-              <AgentCombobox
+              <ManagerCombobox
                 id={a.id}
                 aria-label="Manager"
-                scope="live"
-                order="tree"
-                fixed={NO_MANAGER}
-                filter={canManage}
-                disabled={!activeAgents.data}
-                value={shown.reportsTo || null}
+                value={shown.reportsTo}
                 aria-invalid={a.invalid || undefined}
                 aria-describedby={a.describedBy}
-                onValueChange={(v) => set("reportsTo", v ?? "")}
+                onValueChange={(v) => set("reportsTo", v)}
               />
             )}
           </FieldShell>
@@ -405,20 +488,30 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
             </FieldShell>
             {noCredentials ? (
               // More options' summary says "No Claude credential yet."; the field offers to add one.
-              <div className="flex min-h-7 items-center justify-between gap-2">
-                <p className="text-[0.8125rem] font-medium">Credential</p>
-                {addCredential}
+              <div>
+                <div className="flex min-h-7 items-center justify-between gap-2">
+                  <p className="text-[0.8125rem] font-medium">Credential</p>
+                  {addCredential}
+                </div>
+                {credentialForm}
               </div>
             ) : (
               <FieldShell
                 name="credential"
                 label="Credential"
                 error={errors.credential}
-                help={staleNotes.credential}
+                help={staleNotes.credential ?? credentialNote}
                 action={addCredential}
+                below={credentialForm}
               >
                 {(a) => (
-                  <Select value={shown.credential} onValueChange={(v) => set("credential", v)}>
+                  <Select
+                    value={shown.credential}
+                    onValueChange={(v) => {
+                      set("credential", v);
+                      setCredentialNote(undefined);
+                    }}
+                  >
                     <SelectTrigger
                       id={a.id}
                       aria-invalid={a.invalid || undefined}
@@ -444,8 +537,16 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               error={errors.projects}
               help={staleNotes.projects}
               onChange={s.setProjects}
-              onAddProject={onAddProject}
+              add={
+                <div className="grid gap-0">
+                  <div className="flex flex-wrap gap-2">
+                    <InlineAddTrigger add={projectAdd}>Add project</InlineAddTrigger>
+                  </div>
+                  {projectForm}
+                </div>
+              }
             />
+            <ModelEffortFields {...s.modelEffort} />
           </MoreOptions>
           <FieldShell name="manageOrg" label="Can manage the org" help={MANAGE_ORG_HELP}>
             {(a) => (
@@ -465,7 +566,10 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
         pendingLabel="Creating…"
         pending={busy}
         restored={s.restored}
-        onDiscard={s.discard}
+        onDiscard={() => {
+          s.discard();
+          clearInlineDrafts("new-agent");
+        }}
         submitClassName="min-w-32"
         outcome={s.outcome}
       />

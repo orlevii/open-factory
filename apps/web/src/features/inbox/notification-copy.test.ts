@@ -254,7 +254,6 @@ describe("what does not notify", () => {
   test.each([
     ["a task event", item({ kind: "task_event", fact: "done", task: { key: "T-1", title: "x" } })],
     ["a factory restart", item({ notice: "factory_restarted" })],
-    ["a plugin not loaded notice", item({ notice: "plugin_not_loaded" })],
     ["a worktrees-kept notice", item({ notice: "worktrees_kept" })],
   ])("%s produces no burst", (_, i) => {
     expect(burstsOf({ chats: [], items: [i] })).toEqual([]);

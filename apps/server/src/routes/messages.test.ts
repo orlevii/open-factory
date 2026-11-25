@@ -16,7 +16,7 @@ beforeAll(async () => {
     ops: (await s.seedAgent({ slug: "ops" })).id,
     old: (await s.seedAgent({ slug: "old" })).id,
   };
-  await s.sql`update agents set reports_to = ${agentIds.dev ?? null}, kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'old'`;
+  await s.sql`update agents set reports_to = ${agentIds.dev ?? null}, reports_to_user = null, kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'old'`;
   or = (await s.signUpUser({ handle: "or" })).cookie;
 });
 afterAll(() => s.close());

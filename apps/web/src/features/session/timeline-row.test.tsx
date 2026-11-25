@@ -73,7 +73,6 @@ test("timeline: rate_limited renders nothing; rate_limit_paused follows the fall
 test("timeline: hibernated, process_started reasons (nothing after session_reset), cleanup, stop_escalated, background_work_lost, reconciled, unexpected exited as 'Stopped unexpectedly'", () => {
   const { texts, els } = lines([
     { type: "hibernated", reason: "warm_window", idleMinutes: 70 },
-    { type: "hibernated", reason: "freed_slot" },
     { type: "hibernated", reason: "apply_changes" },
     { type: "hibernated", reason: "shutdown" },
     { type: "hibernated", reason: "archived" },
@@ -109,7 +108,6 @@ test("timeline: hibernated, process_started reasons (nothing after session_reset
   ]);
   expect(texts).toEqual([
     "Hibernated after 70 minutes idle",
-    "Hibernated to free a slot",
     "Hibernated to apply changes",
     "Hibernated: the server stopped",
     "Stopped: the agent was archived",
@@ -132,7 +130,7 @@ test("timeline: hibernated, process_started reasons (nothing after session_reset
     "Stopped unexpectedly",
     "Stopped",
   ]);
-  const crash = els[20] as HTMLElement;
+  const crash = els[19] as HTMLElement;
   expect(crash.querySelector("details")).not.toBeNull();
   expect(crash.querySelector("details")?.open).toBe(false);
 });
@@ -186,14 +184,6 @@ test("timeline: mcp_unavailable is a warning quiet line with the status in its d
   expect(el.querySelector("details")?.open).toBe(false);
   expect(el.querySelector("pre")?.textContent).toBe("failed");
   expect(el.querySelector("svg")).not.toBeNull();
-});
-
-test("timeline: plugin_not_loaded names the plugin, points at the session log and carries a circle-alert", () => {
-  const { texts, els } = lines([{ type: "plugin_not_loaded", key: "p@mk", pin: "commit:abc" }]);
-  expect(texts).toEqual(["Plugin p@mk didn't load. Claude Code's output is in the session log."]);
-  const icon = (els[0] as HTMLElement).querySelector("svg");
-  expect(icon).not.toBeNull();
-  expect(icon).toHaveAttribute("aria-hidden", "true");
 });
 
 test("timeline: interrupt_unconfirmed is a warning quiet line", () => {

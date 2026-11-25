@@ -6,7 +6,13 @@ import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { checkHostPath, PathField } from "@/components/path-field";
 import { createProject } from "@/features/settings/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
-import { FormFrame, type FormFrameKind } from "./form-frame";
+import {
+  type EmbedProps,
+  FormFrame,
+  type FormFrameKind,
+  useEmbedDirty,
+  useEmbedDraft,
+} from "./form-frame";
 import { fieldsOf } from "./shared";
 
 type Field = "name" | "hostPath";
@@ -15,19 +21,22 @@ const FIELDS: readonly Field[] = ["name", "hostPath"];
 export function AddProjectForm({
   frame,
   existing,
+  embed,
   onDone,
   onCancel,
 }: {
   frame: FormFrameKind;
   existing: string[];
+  /** The frame `embedded` only: what its host gives an inline prerequisite. */
+  embed?: EmbedProps;
   onDone(p: ProjectSummary): void;
   onCancel(): void;
 }) {
-  const [name, setName] = useState("");
-  const [hostPath, setHostPath] = useState("");
+  const [name, setName] = useState(embed?.start.name ?? "");
+  const [hostPath, setHostPath] = useState(embed?.start.hostPath ?? "");
   const o = useOutcome();
   const [pending, setPending] = useState(false);
-  const formRef = useRef<HTMLFormElement>(null);
+  const formRef = useRef<HTMLElement>(null);
 
   const f = useFieldErrors({
     form: formRef,
@@ -41,6 +50,9 @@ export function AddProjectForm({
       hostPath: () => checkHostPath(hostPath),
     },
   });
+
+  useEmbedDraft(embed, { name, hostPath });
+  useEmbedDirty(embed, name !== "" || hostPath !== "");
 
   async function submit() {
     o.clear();
@@ -67,6 +79,7 @@ export function AddProjectForm({
       pendingLabel="Adding…"
       pending={pending}
       outcome={o.outcome}
+      embed={embed}
       ref={formRef}
     >
       <FormField

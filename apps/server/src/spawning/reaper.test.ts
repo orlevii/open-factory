@@ -5,6 +5,7 @@ import { type AgentRow, schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
+import { liveCredentialId } from "../agents/live-credential.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { sendAs } from "../agents/testing/runtime-harness.ts";
@@ -45,18 +46,15 @@ interface Child {
   proc: FakeProcess;
 }
 
-/** A spawner `lead` that may spawn `dev` (local), one running slot, and a reaper on the injected clock. */
-async function setup(o: { maxRunning?: number } = {}) {
+/** A spawner `lead` that may spawn `dev` (local), and a reaper on the injected clock. */
+async function setup() {
   const driver = new FakeDriver();
-  t = await makeTestApp({
-    harnessDriver: driver,
-    factorySettings: { maxRunningAgents: o.maxRunning ?? 1 },
-  });
+  t = await makeTestApp({ harnessDriver: driver });
   const app = t;
   writeTemplate(app.factoryHome, "dev", "name: dev\ndisplay_name: Dev\nruntime: local\n");
   const lead = await app.seedAgent({
     slug: "lead",
-    config: { template: { can_spawn: ["dev"], max_live_spawns: 10 } },
+    config: { template: { can_spawn: ["dev"] } },
   });
   // I2 §6.2: spawning follows the spawner's running process.
   await asRunning(app.app, lead);
@@ -186,11 +184,12 @@ const neverReaped: [string, (s: S) => Promise<Child>][] = [
     "queued",
     async (s) => {
       const c = await s.spawnHibernated("q");
-      // The spawner takes the only slot (started, no session yet: not evictable); the child's wake waits for it.
-      const lead = await s.t.app.runtimes.load(s.lead.id);
-      if (!lead) throw new Error("no lead runtime");
-      await s.human(lead, "keep busy");
-      await lead.settled();
+      // The child's credential is rate-limit paused, so its wake waits in the queue.
+      s.t.app.runtimes.supervisor.pause(
+        liveCredentialId(c.rt.agent),
+        new Date(Date.now() + 3_600_000),
+        true,
+      );
       await s.human(c.rt, "hi");
       expect(s.t.app.runtimes.supervisor.isQueued(c.id)).toBe(true);
       return c;
@@ -275,25 +274,25 @@ test("a lost activity write never gets a recently active child reaped", async ()
   expect(c.rt.isTerminated()).toBe(false);
 });
 
-test("a held member update waiting for its window keeps the child; a held peer event alone doesn't", async () => {
+test("a member update inside its debounce keeps the child; a peer event alone doesn't", async () => {
   const s = await setup();
   const a = await s.spawnHibernated("hu");
   const b = await s.spawnHibernated("hp");
-  const update = await s.t.app.store.createHeld({
+  const update = await s.t.app.store.createOrgRow({
     kind: "member_update",
     toAgentId: a.id,
     fromAgentId: s.lead.id,
     body: "an update",
   });
-  await a.rt.receiveHeld(update);
-  const peer = await s.t.app.store.createHeld({
+  await a.rt.receive(update);
+  const peer = await s.t.app.store.createOrgRow({
     kind: "peer_joined",
     toAgentId: b.id,
     subjectAgentId: a.id,
     notice: "peer",
     body: "joined",
   });
-  await b.rt.receiveHeld(peer);
+  await b.rt.receive(peer);
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   expect(await s.terminatedBy(a.id)).toBeNull();
@@ -377,8 +376,9 @@ test("workspace deleted after the grace, not when pinned; unpin after grace dele
   const outside = mkdtempSync(path.join(tmpdir(), "of-outside-"));
   writeFileSync(path.join(outside, "keep.txt"), "not the agent's");
   symlinkSync(outside, path.join(ws.workdir(a.slug), "planted"));
+  // The factory-owned state folder (persona backups live there once a reset happened).
   const stateA = agentStateDir(s.t.factoryHome, a.slug);
-  expect(existsSync(stateA)).toBe(true);
+  mkdirSync(path.join(stateA, "persona"), { recursive: true });
   await s.t.app.store.setWorkspacePinned(b.id, true);
 
   now = Date.now() + 3 * day - 60_000; // inside the grace
@@ -407,6 +407,7 @@ test("a pin that lands after the candidate was read unpinned keeps the workspace
   await s.t.app.terminator.terminate(c.id, "@or");
   await c.rt.settled();
   const ws = s.t.app.workspace;
+  mkdirSync(path.join(agentStateDir(s.t.factoryHome, c.slug), "persona"), { recursive: true });
   const observed: boolean[] = [];
   const original = ws.deleteWorkspace.bind(ws);
   vi.spyOn(ws, "deleteWorkspace").mockImplementation(async (slug, stillUnpinned, markDeleted) => {
@@ -454,7 +455,7 @@ test("a failing deletion is logged and retried by the next run", async () => {
 });
 
 test("stuck: a terminated stop_failed child is force-removed and its slot released; skipped while its stop is in progress", async () => {
-  const s = await setup({ maxRunning: 2 });
+  const s = await setup();
   const release = vi.spyOn(s.t.app.runtimes.supervisor, "release");
   const releasesOf = (id: string) => release.mock.calls.filter(([a]) => a === id).length;
 

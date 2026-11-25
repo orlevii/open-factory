@@ -51,7 +51,6 @@ import {
 } from "./config-states";
 import { jsonPathToLine } from "./json-path-line";
 import {
-  CONFIG_FORM_MSG,
   CONFIG_PAGE_COPY,
   CONFIG_PAGE_MSG,
   restartNotice,
@@ -192,9 +191,8 @@ function AgentConfigEditor({
   const [raw, setRaw] = useState<RawState | null>(null);
   const [rawView, setRawView] = useState<RawView>("agent");
   const [refusals, setRefusals] = useState(0);
-  const [editorOpen, setEditorOpen] = useState(false);
-  // Bumped by Discard, Undo and Reload: the form remounts, so an open MCP editor (its own draft) goes with the
-  // discarded edits instead of bringing them back on Done. Its unmount reports the editor closed.
+  // Bumped by Discard, Undo and Reload: the form remounts, so the MCP dialog and its kept drafts go with the
+  // discarded edits instead of bringing them back on Apply.
   const [formEpoch, setFormEpoch] = useState(0);
   const { outcome, outcomeKey, setOutcome } = usePageOutcome();
   const [issuesOverride, setIssuesOverride] = useState<TemplateIssue[] | null>(null);
@@ -379,15 +377,6 @@ function AgentConfigEditor({
 
   async function onSave() {
     if (save.isPending || rawError) return;
-    if (editorOpen) {
-      // The open MCP editor's edits aren't in the draft until its Done: nothing is sent (C3 review I2).
-      flushSync(() => {
-        setTab("config");
-        setOutcome({ kind: "error", text: CONFIG_FORM_MSG.finishServer });
-      });
-      document.getElementById("field-mcp-name")?.focus();
-      return;
-    }
     if (!d.dirty) return;
     const sent = d.draft;
     if (!isRec(sent)) return setOutcome({ kind: "error", text: CONFIG_PAGE_MSG.notObject });
@@ -496,8 +485,6 @@ function AgentConfigEditor({
             conflicts={d.conflicts}
             onShowRaw={onShowRaw}
             localSkills={localSkills}
-            runningPlugins={config.plugins}
-            onEditorOpenChange={setEditorOpen}
           />
         </TabsContent>
         <TabsContent value="raw" className="min-w-0">
@@ -534,7 +521,7 @@ function AgentConfigEditor({
         sticky={dirty || outcomeShown}
         pending={save.isPending}
         canSave={dirty && !rawError}
-        canDiscard={dirty || editorOpen}
+        canDiscard={dirty}
         onSave={() => void onSave()}
         onDiscard={onDiscard}
         onHeight={setFooterHeight}

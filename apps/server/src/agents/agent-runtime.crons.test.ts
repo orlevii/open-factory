@@ -48,7 +48,6 @@ async function make(runtime: "local" | "docker" = "local") {
       permissionMode: "auto",
       mounts: [],
       effective: testEffective(),
-      plugins: [],
     }),
     log: { debug() {}, info() {}, warn() {}, error() {} },
     slots: unlimitedSlots,

@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, expect, test } from "vitest";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
+import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>> | undefined;
@@ -36,10 +37,11 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   const driver = new FakeDriver();
   t = await makeTestApp({
     harnessDriver: driver,
-    // Held updates are due at once, so a batch of them is written without waiting on a clock.
+    // A debounce of 0: member updates go out at once, without waiting on a clock.
     factorySettings: { memberUpdateDebounceSeconds: 0 },
   });
   const h = t;
+  await seedTestUser(h.db);
   const url = `http://127.0.0.1:${h.app.agentListener.port}`;
 
   // The project is a real git repo with one commit.
@@ -69,7 +71,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
       slug: "lead",
       displayName: "Lead",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "scn-cred",
     },
     { kind: "human", handle: "or" },

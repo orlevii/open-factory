@@ -1,8 +1,6 @@
 import { type RefObject, useRef, useState } from "react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { parsePeekKey } from "../use-peek";
-import { MarketplacePeekBody } from "./marketplace-peek";
-import { PluginPeekBody } from "./plugin-peek";
 import { SkillPeekBody } from "./skill-peek";
 import { SourcePeekBody } from "./source-peek";
 import { usePeekNav } from "./use-peek-nav";
@@ -27,7 +25,7 @@ export function PeekSheet({
   const [shown, setShown] = useState(peekKey);
   if (peekKey !== null && peekKey !== shown) setShown(peekKey);
   const { back, open, goBack } = usePeekNav(peekKey, show, contentRef);
-  // Where focus goes on the next close when it isn't the shown row: a removed source's or marketplace's neighbour row, else
+  // Where focus goes on the next close when it isn't the shown row: a removed source's neighbour row, else
   // (the last one went) the header's add button (spec §10.2). Set from a handler; `undefined` is a plain close.
   const focusInstead = useRef<{ key: string | null } | undefined>(undefined);
   const target = shown ? parsePeekKey(shown) : undefined;
@@ -76,23 +74,6 @@ export function PeekSheet({
           <SourcePeekBody
             key={shown}
             id={target.id}
-            back={back}
-            onBack={goBack}
-            onOpen={open}
-            onRemoved={onRemoved}
-          />
-        ) : target?.kind === "plugin" || target?.kind === "host-plugin" ? (
-          <PluginPeekBody
-            key={shown}
-            pluginKey={target.id}
-            from={target.kind === "plugin" ? "library" : "host"}
-            back={back}
-            onBack={goBack}
-          />
-        ) : target?.kind === "marketplace" ? (
-          <MarketplacePeekBody
-            key={shown}
-            name={target.id}
             back={back}
             onBack={goBack}
             onOpen={open}

@@ -9,6 +9,8 @@ export const MSG = {
   nameChars: "Use only a–z, 0–9 and hyphens.",
   noTrailingHyphen: "Don't end with a hyphen.",
   slugReserved: "That slug is reserved.",
+  managerUnknown: "Choose an active agent or person.",
+  managerRequired: "Choose who this agent reports to.",
   handleLength: "Use 2 to 32 characters.",
   handleReserved: "That handle is reserved.",
   secretChars: "Use A–Z, 0–9 and underscores.",

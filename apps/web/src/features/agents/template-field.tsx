@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { type InlineAdd, InlineAddTrigger } from "@/features/sheets/inline-add";
 
 export type TemplateOption = {
   name: string;
@@ -159,17 +160,17 @@ export function TemplateField({
  *  when the form can stack that sheet. */
 export function TemplateSummary({
   config,
-  pluginCount,
   issues,
   missingSecrets,
-  onAddSecret,
+  addSecret,
+  secretForm,
 }: {
   config: TemplateConfig;
-  /** The plugins the template enables: its list row's `pluginCount`, since the config has none. */
-  pluginCount: number;
   issues: TemplateIssue[];
   missingSecrets: string[];
-  onAddSecret?(name: string): void;
+  /** The inline Add secret: each missing secret opens it with its name; `secretForm` is the open form. */
+  addSecret?: InlineAdd;
+  secretForm?: ReactNode;
 }) {
   const runtimeWarnings = issues
     .filter((i) => i.severity === "warning" && i.path === "runtime")
@@ -178,7 +179,6 @@ export function TemplateSummary({
     config.runtime === "docker" ? "Docker" : "Unsandboxed",
     config.model && `model ${config.model}`,
     config.skills.length > 0 && `skills: ${config.skills.join(", ")}`,
-    pluginCount > 0 && `plugins: ${pluginCount}`,
     config.secrets.length > 0 && `secrets: ${config.secrets.join(", ")}`,
   ].filter(Boolean);
   return (
@@ -194,10 +194,10 @@ export function TemplateSummary({
         <Warning
           key={s}
           action={
-            onAddSecret && (
-              <Button type="button" variant="ghost" size="sm" inForm onClick={() => onAddSecret(s)}>
+            addSecret && (
+              <InlineAddTrigger add={addSecret} seed={{ name: s }}>
                 Add secret
-              </Button>
+              </InlineAddTrigger>
             )
           }
         >
@@ -206,6 +206,7 @@ export function TemplateSummary({
           agent won't start until you add it.
         </Warning>
       ))}
+      {secretForm}
     </div>
   );
 }

@@ -4,7 +4,7 @@
  */
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { type Db, type MarketplaceRow, type SkillSourceRow, schema } from "@open-factory/db";
+import { type Db, type SkillSourceRow, schema } from "@open-factory/db";
 import {
   type AgentOverlay,
   type ConfigDoc,
@@ -16,9 +16,6 @@ import { and, asc, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import { hostSkillsDirOf } from "../config.ts";
 import { ApiError } from "../errors.ts";
-import { COMMIT_PATTERN, tagSha } from "./common.ts";
-import { type CatalogEntry, readCatalog } from "./marketplaces-service.ts";
-import type { Declarations } from "./plugin-usage.ts";
 import { listSkillFiles, readSkillFile, readSkillMdText } from "./skill-files.ts";
 import { readSkillMd } from "./skill-md.ts";
 
@@ -63,8 +60,6 @@ export interface LibraryStore {
   sources(): Promise<SkillSourceRow[]>;
   /** Non-archived, non-terminated agents. */
   agents(): Promise<AgentUse[]>;
-  /** Live (not soft-deleted) marketplaces, oldest first. */
-  marketplaces(): Promise<MarketplaceRow[]>;
 }
 
 export function dbStore(db: Pick<Db, "select">): LibraryStore {
@@ -84,12 +79,6 @@ export function dbStore(db: Pick<Db, "select">): LibraryStore {
         })
         .from(schema.agents)
         .where(and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt))),
-    marketplaces: () =>
-      db
-        .select()
-        .from(schema.marketplaces)
-        .where(isNull(schema.marketplaces.deletedAt))
-        .orderBy(asc(schema.marketplaces.addedAt)),
   };
 }
 
@@ -105,21 +94,13 @@ export type Found = {
 
 const isDir = async (p: string) => (await stat(p).catch(() => undefined))?.isDirectory() ?? false;
 
-/** The rules every live skill folder meets: SKILL.md present, its name equals the folder's, no `.claude-plugin/`. */
+/** The rules every live skill folder meets: SKILL.md present, its name equals the folder's. */
 export async function inspect(name: string, dir: string, missing = "Missing"): Promise<Found> {
   const md = await readSkillMd(dir);
   if (!md) return { state: "missing", detail: missing, dir, description: "" };
   const description = md.description ?? "";
   if (md.name !== undefined && md.name !== name) {
     return { state: "unusable", detail: `SKILL.md names it ${md.name}`, dir, description };
-  }
-  if (await isDir(path.join(dir, ".claude-plugin"))) {
-    return {
-      state: "unusable",
-      detail: "It's a plugin; add it through a marketplace",
-      dir,
-      description,
-    };
   }
   return { state: "ok", dir, description };
 }
@@ -196,33 +177,6 @@ export class LibraryIndex {
     }
     const dir = (await readSkillMd(root)) ? root : path.join(root, name);
     return { ...(await inspect(name, dir, "Fetch again")), ref };
-  }
-
-  /** The registered marketplaces (spec §5.1): what a template's declarations are checked against. */
-  marketplaces(): Promise<MarketplaceRow[]> {
-    return this.store.marketplaces();
-  }
-
-  /**
-   * The read-only checkout of a registered marketplace at `ref` (a commit, or a tag recorded on its row; default
-   * the Library's commit), or the folder itself for a directory marketplace. Null when Skills hasn't read it.
-   */
-  async marketplaceDir(row: MarketplaceRow, ref?: string): Promise<string | null> {
-    if (row.state !== "ready") return null;
-    if (row.source.source === "directory") return row.source.path;
-    const want = ref ?? row.commit;
-    if (!want) return null;
-    const sha = COMMIT_PATTERN.test(want) ? want : tagSha(row.tags, want);
-    if (!sha || !COMMIT_PATTERN.test(sha)) return null;
-    const dir = path.join(this.factoryHome, "state", "library", "marketplaces", row.name, sha);
-    return (await isDir(dir)) ? dir : null;
-  }
-
-  /** The catalog entries of a registered marketplace at `ref`; null when Skills hasn't read it or can't parse it. */
-  async catalogAt(row: MarketplaceRow, ref?: string): Promise<CatalogEntry[] | null> {
-    const dir = await this.marketplaceDir(row, ref);
-    if (!dir) return null;
-    return (await readCatalog(dir).catch(() => undefined))?.plugins ?? null;
   }
 
   async resolveSkill(name: string): Promise<Resolved> {
@@ -310,17 +264,6 @@ export class LibraryIndex {
       }
     }
     return out;
-  }
-
-  /** Each valid template's last good config and each live agent's overlay: what plugin usage is read from. */
-  async declarations(): Promise<Declarations> {
-    const port = this.templates();
-    const templates = new Map<string, ConfigDoc>();
-    for (const t of await port.names()) {
-      const doc = await port.lastValid(t);
-      if (doc) templates.set(t, doc);
-    }
-    return { templates, agents: await this.store.agents() };
   }
 
   async usedBy(name: string): Promise<{ templates: string[]; agents: string[] }> {

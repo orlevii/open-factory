@@ -48,6 +48,21 @@ export const messageAttachmentSchema = z.object({
 });
 export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
 
+/**
+ * A request a report had received in its current turn when it wrote a forwarded text: the message's id and its
+ * envelope sender (`@handle`, `@scheduler`, `@factory`). A `member_update`'s `re` lists them, so its manager can tell
+ * whose request the text answers.
+ */
+export const requestRefSchema = z.object({ id: z.string(), from: z.string() });
+export type RequestRef = z.infer<typeof requestRefSchema>;
+/** The kinds that ask an agent to do work; only these go into a turn's `re` (notes and updates never do). */
+export const REQUEST_KINDS: ReadonlySet<MessageKind> = new Set([
+  "message",
+  "task_assigned",
+  "task_comment",
+  "scheduled",
+]);
+
 export const envelopeSchema = z.object({
   id: z.string(),
   from: z.string(),
@@ -69,6 +84,8 @@ export const envelopeSchema = z.object({
   late: z.boolean().optional(),
   ids: z.array(z.string()).optional(),
   about: z.string().optional(),
+  /** A report's `member_update`: the requests of its turn when it wrote the text (rendered as `re` and `re_from`). */
+  re: z.array(requestRefSchema).optional(),
   parts: z.array(z.object({ id: z.string(), body: z.string(), createdAt: z.string() })),
   fact: z.string().optional(),
   subject: subjectSchema.optional(),

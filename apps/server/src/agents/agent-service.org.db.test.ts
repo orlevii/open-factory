@@ -121,6 +121,19 @@ test("an agent can archive and unarchive an agent that can't manage the org", as
   expect(await svc.unarchive("plain", hr)).toMatchObject({ archivedAt: null });
 });
 
+test("only a human can grant manage_org at creation; a human's grant is stored", async () => {
+  await expect(svc.create({ ...body("granted"), manageOrg: true }, hr)).rejects.toThrow(
+    new OrgRefusedError("Only a human can grant manage_org."),
+  );
+  expect(await rowOf("granted")).toBeUndefined();
+  expect(existsSync(path.join(home, "agents/granted"))).toBe(false);
+
+  expect(await svc.create({ ...body("granted"), manageOrg: true }, human)).toMatchObject({
+    manageOrg: true,
+  });
+  expect((await rowOf("granted"))?.manageOrg).toBe(true);
+});
+
 test("an agent can't create from a local template, and nothing is created", async () => {
   await expect(svc.create(body("loc-2", "localtpl"), hr)).rejects.toThrow(
     new OrgRefusedError(LOCAL_RUNTIME_REFUSAL),

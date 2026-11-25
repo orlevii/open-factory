@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { MAX_FOCUS_CHARS } from "@open-factory/shared";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { AgentService, endedAgentsQuery } from "../agents/agent-service.ts";
@@ -263,6 +264,11 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
       expect(res.statusCode, `${m} ${url}`).toBe(400);
       expect(res.json().error.code).toBe("validation_error");
     }
+    const granted = await call("POST", "/api/agents", { ...body, slug: "gov", manageOrg: true });
+    expect(granted.statusCode).toBe(201);
+    expect(granted.json().agent).toMatchObject({ slug: "gov", manageOrg: true });
+    const [govRow] = await t2.db.select().from(schema.agents).where(eq(schema.agents.slug, "gov"));
+    expect(govRow?.manageOrg).toBe(true);
   } finally {
     await t2.close();
   }

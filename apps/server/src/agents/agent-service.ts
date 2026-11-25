@@ -535,6 +535,8 @@ export class AgentService {
     const slugOk = slugSchema.safeParse(b.slug);
     if (!slugOk.success)
       throw new FieldError("slug", slugOk.error.issues[0]?.message ?? FIELD_MSG.slugInvalid);
+    if (b.manageOrg !== undefined && actor.kind === "agent")
+      throw new OrgRefusedError("Only a human can grant manage_org.");
     if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor);
     return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b, actor));
   }
@@ -588,6 +590,7 @@ export class AgentService {
           runtime: tpl.config.runtime,
           reportsTo: manager?.id ?? null,
           credentialId,
+          manageOrg: b.manageOrg ?? false,
         });
         if (projects.length)
           await tx

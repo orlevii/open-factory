@@ -86,15 +86,15 @@ test("PATCH manageOrg must be a boolean", () => {
   expect(patchAgentBodySchema.safeParse({ manageOrg: true }).success).toBe(true);
 });
 
-test("create body strips manageOrg instead of accepting it", () => {
-  const parsed = createAgentBodySchema.parse({
+test("create body accepts manageOrg as a boolean", () => {
+  const valid = {
     template: "lead",
     slug: "boss",
     displayName: "Boss",
     description: "",
     reportsTo: null,
     credential: "default",
-    manageOrg: true,
-  });
-  expect(parsed).not.toHaveProperty("manageOrg");
+  };
+  expect(createAgentBodySchema.parse({ ...valid, manageOrg: true }).manageOrg).toBe(true);
+  expect(createAgentBodySchema.safeParse({ ...valid, manageOrg: "yes" }).success).toBe(false);
 });

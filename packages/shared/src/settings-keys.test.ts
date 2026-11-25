@@ -3,6 +3,8 @@ import { RESERVED_SETTINGS_KEYS, reservedKeysIn } from "./settings-keys.ts";
 
 /** The spec §7.10 keys, as written in the spec. Each must be reported when a settings file sets it. */
 const SPEC_KEYS = [
+  "enabledPlugins",
+  "extraKnownMarketplaces",
   "permissions.defaultMode",
   "permissions.additionalDirectories",
   "claudeMdExcludes",

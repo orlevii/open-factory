@@ -152,3 +152,10 @@ test("TokenField shows the OAuth help for oauth_token only", () => {
   rerender(<TokenField {...props} kind="api_key" />);
   expect(screen.getByLabelText("Token")).not.toHaveAccessibleDescription();
 });
+
+test("FormField puts its action in the label row and not on the input", () => {
+  render(<FormField name="p" label="Path" action={<button type="button">Help</button>} />);
+  const input = screen.getByLabelText("Path");
+  expect(input).not.toHaveAttribute("action");
+  expect(screen.getByRole("button", { name: "Help" })).toBeInTheDocument();
+});

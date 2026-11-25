@@ -17,6 +17,7 @@ export const MSG = {
   cronTokens: "Use numbers, *, -, / and commas.",
   titleLength: "Use 200 characters or fewer.",
   bodyTooLong: "Shorten this to 64 KB or less.",
+  hostPathStart: "Start with / or ~/.",
   nameRequired: "Enter your name.",
   email: "Enter a valid email.",
   passwordRequired: "Enter your password.",

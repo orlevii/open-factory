@@ -3,10 +3,11 @@ import { useRef, useState } from "react";
 import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
+import { checkHostPath, PathField } from "@/components/path-field";
 import { createProject } from "@/features/settings/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
-import { checkPath, fieldsOf, PATH_HELP } from "./shared";
+import { fieldsOf } from "./shared";
 
 type Field = "name" | "hostPath";
 const FIELDS: readonly Field[] = ["name", "hostPath"];
@@ -37,7 +38,7 @@ export function AddProjectForm({
         if (!r.success) return r.error.issues[0]?.message;
         return existing.includes(name) ? FORM_MSG.nameTaken : undefined;
       },
-      hostPath: () => checkPath(hostPath),
+      hostPath: () => checkHostPath(hostPath),
     },
   });
 
@@ -83,10 +84,10 @@ export function AddProjectForm({
         spellCheck={false}
         className="font-mono"
       />
-      <FormField
+      <PathField
         name="project-path"
         label="Path"
-        help={PATH_HELP}
+        help="A folder on the factory's machine, like ~/code/web."
         error={f.errors.hostPath}
         value={hostPath}
         onChange={(e) => {
@@ -94,10 +95,6 @@ export function AddProjectForm({
           f.change("hostPath");
         }}
         onBlur={(e) => f.blur("hostPath", e)}
-        autoComplete="off"
-        autoCapitalize="none"
-        spellCheck={false}
-        className="font-mono"
       />
     </FormFrame>
   );

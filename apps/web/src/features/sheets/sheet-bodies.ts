@@ -9,6 +9,7 @@ import {
   usersQueryOptions,
 } from "@/features/settings/api";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
+import { hostQueryOptions } from "@/lib/host";
 import type { ChildSpec, SheetSpec } from "./sheet-store";
 
 export type BodyProps<S> = { spec: S; sheetId: number; close(): void };
@@ -99,6 +100,8 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     load: () => import("./setup-sheets").then((m) => ({ default: m.AddProjectSheet })),
     prefetch(qc) {
       warm(qc, projectsQueryOptions);
+      // Direct, not through `warm`: host info is constant, and `warm` would cap its staleTime at 10s.
+      void qc.prefetchQuery(hostQueryOptions);
     },
     title: "Add project",
   },

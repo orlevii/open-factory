@@ -1,8 +1,11 @@
+import { MSG } from "@open-factory/shared";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { createQueryClient } from "@/lib/query-client";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { AddCredentialForm } from "./add-credential-form";
@@ -12,17 +15,19 @@ import { AddSecretForm } from "./add-secret-form";
 beforeEach(() => fakeMatchMedia.install(false));
 afterEach(() => vi.unstubAllGlobals());
 
-/** A stub Sheet around a form in its `sheet` frame. */
+/** A stub Sheet around a form in its `sheet` frame; the query client serves the path help's host query. */
 function inSheet(title: string, form: ReactNode) {
   return render(
-    <Sheet open onOpenChange={() => {}}>
-      <SheetContent>
-        <SheetHeader>
-          <SheetTitle>{title}</SheetTitle>
-        </SheetHeader>
-        {form}
-      </SheetContent>
-    </Sheet>,
+    <QueryClientProvider client={createQueryClient()}>
+      <Sheet open onOpenChange={() => {}}>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>{title}</SheetTitle>
+          </SheetHeader>
+          {form}
+        </SheetContent>
+      </Sheet>
+    </QueryClientProvider>,
   );
 }
 const describedText = (el: HTMLElement) =>
@@ -133,6 +138,7 @@ test("project: validates, submits once on Enter, maps a duplicate under Name", a
   let posts = 0;
   let release: (r: Response) => void = () => {};
   const api = mockApi({
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
     "POST /api/projects": () => {
       posts++;
       return new Promise<Response>((r) => {
@@ -147,7 +153,7 @@ test("project: validates, submits once on Enter, maps a duplicate under Name", a
   const dialog = screen.getByRole("dialog", { name: "Add project" });
   await userEvent.type(within(dialog).getByLabelText("Name"), "app");
   await userEvent.type(within(dialog).getByLabelText("Path"), "rel{Enter}");
-  expect(describedText(within(dialog).getByLabelText("Path"))).toContain("Enter an absolute path.");
+  expect(describedText(within(dialog).getByLabelText("Path"))).toContain(MSG.hostPathStart);
   expect(api.calls).toHaveLength(0);
   const path = within(dialog).getByLabelText("Path");
   await userEvent.clear(path);
@@ -161,8 +167,96 @@ test("project: validates, submits once on Enter, maps a duplicate under Name", a
   expect(describedText(name)).toBe("That name is taken.");
   expect(name).toHaveFocus();
   expect(posts).toBe(1);
-  expect(api.calls[0]?.body).toEqual({ name: "app", hostPath: "/code/app" });
+  expect(api.calls.find((c) => c.method === "POST")?.body).toEqual({
+    name: "app",
+    hostPath: "/code/app",
+  });
 });
+
+test("project: ~ paths post unexpanded; Path has the help line and the find-path button", async () => {
+  const api = mockApi({
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
+    "POST /api/projects": () =>
+      json({ project: { name: "web", hostPath: "/home/or/code/web", grantedTo: [] } }, 201),
+  });
+  inSheet(
+    "Add project",
+    <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add project" });
+  const path = within(dialog).getByLabelText("Path");
+  expect(describedText(path)).toContain("A folder on the factory's machine, like ~/code/web.");
+  const find = within(dialog).getByRole("button", { name: "How do I find this path?" });
+  expect(find.parentElement).toHaveTextContent("Path");
+  await userEvent.type(within(dialog).getByLabelText("Name"), "web");
+  await userEvent.type(path, "~/code/web{Enter}");
+  await waitFor(() => expect(api.calls.some((c) => c.method === "POST")).toBe(true));
+  expect(api.calls.find((c) => c.method === "POST")?.body).toEqual({
+    name: "web",
+    hostPath: "~/code/web",
+  });
+});
+
+test("project: a relative path shows the start message on blur; a server hostPath error focuses Path", async () => {
+  mockApi({
+    "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
+    "POST /api/projects": () =>
+      json(
+        {
+          error: {
+            code: "validation_error",
+            message: MSG.hostPathStart,
+            fields: { hostPath: MSG.hostPathStart },
+          },
+        },
+        400,
+      ),
+  });
+  inSheet(
+    "Add project",
+    <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Add project" });
+  const path = within(dialog).getByLabelText("Path");
+  await userEvent.type(path, "code/web");
+  await userEvent.click(within(dialog).getByLabelText("Name")); // Tab would land on Cancel, which skips the check
+  expect(describedText(path)).toContain("Start with / or ~/.");
+  await userEvent.clear(path);
+  await userEvent.type(within(dialog).getByLabelText("Name"), "web");
+  await userEvent.type(path, "/code/web{Enter}");
+  await waitFor(() => expect(path).toHaveAttribute("aria-invalid", "true"));
+  expect(describedText(path)).toContain(MSG.hostPathStart);
+  expect(path).toHaveFocus();
+});
+
+test.each([
+  ["Shift+Tab", () => userEvent.keyboard("{Shift>}{Tab}{/Shift}")],
+  [
+    "a click",
+    () => userEvent.click(screen.getByRole("button", { name: "How do I find this path?" })),
+  ],
+])(
+  "project (AC6): moving from a half-typed Path to the help by %s flags nothing",
+  async (_, toHelp) => {
+    mockApi({
+      "GET /api/host": () => json({ platform: "linux", hostname: "box", home: "/home/or" }),
+    });
+    inSheet(
+      "Add project",
+      <AddProjectForm frame="sheet" existing={[]} onDone={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Add project" });
+    const path = within(dialog).getByLabelText("Path");
+    await userEvent.type(path, "code");
+    await toHelp();
+    expect(path).not.toHaveAttribute("aria-invalid");
+    expect(describedText(path)).not.toContain(MSG.hostPathStart);
+    // Control: leaving Path for another field does flag it.
+    await userEvent.click(path);
+    await userEvent.click(within(dialog).getByLabelText("Name"));
+    expect(path).toHaveAttribute("aria-invalid", "true");
+  },
+);
 
 test("secret: the inline frame shows a form-level error through the outcome line, above the buttons", async () => {
   mockApi({

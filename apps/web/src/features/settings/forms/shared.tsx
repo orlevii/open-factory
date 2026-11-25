@@ -95,14 +95,6 @@ export function ValueField({
   );
 }
 
-export const PATH_HELP = "Absolute path to a folder on this machine, usually a git repository.";
-export const checkPath = (p: string) =>
-  p.trim() === ""
-    ? FORM_MSG.enterPath
-    : p.trim().startsWith("/")
-      ? undefined
-      : FORM_MSG.absolutePath;
-
 /** Server field errors (`400 validation_error` with `fields`) for this form's fields. */
 export const fieldsOf = (err: unknown): Record<string, string> | undefined =>
   err instanceof ApiError && err.code === "validation_error"

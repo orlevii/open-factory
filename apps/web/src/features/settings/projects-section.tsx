@@ -3,11 +3,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { ErrorLine } from "@/components/error-line";
-import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
+import { checkHostPath, PathField } from "@/components/path-field";
 import {
   AdaptiveMenuContent,
   AdaptiveMenuItem,
@@ -37,7 +37,7 @@ import {
   useFocusLater,
 } from "@/features/settings/shared";
 import { AddProjectForm } from "./forms/add-project-form";
-import { checkPath, fieldsOf, PATH_HELP } from "./forms/shared";
+import { fieldsOf } from "./forms/shared";
 
 type Outcome = {
   tone: "success" | "error" | "pending";
@@ -118,7 +118,7 @@ function ChangePathForm({
   const f = useFieldErrors({
     form: formRef,
     fields: FIELDS,
-    checks: { hostPath: () => checkPath(hostPath) },
+    checks: { hostPath: () => checkHostPath(hostPath) },
   });
 
   async function submit() {
@@ -145,10 +145,10 @@ function ChangePathForm({
       outcome={o.outcome}
       ref={formRef}
     >
-      <FormField
+      <PathField
         name={`project-path-${project.name}`}
         label="Path"
-        help={PATH_HELP}
+        help="A folder on the factory's machine, like ~/code/web."
         error={f.errors.hostPath}
         value={hostPath}
         onChange={(e) => {
@@ -156,10 +156,6 @@ function ChangePathForm({
           f.change("hostPath");
         }}
         onBlur={(e) => f.blur("hostPath", e)}
-        autoComplete="off"
-        autoCapitalize="none"
-        spellCheck={false}
-        className="font-mono"
       />
     </InlineForm>
   );

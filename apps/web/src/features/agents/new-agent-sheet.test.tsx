@@ -302,6 +302,19 @@ test("success closes the sheet, clears the draft and navigates to the session", 
   });
 });
 
+test("a created agent sets a cached setup answer's hasAgent without asking the server again", async () => {
+  const { api, queryClient, router } = await openLead({ extra: created() });
+  queryClient.setQueryData(["setup"], { hasCredential: true, hasTemplate: true, hasAgent: false });
+  await userEvent.click(createButton());
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/team-lead/chat"));
+  expect(queryClient.getQueryData(["setup"])).toEqual({
+    hasCredential: true,
+    hasTemplate: true,
+    hasAgent: true,
+  });
+  expect(api.calls.some((c) => c.url === "/api/setup")).toBe(false);
+});
+
 test("submit waits for the taken names before deriving the slug", async () => {
   const users = held();
   const { api } = await openLead({

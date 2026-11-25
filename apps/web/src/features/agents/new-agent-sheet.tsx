@@ -53,6 +53,7 @@ import {
   projectsQueryOptions,
   usersQueryOptions,
 } from "@/features/settings/api";
+import { setupQueryOptions } from "@/features/setup/api";
 import { clearDraft, clearDraftIf, draftGeneration, peekDraft } from "@/features/sheets/drafts";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { MoreOptions } from "@/features/sheets/more-options";
@@ -269,6 +270,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     if (draftGeneration() !== generation) return;
     // The lists refetch in the background; the session view needn't wait for them.
     void qc.invalidateQueries({ queryKey: ["agents"] });
+    // An agent exists now: the first-run answer can't change back, so a cached one is flipped without a request.
+    qc.setQueryData(setupQueryOptions.queryKey, (d) => d && { ...d, hasAgent: true });
     const open = stillOpen();
     // A late success clears the draft only if it still holds the submitted values; a New agent reopened on those
     // untouched values closes, so the same agent can't be created twice. Edits made since are kept.

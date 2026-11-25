@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { resetSignIn } from "@/features/settings/sign-in/use-sign-in";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { SetupProbe } from "@/test/setup-probe";
 import { AddCredentialForm } from "./add-credential-form";
 
 // Synthetic values only: no real sign-in URL, code or token ever appears in a test.
@@ -57,7 +58,10 @@ beforeEach(() => {
   fakeMatchMedia.install(false);
   resetSignIn();
   calls = [];
-  routes = { [GET]: () => ok({ available: true, attempt: null }) };
+  routes = {
+    [GET]: () => ok({ available: true, attempt: null }),
+    "GET /api/setup": () => ok({ hasCredential: false, hasTemplate: false, hasAgent: false }),
+  };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -84,6 +88,7 @@ function renderSheet(
   if (opts.seed) qc.setQueryData(["claude-sign-in"], opts.seed);
   render(
     <QueryClientProvider client={qc}>
+      <SetupProbe />
       <Sheet open onOpenChange={() => {}}>
         <SheetContent>
           <SheetHeader>
@@ -263,4 +268,35 @@ it("mounting with a live attempt does not move focus (autoFocus false); Ready th
 it("without an attempt the sheet focuses Name on open", async () => {
   const { dialog } = renderSheet({ seed: { available: true, attempt: null } });
   await waitFor(() => expect(within(dialog).getByLabelText("Name")).toHaveFocus());
+});
+
+it("a credential added by paste leaves the setup answer stale: a mounted reader refetches it", async () => {
+  routes[CREATE] = () => ok({ credential: cred({ expiresAt: null }) }, 201);
+  const { dialog, onDone } = renderSheet();
+  const setup = screen.getByLabelText("Setup");
+  await waitFor(() => expect(setup).toHaveTextContent('"hasCredential":false'));
+  routes["GET /api/setup"] = () => ok({ hasCredential: true, hasTemplate: false, hasAgent: false });
+  await userEvent.type(within(dialog).getByLabelText("Name"), "work");
+  await userEvent.click(radio(dialog, "Paste a token"));
+  await userEvent.type(within(dialog).getByLabelText("Token"), "sk-ant-oat01-SYNTHETIC{Enter}");
+  await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(setup).toHaveTextContent('"hasCredential":true'));
+});
+
+it("a credential added by sign-in leaves the setup answer stale: a mounted reader refetches it", async () => {
+  routes[START] = () => ok({ attempt: ready() });
+  routes[CODE] = () => ok({ credential: cred() }, 201);
+  const { dialog, onDone } = renderSheet();
+  const setup = screen.getByLabelText("Setup");
+  await waitFor(() => expect(setup).toHaveTextContent('"hasCredential":false'));
+  routes["GET /api/setup"] = () => ok({ hasCredential: true, hasTemplate: false, hasAgent: false });
+  await userEvent.type(within(dialog).getByLabelText("Name"), "work");
+  fireEvent.click(primary(dialog));
+  await within(dialog).findByRole("link", { name: "Open sign-in page" });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Code" }), {
+    target: { value: SYN_CODE },
+  });
+  fireEvent.click(primary(dialog));
+  await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(setup).toHaveTextContent('"hasCredential":true'));
 });

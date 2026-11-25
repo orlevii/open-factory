@@ -16,7 +16,7 @@ const INDEX = /^\d+$/;
 /**
  * A list field of the form (spec §12.2). Agent mode shows the template's items read-only in their own group and this
  * agent's items (the overlay's) as editable rows; template mode shows the template's as editable rows. A value that
- * isn't a list of strings reads "Edit this in Raw JSON.". Issues on an item (`settings.permissions.allow.3`) show
+ * isn't a list of strings reads "Edit this in Raw JSON.". Issues on an item (`template.can_spawn.3`) show
  * under that row.
  */
 export function ListField({

@@ -33,12 +33,12 @@ type Props = {
   inherited?: readonly string[];
   /** "From template dev". */
   inheritedLabel?: string;
-  /** Rules, names and commands are mono; prose (trust notes) is Geist. */
+  /** Rules, names and commands are mono; prose is Geist. */
   mono?: boolean;
   readOnly?: boolean;
   error?: string;
   warning?: string;
-  /** Notes for single rows (a server issue on `…allow.3`), by index in `own`. */
+  /** Notes for single rows (a server issue on a row), by index in `own`. */
   rowNotes?: ReadonlyMap<number, RowNote>;
   placeholder?: string;
   /** A rule for one new item (an item's own format); its message goes to `onReject`. */

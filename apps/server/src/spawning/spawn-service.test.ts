@@ -118,7 +118,7 @@ async function messagesTo(app: T, agentId: string) {
 const folders = (app: T) => readdirSync(path.join(app.factoryHome, "agents")).sort();
 const agentCount = async (app: T) => (await app.db.select().from(schema.agents)).length;
 
-/** A spawned child row inserted directly (no folder): for the spawn refusals that count children. */
+/** A spawned child row inserted directly (no folder): seeds children to show a spawn isn't refused for them. */
 async function seedChild(app: T, lead: AgentRow, slug: string, o: { terminated?: boolean } = {}) {
   await claimTestHandle(app.db, slug, "agent");
   await app.db.insert(schema.agents).values({

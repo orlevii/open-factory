@@ -151,6 +151,7 @@ test("Resume posts once, shows Resuming… aria-disabled, then the status line t
   await user().click(await resumeButton());
   const busy = await resumeButton("Resuming…");
   expect(busy).toHaveAttribute("aria-disabled", "true");
+  expect(busy).toHaveAttribute("aria-busy", "true");
   await user().click(busy);
   expect(posts()).toHaveLength(1);
   await act(async () => release(json({ sentOn: 4 })));
@@ -201,6 +202,37 @@ test("another human's earlier Resume shows from the hold: its count, a date when
   expect(within(pane()).queryByText(/waiting|Nothing is waiting/)).toBeNull();
 });
 
+test("your own earlier Resume, seen after a reload, says you", async () => {
+  await open({
+    resumedAt: new Date(2026, 10, 25, 14, 30).toISOString(),
+    resumedBy: "@alice",
+    sentOn: 2,
+    waiting: 0,
+  });
+  expect(within(pane()).getByRole("status")).toHaveTextContent(
+    "Resumed by you · 14:30 · 2 messages sent on",
+  );
+});
+
+test("a 409 with an empty resumedBy reads Resumed · time", async () => {
+  api.on("POST /api/loop-holds/h1/resume", () =>
+    json(
+      {
+        error: {
+          code: "conflict",
+          message: "Already resumed",
+          resumedBy: "",
+          resumedAt: new Date(2026, 10, 25, 14, 1).toISOString(),
+        },
+      },
+      409,
+    ),
+  );
+  await open();
+  await user().click(await resumeButton());
+  expect(await within(pane()).findByRole("status")).toHaveTextContent(/^Resumed · 14:01$/);
+});
+
 test("a failed Resume keeps the button and says so", async () => {
   api.on("POST /api/loop-holds/h1/resume", () =>
     json({ error: { code: "internal", message: "boom" } }, 500),
@@ -233,6 +265,6 @@ test("navigating away mid-Resume and back shows the button until inbox_changed b
     ws.onMessage?.({ type: "inbox_changed" });
   });
   await waitFor(() =>
-    expect(within(pane()).getByRole("status")).toHaveTextContent("Resumed by @alice · 14:30"),
+    expect(within(pane()).getByRole("status")).toHaveTextContent("Resumed by you · 14:30"),
   );
 });

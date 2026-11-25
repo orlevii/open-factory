@@ -1,4 +1,5 @@
 import { ApiError } from "@open-factory/shared";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useRef, useState } from "react";
 import { FormOutcome } from "@/components/forms/form-outcome";
@@ -6,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { formatInboxTime } from "@/features/session/format";
 import { FORM_MSG } from "@/lib/form-messages";
+import { sessionQueryOptions } from "@/lib/session";
 import { type InboxItem, useResumeHold } from "./api";
 
 type Hold = NonNullable<InboxItem["loopHold"]>;
@@ -31,13 +33,14 @@ function withHandles(text: string): ReactNode[] {
 type Resumed = { by: string; at: string; sentOn: number | undefined };
 
 /** Who resumed it and what went on: this tab's own Resume (before the refetch), else the stored hold,
- *  else a 409's body (the refetch it triggers brings `sentOn`). */
+ *  else a 409's body (the refetch it triggers brings `sentOn`). `me` is the viewer's "@handle". */
 function resumedOf(
   hold: Hold,
   own: { sentOn: number; at: string } | undefined,
   conflict: Record<string, unknown> | undefined,
+  me: string,
 ): Resumed | undefined {
-  if (own) return { by: "you", at: hold.resumedAt ?? own.at, sentOn: own.sentOn };
+  if (own) return { by: me, at: hold.resumedAt ?? own.at, sentOn: own.sentOn };
   if (hold.resumedAt && hold.resumedBy)
     return { by: hold.resumedBy, at: hold.resumedAt, sentOn: hold.sentOn };
   if (typeof conflict?.resumedBy === "string" && typeof conflict.resumedAt === "string")
@@ -47,9 +50,11 @@ function resumedOf(
 
 function ResumedLine({
   resumed,
+  me,
   statusRef,
 }: {
   resumed: Resumed;
+  me: string;
   statusRef: (node: HTMLParagraphElement | null) => void;
 }) {
   const at = new Date(resumed.at);
@@ -61,7 +66,15 @@ function ResumedLine({
         : " · nothing was left to send";
   return (
     <p ref={statusRef} role="status" tabIndex={-1} className="text-sm">
-      Resumed by {resumed.by === "you" ? "you" : <span className="font-mono">{resumed.by}</span>}
+      Resumed
+      {resumed.by === me ? (
+        " by you"
+      ) : resumed.by ? (
+        <>
+          {" by "}
+          <span className="font-mono">{resumed.by}</span>
+        </>
+      ) : null}
       {" · "}
       <time dateTime={resumed.at} title={at.toLocaleString()} className="tabular-nums">
         {formatInboxTime(at, new Date())}
@@ -75,6 +88,8 @@ function ResumedLine({
 export function LoopHoldPane({ item, hold }: { item: InboxItem; hold: Hold }) {
   const [a, b] = hold.agents;
   const m = useResumeHold(hold.id);
+  const handle = useQuery(sessionQueryOptions).data?.user.handle;
+  const me = handle ? `@${handle}` : "";
   const [minWidth, setMinWidth] = useState<number>();
   const focusResult = useRef(false);
   const statusEl = useRef<HTMLParagraphElement | null>(null);
@@ -87,7 +102,7 @@ export function LoopHoldPane({ item, hold }: { item: InboxItem; hold: Hold }) {
     }
   }, []);
   const conflict = m.error instanceof ApiError && m.error.status === 409 ? m.error.body : undefined;
-  const resumed = resumedOf(hold, m.data, conflict);
+  const resumed = resumedOf(hold, m.data, conflict, me);
   const failed = m.isError && !conflict;
   const ended = hold.agents.filter((x) => x.status === "terminated");
   return (
@@ -109,12 +124,13 @@ export function LoopHoldPane({ item, hold }: { item: InboxItem; hold: Hold }) {
         ))}
         <div className="grid min-h-16 content-start justify-items-start gap-2">
           {resumed ? (
-            <ResumedLine resumed={resumed} statusRef={statusRef} />
+            <ResumedLine resumed={resumed} me={me} statusRef={statusRef} />
           ) : (
             <>
               <Button
                 type="button"
                 aria-disabled={m.isPending || undefined}
+                aria-busy={m.isPending || undefined}
                 className="h-auto min-h-8 py-1.5 text-left whitespace-normal"
                 style={{ minWidth }}
                 onClick={(e) => {

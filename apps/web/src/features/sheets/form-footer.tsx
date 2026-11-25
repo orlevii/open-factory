@@ -1,4 +1,5 @@
 import { type ReactNode, useId } from "react";
+import { FormOutcome, type Outcome, showsNotice } from "@/components/forms/form-outcome";
 import { Button } from "@/components/ui/button";
 import { SheetClose, SheetFooter, useSheetMobile } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -12,9 +13,8 @@ export function SheetFormFooter({
   restored,
   onDiscard,
   left,
-  note,
   submitClassName,
-  above,
+  outcome,
 }: {
   submitLabel: string;
   pendingLabel: string;
@@ -22,19 +22,16 @@ export function SheetFormFooter({
   restored: boolean;
   onDiscard(): void;
   left?: ReactNode;
-  note?: ReactNode;
   /** e.g. a min width that fits the pending label, so the button doesn't change width while pending. */
   submitClassName?: string;
-  /** A muted line on its own row above the buttons (Edit agent's restart notice). It describes the submit button, so
-   *  it is heard there. */
-  above?: ReactNode;
+  /** The reserved line above the buttons: errors, success and a muted notice that describes the submit button. */
+  outcome: Outcome;
 }) {
-  const aboveId = useId();
+  const noticeId = useId();
   const mobile = useSheetMobile();
-  const aside = (left || note || restored) && (
+  const aside = (left || restored) && (
     <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem] text-muted-foreground sm:mr-auto">
       {left}
-      {note}
       {restored && (
         <span className="inline-flex items-center gap-2">
           Draft restored <span>·</span>{" "}
@@ -44,6 +41,7 @@ export function SheetFormFooter({
             size="sm"
             inForm
             className="-ml-1 px-1"
+            data-skip-validate
             onClick={onDiscard}
           >
             Discard
@@ -52,14 +50,18 @@ export function SheetFormFooter({
       )}
     </div>
   );
-  const aboveLine = above && (
-    <p id={aboveId} className="w-full text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-      {above}
-    </p>
+  const line = (
+    <FormOutcome
+      outcome={outcome}
+      pending={pending ? pendingLabel : undefined}
+      noticeId={noticeId}
+      className="basis-full -mb-1"
+    />
   );
   const close = (
     <SheetClose asChild>
-      <Button type="button" variant="ghost">
+      {/* Closing doesn't count as leaving a field (DESIGN.md Validation). */}
+      <Button type="button" variant="ghost" data-skip-validate>
         Close
       </Button>
     </SheetClose>
@@ -68,7 +70,7 @@ export function SheetFormFooter({
     <Button
       type="submit"
       aria-disabled={pending || undefined}
-      aria-describedby={above ? aboveId : undefined}
+      aria-describedby={showsNotice(outcome) ? noticeId : undefined}
       className={submitClassName}
     >
       {pending && <Spinner />}
@@ -78,15 +80,15 @@ export function SheetFormFooter({
   // A phone drawer stacks full width: the action first, Close last at the bottom (DESIGN.md Overlays). DOM order
   // follows, so Tab order matches what is seen.
   return mobile ? (
-    <SheetFooter>
-      {aboveLine}
+    <SheetFooter className="pt-2">
+      {line}
       {submit}
       {aside}
       {close}
     </SheetFooter>
   ) : (
-    <SheetFooter>
-      {aboveLine}
+    <SheetFooter className="pt-2">
+      {line}
       {aside}
       {close}
       {submit}

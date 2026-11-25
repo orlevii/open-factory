@@ -169,10 +169,74 @@ test("add credential: an unverifiable check is a warning, not a bad token", asyn
   await userEvent.type(key, "sk-ant");
   await userEvent.click(within(region).getByRole("button", { name: "Verify and add" }));
   const note = await within(region).findByText("Couldn't reach Claude to verify. Try again.");
-  expect(note.closest("[role=alert]")).not.toBeNull();
+  expect(note).toBeInTheDocument();
   expect(key).not.toHaveAttribute("aria-invalid");
   expect(describedText(key)).toContain("Couldn't reach Claude to verify. Try again.");
   expect(key).toHaveValue("sk-ant");
+});
+
+test("Replace token: an unverifiable check warns under the token and announces a failure line", async () => {
+  world({
+    credentials: [cred({ name: "work" })],
+    extra: {
+      "PUT /api/credentials/work/value": () =>
+        json(
+          {
+            error: {
+              code: "credential_unverifiable",
+              message: "Couldn't reach Claude to verify. Try again.",
+            },
+          },
+          422,
+        ),
+    },
+  });
+  renderApp("/settings/credentials", alice);
+  const u = userEvent.setup();
+  const creds = await section("Credentials");
+  await waitFor(() => expect(row(creds, "work")).toBeDefined());
+  await u.click(within(row(creds, "work")).getByRole("button", { name: "Actions for work" }));
+  await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
+  const token = within(creds).getByLabelText("New token");
+  await u.type(token, "sk-new");
+  await u.click(within(creds).getByRole("button", { name: "Verify and save" }));
+  const line = await within(creds).findByText("Couldn't replace the token.");
+  expect(line.closest("[role=alert]")).not.toBeNull();
+  expect(describedText(token)).toContain("Couldn't reach Claude to verify. Try again.");
+  expect(token).not.toHaveAttribute("aria-invalid");
+  expect(token).toHaveValue("sk-new");
+});
+
+test("Replace token and Update value validate on blur of a changed field", async () => {
+  world({
+    credentials: [cred({ name: "work" })],
+    secrets: [secret({ name: "GH_TOKEN" })],
+  });
+  renderApp("/settings/credentials", alice);
+  const u = userEvent.setup();
+  const creds = await section("Credentials");
+  await waitFor(() => expect(row(creds, "work")).toBeDefined());
+  await u.click(within(row(creds, "work")).getByRole("button", { name: "Actions for work" }));
+  await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
+  const token = within(creds).getByLabelText("New token");
+  await u.type(token, "a");
+  await u.clear(token);
+  await u.tab();
+  expect(describedText(token)).toBe("Enter the token.");
+});
+
+test("Update value validates on blur of a changed field", async () => {
+  world({ secrets: [secret({ name: "GH_TOKEN" })] });
+  renderApp("/settings/secrets", alice);
+  const u = userEvent.setup();
+  const region = await section("Secrets");
+  await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
+  await u.click(within(row(region, "GH_TOKEN")).getByRole("button", { name: "Update" }));
+  const value = within(region).getByLabelText("New value");
+  await u.type(value, "a");
+  await u.clear(value);
+  await u.tab();
+  expect(describedText(value)).toBe("Enter a value.");
 });
 
 test("credential row: Verify visible, Replace token and Delete… in the menu; used ones can't be deleted", async () => {
@@ -417,7 +481,7 @@ test("the secret name is uppercased while typing, keeping the caret; reserved na
   expect(name).not.toHaveAttribute("aria-invalid");
   await userEvent.tab();
   expect(name).toHaveAttribute("aria-invalid", "true");
-  expect(describedText(name)).toBe("That name is reserved for the agent's environment.");
+  expect(describedText(name)).toBe("That name is reserved.");
 });
 
 test("projects: a middle-truncated path, grant wording, and Remove disabled with its reason", async () => {
@@ -809,7 +873,7 @@ test("add secret: 409 secret_name_reserved lands under Name and focuses it", asy
           {
             error: {
               code: "secret_name_reserved",
-              message: "That name is reserved for the agent's environment.",
+              message: "That name is reserved.",
             },
           },
           409,
@@ -824,7 +888,7 @@ test("add secret: 409 secret_name_reserved lands under Name and focuses it", asy
   await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
   const name = within(region).getByLabelText("Name");
   await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
-  expect(describedText(name)).toBe("That name is reserved for the agent's environment.");
+  expect(describedText(name)).toBe("That name is reserved.");
   expect(name).toHaveFocus();
   expect(within(region).queryByRole("alert", { name: /reserved/ })).not.toBeInTheDocument();
 });

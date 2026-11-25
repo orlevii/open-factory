@@ -1,9 +1,15 @@
 import { ApiError, nameSchema, type ProjectSummary } from "@open-factory/shared";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FormField } from "@/components/form-field";
+import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { createProject } from "@/features/settings/api";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
 import { checkPath, fieldsOf, PATH_HELP } from "./shared";
+
+type Field = "name" | "hostPath";
+const FIELDS: readonly Field[] = ["name", "hostPath"];
 
 export function AddProjectForm({
   frame,
@@ -18,42 +24,35 @@ export function AddProjectForm({
 }) {
   const [name, setName] = useState("");
   const [hostPath, setHostPath] = useState("");
-  const [errors, setErrors] = useState<{ name?: string; hostPath?: string }>({});
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
 
-  const checkName = (n: string) => {
-    if (!nameSchema.safeParse(n).success) {
-      return "Use 2–40 lowercase letters, numbers and inner hyphens, starting with a letter.";
-    }
-    return existing.includes(n) ? `A project named ${n} already exists.` : undefined;
-  };
-  const focus = (f: "name" | "hostPath") =>
-    document.getElementById(f === "name" ? "field-project-name" : "field-project-path")?.focus();
+  const f = useFieldErrors({
+    form: formRef,
+    fields: FIELDS,
+    checks: {
+      name: () => {
+        const r = nameSchema.safeParse(name);
+        if (!r.success) return r.error.issues[0]?.message;
+        return existing.includes(name) ? FORM_MSG.nameTaken : undefined;
+      },
+      hostPath: () => checkPath(hostPath),
+    },
+  });
 
   async function submit() {
-    const found = { name: checkName(name), hostPath: checkPath(hostPath) };
-    setErrors(found);
-    setFormError(undefined);
-    if (found.name || found.hostPath) return focus(found.name ? "name" : "hostPath");
+    o.clear();
+    if (!f.submit()) return;
     setPending(true);
     try {
       onDone(await createProject({ name, hostPath: hostPath.trim() }));
     } catch (err) {
-      const fields = fieldsOf(err);
-      if (err instanceof ApiError && err.code === "project_exists") {
-        setErrors({ name: err.message });
-        focus("name");
-      } else if (fields && (fields.name || fields.hostPath)) {
-        setErrors({ name: fields.name, hostPath: fields.hostPath });
-        focus(fields.name ? "name" : "hostPath");
-      } else {
-        setFormError(
-          err instanceof ApiError ? err.message : "Couldn't add the project. Try again.",
-        );
-      }
-    } finally {
       setPending(false);
+      if (err instanceof ApiError && err.code === "project_exists")
+        f.set("name", FORM_MSG.nameTaken, { focus: true });
+      else if (!f.server(fieldsOf(err)))
+        o.fail(err instanceof ApiError ? err.message : FORM_MSG.addProjectFailed);
     }
   }
 
@@ -66,18 +65,19 @@ export function AddProjectForm({
       submitLabel="Add project"
       pendingLabel="Adding…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
+      ref={formRef}
     >
       <FormField
         name="project-name"
         label="Name"
-        error={errors.name}
+        error={f.errors.name}
         value={name}
         onChange={(e) => {
           setName(e.target.value);
-          setErrors((x) => ({ ...x, name: undefined }));
+          f.change("name");
         }}
-        onBlur={() => setErrors((x) => ({ ...x, name: checkName(name) }))}
+        onBlur={(e) => f.blur("name", e)}
         autoComplete="off"
         autoCapitalize="none"
         spellCheck={false}
@@ -87,13 +87,13 @@ export function AddProjectForm({
         name="project-path"
         label="Path"
         help={PATH_HELP}
-        error={errors.hostPath}
+        error={f.errors.hostPath}
         value={hostPath}
         onChange={(e) => {
           setHostPath(e.target.value);
-          setErrors((x) => ({ ...x, hostPath: undefined }));
+          f.change("hostPath");
         }}
-        onBlur={() => setErrors((x) => ({ ...x, hostPath: checkPath(hostPath) }))}
+        onBlur={(e) => f.blur("hostPath", e)}
         autoComplete="off"
         autoCapitalize="none"
         spellCheck={false}

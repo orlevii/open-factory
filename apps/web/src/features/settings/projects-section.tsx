@@ -4,6 +4,8 @@ import { Plus } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { ErrorLine } from "@/components/error-line";
 import { FormField } from "@/components/form-field";
+import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import {
@@ -97,6 +99,8 @@ function InUseMessage({ grantedTo, archived }: { grantedTo: string[]; archived: 
   );
 }
 
+const FIELDS = ["hostPath"] as const;
+
 function ChangePathForm({
   project,
   onDone,
@@ -107,30 +111,26 @@ function ChangePathForm({
   onCancel(): void;
 }) {
   const [hostPath, setHostPath] = useState(project.hostPath);
-  const [error, setError] = useState<string>();
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
-  const field = `project-path-${project.name}`;
-  const focus = () => document.getElementById(`field-${field}`)?.focus();
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const f = useFieldErrors({
+    form: formRef,
+    fields: FIELDS,
+    checks: { hostPath: () => checkPath(hostPath) },
+  });
 
   async function submit() {
-    const e = checkPath(hostPath);
-    setError(e);
-    setFormError(undefined);
-    if (e) return focus();
+    o.clear();
+    if (!f.submit()) return;
     setPending(true);
     try {
       onDone(await updateProject(project.name, hostPath.trim()));
     } catch (err) {
-      const fields = fieldsOf(err);
-      if (fields?.hostPath) {
-        setError(fields.hostPath);
-        focus();
-      } else {
-        setFormError(err instanceof ApiError ? err.message : "Couldn't save the path. Try again.");
-      }
-    } finally {
       setPending(false);
+      if (!f.server(fieldsOf(err)))
+        o.fail(err instanceof ApiError ? err.message : "Couldn't save the path. Try again.");
     }
   }
 
@@ -142,19 +142,20 @@ function ChangePathForm({
       submitLabel="Save path"
       pendingLabel="Saving…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
+      ref={formRef}
     >
       <FormField
-        name={field}
+        name={`project-path-${project.name}`}
         label="Path"
         help={PATH_HELP}
-        error={error}
+        error={f.errors.hostPath}
         value={hostPath}
         onChange={(e) => {
           setHostPath(e.target.value);
-          setError(undefined);
+          f.change("hostPath");
         }}
-        onBlur={() => setError(checkPath(hostPath))}
+        onBlur={(e) => f.blur("hostPath", e)}
         autoComplete="off"
         autoCapitalize="none"
         spellCheck={false}

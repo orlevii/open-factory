@@ -3,6 +3,7 @@ import {
   formatKey,
   formatOffsetIso,
   isValidZone,
+  MSG,
   minGapMinutes,
   nextRun,
   parseAt,
@@ -96,15 +97,9 @@ export class ScheduleService {
     const now = this.d.now();
     const when = this.checkTiming(actor, input, now);
     const body = input.body;
-    if (bytes(body) < 1)
-      throw new ScheduleError("invalid_schedule", "The message can't be empty.", 400, "body");
+    if (bytes(body) < 1) throw new ScheduleError("invalid_schedule", MSG.messageEmpty, 400, "body");
     if (bytes(body) > SCHEDULE_BODY_MAX)
-      throw new ScheduleError(
-        "invalid_schedule",
-        "The message is too long (64 KB at most).",
-        400,
-        "body",
-      );
+      throw new ScheduleError("invalid_schedule", MSG.bodyTooLong, 400, "body");
     const target = await this.resolveTarget(actor, input.target);
 
     const out = await withDeadlockRetry(() =>
@@ -593,15 +588,9 @@ export class ScheduleService {
     return new ScheduleError("schedule_not_found", "There is no such schedule.", 404);
   }
   private checkBody(body: string) {
-    if (bytes(body) < 1)
-      throw new ScheduleError("invalid_schedule", "The message can't be empty.", 400, "body");
+    if (bytes(body) < 1) throw new ScheduleError("invalid_schedule", MSG.messageEmpty, 400, "body");
     if (bytes(body) > SCHEDULE_BODY_MAX)
-      throw new ScheduleError(
-        "invalid_schedule",
-        "The message is too long (64 KB at most).",
-        400,
-        "body",
-      );
+      throw new ScheduleError("invalid_schedule", MSG.bodyTooLong, 400, "body");
   }
 
   /** The item the API returns: derived state, names, no status column (Q15). */

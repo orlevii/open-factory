@@ -14,6 +14,7 @@ import { z } from "zod";
 import { InvalidCursorError } from "../agents/errors.ts";
 import { requireUser } from "../auth/require-user.ts";
 import { ApiError, FieldError } from "../errors.ts";
+import { FIELD_MSG } from "../field-messages.ts";
 
 const inboxQuerySchema = z.object({
   before: z.string().min(1).optional(),
@@ -71,7 +72,7 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
         if (r.count) app.bus.publishToUser(userId, { type: "inbox_changed" });
         return r;
       } catch (err) {
-        if (err instanceof InvalidCursorError) throw new FieldError("upTo", "Not a valid time.");
+        if (err instanceof InvalidCursorError) throw new FieldError("upTo", FIELD_MSG.invalidTime);
         throw err;
       }
     },
@@ -94,7 +95,7 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
         if (r.marked) app.bus.publishToUser(userId, { type: "inbox_changed" });
         return r;
       } catch (err) {
-        if (err instanceof InvalidCursorError) throw new FieldError("upTo", "Not a valid time.");
+        if (err instanceof InvalidCursorError) throw new FieldError("upTo", FIELD_MSG.invalidTime);
         throw err;
       }
     },
@@ -110,7 +111,8 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
         if (r.count) app.bus.publishToUser(userId, { type: "inbox_changed" });
         return r;
       } catch (err) {
-        if (err instanceof InvalidCursorError) throw new FieldError("readAt", "Not a valid time.");
+        if (err instanceof InvalidCursorError)
+          throw new FieldError("readAt", FIELD_MSG.invalidTime);
         throw err;
       }
     },

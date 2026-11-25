@@ -4,15 +4,20 @@ import {
   type CredentialSummary,
   nameSchema,
 } from "@open-factory/shared";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
+import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { createCredential } from "@/features/settings/api";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
-import { TokenField, type Verdict, valueNoun, verdictOf } from "./shared";
+import { enterValueMessage, TokenField, valueNoun, verdictOf } from "./shared";
 
 const cap = (s: string) => s[0]?.toUpperCase() + s.slice(1);
+type Field = "name" | "value";
+const FIELDS: readonly Field[] = ["name", "value"];
 
 export function AddCredentialForm({
   frame,
@@ -28,52 +33,45 @@ export function AddCredentialForm({
   const [name, setName] = useState("");
   const [kind, setKind] = useState<CredentialKind>("oauth_token");
   const [value, setValue] = useState("");
-  const [nameError, setNameError] = useState<string>();
-  const [verdict, setVerdict] = useState<Verdict>({});
-  const [formError, setFormError] = useState<string>();
+  // A transient verification problem: described under the token but not invalid.
+  const [warning, setWarning] = useState<string>();
+  const o = useOutcome();
   const [pending, setPending] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
 
-  const checkName = (n: string) => {
-    if (!nameSchema.safeParse(n).success) {
-      return "Use 2–40 lowercase letters, numbers and inner hyphens, starting with a letter.";
-    }
-    return existing.includes(n) ? `A credential named ${n} already exists.` : undefined;
-  };
-  const checkValue = (v: string, k: CredentialKind) =>
-    v.trim() === "" ? `Enter the ${valueNoun(k)}.` : undefined;
-  const focus = (f: "name" | "value") => document.getElementById(`field-credential-${f}`)?.focus();
+  const f = useFieldErrors({
+    form: formRef,
+    fields: FIELDS,
+    checks: {
+      name: () => {
+        const r = nameSchema.safeParse(name);
+        if (!r.success) return r.error.issues[0]?.message;
+        return existing.includes(name) ? FORM_MSG.nameTaken : undefined;
+      },
+      value: () => (value.trim() === "" ? enterValueMessage(kind) : undefined),
+    },
+  });
 
   async function submit() {
-    const n = checkName(name);
-    const v = checkValue(value, kind);
-    setNameError(n);
-    setVerdict(v ? { error: v } : {});
-    setFormError(undefined);
-    if (n || v) return focus(n ? "name" : "value");
+    o.clear();
+    setWarning(undefined);
+    if (!f.submit()) return;
     setPending(true);
     try {
       onDone(await createCredential({ name, kind, value }));
     } catch (err) {
-      const verdictErr = verdictOf(err);
-      if (verdictErr) {
-        setVerdict(verdictErr);
-        if (verdictErr.error) focus("value");
-      } else if (err instanceof ApiError && err.code === "credential_exists") {
-        setNameError(err.message);
-        focus("name");
-      } else if (err instanceof ApiError && err.code === "validation_error") {
-        const fields = (err.body.fields ?? {}) as Record<string, string>;
-        if (fields.name) setNameError(fields.name);
-        if (fields.value) setVerdict({ error: fields.value });
-        if (fields.name || fields.value) focus(fields.name ? "name" : "value");
-        else setFormError(err.message);
-      } else {
-        setFormError(
-          err instanceof ApiError ? err.message : "Couldn't add the credential. Try again.",
-        );
-      }
-    } finally {
       setPending(false);
+      const v = verdictOf(err);
+      if (v?.error) f.set("value", v.error, { focus: true });
+      else if (v?.warning) {
+        setWarning(v.warning);
+        o.fail(FORM_MSG.addCredentialFailed);
+      } else if (err instanceof ApiError && err.code === "credential_exists")
+        f.set("name", FORM_MSG.nameTaken, { focus: true });
+      else if (err instanceof ApiError && err.code === "validation_error") {
+        const fields = (err.body.fields ?? {}) as Record<string, string>;
+        if (!f.server(fields)) o.fail(err.message);
+      } else o.fail(err instanceof ApiError ? err.message : FORM_MSG.addCredentialFailed);
     }
   }
 
@@ -86,18 +84,19 @@ export function AddCredentialForm({
       submitLabel="Verify and add"
       pendingLabel="Verifying…"
       pending={pending}
-      formError={formError}
+      outcome={o.outcome}
+      ref={formRef}
     >
       <FormField
         name="credential-name"
         label="Name"
-        error={nameError}
+        error={f.errors.name}
         value={name}
         onChange={(e) => {
           setName(e.target.value);
-          setNameError(undefined);
+          f.change("name");
         }}
-        onBlur={() => setNameError(checkName(name))}
+        onBlur={(e) => f.blur("name", e)}
         autoComplete="off"
         autoCapitalize="none"
         spellCheck={false}
@@ -110,7 +109,8 @@ export function AddCredentialForm({
             value={kind}
             onValueChange={(v) => {
               setKind(v as typeof kind);
-              setVerdict({});
+              setWarning(undefined);
+              f.change("value");
             }}
             className="gap-1.5"
           >
@@ -140,13 +140,12 @@ export function AddCredentialForm({
         value={value}
         onChange={(v) => {
           setValue(v);
-          setVerdict({});
+          setWarning(undefined);
+          f.change("value");
         }}
-        onBlur={() => {
-          const v = checkValue(value, kind);
-          if (v) setVerdict({ error: v });
-        }}
-        verdict={verdict}
+        onBlur={(e) => f.blur("value", e)}
+        verdict={{ error: f.errors.value, warning }}
+        kind={kind}
       />
     </FormFrame>
   );

@@ -1,9 +1,9 @@
 import type { TemplateConfig, TemplateIssue } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
-import { CircleAlert, Plus, TriangleAlert } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Plus, TriangleAlert } from "lucide-react";
+import { type FocusEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { FieldShell } from "@/components/field-shell";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -21,13 +21,13 @@ export type TemplateOption = {
 
 const linkClass =
   "text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
-const ID = "field-template";
 
 /**
- * New agent's Template (§6.2): a Select whose items show the display name (the trigger's text) with the description
- * muted under it; templates with errors are listed disabled. "New template" sits in the label row. With no template
- * the Select gives way to "No templates yet."; with every template broken, to a link to fix them. `onBlur` runs when
- * the trigger loses focus with the list closed, and when the list closes (after the pick has rendered).
+ * New agent's Template (§6.2) on `FieldShell`: a Select whose items show the display name (the trigger's text) with
+ * the description muted under it; templates with errors are listed disabled. "New template" is the field's action.
+ * With no template the Select gives way to "No templates yet."; with every template broken, to a link to fix them.
+ * `onBlur` runs when the trigger loses focus with the list closed (with its event), and when the list closes (after
+ * the pick has rendered, with none).
  */
 export function TemplateField({
   value,
@@ -44,7 +44,7 @@ export function TemplateField({
   templates: TemplateOption[];
   onNewTemplate(): void;
   error?: string;
-  onBlur?(): void;
+  onBlur?(e?: FocusEvent): void;
   /** Extra ids describing the trigger (the summary below it). */
   describedBy?: string;
   /** Below the field: the chosen template's summary. */
@@ -52,9 +52,9 @@ export function TemplateField({
 }) {
   const [listOpen, setListOpen] = useState(false);
   const opened = useRef(false);
-  const newTemplate = useRef<HTMLButtonElement>(null);
   // Opening a Radix Select moves focus into its list, so the trigger blurs on open: validate when the list closes,
-  // once the chosen value has rendered.
+  // once the chosen value has rendered. An effect, not the close handler: the close fires before the pick renders, and
+  // this is the only moment the field has been left with its final value. No event, so the hook counts it as a blur.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the list closes
   useEffect(() => {
     if (listOpen || !opened.current) return;
@@ -64,102 +64,93 @@ export function TemplateField({
 
   const ready = templates.filter((t) => t.errors === 0);
   const broken = templates.filter((t) => t.errors > 0);
-  const errorId = `${ID}-error`;
-  const hasSelect = templates.length > 0 && ready.length > 0;
-  const labelRow = (
-    <div className="flex min-h-7 items-center justify-between gap-2">
-      {hasSelect ? (
-        <Label htmlFor={ID} className="text-[0.8125rem]">
-          Template
-        </Label>
-      ) : (
-        <p className="text-[0.8125rem] font-medium">Template</p>
-      )}
-      <Button
-        ref={newTemplate}
-        type="button"
-        variant="ghost"
-        size="sm"
-        inForm
-        onClick={onNewTemplate}
-      >
-        <Plus aria-hidden="true" data-icon="inline-start" />
-        New template
-      </Button>
-    </div>
-  );
-
+  // No Select to label: the empty state's text stands in for it, so a failing submit focuses it and it carries the note.
+  const empty = (a: { id: string; describedBy?: string; invalid: boolean }) => ({
+    id: a.id,
+    tabIndex: -1,
+    "aria-describedby": a.describedBy,
+    "aria-invalid": a.invalid || undefined,
+    className: "text-[0.8125rem] text-muted-foreground",
+  });
   return (
-    <div className="grid gap-1.5">
-      {labelRow}
-      {templates.length === 0 ? (
-        <p className="text-[0.8125rem] text-muted-foreground">No templates yet.</p>
-      ) : ready.length === 0 ? (
-        <p className="text-[0.8125rem] text-muted-foreground">
-          No template is ready: fix the errors in{" "}
-          {broken.length === 1 ? (
-            <Link
-              to="/templates/$name"
-              params={{ name: broken[0]?.name ?? "" }}
-              className={`font-mono ${linkClass}`}
-            >
-              {broken[0]?.name}
-            </Link>
-          ) : (
-            <Link to="/templates" className={linkClass}>
-              {broken.length} templates
-            </Link>
-          )}
-          .
-        </p>
-      ) : (
-        <Select
-          // A name no ready template has (an unknown or broken `?template=`) shows unchosen: the placeholder.
-          value={ready.some((t) => t.name === value) ? value : ""}
-          onValueChange={onChange}
-          onOpenChange={(open) => {
-            setListOpen(open);
-            if (open) opened.current = true;
-          }}
+    <FieldShell
+      name="template"
+      label="Template"
+      plainLabel={ready.length === 0}
+      error={error}
+      describedBy={describedBy}
+      action={
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          inForm
+          data-skip-validate
+          onClick={onNewTemplate}
         >
-          <SelectTrigger
-            id={ID}
-            aria-invalid={error ? true : undefined}
-            aria-describedby={
-              [error ? errorId : undefined, describedBy].filter(Boolean).join(" ") || undefined
-            }
-            // Leaving for the field's own New template isn't leaving it unchosen: its result fills the field.
-            onBlur={(e) => !listOpen && e.relatedTarget !== newTemplate.current && onBlur?.()}
-          >
-            <SelectValue placeholder="Choose a template" />
-          </SelectTrigger>
-          {/* The list scrolls within its own height, also inside a drawer. */}
-          <SelectContent className="max-h-[min(20rem,var(--radix-select-content-available-height))]">
-            {templates.map((t) =>
-              t.errors > 0 ? (
-                <SelectItem key={t.name} value={t.name} disabled>
-                  {`${t.name} (has errors)`}
-                </SelectItem>
-              ) : (
-                <SelectItem key={t.name} value={t.name} description={t.description || undefined}>
-                  {t.displayName || t.name}
-                </SelectItem>
-              ),
+          <Plus aria-hidden="true" data-icon="inline-start" />
+          New template
+        </Button>
+      }
+      below={children}
+    >
+      {(a) =>
+        templates.length === 0 ? (
+          <p {...empty(a)}>No templates yet.</p>
+        ) : ready.length === 0 ? (
+          <p {...empty(a)}>
+            No template is ready: fix the errors in{" "}
+            {broken.length === 1 ? (
+              <Link
+                to="/templates/$name"
+                params={{ name: broken[0]?.name ?? "" }}
+                className={`font-mono ${linkClass}`}
+              >
+                {broken[0]?.name}
+              </Link>
+            ) : (
+              <Link to="/templates" className={linkClass}>
+                {broken.length} templates
+              </Link>
             )}
-          </SelectContent>
-        </Select>
-      )}
-      {error && (
-        <p
-          id={errorId}
-          className="flex items-start gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
-        >
-          <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-          {error}
-        </p>
-      )}
-      {children}
-    </div>
+            .
+          </p>
+        ) : (
+          <Select
+            // A name no ready template has (an unknown or broken `?template=`) shows unchosen: the placeholder.
+            value={ready.some((t) => t.name === value) ? value : ""}
+            onValueChange={onChange}
+            onOpenChange={(open) => {
+              setListOpen(open);
+              if (open) opened.current = true;
+            }}
+          >
+            <SelectTrigger
+              id={a.id}
+              aria-invalid={a.invalid || undefined}
+              aria-describedby={a.describedBy}
+              onBlur={(e) => !listOpen && onBlur?.(e)}
+            >
+              <SelectValue placeholder="Choose a template" />
+            </SelectTrigger>
+            {/* The list scrolls within its own height, also inside a drawer. */}
+            <SelectContent className="max-h-[min(20rem,var(--radix-select-content-available-height))]">
+              {templates.map((t) =>
+                t.errors > 0 ? (
+                  <SelectItem key={t.name} value={t.name} disabled>
+                    {`${t.name} (has errors)`}
+                  </SelectItem>
+                ) : (
+                  <SelectItem key={t.name} value={t.name} description={t.description || undefined}>
+                    {t.displayName || t.name}
+                  </SelectItem>
+                ),
+              )}
+            </SelectContent>
+          </Select>
+        )
+      }
+    </FieldShell>
   );
 }
 

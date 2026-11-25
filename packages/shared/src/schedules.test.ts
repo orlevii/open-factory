@@ -14,9 +14,7 @@ test("the tool schema accepts a weekday cron and refuses a nickname with the 5-f
   );
   const r = scheduleMessageToolSchema.safeParse({ body: "x", cron: "@daily" });
   expect(r.success).toBe(false);
-  expect(r.error?.issues[0]?.message).toBe(
-    "Use 5 fields: minute hour day-of-month month day-of-week.",
-  );
+  expect(r.error?.issues[0]?.message).toBe("Use 5 fields, like 0 9 * * 1-5.");
 });
 test("an unknown zone names the zone", () => {
   const r = scheduleMessageToolSchema.safeParse({

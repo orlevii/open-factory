@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { NO_OUTCOME } from "@/components/forms/form-outcome";
 import { createQueryClient } from "@/lib/query-client";
 import { agentSummary } from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -43,6 +44,7 @@ function StubTask({ close }: BodyProps<{ kind: "new-task" }>) {
         }}
       />
       <SheetFormFooter
+        outcome={NO_OUTCOME}
         submitLabel="Create task"
         pendingLabel="Creating…"
         pending={false}

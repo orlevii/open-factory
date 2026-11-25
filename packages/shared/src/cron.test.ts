@@ -27,13 +27,13 @@ test.each([
 ])("accepts %s", (e) => expect(validateCron(e)).toBeNull());
 
 test.each([
-  ["0 9 * *", "Use 5 fields: minute hour day-of-month month day-of-week."],
-  ["0 0 9 * * *", "Use 5 fields: minute hour day-of-month month day-of-week."],
-  ["@daily", "Use 5 fields: minute hour day-of-month month day-of-week."],
-  ["0 9 L * *", "Only numbers, *, ranges, lists, steps and names are allowed."],
-  ["0 9 * * 5#2", "Only numbers, *, ranges, lists, steps and names are allowed."],
-  ["0 9 ? * *", "Only numbers, *, ranges, lists, steps and names are allowed."],
-  ["0 9 15W * *", "Only numbers, *, ranges, lists, steps and names are allowed."],
+  ["0 9 * *", "Use 5 fields, like 0 9 * * 1-5."],
+  ["0 0 9 * * *", "Use 5 fields, like 0 9 * * 1-5."],
+  ["@daily", "Use 5 fields, like 0 9 * * 1-5."],
+  ["0 9 L * *", "Use numbers, *, -, / and commas."],
+  ["0 9 * * 5#2", "Use numbers, *, -, / and commas."],
+  ["0 9 ? * *", "Use numbers, *, -, / and commas."],
+  ["0 9 15W * *", "Use numbers, *, -, / and commas."],
   ["0 0 30 2 *", "This pattern never runs."],
 ])("refuses %s", (e, msg) => expect(validateCron(e)).toBe(msg));
 

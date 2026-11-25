@@ -261,7 +261,7 @@ test("a spawned agent can't create schedules even when called directly (Q12)", a
 test("review 4: an empty cron is not 'absent': it gets the field sentence", async () => {
   await rejects(
     svc.create(or, { target: "ceo", cron: "", timezone: "UTC", body: "x" }),
-    "Use 5 fields: minute hour day-of-month month day-of-week.",
+    "Use 5 fields, like 0 9 * * 1-5.",
   );
   await rejects(
     svc.create(or, { target: "ceo", at: "", timezone: "UTC", body: "x" }),

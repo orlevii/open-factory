@@ -1,11 +1,13 @@
+import { MSG } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
-import { flushSync } from "react-dom";
+import { useRef, useState } from "react";
 import { z } from "zod";
-import { AuthCard, focusFirstInvalid } from "@/components/auth-card";
+import { AuthCard } from "@/components/auth-card";
 import { mapAuthError, mapAuthFailure } from "@/components/auth-error";
 import { FormField } from "@/components/form-field";
+import { useOutcome } from "@/components/forms/form-outcome";
+import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { signUpStateQueryOptions } from "@/features/auth/api";
 import { authClient } from "@/lib/auth-client";
 import { refreshSession, sessionQueryOptions } from "@/lib/session";
@@ -19,11 +21,11 @@ export const Route = createFileRoute("/sign-in")({
 });
 
 const signInSchema = z.object({
-  email: z.email("Enter a valid email"),
-  password: z.string().min(1, "Enter your password"),
+  email: z.email(MSG.email),
+  password: z.string().min(1, MSG.passwordRequired),
 });
 type Field = "email" | "password";
-type Errors = Partial<Record<Field, string>>;
+const FIELDS: readonly Field[] = ["email", "password"];
 
 function SignIn() {
   const qc = useQueryClient();
@@ -31,48 +33,43 @@ function SignIn() {
   // The "Sign up" link shows only while the factory has no users yet (invite-only afterwards).
   const bootstrap = useQuery(signUpStateQueryOptions()).data?.bootstrap === true;
   const [values, setValues] = useState({ email: "", password: "" });
-  const [errors, setErrors] = useState<Errors>({});
-  const [formError, setFormError] = useState<string>();
+  const o = useOutcome();
   const [submitting, setSubmitting] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const f = useFieldErrors({
+    form: formRef,
+    fields: FIELDS,
+    checks: {
+      email: () => signInSchema.shape.email.safeParse(values.email).error?.issues[0]?.message,
+      password: () =>
+        signInSchema.shape.password.safeParse(values.password).error?.issues[0]?.message,
+    },
+  });
 
-  // Editing a field clears its error; there is no live re-validation while typing.
   const set = (field: Field, value: string) => {
     setValues((v) => ({ ...v, [field]: value }));
-    setErrors((e) => (e[field] ? { ...e, [field]: undefined } : e));
+    f.change(field);
   };
 
-  const showFieldErrors = (form: HTMLFormElement, next: Errors) => {
-    flushSync(() => setErrors(next));
-    focusFirstInvalid(form);
-  };
-
-  async function submit(form: HTMLFormElement) {
-    setFormError(undefined);
-    const parsed = signInSchema.safeParse(values);
-    if (!parsed.success) {
-      const next: Errors = {};
-      for (const issue of parsed.error.issues) next[issue.path[0] as Field] ??= issue.message;
-      showFieldErrors(form, next);
-      return;
-    }
-    setErrors({});
+  async function submit() {
+    o.clear();
+    if (!f.submit()) return;
+    const parsed = signInSchema.parse(values);
     setSubmitting(true);
     try {
-      const failure = await authClient.signIn.email(parsed.data).then(
+      const failure = await authClient.signIn.email(parsed).then(
         ({ error }) => (error ? { error } : null),
         (thrown: unknown) => ({ thrown }),
       );
       if (failure) {
         const m = mapAuthFailure(failure);
-        if (m.field === "email" || m.field === "password")
-          showFieldErrors(form, { [m.field]: m.message });
-        else setFormError(m.message);
+        if (!f.server(m.field ? { [m.field]: m.message } : undefined)) o.fail(m.message);
         return;
       }
       await refreshSession(qc);
       await navigate({ to: "/inbox" });
     } catch {
-      setFormError(mapAuthError(undefined, "").message);
+      o.fail(mapAuthError(undefined, "").message);
     } finally {
       setSubmitting(false);
     }
@@ -84,8 +81,9 @@ function SignIn() {
       submitLabel="Sign in"
       pendingLabel="Signing in…"
       submitting={submitting}
-      formError={formError}
-      onSubmit={(form) => void submit(form)}
+      outcome={o.outcome}
+      ref={formRef}
+      onSubmit={() => void submit()}
       footer={
         bootstrap ? (
           <span>
@@ -108,7 +106,8 @@ function SignIn() {
         autoFocus
         value={values.email}
         onChange={(e) => set("email", e.target.value)}
-        error={errors.email}
+        onBlur={(e) => f.blur("email", e)}
+        error={f.errors.email}
       />
       <FormField
         name="password"
@@ -117,7 +116,8 @@ function SignIn() {
         autoComplete="current-password"
         value={values.password}
         onChange={(e) => set("password", e.target.value)}
-        error={errors.password}
+        onBlur={(e) => f.blur("password", e)}
+        error={f.errors.password}
       />
     </AuthCard>
   );

@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 
 /**
  * A disclosure for a form's rarely needed fields. `open` is the parent's (derived) state. The chevron turns only
- * when its own button is clicked (DESIGN.md); when `open` becomes true from outside it is set `data-instant`, so
- * nothing animates. `reason` says why it opened itself.
+ * when its own button is clicked (DESIGN.md); when `open` becomes true from outside (also after the user folded it)
+ * it is set `data-instant`, so nothing animates. `reason` says why it opened itself.
  */
 export function MoreOptions({
   open,
@@ -20,7 +20,15 @@ export function MoreOptions({
   children: ReactNode;
 }) {
   const id = useId();
-  const [clicked, setClicked] = useState(false);
+  // The state the user's last click asked for. It is forgotten once `open` changes to anything else, so a later
+  // outside open (a failing submit after a fold) is instant even if it lands back on the clicked state.
+  const [clickedFor, setClickedFor] = useState<boolean>();
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    if (clickedFor !== open) setClickedFor(undefined);
+  }
+  const clicked = clickedFor === open;
   return (
     <div className="grid gap-4">
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-[0.8125rem]">
@@ -28,8 +36,9 @@ export function MoreOptions({
           type="button"
           aria-expanded={open}
           aria-controls={open ? id : undefined}
+          data-skip-validate
           onClick={() => {
-            setClicked(true);
+            setClickedFor(!open);
             onOpenChange(!open);
           }}
           className={cn(
@@ -52,7 +61,7 @@ export function MoreOptions({
         {reason && <span className="text-muted-foreground">{reason}</span>}
       </div>
       {open && (
-        <div id={id} className="grid gap-5">
+        <div id={id} className="field-stack">
           {children}
         </div>
       )}

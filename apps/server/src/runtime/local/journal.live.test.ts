@@ -51,7 +51,8 @@ async function startParent(): Promise<{ parent: ChildProcess; sleepPid: number }
 
 test("live: a crash leaves a setsid sleep; reap kills it", async () => {
   const { parent, sleepPid } = await startParent();
-  const journal = new ProcessJournal();
+  // SIGTERM ends the sleep at once: a short grace before the SIGKILL check is enough.
+  const journal = new ProcessJournal({ sleep: () => new Promise((r) => setTimeout(r, 100)) });
   const snap = await journal.snapshot(parent.pid as number);
   expect(snap.descendants.map((d) => d.pid)).toContain(sleepPid);
 

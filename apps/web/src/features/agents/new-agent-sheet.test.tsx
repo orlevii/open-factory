@@ -1,10 +1,13 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
 import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
+import { credentialsQueryOptions } from "@/features/settings/api";
 import { clearDraft, clearInlineDrafts, hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet, resetSheets } from "@/features/sheets/sheet-store";
+import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 import {
   agentSummary,
   credential,
@@ -41,6 +44,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** The sheet suspends on credentials and templates, and React holds a revealed Suspense fallback for
+ *  300 ms before showing the content. Fetching them first (the same mocked calls the sheet would make,
+ *  fresh for its staleTime) takes that fixed wait out of every test that opens it. */
+const warm = (qc: QueryClient, template?: string) =>
+  Promise.all([
+    qc.prefetchQuery(credentialsQueryOptions),
+    qc.prefetchQuery(templatesQueryOptions),
+    // As the template's own "New agent" button does on intent.
+    template ? qc.prefetchQuery(templateQueryOptions(template)) : undefined,
+  ]);
+
 const field = (name: string) => screen.getByLabelText(name) as HTMLInputElement;
 const sheet = () => screen.findByRole("dialog", { name: "New agent" });
 const createButton = () => screen.getByRole("button", { name: /^(Create agent|Creating…)$/ });
@@ -50,6 +64,7 @@ async function open(world: World = {}, spec: { template?: string } = {}) {
   const api = mockWorld(world);
   const utils = renderApp("/agents", alice);
   await screen.findByRole("heading", { level: 1, name: "Agents" });
+  await warm(utils.queryClient, spec.template);
   act(() => openSheet({ kind: "new-agent", ...spec }));
   const d = await sheet();
   await within(d).findByRole("button", { name: "Create agent" });
@@ -112,6 +127,7 @@ test("several credentials and the restored draft's one is gone: Choose a credent
   mockWorld({ credentials: [credential("work"), credential("prod")] });
   const first = renderApp("/agents", alice);
   await screen.findByRole("heading", { level: 1, name: "Agents" });
+  await warm(first.queryClient);
   act(() => openSheet({ kind: "new-agent" }));
   await sheet();
   await userEvent.click(await screen.findByRole("button", { name: "More options" }));
@@ -128,6 +144,7 @@ test("leaving an unchosen Credential for its own Add credential button doesn't f
   mockWorld({ credentials: [credential("work"), credential("prod")] });
   const first = renderApp("/agents", alice);
   await screen.findByRole("heading", { level: 1, name: "Agents" });
+  await warm(first.queryClient);
   act(() => openSheet({ kind: "new-agent" }));
   await sheet();
   await userEvent.click(await screen.findByRole("button", { name: "More options" }));
@@ -451,6 +468,7 @@ test("a draft whose manager has ended clears it with the reason", async () => {
   mockWorld({ agents: [boss] });
   const first = renderApp("/agents", alice);
   await screen.findByRole("heading", { level: 1, name: "Agents" });
+  await warm(first.queryClient);
   act(() => openSheet({ kind: "new-agent" }));
   await sheet();
   const manager = await screen.findByLabelText("Manager");
@@ -485,6 +503,7 @@ test("a failing submit with no credential chosen opens More options every time, 
   mockWorld({ credentials: [credential("work"), credential("prod")] });
   const first = renderApp("/agents", alice);
   await screen.findByRole("heading", { level: 1, name: "Agents" });
+  await warm(first.queryClient, "lead");
   act(() => openSheet({ kind: "new-agent", template: "lead" }));
   await sheet();
   await vi.waitFor(() => expect(field("Display name").value).toBe("Team Lead"));
@@ -871,10 +890,54 @@ test("a late failure toasts the error with Open form, which reopens the kept dra
 
 test("a sheet opened for a template prefills from it", async () => {
   mockWorld();
-  renderApp("/agents", alice);
+  const { queryClient } = renderApp("/agents", alice);
+  await warm(queryClient, "lead");
   act(() => openSheet({ kind: "new-agent", template: "lead" }));
   await sheet();
   await vi.waitFor(() => expect(field("Display name").value).toBe("Team Lead"));
+});
+
+/** A world whose `lead` detail answers only when `land()` is called. */
+function lateDetail() {
+  let land!: () => void;
+  const landed = new Promise<void>((r) => {
+    land = r;
+  });
+  const world: World = {
+    extra: {
+      "GET /api/templates/lead": async () => {
+        await landed;
+        return json(templateDetail(templateConfig()));
+      },
+    },
+  };
+  return { world, land };
+}
+
+test("a template detail that lands after the sheet opened still prefills it", async () => {
+  const late = lateDetail();
+  mockWorld(late.world);
+  const { queryClient } = renderApp("/agents", alice);
+  await warm(queryClient);
+  act(() => openSheet({ kind: "new-agent", template: "lead" }));
+  await within(await sheet()).findByRole("button", { name: "Create agent" });
+  await vi.waitFor(() => expect(field("Display name")).toHaveFocus());
+  late.land();
+  await vi.waitFor(() => expect(field("Display name").value).toBe("Team Lead"));
+});
+
+test("a field the user enters before the template detail lands stays theirs", async () => {
+  const late = lateDetail();
+  mockWorld(late.world);
+  const { queryClient } = renderApp("/agents", alice);
+  await warm(queryClient);
+  act(() => openSheet({ kind: "new-agent", template: "lead" }));
+  await within(await sheet()).findByRole("button", { name: "Create agent" });
+  await userEvent.click(more());
+  await userEvent.click(field("Display name"));
+  late.land();
+  await vi.waitFor(() => expect(field("Description").value).toBe("Leads the team"));
+  expect(field("Display name").value).toBe("");
 });
 
 test("the sidebar + opens New agent", async () => {

@@ -11,7 +11,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await h.close();
-  await tdb.drop();
+  await tdb.release();
 });
 
 test("a GitHub skill source reads back with its picked skills and pinned trees", async () => {

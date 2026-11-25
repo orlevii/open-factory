@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, lstat, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { PTY_BRIDGE } from "./pty-bridge.ts";
 
@@ -55,11 +54,13 @@ export async function startHostPty(d: {
   claudeBin: string;
   serverEnv?: NodeJS.ProcessEnv;
   spawnFn?: typeof spawn;
-  tmp?: string;
+  /** Where the attempt's temp dir is made: the server's own folder, never the shared OS temp dir. */
+  parent: string;
   /** Called synchronously once the bridge has closed, just before the temp dir is removed. Errors are dropped. */
   beforeRemove?: (dir: string) => void;
 }): Promise<PtyRun> {
-  const dir = await mkdtemp(path.join(d.tmp ?? tmpdir(), DIR_PREFIX));
+  await mkdir(d.parent, { recursive: true, mode: 0o700 });
+  const dir = await mkdtemp(path.join(d.parent, DIR_PREFIX));
   await chmod(dir, 0o700);
   // Never rejects: a dir that can't be removed is left to the boot sweep, and must not keep
   // `exit` unsettled or replace the caller's error.
@@ -180,26 +181,20 @@ export function probePython(spawnFn: typeof spawn = spawn): Promise<boolean> {
   });
 }
 
-/** Boot cleanup of a crashed server's temp dirs: only direct children of `tmp` named `of-sign-in-*`,
- *  inspected with lstat (a symlink is never followed), owned by `uid`, a directory, older than 15 min. */
-export async function sweepStaleDirs(
-  tmp: string,
-  now: number,
-  uid = process.getuid?.(),
-): Promise<void> {
-  if (uid === undefined) return;
+/** Boot cleanup of a crashed server's attempt dirs: real directories directly in `parent` older than 15 min
+ *  (lstat, so a symlink is never followed). A missing `parent` is nothing to sweep. */
+export async function sweepStaleDirs(parent: string, now: number): Promise<void> {
   let names: string[];
   try {
-    names = await readdir(tmp);
+    names = await readdir(parent);
   } catch {
     return;
   }
   for (const name of names) {
-    if (!name.startsWith(DIR_PREFIX)) continue;
-    const p = path.join(tmp, name);
+    const p = path.join(parent, name);
     try {
       const st = await lstat(p);
-      if (st.isDirectory() && st.uid === uid && now - st.mtimeMs > STALE_MS)
+      if (st.isDirectory() && now - st.mtimeMs > STALE_MS)
         await rm(p, { recursive: true, force: true });
     } catch {}
   }

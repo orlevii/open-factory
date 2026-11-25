@@ -13,7 +13,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await sql.end();
-  await tdb.drop();
+  await tdb.release();
 });
 
 test("an agent row needs a handles row", async () => {

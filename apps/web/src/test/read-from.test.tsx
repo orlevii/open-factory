@@ -155,14 +155,16 @@ test("a persistent failure is not retried until a newer event arrives", async ()
   renderApp("/agents/dev/session", alice);
   await waitFor(() => expect(posts).toHaveLength(1));
   await waitFor(() => expect(unreadFetches).toBeGreaterThanOrEqual(2)); // the refetch restored the count
-  await new Promise((r) => setTimeout(r, 2300)); // past two throttle windows
+  vi.useFakeTimers(FAKE);
+  await advance(2300); // past two throttle windows
   expect(posts).toHaveLength(1);
   liveEvent("2026-11-18T10:00:09.000Z");
-  await waitFor(() => expect(posts).toHaveLength(2), { timeout: 3000 });
-  expect(posts[1]?.body.upTo).toBe("2026-11-18T10:00:09.000Z");
-  await new Promise((r) => setTimeout(r, 1300));
+  await advance(1100); // the session's frame batching, then the throttle
   expect(posts).toHaveLength(2);
-}, 10000);
+  expect(posts[1]?.body.upTo).toBe("2026-11-18T10:00:09.000Z");
+  await advance(1300);
+  expect(posts).toHaveLength(2);
+});
 
 test("a failure is retried once the tab becomes visible again", async () => {
   postStatus = 500;

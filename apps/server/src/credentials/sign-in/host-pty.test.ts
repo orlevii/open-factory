@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { createFakeClaude } from "@open-factory/harness/testing";
-import { afterAll, describe, expect, it, onTestFinished } from "vitest";
+import { afterAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   bridgeEnv,
   bridgeSpawnArgs,
@@ -28,6 +28,8 @@ import {
 import { PTY_BRIDGE } from "./pty-bridge.ts";
 
 const hasPython = spawnSync("python3", ["--version"]).status === 0;
+const parent = mkdtempSync(path.join(tmpdir(), "of-sign-in-parent-"));
+afterAll(() => rm(parent, { recursive: true, force: true }));
 
 /** A stand-in for the bridge process. It never reports a CLI pid, so the transport's group kill
  *  can never reach a real process from these tests. Closing stdin or kill() ends it. */
@@ -96,6 +98,7 @@ describe("startHostPty with a spawn spy", () => {
     }) as never;
     const run = await startHostPty({
       claudeBin: "/opt/claude",
+      parent,
       serverEnv: {
         PATH: "/usr/bin",
         LANG: "en_US.UTF-8",
@@ -137,9 +140,9 @@ describe("startHostPty with a spawn spy", () => {
     const tmp = await mkdtemp(path.join(tmpdir(), "of-test-enoent-"));
     const err = Object.assign(new Error("spawn python3 ENOENT"), { code: "ENOENT" });
     const spawnFn = (() => fakeChild({ error: err })) as never;
-    await expect(startHostPty({ claudeBin: "/opt/claude", spawnFn, tmp })).rejects.toBeInstanceOf(
-      PtyUnavailable,
-    );
+    await expect(
+      startHostPty({ claudeBin: "/opt/claude", spawnFn, parent: tmp }),
+    ).rejects.toBeInstanceOf(PtyUnavailable);
     expect(await readdir(tmp)).toEqual([]);
     await rm(tmp, { recursive: true, force: true });
   });
@@ -151,7 +154,7 @@ describe("startHostPty with a spawn spy", () => {
     const run = await startHostPty({
       claudeBin: "/opt/claude",
       spawnFn: (() => fakeChild()) as never,
-      tmp,
+      parent: tmp,
       beforeRemove: (dir) => {
         seen.push({ dir, present: readdirSync(tmp).includes(path.basename(dir)) });
         throw new Error("hook failed");
@@ -171,7 +174,9 @@ describe("startHostPty with a spawn spy", () => {
     const spawnFn = (() => {
       throw boom;
     }) as never;
-    await expect(startHostPty({ claudeBin: "/opt/claude", spawnFn, tmp })).rejects.toBe(boom);
+    await expect(startHostPty({ claudeBin: "/opt/claude", spawnFn, parent: tmp })).rejects.toBe(
+      boom,
+    );
     expect(await readdir(tmp)).toEqual([]);
   });
 
@@ -179,6 +184,7 @@ describe("startHostPty with a spawn spy", () => {
     let child!: ReturnType<typeof fakeChild>;
     const run = await startHostPty({
       claudeBin: "/opt/claude",
+      parent,
       spawnFn: (() => (child = fakeChild())) as never,
     });
     const check = Buffer.from("✓ ok");
@@ -201,21 +207,28 @@ describe("startHostPty with a spawn spy", () => {
     let child!: ReturnType<typeof fakeChild>;
     const run = await startHostPty({
       claudeBin: "/opt/claude",
+      parent,
       spawnFn: (() => {
         child = fakeChild({ exitOnKill: false });
         child.stdin.removeAllListeners("finish"); // a bridge that ignores stdin EOF
         return child;
       }) as never,
     });
-    const t0 = Date.now();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     run.kill();
     run.kill();
     expect(child.stdin.writableEnded).toBe(true);
-    await new Promise((r) => setTimeout(r, 1_200));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(child.kills).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
     expect(child.kills).toEqual(["SIGTERM"]);
-    await new Promise((r) => setTimeout(r, 2_000));
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(child.kills).toEqual(["SIGTERM"]);
+    await vi.advanceTimersByTimeAsync(1);
     expect(child.kills).toEqual(["SIGTERM", "SIGKILL"]);
-    expect(Date.now() - t0).toBeGreaterThanOrEqual(3_000);
     child.stdout.end();
     child.stderr.end();
     child.stdio[3]?.end();
@@ -231,6 +244,7 @@ describe("startHostPty with a spawn spy", () => {
     const got: string[] = [];
     const run = await startHostPty({
       claudeBin: "/opt/claude",
+      parent,
       spawnFn: (() => (child = fakeChild({ stderr: MARK }))) as never,
     });
     run.onData((s) => got.push(s));
@@ -278,20 +292,26 @@ describe("probePython", () => {
     const errChild = new EventEmitter();
     setImmediate(() => errChild.emit("error", Object.assign(new Error("x"), { code: "ENOENT" })));
     expect(await probePython((() => errChild) as never)).toBe(false);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const slow = probeChild(null, true);
-    const t0 = Date.now();
-    expect(await probePython((() => slow) as never)).toBe(false);
-    expect(Date.now() - t0).toBeGreaterThanOrEqual(4_900);
+    const result = probePython((() => slow) as never);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(slow.killed).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await result).toBe(false);
     expect(slow.killed).toEqual(["SIGKILL"]);
-  }, 10_000);
+  });
 });
 
 describe("sweepStaleDirs", () => {
-  it("removes only own, real, old of-sign-in-* dirs", async () => {
-    const parent = await mkdtemp(path.join(tmpdir(), "of-sweep-test-"));
+  it("removes only real dirs older than 15 min, never following a symlink", async () => {
+    const dirs = await mkdtemp(path.join(tmpdir(), "of-sweep-test-"));
     const elsewhere = await mkdtemp(path.join(tmpdir(), "of-sweep-target-"));
     onTestFinished(async () => {
-      await rm(parent, { recursive: true, force: true });
+      await rm(dirs, { recursive: true, force: true });
       await rm(elsewhere, { recursive: true, force: true });
     });
     const now = Date.now();
@@ -300,32 +320,27 @@ describe("sweepStaleDirs", () => {
       await mkdir(p, { recursive: true });
       await utimes(p, t, t);
     };
-    const oldOwn = path.join(parent, "of-sign-in-old");
-    await mk(path.join(oldOwn, "inner"), old);
-    await utimes(oldOwn, old, old);
+    const stale = path.join(dirs, "of-sign-in-old");
+    await mk(path.join(stale, "inner"), old);
+    await utimes(stale, old, old);
     const target = path.join(elsewhere, "of-sign-in-target");
     await mk(target, old);
-    const link = path.join(parent, "of-sign-in-link");
+    const link = path.join(dirs, "of-sign-in-link");
     await symlink(target, link);
-    const fresh = path.join(parent, "of-sign-in-fresh");
+    const fresh = path.join(dirs, "of-sign-in-fresh");
     await mk(fresh, new Date(now - 5 * 60_000));
-    const otherName = path.join(parent, "xof-sign-in-y");
-    await mk(otherName, old);
-    const nested = path.join(parent, "sub", "of-sign-in-nested");
-    await mk(nested, old);
-    await utimes(path.join(parent, "sub"), old, old);
-    const uid = process.getuid?.() ?? 0;
 
-    await sweepStaleDirs(parent, now, uid + 1); // not ours: all left alone
-    await expect(lstat(oldOwn)).resolves.toBeTruthy();
-
-    await sweepStaleDirs(parent, now, uid);
-    await expect(lstat(oldOwn)).rejects.toThrow();
+    await sweepStaleDirs(dirs, now);
+    await expect(lstat(stale)).rejects.toThrow();
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
     await expect(lstat(target)).resolves.toBeTruthy();
     await expect(lstat(fresh)).resolves.toBeTruthy();
-    await expect(lstat(otherName)).resolves.toBeTruthy();
-    await expect(lstat(nested)).resolves.toBeTruthy();
+  });
+
+  it("a missing folder is nothing to sweep", async () => {
+    await expect(
+      sweepStaleDirs(path.join(parent, "never-made"), Date.now()),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -388,6 +403,7 @@ describe.skipIf(!hasPython && !process.env.CI)("real bridge with the fake CLI", 
     }) as typeof spawn;
     const run = await startHostPty({
       claudeBin: f.bin,
+      parent,
       serverEnv: { PATH: process.env.PATH },
       spawnFn,
     });

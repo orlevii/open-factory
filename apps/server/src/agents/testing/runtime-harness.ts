@@ -144,8 +144,9 @@ export class RuntimeHarness {
       .sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
   }
 
-  close() {
-    return this.t.close();
+  async close() {
+    if (this.rt) await this.rt.stop();
+    await this.t.close();
   }
 
   async makeRuntime(
@@ -175,6 +176,9 @@ export class RuntimeHarness {
       nextImage?: string;
     } = {},
   ) {
+    // The previous test's runtime stops first: a timer it left (an interrupt hold, a retry) must not write into the
+    // next test, through the store they share.
+    if (this.rt) await this.rt.stop();
     this.n += 1;
     this.agentId = `a${this.n}`;
     this.startError = opts.startError;

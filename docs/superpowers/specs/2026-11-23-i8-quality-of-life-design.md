@@ -4,6 +4,8 @@ Task: [I8 Quality of life](../../product/roadmap/v0.0.2/i8-quality-of-life.md) (
 
 Every question went to the owner proxy (`owner-i8`), and the spec was reviewed through five lenses (self, Taste, Apple, Emil, Break UI); findings that changed an answer went back to the proxy (R1–R10). The log of questions, alternatives, answers and certainty is in the decisions issue. §11 lists what is rated 3/5 or lower.
 
+**Revalidated on I5/I7 (2026-11-25)** against `origin/i7/3-restart` (I1–I7 merged): I1 already ships `operator_input.byKind` (D4 is delivered, no schema change) and the chats/items split (§5.1); `openSheetForResult` already opens Add credential as a self-serving top-level layer (§4.4); `createAgentBodySchema` still strips `manageOrg` (§4.5 stands); I5 adds a `plugin_not_loaded` human notice that never notifies (§5.1); the cleanup notice links to the session without a `seq` (§7.6). The plan's "Revalidated" section lists every change.
+
 ADR 0028: nothing here keeps old shapes alive. Schema changes ship as the generated migration only (plus the hand edits to hand-written constraints named in §6.2); **reset local data** if a migration refuses a non-empty table. The worktree path convention changes without a note for the old layout.
 
 ## 1. Goal
@@ -35,7 +37,7 @@ Four independent slices:
 14. (PR 4) When a terminated spawned agent's workspace is deleted, `<repo>/.worktrees/.agents/<slug>/` is removed in every registered project that has it, with exactly those worktrees' metadata; a branch whose commits are all on a remote-tracking ref or the default branch is deleted; any other branch is kept and listed in one notice to the spawner (if live) and the Inbox ("web: kept `feat/x` (3 commits not pushed or merged)", §7.6).
 15. (PR 4) The cleanup never runs a hook, fsmonitor or a working-tree read, never follows a symlink out of `.worktrees/.agents/<slug>/` or `<common-dir>/worktrees/<id>`, never touches another worktree's metadata, and never deletes the default branch or a branch checked out elsewhere (tests plant each; the guarantee assumes no concurrent writer swaps a directory mid-removal, §12).
 
-## 3. Delivery: four draft PRs
+## 3. Delivery: four stacked PRs
 
 | PR | Branch | Content | Demo |
 |---|---|---|---|
@@ -84,13 +86,13 @@ Set up your factory
 
 ### 4.4 Sheets
 
-- Step 1 opens Add credential. Today `add-credential` is a child-only kind in `features/sheets/sheet-store.ts`; it becomes a top-level kind too, rendered by the **same** sheet body (`sheet-bodies.ts`): on submit a top-level one closes, a child one returns to its parent, as the store already distinguishes. Sign in with Claude is its default method (I3). Focus returns to the step row on close.
+- Step 1 opens Add credential with the existing `openSheetForResult({ kind: "add-credential" }, onDone)` (`features/sheets/sheet-store.ts`): with no sheet open it opens as the parent layer and serves itself (closes, then calls `onDone`), rendered by the same `AddCredentialSheet` body (`setup-sheets.tsx`). No new sheet kind. Sign in with Claude is its default method (I3). Focus returns to the step row on close.
 - Step 2 opens `{ kind: "new-template", then: "open-editor" }` (today's top-level kind).
 - Step 3 opens `{ kind: "new-agent" }`; its inline setup creates a missing credential or template on the way (U4).
 
 ### 4.5 "Can manage the org" where it is decided (R6)
 
-- The New agent sheet gains I7's `Switch` "Can manage the org" (persistent agents only, after Projects, as in Edit agent); `POST /api/agents` accepts `manageOrg` from a human session (agents creating agents through I7's tools still can't set it, ADR 0025).
+- The New agent sheet gains I7's `Switch` "Can manage the org" (New agent only creates persistent agents; after Projects, as in Edit agent); `POST /api/agents` accepts `manageOrg` from a human session (today `createAgentBodySchema` silently strips it); agents creating agents through I7's `create_agent` tool still can't set it (`createAgentToolSchema` has no such field, ADR 0025), and `AgentService.create` refuses it from an agent actor with I7's "Only a human can grant manage_org."
 - The switch's help line, in both sheets, gains a lead sentence before I7's text: "Lets this agent create and arrange other agents: ask it in Chat to build the rest of your team." I7's honest description of what it can reach stays.
 
 ### 4.6 DESIGN.md amendments
@@ -113,13 +115,13 @@ Title = who, capped at 40 characters (handles middle-truncated, names end-trunca
 | `credential` item (I3) | `credential:<name>` | `Credential "work"` | "Expires Dec 3" / "Expired Dec 3" | `/settings/credentials?credential=<name>` |
 | @factory `loop_held` (PR 3) | `loop:<holdId>` | "@a and @b" | "Messages between them are held" | `/inbox?item=<itemId>` |
 
-Nothing else: `task_event` items no longer notify (the branch is deleted, no switch), and no other @factory fact does (restarts, recoveries, PR 4's `worktrees_kept`). Errors notify only when they reach your Inbox (top-level agents). The credential date is formatted from `expiresAt` in the browser's locale and zone, the same source I3's row and pane render from (I3 D11), so the notification and the pane never show different days.
+Nothing else: `task_event` items no longer notify (the branch is deleted, no switch), and no other @factory fact does (restarts, recoveries, I5's `plugin_not_loaded`, PR 4's `worktrees_kept`). Errors notify only when they reach your Inbox (top-level agents). The credential date is formatted from `expiresAt` in the browser's locale and zone, the same source I3's row and pane render from (I3 D11), so the notification and the pane never show different days.
 
 `icon` stays `/favicon.svg`. Constructing a `Notification` is wrapped in `try`: where the constructor throws (Android Chrome requires a service worker), the switch reports notifications as unsupported and hides itself. No service worker is added.
 
-This table supersedes I1 §6.7's notifier line (title "Ada · 3 new", tag `latest.messageId`) and I3's notification copy: whichever of I1, I3 and I8 lands first, PR 2 replaces them.
+This table supersedes the notifier on the base (`notificationTitle`, `chatNotificationTitle` "Ada · 3 new", `notifyNew` with the preview as body and the item or message id as tag, in `features/inbox/notifications.ts`): PR 2 replaces them.
 
-I1 change carried here (self-review M1): I1 §6.7 removes `kind: "message"` inbox items from `items`; the rows it moves into `chats` are only those with `from_agent_id` set. @factory notices (`messages.kind = 'system'`: `agent_errored`, `loop_held`, `worktrees_kept`) stay in `items`. PR 2 states and tests this.
+The chats/items split is already on the base (I1): `inboxPage` excludes `messages.kind = 'message'` from `items`, and `unreadChats` joins on `from_agent_id`. @factory notices (`kind = 'system'`: `agent_errored`, `plugin_not_loaded`, `loop_held`, `worktrees_kept`) stay in `items`. PR 2 only adds `notice` to their entries.
 
 ### 5.2 Bursts (Q9)
 
@@ -148,7 +150,7 @@ For an unordered pair of agents {A, B}:
 - **Counted** (Q2): agent-to-agent rows from one to the other: `send_message` rows (`kind = 'message'`), task-comment deliveries (`kind = 'task_comment'`, sender = the comment's agent author, to the assignee or a mentioned agent), and agent-authored scheduled firings (`kind = 'scheduled'`, sender = `author_agent_id`). Humans, `@factory` and human-authored schedules never count. A row's **sender** is `from_agent_id`, or `author_agent_id` for scheduled rows.
 - **Window start** = the latest of: `now − window`; the pair's last Resume (`loop_holds.resumed_at`); the latest **reset** involving A or B (Q3, R11): only human actions reset,
   - a human's `kind = 'message'` row to A or B (`from_user_id` set, `to_agent_id` in {A, B});
-  - a human's raw Session input to A or B: an `operator_input` session event with `fromKind: "human"` (I8 adds the required field `fromKind: "human" | "agent"` to I1's `operator_input` payload, since I1 PR 4 writes agent ones for `send_command`; D4);
+  - a human's raw Session input to A or B: an `operator_input` session event with `byKind: "human"` (I1 already writes the required `byKind: "human" | "agent"`; `send_command` writes `"agent"`; D4);
   - a `status` task event by a human (`actor_user_id` set) on a task currently assigned to A or B.
   Comments, human-authored schedule firings and every agent action (an agent marking a task done or reopening it included: that is the done/reopen ping-pong the guard exists for) never reset. A reset never releases an open hold; only Resume does.
 - **Trip** (Q4): when a counted row from A to B is about to be inserted, count the counted rows A→B and B→A created after the window start. If, including the new row, both directions exceed N, the new row is the first held one and a hold opens. While a hold is open for the pair, every new counted row between them, either direction, is held.
@@ -173,9 +175,10 @@ index on session_events (agent_id, at) where type = 'operator_input'   -- the re
 ```
 
 - No counts are stored (Q5): the humans' notice body carries them as they were when the hold opened; the live "N messages waiting" is `count(*) where loop_hold_id = $1 and state = 'loop_held'`.
-- `messages_state_check` (migration 0011) and `messages_schedule_pending_idx` (0009, `where state = 'pending'`) are hand-written SQL: the generated migration gets hand edits, as I3's did. The schedule index widens to `state in ('pending','loop_held')`, so the database keeps one open firing row per schedule across both states.
+- `messages_state_check` (migration 0011) and `messages_schedule_pending_idx` (0009, `("schedule_id","to_agent_id") where state = 'pending' and schedule_id is not null`) are hand-written SQL: the generated migration (the next number, 0024 on the base) gets hand edits, as I3's did. The schedule index widens to `state in ('pending','loop_held') and schedule_id is not null`, so the database keeps one open firing row per schedule across both states.
 - The managers' notices carry no `loop_hold_id`, so "the hold's notice" is exactly one row.
 - Shared types gain the state where they enumerate it: `MessageLookup.state` and its schema, the outgoing card's state union, `rejectPending*`.
+- Naming: the base already uses "held" for something else (`EventStore.createHeld`, the `held` queue-item kind: rows held until a turn ends). The loop guard's code identifiers say `loopHeld`/`loop_held`; only the tool result status and the copy say "held".
 
 ### 6.3 The check (`apps/server/src/messaging/loop-guard.ts`)
 
@@ -190,21 +193,22 @@ The caller inserts its row with `state = 'loop_held'` and `loop_hold_id`, and do
 
 - `Router.send` (I1's list send), per agent recipient. The per-recipient result gains `status: "held"` with the note (§6.5).
 - Task comment fan-out (`task-service.ts`), per agent recipient (assignee, mentions) when the author is an agent. The comment itself is always posted; `comment_task`'s result lists held recipients: `held: [{ to: "@b", note }]`.
-- The scheduler's firing, when the schedule's author is an agent and the target is another agent, on the **insert** path. `upsertFiring` that updates an already-pending row in place does not re-check: a firing row that was pending when the hold opened is still delivered (it predates the hold). `records().pendingFiring` and coalescing treat a `loop_held` row like a pending one and leave it held, so a long hold accrues one row per schedule; the widened unique index guarantees that, and Resume's flip to pending can't collide with another open row of the same schedule.
+- Not checked: the spawn brief (`spawn-service.ts`, a `kind = 'message'` row from the spawner to a brand-new child, which can't have a window yet). It still counts toward the pair afterwards.
+- The scheduler's firing (`Scheduler.fireOnce`), when the schedule's author is an agent and the target is another agent, on the **insert** path. `upsertFiring` that updates an already-pending row in place does not re-check: a firing row that was pending when the hold opened is still delivered (it predates the hold). `records().pendingFiring` and coalescing treat a `loop_held` row like a pending one and leave it held, so a long hold accrues one row per schedule; the widened unique index guarantees that, and Resume's flip to pending can't collide with another open row of the same schedule.
 
 When a check opens a hold, the same transaction writes the notices (§6.4); frames publish after commit.
 
 ### 6.4 Notices (Q6)
 
 - **Humans:** one `@factory` message, `kind = 'system'`, `notice = 'loop_held'`, `subject_agent_id = A` (the sender of the tripping row), `loop_hold_id`, `to_all_humans`, through `EventStore.createHumanMessage` (the `agent_errored` path). Body (also the preview): "@a and @b exchanged 22 messages in 3 minutes; further messages between them are held." (pluralised).
-- **Managers:** for each of A's and B's managers that exists, is live and isn't the other agent of the pair (deduplicated): a `@factory` `system` message, notice `loop_held`, without `loop_hold_id`: "@a and @b exchanged 22 messages in 3 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox." Managers can't resume (Q5).
+- **Managers:** for each of A's and B's managers that exists, is live and isn't the other agent of the pair (deduplicated): a `@factory` `system` message, notice `loop_held`, `subject_agent_id = A`, without `loop_hold_id`, always a **new** row inserted in the hold's transaction (not `EventStore.createNotice`, which isn't transaction-aware and replaces a pending notice of the same type and subject, so a second hold involving A would overwrite the first), handed over after commit: "@a and @b exchanged 22 messages in 3 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox." Managers can't resume (Q5).
 - **No new inbox kind** (Q6): the notice drives rendering (`inboxItemSchema.notice`, added in PR 2), and the @factory row anatomy fits. `inboxItemSchema` gains `loopHold?: { id, agents: [{ slug, status }, { slug, status }], waiting: number, sentOn: number, resumedAt: string | null, resumedBy: string | null }` (`sentOn` = rows with this `loop_hold_id` whose state is neither `loop_held` nor `rejected`, so every pane and every remount can show it) (`resumedBy` a handle with `@`; `status` live, so the pane can say who ended).
 
 ### 6.5 The senders
 
 A held recipient's result: `{ to: "@b", kind: "agent", status: "held", id, note }`. The note for the tripping row: "Held: you and @b exchanged 22 messages in 3 minutes with no human in between. A human must resume this pair in the Inbox; it is sent on then." For later rows of an open hold (no stored counts): "Held: messages between you and @b are held until a human resumes them in the Inbox; it is sent on then." CLAUDE.md, messaging section: "If a send comes back `held`, stop messaging that agent about it and carry on with other work or end your turn: a human resumes the pair."
 
-The Session's outgoing card (I1 §4.7) renders `held` like `pending`: one muted line "Held by the loop guard: @b".
+The Session's outgoing card (I1 §4.7, `features/session/outgoing-message.tsx`) renders `held` like `pending`: one muted line "Held by the loop guard: @b". The card shows a recipient's `note` in place of its status text; for `held` the status line wins over the note (the note is written for the agent).
 
 ### 6.6 Resume (R10)
 
@@ -222,7 +226,7 @@ The Session's outgoing card (I1 §4.7) renders `held` like `pending`: one muted 
   3. The action slot, one fixed height: **"Resume @a and @b"** (primary; may wrap, never truncates; keeps its width while pending, label "Resuming…" with a spinner, `aria-disabled`). Below it two ghost links, "Open @a's session" and "Open @b's session", wrapping at every width.
   4. After a Resume, the button is replaced in place by a `role="status"` line, `tabIndex=-1`, which takes focus after your own Resume: "Resumed by you · 14:02 · 4 messages sent on" (zero: "Resumed by you · 14:02 · nothing was left to send"); for another human's Resume or a 409: "Resumed by @ana · 14:01 · 4 messages sent on" (from `loopHold.sentOn`). Times use `formatInboxTime` (a date when not today), full timestamp in `title`. No toast (DESIGN Toasts: the outcome is on screen).
   5. A Resume failure other than 409 keeps the button and shows the I4 `FormOutcome` line "Couldn't resume. Try again."
-- **Below 1024px** (R4): `/inbox?item=<id>` for a `loop_held` (and, from PR 4, `worktrees_kept`) item renders the pane full-width as the page body with a Back link to the list. Today the route drops `?item=` by id alone (`routes/_app/inbox.tsx:49`); instead it keeps `?item=` while `usePaneItem` resolves the item (it fetches unloaded items by id, as when landing from a notification), showing the pane's loading state, never the list; then it renders the full-width pane for these notices, or replaces the URL with the item's own target for every other kind, whose rows navigate as before.
+- **Below 1024px** (R4): `/inbox?item=<id>` for a `loop_held` (and, from PR 4, `worktrees_kept`) item renders the pane full-width as the page body with a Back link to the list. Today the route drops `?item=` below 1024 in an effect (`routes/_app/inbox.tsx`, `InboxPage`, "a `?item=` from a wider window is dropped"); instead it keeps `?item=` while `usePaneItem` resolves the item (it fetches unloaded items by id, as when landing from a notification), showing the pane's loading state, never the list; then it renders the full-width pane for these notices, or replaces the URL with the item's own target for every other kind, whose rows navigate as before.
 - The notification (§5.1) opens this pane at every width.
 
 DESIGN.md amendment, Layout → Two panes: "From 1024px the Inbox is a 380px list beside a reading pane; below, rows navigate to their target. A notice whose action lives only in the Inbox (a loop-guard hold, a cleanup notice) opens its pane full-width at `/inbox?item=`, with Back to the list."
@@ -292,19 +296,19 @@ The terminated agent's Session gets one `workspace_cleanup` event `{ projects: [
 
 Only when a branch was kept or a project failed:
 
-- **Humans:** one `@factory` `system` message, `notice = 'worktrees_kept'`, `subject_agent_id` = the terminated agent, `to_all_humans`, its inbox `link.seq` the `workspace_cleanup` event. Body (and preview): first line "Cleaned up @dev-ab12's worktrees." when something was removed, "Couldn't fully clean up @dev-ab12's worktrees." when any project failed; then one line per project: "web: kept `feat/x` (3 commits not pushed or merged), `feat/y` (checked out elsewhere)". At most 20 branch or failure entries, then "and N more in @dev-ab12's session". Counts pluralised.
-- **Spawner:** the same text as a `@factory` system message to the agent's manager (`reports_to`) when it is live.
+- **Humans:** one `@factory` `system` message, `notice = 'worktrees_kept'`, `subject_agent_id` = the terminated agent, `to_all_humans`. Its inbox link is the existing session link without a `seq` (a `system` row has no sender event): the agent is terminated and the `workspace_cleanup` event is its last, so the session opens at it. Body (and preview): first line "Cleaned up @dev-ab12's worktrees." when something was removed, "Couldn't fully clean up @dev-ab12's worktrees." when any project failed; then one line per project: "web: kept `feat/x` (3 commits not pushed or merged), `feat/y` (checked out elsewhere)". At most 20 branch or failure entries, then "and N more in @dev-ab12's session". Counts pluralised.
+- **Spawner:** the same text as a `@factory` system message to the agent's manager (`reports_to`) when it is live, sent with `EventStore.createNotice({ toAgentId: manager, notice: "worktrees_kept", subjectAgentId: agent, body })` (one per terminated agent, so its replace-pending rule never merges two cleanups).
 - No desktop notification (§5.1).
-- **Item shape:** inbox items of this notice gain `cleanup?: ProjectResult[]`, built from the referenced `workspace_cleanup` event's payload; the pane and the Session line render from that one shape, never by parsing the body.
+- **Item shape:** inbox items of this notice gain `cleanup?: ProjectResult[]`, read in `toEntries` from the subject agent's `workspace_cleanup` event (at most one per agent: the cleanup runs once, before the workspace is marked deleted); the pane and the Session line render from that one shape, never by parsing the body.
 - **Pane:** no excerpt, no composer. The lines grouped by project, branch names in mono with copy feedback (`copy-feedback.tsx`), wrapping; then "Push them to keep the work, or delete them in the project's repository." The header's "Open in session" (the read-only Session at the cleanup event) stays. Full-width below 1024px (§6.7).
 
 ## 8. Schema and shared changes by PR
 
 | PR | Change |
 |---|---|
-| 1 | `GET /api/setup`; top-level `add-credential` sheet kind; `POST /api/agents` accepts `manageOrg` (human); the switch in New agent and its help lead |
-| 2 | `ChatRow.firstUnreadId`; `inboxItemSchema.notice` on @factory items; `GET /api/inbox?unread=true&notify=true`; I1's chats/items split stated and tested |
-| 3 | `messages.state` CHECK `loop_held` (hand edit); `messages_schedule_pending_idx` widened (hand edit); `messages.loop_hold_id`; `loop_holds`; partial index for `operator_input`; `factory_settings.loop_guard_messages`, `loop_guard_window_minutes`, bounds and schemas; `operator_input.fromKind` (required); `NoticeType` `loop_held`; `inboxItemSchema.loopHold`; `held` status in `send_message` / `comment_task` results and the lookup state unions; `POST /api/loop-holds/:id/resume`; `rejectPending*` match `loop_held`; scheduler coalescing matches `loop_held`; CLAUDE.md held line; `?item=` kept below 1024 for `loop_held` |
+| 1 | `GET /api/setup`; Add credential through the existing `openSheetForResult`; `POST /api/agents` accepts `manageOrg` (human); the switch in New agent and its help lead |
+| 2 | `ChatRow.firstUnreadId`; `inboxItemSchema.notice` on @factory items; `GET /api/inbox?unread=true&notify=true` |
+| 3 | `messages.state` CHECK `loop_held` (hand edit); `messages_schedule_pending_idx` widened (hand edit); `messages.loop_hold_id`; `loop_holds`; partial index for `operator_input`; `factory_settings.loop_guard_messages`, `loop_guard_window_minutes`, bounds and schemas; `NoticeType` `loop_held`; `inboxItemSchema.loopHold`; `held` status in `send_message` / `comment_task` results and the lookup state unions; `POST /api/loop-holds/:id/resume`; `rejectPending*` match `loop_held`; scheduler coalescing matches `loop_held`; CLAUDE.md held line; `?item=` kept below 1024 for `loop_held` |
 | 4 | CLAUDE.md worktree line; `spawning/git.ts`; the cleanup in the reaper; `workspace_cleanup` session event; `NoticeType` `worktrees_kept`; `?item=` kept below 1024 for it; `deleteWorkspace`'s `beforeRemove` callback; `inboxItemSchema.cleanup` |
 
 ## 9. Product-doc edits (gitignored, applied in the main checkout by the dev of the PR named)
@@ -328,7 +332,7 @@ The full log (questions, alternatives, answers, certainty) is in the decisions i
 - **D1** `GET /api/setup` rather than reusing list queries: the sidebar's agent list leaves out ended agents, and Q11 counts them.
 - **D2** Bursts are identified by their first unread item, embedded in the tag, so "replace until read" needs no timer and no cross-tab state; `ChatRow` gains `firstUnreadId` for it.
 - **D3** The loop guard serialises per pair with transaction-scoped advisory locks taken once, sorted, before any check, since counts are derived (Q4) and list sends lock several pairs.
-- **D4** `operator_input` gains a required `fromKind`, because I1 PR 4 writes agent-authored ones for `send_command` and only human input resets the window.
+- **D4** Only human raw input resets the window, read from `operator_input.byKind` (I1 already writes it required, `"agent"` for `send_command`); the earlier plan's `fromKind` field is dropped as delivered.
 - **D5** Schedule coalescing matches held rows and the one-open-row index covers both states, so a long hold grows by one row per schedule.
 - **D6** The cleanup runs before the workspace folders are removed, under the same lock, so a pin set meanwhile stops both.
 - **D7** `safe.directory` is passed per call for the exact repo path, only after git refuses for dubious ownership.
@@ -356,3 +360,4 @@ Rated 3/5 or lower, for Or:
 - **Reset read cost:** the window start reads three sources per counted send; the plan measures it on the 214-agent dataset and adds an index only if needed.
 - **Forged remote refs (accepted):** an agent can write `refs/remotes/*` in a granted repo so its own unpushed branch looks pushed, and the cleanup then deletes it. Accepted: it only affects that agent's own branches checked out in its own folder, which it could delete itself, and verifying by fetching would break the no-network rule.
 - **Unlisted branches:** branches an agent made but didn't leave checked out are neither deleted nor reported.
+- **Symlinked project paths (verified, git 2.50.1, 2026-11-25):** an agent reaches a project through `./projects/<name>`, a link to its host path. `git worktree add` with an absolute path through that link, or a relative one from inside it, records the physical path in both `worktree list` and the admin dir's `gitdir`, so entries compare against `realpath(repo)` as §7.5 assumes. Docker mounts keep source and target paths equal (`workspace/mounts.ts`), so container-made worktrees record host paths too.

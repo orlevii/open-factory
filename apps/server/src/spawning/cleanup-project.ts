@@ -1,5 +1,5 @@
 import type { Stats } from "node:fs";
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { type ProjectResult, slugSchema } from "@open-factory/shared";
 import { SafeFs } from "../workspace/safe-fs";
@@ -11,15 +11,29 @@ import { GitError, git } from "./git";
 
 const missing = (err: unknown) => (err as NodeJS.ErrnoException).code === "ENOENT";
 const codeOf = (err: unknown) => (err as NodeJS.ErrnoException).code ?? "error";
+// A path that can't exist: missing, a file where a folder should be, or a symlink loop.
+const absent = (err: unknown) => ["ENOENT", "ENOTDIR", "ELOOP"].includes(codeOf(err));
 
 async function lstatOrNull(p: string): Promise<Stats | null> {
   try {
     return await lstat(p);
   } catch (err) {
-    if (missing(err)) return null;
+    if (absent(err)) return null;
     throw err;
   }
 }
+
+async function statOrNull(p: string): Promise<Stats | null> {
+  try {
+    return await stat(p);
+  } catch (err) {
+    if (absent(err)) return null;
+    throw err;
+  }
+}
+
+class GitdirTooLarge extends Error {}
+const GITDIR_MAX_BYTES = 4096;
 
 function assertSlug(slug: string): void {
   if (
@@ -87,32 +101,41 @@ export async function cleanupProject(
   const name = p.name;
   const rel = `.worktrees/.agents/${slug}`;
 
-  // 1. the repository
+  // 1. the repository. Nothing of ours can be in a folder that is missing or isn't a repository,
+  // so those are reported only when `.worktrees/.agents/<slug>` is there.
   let repo: string;
   try {
     repo = await realpath(p.hostPath);
   } catch (err) {
-    if (missing(err)) return fail(name, "the project folder is missing");
+    if (absent(err)) return null;
     throw err;
   }
+  const base = path.join(repo, ".worktrees/.agents", slug);
+  const hasBase = (await lstatOrNull(base)) !== null;
+  const notOurs = (error: string) => (hasBase ? fail(name, error) : null);
   let common: string;
   try {
     const top = (await git(repo, ["rev-parse", "--show-toplevel"])).trim();
-    if (top !== repo) return fail(name, "not a git repository");
+    if (top !== repo) return notOurs("couldn't clean up: not a git repository");
     common = await realpath(
       path.resolve(repo, (await git(repo, ["rev-parse", "--git-common-dir"])).trim()),
     );
   } catch (err) {
-    if (err instanceof GitError) return fail(name, "not a git repository");
-    if (missing(err)) return fail(name, "the project folder is missing");
+    if (err instanceof GitError) return notOurs("couldn't clean up: not a git repository");
     throw err;
   }
+  // The repo's own `.git` must be a real folder that is also the common dir: a `.git` file,
+  // a symlink or a `commondir` would move every removal and `branch -D` to another repository.
+  const dotGit = path.join(repo, ".git");
+  const dotGitSt = await lstatOrNull(dotGit);
+  if (!dotGitSt || dotGitSt.isSymbolicLink() || !dotGitSt.isDirectory() || common !== dotGit)
+    return notOurs("the repository's .git is not a plain folder; left in place");
 
   // 2. our folder
   const wtDir = path.join(repo, ".worktrees");
   const agentsDir = path.join(wtDir, ".agents");
-  const base = path.join(agentsDir, slug);
   let baseExists = true;
+  let blocked: string | undefined; // a component that is a link or a file: never removed, read-only below
   for (const [dir, label] of [
     [wtDir, ".worktrees"],
     [agentsDir, ".worktrees/.agents"],
@@ -123,8 +146,11 @@ export async function cleanupProject(
       baseExists = false;
       break;
     }
-    if (st.isSymbolicLink()) return fail(name, `${label} is a symbolic link; left in place`);
-    if (!st.isDirectory()) return fail(name, `${label} is not a folder; left in place`);
+    if (st.isSymbolicLink() || !st.isDirectory()) {
+      blocked = `${label} is ${st.isSymbolicLink() ? "a symbolic link" : "not a folder"}; left in place`;
+      baseExists = false;
+      break;
+    }
   }
 
   // 3. entries
@@ -148,17 +174,44 @@ export async function cleanupProject(
       if (!/^[^./][^/]*$/.test(id) || id.includes("..")) continue;
       const dir = path.join(wt, id);
       if (!(await isRealDir(dir))) continue;
-      if (path.dirname(await realpath(dir)) !== wtReal) continue;
-      const raw = (await new SafeFs(dir).readIfRegular("gitdir"))?.toString("utf8").trim();
+      let real: string;
+      try {
+        real = await realpath(dir);
+      } catch (err) {
+        if (missing(err)) continue; // vanished since readdir
+        throw err;
+      }
+      if (path.dirname(real) !== wtReal) continue;
+      let buf: Buffer | undefined;
+      try {
+        buf = await new SafeFs(dir).readIfRegular("gitdir", {
+          maxBytes: GITDIR_MAX_BYTES,
+          onTooLarge: () => {
+            throw new GitdirTooLarge();
+          },
+        });
+      } catch (err) {
+        if (err instanceof GitdirTooLarge) continue; // no match
+        throw err;
+      }
+      const raw = buf?.toString("utf8").trim();
       if (!raw) continue;
       const g = path.normalize(path.isAbsolute(raw) ? raw : path.resolve(wt, id, raw));
       if (inside(base, path.dirname(g))) adminDirs.push({ dir, worktree: path.dirname(g) });
     }
   }
+  // A link or file in our path: refuse only when following it shows something of ours.
+  if (blocked) {
+    const followed = (await statOrNull(base)) !== null;
+    return followed || ours.length > 0 || adminDirs.length > 0 ? fail(name, blocked) : null;
+  }
   for (const e of ours) {
     const worktree = path.normalize(e.path);
     if (!adminDirs.some((a) => a.worktree === worktree))
-      return fail(name, `couldn't match ${e.branch ?? worktree}'s metadata; left in place`);
+      return fail(
+        name,
+        `couldn't match ${e.branch ? `\`${e.branch}\`` : "a detached worktree"}'s metadata; left in place`,
+      );
   }
 
   if (!baseExists && ours.length === 0 && adminDirs.length === 0) return null;
@@ -217,6 +270,8 @@ export async function cleanupProject(
   }
   const protectedNames = new Set([d, "main", "master"].filter((x): x is string => !!x));
   for (const branch of branches) {
+    // `check-ref-format --branch` expands `@{-1}` and accepts a leading `-`; never pass those on.
+    if (branch.startsWith("@") || branch.startsWith("-")) continue;
     const valid = await git(repo, ["check-ref-format", "--branch", branch]).then(
       () => true,
       () => false,

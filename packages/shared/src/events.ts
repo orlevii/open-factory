@@ -196,7 +196,7 @@ export const projectResultSchema = z.object({
       reason: z.literal("elsewhere").optional(),
     }),
   ),
-  /** The sentence after "<project>: ". */
+  /** The whole sentence after "<project>: " (e.g. "couldn't clean up: not a git repository"); the renderer adds only the project prefix. */
   error: z.string().optional(),
 });
 export type ProjectResult = z.infer<typeof projectResultSchema>;

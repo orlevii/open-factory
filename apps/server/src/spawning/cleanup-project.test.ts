@@ -7,6 +7,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -192,6 +193,28 @@ describe("cleanupProject", () => {
     const r = await cleanupProject(project(), "dev-ab12");
     expect(r).toEqual({ project: "web", removed: false, deleted: ["feat/g"], kept: [] });
     expect(adminIds()).toEqual([]);
+  });
+
+  it("reports nothing for a plain-folder project, a missing folder and a non-repo subfolder", async () => {
+    const plain = path.join(root, "docs");
+    mkdirSync(plain);
+    writeFileSync(path.join(plain, "a.md"), "x");
+    const sub = path.join(repo, "sub");
+    mkdirSync(sub);
+    expect(await cleanupProject({ name: "docs", hostPath: plain }, "dev-ab12")).toBeNull();
+    expect(
+      await cleanupProject({ name: "gone", hostPath: path.join(root, "gone") }, "dev-ab12"),
+    ).toBeNull();
+    expect(await cleanupProject({ name: "sub", hostPath: sub }, "dev-ab12")).toBeNull();
+    expect(existsSync(path.join(plain, "a.md"))).toBe(true);
+  });
+
+  it("names a plain folder that holds our folder, with the spec's sentence", async () => {
+    const plain = path.join(root, "docs");
+    mkdirSync(path.join(plain, ".worktrees/.agents/dev-ab12"), { recursive: true });
+    const r = await cleanupProject({ name: "docs", hostPath: plain }, "dev-ab12");
+    expect(r?.error).toBe("couldn't clean up: not a git repository");
+    expect(existsSync(path.join(plain, ".worktrees/.agents/dev-ab12"))).toBe(true);
   });
 
   it("returns null when nothing of ours is there", async () => {

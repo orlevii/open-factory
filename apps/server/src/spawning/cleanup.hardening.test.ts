@@ -99,12 +99,26 @@ describe("symlinked components of our folder", () => {
     expect(victimIntact()).toBe(true);
   });
 
-  it("refuses a regular file in place of a folder", async () => {
+  it("reports nothing for a regular file in place of a folder when nothing of ours is there", async () => {
     mkdirSync(path.join(repo, ".worktrees"));
     writeFileSync(path.join(repo, ".worktrees/.agents"), "x");
-    const r = await cleanupProject(project(), SLUG);
-    expect(r?.error).toMatch(/^\.worktrees\/\.agents is not a folder/);
+    expect(await cleanupProject(project(), SLUG)).toBeNull();
   });
+
+  it.each([".worktrees", ".worktrees/.agents"])(
+    "reports nothing for a symlinked %s that leads to nothing of ours",
+    async (comp) => {
+      const empty = path.join(root, "empty");
+      mkdirSync(empty);
+      if (comp === ".worktrees") symlinkSync(empty, path.join(repo, ".worktrees"));
+      else {
+        mkdirSync(path.join(repo, ".worktrees"));
+        symlinkSync(empty, path.join(repo, ".worktrees/.agents"));
+      }
+      expect(await cleanupProject(project(), SLUG)).toBeNull();
+      expect(readdirSync(empty)).toEqual([]);
+    },
+  );
 
   it("unlinks a symlink inside our folder without following it", async () => {
     const dir = addWorktree("feat/x", { push: true });
@@ -151,6 +165,18 @@ describe("the repository's worktrees metadata folder", () => {
     expect(r?.removed).toBe(false);
     expect(victimIntact()).toBe(true);
     expect(existsSync(path.join(victim, "gitdir"))).toBe(true);
+  });
+
+  it("treats a gitdir file over 4096 bytes as no match and removes nothing", async () => {
+    const dir = addWorktree("feat/x", { push: true });
+    const [id] = adminIds();
+    const file = path.join(wtAdmin(), id as string, "gitdir");
+    writeFileSync(file, `${readFileSync(file, "utf8").trim()}${" ".repeat(5000)}\n`);
+    const r = await cleanupProject(project(), SLUG);
+    expect(r?.error).toBe("couldn't match `feat/x`'s metadata; left in place");
+    expect(r).toMatchObject({ removed: false, deleted: [] });
+    expect(existsSync(dir)).toBe(true);
+    expect(adminIds()).toHaveLength(1);
   });
 
   it("keeps a forged admin dir whose gitdir points outside our folder", async () => {
@@ -217,39 +243,97 @@ describe("git itself", () => {
     expect(r?.kept).toEqual([{ branch: "feat/x", commits: 2 }]);
   });
 
-  it.each(["bad..name", "-D"])(
-    "skips a ref named %s, which git won't accept as a branch",
-    async (bad) => {
-      const dir = addWorktree("feat/x", { push: true });
-      const [id] = adminIds();
-      const sha = g(repo, "rev-parse", "HEAD").trim();
-      const refFile = path.join(repo, ".git/refs/heads", bad);
-      writeFileSync(refFile, `${sha}\n`);
-      writeFileSync(path.join(wtAdmin(), id as string, "HEAD"), `ref: refs/heads/${bad}\n`);
-      const r = await cleanupProject(project(), SLUG);
-      expect(r).toMatchObject({ removed: true, deleted: [], kept: [] });
-      expect(r?.error).toBeUndefined();
-      expect(existsSync(dir)).toBe(false);
-      expect(existsSync(refFile)).toBe(true);
-      expect(existsSync(path.join(repo, ".git/refs/heads/feat/x"))).toBe(true);
-    },
-  );
+  it.each([
+    ["git hides a ref named bad..name from worktree list, so it is never a branch", "bad..name"],
+    ["skips a branch named -D, which would be taken for an option", "-D"],
+    ["skips a branch named @foo, since a leading @ can expand", "@foo"],
+  ])("%s", async (_title, bad) => {
+    const dir = addWorktree("feat/x", { push: true });
+    const [id] = adminIds();
+    const sha = g(repo, "rev-parse", "HEAD").trim();
+    const refFile = path.join(repo, ".git/refs/heads", bad);
+    writeFileSync(refFile, `${sha}\n`);
+    writeFileSync(path.join(wtAdmin(), id as string, "HEAD"), `ref: refs/heads/${bad}\n`);
+    const r = await cleanupProject(project(), SLUG);
+    expect(r).toMatchObject({ removed: true, deleted: [], kept: [] });
+    expect(r?.error).toBeUndefined();
+    expect(existsSync(dir)).toBe(false);
+    expect(existsSync(refFile)).toBe(true);
+    expect(existsSync(path.join(repo, ".git/refs/heads/feat/x"))).toBe(true);
+  });
 
-  it("refuses a non-repo subfolder of a parent repo", async () => {
+  it("refuses a non-repo subfolder of a parent repo that holds our folder", async () => {
     const sub = path.join(repo, "sub");
-    mkdirSync(sub);
+    mkdirSync(path.join(sub, ".worktrees/.agents", SLUG), { recursive: true });
     const r = await cleanupProject(project(sub), SLUG);
     expect(r).toEqual({
       project: "web",
       removed: false,
       deleted: [],
       kept: [],
-      error: "not a git repository",
+      error: "couldn't clean up: not a git repository",
     });
+    expect(existsSync(path.join(sub, ".worktrees/.agents", SLUG))).toBe(true);
   });
+});
 
-  it("reports a missing project folder", async () => {
-    const r = await cleanupProject(project(path.join(root, "gone")), SLUG);
-    expect(r?.error).toBe("the project folder is missing");
+describe("a repository whose .git is not its own plain folder", () => {
+  const snapshot = (other: string) => [
+    g(other, "show-ref"),
+    readdirSync(path.join(other, ".git/worktrees")).sort().join(),
+    g(other, "worktree", "list", "--porcelain"),
+  ];
+  async function setup(mode: "file" | "symlink" | "commondir") {
+    const other = path.join(root, "other");
+    mkdirSync(other);
+    g(other, "init", "-q", "-b", "main");
+    commit(other, "init");
+    mkdirSync(base(), { recursive: true });
+    g(other, "worktree", "add", "-q", "-b", "feat/x", path.join(base(), "feat/x"));
+    const otherGit = path.join(other, ".git");
+    if (mode === "commondir") {
+      writeFileSync(path.join(repo, ".git/commondir"), `${otherGit}\n`);
+    } else {
+      rmSync(path.join(repo, ".git"), { recursive: true });
+      if (mode === "file") writeFileSync(path.join(repo, ".git"), `gitdir: ${otherGit}\n`);
+      else symlinkSync(otherGit, path.join(repo, ".git"));
+    }
+    return other;
+  }
+
+  it.each(["file", "symlink", "commondir"] as const)(
+    "refuses a .git %s pointing at a second repository and leaves it unchanged",
+    async (mode) => {
+      const other = await setup(mode);
+      const before = snapshot(other);
+      const r = await cleanupProject(project(), SLUG);
+      expect(r?.error).toBe("the repository's .git is not a plain folder; left in place");
+      expect(r).toMatchObject({ removed: false, deleted: [] });
+      expect(snapshot(other)).toEqual(before);
+      expect(existsSync(path.join(base(), "feat/x"))).toBe(true);
+    },
+  );
+});
+
+describe("a removal that fails", () => {
+  it("reports it, and skips the metadata and branch steps", async (ctx) => {
+    if (process.getuid?.() === 0) return ctx.skip();
+    addWorktree("feat/x", { push: true });
+    const locked = path.join(base(), "locked");
+    mkdirSync(locked);
+    writeFileSync(path.join(locked, "f"), "x");
+    chmodSync(locked, 0o500);
+    try {
+      const r = await cleanupProject(project(), SLUG);
+      expect(r).toMatchObject({
+        removed: false,
+        deleted: [],
+        error: `couldn't remove .worktrees/.agents/${SLUG}: EACCES`,
+      });
+      expect(adminIds()).toHaveLength(1);
+      expect(g(repo, "show-ref", "--verify", "refs/heads/feat/x")).toContain("feat/x");
+    } finally {
+      chmodSync(locked, 0o700);
+    }
   });
 });

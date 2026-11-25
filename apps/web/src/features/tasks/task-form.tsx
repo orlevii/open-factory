@@ -4,7 +4,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import { useOutcome } from "@/components/forms/form-outcome";
-import { useFieldErrors } from "@/components/forms/use-field-errors";
+import { skippedLeave, useFieldErrors } from "@/components/forms/use-field-errors";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import type { ComboOption } from "@/components/ui/combobox";
 import { SheetBody } from "@/components/ui/sheet";
@@ -223,7 +223,7 @@ export function TaskForm({
                   update({ body: next });
                   f.change("body");
                 }}
-                onBlur={() => f.blur("body")}
+                onBlur={(e) => f.blur("body", e)}
                 {...(a.describedBy ? { "aria-describedby": a.describedBy } : {})}
               />
             )}
@@ -238,9 +238,11 @@ export function TaskForm({
                 update({ deps: next });
                 f.change("dependsOn");
               }}
-              onBlur={() => {
+              onBlur={(e) => {
                 // Focus leaving the window is not a leave (D11).
                 if (!document.hasFocus()) return;
+                // Toward Discard, Add link and the like (§5.4) the lookup still fills the summary, but says no error.
+                const quiet = skippedLeave(e);
                 const text = deps;
                 checkDependencies(text).then(
                   (r) => {
@@ -248,7 +250,7 @@ export function TaskForm({
                     if (values.current.deps !== text) return;
                     setResolvedKeys(r.keys);
                     // Blur only adds: an edit clears through `f.change`, so a server error survives tabbing out.
-                    if (r.error) f.set("dependsOn", r.error);
+                    if (r.error && !quiet) f.set("dependsOn", r.error);
                   },
                   // A failed lookup on leave says nothing; the submit says it.
                   () => {},

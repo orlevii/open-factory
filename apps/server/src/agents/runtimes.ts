@@ -1,6 +1,11 @@
 import type { AgentRow } from "@open-factory/db";
-import { checkClaudeVersion, type HarnessDriver, MIN_CLAUDE_VERSION } from "@open-factory/harness";
-import { type AgentStatus, errorKindSchema, type QueueItem } from "@open-factory/shared";
+import type { HarnessDriver } from "@open-factory/harness";
+import {
+  type AgentStatus,
+  type ConfigSnapshot,
+  errorKindSchema,
+  type QueueItem,
+} from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { resolveImage, USER_TAG_PREFIX, userNameOfTag } from "../images/resolve.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
@@ -11,9 +16,11 @@ import type { ProcessJournal } from "../runtime/local/journal.ts";
 import type { WakeReason } from "../supervisor/slots.ts";
 import { Supervisor } from "../supervisor/supervisor.ts";
 import { AgentRuntime, type CleanupResult, cronZoneOf, type RuntimeLog } from "./agent-runtime.ts";
+import type { ConfigResolver, Effective } from "./config-resolver.ts";
 import { AgentArchivedError, AgentStartError, AgentTerminatedError } from "./errors.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, PendingRow } from "./event-store.ts";
+import { notices } from "./notices.ts";
 import type { PrepareStart } from "./start.ts";
 
 export interface RuntimesDeps {
@@ -55,6 +62,8 @@ export interface RuntimesDeps {
     >;
     claudeBin: string;
     defaultImage: string;
+    /** I2 §6.2: a loaded Docker agent's `nextImage` comes from its effective config at load. */
+    resolver: Pick<ConfigResolver, "effective">;
   };
 }
 
@@ -99,15 +108,6 @@ export function dockerCleanup(
   };
 }
 
-/** `claude --version` runs on the host, so it gets the plugin CLI's rule (spec §11.7): never the
- *  agent's env or its agent-writable `CLAUDE_CONFIG_DIR`, only `PATH` and the host `HOME`. */
-export function versionCheckEnv(serverEnv: NodeJS.ProcessEnv): Record<string, string> {
-  const env: Record<string, string> = {};
-  if (serverEnv.PATH) env.PATH = serverEnv.PATH;
-  if (serverEnv.HOME) env.HOME = serverEnv.HOME;
-  return env;
-}
-
 /** The sender as prose writes it (the urgent interrupt's `by`): `@handle` for a human, `@slug` for an agent. */
 function senderLabel(row: PendingRow): string {
   if (row.fromHandle) return `@${row.fromHandle}`;
@@ -142,7 +142,6 @@ export class AgentRuntimes {
   private readonly byId = new Map<string, Promise<AgentRuntime>>();
   /** The runtimes whose init finished: the Supervisor's synchronous view. */
   private readonly loaded = new Map<string, AgentRuntime>();
-  private versionChecked = false;
   /** The one owner of the cap; every runtime starts through it. */
   readonly supervisor: Supervisor;
   constructor(private readonly d: RuntimesDeps) {
@@ -160,13 +159,15 @@ export class AgentRuntimes {
     });
   }
 
-  /** The Supervisor's image port (spec §11.2): the image of a loaded Docker agent, and a check-and-pull. */
+  /**
+   * The Supervisor's image port (spec §11.2): the image a loaded Docker agent's next start is expected to use (I2 §6.2:
+   * its `nextImage`, undefined when its template was invalid at load, so that start fails closed), and a check-and-pull.
+   */
   private images(docker: NonNullable<RuntimesDeps["docker"]>) {
     return {
       refOf: (id: string) => {
-        const agent = this.loaded.get(id)?.agent;
-        if (agent?.runtime !== "docker") return undefined;
-        return resolveImage(agent.config.image, docker.defaultImage).tag;
+        const rt = this.loaded.get(id);
+        return rt?.agent.runtime === "docker" ? rt.nextImage : undefined;
       },
       ensure: async (ref: string, signal: AbortSignal) => {
         try {
@@ -211,7 +212,9 @@ export class AgentRuntimes {
         store: this.d.store,
         bus: this.d.bus,
         driver: this.d.driver,
-        prepareStart: this.d.prepareStart,
+        // I2 §6.2: every start reads its spawner's running config through here, so no wiring can leave it out.
+        prepareStart: (agent, extra) =>
+          this.d.prepareStart(agent, { ...extra, loaded: (id) => this.startedOf(id) }),
         tokens: this.d.tokens,
         log: this.d.log,
         holdTimeoutMs: this.d.holdTimeoutMs,
@@ -235,12 +238,10 @@ export class AgentRuntimes {
               },
             }
           : {}),
-        // Local agents only: a Docker agent's claude runs in its image, not on the host.
-        onFirstStart: (spec) => {
-          if (spec.runtime === "local") this.checkVersionOnce(spec.claudeBin);
-        },
       });
-      const pending = runtime.init().then(() => {
+      const pending = runtime.init().then(async () => {
+        if (this.d.docker && row.runtime === "docker")
+          runtime.nextImage = await this.imageAtLoad(row, this.d.docker);
         if (this.byId.get(row.id) === pending) this.loaded.set(row.id, runtime);
         return runtime;
       });
@@ -252,6 +253,50 @@ export class AgentRuntimes {
       });
     }
     return rt;
+  }
+
+  /**
+   * I2 §6.2: the image the effective config resolves to when the runtime loads. Undefined when it can't be read (a
+   * missing or invalid template, an invalid overlay): the start then fails closed with the resolver's own error.
+   */
+  private async imageAtLoad(
+    row: AgentRow,
+    docker: NonNullable<RuntimesDeps["docker"]>,
+  ): Promise<string | undefined> {
+    try {
+      return this.imageRef((await docker.resolver.effective(row)).config);
+    } catch (err) {
+      if (!(err instanceof AgentStartError))
+        this.d.log.warn({ err, agent: row.slug }, "reading the config for the image failed");
+      return undefined;
+    }
+  }
+
+  /** I2 §6.2: the Docker image reference a config resolves to (what `setNextImage` takes); undefined for a local one. */
+  imageRef(config: Pick<Effective["config"], "runtime" | "image">): string | undefined {
+    if (config.runtime !== "docker" || !this.d.docker) return undefined;
+    return resolveImage(config.image, this.d.docker.defaultImage).tag;
+  }
+
+  /** I2 §6.2: a loaded runtime's next image (`ConfigChanges` refreshes it on every change); a no-op when not loaded. */
+  setNextImage(agentId: string, ref: string | undefined): void {
+    const rt = this.loaded.get(agentId);
+    if (rt) rt.nextImage = ref;
+  }
+
+  /** What every loaded runtime's running process started with (the Library sweep reads its cache directories). */
+  allStarted(): Effective[] {
+    return [...this.loaded.values()].flatMap((rt) => (rt.started ? [rt.started] : []));
+  }
+
+  /** I2 §6.2: what a loaded runtime's running process started with; undefined when not loaded or not running. */
+  startedOf(agentId: string): Effective | undefined {
+    return this.loaded.get(agentId)?.started;
+  }
+
+  /** The version of each plugin a loaded runtime's running process listed at its first `init` (spec §7.3 step 8). */
+  loadedPluginsOf(agentId: string): Record<string, string> | undefined {
+    return this.loaded.get(agentId)?.loadedPlugins;
   }
 
   /**
@@ -371,9 +416,66 @@ export class AgentRuntimes {
     );
   }
 
-  /** Applies config changes at the next safe moment (spec §13); a no-op when no runtime is loaded. */
-  async requestRestart(agentId: string): Promise<void> {
-    await (await this.get(agentId))?.requestRestart();
+  /**
+   * Applies config changes at the next safe moment (spec §13); a no-op when no runtime is loaded. `changes` (I2 §7.3)
+   * are shown as `restartChanges` while it is pending; `wake` is I7's and ignored in I2. `current` re-reads the
+   * effective config inside the runtime's job, which restarts only when the running process started with another one
+   * (see `AgentRuntime.requestRestart`).
+   */
+  async requestRestart(
+    agentId: string,
+    opts: {
+      changes?: string[];
+      wake?: boolean;
+      current?: () => Promise<ConfigSnapshot | undefined>;
+    } = {},
+  ): Promise<void> {
+    await (await this.get(agentId))?.requestRestart(opts);
+  }
+
+  /**
+   * I2 §7.3: records config change lines in the agent's one pending `config_changed` notice (merged), whatever its
+   * state: through the runtime when one exists (a loading one is awaited first, so the two can't race), else through
+   * the store. A runtime whose load began during that store write may have read its queue before the row committed,
+   * so it adopts the row afterwards. The lines are `describeChanges` output: never a raw config value.
+   */
+  async recordConfigNotice(agentId: string, lines: string[]): Promise<void> {
+    if (!lines.length) return;
+    const rt = await this.get(agentId);
+    if (rt) return rt.recordConfigNotice(lines);
+    const row = await this.d.store.createNotice({
+      toAgentId: agentId,
+      notice: "config_changed",
+      body: notices.configChanged(lines),
+    });
+    await (await this.get(agentId))?.adoptNotice(row.id);
+  }
+
+  /**
+   * I7 §8.2: records an agent actor's change to `reportId`'s configuration in its manager's one pending
+   * `report_config_changed` notice for that report (merged), through the manager's runtime when one exists, as
+   * `recordConfigNotice` does. Nothing for an archived or terminated manager. The lines are `describeChanges` output.
+   */
+  async recordReportNotice(
+    managerId: string,
+    reportId: string,
+    by: string,
+    lines: string[],
+  ): Promise<void> {
+    if (!lines.length) return;
+    const manager = await this.d.store.agentById(managerId);
+    if (!manager || manager.archivedAt || manager.terminatedAt) return;
+    const rt = await this.get(managerId);
+    if (rt) return rt.recordReportNotice(reportId, by, lines);
+    const report = await this.d.store.agentById(reportId);
+    if (!report) return;
+    const row = await this.d.store.createNotice({
+      toAgentId: managerId,
+      notice: "report_config_changed",
+      body: notices.reportConfigChanged({ by, report: report.slug, lines }),
+      subjectAgentId: reportId,
+    });
+    await (await this.get(managerId))?.adoptNotice(row.id);
   }
 
   /**
@@ -408,6 +510,7 @@ export class AgentRuntimes {
       turnOpen: false,
       restartPending: false,
       restartWaitingOn: 0,
+      restartChanges: [],
       waitingOn: { tasks: [], crons: 0 },
       crons: [],
       cronZone: cronZoneOf(row.runtime === "docker" ? "docker" : "local"),
@@ -441,20 +544,5 @@ export class AgentRuntimes {
   private async all(): Promise<AgentRuntime[]> {
     const inits = await Promise.allSettled(this.byId.values());
     return inits.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
-  }
-
-  private checkVersionOnce(bin: string) {
-    if (this.versionChecked) return;
-    this.versionChecked = true;
-    void checkClaudeVersion(bin, versionCheckEnv(this.d.serverEnv ?? process.env)).then(
-      ({ version, tooOld }) => {
-        if (version) this.d.log.info({ version }, "Claude Code version");
-        if (tooOld)
-          this.d.log.warn(
-            { version, minimum: MIN_CLAUDE_VERSION },
-            "Claude Code is older than the version S3 was verified on",
-          );
-      },
-    );
   }
 }

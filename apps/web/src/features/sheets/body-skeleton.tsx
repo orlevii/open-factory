@@ -15,7 +15,10 @@ const ROWS: Partial<Record<SheetKind, number>> = {
   "new-template": 2,
   "add-credential": 3,
   "add-project": 2,
+  "add-skills": 3,
+  "add-marketplace": 3,
   "add-secret": 2,
+  "sign-in-again": 2,
 };
 
 /** Static stand-in while a body's chunk loads: field rows and a footer at the form's real heights. */

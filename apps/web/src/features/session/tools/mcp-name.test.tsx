@@ -13,37 +13,30 @@ test("server · tool reads in full", () => {
   expect(container).toHaveTextContent(/^claude_ai_Google_Drive · search_files$/);
 });
 
-test("the server middle-truncates: its head shrinks to at least 3 characters and an ellipsis; its last 6 stay", () => {
+test("the server splits into a head and its last 6 characters, never narrower than 4 of the head plus the tail", () => {
   const { container } = render(<McpName name="mcp__github-cloud-connector__create_pull_request" />);
   const { server } = parts(container);
   expect(server).toHaveTextContent(/^github-cloud-connector$/);
   const [head, tail] = [...server.children] as HTMLElement[];
   expect(head?.textContent).toBe("github-cloud-con");
-  expect(head).toHaveClass("truncate");
-  // 3 characters and the ellipsis, at least.
-  expect(head?.style.minWidth).toBe("calc(4ch + 1px)");
   expect(tail?.textContent).toBe("nector");
-  expect(tail).toHaveClass("shrink-0");
-  // The server gives way first, never below its head's 4 characters plus its 6-character tail.
-  expect(server).toHaveClass("shrink-[100]");
+  // The server never goes below its head's 4 characters plus its 6-character tail.
   expect(server.style.minWidth).toBe("calc(10ch + 1px)");
 });
 
-test("the separator sits outside the tool's truncation, so ' · ' always shows between the two", () => {
+test("' · ' sits between the server and the tool", () => {
   const { container } = render(<McpName name="mcp__github-cloud-connector__create_pull_request" />);
   const { server, tool } = parts(container);
   const sep = container.querySelector("[data-mcp-sep]") as HTMLElement;
   expect(sep.textContent).toBe(" · ");
-  expect(sep).toHaveClass("shrink-0");
   expect(sep.previousElementSibling).toBe(server);
   expect(sep.nextElementSibling).toBe(tool);
   expect(tool.textContent).toBe("create_pull_request");
 });
 
-test("the tool keeps its tail: it shrinks after the server, and cuts from its start", () => {
+test("the tool cuts from its start: a right-to-left box around left-to-right text", () => {
   const { container } = render(<McpName name="mcp__github__create_pull_request_review" />);
   const { tool } = parts(container);
-  expect(tool).toHaveClass("min-w-0", "truncate");
   expect(tool).toHaveAttribute("dir", "rtl");
   // The text itself stays left-to-right inside the right-to-left box.
   expect(tool.firstElementChild).toHaveAttribute("dir", "ltr");
@@ -53,8 +46,8 @@ test("the tool keeps its tail: it shrinks after the server, and cuts from its st
 test("a short server never shrinks", () => {
   const { container } = render(<McpName name="mcp__gh__create_pull_request" />);
   const { server } = parts(container);
-  expect(server).toHaveClass("shrink-0");
-  expect(server.querySelector(".truncate")).toBeNull();
+  // No least width: only a head longer than 4 characters gives way.
+  expect(server.style.minWidth).toBe("");
 });
 
 test("a one-letter server and a server-only name do not break", () => {
@@ -63,8 +56,7 @@ test("a one-letter server and a server-only name do not break", () => {
   expect(parts(container).tool).toBeNull();
 });
 
-test("a non-MCP name end-truncates as itself", () => {
+test("a non-MCP name renders as itself", () => {
   const { container } = render(<McpName name="Bash" />);
-  expect(container.firstElementChild).toHaveClass("truncate");
   expect(container).toHaveTextContent(/^Bash$/);
 });

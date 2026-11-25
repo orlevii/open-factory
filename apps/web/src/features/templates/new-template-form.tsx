@@ -1,8 +1,6 @@
 import {
   ApiError,
   createTemplateBodySchema,
-  isReservedTemplateName,
-  RESERVED_TEMPLATE_NAME_MESSAGE,
   RESERVED_TEMPLATE_NAMES,
   type TemplateDetail,
   type templatesListSchema,
@@ -44,8 +42,7 @@ type Values = { displayName: string; name: string; revealed: boolean; descriptio
 const blank = (): Values => ({ displayName: "", name: "", revealed: false, description: "" });
 
 const NAME_HELP = "Lowercase letters, numbers and hyphens. Also the folder name.";
-const MESSAGES: Record<Field, string> = {
-  name: FORM_MSG.templateNameChars,
+const MESSAGES: Record<Exclude<Field, "name">, string> = {
   displayName: FORM_MSG.displayNameRequired,
   description: FORM_MSG.descriptionLength,
 };
@@ -61,17 +58,17 @@ const summaryOf = (t: TemplateDetail): TemplateList["templates"][number] => ({
   errors: t.issues.filter((i) => i.severity === "error").length,
   warnings: t.issues.filter((i) => i.severity === "warning").length,
   agentCount: 0,
+  pluginCount: 0,
 });
 
 function check(field: Field, v: { displayName: string; name: string; description: string }) {
-  if (field === "displayName" && v.displayName.trim() === "") return "Enter a display name.";
+  if (field === "displayName" && v.displayName.trim() === "") return FORM_MSG.enterDisplayName;
   const r = createTemplateBodySchema.shape[field].safeParse(
     field === "description" && v.description.trim() === "" ? undefined : v[field],
   );
   if (r.success) return undefined;
-  return field === "name" && isReservedTemplateName(v.name)
-    ? RESERVED_TEMPLATE_NAME_MESSAGE
-    : MESSAGES[field];
+  // Name: the shared schema's first rule (spec §8), the same per-rule copy as credential and project names.
+  return field === "name" ? r.error.issues[0]?.message : MESSAGES[field];
 }
 
 /**
@@ -138,7 +135,7 @@ export function NewTemplateForm({
     name: () =>
       !v.revealed && !name
         ? v.displayName.trim() !== ""
-          ? MESSAGES.name
+          ? check("name", { ...v, name: "" })
           : undefined
         : check("name", { ...v, name }),
     description: () => check("description", { ...v, name }),
@@ -182,7 +179,7 @@ export function NewTemplateForm({
         }
         const fields: Record<string, string> =
           err instanceof ApiError && err.code === "template_exists"
-            ? { name: err.message }
+            ? { name: FORM_MSG.nameTaken }
             : err instanceof ApiError && err.code === "validation_error"
               ? ((err.body.fields ?? {}) as Record<string, string>)
               : {};
@@ -224,6 +221,7 @@ export function NewTemplateForm({
                 latest.current = blank();
                 setV(latest.current);
                 f.reset();
+                o.clear();
                 setRestored(false);
               }}
             >

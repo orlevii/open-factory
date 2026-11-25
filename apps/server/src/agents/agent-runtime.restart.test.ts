@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import type { AgentRuntime } from "./agent-runtime.ts";
+import type { MountCheckContext } from "../workspace/mounts.ts";
+import type { AgentRuntime, DockerDeps } from "./agent-runtime.ts";
 import { AgentStartError } from "./errors.ts";
 import type { EventStore } from "./event-store.ts";
+import { notices, parseConfigNotice } from "./notices.ts";
 import { ev, type FakeDriver, type FakeProcess } from "./testing/fake-driver.ts";
-import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
+import { deliverHuman, okSpec, RuntimeHarness, testEffective } from "./testing/runtime-harness.ts";
+import { RecordingSlots } from "./testing/slots.ts";
 
 const h = new RuntimeHarness();
 let store: EventStore;
@@ -437,4 +440,244 @@ test("apply-restart with nothing lost and nothing queued stays hibernated", asyn
   expect(await types()).not.toContain("background_work_lost");
   expect(driver.starts).toHaveLength(1);
   expect(rt.queueItems()).toEqual([]);
+});
+
+// ---------- I2 §6.2, §7.3: started config, the config_changed notice, restart with a change list ----------
+
+/** The agent's `config_changed` rows. */
+const configRows = async () =>
+  h.t.sql<{ id: string; body: string; state: string }[]>`
+    select id, body, state from messages
+    where to_agent_id = ${agentId} and kind = 'system' and notice = 'config_changed'
+    order by created_at`;
+/** Every body a process was sent, batch by batch. */
+const batches = (p: FakeProcess | undefined) => (p?.sent ?? []).map((b) => b.map((m) => m.body));
+const CONFIG = notices.configChanged(["model: sonnet → opus"]);
+
+test("config_changed is passive: it never wakes a hibernated agent, at runtime or at boot", async () => {
+  await rt.recordConfigNotice(["model: sonnet → opus"]);
+  await rt.settled();
+  expect(driver.starts).toHaveLength(0);
+  expect(rt.hasDeliverable()).toBe(false);
+  expect(rt.queueItems().map((i) => i.kind)).toEqual(["notice"]);
+  expect((await store.bootWakes(0)).map((w) => w.id)).not.toContain(agentId);
+  // A message wakes it; the notice rides at the head of that first batch.
+  await send("hi");
+  expect(batches(driver.last)).toEqual([[CONFIG, "hi"]]);
+});
+
+test("config_changed on an idle process is never written on its own", async () => {
+  await idle();
+  await rt.recordConfigNotice(["model: sonnet → opus"]);
+  await rt.settled();
+  expect(batches(driver.last)).toEqual([["hi"]]);
+  expect(rt.hibernatable()).toBe(true); // passive: it keeps nothing up
+});
+
+test("two config notices before delivery are one pending row: the union of the lines, sorted", async () => {
+  await rt.recordConfigNotice(["model: sonnet → opus", "added skill release"]);
+  await rt.recordConfigNotice(["env LOG_LEVEL changed", "added skill release"]);
+  const rows = await configRows();
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.state).toBe("pending");
+  expect(parseConfigNotice(rows[0]?.body ?? "")).toEqual([
+    "added skill release",
+    "env LOG_LEVEL changed",
+    "model: sonnet → opus",
+  ]);
+  expect(rt.queueItems()).toHaveLength(1);
+  expect(rt.queueItems()[0]?.body).toBe(rows[0]?.body);
+});
+
+test("concurrent merges through the store never create two rows", async () => {
+  const m = (line: string) =>
+    store.createNotice({
+      toAgentId: agentId,
+      notice: "config_changed",
+      body: notices.configChanged([line]),
+    });
+  await Promise.all([m("b"), m("a"), m("c")]);
+  const rows = await configRows();
+  expect(rows).toHaveLength(1);
+  expect(parseConfigNotice(rows[0]?.body ?? "")).toEqual(["a", "b", "c"]);
+});
+
+test("a change after the process started is held from it: a message between the change and the restart doesn't carry it, the first batch after the restart does", async () => {
+  await idle();
+  await rt.recordConfigNotice(["model: sonnet → opus"]);
+  await send("between");
+  expect(batches(driver.starts[0])).toEqual([["hi"], ["between"]]);
+  driver.last.emit(ev.turn(), ev.usage(), ev.end());
+  await rt.settled();
+  await rt.requestRestart({ changes: ["model: sonnet → opus"] });
+  await rt.settled();
+  expect(driver.starts[0]?.stopped).toBe(true);
+  expect(driver.starts).toHaveLength(1); // the passive notice alone wakes nothing
+  expect((await configRows())[0]?.state).toBe("pending");
+  await send("after");
+  expect(driver.starts).toHaveLength(2);
+  expect(batches(driver.starts[1])).toEqual([[CONFIG, "after"]]);
+  driver.last.emit(...ev.fullTurn("sess-1"));
+  await rt.settled();
+  expect((await configRows())[0]?.state).toBe("delivered");
+});
+
+test("a change landing while the start is in prepare is held for the next process", async () => {
+  let open: () => void = () => {};
+  h.prepareGate = new Promise<void>((r) => {
+    open = r;
+  });
+  const p = send("hi");
+  await h.prepared(1); // the start read the config (or is about to): the change may be missing from it
+  const row = await store.createNotice({
+    toAgentId: agentId,
+    notice: "config_changed",
+    body: CONFIG,
+  });
+  const adopted = rt.adoptNotice(row.id); // queued behind the start job
+  open();
+  await p;
+  await adopted;
+  await rt.settled();
+  expect(rt.queueItems().map((i) => i.kind)).toEqual(["notice"]);
+  driver.last.emit(...ev.fullTurn("sess-1"));
+  await rt.settled();
+  await send("next"); // stamped before the prepare: the row is newer than this process
+  expect(batches(driver.last)).toEqual([["hi"], ["next"]]);
+  expect((await configRows()).map((r) => r.state)).toEqual(["pending"]);
+});
+
+test("a change after the first batch is a new row, held for the next process", async () => {
+  await rt.recordConfigNotice(["added skill release"]); // pending before any process
+  await send("hi"); // delivered with this first batch
+  expect(batches(driver.last)).toEqual([[notices.configChanged(["added skill release"]), "hi"]]);
+  driver.last.emit(...ev.fullTurn("sess-1"));
+  await rt.settled();
+  await rt.recordConfigNotice(["model: sonnet → opus"]); // a new row: the first one was delivered
+  await send("next");
+  expect(batches(driver.last).at(-1)).toEqual(["next"]);
+  expect((await configRows()).map((r) => r.state)).toEqual(["delivered", "pending"]);
+});
+
+test.each([
+  [
+    "a crons takeover of the restart",
+    async () => {
+      driver.last.emit(ev.cron("c1", { humanSchedule: "every 5 minutes" }));
+      await rt.settled();
+      driver.last.holdStop = true;
+      await rt.requestRestart({ changes: ["model: sonnet → opus"] });
+      expect(await rt.stopCrons("or")).toEqual({ status: "stopped" });
+      driver.last.releaseStop();
+    },
+  ],
+  ["a shutdown", () => rt.stop()],
+  ["a crash", async () => driver.last.exit(1)],
+] as const)(
+  "after %s the notice is still pending and the next start delivers it",
+  async (_n, exit) => {
+    await idle();
+    await rt.recordConfigNotice(["model: sonnet → opus"]);
+    await exit();
+    await rt.settled();
+    expect(rt.live().status).toBe("hibernated");
+    expect(driver.starts).toHaveLength(1);
+    expect((await configRows()).map((r) => r.state)).toEqual(["pending"]);
+    await send("again");
+    expect(driver.starts).toHaveLength(2);
+    const [first] = batches(driver.last);
+    expect(first?.[0]).toBe(CONFIG);
+    expect(first?.at(-1)).toBe("again");
+  },
+);
+
+test("lost crons on an apply_changes exit still add a non-passive restart_crons that wakes the agent, the config notice with it", async () => {
+  await idle();
+  driver.last.emit(ev.cron("c1", { humanSchedule: "every 5 minutes" }));
+  await rt.settled();
+  await rt.recordConfigNotice(["model: sonnet → opus"]);
+  await rt.requestRestart({ changes: ["model: sonnet → opus"] });
+  await rt.settled();
+  expect(driver.starts).toHaveLength(2); // woken by restart_crons
+  expect((await startReasons()).at(-1)).toBe("apply_changes");
+  const [first] = batches(driver.last);
+  expect(first).toHaveLength(2);
+  expect(first).toContain(CONFIG);
+  expect(first?.find((b) => b !== CONFIG)).toContain("every 5 minutes");
+});
+
+test("restartChanges shows while the restart is pending and clears on the exit", async () => {
+  await idle();
+  driver.last.emit(ev.turn());
+  await rt.settled();
+  await rt.requestRestart({ changes: ["model: sonnet → opus", "added skill release"] });
+  await rt.requestRestart({ changes: ["added skill release"] });
+  expect(rt.live()).toMatchObject({
+    restartPending: true,
+    restartChanges: ["added skill release", "model: sonnet → opus"],
+  });
+  expect(rt.statusFrame().restartChanges).toEqual(["added skill release", "model: sonnet → opus"]);
+  driver.last.emit(ev.usage(), ev.end());
+  await rt.settled();
+  expect(driver.last.stopped).toBe(true);
+  expect(rt.live()).toMatchObject({ restartPending: false, restartChanges: [] });
+  // A restart for another reason (credential, grants, manager) carries no lines.
+  await send("again");
+  driver.last.emit(...ev.fullTurn("sess-1"), ev.turn());
+  await rt.settled();
+  await rt.requestRestart();
+  expect(rt.live()).toMatchObject({ restartPending: true, restartChanges: [] });
+});
+
+test("started is the effective config of the running process, cleared at its exit", async () => {
+  await h.makeRuntime({ spec: (a) => okSpec(a, { model: "opus", warmWindowMinutes: 5 }) });
+  ({ driver, rt, agentId } = h);
+  expect(rt.started).toBeUndefined();
+  await idle();
+  expect(rt.started?.config).toMatchObject({ model: "opus", warmWindowMinutes: 5 });
+  await rt.stop();
+  expect(rt.started).toBeUndefined();
+});
+
+test("a start that resolves an image other than nextImage updates it and goes back through the pull", async () => {
+  const slots = new RecordingSlots();
+  let image = "img:v2";
+  const ops: string[] = [];
+  const containers: DockerDeps["containers"] = {
+    ensure: async () => {
+      ops.push("ensure");
+      return { containerId: "c1", action: "created" as const, imageId: "sha256:img" };
+    },
+    stopIfRunning: async () => true,
+    forceRemove: async () => true,
+    remove: async () => true,
+  };
+  await h.makeRuntime({
+    slots,
+    nextImage: "img:v1",
+    docker: { containers, claudeBin: "/usr/local/bin/claude" },
+    spec: (a) => ({
+      ...okSpec(a),
+      runtime: "docker",
+      effective: testEffective({ runtime: "docker", image }),
+      launch: { image, mountCheck: {} as MountCheckContext },
+    }),
+  });
+  ({ driver, rt, agentId } = h);
+  await send("hi");
+  expect(rt.nextImage).toBe("img:v2");
+  expect(driver.starts).toHaveLength(0);
+  expect(ops).toEqual([]); // no container for an image the Supervisor hasn't checked
+  // The wake went back to the Supervisor (which pulls nextImage first); the slot was given back.
+  expect(slots.events.filter(([k]) => k === "request")).toHaveLength(2);
+  expect(slots.events).toContainEqual(["release"]);
+  await rt.grant("message");
+  await rt.settled();
+  expect(driver.starts).toHaveLength(1);
+  expect(ops).toEqual(["ensure"]);
+  image = "img:v3"; // edited again before the next start: once more through the pull
+  await rt.stop();
+  await send("again");
+  expect(rt.nextImage).toBe("img:v3");
+  expect(driver.starts).toHaveLength(1);
 });

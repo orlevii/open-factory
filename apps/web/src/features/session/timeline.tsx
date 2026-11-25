@@ -13,8 +13,9 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
-import { useDocumentVisible } from "@/hooks/use-document-visible";
+import { readViewPosition, useRememberPosition } from "@/features/agents/view-memory";
 import { runInstantOn } from "@/lib/run-instant";
+import { arrive, useArrivalTint } from "@/lib/use-arrival";
 import { childrenOf, groupOpen, heldSeqs, innerKey, isFold } from "./display-passes";
 import { arrivedSince, JumpPill } from "./jump-pill";
 import { rowOf } from "./row-of";
@@ -23,12 +24,13 @@ import { registerTimelineRepin } from "./session-commands";
 import type { LiveText } from "./session-state";
 import { type StickToBottom, useStickToBottom } from "./stick-to-bottom";
 import type { RowProgress } from "./timeline-item";
-import { type Arrival, rowGap, TimelineItem } from "./timeline-item";
+import { rowGap, TimelineItem } from "./timeline-item";
 
 const NO_KEYS: ReadonlySet<string> = new Set();
 const NO_TEXTS: readonly LiveText[] = [];
 const NO_PROGRESS: readonly SubagentProgress[] = [];
 type TextRow = Extract<Row, { kind: "text" }>;
+const NO_PENDING: readonly Row[] = [];
 const NO_LIVE_ROWS: readonly TextRow[] = [];
 
 /**
@@ -68,25 +70,6 @@ function useLiveRows(texts: readonly LiveText[], head: boolean, off: boolean): r
 /** What a toggle that resizes the timeline calls first, and what re-pins it (U3 §8.1). */
 export type TimelineHandle = Pick<StickToBottom, "captureAnchor" | "expandAnchor" | "repin">;
 
-/** Visible time the deep-link tint holds before it fades (U3 §7.4, Q28). */
-const ARRIVAL_MS = 2000;
-
-/** Focuses a deep-linked row without scrolling again. A programmatic focus after a mouse navigation
- *  may not match `:focus-visible`; the row then carries `data-focus-ring`, styled the same, until it
- *  loses focus ("ring = focus"). */
-function arrive(row: HTMLElement) {
-  row.focus({ preventScroll: true });
-  let visible = false;
-  try {
-    visible = row.matches(":focus-visible");
-  } catch {
-    // An engine without :focus-visible: the stand-in ring.
-  }
-  if (visible) return;
-  row.setAttribute("data-focus-ring", "");
-  row.addEventListener("blur", () => row.removeAttribute("data-focus-ring"), { once: true });
-}
-
 const INTERACTIVE = "a[href],button,summary,pre,input,textarea,select,[tabindex]";
 
 /** The only scrolling region: stick-to-bottom, Jump to latest, Load earlier with a scroll anchor,
@@ -110,6 +93,8 @@ export function Timeline(props: {
   onLoadEarlier(): Promise<boolean>;
   earlierError: boolean;
   footer: ReactNode;
+  /** Raw sends without a row yet (`rawTailRows`): items after the rows, keyed like their rows. */
+  pendingRows?: readonly Row[];
   /** An older window (deep link): the Jump pill always shows and leaves it (U3 §8.2). */
   windowed?: boolean;
   /** The speech that arrived while windowed (the reducer counts it: those rows aren't appended). */
@@ -150,6 +135,11 @@ export function Timeline(props: {
           },
     ),
   );
+  // Where the reader left this agent's session (a Chat/Session switch remounts the view): recorded on
+  // scroll, restored once the rows are in. A deep-link window is not a place worth coming back to.
+  const isPinned = useCallback(() => stick.pinned.current, [stick]);
+  useRememberPosition(props.slug, "session", scroller, isPinned, !windowed);
+  const restored = useRef(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [activeKey, setActiveKey] = useState<string | undefined>();
   // The focused row's key and element, for the rows layout effect (refs: focus moving re-runs nothing).
@@ -166,7 +156,7 @@ export function Timeline(props: {
   }, [rows, highlight, props.highlightMessageId]);
   const litKey = litPath?.[0];
   const arrivedKey = litPath?.at(-1);
-  const [arrival, setArrival] = useState<Arrival>();
+  const { arrival, start: startArrival, onArrivedEnd } = useArrivalTint();
 
   // Runs after every rows commit (the height changed).
   useLayoutEffect(() => {
@@ -196,34 +186,29 @@ export function Timeline(props: {
         return;
       }
       centred.current = true;
+      restored.current = true;
       stick.unpin();
       const target = el.querySelector<HTMLElement>(
         `[data-row="${CSS.escape(litPath.at(-1) ?? "")}"]`,
       );
       target?.scrollIntoView?.({ block: "center" });
       if (target) arrive(target);
-      setArrival("on");
+      startArrival();
       return;
+    }
+    if (!restored.current && rows.length > 0) {
+      restored.current = true;
+      const left = windowed ? undefined : readViewPosition(props.slug, "session");
+      if (left && !left.pinned) {
+        stick.unpin();
+        el.scrollTop = left.top;
+        return;
+      }
     }
     // Pinned: the bottom, instantly (events arrive tens of times a minute). Unpinned: the anchor
     // row keeps its place, a Load earlier prepend included.
     stick.settle();
-  }, [rows, litPath, expanded, stick]);
-
-  // The tint fades after 2s of visible time (U3 §7.4): hidden, the clock stops and keeps what's left.
-  // An effect runs after the row painted, so the 2s start from the first frame that shows it.
-  const visible = useDocumentVisible();
-  const arrivalLeft = useRef(ARRIVAL_MS);
-  useEffect(() => {
-    if (arrival !== "on" || !visible) return;
-    const start = Date.now();
-    const t = setTimeout(() => setArrival("fading"), arrivalLeft.current);
-    return () => {
-      clearTimeout(t);
-      arrivalLeft.current = Math.max(0, arrivalLeft.current - (Date.now() - start));
-    };
-  }, [arrival, visible]);
-  const onArrivedEnd = useCallback(() => setArrival(undefined), []);
+  }, [rows, litPath, expanded, stick, props.slug, windowed, startArrival]);
 
   const arrived = useMemo(
     () => arrivedSince(rows, seen?.seq, handedOff, seen?.live),
@@ -439,8 +424,9 @@ export function Timeline(props: {
     ],
   );
   const liveTexts = props.liveTexts ?? NO_TEXTS;
+  const pendingRows = props.pendingRows ?? NO_PENDING;
   const items =
-    liveRows.length === 0
+    liveRows.length === 0 && pendingRows.length === 0
       ? rowEls
       : [
           ...rowEls,
@@ -466,8 +452,29 @@ export function Timeline(props: {
               onRowFocus={onRowFocus}
             />
           )),
+          ...pendingRows.map((row, i) => (
+            <TimelineItem
+              key={row.key}
+              row={row}
+              slug={slug}
+              spawned={spawned}
+              lit={false}
+              arrivedKey={undefined}
+              arrival={undefined}
+              onArrivedEnd={onArrivedEnd}
+              live={false}
+              firstOfSeq={false}
+              gap={rowGap(row, i === 0 ? (liveRows.at(-1) ?? rows.at(-1)) : pendingRows[i - 1])}
+              tabKey={tabKey}
+              expanded={expanded}
+              failedIds={failedIds}
+              interruptedEnds={interruptedEnds}
+              toggle={toggle}
+              onRowFocus={onRowFocus}
+            />
+          )),
         ];
-  const last = liveRows.at(-1) ?? rows.at(-1);
+  const last = pendingRows.at(-1) ?? liveRows.at(-1) ?? rows.at(-1);
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -577,8 +584,8 @@ const hasKey = (rows: readonly Row[], key: string, expanded: ReadonlySet<string>
 
 /** True when the row shows the envelope (or one of its merged ids / parts). */
 function rowHasMessage(row: Row, id: string): boolean {
-  const has = (e: { id: string; ids?: string[]; parts?: { id: string }[] }) =>
-    e.id === id || !!e.ids?.includes(id) || !!e.parts?.some((p) => p.id === id);
+  const has = (e: { id: string; ids?: string[]; parts: { id: string }[] }) =>
+    e.id === id || !!e.ids?.includes(id) || e.parts.some((p) => p.id === id);
   if (row.kind === "message") return has(row.message);
   if (row.kind === "update_group") return row.envelopes.some(has);
   if (row.kind === "peer") return has(row.envelope);

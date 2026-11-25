@@ -167,7 +167,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   return (
     <li role="none">
       <Link
-        to="/agents/$slug"
+        to="/agents/$slug/chat"
         params={{ slug }}
         role="treeitem"
         {...press}
@@ -215,6 +215,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           slug={slug}
           template={agent.template}
           avatarVersion={agent.avatarVersion}
+          color={agent.color}
           size={20}
           status={agent.status}
         />
@@ -291,7 +292,7 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
   return (
     <li>
       <Link
-        to="/agents/$slug"
+        to="/agents/$slug/chat"
         params={{ slug }}
         data-active={active || undefined}
         aria-current={active ? "page" : undefined}
@@ -307,6 +308,7 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
             slug={slug}
             template={agent.template}
             avatarVersion={agent.avatarVersion}
+            color={agent.color}
             size={20}
             status={agent.status}
           />

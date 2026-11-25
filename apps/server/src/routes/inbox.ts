@@ -37,10 +37,30 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
     { schema: { querystring: inboxQuerySchema, response: { 200: inboxPageSchema } } },
     async (req) => {
       try {
-        // The response schema validates and serializes it (no second parse here).
-        return await app.store.inboxPage(userOf(req), req.query.before, req.query.limit, {
+        const page = await app.store.inboxPage(userOf(req), req.query.before, req.query.limit, {
           unread: req.query.unread === "true",
         });
+        // The chat rows carry their agent's summary fields (I1 §6.7). The response schema validates and serializes it.
+        const { chats: unread, ...rest } = page;
+        const chats = await Promise.all(
+          (unread ?? []).map(async ({ slug, ...rest }) => {
+            const a = await app.agents.summary(slug);
+            return {
+              ...rest,
+              agent: {
+                slug: a.slug,
+                displayName: a.displayName,
+                template: a.template,
+                avatarVersion: a.avatarVersion,
+                color: a.color,
+                kind: a.kind,
+                status: a.status,
+                archivedAt: a.archivedAt,
+              },
+            };
+          }),
+        );
+        return unread ? { ...rest, chats } : rest;
       } catch (err) {
         if (err instanceof InvalidCursorError) throw new FieldError("before", err.message);
         throw err;

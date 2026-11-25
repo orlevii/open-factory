@@ -16,11 +16,11 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
-import { gif, heic, jpeg, png, webp } from "../uploads/fixtures.ts";
+import { heic, jpeg, png } from "../uploads/fixtures.ts";
 import { UploadService } from "../uploads/service.ts";
 import { agentWorkdir } from "../workspace/paths.ts";
 
@@ -103,13 +103,10 @@ test("POST stores a PNG under .factory/uploads with a safe name and answers its 
   expect(statSync(uploadsDir("dev")).mode & 0o777).toBe(0o755);
 });
 
-test("jpeg, gif, webp and UTF-8 text are accepted by content", async () => {
+test("a JPEG and UTF-8 text are accepted by content (sniff.test.ts owns every type)", async () => {
   for (const [data, name, kind] of [
     [jpeg(100, 50), "a.jpg", "image"],
-    [gif(10, 10), "b.gif", "image"],
-    [webp(30, 20), "c.webp", "image"],
     [Buffer.from("# Notes\nhello\n"), "notes.md", "text"],
-    [Buffer.from('{"a":1}'), "data.json", "text"],
   ] as const) {
     const res = await upload("dev", data, name);
     expect(res.statusCode, name).toBe(201);
@@ -239,12 +236,15 @@ test("a symlinked .factory refuses the upload and nothing is written outside the
   ).toEqual([]);
 });
 
-test("GET sends nosniff and the sniffed type; text is an attachment; a swapped or resized file is refused", async () => {
+test("GET sends nosniff, a sandboxing CSP, no-store and the sniffed type; text is an attachment; a swapped or resized file is refused", async () => {
   const img = (await upload("dev", png(8, 8), "pic.txt")).json();
   const r1 = await get("dev", img.uploadId);
   expect(r1.statusCode).toBe(200);
   expect(r1.headers["content-type"]).toBe("image/png");
   expect(r1.headers["x-content-type-options"]).toBe("nosniff");
+  // Uploaded bytes are untrusted: no script, no framing, no caching of what a human sent.
+  expect(r1.headers["content-security-policy"]).toBe("default-src 'none'; sandbox");
+  expect(r1.headers["cache-control"]).toBe("private, no-store");
   expect(String(r1.headers["content-disposition"])).toMatch(/^inline/);
   expect(r1.rawPayload).toEqual(png(8, 8));
 
@@ -252,6 +252,8 @@ test("GET sends nosniff and the sniffed type; text is an attachment; a swapped o
   const r2 = await get("dev", txt.uploadId);
   expect(r2.headers["content-type"]).toBe("text/plain; charset=utf-8");
   expect(r2.headers["x-content-type-options"]).toBe("nosniff");
+  expect(r2.headers["content-security-policy"]).toBe("default-src 'none'; sandbox");
+  expect(r2.headers["cache-control"]).toBe("private, no-store");
   expect(String(r2.headers["content-disposition"])).toMatch(/^attachment; filename="page.md"/);
   expect(r2.body).toBe("plain\n");
 
@@ -291,15 +293,16 @@ test("DELETE by the uploader while unsent removes row and file; a sent upload ca
   const b = (await upload("dev", Buffer.from("kept\n"), "kept.txt")).json();
   const sent = await t.app.inject({
     method: "POST",
-    url: "/api/agents/dev/messages",
+    url: "/api/messages",
     headers: { cookie: or },
-    payload: { body: "see attached" },
+    payload: { to: ["dev"], body: "see attached", attachments: [b.uploadId] },
   });
   expect(sent.statusCode).toBe(202);
-  await t.db
-    .update(schema.uploads)
-    .set({ messageId: sent.json().item.id })
+  const [claimed] = await t.db
+    .select()
+    .from(schema.uploads)
     .where(eq(schema.uploads.id, b.uploadId));
+  expect(claimed?.messageId).toBe(sent.json().results[0].item.id);
   const refused = await del("dev", b.uploadId);
   expect(refused.statusCode).toBe(409);
   expect(refused.json().error.code).toBe("already_sent");
@@ -314,13 +317,13 @@ test("the sweep deletes unsent uploads older than 24 hours, and only those", asy
   const oldSent = (await upload("ops", Buffer.from("old sent\n"), "old-sent.txt")).json();
   const msg = await t.app.inject({
     method: "POST",
-    url: "/api/agents/ops/messages",
+    url: "/api/messages",
     headers: { cookie: or },
-    payload: { body: "x" },
+    payload: { to: ["ops"], body: "x" },
   });
   await t.db
     .update(schema.uploads)
-    .set({ messageId: msg.json().item.id })
+    .set({ messageId: msg.json().results[0].item.id })
     .where(eq(schema.uploads.id, oldSent.uploadId));
   const longAgo = new Date(Date.now() - 25 * 3_600_000);
   for (const id of [old.uploadId, oldSent.uploadId])
@@ -338,16 +341,13 @@ test("the sweep deletes unsent uploads older than 24 hours, and only those", asy
   expect(left).toEqual(expect.arrayContaining([fresh.uploadId, oldSent.uploadId]));
 });
 
-test("the first upload adds .factory/ to the repository's info/exclude, once, never touching .gitignore", async () => {
+test("an upload adds .factory/ to the repository's info/exclude (git-exclude.test.ts owns the detail)", async () => {
   await t.seedAgent({ slug: "repo" });
   execFileSync("git", ["init", "-q"], { cwd: wd("repo") });
-  writeFileSync(path.join(wd("repo"), ".gitignore"), "dist\n");
   mkdirSync(path.join(wd("repo"), ".git/info"), { recursive: true });
   expect((await upload("repo", Buffer.from("a\n"), "a.txt")).statusCode).toBe(201);
-  expect((await upload("repo", Buffer.from("b\n"), "b.txt")).statusCode).toBe(201);
   const exclude = readFileSync(path.join(wd("repo"), ".git/info/exclude"), "utf8");
-  expect(exclude.split("\n").filter((l) => l === ".factory/")).toHaveLength(1);
-  expect(readFileSync(path.join(wd("repo"), ".gitignore"), "utf8")).toBe("dist\n");
+  expect(exclude.split("\n")).toContain(".factory/");
 });
 
 test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connection closes", async () => {
@@ -355,7 +355,7 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
   await t.app.listen({ port: 0, host: "127.0.0.1" });
   const port = (t.app.server.address() as { port: number }).port;
   const before = listUploads("ops");
-  const status = await new Promise<number>((resolve, reject) => {
+  const res413 = await new Promise<{ status: number; connection: unknown }>((resolve, reject) => {
     const r = request(
       {
         host: "127.0.0.1",
@@ -371,7 +371,7 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
       },
       (res) => {
         res.resume();
-        resolve(res.statusCode ?? 0);
+        resolve({ status: res.statusCode ?? 0, connection: res.headers.connection });
       },
     );
     r.on("error", (e: NodeJS.ErrnoException) => {
@@ -389,10 +389,11 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
     };
     pump();
   });
-  expect(status).toBe(413);
+  expect(res413.status).toBe(413);
+  // The rest of the body is unread, so the server must not keep the connection for another request.
+  expect(res413.connection).toBe("close");
   // The temp file is deleted once the handler has unwound.
-  await new Promise((r) => setTimeout(r, 50));
-  expect(listUploads("ops")).toEqual(before);
+  await vi.waitFor(() => expect(listUploads("ops")).toEqual(before));
 });
 
 describe("security review fixes", () => {

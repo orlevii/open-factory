@@ -36,7 +36,7 @@ Environment variables (`npm start` loads `.env` if present):
 | `LOG_LEVEL`          | no       | `info`                     | pino level                                                                                                                                   |
 | `NODE_ENV`           | no       | none                       | `production` disables pretty logs and the dev origin allowance                                                                               |
 | `FACTORY_CLAUDE_BIN` | no       | `claude`                   | path to the `claude` executable agents run                                                                                                   |
-| `FACTORY_HOST_SKILLS_DIR` | no | `~/.claude/skills` | where host skills named in a template's `skills:` list are read from; a leading `~` is expanded |
+| `FACTORY_HOST_CLAUDE_DIR` | no | `~/.claude` | the Claude folder on this machine; host skills are read from its `skills/` subfolder (named in a template's `skills:` list), and a leading `~` is expanded |
 | `FACTORY_ALLOW_LOCAL_RUNTIME` | no | `false` | `true` lets agents with `runtime: local` start; see "Local runtime" |
 | `FACTORY_DEFAULT_IMAGE` | no | `ghcr.io/orlevii/open-factory/base:latest` | container image for Docker agents whose template names none |
 | `FACTORY_DOCKER_CLAUDE_BIN` | no | `claude` | path to Claude Code inside the container image |
@@ -51,7 +51,7 @@ The max running agents, the default warm window and the member update debounce a
 ## Run an agent
 
 1. Start Postgres and the server: `docker compose -f docker-compose.dev.yml up -d`, then `pnpm dev` (or the Quickstart above), and sign up (the first sign-up bootstraps the factory; later ones need an invite). Docker must be running on the machine that runs the server.
-2. In **Settings**, add a credential: run `claude setup-token` and paste the token. Agents never use your own `~/.claude` login; each runs with its own config dir under `FACTORY_HOME`, with the credential you pick for it.
+2. In **Settings**, add a credential: Credentials → Add credential → Sign in with Claude (needs python3 on the server); pasting a token still works. Agents never use your own `~/.claude` login; each runs with its own config dir under `FACTORY_HOME`, with the credential you pick for it.
 3. Optional: register a project (a git repo on this machine) so agents can be granted access to it.
 4. Create a template, in the UI or as a folder under `~/open-factory/templates/<name>/` (see "Templates"). `runtime` defaults to `docker`.
 5. Create an agent from the template, pick its credential, and send it a message.

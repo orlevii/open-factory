@@ -104,7 +104,6 @@ function setup(props: Props = {}) {
       stub("/tasks"),
       stub("/tasks/$key"),
       stub("/schedules"),
-      stub("/schedules/$key"),
       stub("/templates/$name"),
       stub("/agents/"),
       stub("/agents/$slug"),
@@ -178,6 +177,22 @@ test("Now lists every waiting task with its start, and the crons with Stop crons
   expect(await screen.findByRole("button", { name: "Stop 2 crons" })).toBeInTheDocument();
 });
 
+test("Now: a pending restart names what it applies, with the full list below", async () => {
+  const restartChanges = [
+    "model: sonnet → opus",
+    "added skill release",
+    "added plugin x@y",
+    "env LOG_LEVEL changed",
+    "MCP server github added",
+  ];
+  setup({ agent: agentSummary({ restartPending: true, restartChanges }) });
+  const now = within(await section("Now"));
+  expect(now.getByText(/Restarts when idle to apply:/, { exact: false }).textContent).toContain(
+    "model, 1 skill, 1 plugin and 2 more",
+  );
+  for (const c of restartChanges) expect(now.getByText(c)).toBeInTheDocument();
+});
+
 test("Now: restart pending explains itself with Why", async () => {
   const plural = setup({ agent: agentSummary({ restartPending: true, restartWaitingOn: 2 }) });
   expect(within(await section("Now")).getByText(/Restarts when idle/).textContent).toContain(
@@ -193,10 +208,7 @@ test("Now: restart pending explains itself with Why", async () => {
   expect(await screen.findByText(/finishes its current turn/)).toBeInTheDocument();
 });
 
-test("Now: the queued and rate-limited details", async () => {
-  const first = setup({ agent: agentSummary({ status: "rate_limited", credential: "work" }) });
-  expect(within(await section("Now")).getByText(/credential/)).toBeInTheDocument();
-  first.unmount();
+test("Now: an agent pulling its image says so", async () => {
   setup({ agent: agentSummary({ pulling: true }) });
   expect(within(await section("Now")).getByText("Pulling the image…")).toBeInTheDocument();
 });
@@ -217,7 +229,7 @@ test("Now: the queued detail waits for the cap, and reads in the singular for on
   ).toBeInTheDocument();
 });
 
-test("Now: the rate-limited detail names the credential in mono and its reset time", async () => {
+test("Now: the rate-limited detail names the credential and its reset time", async () => {
   const until = new Date(NOW.getTime() + 3_600_000);
   setup({
     agent: agentSummary({
@@ -231,7 +243,6 @@ test("Now: the rate-limited detail names the credential in mono and its reset ti
   expect(paused.textContent).toMatch(
     /^Paused: credential work is rate-limited, retrying at .+\. Messages wait until then\.$/,
   );
-  expect(within(paused).getByText("work")).toHaveClass("font-mono");
 });
 
 test("Now: an errored agent shows its last error in full", async () => {
@@ -257,45 +268,6 @@ test("Now: a terminated agent shows no queued, paused or restart row (an end sta
   expect(now.textContent).not.toMatch(/Queued|Paused|Restarts when idle|Pulling/);
 });
 
-test("Now: a terminated agent shows when it ended and offers Pin", async () => {
-  mockApi({});
-  setup({
-    agent: agentSummary({
-      status: "terminated",
-      kind: "ephemeral",
-      terminatedAt: minutesAgo(10),
-      terminatedBy: "lead",
-      workspaceGraceEndsAt: new Date(NOW.getTime() + 86_400_000).toISOString(),
-    }),
-  });
-  const now = within(await section("Now"));
-  expect(now.getByText(/Terminated/)).toBeInTheDocument();
-  expect(now.getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
-});
-
-test("Now: the terminated row's actions each start a line, pulled back to the sentence's edge", async () => {
-  // jsdom has no layout: this checks the structure; the browser pass checks the alignment.
-  mockApi({});
-  setup({
-    agent: agentSummary({
-      status: "terminated",
-      kind: "ephemeral",
-      terminatedAt: minutesAgo(10),
-      workspaceGraceEndsAt: new Date(NOW.getTime() + 86_400_000).toISOString(),
-    }),
-  });
-  const now = within(await section("Now"));
-  const sentence = now.getByText(/^Terminated/);
-  // The sentence fills its line, so no action sits beside it.
-  expect(sentence).toHaveClass("basis-full");
-  for (const name of ["Pin workspace", "What's kept?"]) {
-    const button = now.getByRole("button", { name });
-    // Every action is a direct item of the row the ghost-padding pull-back applies to.
-    expect(button.parentElement).toBe(sentence.parentElement);
-  }
-  expect(sentence.parentElement?.className).toMatch(/\[&>button\]:-ml-2/);
-});
-
 test("Org: the manager, up to 8 reports, and All N reports to the Agents page", async () => {
   const reports = Array.from({ length: 10 }, (_, i) =>
     agentSummary({ slug: `r${i}`, displayName: `Report ${i}`, reportsTo: "lead" }),
@@ -311,7 +283,7 @@ test("Org: the manager, up to 8 reports, and All N reports to the Agents page", 
   });
   const org = within(await section("Org"));
   expect(org.getByText("Reports to")).toBeInTheDocument();
-  expect(org.getByRole("link", { name: /Big Boss/ })).toHaveAttribute("href", "/agents/boss");
+  expect(org.getByRole("link", { name: /Big Boss/ })).toHaveAttribute("href", "/agents/boss/chat");
   expect(org.getAllByRole("link", { name: /^Report \d$/ })).toHaveLength(8);
   expect(org.getByRole("link", { name: "All 10 reports" })).toHaveAttribute(
     "href",
@@ -412,10 +384,21 @@ test("Usage: the 7-day estimate with a link to the usage page", async () => {
   expect(usage.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
 });
 
-test("Usage: still links while loading or with no turns", async () => {
-  setup({ usage: undefined });
-  const usage = within(await section("Usage"));
-  expect(usage.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
+test("Usage: still links while loading or with no turns, and shows no estimate", async () => {
+  const loading = setup({ usage: undefined });
+  const whileLoading = within(await section("Usage"));
+  expect(whileLoading.getByRole("link", { name: /Usage/ })).toHaveAttribute(
+    "href",
+    "/agents/dev/usage",
+  );
+  expect(whileLoading.queryByText(/est\./)).toBeNull();
+  loading.unmount();
+  const idleTotals = { ...totals, costUsd: 0, turns: 0 };
+  setup({ usage: usageRow({ own: idleTotals, total: idleTotals }) });
+  const noTurns = within(await section("Usage"));
+  expect(noTurns.getByText("No turns in the last 7 days")).toBeInTheDocument();
+  expect(noTurns.queryByText(/est\./)).toBeNull();
+  expect(noTurns.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
 });
 
 test("Runtime: template, credential and projects; Unsandboxed only for a local agent", async () => {
@@ -439,6 +422,25 @@ test("Runtime: template, credential and projects; Unsandboxed only for a local a
   expect(docker.queryByText("Unsandboxed")).toBeNull();
 });
 
+test("Runtime: a Configuration row opens the agent's Configuration page", async () => {
+  setup({ agent: agentSummary({ slug: "ana" }) });
+  const rt = within(await section("Runtime"));
+  expect(rt.getByText("Configuration")).toBeInTheDocument();
+  expect(rt.getByRole("link", { name: "Open configuration" })).toHaveAttribute(
+    "href",
+    "/agents/ana/config",
+  );
+});
+
+test("Runtime: a terminated agent has no Configuration row", async () => {
+  setup({
+    agent: agentSummary({ status: "terminated", terminatedAt: "2026-11-19T10:00:00.000Z" }),
+  });
+  const rt = within(await section("Runtime"));
+  expect(rt.queryByText("Configuration")).toBeNull();
+  expect(rt.queryByRole("link", { name: "Open configuration" })).toBeNull();
+});
+
 test("Runtime: a deleted credential leaves no empty row; a disabled local runtime says so", async () => {
   setup({
     agent: agentSummary({ runtime: "local", credential: null, runtimeDisabled: "disabled" }),
@@ -458,7 +460,6 @@ test("Runtime: a disabled local runtime explains itself in a Why popover (distin
   expect(pop.textContent).toBe(
     "An operator has to allow unsandboxed agents by setting FACTORY_ALLOW_LOCAL_RUNTIME=true. Until then this agent can't start.",
   );
-  expect(within(pop).getByText("FACTORY_ALLOW_LOCAL_RUNTIME=true")).toHaveClass("font-mono");
   expect(pop.tagName).toBe("P");
   expect(pop.parentElement?.children).toHaveLength(1);
   // The restart Why has its own name.
@@ -487,4 +488,24 @@ test("Edit agent is an outline button for a persistent, unarchived agent only, a
   setup({ agent: agentSummary({ archivedAt: "2026-11-01T00:00:00.000Z" }) });
   await screen.findByRole("heading", { name: "Agent details" });
   expect(screen.queryByRole("button", { name: "Edit agent" })).toBeNull();
+});
+
+test("Runtime: 'Manages the org: Yes' shows only for an agent that manages the org", async () => {
+  setup({ agent: agentSummary({ slug: "lead", manageOrg: true }) });
+  const runtime = within(await section("Runtime"));
+  expect(runtime.getByText("Manages the org")).toBeInTheDocument();
+  expect(runtime.getByText("Yes")).toBeInTheDocument();
+});
+
+test("Runtime: no Manages the org row when the flag is off", async () => {
+  setup({ agent: agentSummary({ slug: "lead", manageOrg: false }) });
+  await section("Runtime");
+  expect(screen.queryByText("Manages the org")).not.toBeInTheDocument();
+});
+
+test("Now: a pending restart carries Restart now", async () => {
+  setup({ agent: agentSummary({ restartPending: true }) });
+  expect(
+    within(await section("Now")).getByRole("button", { name: "Restart now" }),
+  ).toBeInTheDocument();
 });

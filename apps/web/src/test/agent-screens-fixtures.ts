@@ -9,6 +9,8 @@ export const credential = (name = "work", kind: "oauth_token" | "api_key" = "oau
   kind,
   lastVerifiedAt: "2026-11-19T08:00:00.000Z",
   lastError: null,
+  expiresAt: null,
+  rejected: false,
   usedBy: [],
   archivedUsedBy: [],
   rateLimit: null,
@@ -22,7 +24,7 @@ export const project = (name: string, hostPath = `/src/${name}`) => ({
   templates: [],
 });
 
-export const templateSummary = (name: string, errors = 0) => ({
+export const templateSummary = (name: string, errors = 0, pluginCount = 0) => ({
   name,
   displayName: name,
   description: "",
@@ -30,6 +32,7 @@ export const templateSummary = (name: string, errors = 0) => ({
   errors,
   warnings: 0,
   agentCount: 0,
+  pluginCount,
 });
 
 export const templateConfig = (over: Partial<TemplateConfig> = {}): TemplateConfig => ({
@@ -41,7 +44,6 @@ export const templateConfig = (over: Partial<TemplateConfig> = {}): TemplateConf
   projects: ["app"],
   skills: [],
   localSkills: true,
-  plugins: [],
   secrets: [],
   canSpawn: [],
   maxLiveSpawns: 5,
@@ -90,7 +92,8 @@ export function mockWorld(w: World = {}): MockApi {
   for (const [name, d] of Object.entries(details))
     routes[`GET /api/templates/${name}`] = () => json(d);
   for (const a of [...agents, ...(w.archived ?? [])]) {
-    routes[`GET /api/agents/${a.slug}`] = () => json({ agent: a, queue: [], lastSeq: 0 });
+    routes[`GET /api/agents/${a.slug}`] = () =>
+      json({ agent: a, model: { value: null, source: "default" }, queue: [], lastSeq: 0 });
   }
   return mockApi({ ...routes, ...w.extra });
 }

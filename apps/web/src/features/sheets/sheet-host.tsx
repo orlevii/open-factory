@@ -31,6 +31,8 @@ import {
   resetBodyLoad,
   type SheetKind,
   sheetBodies,
+  sheetDescription,
+  sheetDescriptionClass,
   sheetTitle,
   sheetTitleClass,
 } from "./sheet-bodies";
@@ -124,7 +126,9 @@ function SheetLayer({
   const shown = last.current;
   if (!shown) return null;
   const title = sheetTitle(shown.kind, shown);
-  const description = parentTitle ? childDescription(shown.kind, parentTitle) : undefined;
+  const description = parentTitle
+    ? childDescription(shown.kind, parentTitle)
+    : sheetDescription(shown.kind, shown);
   // A body's own close (after a submit): from the keyboard it is instant, on this layer only (§5.3).
   const close = () => {
     if (lastInputModality() === "keyboard") closeSheetInstantly(content.current);
@@ -158,7 +162,13 @@ function SheetLayer({
         <SheetHeader>
           <SheetTitle className={sheetTitleClass(shown.kind)}>{title}</SheetTitle>
           <span ref={setSlot} className="contents" />
-          {description ? <SheetDescription>{description}</SheetDescription> : null}
+          {description ? (
+            <SheetDescription
+              className={parentTitle ? undefined : sheetDescriptionClass(shown.kind)}
+            >
+              {description}
+            </SheetDescription>
+          ) : null}
         </SheetHeader>
         <BodyBoundary
           key={shown.kind}
@@ -217,7 +227,13 @@ export function SheetHost() {
   const parentTitle = parent ? sheetTitle(parent.kind, parent) : undefined;
   return (
     <>
-      <SheetLayer spec={parent} open={!!parent} onClose={closeSheet} />
+      {/* A parent opened for a page's result (Add secret) hands focus to the field it filled, as a child does. */}
+      <SheetLayer
+        spec={parent}
+        open={!!parent}
+        onClose={closeSheet}
+        returnFocus={takeChildReturnFocus}
+      />
       <SheetLayer
         spec={child}
         open={!!child}

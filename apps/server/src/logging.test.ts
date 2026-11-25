@@ -1,17 +1,10 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { createFakeClaude } from "@open-factory/harness/testing";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { ev, FakeDriver } from "./agents/testing/fake-driver.ts";
 import { makeTestApp } from "./test/helpers.ts";
-import { installPlugins } from "./workspace/plugins.ts";
 
-// Spec 11.1: credential values, secret values and plugin stderr never reach the log output.
+// Spec 11.1: credential values and secret values never reach the log output.
 const CRED = "sk-ant-oat01-SENTINEL-CREDENTIAL-VALUE";
 const SECRET = "SENTINEL-SECRET-VALUE-9f3a";
-const URL_CRED = "user:pass@host";
-const GH = "ghp_SENTINELPLUGINTOKEN123";
 
 const lines: string[] = [];
 const out = () => lines.join("");
@@ -75,43 +68,22 @@ test("POST /api/credentials and PUT /api/secrets/:name never log their values", 
   expect(out()).not.toContain(SECRET);
 });
 
-test("a plugin install failure with URL credentials and a token in stderr is never logged raw", async () => {
-  const ref = `https://${URL_CRED}/${GH}@mk`;
-  const fake = createFakeClaude({ scenario: "reply", env: { FAKE_CLAUDE_PLUGIN_FAIL: ref } });
-  const cfg = mkdtempSync(path.join(tmpdir(), "cfg-"));
-  const err = await installPlugins({
-    claudeBin: fake.bin,
-    pluginsConfig: cfg,
-    plugins: [ref],
-    tplSettings: {
-      extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/x/mk" } } },
-    },
-    hostHome: process.env.HOME,
-    path: process.env.PATH,
-  }).catch((e) => e);
-  expect(err.output).toContain("[redacted]");
-  // The way the app logs failures: the error itself, and its output field.
-  const log = t.app.log;
-  log.error({ err }, "plugin install failed");
-  log.warn({ output: err.output, detail: { output: err.output } }, "plugin output");
-  expect(out()).toContain("plugin install failed");
-  expect(out()).not.toContain("user:pass");
-  expect(out()).not.toContain(GH);
-});
-
 test("the new redact paths hide sentinels at every shape", () => {
   const S = "SENTINEL-REDACT-VALUE-77";
   const log = t.app.log;
   log.info({ x: { ANTHROPIC_API_KEY: S } }, "a1");
   log.info({ env: { ANTHROPIC_API_KEY: S } }, "a2");
   log.info({ spec: { env: { ANTHROPIC_API_KEY: S } } }, "a3");
+  log.info({ x: { CLAUDE_CODE_OAUTH_TOKEN: S } }, "o1");
+  log.info({ env: { CLAUDE_CODE_OAUTH_TOKEN: S } }, "o2");
+  log.info({ spec: { env: { CLAUDE_CODE_OAUTH_TOKEN: S } } }, "o3");
   log.info({ secret: { value: S } }, "v1");
   log.info({ body: { inner: { value: S } } }, "v2");
   log.info({ cred: { token: S } }, "t1");
   log.info({ spec: { env: { ANY_NAME: S, OTHER: S } } }, "e1");
   log.info({ req: { password: S }, password: S }, "p1");
   const text = out();
-  for (const m of ["a1", "a2", "a3", "v1", "v2", "t1", "e1", "p1"])
+  for (const m of ["a1", "a2", "a3", "o1", "o2", "o3", "v1", "v2", "t1", "e1", "p1"])
     expect(text).toContain(`"msg":"${m}"`);
   expect(text).not.toContain(S);
 });

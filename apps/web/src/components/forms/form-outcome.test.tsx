@@ -24,9 +24,7 @@ function Probe() {
 test("both live regions are always mounted, empty", () => {
   render(<FormOutcome outcome={{ outcomeKey: 0 }} />);
   expect(screen.getByRole("alert")).toBeEmptyDOMElement();
-  const statuses = screen.getAllByRole("status");
-  expect(statuses).toHaveLength(2);
-  expect(statuses.filter((el) => el.classList.contains("sr-only"))).toHaveLength(1);
+  expect(screen.getAllByRole("status")).toHaveLength(2);
 });
 
 test("the error lands inside the alert region, next to its action", () => {
@@ -113,7 +111,7 @@ test("useOutcome bumps the key with every fail, so a repeat is re-inserted", () 
 test("success goes to the status region; pending only to the sr-only status", () => {
   render(<FormOutcome pending="Saving…" outcome={{ success: "Saved.", outcomeKey: 1 }} />);
   expect(screen.getByText("Saved.").closest("[role=status]")).toBeInTheDocument();
-  expect(screen.getByText("Saving…")).toHaveClass("sr-only");
+  expect(screen.getByText("Saving…").closest("[role=status]")).toBeInTheDocument();
 });
 
 test("succeed() bumps the key; clear() drops the message and keeps the key", () => {

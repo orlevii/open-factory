@@ -167,7 +167,7 @@ ARG CLAUDE_CODE_VERSION
 RUN <<'EOF'
 set -euo pipefail
 if [[ ! "${CLAUDE_CODE_VERSION:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "build-arg CLAUDE_CODE_VERSION is required (e.g. 2.1.327), got '${CLAUDE_CODE_VERSION:-}'" >&2
+  echo "build-arg CLAUDE_CODE_VERSION is required (e.g. 2.1.331), got '${CLAUDE_CODE_VERSION:-}'" >&2
   exit 1
 fi
 case "$(uname -m)" in

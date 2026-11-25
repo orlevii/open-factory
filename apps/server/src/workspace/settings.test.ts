@@ -5,36 +5,25 @@ const base = {
   slug: "lead",
   workdir: "/h/of/agents/lead",
   permissionMode: "auto" as const,
-  plugins: ["p@m"],
   grantedPaths: ["/code/app"],
   mcpUrl: "http://127.0.0.1:3001/mcp",
 };
 
-test("rebuild: template base, plugin keys from plugins-config carried and filtered, agent keys dropped", () => {
+test("rebuild: the template base is kept and no plugin key reaches the workdir settings", () => {
   const s = buildSettings({
     ...base,
     tpl: {
       hooks: { Stop: [] },
       permissions: { deny: ["Bash(curl:*)"], additionalDirectories: ["/data"] },
       extraKnownMarketplaces: { m: { source: { source: "directory", path: "/new" } } },
-      enabledPlugins: { "x@y": true },
-    },
-    pluginKeys: {
-      enabledPlugins: { "p@m": true, "old@m": true },
-      extraKnownMarketplaces: {
-        m: { source: { source: "directory", path: "/old" } },
-        other: { source: { source: "git", url: "u" } },
-      },
-      agentAdded: true,
+      enabledPlugins: { "x@m": true },
+      syncClaudeAiPlugins: true,
     },
   });
   expect(s.hooks).toEqual({ Stop: [] });
-  expect(s.enabledPlugins).toEqual({ "p@m": true });
-  expect(s.extraKnownMarketplaces).toEqual({
-    m: { source: { source: "directory", path: "/new" } },
-    other: { source: { source: "git", url: "u" } },
-  });
-  expect(s).not.toHaveProperty("agentAdded");
+  expect(s).not.toHaveProperty("enabledPlugins");
+  expect(s).not.toHaveProperty("extraKnownMarketplaces");
+  expect(s).not.toHaveProperty("syncClaudeAiPlugins");
   expect(s.permissions).toEqual({
     deny: ["Bash(curl:*)", "SendMessage", "ListAgents"],
     defaultMode: "auto",
@@ -45,7 +34,6 @@ test("rebuild: template base, plugin keys from plugins-config carried and filter
 test("autoMode: $defaults first in every list, deduped; factory environment appended", () => {
   const s = buildSettings({
     ...base,
-    pluginKeys: {},
     tpl: {
       autoMode: {
         hard_deny: ["$defaults", "Never X."],
@@ -70,7 +58,6 @@ test("bypass sets bypassPermissions; no grants → 'none' in the environment ent
     ...base,
     permissionMode: "bypass",
     grantedPaths: [],
-    pluginKeys: {},
     tpl: {},
   });
   expect((s.permissions as { defaultMode: string }).defaultMode).toBe("bypassPermissions");
@@ -85,7 +72,7 @@ test("claudeMdExcludes: every ancestor's four files plus the workdir's own CLAUD
   expect(ex).toContain("/h/of/agents/lead/CLAUDE.md");
   expect(ex).toContain("/h/of/agents/lead/CLAUDE.local.md");
   expect(ex).not.toContain("/h/of/agents/lead/AGENTS.md");
-  const s = buildSettings({ ...base, pluginKeys: {}, tpl: { claudeMdExcludes: ["/x/CLAUDE.md"] } });
+  const s = buildSettings({ ...base, tpl: { claudeMdExcludes: ["/x/CLAUDE.md"] } });
   expect((s.claudeMdExcludes as string[])[0]).toBe("/x/CLAUDE.md");
 });
 
@@ -93,7 +80,6 @@ test("settings deny the built-in SendMessage and ListAgents and trust the exact 
   const s = buildSettings({
     ...base,
     tpl: { permissions: { deny: ["Bash(curl:*)", "SendMessage"] } },
-    pluginKeys: {},
     mcpUrl: "http://127.0.0.1:3001/mcp",
   }) as { permissions: { deny: string[] }; autoMode: { environment: string[] } };
   expect(s.permissions.deny).toEqual(["Bash(curl:*)", "SendMessage", "ListAgents"]);
@@ -106,7 +92,6 @@ test("settings deny the built-in SendMessage and ListAgents and trust the exact 
 test("inherited deny rules append after the template's, $defaults first, de-duplicated", () => {
   const s = buildSettings({
     ...base,
-    pluginKeys: {},
     tpl: { permissions: { deny: ["A"] }, autoMode: { hard_deny: ["h1"] } },
     inherited: { permissionsDeny: ["A", "B"], softDeny: ["s"], hardDeny: ["h2"] },
   });

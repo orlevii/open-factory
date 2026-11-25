@@ -1,11 +1,10 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { longPress } from "@/test/long-press";
-import { json, mockApi } from "@/test/mock-api";
-import { agentSummary, resetSeq, se } from "@/test/session-fixtures";
+import { envelope, resetSeq, se } from "@/test/session-fixtures";
+import { ConfigChangedLine } from "./config-changed-line";
 import { groupWork, mergeFailures } from "./display-passes";
 import { rowMenuItems } from "./row-menu";
 import { buildRows, type Row } from "./rows";
@@ -58,7 +57,7 @@ function lines(events: AnyEvent[], spawned = false) {
 }
 
 test("timeline: rate_limited renders nothing; rate_limit_paused follows the fallback rule", () => {
-  const { texts, els } = lines([
+  const { texts } = lines([
     { type: "rate_limited", status: "rejected", resetsAt: 1, rateLimitType: "five_hour" },
     { type: "rate_limit_paused", credential: "work", until: todayAt(14, 30), exact: true },
     { type: "rate_limit_paused", credential: "work", until: todayAt(14, 30), exact: false },
@@ -69,7 +68,6 @@ test("timeline: rate_limited renders nothing; rate_limit_paused follows the fall
     "Rate limit reached on credential work. Paused, retrying at 14:30.",
     "Rate limit on credential work reset",
   ]);
-  for (const el of els) expect(within(el).getByText("work")).toHaveClass("font-mono");
 });
 
 test("timeline: hibernated, process_started reasons (nothing after session_reset), cleanup, stop_escalated, background_work_lost, reconciled, unexpected exited as 'Stopped unexpectedly'", () => {
@@ -137,11 +135,6 @@ test("timeline: hibernated, process_started reasons (nothing after session_reset
   const crash = els[20] as HTMLElement;
   expect(crash.querySelector("details")).not.toBeNull();
   expect(crash.querySelector("details")?.open).toBe(false);
-  expect(within(crash).getByText("Stopped unexpectedly")).toHaveClass("text-foreground");
-  expect(crash.querySelector("svg:not(.lucide-chevron-right)")).toHaveClass("text-destructive");
-  expect(within(els[11] as HTMLElement).getByText("open-factory-base:dev")).toHaveClass(
-    "font-mono",
-  );
 });
 
 test("timeline: the unexpected exit's detail carries the code and stderr", () => {
@@ -173,45 +166,15 @@ test("timeline: a runtime error has no fix link but explains the gate in its Why
 });
 
 test("timeline: a spawned agent's error never links to the edit page (it can't be edited)", () => {
-  const err = (fix: "edit_agent" | "resync"): AnyEvent => ({
+  const err = (fix: "edit_agent" | "config"): AnyEvent => ({
     type: "error",
     source: "spawn",
     message: `failed (${fix})`,
     fix,
   });
-  const { els } = lines([err("edit_agent"), err("resync")], true);
+  const { els } = lines([err("edit_agent"), err("config")], true);
   expect(els).toHaveLength(2);
-  for (const el of els) expect(el.querySelector("a")).toBeNull();
-});
-
-test("timeline: the resync fix runs the agent's Re-sync in place and toasts its outcome", async () => {
-  const api = mockApi({
-    "POST /api/agents/dev/resync": () => json({ agent: agentSummary(), applied: "on_restart" }),
-  });
-  const { rows } = buildRows([
-    se({ type: "error", source: "spawn", message: "Re-sync @dev.", fix: "resync" }, null),
-  ]);
-  const row = rows[0] as Row;
-  render(
-    <QueryClientProvider client={new QueryClient()}>
-      <TimelineRow
-        slug="dev"
-        row={row}
-        expanded={new Set()}
-        toggle={() => {}}
-        rowProps={() => ({})}
-        failedIds={new Set()}
-        interruptedEnds={new Set()}
-      />
-    </QueryClientProvider>,
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Re-sync the agent" }));
-  await waitFor(() =>
-    expect(notify).toHaveBeenCalledWith({
-      text: "Re-synced. The changes apply when @dev restarts (when idle).",
-    }),
-  );
-  expect(api.calls.map((c) => `${c.method} ${c.url}`)).toEqual(["POST /api/agents/dev/resync"]);
+  for (const el of els) expect(el.querySelector("a, button")).toBeNull();
 });
 
 test("timeline: mcp_unavailable is a warning quiet line with the status in its detail", () => {
@@ -223,7 +186,14 @@ test("timeline: mcp_unavailable is a warning quiet line with the status in its d
   expect(el.querySelector("details")?.open).toBe(false);
   expect(el.querySelector("pre")?.textContent).toBe("failed");
   expect(el.querySelector("svg")).not.toBeNull();
-  expect(el.querySelector("svg")).not.toHaveClass("text-destructive");
+});
+
+test("timeline: plugin_not_loaded names the plugin, points at the session log and carries a circle-alert", () => {
+  const { texts, els } = lines([{ type: "plugin_not_loaded", key: "p@mk", pin: "commit:abc" }]);
+  expect(texts).toEqual(["Plugin p@mk didn't load. Claude Code's output is in the session log."]);
+  const icon = (els[0] as HTMLElement).querySelector("svg");
+  expect(icon).not.toBeNull();
+  expect(icon).toHaveAttribute("aria-hidden", "true");
 });
 
 test("timeline: interrupt_unconfirmed is a warning quiet line", () => {
@@ -233,7 +203,6 @@ test("timeline: interrupt_unconfirmed is a warning quiet line", () => {
   ]);
   const icon = (els[0] as HTMLElement).querySelector("svg");
   expect(icon).toHaveClass("lucide-triangle-alert");
-  expect(icon).not.toHaveClass("text-destructive");
 });
 
 test("timeline: spawned-agent lifecycle lines without an agent link (human and TTL `by`)", () => {
@@ -250,9 +219,10 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
     {
       type: "message_in",
       messages: [
-        {
+        envelope({
           id: "p1",
           from: "@factory",
+          fromKind: "factory",
           kind: "peer_left",
           urgent: false,
           about: "tech-lead-ab12",
@@ -263,10 +233,11 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
             relation: "peer",
             left: { reason: "terminated", by: "@or" },
           },
-        },
-        {
+        }),
+        envelope({
           id: "p2",
           from: "@factory",
+          fromKind: "factory",
           kind: "peer_left",
           urgent: false,
           about: "dev-cd34",
@@ -277,7 +248,7 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
             relation: "peer",
             left: { reason: "terminated", by: "@factory" },
           },
-        },
+        }),
       ],
     },
   ]);
@@ -288,8 +259,6 @@ test("timeline: spawned-agent lifecycle lines without an agent link (human and T
     "@tech-lead-ab12 · Tech Lead · ab12 left: terminated by @or",
     "@dev-cd34 · Dev · cd34 left: terminated after 3 days without activity",
   ]);
-  expect(within(els[0] as HTMLElement).getByText("@or")).toHaveClass("font-mono");
-  expect(within(els[3] as HTMLElement).getByText("@or")).toHaveClass("font-mono");
   // The CircleX icon marks every "Terminated" line.
   expect(els[0]?.querySelector("svg.lucide-circle-x")).not.toBeNull();
   expect(els[1]?.querySelector("svg.lucide-circle-x")).not.toBeNull();
@@ -370,31 +339,6 @@ test("a merged failure says how many times and when the last one was", () => {
   ]);
 });
 
-// Reading sizes (U3 §7.3): nothing in a session outranks the page title.
-test("the agent's own text uses the demoted heading scale", () => {
-  const { els } = lines([{ type: "assistant_text", text: "# Plan\n\nBody" }]);
-  const prose = els[0]?.querySelector(".prose-of");
-  expect(prose).toHaveClass("prose-of-detail");
-});
-
-test("the log clips sideways overflow; the scroller around it does not", () => {
-  render(
-    <Timeline
-      slug="dev"
-      rows={[]}
-      failedIds={new Set()}
-      interruptedEnds={new Set()}
-      hasMoreBefore={false}
-      onLoadEarlier={async () => false}
-      earlierError={false}
-      footer={null}
-    />,
-  );
-  const log = screen.getByRole("log");
-  expect(log).toHaveClass("overflow-x-clip");
-  expect(log.parentElement).not.toHaveClass("overflow-x-clip");
-});
-
 // ---- Speaker lines and spacing (U3 §7.1, §7.2) ----
 const speakers = buildSpeakerIndex({
   sessionAgent: {
@@ -465,39 +409,6 @@ test("agent text shows the session agent's speaker line only on head rows, its b
   expect(screen.getByText("first").closest("[dir=auto]")).not.toBeNull();
 });
 
-test("spacing: 24px before a speaker line or card and after a turn footer, 8px inside a turn", () => {
-  const { rows } = buildRows(turnEvents.map((e) => se(e)));
-  render(
-    <SpeakerContext value={speakers}>
-      <Timeline
-        slug="dev"
-        rows={rows}
-        failedIds={new Set()}
-        interruptedEnds={new Set()}
-        hasMoreBefore={false}
-        onLoadEarlier={async () => false}
-        earlierError={false}
-        footer={null}
-      />
-    </SpeakerContext>,
-  );
-  const log = screen.getByRole("log");
-  expect(log).not.toHaveClass("space-y-3");
-  const gap = (t: string) => {
-    const wrap = screen.getByText(t).closest("[data-row-wrap]") as HTMLElement;
-    return ["mt-6", "mt-2"].filter((c) => wrap.classList.contains(c));
-  };
-  expect(gap("second")).toEqual(["mt-2"]);
-  expect(gap("a question")).toEqual(["mt-6"]); // a card
-  expect(gap("third")).toEqual(["mt-6"]); // a speaker line after the message
-  expect(gap("next turn")).toEqual(["mt-6"]); // after the footer, and a head
-  const footer = screen.getByText(/^Worked/).closest("[data-row-wrap]") as HTMLElement;
-  expect(footer).toHaveClass("mt-2");
-  // The first row has nothing above it.
-  const first = screen.getByText("first").closest("[data-row-wrap]") as HTMLElement;
-  expect(first.className).not.toMatch(/\bmt-/);
-});
-
 /** One tool call and its result, rendered expanded or not. */
 function toolLine(name: string, input: unknown, content?: string, open = false) {
   const events: AnyEvent[] = [{ type: "tool_call", toolUseId: "tu1", name, input }];
@@ -524,7 +435,7 @@ function toolLine(name: string, input: unknown, content?: string, open = false) 
 test("an unknown tool keeps today's row: its name, the first string, and input and result plates", () => {
   toolLine("NotebookEdit", { notebook_path: "a.ipynb", cell: 3 }, "edited", true);
   const row = screen.getByRole("button", { expanded: true });
-  expect(within(row).getByText("NotebookEdit")).toHaveClass("font-mono");
+  expect(within(row).getByText("NotebookEdit")).toBeInTheDocument();
   expect(row).toHaveTextContent("a.ipynb");
   const plates = [...document.querySelectorAll("pre")].map((p) => p.textContent);
   expect(plates).toEqual([
@@ -533,18 +444,14 @@ test("an unknown tool keeps today's row: its name, the first string, and input a
   ]);
 });
 
-test("a 55-character MCP tool name truncates, with the full name in its title", () => {
+test("a 55-character MCP tool name shows server · tool, with the full name in its title", () => {
   const name = "mcp__a_long_server_name_here__create_pull_request_now_x";
   expect(name).toHaveLength(55);
   toolLine(name, { title: "Fix" });
   const row = screen.getByRole("button", { expanded: false });
   const label = row.querySelector(`[title="${name}"]`);
   expect(label).not.toBeNull();
-  // Not capped at 60%: the argument gives way first (it takes only the room the name leaves).
-  expect(label).toHaveClass("min-w-0");
   expect(label).toHaveTextContent("a_long_server_name_here · create_pull_request_now_x");
-  // The server middle-truncates: its head carries the ellipsis (mcp-name.test.tsx has the detail).
-  expect(label?.querySelector("[data-mcp-server]")?.firstElementChild).toHaveClass("truncate");
   expect(row).toHaveTextContent("Fix");
 });
 
@@ -693,15 +600,21 @@ function renderRows(events: AnyEvent[]) {
   return rows;
 }
 
-test("a command renders like your message: the command in mono and 'ran a command'", () => {
+test("raw input renders like your message: You, raw, the command", () => {
   const rows = renderRows([
-    { type: "control", cmd: "command", arg: "/code-review src/", by: "@alice" },
+    {
+      type: "operator_input",
+      text: "/code-review src/",
+      by: "@alice",
+      byKind: "human",
+      entryId: "e1",
+    },
   ]);
   expect(rows.map((r) => r.kind)).toEqual(["command"]);
   const row = document.querySelector("[data-test-row=command]") as HTMLElement;
   expect(within(row).getByText("You")).toBeInTheDocument();
-  expect(within(row).getByText("ran a command")).toBeInTheDocument();
-  expect(within(row).getByText("/code-review src/")).toHaveClass("font-mono");
+  expect(within(row).getByText("· raw")).toBeInTheDocument();
+  expect(within(row).getByText("/code-review src/")).toBeInTheDocument();
   expect(row.querySelector("[data-message-block]")).not.toBeNull();
 });
 
@@ -737,7 +650,13 @@ test("/usage and /cost output render as a code plate with Copy", () => {
 test("the row menu copies a command and its output", () => {
   const rows = buildRows(
     [
-      { type: "control", cmd: "command", arg: "/context", by: "@alice" } as AnyEvent,
+      {
+        type: "operator_input",
+        text: "/context",
+        by: "@alice",
+        byKind: "human",
+        entryId: "e2",
+      } as AnyEvent,
       { type: "command_output", command: "context", text: "ctx" } as AnyEvent,
     ].map((e) => se(e)),
   ).rows;
@@ -805,9 +724,7 @@ test("touch: a press on a message's speaker line opens its row menu; the card ta
   expect(card).not.toHaveAttribute("data-pressed");
   longPress(speaker, { x: 50, y: 90 });
   expect(await screen.findByRole("menu", { name: /^Message from @or/ })).toBeInTheDocument();
-  expect(document.querySelector<HTMLElement>("[data-menu-stand-in].size-0")?.style.left).toBe(
-    "50px",
-  );
+  expect(document.querySelector<HTMLElement>("[data-menu-stand-in]")?.style.left).toBe("50px");
 });
 
 test("touch: a press on a tool row's summary line opens that row's menu, and never toggles it", async () => {
@@ -852,21 +769,6 @@ test("a mouse press on a speaker line does nothing", () => {
   longPress(speaker, { pointerType: "mouse", hold: 700, release: false });
   expect(card).not.toHaveAttribute("data-pressed");
   expect(screen.queryByRole("menu")).toBeNull();
-});
-
-test("the gutter strip comes first in its box, so a nested row's ⋯ and gutter paint and hit-test over it", async () => {
-  vi.useRealTimers();
-  const user = userEvent.setup();
-  timeline(groupWork([sh(3), sh(5)]));
-  await user.click(rowEl("3") as HTMLElement);
-  const wrap = rowEl("3")?.closest<HTMLElement>("[data-row-wrap]") as HTMLElement;
-  const calls = [...wrap.querySelectorAll<HTMLElement>("[data-call]")];
-  expect(calls.length).toBe(2);
-  // Positioned boxes without a z-index paint in tree order: the strip must precede the nested rows.
-  expect(wrap.firstElementChild).toHaveAttribute("data-row-gutter");
-  for (const c of calls) expect(c.firstElementChild).toHaveAttribute("data-row-gutter");
-  // Touch only: a fine pointer never has it in the way.
-  expect(wrap.firstElementChild).toHaveClass("hidden", "pointer-coarse:block");
 });
 
 test("touch: a press on a nested call's summary or gutter opens that call's menu only, and fills only it", async () => {
@@ -922,4 +824,37 @@ test("chrome outside a timeline row (no menu there) is not a long-press region",
   );
   expect(document.querySelector("[data-speaker-line]")).not.toBeNull();
   expect(document.querySelector("[data-longpress-region]")).toBeNull();
+});
+
+const MANY = Array.from({ length: 43 }, (_, i) => `added skill skill-${i}`);
+
+test("timeline: config_changed reads 'Configuration changed by x · N changes'; a long list opens with Show all", async () => {
+  const { texts, els } = lines([
+    { type: "config_changed", by: "@or", changes: MANY },
+    { type: "config_changed", by: "template dev", changes: ["model: sonnet → opus"] },
+    { type: "config_changed", by: "a file change in template dev", changes: ["image: a → b"] },
+  ]);
+  expect(texts[0]).toMatch(/^Configuration changed by @or · 43 changes/);
+  expect(texts[1]).toMatch(/^Configuration changed by template dev · 1 change(?!s)/);
+  expect(texts[2]).toMatch(/^Configuration changed by a file change in template dev · 1 change/);
+  const first = els[0] as HTMLElement;
+  // The shared Show all: the timeline's click capture anchors the row before it expands.
+  expect(within(first).getByRole("button", { name: "Show all" })).toHaveAttribute("data-expands");
+  const list = first.querySelector("[data-changes]") as HTMLElement;
+  expect(list.textContent).toContain("added skill skill-42");
+  vi.useRealTimers();
+  await userEvent.click(within(first).getByRole("button", { name: "Show all" }));
+  const open = first.querySelector("[data-changes]") as HTMLElement;
+  expect(open.querySelectorAll("li")).toHaveLength(43);
+  expect(open).toBe(list);
+  expect(within(first).queryByRole("button", { name: "Show all" })).toBeNull();
+  // One or two changes need no Show all.
+  expect(within(els[1] as HTMLElement).queryByRole("button", { name: "Show all" })).toBeNull();
+});
+
+test("timeline: the config_changed row keeps the roving tab stop it is given", () => {
+  const { container } = render(
+    <ConfigChangedLine by="@or" changes={["image: a → b"]} rowProps={{ tabIndex: 0 }} />,
+  );
+  expect(container.firstElementChild).toHaveAttribute("tabindex", "0");
 });

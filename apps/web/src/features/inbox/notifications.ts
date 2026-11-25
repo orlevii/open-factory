@@ -1,10 +1,13 @@
+import type { ChatRow } from "@open-factory/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { expiryState } from "@/features/settings/sign-in/expiry";
 import { homeInboxQueryOptions, type InboxItem, useOpenItem } from "./api";
 
 const KEY = "of-notifications";
 const PREVIEW_CAP = 120;
+const COUNT = new Intl.NumberFormat();
 
 export const BLOCKED_NOTE =
   "Blocked by your browser. Allow notifications for this site to turn them on.";
@@ -77,37 +80,53 @@ const cap = (s: string) => (s.length > PREVIEW_CAP ? `${s.slice(0, PREVIEW_CAP -
 /** UI design §10's titles. Plain text only; agent text never becomes a URL or markup here. */
 export function notificationTitle(i: InboxItem): string {
   if (i.kind === "mention")
-    return `@${i.from.name} mentioned ${i.to === "@humans" ? "@humans" : "you"}${i.task ? ` on ${i.task.key}` : ""}`;
+    return `@${i.from.name} mentioned you${i.task ? ` on ${i.task.key}` : ""}`;
   if (i.kind === "task_event")
     return `${i.task?.key ?? "A task"} ${i.fact === "cancelled" ? "was cancelled" : "is done"}`;
+  if (i.kind === "credential")
+    return expiryState(i.credential?.expiresAt ?? null, new Date()).tone === "crimson"
+      ? "Credential expired"
+      : "Credential expiring";
   if (i.from.kind === "factory") return `Factory${i.about ? ` about @${i.about}` : ""}`;
-  return `@${i.from.name} messaged ${i.to === "@humans" ? "@humans" : "you"}`;
+  // Only `notice` items from an agent reach here (`message` items are chats now).
+  return `@${i.from.name} messaged you`;
 }
 
+/** An unread chat's title: the agent's name and how many messages ("Ada · 3 new"). */
+export const chatNotificationTitle = (c: ChatRow): string =>
+  `${c.agent.displayName} · ${COUNT.format(c.unread)} new`;
+
+/** What the notifier has to show: unread items and unread chats. */
+type Unread = { items: readonly InboxItem[]; chats?: readonly ChatRow[] | undefined };
+type Opens = { item(item: InboxItem): void; chat(chat: ChatRow): void };
+
 /**
- * One notification per unread item not seen before in this tab, only while the tab is hidden and the switch is on.
- * `tag` is the item id, so several open tabs collapse into one. `seen` is updated either way.
+ * One notification per unread item and per chat message not seen before in this tab, only while the tab is
+ * hidden and the switch is on. `tag` is the item id, or a chat's newest message id, so several open tabs
+ * collapse into one. `seen` is updated either way.
  */
-export function notifyNewItems(
-  items: InboxItem[],
-  seen: Set<string>,
-  onOpen: (item: InboxItem) => void,
-) {
+export function notifyNew({ items, chats = [] }: Unread, seen: Set<string>, open: Opens) {
   const show = isOn() && document.visibilityState === "hidden";
-  for (const item of items) {
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
-    if (!show || item.read) continue;
-    const n = new Notification(notificationTitle(item), {
-      body: cap(oneLine(item.preview)),
-      tag: item.id,
-      icon: "/favicon.svg",
-    });
+  const fire = (title: string, preview: string, tag: string, onOpen: () => void) => {
+    const n = new Notification(title, { body: cap(oneLine(preview)), tag, icon: "/favicon.svg" });
     n.onclick = () => {
       window.focus();
       n.close();
-      onOpen(item);
+      onOpen();
     };
+  };
+  for (const item of items) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    if (show && !item.read)
+      fire(notificationTitle(item), item.preview, item.id, () => open.item(item));
+  }
+  for (const chat of chats) {
+    const id = chat.latest.messageId;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (show && chat.unread > 0)
+      fire(chatNotificationTitle(chat), chat.latest.preview, id, () => open.chat(chat));
   }
 }
 
@@ -119,26 +138,49 @@ export function useInboxNotifier() {
   const { enabled } = useBrowserNotifications();
   const seen = useRef<Set<string> | null>(null);
   const fetchUnread = useCallback(
-    () => qc.fetchQuery({ ...homeInboxQueryOptions, staleTime: 0 }).then((p) => p.items),
+    () => qc.fetchQuery({ ...homeInboxQueryOptions, staleTime: 0 }),
     [qc],
   );
-  const onOpen = useCallback(
-    (item: InboxItem) => {
-      open(item);
-      const l = item.link;
-      if (l.kind === "task")
+  const opens = useMemo<Opens>(
+    () => ({
+      item(item) {
+        open(item);
+        const l = item.link;
+        switch (l.kind) {
+          case "task":
+            void navigate({
+              to: "/tasks/$key",
+              params: { key: l.key },
+              search: l.commentId ? { comment: l.commentId } : {},
+            });
+            return;
+          case "session":
+            if (l.seq === undefined)
+              void navigate({ to: "/agents/$slug/chat", params: { slug: l.agentSlug } });
+            else
+              void navigate({
+                to: "/agents/$slug/session",
+                params: { slug: l.agentSlug },
+                search: { event: l.seq },
+              });
+            return;
+          case "credential":
+            void navigate({ to: "/settings/credentials", search: { credential: l.name } });
+            return;
+          default: {
+            const unhandled: never = l;
+            return unhandled;
+          }
+        }
+      },
+      // The chat opens on the message; the Chat page reads it.
+      chat: (chat) =>
         void navigate({
-          to: "/tasks/$key",
-          params: { key: l.key },
-          search: l.commentId ? { comment: l.commentId } : {},
-        });
-      else
-        void navigate({
-          to: "/agents/$slug",
-          params: { slug: l.agentSlug },
-          search: l.seq === undefined ? undefined : { event: l.seq },
-        });
-    },
+          to: "/agents/$slug/chat",
+          params: { slug: chat.agent.slug },
+          search: { message: chat.latest.messageId },
+        }),
+    }),
     [open, navigate],
   );
   // Baseline when the switch is on (at load, or when it is turned on): what is unread now is not "new".
@@ -149,8 +191,12 @@ export function useInboxNotifier() {
     }
     let live = true;
     fetchUnread().then(
-      (items) => {
-        if (live && !seen.current) seen.current = new Set(items.map((i) => i.id));
+      ({ items, chats = [] }) => {
+        if (live && !seen.current)
+          seen.current = new Set([
+            ...items.map((i) => i.id),
+            ...chats.map((c) => c.latest.messageId),
+          ]);
       },
       () => {},
     );
@@ -162,8 +208,8 @@ export function useInboxNotifier() {
     if (!isOn() || !seen.current) return;
     const set = seen.current;
     fetchUnread().then(
-      (items) => notifyNewItems(items, set, onOpen),
+      (unread) => notifyNew(unread, set, opens),
       () => {},
     );
-  }, [fetchUnread, onOpen]);
+  }, [fetchUnread, opens]);
 }

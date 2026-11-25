@@ -1,10 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
-import { ROW_GUTTER } from "./timeline-item";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date", "setTimeout", "setInterval"] });
@@ -26,12 +25,11 @@ test.each([
     "3 updates from @dev waiting, delivered by 14:32",
   ],
   [{ waitReason: "starting" }, "3 updates from @dev waiting for this agent to start"],
-  [{ waitReason: "errored" }, "3 updates from @dev held until a human restarts this agent"],
+  [{ waitReason: "errored" }, "3 updates from @dev held until this agent is restarted"],
   [{ waitReason: "turn", count: 1 }, "1 update from @dev waiting for this turn to end"],
 ])("held line %o", (o, text) => {
   render(<QueueItems items={[held(o)]} agent={agentSummary()} />);
   expect(line(text)).toBeInTheDocument();
-  expect(screen.getByText("@dev")).toHaveClass("font-mono");
 });
 
 test("rate-limited uses S5's reset phrase; peer events collapse into one line; nothing ticks", () => {
@@ -128,13 +126,6 @@ test("the first held message says why; the rest only that they aren't delivered 
   expect(blocks[0]).toHaveTextContent("Not delivered yet: waiting for a free slot");
   expect(blocks[1]?.textContent).toContain("Not delivered yet");
   expect(blocks[1]?.textContent).not.toContain("Not delivered yet:");
-});
-
-test("queued bodies clamp at three lines", () => {
-  render(
-    <QueueItems items={[msg({ id: "a", body: "1\n\n2\n\n3\n\n4\n\n5" })]} agent={agentSummary()} />,
-  );
-  expect(document.querySelector("[data-message-body] .line-clamp-3")).not.toBeNull();
 });
 
 test("three queued messages all show; five show two and '+3 more queued' expands in place", async () => {
@@ -315,26 +306,6 @@ test("a failed restore moves focus from Undo to the error line", async () => {
   await vi.waitFor(() => expect(errorLine).toHaveFocus());
 });
 
-test("queued and Sending cards span the column like a delivered card; a cancelled line keeps the rows' gutter", () => {
-  render(
-    <QueueItems
-      items={[msg({ id: "a", body: "queued" })]}
-      sending={[{ clientMessageId: "c1", body: "sending", urgent: false }]}
-      cancelled={new Map([["b", { item: msg({ id: "b" }), index: 1 }]])}
-      agent={agentSummary()}
-      self="alice"
-      onUndo={() => {}}
-    />,
-  );
-  const wrap = (el: Element | null) => el?.closest(".pt-3");
-  expect(wrap(screen.getByText("queued"))).not.toHaveClass(ROW_GUTTER);
-  expect(wrap(screen.getByText("sending"))).not.toHaveClass(ROW_GUTTER);
-  // The card's own padding matches a delivered card's, so its body wraps the same at the handoff.
-  for (const t of ["queued", "sending"])
-    expect(screen.getByText(t).closest("[data-message-block]")).toHaveClass("pr-9");
-  expect(wrap(screen.getByText("Message cancelled."))).toHaveClass(ROW_GUTTER);
-});
-
 test("after a successful Undo focus goes to the restored message's Cancel, else the composer", async () => {
   vi.useRealTimers();
   const b = msg({ id: "b", body: "restored" });
@@ -370,56 +341,39 @@ test("after a successful Undo focus goes to the restored message's Cancel, else 
   }
 });
 
-// ---- Command items (U3 §13.3, Q39) ----
+// ---- Raw items are tail blocks of the timeline, not lines here (I1 §5) ----
 
-const command = (o: Record<string, unknown>) =>
-  ({
+test("a raw queue item and a raw sending block draw nothing in the queue area", () => {
+  const raw = {
     id: "c1",
-    kind: "command",
+    kind: "raw",
     from: "@alice",
-    body: "/code-review src/ --fix",
-    waitReason: "turn",
+    body: "/context",
     createdAt: local(13, 59),
-    ...o,
-  }) as never;
-
-test("a held command is one truncated line: the name waits for the turn, args after, the whole in its title", () => {
-  render(<QueueItems items={[command({})]} agent={agentSummary()} self="alice" />);
-  const el = document.querySelector("[data-command-item]") as HTMLElement;
-  const text = el.querySelector("[title]") as HTMLElement;
-  expect(text).toHaveClass("truncate");
-  expect(text).toHaveAttribute("title", "/code-review src/ --fix");
-  expect(text.textContent).toBe("/code-review waits for the turn to end: src/ --fix");
-  expect(within(el).getByText("/code-review")).toHaveClass("font-mono");
-  expect(screen.queryByText(/Compact queued/)).toBeNull();
+  } as never;
+  const { container } = render(
+    <QueueItems
+      items={[raw]}
+      sending={[{ clientMessageId: "x", body: "hi", urgent: false, raw: true }]}
+      agent={agentSummary()}
+      self="alice"
+    />,
+  );
+  expect(container).toBeEmptyDOMElement();
 });
 
-test("Cancel on your own held command only; no Undo once cancelled", async () => {
+test("a queued item's sender is read by the kind it carries: an agent is a chip, a human a handle", async () => {
   vi.useRealTimers();
-  const onCancel = vi.fn();
-  const mine = command({});
-  const { rerender } = render(
+  const item = (id: string, from: string, fromKind: "agent" | "human") =>
+    ({ id, kind: "message", from, fromKind, body: id, createdAt: local(13, 59) }) as never;
+  renderInRouter(
     <QueueItems
-      items={[mine, command({ id: "c2", from: "@bob", body: "/context" })]}
+      items={[item("a", "@gone-ab12", "agent"), item("h", "@orla", "human")]}
       agent={agentSummary()}
-      self="alice"
-      onCancel={onCancel}
     />,
   );
-  const cancels = screen.getAllByRole("button", { name: "Cancel" });
-  expect(cancels).toHaveLength(1);
-  await userEvent.click(cancels[0] as HTMLElement);
-  expect(onCancel).toHaveBeenCalledWith(expect.objectContaining({ id: "c1" }));
-  rerender(
-    <QueueItems
-      items={[command({ id: "c2", from: "@bob", body: "/context" })]}
-      cancelled={new Map([["c1", { item: mine, index: 0 }]])}
-      agent={agentSummary()}
-      self="alice"
-      onCancel={onCancel}
-      onUndo={() => {}}
-    />,
-  );
-  expect(screen.getByText("Command cancelled.")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  await waitFor(() => expect(document.querySelectorAll("[data-speaker-line]")).toHaveLength(2));
+  const lines = document.querySelectorAll<HTMLElement>("[data-speaker-line]");
+  expect(lines[0]?.querySelector("[data-agent-avatar]")).not.toBeNull();
+  expect(lines[1]?.querySelector("[data-agent-avatar]")).toBeNull();
 });

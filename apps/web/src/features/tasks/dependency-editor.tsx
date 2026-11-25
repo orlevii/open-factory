@@ -1,6 +1,8 @@
-import { parseTaskKey, type TaskSummary } from "@open-factory/shared";
+import { MSG, parseTaskKey, type TaskSummary } from "@open-factory/shared";
+import type { FocusEvent } from "react";
 import { FieldShell } from "@/components/field-shell";
 import { Input } from "@/components/ui/input";
+import { FORM_MSG } from "@/lib/form-messages";
 import { lookupTasks } from "./api";
 
 /** Keys separated by commas or spaces, as typed ("T-41, T-44") -> canonical keys, duplicates dropped. */
@@ -24,16 +26,14 @@ export async function checkDependencies(
   selfKey?: string,
 ): Promise<{ keys: string[]; resolved: TaskSummary[]; error?: string }> {
   const { keys, bad } = parseKeys(text);
-  if (bad !== undefined) return { keys, resolved: [], error: "Use task keys, like T-41." };
-  if (keys.length > 50)
-    return { keys, resolved: [], error: "A task can depend on at most 50 tasks." };
-  if (selfKey && keys.includes(selfKey))
-    return { keys, resolved: [], error: "A task can't depend on itself." };
+  if (bad !== undefined) return { keys, resolved: [], error: FORM_MSG.taskKeys };
+  if (keys.length > 50) return { keys, resolved: [], error: MSG.dependsMax };
+  if (selfKey && keys.includes(selfKey)) return { keys, resolved: [], error: FORM_MSG.dependsSelf };
   if (!keys.length) return { keys, resolved: [] };
   const found = await lookupTasks(keys);
   const missing = keys.find((k) => !found.some((t) => t.key === k));
   const resolved = keys.flatMap((k) => found.filter((t) => t.key === k));
-  return missing ? { keys, resolved, error: `No task ${missing}.` } : { keys, resolved };
+  return missing ? { keys, resolved, error: FORM_MSG.noSuchTask } : { keys, resolved };
 }
 
 /** "Depends on T-41.", "... T-41 and T-52." or "... T-41, T-44 and 3 more." (kept short for the one-line note). */
@@ -55,7 +55,7 @@ export function DependencyEditor({
 }: {
   value: string;
   onChange(v: string): void;
-  onBlur(): void;
+  onBlur(e: FocusEvent<HTMLInputElement>): void;
   error?: string | undefined;
   resolvedKeys: string[];
   name?: string;

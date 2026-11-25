@@ -12,7 +12,6 @@ const tpl = (o: object) =>
     projects: [],
     skills: [],
     localSkills: true,
-    plugins: [],
     secrets: [],
     canSpawn: [],
     maxLiveSpawns: 5,

@@ -91,7 +91,8 @@ async function step<T>(name: string, fn: () => Promise<T>): Promise<T> {
 // realpath: macOS tmpdir is a /var symlink; the factory works with canonical paths.
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-spawn-")));
 const factoryHome = path.join(root, "home");
-const hostSkillsDir = path.join(root, "host-skills");
+const hostClaudeDir = path.join(root, "host-claude");
+const hostSkillsDir = path.join(hostClaudeDir, "skills");
 /** The granted project `app`: a real git repo with one commit on main. */
 const repo = path.join(root, "app");
 const WORD = `SPAWN-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -268,8 +269,11 @@ let orUser = { userId: "", handle: "or" };
 /** Sends a human message (as @or) and returns its row id and the recipient's seq before it. */
 async function send(slug: string, body: string) {
   const from = await lastSeq(slug);
-  const sent = await app.router.send(orUser, slug, body, false);
-  if (!sent.ok) throw new Error(`send to ${slug} failed: ${sent.message}`);
+  const [sent] = (await app.router.send(orUser, [slug], body, false)).results;
+  if (!sent || sent.status === "refused" || sent.status === "start_failed")
+    throw new Error(
+      `send to ${slug} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+    );
   return { id: sent.id, from };
 }
 /** The events of the turn that read message `id`: from its message_in to the first origin-less turn_end after it. */
@@ -425,7 +429,7 @@ try {
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
     FACTORY_HOME: factoryHome,
-    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+    FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
     FACTORY_DEFAULT_IMAGE: IMAGE,
     FACTORY_ALLOW_LOCAL_RUNTIME: LOCAL ? "true" : "false",
     HOST: "127.0.0.1",
@@ -467,7 +471,7 @@ try {
     patchFactorySettings(or.cookie, { memberUpdateDebounceSeconds: 10 }),
   );
   await step("0. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step("0. temp git repo registered as project app", () =>
     app.projects.create({ name: "app", hostPath: repo }),

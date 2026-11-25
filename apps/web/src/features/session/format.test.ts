@@ -13,6 +13,14 @@ test("tokens", () => {
   expect(formatTokens(15259)).toBe("15.3k");
   expect(formatTokens(129052)).toBe("129k");
   expect(formatTokens(950)).toBe("950");
+  // Millions, and the rounding at each unit boundary.
+  expect(formatTokens(1_234_567)).toBe("1.2M");
+  expect(formatTokens(123_456)).toBe("123k");
+  expect(formatTokens(999_499)).toBe("999k");
+  expect(formatTokens(999_500)).toBe("1.0M");
+  expect(formatTokens(999_999)).toBe("1.0M");
+  expect(formatTokens(99_949)).toBe("99.9k");
+  expect(formatTokens(99_950)).toBe("100k");
 });
 test("bytes", () => {
   expect(formatBytes(1_200_000)).toBe("1.2 MB");

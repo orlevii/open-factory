@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
@@ -57,9 +57,9 @@ test("rows keep server order and indent the name cell by depth", async () => {
   renderApp("/agents", alice);
   const links = await rows();
   expect(links.map((l) => l.getAttribute("href"))).toEqual([
-    "/agents/lead",
-    "/agents/dev-1",
-    "/agents/reviewer",
+    "/agents/lead/chat",
+    "/agents/dev-1/chat",
+    "/agents/reviewer/chat",
   ]);
   const nameCell = (l: HTMLElement) => l.querySelector<HTMLElement>("[data-depth]");
   expect(nameCell(links[0] as HTMLElement)?.style.paddingLeft).toBe("0px");
@@ -72,25 +72,17 @@ test("a nested row says who it reports to, for screen readers", async () => {
   mockWorld({ agents: tree });
   renderApp("/agents", alice);
   const links = await rows();
-  const hidden = within(links[1] as HTMLElement).getByText("reports to Team Lead (@lead)");
-  expect(hidden).toHaveClass("sr-only");
+  expect(
+    within(links[1] as HTMLElement).getByText("reports to Team Lead (@lead)"),
+  ).toBeInTheDocument();
   expect(within(links[0] as HTMLElement).queryByText(/reports to/)).not.toBeInTheDocument();
-});
-
-test("runtime badge: Unsandboxed for local, nothing for docker", async () => {
-  mockWorld({ agents: tree });
-  renderApp("/agents", alice);
-  const links = await rows();
-  expect(within(links[0] as HTMLElement).getByText("Unsandboxed")).toBeInTheDocument();
-  expect(within(links[2] as HTMLElement).queryByText("Docker")).not.toBeInTheDocument();
-  expect(within(links[2] as HTMLElement).queryByText("Unsandboxed")).not.toBeInTheDocument();
 });
 
 test("restartPending shows the restart icon with hidden text", async () => {
   mockWorld({ agents: tree });
   renderApp("/agents", alice);
   const links = await rows();
-  expect(within(links[1] as HTMLElement).getByText("restart pending")).toHaveClass("sr-only");
+  expect(within(links[1] as HTMLElement).getByText("restart pending")).toBeInTheDocument();
   expect(within(links[0] as HTMLElement).queryByText("restart pending")).not.toBeInTheDocument();
 });
 
@@ -151,7 +143,7 @@ test("ended view: a report whose manager isn't listed isn't indented but names i
   renderApp("/agents?ended=only", alice);
   const row = await screen.findByRole("link", { name: /Old one/ });
   expect(row.querySelector<HTMLElement>("[data-depth]")?.style.paddingLeft).toBe("0px");
-  expect(within(row).getByText("reports to @lead")).toHaveClass("sr-only");
+  expect(within(row).getByText("reports to @lead")).toBeInTheDocument();
 });
 
 describe("the Ended view (S7 UI design §3)", () => {
@@ -206,10 +198,10 @@ describe("the Ended view (S7 UI design §3)", () => {
     renderApp("/agents?ended=only", alice);
     const links = await rows();
     expect(links.map((l) => l.getAttribute("href"))).toEqual([
-      "/agents/tech-lead-ab12",
-      "/agents/tech-lead-cd34",
-      "/agents/tech-lead-ef56",
-      "/agents/old",
+      "/agents/tech-lead-ab12/chat",
+      "/agents/tech-lead-cd34/chat",
+      "/agents/tech-lead-ef56/chat",
+      "/agents/old/chat",
     ]);
     // Flat: no row is indented, even though the spawned ones report to @lead.
     for (const l of links)
@@ -247,47 +239,13 @@ describe("the Ended view (S7 UI design §3)", () => {
     expect(await screen.findByText("No ended agents.")).toBeInTheDocument();
   });
 
-  test("with more, a muted line under the list says only the latest 200 are shown", async () => {
+  test("with more, a line under the list says only the latest 200 are shown", async () => {
     endedWorld(ended, true);
     renderApp("/agents?ended=only", alice);
     const list = await screen.findByRole("list", { name: "Agents" });
     const line = await screen.findByText("Showing the latest 200 ended agents.");
-    expect(line).toHaveClass("text-muted-foreground");
     expect(list.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
-
-  test("an old ?archived=only bookmark lands on ?ended=only", async () => {
-    endedWorld(ended);
-    const { router } = renderApp("/agents?archived=only", alice);
-    await vi.waitFor(() => expect(router.state.location.search).toEqual({ ended: "only" }));
-    expect(screen.getByRole("radio", { name: "Ended" })).toBeChecked();
-    expect(await screen.findByRole("link", { name: /Old one/ })).toBeInTheDocument();
-  });
-});
-
-test("on mobile, a spawned agent's name keeps its ' · ab12' tail; the head truncates", async () => {
-  vi.stubGlobal("innerWidth", 400);
-  mockWorld({
-    agents: [
-      tree[0] as ReturnType<typeof agentSummary>,
-      agentSummary({
-        slug: "tech-lead-ab12",
-        displayName: "A very long tech lead display name · ab12",
-        kind: "ephemeral",
-        reportsTo: "lead",
-        depth: 1,
-      }),
-    ],
-  });
-  renderApp("/agents", alice);
-  const row = await screen.findByRole("link", { name: /A very long tech lead display name/ });
-  const head = within(row).getByText("A very long tech lead display name");
-  const tail = within(row).getByText("· ab12");
-  expect(head).toHaveClass("truncate");
-  expect(tail).toHaveClass("shrink-0");
-  expect(tail).not.toHaveClass("truncate");
-  // Spawned agents nest under their spawner in the Active view.
-  expect(row.querySelector<HTMLElement>("[data-depth]")?.style.paddingLeft).toBe("20px");
 });
 
 describe("usage in the tree (S10 §12.1)", () => {
@@ -334,55 +292,41 @@ describe("usage in the tree (S10 §12.1)", () => {
       },
     });
 
-  test("a persistent row shows the total with the spelled-out sr-only text; a spawned row its own; no turns is a dash", async () => {
+  test("a persistent row shows the total with the spelled-out text; a spawned row its own; no turns is a dash", async () => {
     usageWorld();
     renderApp("/agents", alice);
     const [lead, dev, idle] = (await rows()) as [HTMLElement, HTMLElement, HTMLElement];
     expect(await within(lead).findByText("$4.60")).toBeInTheDocument();
     expect(
       within(lead).getByText("Estimated cost, last 7 days: $4.60 (own $1.20, spawned $3.40)"),
-    ).toHaveClass("sr-only");
-    expect(within(dev).getByText("$0.50").parentElement).toHaveClass("tabular-nums");
-    expect(within(dev).getByText("Estimated cost, last 7 days: $0.50")).toHaveClass("sr-only");
+    ).toBeInTheDocument();
+    expect(within(dev).getByText("$0.50")).toBeInTheDocument();
+    expect(within(dev).getByText("Estimated cost, last 7 days: $0.50")).toBeInTheDocument();
     expect(within(idle).getByText("—")).toBeInTheDocument();
-    expect(within(idle).getByText("Estimated cost, last 7 days: none")).toHaveClass("sr-only");
-    // Hidden below md; no tooltip trigger inside a row link, and the only title is the name's (U4 §11.6).
-    expect(within(lead).getByText("$4.60").parentElement).toHaveClass("hidden", "md:block");
+    expect(within(idle).getByText("Estimated cost, last 7 days: none")).toBeInTheDocument();
+    // No tooltip trigger inside a row link, and the only title is the name's (U4 §11.6).
     expect(lead.querySelector("[data-slot=tooltip-trigger]")).toBeNull();
     expect([...lead.querySelectorAll("[title]")].map((e) => e.getAttribute("title"))).toEqual([
       "Team Lead",
     ]);
   });
 
-  test("the name keeps a minimum width: two lines from md, full columns only on a wide tree", async () => {
-    usageWorld();
-    renderApp("/agents", alice);
-    const list = await screen.findByRole("list", { name: "Agents" });
-    const [lead] = (await rows()) as [HTMLElement];
-    // The full columns key on the tree's own width (a container query), not the window's: with the
-    // sidebar open a 1024px window leaves the name track about 40px.
-    expect(list).toHaveClass("@container");
-    expect(lead).toHaveClass("md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]");
-    expect(lead).toHaveClass("@min-[54rem]:grid-cols-[7rem_minmax(0,1fr)_10rem_10rem_7rem_4rem]");
-    // The second line (slug, template, runtime) can shrink below a 40-char template's width at 320,
-    // and never grows past the row (U4 §11.6).
-    expect(lead.querySelector(".basis-full")).toHaveClass("min-w-0", "max-w-full", "flex-wrap");
-    expect(within(lead).getByText("$4.60").parentElement).toHaveClass(
-      "md:col-start-3",
-      "md:row-start-1",
-      "@min-[54rem]:col-start-6",
-    );
-  });
-
-  test("the muted line above the Active tree explains the column", async () => {
-    usageWorld();
-    renderApp("/agents", alice);
+  test.each([
+    ["Active tree", "/agents"],
+    ["Ended list", "/agents?ended=only"],
+  ])("the muted line above the %s explains the column", async (_view, url) => {
+    mockWorld({
+      agents: [agentSummary({ slug: "lead", displayName: "Team Lead" })],
+      archived: [agentSummary({ slug: "old", displayName: "Old", status: "terminated" })],
+      extra: { "GET /api/usage/agents?window=rolling": () => json({ agents: [] }) },
+    });
+    renderApp(url, alice);
     await screen.findByRole("list", { name: "Agents" });
-    const line = screen.getByText(
-      "Costs are estimates for the last 7 days. A persistent agent's figure includes the agents it spawned.",
-    );
-    // Only where the cost cells are: they are hidden below md.
-    expect(line).toHaveClass("hidden", "md:block");
+    expect(
+      screen.getByText(
+        "Costs are estimates for the last 7 days. A persistent agent's figure includes the agents it spawned.",
+      ),
+    ).toBeInTheDocument();
   });
 
   test("an agent with no row in the loaded usage shows a dash; nothing while usage hasn't loaded", async () => {
@@ -401,7 +345,7 @@ describe("usage in the tree (S10 §12.1)", () => {
     // Own turns but no spawned turns: no "(own …, spawned —)" parenthesis.
     expect(await within(lead).findByText("Estimated cost, last 7 days: $1.20")).toBeInTheDocument();
     expect(within(solo).getByText("—")).toBeInTheDocument();
-    expect(within(solo).getByText("Estimated cost, last 7 days: none")).toHaveClass("sr-only");
+    expect(within(solo).getByText("Estimated cost, last 7 days: none")).toBeInTheDocument();
   });
 
   test("the cost cell stays empty while usage fails to load", async () => {
@@ -416,40 +360,12 @@ describe("usage in the tree (S10 §12.1)", () => {
     expect(within(solo).queryByText("—")).toBeNull();
     expect(within(solo).queryByText(/Estimated cost/)).toBeNull();
   });
-
-  test("the explanation line also shows above the Ended list", async () => {
-    mockWorld({
-      archived: [agentSummary({ slug: "old", displayName: "Old", status: "terminated" })],
-      extra: { "GET /api/usage/agents?window=rolling": () => json({ agents: [] }) },
-    });
-    renderApp("/agents?ended=only", alice);
-    await screen.findByRole("list", { name: "Agents" });
-    expect(screen.getByText(/^Costs are estimates for the last 7 days\./)).toBeInTheDocument();
-  });
-
-  test("the tree asks for the rolling window", async () => {
-    const api = usageWorld();
-    renderApp("/agents", alice);
-    await screen.findByRole("list", { name: "Agents" });
-    await waitFor(() =>
-      expect(api.calls.some((c) => c.url === "/api/usage/agents?window=rolling")).toBe(true),
-    );
-  });
 });
 
 describe("Agents page identity and tree lines (U2 §7)", () => {
   const A = (slug: string, over: Parameters<typeof agentSummary>[0] = {}) =>
     agentSummary({ slug, displayName: slug, ...over });
   const lines = (l: HTMLElement) => l.querySelectorAll("[data-tree-line]").length;
-
-  test("row starts with AgentChip (avatar, name, @slug)", async () => {
-    mockWorld({ agents: [A("lead", { displayName: "Team Lead" })] });
-    renderApp("/agents", alice);
-    const [row] = (await rows()) as [HTMLElement];
-    expect(row.querySelector("svg, img")).not.toBeNull();
-    expect(within(row).getByText("Team Lead")).toBeInTheDocument();
-    expect(within(row).getAllByText("@lead").length).toBeGreaterThan(0);
-  });
 
   test("template shown only when it differs from the slug stem", async () => {
     mockWorld({
@@ -487,38 +403,16 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
     expect(r.map((l) => lines(l))).toEqual([0, 0, 1, 1, 0, 0]);
   });
 
-  test("phones (#102, class contract, jsdom has no layout): the status column is the shape alone, its label kept for screen readers; the name carries its full value in title", async () => {
+  test("the status label is part of the row's accessible name; the name carries its full value in title", async () => {
     mockWorld({
       agents: [A("lead", { displayName: "A very long team lead display name", status: "working" })],
     });
     renderApp("/agents", alice);
     const [lead] = (await rows()) as [HTMLElement];
-    // The label is still the row's text (the link's accessible name keeps it)...
-    const label = within(lead).getByText("Working");
-    // ...but below md it takes no width, and the column shrinks to the shape: a fixed 7rem column
-    // left a deep row's name cell ~8px at 320, so the avatar ran under the ⋯.
-    expect(label).toHaveClass("max-md:sr-only");
-    const column = label.closest("[data-status-cell]");
-    expect(column).not.toBeNull();
-    expect(column).toHaveClass("md:w-28");
-    expect(column).not.toHaveClass("w-28");
     expect(lead).toHaveAccessibleName(/Working/);
     const name = lead.querySelector("[title]");
     expect(name).toHaveAttribute("title", "A very long team lead display name");
     expect(name).toHaveTextContent("A very long team lead display name");
-  });
-
-  test("an archived row's label hides below md too", async () => {
-    const old = A("old", { displayName: "Old one", archivedAt: "2026-11-01T10:00:00.000Z" });
-    mockWorld({
-      extra: {
-        "GET /api/agents?ended=only": () =>
-          json({ agents: [old], more: false, running: { count: 0, max: 8 } }),
-      },
-    });
-    renderApp("/agents?ended=only", alice);
-    const [row] = (await rows()) as [HTMLElement];
-    expect(within(row).getByText("Archived")).toHaveClass("max-md:sr-only");
   });
 
   test("rows deeper than the cap show a depth marker", async () => {

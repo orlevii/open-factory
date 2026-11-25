@@ -1,11 +1,11 @@
-import { type AgentSummary, ApiError } from "@open-factory/shared";
-import { CircleAlert, FilePlus2, RefreshCcw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import type { AgentSummary } from "@open-factory/shared";
+import { useQueryClient } from "@tanstack/react-query";
+import { FilePlus2, RefreshCcw } from "lucide-react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useWs } from "@/lib/ws-context";
-import { postRestart } from "./api";
-import { focusComposer, NETWORK_ERROR } from "./composer";
+import { restartAgentNow, useRestartPending } from "@/features/agents/lifecycle";
+import { focusComposer } from "./composer";
 import { NewSessionDialog } from "./new-session-dialog";
 
 /**
@@ -13,14 +13,7 @@ import { NewSessionDialog } from "./new-session-dialog";
  * Interrupt. Mounted for every status, so an open dialog survives the status frame that a confirmed
  * reset publishes before its response, and can still move focus to the composer when it closes.
  */
-export function RecoveryActions({
-  agent,
-  onError,
-}: {
-  agent: AgentSummary;
-  /** Where a failed Restart's message goes (the header's notice row); inline when absent. */
-  onError?: (message: string | undefined) => void;
-}) {
+export function RecoveryActions({ agent }: { agent: AgentSummary }) {
   const [dialog, setDialog] = useState<{ open: boolean; lastError?: string }>({ open: false });
   const trigger = useRef<HTMLButtonElement>(null);
   const kind = agent.errorKind;
@@ -30,7 +23,7 @@ export function RecoveryActions({
   const canReset = errored && (kind === "resume" || kind === "resume_unrecoverable");
   return (
     <>
-      {canRestart && <RestartButton slug={agent.slug} onError={onError} />}
+      {canRestart && <RestartButton slug={agent.slug} />}
       {canReset && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -59,80 +52,33 @@ export function RecoveryActions({
 }
 
 /**
- * aria-disabled "Restarting…" while pending (the S3 Interrupt pattern). Pending ends once the
- * response and the next status frame are both in, or on the next `error` event, whichever comes
- * first, so a Restart that fails comes back as "Restart". A 409 not_errored is ignored.
+ * aria-disabled "Restarting…" while pending (the S3 Interrupt pattern). `useRestartPending` ends it once
+ * the response and the next status frame are both in, or on the next `error` event, so a Restart that
+ * fails comes back as "Restart"; the failure is a toast.
  */
-function RestartButton({
-  slug,
-  onError,
-}: {
-  slug: string;
-  onError?: ((message: string | undefined) => void) | undefined;
-}) {
-  const ws = useWs();
-  const [pending, setPending] = useState(false);
-  const [ownError, setOwnError] = useState<string | undefined>();
-  const error = onError ? undefined : ownError;
-  const setError = onError ?? setOwnError;
-  const progress = useRef({ responded: false, framed: false });
-
-  useEffect(() => {
-    if (!pending) return;
-    return ws.listen((m) => {
-      if (m.type === "agent_status" && m.agent === slug) {
-        progress.current.framed = true;
-        if (progress.current.responded) setPending(false);
-      } else if (m.type === "session_event" && m.agent === slug && m.event.event.type === "error") {
-        setPending(false);
-      }
-    });
-  }, [ws, slug, pending]);
-
-  async function restart() {
-    progress.current = { responded: false, framed: false };
-    setPending(true);
-    setError(undefined);
-    try {
-      await postRestart(slug);
-      progress.current.responded = true;
-      if (progress.current.framed) setPending(false);
-      focusComposer();
-    } catch (e) {
-      setPending(false);
-      if (e instanceof ApiError && e.code === "not_errored") return;
-      setError(e instanceof ApiError ? e.message : NETWORK_ERROR);
-    }
-  }
-
+function RestartButton({ slug }: { slug: string }) {
+  const qc = useQueryClient();
+  const pending = useRestartPending(slug);
   const label = pending ? "Restarting…" : "Restart";
   return (
-    <>
-      {error && (
-        <p
-          role="alert"
-          className="flex max-w-[16rem] min-w-0 items-center gap-1.5 text-[0.8125rem] leading-[1.125rem] text-destructive"
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          aria-disabled={pending || undefined}
+          onClick={() => {
+            if (!pending)
+              void restartAgentNow(slug, qc).then((ok) => {
+                if (ok) focusComposer();
+              });
+          }}
         >
-          <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-          <span>Couldn't restart: {error}</span>
-        </p>
-      )}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            aria-disabled={pending || undefined}
-            onClick={() => {
-              if (!pending) void restart();
-            }}
-          >
-            <RefreshCcw aria-hidden="true" />
-            <span className="max-md:sr-only">{label}</span>
-          </Button>
-        </TooltipTrigger>
-        {/* The label is visible from md up, so the tooltip only serves icon-only widths. */}
-        <TooltipContent className="md:hidden">{label}</TooltipContent>
-      </Tooltip>
-    </>
+          <RefreshCcw aria-hidden="true" />
+          <span className="max-md:sr-only">{label}</span>
+        </Button>
+      </TooltipTrigger>
+      {/* The label is visible from md up, so the tooltip only serves icon-only widths. */}
+      <TooltipContent className="md:hidden">{label}</TooltipContent>
+    </Tooltip>
   );
 }

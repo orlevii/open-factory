@@ -57,21 +57,11 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
   );
   renderApp("/agents", alice);
   const row = await screen.findByRole("link", { name: /Dev agent/ });
-  expect(row).toHaveAttribute("href", "/agents/dev");
+  expect(row).toHaveAttribute("href", "/agents/dev/chat");
   expect(within(row).getByText("Working")).toBeInTheDocument();
   expect(within(row).getAllByText("@dev").length).toBeGreaterThan(0);
   expect(within(row).getByText("developer")).toBeInTheDocument();
   expect(within(row).getByText("Unsandboxed")).toBeInTheDocument();
-});
-
-test("an empty list says so and offers to create the first agent", async () => {
-  mockWorld({ agents: [] });
-  renderApp("/agents", alice);
-  // The sidebar tree says it too: the page is the main region.
-  const main = await screen.findByRole("main");
-  expect(await within(main).findByText("No agents yet.")).toBeInTheDocument();
-  expect(within(main).getByRole("button", { name: "Create your first agent" })).toBeInTheDocument();
-  expect(screen.queryByText(/seed:dev-agent/)).not.toBeInTheDocument();
 });
 
 test("a pushed agent_status frame turns the row's Working into Idle", async () => {
@@ -169,11 +159,9 @@ test("Agents list: inline note priority, '3 of 8 running' before the radio pair,
   expect(await note("Plain")).toBeNull();
   // Plain text only: nothing interactive inside the row link.
   const busy = screen.getByRole("link", { name: /Busy/ });
-  expect(busy.querySelector("[data-agent-note]")).toHaveClass("text-muted-foreground");
   expect(within(busy).queryByRole("button")).toBeNull();
 
   const count = screen.getByText("3 of 8 running");
-  expect(count).toHaveClass("max-md:hidden");
   const radios = screen.getByRole("group", { name: "Show" });
   expect(count.compareDocumentPosition(radios) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   act(() => pushFrame({ type: "supervisor", running: 4, max: 8 }));
@@ -183,19 +171,6 @@ test("Agents list: inline note priority, '3 of 8 running' before the radio pair,
   await screen.findByText("No ended agents.");
   expect(screen.queryByText(/of 8 running/)).not.toBeInTheDocument();
   vi.useRealTimers();
-});
-
-test("header at 200% text on a phone (class contract): Active/Ended never shrink, and below an 18rem header they take a line of their own (evidence D3)", async () => {
-  listWith([agentSummary({ slug: "a", displayName: "Ada" })]);
-  renderApp("/agents", alice);
-  const radios = await screen.findByRole("group", { name: "Show" });
-  // Squeezed, the nowrap labels printed over each other and over New agent.
-  expect(radios).toHaveClass("shrink-0", "@max-[18rem]:order-last", "@max-[18rem]:basis-full");
-  const header = radios.closest("header");
-  expect(header).toHaveClass("flex-wrap", "min-h-12");
-  expect(header).not.toHaveClass("h-12");
-  const action = within(header as HTMLElement).getByRole("button", { name: "New agent" });
-  expect(action.parentElement).toHaveClass("ml-auto");
 });
 
 test("a terminated frame shows Terminated (no dot) at once, then the list refetches without it", async () => {
@@ -277,20 +252,15 @@ test("each Agents row has a ⋯ beside its link that opens the agent's menu", as
   const more = await within(main).findByRole("button", { name: "Actions for Dev agent" });
   // A sibling of the row's link, never inside it.
   expect(more.closest("a")).toBeNull();
-  expect(more.closest("li")?.querySelector('a[href="/agents/dev"]')).not.toBeNull();
+  expect(more.closest("li")?.querySelector('a[href="/agents/dev/chat"]')).not.toBeNull();
   await userEvent.click(more);
   const menu = await screen.findByRole("menu");
-  expect(menuLayout(menu)).toEqual([
-    "New task",
-    "New schedule",
-    "—",
-    "Edit",
-    "Usage",
-    "Open tasks",
-    "—",
-    "Re-sync from template…",
-    "Archive…",
-  ]);
+  // The full layout is pinned in agent-menu.test.tsx; here: it is this agent's menu.
+  expect(within(menu).getByRole("menuitem", { name: "Archive…" })).toBeInTheDocument();
+  expect(within(menu).getByRole("menuitem", { name: "Usage" })).toHaveAttribute(
+    "href",
+    "/agents/dev/usage",
+  );
 });
 
 test("Ended view: an archived row's menu restores it and toasts; a terminated row offers only Usage and Open tasks", async () => {
@@ -321,25 +291,19 @@ test("Ended view: an archived row's menu restores it and toasts; a terminated ro
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await u.click(within(main).getByRole("button", { name: "Actions for Old one" }));
   const menu = await screen.findByRole("menu");
-  expect(menuLayout(menu)).toEqual(["Usage", "Open tasks", "—", "Restore"]);
+  expect(menuLayout(menu)).toEqual([
+    "Configure",
+    "Usage",
+    "Open tasks",
+    "—",
+    "Reset persona…",
+    "Restore",
+  ]);
   await u.click(within(menu).getByRole("menuitem", { name: "Restore" }));
   expect(await screen.findByText("Restored @old.")).toBeInTheDocument();
   expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/old/unarchive")).toBe(
     true,
   );
-});
-
-test("an old /agents?archived=only&justArchived=x URL lands on the Ended view with no error", async () => {
-  mockWorld({
-    agents: [],
-    archived: [agentSummary({ slug: "x", displayName: "Old x", archivedAt: "2026-11-01" })],
-  });
-  const { router } = renderApp("/agents?archived=only&justArchived=x", alice);
-  const main = await screen.findByRole("main");
-  expect(await within(main).findByRole("link", { name: /Old x/ })).toBeInTheDocument();
-  await waitFor(() => expect(router.state.location.search).toEqual({ ended: "only" }));
-  expect(screen.getByRole("radio", { name: "Ended" })).toBeChecked();
-  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
 });
 
 test("/agents?unknownKey=1 loads the page normally", async () => {

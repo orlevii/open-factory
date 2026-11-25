@@ -196,7 +196,7 @@ Each form keeps its values and checks and drops its own error machinery.
 
 - **sign-in, sign-up:** `useFieldErrors` with the Zod schemas split into per-field checks; blur now validates changed fields (DESIGN.md's auth special case goes); `AuthCard` takes `outcome`.
 - **task form:** checks title, body, links (one field; row messages derived from it), dependsOn via `f.set`; `MarkdownEditor invalid`; outcome in `SheetFormFooter`.
-- **task detail editors:** title, dependencies and links each use `useFieldErrors` with a `FieldNote` under the control (the title's validation moves from the failed line into its note); `EditorButtons`' `FormOutcome` holds the hint (notice) and the save failure.
+- **task detail editors:** title, description, dependencies and links each use `useFieldErrors` with a `FieldNote` under the control (the title's and the description's validation move from the failed line into their notes); `EditorButtons`' `FormOutcome` holds the hint (notice) and the save failure.
 - **schedule form:** checks target, cron, at, timezone, body; edit passes the changed fields to `submit`; outcome in `SheetFormFooter`.
 - **agent form-state:** owns one `useFieldErrors` (both modes check every field, as today); its body `InlineOutcome` and the `above` notice move to the footer `FormOutcome`.
 - **new template form, add credential/project/secret forms:** through `FormFrame`'s `outcome`.

@@ -30,6 +30,7 @@ import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { dockerodeClient } from "../src/runtime/docker/client.ts";
 import { containerName, LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { claimTestHandle } from "../src/test/handles.ts";
 import { agentWorkdir } from "../src/workspace/paths.ts";
 
 const IMAGE = "open-factory-base:dev";
@@ -83,7 +84,8 @@ const must = (name: string, cond: boolean, detail?: string) => {
 // realpath: macOS tmpdir is a /var symlink; the factory works with canonical paths (spec §10).
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-docker-")));
 const factoryHome = path.join(root, "home");
-const hostSkillsDir = path.join(root, "host-skills");
+const hostClaudeDir = path.join(root, "host-claude");
+const hostSkillsDir = path.join(hostClaudeDir, "skills");
 const repoDir = path.join(root, "smoke-repo");
 const marketDir = path.join(root, "smoke-market");
 const WORD = `OSPREY-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -248,8 +250,12 @@ async function turn(body: string, ms = 240_000): Promise<{ from: number; events:
   const from = await lastSeq();
   const rt = await app.runtimes.bySlug(SLUG);
   if (!rt) throw new Error(`no runtime for ${SLUG}`);
-  const sent = await app.router.send({ userId: "smoke", handle: "smoke" }, SLUG, body, false);
-  if (!sent.ok) throw new Error(`send to ${SLUG} failed: ${sent.message}`);
+  const [sent] = (await app.router.send({ userId: "smoke", handle: "smoke" }, [SLUG], body, false))
+    .results;
+  if (!sent || sent.status === "refused" || sent.status === "start_failed")
+    throw new Error(
+      `send to ${SLUG} failed: ${sent?.status === "refused" ? sent.reason : sent?.note}`,
+    );
   const got = await until(
     "the turn to end",
     async () => {
@@ -301,7 +307,7 @@ try {
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
     FACTORY_HOME: factoryHome,
-    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+    FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
     FACTORY_DEFAULT_IMAGE: IMAGE,
     HOST: process.env.HOST ?? "127.0.0.1",
     PORT: String(port),
@@ -351,15 +357,20 @@ try {
   appBuilt = true;
   await app.listen({ host: config.host, port: config.port });
   say(`  server: http://${config.host}:${config.port}; agents reach it at ${config.agentUrl}`);
+  await claimTestHandle(conn.db, "smoke", "user");
   await conn.sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
 
   await step("0. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step("0. temp git repo registered as project smoke-repo", () =>
     app.projects.create({ name: "smoke-repo", hostPath: repoDir }),
   );
   await step("0. docker template (haiku, warm window 1 min, one plugin) is valid", async () => {
+    // The template's marketplace must be registered in Skills (spec §7.4); a folder marketplace is live.
+    const source = JSON.stringify({ source: "directory", path: marketDir });
+    await conn.sql`insert into marketplaces (name, source, tags, state, started_at, added_by, added_at)
+      values ('smoke-market', ${source}::jsonb, '{}'::jsonb, 'ready', now(), '@smoke', now())`;
     writeTemplate("dock", {
       "template.yaml": [
         "name: dock",
@@ -369,7 +380,6 @@ try {
         "model: haiku",
         "warm_window_minutes: 1",
         "projects: [smoke-repo]",
-        "plugins: [heron@smoke-market]",
         "",
       ].join("\n"),
       "AGENTS.md":
@@ -379,6 +389,7 @@ try {
           extraKnownMarketplaces: {
             "smoke-market": { source: { source: "directory", path: marketDir } },
           },
+          enabledPlugins: { "heron@smoke-market": true },
         },
         null,
         2,
@@ -389,15 +400,18 @@ try {
     const errs = r?.issues.filter((i) => i.severity === "error") ?? [];
     if (!r || errs.length) throw new Error(JSON.stringify(errs));
   });
-  await step("0. agent smoke-dock created (plugin installed into plugins-config)", () =>
-    app.agents.create({
-      template: "dock",
-      slug: SLUG,
-      displayName: "Smoke Dock",
-      description: "Smoke Docker agent",
-      reportsTo: null,
-      credential: "smoke",
-    }),
+  await step("0. agent smoke-dock created (Claude Code installs the plugin at start)", () =>
+    app.agents.create(
+      {
+        template: "dock",
+        slug: SLUG,
+        displayName: "Smoke Dock",
+        description: "Smoke Docker agent",
+        reportsTo: null,
+        credential: "smoke",
+      },
+      { kind: "human", handle: "or" },
+    ),
   );
   agentId = String((await conn.sql`select id from agents where slug = ${SLUG}`)[0]?.id ?? "");
   const workdir = agentWorkdir(config.factoryHome, SLUG);

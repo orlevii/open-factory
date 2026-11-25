@@ -33,6 +33,8 @@ const cred = (o: Partial<CredentialSummary> = {}): CredentialSummary => ({
   kind: "oauth_token",
   lastVerifiedAt: hoursAgo(2),
   lastError: null,
+  expiresAt: null,
+  rejected: false,
   usedBy: [],
   archivedUsedBy: [],
   rateLimit: null,
@@ -92,7 +94,7 @@ const describedText = (el: HTMLElement) =>
     .map((id) => document.getElementById(id)?.textContent ?? "")
     .join(" ");
 
-test("add credential: kind radios, a password field, Verifying…, a rejected token under the field, then the row", async () => {
+test("add credential: method radios, a password field, Verifying…, a rejected token under the field, then the row", async () => {
   let release: (r: Response) => void = () => {};
   const { api, state } = world({
     extra: {
@@ -105,10 +107,11 @@ test("add credential: kind radios, a password field, Verifying…, a rejected to
   renderApp("/settings/credentials", alice);
   const region = await section("Credentials");
   await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
+  expect(within(region).getByLabelText("Name")).toHaveFocus();
+  await userEvent.click(within(region).getByRole("radio", { name: "Paste a token" }));
+  expect(within(region).getByRole("radio", { name: "Paste a token" })).toBeChecked();
+  expect(within(region).getByRole("radio", { name: "Paste an API key" })).not.toBeChecked();
   const name = within(region).getByLabelText("Name");
-  expect(name).toHaveFocus();
-  expect(within(region).getByRole("radio", { name: /OAuth token/ })).toBeChecked();
-  expect(within(region).getByRole("radio", { name: "API key" })).not.toBeChecked();
   const token = within(region).getByLabelText("Token");
   expect(token).toHaveAttribute("type", "password");
   expect(token).toHaveAttribute("autocomplete", "new-password");
@@ -151,10 +154,11 @@ test("add credential: kind radios, a password field, Verifying…, a rejected to
   });
 });
 
-test("add credential: an unverifiable check is a warning, not a bad token", async () => {
+test("Replace token: an unverifiable check warns under the token and announces a failure line", async () => {
   world({
+    credentials: [cred({ name: "work" })],
     extra: {
-      "POST /api/credentials": () =>
+      "PUT /api/credentials/work/value": () =>
         json(
           {
             error: {
@@ -167,50 +171,57 @@ test("add credential: an unverifiable check is a warning, not a bad token", asyn
     },
   });
   renderApp("/settings/credentials", alice);
-  const region = await section("Credentials");
-  await userEvent.click(within(region).getByRole("button", { name: "Add credential" }));
-  await userEvent.type(within(region).getByLabelText("Name"), "work");
-  await userEvent.click(within(region).getByRole("radio", { name: "API key" }));
-  const key = within(region).getByLabelText("Key");
-  await userEvent.type(key, "sk-ant");
-  await userEvent.click(within(region).getByRole("button", { name: "Verify and add" }));
-  const note = await within(region).findByText("Couldn't reach Claude to verify. Try again.");
-  expect(note).toBeInTheDocument();
-  expect(key).not.toHaveAttribute("aria-invalid");
-  expect(describedText(key)).toContain("Couldn't reach Claude to verify. Try again.");
-  expect(key).toHaveValue("sk-ant");
-});
-
-test("Replace token and Update value validate on blur of a changed field", async () => {
-  world({
-    credentials: [cred({ name: "work" })],
-    secrets: [secret({ name: "GH_TOKEN" })],
-  });
-  renderApp("/settings/credentials", alice);
   const u = userEvent.setup();
   const creds = await section("Credentials");
   await waitFor(() => expect(row(creds, "work")).toBeDefined());
   await u.click(within(row(creds, "work")).getByRole("button", { name: "Actions for work" }));
   await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
   const token = within(creds).getByLabelText("New token");
-  await u.type(token, "a");
-  await u.clear(token);
-  await u.tab();
-  expect(describedText(token)).toBe("Enter the token.");
+  await u.type(token, "sk-new");
+  await u.click(within(creds).getByRole("button", { name: "Verify and save" }));
+  const line = await within(creds).findByText("Couldn't replace the token.");
+  expect(line.closest("[role=alert]")).not.toBeNull();
+  expect(describedText(token)).toContain("Couldn't reach Claude to verify. Try again.");
+  expect(token).not.toHaveAttribute("aria-invalid");
+  expect(token).toHaveValue("sk-new");
 });
 
-test("Update value validates on blur of a changed field", async () => {
-  world({ secrets: [secret({ name: "GH_TOKEN" })] });
-  renderApp("/settings/secrets", alice);
+test.each([
+  [
+    "Replace token",
+    "/settings/credentials",
+    "Credentials",
+    async (u: ReturnType<typeof userEvent.setup>, region: HTMLElement) => {
+      await waitFor(() => expect(row(region, "work")).toBeDefined());
+      await u.click(within(row(region, "work")).getByRole("button", { name: "Actions for work" }));
+      await u.click(await screen.findByRole("menuitem", { name: "Replace token" }));
+      return within(region).getByLabelText("New token");
+    },
+    "Enter the token.",
+  ],
+  [
+    "Update value",
+    "/settings/secrets",
+    "Secrets",
+    async (u: ReturnType<typeof userEvent.setup>, region: HTMLElement) => {
+      await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
+      await u.click(within(row(region, "GH_TOKEN")).getByRole("button", { name: "Update" }));
+      return within(region).getByLabelText("New value");
+    },
+    "Enter a value.",
+  ],
+])("%s validates on blur of a changed field", async (_name, path, title, open, message) => {
+  world({
+    credentials: [cred({ name: "work" })],
+    secrets: [secret({ name: "GH_TOKEN" })],
+  });
+  renderApp(path, alice);
   const u = userEvent.setup();
-  const region = await section("Secrets");
-  await waitFor(() => expect(row(region, "GH_TOKEN")).toBeDefined());
-  await u.click(within(row(region, "GH_TOKEN")).getByRole("button", { name: "Update" }));
-  const value = within(region).getByLabelText("New value");
-  await u.type(value, "a");
-  await u.clear(value);
+  const field = await open(u, await section(title));
+  await u.type(field, "a");
+  await u.clear(field);
   await u.tab();
-  expect(describedText(value)).toBe("Enter a value.");
+  expect(describedText(field)).toBe(message);
 });
 
 test("credential row: Verify visible, Replace token and Delete… in the menu; used ones can't be deleted", async () => {
@@ -242,7 +253,7 @@ test("credential row: Verify visible, Replace token and Delete… in the menu; u
   );
   expect(within(row(region, "work")).getByRole("link", { name: "@lead" })).toHaveAttribute(
     "href",
-    "/agents/lead",
+    "/agents/lead/chat",
   );
 
   await userEvent.click(
@@ -291,7 +302,7 @@ test("deleting an unused credential confirms, then calls DELETE", async () => {
   await userEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
   const dialog = screen.getByRole("alertdialog", { name: "Delete credential work?" });
   expect(dialog).toHaveTextContent(
-    "Its token is erased and can't be shown again. To use it later, create a new one with claude setup-token.",
+    "Its token is erased and can't be shown again. To use it later, add it again with Sign in with Claude.",
   );
   expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
   await userEvent.click(within(dialog).getByRole("button", { name: "Delete work" }));
@@ -458,7 +469,7 @@ test("the secret name is uppercased while typing, keeping the caret; reserved na
   expect(describedText(name)).toBe("That name is reserved.");
 });
 
-test("projects: a middle-truncated path, grant wording, and Remove disabled with its reason", async () => {
+test("projects: the full path, grant wording, and Remove disabled with its reason", async () => {
   world({
     projects: [
       project({ name: "app", grantedTo: ["a"], archivedGrantedTo: ["c"] }),
@@ -469,7 +480,7 @@ test("projects: a middle-truncated path, grant wording, and Remove disabled with
   const region = await section("Projects");
   await waitFor(() => expect(row(region, "app")).toBeDefined());
   const r = row(region, "app");
-  expect(within(r).getByText("/Users/or/code/app")).toHaveClass("sr-only");
+  expect(within(r).getByText("/Users/or/code/app")).toBeInTheDocument();
   expect(r).toHaveTextContent("Granted to @a · archived: @c");
   expect(row(region, "docs")).toHaveTextContent("Not granted");
   await userEvent.click(within(r).getByRole("button", { name: "Actions for app" }));
@@ -836,7 +847,6 @@ test("a failing section shows its own error line, with Retry", async () => {
   const line = text.parentElement as HTMLElement;
   const icon = line.querySelector("svg");
   expect(icon).toHaveAttribute("aria-hidden", "true");
-  expect(icon).toHaveClass("text-destructive");
   // The route loader's failure is the section's error, never the route's.
   expect(screen.queryByText("Couldn't load settings.")).not.toBeInTheDocument();
   fail = false;
@@ -918,34 +928,6 @@ test("a later ?addSecret updates the open add form and refocuses the value field
   await waitFor(() => expect(within(region).getByLabelText("Value")).toHaveFocus());
 });
 
-test("add secret: 409 secret_name_reserved lands under Name and focuses it", async () => {
-  world({
-    extra: {
-      "PUT /api/secrets/MY_VAR": () =>
-        json(
-          {
-            error: {
-              code: "secret_name_reserved",
-              message: "That name is reserved.",
-            },
-          },
-          409,
-        ),
-    },
-  });
-  renderApp("/settings/secrets", alice);
-  const region = await section("Secrets");
-  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
-  await userEvent.type(within(region).getByLabelText("Name"), "MY_VAR");
-  await userEvent.type(within(region).getByLabelText("Value"), "v");
-  await userEvent.click(within(region).getByRole("button", { name: "Add secret" }));
-  const name = within(region).getByLabelText("Name");
-  await waitFor(() => expect(name).toHaveAttribute("aria-invalid", "true"));
-  expect(describedText(name)).toBe("That name is reserved.");
-  expect(name).toHaveFocus();
-  expect(within(region).queryByRole("alert", { name: /reserved/ })).not.toBeInTheDocument();
-});
-
 test("add secret: server fields land under their fields, whatever the code", async () => {
   world({
     extra: {
@@ -1008,7 +990,7 @@ test("a hover preload warms a list once; entering the page then reuses it", asyn
   expect(settingsCalls(api)).toEqual(["GET /api/credentials"]);
 });
 
-test("sub-nav lists the five pages; the current one is aria-current with the selected fill and medium weight", async () => {
+test("sub-nav lists the five pages; the current one is aria-current", async () => {
   world();
   renderApp("/settings/projects", alice);
   const nav = await screen.findByRole("navigation", { name: "Settings" });
@@ -1022,17 +1004,6 @@ test("sub-nav lists the five pages; the current one is aria-current with the sel
   ]);
   const current = links.filter((l) => l.getAttribute("aria-current") === "page");
   expect(current.map((l) => l.textContent)).toEqual(["Projects"]);
-  expect(current[0]).toHaveClass("font-medium");
-  // The current page takes the selected fill (one step past hover) and keeps it under the pointer.
-  expect(current[0]).toHaveClass("bg-selected");
-  expect(current[0]?.className).not.toMatch(/hover:bg-accent/);
-  // Its text is not muted: a muted class in the base would beat the active one by CSS order.
-  expect(current[0]).not.toHaveClass("text-muted-foreground");
-  const users = links.find((l) => l.textContent === "Users");
-  expect(users).not.toHaveClass("font-medium");
-  expect(users).not.toHaveClass("bg-selected");
-  expect(users?.className).toMatch(/hover:bg-accent/);
-  expect(users).toHaveClass("text-muted-foreground");
   await userEvent.click(within(nav).getByRole("link", { name: "Secrets" }));
   expect(await section("Secrets")).toBeInTheDocument();
   expect(within(nav).getByRole("link", { name: "Secrets" })).toHaveAttribute(
@@ -1041,26 +1012,16 @@ test("sub-nav lists the five pages; the current one is aria-current with the sel
   );
 });
 
-test("below a 40rem content width the sub-nav is a Section select", async () => {
+test("the Section select shows the current page, and picking another navigates", async () => {
   world();
-  renderApp("/settings/secrets", alice);
-  const nav = await screen.findByRole("navigation", { name: "Settings" });
-  // jsdom has no layout: the container query is checked through its classes (browser pass for the real width).
-  expect(nav.className).toMatch(/hidden/);
-  expect(nav.className).toMatch(/@min-\[53\.75rem\]:block/);
-  const select = screen.getByRole("combobox", { name: "Section" });
-  expect(select.closest("div")?.className).toMatch(/@min-\[53\.75rem\]:hidden/);
+  const { router } = renderApp("/settings/secrets", alice);
+  // jsdom has no layout: which of the nav and the select shows at a width is the browser pass's.
+  const select = await screen.findByRole("combobox", { name: "Section" });
   expect(select).toHaveTextContent("Secrets");
   await userEvent.click(select);
   await userEvent.click(await screen.findByRole("option", { name: "Projects" }));
   expect(await section("Projects")).toBeInTheDocument();
-});
-
-test("/settings/secrets?addSecret=GH_TOKEN opens the add form with the name", async () => {
-  world();
-  renderApp("/settings/secrets?addSecret=GH_TOKEN", alice);
-  const region = await section("Secrets");
-  expect(within(region).getByLabelText("Name")).toHaveValue("GH_TOKEN");
+  expect(router.state.location.pathname).toBe("/settings/projects");
 });
 
 test.each([

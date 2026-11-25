@@ -377,7 +377,7 @@ test("Restart of a stop_failed agent: the retry's SIGKILL exit reaps before the 
   expect(f.kills).toEqual([]);
 
   p.forceKill = kill;
-  await h.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await h.rt.settled();
   expect(f.kills).toEqual([[5000, "SIGTERM"]]);
   expect(f.startsAtKill).toEqual([1]);
@@ -407,7 +407,7 @@ test("a failed cleanup at a Restart's exit is stop_failed with no wake, and keep
   await vi.advanceTimersByTimeAsync(5_000);
   await h.rt.settled();
   p.forceKill = kill;
-  await h.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await h.rt.settled();
   expect(h.rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
   expect(h.driver.starts).toHaveLength(1);

@@ -1,10 +1,15 @@
 import path from "node:path";
 import {
+  type Actor,
   createTemplateBodySchema,
+  effectivePlugins,
   issuesResponseSchema,
   nameSchema,
+  putTemplateConfigBodySchema,
+  putTemplateConfigResponseSchema,
   putTemplateFileBodySchema,
   putTemplateFileResponseSchema,
+  templateConfigResponseSchema,
   templateDetailResponseSchema,
   templateFileSchema,
   templatesListSchema,
@@ -36,6 +41,10 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
   });
   // onRequest, not preHandler: auth must come before validation (401 before 400).
   app.addHook("onRequest", requireUser);
+  const humanOf = (req: FastifyRequest): Extract<Actor, { kind: "human" }> => {
+    if (!req.user) throw new Error("requireUser did not set request.user");
+    return { kind: "human", handle: req.user.handle };
+  };
 
   app.get("/api/templates", { schema: { response: { 200: templatesListSchema } } }, async (req) => {
     const rows = await app.templates.scan();
@@ -62,6 +71,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
             errors: r.issues.filter((i) => i.severity === "error").length,
             warnings: r.issues.filter((i) => i.severity === "warning").length,
             agentCount: byTemplate.get(r.name) ?? 0,
+            pluginCount: r.lastValid ? effectivePlugins(r.lastValid).length : 0,
             ...(imageStatus ? { imageStatus } : {}),
           };
         }),
@@ -105,7 +115,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
     "/api/templates",
     { schema: { body: createTemplateBodySchema, response: { 201: templateDetailResponseSchema } } },
     async (req, reply) => {
-      await app.templates.create(req.body);
+      await app.templates.create(req.body, humanOf(req));
       return reply.code(201).send({ template: await app.templates.detail(req.body.name) });
     },
   );
@@ -125,7 +135,36 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
         req.params.file,
         req.body.content,
         req.body.baseHash,
+        humanOf(req),
       ),
+  );
+
+  app.get(
+    "/api/templates/:name/config",
+    { schema: { params, response: { 200: templateConfigResponseSchema } } },
+    async (req) => app.templates.readConfig(req.params.name),
+  );
+
+  app.put(
+    "/api/templates/:name/config",
+    {
+      schema: {
+        params,
+        body: putTemplateConfigBodySchema,
+        response: { 200: putTemplateConfigResponseSchema },
+      },
+    },
+    async (req) => {
+      const { changed, ...saved } = await app.templates.writeConfig(
+        req.params.name,
+        req.body.doc,
+        req.body.baseHashes,
+        humanOf(req),
+      );
+      // At once, so an open template or agent page refreshes without waiting for the change flow (spec §7.1).
+      if (changed) app.bus.publishAll({ type: "config_changed", template: req.params.name });
+      return saved;
+    },
   );
 
   app.post(

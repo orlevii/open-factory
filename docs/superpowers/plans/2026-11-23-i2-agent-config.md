@@ -559,7 +559,7 @@ Implements spec §7.2, §6.2 (`started` readers) and §6.7.
   - `secrets/secret-service.ts:40` (`usedBy` per spec §6.7, using SQL on `templates.last_valid->'template'->'secrets'` and `agents.config->'template'->'secrets'`, plus the live children).
 
 **Interfaces:**
-- Produces: `class ConfigChanges { templateChanged(e): Promise<void>; overlaySaved(agent: AgentRow, by: string, before: ConfigDoc, after: ConfigDoc): Promise<{ changes: string[]; restart: boolean }> }`. It is never awaited by scans, and its restart requests are never awaited by HTTP.
+- Produces: `class ConfigChanges { templateChanged(e): Promise<void>; overlaySaved(agent: AgentRow, by: string, before: ConfigDoc, after: ConfigDoc): Promise<{ changes: string[]; restartChecked: boolean }> }`. It is never awaited by scans, and its restart requests are never awaited by HTTP.
 
 - [ ] **Step 1: Failing tests** (CI):
   - a template change with a new skill writes `config_changed` on each live agent of that template, persistent and spawned, records the notice and requests a restart for running ones only when `describeChanges(started.doc, after)` is non-empty;
@@ -888,6 +888,8 @@ Implements spec §12.2 sections 2–6. **Web:** the implementer and reviewer inv
 ### Task C4: Agent Configuration page and Raw JSON tab
 
 Implements spec §12.4 and DESIGN.md amendments 1, 4 and 5. **Web:** the implementer and reviewer invoke `vercel-react-best-practices` and follow it.
+
+**Note (A14):** the agent config GET never returns the template's skill folder names (`local_skill_names` is internal and stripped). The read-only "Template skills" list takes them from the template GET (`GET /api/templates/:name/config` or the template detail), not from the agent config response.
 
 **Files:**
 - Create: `apps/web/src/routes/_app/agents.$slug_.config.tsx`, `apps/web/src/features/config/{config-page,raw-json-tab,page-footer,config-states}.tsx`, `features/config/api.ts` (query options plus the PUT mutation), and tests.

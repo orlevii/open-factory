@@ -59,12 +59,12 @@ test("archived target: firings skip; unarchive recomputes from now without catch
   await boot();
   await h.seedAgent({ slug: "ceo" });
   const { item } = await make("ceo");
-  await h.app.agents.archive("ceo");
+  await h.app.agents.archive("ceo", { kind: "human", handle: "or" });
   await fireAt("2026-11-23T08:00:00Z");
   expect(await rows()).toHaveLength(0);
   expect((await h.app.schedules.get(item.key))?.state).toBe("skipped_archived");
   clock = new Date("2026-11-26T12:00:00Z"); // three runs passed while archived
-  await h.app.agents.unarchive("ceo");
+  await h.app.agents.unarchive("ceo", { kind: "human", handle: "or" });
   const s = await h.app.schedules.get(item.key);
   expect(s).toMatchObject({ state: "active", nextRunAt: "2026-11-27T08:00:00.000Z" });
   await h.app.scheduler.tick();
@@ -80,7 +80,7 @@ test("an archived persistent creator's schedules keep firing", async () => {
     { agentId: await idOf("dev") },
     { target: "ceo", ...weekday, body: "x" },
   );
-  await h.app.agents.archive("dev");
+  await h.app.agents.archive("dev", { kind: "human", handle: "or" });
   await fireAt("2026-11-23T08:00:00Z");
   expect(await rows()).toHaveLength(1);
   expect((await h.app.schedules.get(item.key))?.createdBy).toMatchObject({
@@ -111,6 +111,7 @@ test("a mid-turn target gets the row written at once", async () => {
   const row = await h.app.store.createMessage({
     from: { userId },
     toAgentId: await idOf("ceo"),
+    recipients: ["@test"],
     body: "go",
     urgent: false,
   });
@@ -136,6 +137,7 @@ test("hibernated and queued at a cap of 1: the row waits and a second firing rep
   const b = await h.app.store.createMessage({
     from: { userId },
     toAgentId: await idOf("busy"),
+    recipients: ["@test"],
     body: "hold the slot",
     urgent: false,
   });

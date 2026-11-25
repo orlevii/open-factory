@@ -15,6 +15,8 @@ import {
   sendAs,
   silentLog,
 } from "../agents/testing/runtime-harness.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
+
 import { createTestDb } from "../test/helpers.ts";
 import { Supervisor } from "./supervisor.ts";
 
@@ -23,6 +25,7 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -60,7 +63,13 @@ class World {
     await insertAgent(t.sql, { id, slug: `sup${n}`, ...(o.status ? { status: o.status } : {}) });
     if (o.errorKind) await t.sql`update agents set error_kind = ${o.errorKind} where id = ${id}`;
     for (const body of o.pending ?? [])
-      await store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
+      await store.createMessage({
+        from: { userId: "u1" },
+        toAgentId: id,
+        recipients: ["@test"],
+        body,
+        urgent: false,
+      });
     const agent = await store.agentById(id);
     if (!agent) throw new Error("no agent");
     const rt = new AgentRuntime({
@@ -574,7 +583,7 @@ test("a restart wake takes over a queued entry whose reason no longer wakes the 
   await busy(a);
   expect(w.sup.requestWake(b.agent.id, "message", false)).toBe("queued");
   await send(c, "c1");
-  await b.restart({ byHandle: "or", runtimeAllowed: true });
+  await b.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   expect(status(b)).toBe("queued"); // the entry kept its place, ahead of c, and is now the restart's wake
   endTurnAndExit(a);
   await w.settleAll();
@@ -593,9 +602,9 @@ test("a slot granted for an older request before Restart began starts the restar
   expect(w.sup.requestWake(b.agent.id, "message", false)).toBe("queued");
   // a's exit grants b its slot for "message"; Restart lands ahead of b's grant job.
   const original = b.grant.bind(b);
-  let restarting: Promise<void> | undefined;
+  let restarting: Promise<unknown> | undefined;
   vi.spyOn(b, "grant").mockImplementationOnce((reason) => {
-    restarting = b.restart({ byHandle: "or", runtimeAllowed: true });
+    restarting = b.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
     return original(reason);
   });
   endTurnAndExit(a);

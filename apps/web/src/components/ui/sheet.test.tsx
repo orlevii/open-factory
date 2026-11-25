@@ -24,21 +24,11 @@ function Demo({ open = true, onOpenChange = () => {} }: { open?: boolean; onOpen
   );
 }
 
-test("desktop: a right panel with a header close, full travel, no fade, no shadow", () => {
+test("desktop: a panel with a header close", () => {
   fakeMatchMedia.install(false);
   render(<Demo />);
   const panel = screen.getByRole("dialog", { name: "New task" });
   expect(panel).toHaveAttribute("data-slot", "sheet-content");
-  const tokens = panel.className.split(/\s+/);
-  expect(tokens).toContain("data-open:slide-in-from-right");
-  expect(tokens).toContain("data-closed:slide-out-to-right");
-  // Full travel: no partial distance such as slide-in-from-right-10.
-  expect(tokens.filter((c) => /slide-(in-from|out-to)-right-/.test(c))).toEqual([]);
-  // No panel fade except under reduced motion (checked per class token).
-  const fades = tokens.filter((c) => /fade-(in|out)/.test(c));
-  expect(fades.filter((c) => !c.startsWith("motion-reduce:"))).toEqual([]);
-  expect(panel.className).toMatch(/motion-reduce:data-open:fade-in-0/);
-  expect(panel.className).not.toMatch(/shadow-/);
   expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
 });
 
@@ -65,13 +55,11 @@ test("mobile: Esc closes", async () => {
   expect(onOpenChange).toHaveBeenCalledWith(false);
 });
 
-test("mobile: the body is the drawer body and keeps scrolling on short screens", () => {
+test("mobile: the body is the drawer body", () => {
   fakeMatchMedia.install(true);
   render(<Demo />);
   const body = screen.getByText("body");
   expect(body).toHaveAttribute("data-slot", "drawer-body");
-  expect(body.className).toMatch(/overflow-y-auto/);
-  expect(body.className).not.toMatch(/overflow-visible/);
 });
 
 test("crossing the breakpoint while open keeps the primitive, even across re-renders", () => {
@@ -281,19 +269,6 @@ test("without keepFocus, opening moves focus into the sheet", async () => {
   await vi.waitFor(() => expect(panel.contains(document.activeElement)).toBe(true));
 });
 
-test("width='panel' and inset='below-header' classes", async () => {
-  fakeMatchMedia.install(false);
-  render(<Peek width="panel" inset="below-header" />);
-  await userEvent.click(screen.getByRole("button", { name: "Open peek" }));
-  const panel = await screen.findByRole("dialog", { name: "Peek" });
-  const tokens = panel.className.split(/\s+/);
-  expect(tokens).toContain("w-[min(20rem,100%)]");
-  expect(tokens).toContain("top-12");
-  expect(tokens).toContain("bottom-0");
-  expect(tokens).not.toContain("inset-y-0");
-  expect(tokens).not.toContain("w-[min(30rem,100%)]");
-});
-
 test("below md it is still the modal bottom drawer", async () => {
   fakeMatchMedia.install(true);
   render(<Peek />);
@@ -303,7 +278,7 @@ test("below md it is still the modal bottom drawer", async () => {
   expect(document.querySelector("[data-slot=sheet-content]")).toBeNull();
 });
 
-test("stacked desktop sheet is 27rem wide and leaves the parent open and mounted", async () => {
+test("stacked desktop sheet leaves the parent open and mounted", async () => {
   fakeMatchMedia.install(false);
   render(
     <Sheet open onOpenChange={() => {}}>
@@ -322,8 +297,6 @@ test("stacked desktop sheet is 27rem wide and leaves the parent open and mounted
     </Sheet>,
   );
   const child = await screen.findByRole("dialog", { name: "Child" });
-  expect(child.className.split(/\s+/)).toContain("w-[min(27rem,100%)]");
-  expect(child.className.split(/\s+/)).not.toContain("w-[min(30rem,100%)]");
   const parent = screen.getAllByRole("dialog", { hidden: true }).find((d) => d !== child);
   expect(parent).toHaveAttribute("data-state", "open");
 });

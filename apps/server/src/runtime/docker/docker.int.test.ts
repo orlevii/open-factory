@@ -22,6 +22,7 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../../agents/event-store.ts";
 import { makeTestApp } from "../../test/helpers.ts";
+import { asRunning } from "../../test/running.ts";
 import { agentWorkdir } from "../../workspace/paths.ts";
 import { dockerodeClient } from "./client.ts";
 import { containerName, LABEL_AGENT_ID, READY_MARKER } from "./containers.ts";
@@ -192,15 +193,18 @@ async function setup(o: {
   await t.app.secrets.put("FAKE_CLAUDE_SCENARIO", settings.scenario);
   await t.app.secrets.put("FAKE_CLAUDE_DIR", settings.dir);
   if (o.grant) await t.app.projects.create({ name: "app", hostPath: gitRepo() });
-  await t.app.agents.create({
-    template: "dock",
-    slug,
-    displayName: "Dock",
-    description: "",
-    reportsTo: null,
-    credential: "work",
-    ...(o.grant ? { projects: ["app"] } : {}),
-  });
+  await t.app.agents.create(
+    {
+      template: "dock",
+      slug,
+      displayName: "Dock",
+      description: "",
+      reportsTo: null,
+      credential: "work",
+      ...(o.grant ? { projects: ["app"] } : {}),
+    },
+    { kind: "human", handle: "or" },
+  );
   const fake = installFakeClaude({ workdir, scenario: o.scenario });
   expect(fake.bin).toBe(env.FACTORY_DOCKER_CLAUDE_BIN);
   const agentId = await idOf(t.db, slug);
@@ -245,17 +249,24 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
   await t.app.secrets.put("FAKE_CLAUDE_SCENARIO", fake.secrets.FAKE_CLAUDE_SCENARIO);
   await t.app.secrets.put("FAKE_CLAUDE_DIR", fake.secrets.FAKE_CLAUDE_DIR);
   await t.app.projects.create({ name: "app", hostPath: repo });
-  await t.app.agents.create({
-    template: "lead",
-    slug: "lead",
-    displayName: "Lead",
-    description: "",
-    reportsTo: null,
-    credential: "work",
-    projects: ["app"],
-  });
+  await t.app.agents.create(
+    {
+      template: "lead",
+      slug: "lead",
+      displayName: "Lead",
+      description: "",
+      reportsTo: null,
+      credential: "work",
+      projects: ["app"],
+    },
+    { kind: "human", handle: "or" },
+  );
   const leadId = await idOf(t.db, "lead");
   agentIds.add(leadId);
+  // I2 §6.2: spawning follows the spawner's running process.
+  const leadRow = await t.app.store.agentById(leadId);
+  if (!leadRow) throw new Error("no lead");
+  await asRunning(t.app, leadRow);
   const cookie = (await t.signUpUser({ handle: "or" })).cookie;
 
   const r = await t.app.spawner.spawn(
@@ -304,9 +315,9 @@ const runtime = async (w: World, slug = w.slug) => {
 const post = async (w: World, body = "hi", slug = w.slug) => {
   const res = await w.app.inject({
     method: "POST",
-    url: `/api/agents/${slug}/messages`,
+    url: `/api/messages`,
     headers: { cookie: w.cookie },
-    payload: { body, urgent: false },
+    payload: { to: [slug], body, urgent: false },
   });
   expect(res.statusCode).toBe(202);
 };
@@ -408,7 +419,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       );
     expect(stdin).toHaveLength(1);
     expect(stdin[0].message.content).toMatch(
-      /^<factory-message from="@or" kind="message" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
+      /^<factory-message from="@or" from_kind="human" kind="message" to="@[a-z0-9-]+" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
     );
     const types = (await events(w)).map((e) => e.type);
     expect(types).toEqual([
@@ -502,7 +513,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     // A new grant changes the mounts, so the spec hash: the next start re-creates the container.
     const repo = gitRepo();
     await w.app.projects.create({ name: "app", hostPath: repo });
-    await w.app.agents.update(w.slug, { projects: ["app"] });
+    await w.app.agents.update(w.slug, { projects: ["app"] }, { kind: "human", handle: "or" });
     await idle(w, "with a project");
     const next = await inspect(w);
     expect(next.Id).not.toBe(first.Id);
@@ -552,7 +563,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     const afterResume = log.slice(log.indexOf(resumed as FakeLogEntry));
     const first = afterResume.find((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user");
     expect(first?.kind === "stdin" && JSON.parse(first.line).message.content).toMatch(
-      /^<factory-message from="@factory" kind="system"[^>]*>\nYour previous process stopped unexpectedly \(exit code 137\) during a turn\./,
+      /^<factory-message from="@factory" from_kind="factory" kind="system"[^>]*>\nYour previous process stopped unexpectedly \(exit code 137\) during a turn\./,
     );
     expect(await claudes(w)).toHaveLength(1);
   });
@@ -692,14 +703,17 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     hostFakes.push(local);
     const w = await setup({ scenario: LONG, local });
     writeTemplate(w.home, "loc", "runtime: local\n");
-    await w.app.agents.create({
-      template: "loc",
-      slug: "loc",
-      displayName: "Loc",
-      description: "",
-      reportsTo: null,
-      credential: "work",
-    });
+    await w.app.agents.create(
+      {
+        template: "loc",
+        slug: "loc",
+        displayName: "Loc",
+        description: "",
+        reportsTo: null,
+        credential: "work",
+      },
+      { kind: "human", handle: "or" },
+    );
     const locId = await idOf(w.t.db, "loc");
     await w.app.close();
 
@@ -712,7 +726,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
         ...process.env,
         DATABASE_URL: w.t.config.databaseUrl,
         FACTORY_SECRET_KEY: SECRET_KEY,
-        FACTORY_HOST_SKILLS_DIR: w.t.config.hostSkillsDir,
+        FACTORY_HOST_CLAUDE_DIR: w.t.config.hostClaudeDir,
         FACTORY_ALLOW_LOCAL_RUNTIME: "true",
         ...w.env,
         PORT: String(port),
@@ -736,9 +750,9 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       expect((await fetch(`${base}/api/status`).catch(() => undefined))?.ok).toBe(true);
     }, 60_000);
     for (const slug of ["dock", "loc"]) {
-      const res = await api(`/api/agents/${slug}/messages`, {
+      const res = await api(`/api/messages`, {
         method: "POST",
-        body: JSON.stringify({ body: "long job", urgent: false }),
+        body: JSON.stringify({ to: [slug], body: "long job", urgent: false }),
       });
       expect(res.status).toBe(202);
     }

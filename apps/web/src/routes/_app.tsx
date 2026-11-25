@@ -1,22 +1,28 @@
-import type { AgentDetail, ServerMessage } from "@open-factory/shared";
+import type { AgentConfigResponse, AgentDetail, ServerMessage } from "@open-factory/shared";
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect, useNavigate } from "@tanstack/react-router";
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { Toaster } from "@/components/ui/toaster";
-import { OutputDialogHost } from "@/features/agents/show-output";
+import { Toaster, notify as toast } from "@/components/ui/toaster";
+import { onRestartFrame, resetRestartLatch } from "@/features/agents/lifecycle";
+import { RestartConfirmHost } from "@/features/agents/restart-confirm";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
+import { onChatChanged } from "@/features/chat/use-chat";
+import { agentConfigQueryOptions, templateConfigQueryOptions } from "@/features/config/api";
 import { useInboxNotifier } from "@/features/inbox/notifications";
+import { createOrgToasts } from "@/features/org/org-toasts";
 import { CommandPalette } from "@/features/palette/command-palette";
 import { summaryFromAgentsList } from "@/features/session/api";
+import { invalidateCommands } from "@/features/session/commands";
 import { dropUploadsExcept } from "@/features/session/uploads";
 import { preloadAllSheets } from "@/features/sheets/sheet-bodies";
 import { SheetHost } from "@/features/sheets/sheet-host";
 import { GlobalShortcuts } from "@/features/shortcuts/global-shortcuts";
 import { useConnectionLost } from "@/lib/connection";
 import { installFileDropGuard } from "@/lib/file-drop";
+import { invalidateLibrary, onLibraryChanged } from "@/lib/library";
 import { SESSION_GUARD_RETRIES, sessionQueryOptions } from "@/lib/session";
 import { installShortcuts } from "@/lib/shortcuts";
 import { connectWs, type WsConnection, type WsStatus } from "@/lib/ws";
@@ -73,6 +79,7 @@ function AppLayout() {
   // A file dropped outside the composer never navigates away from the app (U3 §13.5).
   useEffect(() => installFileDropGuard(), []);
   useEffect(() => {
+    const orgToasts = createOrgToasts({ notify: toast, navigate: (to) => navigate({ to }) });
     const connection = connectWs({
       // A failed check (5xx, network) rejects; connectWs then keeps retrying instead of signing out.
       hasSession: async () => {
@@ -84,6 +91,8 @@ function AppLayout() {
       onMessage: (m) => {
         // agent_status and supervisor frames are folded into the caches once per animation frame.
         enqueueStatusFrame(qc, m);
+        // Restart now's pending latch ends on the next status frame or an error event.
+        onRestartFrame(m);
         // A message reached the humans: refetch the Inbox (only a mounted list actually fetches).
         if (m.type === "inbox_changed") {
           void qc.invalidateQueries({ queryKey: ["inbox"] });
@@ -91,12 +100,18 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["inbox-home"] });
           notifyRef.current();
         }
+        // I1: a chat on screen refreshes its newest page (one request in flight, one trailing).
+        onChatChanged(qc, m);
+        // I1: an agent started, so its `/` list is stale (an open menu fetches it again).
+        invalidateCommands(qc, m);
         // S8: the list, an open detail page and the agents' open-task counts refetch (only mounted ones fetch).
         if (m.type === "tasks_changed") {
           void qc.invalidateQueries({ queryKey: ["tasks"] });
           void qc.invalidateQueries({ queryKey: ["agents"] });
           void qc.invalidateQueries({ queryKey: ["agent"] });
         }
+        // I5: the Skills views refetch once per 250 ms window (only mounted ones fetch).
+        if (m.type === "library_changed") onLibraryChanged(qc, m);
         // S9: the Schedules page, an open edit page and the agents' schedule counts refetch (only mounted ones fetch).
         if (m.type === "schedules_changed") {
           void qc.invalidateQueries({ queryKey: ["schedules"] });
@@ -117,6 +132,43 @@ function AppLayout() {
           void qc.invalidateQueries({ queryKey: ["images"] });
           void qc.invalidateQueries({ queryKey: ["templates"] });
         }
+        // I2 §12.4: an open Configuration page (or template tab) refetches; nothing else reads these keys.
+        if (m.type === "config_changed") {
+          // I5 §9.5: a template or agent change moves the Skills lists and used-by counts.
+          invalidateLibrary(qc);
+          if (m.agent)
+            void qc.invalidateQueries({
+              queryKey: agentConfigQueryOptions(m.agent).queryKey,
+              exact: true,
+            });
+          if (m.template) {
+            const template = m.template;
+            void qc.invalidateQueries({
+              queryKey: templateConfigQueryOptions(template).queryKey,
+              exact: true,
+            });
+            // An open agent page on this template: it may have just turned broken (or fixed), which no per-agent
+            // frame reports. Only mounted queries refetch.
+            void qc.invalidateQueries({
+              queryKey: ["agent-config"],
+              predicate: (q) =>
+                (q.state.data as AgentConfigResponse | undefined)?.template.name === template,
+            });
+          }
+        }
+        // I7: an agent changed the org: one merged toast per actor window; the lists it touched refetch.
+        if (m.type === "org_action") {
+          orgToasts.onOrgAction(m);
+          if (m.action === "template_created")
+            void qc.invalidateQueries(
+              { queryKey: ["templates"], exact: true },
+              { cancelRefetch: false },
+            );
+          else {
+            void qc.invalidateQueries({ queryKey: ["agents"] });
+            void qc.invalidateQueries({ queryKey: ["agent", m.subject] });
+          }
+        }
         if (m.type === "agent_status") {
           // Before the first frame for an agent, the cached list or detail (fetched over REST) tells
           // whether a turn was already open when the socket connected. The queued frame lands on a
@@ -135,6 +187,8 @@ function AppLayout() {
       },
       onOpen: () => {
         setOpenCount((n) => n + 1);
+        // A status frame dropped while the socket was down would leave "Restarting…" until reload.
+        resetRestartLatch();
         // The first open follows the loaders' fetches; a reconnect may have missed turn ends and
         // supervisor frames while the socket was down.
         if (!opened.current) {
@@ -142,7 +196,8 @@ function AppLayout() {
           return;
         }
         // Only mounted queries refetch; the rest are marked stale.
-        void qc.invalidateQueries();
+        // Chats refresh their newest page themselves (the union), never wholesale.
+        void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "chat" });
       },
     });
     conn.current = connection;
@@ -150,6 +205,7 @@ function AppLayout() {
     const removeFlush = installStatusFrameFlush();
     return () => {
       removeFlush();
+      orgToasts.dispose();
       connection.close();
       conn.current = null;
       clearTimeout(usageTimer.current);
@@ -214,10 +270,10 @@ function AppLayout() {
             <Outlet />
           </SidebarInset>
           <Toaster />
-          <OutputDialogHost />
           <CommandPalette />
           <GlobalShortcuts />
           <SheetHost />
+          <RestartConfirmHost />
         </SidebarProvider>
       </ShellContext.Provider>
     </WsContext.Provider>

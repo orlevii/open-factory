@@ -61,15 +61,6 @@ describe("loadConfig", () => {
     expect(o.agentHosts).toEqual(["127.0.0.1", "10.0.0.5"]);
     expect(o.agentUrl).toBe("http://factory:9000");
   });
-  test("the cap and the debounce are no longer config (S10 Q6): set values are not read", () => {
-    const c = loadConfig({
-      ...ok,
-      FACTORY_MAX_RUNNING_AGENTS: "0",
-      FACTORY_MEMBER_UPDATE_DEBOUNCE_SECONDS: "-1",
-    });
-    expect("maxRunningAgents" in c).toBe(false);
-    expect("memberUpdateDebounceMs" in c).toBe(false);
-  });
   test("FACTORY_MAX_SPAWNS_PER_HOUR defaults to 20 and is at least 1", () => {
     expect(loadConfig(ok).maxSpawnsPerHour).toBe(20);
     expect(loadConfig({ ...ok, FACTORY_MAX_SPAWNS_PER_HOUR: "3" }).maxSpawnsPerHour).toBe(3);
@@ -139,21 +130,43 @@ describe("loadConfig", () => {
   test("production flag", () => {
     expect(loadConfig({ ...ok, NODE_ENV: "production" }).isProduction).toBe(true);
   });
-  test("host skills dir defaults to ~/.claude/skills and expands ~", () => {
+  test("host Claude dir defaults to ~/.claude and expands ~", () => {
     const c = loadConfig({ DATABASE_URL: "x", FACTORY_SECRET_KEY: "k".repeat(40) });
-    expect(c.hostSkillsDir).toBe(path.join(os.homedir(), ".claude", "skills"));
+    expect(c.hostClaudeDir).toBe(path.join(os.homedir(), ".claude"));
     expect(
       loadConfig({
         DATABASE_URL: "x",
         FACTORY_SECRET_KEY: "k".repeat(40),
-        FACTORY_HOST_SKILLS_DIR: "~/s",
-      }).hostSkillsDir,
-    ).toBe(path.join(os.homedir(), "s"));
+        FACTORY_HOST_CLAUDE_DIR: "~/c",
+      }).hostClaudeDir,
+    ).toBe(path.join(os.homedir(), "c"));
     expect("claudeToken" in c).toBe(false);
   });
+  test("GitHub base URL defaults to github.com; a file:// fixture is accepted", () => {
+    expect(loadConfig(ok).githubUrl).toBe("https://github.com");
+    expect(loadConfig({ ...ok, FACTORY_GITHUB_URL: "file:///tmp/fixtures/" }).githubUrl).toBe(
+      "file:///tmp/fixtures",
+    );
+    expect(() => loadConfig({ ...ok, FACTORY_GITHUB_URL: "ftp://x" })).toThrow(
+      /FACTORY_GITHUB_URL/,
+    );
+  });
+  test.each(["https://u:tok@github.com", "https://tok@github.com"])(
+    "a GitHub base URL with credentials (%s) is refused at boot",
+    (url) => {
+      expect(() => loadConfig({ ...ok, FACTORY_GITHUB_URL: url })).toThrow(
+        /FACTORY_GITHUB_URL.*username or password/s,
+      );
+    },
+  );
 });
 
 describe("removedEnvWarnings", () => {
+  test("FACTORY_HOST_SKILLS_DIR names its replacement", () => {
+    expect(removedEnvWarnings({ FACTORY_HOST_SKILLS_DIR: "~/s" })).toEqual([
+      "FACTORY_HOST_SKILLS_DIR is no longer read; set FACTORY_HOST_CLAUDE_DIR to the Claude folder.",
+    ]);
+  });
   test("names each removed variable that is still set", () => {
     expect(removedEnvWarnings({ FACTORY_MAX_RUNNING_AGENTS: "4" })).toEqual([
       "FACTORY_MAX_RUNNING_AGENTS is no longer read; set it in Settings → Factory.",
@@ -191,6 +204,8 @@ describe("FACTORY_TIMEZONE", () => {
     );
   });
   test("empty means not set", () => {
-    expect(loadConfig({ ...ok, FACTORY_TIMEZONE: "" }).factoryTimezone).toBeTruthy();
+    expect(loadConfig({ ...ok, FACTORY_TIMEZONE: "" }).factoryTimezone).toBe(
+      loadConfig(ok).factoryTimezone,
+    );
   });
 });

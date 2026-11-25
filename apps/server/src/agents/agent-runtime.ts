@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import type { AgentRow, MessageRow, RuntimeJournal } from "@open-factory/db";
 import {
   type AgentRuntimeSpec,
@@ -9,13 +11,15 @@ import {
   type HarnessDriver,
   type HarnessProcess,
   type LiveEvent,
+  neutraliseEnvelopeTags,
   ProcessNotRunningError,
 } from "@open-factory/harness";
 import {
   type AgentStatus,
   type AgentStatusFrame,
   type AnyEvent,
-  commandText,
+  type ConfigSnapshot,
+  describeChanges,
   type Envelope,
   type ErrorKind,
   errorKindSchema,
@@ -34,6 +38,7 @@ import {
   type WaitingOn,
 } from "@open-factory/shared";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
+import { readManifest } from "../library/plugin-settings.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import { type FactDetail, type Forward, factFor } from "../messaging/forwarder.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
@@ -46,6 +51,7 @@ import { dockerStartError } from "../runtime/docker/errors.ts";
 import type { SlotPort, WakeReason } from "../supervisor/slots.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import { capText } from "./cap.ts";
+import type { Effective } from "./config-resolver.ts";
 import {
   AgentArchivedError,
   AgentStartError,
@@ -55,6 +61,7 @@ import {
   forSpawnedAgent,
   NoOpenTurnError,
   RecoveryRefusedError,
+  SelfCommandPendingError,
   type StartFix,
   StopCronsError,
 } from "./errors.ts";
@@ -71,7 +78,7 @@ import {
 import { type NoticeType, notices } from "./notices.ts";
 import { classifyResumeFailure } from "./resume-failure.ts";
 import { SerialQueue } from "./serial-queue.ts";
-import type { PreparedSpec, PrepareStart } from "./start.ts";
+import type { PreparedSpec, StartPreparer } from "./start.ts";
 
 export interface RuntimeLog {
   debug(obj: object, msg: string): void;
@@ -86,13 +93,11 @@ export interface RuntimeDeps {
   bus: EventBus;
   driver: HarnessDriver;
   /** Builds the spec for a process start. It takes the agent's slug lock itself: never call it while holding that lock. */
-  prepareStart: PrepareStart;
+  prepareStart: StartPreparer;
   /** Per-launch agent tokens (spec §5.2): minted before each start, revoked when that process exits. */
   tokens: Pick<AgentTokens, "mint" | "revoke">;
   log: RuntimeLog;
   holdTimeoutMs?: number;
-  /** Called with the spec of the first start (AgentRuntimes uses it for the one-time version check). */
-  onFirstStart?: (spec: AgentRuntimeSpec) => void;
   /** The Supervisor's slot port (spec §5.2), which also owns the credential pauses (§7). */
   slots: SlotPort;
   /**
@@ -116,7 +121,7 @@ export interface RuntimeDeps {
    */
   memberUpdateDebounceMs?: () => number;
   /**
-   * S10 §8.2: the factory default warm window in minutes, read live, for a snapshot that omits `warmWindowMinutes`
+   * S10 §8.2: the factory default warm window in minutes, read live, for a started config that omits `warmWindowMinutes`
    * (70 when absent); `settingsChanged()` re-arms an armed warm timer on a change.
    */
   defaultWarmWindowMinutes?: () => number;
@@ -195,48 +200,95 @@ export type AfterExit =
   | { kind: "internal" }; // S3's onJobFailure stop
 
 /**
- * A pending message row (S6 §8): `from` is the envelope sender (`@handle` for a human, the bare slug for an agent,
- * `@factory`); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
+ * A pending message row (S6 §8): `from` is the envelope sender (`@handle` for a human or an agent, `@factory`); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
  * the UI needs for a peer event.
  */
 type MessageEntry = {
   kind: "message";
   row: MessageRow;
   from: string;
+  fromKind: "human" | "agent" | "factory";
   groupKey?: string;
   about?: string;
   subject?: Subject;
 };
-type CompactEntry = { kind: "compact"; id: string; focus?: string; by: string; createdAt: Date };
 /**
- * U3 §13.3 (Q39): a human's slash command, in memory like a compact. `text` is the raw `/name args` (the allowed
- * entry's name, built here); `userId` is the sender, the only one who may cancel it.
+ * I1 §6.3 (D3): a written batch, kept until the turn that consumes it closes. `workingFor` answers from these, so a page
+ * knows whose message a turn is working on from the write, long before `turn_started` or the stamp.
  */
-type CommandEntry = {
-  kind: "command";
+type WrittenBatch = {
+  ids: string[];
+  /** Each row's human sender (`null` for an agent, a schedule, the factory). */
+  senders: Map<string, string | null>;
+  writtenAt: string;
+  /** The id of each human's first `message` row in the batch. */
+  firstIdBySender: Map<string, string>;
+  /** The entries written, so a cut restart can put a batch whose turn never started back in the queue (I7 §9.2.1 step 4). */
+  entries: MessageEntry[];
+};
+function writtenBatch(batch: MessageEntry[], writtenAt: string): WrittenBatch {
+  const senders = new Map<string, string | null>();
+  const firstIdBySender = new Map<string, string>();
+  for (const { row } of batch) {
+    senders.set(row.id, row.fromUserId);
+    if (row.kind === "message" && row.fromUserId && !firstIdBySender.has(row.fromUserId))
+      firstIdBySender.set(row.fromUserId, row.id);
+  }
+  return { ids: [...senders.keys()], senders, writtenAt, firstIdBySender, entries: batch };
+}
+/** The human senders of written batches, once each. */
+function sendersOf(batches: WrittenBatch[]): string[] {
+  const out = new Set<string>();
+  for (const b of batches) for (const u of b.senders.values()) if (u) out.add(u);
+  return [...out];
+}
+type CompactEntry = {
+  kind: "compact";
   id: string;
-  text: string;
-  userId: string;
+  focus?: string;
   by: string;
+  /** The human sender; an agent's entry (`send_command`) has none, so nobody can cancel it. */
+  userId?: string;
+  self?: boolean;
   createdAt: Date;
   clientMessageId?: string;
 };
-type Entry = MessageEntry | CompactEntry | CommandEntry;
+/**
+ * I1 §5.1: raw session input (text or a slash command), in memory like a compact. `text` is written as typed, one user
+ * line with no envelope; `by` is the sender's handle (`@orlevi`); `userId` is the human sender, the only one who may
+ * cancel it (an agent's own entry, `self`, has none).
+ */
+type RawEntry = {
+  kind: "raw";
+  id: string;
+  text: string;
+  userId?: string;
+  by: string;
+  self?: boolean;
+  createdAt: Date;
+  clientMessageId?: string;
+};
+type Entry = MessageEntry | CompactEntry | RawEntry;
 /** U3 §13.3: how many written command ids the runtime remembers, so a late Cancel says "already delivered". */
-const WRITTEN_COMMANDS_KEPT = 100;
+const WRITTEN_RAW_KEPT = 100;
 /** U3 §13.3: how many (sender, clientMessageId) dispatches the runtime remembers, so a retry never runs twice. */
-const COMMAND_RETRIES_KEPT = 200;
+const RAW_RETRIES_KEPT = 200;
 
 type Subject = NonNullable<Envelope["subject"]>;
 
 const isNotice = (e: Entry): e is MessageEntry => e.kind === "message" && e.row.kind === "system";
 /**
- * S9 §10.3: a notice that never makes an agent wake, stay up or be kept alive by itself (`crons_stopped`: the agent was
- * stopped on purpose). It rides at the head of the next batch that has something else. The one predicate every place
- * that counts a queued item as a reason to act uses.
+ * S9 §10.3, I2 §7.3: a notice that never makes an agent wake, stay up or be kept alive by itself (`crons_stopped`: the
+ * agent was stopped on purpose; `config_changed`: the change applies at the next start; `report_config_changed`
+ * (I7 §8.2): a report's config change is information for a manager, never work). It rides at the head of the
+ * next batch that has something else. The one predicate every place that counts a queued item as a reason to act uses.
  */
 const isPassive = (e: Entry): boolean =>
-  e.kind === "message" && e.row.kind === "system" && e.row.notice === "crons_stopped";
+  e.kind === "message" &&
+  e.row.kind === "system" &&
+  (e.row.notice === "crons_stopped" ||
+    e.row.notice === "config_changed" ||
+    e.row.notice === "report_config_changed");
 const kindOf = (row: MessageRow): MessageKind => row.kind as MessageKind;
 /** Member updates and peer events: never written mid-turn, written with any batch written while no turn is open. */
 const isHeld = (e: Entry): e is MessageEntry =>
@@ -261,20 +313,26 @@ const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
 function entryOf(r: PendingRow): MessageEntry {
   const { fromHandle, fromSlug, subjectSlug, subjectDisplayName, ...row } = r;
   let from: string;
+  let fromKind: MessageEntry["fromKind"] = "factory";
   if (row.kind === "system") from = "@factory";
   // S9: a scheduled row has no sender columns; it is from the scheduler (its author travels as `by`).
   else if (row.kind === "scheduled") from = "@scheduler";
-  else if (fromHandle) from = `@${fromHandle}`;
-  else if (fromSlug) from = fromSlug;
-  else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
+  else if (fromHandle) {
+    from = `@${fromHandle}`;
+    fromKind = "human";
+  } else if (fromSlug) {
+    from = `@${fromSlug}`;
+    fromKind = "agent";
+  } else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
   else from = "@factory";
   const groupKey = fromSlug ?? subjectSlug ?? undefined;
   const entry: MessageEntry = {
     kind: "message",
     row,
     from,
+    fromKind,
     ...(groupKey ? { groupKey } : {}),
-    ...(subjectSlug ? { about: subjectSlug } : {}),
+    ...(subjectSlug ? { about: `@${subjectSlug}` } : {}),
   };
   if ((row.kind === "peer_joined" || row.kind === "peer_left") && subjectSlug) {
     const left = row.kind === "peer_left" ? peerLeftOf(row.body) : undefined;
@@ -302,12 +360,14 @@ const scheduleFieldsOf = (
     scheduleKey?: string | null;
     scheduleZone?: string | null;
     authorLabel?: string | null;
+    authorKind?: "human" | "agent" | null;
   },
 ) =>
   row.kind === "scheduled" && row.scheduleKey
     ? {
         scheduleKey: row.scheduleKey,
         ...(row.authorLabel ? { by: row.authorLabel } : {}),
+        ...(row.authorKind ? { byKind: row.authorKind } : {}),
         ...(row.dueAt ? { due: formatOffsetIso(row.dueAt, row.scheduleZone ?? "UTC") } : {}),
         ...(row.firings ? { firings: row.firings } : {}),
         ...(row.late ? { late: true } : {}),
@@ -328,6 +388,8 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
   from: e.from,
+  fromKind: e.fromKind,
+  ...(e.row.recipients ? { to: e.row.recipients } : {}),
   urgent: e.row.urgent,
   body: e.row.body,
   createdAt: e.row.createdAt,
@@ -391,12 +453,32 @@ type LiveCron = {
 const toEnvelopes = (batch: MessageEntry[]): FactoryMessage[] =>
   groupEnvelopes(batch.map(toBatchRow));
 
+/** I7 §9.2: what a `restartNow` did; it never waits for the start. */
+export type RestartOutcome = {
+  status: "restarting" | "restart_pending" | "not_running" | "restarted_idle";
+  note?: string;
+};
+
+/** I7 §9.2 row 8: the refusal text, from what a forced restart would stop. */
+const lostWorkMessage = (slug: string, lost: { tasks: string[]; crons: string[] }) => {
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const parts = [
+    ...(lost.tasks.length
+      ? [
+          `${plural(lost.tasks.length, "background task")} (${lost.tasks.map((t) => `\`${t}\``).join(", ")})`,
+        ]
+      : []),
+    ...(lost.crons.length ? [plural(lost.crons.length, "cron")] : []),
+  ];
+  return `@${slug} has ${parts.join(" and ")}; pass force: true to restart anyway.`;
+};
+
 export class AgentRuntime {
   agent: AgentRow;
   private readonly jobs = new SerialQueue();
   private proc: HarnessProcess | undefined;
   private deadProc: HarnessProcess | undefined;
-  private started = false; // session_started seen for this process
+  private sessionStarted = false; // session_started seen for this process
   private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the slug lock)
   private openTurnId: string | undefined;
   /** U3 §5.2: when the open turn's `turn_started` was stored (ISO); set and cleared with `openTurnId`. */
@@ -409,7 +491,10 @@ export class AgentRuntime {
   private held: MessageEntry[] = [];
   private readonly seen = new Set<string>(); // every row id this runtime loaded or was handed (S6 §7.3)
   private inFlight: MessageEntry[][] = []; // written, waiting for session_started
-  private awaiting: string[][] = []; // written with no open turn, waiting for a user-initiated turn_end
+  private awaiting: WrittenBatch[] = []; // written with no open turn, waiting for a user-initiated turn_end
+  private absorbed: WrittenBatch[] = []; // written into the open turn (already stamped with it)
+  /** An exit's snapshot of `awaiting` and `absorbed` until its close settles, so `workingFor` never goes blank (I1 §6.3). */
+  private closing: WrittenBatch[] | undefined;
   private awaitingKinds: MessageKind[][] = []; // the kinds of each `awaiting` batch (an update-only turn, S6 §8.1)
   private turnKinds: MessageKind[] = []; // kinds written into the open turn (absorbed)
   // S6 §8.1: rows pending when a turn (not update-only) ended are due at once; cleared when held is written.
@@ -417,12 +502,32 @@ export class AgentRuntime {
   private heldTimer: ReturnType<typeof setTimeout> | undefined;
   private heldFiredFor: number | undefined; // the due time the held timer last fired for: never fired twice
   private compactInFlight = false;
-  /** U3 §13.3: a command was written and its turn hasn't ended; nothing is written behind it (like a compact). */
-  private commandInFlight = false;
+  /** A manual `compact_failed` arrived while `compactInFlight`: whether Claude then sends the compact's own
+   *  `turn_end{command: "compact"}` is unverified, so the next origin-less `turn_end` also ends the compact. */
+  private compactFailedSeen = false;
+  /**
+   * I1 §6.3 (D3): the user's message a turn is working on, read synchronously for `GET /chat`. `key` is the id of the
+   * user's first message in the batch (or, with none awaiting, the first absorbed into the open turn); `since` is that
+   * batch's write time. Reports an exit's snapshot until its close settles.
+   */
+  workingFor(userId: string): { key: string; since: string } | null {
+    for (const b of [...(this.closing ?? []), ...this.awaiting, ...this.absorbed]) {
+      const key = b.firstIdBySender.get(userId);
+      if (key) return { key, since: b.writtenAt };
+    }
+    return null;
+  }
+
+  /** I1 §5.1: a raw entry was written and its turn hasn't ended; nothing is written behind it (like a compact). */
+  private rawInFlight = false;
+  /** I1 §7: the written raw entry is the agent's own command. */
+  private rawSelf = false;
+  /** I1 §7: the agent's own `/compact` was written; `failed` once a `compact_failed` came after it. Gone on exit. */
+  private selfCompact: { failed: boolean } | undefined;
   /** U3 §13.3: written commands' ids and senders (the newest few), for the Cancel that arrives too late. */
-  private readonly writtenCommands = new Map<string, string>();
+  private readonly writtenRaw = new Map<string, string>();
   /** U3 §13.3: `userId \0 clientMessageId` → the dispatch's entry, queued or written (the newest few). */
-  private readonly commandRetries = new Map<string, CommandEntry>();
+  private readonly rawRetries = new Map<string, RawEntry | CompactEntry>();
   private hold: ReturnType<typeof setTimeout> | undefined;
   private errored: boolean;
   private archived: boolean;
@@ -436,6 +541,7 @@ export class AgentRuntime {
   private provisionalLatches = 0;
   // What the first provisional latch held back, restored when the last one is undone.
   private restartPendingAtLatch = false;
+  private pendingWakeAtLatch = false;
   private lastError: string | undefined;
   private errorKind: ErrorKind | undefined;
   // Spec §9.2: an attempt to bring back interrupted work is in progress (persisted). `attemptReason` is its wake's
@@ -454,10 +560,54 @@ export class AgentRuntime {
   private readonly escalated = new WeakSet<HarnessProcess>(); // SIGKILLed or container-stopped: its exit reaps (§9.6)
   private escalationTimer: ReturnType<typeof setTimeout> | undefined;
   private lastStatusJson = "";
-  private firstStartDone = false;
   private submitted = 0;
   // Apply-restart (spec §13)
   private restartPending = false;
+  /**
+   * I7 §9.5: the pending restart is a self-edit's: its exit adds a waking `config_continue` notice and wakes the agent.
+   * Set only with `restartPending` (by `requestRestart`), kept by Stop crons' takeover, and consumed or cleared by
+   * every exit and every stop or takeover that clears `restartPending`, so a crash or archive never carries it.
+   */
+  private pendingWake = false;
+  /** I2 §7.3: the change lines the pending restart applies (`restartChanges`); cleared on every exit and launch. */
+  private pendingChanges = new Set<string>();
+  /** I2 §7.2: the config lines of the pending restart, `describeChanges(started, current)`; replaced, never unioned. */
+  private configChanges: string[] = [];
+  /** A pending restart was also asked for by something other than a config change (credential, grants, manager). */
+  private otherRestartCause = false;
+  /**
+   * I2 §6.2: the config the current process started with (`PreparedSpec.effective`), set at the launch and cleared at
+   * its exit; undefined while nothing runs. Whatever describes the running process reads it. Holds env values: never log
+   * it.
+   */
+  started: Effective | undefined;
+  /** The plugins the running process was started to load, each with its pin (spec §7.3 step 8); checked at its first `init`. */
+  private expectedPlugins: { key: string; pin: string }[] = [];
+  /** Where a plugin `init` reports may live (the agent's plugins dir, the registered directory marketplaces). */
+  private pluginRoots: string[] = [];
+  /**
+   * The version of each plugin the process's first `init` listed (spec §7.3 step 8). Deliberately not in
+   * `started.library`: a loaded version never counts as a config change.
+   */
+  loadedPlugins: Record<string, string> = {};
+  /**
+   * I2 §7.3: the store-clock stamp taken before the current process's prepare. A `config_changed` row created after it
+   * describes a change this process may not have, so it is held for the next process.
+   */
+  private procStartedAt: Date | undefined;
+  /**
+   * I2 §6.2: the image the next Docker start is expected to use, which the Supervisor's synchronous `refOf` checks and
+   * pulls before the grant. Kept by `AgentRuntimes` for a loaded runtime (undefined when the template was invalid at
+   * load) and refreshed on every config change; a start that resolves another image updates it and goes back through
+   * the pull.
+   */
+  nextImage: string | undefined;
+  /**
+   * I7 §9.2.1: a cut restart is under way. While set, nothing is written to the old process (`flush`), whoever calls it.
+   * Cleared by every exit and by `stop()`; the fallback is its bound (`holdTimeoutMs`), cleared with it.
+   */
+  private restartNowPending?: { by: string; changes: string[] | null };
+  private restartNowFallback?: ReturnType<typeof setTimeout>;
   private stopping = false; // a deliberate stop of the current process began: flush() writes nothing
   /** S7 §8 step 5: the sweep's last Docker list showed a container left for this terminated agent. */
   private containerListed = false;
@@ -465,7 +615,7 @@ export class AgentRuntime {
   private afterExit: AfterExit | undefined; // the intent of the stop in progress, consumed by the `exited` job
   private noStart = false; // the closing latch (spec §5.6): never launch again
   // The runtime of the last launched process (or of a container a start left that couldn't be stopped): its exit and
-  // cleanup follow it, even if a re-sync changed the row since.
+  // cleanup follow it, even if the row changed since.
   private procRuntime: "local" | "docker" | undefined;
   private lastImage: string | undefined; // Docker: the image reference of the last start (spec §8.2)
   // A start whose container couldn't be stopped (spec §9.6): stop_failed, and startNow must not give the slot back.
@@ -525,7 +675,7 @@ export class AgentRuntime {
     if (this.terminationCommitted) {
       // S7 §8: a terminated agent receives nothing. A row still pending to it (one that raced in during a crash window)
       // is rejected, never queued.
-      await this.d.store.rejectPending(this.agent.id);
+      this.chatChanged(await this.d.store.rejectPending(this.agent.id));
       this.updateHeldTimer();
       return;
     }
@@ -577,11 +727,11 @@ export class AgentRuntime {
     return this.apiJob(async () => {
       if (this.terminationCommitted) {
         // S7 §8 step 2: the transaction rejected what was pending; a row handed over after it is rejected here.
-        await this.d.store.markRejected(row.id);
+        this.chatChanged([await this.d.store.markRejected(row.id)]);
         throw new AgentTerminatedError(this.agent.slug);
       }
       if (this.archived) {
-        await this.d.store.markRejected(row.id);
+        this.chatChanged([await this.d.store.markRejected(row.id)]);
         const at = this.queue.findIndex((e) => e.kind === "message" && e.row.id === row.id);
         if (at !== -1) {
           this.queue.splice(at, 1);
@@ -658,7 +808,7 @@ export class AgentRuntime {
    */
   cancelQueued(messageId: string, userId: string): Promise<QueueItem> {
     return this.apiJob(async () => {
-      const cmd = this.cancelCommand(messageId, userId);
+      const cmd = this.cancelRaw(messageId, userId);
       if (cmd) return cmd;
       const row = await this.d.store.messageRow(messageId);
       assertSender(row, { agentId: this.agent.id, userId });
@@ -671,6 +821,7 @@ export class AgentRuntime {
       if (!(await this.d.store.cancelPending(messageId))) throw new AlreadyDeliveredError();
       this.queue.splice(at, 1);
       this.publishQueue();
+      this.chatChanged([userId]);
       return this.itemOf(entry);
     });
   }
@@ -679,16 +830,16 @@ export class AgentRuntime {
    * U3 §13.3 (Q39): a held command is the sender's to cancel, with no restore; another user gets `NotSenderError`, and
    * a written one `AlreadyDeliveredError` (for its sender). Undefined when `id` is no command's.
    */
-  private cancelCommand(id: string, userId: string): QueueItem | undefined {
-    const at = this.queue.findIndex((e) => e.kind === "command" && e.id === id);
+  private cancelRaw(id: string, userId: string): QueueItem | undefined {
+    const at = this.queue.findIndex((e) => e.kind === "raw" && e.id === id);
     const entry = this.queue[at];
-    if (entry?.kind === "command") {
-      if (entry.userId !== userId) throw new NotSenderError();
+    if (entry?.kind === "raw") {
+      if (entry.userId === undefined || entry.userId !== userId) throw new NotSenderError();
       this.queue.splice(at, 1);
       this.publishQueue();
       return this.itemOf(entry);
     }
-    const sender = this.writtenCommands.get(id);
+    const sender = this.writtenRaw.get(id);
     if (sender === undefined) return undefined;
     if (sender !== userId) throw new NotSenderError();
     throw new AlreadyDeliveredError();
@@ -717,6 +868,7 @@ export class AgentRuntime {
       this.seen.add(row.id);
       this.insertByCreated(entryOf(row));
       this.publishQueue();
+      this.chatChanged([userId]);
       if (this.messageStartsAttempt()) await this.beginAttempt("message", true);
       else {
         if (this.messageMayAttempt() && this.proc) this.attemptOwedAtExit = true;
@@ -730,11 +882,22 @@ export class AgentRuntime {
    * Adds (or refreshes) a `@factory` notice. Call inside a job. A new notice goes ahead of every non-notice entry
    * (older pending messages, rolled-back batches); a replaced pending one only changes its body. Starts nothing.
    */
-  async addNotice(type: NoticeType, body: string) {
+  async addNotice(type: NoticeType, body: string, subjectAgentId?: string) {
     const row = await this.d.store.createNotice(
-      { toAgentId: this.agent.id, notice: type, body },
-      this.inFlight.flat().map((e) => e.row.id),
+      {
+        toAgentId: this.agent.id,
+        notice: type,
+        body,
+        ...(subjectAgentId ? { subjectAgentId } : {}),
+      },
+      { inFlightIds: this.inFlight.flat().map((e) => e.row.id) },
     );
+    this.placeNotice(row);
+    this.publishQueue();
+  }
+
+  /** A notice row into the queue: its entry refreshed when queued, else ahead of every non-notice entry. */
+  private placeNotice(row: MessageRow) {
     const existing = this.queue.find(
       (e): e is MessageEntry => e.kind === "message" && e.row.id === row.id,
     );
@@ -746,9 +909,65 @@ export class AgentRuntime {
         kind: "message",
         row,
         from: "@factory",
+        fromKind: "factory",
       });
     }
-    this.publishQueue();
+  }
+
+  /**
+   * I2 §7.3: records config change lines in the one pending `config_changed` notice (merged, sorted). Passive: it wakes
+   * nothing and is held from the running process (see `flush`), so only the next process reads it. Never throws for a
+   * terminated agent: its rows are rejected anyway.
+   */
+  recordConfigNotice(lines: string[]): Promise<void> {
+    return this.run(async () => {
+      if (this.terminationCommitted || !lines.length) return;
+      await this.addNotice("config_changed", notices.configChanged(lines));
+    });
+  }
+
+  /**
+   * I7 §8.2: records an agent actor's change to one of this agent's reports in the one pending
+   * `report_config_changed` notice for that report (merged, sorted). Passive like `recordConfigNotice`. Never throws
+   * for a terminated agent.
+   */
+  recordReportNotice(reportId: string, by: string, lines: string[]): Promise<void> {
+    return this.run(async () => {
+      if (this.terminationCommitted || !lines.length) return;
+      const report = await this.d.store.agentById(reportId);
+      if (!report) return;
+      await this.addNotice(
+        "report_config_changed",
+        notices.reportConfigChanged({ by, report: report.slug, lines }),
+        reportId,
+      );
+    });
+  }
+
+  /**
+   * I2 §7.3: the `config_changed` event, appended as a job so it is published in seq order with this runtime's other
+   * events (an open Session shows it live). `changes` are `describeChanges` lines only: never a config value.
+   */
+  appendConfigChanged(by: string, changes: string[]): Promise<void> {
+    return this.run(async () => {
+      await this.append(null, { type: "config_changed", by, changes });
+    });
+  }
+
+  /**
+   * I2 §7.3: a `config_changed` row written through the store while this runtime was loading (its init may have read
+   * the queue before that write committed). Re-read: queued, its entry is refreshed; unseen and still pending, queued.
+   */
+  adoptNotice(id: string): Promise<void> {
+    return this.run(async () => {
+      if (this.terminationCommitted) return;
+      const queued = this.queue.some((e) => e.kind === "message" && e.row.id === id);
+      if (this.seen.has(id) && !queued) return; // written (or rejected) meanwhile
+      const row = await this.d.store.pendingJoined(id);
+      if (!row) return;
+      this.placeNotice(entryOf(row).row);
+      this.publishQueue();
+    });
   }
 
   /** `addNotice` as its own job, then a flush (never starts a process). */
@@ -759,18 +978,44 @@ export class AgentRuntime {
     });
   }
 
-  async compact(c: { focus?: string; byHandle: string }): Promise<QueueItem> {
+  /** I1 §7: one command queued for itself per agent: queued, or written with its turn still running. */
+  private selfCommandPending(): boolean {
+    return (
+      this.queue.some((e) => (e.kind === "raw" || e.kind === "compact") && e.self) ||
+      Boolean(this.selfCompact) ||
+      (this.rawInFlight && this.rawSelf)
+    );
+  }
+
+  /** `focus` is neutralised here (§5.1.3), so every caller is covered. */
+  async compact(c: {
+    focus?: string;
+    byHandle: string;
+    userId?: string;
+    clientMessageId?: string;
+    self?: boolean;
+  }): Promise<QueueItem> {
     const entry: CompactEntry = {
       kind: "compact",
       id: randomUUID(),
-      by: c.byHandle,
+      by: `@${c.byHandle}`,
       createdAt: new Date(),
-      ...(c.focus ? { focus: c.focus } : {}),
+      ...(c.userId ? { userId: c.userId } : {}),
+      ...(c.self ? { self: true } : {}),
+      ...(c.focus ? { focus: neutraliseEnvelopeTags(c.focus) } : {}),
+      ...(c.clientMessageId ? { clientMessageId: c.clientMessageId } : {}),
     };
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (c.self && this.selfCommandPending()) throw new SelfCommandPendingError();
+      // A retry (a lost 202) returns the earlier dispatch and queues nothing, as for raw input.
+      const retryKey =
+        c.userId && c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
+      const dup = retryKey ? this.rawRetries.get(retryKey) : undefined;
+      if (dup) return this.itemOf(dup);
       this.queue.push(entry);
+      if (retryKey) this.rememberRetry(retryKey, entry);
       this.publishQueue();
       await this.wakeInline("compact");
       await this.flush();
@@ -779,49 +1024,54 @@ export class AgentRuntime {
     });
   }
 
+  private rememberRetry(key: string, entry: RawEntry | CompactEntry): void {
+    this.rawRetries.set(key, entry);
+    if (this.rawRetries.size > RAW_RETRIES_KEPT) {
+      const [oldest] = this.rawRetries.keys();
+      if (oldest !== undefined) this.rawRetries.delete(oldest);
+    }
+  }
+
   /**
-   * U3 §13.3: a human's slash command. The caller has resolved `name` against the allowed set; the raw text is built
-   * here from that name, with `args` as data. Held until no turn is open, written on its own, and a barrier until its
-   * turn ends. A retry with the same sender and `clientMessageId` returns the queued item.
+   * I1 §5.1: raw session input. The caller has classified and neutralised `text`. Held until no turn is open, written
+   * as one user line with no envelope, and a barrier until its turn ends. A retry with the same sender and
+   * `clientMessageId` returns the queued item.
    */
-  async command(c: {
-    name: string;
-    args: string;
-    userId: string;
-    byHandle: string;
+  async rawInput(c: {
+    text: string;
+    by: string;
+    userId?: string;
     clientMessageId?: string;
+    self?: boolean;
   }): Promise<QueueItem> {
-    const entry: CommandEntry = {
-      kind: "command",
+    const entry: RawEntry = {
+      kind: "raw",
       id: randomUUID(),
-      text: commandText(c.name, c.args),
-      userId: c.userId,
-      by: c.byHandle,
+      text: c.text,
+      by: c.by,
       createdAt: new Date(),
+      ...(c.userId ? { userId: c.userId } : {}),
+      ...(c.self ? { self: true } : {}),
       ...(c.clientMessageId ? { clientMessageId: c.clientMessageId } : {}),
     };
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
+      if (c.self && this.selfCommandPending()) throw new SelfCommandPendingError();
       // A retry (a lost 202) returns the earlier dispatch, queued, written or cancelled, and writes nothing.
-      const retryKey = c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
-      const dup = retryKey ? this.commandRetries.get(retryKey) : undefined;
+      const retryKey =
+        c.userId && c.clientMessageId ? `${c.userId}\0${c.clientMessageId}` : undefined;
+      const dup = retryKey ? this.rawRetries.get(retryKey) : undefined;
       if (dup) return this.itemOf(dup);
-      if (this.proc && !this.proc.command) throw new CommandsUnsupportedError();
+      if (this.proc && !this.proc.raw) throw new CommandsUnsupportedError();
       this.queue.push(entry);
-      if (retryKey) {
-        this.commandRetries.set(retryKey, entry);
-        if (this.commandRetries.size > COMMAND_RETRIES_KEPT) {
-          const [oldest] = this.commandRetries.keys();
-          if (oldest !== undefined) this.commandRetries.delete(oldest);
-        }
-      }
+      if (retryKey) this.rememberRetry(retryKey, entry);
       this.publishQueue();
-      await this.wakeInline("command");
-      // A process started just now that can't write commands: take it back rather than drop it later.
-      if (this.proc && !this.proc.command) {
+      await this.wakeInline("raw");
+      // A process started just now that can't write raw input: take it back rather than drop it later.
+      if (this.proc && !this.proc.raw) {
         this.queue = this.queue.filter((e) => e !== entry);
-        if (retryKey) this.commandRetries.delete(retryKey);
+        if (retryKey) this.rawRetries.delete(retryKey);
         this.publishQueue();
         throw new CommandsUnsupportedError();
       }
@@ -844,8 +1094,8 @@ export class AgentRuntime {
       if (this.hold) return;
       // U3 §13.3 (review M1): a written command whose turn never opened has nothing to interrupt, and its turn_end may
       // never come; Stop ends its barrier so the queue moves again.
-      if (this.proc && this.commandInFlight && !this.openTurnId) {
-        this.commandInFlight = false;
+      if (this.proc && this.rawInFlight && !this.openTurnId) {
+        this.rawInFlight = false;
         await this.append(null, { type: "control", cmd: "interrupt", by: `@${c.byHandle}` });
         this.publishQueue();
         await this.flush();
@@ -906,7 +1156,7 @@ export class AgentRuntime {
         // `restart_crons` notice, and wakes only for non-passive items.
         a.reason = "crons_stopped";
         a.by = by;
-        this.restartPending = false;
+        this.restartPending = false; // `pendingWake` stays: the exit honours it (I7 §9.5)
         await this.addStopNotice(by);
         this.publishStatus();
         return { status: "stopped" as const };
@@ -972,9 +1222,29 @@ export class AgentRuntime {
   /**
    * Applies config changes at the next safe moment: stop the process gracefully and resume the same session on
    * the next start, whose prepareStart reloads everything from the DB. A no-op when no process is running.
+   * `changes` (I2 §7.3) are the lines the restart applies, shown as `restartChanges` until the process exits; callers
+   * that restart for other reasons (credential, grants, manager) pass none. `wake` is I7's self-edit (§9.5): when a restart ends up pending the
+   * agent is woken after it with `config_continue`, no human message needed; a `current` that finds no difference
+   * leaves neither.
+   * `current` (I2 §7.2, I5 §8.2) reads the agent's effective doc and Library now (a fresh row through the resolver); undefined when it can't
+   * be read. It is called here, in the job, so the decision always compares what the process started with against the
+   * latest committed config, never against a doc a caller computed from rows read earlier: a request issued from stale
+   * reads can't cancel a restart a newer change needs. The restart happens only when `describeChanges(started,
+   * current)` is non-empty, and those lines are what it applies: a start already on the latest config restarts nothing,
+   * and two edits that cancel out restart nothing. An unreadable config (a broken template or overlay) leaves what is
+   * pending as it is: the next start fails closed anyway.
+   * The config lines are kept apart from other causes and replaced on every `current` request. When they become empty
+   * and no other cause is pending, the pending restart is dropped.
    */
-  async requestRestart(): Promise<void> {
+  async requestRestart(
+    opts: {
+      changes?: string[];
+      wake?: boolean;
+      current?: () => Promise<ConfigSnapshot | undefined>;
+    } = {},
+  ): Promise<void> {
     await this.run(async () => {
+      const now = opts.current ? await opts.current() : undefined;
       // Not running (or already going away): the next start reads the new values anyway.
       if (
         this.proc &&
@@ -983,53 +1253,280 @@ export class AgentRuntime {
         !this.stopping &&
         !this.terminated
       ) {
+        this.dropClearedRestart();
+        if (opts.current && this.started) {
+          if (!now) {
+            this.publishStatus();
+            return;
+          }
+          this.configChanges = describeChanges(this.started, now);
+          if (!this.configChanges.length && !this.otherRestartCause) {
+            this.restartPending = false;
+            this.pendingWake = false;
+            this.publishStatus();
+            return;
+          }
+        } else {
+          this.otherRestartCause = true;
+          for (const c of opts.changes ?? []) this.pendingChanges.add(c);
+        }
         this.restartPending = true;
+        if (opts.wake) this.pendingWake = true;
         this.maybeRestart();
       }
       this.publishStatus();
     });
   }
 
+  /** A cleared restart (stop, exit, takeover) leaves nothing of its causes behind. */
+  private dropClearedRestart() {
+    if (this.restartPending) return;
+    this.pendingWake = false;
+    this.otherRestartCause = false;
+    this.configChanges = [];
+    this.pendingChanges.clear();
+  }
+
+  /** In a job: a restart when idle for a cause other than a config diff (`requestRestart` without `current`, for jobs). */
+  private markRestartPending(changes: string[]) {
+    this.dropClearedRestart();
+    this.otherRestartCause = true;
+    for (const c of changes) this.pendingChanges.add(c);
+    this.restartPending = true;
+    this.maybeRestart();
+  }
+
   /**
-   * Restart (spec §9.7): the restart notice, `control{restart}`, then one attempt. A process left is force-stopped
-   * and its exit makes the wake; a `stop_failed` agent gets one more escalation try first (§9.6).
+   * Restart now (I7 §9.2), for agents and humans: one check table, the first match deciding, run in an API job. The
+   * errored rows (1, 5, 6) come before the starting and stopping rows (2-4) because a `stop_failed` agent keeps
+   * `deadProc` set and `stopping` true. Never call a public runtime method in here: each is its own job, and jobs are
+   * serial, so it would wait on itself. `by` is an `@handle`. `changes` are the caller's `describeChanges` lines, `null`
+   * when its resolver failed. `runtimeAllowed` is only "the local runtime is disabled in this factory".
    */
-  restart(r: { byHandle: string; runtimeAllowed: boolean }): Promise<void> {
+  restartNow(r: {
+    by: string;
+    force: boolean;
+    changes: string[] | null;
+    runtimeAllowed: boolean;
+  }): Promise<RestartOutcome> {
     return this.apiJob(async () => {
+      const { by } = r;
+      const slug = this.agent.slug;
       this.refuseTerminated();
-      if (this.archived) throw new AgentArchivedError(this.agent.slug);
-      this.refuseRecoveryWhileAttempting();
-      if (!this.errored)
+      if (this.archived) throw new AgentArchivedError(slug);
+      if (this.errored) {
+        if (this.errorKind === "resume_unrecoverable")
+          throw new RecoveryRefusedError(
+            "resume_unrecoverable",
+            `@${slug}'s session can't be resumed; a human must start a new session.`,
+          );
+        return this.restartErrored(by, r.runtimeAllowed);
+      }
+      const proc = this.proc;
+      if (this.starting || this.attempting || (proc && !this.sessionStarted))
+        throw new RecoveryRefusedError("starting", `@${slug} is starting; try again shortly.`);
+      // `stopping` outlives the exit (a fresh start resets it), so it only counts while a process is left.
+      if (proc && (this.stopping || proc === this.deadProc || proc === this.failingProc))
+        throw new RecoveryRefusedError("stopping", `@${slug} is stopping; try again shortly.`);
+      if (this.compactInFlight)
         throw new RecoveryRefusedError(
-          "not_errored",
-          `@${this.agent.slug} isn't errored. Restart is only for an errored agent.`,
+          "compacting",
+          `@${slug} is compacting; try again when it finishes.`,
         );
-      if (this.errorKind === "resume_unrecoverable")
-        throw new RecoveryRefusedError(
-          "resume_unrecoverable",
-          "This session can't be resumed. Start a new session instead.",
-        );
-      if (!r.runtimeAllowed)
-        throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
-      this.refuseWhileStopping();
-      const by = `@${r.byHandle}`;
-      const lost = this.proc ? this.lostSnapshot() : { tasks: [], crons: [] };
-      await this.addNotice(
-        "restart",
-        notices.restart({
-          by,
+      if (!proc) return { status: "not_running" as const };
+      if (this.restartNowPending) {
+        // A cut restart is already under way: the later caller's name and changes win; nothing more to start.
+        this.restartNowPending = { by, changes: r.changes };
+        return { status: "restarting" as const };
+      }
+      const lost = this.lostSnapshot();
+      const hasLost = lost.tasks.length > 0 || lost.crons.length > 0;
+      if (hasLost && !r.force) {
+        const data = {
           tasks: lost.tasks.map((t) => t.description || t.taskId),
           crons: lost.crons.map((c) => c.humanSchedule),
-        }),
+        };
+        throw new RecoveryRefusedError("lost_work", lostWorkMessage(slug, data), data);
+      }
+      const turnWork = Boolean(
+        this.openTurnId || this.awaiting.length || this.rawInFlight || this.hold,
       );
-      await this.append(null, { type: "control", cmd: "restart", by });
-      if (this.stopFailed()) await this.retryStopFailed(by);
-      else if (this.proc) {
-        await this.markAttempting("restart");
-        this.beginForceStop({ kind: "restart", by }, { graceMs: 0, termWaitMs: 3000 });
-      } else await this.beginAttempt("restart", false);
+      if (turnWork || hasLost) {
+        // Rows 9 and 10 start a process again.
+        if (!r.runtimeAllowed)
+          throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
+        await this.beginCutRestart(by, r.changes);
+        this.publishStatus();
+        return { status: "restarting" as const };
+      }
+      if (this.owedNotifications > 0) {
+        this.markRestartPending(r.changes ?? []);
+        this.publishStatus();
+        return {
+          status: "restart_pending" as const,
+          note: `@${slug} restarts in a moment, once a finished task's result is delivered.`,
+        };
+      }
+      // Row 12: an idle restart is a hibernate; the next start reads the latest config.
+      if (!this.beginHibernate("apply_changes")) {
+        // Refused (a batch still in flight): same as row 11, restart once it is delivered.
+        this.markRestartPending(r.changes ?? []);
+        this.publishStatus();
+        return {
+          status: "restart_pending" as const,
+          note: `@${slug} restarts in a moment, once its current messages are delivered.`,
+        };
+      }
+      if (r.changes?.length)
+        await this.addNotice("config_changed", notices.configChanged(r.changes));
       this.publishStatus();
+      return { status: "restarted_idle" as const };
     });
+  }
+
+  /**
+   * Rows 9 and 10 (spec §9.2.1 steps 1 to 3), inside the job: hold every write, then interrupt the open turn, wait for
+   * the turn an `awaiting` batch is still to start, or stop at once (no turn work, or a raw command whose turn may
+   * never come). The stop itself is `beginRestartNowStop`, from the first release point.
+   */
+  private async beginCutRestart(by: string, changes: string[] | null) {
+    this.restartNowPending = { by, changes };
+    this.armRestartNowFallback();
+    try {
+      await this.cutRestartSteps(by);
+    } catch (err) {
+      // Never leave the write hold set: nothing would release it.
+      this.clearRestartNow();
+      if (this.attempting && this.attemptReason === "restart" && !this.stopping) {
+        this.attempting = false; // `markAttempting` ran but no stop began, so no exit will clear it
+        this.attemptReason = undefined;
+        await this.d.store.setAttempting(this.agent.id, false).catch(() => undefined);
+        this.publishStatus();
+      }
+      throw err;
+    }
+  }
+
+  private async cutRestartSteps(by: string) {
+    if (this.openTurnId) {
+      if (this.hold) return; // a Stop's or an urgent send's hold is reused, not replaced
+      try {
+        await this.beginInterruptHold(by);
+      } catch (err) {
+        if (!(err instanceof ProcessNotRunningError)) throw err;
+        // The process is going away and its `exited` isn't processed yet.
+        throw new RecoveryRefusedError(
+          "stopping",
+          `@${this.agent.slug} is stopping; try again shortly.`,
+        );
+      }
+      return;
+    }
+    if (this.awaiting.length) return; // `turn_started` interrupts, or the fallback stops
+    await this.beginRestartNowStop();
+  }
+
+  /** The bound on a cut restart: if no release point fired within `holdTimeoutMs`, stop anyway (spec §9.2.1 step 2). */
+  private armRestartNowFallback() {
+    if (this.restartNowFallback) clearTimeout(this.restartNowFallback);
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      void this.run(async () => {
+        if (this.restartNowFallback !== timer) return;
+        this.restartNowFallback = undefined;
+        if (!this.restartNowPending) return;
+        try {
+          await this.beginRestartNowStop();
+        } catch (err) {
+          if (this.proc) await this.onJobFailure(this.proc, err);
+          else this.d.log.error({ err, agent: this.agent.slug }, "cut restart fallback failed");
+        }
+        this.publishStatus();
+      }).catch((err) =>
+        this.d.log.error({ err, agent: this.agent.slug }, "cut restart fallback job failed"),
+      );
+    }, this.d.holdTimeoutMs ?? 10_000);
+    this.restartNowFallback = timer;
+  }
+
+  private clearRestartNow() {
+    this.restartNowPending = undefined;
+    if (this.restartNowFallback) clearTimeout(this.restartNowFallback);
+    this.restartNowFallback = undefined;
+  }
+
+  /**
+   * Spec §9.2.1 step 3, inside a job: the stop of a cut restart, from the first of `turn_end`, the interrupt hold's
+   * timeout and the fallback. Does nothing when a stop is already under way (an archive or shutdown that began
+   * meanwhile wins). The exit makes the attempt and its wake (`markAttempting`).
+   */
+  private async beginRestartNowStop(): Promise<void> {
+    const pending = this.restartNowPending;
+    const proc = this.proc;
+    if (
+      !pending ||
+      !proc ||
+      this.terminated ||
+      this.stopping ||
+      proc === this.deadProc ||
+      proc === this.failingProc
+    ) {
+      // Known gap (PR 3 review, minor 3): when only a provisional `terminated` latch is the reason and the
+      // termination then fails (`unmarkTerminated`), the restart the caller was told about is dropped. Rare
+      // (spawned agents, failed TTL or terminate), so accepted.
+      if (!this.stopping) this.clearRestartNow();
+      return;
+    }
+    if (this.restartNowFallback) clearTimeout(this.restartNowFallback);
+    this.restartNowFallback = undefined;
+    await this.markAttempting("restart");
+    const lost = this.lostSnapshot(); // fresh: tasks started during the interrupt window are killed too (T4)
+    await this.append(null, { type: "control", cmd: "restart", by: pending.by });
+    // A batch written with no turn open whose turn never started was marked delivered by its write and would be
+    // dropped by the exit: back to pending and the head of the queue, since a duplicate beats a lost message.
+    if (!this.openTurnId && this.awaiting.length) {
+      const batches = this.awaiting;
+      this.awaiting = [];
+      this.awaitingKinds = [];
+      await this.d.store.markPending(batches.flatMap((b) => b.ids));
+      this.requeue(batches.flatMap((b) => b.entries));
+    }
+    await this.addNotice(
+      "restart_applied",
+      notices.restartApplied({
+        by: pending.by,
+        changes: pending.changes,
+        tasks: lost.tasks.map((t) => t.description || t.taskId),
+        crons: lost.crons.map((c) => c.humanSchedule),
+      }),
+    );
+    this.beginForceStop({ kind: "restart", by: pending.by }, { graceMs: 3000, termWaitMs: 10_000 });
+  }
+
+  /**
+   * Row 6, Restart of an errored agent (spec §9.7): the restart notice, `control{restart}`, then one attempt. A process
+   * left is force-stopped and its exit makes the wake; a `stop_failed` agent gets one more escalation try first (§9.6).
+   */
+  private async restartErrored(by: string, runtimeAllowed: boolean) {
+    this.refuseRecoveryWhileAttempting();
+    if (!runtimeAllowed) throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
+    this.refuseWhileStopping();
+    const lost = this.proc ? this.lostSnapshot() : { tasks: [], crons: [] };
+    await this.addNotice(
+      "restart",
+      notices.restart({
+        by,
+        tasks: lost.tasks.map((t) => t.description || t.taskId),
+        crons: lost.crons.map((c) => c.humanSchedule),
+      }),
+    );
+    await this.append(null, { type: "control", cmd: "restart", by });
+    if (this.stopFailed()) await this.retryStopFailed(by);
+    else if (this.proc) {
+      await this.markAttempting("restart");
+      this.beginForceStop({ kind: "restart", by }, { graceMs: 0, termWaitMs: 3000 });
+    } else await this.beginAttempt("restart", false);
+    this.publishStatus();
+    return { status: "restarting" as const };
   }
 
   /**
@@ -1091,13 +1588,16 @@ export class AgentRuntime {
     if (!o.committed) {
       this.provisionalLatches += 1;
       this.restartPendingAtLatch ||= this.restartPending;
+      this.pendingWakeAtLatch ||= this.pendingWake;
     }
     this.terminated = true;
     this.restartPending = false;
+    this.pendingWake = false;
     if (o.committed && !this.terminationCommitted) {
       this.terminationCommitted = true;
       this.provisionalLatches = 0;
       this.restartPendingAtLatch = false;
+      this.pendingWakeAtLatch = false;
       const dropped = [...this.queue, ...this.held].flatMap((e) =>
         e.kind === "message" ? [e.row.id] : [],
       );
@@ -1111,7 +1611,7 @@ export class AgentRuntime {
       // was only queued in memory: reject it in the DB too (spec §8, "Pending messages vs. rejection").
       if (dropped.length)
         void this.run(async () => {
-          for (const id of dropped) await this.d.store.markRejected(id);
+          for (const id of dropped) this.chatChanged([await this.d.store.markRejected(id)]);
         }).catch((err: unknown) =>
           this.d.log.error({ err, agent: this.agent.slug }, "rejecting dropped rows failed"),
         );
@@ -1135,13 +1635,17 @@ export class AgentRuntime {
     if (this.provisionalLatches > 0) return;
     this.terminated = false;
     const restart = this.restartPendingAtLatch;
+    const wake = this.pendingWakeAtLatch;
     this.restartPendingAtLatch = false;
+    this.pendingWakeAtLatch = false;
     this.updateHeldTimer();
     this.publishStatus();
     void this.run(async () => {
       if (this.terminated) return; // latched again meanwhile
-      if (restart && this.proc && this.proc !== this.deadProc && !this.stopping)
+      if (restart && this.proc && this.proc !== this.deadProc && !this.stopping) {
         this.restartPending = true;
+        this.pendingWake = wake;
+      }
       this.armOwedBound();
       if (this.proc) await this.flushOrStop("flush after a failed termination failed");
       else if (this.hasDeliverable()) await this.wakeFromJob("queued_items");
@@ -1242,7 +1746,7 @@ export class AgentRuntime {
    * process, a `stop_failed` agent, a journal that names processes, or (Docker) a container still listed for it gets
    * the cleanup again: the journal reap or the container removal; on success the slot goes back. "none": nothing was
    * left. `containerListed`: the sweep's Docker list shows a container labelled for this agent, so it is removed
-   * whatever runtime the agent last ran (a re-sync may have moved it to local since).
+   * whatever runtime the agent last ran (the row may have changed since).
    */
   sweepStuck(o: { containerListed?: boolean } = {}): Promise<"none" | "cleared" | "still"> {
     return this.run(async () => {
@@ -1455,7 +1959,7 @@ export class AgentRuntime {
         this.inFlight.length ||
         this.hold ||
         this.compactInFlight ||
-        this.commandInFlight ||
+        this.rawInFlight ||
         this.stopping,
     );
   }
@@ -1561,6 +2065,8 @@ export class AgentRuntime {
     errorKind?: ErrorKind;
     restartPending: boolean;
     restartWaitingOn: number;
+    /** I2 §7.3: what the pending restart applies, sorted; empty when none is pending. */
+    restartChanges: string[];
     waitingOn: WaitingOn;
     /** S9 §10.2: the live in-session crons, the zone their text is written in, and a pending Stop crons. */
     crons: LiveCronView[];
@@ -1592,6 +2098,9 @@ export class AgentRuntime {
       ...(this.slots.isPulling(this.agent.id) ? { pulling: true } : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
+      restartChanges: this.restartPending
+        ? [...new Set([...this.pendingChanges, ...this.configChanges])].sort()
+        : [],
       waitingOn: this.waitingOn(),
       crons: this.cronsList(),
       cronZone: cronZoneOf(this.agent.runtime),
@@ -1631,12 +2140,12 @@ export class AgentRuntime {
   busy(): boolean {
     return (
       this.starting ||
-      (Boolean(this.proc) && !this.started) ||
+      (Boolean(this.proc) && !this.sessionStarted) ||
       Boolean(this.openTurnId) ||
       this.inFlight.length > 0 ||
       this.awaiting.length > 0 ||
       this.compactInFlight ||
-      this.commandInFlight ||
+      this.rawInFlight ||
       Boolean(this.hold) ||
       this.nonAmbient() > 0 ||
       this.owedNotifications > 0
@@ -1656,7 +2165,7 @@ export class AgentRuntime {
     const proc = this.proc;
     return (
       Boolean(proc) &&
-      this.started &&
+      this.sessionStarted &&
       proc !== this.deadProc &&
       proc !== this.failingProc &&
       !this.stopping &&
@@ -1710,6 +2219,7 @@ export class AgentRuntime {
         id: first.row.id,
         kind: "held",
         from: first.from,
+        fromKind: first.fromKind,
         count: g.length,
         createdAt: first.row.createdAt.toISOString(),
         ...(first.about ? { about: first.about } : {}),
@@ -1738,11 +2248,15 @@ export class AgentRuntime {
     // inside prepareStart, and an apply-restart waiting for its moment is dropped.
     this.stopsInProgress += 1;
     this.restartPending = false;
+    this.pendingWake = false;
     this.publishStatus();
     try {
       const proc = await this.run(async () => {
         this.restartPending = false;
+        this.pendingWake = false;
+        // After the stop begins, so no write slips in between: `stopping` holds them from here.
         this.beginHibernate(this.archived ? "archived" : "shutdown", opts);
+        this.clearRestartNow();
         this.publishStatus();
         // The stop under way is the one to wait for: this one, or a Restart's or a failed start's (each with its own
         // intent, none of which wakes now). A stop_failed process gets one more escalation try (§9.6).
@@ -1798,6 +2312,7 @@ export class AgentRuntime {
             err instanceof NoOpenTurnError ||
             err instanceof CompactingError ||
             err instanceof CommandsUnsupportedError ||
+            err instanceof SelfCommandPendingError ||
             err instanceof RecoveryRefusedError ||
             err instanceof NotSenderError ||
             err instanceof AlreadyDeliveredError ||
@@ -1820,11 +2335,11 @@ export class AgentRuntime {
       attempting: this.attempting,
       working:
         this.starting ||
-        (Boolean(this.proc) && !this.started) ||
+        (Boolean(this.proc) && !this.sessionStarted) ||
         Boolean(this.openTurnId) ||
         this.awaiting.length > 0 ||
         this.compactInFlight ||
-        this.commandInFlight,
+        this.rawInFlight,
       credentialPaused: this.credentialPaused(),
       hasPendingWork: this.hasDeliverable(),
       queuedWake: this.slots.isQueued(this.agent.id),
@@ -1844,6 +2359,7 @@ export class AgentRuntime {
           body: e.row.body,
           urgent: e.row.urgent,
           from: e.from,
+          fromKind: e.fromKind,
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
           ...queueScheduleOf(e.row),
@@ -1851,12 +2367,13 @@ export class AgentRuntime {
           // U3 §6.3: a Stop (or urgent send) is waiting for the interrupted turn's result.
           ...(this.hold ? { waitReason: "stopping" as const } : {}),
         }
-      : e.kind === "command"
+      : e.kind === "raw"
         ? {
             id: e.id,
-            kind: "command",
+            kind: "raw",
             body: e.text,
-            from: `@${e.by}`,
+            from: e.by,
+            fromKind: e.userId ? "human" : "agent",
             createdAt: e.createdAt.toISOString(),
             ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
             ...(this.proc && this.turnOpen() ? { waitReason: "turn" as const } : {}),
@@ -1864,9 +2381,11 @@ export class AgentRuntime {
         : {
             id: e.id,
             kind: "compact",
-            from: `@${e.by}`,
+            from: e.by,
+            fromKind: e.userId ? "human" : "agent",
             createdAt: e.createdAt.toISOString(),
             ...(e.focus ? { focus: e.focus } : {}),
+            ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
           };
   }
 
@@ -2191,6 +2710,9 @@ export class AgentRuntime {
   ): Promise<boolean> {
     // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
     // lock: it has no handle to it, and its own serialization is the job queue.
+    // I2 §7.3: stamped before the prepare reads the config, so a change landing during the prepare is held for the next
+    // process (the start may have read the config before it).
+    const procStartedAt = this.d.store.clock();
     let prepared: PreparedSpec;
     try {
       prepared = await this.d.prepareStart(this.agent, { agentToken });
@@ -2203,12 +2725,22 @@ export class AgentRuntime {
       if (this.terminated) throw new AgentStartError(TERMINATED_START);
       return this.failStart(err, "prepareStart failed");
     }
-    const { launch: dockerLaunch, credentialId, ...prepSpec } = prepared;
-    let spec: AgentRuntimeSpec = prepSpec;
-    if (!this.firstStartDone) {
-      this.firstStartDone = true;
-      this.d.onFirstStart?.(spec);
+    // `effective` holds env values: it is kept out of the spec the driver sees, and kept as `started` at the launch.
+    const {
+      launch: dockerLaunch,
+      credentialId,
+      effective,
+      plugins,
+      pluginRoots,
+      ...prepSpec
+    } = prepared;
+    // I2 §6.2: the Supervisor checked (and pulled) `nextImage` before the grant. A start that resolved another image (a
+    // disk edit no scan has seen yet) updates it and goes back through the pull, as an image found missing does.
+    if (dockerLaunch && dockerLaunch.image !== this.nextImage) {
+      this.nextImage = dockerLaunch.image;
+      return false;
     }
+    let spec: AgentRuntimeSpec = prepSpec;
     // Docker (spec §10 step 4): the container, outside the workspace lock; any throw from here to the launch stops it.
     let container: (EnsureResult & { image: string }) | undefined;
     if (spec.runtime === "docker") {
@@ -2238,10 +2770,19 @@ export class AgentRuntime {
     this.tokenGens.set(proc, generation);
     onLaunched();
     this.proc = proc;
+    this.started = effective;
+    this.expectedPlugins = plugins;
+    this.pluginRoots = pluginRoots ?? [];
+    this.loadedPlugins = {};
+    this.procStartedAt = procStartedAt;
+    // This process runs on the config the changes describe.
+    this.pendingChanges.clear();
+    this.configChanges = [];
+    this.otherRestartCause = false;
     this.procCredentialId = credentialId; // what prepareStart launched on, not the row (a spawned agent's differs)
     this.procRuntime = spec.runtime;
     this.imageRequeued = false;
-    this.started = false;
+    this.sessionStarted = false;
     this.stopping = false; // only reached with no stop() in progress: this is a fresh start after it completed
     this.afterExit = undefined;
     this.liveTasks = new Map();
@@ -2289,6 +2830,10 @@ export class AgentRuntime {
       );
       if (dropped)
         this.d.log.warn({ agent: this.agent.slug, dropped }, "dropped malformed command entries");
+      this.d.bus.publish(this.agent.slug, {
+        type: "agent_commands_changed",
+        agent: this.agent.slug,
+      });
     } catch (err) {
       this.d.log.warn({ err, agent: this.agent.slug }, "storing the command list failed");
     }
@@ -2344,6 +2889,7 @@ export class AgentRuntime {
       source: "spawn",
       message,
       ...(known && err.fix ? { fix: err.fix } : {}),
+      ...(known && err.detail ? { detail: err.detail } : {}),
     });
     await this.setErrored(message, "start");
     this.publishStatus();
@@ -2446,7 +2992,7 @@ export class AgentRuntime {
     return { ...this.agent, runtime: this.runningRuntime() };
   }
 
-  /** The runtime of the last launched process (a re-sync may have changed the row's since), else the row's. */
+  /** The runtime of the last launched process (the row may have changed since), else the row's. */
   private runningRuntime(): "local" | "docker" {
     return this.procRuntime ?? this.agent.runtime;
   }
@@ -2577,12 +3123,71 @@ export class AgentRuntime {
     this.publishStatus();
   }
 
+  /** `p` (by its real path) is inside the plugins dir or a registered directory marketplace; `init` is not trusted for it. */
+  private async insideRoots(p: string): Promise<boolean> {
+    try {
+      const real = await realpath(p);
+      return this.pluginRoots.some((root) => {
+        const rel = path.relative(root, real);
+        return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Spec §7.3 step 8: the first `init`'s plugins against the closure this process was started with, matched on
+   * `source` (`name@marketplace`). Each plugin that didn't load leaves the agent running without it, adds the
+   * `plugin_not_loaded` event and sends every user one Inbox notice, once per start. A failed notice is logged: the
+   * event is the record.
+   */
+  private async checkPlugins(
+    init: { name: string; path: string; source: string; version?: string }[],
+  ): Promise<void> {
+    const bySource = new Map(init.map((p) => [p.source, p]));
+    const missing: string[] = [];
+    for (const { key, pin } of this.expectedPlugins) {
+      const found = bySource.get(key);
+      if (found) {
+        // The plugin's own manifest is the evidence for its version: the catalog's (`init`'s) can differ (spec §7.4).
+        const manifest = (await this.insideRoots(found.path))
+          ? await readManifest(found.path)
+          : undefined;
+        this.loadedPlugins[key] = manifest?.version ?? found.version ?? "";
+        continue;
+      }
+      missing.push(key);
+      try {
+        await this.append(null, { type: "plugin_not_loaded", key, pin });
+      } catch (err) {
+        this.d.log.error({ err, agent: this.agent.slug, plugin: key }, "the plugin event failed");
+      }
+    }
+    if (!missing.length) return;
+    // One notice per start for every user, however many plugins are missing (spec §7.3 step 8).
+    try {
+      const out = await this.d.store.createHumanMessage({
+        kind: "system",
+        notice: "plugin_not_loaded",
+        subjectAgentId: this.agent.id,
+        to: "all",
+        body: `${missing.join(", ")} didn't load for @${this.agent.slug}.`,
+        urgent: false,
+        createdAt: this.d.store.clock(),
+      });
+      for (const userId of out.userIds) this.d.bus.publishToUser(userId, { type: "inbox_changed" });
+    } catch (err) {
+      this.d.log.error({ err, agent: this.agent.slug }, "the plugin notice failed");
+    }
+  }
+
   private async onEvent(proc: HarnessProcess, e: HarnessEvent) {
     if (this.deadProc === proc && e.type !== "exited") return;
     if (proc !== this.proc && this.deadProc !== proc) return;
     switch (e.type) {
       case "session_started": {
-        this.started = true;
+        this.sessionStarted = true;
         const row = await this.d.store.agentById(this.agent.id);
         if (!row?.sessionId) await this.d.store.setSessionId(this.agent.id, e.sessionId);
         else if (row.sessionId !== e.sessionId)
@@ -2604,8 +3209,11 @@ export class AgentRuntime {
             await this.append(null, { type: "mcp_unavailable", status });
           }
         }
-        for (const batch of this.inFlight.splice(0))
-          await this.d.store.markDelivered(batch.map((m) => m.row.id));
+        await this.checkPlugins(e.plugins ?? []);
+        const flight = this.inFlight.splice(0);
+        for (const batch of flight) await this.d.store.markDelivered(batch.map((m) => m.row.id));
+        // A batch written before session_started was pending until now (I1 §6.5): its sender's chat changed.
+        this.chatChanged(flight.flatMap((batch) => batch.map((m) => m.row.fromUserId)));
         break;
       }
       case "turn_started":
@@ -2613,7 +3221,18 @@ export class AgentRuntime {
         this.openTurnId = await this.d.store.openTurn(this.agent.id, this.procCredentialId ?? null);
         this.lastUsage = undefined;
         this.turnKinds = [];
+        this.absorbed = [];
         this.turnStartedAt = (await this.append(this.openTurnId, e)).at;
+        this.chatChanged(sendersOf(this.awaiting));
+        // I7 §9.2.1 step 2: the turn of a batch written before the cut restart began has started now.
+        if (this.restartNowPending && !this.hold && !this.stopping) {
+          try {
+            await this.beginInterruptHold(this.restartNowPending.by);
+          } catch (err) {
+            // The process is going away: its exit clears the cut restart.
+            if (!(err instanceof ProcessNotRunningError)) throw err;
+          }
+        }
         break;
       case "usage":
         this.lastUsage = e;
@@ -2629,9 +3248,12 @@ export class AgentRuntime {
         this.turnKinds = [];
         // U3 §11.2: right after the turn_end row, in the same tick (no live patch in between), so the client clears its
         // live state first and the reset restores a block a self-started turn already began.
-        await this.append(turnId, e, undefined, () =>
-          this.liveState.endBefore(this.lineOf(proc, e), { subagents: false }),
-        );
+        const closing = sendersOf([...this.awaiting, ...this.absorbed]);
+        const endSeq = (
+          await this.append(turnId, e, undefined, () =>
+            this.liveState.endBefore(this.lineOf(proc, e), { subagents: false }),
+          )
+        ).seq;
         if (turnId) {
           const close = {
             isError: e.isError,
@@ -2643,13 +3265,21 @@ export class AgentRuntime {
           // transaction, so `attributeTask` sees it. A self-started turn (cron, task notification) never consumes
           // `awaiting` and isn't attributed.
           if (!e.originKind) {
-            await this.d.store.closeTurnWith(turnId, close, this.awaiting.flat(), true);
+            await this.d.store.closeTurnWith(
+              turnId,
+              close,
+              this.awaiting.flatMap((b) => b.ids),
+              true,
+              endSeq,
+            );
             this.awaiting = [];
             this.awaitingKinds = [];
-          } else await this.d.store.closeTurnWith(turnId, close, [], false);
+          } else await this.d.store.closeTurnWith(turnId, close, [], false, endSeq);
         }
+        this.absorbed = []; // the stamp and the close committed: the batch is no longer working
+        this.chatChanged(closing);
         // The attempt's batch turn (spec §9.2): the first origin-less turn_end after its batch was written.
-        if (!e.originKind && this.attempting && this.attemptBatchWritten && this.started)
+        if (!e.originKind && this.attempting && this.attemptBatchWritten && this.sessionStarted)
           await this.attemptSucceeded();
         this.openTurnId = undefined;
         this.turnStartedAt = undefined;
@@ -2658,15 +3288,23 @@ export class AgentRuntime {
         this.lastActivityAt = Date.now();
         this.persistActivity(); // the turn_end event and the turn row are written (S7 §10.2)
         await this.oweNoticeIfCutOff();
-        if (e.command === "compact") this.compactInFlight = false;
+        if (e.command === "compact" || (this.compactFailedSeen && !e.originKind)) {
+          this.compactInFlight = false;
+          this.compactFailedSeen = false;
+          // I1 §7: decided once, here: failed if a `compact_failed` came since the compact was written.
+          const own = this.selfCompact;
+          this.selfCompact = undefined;
+          if (own) await this.addNotice("compact_continue", notices.compactContinue(own));
+        }
         // U3 §13.3: the command's turn (the first origin-less one after the write) ends its barrier.
-        if (!e.originKind) this.commandInFlight = false;
+        if (!e.originKind) this.rawInFlight = false;
         if (e.originKind === "task-notification")
           this.owedNotifications = Math.max(0, this.owedNotifications - 1);
         this.armOwedBound();
         if (e.originKind === "cron") await this.dropFiredOneShots();
         this.releaseHold();
-        await this.flush();
+        if (this.restartNowPending) await this.beginRestartNowStop();
+        else await this.flush();
         this.maybeRestart();
         break;
       }
@@ -2701,6 +3339,13 @@ export class AgentRuntime {
           );
         }
         break;
+      case "compact_failed":
+        if (e.trigger === "manual") {
+          if (this.selfCompact) this.selfCompact.failed = true;
+          if (this.compactInFlight) this.compactFailedSeen = true;
+        }
+        await this.append(this.openTurnId, e);
+        break;
       case "rate_limited":
         await this.append(this.openTurnId, e);
         this.rateLimitedTurn = true;
@@ -2734,7 +3379,7 @@ export class AgentRuntime {
         break;
       case "error":
         await this.append(this.openTurnId, e);
-        if (!this.started && (e.source === "resume" || e.source === "spawn")) {
+        if (!this.sessionStarted && (e.source === "resume" || e.source === "spawn")) {
           // Spec §9.3: the failed result of whichever attempt started it; never an automatic attempt of its own.
           const code = e.code !== undefined ? Number(e.code) : Number.NaN;
           const kind: ErrorKind =
@@ -2773,6 +3418,28 @@ export class AgentRuntime {
     this.publishStatus();
   }
 
+  /**
+   * I1 §6.3: an exit closes the open turn, stamping the written batch it started with (a message-started turn). A
+   * written batch with no turn opened gets a zero-length errored turn, so the message still has an outcome.
+   */
+  private async closeExitedTurn(
+    openTurnId: string | undefined,
+    stampIds: string[],
+    usage: Extract<HarnessEvent, { type: "usage" }> | undefined,
+    credentialId: string | null,
+    e: Extract<HarnessEvent, { type: "exited" }>,
+  ): Promise<void> {
+    const close = {
+      isError: !e.expected,
+      terminalReason: e.expected ? "process_stopped" : "process_exited",
+    };
+    if (openTurnId)
+      return this.d.store.closeTurnWith(openTurnId, { ...close, usage }, stampIds, true);
+    if (!stampIds.length) return;
+    const turnId = await this.d.store.openTurn(this.agent.id, credentialId);
+    await this.d.store.closeTurnWith(turnId, close, stampIds, true);
+  }
+
   private async onExited(proc: HarnessProcess, e: Extract<HarnessEvent, { type: "exited" }>) {
     this.revokeToken(proc);
     // S7 §8 step 4: the exit path is chosen by the latch, not by the recorded intent (markStopFailed overwrites it with
@@ -2781,6 +3448,12 @@ export class AgentRuntime {
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;
+    this.clearRestartNow();
+    const wake = this.pendingWake; // honoured by a hibernate exit below; every other exit drops it
+    this.pendingWake = false;
+    this.pendingChanges.clear();
+    this.configChanges = [];
+    this.otherRestartCause = false;
     this.stopCronsPending = undefined; // the crons die with the process anyway (S9 §10.3)
     const attemptOwed = this.attemptOwedAtExit; // only this process's exit honours it
     this.attemptOwedAtExit = false;
@@ -2817,36 +3490,49 @@ export class AgentRuntime {
     this.turnStartedAt = undefined;
     this.releaseHold();
     this.compactInFlight = false;
-    this.commandInFlight = false;
+    this.compactFailedSeen = false;
+    this.rawInFlight = false;
+    this.selfCompact = undefined; // no notice: the restart's own notice covers it
     // A batch written after session_started whose turn hadn't begun: delivered but never answered (lost work).
     const batchUnanswered = this.awaiting.length > 0;
+    // Stamped by the close below (I1 §6.3). A batch written before session_started is still in `rolledBack`: it was
+    // never delivered, goes back to pending (or is rejected) and gets no stamp or turn of its own.
+    const rolledIds = new Set(rolledBack.flat().map((m) => m.row.id));
+    const unansweredIds = this.awaiting.flatMap((b) => b.ids).filter((id) => !rolledIds.has(id));
+    const closingBatches = [...this.awaiting, ...this.absorbed];
+    const credentialId = this.procCredentialId ?? null; // cleared below, the close still records it
     this.awaiting = [];
     this.awaitingKinds = [];
     this.turnKinds = [];
+    this.absorbed = [];
     if (this.proc === proc) {
       this.proc = undefined;
       this.procCredentialId = undefined;
+      this.started = undefined;
+      this.loadedPlugins = {};
+      this.procStartedAt = undefined;
     }
-    this.started = false;
+    this.sessionStarted = false;
     const live = { turnOpen: Boolean(openTurnId), batchUnanswered, lost };
     const policy = crash ? this.onCrash(e, live) : "none";
     let keepSlot = false;
+    this.closing = closingBatches;
     try {
       // S10 §11: close the turn before the cleanup, which can take seconds (a Docker stop). A status frame published
       // meanwhile already says turnOpen false, so the row must be closed by then. A failed close must not skip the
       // cleanup: it is rethrown where the close used to be.
-      const closeFailure = openTurnId
-        ? await this.d.store
-            .closeTurn(openTurnId, {
-              isError: !e.expected,
-              terminalReason: e.expected ? "process_stopped" : "process_exited",
-              usage,
-            })
-            .then(
-              () => undefined,
-              (err: unknown) => ({ err }),
-            )
-        : undefined;
+      const closeFailure = await this.closeExitedTurn(
+        openTurnId,
+        unansweredIds,
+        usage,
+        credentialId,
+        e,
+      ).then(
+        () => undefined,
+        (err: unknown) => ({ err }),
+      );
+      this.closing = undefined; // the stamp and the close settled: the outcome is readable
+      this.chatChanged(sendersOf(closingBatches));
       // Terminated: Docker removes the container rather than stopping it (S7 §8 step 4).
       if (terminating) keepSlot = !(await this.terminationCleanup());
       else if (reap || docker) keepSlot = !(await this.cleanUpLeftovers(crash, forced));
@@ -2854,7 +3540,8 @@ export class AgentRuntime {
       if (!terminating) await this.oweNoticeIfCutOff(); // the exit ended a turn the rate limit cut off
       for (const batch of rolledBack) {
         const ids = batch.map((m) => m.row.id);
-        if (terminating) for (const id of ids) await this.d.store.markRejected(id);
+        if (terminating)
+          for (const id of ids) this.chatChanged([await this.d.store.markRejected(id)]);
         else await this.d.store.markPending(ids);
         await this.append(null, {
           type: "delivery_failed",
@@ -2868,7 +3555,7 @@ export class AgentRuntime {
       await this.append(null, e);
       if (terminating) await this.reportLostWork("terminated", lost);
       else if (intent?.kind === "hibernate") {
-        await this.recordLostWork(intent, Boolean(openTurnId));
+        await this.recordLostWork(intent, Boolean(openTurnId), wake);
         await this.append(null, {
           type: "hibernated",
           reason: intent.reason,
@@ -2885,6 +3572,7 @@ export class AgentRuntime {
       if (!crash) await this.writeJournal();
       else await this.persistJournal();
     } finally {
+      this.closing = undefined;
       this.publishQueue();
       // Every exit gives the slot back once it is recorded (spec §5.2), even when recording failed; a crash whose
       // cleanup failed keeps it (stop_failed, §9.6).
@@ -2908,12 +3596,13 @@ export class AgentRuntime {
       if (canAttempt && this.messageStartsAttempt() && this.hasDeliverable())
         await this.beginAttempt("message", false);
     } else if (intent?.kind === "hibernate") {
-      if (intent.reason !== "shutdown" && intent.reason !== "archived")
-        await this.wakeAfterExit(
-          intent.reason === "apply_changes" && intent.lost.crons.length
-            ? "apply_changes"
-            : "queued_items",
-        );
+      if (intent.reason !== "shutdown" && intent.reason !== "archived") {
+        // Only an apply-restart (or Stop crons taking it over) restarts for config: a self-edit's wake, or crons it lost.
+        const applies = intent.reason === "apply_changes" || intent.reason === "crons_stopped";
+        const configWake =
+          applies && (wake || (intent.reason === "apply_changes" && intent.lost.crons.length > 0));
+        await this.wakeAfterExit(configWake ? "apply_changes" : "queued_items");
+      }
     } else if (intent?.kind === "restart" && this.attempting && this.attemptReason) {
       // Restart or Start a new session: the attempt's wake; if none can start now, the attempt ends.
       const reason = this.attemptReason;
@@ -2929,6 +3618,7 @@ export class AgentRuntime {
   private async recordLostWork(
     intent: Extract<AfterExit, { kind: "hibernate" }>,
     turnWasOpen: boolean,
+    wake: boolean,
   ) {
     const { reason, lost } = intent;
     const anyLost = lost.tasks.length > 0 || lost.crons.length > 0;
@@ -2938,6 +3628,15 @@ export class AgentRuntime {
       await this.addNotice(
         "factory_restarted",
         notices.factoryRestarted({ tasks: lost.tasks.map((t) => t.description || t.taskId) }),
+      );
+    else if (wake && (reason === "apply_changes" || reason === "crons_stopped"))
+      // I7 §9.5: the self-edit's one waking notice, replacing `restart_crons`. After Stop crons took the hibernate
+      // over, the human's `crons_stopped` notice already lists them.
+      await this.addNotice(
+        "config_continue",
+        notices.configContinue({
+          crons: reason === "apply_changes" ? lost.crons.map((c) => c.humanSchedule) : [],
+        }),
       );
     else if (reason === "apply_changes" && lost.crons.length)
       await this.addNotice(
@@ -3172,6 +3871,7 @@ export class AgentRuntime {
       if (!final || this.afterExit?.kind !== "hibernate") return false;
       this.afterExit.reason = reason;
       this.restartPending = false;
+      this.pendingWake = false;
       return true;
     }
     if (reason === "warm_window" || reason === "freed_slot") {
@@ -3269,6 +3969,7 @@ export class AgentRuntime {
     this.deadProc = proc;
     this.afterExit = { kind: "internal" };
     this.restartPending = false;
+    this.pendingWake = false;
     this.d.log.error({ agent: this.agent.slug, pid: proc.pid }, "the process can't be stopped");
     // setErrored sets the in-memory truth first; the DB may be what failed.
     await this.setErrored(stopFailedMessage(proc.pid), "stop_failed").catch(() => {});
@@ -3310,10 +4011,10 @@ export class AgentRuntime {
     this.updateCronExpiry();
   }
 
-  /** The snapshot's warm window, else the factory default read live (S10 §8.2, Q8). */
+  /** The running process's warm window (I2 §6.2), else the factory default read live (S10 §8.2, Q8). */
   private warmWindowMs(): number {
     const minutes =
-      this.agent.config.warmWindowMinutes ??
+      this.started?.config.warmWindowMinutes ??
       this.d.defaultWarmWindowMinutes?.() ??
       DEFAULT_WARM_WINDOW_MINUTES;
     return minutes * 60_000;
@@ -3335,13 +4036,13 @@ export class AgentRuntime {
   }
 
   /**
-   * S10 §8.2: the default warm window or the member-update debounce changed. A snapshot that omits the window re-arms
-   * its armed warm timer from when it was armed (firing at once when that is past); a snapshot that holds a window
+   * S10 §8.2: the default warm window or the member-update debounce changed. A started config that omits the window
+   * re-arms its armed warm timer from when it was armed (firing at once when that is past); one that holds a window
    * keeps it. The held-update timer re-arms from the recomputed due time (and again at the end of the job).
    */
   async settingsChanged(): Promise<void> {
     await this.run(async () => {
-      if (this.agent.config.warmWindowMinutes === undefined && this.warmTimer) {
+      if (this.started?.config.warmWindowMinutes === undefined && this.warmTimer) {
         clearTimeout(this.warmTimer);
         this.warmTimer = undefined;
         const armedAt = this.warmArmedAt ?? Date.now();
@@ -3517,7 +4218,8 @@ export class AgentRuntime {
         this.releaseHold();
         try {
           await this.append(this.openTurnId, { type: "interrupt_unconfirmed" });
-          await this.flush();
+          if (this.restartNowPending) await this.beginRestartNowStop();
+          else await this.flush();
           this.maybeRestart();
         } catch (err) {
           if (this.proc) await this.onJobFailure(this.proc, err);
@@ -3553,10 +4255,11 @@ export class AgentRuntime {
       this.proc &&
       !this.terminated && // a latch set while a batch was being written stops the next one
       !this.stopping &&
+      !this.restartNowPending && // a cut restart writes nothing to the old process (I7 §9.2.1 step 1)
       !this.credentialPaused() &&
       !this.hold &&
       !this.compactInFlight &&
-      !this.commandInFlight &&
+      !this.rawInFlight &&
       this.queue.length
     ) {
       const head = this.queue[0];
@@ -3571,28 +4274,34 @@ export class AgentRuntime {
           break;
         }
         this.compactInFlight = true;
+        this.compactFailedSeen = false;
+        this.selfCompact = head.self ? { failed: false } : undefined;
         await this.append(null, {
           type: "control",
           cmd: "compact",
-          by: `@${head.by}`,
+          by: head.by,
           ...(head.focus ? { arg: head.focus } : {}),
         });
         this.publishQueue();
         break;
       }
-      if (head.kind === "command") {
+      if (head.kind === "raw") {
         if (this.openTurnId || this.awaiting.length || this.inFlight.length) break;
-        await this.writeCommand(head);
+        await this.writeRaw(head);
         break;
       }
-      const batch: MessageEntry[] = [];
-      while (this.queue[0]?.kind === "message") batch.push(this.queue.shift() as MessageEntry);
+      const run: MessageEntry[] = [];
+      while (this.queue[0]?.kind === "message") run.push(this.queue.shift() as MessageEntry);
+      // I2 §7.3: a config notice newer than this process stays queued for the next one (it is passive, see below).
+      const kept = run.filter((e) => this.forNextProcess(e));
+      const batch = run.filter((e) => !kept.includes(e));
       // S6 §8.1: a batch written while no turn is open carries every held row, due or not.
       if (!this.turnOpen()) batch.push(...this.held.splice(0));
       // S9 §10.3: a passive notice alone is never written; it waits for a batch with something else. A compact or a
-      // command queued behind it goes ahead (flush otherwise cuts a batch at the first non-message entry).
+      // command queued behind it goes ahead (flush otherwise cuts a batch at the first non-message entry). Held rows
+      // are never passive, so here `batch` is still a part of `run`.
       if (batch.every(isPassive)) {
-        this.queue.unshift(...batch);
+        this.queue.unshift(...run);
         const at = this.queue.findIndex((e) => e.kind !== "message");
         if (at > 0 && this.queue.slice(0, at).every(isPassive)) {
           const [c] = this.queue.splice(at, 1);
@@ -3601,12 +4310,19 @@ export class AgentRuntime {
         }
         break;
       }
-      if (!(await this.writeBatch(batch))) break; // a rejected write leaves the batch at the head: stop, don't spin
+      let written: boolean;
+      try {
+        written = await this.writeBatch(batch);
+      } finally {
+        this.queue.unshift(...kept); // ahead of a rejected batch too: notices lead
+      }
+      if (!written) break; // a rejected write leaves the batch at the head: stop, don't spin
     }
     // Due held rows on their own, only while no turn is open (S6 §8.1).
     if (
       this.proc &&
       !this.stopping &&
+      !this.restartNowPending &&
       !this.credentialPaused() &&
       !this.turnOpen() &&
       this.heldDue()
@@ -3615,32 +4331,50 @@ export class AgentRuntime {
   }
 
   /**
-   * U3 §13.3: writes the head command raw, on its own, then sets the barrier and records `control{command}`. A
-   * rejected write leaves it at the head. A process without `command()` (dispatch refuses one already running) can't
-   * run it: it is dropped with an error log rather than blocking the queue.
+   * I1 §5.1: writes the head raw entry as one user line, on its own, then sets the barrier and records
+   * `operator_input`. A rejected write leaves it at the head. A process without `raw()` can't take it: it is dropped
+   * with an error log rather than blocking the queue.
    */
-  private async writeCommand(head: CommandEntry): Promise<void> {
+  private async writeRaw(head: RawEntry): Promise<void> {
     if (!this.proc) return;
     this.queue.shift();
-    if (!this.proc.command) {
-      this.d.log.error({ agent: this.agent.slug }, "the harness can't run slash commands; dropped");
+    if (!this.proc.raw) {
+      this.d.log.error({ agent: this.agent.slug }, "the harness can't take raw input; dropped");
       this.publishQueue();
       return;
     }
     try {
-      await this.proc.command(head.text);
+      await this.proc.raw(head.text);
     } catch {
       this.queue.unshift(head);
       return;
     }
-    this.commandInFlight = true;
-    this.writtenCommands.set(head.id, head.userId);
-    if (this.writtenCommands.size > WRITTEN_COMMANDS_KEPT) {
-      const [oldest] = this.writtenCommands.keys();
-      if (oldest !== undefined) this.writtenCommands.delete(oldest);
+    this.rawInFlight = true;
+    this.rawSelf = Boolean(head.self);
+    this.writtenRaw.set(head.id, head.userId ?? "");
+    if (this.writtenRaw.size > WRITTEN_RAW_KEPT) {
+      const [oldest] = this.writtenRaw.keys();
+      if (oldest !== undefined) this.writtenRaw.delete(oldest);
     }
-    await this.append(null, { type: "control", cmd: "command", arg: head.text, by: `@${head.by}` });
+    await this.append(null, {
+      type: "operator_input",
+      text: head.text,
+      by: head.by,
+      byKind: head.userId ? "human" : "agent",
+      entryId: head.id,
+      ...(head.clientMessageId ? { clientMessageId: head.clientMessageId } : {}),
+    });
     this.publishQueue();
+  }
+
+  /** I2 §7.3: a `config_changed` row created after the running process's start stamp: only the next process reads it. */
+  private forNextProcess(e: MessageEntry): boolean {
+    return (
+      e.row.kind === "system" &&
+      e.row.notice === "config_changed" &&
+      this.procStartedAt !== undefined &&
+      e.row.createdAt.getTime() > this.procStartedAt.getTime()
+    );
   }
 
   /**
@@ -3767,7 +4501,7 @@ export class AgentRuntime {
           batch.filter((e) => e.row.kind === "scheduled").map((e) => e.row),
           tx,
         );
-        if (this.started) await this.d.store.markDelivered(ids, tx);
+        if (this.sessionStarted) await this.d.store.markDelivered(ids, tx);
         if (turnAtWrite) await this.d.store.setDeliveredTurn(ids, turnAtWrite, tx);
         return out;
       });
@@ -3787,13 +4521,24 @@ export class AgentRuntime {
     // Its own statement, after the batch's transaction committed: never inside it (S7 §10.2, the lock order of §5.7).
     this.persistActivity();
     if (this.attempting) this.attemptBatchWritten = true;
-    if (!this.started) this.inFlight.push(batch);
+    if (!this.sessionStarted) this.inFlight.push(batch);
     const kinds = batch.map((e) => kindOf(e.row));
+    const written = writtenBatch(batch, new Date().toISOString());
     if (!turnAtWrite) {
-      this.awaiting.push(ids);
+      this.awaiting.push(written);
       this.awaitingKinds.push(kinds);
-    } else this.turnKinds.push(...kinds);
+    } else {
+      this.absorbed.push(written);
+      this.turnKinds.push(...kinds);
+    }
     this.publishQueue();
+    this.chatChanged(sendersOf([written]));
     return true;
+  }
+
+  /** I1 §6.5: each of these humans' chat with this agent changed (never anyone else). */
+  chatChanged(userIds: Iterable<string | null>): void {
+    for (const u of new Set(userIds))
+      if (u) this.d.bus.publishToUser(u, { type: "chat_changed", agent: this.agent.slug });
   }
 }

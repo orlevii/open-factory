@@ -10,7 +10,7 @@ describe("inputLengthError", () => {
     (path) => {
       expect(inputLengthError(path, { name: long(81) })).toEqual({
         code: "NAME_TOO_LONG",
-        message: "Keep your name to 80 characters or fewer.",
+        message: "Use 80 characters or fewer.",
       });
       expect(inputLengthError(path, { name: long(80) })).toBeNull();
       expect(inputLengthError(path, { name: `  ${long(76)}  ` })).toBeNull();
@@ -23,7 +23,7 @@ describe("inputLengthError", () => {
   test("sign-up refuses an email over 254, accepts 254", () => {
     expect(inputLengthError("/sign-up/email", { name: "A", email: emailOf(255) })).toEqual({
       code: "EMAIL_TOO_LONG",
-      message: "Keep your email to 254 characters or fewer.",
+      message: "Use 254 characters or fewer.",
     });
     expect(inputLengthError("/sign-up/email", { name: "A", email: emailOf(254) })).toBeNull();
   });

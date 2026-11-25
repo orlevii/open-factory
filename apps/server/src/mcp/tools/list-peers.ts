@@ -1,5 +1,6 @@
 import type { AgentRow } from "@open-factory/db";
 import { type AgentStatus, listPeersToolSchema } from "@open-factory/shared";
+import { inline } from "../../messaging/inline.ts";
 import type { Neighborhood } from "../../messaging/neighborhood.ts";
 import {
   callerOf,
@@ -22,7 +23,7 @@ export function listPeersTool(d: {
         "list_peers",
         {
           description:
-            'List the agents you can message (your manager, peers and reports) and the humans. Pass scope "all" to see every agent.',
+            'List who you can message: agents (your manager, peers and reports) and humans, each with a handle. Pass scope "all" to see every agent.',
           inputSchema: listPeersToolSchema,
         },
         async (args: { scope?: "neighborhood" | "all" }, tctx: ToolContext) => {
@@ -39,15 +40,23 @@ export function listPeersTool(d: {
               if (!seen.has(a.id)) rows.push(["other", a]);
             }
           }
+          const humans = await d.neighborhood.humans();
           return textResult({
-            agents: rows.map(([relation, a]) => ({
-              slug: a.slug,
-              displayName: a.displayName,
-              description: a.description,
-              relation,
-              status: d.statusOf(a),
-            })),
-            humans: await d.neighborhood.humans(),
+            peers: [
+              ...rows.map(([relation, a]) => ({
+                handle: `@${a.slug}`,
+                kind: "agent" as const,
+                displayName: inline(a.displayName),
+                description: inline(a.description),
+                relation,
+                status: d.statusOf(a),
+              })),
+              ...humans.map((h) => ({
+                handle: `@${h.handle}`,
+                kind: "human" as const,
+                name: inline(h.name),
+              })),
+            ],
           });
         },
       );

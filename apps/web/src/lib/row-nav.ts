@@ -3,13 +3,14 @@ import { shouldIgnore } from "./shortcuts";
 
 const KEYS = ["ArrowDown", "ArrowUp", "Home", "End"];
 
-/** Arrow keys, Home and End also move between the link rows of a list (`j`/`k` too, unless single-key
- *  shortcuts are off or the press belongs to a field or modal); Tab still reaches every row.
- *  Returns the row that took focus. */
+/** Arrow keys, Home and End also move between the rows of a list, anchors and buttons alike, found by their
+ *  `data-row` attribute (`j`/`k` too, unless single-key shortcuts are off or the press belongs to a field or
+ *  modal); Tab still reaches every row. Returns the row that took focus. */
 export function onRowKeyDown(e: KeyboardEvent<HTMLElement>): HTMLElement | undefined {
   const vim = (e.key === "j" || e.key === "k") && !shouldIgnore(e.nativeEvent);
-  if (!(vim || KEYS.includes(e.key)) || !(e.target instanceof HTMLAnchorElement)) return;
-  const links = [...e.currentTarget.querySelectorAll<HTMLElement>("a")];
+  if (!(vim || KEYS.includes(e.key)) || !(e.target instanceof HTMLElement)) return;
+  if (!e.target.hasAttribute("data-row")) return;
+  const links = [...e.currentTarget.querySelectorAll<HTMLElement>("[data-row]")];
   const i = links.indexOf(e.target);
   const down = e.key === "ArrowDown" || e.key === "j";
   const next =

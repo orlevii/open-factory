@@ -6,6 +6,7 @@ let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
 const driver = new FakeDriver();
 const TOKEN = "sk-ant-oat01-ROUTE-SECRET";
+const REPLACED = "sk-ant-oat01-REPLACED-SECRET";
 
 /** Answers each verification process as it starts. */
 let answer: "ok" | "401" = "ok";
@@ -62,12 +63,14 @@ test("create, list, replace, verify, delete; the value never comes back", async 
   expect(list.json().credentials.map((c: { name: string }) => c.name)).toEqual(["work"]);
   expect(list.body).not.toContain(TOKEN);
 
-  expect((await call("PUT", "/api/credentials/work/value", { value: "other" })).statusCode).toBe(
-    200,
-  );
-  expect(
-    (await call("POST", "/api/credentials/work/verify")).json().credential.lastError,
-  ).toBeNull();
+  const replaced = await call("PUT", "/api/credentials/work/value", { value: REPLACED });
+  expect(replaced.statusCode).toBe(200);
+  expect(replaced.body).not.toContain(REPLACED);
+  expect(replaced.body).not.toContain(TOKEN);
+  const verified = await call("POST", "/api/credentials/work/verify");
+  expect(verified.json().credential.lastError).toBeNull();
+  expect(verified.body).not.toContain(REPLACED);
+  expect((await call("GET", "/api/credentials")).body).not.toContain(REPLACED);
 
   expect((await call("DELETE", "/api/credentials/work")).statusCode).toBe(204);
   expect((await call("GET", "/api/credentials")).json().credentials).toEqual([]);

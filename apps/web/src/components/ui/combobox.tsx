@@ -2,6 +2,7 @@ import * as React from "react"
 import { cn } from "cn"
 import { Command as CommandPrimitive, defaultFilter } from "cmdk"
 import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react"
+import { FORM_MSG } from "@/lib/form-messages"
 import { lastInputModality } from "@/lib/input-modality"
 import { Popover, PopoverContent, PopoverTrigger } from "./popover"
 import { selectTriggerClass } from "./select"
@@ -23,12 +24,22 @@ type Side = "top" | "right" | "bottom" | "left"
 const FIXED = "f:"
 const itemKey = (o: ComboOption) => (o.fixed ? FIXED : "o:") + o.value
 
-/** Fixed options always match with cmdk's top score, so its re-sort keeps them first; the rest
- *  match on their label (the first keyword) and then their keywords. */
+/** Fixed options always match with cmdk's top score, so its re-sort keeps them first. The rest rank by
+ *  their label (the first keyword): the exact label, then a prefix, then a substring, then cmdk's fuzzy
+ *  match (a weak tail). The other keywords (a description) match only as a whole-word-run substring, so
+ *  a short query doesn't light up every description holding its letters in order. */
 function filter(value: string, search: string, keywords?: string[]) {
   if (value.startsWith(FIXED)) return 1
   const [label = "", ...rest] = keywords ?? []
-  return defaultFilter(label, search, rest)
+  const q = search.trim().toLowerCase()
+  if (!q) return 0.5
+  const name = label.toLowerCase()
+  if (name === q) return 0.99
+  if (name.startsWith(q)) return 0.9
+  if (name.includes(q)) return 0.8
+  const fuzzy = defaultFilter(label, search, [])
+  if (fuzzy > 0) return fuzzy * 0.5
+  return rest.some((k) => k.toLowerCase().includes(q)) ? 0.4 : 0
 }
 
 /** Fixed options first, then the current value, then the rest in their order. Grouped options keep
@@ -60,11 +71,14 @@ const groupClass =
 function ComboItem({
   option,
   selected,
+  added,
   onCommit,
   renderOption,
 }: {
   option: ComboOption
   selected: boolean
+  /** Multi-pick: this option was picked in this opening; it stays listed, disabled, marked "Added". */
+  added: boolean
   onCommit: (value: string) => void
   renderOption?: ((option: ComboOption) => React.ReactNode) | undefined
 }) {
@@ -72,13 +86,14 @@ function ComboItem({
     <CommandPrimitive.Item
       value={itemKey(option)}
       keywords={[option.label, ...(option.keywords ?? [])]}
-      disabled={option.disabled}
+      disabled={option.disabled || added}
       onSelect={() => onCommit(option.value)}
       className={itemClass}
     >
       <span className="min-w-0 flex-1 truncate">{renderOption ? renderOption(option) : option.label}</span>
+      {added ? <span className="shrink-0 text-xs text-muted-foreground">Added</span> : null}
       <span className="absolute right-2 flex size-4 items-center justify-center">
-        {selected ? <CheckIcon aria-hidden="true" className="size-4 text-foreground" /> : null}
+        {selected || added ? <CheckIcon aria-hidden="true" className="size-4 text-foreground" /> : null}
       </span>
       {/* cmdk's aria-selected marks the highlight, so the current value says so in words. */}
       {selected ? <span className="sr-only">, selected</span> : null}
@@ -92,18 +107,25 @@ function ComboList({
   options,
   value,
   emptyText,
+  added,
   onCommit,
   onSearch,
   renderOption,
+  renderGroup,
+  footer,
 }: {
   /** The combobox's name, given to the listbox. */
   label: string
   options: ComboOption[]
   value: string
   emptyText?: string
+  /** Multi-pick mode: the values picked so far. */
+  added?: Set<string> | undefined
   onCommit: (value: string) => void
   onSearch: () => void
   renderOption?: ((option: ComboOption) => React.ReactNode) | undefined
+  renderGroup?: ((group: string) => React.ReactNode) | undefined
+  footer?: React.ReactNode
 }) {
   const { loose, groups } = React.useMemo(() => arrange(options, value), [options, value])
   const current = options.find((o) => o.value === value)
@@ -125,12 +147,31 @@ function ComboList({
     }
     if (best) setHighlight(best.key)
   }, [highlight, search, options])
+  // A pick in multi mode keeps the popover open, so the highlight (on the row just disabled) moves on
+  // to the next enabled row that still matches the filter.
+  const commit = (picked: string) => {
+    if (added) {
+      const flat = [...loose, ...groups.flatMap(([, members]) => members)]
+      const from = flat.findIndex((o) => o.value === picked)
+      const next = flat
+        .slice(from + 1)
+        .find(
+          (o) =>
+            !o.disabled &&
+            !added.has(o.value) &&
+            (!search || o.fixed || filter(itemKey(o), search, [o.label, ...(o.keywords ?? [])]) > 0),
+        )
+      if (next) setHighlight(itemKey(next))
+    }
+    onCommit(picked)
+  }
   const item = (o: ComboOption) => (
     <ComboItem
       key={itemKey(o)}
       option={o}
       selected={o.value === value}
-      onCommit={onCommit}
+      added={added?.has(o.value) ?? false}
+      onCommit={commit}
       renderOption={renderOption}
     />
   )
@@ -143,7 +184,7 @@ function ComboList({
       onKeyDown={(e) => {
         if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") moved.current = true
       }}
-      className="flex flex-col"
+      className="flex min-h-0 flex-col"
     >
       <div className="flex h-9 items-center gap-2 border-b border-border px-2.5">
         <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -158,7 +199,7 @@ function ComboList({
         />
       </div>
       {/* A fixed height: the popover doesn't resize as the filter narrows, and nothing animates it. */}
-      <CommandPrimitive.List label={label} onPointerMove={() => (moved.current = true)} className="h-72 overflow-y-auto overscroll-contain scroll-py-1 p-1">
+      <CommandPrimitive.List label={label} onPointerMove={() => (moved.current = true)} className="h-72 min-h-0 overflow-y-auto overscroll-contain scroll-py-1 p-1">
         <CommandPrimitive.Empty className="py-6 text-center text-sm text-muted-foreground">
           {emptyText}
         </CommandPrimitive.Empty>
@@ -166,11 +207,16 @@ function ComboList({
             every group, which would push fixed options below a group while filtering. */}
         <CommandPrimitive.Group>{loose.map(item)}</CommandPrimitive.Group>
         {groups.map(([group, members]) => (
-          <CommandPrimitive.Group key={group} heading={group} className={groupClass}>
+          <CommandPrimitive.Group
+            key={group}
+            heading={renderGroup ? renderGroup(group) : group}
+            className={groupClass}
+          >
             {members.map(item)}
           </CommandPrimitive.Group>
         ))}
       </CommandPrimitive.List>
+      {footer}
     </CommandPrimitive>
   )
 }
@@ -193,7 +239,12 @@ function Combobox({
   renderValue,
   triggerClassName,
   onOpen,
+  onClose,
   onBlur,
+  multiple,
+  trigger,
+  renderGroup,
+  footer,
 }: {
   value: string
   onValueChange: (value: string) => void
@@ -214,9 +265,23 @@ function Combobox({
   triggerClassName?: string
   /** Called each time the popover opens (for work that should wait for the first look). */
   onOpen?: () => void
-  onBlur?: () => void
+  /** Called each time the popover closes (after a pick in single mode, or Escape, outside click). */
+  onClose?: () => void
+  onBlur?: (e: React.FocusEvent<HTMLButtonElement>) => void
+  /** Multi-pick: a pick calls `onValueChange` and `announce("Added <label>")` and keeps the popover open;
+   *  picked options stay listed, disabled and marked "Added" until it closes, and are left out the next
+   *  time it opens. The list is still a single-select listbox (never aria-multiselectable). */
+  multiple?: { added: Set<string>; announce: (label: string) => void }
+  /** A caller-supplied trigger (one element) in place of the default Select-shaped button. */
+  trigger?: React.ReactElement
+  /** A heading per group, in place of its name (a stable function): a long path that truncates in the middle. */
+  renderGroup?: (group: string) => React.ReactNode
+  /** A muted line under the list (what was left out and why). */
+  footer?: React.ReactNode
 }) {
   const [open, setOpen] = React.useState(false)
+  // Multi-pick: what was already added when the popover opened, left out of its options.
+  const [leftOut, setLeftOut] = React.useState<Set<string>>()
   // Once the filter is used, the popover's placement is frozen so it never flips while open: the side
   // it landed on, plus how far collision shift had moved it along the trigger (as an alignment offset,
   // since locking turns collision handling, flip and shift alike, off).
@@ -234,7 +299,10 @@ function Combobox({
     // Reset on open, not on close, so a locked popover doesn't jump while it fades out.
     if (next) {
       setLock(undefined)
+      if (multiple) setLeftOut(new Set(multiple.added))
       onOpen?.()
+    } else {
+      onClose?.()
     }
   }
   const lockPlacement = () => {
@@ -248,7 +316,20 @@ function Combobox({
   }
   // A key that closes an overlay closes it at once (DESIGN.md → Motion).
   const stampInstant = () => contentRef.current?.setAttribute("data-instant", "")
+  // Primitives, not the inline `multiple` object, so the list is only filtered again when the options or
+  // the opening's snapshot change.
+  const isMulti = !!multiple
+  const listed = React.useMemo(
+    () => (isMulti && leftOut ? options.filter((o) => !leftOut.has(o.value)) : options),
+    [options, isMulti, leftOut],
+  )
   const commit = (next: string) => {
+    if (multiple) {
+      lockPlacement()
+      multiple.announce(`Added ${options.find((o) => o.value === next)?.label ?? next}`)
+      onValueChange(next)
+      return
+    }
     if (lastInputModality() === "keyboard") stampInstant()
     onOpenChange(false)
     onValueChange(next)
@@ -256,7 +337,8 @@ function Combobox({
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>
+      <PopoverTrigger asChild ref={triggerRef}>
+        {trigger ?? (
         <button
           type="button"
           role="combobox"
@@ -278,7 +360,6 @@ function Combobox({
               onOpenChange(true)
             }
           }}
-          ref={triggerRef}
         >
           {/* A flex item that shrinks below its content and clips it: text gets its own ellipsis and a
               rendered value (an agent chip) shrinks with the slot, so its parts truncate. `relative`
@@ -288,6 +369,7 @@ function Combobox({
           </span>
           <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
         </button>
+        )}
       </PopoverTrigger>
       <PopoverContent
         ref={contentRef}
@@ -297,16 +379,20 @@ function Combobox({
         avoidCollisions={!lock}
         onEscapeKeyDown={stampInstant}
         aria-label={ariaLabel}
-        className="w-[max(var(--radix-popover-trigger-width),min(24rem,calc(100vw-2rem)))] gap-0 p-0"
+        className="max-h-(--radix-popover-content-available-height) w-[max(var(--radix-popover-trigger-width),min(24rem,calc(100vw-2rem)))] gap-0 p-0"
       >
         <ComboList
           label={ariaLabel}
-          options={options}
+          options={listed}
           value={value}
-          emptyText={emptyText}
+          // Multi: once something is listed, an empty result is the filter's, not an empty list.
+          emptyText={isMulti && listed.length > 0 ? FORM_MSG.noMatches : emptyText}
+          added={multiple?.added}
           onCommit={commit}
           onSearch={lockPlacement}
           renderOption={renderOption}
+          renderGroup={renderGroup}
+          footer={footer}
         />
       </PopoverContent>
     </Popover>

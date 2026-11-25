@@ -5,9 +5,10 @@ export type StartFix =
   | "secrets"
   | "projects"
   | "edit_agent"
-  | "resync"
   | "runtime"
-  | "image";
+  | "image"
+  | "template"
+  | "config";
 
 export class AgentStartError extends Error {
   /** The message without its advice (what is wrong, not what to do): a spawned agent's variant ends differently. */
@@ -16,6 +17,8 @@ export class AgentStartError extends Error {
     message: string,
     readonly fix?: StartFix,
     diagnosis?: string,
+    /** Redacted, capped output that explains the failure (a plugin install's); goes into the error event's `detail`. */
+    readonly detail?: string,
   ) {
     super(message);
     this.name = "AgentStartError";
@@ -23,11 +26,12 @@ export class AgentStartError extends Error {
   }
 }
 /**
- * S7 §8: a spawned agent can't be edited or re-synced, so a start error whose fix is one of those drops the fix and
- * its advice: the diagnosis ends with "Terminate it and spawn a new one." instead. Other errors are returned unchanged.
+ * S7 §8: a spawned agent can't be edited or configured, so a start error whose fix is one of those drops
+ * the fix and its advice: the diagnosis ends with "Terminate it and spawn a new one." instead. Other errors are
+ * returned unchanged.
  */
 export function forSpawnedAgent(err: AgentStartError): AgentStartError {
-  if (err.fix !== "edit_agent" && err.fix !== "resync") return err;
+  if (err.fix !== "edit_agent" && err.fix !== "config") return err;
   return new AgentStartError(`${err.diagnosis} Terminate it and spawn a new one.`);
 }
 
@@ -47,8 +51,11 @@ export class AgentTerminatedError extends Error {
 
 /** Why Restart or Start a new session is refused (spec §9.7); the route answers 409 with the code. */
 export type RecoveryRefusal =
-  | "not_errored"
   | "attempt_in_progress"
+  | "starting"
+  | "stopping"
+  | "compacting"
+  | "lost_work"
   | "resume_unrecoverable"
   | "runtime_disabled"
   | "reset_not_allowed";
@@ -57,6 +64,8 @@ export class RecoveryRefusedError extends Error {
   constructor(
     readonly code: RecoveryRefusal,
     message: string,
+    /** `lost_work`: what a forced restart would stop, so a caller can show it (I7 §9.2). */
+    readonly data?: { tasks: string[]; crons: string[] },
   ) {
     super(message);
     this.name = "RecoveryRefusedError";
@@ -87,6 +96,15 @@ export class CommandsUnsupportedError extends Error {
   }
 }
 
+/** I1 §7: an agent may have one command queued for itself at a time. */
+export class SelfCommandPendingError extends Error {
+  readonly code = "self_command_pending";
+  constructor() {
+    super("You already have a command queued for yourself.");
+    this.name = "SelfCommandPendingError";
+  }
+}
+
 /** An inbox cursor that doesn't decode to `created_at|id` (spec §11); the route answers 400. */
 export class InvalidCursorError extends Error {
   constructor() {
@@ -106,5 +124,13 @@ export class StopCronsError extends ApiError {
         : `@${slug} is already stopping; its crons stop with it.`,
     );
     this.name = "StopCronsError";
+  }
+}
+
+/** An agent actor asked for something only a human may do (spec §7.2): a 403 for REST, a tool error for MCP. */
+export class OrgRefusedError extends ApiError {
+  constructor(message: string) {
+    super(403, "org_refused", message);
+    this.name = "OrgRefusedError";
   }
 }

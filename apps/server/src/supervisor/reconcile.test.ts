@@ -8,13 +8,20 @@ import { EventStore } from "../agents/event-store.ts";
 import { AgentRuntimes } from "../agents/runtimes.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { insertAgent, insertSchedule, insertScheduledMessage } from "../agents/testing/rows.ts";
-import { noForward, noopTokens, okSpec, silentLog } from "../agents/testing/runtime-harness.ts";
+import {
+  noForward,
+  noopTokens,
+  okSpec,
+  silentLog,
+  testEffective,
+} from "../agents/testing/runtime-harness.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import { ContainerManager, containerName, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ProcessJournal } from "../runtime/local/journal.ts";
 import { ScheduleStore } from "../scheduling/schedule-store.ts";
 import { Reaper } from "../spawning/reaper.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { ATTEMPT_CUT_SHORT, reconcile } from "./reconcile.ts";
 
@@ -23,6 +30,7 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
+  await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
 });
 afterAll(() => t.close());
@@ -37,6 +45,7 @@ class Boot {
     log: silentLog,
     uid: 501,
     gid: 20,
+    checkImage: async () => {},
   });
   readonly runtimes: AgentRuntimes;
   readonly logs: { level: string; msg: string }[] = [];
@@ -59,7 +68,14 @@ class Boot {
       log: silentLog,
       maxRunningAgents: () => max,
       ...(o.dockerRuntime
-        ? { docker: { containers: this.containers, claudeBin: "claude", defaultImage: "img" } }
+        ? {
+            docker: {
+              containers: this.containers,
+              claudeBin: "claude",
+              defaultImage: "img",
+              resolver: { effective: async () => testEffective({ runtime: "docker" }) },
+            },
+          }
         : {}),
     });
   }
@@ -128,7 +144,13 @@ async function agent(o: { status?: string } = {}): Promise<string> {
   return id;
 }
 const pending = (id: string, body: string) =>
-  store.createMessage({ from: { userId: "u1" }, toAgentId: id, body, urgent: false });
+  store.createMessage({
+    from: { userId: "u1" },
+    toAgentId: id,
+    recipients: ["@test"],
+    body,
+    urgent: false,
+  });
 const openTurn = (id: string) => store.openTurn(id, null);
 const setJournal = (id: string, j: Omit<RuntimeJournal, "takenAt">) =>
   store.setRuntimeJournal(id, { ...j, takenAt: new Date().toISOString() });

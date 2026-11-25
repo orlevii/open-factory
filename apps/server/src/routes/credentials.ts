@@ -24,8 +24,13 @@ export const credentialsRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     "/api/credentials",
     { schema: { body: createCredentialBodySchema, response: { 201: credentialResponseSchema } } },
-    async (req, reply) =>
-      reply.code(201).send({ credential: await app.credentials.create(req.body) }),
+    async (req, reply) => {
+      const credential = await app.credentials.create({ ...req.body, expiresAt: null });
+      // I3 §5.4: a successful paste or API-key add ends the caller's sign-in attempt.
+      if (!req.user) throw new Error("requireUser did not set request.user");
+      app.signIn.endFor(req.user.id);
+      return reply.code(201).send({ credential });
+    },
   );
 
   app.put(

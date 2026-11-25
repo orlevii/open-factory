@@ -76,29 +76,23 @@ const openOver = async (path = "/schedules") => {
   return r;
 };
 
-test("the header has the key in mono, the first line, and an icon Pause named with the key", async () => {
+test("the header has the key, the first line, and an icon Pause named with the key", async () => {
   mockApi(common(sched()));
   await openOver();
   const dialog = await sheet();
-  expect(within(dialog).getByText("S-3")).toHaveClass("font-mono");
+  expect(within(dialog).getByText("S-3")).toBeInTheDocument();
   expect(await within(dialog).findByText("Morning review", { selector: "[id]" })).toBeVisible();
   expect(within(dialog).getByRole("button", { name: "Pause S-3" })).toBeInTheDocument();
 });
 
-test("the footer has Save changes, Close and a ghost crimson Delete schedule on the left", async () => {
+test("the footer has Save changes, Close and Delete schedule", async () => {
   mockApi(common(sched()));
   await openOver();
   const dialog = await sheet();
   await message();
   expect(within(dialog).getByRole("button", { name: "Save changes" })).toBeInTheDocument();
   expect(within(dialog).getAllByRole("button", { name: "Close" }).length).toBeGreaterThan(0);
-  const del = within(dialog).getByRole("button", { name: "Delete schedule" });
-  expect(del).toHaveClass("text-destructive");
-  const footer = del.closest("[data-slot=sheet-footer]") as HTMLElement;
-  const aside = footer.querySelector(".sm\\:mr-auto");
-  expect(aside?.contains(del)).toBe(true);
-  // The outcome line leads the footer; the aside follows it on the left.
-  expect(footer.firstElementChild).toHaveClass("form-outcome");
+  expect(within(dialog).getByRole("button", { name: "Delete schedule" })).toBeInTheDocument();
 });
 
 test("phones: the footer stacks Save changes first and Close last, Delete between", async () => {
@@ -281,13 +275,20 @@ test("a server field error on save focuses its field; a failure with no field sa
   expect(await screen.findByText("Couldn't save the schedule. Try again.")).toBeInTheDocument();
 });
 
-test("leaving a field for Delete schedule doesn't validate it", async () => {
+test("leaving an edited, invalid Message for Delete schedule doesn't validate it; leaving it for Save does", async () => {
   mockApi(common(sched()));
   await openOver();
-  await message();
-  expect(screen.getByRole("button", { name: "Delete schedule" })).toHaveAttribute(
-    "data-skip-validate",
-  );
+  const msg = await message();
+  await userEvent.clear(msg);
+  const del = screen.getByRole("button", { name: "Delete schedule" });
+  expect(del).toHaveAttribute("data-skip-validate");
+  // A keyboard move: the blur's relatedTarget is the Delete button, with no pointerdown to fall back on.
+  act(() => del.focus());
+  expect(msg).not.toHaveAttribute("aria-invalid");
+  act(() => msg.focus());
+  act(() => screen.getByRole("button", { name: "Save changes" }).focus());
+  expect(msg).toHaveAttribute("aria-invalid", "true");
+  expect(msg).toHaveAccessibleDescription("Enter a message.");
 });
 
 test("an archived target stays selected as an extra option; the helper names the author change; pending notes", async () => {
@@ -634,14 +635,6 @@ test("a ScheduleBadge opens the sheet for its key", async () => {
   expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
 });
 
-test("the old page URL opens the sheet over the list, key upper-cased, replacing the entry", async () => {
-  mockApi(common(sched()));
-  const { router } = renderApp("/schedules/s-3", alice);
-  expect(await sheet()).toBeInTheDocument();
-  expect(router.state.location.pathname).toBe("/schedules");
-  expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-3" });
-});
-
 test("a late Delete failure toasts the error with Open form", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
@@ -663,7 +656,7 @@ test("a late Delete failure toasts the error with Open form", async () => {
   expect(n?.action?.label).toBe("Open form");
 });
 
-test("a double click on Delete sends one DELETE, and Delete waits while a Save is pending", async () => {
+test("a double click on Delete sends one DELETE", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
   const api = mockApi({

@@ -1,4 +1,4 @@
-import type { KeyboardEventHandler, ReactNode, Ref } from "react";
+import type { FocusEvent, KeyboardEventHandler, ReactNode, Ref } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./markdown";
@@ -15,7 +15,7 @@ export function MarkdownEditor(props: {
   placeholder?: string;
   "aria-label"?: string;
   "aria-describedby"?: string;
-  onBlur?(): void;
+  onBlur?(e: FocusEvent<HTMLTextAreaElement>): void;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   textareaRef?: Ref<HTMLTextAreaElement>;
   /** Controlled Write / Preview, for callers that must jump into the textarea. */

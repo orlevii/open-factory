@@ -6,6 +6,7 @@ import {
   lstat,
   mkdir,
   open,
+  readdir,
   readlink,
   rename,
   rm,
@@ -19,7 +20,7 @@ export class WorkspaceError extends Error {
   readonly diagnosis: string;
   constructor(
     message: string,
-    readonly fix?: "projects" | "edit_agent" | "resync",
+    readonly fix?: "projects" | "edit_agent" | "template" | "config",
     diagnosis?: string,
   ) {
     super(message);
@@ -66,7 +67,7 @@ const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBL
  * can write the workdir *concurrently* could swap a checked directory for a link in between. The
  * final component is race-free (O_NOFOLLOW, O_EXCL temp, rename); the parents are not (Node has no
  * openat/O_BENEATH). That race is closed by the caller, not here: Docker agents are prepared only
- * with their container stopped, and re-sync stages its files when the agent may be running (spec
+ * with their container stopped, and a persona reset stages its file when the agent may be running (spec
  * §11.4 part 4), so no agent process runs while these writes happen. A local agent is no boundary
  * (it runs as the host user) and gets the same code.
  */
@@ -192,6 +193,34 @@ export class SafeFs {
     await unlink(abs);
   }
 
+  /**
+   * Empties the folder at `rel`: a link in its place is removed as a link, every link inside is unlinked (never followed)
+   * and every real entry is removed with its contents (`rm` never follows links). Missing is fine; a file there fails.
+   */
+  async emptyDir(rel: string): Promise<void> {
+    const st = await this.entry(rel);
+    if (!st) return;
+    const abs = this.abs(rel);
+    if (st.isSymbolicLink()) {
+      await unlink(abs);
+      return;
+    }
+    if (!st.isDirectory()) throw new WorkspaceError(`${abs} isn't a folder; move it away.`);
+    // One entry that can't go doesn't stop the rest: the folder is left as empty as it can be, then the first failure surfaces.
+    let failure: unknown;
+    for (const name of await readdir(abs)) {
+      try {
+        const cst = await this.entry(path.join(rel, name));
+        if (!cst) continue;
+        if (cst.isSymbolicLink()) await unlink(path.join(abs, name));
+        else await rm(path.join(abs, name), { recursive: true, force: true });
+      } catch (err) {
+        failure ??= err;
+      }
+    }
+    if (failure) throw failure;
+  }
+
   /** Copy for backups: a symlink source is copied as a symlink (never its target's bytes).
    *  `dest` is factory-owned (outside the root) and must not exist (EEXIST otherwise). */
   async copyOut(rel: string, dest: string): Promise<void> {
@@ -225,8 +254,14 @@ export class SafeFs {
     await rename(abs, dest);
   }
 
-  /** undefined for missing, a symlink, or anything that isn't a regular file. */
-  async readIfRegular(rel: string): Promise<Buffer | undefined> {
+  /**
+   * undefined for missing, a symlink, or anything that isn't a regular file. With `maxBytes`, a file over it is not
+   * read at all: `onTooLarge` is called (its throw propagates) before any byte is read.
+   */
+  async readIfRegular(
+    rel: string,
+    limit?: { maxBytes: number; onTooLarge: () => never },
+  ): Promise<Buffer | undefined> {
     const abs = this.abs(rel);
     if (!(await this.walk(abs))) return undefined;
     let fh: FileHandle;
@@ -239,7 +274,9 @@ export class SafeFs {
       throw err;
     }
     try {
-      if (!(await fh.stat()).isFile()) return undefined;
+      const st = await fh.stat();
+      if (!st.isFile()) return undefined;
+      if (limit && st.size > limit.maxBytes) limit.onTooLarge();
       return await fh.readFile();
     } finally {
       await fh.close();

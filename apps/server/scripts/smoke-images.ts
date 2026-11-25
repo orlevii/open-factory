@@ -83,7 +83,8 @@ async function step<T>(name: string, fn: () => Promise<T>): Promise<T> {
 // realpath: macOS tmpdir is a /var symlink; the factory works with canonical paths.
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-images-")));
 const factoryHome = path.join(root, "home");
-const hostSkillsDir = path.join(root, "host-skills");
+const hostClaudeDir = path.join(root, "host-claude");
+const hostSkillsDir = path.join(hostClaudeDir, "skills");
 const cliHome = path.join(root, "cli-home");
 const WORD = randomBytes(3).toString("hex");
 
@@ -332,7 +333,7 @@ try {
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
     FACTORY_HOME: factoryHome,
-    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+    FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
     FACTORY_DEFAULT_IMAGE: LOCAL_BASE,
     FACTORY_ALLOW_LOCAL_RUNTIME: "false",
     HOST: "127.0.0.1",
@@ -439,12 +440,13 @@ try {
   const notBuilt =
     "Image `smoke` isn't built. Build it in Templates → Images, or run `open-factory images build smoke`.";
   await step("2. message smoke before the build → 202", async () => {
-    const r = await http("POST", "/api/agents/smoke/messages", or(), {
+    const r = await http("POST", "/api/messages", or(), {
+      to: ["smoke"],
       // The same instruction as the later message: this one stays queued through the failed start and may be
       // delivered in the same batch.
       body: ASK,
     });
-    expect(r, 202, "POST /api/agents/smoke/messages");
+    expect(r, 202, "POST /api/messages");
   });
   const startErr = await step("2. the start fails: error event (source spawn)", () =>
     until(
@@ -506,11 +508,12 @@ try {
     expect(r, 202, "POST /api/agents/smoke/restart");
   });
   const sent = await step("4. message smoke after the build → 202", async () => {
-    const r = await http("POST", "/api/agents/smoke/messages", or(), {
+    const r = await http("POST", "/api/messages", or(), {
+      to: ["smoke"],
       body: ASK,
     });
-    expect(r, 202, "POST /api/agents/smoke/messages");
-    return String((r.json as { item: { id: string } }).item.id);
+    expect(r, 202, "POST /api/messages");
+    return String((r.json as { results: { id: string }[] }).results[0]?.id);
   });
   const turn = await step("4. smoke's turn for that message ends", () =>
     until(

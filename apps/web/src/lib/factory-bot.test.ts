@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { AVATAR_CHROMA, AVATAR_HUES, avatarL, oklchDistance } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { SRC } from "../test/ui-contract-files";
 import { botParts, contrast, fnv1a32, oklchToRelLuminance } from "./factory-bot";
@@ -27,28 +28,28 @@ test("botParts golden vectors (a change here must be deliberate)", () => {
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
         "accessory": 3,
         "eyes": 3,
-        "fill": 8,
+        "fill": 12,
         "head": 1,
         "mouth": 0,
       },
       "ceo": {
         "accessory": 1,
         "eyes": 3,
-        "fill": 8,
+        "fill": 4,
         "head": 2,
         "mouth": 0,
       },
       "designer": {
         "accessory": 1,
         "eyes": 1,
-        "fill": 8,
+        "fill": 4,
         "head": 0,
         "mouth": 0,
       },
       "dev": {
         "accessory": 4,
         "eyes": 5,
-        "fill": 2,
+        "fill": 10,
         "head": 0,
         "mouth": 3,
       },
@@ -62,21 +63,21 @@ test("botParts golden vectors (a change here must be deliberate)", () => {
       "lead": {
         "accessory": 2,
         "eyes": 3,
-        "fill": 6,
+        "fill": 10,
         "head": 3,
         "mouth": 0,
       },
       "ops-xyzw": {
         "accessory": 2,
         "eyes": 5,
-        "fill": 4,
+        "fill": 8,
         "head": 2,
         "mouth": 3,
       },
       "pm": {
         "accessory": 0,
         "eyes": 1,
-        "fill": 4,
+        "fill": 12,
         "head": 2,
         "mouth": 0,
       },
@@ -90,7 +91,7 @@ test("botParts golden vectors (a change here must be deliberate)", () => {
       "reviewer": {
         "accessory": 4,
         "eyes": 2,
-        "fill": 6,
+        "fill": 2,
         "head": 2,
         "mouth": 2,
       },
@@ -98,18 +99,23 @@ test("botParts golden vectors (a change here must be deliberate)", () => {
   `);
 });
 
-test("parts stay in range", () => {
-  for (const s of ["x", "lead", "z9"]) {
-    const p = botParts(s);
-    expect(p.fill).toBeGreaterThanOrEqual(1);
-    expect(p.fill).toBeLessThanOrEqual(8);
+test("every part stays an integer in its range, over many slugs", () => {
+  const ranges = { head: [0, 3], eyes: [0, 5], mouth: [0, 3], accessory: [0, 4], fill: [1, 12] };
+  for (let i = 0; i < 500; i++) {
+    const p = botParts(`agent-${i}-${(i * 7919).toString(36)}`);
+    for (const [part, [lo, hi]] of Object.entries(ranges) as [keyof typeof ranges, number[]][]) {
+      const v = p[part];
+      expect(Number.isInteger(v), `${part} of #${i}`).toBe(true);
+      expect(v, `${part} of #${i}`).toBeGreaterThanOrEqual(lo as number);
+      expect(v, `${part} of #${i}`).toBeLessThanOrEqual(hi as number);
+    }
   }
 });
 
 test("avatar ink reaches 3:1 on every fill in both themes (computed from styles.css)", () => {
   const css = readFileSync(join(SRC, "styles.css"), "utf8");
-  const fills = [...css.matchAll(/--avatar-(\d):\s*oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/g)];
-  expect(fills.length).toBe(16);
+  const fills = [...css.matchAll(/--avatar-(\d+):\s*oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/g)];
+  expect(fills.length).toBe(24);
   const ink = oklchToRelLuminance(0.2, 0.008, 255);
   for (const [, , l, c, h] of fills) {
     expect(
@@ -122,4 +128,28 @@ test("avatar-ink is declared in both themes", () => {
   const css = readFileSync(join(SRC, "styles.css"), "utf8");
   expect(css.match(/--avatar-ink:\s*oklch\(0\.2 0\.008 255\)/g)?.length).toBe(2);
   expect(css).toContain("--color-avatar-ink: var(--avatar-ink)");
+});
+
+test("styles.css tokens equal AVATAR_HUES and clear the dE gate per theme", () => {
+  const css = readFileSync(join(SRC, "styles.css"), "utf8");
+  const all = [...css.matchAll(/--avatar-(\d+):\s*oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)/g)].map(
+    (m) => ({ index: Number(m[1]), l: Number(m[2]), c: Number(m[3]), h: Number(m[4]) }),
+  );
+  expect(all.length).toBe(24);
+  for (const [t, theme] of (["light", "dark"] as const).entries()) {
+    const block = all.slice(t * 12, t * 12 + 12);
+    expect(block).toEqual(
+      AVATAR_HUES.map((e) => ({
+        index: e.index,
+        l: avatarL(theme, e.tier),
+        c: AVATAR_CHROMA,
+        h: e.hue,
+      })),
+    );
+    let min = Number.POSITIVE_INFINITY;
+    for (const [i, a] of block.entries())
+      for (const b of block.slice(i + 1)) min = Math.min(min, oklchDistance(a, b));
+    expect(min).toBeGreaterThanOrEqual(0.03);
+  }
+  for (let i = 1; i <= 12; i++) expect(css).toContain(`--color-avatar-${i}: var(--avatar-${i});`);
 });

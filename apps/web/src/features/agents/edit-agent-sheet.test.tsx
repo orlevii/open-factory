@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { notify } from "@/components/ui/toaster";
 import { hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
+import { FORM_MSG } from "@/lib/form-messages.ts";
 import { agentSummary, credential, mockWorld, type World } from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json } from "@/test/mock-api";
@@ -92,21 +93,20 @@ async function rename(to: string) {
 
 // --- The body ---
 
-test("header Edit agent, a wrapping @slug · Template description, every field and no template or slug input", async () => {
+test("header Edit agent, an @slug · Template description, every field and no template or slug input", async () => {
   const { dialog } = await open(
     {
       agents: [lead({ slug: "a-very-long-agent-slug-that-wraps", template: "lead" })],
     },
     { slug: "a-very-long-agent-slug-that-wraps" },
   );
-  const description = within(dialog).getByText(
-    (_c, el) =>
-      el?.getAttribute("data-slot") === "sheet-description" &&
-      el.textContent === "@a-very-long-agent-slug-that-wraps · Template lead",
-  );
-  expect(description.className).not.toMatch(/truncate/);
-  expect(description.className).toMatch(/overflow-wrap:anywhere/);
-  expect(within(description).getByText("lead")).toHaveClass("font-mono");
+  expect(
+    within(dialog).getByText(
+      (_c, el) =>
+        el?.getAttribute("data-slot") === "sheet-description" &&
+        el.textContent === "@a-very-long-agent-slug-that-wraps · Template lead",
+    ),
+  ).toBeInTheDocument();
   expect(field("Display name")).toHaveValue("Lead");
   expect(field("Manager")).toBeInTheDocument();
   expect(field("Description")).toHaveValue("Leads");
@@ -116,6 +116,47 @@ test("header Edit agent, a wrapping @slug · Template description, every field a
   expect(within(dialog).queryByLabelText(/Slug|Address/)).not.toBeInTheDocument();
   expect(within(dialog).queryByRole("button", { name: "More options" })).not.toBeInTheDocument();
   expect(footerClose(dialog)).toBeInTheDocument();
+});
+
+test("the model summary row ends the form and opens the Configuration page, keeping the draft", async () => {
+  const detailWith = (model: { value: string | null; source: string }) => () =>
+    json({ agent: lead(), model, queue: [], lastSeq: 0 });
+  const { router, dialog } = await open({
+    extra: { "GET /api/agents/lead": detailWith({ value: "opus", source: "agent" }) },
+  });
+  const row = within(dialog)
+    .getByText(/^Model/)
+    .closest("p") as HTMLElement;
+  expect(row).toHaveTextContent("Model opus (this agent) · Open configuration");
+  // The last row of the form, after Projects.
+  const body = dialog.querySelector("[data-slot=sheet-body]") as HTMLElement;
+  expect(body.lastElementChild?.contains(row)).toBe(true);
+  const link = within(row).getByRole("link", { name: "Open configuration" });
+  expect(link).toHaveAttribute("href", "/agents/lead/config");
+  await userEvent.type(field("Display name"), "!");
+  await userEvent.click(link);
+  await waitFor(() => expect(router.state.location.pathname).toBe("/agents/lead/config"));
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+  expect(hasDraft("edit-agent:lead")).toBe(true);
+});
+
+test("the model summary says where the model comes from", async () => {
+  const { dialog } = await open({
+    extra: {
+      "GET /api/agents/lead": () =>
+        json({
+          agent: lead(),
+          model: { value: "sonnet", source: "template" },
+          queue: [],
+          lastSeq: 0,
+        }),
+    },
+  });
+  expect(
+    within(dialog)
+      .getByText(/^Model/)
+      .closest("p"),
+  ).toHaveTextContent("Model sonnet (from template) · Open configuration");
 });
 
 test("the manager picker leaves out the agent and its descendants", async () => {
@@ -128,9 +169,8 @@ test("the manager picker leaves out the agent and its descendants", async () => 
   await open({ agents });
   const select = field("Manager");
   await vi.waitFor(() => expect(select).toHaveTextContent("CTO"));
-  // The closed trigger shows the name and @slug, without the item's indent.
+  // The closed trigger shows the name and @slug.
   expect(select).toHaveTextContent("@cto");
-  expect(select.querySelector("[style*=padding]")).toBeNull();
   expect((await comboOptionNames(select)).map((n) => n.replace(/@.*/, ""))).toEqual([
     "No manager (reports to the humans)",
     "CTO",
@@ -138,36 +178,46 @@ test("the manager picker leaves out the agent and its descendants", async () => 
   ]);
 });
 
-test("the restart notice names the dirty credential on a running agent, and goes when it's undone", async () => {
+const SELF = FORM_MSG.restartsSelf;
+const RUNNING_HELP =
+  "A running agent restarts when idle to apply a change. Crons it set in this session stop.";
+
+test("every restart notice fits the outcome line: at most 40 characters, no user value", () => {
+  for (const m of [FORM_MSG.restartsSelf, FORM_MSG.restartsReports, FORM_MSG.restartsBoth]) {
+    expect(m.length, m).toBeLessThanOrEqual(40);
+    expect(m).not.toContain("@");
+  }
+});
+
+test("the restart notice shows on a running agent's change, and goes when it's undone", async () => {
   await open({
     agents: [lead({ status: "idle" })],
     credentials: [credential("work"), credential("prod")],
   });
-  const notice =
-    "Saving restarts @lead the next time it is idle, to apply the new credential. Crons it set in this session stop.";
   expect(screen.queryByText(/^Saving restarts/)).not.toBeInTheDocument();
   await pickOption(field("Credential"), /^prod/);
-  expect(await screen.findByText(notice)).toBeInTheDocument();
+  expect(await screen.findByText(SELF)).toBeInTheDocument();
   await pickOption(field("Credential"), /^work/);
   expect(screen.queryByText(/^Saving restarts/)).not.toBeInTheDocument();
 });
 
-test("the restart notice names every changed kind", async () => {
-  await open({
-    agents: [lead({ status: "working" }), agentSummary({ slug: "cto", displayName: "CTO" })],
+test("the restart help is there before any edit and unchanged by one, so nothing moves", async () => {
+  const { dialog } = await open({
+    agents: [
+      lead({ status: "working" }),
+      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "working", depth: 1 }),
+      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "idle", depth: 1 }),
+      agentSummary({ slug: "dev-3", reportsTo: "lead", status: "hibernated", depth: 1 }),
+    ],
     credentials: [credential("work"), credential("prod")],
   });
+  const help = `${RUNNING_HELP} Its direct reports @dev-1 and @dev-2 restart too when a name or description changes.`;
+  const before = await within(dialog).findByText(help);
+  expect(before.closest("[data-slot=sheet-footer]")).toBeNull();
   await pickOption(field("Credential"), /^prod/);
-  await userEvent.click(
-    within(screen.getByRole("group", { name: /Projects/ })).getByRole("checkbox", {
-      name: /docs/,
-    }),
-  );
-  expect(
-    await screen.findByText(
-      "Saving restarts @lead the next time it is idle, to apply the new credential and the new projects. Crons it set in this session stop.",
-    ),
-  ).toBeInTheDocument();
+  await rename("Boss");
+  expect(await screen.findByText(FORM_MSG.restartsBoth)).toBeInTheDocument();
+  expect(within(dialog).getByText(help)).toBe(before);
 });
 
 test("Save is described by the restart notice, so it is heard", async () => {
@@ -177,14 +227,30 @@ test("Save is described by the restart notice, so it is heard", async () => {
   });
   expect(saveButton()).not.toHaveAccessibleDescription();
   await pickOption(field("Credential"), /^prod/);
-  await vi.waitFor(() =>
-    expect(saveButton()).toHaveAccessibleDescription(
-      "Saving restarts @lead the next time it is idle, to apply the new credential. Crons it set in this session stop.",
-    ),
-  );
+  await vi.waitFor(() => expect(saveButton()).toHaveAccessibleDescription(SELF));
 });
 
-test("a text change names the running direct reports that restart too", async () => {
+test("the restart notice is the footer's notice; a save failure replaces it until the next edit", async () => {
+  await open({
+    agents: [lead({ status: "idle" })],
+    credentials: [credential("work"), credential("prod")],
+    extra: { "PATCH /api/agents/lead": () => Promise.reject(new TypeError("Failed to fetch")) },
+  });
+  await pickOption(field("Credential"), /^prod/);
+  const notice = await screen.findByText(SELF);
+  expect(notice.closest("[data-slot=sheet-footer]")).not.toBeNull();
+  expect(notice).toHaveAttribute("data-shown");
+  await userEvent.click(saveButton());
+  const error = await screen.findByText("Couldn't reach the server. Try again.");
+  expect(error.closest("[role=alert]")?.closest("[data-slot=sheet-footer]")).not.toBeNull();
+  expect(screen.getByText(SELF)).not.toHaveAttribute("data-shown");
+  expect(saveButton()).not.toHaveAccessibleDescription();
+  await rename("Boss");
+  expect(screen.queryByText("Couldn't reach the server. Try again.")).toBeNull();
+  expect(screen.getByText(SELF)).toHaveAttribute("data-shown");
+});
+
+test("a text change restarts the running direct reports too", async () => {
   await open({
     agents: [
       lead({ status: "idle" }),
@@ -193,18 +259,19 @@ test("a text change names the running direct reports that restart too", async ()
     ],
     credentials: [credential("work"), credential("prod")],
   });
-  await pickOption(field("Credential"), /^prod/);
-  // A credential is the agent's own: its reports don't restart.
-  expect(await screen.findByText(/^Saving restarts @lead/)).not.toHaveTextContent("dev-1");
-  await rename("Boss");
   expect(
     await screen.findByText(
-      "Saving restarts @lead the next time it is idle, to apply the new display name and the new credential. Crons it set in this session stop. Its direct report @dev-1 restarts too, the next time it is idle.",
+      `${RUNNING_HELP} Its direct report @dev-1 restarts too when a name or description changes.`,
     ),
   ).toBeInTheDocument();
+  await pickOption(field("Credential"), /^prod/);
+  // A credential is the agent's own: its reports don't restart.
+  expect(await screen.findByText(SELF)).toBeInTheDocument();
+  await rename("Boss");
+  expect(await screen.findByText(FORM_MSG.restartsBoth)).toBeInTheDocument();
 });
 
-test("a stopped agent's text change still names its running reports", async () => {
+test("a stopped agent's text change still restarts its running reports", async () => {
   await open({
     agents: [
       lead(),
@@ -212,13 +279,15 @@ test("a stopped agent's text change still names its running reports", async () =
       agentSummary({ slug: "dev-2", reportsTo: "lead", status: "working", depth: 1 }),
     ],
   });
-  await userEvent.clear(field("Description"));
-  await userEvent.type(field("Description"), "New");
   expect(
     await screen.findByText(
-      "Saving restarts its direct reports @dev-1 and @dev-2 the next time they are idle, to apply the new description.",
+      "Its direct reports @dev-1 and @dev-2 restart when idle if a name or description changes.",
     ),
   ).toBeInTheDocument();
+  expect(screen.queryByText(/^A running agent/)).not.toBeInTheDocument();
+  await userEvent.clear(field("Description"));
+  await userEvent.type(field("Description"), "New");
+  expect(await screen.findByText(FORM_MSG.restartsReports)).toBeInTheDocument();
 });
 
 test("the credential select is disabled while the list loads", async () => {
@@ -227,11 +296,12 @@ test("the credential select is disabled while the list loads", async () => {
   expect(field("Credential")).toHaveTextContent("work");
 });
 
-test("no restart notice for an agent that isn't running", async () => {
+test("no restart notice or help for an agent that isn't running", async () => {
   await open({ credentials: [credential("work"), credential("prod")] });
   await pickOption(field("Credential"), /^prod/);
   await vi.waitFor(() => expect(field("Credential")).toHaveTextContent("prod"));
   expect(screen.queryByText(/^Saving restarts/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/restarts? (too )?when/)).not.toBeInTheDocument();
 });
 
 test("Nothing to save: no field changed. stays inline and sends nothing", async () => {
@@ -263,7 +333,7 @@ test("on its own session, a display-name-only save toasts nothing", async () => 
     { extra: { ...sessionRoutes, "PATCH /api/agents/lead": saved(lead({ displayName: "Boss" })) } },
     { path: "/agents/lead" },
   );
-  expect(getSheetState().parent?.at).toBe("/agents/lead");
+  expect(getSheetState().parent?.at).toBe("/agents/lead/chat");
   await rename("Boss");
   await userEvent.click(saveButton());
   await waitFor(() => expect(getSheetState().parent).toBeUndefined());
@@ -304,11 +374,7 @@ test("a running agent's save says it restarts", async () => {
     extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", displayName: "Boss" })) },
   });
   await rename("Boss");
-  expect(
-    screen.getByText(
-      "Saving restarts @lead the next time it is idle, to apply the new display name. Crons it set in this session stop.",
-    ),
-  ).toBeInTheDocument();
+  expect(screen.getByText(SELF)).toBeInTheDocument();
   await userEvent.click(saveButton());
   await waitFor(() => expect(notify).toHaveBeenCalledOnce());
   expect(vi.mocked(notify).mock.calls[0]?.[0].text).toBe("Saved @lead. Restarts when idle.");
@@ -348,21 +414,26 @@ test("a server projects error shows under Projects", async () => {
   const group = within(dialog).getByRole("group", { name: /Projects/ });
   await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
   await userEvent.click(saveButton());
-  expect(await within(group).findByText("Project docs isn't registered.")).toBeInTheDocument();
+  const msg = await within(group).findByText("Project docs isn't registered.");
+  expect(msg.closest(".field-note")).not.toBeNull();
+  expect(group).toHaveAttribute("aria-invalid", "true");
+  await vi.waitFor(() =>
+    expect(within(group).getByRole("checkbox", { name: /app/ })).toHaveFocus(),
+  );
   expect(getSheetState().parent?.kind).toBe("edit-agent");
 });
 
-test("a toggle sends the project array; Use template default sends null", async () => {
-  const agent = lead({ grantsOverridden: true, projects: ["app", "docs"] });
+test("a toggle sends the project array", async () => {
+  const agent = lead({ projects: ["app", "docs"] });
   const { api } = await open({
     agents: [agent],
     extra: { "PATCH /api/agents/lead": saved(lead()) },
   });
   const group = screen.getByRole("group", { name: /Projects/ });
-  await userEvent.click(within(group).getByRole("button", { name: "Use template default" }));
+  await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
   await userEvent.click(saveButton());
   await waitFor(() => expect(getSheetState().parent).toBeUndefined());
-  expect(patches(api)).toEqual([{ projects: null }]);
+  expect(patches(api)).toEqual([{ projects: ["app"] }]);
 });
 
 // --- Dismissed while saving (break-ui M2) ---
@@ -698,15 +769,108 @@ test("Add project stacks over Edit agent", async () => {
 
 // --- Entry points ---
 
-test("/agents/lead/edit lands on /agents/lead with Edit agent open", async () => {
+test("/agents/lead/edit lands on the lead chat with Edit agent open", async () => {
   mockWorld({ agents: [lead()], extra: sessionRoutes });
   const { router } = renderApp("/agents/lead/edit", alice);
   await sheet();
-  expect(router.state.location.pathname).toBe("/agents/lead");
+  expect(router.state.location.pathname).toBe("/agents/lead/chat");
   expect(getSheetState().parent).toMatchObject({
     kind: "edit-agent",
     slug: "lead",
-    at: "/agents/lead",
+    at: "/agents/lead/chat",
   });
   expect(await screen.findByLabelText("Display name")).toHaveValue("Lead");
+});
+
+// --- Colour (I2 §12.6) ---
+
+const radio = (name: string) => screen.getByRole("radio", { name });
+
+test("Colour sits after Display name, names Auto's seeded hue, and sends color alone without a restart", async () => {
+  const api = await open({
+    agents: [lead({ status: "idle" })],
+    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 4 })) },
+  });
+  const group = screen.getByRole("radiogroup", { name: /^Colour/ });
+  expect(screen.getByText(/^Colour · Auto \(\w+\)$/)).toBeInTheDocument();
+  expect(field("Display name").compareDocumentPosition(group)).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+  await userEvent.click(radio("Teal"));
+  expect(screen.getByText("Colour · Teal")).toBeInTheDocument();
+  expect(screen.queryByText(SELF)).not.toBeInTheDocument();
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  expect(vi.mocked(notify).mock.calls[0]?.[0].text).toBe("Saved @lead.");
+  expect(patches(api.api)).toEqual([{ color: 4 }]);
+});
+
+test("a saved colour invalidates the inbox list so chat rows recolour", async () => {
+  const { queryClient } = await open({
+    agents: [lead({ status: "idle" })],
+    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 4 })) },
+  });
+  // A cached inbox list (inactive here, as when the sheet is over /agents): the save must mark it stale.
+  const inboxKey = ["inbox", "list"];
+  queryClient.setQueryData(inboxKey, { chats: [], items: [], nextCursor: null });
+  expect(queryClient.getQueryState(inboxKey)?.isInvalidated).toBe(false);
+  await userEvent.click(radio("Teal"));
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(notify).toHaveBeenCalledOnce());
+  expect(queryClient.getQueryState(inboxKey)?.isInvalidated).toBe(true);
+});
+
+test("arrow keys move and select, Home and End jump, roving tabindex follows", async () => {
+  await open();
+  await userEvent.click(radio("Auto"));
+  await userEvent.keyboard("{ArrowRight}");
+  expect(radio("Olive")).toHaveAttribute("aria-checked", "true");
+  expect(radio("Olive")).toHaveFocus();
+  expect(radio("Olive")).toHaveAttribute("tabindex", "0");
+  expect(radio("Auto")).toHaveAttribute("tabindex", "-1");
+  await userEvent.keyboard("{End}");
+  expect(radio("Ruby")).toHaveAttribute("aria-checked", "true");
+  expect(screen.getByText("Colour · Ruby")).toBeInTheDocument();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(radio("Auto")).toHaveAttribute("aria-checked", "true");
+  await userEvent.keyboard("{ArrowLeft}{Home}");
+  expect(radio("Auto")).toHaveAttribute("aria-checked", "true");
+  expect(radio("Auto")).toHaveFocus();
+});
+
+test("an agent whose template has an avatar.svg gets the line, not the group", async () => {
+  await open({ agents: [lead({ avatarVersion: "v1" })] });
+  expect(screen.getByText("This template's avatar.svg sets the avatar.")).toBeInTheDocument();
+  expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+});
+
+test("a running agent's colour with another field still restarts", async () => {
+  await open({
+    agents: [lead({ status: "idle" })],
+    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 2 })) },
+  });
+  await userEvent.click(radio("Moss"));
+  await rename("Boss");
+  expect(screen.getByText(SELF)).toBeInTheDocument();
+});
+
+const MANAGE_HELP =
+  "Create templates and agents, edit configurations, archive. Can assign secrets and credentials to agents and read configuration values humans typed in; grant it like admin access and keep sensitive values in secrets. Can't change local-runtime agents or grant this permission.";
+
+test("Can manage the org: a switch described by the spec's help, and its change is sent", async () => {
+  const { api } = await open({
+    extra: { "PATCH /api/agents/lead": saved(lead({ manageOrg: true })) },
+  });
+  const sw = screen.getByRole("switch", { name: "Can manage the org" });
+  expect(sw).not.toBeChecked();
+  expect(sw).toHaveAccessibleDescription(MANAGE_HELP);
+  await userEvent.click(sw);
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(patches(api)).toEqual([{ manageOrg: true }]));
+});
+
+test("Can manage the org: on a running agent the change shows the restart notice", async () => {
+  await open({ agents: [lead({ status: "idle" })] });
+  await userEvent.click(screen.getByRole("switch", { name: "Can manage the org" }));
+  expect(await screen.findByText(SELF)).toBeInTheDocument();
 });

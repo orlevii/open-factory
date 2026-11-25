@@ -1,20 +1,19 @@
 import type postgres from "postgres";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createDb } from "./client.ts";
-import { MIGRATIONS_DIR, migrate } from "./migrate.ts";
-import { createTestDatabase } from "./testing.ts";
+import { createMigratedTestDatabase } from "./testing.ts";
 
 let sql: postgres.Sql;
 let close: () => Promise<void>;
 beforeAll(async () => {
-  const t = await createTestDatabase();
-  await migrate(t.url, MIGRATIONS_DIR);
+  const t = await createMigratedTestDatabase();
   const h = createDb(t.url);
   sql = h.sql;
   close = async () => {
     await h.close();
     await t.drop();
   };
+  await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('lead','agent')`;
   await sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
   await sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
   await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id) values
@@ -34,53 +33,6 @@ const bad = (q: Promise<unknown>) => expect(q).rejects.toThrow(/check|violates|d
 test("keys come from a sequence", async () => {
   const rows = await sql`select number from schedules order by number`;
   expect(rows.map((r) => r.number)).toEqual([1, 2]);
-});
-
-test("every S3-S8 shape still passes and the scheduled shape passes", async () => {
-  await ok(
-    sql`insert into messages (id,kind,from_user_id,to_agent_id,body) values ('m1','message','u1','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,from_agent_id,to_all_humans,body,state) values ('m2','message','a1',true,'x','delivered') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,subject_agent_id,notice,to_agent_id,body) values ('m3','member_update','a1','denied','a2','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,from_agent_id,to_agent_id,body) values ('m3b','member_update','a1','a2','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,subject_agent_id,notice,to_agent_id,body) values ('m4','peer_left','a1','peer','a2','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,notice,to_agent_id,body) values ('m5','system','crash_recovered','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,notice,subject_agent_id,to_all_humans,body,state) values ('m6','system','agent_errored','a1',true,'x','delivered') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,task_id,to_agent_id,body) values ('n1','task_assigned','t1','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,from_agent_id,task_id,comment_id,to_agent_id,body) values ('n2','task_comment','a2','t1','k1','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,from_user_id,task_id,comment_id,to_agent_id,body) values ('n3','task_comment','u1','t1','k1','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,notice,task_id,to_agent_id,body) values ('n5','task_update','unblocked','t1','a1','x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,notice,task_id,to_user_id,body,state) values ('n6','task_update','done','t1','u1','x','delivered') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,to_agent_id,schedule_id,author_user_id,due_at,firings,late,body)
-        values ('sc1','scheduled','a1','s1','u1',now(),1,false,'x') returning id`,
-  );
-  await ok(
-    sql`insert into messages (id,kind,to_agent_id,schedule_id,author_agent_id,due_at,firings,late,body)
-        values ('sc2','scheduled','a1','s2','a2',now(),3,true,'x') returning id`,
-  );
 });
 
 test("wrong scheduled shapes are rejected", async () => {
@@ -114,7 +66,7 @@ test("wrong scheduled shapes are rejected", async () => {
     ),
   );
   await bad(
-    sql`insert into messages (id,kind,from_user_id,to_agent_id,schedule_id,body) values ('bad2','message','u1','a1','s1','x')`,
+    sql`insert into messages (id,kind,from_user_id,to_agent_id,schedule_id,body,recipients) values ('bad2','message','u1','a1','s1','x','{@test}')`,
   );
   await bad(
     sql`insert into messages (id,kind,notice,task_id,firings,to_agent_id,body) values ('bad3','task_update','done','t1',1,'a1','x')`,

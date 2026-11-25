@@ -1,16 +1,18 @@
 import type { AnyEvent, SubagentProgress } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, CircleX, GitFork, ShieldAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import { resyncAgent } from "@/features/agents/lifecycle";
+import { CONFIG_PAGE_COPY } from "@/features/config/messages";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { LocalRuntimeWhy } from "./agent-details";
 import { AgentText } from "./agent-text";
+import { agentDetailQueryOptions } from "./api";
 import { CommandBlock, CommandOutput } from "./command-rows";
 import { CompactionMarker } from "./compaction-marker";
+import { ConfigChangedLine } from "./config-changed-line";
 import { groupOpen } from "./display-passes";
 import { formatDuration, formatLastAt } from "./format";
 import { MessageBlock } from "./message-block";
@@ -173,6 +175,12 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
       );
     case "mcp_unavailable":
       return "Factory tools didn't connect in this process, so it can't send messages until it restarts. Messages to it still arrive.";
+    case "plugin_not_loaded":
+      return (
+        <>
+          Plugin <Mono>{e.key}</Mono> didn't load. Claude Code's output is in the session log.
+        </>
+      );
     case "interrupt_unconfirmed":
       return "The turn didn't confirm the stop within 10 seconds, so held messages were sent anyway.";
     default:
@@ -192,6 +200,7 @@ function quietDetail(e: AnyEvent): string | undefined {
   return undefined;
 }
 
+// `plugin_not_loaded` is deliberately not here: it gets its own CircleAlert in `quietIcon` (spec §7.3 step 8).
 const WARN = new Set([
   "delivery_failed",
   "compact_failed",
@@ -206,17 +215,33 @@ function quietIcon(e: AnyEvent): ReactNode {
   // One crash is red once: the unexpected exit, never a separate crimson error row.
   if (e.type === "exited" && !e.expected)
     return <CircleAlert aria-hidden="true" className="text-destructive" />;
+  if (e.type === "plugin_not_loaded") return <CircleAlert aria-hidden="true" />;
   if (e.type === "spawned") return <GitFork aria-hidden="true" />;
   if (e.type === "terminated") return <CircleX aria-hidden="true" />;
   return WARN.has(e.type) ? <TriangleAlert aria-hidden="true" /> : undefined;
 }
 
-function ResyncFix({ slug, className }: { slug: string; className: string }) {
-  const qc = useQueryClient();
-  return (
-    <button type="button" className={className} onClick={() => void resyncAgent(slug, qc)}>
-      Re-sync the agent
-    </button>
+const FIX_LINK =
+  "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+
+/**
+ * The agent's template page. The name comes from the session's own cached agent (no extra request once it is
+ * loaded); before that, or if it can't be read, the Templates list.
+ */
+function TemplateLink({ slug, label }: { slug: string; label: (template: string) => string }) {
+  const { data: template } = useQuery({
+    ...agentDetailQueryOptions(slug),
+    staleTime: Number.POSITIVE_INFINITY,
+    select: (d) => d.agent.template,
+  });
+  return template ? (
+    <Link to="/templates/$name" params={{ name: template }} className={FIX_LINK}>
+      {label(template)}
+    </Link>
+  ) : (
+    <Link to="/templates" className={FIX_LINK}>
+      Open Templates
+    </Link>
   );
 }
 
@@ -230,11 +255,10 @@ function FixLink({
   slug: string;
   spawned?: boolean;
 }) {
-  // A spawned agent can't be edited or re-synced (the server drops these fixes for it, spec §8):
+  // A spawned agent can't be edited or configured (the server drops these fixes for it, spec §8):
   // never link to an edit page that can only refuse.
-  if (spawned && (fix === "edit_agent" || fix === "resync")) return null;
-  const cls =
-    "text-[0.8125rem] leading-[1.125rem] text-foreground underline underline-offset-4 decoration-muted-foreground hover:decoration-ring";
+  if (spawned && (fix === "edit_agent" || fix === "config")) return null;
+  const cls = FIX_LINK;
   // Opens Edit agent over the session (U4 §5.6).
   if (fix === "edit_agent")
     return (
@@ -257,8 +281,15 @@ function FixLink({
         Open Templates → Images
       </Link>
     );
-  // Runs the Re-sync action in place; its outcome toasts (U4 §6.5).
-  if (fix === "resync") return <ResyncFix slug={slug} className={cls} />;
+  // The agent's own configuration (a plugin that didn't install, an overlay that fails its schema).
+  if (fix === "config")
+    return (
+      <Link to="/agents/$slug/config" params={{ slug }} className={cls}>
+        {CONFIG_PAGE_COPY.openConfiguration}
+      </Link>
+    );
+  // A template with errors, or a deleted one, is fixed on its page.
+  if (fix === "template") return <TemplateLink slug={slug} label={(t) => `Open template ${t}`} />;
   const target = {
     credentials: { to: "/settings/credentials", label: "Credentials" },
     secrets: { to: "/settings/secrets", label: "Secrets" },
@@ -303,6 +334,7 @@ export function TimelineRow(props: TimelineRowProps) {
         <div {...rp}>
           <MessageBlock
             from={row.message.from}
+            fromKind={row.message.fromKind}
             // `task_assigned` and `task_update` are from the factory; a `task_comment` is from its author.
             system={isNoticeKind(row.message.kind)}
             body={row.message.body}
@@ -316,6 +348,7 @@ export function TimelineRow(props: TimelineRowProps) {
                   scheduled: {
                     key: row.message.scheduleKey,
                     by: row.message.by,
+                    byKind: row.message.byKind,
                     due: row.message.due,
                     late: row.message.late,
                     firings: row.message.firings,
@@ -534,12 +567,20 @@ export function TimelineRow(props: TimelineRowProps) {
     case "command":
       return (
         <div {...rp}>
-          <CommandBlock by={row.by} text={row.text} at={row.at} />
+          <CommandBlock
+            by={row.by}
+            fromKind={row.fromKind}
+            text={row.text}
+            at={row.at}
+            pending={row.pending}
+          />
         </div>
       );
     case "command_output":
       return <CommandOutput command={row.command} text={row.text} rowProps={rp} />;
     case "quiet":
+      if (row.event.type === "config_changed")
+        return <ConfigChangedLine by={row.event.by} changes={row.event.changes} rowProps={rp} />;
       return (
         <QuietLine rowProps={rp} icon={quietIcon(row.event)} detail={quietDetail(row.event)}>
           {quietText(row.event, interruptedEnds.has(row.seq))}

@@ -26,13 +26,25 @@ test("FieldShell wires label, help and error; error replaces help", () => {
   expect(screen.getByLabelText("Slug")).toBeInvalid();
 });
 
-test("FieldShell legend renders a fieldset", () => {
+test("FieldShell legend is invalid with an error, and its label may carry a marker", () => {
   render(
-    <FieldShell name="projects" label="Projects" legend>
-      {() => <span>body</span>}
+    <FieldShell
+      name="projects"
+      label={
+        <>
+          Projects <span id="m">Custom</span>
+        </>
+      }
+      legend
+      describedBy="m"
+      error="Project docs isn't registered."
+    >
+      {() => <input aria-label="x" />}
     </FieldShell>,
   );
-  expect(screen.getByRole("group", { name: "Projects" })).toBeInTheDocument();
+  const group = screen.getByRole("group", { name: "Projects Custom" });
+  expect(group).toHaveAttribute("aria-invalid", "true");
+  expect(group).toHaveAttribute("aria-describedby", "field-projects-error m");
 });
 
 test("FormField keeps its API (S1 tests stay green)", () => {
@@ -126,7 +138,7 @@ test("TokenField shows the OAuth help for oauth_token only", () => {
   };
   const { rerender } = render(<TokenField {...props} kind="oauth_token" />);
   expect(screen.getByLabelText("Token")).toHaveAccessibleDescription(
-    "Create one with claude setup-token.",
+    "Create one with claude setup-token. You won't be warned before it expires.",
   );
   rerender(<TokenField {...props} kind="api_key" />);
   expect(screen.getByLabelText("Token")).not.toHaveAccessibleDescription();

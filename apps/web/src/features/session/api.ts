@@ -1,5 +1,6 @@
 import {
   type AgentSummary,
+  ApiError,
   agentDetailSchema,
   agentListSchema,
   agentResponseSchema,
@@ -7,6 +8,8 @@ import {
   eventsPageSchema,
   messageLookupSchema,
   queueItemResponseSchema,
+  restartAgentResponseSchema,
+  sendMessagesResponseSchema,
 } from "@open-factory/shared";
 import { type QueryClient, queryOptions, skipToken } from "@tanstack/react-query";
 import { z } from "zod";
@@ -83,22 +86,18 @@ export function fetchEvents(
 export const fetchMessage = (id: string) =>
   apiFetch(`/api/messages/${encodeURIComponent(id)}`, { schema: messageLookupSchema });
 
-/** U3 §13.2: `clientMessageId` makes a retry idempotent (the server answers a repeat with the original). */
-export const postMessage = (
+/** `POST /api/agents/:slug/input`: the raw text a human types into the session, exactly as typed (I1 §5.1).
+ *  `clientMessageId` makes a retry idempotent. */
+export const postInput = (
   slug: string,
-  body: string,
-  o: { urgent: boolean; clientMessageId?: string; attachments?: string[]; signal?: AbortSignal },
+  body: { text: string; clientMessageId: string },
+  signal?: AbortSignal,
 ) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/messages`, {
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/input`, {
     method: "POST",
-    body: {
-      body,
-      urgent: o.urgent,
-      ...(o.clientMessageId ? { clientMessageId: o.clientMessageId } : {}),
-      ...(o.attachments?.length ? { attachments: o.attachments } : {}),
-    },
+    body,
     schema: queueItemResponseSchema,
-    ...(o.signal ? { signal: o.signal } : {}),
+    ...(signal ? { signal } : {}),
   }).then((r) => r.item);
 
 /** U3 §6.4: withdraw a held message you sent; resolves to the cancelled item. */
@@ -129,14 +128,20 @@ export const postInterrupt = (slug: string) =>
     schema: z.object({}),
   }).then(() => undefined);
 
-const postEmpty = (slug: string, action: "restart" | "reset-session") =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/${action}`, {
+export const postResetSession = (slug: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/reset-session`, {
     method: "POST",
     body: {},
     schema: z.object({}),
   }).then(() => undefined);
-export const postRestart = (slug: string) => postEmpty(slug, "restart");
-export const postResetSession = (slug: string) => postEmpty(slug, "reset-session");
+
+/** I7 §9.4: what the restart did (a 409 `lost_work` throws, its lists in the error's `body.data`). */
+export const postRestart = (slug: string, { force }: { force?: boolean } = {}) =>
+  apiFetch(`/api/agents/${encodeURIComponent(slug)}/restart`, {
+    method: "POST",
+    body: force ? { force: true } : {},
+    schema: restartAgentResponseSchema,
+  }).then((r) => r.status);
 
 /** S7: terminate a spawned agent (idempotent: one already terminated comes back as it is). */
 export const postTerminate = (slug: string) =>

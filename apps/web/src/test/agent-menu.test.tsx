@@ -7,12 +7,12 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentMenu } from "@/features/agents/agent-menu";
-import { restoreAgent } from "@/features/agents/lifecycle";
-import { OutputDialogHost } from "@/features/agents/show-output";
+import { resetRestartLatch, restoreAgent } from "@/features/agents/lifecycle";
+import { RestartConfirmHost } from "@/features/agents/restart-confirm";
 import { CronsStopLayer, useStopCrons } from "@/features/session/stop-crons";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
@@ -24,6 +24,7 @@ vi.mock("@/components/ui/toaster", () => ({ notify }));
 
 const originalMatchMedia = window.matchMedia;
 afterEach(() => {
+  resetRestartLatch();
   window.matchMedia = originalMatchMedia;
   notify.mockReset();
   resetSheets();
@@ -113,12 +114,14 @@ test.each([
       "New schedule",
       "—",
       "Edit",
+      "Configure",
       "Usage",
       "Open tasks",
       "Agent details",
       "Compact…",
+      "Restart now",
       "—",
-      "Re-sync from template…",
+      "Reset persona…",
       "Archive…",
     ],
   ],
@@ -130,10 +133,12 @@ test.each([
       "—",
       "Open session",
       "Edit",
+      "Configure",
       "Usage",
       "Open tasks",
+      "Restart now",
       "—",
-      "Re-sync from template…",
+      "Reset persona…",
       "Archive…",
     ],
   ],
@@ -144,10 +149,12 @@ test.each([
       "New schedule",
       "—",
       "Edit",
+      "Configure",
       "Usage",
       "Open tasks",
+      "Restart now",
       "—",
-      "Re-sync from template…",
+      "Reset persona…",
       "Archive…",
     ],
   ],
@@ -161,7 +168,7 @@ test.each([
   );
 });
 
-test("Edit and Compact are left out for a spawned agent; Stop crons… only with live crons", async () => {
+test("Edit is left out for a spawned agent; Stop crons… is offered with live crons", async () => {
   setup({
     agent: agentSummary({ kind: "ephemeral", crons: [cron] }),
     context: "session",
@@ -170,6 +177,12 @@ test("Edit and Compact are left out for a spawned agent; Stop crons… only with
   const names = itemNames(menu);
   expect(names).not.toContain("Edit");
   expect(names).toContain("Stop crons…");
+});
+
+test("Stop crons… is left out when the agent has no live crons", async () => {
+  setup({ agent: agentSummary({ kind: "ephemeral", crons: [] }), context: "session" });
+  const menu = await openMenu(userEvent.setup());
+  expect(itemNames(menu)).not.toContain("Stop crons…");
 });
 
 test("a terminated agent offers no Compact or Terminate", async () => {
@@ -242,7 +255,8 @@ test("Compact… moves focus into the compact popover", async () => {
   await vi.waitFor(() => expect(input).toHaveFocus());
 });
 
-test("Escape from the compact popover returns focus to the ⋯ button", async () => {
+test("Escape from the compact popover closes it and returns focus to the ⋯ button, posting nothing", async () => {
+  const api = mockApi({});
   setup({ agent: agentSummary(), context: "session" });
   const u = userEvent.setup();
   await openMenu(u);
@@ -251,14 +265,21 @@ test("Escape from the compact popover returns focus to the ⋯ button", async ()
   await vi.waitFor(() => expect(input).toHaveFocus());
   await u.keyboard("{Escape}");
   await vi.waitFor(() =>
+    expect(screen.queryByRole("textbox", { name: "Focus (optional)" })).not.toBeInTheDocument(),
+  );
+  await vi.waitFor(() =>
     expect(screen.getByRole("button", { name: "Actions for Dev agent" })).toHaveFocus(),
   );
+  expect(api.calls.filter((c) => c.method === "POST")).toEqual([]);
 });
 
 test("a successful Compact returns focus to the ⋯ button", async () => {
   mockApi({
     "POST /api/agents/dev/compact": () =>
-      json({ item: { id: "q", kind: "compact", from: "@alice", createdAt: "x" } }, 202),
+      json(
+        { item: { id: "q", kind: "compact", from: "@alice", fromKind: "human", createdAt: "x" } },
+        202,
+      ),
   });
   setup({ agent: agentSummary(), context: "session" });
   const u = userEvent.setup();
@@ -299,7 +320,11 @@ const archived = (over: Partial<AgentSummary> = {}) =>
   agentSummary({ archivedAt: "2026-11-19T10:00:00.000Z", status: "hibernated", ...over });
 
 test.each([
-  ["an archived persistent agent", archived(), ["Usage", "Open tasks", "—", "Restore"]],
+  [
+    "an archived persistent agent",
+    archived(),
+    ["Configure", "Usage", "Open tasks", "—", "Reset persona…", "Restore"],
+  ],
   [
     "a terminated persistent agent",
     agentSummary({ status: "terminated", terminatedAt: "2026-11-19T10:00:00.000Z" }),
@@ -315,12 +340,20 @@ test.each([
   expect(layout(await openMenu(userEvent.setup()))).toEqual(items);
 });
 
+test("Configure opens the agent's Configuration page", async () => {
+  setup({ agent: agentSummary(), context: "list" });
+  const menu = await openMenu(userEvent.setup());
+  expect(within(menu).getByRole("menuitem", { name: "Configure" })).toHaveAttribute(
+    "href",
+    "/agents/dev/config",
+  );
+});
+
 test("session: an archived agent's menu offers Restore", async () => {
   setup({ agent: archived(), context: "session" });
   const names = itemNames(await openMenu(userEvent.setup()));
   expect(names).toContain("Restore");
   expect(names).not.toContain("Archive…");
-  expect(names).not.toContain("Re-sync from template…");
   expect(names).not.toContain("New task");
 });
 
@@ -376,30 +409,29 @@ test("Archive… archives at once (no confirmation, as before) and toasts with a
   expect(api.calls.some((c) => c.url === "/api/agents/dev/unarchive")).toBe(true);
 });
 
-test("a failed archive toasts the server's message, naming the agent", async () => {
-  mockApi({
-    "POST /api/agents/dev/archive": () =>
-      json(
-        {
-          error: {
-            code: "has_reports",
-            message: "@a and @b report to this agent. Change their manager first.",
-            reports: ["a", "b"],
-          },
-        },
-        409,
-      ),
-  });
-  setup({ agent: agentSummary(), context: "list" });
-  const u = userEvent.setup();
-  await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
-  await vi.waitFor(() =>
-    expect(notify).toHaveBeenCalledWith({
-      text: "Couldn't archive @dev: @a and @b report to this agent. Change their manager first.",
-    }),
-  );
-});
+test.each([
+  ["a manager", "@a and @b report to this agent. Change their manager first.", ["a", "b"]],
+  [
+    "live spawned agents",
+    "@dev has live spawned agents: @dev-ab12. Terminate them first.",
+    ["dev-ab12"],
+  ],
+])(
+  "a failed archive (%s) toasts the server's message, naming the agent",
+  async (_name, message, reports) => {
+    mockApi({
+      "POST /api/agents/dev/archive": () =>
+        json({ error: { code: "has_reports", message, reports } }, 409),
+    });
+    setup({ agent: agentSummary(), context: "list" });
+    const u = userEvent.setup();
+    await openMenu(u);
+    await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
+    await vi.waitFor(() =>
+      expect(notify).toHaveBeenCalledWith({ text: `Couldn't archive @dev: ${message}` }),
+    );
+  },
+);
 
 test("a network failure on archive says the server can't be reached", async () => {
   vi.stubGlobal(
@@ -420,7 +452,13 @@ test("a network failure on archive says the server can't be reached", async () =
 test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
   const api = mockApi({
     "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }),
-    "GET /api/agents/dev": () => json({ agent: agentSummary(), queue: [], lastSeq: 0 }),
+    "GET /api/agents/dev": () =>
+      json({
+        agent: agentSummary(),
+        model: { value: null, source: "default" },
+        queue: [],
+        lastSeq: 0,
+      }),
   });
   setup({ agent: archived(), context: "list" });
   const u = userEvent.setup();
@@ -430,99 +468,72 @@ test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
   expect(api.calls.some((c) => c.url === "/api/agents/dev/unarchive")).toBe(true);
 });
 
-test.each([
-  [{ applied: "now" }, "Re-synced. Nothing differed."],
-  [
-    { applied: "now", backupDir: "state/agents/dev/resync/x" },
-    "Re-synced. Previous files saved in state/agents/dev/resync/x.",
-  ],
-  [{ applied: "on_restart" }, "Re-synced. The changes apply when @dev restarts (when idle)."],
-])(
-  "Re-sync from template… runs at once (no confirmation, as before) and toasts %o",
-  async (r, text) => {
-    mockApi({ "POST /api/agents/dev/resync": () => json({ agent: agentSummary(), ...r }) });
-    setup({ agent: agentSummary(), context: "session" });
-    const u = userEvent.setup();
-    await openMenu(u);
-    await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text }));
-  },
-);
+test("Reset persona… is offered for live and archived agents, never for a spawned or terminated one", async () => {
+  setup({ agent: archived(), context: "list" });
+  expect(itemNames(await openMenu(userEvent.setup()))).toContain("Reset persona…");
+  cleanup();
+  setup({ agent: agentSummary({ kind: "ephemeral" }), context: "session" });
+  expect(itemNames(await openMenu(userEvent.setup()))).not.toContain("Reset persona…");
+  cleanup();
+  setup({ agent: agentSummary({ status: "terminated" }), context: "session" });
+  expect(itemNames(await openMenu(userEvent.setup()))).not.toContain("Reset persona…");
+});
+
+test("Reset persona… confirms with the spec copy, cancel sends nothing", async () => {
+  const api = mockApi({});
+  setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Reset persona…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Reset persona?" });
+  expect(dialog).toHaveTextContent(
+    "Replace @dev's AGENTS.md with the template's. The current file is saved in state/agents/dev/persona/.",
+  );
+  expect(within(dialog).getByRole("button", { name: "Reset persona" })).toBeInTheDocument();
+  await u.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  expect(api.calls).toEqual([]);
+  expect(notify).not.toHaveBeenCalled();
+});
 
 test.each([
-  ["template_invalid", "Template developer: model must be a string."],
+  [
+    { applied: "now", backupDir: "state/agents/dev/persona/x" },
+    "Persona reset. Previous file saved.",
+  ],
+  [{ applied: "now" }, "Persona reset."],
+  [{ applied: "on_restart" }, "Persona resets when @dev restarts."],
+])("confirming Reset persona posts once and toasts %o", async (r, text) => {
+  const api = mockApi({ "POST /api/agents/dev/reset-persona": () => json(r) });
+  setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Reset persona…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Reset persona?" });
+  await u.click(within(dialog).getByRole("button", { name: "Reset persona" }));
+  await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text }));
+  expect(api.calls.filter((c) => c.url === "/api/agents/dev/reset-persona")).toHaveLength(1);
+  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+});
+
+test.each([
+  ["template_invalid", "Template developer has errors."],
   ["template_missing", "Template developer no longer exists."],
-])("a re-sync refused with %s toasts the server's own reason", async (code, message) => {
+  ["workdir_unusable", "/x/AGENTS.md isn't a file; move it away."],
+  ["agent_not_found", "No agent named dev"],
+])("a reset refused with %s toasts the server's own reason", async (code, message) => {
   mockApi({
-    "POST /api/agents/dev/resync": () => json({ error: { code, message } }, 409),
+    "POST /api/agents/dev/reset-persona": () => json({ error: { code, message } }, 409),
   });
   setup({ agent: agentSummary({ template: "developer" }), context: "session" });
   const u = userEvent.setup();
   await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
-  await vi.waitFor(() =>
-    expect(notify).toHaveBeenCalledWith({ text: `Couldn't re-sync @dev: ${message}` }),
-  );
-});
-
-test("a failed plugin install on re-sync names the backup folder, and Show output opens the output", async () => {
-  mockApi({
-    "POST /api/agents/dev/resync": () =>
-      json({ error: { code: "plugin_install_failed", message: "x", output: "boom output" } }, 502),
-  });
-  setup({ agent: agentSummary(), context: "session" });
-  const u = userEvent.setup();
-  await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
-  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
-  const n = notify.mock.calls[0]?.[0];
-  expect(n.text).toBe(
-    "Couldn't re-sync @dev: Plugin install failed. Some files were already copied (previous versions in state/agents/dev/resync/). Fix the template and re-sync again.",
-  );
-  expect(n.action.label).toBe("Show output");
-  render(<OutputDialogHost />);
-  act(() => n.action.run());
-  const dlg = await screen.findByRole("alertdialog", { name: "Plugin install output" });
-  expect(within(dlg).getByText("boom output")).toBeInTheDocument();
-  await u.click(within(dlg).getByRole("button", { name: "Close" }));
-  await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-});
-
-test("a failed plugin install with no output toasts without Show output", async () => {
-  mockApi({
-    "POST /api/agents/dev/resync": () =>
-      json({ error: { code: "plugin_install_failed", message: "x" } }, 502),
-  });
-  setup({ agent: agentSummary(), context: "session" });
-  const u = userEvent.setup();
-  await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Re-sync from template…" }));
-  await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
-  expect(notify.mock.calls[0]?.[0].action).toBeUndefined();
-});
-
-test("archive blocked by live spawned agents toasts the server's advice to terminate them", async () => {
-  mockApi({
-    "POST /api/agents/dev/archive": () =>
-      json(
-        {
-          error: {
-            code: "has_reports",
-            message: "@dev has live spawned agents: @dev-ab12. Terminate them first.",
-            reports: ["dev-ab12"],
-          },
-        },
-        409,
-      ),
-  });
-  setup({ agent: agentSummary(), context: "list" });
-  const u = userEvent.setup();
-  await openMenu(u);
-  await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
+  await u.click(screen.getByRole("menuitem", { name: "Reset persona…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Reset persona?" });
+  await u.click(within(dialog).getByRole("button", { name: "Reset persona" }));
   await vi.waitFor(() =>
     expect(notify).toHaveBeenCalledWith({
-      text: "Couldn't archive @dev: @dev has live spawned agents: @dev-ab12. Terminate them first.",
+      text: `Couldn't reset the persona of @dev: ${message}`,
     }),
   );
 });
@@ -573,7 +584,17 @@ test("Restore mentions pending messages when the agent has some", async () => {
     "GET /api/agents/dev": () =>
       json({
         agent: agentSummary(),
-        queue: [{ id: "q1", kind: "message", body: "hi", from: "@alice", createdAt: "x" }],
+        model: { value: null, source: "default" },
+        queue: [
+          {
+            id: "q1",
+            kind: "message",
+            body: "hi",
+            from: "@alice",
+            fromKind: "human",
+            createdAt: "x",
+          },
+        ],
         lastSeq: 0,
       }),
   });
@@ -709,3 +730,92 @@ test.each([
     expect(refocus).not.toHaveBeenCalled();
   },
 );
+
+test.each([
+  ["idle", { status: "idle" as const }, true],
+  ["working", { status: "working" as const }, true],
+  ["a spawned running agent", { kind: "ephemeral" as const, status: "idle" as const }, true],
+  ["hibernated", { status: "hibernated" as const }, false],
+  ["errored", { status: "errored" as const, errorKind: "crash" as const }, false],
+])("Restart now is offered for %s", async (_name, over, offered) => {
+  setup({ agent: agentSummary(over), context: "session" });
+  const menu = await openMenu(userEvent.setup());
+  expect(within(menu).queryByRole("menuitem", { name: "Restart now" }) !== null).toBe(offered);
+});
+
+test("Restart now posts without force and toasts the outcome", async () => {
+  const api = mockApi({
+    "POST /api/agents/dev/restart": () => json({ status: "restarted_idle" }, 202),
+  });
+  setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Restart now" }));
+  await vi.waitFor(() =>
+    expect(notify).toHaveBeenCalledWith({
+      text: "@dev restarted; its next start uses the latest config.",
+    }),
+  );
+  expect(api.calls.find((c) => c.url === "/api/agents/dev/restart")?.body).toEqual({});
+});
+
+test("a 409 lost_work that arrives after the menu unmounted still opens the confirm for that agent", async () => {
+  let release: (r: Response) => void = () => {};
+  mockApi({
+    "POST /api/agents/dev/restart": () => new Promise<Response>((r) => (release = r)),
+  });
+  const view = setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Restart now" }));
+  view.unmount();
+  render(<RestartConfirmHost />);
+  await act(async () =>
+    release(
+      json(
+        { error: { code: "lost_work", message: "x", data: { tasks: ["pnpm test"], crons: [] } } },
+        409,
+      ),
+    ),
+  );
+  expect(await screen.findByRole("alertdialog", { name: "Restart @dev now?" })).toBeInTheDocument();
+});
+
+test("a 409 lost_work that arrives after the menu moved to another agent still targets the original slug", async () => {
+  let release: (r: Response) => void = () => {};
+  const api = mockApi({
+    "POST /api/agents/dev/restart": (body) =>
+      (body as { force?: boolean })?.force
+        ? json({ status: "restarting" }, 202)
+        : new Promise<Response>((r) => (release = r)),
+  });
+  const view = setup({ agent: agentSummary(), context: "session" });
+  const u = userEvent.setup();
+  await openMenu(u);
+  await u.click(screen.getByRole("menuitem", { name: "Restart now" }));
+  // The menu's agent changes while the request is out.
+  view.unmount();
+  setup({ agent: agentSummary({ slug: "ops", displayName: "Ops agent" }), context: "session" });
+  render(<RestartConfirmHost />);
+  await act(async () =>
+    release(
+      json(
+        { error: { code: "lost_work", message: "x", data: { tasks: ["pnpm test"], crons: [] } } },
+        409,
+      ),
+    ),
+  );
+  expect(await screen.findByRole("alertdialog", { name: "Restart @dev now?" })).toBeInTheDocument();
+  await u.click(screen.getByRole("button", { name: "Restart anyway" }));
+  await vi.waitFor(() =>
+    expect(
+      api.calls.some(
+        (c) =>
+          c.method === "POST" &&
+          c.url === "/api/agents/dev/restart" &&
+          (c.body as { force?: boolean })?.force,
+      ),
+    ).toBe(true),
+  );
+  expect(api.calls.some((c) => c.url === "/api/agents/ops/restart")).toBe(false);
+});

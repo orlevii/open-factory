@@ -3,7 +3,7 @@ export type BotParts = {
   eyes: 0 | 1 | 2 | 3 | 4 | 5;
   mouth: 0 | 1 | 2 | 3;
   accessory: 0 | 1 | 2 | 3 | 4;
-  fill: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  fill: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 };
 
 /** 32-bit FNV-1a over UTF-16 code units. */
@@ -28,7 +28,7 @@ export function botParts(slug: string): BotParts {
   const eyes = take(6) as BotParts["eyes"];
   const mouth = take(4) as BotParts["mouth"];
   const accessory = take(5) as BotParts["accessory"];
-  const fill = (take(8) + 1) as BotParts["fill"];
+  const fill = (take(12) + 1) as BotParts["fill"];
   return { head, eyes, mouth, accessory, fill };
 }
 

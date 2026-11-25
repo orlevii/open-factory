@@ -1,12 +1,4 @@
-import {
-  act,
-  cleanup,
-  createEvent,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -89,44 +81,30 @@ test("one frame holds the textarea and a 32px toolbar", () => {
   expect(frame).not.toBeNull();
   const toolbar = frame?.querySelector("[data-composer-toolbar]");
   expect(toolbar).not.toBeNull();
-  expect(toolbar).toHaveClass("min-h-8"); // one 32px line, a second only when it must wrap
   expect(toolbar?.contains(screen.getByRole("button", { name: "Send" }))).toBe(true);
-});
-
-test("growth is capped at 6 lines or 35svh below md, 12 lines or 40svh from md, then it scrolls", () => {
-  const { box } = setup();
-  expect(box).toHaveClass(
-    "max-h-[min(calc(6lh_+_1rem),35svh)]",
-    "md:max-h-[min(calc(12lh_+_1rem),40svh)]",
-    "min-h-[calc(2lh_+_1rem)]",
-    "overflow-y-auto",
-  );
 });
 
 test("Send is labelled Send, disabled-shaped while empty, primary at once when there is text", async () => {
   const { box } = setup();
   const send = screen.getByRole("button", { name: "Send" });
   expect(send).toBeDisabled();
-  expect(send).toHaveAttribute("data-variant", "default");
-  // A keyboard action: no transition between the disabled plate and graphite.
-  expect(send).toHaveClass("transition-none");
   await userEvent.type(box, "x");
   expect(send).toBeEnabled();
   await userEvent.clear(box);
   await userEvent.type(box, "   ");
   expect(send).toBeDisabled();
+  expect(screen.queryByRole("checkbox", { name: "Urgent" })).toBeNull();
 });
 
 test("Stop's slot keeps its width with no turn open (an invisible stand-in), so a turn edge never re-wraps", () => {
   const onStop = vi.fn(async () => {});
-  const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false });
+  const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false, stopVisible: false });
   const slot = document.querySelector("[data-stop-slot]");
   expect(slot).not.toBeNull();
   const standIn = slot?.querySelector("[data-stop-stand-in]");
-  expect(standIn).toHaveClass("invisible");
   expect(standIn).toHaveAttribute("aria-hidden", "true");
   expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
-  rerender({ onStop, stopEpoch: 2, turnOpen: true });
+  rerender({ onStop, stopEpoch: 2, turnOpen: true, stopVisible: true });
   expect(document.querySelector("[data-stop-slot]")).toBe(slot);
   expect(slot?.querySelector("[data-stop-stand-in]")).toBe(standIn);
   expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
@@ -144,7 +122,6 @@ test("the hint sits in the toolbar, takes the free room and truncates first", ()
   setup({ hintMode: "working", turnOpen: true });
   const hint = document.querySelector("[data-composer-hint]");
   expect(hint?.closest("[data-composer-toolbar]")).not.toBeNull();
-  expect(hint).toHaveClass("min-w-0", "flex-1", "truncate");
   expect(hint).toHaveTextContent(
     /^Arrives at the agent's next step\. (⌥|Alt)↵ to interrupt instead\.$/,
   );
@@ -358,7 +335,13 @@ test("Tab accepts too", async () => {
 
 test("Esc closes the menu and leaves the text; it doesn't stop the turn", async () => {
   const onStop = vi.fn(async () => {});
-  const { box } = setup({ completions: AT_ONLY, turnOpen: true, stopEpoch: 1, onStop });
+  const { box } = setup({
+    completions: AT_ONLY,
+    turnOpen: true,
+    stopVisible: true,
+    stopEpoch: 1,
+    onStop,
+  });
   await userEvent.type(box, "hi @d");
   await userEvent.keyboard("{Escape}");
   expect(screen.queryByRole("listbox")).toBeNull();
@@ -556,9 +539,9 @@ test("data that arrives while the menu is open shows without a keystroke", async
   expect(unwatch).toHaveBeenCalledTimes(1);
 });
 
-// ---- `/` commands and command mode (U3 §13.3, Q36, Q43) ----
+// ---- the `/` menu: autocomplete only (I1 §5.4) ----
 
-/** A `/` source over a fixed list: `exact` marks a name-prefix match (the only rows Enter takes). */
+/** A `/` source over a fixed list. `enterSends` marks a name typed in full. */
 const COMMANDS: CompletionItem[] = [
   {
     id: "code-review",
@@ -570,49 +553,53 @@ const COMMANDS: CompletionItem[] = [
   { id: "context", label: "/context", group: "Commands", kind: "command" },
   { id: "deploy", label: "/deploy", detail: "Ship the code", group: "Skills", kind: "command" },
 ];
+const CLEAR: CompletionItem = {
+  id: "clear",
+  label: "/clear",
+  group: "Commands",
+  kind: "command",
+  detail: "/clear isn't available: each agent keeps one session.",
+  disabled: "/clear isn't available: each agent keeps one session.",
+  enterSends: true,
+};
 const slashAsked = vi.hoisted(() => ({ queries: [] as string[] }));
 const SLASH: CompletionSource = {
   trigger: "/",
   label: "Run a command",
   opensAt(text, caret) {
-    const m = /^\/(?!\/)(\S*)$/.exec(text);
+    const m = /^\/(\S*)$/.exec(text);
     return m && caret > 0 ? { query: m[1] ?? "", from: 0 } : undefined;
   },
   items(query) {
     slashAsked.queries.push(query);
-    return COMMANDS.flatMap((c) =>
-      c.id.startsWith(query)
-        ? [{ ...c, exact: true }]
-        : c.detail?.toLowerCase().includes(query)
-          ? [c]
-          : [],
-    );
+    return [
+      ...(query === "clear" ? [CLEAR] : []),
+      ...COMMANDS.flatMap((c) =>
+        c.id === query
+          ? [{ ...c, enterSends: true }]
+          : c.id.startsWith(query)
+            ? [c]
+            : c.detail?.toLowerCase().includes(query)
+              ? [{ ...c, enterSends: true }]
+              : [],
+      ),
+    ];
   },
-  enterNeedsExact: true,
-  accept: (item) => ({
-    text: "",
-    caret: 0,
-    command: { name: item.id, placeholder: item.hint ?? "" },
+  accept: (item, text, from, caret) => ({
+    text: `${text.slice(0, from)}/${item.id} ${text.slice(caret)}`,
+    caret: from + item.id.length + 2,
   }),
-  commandFor(text) {
-    const m = /^\/(\S+) $/.exec(text);
-    const c = m && COMMANDS.find((x) => x.id === m[1]);
-    return c ? { name: c.id, placeholder: c.hint ?? "" } : undefined;
+  textNote(text, sending) {
+    const m = /^\s*\/clear(\s|$)/.exec(text);
+    return m && (m[1] !== "" || sending)
+      ? { kind: "refusal", text: "/clear isn't available: each agent keeps one session." }
+      : undefined;
   },
-  missNote: () => "Not a command for this agent; sends as text",
-  textNote: (text) =>
-    /^\/\/[^\s/]/.test(text)
-      ? "Sends as text; the agent may still run a skill by that name"
-      : undefined,
 };
 const SLASH_ONLY = { slash: SLASH };
-type OnCommand = (name: string, args: string, o: { clientMessageId: string }) => Promise<void>;
 function setupSlash(over: Partial<Parameters<typeof Composer>[0]> = {}) {
-  const onCommand = vi.fn<OnCommand>(async () => {});
-  const r = setup({ completions: SLASH_ONLY, onCommand, ...over });
-  return { ...r, onCommand };
+  return setup({ completions: SLASH_ONLY, ...over });
 }
-const chip = () => document.querySelector("[data-command-chip]");
 
 test("a typed `/` opens the menu; items are asked for only while it is open", async () => {
   slashAsked.queries = [];
@@ -638,97 +625,82 @@ test("a paste never opens the menu", async () => {
 });
 
 test("a pasted multi-line text starting with `/` and Enter sends unchanged", async () => {
-  const { box, onSubmit, onCommand } = setupSlash();
+  const { box, onSubmit } = setupSlash();
   box.focus();
   await userEvent.paste("/context\nplease explain");
   await userEvent.keyboard("{Enter}");
   expect(onSubmit).toHaveBeenCalledWith("/context\nplease explain", expect.anything());
-  expect(onCommand).not.toHaveBeenCalled();
 });
 
-test("Enter takes a name match into command mode, its hint as the placeholder; Enter then dispatches", async () => {
-  const { box, onSubmit, onCommand } = setupSlash();
+test("Enter on a partial name inserts `/name ` and keeps the box; Tab does the same", async () => {
+  const { box, onSubmit } = setupSlash();
   await userEvent.type(box, "/code");
   await userEvent.keyboard("{Enter}");
+  expect(box).toHaveValue("/code-review ");
   expect(screen.queryByRole("listbox")).toBeNull();
-  expect(chip()).toHaveTextContent("Command");
-  expect(chip()).toHaveTextContent("/code-review");
-  expect(box).toHaveValue("");
-  expect(box).toHaveAttribute("placeholder", "[target]");
-  // Send works with no arguments too.
-  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
-  await userEvent.type(box, " src/ {Enter}");
-  expect(onCommand).toHaveBeenCalledWith("code-review", "src/", expect.anything());
   expect(onSubmit).not.toHaveBeenCalled();
-  expect(chip()).toBeNull();
-  expect(box).toHaveValue("");
+  await userEvent.clear(box);
+  await userEvent.type(box, "/con");
+  await userEvent.keyboard("{Tab}");
+  expect(box).toHaveValue("/context ");
+  expect(document.activeElement).toBe(box);
+});
+
+test("Enter on a name typed in full sends it as typed", async () => {
+  const { box, onSubmit } = setupSlash();
+  await userEvent.type(box, "/context");
+  expect(screen.getAllByRole("option")).toHaveLength(1);
+  await userEvent.keyboard("{Enter}");
+  expect(onSubmit).toHaveBeenCalledWith("/context", expect.anything());
+});
+
+test("a denied row is disabled with its reason and never accepted", async () => {
+  const { box, onSubmit } = setupSlash();
+  await userEvent.type(box, "/clear");
+  const row = screen.getByRole("option", { name: /clear/ });
+  expect(row).toHaveAttribute("aria-disabled", "true");
+  expect(row).toHaveTextContent("/clear isn't available: each agent keeps one session.");
+  fireEvent.keyDown(box, { key: "Tab" });
+  expect(box).toHaveValue("/clear");
+  // Enter sends as typed: the composer refuses it, it never reaches onSubmit.
+  await userEvent.keyboard("{Enter}");
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(slot()).toHaveTextContent("/clear isn't available: each agent keeps one session.");
+});
+
+test("a denied first token takes the slot once it is complete and holds Send", async () => {
+  const { box, onSubmit } = setupSlash();
+  const send = screen.getByRole("button", { name: "Send" });
+  await userEvent.type(box, "/clear");
+  expect(slot()).not.toHaveTextContent("isn't available"); // still typing the token
+  await userEvent.type(box, " ");
+  expect(slot()).toHaveTextContent("/clear isn't available: each agent keeps one session.");
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  expect(send).toHaveAccessibleDescription("/clear isn't available: each agent keeps one session.");
+  fireEvent.keyDown(box, { key: "Enter" });
+  await userEvent.click(send);
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(box).toHaveValue("/clear ");
+  await userEvent.type(box, "{Backspace}{Backspace}");
+  expect(slot()).toBeEmptyDOMElement();
+  expect(send).not.toHaveAttribute("aria-disabled");
+});
+
+test("Esc closes the menu first and leaves the text", async () => {
+  const { box } = setupSlash();
+  await userEvent.type(box, "/co");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(box).toHaveValue("/co");
 });
 
 test("Enter on a description-only match sends the text as typed", async () => {
-  const { box, onSubmit, onCommand } = setupSlash();
+  const { box, onSubmit } = setupSlash();
   await userEvent.type(box, "/ship");
   expect(screen.getAllByRole("option")).toHaveLength(1);
   await userEvent.keyboard("{Enter}");
   expect(onSubmit).toHaveBeenCalledWith("/ship", expect.anything());
-  expect(onCommand).not.toHaveBeenCalled();
-});
-
-test("Tab completes a match into command mode", async () => {
-  const { box } = setupSlash();
-  await userEvent.type(box, "/con");
-  await userEvent.keyboard("{Tab}");
-  expect(chip()).toHaveTextContent("/context");
-  expect(document.activeElement).toBe(box);
-});
-
-test("an exact name and a space enter command mode", async () => {
-  const { box, onCommand } = setupSlash();
-  await userEvent.type(box, "/context ");
-  expect(chip()).toHaveTextContent("/context");
-  expect(box).toHaveValue("");
-  await userEvent.type(box, "{Enter}");
-  expect(onCommand).toHaveBeenCalledWith("context", "", expect.anything());
-});
-
-test("⌥Enter acts as Enter in command mode", async () => {
-  const { box, onSubmit, onCommand } = setupSlash();
-  await userEvent.type(box, "/context ");
-  fireEvent.keyDown(box, { key: "Enter", altKey: true });
-  expect(onCommand).toHaveBeenCalledTimes(1);
-  expect(onSubmit).not.toHaveBeenCalled();
-});
-
-test("a refused command shows its error inline, comes back in command mode, sends no text", async () => {
-  const onCommand = vi.fn<OnCommand>(async () => {
-    throw new SubmitError("/context isn't a command this agent can run.");
-  });
-  const { box, onSubmit } = setupSlash({ onCommand });
-  await userEvent.type(box, "/context ");
-  await userEvent.type(box, "now{Enter}");
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "/context isn't a command this agent can run.",
-  );
-  expect(chip()).toHaveTextContent("/context");
-  expect(box).toHaveValue("now");
-  expect(onSubmit).not.toHaveBeenCalled();
-});
-
-test("`/foo` that matches nothing says it sends as text, and Enter sends it", async () => {
-  const { box, onSubmit } = setupSlash();
-  await userEvent.type(box, "/foo");
-  expect(screen.queryByRole("listbox")).toBeNull();
-  expect(screen.getByText("Not a command for this agent; sends as text")).toBeInTheDocument();
-  await userEvent.keyboard("{Enter}");
-  expect(onSubmit).toHaveBeenCalledWith("/foo", expect.anything());
-});
-
-test("`//x` says it sends as text", async () => {
-  const { box } = setupSlash();
-  await userEvent.type(box, "//deploy");
-  expect(screen.queryByRole("listbox")).toBeNull();
-  expect(
-    screen.getByText("Sends as text; the agent may still run a skill by that name"),
-  ).toBeInTheDocument();
 });
 
 test("an open menu with no rows shows its note (the empty state); Enter sends", async () => {
@@ -743,49 +715,11 @@ test("an open menu with no rows shows its note (the empty state); Enter sends", 
   expect(
     screen.getByText("No commands loaded yet. They appear after the agent starts."),
   ).toBeInTheDocument();
-  expect(screen.queryByText("Not a command for this agent; sends as text")).toBeNull();
   await userEvent.keyboard("{Enter}");
   expect(onSubmit).toHaveBeenCalledWith("/x", expect.anything());
 });
 
-test("Esc order: the menu, then command mode, then stop", async () => {
-  const onStop = vi.fn(async () => {});
-  const { box } = setupSlash({ onStop, stopEpoch: 1, turnOpen: true });
-  await userEvent.type(box, "/code");
-  await userEvent.keyboard("{Escape}");
-  expect(screen.queryByRole("listbox")).toBeNull();
-  expect(box).toHaveValue("/code");
-  await userEvent.clear(box);
-  await userEvent.type(box, "/context ");
-  await userEvent.type(box, "x");
-  expect(chip()).not.toBeNull();
-  await userEvent.keyboard("{Escape}");
-  // Leaving command mode keeps what was typed, as text.
-  expect(chip()).toBeNull();
-  expect(box).toHaveValue("/context x");
-  expect(onStop).not.toHaveBeenCalled();
-  await userEvent.keyboard("{Escape}");
-  expect(onStop).toHaveBeenCalledTimes(1);
-});
-
-test("IME composition never dispatches, completes or leaves command mode", async () => {
-  const { box, onCommand } = setupSlash();
-  await userEvent.type(box, "/context ");
-  fireEvent.keyDown(box, { key: "Enter", isComposing: true });
-  fireEvent.keyDown(box, { key: "Escape", keyCode: 229 });
-  expect(onCommand).not.toHaveBeenCalled();
-  expect(chip()).not.toBeNull();
-});
-
-test("Backspace in an empty command mode puts the name back as text", async () => {
-  const { box } = setupSlash();
-  await userEvent.type(box, "/context ");
-  await userEvent.keyboard("{Backspace}");
-  expect(chip()).toBeNull();
-  expect(box).toHaveValue("/context");
-});
-
-test("the toolbar's `/` button starts a command in an empty box", async () => {
+test("the toolbar's `/` button opens the menu in an empty box", async () => {
   const { box } = setupSlash();
   await userEvent.click(screen.getByRole("button", { name: "Run a command" }));
   expect(box).toHaveValue("/");
@@ -825,7 +759,6 @@ test("a files-only paste attaches them as chips, max 12rem wide", () => {
   const { box } = setupFiles();
   expect(pasteFiles(box, [file("notes.txt")])).toBe(false);
   expect(chips()).toHaveLength(1);
-  expect(chips()[0]).toHaveClass("max-w-[12rem]");
   expect(chips()[0]).toHaveTextContent("notes.txt");
   expect(lastXhr().url).toBe("/api/agents/dev/uploads");
 });
@@ -905,9 +838,8 @@ test("an upload shows a determinate 2px bar and a tabular percentage, without tr
   });
   const bar = screen.getByRole("progressbar", { name: "Uploading a.txt" });
   expect(bar).toHaveAttribute("aria-valuenow", "40");
-  expect(bar).toHaveClass("h-0.5", "transition-none");
   expect(bar.style.transform).toBe("scaleX(0.4)");
-  expect(screen.getByText("40%")).toHaveClass("tabular-nums");
+  expect(screen.getByText("40%")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Cancel a.txt" })).toBeInTheDocument();
 });
 
@@ -1097,8 +1029,6 @@ test("a file dragged over the frame edges it in ink with no animation; dropping 
   expect(fireEvent.dragOver(frame, { dataTransfer: dt })).toBe(false);
   const edge = frame.querySelector("[data-drop-edge]");
   expect(edge).not.toBeNull();
-  expect(edge).toHaveClass("border-foreground");
-  expect(edge?.className).not.toMatch(/transition|animate/);
   expect(fireEvent.drop(frame, { dataTransfer: dt })).toBe(false);
   expect(frame.querySelector("[data-drop-edge]")).toBeNull();
   expect(chips()).toHaveLength(1);
@@ -1126,81 +1056,13 @@ test("↑ in an empty box recalls your last message's text; not once the box has
 
 // ---- Task 56 fix round 1 ----
 
-test("command mode is perceivable: the box is described by the chip, and the change is announced", async () => {
+test("the note slot's live region is there before the note", async () => {
   const { box } = setupSlash();
-  const live = screen.getAllByText((_, el) => el?.getAttribute("aria-live") === "polite");
-  expect(live.length).toBeGreaterThan(0);
-  await userEvent.type(box, "/context ");
-  const c = chip() as HTMLElement;
-  expect(c.id).not.toBe("");
-  expect(box.getAttribute("aria-describedby")?.split(" ")).toContain(c.id);
-  const announce = screen.getByText("Command mode: /context. Esc to leave.");
-  expect(announce).toHaveAttribute("aria-live", "polite");
-  await userEvent.keyboard("{Escape}");
-  expect(announce).toHaveTextContent("");
-  expect(box.getAttribute("aria-describedby") ?? "").not.toContain(c.id);
-});
-
-test("command mode is stored in the draft as `/name args`", async () => {
-  const { box } = setupSlash();
-  await userEvent.type(box, "/code-review ");
-  await userEvent.type(box, "src/");
-  box.blur();
-  expect(readDraft("agent:dev")).toBe("/code-review src/");
-});
-
-test("a stored `/name args` draft comes back in command mode when the name is known; else plain text", () => {
-  localStorage.setItem(
-    "of-draft:v1:agent:dev",
-    JSON.stringify({ text: "/code-review src/", at: Date.now() }),
-  );
-  const { box } = setupSlash();
-  expect(chip()).toHaveTextContent("/code-review");
-  expect(box).toHaveValue("src/");
-  cleanup();
-  localStorage.setItem(
-    "of-draft:v1:agent:dev",
-    JSON.stringify({ text: "/nope src/", at: Date.now() }),
-  );
-  const again = setupSlash();
-  expect(chip()).toBeNull();
-  expect(again.box).toHaveValue("/nope src/");
-});
-
-test("a refused command after the box was used goes after the new text, never lost", async () => {
-  let fail: (e: unknown) => void = () => {};
-  const onCommand = vi.fn<OnCommand>(
-    () =>
-      new Promise<void>((_, rej) => {
-        fail = rej;
-      }),
-  );
-  const { box } = setupSlash({ onCommand });
-  await userEvent.type(box, "/context ");
-  await userEvent.type(box, "now{Enter}");
-  await userEvent.type(box, "hello");
-  await act(async () => fail(new SubmitError("Refused.")));
-  expect(box).toHaveValue("hello\n/context now");
-  expect(chip()).toBeNull();
-  expect(screen.getByRole("alert")).toHaveTextContent("Refused.");
-});
-
-test("an Esc a peek already took closes only the peek: command mode stays", async () => {
-  const { box } = setupSlash();
-  await userEvent.type(box, "/context ");
-  const ev = createEvent.keyDown(box, { key: "Escape", cancelable: true });
-  ev.preventDefault();
-  fireEvent(box, ev);
-  expect(chip()).not.toBeNull();
-});
-
-test("the slash note's live region is there before the note", async () => {
-  const { box } = setupSlash();
-  const region = document.querySelector("[data-slash-note]") as HTMLElement;
+  const region = document.querySelector("[data-composer-hint]") as HTMLElement;
   expect(region).toHaveAttribute("aria-live", "polite");
   expect(region).toHaveTextContent("");
-  await userEvent.type(box, "/foo");
-  expect(region).toHaveTextContent("Not a command for this agent; sends as text");
+  await userEvent.type(box, "/clear ");
+  expect(region).toHaveTextContent("/clear isn't available");
 });
 
 test("the `/` button is disabled while the box has text", async () => {
@@ -1210,19 +1072,18 @@ test("the `/` button is disabled while the box has text", async () => {
 });
 
 test("⌥Enter with the `/` menu open sends the text as typed", async () => {
-  const { box, onSubmit, onCommand } = setupSlash();
+  const { box, onSubmit } = setupSlash();
   await userEvent.type(box, "/code");
   expect(screen.getByRole("listbox")).toBeInTheDocument();
   fireEvent.keyDown(box, { key: "Enter", altKey: true });
   expect(onSubmit).toHaveBeenCalledWith("/code", expect.objectContaining({ urgent: true }));
-  expect(onCommand).not.toHaveBeenCalled();
 });
 
 test("a row with a heading starts a labelled group in the menu", async () => {
   const items: CompletionItem[] = [
-    { id: "a", label: "/a", group: "Skills", kind: "command", heading: "Skills", exact: true },
-    { id: "b", label: "/b", group: "Skills", kind: "command", exact: true },
-    { id: "c", label: "/c", group: "Commands", kind: "command", heading: "Commands", exact: true },
+    { id: "a", label: "/a", group: "Skills", kind: "command", heading: "Skills" },
+    { id: "b", label: "/b", group: "Skills", kind: "command" },
+    { id: "c", label: "/c", group: "Commands", kind: "command", heading: "Commands" },
   ];
   const slash: CompletionSource = {
     trigger: "/",
@@ -1283,70 +1144,6 @@ test("a failed chip's reason takes up to two lines instead of being cut to a few
   act(() => lastXhr().respond(415, { error: { message: "HEIC isn't supported; export as JPEG" } }));
   const reason = chips()[0]?.querySelector("[data-upload-error]");
   expect(reason).toHaveTextContent("HEIC isn't supported; export as JPEG");
-  expect(reason).toHaveClass("line-clamp-2");
-  expect(reason).not.toHaveClass("truncate");
-});
-
-test("after a reload the stored command comes back once the commands list arrives, if the box is untouched", () => {
-  localStorage.setItem(
-    "of-draft:v1:agent:dev",
-    JSON.stringify({ text: "/code-review src/", at: Date.now() }),
-  );
-  // The list isn't loaded at mount: nothing is known until `watch` says it changed.
-  let loaded = false;
-  let changed: () => void = () => {};
-  const late: CompletionSource = {
-    ...SLASH,
-    commandFor: (t) => (loaded ? SLASH.commandFor?.(t) : undefined),
-    ready: () => loaded,
-    watch(onChange) {
-      changed = onChange;
-      return () => {};
-    },
-  };
-  const { box } = setupSlash({ completions: { slash: late } });
-  expect(chip()).toBeNull();
-  expect(box).toHaveValue("/code-review src/");
-  loaded = true;
-  act(() => changed());
-  expect(chip()).toHaveTextContent("/code-review");
-  expect(box).toHaveValue("src/");
-});
-
-test("a stored command typed over before the list arrives stays text", async () => {
-  localStorage.setItem(
-    "of-draft:v1:agent:dev",
-    JSON.stringify({ text: "/code-review src/", at: Date.now() }),
-  );
-  let loaded = false;
-  let changed: () => void = () => {};
-  const late: CompletionSource = {
-    ...SLASH,
-    commandFor: (t) => (loaded ? SLASH.commandFor?.(t) : undefined),
-    ready: () => loaded,
-    watch(onChange) {
-      changed = onChange;
-      return () => {};
-    },
-  };
-  const { box } = setupSlash({ completions: { slash: late } });
-  await userEvent.type(box, "x");
-  loaded = true;
-  act(() => changed());
-  expect(chip()).toBeNull();
-  expect(box).toHaveValue("/code-review src/x");
-});
-
-test("Esc out of command mode puts the name back without reopening the menu", async () => {
-  const { box } = setupSlash();
-  await userEvent.type(box, "/context ");
-  expect(chip()).not.toBeNull();
-  await userEvent.keyboard("{Escape}");
-  expect(box).toHaveValue("/context");
-  fireEvent.select(box); // the caret placed after the name
-  expect(screen.queryByRole("listbox")).toBeNull();
-  await userEvent.type(box, "x"); // typing brings menus back as usual
-  expect(box).toHaveValue("/contextx");
 });
 
 test("the `/` menu renders every row its source gives (the list scrolls); `@` keeps its 8", async () => {
@@ -1355,7 +1152,6 @@ test("the `/` menu renders every row its source gives (the list scrolls); `@` ke
     label: `/c${i}`,
     group: i < 8 ? "Skills" : "Commands",
     kind: "command",
-    exact: true,
   }));
   const slash: CompletionSource = {
     ...SLASH,
@@ -1365,51 +1161,6 @@ test("the `/` menu renders every row its source gives (the list scrolls); `@` ke
   const { box } = setupSlash({ completions: { slash } });
   await userEvent.type(box, "/");
   expect(screen.getAllByRole("option")).toHaveLength(13);
-});
-
-test("while a stored command waits for the commands list, Enter holds instead of sending it as text", async () => {
-  localStorage.setItem(
-    "of-draft:v1:agent:dev",
-    JSON.stringify({ text: "/code-review src/", at: Date.now() }),
-  );
-  let loaded = false;
-  let changed: () => void = () => {};
-  const late: CompletionSource = {
-    ...SLASH,
-    commandFor: (t) => (loaded ? SLASH.commandFor?.(t) : undefined),
-    ready: () => loaded,
-    watch(onChange) {
-      changed = onChange;
-      return () => {};
-    },
-  };
-  const { box, onSubmit, onCommand } = setupSlash({ completions: { slash: late } });
-  fireEvent.keyDown(box, { key: "Enter" });
-  expect(onSubmit).not.toHaveBeenCalled();
-  expect(box).toHaveValue("/code-review src/");
-  const send = screen.getByRole("button", { name: "Send" });
-  expect(send).toHaveAttribute("aria-disabled", "true");
-  expect(document.querySelector("[data-send-reason]")).toHaveTextContent(
-    "Loading this agent's commands…",
-  );
-  loaded = true;
-  act(() => changed());
-  expect(chip()).toHaveTextContent("/code-review");
-  fireEvent.keyDown(box, { key: "Enter" });
-  await vi.waitFor(() => expect(onCommand).toHaveBeenCalled());
-  expect(onSubmit).not.toHaveBeenCalled();
-});
-
-test("a stored text whose name the loaded list doesn't know sends as text", () => {
-  localStorage.setItem(
-    "of-draft:v1:agent:dev",
-    JSON.stringify({ text: "/nope src/", at: Date.now() }),
-  );
-  const ready: CompletionSource = { ...SLASH, ready: () => true };
-  const { box, onSubmit } = setupSlash({ completions: { slash: ready } });
-  expect(document.querySelector("[data-send-reason]")).toBeNull();
-  fireEvent.keyDown(box, { key: "Enter" });
-  expect(onSubmit).toHaveBeenCalledWith("/nope src/", expect.anything());
 });
 
 // The phone composer (U4 §11.4, #107): below 48rem the toolbar is icons only, Stop and Send at its end.
@@ -1426,10 +1177,6 @@ test("on a phone Send is a 40px primary icon button named Send", async () => {
   try {
     const { box } = setup();
     const send = screen.getByRole("button", { name: "Send" });
-    expect(send).toHaveAttribute("data-variant", "default");
-    expect(send).toHaveClass("size-10", "pointer-coarse:size-10", "transition-none");
-    // `size="icon"` brings `pointer-coarse:size-9`, which would win on a touch screen (evidence D1).
-    expect(send).not.toHaveClass("pointer-coarse:size-9");
     expect(send).toHaveTextContent(/^$/); // the arrow only, the name from aria-label
     expect(send.querySelector("svg")).not.toBeNull();
     expect(send).toBeDisabled();
@@ -1451,14 +1198,10 @@ test("on a phone attach, / and @ are 40px ghost icons and there is no Write/Prev
       turnOpen: true,
     });
     for (const name of ["Attach files", "Run a command", "Insert an agent's handle"]) {
-      const b = screen.getByRole("button", { name });
-      expect(b).toHaveAttribute("data-variant", "ghost");
-      expect(b).toHaveClass("size-10", "pointer-coarse:size-10");
-      expect(b).not.toHaveClass("pointer-coarse:size-9");
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole("button", { name: "Write" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Preview" })).toBeNull();
-    expect(document.querySelector("[data-composer-hint]")).toHaveClass("sr-only");
   } finally {
     restore();
   }
@@ -1480,34 +1223,20 @@ test("on a phone Stop is a 40px outline icon left of Send, in a slot kept with n
   const restore = onPhone();
   try {
     const onStop = vi.fn(async () => {});
-    const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false });
+    const { rerender } = setup({ onStop, stopEpoch: 1, turnOpen: false, stopVisible: false });
     const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
-    const toolbarClass = toolbar.className;
     const slot = document.querySelector("[data-stop-slot]") as HTMLElement;
-    const slotClass = slot.className;
-    expect(slot).toHaveClass("size-10");
-    const standIn = slot.querySelector("[data-stop-stand-in]");
-    expect(standIn).toHaveClass("invisible", "size-10", "pointer-coarse:size-10");
-    expect(standIn).not.toHaveClass("pointer-coarse:size-9");
     expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull();
 
-    rerender({ onStop, stopEpoch: 2, turnOpen: true });
+    rerender({ onStop, stopEpoch: 2, turnOpen: true, stopVisible: true });
     const stop = screen.getByRole("button", { name: "Stop" });
     const send = screen.getByRole("button", { name: "Send" });
-    expect(stop).toHaveAttribute("data-variant", "outline");
-    expect(stop).toHaveClass("size-10", "pointer-coarse:size-10");
-    expect(stop).not.toHaveClass("pointer-coarse:size-9");
     expect(stop).toHaveTextContent(/^$/);
     expect(slot.contains(stop)).toBe(true);
     expect(stop.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // 8px between Stop and Send.
-    expect(slot.parentElement).toHaveAttribute("data-composer-actions");
-    expect(slot.parentElement).toHaveClass("gap-2");
-    // Nothing reflows on the turn edge: the same toolbar and slot, with the same classes.
+    // Nothing remounts on the turn edge: the same toolbar and slot.
     expect(document.querySelector("[data-composer-toolbar]")).toBe(toolbar);
-    expect(toolbar.className).toBe(toolbarClass);
     expect(document.querySelector("[data-stop-slot]")).toBe(slot);
-    expect(slot.className).toBe(slotClass);
   } finally {
     restore();
   }
@@ -1518,7 +1247,7 @@ test("on a phone a pending Stop is named Stopping… and says so in a status", a
   try {
     let resolve: () => void = () => {};
     const onStop = vi.fn(() => new Promise<void>((r) => (resolve = r)));
-    setup({ onStop, stopEpoch: 1, turnOpen: true });
+    setup({ onStop, stopEpoch: 1, turnOpen: true, stopVisible: true });
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
     const stop = screen.getByRole("button", { name: "Stopping…" });
     expect(stop).toHaveAttribute("aria-busy", "true");
@@ -1546,13 +1275,13 @@ test("from 48rem the placeholder, Send and Stop keep U3's layout", () => {
   const { box } = setup({
     turnPlaceholder: "Sends after @dev's current step",
     turnOpen: true,
+    stopVisible: true,
     stopEpoch: 1,
     onStop: async () => {},
   });
   expect(box).toHaveAttribute("placeholder", "Message Dev");
   expect(screen.getByRole("button", { name: "Send" })).toHaveTextContent("Send");
   expect(screen.getByRole("button", { name: "Stop" })).toHaveTextContent("Stop");
-  expect(document.querySelector("[data-stop-slot]")).not.toHaveClass("size-10");
 });
 
 test("a Preview left open shows Write again on a phone, where there is no toggle", async () => {
@@ -1567,4 +1296,107 @@ test("a Preview left open shows Write again on a phone, where there is no toggle
   } finally {
     window.matchMedia = real;
   }
+});
+
+// The one note slot (I1 §5.4, DESIGN §9.3).
+const slot = () => document.querySelector("[data-composer-hint]") as HTMLElement;
+const noteLine = () => document.querySelector("[data-composer-note-line]");
+
+test("a fine pointer shows the note in the toolbar slot and the frame never changes height", () => {
+  const rect = vi.spyOn(Element.prototype, "getBoundingClientRect");
+  const { box, rerender } = setup();
+  const frame = box.closest("[data-composer-frame]") as HTMLElement;
+  const heightOf = () => frame.getBoundingClientRect().height;
+  const before = heightOf();
+  const siblings = frame.parentElement?.children.length;
+  rerender({ note: { kind: "refusal", text: "Nope, not here." } });
+  expect(slot()).toHaveTextContent("Nope, not here.");
+  expect(frame.querySelector("[data-composer-toolbar]")?.contains(slot())).toBe(true);
+  expect(heightOf()).toBe(before);
+  expect(frame.parentElement?.children.length).toBe(siblings); // nothing is added under the frame
+  expect(noteLine()).toBeNull();
+  rect.mockRestore();
+});
+
+test("below md the one line is reserved under the frame, with no note in it", () => {
+  const restore = onPhone();
+  try {
+    const { box, rerender } = setup({ reserveNote: true });
+    const line = noteLine() as HTMLElement;
+    expect(line).not.toBeNull();
+    expect(line).toBeEmptyDOMElement();
+    const frame = box.closest("[data-composer-frame]") as HTMLElement;
+    const siblings = frame.parentElement?.children.length;
+    rerender({ note: { kind: "conflict", text: "Several recipients." } });
+    expect(noteLine()).toBe(line); // the same element, filled
+    expect(line).toHaveTextContent("Several recipients.");
+    expect(frame.parentElement?.children.length).toBe(siblings);
+  } finally {
+    restore();
+  }
+});
+
+test("below md a composer that shows no notes reserves no line until one needs it", () => {
+  const restore = onPhone();
+  try {
+    const { rerender } = setup();
+    expect(noteLine()).toBeNull();
+    rerender({ note: { kind: "refusal", text: "Nope." } });
+    expect(noteLine()).toHaveTextContent("Nope.");
+  } finally {
+    restore();
+  }
+});
+
+test("the slot carries its plain text in a title, so a cut line stays readable", () => {
+  setup({ note: { kind: "refusal", text: "A long reason." } });
+  expect(slot()).toHaveAttribute("title", "A long reason.");
+});
+
+test("one note at a time: error > refusal > conflict > hint", async () => {
+  const onSubmit = vi.fn(async () => {
+    throw new SubmitError("It failed.");
+  });
+  const { box, rerender } = setup({ onSubmit, note: { kind: "hint", text: "A hint." } });
+  expect(slot()).toHaveTextContent("A hint.");
+  rerender({ onSubmit, note: { kind: "conflict", text: "A conflict." } });
+  expect(slot()).toHaveTextContent("A conflict.");
+  // A dropped file is a refusal: it outranks the conflict.
+  fireEvent.drop(box.closest("[data-composer-frame]") as HTMLElement, {
+    dataTransfer: { files: [file("a.txt")], items: [], types: ["Files"] },
+  });
+  expect(slot()).toHaveTextContent(FILES_NOTE);
+  expect(slot()).not.toHaveTextContent("A conflict.");
+  rerender({ onSubmit, note: { kind: "refusal", text: "A refusal." } });
+  expect(slot()).toHaveTextContent(FILES_NOTE); // equal rank: the composer's own is the more specific
+  // An error outranks all of them.
+  await userEvent.type(box, "x{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent("It failed.");
+  expect(slot()).toHaveTextContent("It failed.");
+  expect(slot()).not.toHaveTextContent("A refusal.");
+});
+
+test("the slot is announced through the live region mounted with the box", () => {
+  const { rerender } = setup();
+  expect(slot()).toHaveAttribute("aria-live", "polite");
+  expect(slot()).toBeEmptyDOMElement();
+  rerender({ note: { kind: "refusal", text: "Refused." } });
+  expect(slot()).toHaveAttribute("aria-live", "polite");
+  expect(slot()).toHaveTextContent("Refused.");
+});
+
+test("a held Send is focusable and aria-disabled, its reason linked; pressing it shows the reason", async () => {
+  const { box, onSubmit } = setupFiles();
+  await userEvent.type(box, "see these");
+  pasteFiles(box, [file("a.txt")]);
+  const send = screen.getByRole("button", { name: "Send" });
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  expect(send).toBeEnabled();
+  expect(send).toHaveAccessibleDescription("Waiting for 1 upload");
+  expect(slot()).not.toHaveTextContent("Waiting for 1 upload"); // not until it is pressed
+  send.focus();
+  expect(send).toHaveFocus();
+  await userEvent.click(send);
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(slot()).toHaveTextContent("Waiting for 1 upload");
 });

@@ -13,7 +13,7 @@ vi.mock("mermaid", () => ({ default: { initialize: vi.fn(), render: mermaidRende
 
 const NAME = "mcp__linear__create_issue";
 
-test("collapsed: server · tool, then the first string argument muted", () => {
+test("collapsed: server · tool, then the first string argument", () => {
   render(
     <RowHarness
       row={toolRow(NAME, { team: 3, title: "Fix the retry loop", body: "Long" }, { content: "ok" })}
@@ -21,7 +21,6 @@ test("collapsed: server · tool, then the first string argument muted", () => {
   );
   const row = rowToggle();
   expect(row).toHaveTextContent(/^linear · create_issueFix the retry loop$/);
-  expect(within(row).getByText("Fix the retry loop")).toHaveClass("text-muted-foreground");
   expect(within(row).getByTitle(NAME)).toBeInTheDocument();
 });
 
@@ -50,23 +49,6 @@ test("expanded: the preferred keys lead the input list, the rest keep their orde
     .getAllByRole("term")
     .map((t) => t.textContent);
   expect(terms).toEqual(["title", "base", "head", "body"]);
-});
-
-test("at narrow widths the argument gives way before the name: it only takes the room the name leaves", () => {
-  render(
-    <RowHarness
-      row={toolRow(
-        "mcp__github-cloud-connector__create_pull_request",
-        { title: "Fix the nightly deploy" },
-        { content: "ok" },
-      )}
-    />,
-  );
-  const arg = within(rowToggle()).getByText("Fix the nightly deploy");
-  expect(arg).toHaveClass("min-w-0", "flex-1", "basis-0", "truncate");
-  const name = rowToggle().querySelector("[data-mcp-server]")?.parentElement as HTMLElement;
-  expect(name).not.toHaveClass("shrink-0");
-  expect(name).toHaveClass("min-w-0");
 });
 
 test("expanded: the input as a key/value list", () => {

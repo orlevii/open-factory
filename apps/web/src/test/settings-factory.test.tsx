@@ -76,7 +76,7 @@ const field = async (label: string) =>
 const CAP_HINT =
   "Agents that can run at once (1–64). Lowering it never interrupts a turn; idle agents may hibernate sooner.";
 const WARM_HINT =
-  "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes. Agents created before this change keep 70 min until re-synced.";
+  "How long an idle agent stays running before it hibernates (1–1440 min). Templates can set their own with warm_window_minutes.";
 const DEBOUNCE_HINT =
   "How long to collect status changes from an agent's reports before telling it (0–86400 s). 0 sends each change at once.";
 
@@ -90,7 +90,6 @@ test("the three fields carry their hints and suffixes, with the loaded values", 
   expect(warm).toHaveValue(70);
   expect(debounce).toHaveValue(30);
   expect(cap).toHaveAccessibleDescription(CAP_HINT);
-  // The warm-window hint always carries the re-sync sentence (spec §12.4).
   expect(warm).toHaveAccessibleDescription(WARM_HINT);
   expect(debounce).toHaveAccessibleDescription(DEBOUNCE_HINT);
   const region = await factory();
@@ -107,26 +106,26 @@ test("the running count is live from the supervisor frame", async () => {
   expect(await within(region).findByText("3 of 8 running")).toBeInTheDocument();
 });
 
-test("the local runtime row is read-only with how to change it", async () => {
-  world();
-  renderApp("/settings/factory", alice);
-  const region = await factory();
-  expect(await within(region).findByText("Local runtime: Not allowed")).toBeInTheDocument();
-  expect(
-    within(region).getByText(
-      (_, el) =>
-        el?.tagName === "P" &&
-        el.textContent ===
-          "Set FACTORY_ALLOW_LOCAL_RUNTIME on the server and restart to change it.",
-    ),
-  ).toBeInTheDocument();
-});
-
-test("allowed local runtime reads Allowed", async () => {
-  world({}, settings({ allowLocalRuntime: true }));
-  renderApp("/settings/factory", alice);
-  expect(await within(await factory()).findByText("Local runtime: Allowed")).toBeInTheDocument();
-});
+test.each([
+  [false, "Not allowed"],
+  [true, "Allowed"],
+])(
+  "the local runtime row (allowLocalRuntime %s) reads %s, read-only with how to change it",
+  async (allowed, label) => {
+    world({}, settings({ allowLocalRuntime: allowed }));
+    renderApp("/settings/factory", alice);
+    const region = await factory();
+    expect(await within(region).findByText(`Local runtime: ${label}`)).toBeInTheDocument();
+    expect(
+      within(region).getByText(
+        (_, el) =>
+          el?.tagName === "P" &&
+          el.textContent ===
+            "Set FACTORY_ALLOW_LOCAL_RUNTIME on the server and restart to change it.",
+      ),
+    ).toBeInTheDocument();
+  },
+);
 
 test("blur validates the cap; editing clears the error", async () => {
   world();
@@ -188,15 +187,23 @@ test("Save sends only the changed fields and shows Saved.", async () => {
   expect(within(region).queryByText("Saved.")).not.toBeInTheDocument();
 });
 
-test("blur on an unchanged number field shows nothing", async () => {
-  world();
+test("blur on an unchanged number field shows nothing, even when its value fails the check", async () => {
+  // A stored cap outside today's bounds (1–64): only a change makes leaving the field validate.
+  world({}, settings({ maxRunningAgents: 100 }));
   const user = userEvent.setup();
   renderApp("/settings/factory", alice);
   const cap = await field("Concurrency cap");
-  await waitFor(() => expect(cap).toHaveValue(8));
+  await waitFor(() => expect(cap).toHaveValue(100));
   await user.click(cap);
   await user.tab();
+  expect(cap).not.toHaveAttribute("aria-invalid");
   expect(cap).toHaveAccessibleDescription(CAP_HINT);
+  // The same value typed back in is a change: now the leave flags it.
+  await user.clear(cap);
+  await user.type(cap, "100");
+  await user.tab();
+  expect(cap).toHaveAttribute("aria-invalid", "true");
+  expect(cap).not.toHaveAccessibleDescription(CAP_HINT);
 });
 
 test("a failed save says so in an alert", async () => {

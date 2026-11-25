@@ -183,6 +183,9 @@ test("listImages lists every valid image folder by name with the templates that 
     issues: [],
     contentHash: "h",
     scannedAt: new Date(),
+    lastValid: null,
+    lastValidHash: null,
+    valid: image !== "none",
   });
   const items = await listImages(d, [
     row("qa", "smoke"),

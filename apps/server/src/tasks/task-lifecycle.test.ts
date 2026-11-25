@@ -45,7 +45,9 @@ const messageIns = async (slug: string) => {
 test("an errored assignee: the row stays pending with the note; a human comment starts an attempt, an agent's doesn't", async () => {
   await makeErrored();
   const r = await h.app.tasks.create(or, { title: "t", assignee: "dev" });
-  expect(r.note).toBe("@dev is errored; it will see this when a human restarts it.");
+  expect(r.note).toBe(
+    "@dev is errored; it will see this after it is restarted (restart_agent, or a human).",
+  );
   await settle("dev");
   expect(procs("dev")).toHaveLength(0);
   expect((await rows("dev"))[0]?.state).toBe("pending");
@@ -171,12 +173,12 @@ test("unarchive is not retroactive: nothing was written while the agent was arch
   await settle("dev");
   proc("dev")?.emit(...ev.fullTurn("sess-dev"));
   await settle("dev");
-  await h.app.agents.archive("dev");
+  await h.app.agents.archive("dev", { kind: "human", handle: "or" });
   const before = (await rows("dev")).length;
   await h.app.tasks.update(or, "T-1", { status: "in_progress" });
   await h.app.tasks.comment(or, "T-1", "@dev hello");
   expect((await rows("dev")).length).toBe(before);
-  await h.app.agents.unarchive("dev");
+  await h.app.agents.unarchive("dev", { kind: "human", handle: "or" });
   await settle("dev");
   expect((await rows("dev")).length).toBe(before);
 });
@@ -194,13 +196,4 @@ test("start a new session with only a task_update queued starts an attempt (S5's
   await settle("dev");
   expect(await reasons("dev")).toContain("reset");
   expect(procs("dev")).toHaveLength(1);
-});
-
-test("one namespace: an assignee named like both a user and an agent gets S6's sentence", async () => {
-  await h.sql`insert into users (id,name,email,handle) values ('twin-u','Twin','twin@x.io','twin')`;
-  await h.sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id)
-    select 'twin-a','twin','Twin','t','{}','local',credential_id from agents where slug = 'qa'`;
-  await expect(h.app.tasks.create(or, { title: "t", assignee: "twin" })).rejects.toMatchObject({
-    message: "'twin' matches both an agent and a user; ask a human to rename one.",
-  });
 });

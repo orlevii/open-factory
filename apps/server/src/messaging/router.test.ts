@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Tx } from "../agents/event-store.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
+import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
 import { Router } from "./router.ts";
 
@@ -35,9 +36,9 @@ async function startIdle(slug: string) {
   const { cookie } = await signUp(h.app, { handle: `h${slug}` });
   const res = await h.app.inject({
     method: "POST",
-    url: `/api/agents/${slug}/messages`,
+    url: `/api/messages`,
     headers: { cookie },
-    payload: { body: "hi" },
+    payload: { to: [slug], body: "hi" },
   });
   const p = proc(slug);
   if (!p) throw new Error(`${slug} not started: ${res.statusCode} ${res.body}`);
@@ -51,12 +52,23 @@ const pendingOf = (slug: string) =>
 
 test("AC 1: send_message to a hibernated agent wakes it with agent_message; the result names its status; the tool-use id is stored", async () => {
   const tokA = await startIdle("ada");
-  const r = await callTool(url, tokA, "send_message", { to: "@bob", body: "ping" }, "toolu_01ABC");
+  const r = await callTool(
+    url,
+    tokA,
+    "send_message",
+    { to: ["@bob"], body: "ping" },
+    "toolu_01ABC",
+  );
   expect(r.isError).toBeFalsy();
-  const out = JSON.parse(text(r));
-  expect(out).toMatchObject({ to: "bob", status: "hibernated" });
+  const out = JSON.parse(text(r)).results[0];
+  expect(out).toMatchObject({
+    to: "@bob",
+    kind: "agent",
+    status: "queued",
+    recipient_status: "hibernated",
+  });
   await settle("bob");
-  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "ada", kind: "message", body: "ping" });
+  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "@ada", kind: "message", body: "ping" });
   const b = await h.app.store.agentBySlug("bob");
   const started = (await h.app.store.after(b?.id ?? "", 0, 100)).map((e) => e.event);
   expect(started).toContainEqual(
@@ -67,38 +79,16 @@ test("AC 1: send_message to a hibernated agent wakes it with agent_message; the 
   ).toBe("toolu_01ABC");
 });
 
-test("rejections are tool errors with one sentence", async () => {
-  const tokA = await startIdle("ada");
-  const err = async (to: string) => {
-    const r = await callTool(url, tokA, "send_message", { to, body: "x" });
-    expect(r.isError).toBe(true);
-    return text(r);
-  };
-  expect(await err("nobody")).toBe(
-    "No agent or user named 'nobody'. Call list_peers to see who you can message.",
-  );
-  expect(await err("ada")).toBe("You can't message yourself.");
-  expect(await err("@me")).toBe("'me' is reserved and can't receive messages.");
-  await h.app.agents.archive("bob");
-  expect(await err("bob")).toBe("@bob is archived and can't receive messages.");
-  // A name both an agent and a user hold (only a race can make one) is refused, never guessed.
-  await h.sql`insert into users (id, name, email, handle) values ('dup', 'Dup', 'dup@x.io', 'lead')`;
-  expect(await err("lead")).toBe(
-    "'lead' matches both an agent and a user; ask a human to rename one.",
-  );
-  expect(await pendingOf("bob")).toEqual([]);
-});
-
 test("an agent id smuggled in the tool arguments is ignored: the caller is the token's agent", async () => {
   const tokA = await startIdle("ada");
   const lead = await h.app.store.agentBySlug("lead");
   const r = await callTool(url, tokA, "send_message", {
-    to: "bob",
+    to: ["bob"],
     body: "who am I",
     agentId: lead?.id,
     from: "lead",
   });
-  const out = JSON.parse(text(r));
+  const out = JSON.parse(text(r)).results[0];
   const a = await h.app.store.agentBySlug("ada");
   expect((await h.sql`select from_agent_id from messages where id = ${out.id}`)[0]).toEqual({
     from_agent_id: a?.id,
@@ -109,11 +99,13 @@ test("an errored recipient: accepted and pending, no attempt, the note says so",
   await h.sql`update agents set status = 'errored', error_kind = 'crash', last_error = 'boom' where slug = 'bob'`;
   const tokA = await startIdle("ada");
   const out = JSON.parse(
-    text(await callTool(url, tokA, "send_message", { to: "bob", body: "are you ok" })),
-  );
+    text(await callTool(url, tokA, "send_message", { to: ["bob"], body: "are you ok" })),
+  ).results[0];
   expect(out).toMatchObject({
-    status: "errored",
-    note: "@bob is errored; your message will be delivered when a human restarts it.",
+    to: "@bob",
+    kind: "agent",
+    status: "pending",
+    note: "@bob is errored; your message will be delivered after it is restarted (restart_agent, or a human).",
   });
   await settle("bob");
   expect(proc("bob")).toBeUndefined();
@@ -128,33 +120,12 @@ test("AC 3: an urgent message from an agent interrupts a working recipient", asy
   await startIdle("lead");
   proc("lead")?.emit(ev.turn());
   await settle("lead");
-  await callTool(url, tokA, "send_message", { to: "lead", body: "stop!", urgent: true });
+  await callTool(url, tokA, "send_message", { to: ["lead"], body: "stop!", urgent: true });
   await settle("lead");
   expect(proc("lead")?.controls).toContainEqual({ kind: "control", cmd: "interrupt" });
   const lead = await h.app.store.agentBySlug("lead");
   const events = (await h.app.store.after(lead?.id ?? "", 0, 200)).map((e) => e.event);
   expect(events).toContainEqual({ type: "control", cmd: "interrupt", by: "@ada" });
-});
-
-test("AC 5: @humans → one inbox item per existing user, delivered at once, and an inbox_changed frame", async () => {
-  await signUp(h.app, { handle: "or" });
-  await signUp(h.app, { handle: "sam" });
-  const tokA = await startIdle("ada"); // signs up a third user, "hada"
-  const out = JSON.parse(
-    text(await callTool(url, tokA, "send_message", { to: "@humans", body: "need a decision" })),
-  );
-  expect(out).toMatchObject({ to: "@humans", status: "inbox" });
-  const items = await h.sql`select user_id from inbox_items where message_id = ${out.id}`;
-  expect(items).toHaveLength(3);
-  expect((await h.sql`select state from messages where id = ${out.id}`)[0]?.state).toBe(
-    "delivered",
-  );
-  expect(frames).toContainEqual({ type: "inbox_changed" });
-  const one = JSON.parse(
-    text(await callTool(url, tokA, "send_message", { to: "or", body: "just you" })),
-  );
-  expect(one).toMatchObject({ to: "@or", status: "inbox" });
-  expect(await h.sql`select user_id from inbox_items where message_id = ${one.id}`).toHaveLength(1);
 });
 
 test("a row loaded by init() and handed over again is written once and still wakes the agent", async () => {
@@ -164,6 +135,7 @@ test("a row loaded by init() and handed over again is written once and still wak
   const row = await h.app.store.createMessage({
     from: { agentId: a.id },
     toAgentId: b.id,
+    recipients: ["@test"],
     body: "once",
     urgent: false,
   });
@@ -194,7 +166,7 @@ test("hand-offs wait for bootDone", async () => {
     return row;
   });
   const handed = vi.spyOn(h.app.runtimes, "deliver");
-  const sending = router.send({ agentId: a?.id ?? "" }, "bob", "after boot", false);
+  const sending = router.send({ agentId: a?.id ?? "" }, ["bob"], "after boot", false);
   // The row is committed; once every microtask after it has run, the hand-off is still waiting on the gate.
   await commit;
   await new Promise((r) => setImmediate(r));
@@ -223,8 +195,8 @@ test("after close() no hand-off runs: rows committed during shutdown stay pendin
   if (!a || !lead) throw new Error("seed");
   const delivered = vi.spyOn(h.app.runtimes, "deliver");
   const held = vi.spyOn(h.app.runtimes, "deliverHeld");
-  const r = await router.send({ agentId: a.id }, "bob", "during shutdown", false);
-  expect(r).toMatchObject({ ok: true, to: "bob" });
+  const r = await router.send({ agentId: a.id }, ["bob"], "during shutdown", false);
+  expect(r.results).toMatchObject([{ to: "@bob", status: "queued" }]);
   await router.forward({ agentId: a.id, body: "halfway" });
   await router.peerEvents(a.id, { kind: "joined" }, { managerId: null, peerIds: [] });
   // Let any `booted.then` hand-off run.
@@ -267,10 +239,11 @@ test("archive between resolve and hand-off marks the row rejected", async () => 
   const row = await h.app.store.createMessage({
     from: { agentId: a.id },
     toAgentId: b.id,
+    recipients: ["@test"],
     body: "late",
     urgent: false,
   });
-  await h.app.agents.archive("bob");
+  await h.app.agents.archive("bob", { kind: "human", handle: "or" });
   await h.app.runtimes.deliver(row, "agent");
   await settle("bob");
   expect((await h.sql`select state from messages where id = ${row.id}`)[0]?.state).toBe("rejected");
@@ -282,9 +255,9 @@ test("AC 6: a valid agent token on a REST route is 401", async () => {
   const auth = { authorization: `Bearer ${tokA}` };
   const send = await h.app.inject({
     method: "POST",
-    url: "/api/agents/bob/messages",
+    url: "/api/messages",
     headers: auth,
-    payload: { body: "x" },
+    payload: { to: ["bob"], body: "x" },
   });
   expect(send.statusCode).toBe(401);
   const list = await h.app.inject({ method: "GET", url: "/api/agents", headers: auth });
@@ -294,44 +267,24 @@ test("AC 6: a valid agent token on a REST route is 401", async () => {
   expect(await pendingOf("bob")).toEqual([]);
 });
 
-test("the human REST send resolves only agents: a user or an unknown name is 404, a reserved one 400; archived is 409", async () => {
-  const { cookie } = await signUp(h.app, { handle: "orla" });
-  const post = (slug: string) =>
-    h.app.inject({
-      method: "POST",
-      url: `/api/agents/${slug}/messages`,
-      headers: { cookie },
-      payload: { body: "x" },
-    });
-  for (const slug of ["orla", "nobody"]) {
-    const r = await post(slug);
-    expect(r.statusCode).toBe(404);
-    expect(r.json().error.code).toBe("agent_not_found");
-  }
-  // `humans` and the other reserved names never reach the Router: the slug parameter refuses them (S4).
-  for (const slug of ["humans", "factory"]) expect((await post(slug)).statusCode).toBe(400);
-  await h.app.agents.archive("bob");
-  const r = await post("bob");
-  expect(r.statusCode).toBe(409);
-  expect(r.json().error.code).toBe("agent_archived");
-  expect(await pendingOf("bob")).toEqual([]);
-  expect(await h.sql`select id from inbox_items`).toEqual([]);
-});
-
 test("AC 4: list_peers returns relations, scope all, and the humans every time", async () => {
   await signUp(h.app, { handle: "or", name: "Or" });
   const ops = await h.seedAgent({ slug: "ops" }); // top-level, a peer of lead
   const tokA = await startIdle("ada");
   const near = JSON.parse(text(await callTool(url, tokA, "list_peers", {})));
-  expect(near.agents.map((x: { slug: string; relation: string }) => [x.slug, x.relation])).toEqual([
-    ["lead", "manager"],
-    ["bob", "peer"],
+  const agentsOf = (r: { peers: { kind: string; handle: string; relation?: string }[] }) =>
+    r.peers.filter((x) => x.kind === "agent");
+  expect(agentsOf(near).map((x) => [x.handle, x.relation])).toEqual([
+    ["@lead", "manager"],
+    ["@bob", "peer"],
   ]);
-  expect(near.humans).toEqual(expect.arrayContaining([{ handle: "or", name: "Or" }]));
+  expect(near.peers).toContainEqual({ handle: "@or", kind: "human", name: "Or" });
   expect(JSON.stringify(near)).not.toContain("@example.com"); // never emails
   const all = JSON.parse(text(await callTool(url, tokA, "list_peers", { scope: "all" })));
-  expect(all.agents).toContainEqual(expect.objectContaining({ slug: ops.slug, relation: "other" }));
-  expect(all.agents.find((x: { slug: string }) => x.slug === "ada")).toBeUndefined();
+  expect(all.peers).toContainEqual(
+    expect.objectContaining({ handle: `@${ops.slug}`, relation: "other" }),
+  );
+  expect(all.peers.find((x: { handle: string }) => x.handle === "@ada")).toBeUndefined();
 });
 
 test("Router.forward: a report's text goes to its manager as a held member_update; a top-level agent's errored goes to the humans once", async () => {
@@ -420,9 +373,9 @@ test("R4 (owner): a top-level agent's errored episode is one inbox item; a succe
   const retry = () =>
     h.app.inject({
       method: "POST",
-      url: "/api/agents/lead/messages",
+      url: "/api/messages",
       headers: { cookie },
-      payload: { body: "are you there" },
+      payload: { to: ["lead"], body: "are you there" },
     });
   await retry();
   (await nextAttempt(4))?.exit(1);
@@ -460,18 +413,38 @@ test("a report's top-level text is persisted for its manager and handed over as 
 test("a recipient whose init fails after the commit doesn't fail the sender's call; the row stays pending", async () => {
   const tokA = await startIdle("ada");
   vi.spyOn(h.app.runtimes, "load").mockRejectedValue(new Error("init failed"));
-  const r = await callTool(url, tokA, "send_message", { to: "bob", body: "still here" });
+  const r = await callTool(url, tokA, "send_message", { to: ["bob"], body: "still here" });
   expect(r.isError).toBeFalsy();
-  expect(JSON.parse(text(r))).toMatchObject({ to: "bob", status: "hibernated" });
+  expect(JSON.parse(text(r)).results[0]).toMatchObject({
+    to: "@bob",
+    status: "queued",
+    recipient_status: "hibernated",
+  });
   expect((await pendingOf("bob")).map((x) => x.state)).toEqual(["pending"]);
 });
 
-test("deliverHeld never throws, even for a row with no agent recipient", () => {
-  expect(() =>
-    h.app.runtimes.deliverHeld({ id: "m1", toAgentId: null } as unknown as Parameters<
+test("deliverHeld: a recipient that fails to load is logged, never thrown or unhandled", async () => {
+  const error = vi.spyOn(h.app.log, "error").mockImplementation(() => undefined);
+  vi.spyOn(h.app.runtimes, "load").mockRejectedValue(new Error("load failed"));
+  const unhandled = vi.fn();
+  process.on("unhandledRejection", unhandled);
+  try {
+    const row = { id: "m1", toAgentId: "ag1" } as unknown as Parameters<
       typeof h.app.runtimes.deliverHeld
-    >[0]),
-  ).not.toThrow();
+    >[0];
+    expect(() => h.app.runtimes.deliverHeld(row)).not.toThrow();
+    await vi.waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: "ag1", message: "m1" }),
+        "delivering a held row failed",
+      ),
+    );
+    await new Promise((r) => setImmediate(r));
+    expect(unhandled).not.toHaveBeenCalled();
+  } finally {
+    process.off("unhandledRejection", unhandled);
+    vi.restoreAllMocks();
+  }
 });
 
 test("reconcile forwards factory_restarted lost work to the manager", async () => {
@@ -532,9 +505,9 @@ test("errored_reported clears with the error, so the next episode is reported", 
   const { cookie } = await signUp(h.app, { handle: "sam" });
   await h.app.inject({
     method: "POST",
-    url: "/api/agents/lead/messages",
+    url: "/api/messages",
     headers: { cookie },
-    payload: { body: "retry" },
+    payload: { to: ["lead"], body: "retry" },
   });
   proc("lead")?.emit(ev.session("sess-lead"), ev.turn(), ev.usage(), ev.end());
   await settle("lead");
@@ -546,30 +519,42 @@ test("errored_reported clears with the error, so the next episode is reported", 
 test("a message to a terminated agent is refused; a terminated sender can't send and writes nothing", async () => {
   const ada = await h.app.store.agentBySlug("ada");
   await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'bob'`;
-  const toGone = await h.app.router.send({ agentId: ada?.id ?? "" }, "bob", "x", false);
-  expect(toGone).toEqual({
-    ok: false,
-    code: "terminated",
-    message: "@bob was terminated and can't receive messages.",
-  });
+  const toGone = await h.app.router.send({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
+  expect(toGone.results).toEqual([
+    {
+      to: "@bob",
+      status: "refused",
+      code: "terminated",
+      reason: "@bob was terminated and can't receive messages.",
+    },
+  ]);
   await h.sql`update agents set kind = 'persistent', terminated_at = null, terminated_by = null where slug = 'bob'`;
   await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'ada'`;
-  const fromEnded = await h.app.router.send({ agentId: ada?.id ?? "" }, "bob", "x", false);
-  expect(fromEnded).toEqual({
-    ok: false,
-    code: "ended",
-    message: "You can't send messages: you were terminated.",
-  });
+  const fromEnded = await h.app.router.send({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
+  expect(fromEnded.results).toMatchObject([
+    {
+      status: "refused",
+      code: "terminated",
+      reason: "You can't send messages: you were terminated.",
+    },
+  ]);
   expect(await pendingOf("bob")).toEqual([]);
   expect(await h.sql`select id from inbox_items`).toEqual([]);
-  const toHumans = await h.app.router.send({ agentId: ada?.id ?? "" }, "@humans", "x", false);
-  expect(toHumans).toMatchObject({ ok: false, code: "ended" });
+  // The refusal names each recipient once, as `@handle`, like the other paths.
+  const repeated = await h.app.router.send(
+    { agentId: ada?.id ?? "" },
+    ["bob", "@bob", " @carol "],
+    "x",
+    false,
+  );
+  expect(repeated.results.map((r) => r.to)).toEqual(["@bob", "@carol"]);
 });
 
 /** A spawned child of `lead` inserted inside `tx` (it shares lead's credential). */
 async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {}) {
   const lead = await h.app.store.agentBySlug("lead");
   if (!lead) throw new Error("no lead");
+  await claimTestHandle(tx, slug, "agent");
   const [row] = await tx
     .insert(schema.agents)
     .values({
@@ -687,6 +672,7 @@ test("deliver with a reason wakes with it: a spawned agent's first wake records 
   const row = await h.app.store.createMessage({
     from: { agentId: ada },
     toAgentId: bob,
+    recipients: ["@test"],
     body: "your brief",
     urgent: false,
   });
@@ -696,5 +682,213 @@ test("deliver with a reason wakes with it: a spawned agent's first wake records 
   expect(started).toContainEqual(
     expect.objectContaining({ type: "process_started", reason: "spawned" }),
   );
-  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "ada", body: "your brief" });
+  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "@ada", body: "your brief" });
+});
+
+describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () => {
+  const sendAs = async (slug: string, to: string[], body = "hello all") => {
+    const a = await h.app.store.agentBySlug(slug);
+    return h.app.router.send({ agentId: a?.id ?? "" }, to, body, false);
+  };
+  const rowsOf = (body: string) =>
+    h.sql`select id, recipients, to_agent_id, to_user_id from messages where body = ${body} and kind = 'message' order by created_at, id`;
+
+  test("duplicates collapse by principal: one row, one result", async () => {
+    const r = await sendAs("ada", ["bob", "@bob", " bob "], "dup");
+    expect(r.results).toHaveLength(1);
+    expect(r.results[0]).toMatchObject({ to: "@bob", kind: "agent", status: "queued" });
+    expect(await rowsOf("dup")).toHaveLength(1);
+  });
+
+  test("a self-send is refused alone; the others still get rows", async () => {
+    const alone = await sendAs("ada", ["ada"], "me");
+    expect(alone.results).toEqual([
+      { to: "@ada", status: "refused", code: "self", reason: "You can't message yourself." },
+    ]);
+    const mixed = await sendAs("ada", ["ada", "bob"], "me-and-bob");
+    expect(mixed.results.map((x) => x.status)).toEqual(["refused", "queued"]);
+    const rows = await rowsOf("me-and-bob");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.recipients).toEqual(["@bob"]);
+  });
+
+  test("a terminated recipient is refused alone while the others get rows with the accepted list only", async () => {
+    await signUp(h.app, { handle: "or" });
+    await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'bob'`;
+    const r = await sendAs("ada", ["or", "bob", "lead"], "partial");
+    expect(r.results.map((x) => [x.to, x.status])).toEqual([
+      ["@or", "inbox"],
+      ["@bob", "refused"],
+      ["@lead", "queued"],
+    ]);
+    expect(r.results[1]).toMatchObject({ code: "terminated" });
+    const rows = await rowsOf("partial");
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row.recipients).toEqual(["@or", "@lead"]);
+    // The row order is the input order.
+    expect(rows[0]?.to_user_id).not.toBeNull();
+    expect(rows[1]?.to_agent_id).not.toBeNull();
+  });
+
+  test("all refused: nothing is written", async () => {
+    const r = await sendAs("ada", ["ghost", "ada"], "none");
+    expect(r.results.map((x) => (x.status === "refused" ? x.code : x.status))).toEqual([
+      "not_found",
+      "self",
+    ]);
+    expect(await rowsOf("none")).toEqual([]);
+  });
+
+  test("a channel and @humans are refused with their sentences", async () => {
+    const r = await sendAs("ada", ["#ops", "@humans", "@me"], "x");
+    expect(r.results).toEqual([
+      { to: "#ops", status: "refused", code: "channel", reason: "Channels aren't supported yet." },
+      {
+        to: "@humans",
+        status: "refused",
+        code: "reserved",
+        reason: "`@humans` isn't a handle. Message people by handle; list_peers lists them.",
+      },
+      {
+        to: "@me",
+        status: "refused",
+        code: "reserved",
+        reason: "'me' is reserved and can't receive messages.",
+      },
+    ]);
+    expect(await h.sql`select id from inbox_items`).toEqual([]);
+  });
+
+  test("a disabled user is refused", async () => {
+    await signUp(h.app, { handle: "gone" });
+    await h.sql`update users set disabled_at = now() where handle = 'gone'`;
+    const r = await sendAs("ada", ["gone"], "x");
+    expect(r.results).toEqual([
+      {
+        to: "@gone",
+        status: "refused",
+        code: "disabled",
+        reason: "@gone's account is disabled.",
+      },
+    ]);
+  });
+
+  test("a human sender can't address a human; agents still work", async () => {
+    const { user } = await signUp(h.app, { handle: "orla" });
+    await signUp(h.app, { handle: "sam" });
+    const r = await h.app.router.send(
+      { userId: user.id, handle: user.handle },
+      ["sam", "bob"],
+      "to-mixed",
+      false,
+    );
+    expect(r.results.map((x) => x.status)).toEqual(["refused", "queued"]);
+    expect(r.results[0]).toMatchObject({ code: "human" });
+    expect((await rowsOf("to-mixed"))[0]?.recipients).toEqual(["@bob"]);
+  });
+
+  test("chat_changed goes to the human party of each row only", async () => {
+    const or = await signUp(h.app, { handle: "or" });
+    const sam = await signUp(h.app, { handle: "sam" });
+    const got: Record<string, ServerMessage[]> = { or: [], sam: [] };
+    h.app.bus.subscribeUser(or.user.id, (m) => got.or?.push(m));
+    h.app.bus.subscribeUser(sam.user.id, (m) => got.sam?.push(m));
+    await sendAs("ada", ["or"], "to-or");
+    expect(got.or).toContainEqual({ type: "chat_changed", agent: "ada" });
+    expect(got.sam).toEqual([]);
+    got.or = [];
+    await h.app.inject({
+      method: "POST",
+      url: "/api/messages",
+      headers: { cookie: sam.cookie },
+      payload: { to: ["bob"], body: "hi bob" },
+    });
+    expect(got.sam).toContainEqual({ type: "chat_changed", agent: "bob" });
+    expect(got.or.filter((m) => m.type === "chat_changed")).toEqual([]);
+  });
+
+  test("one inbox item per human recipient; inbox_changed goes to those users only", async () => {
+    const or = await signUp(h.app, { handle: "or" });
+    const sam = await signUp(h.app, { handle: "sam" });
+    const bystander = await signUp(h.app, { handle: "bystander" });
+    const got: Record<string, ServerMessage[]> = { or: [], sam: [], bystander: [] };
+    h.app.bus.subscribeUser(or.user.id, (m) => got.or?.push(m));
+    h.app.bus.subscribeUser(sam.user.id, (m) => got.sam?.push(m));
+    h.app.bus.subscribeUser(bystander.user.id, (m) => got.bystander?.push(m));
+    frames.length = 0;
+    const r = await sendAs("ada", ["or", "sam"], "two-humans");
+    expect(r.results.map((x) => x.status)).toEqual(["inbox", "inbox"]);
+    const ids = r.results.flatMap((x) => ("id" in x ? [x.id] : []));
+    for (const id of ids)
+      expect(await h.sql`select user_id from inbox_items where message_id = ${id}`).toHaveLength(1);
+    expect(got.or).toContainEqual({ type: "inbox_changed" });
+    expect(got.sam).toContainEqual({ type: "inbox_changed" });
+    expect(got.bystander).toEqual([]);
+    expect(frames).not.toContainEqual({ type: "inbox_changed" });
+    for (const id of ids)
+      expect((await h.sql`select state from messages where id = ${id}`)[0]?.state).toBe(
+        "delivered",
+      );
+  });
+
+  test("an errored agent recipient is pending with the note, beside a queued one", async () => {
+    await h.sql`update agents set status = 'errored', error_kind = 'crash', last_error = 'boom' where slug = 'bob'`;
+    const r = await sendAs("ada", ["bob", "lead"], "mixed-status");
+    expect(r.results[0]).toMatchObject({
+      to: "@bob",
+      kind: "agent",
+      status: "pending",
+      note: "@bob is errored; your message will be delivered after it is restarted (restart_agent, or a human).",
+    });
+    expect(r.results[1]).toMatchObject({ to: "@lead", status: "queued" });
+  });
+
+  test("a client-id retry returns every row's result and writes nothing twice", async () => {
+    const { cookie, user } = await signUp(h.app, { handle: "orla" });
+    const send = () =>
+      h.app.router.send({ userId: user.id, handle: user.handle }, ["bob", "lead"], "twice", false, {
+        clientMessageId: "11111111-1111-4111-8111-111111111111",
+      });
+    const first = await send();
+    expect(first.results.map((x) => x.status)).toEqual(["queued", "queued"]);
+    const again = await send();
+    expect(again.results.map((x) => ("id" in x ? x.id : ""))).toEqual(
+      first.results.map((x) => ("id" in x ? x.id : "")),
+    );
+    expect(again.results.map((x) => x.to)).toEqual(["@bob", "@lead"]);
+    expect(await rowsOf("twice")).toHaveLength(2);
+    void cookie;
+  });
+
+  test("attachments go to exactly one agent: with two recipients every target is refused", async () => {
+    const { user } = await signUp(h.app, { handle: "orla" });
+    const r = await h.app.router.send(
+      { userId: user.id, handle: user.handle },
+      ["bob", "lead"],
+      "files",
+      false,
+      { attachments: ["00000000-0000-4000-8000-000000000000"] },
+    );
+    expect(r.results.map((x) => (x.status === "refused" ? x.code : x.status))).toEqual([
+      "invalid_attachment",
+      "invalid_attachment",
+    ]);
+    expect(await rowsOf("files")).toEqual([]);
+  });
+
+  test("attachments with a refused target: the refused one keeps its own reason", async () => {
+    const { user } = await signUp(h.app, { handle: "orla" });
+    const r = await h.app.router.send(
+      { userId: user.id, handle: user.handle },
+      ["ghost", "bob", "lead"],
+      "files2",
+      false,
+      { attachments: ["00000000-0000-4000-8000-000000000000"] },
+    );
+    expect(r.results.map((x) => (x.status === "refused" ? x.code : x.status))).toEqual([
+      "not_found",
+      "invalid_attachment",
+      "invalid_attachment",
+    ]);
+  });
 });

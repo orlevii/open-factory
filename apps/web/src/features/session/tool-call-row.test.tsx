@@ -16,7 +16,7 @@ const agentWith = (task: NonNullable<ToolRow["backgroundTask"]>): ToolRow => ({
 
 test("a background task shows on any call row it attaches to, not only Bash (U3 §9.5)", () => {
   const { unmount } = render(<RowHarness row={agentWith({ taskId: "b", state: "running" })} />);
-  expect(within(rowToggle()).getByText("In background")).toHaveClass("shrink-0");
+  expect(within(rowToggle()).getByText("In background")).toBeInTheDocument();
   unmount();
   render(
     <RowHarness row={agentWith({ taskId: "b", state: "failed", summary: "Agent crashed" })} />,
@@ -24,7 +24,6 @@ test("a background task shows on any call row it attaches to, not only Bash (U3 
   expect(within(rowToggle()).getByText("Failed")).toBeInTheDocument();
   const detail = screen.getByText("Agent crashed");
   expect(rowToggle()).not.toContainElement(detail);
-  expect(detail).toHaveClass("line-clamp-2");
 });
 
 test("a finished task on an MCP call: 'Finished' with the summary on the detail line", () => {

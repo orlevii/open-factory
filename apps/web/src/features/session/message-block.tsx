@@ -13,7 +13,7 @@ import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } fro
 import { formatTime } from "./format";
 import { useLongPressRegion } from "./long-press-region";
 import { rowOf } from "./row-of";
-import { SpeakerLine } from "./speaker-line";
+import { type PartyKind, type SenderKind, SpeakerLine, useSpeakers } from "./speaker-line";
 import { stripAttachedLines } from "./uploads";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
@@ -66,7 +66,7 @@ function useAgentLinkTarget(slug: string): { link: boolean; display?: string } {
   return { link: display === undefined && more === true };
 }
 
-/** An agent slug in mono, as a link to its session (resolved by `useAgentLinkTarget`). `name` adds
+/** An agent slug in mono, as a link to its chat (resolved by `useAgentLinkTarget`). `name` adds
  *  " · Display name" when it is known. */
 export function AgentLink({ slug, name = false }: { slug: string; name?: boolean }) {
   const { link, display } = useAgentLinkTarget(slug);
@@ -74,9 +74,9 @@ export function AgentLink({ slug, name = false }: { slug: string; name?: boolean
   return (
     <>
       <Link
-        to="/agents/$slug"
+        to="/agents/$slug/chat"
         params={{ slug }}
-        aria-label={`Open @${slug}'s session`}
+        aria-label={`Open @${slug}'s chat`}
         className={`font-mono text-foreground ${LINK_CLASS}`}
       >
         @{slug}
@@ -109,26 +109,40 @@ export function formatDue(due: string): string {
   return `${p.weekday} ${p.day} ${p.month} ${p.hour}:${p.minute} ${off}`;
 }
 
-/** Agent senders are bare slugs; humans are `@handle`, the factory `@factory`. */
-export const isAgentSender = (from: string) => !from.startsWith("@");
+/** Who scheduled a message, by the kind the envelope carries (`byKind`). */
+function ScheduledBy({ by, kind }: { by: string; kind: PartyKind }) {
+  const bare = by.startsWith("@") ? by.slice(1) : by;
+  return kind === "agent" ? (
+    <AgentLink slug={bare} />
+  ) : (
+    <span className="font-mono text-foreground">@{bare}</span>
+  );
+}
 
 /** Incoming input (UI design §4.1): on the ground with a 1px rule edge and 6px radius, never a bubble.
  *  The sender line is generic (`from` + badges), never the raw envelope XML. A `system` message is a
  *  notice from the factory itself (S5 UI design §3.5): sender "Factory", never Urgent, never orange. */
 export function MessageBlock(props: {
+  /** The sender's handle, with or without its `@`. */
   from: string;
+  /** What the sender is: the envelope's or the queue item's `fromKind`. */
+  fromKind: SenderKind;
   system?: boolean;
   body: string;
   urgent?: boolean;
   at?: string;
-  queued?: { reason?: string };
-  failed?: boolean;
+  /** Held, not delivered yet: `reason` follows "Not delivered yet:"; `text` replaces the whole line. */
+  queued?: { reason?: string; text?: string };
+  /** Not delivered; a string is the line's text (the Chat's rejected row), else "Not delivered". */
+  failed?: boolean | string;
   /** S8: the task badge of a task message, after the sender. */
   badge?: ReactNode;
   /** S9: a scheduled message: sender "Scheduler", the schedule badge, who wrote it, and the notes. */
   scheduled?: {
     key: string;
     by?: string | undefined;
+    /** What `by` is (the envelope's `byKind`). */
+    byKind?: PartyKind | undefined;
     /** ISO 8601 with the schedule zone's offset (the envelope's `due`). */
     due?: string | undefined;
     late?: boolean | undefined;
@@ -149,6 +163,7 @@ export function MessageBlock(props: {
   const region = useLongPressRegion();
   const {
     from,
+    fromKind,
     system,
     body,
     urgent,
@@ -186,7 +201,7 @@ export function MessageBlock(props: {
   ) : queued ? (
     <span className="flex items-center gap-1 text-muted-foreground">
       <Clock aria-hidden="true" className="size-3.5" />
-      {queued.reason ? `Not delivered yet: ${queued.reason}` : "Not delivered yet"}
+      {queued.text ?? (queued.reason ? `Not delivered yet: ${queued.reason}` : "Not delivered yet")}
     </span>
   ) : null;
   // A delivered factory notice is no card: a quiet line with the factory mark and its badge, the
@@ -215,14 +230,9 @@ export function MessageBlock(props: {
   const extras = (
     <>
       {scheduled && <ScheduleBadge scheduleKey={scheduled.key} />}
-      {scheduled?.by && (
+      {scheduled?.by && scheduled.byKind && (
         <span className="text-muted-foreground">
-          by{" "}
-          {isAgentSender(scheduled.by) ? (
-            <AgentLink slug={scheduled.by} />
-          ) : (
-            <span className="font-mono text-foreground">{scheduled.by}</span>
-          )}
+          by <ScheduledBy by={scheduled.by} kind={scheduled.byKind} />
         </span>
       )}
       {badge}
@@ -259,7 +269,7 @@ export function MessageBlock(props: {
           {action && <span className="ml-auto">{action}</span>}
         </div>
       ) : (
-        <SpeakerLine from={from} at={at} status={status} action={action}>
+        <SpeakerLine from={from} fromKind={fromKind} at={at} status={status} action={action}>
           {extras}
         </SpeakerLine>
       )}
@@ -270,7 +280,7 @@ export function MessageBlock(props: {
       )}
       {failed && (
         <p className="mb-1 text-[0.8125rem] leading-[1.125rem] text-muted-foreground">
-          Not delivered
+          {typeof failed === "string" ? failed : "Not delivered"}
         </p>
       )}
       {/* One wrapper either way, so a send becoming its queued item keeps the parsed body. The prose
@@ -318,7 +328,7 @@ function AttachmentList({
 function AttachmentChip({ slug, attachment: a }: { slug: string; attachment: MessageAttachment }) {
   const url = uploadUrl(slug, a.uploadId);
   const name = displayName(a.name);
-  const small = a.bytes !== undefined && a.bytes <= AUTO_PREVIEW_BYTES;
+  const small = a.bytes <= AUTO_PREVIEW_BYTES;
   const [asked, setAsked] = useState(false);
   const preview = a.kind === "image" && (small || asked);
   return (

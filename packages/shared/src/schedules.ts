@@ -17,7 +17,7 @@ const bytes = (s: string) => new TextEncoder().encode(s).length;
 
 export const scheduleBodySchema = z
   .string()
-  .refine((s) => bytes(s) >= 1, "The message can't be empty.")
+  .refine((s) => bytes(s) >= 1, MSG.messageEmpty)
   .refine((s) => bytes(s) <= SCHEDULE_BODY_MAX, MSG.bodyTooLong);
 
 export const cronFieldSchema = z.string().superRefine((s, ctx) => {

@@ -1,19 +1,13 @@
 import { z } from "zod";
 import { imageStatusSchema } from "./images.ts";
+import { MSG } from "./messages.ts";
+import { modelSchema } from "./models.ts";
 import { hostSkillSchema, nameSchema, secretNameSchema } from "./names.ts";
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const TEMPLATE_FILES = ["template.yaml", "AGENTS.md", "settings.json", "mcp.json"] as const;
 export type TemplateFile = (typeof TEMPLATE_FILES)[number];
 export const templateFileSchema = z.enum(TEMPLATE_FILES);
-
-/** Passed to the CLI as `--model <m>`: a leading dash could be read as another flag. */
-const modelSchema = z
-  .string()
-  .min(1)
-  .refine((v) => !v.startsWith("-"), "Use a model alias or id such as haiku or claude-sonnet-4-5.");
-
-const pluginRef = z.string().regex(/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/, "Use name@marketplace.");
 
 // The Docker image reference grammar (distribution/reference): `[registry[:port]/]path[:tag][@algo:hex]`.
 const domainPart = "(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])";
@@ -53,7 +47,6 @@ export const templateConfigSchema = z.object({
   projects: z.array(nameSchema),
   skills: z.array(hostSkillSchema),
   localSkills: z.boolean(),
-  plugins: z.array(pluginRef),
   secrets: z.array(secretNameSchema),
   canSpawn: z.array(nameSchema),
   maxLiveSpawns: z.number().int().min(0).max(50),
@@ -61,25 +54,41 @@ export const templateConfigSchema = z.object({
 });
 export type TemplateConfig = z.infer<typeof templateConfigSchema>;
 
+/**
+ * The field schemas of template.yaml, with no defaults and no transform. The overlay (config.ts) picks from
+ * this shape; a default would fill `skills: []` into every overlay.
+ */
+export const templateYamlShape = {
+  name: nameSchema,
+  display_name: z.string().min(1).max(80),
+  description: z.string().max(500).optional(),
+  runtime: z.enum(["docker", "local"]).optional(),
+  image: imageRefSchema.optional(),
+  permission_mode: z.enum(["auto", "bypass"]).optional(),
+  model: modelSchema.optional(),
+  effort: z.enum(EFFORTS).optional(),
+  projects: z.array(nameSchema).max(200).optional(),
+  skills: z.array(hostSkillSchema).max(200).optional(),
+  local_skills: z.boolean().optional(),
+  secrets: z.array(secretNameSchema).max(200).optional(),
+  can_spawn: z.array(nameSchema).max(200).optional(),
+  max_live_spawns: z.number().int().min(0).max(50).optional(),
+  warm_window_minutes: z.number().int().min(1).max(1440).optional(),
+};
+
 /** template.yaml as written (snake_case, strict), transformed into TemplateConfig. */
 export const templateYamlSchema = z
   .strictObject({
-    name: nameSchema,
-    display_name: z.string().min(1).max(80),
-    description: z.string().max(500).default(""),
-    runtime: z.enum(["docker", "local"]).default("docker"),
-    image: imageRefSchema.optional(),
-    permission_mode: z.enum(["auto", "bypass"]).default("auto"),
-    model: modelSchema.optional(),
-    effort: z.enum(EFFORTS).optional(),
-    projects: z.array(nameSchema).default([]),
-    skills: z.array(hostSkillSchema).default([]),
-    local_skills: z.boolean().default(true),
-    plugins: z.array(pluginRef).default([]),
-    secrets: z.array(secretNameSchema).default([]),
-    can_spawn: z.array(nameSchema).default([]),
-    max_live_spawns: z.number().int().min(0).max(50).default(5),
-    warm_window_minutes: z.number().int().min(1).max(1440).optional(),
+    ...templateYamlShape,
+    description: templateYamlShape.description.default(""),
+    runtime: templateYamlShape.runtime.default("docker"),
+    permission_mode: templateYamlShape.permission_mode.default("auto"),
+    projects: templateYamlShape.projects.default([]),
+    skills: templateYamlShape.skills.default([]),
+    local_skills: templateYamlShape.local_skills.default(true),
+    secrets: templateYamlShape.secrets.default([]),
+    can_spawn: templateYamlShape.can_spawn.default([]),
+    max_live_spawns: templateYamlShape.max_live_spawns.default(5),
   })
   .transform(
     (y): TemplateConfig => ({
@@ -94,7 +103,6 @@ export const templateYamlSchema = z
       projects: y.projects,
       skills: y.skills,
       localSkills: y.local_skills,
-      plugins: y.plugins,
       secrets: y.secrets,
       canSpawn: y.can_spawn,
       maxLiveSpawns: y.max_live_spawns,
@@ -109,6 +117,8 @@ export const templateIssueSchema = z.object({
   line: z.number().int().positive().optional(),
   column: z.number().int().positive().optional(),
   path: z.string().optional(),
+  /** A fix the page offers on the issue: open Add marketplace prefilled from the declaration (spec §7.4). */
+  action: z.literal("add_from_template").optional(),
 });
 export type TemplateIssue = z.infer<typeof templateIssueSchema>;
 
@@ -120,6 +130,8 @@ export const templateSummarySchema = z.object({
   errors: z.number().int(),
   warnings: z.number().int(),
   agentCount: z.number().int(),
+  /** The plugins its `settings.json` enables (`effectivePlugins`). */
+  pluginCount: z.number().int().nonnegative(),
   imageStatus: imageStatusSchema.optional(),
 });
 export const templatesListSchema = z.object({
@@ -148,9 +160,8 @@ export const templateDetailResponseSchema = z.object({ template: templateDetailS
  *  with one of these names would be unreachable by URL, so creation refuses them. */
 export const RESERVED_TEMPLATE_NAMES: readonly string[] = ["new", "images"];
 export const isReservedTemplateName = (name: string) => RESERVED_TEMPLATE_NAMES.includes(name);
-export const RESERVED_TEMPLATE_NAME_MESSAGE = "That name is reserved.";
 export const createTemplateBodySchema = z.object({
-  name: nameSchema.refine((n) => !isReservedTemplateName(n), RESERVED_TEMPLATE_NAME_MESSAGE),
+  name: nameSchema.refine((n) => !isReservedTemplateName(n), MSG.nameReserved),
   displayName: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).optional(),
 });

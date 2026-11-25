@@ -95,6 +95,7 @@ const Row = memo(function Row({
         aria-current={selected ? "true" : undefined}
         onFocus={skipFocusPreload}
         data-task-key={t.key}
+        data-row=""
         className="of-row grid min-h-14 grid-cols-[3.5rem_minmax(0,1fr)] content-center gap-x-3 gap-y-0.5 px-2 py-2 text-sm md:grid-cols-[3.5rem_minmax(0,1fr)_7rem_10rem]"
       >
         <span className="font-mono text-[0.8125rem] leading-5 text-foreground">{t.key}</span>

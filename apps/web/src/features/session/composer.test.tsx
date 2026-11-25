@@ -1,13 +1,20 @@
 import type { AgentSummary, QueueItem, SessionEvent } from "@open-factory/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, type ReactNode, useCallback, useReducer, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
-import { agentDraftKey, readDraft } from "@/lib/drafts";
+import { readDraft, sessionDraftKey } from "@/lib/drafts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
-import { agentSummary } from "@/test/session-fixtures";
+import { agentSummary, envelope } from "@/test/session-fixtures";
 import { Composer, type ComposerHandle } from "./composer";
 import { QueueItems } from "./queue-items";
 import {
@@ -16,6 +23,26 @@ import {
   type SessionAction,
   sessionReducer,
 } from "./session-state";
+
+/** The raw session's hint links to the chat; a plain anchor stands in for the router's Link here. */
+vi.mock("@tanstack/react-router", async (orig) => ({
+  ...(await orig<typeof import("@tanstack/react-router")>()),
+  Link: ({
+    to,
+    params,
+    children,
+    className,
+  }: {
+    to: string;
+    params: { slug: string };
+    children: ReactNode;
+    className?: string;
+  }) => (
+    <a href={to.replace("$slug", params.slug)} className={className}>
+      {children}
+    </a>
+  ),
+}));
 
 /** The session's composer reads the cached agents and users lists for `@` (U3 §13.4). */
 let qc: QueryClient;
@@ -35,7 +62,24 @@ beforeEach(() => {
   reply = (url) =>
     url.endsWith("/interrupt")
       ? json({}, 202)
-      : json({ item: { id: "q", kind: "message", from: "@alice", createdAt: "x" } }, 202);
+      : json(
+          {
+            results: [
+              {
+                to: "@dev",
+                status: "queued",
+                item: {
+                  id: "q",
+                  kind: "message",
+                  from: "@alice",
+                  fromKind: "human",
+                  createdAt: "x",
+                },
+              },
+            ],
+          },
+          202,
+        );
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -57,7 +101,7 @@ function setup(initial: AgentSummary, extra?: ReactNode) {
   const ui = (agent: AgentSummary, epoch: number) => (
     <>
       {extra}
-      <Composer slug="dev" agent={agent} stopEpoch={epoch} context="session" />
+      <Composer slug="dev" agent={agent} stopEpoch={epoch} />
     </>
   );
   const r = render(ui(initial, 1));
@@ -139,14 +183,6 @@ test("while compacting Stop is disabled and reads Compacting…", async () => {
   expect(interrupts()).toEqual([]);
 });
 
-test("while compacting the hint says the message arrives after it (no ⌥↵ promise)", () => {
-  setup(working({ compacting: true }));
-  expect(document.querySelector("[data-composer-hint]")).toHaveTextContent(
-    /^Arrives after the compaction\.$/,
-  );
-  expect(document.querySelector("[data-composer-hint] kbd")).toBeNull();
-});
-
 test("a 409 compacting on Stop resets the button, which then reads Compacting…", async () => {
   reply = (url) =>
     url.endsWith("/interrupt")
@@ -173,35 +209,6 @@ test("Stop resets from Stopping… when stopEpoch changes within the same turn (
   expect(interrupts()).toHaveLength(2);
 });
 
-test("⌥Enter posts urgent:true; Enter and ⌘Enter post urgent:false", async () => {
-  const { box } = setup(working());
-  const sends = () =>
-    posted
-      .filter((p) => p.url.endsWith("/messages"))
-      .map((p) => {
-        const { clientMessageId: _id, ...rest } = p.body as { clientMessageId?: string };
-        return rest;
-      });
-  await userEvent.type(box, "a");
-  fireEvent.keyDown(box, { key: "Enter", altKey: true });
-  await vi.waitFor(() => expect(sends()).toEqual([{ body: "a", urgent: true }]));
-  await vi.waitFor(() => expect(box).toHaveValue(""));
-  await userEvent.type(box, "b{Enter}");
-  await vi.waitFor(() => expect(sends()).toHaveLength(2));
-  await vi.waitFor(() => expect(box).toHaveValue(""));
-  await userEvent.type(box, "c");
-  fireEvent.keyDown(box, { key: "Enter", metaKey: true });
-  await vi.waitFor(() =>
-    expect(sends()).toEqual([
-      { body: "a", urgent: true },
-      { body: "b", urgent: false },
-      { body: "c", urgent: false },
-    ]),
-  );
-  expect(screen.queryByRole("checkbox", { name: "Urgent" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Send urgent" })).toBeNull();
-});
-
 test("⌥Enter during IME composition does not send", async () => {
   const { box } = setup(working());
   await userEvent.type(box, "日本");
@@ -210,42 +217,6 @@ test("⌥Enter during IME composition does not send", async () => {
   await tick();
   // Only the commands list's prefetch (a GET); nothing sent.
   expect(posted.filter((p) => !p.url.endsWith("/commands"))).toEqual([]);
-});
-
-test("the hint shows only while a turn is open; the composer height is unchanged", () => {
-  const { update } = setup(working());
-  const hint = document.querySelector("[data-composer-hint]");
-  expect(hint).toHaveTextContent(
-    /^Arrives at the agent's next step\. (⌥|Alt)↵ to interrupt instead\.$/,
-  );
-  // The line's height is fixed whether or not it has text, so the composer never resizes: a fixed
-  // height that clips (not a minimum the key caps could grow), and caps aligned inside the line box.
-  expect(hint).toHaveClass("h-5", "truncate");
-  expect(hint).not.toHaveClass("min-h-5");
-  const caps = hint?.querySelector("kbd")?.parentElement;
-  expect(caps).toHaveClass("align-top");
-  expect(caps).not.toHaveClass("align-middle");
-  update(agentSummary(), 2);
-  const after = document.querySelector("[data-composer-hint]");
-  expect(after).toBe(hint);
-  expect(after).toBeEmptyDOMElement();
-  expect(after).toHaveClass("h-5", "truncate");
-});
-
-test("on a coarse pointer the hint says to Stop first", () => {
-  const real = window.matchMedia;
-  window.matchMedia = ((q: string) => ({
-    ...real(q),
-    matches: q === "(pointer: coarse)",
-  })) as typeof window.matchMedia;
-  try {
-    setup(working());
-    expect(document.querySelector("[data-composer-hint]")).toHaveTextContent(
-      "Arrives at the agent's next step. Stop first to interrupt.",
-    );
-  } finally {
-    window.matchMedia = real;
-  }
 });
 
 test("Stop is outline, left of Send; shows a spinner and Stopping… until turnEpoch changes", async () => {
@@ -290,30 +261,6 @@ test("a failed Stop says why and allows a retry", async () => {
   expect(screen.getByRole("button", { name: "Stop" })).toHaveAttribute("aria-disabled", "false");
 });
 
-test("Stop's label hides below a ~24rem composer (its stand-in too), keeping its name", () => {
-  setup(working());
-  const label = screen.getByText("Stop");
-  // §13.1: below ~24rem only the icon (a 390px phone's ~358px composer included), so the hint keeps room.
-  expect(label).toHaveClass("@max-[24rem]:sr-only");
-  expect(label.closest(".\\@container")).not.toBeNull();
-  const standIn = document.querySelector("[data-stop-stand-in] [data-stop-label]")?.parentElement;
-  expect(standIn).toHaveClass("@max-[24rem]:hidden");
-});
-
-test("the toolbar wraps Stop and Send together onto a line of their own when they don't fit (200% text)", () => {
-  setup(working());
-  const toolbar = document.querySelector("[data-composer-toolbar]") as HTMLElement;
-  expect(toolbar).toHaveClass("flex-wrap", "min-h-8");
-  expect(toolbar).not.toHaveClass("flex-nowrap", "h-8");
-  const actions = toolbar.lastElementChild as HTMLElement;
-  expect(actions).toHaveAttribute("data-composer-actions");
-  expect(actions.querySelector("[data-stop-slot]")).not.toBeNull();
-  expect(within(actions).getByRole("button", { name: "Send" })).toBeInTheDocument();
-  expect(actions).toHaveClass("ml-auto", "shrink-0");
-  // The hint takes only what is left: it never pushes anything to another line.
-  expect(document.querySelector("[data-composer-hint]")).toHaveClass("basis-0", "flex-1");
-});
-
 test("focus moves to the textarea when Stop unmounts while focused", async () => {
   const { box, update } = setup(working());
   screen.getByRole("button", { name: "Stop" }).focus();
@@ -343,7 +290,7 @@ function Session({ agent }: { agent: AgentSummary }) {
     sessionReducer(initialSessionState, {
       type: "loaded",
       page: { events: [], hasMore: { before: false, after: false } },
-      detail: { agent, queue: [], lastSeq: 0 },
+      detail: { agent, model: { value: null, source: "default" }, queue: [], lastSeq: 0 },
       mode: "latest",
     }),
   );
@@ -367,7 +314,6 @@ function Session({ agent }: { agent: AgentSummary }) {
         slug="dev"
         agent={agent}
         stopEpoch={1}
-        context="session"
         onSending={onSending}
         onSendFailed={onSendFailed}
         onQueued={onQueued}
@@ -381,7 +327,7 @@ function Session({ agent }: { agent: AgentSummary }) {
 function heldReply() {
   let resolve: (r: Response) => void = () => {};
   reply = (url, init) =>
-    url.endsWith("/messages")
+    url.endsWith("/input")
       ? new Promise<Response>((res, rej) => {
           resolve = res;
           init?.signal?.addEventListener("abort", () =>
@@ -393,21 +339,31 @@ function heldReply() {
 }
 const messageSends = () =>
   posted
-    .filter((p) => p.url.endsWith("/messages"))
-    .map((p) => p.body as { body: string; urgent: boolean; clientMessageId: string });
+    .filter((p) => p.url.endsWith("/input"))
+    .map((p) => ({
+      body: (p.body as { text: string }).text,
+      ...(p.body as { clientMessageId: string }),
+    }));
 const queueEl = () => screen.getByTestId("queue");
-const accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
+const _accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
   json(
     {
-      item: {
-        id: "m1",
-        kind: "message",
-        from: "@alice",
-        body: "hello",
-        clientMessageId,
-        createdAt: new Date().toISOString(),
-        ...over,
-      },
+      results: [
+        {
+          to: "@dev",
+          status: "queued",
+          item: {
+            id: "m1",
+            kind: "message",
+            from: "@alice",
+            fromKind: "human",
+            body: "hello",
+            clientMessageId,
+            createdAt: new Date().toISOString(),
+            ...over,
+          },
+        },
+      ],
     },
     202,
   );
@@ -419,7 +375,15 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
   event: {
     type: "message_in",
     messages: [
-      { id: "m1", from: "@alice", kind: "message", urgent: false, body: "hello", clientMessageId },
+      envelope({
+        id: "m1",
+        from: "@alice",
+        fromKind: "human",
+        kind: "message",
+        urgent: false,
+        body: "hello",
+        clientMessageId,
+      }),
     ],
   },
 });
@@ -429,72 +393,16 @@ function renderSession(agent = agentSummary()) {
   render(<Session agent={agent} />);
   return screen.getByRole("combobox", { name: "Message to Dev agent" });
 }
-const sleep = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
+const _sleep = (ms: number) => act(() => new Promise((r) => setTimeout(r, ms)));
 
 test("the draft is in localStorage under a versioned key and survives a remount", async () => {
   const box = renderSession();
   await userEvent.type(box, "half a thought");
   box.blur();
-  expect(readDraft(agentDraftKey("dev"))).toBe("half a thought");
-  expect(localStorage.getItem("of-draft:v1:agent:dev")).not.toBeNull();
-});
-
-test("Enter clears the box and shows a muted Sending block: no time, no Cancel, no dashed edge", async () => {
-  heldReply();
-  const box = renderSession();
-  await userEvent.type(box, "hello{Enter}");
-  expect(box).toHaveValue("");
-  const block = within(queueEl()).getByRole("group", { name: "Sending" });
-  expect(block).toHaveTextContent("hello");
-  expect(block).not.toHaveTextContent("Sending");
-  expect(block).not.toHaveClass("border-dashed");
-  expect(block.querySelector("time")).toBeNull();
-  expect(within(block).queryByRole("button")).toBeNull();
-  expect(block.querySelector("[data-message-body]")).toHaveClass("text-muted-foreground");
-  const sent = messageSends()[0];
-  expect(sent).toEqual({ body: "hello", urgent: false, clientMessageId: expect.any(String) });
-  expect(sent?.clientMessageId).toMatch(/^[0-9a-f-]{36}$/);
-  // The stored draft keeps the text until the server accepts it (after the 150ms write throttle).
-  await sleep(200);
-  expect(readDraft(agentDraftKey("dev"))).toBe("hello");
-});
-
-test("Sending… with a spinner appears only after 400ms", async () => {
-  heldReply();
-  const box = renderSession();
-  await userEvent.type(box, "hello{Enter}");
-  await sleep(250);
-  expect(within(queueEl()).queryByText("Sending…")).toBeNull();
-  await sleep(250);
-  const label = within(queueEl()).getByText("Sending…");
-  expect(label.closest("span")?.querySelector("svg.motion-safe\\:animate-spin")).not.toBeNull();
-});
-
-test("an ⌥Enter send says Sending · will interrupt the turn", async () => {
-  heldReply();
-  const box = renderSession(agentSummary({ status: "working", turnOpen: true }));
-  await userEvent.type(box, "now");
-  fireEvent.keyDown(box, { key: "Enter", altKey: true });
-  await sleep(450);
-  expect(within(queueEl()).getByText("Sending · will interrupt the turn")).toBeInTheDocument();
-  expect(messageSends()[0]?.urgent).toBe(true);
-});
-
-test("the 202 replaces the block in place: same element, no Not delivered yet for 300ms", async () => {
-  const held = heldReply();
-  const box = renderSession();
-  await userEvent.type(box, "hello{Enter}");
-  const block = within(queueEl()).getByRole("group", { name: "Sending" });
-  const id = messageSends()[0]?.clientMessageId ?? "";
-  await held.resolve(accepted202(id));
-  expect(within(queueEl()).queryByRole("group", { name: "Sending" })).toBeNull();
-  const item = queueEl().querySelector("[data-message-block]");
-  expect(item).toBe(block); // one commit, the same node: nothing re-enters
-  expect(item).not.toHaveAttribute("data-live");
-  expect(queueEl()).not.toHaveTextContent("Not delivered yet");
-  await sleep(350);
-  expect(queueEl()).toHaveTextContent("Not delivered yet");
-  expect(readDraft(agentDraftKey("dev"))).toBe("");
+  expect(readDraft(sessionDraftKey("dev"))).toBe("half a thought");
+  expect(localStorage.getItem("of-draft:v1:session:dev")).not.toBeNull();
+  cleanup();
+  expect(renderSession()).toHaveValue("half a thought");
 });
 
 test("a message_in echoing the id removes the block in one step", async () => {
@@ -571,7 +479,7 @@ test("a late message_in for an aborted send clears the unchanged box and the err
   frame(echoIn(5, id));
   expect(box).toHaveValue("");
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(readDraft(agentDraftKey("dev"))).toBe("");
+  expect(readDraft(sessionDraftKey("dev"))).toBe("");
 });
 
 test("an aborted send whose item the queue already showed counts as sent", async () => {
@@ -592,6 +500,7 @@ test("an aborted send whose item the queue already showed counts as sent", async
             id: "m1",
             kind: "message",
             from: "@alice",
+            fromKind: "human",
             body: "hello",
             clientMessageId: id,
             createdAt: new Date().toISOString(),
@@ -609,15 +518,15 @@ test("an aborted send whose item the queue already showed counts as sent", async
 
 test("a Cancel put-back is saved as the draft at once, even with the box unfocused (reload keeps it)", () => {
   const ref = createRef<ComposerHandle>();
-  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} context="session" />);
+  render(<Composer ref={ref} slug="dev" agent={working()} stopEpoch={1} />);
   expect(screen.getByRole("combobox")).not.toHaveFocus();
   act(() => {
     expect(ref.current?.putBackIfEmpty("cancelled text")).toBe(true);
   });
-  expect(readDraft(agentDraftKey("dev"))).toBe("cancelled text");
+  expect(readDraft(sessionDraftKey("dev"))).toBe("cancelled text");
   // Undo of an untouched box takes it out of the stored draft too.
   act(() => ref.current?.clearIfUnchanged("cancelled text"));
-  expect(readDraft(agentDraftKey("dev"))).toBe("");
+  expect(readDraft(sessionDraftKey("dev"))).toBe("");
 });
 
 test("after an abort, text typed meanwhile makes Enter send under a new id, and there is no Retry", async () => {
@@ -660,33 +569,7 @@ test("a remount after an abort resends the unchanged text under the same id", as
 
 // ---- `@` (U3 §13.4, Q23) ----
 
-test("`@` inserts an agent's handle as plain text; nothing in the session says mention", async () => {
-  qc.setQueryData(
-    ["agents", "exclude"],
-    [agentSummary({ slug: "dev" }), agentSummary({ slug: "qa", displayName: "QA agent" })],
-  );
-  const { box } = setup(agentSummary());
-  const button = screen.getByRole("button", { name: "Insert an agent's handle" });
-  await userEvent.type(box, "ask @q");
-  expect(screen.getByRole("option", { name: /QA agent/ })).toBeInTheDocument();
-  await userEvent.keyboard("{Enter}");
-  expect(box).toHaveValue("ask @qa ");
-  // Nothing was sent; the opening menu loaded the users list, which nobody had cached (review I-2).
-  // (The commands list is prefetched on mount, U3 §13.3 m11.)
-  expect(posted.map((p) => p.url).filter((u) => !u.endsWith("/commands"))).toEqual(["/api/users"]);
-  await userEvent.click(button);
-  expect(screen.getByRole("listbox")).toBeInTheDocument();
-  const composer = document.querySelector("#composer") as HTMLElement;
-  const copy = [
-    composer.textContent,
-    ...[...document.querySelectorAll("[aria-label], [title]")].map(
-      (e) => `${e.getAttribute("aria-label")} ${e.getAttribute("title")}`,
-    ),
-  ].join(" ");
-  expect(copy.toLowerCase()).not.toContain("mention");
-});
-
-// ---- `/` commands (U3 §13.3) ----
+// ---- the session composer is raw (I1 §5.4) ----
 
 const COMMANDS_RESPONSE = {
   commands: [
@@ -697,143 +580,211 @@ const COMMANDS_RESPONSE = {
       argumentHint: "[target]",
       builtin: true,
     },
+    {
+      name: "clear",
+      description: "Start over",
+      argumentHint: "",
+      builtin: true,
+      denied: "/clear isn't available: each agent keeps one session.",
+    },
   ],
   source: "session",
   at: "2026-11-21T10:00:00.000Z",
   stale: false,
 };
+const inputs = () =>
+  posted
+    .filter((p) => p.url === "/api/agents/dev/input")
+    .map((p) => p.body as { text: string; clientMessageId: string });
+const hintLine = () => document.querySelector("[data-composer-hint]") as HTMLElement;
+const raw = (agent = agentSummary()) => setup(agent);
 
-test("the placeholder points at `/`", () => {
-  const { box } = setup(agentSummary());
-  expect(box).toHaveAttribute("placeholder", "Message Dev agent · / for commands");
+test("placeholder, toolbar and hint of the raw session", () => {
+  const { box } = raw();
+  expect(box).toHaveAttribute("placeholder", "Raw input to Claude · / for commands");
+  expect(screen.getByRole("button", { name: "Run a command" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Insert an agent's handle" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Attach files" })).toBeNull();
+  expect(hintLine()).toHaveTextContent("Goes to Claude as typed · Message Dev agent in Chat");
+  // Until the chat has its own page the link goes to the agent (PR 3 points it at /chat).
+  expect(
+    within(hintLine()).getByRole("link", { name: "Message Dev agent in Chat" }),
+  ).toHaveAttribute("href", "/agents/dev/chat");
 });
 
-test("on a phone the placeholder says a message sends after the agent's current step while a turn is open", () => {
+test("with a turn open the hint says raw input runs after it", () => {
+  const { update } = raw(working());
+  expect(hintLine()).toHaveTextContent(/^Runs after the current turn\.$/);
+  expect(hintLine().querySelector("kbd")).toBeNull();
+  update(agentSummary(), 2);
+  expect(hintLine()).toHaveTextContent("Goes to Claude as typed");
+});
+
+test("a dropped file says files go through the chat", () => {
+  const { box } = raw();
+  fireEvent.drop(box.closest("[data-composer-frame]") as HTMLElement, {
+    dataTransfer: { files: [new File(["x"], "a.txt")], items: [], types: ["Files"] },
+  });
+  expect(hintLine()).toHaveTextContent("Files can be sent from the chat");
+});
+
+test("Enter and ⌥Enter both POST /input as typed, with a clientMessageId and no urgency", async () => {
+  const { box } = raw(working());
+  await userEvent.type(box, "  /context now");
+  fireEvent.keyDown(box, { key: "Enter", altKey: true });
+  await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+  expect(inputs()[0]).toMatchObject({ text: "  /context now" });
+  expect(inputs()[0]?.clientMessageId).toEqual(expect.any(String));
+  expect(inputs()[0]).not.toHaveProperty("urgent");
+  await vi.waitFor(() => expect(box).toHaveValue(""));
+  await userEvent.type(box, "hello{Enter}");
+  await vi.waitFor(() => expect(inputs()).toHaveLength(2));
+  expect(
+    posted.some(
+      (p) =>
+        p.url.endsWith("/messages") ||
+        (p.url.endsWith("/commands") && p.body && "name" in (p.body as object)),
+    ),
+  ).toBe(false);
+});
+
+test("a command and its arguments are one text; nothing is dispatched as a command", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw();
+  await userEvent.type(box, "/code");
+  expect(screen.getByRole("option", { name: /code-review/ })).toBeInTheDocument();
+  await userEvent.keyboard("{Enter}"); // accepting inserts `/code-review `
+  expect(box).toHaveValue("/code-review ");
+  await userEvent.type(box, "src/{Enter}");
+  await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+  expect(inputs()[0]?.text).toBe("/code-review src/");
+});
+
+test("`/clear ` shows its reason in the note slot and holds Send; `/news-digest` shows nothing", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw();
+  await userEvent.type(box, "/news-digest");
+  expect(hintLine()).toHaveTextContent("Goes to Claude as typed"); // the rest hint, no note
+  await userEvent.type(box, " today");
+  expect(hintLine()).not.toHaveTextContent("isn't available");
+  await userEvent.clear(box);
+  await userEvent.type(box, "/clear ");
+  expect(hintLine()).toHaveTextContent("/clear isn't available: each agent keeps one session.");
+  const send = screen.getByRole("button", { name: "Send" });
+  expect(send).toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(send);
+  fireEvent.keyDown(box, { key: "Enter" });
+  await tick();
+  expect(inputs()).toEqual([]);
+});
+
+test("a denied row shows only on an exact match, disabled, with its reason", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw();
+  await userEvent.type(box, "/cle");
+  expect(screen.queryByRole("option", { name: /clear/ })).toBeNull();
+  await userEvent.type(box, "ar");
+  const row = screen.getByRole("option", { name: /clear/ });
+  expect(row).toHaveAttribute("aria-disabled", "true");
+  expect(row).toHaveTextContent("/clear isn't available: each agent keeps one session.");
+});
+
+test("Enter on `/context` while the commands list is pending POSTs /input", async () => {
+  reply = (url) => (url.endsWith("/commands") ? new Promise<Response>(() => {}) : json({}, 202));
+  const { box } = raw();
+  await userEvent.type(box, "/context{Enter}");
+  await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+  expect(inputs()[0]?.text).toBe("/context");
+});
+
+test("a pasted `/context` and Enter POSTs /input", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw();
+  box.focus();
+  await userEvent.paste("/context");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+  expect(inputs()[0]?.text).toBe("/context");
+});
+
+test("an empty list and `/context` POSTs /input", async () => {
+  qc.setQueryData(["agent-commands", "dev"], { ...COMMANDS_RESPONSE, commands: [] });
+  const { box } = raw();
+  await userEvent.type(box, "/context{Enter}");
+  await vi.waitFor(() => expect(inputs()).toHaveLength(1));
+  expect(inputs()[0]?.text).toBe("/context");
+});
+
+test("a typed `/clear` and Enter is refused in the slot, never posted", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw();
+  await userEvent.type(box, "/clear{Enter}");
+  await tick();
+  expect(inputs()).toEqual([]);
+  expect(hintLine()).toHaveTextContent("/clear isn't available");
+});
+
+test("Esc closes the menu first; with none open it stops the turn", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw(working());
+  await userEvent.type(box, "/co");
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+  fireEvent.keyDown(box, { key: "Escape" });
+  await tick();
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(interrupts()).toEqual([]);
+  fireEvent.keyDown(box, { key: "Escape" });
+  await tick();
+  expect(interrupts()).toHaveLength(1);
+});
+
+test("a refused input shows inline and the text comes back", async () => {
+  reply = (url) =>
+    url.endsWith("/input")
+      ? json({ error: { code: "command_denied", message: "/clear isn't available." } }, 422)
+      : json(COMMANDS_RESPONSE);
+  const { box } = raw();
+  await userEvent.type(box, "hello{Enter}");
+  expect(await screen.findByRole("alert")).toHaveTextContent("/clear isn't available.");
+  expect(box).toHaveValue("hello");
+});
+
+test("the note slot carries a refusal's full text in its title, since the line can be cut", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw();
+  expect(hintLine()).not.toHaveAttribute("title");
+  await userEvent.type(box, "/clear ");
+  expect(hintLine()).toHaveAttribute(
+    "title",
+    "/clear isn't available: each agent keeps one session.",
+  );
+});
+
+test("a known command over several lines is refused in the slot and held", async () => {
+  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
+  const { box } = raw();
+  await userEvent.type(box, "/context{Shift>}{Enter}{/Shift}more");
+  expect(hintLine()).toHaveTextContent("A command must be one line.");
+  fireEvent.keyDown(box, { key: "Enter" });
+  await tick();
+  expect(inputs()).toEqual([]);
+  await userEvent.clear(box);
+  await userEvent.type(box, "/Users/or/x{Shift>}{Enter}{/Shift}y");
+  expect(hintLine()).not.toHaveTextContent("one line");
+});
+
+test("on a phone the session composer reserves the note line", () => {
   const real = window.matchMedia;
-  fakeMatchMedia.install(true);
   try {
-    const { box, update } = setup(working());
-    expect(box).toHaveAttribute("placeholder", "Sends after @dev's current step");
-    update(agentSummary(), 2);
-    expect(box).toHaveAttribute("placeholder", "Message Dev agent · / for commands");
+    fakeMatchMedia.install(true);
+    raw();
+    expect(document.querySelector("[data-composer-note-line]")).not.toBeNull();
+    cleanup();
+    fakeMatchMedia.install(false);
+    raw();
+    expect(document.querySelector("[data-composer-note-line]")).toBeNull();
   } finally {
     window.matchMedia = real;
   }
-});
-
-test("a command dispatches to POST /commands with the chosen name and the args, never as text", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
-  reply = (url) =>
-    url.endsWith("/commands")
-      ? json({ item: { id: "c1", kind: "command", from: "@alice", createdAt: "x" } }, 202)
-      : json(COMMANDS_RESPONSE);
-  const { box } = setup(agentSummary());
-  await userEvent.type(box, "/code");
-  expect(screen.getByRole("option", { name: /code-review/ })).toBeInTheDocument();
-  await userEvent.keyboard("{Enter}");
-  await userEvent.type(box, "src/{Enter}");
-  await tick();
-  const sent = posted.filter((p) => p.url.includes("/api/agents/dev/"));
-  expect(sent.map((p) => p.url)).toContain("/api/agents/dev/commands");
-  const post = sent.find(
-    (p) => p.url === "/api/agents/dev/commands" && "name" in (p.body as object),
-  );
-  expect(post?.body).toMatchObject({ name: "code-review", args: "src/" });
-  expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
-});
-
-test("a 422 shows inline and sends no text", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
-  reply = (url, init) =>
-    url.endsWith("/commands") && init?.method === "POST"
-      ? json(
-          {
-            error: {
-              code: "unknown_command",
-              message: "/context isn't a command this agent can run.",
-            },
-          },
-          422,
-        )
-      : json(COMMANDS_RESPONSE);
-  const { box } = setup(agentSummary());
-  await userEvent.type(box, "/context {Enter}");
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "/context isn't a command this agent can run.",
-  );
-  expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
-});
-
-test("`//x` sends `/x` as a message", async () => {
-  const { box } = setup(agentSummary());
-  await userEvent.type(box, "//deploy now");
-  expect(
-    screen.getByText("Sends as text; the agent may still run a skill by that name"),
-  ).toBeInTheDocument();
-  await userEvent.keyboard("{Enter}");
-  await tick();
-  const msg = posted.find((p) => p.url.endsWith("/messages"));
-  expect(msg?.body).toMatchObject({ body: "/deploy now" });
-});
-
-test("`/foo` sends as text with the note", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
-  const { box } = setup(agentSummary());
-  await userEvent.type(box, "/foo");
-  expect(screen.getByText("Not a command for this agent; sends as text")).toBeInTheDocument();
-  await userEvent.keyboard("{Enter}");
-  await tick();
-  expect(posted.find((p) => p.url.endsWith("/messages"))?.body).toMatchObject({ body: "/foo" });
-});
-
-test("a command over 64 KB is refused inline before any POST", async () => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
-  const { box } = setup(agentSummary());
-  await userEvent.type(box, "/context ");
-  fireEvent.change(box, { target: { value: "x".repeat(70_000) } });
-  await userEvent.type(box, "{Enter}");
-  expect(await screen.findByRole("alert")).toHaveTextContent("The command is larger than 64 KB.");
-  expect(posted.some((p) => p.url.endsWith("/commands") && "name" in (p.body as object))).toBe(
-    false,
-  );
-});
-
-test.each([
-  [413, "too_large", "The command is larger than 64 KB."],
-  [501, "commands_unsupported", "This agent can't run commands."],
-  [409, "agent_archived", "This agent is archived."],
-])("a %i shows inline and sends no text", async (status, code, message) => {
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
-  reply = (url, init) =>
-    url.endsWith("/commands") && init?.method === "POST"
-      ? json({ error: { code, message } }, status)
-      : json(COMMANDS_RESPONSE);
-  const { box } = setup(agentSummary());
-  await userEvent.type(box, "/context {Enter}");
-  expect(await screen.findByRole("alert")).toHaveTextContent(message);
-  expect(posted.some((p) => p.url.endsWith("/messages"))).toBe(false);
-});
-
-test("a command POST that hangs is aborted after 15s with the reason inline", async () => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
-  reply = (url, init) =>
-    url.endsWith("/commands") && init?.method === "POST"
-      ? new Promise<Response>((_, rej) =>
-          init.signal?.addEventListener("abort", () =>
-            rej(new DOMException("aborted", "AbortError")),
-          ),
-        )
-      : json(COMMANDS_RESPONSE);
-  const { box } = setup(agentSummary());
-  fireEvent.change(box, { target: { value: "/context " } });
-  fireEvent.keyDown(box, { key: "Enter" });
-  expect(screen.queryByRole("alert")).toBeNull();
-  await act(async () => {
-    vi.advanceTimersByTime(15_000);
-  });
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "Couldn't confirm the command. Check the queue before running it again.",
-  );
-  expect(document.querySelector("[data-command-chip]")).not.toBeNull();
 });

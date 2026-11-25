@@ -6,6 +6,7 @@ import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
+import { asRunning } from "../test/running.ts";
 import { ev, FakeDriver, type FakeProcess } from "./testing/fake-driver.ts";
 import { sendAs } from "./testing/runtime-harness.ts";
 
@@ -59,15 +60,20 @@ async function setup() {
     "dev",
     "name: dev\ndisplay_name: Dev\nruntime: local\nprojects:\n  - app\n  - docs\n",
   );
-  await app.app.agents.create({
-    template: "lead",
-    slug: "lead",
-    displayName: "Lead",
-    description: "",
-    reportsTo: null,
-    credential: "work",
-  });
+  await app.app.agents.create(
+    {
+      template: "lead",
+      slug: "lead",
+      displayName: "Lead",
+      description: "",
+      reportsTo: null,
+      credential: "work",
+    },
+    { kind: "human", handle: "or" },
+  );
   const lead = await row(app, "lead");
+  // I2 §6.2: spawning follows the spawner's running process.
+  await asRunning(app.app, lead);
   return { t: app, driver, lead, projects, creds };
 }
 
@@ -108,7 +114,7 @@ test("a spawner's credential change rewrites its live children in the same trans
   const child = await spawnIdle(t, driver, lead.id, "c1");
   expect((await row(t, child.slug)).credentialId).toBe(creds.work);
 
-  await t.app.agents.update("lead", { credential: "spare" });
+  await t.app.agents.update("lead", { credential: "spare" }, { kind: "human", handle: "or" });
   expect((await row(t, "lead")).credentialId).toBe(creds.spare);
   expect((await row(t, child.slug)).credentialId).toBe(creds.spare);
   // The idle child got the restart: its process was stopped to apply the change.
@@ -136,44 +142,14 @@ test("revoking one of the spawner's grants removes it from its children, and a r
   const child = await spawnIdle(t, driver, lead.id, "g1");
   expect(await grantIds(t, child.id)).toEqual([projects.app, projects.docs].sort());
 
-  await t.app.agents.update("lead", { projects: ["app"] });
+  await t.app.agents.update("lead", { projects: ["app"] }, { kind: "human", handle: "or" });
   expect(await grantIds(t, child.id)).toEqual([projects.app]);
   await child.rt.settled();
   expect(child.proc.stopped).toBe(true);
 
   // Granting it back to the spawner gives it back to the child (spawner's grants ∩ the child's template).
-  await t.app.agents.update("lead", { projects: null });
+  await t.app.agents.update("lead", { projects: ["app", "docs"] }, { kind: "human", handle: "or" });
   expect(await grantIds(t, child.id)).toEqual([projects.app, projects.docs].sort());
-});
-
-test("a spawner re-sync whose template drops a project removes it from its children", async () => {
-  const { t, driver, lead, projects } = await setup();
-  const child = await spawnIdle(t, driver, lead.id, "r1");
-  writeTemplate(t.factoryHome, "lead", leadYaml(["docs"]));
-  const restarts = vi.spyOn(t.app.runtimes, "requestRestart");
-  const refreshes = vi.spyOn(t.app.runtimes, "refresh");
-
-  await t.app.agents.resync("lead");
-  expect(await grantIds(t, lead.id)).toEqual([projects.docs]);
-  expect(await grantIds(t, child.id)).toEqual([projects.docs]);
-  expect(refreshes.mock.calls.map((c) => c[0])).toContain(child.id);
-  expect(restarts.mock.calls.map((c) => c[0])).toContain(child.id);
-});
-
-test("a spawner re-sync refreshes and restarts every live child, even when its grants are unchanged", async () => {
-  const { t, driver, lead } = await setup();
-  const child = await spawnIdle(t, driver, lead.id, "r2");
-  const gone = await spawnIdle(t, driver, lead.id, "r3");
-  expect(await t.app.terminator.terminate(gone.id, "@or")).toEqual({ status: "terminated" });
-  await gone.rt.settled();
-  const restarts = vi.spyOn(t.app.runtimes, "requestRestart");
-  const refreshes = vi.spyOn(t.app.runtimes, "refresh");
-
-  await t.app.agents.resync("lead");
-  // The child's secrets and deny rules derive from the spawner at start, so it restarts to pick the change up.
-  expect(refreshes.mock.calls.map((c) => c[0])).toContain(child.id);
-  expect(restarts.mock.calls.map((c) => c[0])).toContain(child.id);
-  expect(restarts.mock.calls.map((c) => c[0])).not.toContain(gone.id);
 });
 
 test("terminated children are never touched by syncChildren", async () => {
@@ -220,7 +196,11 @@ test("a child's forward holding its own row lock doesn't deadlock with a spawner
              values (${randomUUID()}, ${child.id}, ${lead.id}, 'done', 'member_update', 'pending')`;
   });
   await childLocked;
-  const update = t.app.agents.update("lead", { credential: "spare" });
+  const update = t.app.agents.update(
+    "lead",
+    { credential: "spare" },
+    { kind: "human", handle: "or" },
+  );
   for (;;) {
     const [w] = await t.sql`select count(*)::int as n from pg_stat_activity
       where datname = current_database() and wait_event_type = 'Lock'

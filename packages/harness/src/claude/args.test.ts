@@ -34,17 +34,30 @@ test("auto mode", () => {
     "--effort",
     "high",
   ]);
+  // no resume and no model: only the fixed flags
+  expect(buildClaudeArgs(spec(), {})).toEqual([
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--permission-mode",
+    "auto",
+  ]);
 });
 
 test("bypass uses --dangerously-skip-permissions and no --permission-mode", () => {
   const a = buildClaudeArgs(spec({ permissionMode: "bypass" }), {});
   expect(a).toContain("--dangerously-skip-permissions");
   expect(a).not.toContain("--permission-mode");
+  expect(a).toContain("--include-partial-messages");
 });
 
-test("args include --include-partial-messages (U3 §11.1)", () => {
-  expect(buildClaudeArgs(spec(), {})).toContain("--include-partial-messages");
-  expect(buildClaudeArgs(spec({ permissionMode: "bypass" }), {})).toContain(
-    "--include-partial-messages",
-  );
+test("--settings carries the inline JSON only when settingsJson is set", () => {
+  const json = '{"enabledPlugins":{"p@m":true}}';
+  const withSettings = buildClaudeArgs(spec({ settingsJson: json }), {});
+  expect(withSettings.slice(withSettings.indexOf("--settings"))).toEqual(["--settings", json]);
+  expect(buildClaudeArgs(spec(), {})).not.toContain("--settings");
 });

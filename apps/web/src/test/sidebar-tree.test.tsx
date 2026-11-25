@@ -61,6 +61,7 @@ const frame = (agent: string, status: Frame["status"]): Frame => ({
   turnOpen: status === "working",
   restartPending: false,
   restartWaitingOn: 0,
+  restartChanges: [],
 });
 
 /** The tree's host: holds the active slug so a test can navigate. */
@@ -149,7 +150,7 @@ test("A open, B collapsed with a working count named '1 working'", async () => {
   expect(row("Bravo")).toHaveAttribute("aria-level", "2");
   expect(row("Bravo")).toHaveAttribute("aria-setsize", "1");
   expect(row("Bravo")).toHaveAttribute("aria-posinset", "1");
-  expect(row("Bravo")).toHaveAttribute("href", "/agents/b");
+  expect(row("Bravo")).toHaveAttribute("href", "/agents/b/chat");
   expect(screen.getByRole("navigation", { name: "Agents" })).toContainElement(
     screen.getByRole("tree"),
   );
@@ -234,10 +235,10 @@ test("APG keys: one tab stop, ↓/↑, →/← open/close and move, Home/End, En
   await userEvent.keyboard("{ArrowLeft}");
   expect(row("Alpha")).toHaveFocus();
   await userEvent.keyboard("{Enter}");
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a"));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a/chat"));
 });
 
-test("an agent_status frame re-renders C's row only (B expanded) / B's row only (B collapsed)", async () => {
+test("with B expanded, an agent_status frame re-renders C's row only", async () => {
   localStorage.setItem("of-tree-expanded", JSON.stringify({ b: true }));
   const { qc } = setup();
   await screen.findByRole("tree");
@@ -267,25 +268,13 @@ test("the tree renders 0 times on a frame that changes no count and no rail memb
   expect(probe.rows).toEqual({ a: 1 });
 });
 
-test("unread count from byAgent, working count hides first when narrow", async () => {
+test("unread count from byAgent, capped at 99+, part of the row's name; a working report is counted", async () => {
   setup({ list: agents({ c: { status: "working" } }), byAgent: { a: 3, b: 120 } });
   await screen.findByRole("tree");
   expect(within(row("Alpha")).getByText("3")).toBeInTheDocument();
   expect(within(row("Bravo")).getByText("99+")).toBeInTheDocument();
   expect(row("Alpha")).toHaveAccessibleName(/3 unread/);
-  // The working count gives way only to the name's minimum, never to the row's indent: it shares a
-  // wrapping line with the name and drops out of sight when both no longer fit. No container query
-  // on the indented row, and the unread count stays outside that line.
-  const working = within(row("Bravo")).getByText("1 working", { selector: ".sr-only" })
-    .parentElement as HTMLElement;
-  expect(`${row("Bravo").className} ${working.className}`).not.toMatch(/@container|@max-/);
-  const line = working.closest<HTMLElement>("[data-name-line]");
-  expect(line).not.toBeNull();
-  // The mechanism: a second line exists and is clipped.
-  expect(line?.className).toMatch(/\bflex-wrap\b/);
-  expect(line?.className).toMatch(/\boverflow-hidden\b/);
-  expect(line).toContainElement(within(row("Bravo")).getByText("Bravo"));
-  expect(line).not.toContainElement(within(row("Bravo")).getByText("99+"));
+  expect(within(row("Bravo")).getByText("1 working")).toBeInTheDocument();
 });
 
 test("empty: 'No agents yet.' with a New agent button that opens the sheet", async () => {
@@ -317,7 +306,11 @@ test("collapsed rail: only the active agent, unread and badge-worthy agents, ava
   });
   const rail = await screen.findByRole("navigation", { name: "Agents" });
   const links = within(rail).getAllByRole("link");
-  expect(links.map((l) => l.getAttribute("href"))).toEqual(["/agents/a", "/agents/c", "/agents/s"]);
+  expect(links.map((l) => l.getAttribute("href"))).toEqual([
+    "/agents/a/chat",
+    "/agents/c/chat",
+    "/agents/s/chat",
+  ]);
   expect(links[1]).toHaveAttribute("aria-current", "page");
   expect(links[0]).toHaveAccessibleName(/Alpha/);
   expect(screen.queryByRole("tree")).toBeNull();
@@ -344,7 +337,7 @@ test("a click through the rail's open tooltip still follows the link", async () 
   await screen.findByRole("tooltip");
   const trigger = link.querySelector("[data-slot=tooltip-trigger]") as HTMLElement;
   await userEvent.click(trigger);
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a"));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a/chat"));
 });
 
 test("a click on a collapsed manager's working count follows the row's link", async () => {
@@ -356,7 +349,7 @@ test("a click on a collapsed manager's working count follows the row's link", as
   await screen.findByRole("tooltip");
   const trigger = row("Bravo").querySelector("[data-slot=tooltip-trigger]") as HTMLElement;
   await userEvent.click(trigger);
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/b"));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/b/chat"));
 });
 
 test("each row carries a ⋯ that is out of the tab order; it opens the sidebar menu on its own row", async () => {

@@ -94,7 +94,8 @@ async function soft<T>(name: string, fn: () => Promise<T>): Promise<T | undefine
 // realpath: macOS tmpdir is a /var symlink; the factory works with canonical paths.
 const root = realpathSync(mkdtempSync(path.join(tmpdir(), "of-smoke-tasks-")));
 const factoryHome = path.join(root, "home");
-const hostSkillsDir = path.join(root, "host-skills");
+const hostClaudeDir = path.join(root, "host-claude");
+const hostSkillsDir = path.join(hostClaudeDir, "skills");
 const WORD = `KESTREL-${randomBytes(3).toString("hex").toUpperCase()}`;
 
 // ---------- server log capture (pino JSON lines, never printed raw) ----------
@@ -436,7 +437,7 @@ try {
     DATABASE_URL: tdb.url,
     FACTORY_SECRET_KEY: "s".repeat(40),
     FACTORY_HOME: factoryHome,
-    FACTORY_HOST_SKILLS_DIR: hostSkillsDir,
+    FACTORY_HOST_CLAUDE_DIR: hostClaudeDir,
     FACTORY_DEFAULT_IMAGE: IMAGE,
     FACTORY_ALLOW_LOCAL_RUNTIME: LOCAL ? "true" : "false",
     HOST: "127.0.0.1",
@@ -477,7 +478,7 @@ try {
   );
   samUser = { userId: users.sam.userId, handle: "sam" };
   await step("1. credential created (live verification turn passed)", () =>
-    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token }),
+    app.credentials.create({ name: "smoke", kind: "oauth_token", value: token, expiresAt: null }),
   );
   await step(`1. template tasks (${LOCAL ? "local" : "docker"}, haiku) is valid`, async () => {
     writeTemplate("tasks", {
@@ -502,14 +503,17 @@ try {
   });
   for (const slug of SLUGS) {
     await step(`1. agent ${slug} created (top level)`, () =>
-      app.agents.create({
-        template: "tasks",
-        slug,
-        displayName: slug[0]?.toUpperCase() + slug.slice(1),
-        description: `Smoke tasks agent ${slug}`,
-        reportsTo: null,
-        credential: "smoke",
-      }),
+      app.agents.create(
+        {
+          template: "tasks",
+          slug,
+          displayName: slug[0]?.toUpperCase() + slug.slice(1),
+          description: `Smoke tasks agent ${slug}`,
+          reportsTo: null,
+          credential: "smoke",
+        },
+        { kind: "human", handle: "or" },
+      ),
     );
     ids.set(
       slug,

@@ -2,12 +2,18 @@ import type {
   AgentDetail,
   AgentSummary,
   AnyEvent,
+  Envelope,
   EventsPage,
   SessionEvent,
 } from "@open-factory/shared";
 
 let seq = 0;
 const at = "2026-11-18T10:00:00.000Z";
+/** An envelope as the server sends it: one part per row, so a single row's part is its own body. */
+export const envelope = (e: Omit<Envelope, "parts"> & { parts?: Envelope["parts"] }): Envelope => ({
+  ...e,
+  parts: e.parts ?? [{ id: e.id, body: e.body, createdAt: at }],
+});
 export const se = (event: AnyEvent, turnId: string | null = "t1"): SessionEvent => ({
   seq: ++seq,
   agentSlug: "dev",
@@ -28,23 +34,25 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   turnOpen: false,
   runtime: "local",
   kind: "persistent",
+  manageOrg: false,
   template: "dev",
   reportsTo: null,
   reports: 0,
   openTasks: 0,
   credential: "work",
   projects: [],
-  grantsOverridden: false,
   depth: 0,
   archivedAt: null,
   restartPending: false,
   restartWaitingOn: 0,
+  restartChanges: [],
   waitingOn: { tasks: [], crons: 0 },
   crons: [],
   cronZone: "UTC",
   stopCronsPending: false,
   scheduleCount: 0,
   avatarVersion: null,
+  color: null,
   ...over,
 });
 
@@ -52,7 +60,12 @@ export const detail = (
   over: Partial<AgentSummary> = {},
   queue: AgentDetail["queue"] = [],
   lastSeq = 10,
-): AgentDetail => ({ agent: agentSummary(over), queue, lastSeq });
+): AgentDetail => ({
+  agent: agentSummary(over),
+  model: { value: null, source: "default" },
+  queue,
+  lastSeq,
+});
 
 export function conversation(): EventsPage {
   resetSeq();
@@ -64,7 +77,14 @@ export function conversation(): EventsPage {
         {
           type: "message_in",
           messages: [
-            { id: "m1", from: "@or", kind: "message", urgent: true, body: "Please **list** files" },
+            envelope({
+              id: "m1",
+              from: "@or",
+              fromKind: "human",
+              kind: "message",
+              urgent: true,
+              body: "Please **list** files",
+            }),
           ],
         },
         null,

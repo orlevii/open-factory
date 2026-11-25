@@ -5,11 +5,12 @@ import { Profiler, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AgentLayout } from "@/features/agents/agent-layout";
+import { enqueueStatusFrame } from "@/features/agents/status-frames";
 import { WsContext, type WsHub } from "@/lib/ws-context";
 import { longPress } from "@/test/long-press";
 import { renderInRouter } from "@/test/render-in-router";
-import { agentSummary } from "@/test/session-fixtures";
-import type { AgentDetailsPanel } from "./agent-details";
+import { agentSummary, envelope } from "@/test/session-fixtures";
 import type { Row } from "./rows";
 import { SessionView } from "./session-view";
 import { Timeline } from "./timeline";
@@ -148,7 +149,16 @@ const initial: SessionEvent[] = [
     2,
     {
       type: "message_in",
-      messages: [{ id: "m1", from: "@or", kind: "message", urgent: false, body: "Hello" }],
+      messages: [
+        envelope({
+          id: "m1",
+          from: "@or",
+          fromKind: "human",
+          kind: "message",
+          urgent: false,
+          body: "Hello",
+        }),
+      ],
     },
     null,
   ),
@@ -159,7 +169,12 @@ const initial: SessionEvent[] = [
     ev(6 + i, { type: "assistant_text", text: `Text ${6 + i}` }),
   ),
 ];
-let detail: AgentDetail = { agent: agentSummary(), queue: [], lastSeq: 200 };
+let detail: AgentDetail = {
+  agent: agentSummary(),
+  model: { value: null, source: "default" },
+  queue: [],
+  lastSeq: 200,
+};
 
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
@@ -197,18 +212,24 @@ function Harness() {
 }
 
 let push: (m: ServerMessage) => void = () => {};
+let queryClient = new QueryClient();
 const hub: WsHub = {
   send: () => true,
   listen: (fn) => {
-    push = fn;
+    // The shell's handler folds a status frame into the agent cache too (the header reads it there).
+    push = (m) => {
+      fn(m);
+      enqueueStatusFrame(queryClient, m);
+    };
     return () => {};
   },
   status: "open",
   openCount: 1,
 };
 async function setup(ui: ReactNode = <Harness />) {
+  queryClient = new QueryClient();
   renderInRouter(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <WsContext.Provider value={hub}>{ui}</WsContext.Provider>
     </QueryClientProvider>,
   );
@@ -243,7 +264,12 @@ beforeEach(() => {
   passes.mergeErrors = false;
   passes.rebuild = false;
   vi.stubGlobal("fetch", () => new Promise(() => {})); // the sender lookups never settle
-  detail = { agent: agentSummary(), queue: [], lastSeq: 200 };
+  detail = {
+    agent: agentSummary(),
+    model: { value: null, source: "default" },
+    queue: [],
+    lastSeq: 200,
+  };
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -259,6 +285,7 @@ test("an agent_status frame renders no row and no markdown", async () => {
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
   });
   frame();
   expect(count.rows.size).toBe(0);
@@ -271,7 +298,17 @@ test("a queue frame renders no row and no markdown", async () => {
   push({
     type: "queue",
     agent: "dev",
-    items: [{ id: "q1", kind: "message", body: "next", urgent: false, from: "@or", createdAt: at }],
+    items: [
+      {
+        id: "q1",
+        kind: "message",
+        body: "next",
+        urgent: false,
+        from: "@or",
+        fromKind: "human",
+        createdAt: at,
+      },
+    ],
   });
   frame();
   expect(count.rows.size).toBe(0);
@@ -600,6 +637,8 @@ test("itemPropsEqual: unrelated keys and fresh but equal sets are not a change",
   expect(itemPropsEqual(props(), props({ failedIds: new Set(["x"]) }))).toBe(true);
   expect(itemPropsEqual(props(), props({ row: { ...parent } }))).toBe(false);
   expect(itemPropsEqual(props(), props({ lit: true }))).toBe(false);
+  expect(itemPropsEqual(props(), props({ live: true }))).toBe(false);
+  expect(itemPropsEqual(props({ live: true }), props({ live: false }))).toBe(false);
   // The deep-link tint's phase reaches only the item holding it.
   expect(itemPropsEqual(props(), props({ arrivedKey: "4", arrival: "on" }))).toBe(false);
   expect(
@@ -619,6 +658,7 @@ test("buildRows runs once per events change, not for status or queue frames; ope
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
   });
   frame();
   // The frame did reach the hook (a render that skipped it would prove nothing).
@@ -639,20 +679,15 @@ test("buildRows runs once per events change, not for status or queue frames; ope
   expect(seen?.open).toBe(open);
 });
 
-const noopPanel: AgentDetailsPanel = {
-  open: true,
-  mode: "inflow",
-  toggle: noop,
-  setOpen: noop,
-  timeline: { current: null },
-};
 /** The SessionView-level harness: Profilers around the header, Agent details, the queue and the
  *  composer, a call count on `Timeline`, and the row counts (U3 M2; Tasks 44 and 50 reuse it). */
 const renderSessionView = () =>
   setup(
     <SidebarProvider>
       <TooltipProvider>
-        <SessionView slug="dev" panel={noopPanel} sheetHost={null} />
+        <AgentLayout slug="dev">
+          <SessionView slug="dev" />
+        </AgentLayout>
       </TooltipProvider>
     </SidebarProvider>,
   );
@@ -660,6 +695,7 @@ const renderSessionView = () =>
 test("SessionView: an Elapsed tick renders only Elapsed", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -677,14 +713,17 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     turnStartedAt: "2026-11-21T10:00:00.000Z",
   });
   frame();
   expect(document.querySelector("[data-activity-line]")?.textContent).toContain("0s");
-  // The harness sees a SessionView render: the status frame reached every profiled part but the
-  // composer, which reads nothing the frame changed (U3 M3).
-  for (const id of ["header", "details", "queue", "crons"])
-    expect(count.profiled.get(id)).toBeGreaterThan(0);
+  // The harness sees a SessionView render: the status frame reached the queue but not the composer,
+  // which reads nothing the frame changed (U3 M3), nor the layout's header and crons layer, which
+  // read the cached agent that the frame left as it was.
+  expect(count.profiled.get("queue")).toBeGreaterThan(0);
+  expect(count.profiled.get("header")).toBeUndefined();
+  expect(count.profiled.get("crons")).toBeUndefined();
   expect(count.timeline).toBeGreaterThan(0);
   reset();
   act(() => {
@@ -700,6 +739,7 @@ test("SessionView: an Elapsed tick renders only Elapsed", async () => {
 test("SessionView: a live frame and an agent_status frame render the composer 0 times; a keystroke renders only the composer", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -717,10 +757,11 @@ test("SessionView: a live frame and an agent_status frame render the composer 0 
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
     turnStartedAt: "2026-11-21T10:00:00.000Z",
   });
   frame();
-  expect(count.profiled.get("header")).toBeGreaterThan(0); // the frame did reach SessionView
+  expect(count.profiled.get("queue")).toBeGreaterThan(0); // the frame did reach SessionView
   expect(count.profiled.get("composer")).toBeUndefined();
   reset();
   act(() => {
@@ -742,6 +783,7 @@ test("SessionView: a status frame that opens the turn renders the composer once 
     turnOpen: true,
     restartPending: false,
     restartWaitingOn: 0,
+    restartChanges: [],
   });
   frame();
   expect(count.profiled.get("composer")).toBe(1);
@@ -777,6 +819,7 @@ const livePatch = (
 test("SessionView: a live frame re-renders only the live row, the activity line and the pill: no other TimelineItem, not the header, details, queue or composer", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -796,6 +839,7 @@ test("SessionView: a live frame re-renders only the live row, the activity line 
 test("SessionView: the persisted block retires the live one in one commit on the same DOM node, re-rendering only that row", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -822,6 +866,7 @@ test("SessionView: the persisted block retires the live one in one commit on the
 test("SessionView: the activity line reads live frames (text, then tool input), still rendering no other row", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -869,6 +914,7 @@ const prog = (id: string, toolUses: number) => ({
 test("SessionView: a progress frame re-renders only its subagent card; a text-only frame renders no card", async () => {
   detail = {
     agent: agentSummary({ status: "working", turnOpen: true }),
+    model: { value: null, source: "default" },
     queue: [],
     lastSeq: 200,
   };
@@ -925,7 +971,8 @@ test("200 rows at rest mount no menu root and read no phone or pointer query (me
   }) as typeof window.matchMedia;
   try {
     await setup();
-    expect(document.querySelectorAll("[data-row-menu]").length).toBeGreaterThan(190);
+    expect(document.querySelectorAll("[data-row-menu]")).toHaveLength(198);
+    expect(document.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(198);
     expect(document.querySelector('[data-slot="dropdown-menu-trigger"]')).toBeNull();
     expect(document.querySelector('[data-slot="drawer-content"]')).toBeNull();
     const menuQueries = [...reads.keys()].filter(

@@ -12,6 +12,8 @@
     "build": "node scripts/build.mjs",
     "start": "node --env-file-if-exists=.env apps/server/dist/index.js",
     "test": "vitest run",
+    "test:fast": "vitest run --changed origin/main",
+    "test:related": "vitest related --run",
     "typecheck": "pnpm -r --parallel exec tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

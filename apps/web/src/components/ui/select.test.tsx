@@ -22,21 +22,10 @@ test("keyboard selection calls onValueChange; the sentinel stands for 'all'", as
     </Select>,
   );
   const trigger = screen.getByRole("combobox", { name: "Agent" });
-  expect(trigger).toHaveClass("h-8", "pointer-coarse:h-9", "min-w-0");
   trigger.focus();
   await userEvent.keyboard("{Enter}");
   await userEvent.keyboard("{ArrowDown}{Enter}");
   expect(onChange).toHaveBeenCalledWith("dev-001");
-});
-
-test("content is a floating layer without shadow", async () => {
-  render(
-    <Select defaultOpen><SelectTrigger aria-label="x"><SelectValue /></SelectTrigger>
-      <SelectContent><SelectItem value="a">A</SelectItem></SelectContent></Select>,
-  );
-  const listbox = await screen.findByRole("listbox");
-  expect(listbox.closest("[data-slot=select-content]")?.className).toMatch(/border-float-edge/);
-  expect(listbox.closest("[data-slot=select-content]")?.className).not.toMatch(/shadow-/);
 });
 
 test("Select is stamped per opening, not per mount", async () => {

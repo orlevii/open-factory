@@ -611,7 +611,7 @@ test("Restart of a stop_failed Docker agent: the stop fails again, so the contai
   const w = await setup();
   await stopFailedWithoutProcess(w);
   const old = container(w)?.id;
-  await w.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await w.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await until(() => expect(w.rt.live().status).toBe("idle"));
   w.docker.stopError = undefined;
   expect(removes(w).map((c) => c.args)).toEqual([[old, { force: true }]]);
@@ -628,7 +628,7 @@ test("Restart of a stop_failed Docker agent whose remove fails too: still stop_f
   const w = await setup();
   await stopFailedWithoutProcess(w);
   w.docker.removeError = new Error("daemon error");
-  await w.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await w.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await w.rt.settled();
   expect(w.rt.live()).toMatchObject({ status: "errored", errorKind: "stop_failed" });
   expect(execs(w)).toHaveLength(1);
@@ -644,7 +644,7 @@ test("Restart of a stop_failed Docker agent with its process left: the escalatio
   await w.rt.stop({ graceMs: 50, termWaitMs: 200 });
   await until(() => expect(w.rt.live().errorKind).toBe("stop_failed"));
   expect(w.docker.live(container(w)?.id ?? "")).toHaveLength(1); // Claude still runs
-  await w.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await w.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await until(async () =>
     expect((await events(w)).filter((e) => e.type === "process_started").at(-1)).toMatchObject({
       reason: "restart",

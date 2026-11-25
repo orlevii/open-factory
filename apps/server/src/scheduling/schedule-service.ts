@@ -233,7 +233,9 @@ export class ScheduleService {
   private noteFor(actor: Actor, target: LockedAgent, rec: ScheduleRecord): { note?: string } {
     if (!isAgent(actor)) return {};
     if (this.d.statusOf?.({ id: target.id, status: target.status }) === "errored")
-      return { note: `@${target.slug} is errored; it will see this when a human restarts it.` };
+      return {
+        note: `@${target.slug} is errored; it will see this after it is restarted (restart_agent, or a human).`,
+      };
     if (target.id === actor.agentId && rec.cron)
       return {
         note: "You will be woken at each run; cancel it with cancel_schedule when it is no longer needed.",

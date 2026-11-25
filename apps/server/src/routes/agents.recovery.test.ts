@@ -7,7 +7,8 @@ let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
 const driver = new FakeDriver();
 beforeAll(async () => {
-  t = await makeTestApp({ harnessDriver: driver });
+  // The earlier tests leave their processes running, so the restart tests get room under the default cap of 8.
+  t = await makeTestApp({ harnessDriver: driver, factorySettings: { maxRunningAgents: 50 } });
   cookie = (await t.signUpUser({ handle: "or" })).cookie;
 });
 afterAll(() => t.close());
@@ -53,11 +54,7 @@ async function resumeErrored(message = "API Error: 500 overloaded") {
   return a;
 }
 
-test("restart: 409 unless errored; errored → restart notice first, control event, one attempt", async () => {
-  const healthy = await agent();
-  const r0 = await post(`/api/agents/${healthy.slug}/restart`);
-  expect(r0.statusCode).toBe(409);
-  expect(r0.json().error.code).toBe("not_errored");
+test("restart: an errored agent gets the restart notice first, control event, one attempt", async () => {
   expect((await post("/api/agents/nobody/restart")).statusCode).toBe(404);
 
   const { slug, rt } = await resumeErrored();
@@ -112,7 +109,7 @@ test("restart of resume_unrecoverable: 409 with the new-session hint", async () 
   expect(r.statusCode).toBe(409);
   expect(r.json().error).toEqual({
     code: "resume_unrecoverable",
-    message: "This session can't be resumed. Start a new session instead.",
+    message: `@${slug}'s session can't be resumed; a human must start a new session.`,
   });
 });
 
@@ -364,4 +361,80 @@ test("restart and reset-session of an archived agent: 409 agent_archived", async
     expect(r.statusCode).toBe(409);
     expect(r.json().error.code).toBe("agent_archived");
   }
+});
+
+/** Hibernates a test's agent so it stops counting against the supervisor's running-agent cap. */
+const park = async (rt: AgentRuntime) => {
+  await rt.hibernate("apply_changes");
+  await rt.settled();
+};
+
+/** A running agent that has finished its first turn, with one live background task (lost work on a restart). */
+async function runningWithBackgroundTask() {
+  const a = await agent();
+  await send(a.slug, "hi");
+  lastProc(a.rt).emit(
+    ...ev.fullTurn(),
+    ev.background([{ taskId: "t1", description: "pnpm test" }]),
+  );
+  await a.rt.settled();
+  expect(a.rt.live().status).toBe("idle");
+  return a;
+}
+
+test("restart of a running agent with background work and no force: 409 lost_work, its tasks in error.data, nothing stopped", async () => {
+  const { slug, rt } = await runningWithBackgroundTask();
+  const before = procsOf(rt).length;
+  const r = await post(`/api/agents/${slug}/restart`);
+  expect(r.statusCode).toBe(409);
+  expect(r.json().error).toMatchObject({
+    code: "lost_work",
+    data: { tasks: ["pnpm test"], crons: [] },
+  });
+  expect(r.json().error.message).toContain("pass force: true");
+  expect(procsOf(rt)).toHaveLength(before);
+  expect(lastProc(rt).exited).toBe(false);
+  await park(rt);
+});
+
+test("restart of a running agent with background work and force: true: 202 restarting, then a new process", async () => {
+  const { slug, rt } = await runningWithBackgroundTask();
+  const before = procsOf(rt).length;
+  const r = await post(`/api/agents/${slug}/restart`, { force: true });
+  expect(r.statusCode).toBe(202);
+  expect(r.json()).toEqual({ status: "restarting" });
+  await rt.settled();
+  expect(procsOf(rt)).toHaveLength(before + 1);
+  await park(rt);
+});
+
+test("restart of an idle running agent with nothing lost: 202 restarted_idle", async () => {
+  const { slug, rt } = await agent();
+  await send(slug, "hi");
+  lastProc(rt).emit(...ev.fullTurn());
+  await rt.settled();
+  const r = await post(`/api/agents/${slug}/restart`);
+  expect(r.statusCode).toBe(202);
+  expect(r.json()).toEqual({ status: "restarted_idle" });
+  await park(rt);
+});
+
+test("restart of a hibernated agent: 202 not_running", async () => {
+  const { slug, rt } = await agent();
+  await send(slug, "hi");
+  lastProc(rt).emit(...ev.fullTurn());
+  await rt.settled();
+  await rt.hibernate("warm_window");
+  await rt.settled();
+  const r = await post(`/api/agents/${slug}/restart`);
+  expect(r.statusCode).toBe(202);
+  expect(r.json()).toEqual({ status: "not_running" });
+  await park(rt);
+});
+
+test("restart with a force that isn't a boolean: 400", async () => {
+  const { slug, rt } = await runningWithBackgroundTask();
+  const r = await post(`/api/agents/${slug}/restart`, { force: "yes" });
+  expect(r.statusCode).toBe(400);
+  await park(rt);
 });

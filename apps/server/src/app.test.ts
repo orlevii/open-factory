@@ -131,6 +131,7 @@ const PERSISTENT_TOOLS = [
   ...BASE_TOOLS,
   "cancel_schedule",
   "list_schedules",
+  "restart_agent",
   "schedule_message",
 ].sort();
 

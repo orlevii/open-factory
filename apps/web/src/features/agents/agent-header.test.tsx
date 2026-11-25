@@ -110,3 +110,22 @@ test("the live fact's Open session link is in the Chat and hidden in the Session
   expect(await within(await banner()).findByText("boom")).toBeInTheDocument();
   expect(within(await banner()).queryByRole("link", { name: "Open session" })).toBeNull();
 });
+
+test("a pending restart's Restart now is a sibling of the status line, never inside it", async () => {
+  agent = { status: "idle", restartPending: true };
+  renderApp("/agents/dev/session", alice);
+  const header = await banner();
+  const button = await within(header).findByRole("button", { name: "Restart now" });
+  const line = within(header)
+    .getAllByRole("status")
+    .find((s) => s.textContent === "Restarts when idle");
+  expect(line).toBeDefined();
+  expect(line?.contains(button)).toBe(false);
+});
+
+test("with no pending restart the header has no Restart now", async () => {
+  agent = { status: "idle" };
+  renderApp("/agents/dev/session", alice);
+  await switchLink();
+  expect(within(await banner()).queryByRole("button", { name: "Restart now" })).toBeNull();
+});

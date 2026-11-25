@@ -23,6 +23,8 @@ import {
   putAgentConfigResponseSchema,
   queueItemResponseSchema,
   resetPersonaResponseSchema,
+  restartAgentBodySchema,
+  restartAgentResponseSchema,
   slugSchema,
   stopCronsResponseSchema,
 } from "@open-factory/shared";
@@ -46,6 +48,7 @@ import {
   AlreadyDeliveredError,
   NotSenderError,
 } from "../agents/message-cancel.ts";
+import { restartChanges, restartRuntimeAllowed } from "../agents/restart-changes.ts";
 import { requireUser } from "../auth/require-user.ts";
 import { localRuntimeAllowed } from "../config.ts";
 import { FieldError } from "../errors.ts";
@@ -446,27 +449,45 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
 
   /** Restart and Start a new session share their refusals (spec §9.7). */
   const recoveryError = (reply: FastifyReply, e: unknown) => {
-    if (e instanceof RecoveryRefusedError) return err(reply, 409, e.code, e.message);
+    if (e instanceof RecoveryRefusedError)
+      return reply.code(409).send({
+        error: { code: e.code, message: e.message, ...(e.data ? { data: e.data } : {}) },
+      });
     if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
     if (e instanceof AgentTerminatedError) return err(reply, 409, "agent_terminated", e.message);
     if (e instanceof AgentStartError) return err(reply, 503, "agent_start_failed", e.message);
     throw e;
   };
 
-  app.post("/api/agents/:slug/restart", { schema: { params: slugParams } }, async (req, reply) => {
-    const rt = await app.runtimes.bySlug(req.params.slug);
-    if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-    try {
-      await rt.restart({
-        byHandle: user(req).handle,
-        // A Restart certain to fail isn't offered (spec §13).
-        runtimeAllowed: rt.agent.runtime !== "local" || localRuntimeAllowed(app.config),
-      });
-      return reply.code(202).send({});
-    } catch (e) {
-      return recoveryError(reply, e);
-    }
-  });
+  app.post(
+    "/api/agents/:slug/restart",
+    {
+      schema: {
+        params: slugParams,
+        body: restartAgentBodySchema.nullish(), // a bodyless POST arrives as null
+        response: { 202: restartAgentResponseSchema },
+      },
+    },
+    async (req, reply) => {
+      const rt = await app.runtimes.bySlug(req.params.slug);
+      if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      try {
+        // The row is read fresh, not the runtime's (it can be stale), so the config is the one a start would use.
+        const row = await app.store.agentBySlug(req.params.slug);
+        if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+        const outcome = await rt.restartNow({
+          by: `@${user(req).handle}`,
+          force: req.body?.force ?? false,
+          changes: await restartChanges(app, row),
+          // A Restart certain to fail isn't offered (spec §13).
+          runtimeAllowed: restartRuntimeAllowed(row, localRuntimeAllowed(app.config)),
+        });
+        return reply.code(202).send({ status: outcome.status });
+      } catch (e) {
+        return recoveryError(reply, e);
+      }
+    },
+  );
 
   // S9 §10.3: a human stops the agent's in-session crons (its process hibernates, with the passive notice waiting).
   app.post(

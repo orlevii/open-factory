@@ -196,14 +196,34 @@ const manageOrgLines = [
   "- Read before you write: `get_agent` returns the hash `update_agent` needs.",
   "- With `mcp__factory__create_template` and `write_template_file` you can create and edit templates; `get_template` returns the hash `write_template_file` needs.",
   "- Your own changes restart you when you're idle (background tasks finished; crons are stopped), and you continue on your own.",
+  "- Changes reach an agent when it restarts: when idle by default, now with `mcp__factory__restart_agent`.",
 ];
 
-test("manage_org: the Managing the org section holds exactly the PR 1 and PR 2 lines", () => {
+test("manage_org: the Managing the org section holds exactly the PR 1, PR 2 and PR 3 lines", () => {
   const md = buildClaudeMd({ ...input, manageOrg: true });
   const at = md.indexOf("## Managing the org\n");
   expect(at).toBeGreaterThan(-1);
   const section = md.slice(at, md.indexOf("\n## ", at + 1));
   expect(section.split("\n").filter((l) => l.startsWith("- "))).toEqual(manageOrgLines);
+});
+
+const restartingReportsLines = [
+  "- `mcp__factory__restart_agent` restarts a direct report: it recovers an errored one, or applies its new configuration now. It's refused when background work would be lost, unless you pass force: true. A note is delivered as a message from you.",
+];
+
+test("restarting reports: the section appears for a persistent agent with live reports, with its one line", () => {
+  const md = buildClaudeMd({
+    ...input,
+    reports: [{ slug: "dev", displayName: "Dev", description: "Builds." }],
+  });
+  const at = md.indexOf("## Restarting reports\n");
+  expect(at).toBeGreaterThan(-1);
+  const section = md.slice(at, md.indexOf("\n## ", at + 1));
+  expect(section.split("\n").filter((l) => l.startsWith("- "))).toEqual(restartingReportsLines);
+});
+
+test("restarting reports: no section for an agent without reports", () => {
+  expect(buildClaudeMd(input)).not.toContain("## Restarting reports");
 });
 
 test("manage_org: no Managing the org section when the agent does not manage the org", () => {

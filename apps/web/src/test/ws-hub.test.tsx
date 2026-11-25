@@ -1,6 +1,8 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, screen, waitFor } from "@testing-library/react";
+import { QueryClient } from "@tanstack/react-query";
+import { act, renderHook, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
+import { resetRestartLatch, restartAgentNow, useRestartPending } from "@/features/agents/lifecycle";
 import { resetLibraryChanged } from "@/lib/library";
 import type { WsOptions } from "@/lib/ws";
 import { useWs, type WsHub } from "@/lib/ws-context";
@@ -245,4 +247,22 @@ test("unmounting the layout flushes queued status frames", async () => {
   expect(listed()).toBe("idle");
   unmount();
   expect(listed()).toBe("working");
+});
+
+test("a reconnect ends a pending restart whose status frame was dropped", async () => {
+  mockApi({
+    "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
+    "POST /api/agents/dev/restart": () => json({ status: "restarting" }, 202),
+  });
+  renderApp("/inbox", alice);
+  await screen.findByText("probe 0");
+  const { result } = renderHook(() => useRestartPending("dev"));
+  try {
+    await act(() => restartAgentNow("dev", new QueryClient()));
+    expect(result.current).toBe(true); // the response is in; the status frame never comes
+    act(() => h.opts?.onOpen?.());
+    expect(result.current).toBe(false);
+  } finally {
+    resetRestartLatch();
+  }
 });

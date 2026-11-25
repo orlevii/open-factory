@@ -62,7 +62,7 @@ function HeldLine({ item, agent }: { item: QueueItem; agent: AgentSummary }) {
       case "starting":
         return " waiting for this agent to start";
       case "errored":
-        return " held until a human restarts this agent";
+        return " held until this agent is restarted";
       case "rate_limited": {
         const phrase = resetPhrase(agent)?.bare;
         return phrase ? ` held ${phrase}` : " held";

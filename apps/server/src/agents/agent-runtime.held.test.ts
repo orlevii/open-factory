@@ -364,7 +364,7 @@ test("an errored manager is not woken by updates; after a Restart they ride with
   expect(slots.events).not.toContainEqual(["request", "member_updates"]);
   expect(h.driver.starts).toHaveLength(0);
   expect(h.rt.queueItems()[0]).toMatchObject({ kind: "held", waitReason: "errored" });
-  await h.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await h.rt.settled();
   expect(h.driver.starts).toHaveLength(1);
   expect(h.driver.last.sent[0]?.map((m) => m.kind)).toEqual(["system", "member_update"]);
@@ -400,7 +400,7 @@ test("the exited rollback re-partitions a batch written before session_started",
     expect.objectContaining({ kind: "held", count: 1 }),
   ]);
   slots.answer = "granted";
-  await h.rt.restart({ byHandle: "or", runtimeAllowed: true });
+  await h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   await h.rt.settled();
   // The notices first, the update riding along as a held row (not a FIFO message).
   expect(kinds()).toEqual([["system", "system", "member_update"]]); // crash and restart notices

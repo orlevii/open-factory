@@ -237,7 +237,9 @@ test("a task_update to an errored assignee carries the errored note", async () =
   await h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'crashed' where slug = 'dev'`;
   await h.app.tasks.create(or, { title: "t", assignee: "dev" });
   const r = await h.app.tasks.update(or, "T-1", { status: "in_progress" });
-  expect(r.note).toBe("@dev is errored; it will see this when a human restarts it.");
+  expect(r.note).toBe(
+    "@dev is errored; it will see this after it is restarted (restart_agent, or a human).",
+  );
 });
 
 test("removing the last blocker unblocks even when the other blocker's completion commits while the edit waits on the lock", async () => {

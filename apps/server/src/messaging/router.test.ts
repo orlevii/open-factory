@@ -105,7 +105,7 @@ test("an errored recipient: accepted and pending, no attempt, the note says so",
     to: "@bob",
     kind: "agent",
     status: "pending",
-    note: "@bob is errored; your message will be delivered when a human restarts it.",
+    note: "@bob is errored; your message will be delivered after it is restarted (restart_agent, or a human).",
   });
   await settle("bob");
   expect(proc("bob")).toBeUndefined();
@@ -838,7 +838,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
       to: "@bob",
       kind: "agent",
       status: "pending",
-      note: "@bob is errored; your message will be delivered when a human restarts it.",
+      note: "@bob is errored; your message will be delivered after it is restarted (restart_agent, or a human).",
     });
     expect(r.results[1]).toMatchObject({ to: "@lead", status: "queued" });
   });

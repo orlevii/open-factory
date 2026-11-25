@@ -6,6 +6,8 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ShellContext } from "@/components/shell-context";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster, notify as toast } from "@/components/ui/toaster";
+import { onRestartFrame, resetRestartLatch } from "@/features/agents/lifecycle";
+import { RestartConfirmHost } from "@/features/agents/restart-confirm";
 import { enqueueStatusFrame, installStatusFrameFlush } from "@/features/agents/status-frames";
 import { onChatChanged } from "@/features/chat/use-chat";
 import { agentConfigQueryOptions, templateConfigQueryOptions } from "@/features/config/api";
@@ -89,6 +91,8 @@ function AppLayout() {
       onMessage: (m) => {
         // agent_status and supervisor frames are folded into the caches once per animation frame.
         enqueueStatusFrame(qc, m);
+        // Restart now's pending latch ends on the next status frame or an error event.
+        onRestartFrame(m);
         // A message reached the humans: refetch the Inbox (only a mounted list actually fetches).
         if (m.type === "inbox_changed") {
           void qc.invalidateQueries({ queryKey: ["inbox"] });
@@ -183,6 +187,8 @@ function AppLayout() {
       },
       onOpen: () => {
         setOpenCount((n) => n + 1);
+        // A status frame dropped while the socket was down would leave "Restarting…" until reload.
+        resetRestartLatch();
         // The first open follows the loaders' fetches; a reconnect may have missed turn ends and
         // supervisor frames while the socket was down.
         if (!opened.current) {
@@ -267,6 +273,7 @@ function AppLayout() {
           <CommandPalette />
           <GlobalShortcuts />
           <SheetHost />
+          <RestartConfirmHost />
         </SidebarProvider>
       </ShellContext.Provider>
     </WsContext.Provider>

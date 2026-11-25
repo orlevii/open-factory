@@ -583,7 +583,7 @@ test("a restart wake takes over a queued entry whose reason no longer wakes the 
   await busy(a);
   expect(w.sup.requestWake(b.agent.id, "message", false)).toBe("queued");
   await send(c, "c1");
-  await b.restart({ byHandle: "or", runtimeAllowed: true });
+  await b.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
   expect(status(b)).toBe("queued"); // the entry kept its place, ahead of c, and is now the restart's wake
   endTurnAndExit(a);
   await w.settleAll();
@@ -602,9 +602,9 @@ test("a slot granted for an older request before Restart began starts the restar
   expect(w.sup.requestWake(b.agent.id, "message", false)).toBe("queued");
   // a's exit grants b its slot for "message"; Restart lands ahead of b's grant job.
   const original = b.grant.bind(b);
-  let restarting: Promise<void> | undefined;
+  let restarting: Promise<unknown> | undefined;
   vi.spyOn(b, "grant").mockImplementationOnce((reason) => {
-    restarting = b.restart({ byHandle: "or", runtimeAllowed: true });
+    restarting = b.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true });
     return original(reason);
   });
   endTurnAndExit(a);

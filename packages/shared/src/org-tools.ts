@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_BODY_BYTES } from "./agents.ts";
 import { agentOverlaySchema } from "./config.ts";
 import { createTemplateBodySchema, TEMPLATE_FILES, templateFileSchema } from "./templates.ts";
 
@@ -50,6 +51,25 @@ export const updateAgentToolSchema = z
     message: "base_hash is required with config; read it from get_agent.",
     path: ["base_hash"],
   });
+
+/** I7 §9.1: `restart_agent`; the note is an ordinary message, at most the message body limit. */
+export const restartAgentToolSchema = z.object({
+  target: slugRef.describe(
+    "A direct report's name; with manage_org, any agent (a leading @ is fine)",
+  ),
+  note: z
+    .string()
+    .refine(
+      (s) => new TextEncoder().encode(s).length <= MAX_BODY_BYTES,
+      "The note is larger than 64 KB.",
+    )
+    .optional()
+    .describe("A message to the target, sent after the restart"),
+  force: z
+    .boolean()
+    .optional()
+    .describe("Restart even when background tasks or crons would be stopped"),
+});
 
 export const listLibraryToolSchema = z.object({
   query: z

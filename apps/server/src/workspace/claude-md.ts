@@ -110,6 +110,15 @@ function managingOrgSection(): string[] {
     "- Read before you write: `get_agent` returns the hash `update_agent` needs.",
     "- With `mcp__factory__create_template` and `write_template_file` you can create and edit templates; `get_template` returns the hash `write_template_file` needs.",
     "- Your own changes restart you when you're idle (background tasks finished; crons are stopped), and you continue on your own.",
+    "- Changes reach an agent when it restarts: when idle by default, now with `mcp__factory__restart_agent`.",
+    "",
+  ];
+}
+
+function restartingReportsSection(): string[] {
+  return [
+    "## Restarting reports",
+    "- `mcp__factory__restart_agent` restarts a direct report: it recovers an errored one, or applies its new configuration now. It's refused when background work would be lost, unless you pass force: true. A note is delivered as a message from you.",
     "",
   ];
 }
@@ -226,6 +235,7 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
     ...tasksSection(),
     ...schedulingSection(i.scheduling),
     ...(i.spawning && !spawner ? spawningSection(i.spawning, i.manager != null) : []),
+    ...(i.kind === "persistent" && i.reports.length ? restartingReportsSection() : []),
     ...(i.manageOrg ? managingOrgSection() : []),
     "## Your workspace",
     `- Your working directory is ${i.workdir}. It is yours; files you create there persist. Keep notes you want to carry forward in AGENTS.md: a CLAUDE.md you create in the working directory is not loaded.`,

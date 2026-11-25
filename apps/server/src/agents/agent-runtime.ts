@@ -223,6 +223,8 @@ type WrittenBatch = {
   writtenAt: string;
   /** The id of each human's first `message` row in the batch. */
   firstIdBySender: Map<string, string>;
+  /** The entries written, so a cut restart can put a batch whose turn never started back in the queue (I7 §9.2.1 step 4). */
+  entries: MessageEntry[];
 };
 function writtenBatch(batch: MessageEntry[], writtenAt: string): WrittenBatch {
   const senders = new Map<string, string | null>();
@@ -232,7 +234,7 @@ function writtenBatch(batch: MessageEntry[], writtenAt: string): WrittenBatch {
     if (row.kind === "message" && row.fromUserId && !firstIdBySender.has(row.fromUserId))
       firstIdBySender.set(row.fromUserId, row.id);
   }
-  return { ids: [...senders.keys()], senders, writtenAt, firstIdBySender };
+  return { ids: [...senders.keys()], senders, writtenAt, firstIdBySender, entries: batch };
 }
 /** The human senders of written batches, once each. */
 function sendersOf(batches: WrittenBatch[]): string[] {
@@ -451,6 +453,26 @@ type LiveCron = {
 const toEnvelopes = (batch: MessageEntry[]): FactoryMessage[] =>
   groupEnvelopes(batch.map(toBatchRow));
 
+/** I7 §9.2: what a `restartNow` did; it never waits for the start. */
+export type RestartOutcome = {
+  status: "restarting" | "restart_pending" | "not_running" | "restarted_idle";
+  note?: string;
+};
+
+/** I7 §9.2 row 8: the refusal text, from what a forced restart would stop. */
+const lostWorkMessage = (slug: string, lost: { tasks: string[]; crons: string[] }) => {
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const parts = [
+    ...(lost.tasks.length
+      ? [
+          `${plural(lost.tasks.length, "background task")} (${lost.tasks.map((t) => `\`${t}\``).join(", ")})`,
+        ]
+      : []),
+    ...(lost.crons.length ? [plural(lost.crons.length, "cron")] : []),
+  ];
+  return `@${slug} has ${parts.join(" and ")}; pass force: true to restart anyway.`;
+};
+
 export class AgentRuntime {
   agent: AgentRow;
   private readonly jobs = new SerialQueue();
@@ -580,6 +602,12 @@ export class AgentRuntime {
    * the pull.
    */
   nextImage: string | undefined;
+  /**
+   * I7 §9.2.1: a cut restart is under way. While set, nothing is written to the old process (`flush`), whoever calls it.
+   * Cleared by every exit and by `stop()`; the fallback is its bound (`holdTimeoutMs`), cleared with it.
+   */
+  private restartNowPending?: { by: string; changes: string[] | null };
+  private restartNowFallback?: ReturnType<typeof setTimeout>;
   private stopping = false; // a deliberate stop of the current process began: flush() writes nothing
   /** S7 §8 step 5: the sweep's last Docker list showed a container left for this terminated agent. */
   private containerListed = false;
@@ -1225,13 +1253,7 @@ export class AgentRuntime {
         !this.stopping &&
         !this.terminated
       ) {
-        // A cleared restart (stop, exit, takeover) leaves nothing of its causes behind.
-        if (!this.restartPending) {
-          this.pendingWake = false;
-          this.otherRestartCause = false;
-          this.configChanges = [];
-          this.pendingChanges.clear();
-        }
+        this.dropClearedRestart();
         if (opts.current && this.started) {
           if (!now) {
             this.publishStatus();
@@ -1256,46 +1278,255 @@ export class AgentRuntime {
     });
   }
 
+  /** A cleared restart (stop, exit, takeover) leaves nothing of its causes behind. */
+  private dropClearedRestart() {
+    if (this.restartPending) return;
+    this.pendingWake = false;
+    this.otherRestartCause = false;
+    this.configChanges = [];
+    this.pendingChanges.clear();
+  }
+
+  /** In a job: a restart when idle for a cause other than a config diff (`requestRestart` without `current`, for jobs). */
+  private markRestartPending(changes: string[]) {
+    this.dropClearedRestart();
+    this.otherRestartCause = true;
+    for (const c of changes) this.pendingChanges.add(c);
+    this.restartPending = true;
+    this.maybeRestart();
+  }
+
   /**
-   * Restart (spec §9.7): the restart notice, `control{restart}`, then one attempt. A process left is force-stopped
-   * and its exit makes the wake; a `stop_failed` agent gets one more escalation try first (§9.6).
+   * Restart now (I7 §9.2), for agents and humans: one check table, the first match deciding, run in an API job. The
+   * errored rows (1, 5, 6) come before the starting and stopping rows (2-4) because a `stop_failed` agent keeps
+   * `deadProc` set and `stopping` true. Never call a public runtime method in here: each is its own job, and jobs are
+   * serial, so it would wait on itself. `by` is an `@handle`. `changes` are the caller's `describeChanges` lines, `null`
+   * when its resolver failed. `runtimeAllowed` is only "the local runtime is disabled in this factory".
    */
-  restart(r: { byHandle: string; runtimeAllowed: boolean }): Promise<void> {
+  restartNow(r: {
+    by: string;
+    force: boolean;
+    changes: string[] | null;
+    runtimeAllowed: boolean;
+  }): Promise<RestartOutcome> {
     return this.apiJob(async () => {
+      const { by } = r;
+      const slug = this.agent.slug;
       this.refuseTerminated();
-      if (this.archived) throw new AgentArchivedError(this.agent.slug);
-      this.refuseRecoveryWhileAttempting();
-      if (!this.errored)
+      if (this.archived) throw new AgentArchivedError(slug);
+      if (this.errored) {
+        if (this.errorKind === "resume_unrecoverable")
+          throw new RecoveryRefusedError(
+            "resume_unrecoverable",
+            `@${slug}'s session can't be resumed; a human must start a new session.`,
+          );
+        return this.restartErrored(by, r.runtimeAllowed);
+      }
+      const proc = this.proc;
+      if (this.starting || this.attempting || (proc && !this.sessionStarted))
+        throw new RecoveryRefusedError("starting", `@${slug} is starting; try again shortly.`);
+      // `stopping` outlives the exit (a fresh start resets it), so it only counts while a process is left.
+      if (proc && (this.stopping || proc === this.deadProc || proc === this.failingProc))
+        throw new RecoveryRefusedError("stopping", `@${slug} is stopping; try again shortly.`);
+      if (this.compactInFlight)
         throw new RecoveryRefusedError(
-          "not_errored",
-          `@${this.agent.slug} isn't errored. Restart is only for an errored agent.`,
+          "compacting",
+          `@${slug} is compacting; try again when it finishes.`,
         );
-      if (this.errorKind === "resume_unrecoverable")
-        throw new RecoveryRefusedError(
-          "resume_unrecoverable",
-          "This session can't be resumed. Start a new session instead.",
-        );
-      if (!r.runtimeAllowed)
-        throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
-      this.refuseWhileStopping();
-      const by = `@${r.byHandle}`;
-      const lost = this.proc ? this.lostSnapshot() : { tasks: [], crons: [] };
-      await this.addNotice(
-        "restart",
-        notices.restart({
-          by,
+      if (!proc) return { status: "not_running" as const };
+      if (this.restartNowPending) {
+        // A cut restart is already under way: the later caller's name and changes win; nothing more to start.
+        this.restartNowPending = { by, changes: r.changes };
+        return { status: "restarting" as const };
+      }
+      const lost = this.lostSnapshot();
+      const hasLost = lost.tasks.length > 0 || lost.crons.length > 0;
+      if (hasLost && !r.force) {
+        const data = {
           tasks: lost.tasks.map((t) => t.description || t.taskId),
           crons: lost.crons.map((c) => c.humanSchedule),
-        }),
+        };
+        throw new RecoveryRefusedError("lost_work", lostWorkMessage(slug, data), data);
+      }
+      const turnWork = Boolean(
+        this.openTurnId || this.awaiting.length || this.rawInFlight || this.hold,
       );
-      await this.append(null, { type: "control", cmd: "restart", by });
-      if (this.stopFailed()) await this.retryStopFailed(by);
-      else if (this.proc) {
-        await this.markAttempting("restart");
-        this.beginForceStop({ kind: "restart", by }, { graceMs: 0, termWaitMs: 3000 });
-      } else await this.beginAttempt("restart", false);
+      if (turnWork || hasLost) {
+        // Rows 9 and 10 start a process again.
+        if (!r.runtimeAllowed)
+          throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
+        await this.beginCutRestart(by, r.changes);
+        this.publishStatus();
+        return { status: "restarting" as const };
+      }
+      if (this.owedNotifications > 0) {
+        this.markRestartPending(r.changes ?? []);
+        this.publishStatus();
+        return {
+          status: "restart_pending" as const,
+          note: `@${slug} restarts in a moment, once a finished task's result is delivered.`,
+        };
+      }
+      // Row 12: an idle restart is a hibernate; the next start reads the latest config.
+      if (!this.beginHibernate("apply_changes")) {
+        // Refused (a batch still in flight): same as row 11, restart once it is delivered.
+        this.markRestartPending(r.changes ?? []);
+        this.publishStatus();
+        return {
+          status: "restart_pending" as const,
+          note: `@${slug} restarts in a moment, once its current messages are delivered.`,
+        };
+      }
+      if (r.changes?.length)
+        await this.addNotice("config_changed", notices.configChanged(r.changes));
       this.publishStatus();
+      return { status: "restarted_idle" as const };
     });
+  }
+
+  /**
+   * Rows 9 and 10 (spec §9.2.1 steps 1 to 3), inside the job: hold every write, then interrupt the open turn, wait for
+   * the turn an `awaiting` batch is still to start, or stop at once (no turn work, or a raw command whose turn may
+   * never come). The stop itself is `beginRestartNowStop`, from the first release point.
+   */
+  private async beginCutRestart(by: string, changes: string[] | null) {
+    this.restartNowPending = { by, changes };
+    this.armRestartNowFallback();
+    try {
+      await this.cutRestartSteps(by);
+    } catch (err) {
+      // Never leave the write hold set: nothing would release it.
+      this.clearRestartNow();
+      if (this.attempting && this.attemptReason === "restart" && !this.stopping) {
+        this.attempting = false; // `markAttempting` ran but no stop began, so no exit will clear it
+        this.attemptReason = undefined;
+        await this.d.store.setAttempting(this.agent.id, false).catch(() => undefined);
+        this.publishStatus();
+      }
+      throw err;
+    }
+  }
+
+  private async cutRestartSteps(by: string) {
+    if (this.openTurnId) {
+      if (this.hold) return; // a Stop's or an urgent send's hold is reused, not replaced
+      try {
+        await this.beginInterruptHold(by);
+      } catch (err) {
+        if (!(err instanceof ProcessNotRunningError)) throw err;
+        // The process is going away and its `exited` isn't processed yet.
+        throw new RecoveryRefusedError(
+          "stopping",
+          `@${this.agent.slug} is stopping; try again shortly.`,
+        );
+      }
+      return;
+    }
+    if (this.awaiting.length) return; // `turn_started` interrupts, or the fallback stops
+    await this.beginRestartNowStop();
+  }
+
+  /** The bound on a cut restart: if no release point fired within `holdTimeoutMs`, stop anyway (spec §9.2.1 step 2). */
+  private armRestartNowFallback() {
+    if (this.restartNowFallback) clearTimeout(this.restartNowFallback);
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      void this.run(async () => {
+        if (this.restartNowFallback !== timer) return;
+        this.restartNowFallback = undefined;
+        if (!this.restartNowPending) return;
+        try {
+          await this.beginRestartNowStop();
+        } catch (err) {
+          if (this.proc) await this.onJobFailure(this.proc, err);
+          else this.d.log.error({ err, agent: this.agent.slug }, "cut restart fallback failed");
+        }
+        this.publishStatus();
+      }).catch((err) =>
+        this.d.log.error({ err, agent: this.agent.slug }, "cut restart fallback job failed"),
+      );
+    }, this.d.holdTimeoutMs ?? 10_000);
+    this.restartNowFallback = timer;
+  }
+
+  private clearRestartNow() {
+    this.restartNowPending = undefined;
+    if (this.restartNowFallback) clearTimeout(this.restartNowFallback);
+    this.restartNowFallback = undefined;
+  }
+
+  /**
+   * Spec §9.2.1 step 3, inside a job: the stop of a cut restart, from the first of `turn_end`, the interrupt hold's
+   * timeout and the fallback. Does nothing when a stop is already under way (an archive or shutdown that began
+   * meanwhile wins). The exit makes the attempt and its wake (`markAttempting`).
+   */
+  private async beginRestartNowStop(): Promise<void> {
+    const pending = this.restartNowPending;
+    const proc = this.proc;
+    if (
+      !pending ||
+      !proc ||
+      this.terminated ||
+      this.stopping ||
+      proc === this.deadProc ||
+      proc === this.failingProc
+    ) {
+      // Known gap (PR 3 review, minor 3): when only a provisional `terminated` latch is the reason and the
+      // termination then fails (`unmarkTerminated`), the restart the caller was told about is dropped. Rare
+      // (spawned agents, failed TTL or terminate), so accepted.
+      if (!this.stopping) this.clearRestartNow();
+      return;
+    }
+    if (this.restartNowFallback) clearTimeout(this.restartNowFallback);
+    this.restartNowFallback = undefined;
+    await this.markAttempting("restart");
+    const lost = this.lostSnapshot(); // fresh: tasks started during the interrupt window are killed too (T4)
+    await this.append(null, { type: "control", cmd: "restart", by: pending.by });
+    // A batch written with no turn open whose turn never started was marked delivered by its write and would be
+    // dropped by the exit: back to pending and the head of the queue, since a duplicate beats a lost message.
+    if (!this.openTurnId && this.awaiting.length) {
+      const batches = this.awaiting;
+      this.awaiting = [];
+      this.awaitingKinds = [];
+      await this.d.store.markPending(batches.flatMap((b) => b.ids));
+      this.requeue(batches.flatMap((b) => b.entries));
+    }
+    await this.addNotice(
+      "restart_applied",
+      notices.restartApplied({
+        by: pending.by,
+        changes: pending.changes,
+        tasks: lost.tasks.map((t) => t.description || t.taskId),
+        crons: lost.crons.map((c) => c.humanSchedule),
+      }),
+    );
+    this.beginForceStop({ kind: "restart", by: pending.by }, { graceMs: 3000, termWaitMs: 10_000 });
+  }
+
+  /**
+   * Row 6, Restart of an errored agent (spec §9.7): the restart notice, `control{restart}`, then one attempt. A process
+   * left is force-stopped and its exit makes the wake; a `stop_failed` agent gets one more escalation try first (§9.6).
+   */
+  private async restartErrored(by: string, runtimeAllowed: boolean) {
+    this.refuseRecoveryWhileAttempting();
+    if (!runtimeAllowed) throw new RecoveryRefusedError("runtime_disabled", LOCAL_RUNTIME_DISABLED);
+    this.refuseWhileStopping();
+    const lost = this.proc ? this.lostSnapshot() : { tasks: [], crons: [] };
+    await this.addNotice(
+      "restart",
+      notices.restart({
+        by,
+        tasks: lost.tasks.map((t) => t.description || t.taskId),
+        crons: lost.crons.map((c) => c.humanSchedule),
+      }),
+    );
+    await this.append(null, { type: "control", cmd: "restart", by });
+    if (this.stopFailed()) await this.retryStopFailed(by);
+    else if (this.proc) {
+      await this.markAttempting("restart");
+      this.beginForceStop({ kind: "restart", by }, { graceMs: 0, termWaitMs: 3000 });
+    } else await this.beginAttempt("restart", false);
+    this.publishStatus();
+    return { status: "restarting" as const };
   }
 
   /**
@@ -2023,7 +2254,9 @@ export class AgentRuntime {
       const proc = await this.run(async () => {
         this.restartPending = false;
         this.pendingWake = false;
+        // After the stop begins, so no write slips in between: `stopping` holds them from here.
         this.beginHibernate(this.archived ? "archived" : "shutdown", opts);
+        this.clearRestartNow();
         this.publishStatus();
         // The stop under way is the one to wait for: this one, or a Restart's or a failed start's (each with its own
         // intent, none of which wakes now). A stop_failed process gets one more escalation try (§9.6).
@@ -2991,6 +3224,15 @@ export class AgentRuntime {
         this.absorbed = [];
         this.turnStartedAt = (await this.append(this.openTurnId, e)).at;
         this.chatChanged(sendersOf(this.awaiting));
+        // I7 §9.2.1 step 2: the turn of a batch written before the cut restart began has started now.
+        if (this.restartNowPending && !this.hold && !this.stopping) {
+          try {
+            await this.beginInterruptHold(this.restartNowPending.by);
+          } catch (err) {
+            // The process is going away: its exit clears the cut restart.
+            if (!(err instanceof ProcessNotRunningError)) throw err;
+          }
+        }
         break;
       case "usage":
         this.lastUsage = e;
@@ -3061,7 +3303,8 @@ export class AgentRuntime {
         this.armOwedBound();
         if (e.originKind === "cron") await this.dropFiredOneShots();
         this.releaseHold();
-        await this.flush();
+        if (this.restartNowPending) await this.beginRestartNowStop();
+        else await this.flush();
         this.maybeRestart();
         break;
       }
@@ -3205,6 +3448,7 @@ export class AgentRuntime {
     const intent = this.afterExit;
     this.afterExit = undefined;
     this.restartPending = false;
+    this.clearRestartNow();
     const wake = this.pendingWake; // honoured by a hibernate exit below; every other exit drops it
     this.pendingWake = false;
     this.pendingChanges.clear();
@@ -3974,7 +4218,8 @@ export class AgentRuntime {
         this.releaseHold();
         try {
           await this.append(this.openTurnId, { type: "interrupt_unconfirmed" });
-          await this.flush();
+          if (this.restartNowPending) await this.beginRestartNowStop();
+          else await this.flush();
           this.maybeRestart();
         } catch (err) {
           if (this.proc) await this.onJobFailure(this.proc, err);
@@ -4010,6 +4255,7 @@ export class AgentRuntime {
       this.proc &&
       !this.terminated && // a latch set while a batch was being written stops the next one
       !this.stopping &&
+      !this.restartNowPending && // a cut restart writes nothing to the old process (I7 §9.2.1 step 1)
       !this.credentialPaused() &&
       !this.hold &&
       !this.compactInFlight &&
@@ -4076,6 +4322,7 @@ export class AgentRuntime {
     if (
       this.proc &&
       !this.stopping &&
+      !this.restartNowPending &&
       !this.credentialPaused() &&
       !this.turnOpen() &&
       this.heldDue()

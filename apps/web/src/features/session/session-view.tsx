@@ -241,6 +241,7 @@ export function SessionView({
         template={agent.template}
         kind={agent.kind}
         avatarVersion={agent.avatarVersion}
+        color={agent.color}
       >
         {loaded ? (
           <Timeline

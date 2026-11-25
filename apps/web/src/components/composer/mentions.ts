@@ -3,7 +3,7 @@ import type { AgentSummary } from "@open-factory/shared";
 /** The agent fields a mention reads (from the cached live agents list). */
 export type MentionAgent = Pick<
   AgentSummary,
-  "slug" | "displayName" | "reportsTo" | "template" | "avatarVersion" | "archivedAt"
+  "slug" | "displayName" | "reportsTo" | "template" | "avatarVersion" | "color" | "archivedAt"
 > & { terminatedAt?: string | undefined };
 export type MentionHuman = { handle: string; name: string; disabledAt?: string | null };
 
@@ -14,6 +14,7 @@ export type Mention =
       name: string;
       template: string;
       avatarVersion: string | null;
+      color: number | null;
     }
   | { kind: "human"; handle: string; name: string };
 
@@ -91,6 +92,7 @@ export function rankMentions(
       name: a.displayName || a.slug,
       template: a.template,
       avatarVersion: a.avatarVersion,
+      color: a.color,
     };
     const r = recentAt.get(a.slug);
     // "Your reports": humans aren't stored as managers, so every root of the reporting line (which

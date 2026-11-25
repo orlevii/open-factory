@@ -65,6 +65,7 @@ test("GET /api/inbox: agent messages are chats, not items; the preview is plain 
         displayName: expect.any(String),
         template: expect.any(String),
         avatarVersion: null,
+        color: null,
         kind: "persistent",
         status: expect.any(String),
         archivedAt: null,

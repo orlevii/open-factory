@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 export type AgentChipAgent = Pick<
   AgentSummary,
-  "slug" | "displayName" | "template" | "status" | "kind" | "avatarVersion"
+  "slug" | "displayName" | "template" | "status" | "kind" | "avatarVersion" | "color"
 >;
 
 type Size = 16 | 20 | 24;
@@ -77,6 +77,7 @@ export type ChipAgent = {
   kind?: AgentSummary["kind"];
   template?: string;
   avatarVersion?: string | null;
+  color?: number | null;
   status?: AgentSummary["status"];
   /** The name is the `@slug` stand-in: never repeat it as the slug. */
   stub?: boolean;
@@ -129,6 +130,7 @@ function ChipView({
           slug={a.slug}
           template={a.template}
           avatarVersion={a.avatarVersion}
+          color={a.color ?? null}
           size={size}
           status={badge ? a.status : undefined}
         />

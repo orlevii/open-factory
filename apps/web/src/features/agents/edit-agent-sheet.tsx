@@ -35,8 +35,10 @@ import { notify } from "@/components/ui/toaster";
 import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
 import { useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions, updateAgent } from "@/features/agents/api";
+import { ColourField } from "@/features/agents/colour-field";
 import { restoreAgent } from "@/features/agents/lifecycle";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
+import { inboxQueryKey } from "@/features/inbox/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { projectsQueryOptions } from "@/features/settings/api";
 import { BodySkeleton } from "@/features/sheets/body-skeleton";
@@ -260,7 +262,9 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   const runningReports = (activeAgents.data ?? [])
     .filter((a) => a.reportsTo === slug && isRunning(a))
     .map((a) => `@${a.slug}`);
-  const selfRestarts = running && changes.length > 0;
+  // A colour change is identity only: it never restarts the agent (spec §11).
+  const restartFields = changes.filter((f) => f !== "color");
+  const selfRestarts = running && restartFields.length > 0;
   const reportsRestart =
     runningReports.length > 0 && changes.some((f) => f === "displayName" || f === "description");
   // One short line on the reserved outcome line (§8); the detail is the static help below, which no edit changes.
@@ -289,7 +293,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     // A late result is judged against what was submitted (the draft now) and the session it was sent in.
     const snapshot = peekDraft(draftKey);
     const generation = draftGeneration();
-    const restartsNow = running;
+    const restartsNow = running && restartFields.length > 0;
     const nameOnly = onlyDisplayName(body);
     let saved: AgentSummary;
     try {
@@ -312,6 +316,8 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
     );
     void qc.invalidateQueries({ queryKey: ["agents"] });
     void qc.invalidateQueries({ queryKey: ["agent", slug] });
+    // The Inbox chat rows carry the agent's colour.
+    void qc.invalidateQueries({ queryKey: inboxQueryKey });
     const late = !stillOpen();
     // Late: dismissed, or the sheet now shows another state the user is reading; it stays. A late success clears the
     // draft only if it still holds what was sent; this agent's Edit reopened on those untouched values closes. Edits
@@ -359,6 +365,13 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             onFocus={() => claim("displayName")}
             onBlur={(e) => blur("displayName", e)}
             autoComplete="off"
+          />
+          <ColourField
+            slug={slug}
+            value={shown.color}
+            onChange={(c) => set("color", c)}
+            avatarVersion={agent.avatarVersion}
+            error={errors.color}
           />
           <FieldShell
             name="reportsTo"

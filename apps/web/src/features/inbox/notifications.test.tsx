@@ -80,6 +80,7 @@ const chatRow = (over: Partial<ChatRow> = {}): ChatRow => ({
     displayName: "Ada",
     template: "ada",
     avatarVersion: null,
+    color: null,
     kind: "persistent",
     status: "idle",
     archivedAt: null,

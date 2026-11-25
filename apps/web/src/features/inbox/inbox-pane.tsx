@@ -447,6 +447,7 @@ function ChatStrip({ slug }: { slug: string }) {
             slug={agent.slug}
             template={agent.template}
             avatarVersion={agent.avatarVersion}
+            color={agent.color}
             size={20}
           />
           <span className="flex min-w-0 font-medium">

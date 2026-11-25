@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { avatarColorSchema } from "./avatar.ts";
 import { configDocSchema } from "./config.ts";
 import { sessionEventSchema } from "./events.ts";
 import { nameSchema, slugSchema } from "./names.ts";
@@ -68,6 +69,8 @@ export const agentSummarySchema = z.object({
   openTasks: z.number().int().nonnegative().default(0),
   /** U2: the avatar's cache-busting version, null when the agent has no avatar. */
   avatarVersion: z.string().nullable().default(null),
+  /** I2 §11: identity colour 1..12 (`AVATAR_HUES`), null = Auto. */
+  color: avatarColorSchema.nullable().default(null),
   credential: z.string().nullable(),
   projects: z.array(z.string()),
   depth: z.number().int().nonnegative(),
@@ -243,6 +246,7 @@ export const patchAgentBodySchema = z
     reportsTo: slugSchema.nullable(),
     credential: nameSchema,
     projects: z.array(nameSchema),
+    color: avatarColorSchema.nullable(),
   })
   .partial();
 export type PatchAgentBody = z.infer<typeof patchAgentBodySchema>;

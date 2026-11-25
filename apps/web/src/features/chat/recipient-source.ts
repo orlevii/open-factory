@@ -49,7 +49,7 @@ export function recipientSource(qc: QueryClient, h: Held): CompletionSource {
             avatar: {
               slug: m.handle,
               ...(m.kind === "agent"
-                ? { template: m.template, avatarVersion: m.avatarVersion }
+                ? { template: m.template, avatarVersion: m.avatarVersion, color: m.color }
                 : {}),
             },
           }),

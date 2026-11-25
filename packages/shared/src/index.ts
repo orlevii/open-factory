@@ -1,5 +1,6 @@
 export * from "./agents.ts";
 export * from "./api-fetch.ts";
+export * from "./avatar.ts";
 export * from "./chat.ts";
 export * from "./claude-builtins.ts";
 export * from "./commands.ts";

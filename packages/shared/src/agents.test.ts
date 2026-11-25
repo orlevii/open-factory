@@ -72,3 +72,10 @@ test("send body takes an optional clientMessageId", () => {
     sendMessagesBodySchema.parse({ to: ["dev"], body: "hi", clientMessageId: id }).clientMessageId,
   ).toBe(id);
 });
+
+test("PATCH colour is an int 1..12 or null", () => {
+  for (const color of [1, 12, null])
+    expect(patchAgentBodySchema.safeParse({ color }).success).toBe(true);
+  for (const color of [0, 13, 1.5, "3"])
+    expect(patchAgentBodySchema.safeParse({ color }).success).toBe(false);
+});

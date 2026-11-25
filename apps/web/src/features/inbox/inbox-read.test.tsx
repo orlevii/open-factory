@@ -248,6 +248,7 @@ const chatRow = (slug: string, name: string, unread: number, createdAt: string) 
     displayName: name,
     template: slug,
     avatarVersion: null,
+    color: null,
     kind: "persistent",
     status: "idle",
     archivedAt: null,

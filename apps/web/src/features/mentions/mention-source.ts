@@ -52,7 +52,14 @@ const toItem = (m: Mention): CompletionItem => ({
   detail: `@${m.handle}`,
   group: m.kind === "agent" ? "agents" : "humans",
   ...(m.kind === "agent"
-    ? { avatar: { slug: m.handle, template: m.template, avatarVersion: m.avatarVersion } }
+    ? {
+        avatar: {
+          slug: m.handle,
+          template: m.template,
+          avatarVersion: m.avatarVersion,
+          color: m.color,
+        },
+      }
     : {}),
 });
 

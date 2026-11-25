@@ -43,7 +43,7 @@ export interface PrepareInput {
   /** A spawned agent's spawner; null for a persistent agent. */
   spawner: { slug: string } | null;
   /** Set for an agent that holds the spawn tools (S7 §11.3). */
-  spawning: { maxLive: number; perHour: number } | null;
+  spawning: boolean;
   /** Set for a persistent agent (S9 §10.5); absent means none. */
   scheduling?: { zone: string; maxSchedules: number; minGapMinutes: number } | null;
   /** A spawned agent's deny rules inherited from its spawner at this start (S7 §6.3). */

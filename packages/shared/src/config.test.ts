@@ -7,26 +7,20 @@ describe("agentOverlaySchema", () => {
     expect(agentOverlaySchema.parse({})).toEqual({});
     expect(agentOverlaySchema.parse({ template: {} })).toEqual({ template: {} });
   });
-  it.each([
-    "model",
-    "effort",
-    "warm_window_minutes",
-    "max_live_spawns",
-    "skills",
-    "can_spawn",
-    "secrets",
-  ])("accepts template.%s", (k) => {
-    const v = {
-      model: "opus",
-      effort: "high",
-      warm_window_minutes: 30,
-      max_live_spawns: 2,
-      skills: ["release"],
-      can_spawn: ["dev"],
-      secrets: ["GH_TOKEN"],
-    } as Record<string, unknown>;
-    expect(agentOverlaySchema.safeParse({ template: { [k]: v[k] } }).success).toBe(true);
-  });
+  it.each(["model", "effort", "warm_window_minutes", "skills", "can_spawn", "secrets"])(
+    "accepts template.%s",
+    (k) => {
+      const v = {
+        model: "opus",
+        effort: "high",
+        warm_window_minutes: 30,
+        skills: ["release"],
+        can_spawn: ["dev"],
+        secrets: ["GH_TOKEN"],
+      } as Record<string, unknown>;
+      expect(agentOverlaySchema.safeParse({ template: { [k]: v[k] } }).success).toBe(true);
+    },
+  );
   it.each([
     "name",
     "display_name",
@@ -39,6 +33,9 @@ describe("agentOverlaySchema", () => {
     "bogus",
   ])("refuses template.%s", (k) => {
     expect(agentOverlaySchema.safeParse({ template: { [k]: "x" } }).success).toBe(false);
+  });
+  it("refuses template.max_live_spawns: the spawn limit is gone", () => {
+    expect(agentOverlaySchema.safeParse({ template: { max_live_spawns: 2 } }).success).toBe(false);
   });
   it("refuses unknown top-level keys and extra mcp keys", () => {
     expect(agentOverlaySchema.safeParse({ other: {} }).success).toBe(false);

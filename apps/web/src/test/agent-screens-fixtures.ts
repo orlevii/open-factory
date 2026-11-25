@@ -45,7 +45,6 @@ export const templateConfig = (over: Partial<TemplateConfig> = {}): TemplateConf
   localSkills: true,
   secrets: [],
   canSpawn: [],
-  maxLiveSpawns: 5,
   ...over,
 });
 

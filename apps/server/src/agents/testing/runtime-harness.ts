@@ -70,7 +70,6 @@ export const testEffective = (config: Partial<TemplateConfig> = {}): Effective =
     localSkills: true,
     secrets: [],
     canSpawn: [],
-    maxLiveSpawns: 5,
     ...config,
   },
   templateSkills: [],

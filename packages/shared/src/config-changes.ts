@@ -23,7 +23,6 @@ const SCALARS: readonly (readonly [key: string, label: string, unit?: string])[]
   ["model", "model"],
   ["effort", "effort"],
   ["warm_window_minutes", "warm window", " min"],
-  ["max_live_spawns", "max live spawns"],
   ["image", "image"],
   ["permission_mode", "permission mode"],
 ];

@@ -96,8 +96,8 @@ test("an unknown settings key survives a form edit", async () => {
 
 test("wrong types anywhere never throw: each field reads 'Edit this in Raw JSON.'", () => {
   render(<Form start={{ template: { model: 5, effort: "turbo" }, settings: "x" }} />);
-  // model, effort, then the four settings fields: allow, deny, trust notes, plain env.
-  expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(6);
+  // model, effort, then the settings' plain env.
+  expect(screen.getAllByText(CONFIG_FIELD_MSG.editInRaw)).toHaveLength(3);
 });
 
 test("a non-object draft (valid JSON, wrong schema) renders tolerantly", () => {
@@ -120,7 +120,6 @@ test("the sections come in the spec's order", () => {
     "Model",
     "Skills",
     "MCP servers",
-    "Permissions",
     "Environment",
     "Behavior",
   ]);
@@ -153,6 +152,12 @@ test("issues no field owns are listed at the top with 'Show in Raw JSON'; owned 
   });
 });
 
+test("an issue on a permission rule, which the form doesn't edit, lands in the issues block", () => {
+  render(<Form start={{}} issues={[issue("settings.permissions.allow.0", "Bad rule.")]} />);
+  const block = screen.getByRole("region", { name: "Issues the form can't show" });
+  expect(within(block).getByText("Bad rule.")).toBeInTheDocument();
+});
+
 test("no issues, no block", () => {
   render(<Form start={{}} />);
   expect(screen.queryByRole("region", { name: "Issues the form can't show" })).toBeNull();
@@ -172,44 +177,57 @@ test("ListField: the template's rows are read-only, this agent's are the overlay
   const onValue = vi.fn();
   render(
     <ScopeHarness
-      start={{ settings: { theme: "dark", permissions: { allow: ["Read"] } } }}
-      base={doc({}, { permissions: { allow: ["Bash(git:*)"] } })}
+      start={{ template: { model: "opus", can_spawn: ["Read"] } }}
+      base={doc({ can_spawn: ["dev-a"] })}
       onValue={onValue}
     >
-      <ListField field="allow" label="Allow rules" noun="allow rule" mono />
+      <ListField field="canSpawn" label="Spawnable templates" noun="spawnable template" mono />
     </ScopeHarness>,
   );
-  expect(screen.getByRole("list", { name: "From template dev · 1" })).toHaveTextContent(
-    "Bash(git:*)",
-  );
+  expect(screen.getByRole("list", { name: "From template dev · 1" })).toHaveTextContent("dev-a");
   expect(screen.getByRole("list", { name: "This agent · 1" })).toHaveTextContent("Read");
   await userEvent.type(
-    screen.getByRole("textbox", { name: "Add allow rule" }),
-    "Bash(ls:*){Enter}",
+    screen.getByRole("textbox", { name: "Add spawnable template" }),
+    "tech-lead{Enter}",
   );
   expect(onValue).toHaveBeenLastCalledWith({
-    settings: { theme: "dark", permissions: { allow: ["Read", "Bash(ls:*)"] } },
+    template: { model: "opus", can_spawn: ["Read", "tech-lead"] },
   });
-  await userEvent.click(screen.getByRole("button", { name: "Remove allow rule 1" }));
-  await userEvent.click(screen.getByRole("button", { name: "Remove allow rule 1" }));
+  await userEvent.click(screen.getByRole("button", { name: "Remove spawnable template 1" }));
+  await userEvent.click(screen.getByRole("button", { name: "Remove spawnable template 1" }));
   // The emptied list and its emptied containers are pruned; the unknown key stays.
-  expect(onValue).toHaveBeenLastCalledWith({ settings: { theme: "dark" } });
+  expect(onValue).toHaveBeenLastCalledWith({ template: { model: "opus" } });
 });
 
 test("ListField: an item issue shows under its row", () => {
   render(
     <ScopeHarness
-      start={{ settings: { permissions: { deny: ["a", "b"] } } }}
+      start={{ template: { can_spawn: ["a", "b"] } }}
       base={doc()}
-      issues={[issue("settings.permissions.deny.1", "Bad rule.")]}
+      issues={[issue("template.can_spawn.1", "Bad template.")]}
     >
-      <ListField field="deny" label="Deny rules" noun="deny rule" mono />
+      <ListField field="canSpawn" label="Spawnable templates" noun="spawnable template" mono />
     </ScopeHarness>,
   );
   const rows = within(screen.getByRole("list", { name: "This agent · 2" })).getAllByRole(
     "listitem",
   );
-  expect(rows[1]).toHaveTextContent("Bad rule.");
+  expect(rows[1]).toHaveTextContent("Bad template.");
+});
+
+test("NumberField: out of range is flagged when the field is left", async () => {
+  render(
+    <ScopeHarness start={{}} base={doc()}>
+      <NumberField field="warmWindow" label="Warm window" unit="minutes" />
+    </ScopeHarness>,
+  );
+  const input = screen.getByRole("textbox", { name: "Warm window" });
+  await userEvent.type(input, "1441");
+  await userEvent.tab();
+  expect(document.getElementById("field-warmWindow-error")).toHaveTextContent(
+    CONFIG_FIELD_MSG.warmWindowRange,
+  );
+  expect(input).toHaveAttribute("aria-invalid", "true");
 });
 
 test("NumberField: the placeholder is the inherited value; digits only; empty inherits", async () => {
@@ -229,25 +247,10 @@ test("NumberField: the placeholder is the inherited value; digits only; empty in
   expect(onValue).toHaveBeenLastCalledWith({});
 });
 
-test("NumberField: out of range is flagged when the field is left", async () => {
-  render(
-    <ScopeHarness start={{}} base={doc()}>
-      <NumberField field="maxLiveSpawns" label="Max live spawns" />
-    </ScopeHarness>,
-  );
-  const input = screen.getByRole("textbox", { name: "Max live spawns" });
-  await userEvent.type(input, "51");
-  await userEvent.tab();
-  expect(document.getElementById("field-maxLiveSpawns-error")).toHaveTextContent(
-    CONFIG_FIELD_MSG.maxLiveSpawnsRange,
-  );
-  expect(input).toHaveAttribute("aria-invalid", "true");
-});
-
 test("read-only: controls are disabled and lists have no add row", () => {
   render(
-    <ScopeHarness start={{ settings: { permissions: { allow: ["a"] } } }} base={null} readOnly>
-      <ListField field="allow" label="Allow rules" noun="allow rule" />
+    <ScopeHarness start={{ template: { can_spawn: ["a"] } }} base={null} readOnly>
+      <ListField field="canSpawn" label="Spawnable templates" noun="spawnable template" />
       <NumberField field="warmWindow" label="Warm window" />
     </ScopeHarness>,
   );

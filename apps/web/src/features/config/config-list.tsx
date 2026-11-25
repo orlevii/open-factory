@@ -36,7 +36,6 @@ type Props = {
   /** Rules, names and commands are mono; prose (trust notes) is Geist. */
   mono?: boolean;
   readOnly?: boolean;
-  help?: string;
   error?: string;
   warning?: string;
   /** Notes for single rows (a server issue on `…allow.3`), by index in `own`. */
@@ -166,7 +165,6 @@ export function ConfigList({
   inheritedLabel = "From template",
   mono,
   readOnly,
-  help,
   error,
   warning,
   rowNotes,
@@ -280,7 +278,6 @@ export function ConfigList({
       name={name}
       label={label}
       legend
-      help={help}
       error={error}
       warning={warning}
       legendAction={

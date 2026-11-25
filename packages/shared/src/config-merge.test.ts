@@ -10,7 +10,6 @@ const base: ConfigDoc = {
     model: "sonnet",
     effort: "medium",
     warm_window_minutes: 70,
-    max_live_spawns: 5,
     skills: ["tdd"],
     can_spawn: ["rev"],
     secrets: ["GH_TOKEN"],
@@ -30,7 +29,6 @@ describe("mergeConfig", () => {
     ["model", "opus"],
     ["effort", "high"],
     ["warm_window_minutes", 30],
-    ["max_live_spawns", 1],
   ])("replaces %s", (k, v) =>
     expect(mergeConfig(base, { template: { [k]: v } }).template[k]).toEqual(v),
   );

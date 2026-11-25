@@ -64,7 +64,6 @@ export const overlayTemplateSchema = strict({
   model: templateYamlShape.model,
   effort: templateYamlShape.effort,
   warm_window_minutes: templateYamlShape.warm_window_minutes,
-  max_live_spawns: templateYamlShape.max_live_spawns,
   skills: templateYamlShape.skills,
   can_spawn: templateYamlShape.can_spawn,
   secrets: z

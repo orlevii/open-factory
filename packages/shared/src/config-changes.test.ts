@@ -30,9 +30,6 @@ describe("describeDocChanges", () => {
     expect(
       diff({ template: { warm_window_minutes: 70 } }, { template: { warm_window_minutes: 30 } }),
     ).toEqual(["warm window: 70 → 30 min"]);
-    expect(
-      diff({ template: { max_live_spawns: 5 } }, { template: { max_live_spawns: 1 } }),
-    ).toEqual(["max live spawns: 5 → 1"]);
   });
 
   it("names added and removed skills and secrets", () => {

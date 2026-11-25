@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { sendMessagesBodySchema } from "@open-factory/shared";
-import { and, asc, count, eq, gt, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { ConfigResolver, Effective } from "../agents/config-resolver.ts";
 import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
@@ -24,7 +24,6 @@ type Template = Awaited<ReturnType<TemplateIndex["loadValid"]>>;
 type Granted = Extract<Inherited, { ok: true }>;
 type Refused = { ok: false; message: string };
 
-const HOUR_MS = 3_600_000;
 const SHUTTING_DOWN = "The factory is shutting down; spawn again after it restarts.";
 const CANT_SPAWN = "You can't spawn agents.";
 const fail = (message: string): Refused => ({ ok: false, message });
@@ -69,7 +68,7 @@ export class SpawnService {
     if (this.d.closing()) return fail(SHUTTING_DOWN);
     const caller = await this.d.store.agentById(callerId);
     if (!caller) return fail(CANT_SPAWN);
-    // I2 §6.2: can_spawn and max_live_spawns are what the running process started with.
+    // I2 §6.2: can_spawn is what the running process started with.
     const started = this.d.runtimes.startedOf(caller.id);
     if (!started) return notRunning(caller.slug);
     if (!maySpawn(caller, started.config)) return fail(CANT_SPAWN);
@@ -136,9 +135,9 @@ export class SpawnService {
   }
 
   /**
-   * The live count (§5.4), the hourly rate (§5.5) and the inheritance rule (§6) against the spawner's current state,
-   * read through `db` (the pool for the pre-check, the locked transaction for the re-check). The cap is `started`'s;
-   * what the child may hold is the stricter of `started` and `current` (I2 §6.2, `spawnerHolds`).
+   * The inheritance rule (§6) against the spawner's current state, read through `db` (the pool for the pre-check, the
+   * locked transaction for the re-check). What the child may hold is the stricter of `started` and `current` (I2 §6.2,
+   * `spawnerHolds`).
    */
   private async check(
     spawner: AgentRow,
@@ -147,38 +146,6 @@ export class SpawnService {
     tpl: Template,
     db: Exec,
   ): Promise<{ ok: true; inherited: Granted } | Refused> {
-    const { agents } = schema;
-    const live = await db
-      .select({ slug: agents.slug })
-      .from(agents)
-      .where(
-        and(
-          eq(agents.reportsTo, spawner.id),
-          eq(agents.kind, "ephemeral"),
-          isNull(agents.terminatedAt),
-        ),
-      )
-      .orderBy(asc(agents.slug));
-    const max = started.config.maxLiveSpawns;
-    if (live.length >= max)
-      return fail(
-        `You have ${live.length} live spawned agents (max ${max}): ${live.map((r) => `@${r.slug}`).join(", ")}. Terminate one first.`,
-      );
-    const [recent] = await db
-      .select({ n: count() })
-      .from(agents)
-      .where(
-        and(
-          eq(agents.reportsTo, spawner.id),
-          eq(agents.kind, "ephemeral"),
-          gt(agents.createdAt, new Date(this.now() - HOUR_MS)),
-        ),
-      );
-    const cap = this.d.config.maxSpawnsPerHour;
-    if ((recent?.n ?? 0) >= cap)
-      return fail(
-        `You've spawned ${cap} agents in the last hour; ${askFor(spawner)} if you need more.`,
-      );
     const grants = await db
       .select({
         id: schema.projects.id,

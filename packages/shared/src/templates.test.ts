@@ -14,7 +14,6 @@ test("defaults and camelCase output", () => {
     localSkills: true,
     secrets: [],
     canSpawn: [],
-    maxLiveSpawns: 5,
   });
   expect(templateConfigSchema.parse(c)).toEqual(c);
 });
@@ -31,6 +30,12 @@ test("strict: unknown keys and bad values are errors", () => {
   ).toBe(false);
   expect(
     templateYamlSchema.safeParse({ name: "x1", display_name: "X", secrets: ["PATH"] }).success,
+  ).toBe(false);
+});
+
+test("max_live_spawns is refused in template.yaml: the spawn limits are gone", () => {
+  expect(
+    templateYamlSchema.safeParse({ name: "x1", display_name: "X", max_live_spawns: 3 }).success,
   ).toBe(false);
 });
 

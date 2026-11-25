@@ -34,8 +34,6 @@ export interface Config {
   agentPort: number;
   /** `FACTORY_AGENT_HOST`: replaces the default bind list when set. */
   agentHosts: string[] | undefined;
-  /** `FACTORY_MAX_SPAWNS_PER_HOUR`: children per spawner created in the last 60 minutes (S7 §5.5). */
-  maxSpawnsPerHour: number;
   /** `FACTORY_TIMEZONE` (S9): the zone agent-created schedules default to, named in the generated CLAUDE.md. */
   factoryTimezone: string;
 }
@@ -100,11 +98,6 @@ const envSchema = z.object({
     .max(65535)
     .optional(),
   FACTORY_AGENT_HOST: z.string().optional(),
-  FACTORY_MAX_SPAWNS_PER_HOUR: z.coerce
-    .number({ message: "must be a whole number" })
-    .int()
-    .min(1)
-    .default(20),
   FACTORY_TIMEZONE: zoneSchema.optional(),
 });
 
@@ -188,7 +181,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     ),
     agentPort,
     agentHosts: agentHosts?.length ? agentHosts : undefined,
-    maxSpawnsPerHour: e.FACTORY_MAX_SPAWNS_PER_HOUR,
     factoryTimezone: e.FACTORY_TIMEZONE ?? factoryZoneDefault(),
   };
 }

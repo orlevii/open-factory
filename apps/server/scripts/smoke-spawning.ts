@@ -6,7 +6,7 @@
 // credential and is never printed: everything this script prints goes through `redact`.
 // Uses a throwaway database and a temp FACTORY_HOME; the human server and the agent listener listen on loopback.
 // Model: haiku. A member update debounce of 10 s (factory settings) so the spawner hears from its child quickly.
-// Org: `lead` (top, can_spawn: [helper, tech-lead, proxy-reviewer, developer], max_live_spawns: 3, granted the temp
+// Org: `lead` (top, can_spawn: [helper, tech-lead, proxy-reviewer, developer], granted the temp
 // git repo `app`).
 // Part 1 (Task 10): one spawn (`helper-one`), the brief, the child's text as a member_update, one terminate.
 // Part 2 (Task 21): spec §17.3 with real models. The lead spawns `proxy-reviewer-r1` and `tech-lead-t1` (each brief
@@ -487,7 +487,6 @@ try {
         "model: haiku",
         "projects: [app]",
         "can_spawn: [helper, tech-lead, proxy-reviewer, developer]",
-        "max_live_spawns: 3",
         "",
       ].join("\n"),
       "AGENTS.md": [

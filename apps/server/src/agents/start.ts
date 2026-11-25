@@ -337,9 +337,7 @@ export function createPrepareStart(d: {
           humans: await d.neighborhood.humans(),
           kind: spawned ? "ephemeral" : "persistent",
           spawner: spawned ? { slug: spawned.spawner.slug } : null,
-          spawning: maySpawn(agent, config)
-            ? { maxLive: config.maxLiveSpawns, perHour: d.config.maxSpawnsPerHour }
-            : null,
+          spawning: maySpawn(agent, config),
           // S9 §10.5: only persistent agents hold the schedule tools.
           scheduling: spawned
             ? null

@@ -56,7 +56,7 @@ async function setup(o: { maxRunning?: number } = {}) {
   writeTemplate(app.factoryHome, "dev", "name: dev\ndisplay_name: Dev\nruntime: local\n");
   const lead = await app.seedAgent({
     slug: "lead",
-    config: { template: { can_spawn: ["dev"], max_live_spawns: 10 } },
+    config: { template: { can_spawn: ["dev"] } },
   });
   // I2 §6.2: spawning follows the spawner's running process.
   await asRunning(app.app, lead);

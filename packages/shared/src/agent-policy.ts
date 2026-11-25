@@ -16,7 +16,6 @@ export const AGENT_EDITABLE = {
     "model",
     "effort",
     "warm_window_minutes",
-    "max_live_spawns",
     "skills",
     "can_spawn",
     "secrets",
@@ -26,15 +25,7 @@ export const AGENT_EDITABLE = {
   /** Judged against `frozen` (rule 3), not byte-equality. */
   frozen: ["runtime", "image", "permission_mode"],
   /** An overlay's `template` part: everything I2 allows there. */
-  overlayTemplate: [
-    "model",
-    "effort",
-    "warm_window_minutes",
-    "max_live_spawns",
-    "skills",
-    "can_spawn",
-    "secrets",
-  ],
+  overlayTemplate: ["model", "effort", "warm_window_minutes", "skills", "can_spawn", "secrets"],
   settings: [
     "permissions.allow",
     "permissions.ask",

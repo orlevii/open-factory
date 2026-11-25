@@ -10,7 +10,6 @@ import { fieldForPath } from "./fields";
 import { McpSection } from "./mcp-section";
 import { CONFIG_COPY, CONFIG_FIELD_MSG } from "./messages";
 import { ModelField } from "./model-field";
-import { PermissionsSection } from "./permissions-section";
 import { type ConfigFormProps, ConfigFormScope, type RawTarget } from "./scope";
 import { Section } from "./section";
 import { SkillsSection } from "./skills-section";
@@ -20,7 +19,7 @@ export type { ConfigFormProps, RawTarget } from "./scope";
 /**
  * The Configuration form (spec §12.2), one for a template and an agent. It is controlled: the draft lives in the page
  * (`useConfigDraft`), shared with Raw JSON, and every edit goes through `onChange` as a functional update that keeps
- * every key the form doesn't own. The six sections follow in the spec's order, and between them they render every
+ * every key the form doesn't own. The five sections follow in the spec's order, and between them they render every
  * field in `CONFIG_FIELDS`, so every issue a field owns has a note to land on.
  */
 export function ConfigForm(props: ConfigFormProps) {
@@ -49,7 +48,6 @@ export function ConfigForm(props: ConfigFormProps) {
       </Section>
       <SkillsSection localSkills={localSkills} />
       <McpSection />
-      <PermissionsSection />
       <EnvironmentSection />
       <BehaviorSection />
     </ConfigFormScope>

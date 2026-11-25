@@ -61,12 +61,6 @@ describe("loadConfig", () => {
     expect(o.agentHosts).toEqual(["127.0.0.1", "10.0.0.5"]);
     expect(o.agentUrl).toBe("http://factory:9000");
   });
-  test("FACTORY_MAX_SPAWNS_PER_HOUR defaults to 20 and is at least 1", () => {
-    expect(loadConfig(ok).maxSpawnsPerHour).toBe(20);
-    expect(loadConfig({ ...ok, FACTORY_MAX_SPAWNS_PER_HOUR: "3" }).maxSpawnsPerHour).toBe(3);
-    expect(() => loadConfig({ ...ok, FACTORY_MAX_SPAWNS_PER_HOUR: "0" })).toThrow(ConfigError);
-    expect(() => loadConfig({ ...ok, FACTORY_MAX_SPAWNS_PER_HOUR: "1.5" })).toThrow(ConfigError);
-  });
   test("FACTORY_AGENT_PORT can't be PORT (unless 0, any free port)", () => {
     expect(() => loadConfig({ ...ok, PORT: "4000", FACTORY_AGENT_PORT: "4000" })).toThrow(
       /FACTORY_AGENT_PORT must differ from PORT/,

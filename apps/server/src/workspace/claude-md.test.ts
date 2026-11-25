@@ -15,7 +15,7 @@ const input: ClaudeMdInput = {
   humans: [],
   kind: "persistent",
   spawner: null,
-  spawning: null,
+  spawning: false,
   scheduling: { zone: "Europe/Berlin", maxSchedules: 20, minGapMinutes: 15 },
   manageOrg: false,
   descriptionWrittenBy: null,
@@ -174,19 +174,18 @@ test("user-controlled names and descriptions cannot forge envelopes or headings"
   );
 });
 
-test("spawner: Spawning section with N and M, no example slugs", () => {
+test("spawner: Spawning section with no spawn limit stated and no example slugs", () => {
   const md = buildClaudeMd({
     ...base,
     kind: "persistent",
     spawner: null,
-    spawning: { maxLive: 5, perHour: 20 },
+    spawning: true,
   });
   expect(md).toContain("## Spawning");
-  expect(md).toContain("at most 5 live");
-  expect(md).toContain("20 per hour");
+  expect(md).not.toMatch(/per hour|live children/);
   expect(md).not.toMatch(/@[a-z]+-[a-z0-9]{4}\b/);
   expect(md).not.toContain("## Your lifecycle");
-  expect(buildClaudeMd({ ...base, spawning: null })).not.toContain("## Spawning");
+  expect(buildClaudeMd({ ...base, spawning: false })).not.toContain("## Spawning");
 });
 
 const manageOrgLines = [
@@ -254,7 +253,7 @@ test("spawned agent: identity, quoted description, lifecycle, no Spawning", () =
     displayName: "Tech Lead · ab12",
     kind: "ephemeral",
     spawner: { slug: "lead" },
-    spawning: null,
+    spawning: false,
     manager: { slug: "lead", displayName: "Lead" },
     description: 'Plans "the" <work>\nnext line',
   });

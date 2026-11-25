@@ -81,7 +81,7 @@ beforeEach(async () => {
     mcpUrl: "http://127.0.0.1:3001/mcp",
     kind: "persistent" as const,
     spawner: null,
-    spawning: null,
+    spawning: false,
     secretNames: config.secrets,
     manageOrg: false,
     descriptionWrittenBy: null,

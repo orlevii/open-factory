@@ -79,8 +79,8 @@ export interface ClaudeMdInput {
   kind: "persistent" | "ephemeral";
   /** A spawned agent's spawner (S7 §11.2); null for a persistent agent. */
   spawner: { slug: string } | null;
-  /** Set only for an agent that holds the spawn tools (S7 §11.3); N and M come from config. */
-  spawning: { maxLive: number; perHour: number } | null;
+  /** Set only for an agent that holds the spawn tools (S7 §11.3). */
+  spawning: boolean;
   /**
    * S9 §10.5: set for a persistent agent (it holds the schedule tools); the zone (`FACTORY_TIMEZONE`) and the limits
    * come from config and constants, so the file stays deterministic. A spawned agent has none.
@@ -135,15 +135,14 @@ function lifecycleSection(spawner: string): string[] {
   ];
 }
 
-function spawningSection(s: { maxLive: number; perHour: number }, hasManager: boolean): string[] {
+function spawningSection(): string[] {
   return [
     "## Spawning",
     "- Spawn a fresh agent for each phase of work instead of carrying one context through everything: fresh context keeps each phase focused.",
     "- The brief is the child's whole context besides its template, so make it complete, and name the collaborators it will work with, by slug.",
     "- `mcp__factory__spawn_agent` returns at once; the child's text reaches you as updates, and you can message it directly.",
-    `- Terminate a child with \`mcp__factory__terminate_agent\` when its phase is done: you can have at most ${s.maxLive} live children, and idle ones are terminated after 3 days anyway.`,
+    "- Terminate a child with `mcp__factory__terminate_agent` when its phase is done; idle ones are terminated after 3 days anyway.",
     "- Termination discards the child's session, and its working directory is deleted 3 days later: ask it to put anything worth keeping in a granted project or a message first.",
-    `- Spawning is capped at ${s.perHour} per hour; if you need more, ${hasManager ? "ask your manager" : "ask a human (list_peers lists them)"}.`,
     "",
   ];
 }
@@ -234,7 +233,7 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
     ...messagingSection(i),
     ...tasksSection(),
     ...schedulingSection(i.scheduling),
-    ...(i.spawning && !spawner ? spawningSection(i.spawning, i.manager != null) : []),
+    ...(i.spawning && !spawner ? spawningSection() : []),
     ...(i.kind === "persistent" && i.reports.length ? restartingReportsSection() : []),
     ...(i.manageOrg ? managingOrgSection() : []),
     "## Your workspace",

@@ -37,7 +37,6 @@ export const templateConfigSchema = z.object({
   localSkills: z.boolean(),
   secrets: z.array(secretNameSchema),
   canSpawn: z.array(nameSchema),
-  maxLiveSpawns: z.number().int().min(0).max(50),
   warmWindowMinutes: z.number().int().min(1).max(1440).optional(),
 });
 export type TemplateConfig = z.infer<typeof templateConfigSchema>;
@@ -60,7 +59,6 @@ export const templateYamlShape = {
   local_skills: z.boolean().optional(),
   secrets: z.array(secretNameSchema).max(200).optional(),
   can_spawn: z.array(nameSchema).max(200).optional(),
-  max_live_spawns: z.number().int().min(0).max(50).optional(),
   warm_window_minutes: z.number().int().min(1).max(1440).optional(),
 };
 
@@ -76,7 +74,6 @@ export const templateYamlSchema = z
     local_skills: templateYamlShape.local_skills.default(true),
     secrets: templateYamlShape.secrets.default([]),
     can_spawn: templateYamlShape.can_spawn.default([]),
-    max_live_spawns: templateYamlShape.max_live_spawns.default(5),
   })
   .transform(
     (y): TemplateConfig => ({
@@ -93,7 +90,6 @@ export const templateYamlSchema = z
       localSkills: y.local_skills,
       secrets: y.secrets,
       canSpawn: y.can_spawn,
-      maxLiveSpawns: y.max_live_spawns,
       ...(y.warm_window_minutes !== undefined ? { warmWindowMinutes: y.warm_window_minutes } : {}),
     }),
   );

@@ -1,12 +1,11 @@
 import type { ConfigDoc, TemplateIssue } from "@open-factory/shared";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { completeChild, getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { installInputModality } from "@/lib/input-modality";
 import { doc, QueryWrap } from "@/test/config-harness";
-import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { ConfigForm } from "./config-form";
 import { CONFIG_COPY, CONFIG_FIELD_MSG } from "./messages";
@@ -337,20 +336,17 @@ test("an issue on a server or an env name lands under its row", () => {
   expect(screen.queryByRole("region", { name: "Issues the form can't show" })).toBeNull();
 });
 
-test("template deny rules can't be removed in agent mode", () => {
+test("template spawnable templates can't be removed in agent mode", () => {
   render(
-    <Form
-      start={{ settings: { permissions: { deny: ["Bash(curl:*)"] } } }}
-      base={doc({}, { permissions: { deny: ["Bash(rm:*)"] } })}
-    />,
+    <Form start={{ template: { can_spawn: ["tech-lead"] } }} base={doc({ can_spawn: ["dev"] })} />,
   );
-  const deny = screen.getByRole("group", { name: "Deny rules" });
-  const tpl = within(deny).getByRole("list", { name: "From template dev · 1" });
-  expect(within(tpl).getByText("Bash(rm:*)")).toBeInTheDocument();
+  const group = screen.getByRole("group", { name: "Spawnable templates" });
+  const tpl = within(group).getByRole("list", { name: "From template dev · 1" });
+  expect(within(tpl).getByText("dev")).toBeInTheDocument();
   expect(within(tpl).queryAllByRole("button")).toHaveLength(0);
-  expect(within(deny).getAllByRole("button", { name: /^Remove deny rule/ })).toHaveLength(1);
-  expect(screen.getAllByText(CONFIG_COPY.rulesHelp)).toHaveLength(2);
-  expect(screen.getByText(CONFIG_COPY.notesHelp)).toBeInTheDocument();
+  expect(within(group).getAllByRole("button", { name: /^Remove spawnable template/ })).toHaveLength(
+    1,
+  );
 });
 
 test("a factory env name is refused, as a variable and as a secret", async () => {
@@ -466,7 +462,7 @@ test("an issue on a template server lands on its row; one on an unknown server f
 test("an env issue on a name with no row, and a list issue past the list, fall to the field's note with their severity", () => {
   render(
     <Form
-      start={{ settings: { permissions: { allow: ["a"] } } }}
+      start={{ template: { can_spawn: ["a"] } }}
       issues={[
         {
           severity: "warning",
@@ -477,15 +473,15 @@ test("an env issue on a name with no row, and a list issue past the list, fall t
         {
           severity: "error",
           file: "settings.json",
-          message: "Gone rule.",
-          path: "settings.permissions.allow.4",
+          message: "Gone template.",
+          path: "template.can_spawn.4",
         },
       ]}
     />,
   );
   expect(document.getElementById("field-env-error")).toHaveTextContent("Gone env.");
   expect(document.getElementById("field-env-error")).toHaveAttribute("data-tone", "warning");
-  expect(document.getElementById("field-allow-error")).toHaveTextContent("Gone rule.");
+  expect(document.getElementById("field-canSpawn-error")).toHaveTextContent("Gone template.");
 });
 
 test("the form reports an open MCP editor: on open, Done, Cancel, removing it, and unmount", async () => {

@@ -1,4 +1,4 @@
-import type { AgentConfigResponse, ConfigDoc, TemplateIssue } from "@open-factory/shared";
+import type { ConfigDoc, TemplateIssue } from "@open-factory/shared";
 import { modelSchema } from "@open-factory/shared";
 import { createContext, type ReactNode, use, useCallback, useMemo, useRef } from "react";
 import { type FieldErrors, useFieldErrors } from "@/components/forms/use-field-errors";
@@ -70,7 +70,6 @@ const keepNothing = () => false;
 
 const NUMBER_RANGE = {
   warmWindow: { min: 1, max: 1440, message: CONFIG_FIELD_MSG.warmWindowRange },
-  maxLiveSpawns: { min: 0, max: 50, message: CONFIG_FIELD_MSG.maxLiveSpawnsRange },
 } as const;
 
 function numberCheck(value: unknown, f: keyof typeof NUMBER_RANGE): string | undefined {
@@ -110,7 +109,6 @@ export function ConfigFormScope({
     checks: {
       model: () => modelCheck(value),
       warmWindow: () => numberCheck(value, "warmWindow"),
-      maxLiveSpawns: () => numberCheck(value, "maxLiveSpawns"),
     },
     fields: CONFIG_FIELDS,
   });

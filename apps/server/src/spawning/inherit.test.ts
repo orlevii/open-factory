@@ -14,7 +14,6 @@ const tpl = (o: object) =>
     localSkills: true,
     secrets: [],
     canSpawn: [],
-    maxLiveSpawns: 5,
     ...o,
   });
 const none = { permissionsDeny: [], softDeny: [], hardDeny: [] };

@@ -141,12 +141,12 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
   try {
     await t.seedAgent({
       slug: "lead",
-      config: { template: { can_spawn: ["tech-lead", "developer"], max_live_spawns: 5 } },
+      config: { template: { can_spawn: ["tech-lead", "developer"] } },
     });
     await t.seedAgent({ slug: "solo" });
     await t.seedAgent({
-      slug: "capped",
-      config: { template: { can_spawn: ["developer"], max_live_spawns: 0 } },
+      slug: "second",
+      config: { template: { can_spawn: ["developer"] } },
     });
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
     const names = async (slug: string) => {
@@ -165,7 +165,9 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
       lead.find((x) => x.name === "spawn_agent")?.inputSchema.properties.template?.enum,
     ).toEqual(["tech-lead", "developer"]);
     expect((await names("solo")).map((x) => x.name).sort()).toEqual(PERSISTENT_TOOLS);
-    expect((await names("capped")).map((x) => x.name).sort()).toEqual(PERSISTENT_TOOLS);
+    expect((await names("second")).map((x) => x.name).sort()).toEqual(
+      [...PERSISTENT_TOOLS, "spawn_agent", "terminate_agent"].sort(),
+    );
     // A spawned agent never spawns (depth one), even when its template has can_spawn.
     const tplDir = path.join(t.factoryHome, "templates", "developer");
     mkdirSync(tplDir, { recursive: true });

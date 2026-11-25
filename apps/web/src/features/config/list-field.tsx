@@ -7,10 +7,7 @@ import { WrongType } from "./section";
 import { readAt, readList } from "./tolerant";
 
 /** The list fields: each binds one union list of the draft to a `ConfigList`. */
-export type ListFieldId = Extract<
-  ConfigField,
-  "skills" | "allow" | "deny" | "trustNotes" | "envSecrets" | "canSpawn"
->;
+export type ListFieldId = Extract<ConfigField, "skills" | "envSecrets" | "canSpawn">;
 
 const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const NO_ROWS: ReadonlyMap<number, RowNote> = new Map();
@@ -27,7 +24,6 @@ export function ListField({
   label,
   noun,
   mono,
-  help,
   placeholder,
   check,
   rowCheck,
@@ -40,7 +36,6 @@ export function ListField({
   label: string;
   noun: string;
   mono?: boolean;
-  help?: string;
   placeholder?: string;
   check?: (value: string) => string | undefined;
   /** A client rule for rows already in the list (a name Raw JSON added): a failing row gets an error note. Stable. */
@@ -94,7 +89,6 @@ export function ListField({
       label={label}
       noun={noun}
       mono={mono}
-      help={help}
       placeholder={placeholder}
       check={check}
       own={own.items}

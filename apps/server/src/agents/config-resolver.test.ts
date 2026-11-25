@@ -12,7 +12,6 @@ const baseDoc = (): ConfigDoc => ({
     runtime: "docker",
     skills: ["grilling"],
     secrets: ["GH_TOKEN"],
-    max_live_spawns: 2,
   },
   settings: { permissions: { deny: ["Bash(curl:*)"] } },
   mcp: { mcpServers: { a: { command: "secret-cmd", args: ["--token", "s3cr3t"] } } },
@@ -59,7 +58,6 @@ describe("ConfigResolver.effective", () => {
     const e = await resolverFor().effective(agent());
     expect(e.doc).toEqual(baseDoc());
     expect(e.config.skills).toEqual(["grilling"]);
-    expect(e.config.maxLiveSpawns).toBe(2);
   });
 
   test("records the Library's ref of each listed skill, and missing for one that doesn't resolve", async () => {
@@ -141,7 +139,7 @@ describe("ConfigResolver.effective", () => {
 
   test("an overlay that breaks the merged template is invalid", async () => {
     const err = await resolverFor()
-      .effective(agent({ config: { template: { max_live_spawns: 999 } } }))
+      .effective(agent({ config: { template: { effort: "turbo" } } }))
       .catch((e) => e);
     expect(err).toBeInstanceOf(AgentStartError);
     expect(err.fix).toBe("config");

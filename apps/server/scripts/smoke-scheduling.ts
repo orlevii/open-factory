@@ -504,7 +504,6 @@ try {
           "model: haiku",
           "warm_window_minutes: 1",
           "can_spawn: [kid]",
-          "max_live_spawns: 2",
           "",
         ].join("\n"),
         "AGENTS.md": [

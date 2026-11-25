@@ -677,7 +677,7 @@ test.each([
 test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quoted", async () => {
   await t.db
     .update(schema.agents)
-    .set({ config: { template: { can_spawn: ["dev"], max_live_spawns: 3 } } })
+    .set({ config: { template: { can_spawn: ["dev"] } } })
     .where(eq(schema.agents.id, agent.id));
   const child = await seedChild({ description: "ignored" });
   await t.db
@@ -687,8 +687,6 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
   const lead = md(agent.slug);
   expect(lead).toContain("## Spawning");
-  expect(lead).toContain("at most 3 live");
-  expect(lead).toContain(`${factoryConfig.maxSpawnsPerHour} per hour`);
   expect(lead).toContain(`- @${child.slug} (Dev · ab), written by @${agent.slug}: "Ship 'it' now"`);
   await prepareStart(child, { agentToken: "tok" });
   const own = md(child.slug);

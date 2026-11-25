@@ -259,8 +259,8 @@ In the reaper's step 3 (`spawning/reaper.ts`), inside `Workspace.deleteWorkspace
 Termination deletes the agent's `agent_project_grants` rows, so the cleanup doesn't read grants: it scans **every registered project** (`projects`, current `host_path`) for `.worktrees/.agents/<slug>`, one `lstat` each (the namespace is ours and the slug is never reused). For each project independently:
 
 - no `.worktrees/.agents/<slug>` → nothing to do, nothing reported;
-- the folder is missing, isn't a git repository, a check refuses, or a git call fails → the project is skipped and named in the notice ("web: couldn't clean up: not a git repository");
-- `git` missing from the host (ENOENT on the first call) → every project with a folder is skipped, one notice line "Couldn't clean up worktrees: git isn't installed on the factory host."
+- a check refuses (a symlinked component, forged or unmatched worktree metadata, a `.git` that isn't a plain folder, a branch that can't be judged) or a git call fails while something of ours is there → the project is skipped and named in the notice ("web: couldn't clean up: not a git repository"); a project folder that is missing or isn't a git repository has no `.worktrees/.agents/<slug>` of ours, so it is not reported;
+- `git` missing from the host (ENOENT), or older than 2.44 (see §7.4), while some project has a folder of ours → every project is skipped, one notice line "Couldn't clean up worktrees: git isn't installed on the factory host." or "Couldn't clean up worktrees: git 2.44 or newer is needed on the factory host."
 
 The workspace is deleted regardless; nothing is retried.
 
@@ -269,7 +269,7 @@ The workspace is deleted regardless; nothing is retried.
 `apps/server/src/spawning/git.ts`, one function `git(repo, args, { timeoutMs = 15_000 })`:
 
 - `execFile("git", ["--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd: repo, timeout, maxBuffer: 1 MB, env })`; never a shell.
-- `env`: the server's `PATH` and `HOME` only, plus `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_OPTIONAL_LOCKS=0`, `GIT_CEILING_DIRECTORIES=<dirname(repo)>` (a non-repo subfolder of a parent repo isn't taken for a repo), `LC_ALL=C`.
+- `env`: the server's `PATH` and `HOME` only, plus `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_OPTIONAL_LOCKS=0`, `GIT_CEILING_DIRECTORIES=<dirname(repo)>` (a non-repo subfolder of a parent repo isn't taken for a repo), `GIT_NO_LAZY_FETCH=1` (a repo configured as a partial clone with a promisor remote makes `rev-list`, `show-ref` and `branch -D` fetch, and a repo-level `core.sshCommand` then runs code; the variable needs git 2.44, and older git ignores it, so the runner refuses to run below 2.44), `LC_ALL=C`. PATH entries that are empty or relative are dropped. Every free string slot (a ref or branch name) is refused when it starts with `-`.
 - **No network, no working-tree reads.** Allowed subcommands, enforced by a constant the function checks: `rev-parse`, `worktree list --porcelain -z`, `symbolic-ref`, `show-ref`, `check-ref-format`, `rev-list`, `branch -D`. Never `status`, `diff`, `worktree remove`, `worktree prune`, `fetch`, `gc`.
 - `safe.directory`: never loosened globally. If a call fails with git's "detected dubious ownership" (a container writing as another uid), the runner retries that call once with `-c safe.directory=<realpath(repo)>`, that exact path, never `*`, never written to any config (D7). The plan flags it as the only place this happens.
 

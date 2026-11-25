@@ -15,7 +15,7 @@ import {
   mentionOpensAt,
   rankMentions,
 } from "@/components/composer/mentions";
-import { homeInboxQueryKey, inboxQueryKey } from "@/features/inbox/api";
+import { inboxQueryKey } from "@/features/inbox/api";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { usersQueryOptions } from "@/features/settings/api";
 import { sessionQueryOptions } from "@/lib/session";
@@ -36,9 +36,8 @@ type InboxPage = {
  *  the inbox already loaded). */
 function recentSenders(qc: QueryClient): string[] {
   const pages = qc.getQueryData<InfiniteData<InboxPage>>(inboxQueryKey)?.pages ?? [];
-  const home = qc.getQueryData<InboxPage>(homeInboxQueryKey);
   const found: { slug: string; at: string }[] = [];
-  for (const p of home ? [home, ...pages] : pages) {
+  for (const p of pages) {
     for (const i of p.items)
       if (i.from.kind === "agent") found.push({ slug: i.from.name, at: i.createdAt });
     for (const c of p.chats ?? []) found.push({ slug: c.agent.slug, at: c.latest.createdAt });

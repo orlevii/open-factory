@@ -11,7 +11,7 @@ beforeAll(async () => {
   sql = h.sql;
   close = async () => {
     await h.close();
-    await t.drop();
+    await t.release();
   };
   await sql`insert into handles (handle, kind) values ('or','user'),('two','user'),('dev','agent')`;
   await sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or'),('u2','Two','two@x.io','two')`;

@@ -149,7 +149,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
         await o.app.close().catch(() => {});
         await o.closeDb().catch(() => {});
       }
-      await tdb.drop();
+      await tdb.release();
     },
   };
 }
@@ -262,7 +262,7 @@ export async function createTestDb() {
     url: tdb.url,
     async close() {
       await h.close();
-      await tdb.drop();
+      await tdb.release();
     },
   };
 }

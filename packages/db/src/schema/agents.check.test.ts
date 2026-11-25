@@ -16,7 +16,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await sql.end();
-  await tdb.drop();
+  await tdb.release();
 });
 
 test("deleting a credential used only by a terminated agent nulls it", async () => {

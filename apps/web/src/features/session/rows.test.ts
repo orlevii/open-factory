@@ -884,3 +884,13 @@ test("a background subagent stays In background after the main turn ends; only a
   ]);
   expect(open[0]).toMatchObject({ state: "stopped" });
 });
+
+test("a workspace_cleanup event is one quiet row that keeps the store's own event object", () => {
+  seq = 0;
+  const ev = e({ type: "workspace_cleanup", projects: [], host: "missing" }, null);
+  const rows = rowsOf([ev]);
+  expect(rows).toHaveLength(1);
+  const [row] = rows;
+  expect(row?.kind).toBe("quiet");
+  expect(row?.kind === "quiet" && row.event).toBe(ev.event);
+});

@@ -51,6 +51,19 @@ const hold = {
   },
   link: { kind: "session", agentSlug: "a" },
 };
+const cleanup = {
+  ...base,
+  id: "clean1",
+  about: "dev-ab12",
+  preview: "Cleaned up @dev-ab12's worktrees.",
+  notice: "worktrees_kept",
+  cleanup: {
+    projects: [
+      { project: "web", removed: true, deleted: [], kept: [{ branch: "feat/x", commits: 3 }] },
+    ],
+  },
+  link: { kind: "session", agentSlug: "dev-ab12" },
+};
 const mention = {
   ...base,
   id: "men1",
@@ -81,7 +94,7 @@ let items: unknown[];
 let later: unknown;
 let api: MockApi;
 beforeEach(() => {
-  items = [hold, mention];
+  items = [hold, mention, cleanup];
   later = undefined;
   api = mockApi({
     "GET /api/inbox?": () => json({ chats: [], items, nextCursor: null }),
@@ -137,4 +150,22 @@ test.each([390, 1440])("a hold row links to /inbox?item= at %ipx", async (width)
   renderApp("/inbox", alice);
   const row = await screen.findByRole("link", { name: /held/ });
   expect(row).toHaveAttribute("href", "/inbox?item=hold1");
+});
+
+test("below 1024 a cleanup notice opens full-width with Back and no composer", async () => {
+  fakeMatchMedia.installWidth(390);
+  const app = renderApp("/inbox?item=clean1", alice);
+  expect(await screen.findByRole("button", { name: "Copy feat/x" })).toBeInTheDocument();
+  expect(app.router.state.location.search).toEqual({ item: "clean1" });
+  expect(screen.queryByRole("textbox")).toBeNull();
+  await userEvent.click(screen.getByRole("link", { name: "Back" }));
+  await waitFor(() => expect(app.router.state.location.search).toEqual({}));
+  expect(await screen.findByRole("heading", { name: "Inbox" })).toBeInTheDocument();
+});
+
+test.each([390, 1440])("a cleanup row links to /inbox?item= at %ipx", async (width) => {
+  fakeMatchMedia.installWidth(width);
+  renderApp("/inbox", alice);
+  const row = await screen.findByRole("link", { name: /about @dev-ab12/ });
+  expect(row).toHaveAttribute("href", "/inbox?item=clean1");
 });

@@ -102,6 +102,7 @@ class Boot {
       runtimes: this.runtimes,
       terminator: { terminate: async () => ({ status: "terminated" }) },
       workspace: { deleteWorkspace: async () => false },
+      cleanup: { run: async () => {} },
       containers: this.containers,
       log: this.log,
       now: () => now,

@@ -170,14 +170,18 @@ export class Workspace {
    * that returned success always keeps the workspace), then removes the workdir (`.claude-config` and its session
    * JSONL included) and the factory's state for it, each through `SafeFs.removeAll` (a link is removed as a link,
    * never followed), then records the deletion (`markDeleted`) before the lock is released. False when pinned.
+   * `beforeRemove` runs after the pin check and before anything is removed, under the same lock (I8 §7.2: the spawned
+   * agent's worktree cleanup); it must not throw.
    */
   async deleteWorkspace(
     slug: string,
     stillUnpinned: () => Promise<boolean>,
     markDeleted: () => Promise<void>,
+    beforeRemove: () => Promise<void>,
   ): Promise<boolean> {
     return this.lock.run(slug, async () => {
       if (!(await stillUnpinned())) return false;
+      await beforeRemove();
       await new SafeFs(this.workdir(slug)).removeAll();
       await new SafeFs(agentStateDir(this.d.factoryHome, slug)).removeAll();
       await markDeleted();

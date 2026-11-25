@@ -3,6 +3,7 @@ import type { EventStore } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import type { Workspace } from "../workspace/workspace.ts";
+import type { SpawnCleanup } from "./cleanup.ts";
 import { EPHEMERAL_TTL_MS, SWEEP_INTERVAL_MS, WORKSPACE_GRACE_MS } from "./lifecycle.ts";
 import type { TerminateService } from "./terminate-service.ts";
 
@@ -19,6 +20,8 @@ export interface ReaperDeps {
   runtimes: Pick<AgentRuntimes, "load">;
   terminator: Pick<TerminateService, "terminate">;
   workspace: Pick<Workspace, "deleteWorkspace">;
+  /** I8 §7.2: the worktree cleanup that runs before a workspace's folders are removed. */
+  cleanup: Pick<SpawnCleanup, "run">;
   /**
    * Absent when the factory has no Docker runtime. Listed once per run, so a terminated agent's leftover container is
    * found however long ago it was terminated (S7 §8 step 5: a container still listed for it is stuck).
@@ -157,6 +160,7 @@ export class Reaper {
             return Boolean(r && !r.workspacePinned && !r.workspaceDeletedAt);
           },
           () => this.d.store.setWorkspaceDeleted(a.id, new Date(this.d.now())),
+          () => this.d.cleanup.run(a),
         );
       } catch (err) {
         this.d.log.error(

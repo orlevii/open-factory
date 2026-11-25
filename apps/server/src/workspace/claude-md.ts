@@ -246,7 +246,7 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
           ...i.projects.map((p) => `  - \`./projects/${p.name}\` → ${p.hostPath}`),
         ]
       : ["- No projects are granted to you."]),
-    "- To change code in a project, create your own git worktree under `<repo>/.worktrees/<slug>-<branch>` instead of editing the main checkout, so you never disturb the humans' or other agents' work.",
+    `- To change code in a project, create your own git worktree under \`<repo>/.worktrees/.agents/${i.slug}/<branch>\` instead of editing the main checkout, so you never disturb the humans' or other agents' work.${i.kind !== "persistent" ? " They are removed a few days after you are terminated, with any uncommitted changes; a branch checked out there is kept unless every commit on it is already pushed or merged, so push what you want to keep." : ""}`,
     ...(i.secretNames.length
       ? [
           `- Environment variables provided to you: ${i.secretNames.join(", ")}. Use them; never print their values.`,

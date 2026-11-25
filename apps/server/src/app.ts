@@ -90,6 +90,7 @@ import { ScheduleStore } from "./scheduling/schedule-store.ts";
 import { Scheduler } from "./scheduling/scheduler.ts";
 import { SecretService } from "./secrets/secret-service.ts";
 import { FactorySettings } from "./settings/factory-settings.ts";
+import { SpawnCleanup } from "./spawning/cleanup.ts";
 import { maySpawn } from "./spawning/may-spawn.ts";
 import { Reaper } from "./spawning/reaper.ts";
 import { SpawnService } from "./spawning/spawn-service.ts";
@@ -148,6 +149,7 @@ declare module "fastify" {
     userAdmin: UserAdminService;
     factorySettings: FactorySettings;
     reaper: Reaper;
+    spawnCleanup: SpawnCleanup;
     schedules: ScheduleService;
     scheduler: Scheduler;
     agentListener: { port: number; close(): Promise<void> };
@@ -508,12 +510,16 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     loopGuard,
   });
   app.decorate("tasks", tasks);
+  // I8 §7.2: the worktree cleanup the reaper runs before it deletes a spawned agent's workspace.
+  const spawnCleanup = new SpawnCleanup({ db: deps.db, store, bus, runtimes, log: app.log });
+  app.decorate("spawnCleanup", spawnCleanup);
   // S7 §10.3: the spawned-agent sweep, started after boot reconciliation, stopped first on close.
   const reaper = new Reaper({
     store,
     runtimes,
     terminator,
     workspace,
+    cleanup: spawnCleanup,
     containers,
     log: app.log,
     now: () => Date.now(),

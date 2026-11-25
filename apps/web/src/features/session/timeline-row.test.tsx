@@ -858,3 +858,37 @@ test("timeline: the config_changed row keeps the roving tab stop it is given", (
   );
   expect(container.firstElementChild).toHaveAttribute("tabindex", "0");
 });
+
+test("timeline: workspace_cleanup is one muted line grouped by project, branch names in mono", () => {
+  const { texts, els } = lines([
+    {
+      type: "workspace_cleanup",
+      projects: [
+        {
+          project: "web",
+          removed: true,
+          deleted: ["feat/y"],
+          kept: [
+            { branch: "feat/x", commits: 3 },
+            { branch: "feat/z", reason: "elsewhere" },
+          ],
+        },
+        {
+          project: "docs",
+          removed: false,
+          deleted: [],
+          kept: [],
+          error: "couldn't clean up: EACCES",
+        },
+      ],
+    },
+    { type: "workspace_cleanup", projects: [], host: "missing" },
+  ]);
+  expect(texts[0]).toContain(
+    "web: removed the worktrees; deleted feat/y; kept feat/x (3 commits not pushed or merged), feat/z (checked out elsewhere)",
+  );
+  expect(texts[0]).toContain("docs: couldn't clean up: EACCES");
+  expect(texts[1]).toContain(
+    "Couldn't clean up worktrees: git isn't installed on the factory host.",
+  );
+});

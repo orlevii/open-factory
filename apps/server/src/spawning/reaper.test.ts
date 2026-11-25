@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import { sendAs } from "../agents/testing/runtime-harness.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { asRunning } from "../test/running.ts";
 import { agentStateDir } from "../workspace/paths.ts";
+import { SafeFs } from "../workspace/safe-fs.ts";
 import { SWEEP_INTERVAL_MS } from "./lifecycle.ts";
 import { Reaper } from "./reaper.ts";
 
@@ -69,6 +71,7 @@ async function setup(o: { maxRunning?: number } = {}) {
     runtimes: app.app.runtimes,
     terminator: app.app.terminator,
     workspace: app.app.workspace,
+    cleanup: app.app.spawnCleanup,
     log,
     now: () => now,
   });
@@ -409,27 +412,149 @@ test("a pin that lands after the candidate was read unpinned keeps the workspace
   const ws = s.t.app.workspace;
   const observed: boolean[] = [];
   const original = ws.deleteWorkspace.bind(ws);
-  vi.spyOn(ws, "deleteWorkspace").mockImplementation(async (slug, stillUnpinned, markDeleted) => {
-    // The candidate query read it unpinned; the guard agrees before the race.
-    observed.push(await stillUnpinned());
-    // The pin route (Task 16's shape) takes the workspace lock first and pins.
-    await ws.lock.run(slug, () => s.t.app.store.setWorkspacePinned(c.id, true));
-    return original(
-      slug,
-      async () => {
-        const v = await stillUnpinned();
-        observed.push(v);
-        return v;
-      },
-      markDeleted,
-    );
-  });
+  vi.spyOn(ws, "deleteWorkspace").mockImplementation(
+    async (slug, stillUnpinned, markDeleted, beforeRemove) => {
+      // The candidate query read it unpinned; the guard agrees before the race.
+      observed.push(await stillUnpinned());
+      // The pin route (Task 16's shape) takes the workspace lock first and pins.
+      await ws.lock.run(slug, () => s.t.app.store.setWorkspacePinned(c.id, true));
+      return original(
+        slug,
+        async () => {
+          const v = await stillUnpinned();
+          observed.push(v);
+          return v;
+        },
+        markDeleted,
+        beforeRemove,
+      );
+    },
+  );
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   expect(observed).toEqual([true, false]);
   expect(existsSync(ws.workdir(c.slug))).toBe(true);
   expect(existsSync(agentStateDir(s.t.factoryHome, c.slug))).toBe(true);
   expect((await s.row(c.id)).workspaceDeletedAt).toBeNull();
+});
+
+/** A real repository registered as a project, with a worktree of `slug` in it (a branch with an unpushed commit). */
+async function projectWithWorktree(s: S, slug: string) {
+  const repo = path.join(mkdtempSync(path.join(tmpdir(), "of-reap-")), "web");
+  mkdirSync(repo);
+  const g = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
+    });
+  g(repo, "init", "-q", "-b", "main");
+  g(repo, "commit", "-q", "--allow-empty", "-m", "init");
+  const dir = path.join(repo, ".worktrees/.agents", slug, "feat/x");
+  g(repo, "worktree", "add", "-q", "-b", "feat/x", dir);
+  g(dir, "commit", "-q", "--allow-empty", "-m", "work");
+  await s.t.db
+    .insert(schema.projects)
+    .values({ id: "p-web", name: "web", hostPath: repo })
+    .onConflictDoUpdate({ target: schema.projects.id, set: { hostPath: repo } });
+  return { repo, dir };
+}
+const cleanupEvents = (s: S, id: string) =>
+  s.t.db
+    .select()
+    .from(schema.sessionEvents)
+    .where(eq(schema.sessionEvents.agentId, id))
+    .then((rows) => rows.filter((r) => r.type === "workspace_cleanup"));
+
+test("a spawned agent's worktrees are cleaned up before its workspace goes, and the humans are told what was kept", async () => {
+  const s = await setup();
+  const c = await s.spawnHibernated("w");
+  const { dir } = await projectWithWorktree(s, c.slug);
+  await s.t.app.terminator.terminate(c.id, "@or");
+  await c.rt.settled();
+  now = Date.now() + 3 * day + 1;
+  await s.reaper.run();
+  expect(existsSync(dir)).toBe(false);
+  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(false);
+  expect((await cleanupEvents(s, c.id)).map((r) => r.payload)).toEqual([
+    {
+      projects: [
+        {
+          project: "web",
+          removed: true,
+          deleted: [],
+          kept: [{ branch: "feat/x", commits: 1 }],
+        },
+      ],
+    },
+  ]);
+  const notices = await s.t.db
+    .select()
+    .from(schema.messages)
+    .where(eq(schema.messages.notice, "worktrees_kept"));
+  expect(notices.map((n) => n.subjectAgentId).sort()).toEqual([c.id, c.id].sort());
+});
+
+test("a pinned workspace keeps its worktrees; unpinning later runs the cleanup", async () => {
+  const s = await setup();
+  const c = await s.spawnHibernated("pw");
+  const { dir } = await projectWithWorktree(s, c.slug);
+  await s.t.app.terminator.terminate(c.id, "@or");
+  await c.rt.settled();
+  await s.t.app.store.setWorkspacePinned(c.id, true);
+  now = Date.now() + 3 * day + 1;
+  await s.reaper.run();
+  expect(existsSync(dir)).toBe(true);
+  expect(await cleanupEvents(s, c.id)).toHaveLength(0);
+
+  await s.t.app.store.setWorkspacePinned(c.id, false);
+  now += SWEEP_INTERVAL_MS;
+  await s.reaper.run();
+  expect(existsSync(dir)).toBe(false);
+  expect(await cleanupEvents(s, c.id)).toHaveLength(1);
+});
+
+test("the workspace is deleted even when the cleanup can't record its result", async () => {
+  const s = await setup();
+  const c = await s.spawnHibernated("cf");
+  await projectWithWorktree(s, c.slug);
+  await s.t.app.terminator.terminate(c.id, "@or");
+  await c.rt.settled();
+  vi.spyOn(s.t.app.store, "append").mockRejectedValue(new Error("db down"));
+  now = Date.now() + 3 * day + 1;
+  await s.reaper.run();
+  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(false);
+  expect((await s.row(c.id)).workspaceDeletedAt).toEqual(new Date(now));
+});
+
+test("a retried deletion doesn't clean up or tell twice", async () => {
+  const s = await setup();
+  const c = await s.spawnHibernated("rt");
+  await projectWithWorktree(s, c.slug);
+  await s.t.app.terminator.terminate(c.id, "@or");
+  await c.rt.settled();
+  // The folder removal fails after the cleanup ran, as the reaper's retry path assumes.
+  const removeAll = vi
+    .spyOn(SafeFs.prototype, "removeAll")
+    .mockRejectedValueOnce(new Error("EBUSY"));
+  now = Date.now() + 3 * day + 1;
+  await s.reaper.run();
+  now += SWEEP_INTERVAL_MS;
+  await s.reaper.run();
+  removeAll.mockRestore();
+  expect(await cleanupEvents(s, c.id)).toHaveLength(1);
+  const notices = await s.t.db
+    .select()
+    .from(schema.messages)
+    .where(eq(schema.messages.notice, "worktrees_kept"));
+  expect(notices).toHaveLength(2);
+  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(false);
 });
 
 test("a failing deletion is logged and retried by the next run", async () => {

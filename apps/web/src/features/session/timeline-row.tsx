@@ -27,6 +27,7 @@ import type { RowProgress } from "./timeline-item";
 import { ToolCallRow } from "./tool-call-row";
 import { PeerLine, UpdateGroup } from "./update-group";
 import { WorkGroup } from "./work-group";
+import { WorkspaceCleanupLine } from "./workspace-cleanup-line";
 
 const Mono = ({ children }: { children: ReactNode }) => (
   <span className="font-mono">{children}</span>
@@ -581,6 +582,8 @@ export function TimelineRow(props: TimelineRowProps) {
     case "quiet":
       if (row.event.type === "config_changed")
         return <ConfigChangedLine by={row.event.by} changes={row.event.changes} rowProps={rp} />;
+      if (row.event.type === "workspace_cleanup")
+        return <WorkspaceCleanupLine event={row.event} rowProps={rp} />;
       return (
         <QuietLine rowProps={rp} icon={quietIcon(row.event)} detail={quietDetail(row.event)}>
           {quietText(row.event, interruptedEnds.has(row.seq))}

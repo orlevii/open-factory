@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { envelopeSchema } from "./messaging.ts";
 import { toolMetaSchema } from "./tool-meta.ts";
+import { cleanupSchema } from "./workspace-cleanup.ts";
 
 const parent = { parentToolUseId: z.string().optional() };
 /**
@@ -282,6 +283,11 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
   /** A plugin of the agent's closure that isn't in the first `init` (spec §7.3 step 8). `pin` is as `Effective.library.plugins`. */
   z.object({ type: z.literal("plugin_not_loaded"), key: z.string(), pin: z.string() }),
   z.object({ type: z.literal("interrupt_unconfirmed") }),
+  /** A terminated spawned agent's worktrees, cleaned up just before its workspace was deleted (I8 spec §7.5). At most one per agent. */
+  z.object({
+    type: z.literal("workspace_cleanup"),
+    ...cleanupSchema.shape,
+  }),
 ]);
 export type FactoryEvent = z.infer<typeof factoryEventSchema>;
 

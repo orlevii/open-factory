@@ -29,6 +29,7 @@ import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/co
 import { StatusLabel } from "@/features/tasks/status-label";
 import { INBOX_DWELL_MS, PREFETCH_REST_MS } from "@/lib/timing";
 import { chatSlugOf, type InboxItem, inboxQueryOptions, useOpenItem, usePaneItem } from "./api";
+import { CleanupPane } from "./cleanup-pane";
 import { aboutOf } from "./credential-notice";
 import { LoopHoldPane } from "./loop-hold-pane";
 
@@ -68,9 +69,17 @@ function Sender({ item }: { item: InboxItem }) {
 
 /** The exact target, as the row links it. */
 function OpenLink({ item }: { item: InboxItem }) {
+  const link = item.link;
   return (
     <Button asChild variant="outline" size="sm" className="shrink-0">
-      <OpenLinkTarget link={item.link} />
+      {item.notice === "worktrees_kept" && link.kind === "session" ? (
+        // A cleanup notice has no sender event (no `seq`): the terminated agent's Session, whose last event is the cleanup.
+        <Link to="/agents/$slug/session" params={{ slug: link.agentSlug }}>
+          Open in session
+        </Link>
+      ) : (
+        <OpenLinkTarget link={link} />
+      )}
     </Button>
   );
 }
@@ -399,6 +408,8 @@ function TaskContent({
 function PaneBody({ item }: { item: InboxItem }) {
   if (item.notice === "loop_held" && item.loopHold)
     return <LoopHoldPane item={item} hold={item.loopHold} />;
+  if (item.notice === "worktrees_kept" && item.cleanup)
+    return <CleanupPane item={item} cleanup={item.cleanup} />;
   const link = item.link;
   switch (link.kind) {
     case "session":

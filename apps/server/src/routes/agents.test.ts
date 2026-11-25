@@ -421,6 +421,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
         await s.sql`update agents set workspace_deleted_at = now() where id = ${id}`;
         order.push("deleted");
       },
+      async () => {},
     );
     await reached;
     const pin = call("PUT", "/api/agents/boss-ee55/workspace-pin").then((r) => {

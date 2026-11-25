@@ -403,10 +403,12 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.decorate("credentials", credentials);
   // I3 §5.4: before UserAdminService, which ends a disabled user's attempt.
   const signInSpawn = deps.signInSpawn ?? spawn;
+  const signInDirs = path.join(config.factoryHome, "state", "sign-in");
   app.decorate(
     "signIn",
     new SignInAttempts({
-      startPty: () => startHostPty({ claudeBin: config.claudeBin, spawnFn: signInSpawn }),
+      startPty: () =>
+        startHostPty({ claudeBin: config.claudeBin, spawnFn: signInSpawn, parent: signInDirs }),
       run: (pty) => runSetupToken(pty),
       verify: (value) => verifier.verify("oauth_token", value),
       credentials,
@@ -657,7 +659,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
       .catch((e: unknown) => app.log.error({ err: e }, "library boot purge failed"));
     librarySweep.start();
     // I3 §5.2: a crashed server's sign-in temp dirs.
-    void sweepStaleDirs(os.tmpdir(), clock().getTime());
+    void sweepStaleDirs(signInDirs, clock().getTime());
   } catch (err) {
     // A wake may already have started a process. The onClose hook closes the agent listener after the runtimes. A
     // failing close is logged and never masks the boot's error.

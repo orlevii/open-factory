@@ -15,9 +15,10 @@ pid, fd = pty.fork()
 if pid == 0:
     os.execvp(sys.argv[1], sys.argv[1:])
 codes = [c.encode() for c in os.environ["CODE"].split(",")]
+bads = codes.count(b"bad")
 out = b""; sent = 0; t0 = time.time()
 while time.time() - t0 < 10:
-    r, _, _ = select.select([fd], [], [], 0.2)
+    r, _, _ = select.select([fd], [], [], 0.05)
     if fd in r:
         try: d = os.read(fd, 65536)
         except OSError: break
@@ -27,8 +28,9 @@ while time.time() - t0 < 10:
     if sent < len(codes) and b"Paste code here" in out and out.count(b"Press Enter to retry") == sent:
         code = codes[sent]; sent += 1
         os.write(fd, code); time.sleep(0.15); os.write(fd, b"\r")
-        if code == b"bad" and sent == len(codes):
-            t0 = time.time() - 8
+    # a final bad code never exits on its own: stop once every bad code has been rejected
+    if sent == len(codes) and codes[-1] == b"bad" and out.count(b"OAuth error:") >= bads:
+        break
 sys.stdout.buffer.write(out)
 try:
     os.kill(pid, 9)

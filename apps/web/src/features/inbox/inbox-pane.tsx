@@ -36,6 +36,7 @@ import {
   useOpenItem,
 } from "./api";
 import { aboutOf } from "./credential-notice";
+import { LoopHoldPane } from "./loop-hold-pane";
 
 /** Static plates where a pane body will be. */
 function ExcerptSkeleton() {
@@ -417,6 +418,8 @@ function TaskContent({
 
 /** The body by link kind; a new kind fails to compile here. */
 function PaneBody({ item }: { item: InboxItem }) {
+  if (item.notice === "loop_held" && item.loopHold)
+    return <LoopHoldPane item={item} hold={item.loopHold} />;
   const link = item.link;
   switch (link.kind) {
     case "session":
@@ -456,7 +459,7 @@ function PaneItem({
               {formatInboxTime(new Date(item.createdAt), new Date())}
             </time>
             <span className="ml-auto" />
-            <OpenLink item={item} />
+            {item.notice !== "loop_held" && <OpenLink item={item} />}
           </>
         )}
       </div>

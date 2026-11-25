@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { imageStatusSchema } from "./images.ts";
 import { MSG } from "./messages.ts";
 import { modelSchema } from "./models.ts";
 import { hostSkillSchema, nameSchema, secretNameSchema } from "./names.ts";
@@ -18,22 +17,11 @@ const IMAGE_REF = new RegExp(
     // Only the digest Docker accepts: a malformed one is a validation error, not a Docker 400.
     "(?:@sha256:[0-9a-f]{64})?$",
 );
-const USER_TAG_PREFIX = "open-factory-user/";
-/**
- * An image reference only (no `..`, whitespace, `?` or `#`): it reaches Docker API paths that aren't encoded.
- * A built user image is named by its bare folder name, never by its `open-factory-user/` tag (spec §10.1),
- * so the tag can't bypass the no-pull rule.
- */
+/** An image reference only (no `..`, whitespace, `?` or `#`): it reaches Docker API paths that aren't encoded. */
 export const imageRefSchema = z
   .string()
   .max(255)
-  .regex(IMAGE_REF, "Use a Docker image reference, like ghcr.io/org/image:tag.")
-  .refine((v) => !v.startsWith(USER_TAG_PREFIX), {
-    error: (iss) => {
-      const name = String(iss.input).slice(USER_TAG_PREFIX.length).split(/[:@]/)[0];
-      return `Use the bare name ${name} for a user image.`;
-    },
-  });
+  .regex(IMAGE_REF, "Use a Docker image reference, like ghcr.io/org/image:tag.");
 
 export const templateConfigSchema = z.object({
   name: nameSchema,
@@ -128,7 +116,6 @@ export const templateSummarySchema = z.object({
   errors: z.number().int(),
   warnings: z.number().int(),
   agentCount: z.number().int(),
-  imageStatus: imageStatusSchema.optional(),
 });
 export const templatesListSchema = z.object({
   dir: z.string(),
@@ -146,15 +133,14 @@ export const templateDetailSchema = z.object({
   files: z.array(templateFileStateSchema),
   issues: z.array(templateIssueSchema),
   agents: z.array(z.string()),
-  imageStatus: imageStatusSchema.optional(),
   /** U2 §15.3: the folder's `avatar.svg` version (null when absent or rejected) and whether it is over 256 KB. */
   avatar: z.object({ version: z.string().nullable(), tooLarge: z.boolean() }),
 });
 export type TemplateDetail = z.infer<typeof templateDetailSchema>;
 export const templateDetailResponseSchema = z.object({ template: templateDetailSchema });
-/** U2 §14: the web's static routes beside `/templates/$name` (`/templates/new`, `/templates/images`). A template
- *  with one of these names would be unreachable by URL, so creation refuses them. */
-export const RESERVED_TEMPLATE_NAMES: readonly string[] = ["new", "images"];
+/** U2 §14: the web's static route beside `/templates/$name` (`/templates/new`). A template
+ *  with this name would be unreachable by URL, so creation refuses it. */
+export const RESERVED_TEMPLATE_NAMES: readonly string[] = ["new"];
 export const isReservedTemplateName = (name: string) => RESERVED_TEMPLATE_NAMES.includes(name);
 export const createTemplateBodySchema = z.object({
   name: nameSchema.refine((n) => !isReservedTemplateName(n), MSG.nameReserved),

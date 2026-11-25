@@ -62,22 +62,14 @@ An agent that is idle is hibernated: its process is stopped (a Docker agent's co
 
 Docker is the default runtime for new templates. Each agent gets one container, created on its first wake, stopped when it hibernates and started again on the next wake. Claude Code runs inside it as a non-root `agent` user, with only the agent's working directory, the projects it was granted and its skills mounted. Files the agent writes in a granted repo are owned by your host user.
 
-- **Image.** A template's `image:` wins, otherwise `FACTORY_DEFAULT_IMAGE` (`ghcr.io/orlevii/open-factory/base:latest`, see the [base image](images/base/README.md)). A bare name such as `image: playwright` is a user image (below); anything with a registry, a path or a tag (`ghcr.io/you/img:1`, `node:24-slim`) is a registry image. For development, build the image locally and set `FACTORY_DEFAULT_IMAGE=open-factory-base:dev`.
-- **Pulls are explicit.** For a registry image, the factory pulls only when it is missing locally, once per image reference, when an agent wakes. It never updates a tag that is already present; pull a newer image yourself when you want one. While it pulls, the agent shows as queued ("Pulling the image..."). A user image is never pulled: an agent whose user image isn't built fails to start and says how to build it.
-- **No sudo.** Containers run with `no-new-privileges`, so `agent` cannot become root. If an agent needs system packages, add a user image `FROM` the base image and set its name as the template's `image:`.
+- **Image.** A template's `image:` wins, otherwise `FACTORY_DEFAULT_IMAGE` (`ghcr.io/orlevii/open-factory/base:latest`, see the [base image](images/base/README.md)). The factory runs images, it never builds them: the value is any Docker reference, used as written (a bare name such as `playwright` is a local Docker tag). For development, build the image locally and set `FACTORY_DEFAULT_IMAGE=open-factory-base:dev`.
+- **Pulls are explicit.** The factory pulls an image only when it is missing locally, once per image reference, when an agent wakes. It never updates a tag that is already present; pull a newer image yourself when you want one. While it pulls, the agent shows as queued ("Pulling the image..."). An image that is missing and can't be pulled fails the start: "Image `<ref>` isn't available locally and couldn't be pulled."
+- **No sudo.** Containers run with `no-new-privileges`, so `agent` cannot become root. If an agent needs system packages, build your own image `FROM` the base image with `docker build`, and set it as the template's `image:`.
 - **Re-creation wipes `/home/agent`.** The container is removed and re-created on a wake when its grants (mounts) or its image changed. Shell history, `gh` login state, `known_hosts` and caches in `/home/agent` are lost. Keep credentials in secrets, and the working directory is never affected.
 - **Reaching the factory.** Containers call the factory's agent listener at `FACTORY_AGENT_URL` (`http://host.docker.internal:<agent port>` by default). See "Agent listener" for Linux, compose, rootless Docker and firewalls.
 - **CLI bundle.** The bundled CLI is mounted into containers, so run `pnpm build` first; a Docker agent will not start without it.
 
 `pnpm smoke:docker` is a live check, not part of `pnpm test`: it runs a real Claude in a real container (build the image as `open-factory-base:dev` first) and needs an OAuth token in `~/.open-factory-spike/oauth-token`.
-
-### User images
-
-A user image is a folder `${FACTORY_HOME}/images/<name>/` with a `Dockerfile` (and anything it copies; `.dockerignore` is honoured). A template with `image: <name>` uses `open-factory-user/<name>:latest`, which the factory builds and never pulls. Build it in **Templates → Images** or with `open-factory images build <name>`; builds pull a newer base image by default (`--no-pull` skips that, CLI only). Agents use a rebuilt image from their next start. Status comes from the image's Docker labels: "Out of date" once a file in the folder has changed since the build.
-
-**Upgrading from an earlier version.** A bare name used to mean a Docker Hub image. A template with `image: ubuntu` (or any other bare name) is now invalid unless `${FACTORY_HOME}/images/ubuntu/` exists, and an agent created from it fails to start with an image error. Write the Docker Hub name in full instead: `image: docker.io/library/ubuntu`.
-
-`pnpm smoke:images` is a live check, not part of `pnpm test`: it builds a user image through the API and the CLI, starts a Docker agent on it with a real Claude (haiku), and checks the image was never pulled. It needs Postgres, Docker, a real `claude` on the PATH, an OAuth token in `~/.open-factory-spike/oauth-token`, `pnpm build` (the CLI bundle) and `open-factory-base:dev` for its local-base step, and uses a throwaway database and `FACTORY_HOME`.
 
 ## Agent listener
 
@@ -167,11 +159,7 @@ Behind a reverse proxy, login rate limiting and session IP addresses see the pro
 
 ```
 node apps/cli/dist/open-factory.js login|status|logout|help
-node apps/cli/dist/open-factory.js images
-node apps/cli/dist/open-factory.js images build (<name>|--all) [--no-pull]
 ```
-
-`images` lists the user images with their status; `images build` builds one, or with `--all` every image that isn't up to date (folders without a `Dockerfile` are skipped). See "User images".
 
 Config lives at `${XDG_CONFIG_HOME:-~/.config}/open-factory/cli.json` (mode 0600). `OPEN_FACTORY_URL` and `OPEN_FACTORY_TOKEN` override the file.
 

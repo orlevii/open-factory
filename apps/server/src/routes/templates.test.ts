@@ -116,7 +116,7 @@ test("validate reports a YAML syntax error with its file and line and writes not
 });
 
 test("the names the web routes use are reserved: POST rejects them; a folder on disk with one still lists", async () => {
-  for (const name of ["images", "new"]) {
+  for (const name of ["new"]) {
     const r = await post("/api/templates", { name, displayName: "X" });
     expect(r.statusCode).toBe(400);
     expect(r.json().error).toMatchObject({
@@ -126,7 +126,7 @@ test("the names the web routes use are reserved: POST rejects them; a folder on 
     });
   }
   // Made on disk (an agent, a shell): the list and its detail don't crash on it.
-  for (const name of ["images", "new"]) {
+  for (const name of ["new"]) {
     mkdirSync(path.join(h.factoryHome, `templates/${name}`), { recursive: true });
     writeFileSync(
       path.join(h.factoryHome, `templates/${name}/template.yaml`),
@@ -136,9 +136,9 @@ test("the names the web routes use are reserved: POST rejects them; a folder on 
   const list = await get("/api/templates");
   expect(list.statusCode).toBe(200);
   const names = list.json().templates.map((t: { name: string }) => t.name);
-  expect(names).toEqual(expect.arrayContaining(["images", "new"]));
-  expect((await get("/api/templates/images")).statusCode).toBe(200);
-  for (const name of ["images", "new"])
+  expect(names).toEqual(expect.arrayContaining(["new"]));
+  expect((await get("/api/templates/new")).statusCode).toBe(200);
+  for (const name of ["new"])
     rmSync(path.join(h.factoryHome, `templates/${name}`), { recursive: true, force: true });
 });
 

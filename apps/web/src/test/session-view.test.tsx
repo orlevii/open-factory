@@ -846,7 +846,6 @@ test.each([
   ["secrets", "Open Settings → Secrets", "/settings/secrets"],
   ["credentials", "Open Settings → Credentials", "/settings/credentials"],
   ["projects", "Open Settings → Projects", "/settings/projects"],
-  ["image", "Open Templates → Images", "/templates/images"],
   ["config", "Open configuration", "/agents/dev/config"],
   ["template", "Open template dev", "/templates/dev"],
 ] as const)("an error with fix %s links to %s", async (fix, linkName, href) => {

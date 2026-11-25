@@ -22,7 +22,6 @@ import {
   type ConfigDoc,
   type ConfigHashes,
   canonicalJson,
-  isUserImageRef,
   LOCAL_RUNTIME_REFUSAL,
   LOCAL_SKILL_NAMES,
   NAME_PATTERN,
@@ -42,7 +41,6 @@ import { OrgRefusedError } from "../agents/errors.ts";
 import type { PolicyInputs } from "../agents/policy-inputs.ts";
 import { type Config, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
-import { imageDir } from "../images/context.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
 import { avatarStat } from "./avatar.ts";
 import { KeyLock } from "./key-lock.ts";
@@ -184,41 +182,16 @@ export class TemplateIndex {
     return out.sort();
   }
 
-  /**
-   * Names of `<factoryHome>/images/<name>/` folders that hold a Dockerfile, by the builder's rule: the folder's
-   * real path is a direct child of images/ (`imageDir`), so a link leaving images/ never validates.
-   */
-  private async userImages(): Promise<string[]> {
-    const root = path.join(this.config.factoryHome, "images");
-    let entries: Dirent[];
-    try {
-      entries = await readdir(root, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-    const out: string[] = [];
-    for (const e of entries) {
-      if (!isUserImageRef(e.name)) continue;
-      try {
-        const dir = await imageDir(root, e.name);
-        if ((await stat(path.join(dir, "Dockerfile"))).isFile()) out.push(e.name);
-      } catch {}
-    }
-    return out;
-  }
-
   async context(): Promise<ValidationContext> {
-    const [projects, secrets, templates, userImages] = await Promise.all([
+    const [projects, secrets, templates] = await Promise.all([
       this.db.select({ name: schema.projects.name }).from(schema.projects),
       this.db.select({ name: schema.secrets.name }).from(schema.secrets),
       this.names(),
-      this.userImages(),
     ]);
     return {
       projects: new Set(projects.map((p) => p.name)),
       secrets: new Set(secrets.map((s) => s.name)),
       templates: new Set(templates),
-      userImages: new Set(userImages),
       library: this.library,
       localRuntimeAllowed: localRuntimeAllowed(this.config),
     };

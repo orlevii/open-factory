@@ -17,7 +17,6 @@ import {
 } from "@open-factory/shared";
 import { LOCAL_RUNTIME_DISABLED } from "../config.ts";
 import { FIELD_MSG } from "../field-messages.ts";
-import { resolveImage } from "../images/resolve.ts";
 import { type LibraryIndex, skillProblem } from "../library/library-index.ts";
 import { redactOutput } from "../redact.ts";
 import { parseJson, parseYaml } from "./parse.ts";
@@ -26,8 +25,6 @@ export interface ValidationContext {
   projects: Set<string>;
   secrets: Set<string>;
   templates: Set<string>;
-  /** Names whose `images/<name>/Dockerfile` exists. */
-  userImages: Set<string>;
   /** Where every listed skill is resolved (spec §6.6). */
   library: Pick<LibraryIndex, "resolveSkill">;
   /** `localRuntimeAllowed(config)`: the one gate rule. */
@@ -145,13 +142,6 @@ export async function validateEffective(
       const found = await ctx.library.resolveSkill(n);
       if (!found.ok) t("error", ["skills", i], skillProblem(n, found));
     }
-    const image = config.image ? resolveImage(config.image, "") : undefined;
-    if (image?.kind === "user" && !ctx.userImages.has(image.name))
-      t(
-        "error",
-        ["image"],
-        `No user image \u2018${image.name}\u2019 (images/${image.name}/Dockerfile). For a Docker Hub image, write docker.io/library/${image.name}.`,
-      );
     for (const [i, p] of config.projects.entries())
       if (!ctx.projects.has(p))
         t(

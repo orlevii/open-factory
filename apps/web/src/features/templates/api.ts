@@ -1,8 +1,6 @@
 import {
   apiFetch,
   type createTemplateBodySchema,
-  imageLogSchema,
-  imagesListSchema,
   issuesResponseSchema,
   putTemplateFileResponseSchema,
   type TemplateFile,
@@ -70,23 +68,3 @@ export const deletedTemplateFrom = (state: unknown): string | undefined => {
   return typeof v === "string" ? v : undefined;
 };
 export const clearedState = () => ({}) as never;
-
-// S10 §10.5: user images. The list refetches on `images_changed` / `image_build` (the layout invalidates ["images"]).
-const imagePath = (name: string) => `/api/images/${encodeURIComponent(name)}`;
-
-export const imagesQueryOptions = queryOptions({
-  queryKey: ["images"],
-  queryFn: () => apiFetch("/api/images", { schema: imagesListSchema }),
-});
-
-/** The running build's lines, or the last build's (up to 200). */
-export const fetchImageLog = (name: string) =>
-  apiFetch(`${imagePath(name)}/log`, { schema: imageLogSchema });
-
-/** Starts a build (or joins the running one); progress arrives as `image_build` frames. */
-export const buildImage = (name: string) =>
-  apiFetch(`${imagePath(name)}/build`, {
-    method: "POST",
-    body: {},
-    schema: zod.object({ state: zod.literal("building") }),
-  });

@@ -23,7 +23,6 @@ const ctx: ValidationContext = {
   projects: new Set(["app"]),
   secrets: new Set(["GH_TOKEN"]),
   templates: new Set(["tech-lead", "dev"]),
-  userImages: new Set(["smoke"]),
   library: hostOnlyLibrary(claude, claude),
   localRuntimeAllowed: true,
 };
@@ -207,22 +206,7 @@ test("gate off: validator warns on runtime: local", async () => {
   ).toEqual([]);
 });
 
-test("a bare image name without images/<name>/Dockerfile is an error naming the escape", async () => {
-  const yaml = "name: tech-lead\ndisplay_name: Tech Lead\nruntime: docker\nimage: ubuntu\n";
-  const r = await validateTemplate(tpl({ ...base, "template.yaml": yaml }), "tech-lead", ctx);
-  expect(r.issues).toEqual([
-    {
-      severity: "error",
-      file: "template.yaml",
-      message:
-        "No user image \u2018ubuntu\u2019 (images/ubuntu/Dockerfile). For a Docker Hub image, write docker.io/library/ubuntu.",
-      line: 4,
-      path: "template.image",
-    },
-  ]);
-});
-
-test("a bare image name with its Dockerfile, and a registry reference, are fine", async () => {
+test("a template image is any Docker reference: a bare local tag or a registry one", async () => {
   for (const image of ["smoke", "docker.io/library/ubuntu"]) {
     const yaml = `name: tech-lead\ndisplay_name: Tech Lead\nruntime: docker\nimage: ${image}\n`;
     const r = await validateTemplate(tpl({ ...base, "template.yaml": yaml }), "tech-lead", ctx);

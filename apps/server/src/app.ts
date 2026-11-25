@@ -32,7 +32,6 @@ import { runSetupToken } from "./credentials/sign-in/setup-token.ts";
 import { CredentialVerifier } from "./credentials/verify.ts";
 import { Vault } from "./crypto/vault.ts";
 import { registerErrorHandlers } from "./errors.ts";
-import { ImageBuilder } from "./images/builder.ts";
 import { LibraryIndex } from "./library/library-index.ts";
 import { LibrarySweep, skillDirsInUse } from "./library/library-sweep.ts";
 import { dbSourcesStore, SourcesService } from "./library/sources-service.ts";
@@ -57,7 +56,6 @@ import { authRoutes } from "./routes/auth.ts";
 import { claudeSignInRoutes } from "./routes/claude-sign-in.ts";
 import { credentialsRoutes } from "./routes/credentials.ts";
 import { hostRoutes } from "./routes/host.ts";
-import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { libraryRoutes } from "./routes/library.ts";
 import { meRoutes } from "./routes/me.ts";
@@ -135,7 +133,6 @@ declare module "fastify" {
     terminator: TerminateService;
     tasks: TaskService;
     usage: UsageService;
-    images: ImageBuilder;
     invites: InviteService;
     userAdmin: UserAdminService;
     factorySettings: FactorySettings;
@@ -219,7 +216,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   config.factoryHome = await realpath(config.factoryHome);
   await mkdir(path.join(config.factoryHome, "agents"), { recursive: true });
   await mkdir(path.join(config.factoryHome, "templates"), { recursive: true });
-  await mkdir(path.join(config.factoryHome, "images"), { recursive: true });
 
   // S10 §8.2: the settings row loads before anything that reads it (the runtimes, boot reconciliation).
   const settings = await FactorySettings.load(deps.db, app.log);
@@ -411,16 +407,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     new UsageService({ db: deps.db, now: clock, timezone: () => config.factoryTimezone }),
   );
   app.decorate(
-    "images",
-    new ImageBuilder({
-      docker,
-      imagesRoot: path.join(config.factoryHome, "images"),
-      bus,
-      now: clock,
-      log: app.log,
-    }),
-  );
-  app.decorate(
     "invites",
     new InviteService({ db: deps.db, now: clock, publicUrl: config.publicUrl, bus }),
   );
@@ -582,8 +568,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(settingsRoutes, { db: deps.db });
   await app.register(secretsRoutes);
   await app.register(projectsRoutes);
-  await app.register(templatesRoutes, { docker });
-  await app.register(imagesRoutes, { docker });
+  await app.register(templatesRoutes);
   await app.register(inboxRoutes);
   await app.register(setupRoutes, { db: deps.db });
   await app.register(tasksRoutes);

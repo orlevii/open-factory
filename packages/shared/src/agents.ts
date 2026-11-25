@@ -43,7 +43,8 @@ export const agentLiveShape = {
   rateLimitExact: z.boolean().optional(),
   runtimeDisabled: z.string().optional(),
   errorKind: errorKindSchema.optional(),
-  image: z.string().optional(),
+  /** Docker agents: the image of the live process (null when none runs) and the one the config resolves to now. */
+  image: z.object({ running: z.string().nullable(), next: z.string() }).optional(),
   pulling: z.boolean().optional(),
   /** U3: when the open turn started (ISO), so the UI can time it. */
   turnStartedAt: z.string().optional(),

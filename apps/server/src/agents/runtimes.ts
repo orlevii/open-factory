@@ -7,7 +7,6 @@ import {
   type QueueItem,
 } from "@open-factory/shared";
 import { DEFAULT_MAX_RUNNING_AGENTS, LOCAL_RUNTIME_DISABLED } from "../config.ts";
-import { resolveImage, USER_TAG_PREFIX, userNameOfTag } from "../images/resolve.ts";
 import type { AgentTokens } from "../mcp/tokens.ts";
 import type { Forward } from "../messaging/forwarder.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -171,21 +170,14 @@ export class AgentRuntimes {
       },
       ensure: async (ref: string, signal: AbortSignal) => {
         try {
-          if (ref.startsWith(USER_TAG_PREFIX)) {
-            // Spec §10.1: a user image is built by the factory, never pulled. This keys on the tag prefix, so a
-            // registry template that literally names `open-factory-user/<x>:latest` is never pulled either; that
-            // namespace is the factory's own local one, so nothing is lost.
-            if (!(await docker.containers.hasImage(ref)))
-              throw new AgentStartError(
-                `Image \`${userNameOfTag(ref)}\` isn't built. Build it in Templates \u2192 Images, or run \`open-factory images build ${userNameOfTag(ref)}\`.`,
-                "image",
-              );
-            return;
-          }
           await docker.containers.ensureImage(ref, signal);
         } catch (err) {
-          // The registry's error stays verbatim (spec §11.2); only an unreachable daemon is named as such.
-          throw dockerUnreachable(err) ? dockerStartError(err) : err;
+          // The registry's own error goes to the log (the Supervisor warns with it); the start fails with the same
+          // words whatever the cause. Only an unreachable daemon is named as such.
+          if (dockerUnreachable(err)) throw dockerStartError(err);
+          throw new AgentStartError(
+            `Image \`${ref}\` isn't available locally and couldn't be pulled.`,
+          );
         }
       },
     };
@@ -275,13 +267,15 @@ export class AgentRuntimes {
   /** I2 §6.2: the Docker image reference a config resolves to (what `setNextImage` takes); undefined for a local one. */
   imageRef(config: Pick<Effective["config"], "runtime" | "image">): string | undefined {
     if (config.runtime !== "docker" || !this.d.docker) return undefined;
-    return resolveImage(config.image, this.d.docker.defaultImage).tag;
+    return config.image ?? this.d.docker.defaultImage;
   }
 
   /** I2 §6.2: a loaded runtime's next image (`ConfigChanges` refreshes it on every change); a no-op when not loaded. */
   setNextImage(agentId: string, ref: string | undefined): void {
     const rt = this.loaded.get(agentId);
-    if (rt) rt.nextImage = ref;
+    if (!rt || rt.nextImage === ref) return;
+    rt.nextImage = ref;
+    rt.publishStatus(); // the Image row shows it before any restart
   }
 
   /** What every loaded runtime's running process started with (the Library sweep reads its cache directories). */

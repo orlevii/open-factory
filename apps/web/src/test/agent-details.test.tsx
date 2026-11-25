@@ -416,7 +416,9 @@ test("Runtime: template, credential and projects; Unsandboxed only for a local a
   expect(rt.getByText("web")).toBeInTheDocument();
   expect(rt.getByText("Unsandboxed")).toBeInTheDocument();
   first.unmount();
-  setup({ agent: agentSummary({ runtime: "docker", image: "node:22" }) });
+  setup({
+    agent: agentSummary({ runtime: "docker", image: { running: "node:22", next: "node:22" } }),
+  });
   const docker = within(await section("Runtime"));
   expect(docker.getByText("node:22")).toBeInTheDocument();
   expect(docker.queryByText("Unsandboxed")).toBeNull();

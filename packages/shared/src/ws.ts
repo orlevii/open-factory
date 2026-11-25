@@ -103,7 +103,6 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   /** S10: factory settings, users and invites, and the images list changed. */
   z.object({ type: z.literal("settings_changed") }),
   z.object({ type: z.literal("users_changed") }),
-  z.object({ type: z.literal("images_changed") }),
   /**
    * I5 §9.5: the Library (skill sources) changed; the Library pages refetch. `addFailed` is
    * the repo of a background GitHub add that failed and whose row was removed: the spec (§10.4) asks for a toast
@@ -128,12 +127,6 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
     action: z.enum(["agent_created", "agent_archived", "agent_unarchived", "template_created"]),
     by: z.string(),
     subject: z.string(),
-  }),
-  z.object({
-    type: z.literal("image_build"),
-    name: z.string(),
-    state: z.enum(["building", "succeeded", "failed"]),
-    lines: z.array(z.string()).optional(),
   }),
 ]);
 export type ServerMessage = z.infer<typeof serverMessageSchema>;

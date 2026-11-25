@@ -4,7 +4,6 @@ import type { AgentRuntimeSpec } from "@open-factory/harness";
 import { asc, eq, inArray } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE, localRuntimeAllowed } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
-import { resolveImage } from "../images/resolve.ts";
 import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError } from "../runtime/docker/errors.ts";
@@ -395,7 +394,7 @@ export function createPrepareStart(d: {
             credentialId,
             effective,
             launch: {
-              image: resolveImage(config.image, d.config.defaultImage).tag,
+              image: config.image ?? d.config.defaultImage,
               mountCheck: prepared.mountCheck,
             },
           }

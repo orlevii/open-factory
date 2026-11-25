@@ -266,13 +266,6 @@ function FixLink({
   // Nothing to link to: an operator has to allow the local runtime (S5 UI design §3.2). The row
   // explains how, as Agent details' Runtime row does.
   if (fix === "runtime") return <LocalRuntimeWhy />;
-  // An unbuilt user image is built in Templates → Images (spec §10.1).
-  if (fix === "image")
-    return (
-      <Link to="/templates/images" className={cls}>
-        Open Templates → Images
-      </Link>
-    );
   // The agent's own configuration (an overlay that fails its schema).
   if (fix === "config")
     return (

@@ -92,14 +92,6 @@ test("image: only a Docker image reference", () => {
   expect(templateConfigSchema.safeParse({ ...base, image: "x/y:1" }).success).toBe(true);
 });
 
-test("image: the open-factory-user/ tag is refused, pointing to the bare name", () => {
-  const r = imageRefSchema.safeParse("open-factory-user/playwright:latest");
-  expect(r.success).toBe(false);
-  expect(r.error?.issues[0]?.message).toBe("Use the bare name playwright for a user image.");
-  expect(imageRefSchema.safeParse("playwright").success).toBe(true);
-  expect(imageRefSchema.safeParse("ghcr.io/open-factory-user/x:1").success).toBe(true);
-});
-
 test("warm_window_minutes has no default and is kept when set", () => {
   const base = { name: "x1", display_name: "X" };
   expect("warmWindowMinutes" in templateYamlSchema.parse(base)).toBe(false);

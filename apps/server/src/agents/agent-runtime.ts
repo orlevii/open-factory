@@ -605,7 +605,7 @@ export class AgentRuntime {
   // The runtime of the last launched process (or of a container a start left that couldn't be stopped): its exit and
   // cleanup follow it, even if the row changed since.
   private procRuntime: "local" | "docker" | undefined;
-  private lastImage: string | undefined; // Docker: the image reference of the last start (spec §8.2)
+  private runningImage: string | undefined; // Docker: the image the live process was started from
   // A start whose container couldn't be stopped (spec §9.6): stop_failed, and startNow must not give the slot back.
   private keepSlotAfterFailedStart = false;
   // `ensure` found the image gone once since the last launch: the wake went back through the pull (spec §11.2).
@@ -2063,7 +2063,7 @@ export class AgentRuntime {
     rateLimitedUntil?: string;
     rateLimitExact?: boolean;
     runtimeDisabled?: string;
-    image?: string;
+    image?: { running: string | null; next: string };
     pulling?: boolean;
     turnStartedAt?: string;
     compacting?: boolean;
@@ -2082,7 +2082,14 @@ export class AgentRuntime {
       ...(this.agent.runtime === "local" && !(this.d.localRuntimeAllowed?.() ?? true)
         ? { runtimeDisabled: LOCAL_RUNTIME_DISABLED }
         : {}),
-      ...(this.lastImage ? { image: this.lastImage } : {}),
+      ...(this.agent.runtime === "docker" && (this.nextImage ?? this.runningImage)
+        ? {
+            image: {
+              running: this.runningImage ?? null,
+              next: (this.nextImage ?? this.runningImage) as string,
+            },
+          }
+        : {}),
       ...(this.slots.isPulling(this.agent.id) ? { pulling: true } : {}),
       restartPending: this.restartPending,
       restartWaitingOn: this.restartPending ? this.nonAmbient() : 0,
@@ -2752,6 +2759,7 @@ export class AgentRuntime {
     onLaunched();
     this.proc = proc;
     this.started = effective;
+    this.runningImage = container?.image;
     this.procStartedAt = procStartedAt;
     // This process runs on the config the changes describe.
     this.pendingChanges.clear();
@@ -2775,7 +2783,6 @@ export class AgentRuntime {
     void this.storeCommands(proc);
     void this.drainLive(proc); // every process, restarts and resumes included: the queue is unbounded
     if (container) {
-      this.lastImage = container.image;
       await this.append(null, {
         type: "container",
         action: container.action,
@@ -3427,6 +3434,7 @@ export class AgentRuntime {
       this.proc = undefined;
       this.procCredentialId = undefined;
       this.started = undefined;
+      this.runningImage = undefined;
       this.procStartedAt = undefined;
     }
     this.sessionStarted = false;

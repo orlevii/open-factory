@@ -6,7 +6,6 @@ export type StartFix =
   | "projects"
   | "edit_agent"
   | "runtime"
-  | "image"
   | "template"
   | "config";
 

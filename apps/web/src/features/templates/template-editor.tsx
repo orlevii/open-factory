@@ -43,7 +43,6 @@ import { factorySettingsQueryOptions } from "@/features/settings/api";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import {
-  buildImage,
   deletedState,
   deleteTemplate,
   saveTemplateFile,
@@ -58,7 +57,6 @@ import {
   focusTextareaLine,
   isEditorSettled,
 } from "./code-surface";
-import { ImageStatusLabel } from "./image-status";
 import { IssueIcon, IssueList, sortIssues } from "./issue-list";
 import { EMPTY_DOC, hashesVersion, TemplateConfigTab } from "./template-config-tab";
 
@@ -825,12 +823,6 @@ const TemplateHeader = memo(function TemplateHeader({
           <span>{template.config.runtime === "docker" ? "Docker" : "Local"}</span>
         )}
         {template.config && <span aria-hidden="true">·</span>}
-        {template.imageStatus && (
-          <>
-            <ImageLine image={template.imageStatus} />
-            <span aria-hidden="true">·</span>
-          </>
-        )}
         <span className="flex min-w-0 max-w-full font-mono">
           <MiddleTruncate text={template.path} />
         </span>
@@ -899,55 +891,6 @@ function fileOutcome(o: Outcome | undefined, outcomeKey: number): FormOutcomeVal
   if (o.tone !== "pending")
     return o.tone === "success" ? { outcomeKey, success: o.text } : { outcomeKey, error: o.text };
   return { outcomeKey, notice: o.kind === "saving" ? undefined : o.text };
-}
-
-/** `image:` with its status (spec §12.8), and Build for a user image that isn't built. */
-function ImageLine({ image }: { image: NonNullable<TemplateDetail["imageStatus"]> }) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
-  // Once a build starts here the button stays rendered (aria-disabled while it runs), so focus
-  // isn't dropped to <body> when the status changes under it.
-  const [started, setStarted] = useState(false);
-  // Unknown (Docker unreachable) offers no Build here: it would only fail.
-  const showBuild =
-    image.kind === "user" &&
-    image.status !== "no_dockerfile" &&
-    image.status !== "unknown" &&
-    (image.status !== "built" || started);
-  const disabled = pending || image.status === "building";
-  const build = async () => {
-    setStarted(true);
-    setPending(true);
-    setError(undefined);
-    try {
-      await buildImage(image.name);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPending(false);
-    }
-  };
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-x-2">
-      <span className="font-mono">image: {image.name}</span>
-      <ImageStatusLabel status={image.status} className="text-foreground" />
-      {showBuild && (
-        <Button
-          variant="ghost"
-          size="xs"
-          aria-disabled={disabled || undefined}
-          onClick={() => !disabled && void build()}
-        >
-          Build
-        </Button>
-      )}
-      {error && (
-        <span role="alert" className="text-destructive">
-          {error}
-        </span>
-      )}
-    </span>
-  );
 }
 
 /** Below 40rem the tab strip is this Select: every tab, with its unsaved and error marks in the item's text. */

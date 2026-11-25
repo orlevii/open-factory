@@ -177,22 +177,12 @@ test("a turn open at connect (per the cached agents list) is seen ending", async
   }
 });
 
-test("admin frames invalidate their keys; build log batches don't", async () => {
+test("admin frames invalidate their keys", async () => {
   const { spy } = await mounted();
   const keys = () => spy.mock.calls.map(([f]) => f?.queryKey?.[0]);
   act(() => h.opts?.onMessage?.({ type: "settings_changed" }));
   act(() => h.opts?.onMessage?.({ type: "users_changed" }));
   expect(keys()).toEqual(expect.arrayContaining(["factory-settings", "users", "invites"]));
-  const images = () => keys().filter((k) => k === "images").length;
-  act(() =>
-    h.opts?.onMessage?.({ type: "image_build", name: "x", state: "building", lines: ["a"] }),
-  );
-  expect(images()).toBe(0);
-  act(() => h.opts?.onMessage?.({ type: "image_build", name: "x", state: "building" }));
-  expect(images()).toBe(1);
-  act(() => h.opts?.onMessage?.({ type: "images_changed" }));
-  expect(images()).toBe(2);
-  expect(keys()).toContain("templates");
 });
 
 test("config_changed invalidates the agent's and the template's configuration, and that template's agent pages", async () => {

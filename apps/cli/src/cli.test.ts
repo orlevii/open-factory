@@ -150,9 +150,6 @@ test("help and --version", async () => {
   const h = io();
   expect(await run([], h.io)).toBe(0);
   expect(h.out.join("\n")).toMatch(/login[\s\S]*logout[\s\S]*status/);
-  expect(h.out.join("\n")).toContain(
-    "open-factory images | open-factory images build (<name>|--all) [--no-pull]",
-  );
   h.out.length = 0;
   expect(await run(["--version"], h.io)).toBe(0);
   expect(h.out).toEqual(["0.1.0"]);

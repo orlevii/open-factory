@@ -2,7 +2,6 @@ import type { AgentRuntime, RuntimeLog } from "../agents/agent-runtime.ts";
 import { AgentStartError, type StartFix } from "../agents/errors.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore } from "../agents/event-store.ts";
-import { USER_TAG_PREFIX } from "../images/resolve.ts";
 import type { CredentialPause, SlotPort, WakeReason } from "./slots.ts";
 
 /**
@@ -31,7 +30,7 @@ export interface SupervisorDeps {
   load(slug: string): Promise<AgentRuntime | undefined>;
   /**
    * Docker images (spec §11.2): `refOf` is the image a Docker agent starts from (undefined for a local agent);
-   * `ensure` pulls it only when it is missing locally, and rejects with the registry's error.
+   * `ensure` pulls it only when it is missing locally, and rejects with the start error a failed pull is.
    */
   images?: {
     refOf(agentId: string): string | undefined;
@@ -178,10 +177,9 @@ export class Supervisor implements SlotPort {
     return false;
   }
 
-  /** A user image (S10 §10.1) is only checked, never pulled, so its wait isn't shown as pulling. */
+  /** Whether the agent's wake is waiting on its image's check-and-pull. */
   isPulling(agentId: string): boolean {
-    const ref = this.queue.find((e) => e.agentId === agentId)?.pulling;
-    return ref !== undefined && !ref.startsWith(USER_TAG_PREFIX);
+    return this.queue.find((e) => e.agentId === agentId)?.pulling !== undefined;
   }
 
   /** `ensure` found the image gone (removed after it was seen): the next wake checks and pulls again. */

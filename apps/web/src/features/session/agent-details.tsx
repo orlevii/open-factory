@@ -474,11 +474,13 @@ function Runtime({ agent }: { agent: AgentSummary }) {
             <dd className="min-w-0 truncate font-mono">{agent.credential}</dd>
           </>
         )}
-        {agent.runtime === "docker" && (
+        {agent.runtime === "docker" && agent.image && (
           <>
             <dt className="text-muted-foreground">Image</dt>
             <dd className="min-w-0">
-              <span className="font-mono [overflow-wrap:anywhere]">{agent.image ?? "Docker"}</span>
+              <span className="font-mono [overflow-wrap:anywhere]">
+                {agent.image.running ?? agent.image.next}
+              </span>
               {agent.pulling && " (pulling)"}
             </dd>
           </>

@@ -241,7 +241,7 @@ test("in the Session the palette offers 'Open chat' and not 'Open session'; it g
   await waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
 });
 
-test("Go to includes Skills, Usage and each Settings page; Images links /templates/images", async () => {
+test("Go to includes Skills, Usage and each Settings page", async () => {
   const { dialog, router } = await openFromInput();
   const goTo = within(dialog).getByRole("group", { name: "Go to" });
   const names = within(goTo)
@@ -264,9 +264,6 @@ test("Go to includes Skills, Usage and each Settings page; Images links /templat
     ]),
   );
   expect(new Set(names).size).toBe(names.length);
-  await userEvent.click(within(goTo).getByRole("option", { name: "Images" }));
-  await waitFor(() => expect(router.state.location.pathname).toBe("/templates/images"));
-  expect(router.state.location.hash).toBe("");
 });
 
 test("the Search row opens it and shows the platform key hint", async () => {

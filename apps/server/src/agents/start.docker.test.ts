@@ -117,11 +117,6 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
   const tdir = path.join(home, "templates/dock");
   mkdirSync(tdir, { recursive: true });
   writeFileSync(path.join(tdir, "AGENTS.md"), "# Dock\n");
-  // A user image the template names has its Dockerfile (or the template doesn't validate); built or not is per test.
-  if (image) {
-    mkdirSync(path.join(home, "images", image), { recursive: true });
-    writeFileSync(path.join(home, "images", image, "Dockerfile"), "FROM scratch\n");
-  }
   writeFileSync(
     path.join(tdir, "template.yaml"),
     JSON.stringify({
@@ -336,7 +331,7 @@ test("container event carries image id and claude version label", async () => {
     claudeCodeVersion: "2.1.327",
   });
   expect(evs[at + 1]).toMatchObject({ type: "process_started", reason: "message" });
-  expect(w.rt.live().image).toBe(IMAGE);
+  expect(w.rt.live().image).toEqual({ running: IMAGE, next: IMAGE });
 
   // The next wake reuses the stopped container.
   expect(await w.rt.hibernate("warm_window")).toBe(true);
@@ -653,19 +648,19 @@ test("Restart of a stop_failed Docker agent with its process left: the escalatio
   expect(execs(w)).toHaveLength(2);
 });
 
-test("a pull failure records errored start with the registry error", async () => {
+test("a missing image that can't be pulled fails the start with a plain message", async () => {
   const w = await setup();
   w.docker.images.clear();
-  const registry = "manifest for open-factory-base:dev not found: manifest unknown";
-  w.docker.pullError = new Error(registry);
+  w.docker.pullError = new Error("manifest for open-factory-base:dev not found: manifest unknown");
+  const message = `Image \`${IMAGE}\` isn't available locally and couldn't be pulled.`;
   await send(w);
   await until(() => expect(w.rt.live().status).toBe("errored"));
-  expect(w.rt.live()).toMatchObject({ errorKind: "start", lastError: registry });
-  expect(await events(w)).toContainEqual({ type: "error", source: "spawn", message: registry });
+  expect(w.rt.live()).toMatchObject({ errorKind: "start", lastError: message });
+  expect(await events(w)).toContainEqual({ type: "error", source: "spawn", message });
   expect(w.docker.ops()).not.toContain("prepare");
   expect(w.runtimes.supervisor.running().count).toBe(0);
   const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, w.agent.id));
-  expect(row).toMatchObject({ status: "errored", errorKind: "start", lastError: registry });
+  expect(row).toMatchObject({ status: "errored", errorKind: "start", lastError: message });
 });
 
 test("Docker unreachable: start fails with the DOCKER_HOST message", async () => {
@@ -739,44 +734,21 @@ test("a good pid file: terminate SIGTERMs Claude in the container, no escalation
   await until(() => expect(container(w)).toMatchObject({ running: false })); // the exit stops the container
 });
 
-test("a user image that isn't built fails the start with fix image, and is never pulled", async () => {
-  const w = await setup("reply", "smoke");
-  await send(w);
-  await until(() => expect(w.rt.live().status).toBe("errored"));
-  const message =
-    "Image `smoke` isn't built. Build it in Templates \u2192 Images, or run `open-factory images build smoke`.";
-  expect(w.rt.live().lastError).toBe(message);
-  expect(await events(w)).toContainEqual(
-    expect.objectContaining({ type: "error", source: "spawn", message, fix: "image" }),
-  );
-  expect(w.docker.ops()).not.toContain("pull");
-});
-
-test("a user image's presence check never shows the wake as pulling", async () => {
-  const w = await setup("reply", "smoke");
-  w.docker.images.set("open-factory-user/smoke:latest", { id: "sha256:smoke", labels: {} });
-  const real = w.docker.imageId.bind(w.docker);
-  let release = () => {};
-  const gate = new Promise<void>((r) => {
-    release = r;
-  });
-  vi.spyOn(w.docker, "imageId").mockImplementation(async (ref) => {
-    await gate;
-    return real(ref);
-  });
-  await send(w);
-  expect(w.rt.live().status).toBe("queued");
-  expect(w.rt.live().pulling).toBeUndefined();
-  release();
-  await until(() => expect(w.rt.live().status).toBe("idle"));
-  expect(w.docker.ops()).not.toContain("pull");
-});
-
-test("a user image that is built starts from its local tag without a pull", async () => {
-  const w = await setup("reply", "smoke");
-  w.docker.images.set("open-factory-user/smoke:latest", { id: "sha256:smoke", labels: {} });
+test("a template's image is used as written, and a missing one is pulled", async () => {
+  const w = await setup("reply", "playwright");
   await send(w);
   await until(() => expect(w.rt.live().status).toBe("idle"));
-  expect(w.rt.live().image).toBe("open-factory-user/smoke:latest");
-  expect(w.docker.ops()).not.toContain("pull");
+  expect(w.docker.ops()).toContain("pull");
+  expect(w.rt.live().image).toEqual({ running: "playwright", next: "playwright" });
+});
+
+test("image.next follows a template image change before the restart; image.running keeps the old one", async () => {
+  const w = await setup();
+  expect(w.rt.live().image).toEqual({ running: null, next: IMAGE });
+  await idleAgent(w);
+  w.runtimes.setNextImage(w.agent.id, "ghcr.io/acme/dev:2");
+  expect(w.rt.live().image).toEqual({ running: IMAGE, next: "ghcr.io/acme/dev:2" });
+  expect(await w.rt.hibernate("warm_window")).toBe(true);
+  await until(() => expect(w.rt.live().status).toBe("hibernated"));
+  expect(w.rt.live().image).toEqual({ running: null, next: "ghcr.io/acme/dev:2" });
 });

@@ -855,7 +855,7 @@ test("a running agent's colour with another field still restarts", async () => {
 });
 
 const MANAGE_HELP =
-  "Create templates and agents, edit configurations, archive. Can assign secrets and credentials to agents and read configuration values humans typed in; grant it like admin access and keep sensitive values in secrets. Can't change local-runtime agents or grant this permission.";
+  "Lets this agent create and arrange other agents: ask it in Chat to build the rest of your team. Create templates and agents, edit configurations, archive. Can assign secrets and credentials to agents and read configuration values humans typed in; grant it like admin access and keep sensitive values in secrets. Can't change local-runtime agents or grant this permission.";
 
 test("Can manage the org: a switch described by the spec's help, and its change is sent", async () => {
   const { api } = await open({

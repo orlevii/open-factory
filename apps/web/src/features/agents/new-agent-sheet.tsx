@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SheetBody } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { AddressLine } from "@/features/agents/address-line";
@@ -42,6 +43,7 @@ import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
 import { useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions, createAgent } from "@/features/agents/api";
 import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
+import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import {
   TemplateField,
@@ -442,6 +444,17 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               onChange={s.setProjects}
               onAddProject={onAddProject}
             />
+            <FieldShell name="manageOrg" label="Can manage the org" help={MANAGE_ORG_HELP}>
+              {(a) => (
+                <Switch
+                  id={a.id}
+                  className="justify-self-start"
+                  checked={shown.manageOrg}
+                  aria-describedby={a.describedBy}
+                  onCheckedChange={(v) => set("manageOrg", v)}
+                />
+              )}
+            </FieldShell>
           </MoreOptions>
         </fieldset>
       </SheetBody>

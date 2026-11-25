@@ -40,6 +40,7 @@ import { useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions, updateAgent } from "@/features/agents/api";
 import { ColourField } from "@/features/agents/colour-field";
 import { restoreAgent } from "@/features/agents/lifecycle";
+import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import { CONFIG_PAGE_COPY, MODEL_SOURCE_COPY } from "@/features/config/messages";
 import { inboxQueryKey } from "@/features/inbox/api";
@@ -64,9 +65,6 @@ type Spec = { kind: "edit-agent"; slug: string; at?: string };
 const NO_MANAGER: ComboOption[] = [
   { value: "", label: "No manager (reports to the humans)", fixed: true },
 ];
-/** Spec §5.4, verbatim. */
-const MANAGE_ORG_HELP =
-  "Create templates and agents, edit configurations, archive. Can assign secrets and credentials to agents and read configuration values humans typed in; grant it like admin access and keep sensitive values in secrets. Can't change local-runtime agents or grant this permission.";
 const KIND_LABEL = { oauth_token: "OAuth token", api_key: "API key" } as const;
 const andList = (items: string[]) =>
   items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;

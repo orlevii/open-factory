@@ -874,6 +874,33 @@ test("a touched Projects group sends its set", async () => {
   expect(posts(api)[0]?.body).toHaveProperty("projects", expect.arrayContaining(["docs"]));
 });
 
+const MANAGE_HELP =
+  "Lets this agent create and arrange other agents: ask it in Chat to build the rest of your team. Create templates and agents, edit configurations, archive. Can assign secrets and credentials to agents and read configuration values humans typed in; grant it like admin access and keep sensitive values in secrets. Can't change local-runtime agents or grant this permission.";
+
+test("Can manage the org: a switch, off, described by the lead and the spec's help", async () => {
+  const { dialog } = await openLead();
+  await userEvent.click(more());
+  const sw = within(dialog).getByRole("switch", { name: "Can manage the org" });
+  expect(sw).not.toBeChecked();
+  expect(sw).toHaveAccessibleDescription(MANAGE_HELP);
+});
+
+test("Can manage the org: switched on, the create posts manageOrg true", async () => {
+  const { api } = await openLead({ extra: created() });
+  await userEvent.click(more());
+  await userEvent.click(screen.getByRole("switch", { name: "Can manage the org" }));
+  await userEvent.click(createButton());
+  await vi.waitFor(() => expect(posts(api)).toHaveLength(1));
+  expect(posts(api)[0]?.body).toHaveProperty("manageOrg", true);
+});
+
+test("Can manage the org: left off, the create posts no manageOrg", async () => {
+  const { api } = await openLead({ extra: created() });
+  await userEvent.click(createButton());
+  await vi.waitFor(() => expect(posts(api)).toHaveLength(1));
+  expect(posts(api)[0]?.body).not.toHaveProperty("manageOrg");
+});
+
 test("no projects registered says so beside Add project", async () => {
   const { dialog } = await openLead({
     projects: [],

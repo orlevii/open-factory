@@ -215,7 +215,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     ),
     tool(
       "update_agent",
-      "Change an agent. A field you leave out is unchanged. config is the WHOLE new overlay and needs base_hash (the overlay_hash from get_agent). Everything is validated first and written together, or nothing is. The result's restart is a hint that a restart was requested, not a guarantee (an errored or hibernated agent does not restart).",
+      "Change an agent. A field you leave out is unchanged. config replaces the agent's whole overlay, so start from the one get_agent returned and pass its overlay_hash as base_hash. Everything is validated first and written together, or nothing is. The result's restart is a hint that a restart was requested, not a guarantee (an errored or hibernated agent does not restart).",
       updateAgentToolSchema,
       async (a, actor) => {
         const slug = bare(a.slug);

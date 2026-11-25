@@ -112,7 +112,7 @@ export const notices = {
   },
   /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). */
   cronsStopped(i: { by: string; crons: string[] }): string {
-    return `${i.by} stopped your crons: ${i.crons.join("; ")}. Don't recreate them unless you are asked to.`;
+    return `${i.by} stopped your crons: ${i.crons.join("; ")}. A human stopped them on purpose, so don't recreate them unless you are asked to.`;
   },
   /** I1 §7: an agent compacted itself. Fixed text: Claude's failure text is process output and is never quoted. */
   compactContinue(i: { failed: boolean }): string {

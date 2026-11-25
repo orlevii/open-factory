@@ -125,7 +125,7 @@ test("idle with two crons: stops now, records who, leaves the passive notice, wa
   });
   const [notice] = await pendingNotice();
   expect(notice?.body).toBe(
-    "@or stopped your crons: every 5 minutes; at 14:30, once. Don't recreate them unless you are asked to.",
+    "@or stopped your crons: every 5 minutes; at 14:30, once. A human stopped them on purpose, so don't recreate them unless you are asked to.",
   );
   expect(driver.starts).toHaveLength(1); // no wake
   expect(forwarded.filter((f) => f.fact === "work_lost")).toHaveLength(0);

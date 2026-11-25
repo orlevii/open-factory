@@ -23,7 +23,7 @@ export function terminateAgentTool(d: { terminate: TerminatePort }): ToolRegistr
         "terminate_agent",
         {
           description:
-            "Terminate an agent you spawned. Its process stops now and its session can't continue.",
+            "Terminate an agent you spawned when its work is done. Its process stops now and its session can't continue, and its working directory is deleted 3 days later, so first ask it to put anything worth keeping in a granted project or a message.",
           inputSchema: terminateAgentToolSchema,
         },
         async (args: { slug: string }, tctx: ToolContext) => {

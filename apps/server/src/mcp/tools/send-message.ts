@@ -21,7 +21,7 @@ export function sendMessageTool(router: Pick<Router, "send">): ToolRegistration 
         "send_message",
         {
           description:
-            "Send a message to one or more handles (an agent's @slug or a person's @handle), up to 10. Every recipient sees the full list. Set urgent to interrupt agents that are working.",
+            "Send a message to one or more handles (an agent's @slug or a person's @handle), up to 10. Every recipient sees the full list. Set urgent only when what a working agent is doing is now wrong: it stops the agent's current tool and turn.",
           inputSchema: sendMessageToolSchema,
         },
         async (args: { to: string[]; body: string; urgent?: boolean }, tctx: ToolContext) => {

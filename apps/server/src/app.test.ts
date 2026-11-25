@@ -205,7 +205,7 @@ test("the member update debounce setting reaches the runtimes: 0 writes a member
   try {
     const lead = await t.seedAgent({ slug: "lead" });
     const dev = await t.seedAgent({ slug: "dev" });
-    await t.sql`update agents set reports_to = ${lead.id} where id = ${dev.id}`;
+    await t.sql`update agents set reports_to = ${lead.id}, reports_to_user = null where id = ${dev.id}`;
     const { proc } = await startIdle(t, driver, "lead");
     const row = await t.app.store.createOrgRow({
       kind: "member_update",

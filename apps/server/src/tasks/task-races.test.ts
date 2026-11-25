@@ -15,7 +15,7 @@ beforeEach(async () => {
   const u = await signUp(h.app, { handle: "or" });
   or = { kind: "user", userId: u.user.id, handle: "or" };
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
-  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
 });
 afterEach(() => h.close());
 
@@ -48,7 +48,7 @@ const outcome = <T>(p: Promise<T>) =>
   );
 const spawned = async (slug: string) => {
   const a = await h.seedAgent({ slug });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = ${a.id}`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null where id = ${a.id}`;
   ids[slug] = a.id;
   return a.id;
 };

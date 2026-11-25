@@ -7,6 +7,8 @@ import { createFakeClaude } from "@open-factory/harness/testing";
 import { type Actor, overlayVersion } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { insertAgent } from "../../agents/testing/rows.ts";
+import { seedTestUser } from "../../test/handles.ts";
 import { makeTestApp } from "../../test/helpers.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
@@ -50,7 +52,7 @@ const body = (slug: string) => ({
   slug,
   displayName: slug,
   description: "",
-  reportsTo: null,
+  reportsTo: "or",
   credential: "work",
 });
 const call = async (who: string, name: string, args: object) => {
@@ -74,6 +76,7 @@ beforeAll(async () => {
     env: { FACTORY_CLAUDE_BIN: createFakeClaude({ scenario: "reply" }).bin },
   });
   url = `http://127.0.0.1:${t.app.agentListener.port}`;
+  await seedTestUser(t.db);
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
     id: credId,
@@ -146,28 +149,76 @@ test("a handler reached with a revoked caller row refuses with the sentence", as
   });
 });
 
+const createArgs = (slug: string, extra: object = {}) => ({
+  template: "dev",
+  name: `@${slug}`,
+  display_name: "C",
+  description: "d",
+  credential: "work",
+  ...extra,
+});
+
 test.each([
-  ["omitted", {}, "hr-bot"],
-  ["me", { manager: "me" }, "hr-bot"],
-  ["null", { manager: null }, null],
-])("create_agent with manager %s", async (n, extra, want) => {
-  const slug = `c-${n}`;
-  const r = await call("hr-bot", "create_agent", {
-    template: "dev",
-    name: `@${slug}`,
-    display_name: "C",
-    description: "d",
-    credential: "work",
-    ...extra,
-  });
+  ["an agent with its @handle", "@hr-bot", "agent"],
+  ["an agent with its bare name", "hr-bot", "agent"],
+  ["a person with their @handle", "@or", "user"],
+])("create_agent reports to %s", async (n, reports_to, kind) => {
+  const slug = `c-${n.replace(/\W+/g, "-")}`;
+  const r = await call("hr-bot", "create_agent", createArgs(slug, { reports_to }));
   expect(r.json).toEqual({
     slug,
     status: "created",
     note: `@${slug} is created and starts when it gets its first message.`,
   });
   const created = await row(slug);
-  expect(created.reportsTo).toBe(want === "hr-bot" ? (await row("hr-bot")).id : null);
+  expect(created.reportsTo).toBe(kind === "agent" ? (await row("hr-bot")).id : null);
+  expect(created.reportsToUser).toBe(kind === "user" ? "u-or" : null);
   expect(created.manageOrg).toBe(false);
+});
+
+test("create_agent without reports_to is refused and creates nothing", async () => {
+  const r = await call("hr-bot", "create_agent", createArgs("no-boss"));
+  expect(r.err).toBe(true);
+  expect(r.text).toContain("reports_to");
+  expect(await t.sql`select 1 from agents where slug = 'no-boss'`).toHaveLength(0);
+});
+
+test("create_agent and update_agent refuse an unknown handle, a disabled person and a spawned agent as the manager", async () => {
+  await seedTestUser(t.db, { handle: "off", name: "Off" });
+  await t.sql`update users set disabled_at = now() where handle = 'off'`;
+  await t.app.agents.create(body("kid-parent"), human);
+  await insertAgent(t.sql, {
+    id: "kid-id",
+    slug: "kid-abcd",
+    kind: "ephemeral",
+    reportsTo: (await row("kid-parent")).id,
+  });
+  const refusal = "reports_to: Choose an active agent or person.";
+  for (const reports_to of ["@ghost", "@off", "@kid-abcd"]) {
+    expect(await call("hr-bot", "create_agent", createArgs("never", { reports_to }))).toMatchObject(
+      { err: true, text: refusal },
+    );
+    expect(await call("hr-bot", "update_agent", { slug: "dev-1", reports_to })).toMatchObject({
+      err: true,
+      text: refusal,
+    });
+  }
+  expect(await t.sql`select 1 from agents where slug = 'never'`).toHaveLength(0);
+  expect((await row("dev-1")).reportsToUser).toBe("u-or");
+  await t.sql`delete from agents where id = 'kid-id'`;
+  await t.sql`delete from credentials where id = 'cred-kid-id'`;
+});
+
+test("update_agent moves an agent to a new manager and reports reports_to as changed; get_agent shows it", async () => {
+  const r = await call("hr-bot", "update_agent", { slug: "dev-1", reports_to: "@plain" });
+  expect(r.json).toMatchObject({ slug: "dev-1", changed: ["reports_to"] });
+  const moved = await row("dev-1");
+  expect(moved.reportsTo).toBe((await row("plain")).id);
+  expect(moved.reportsToUser).toBeNull();
+  expect((await call("hr-bot", "get_agent", { slug: "dev-1" })).json.reports_to).toBe("@plain");
+  const back = await call("hr-bot", "update_agent", { slug: "dev-1", reports_to: "@or" });
+  expect(back.json).toMatchObject({ changed: ["reports_to"] });
+  expect((await call("hr-bot", "get_agent", { slug: "dev-1" })).json.reports_to).toBe("@or");
 });
 
 test("create_agent with a taken name returns the human sentence as name: …", async () => {
@@ -176,6 +227,7 @@ test("create_agent with a taken name returns the human sentence as name: …", a
     name: "plain",
     display_name: "P",
     description: "",
+    reports_to: "@or",
     credential: "work",
   });
   expect(r).toMatchObject({ err: true, text: "name: That slug is taken." });
@@ -382,6 +434,7 @@ test("no tool result holds a secret value, a credential token or a host path (AC
         name: "scan-1",
         display_name: "S",
         description: "",
+        reports_to: "@or",
         credential: "work",
         projects: ["site"],
       },
@@ -395,7 +448,14 @@ test("no tool result holds a secret value, a credential token or a host path (AC
     ["get_agent", { slug: "nobody" }, true],
     [
       "create_agent",
-      { template: "dev", name: "scan-1", display_name: "S", description: "", credential: "work" },
+      {
+        template: "dev",
+        name: "scan-1",
+        display_name: "S",
+        description: "",
+        reports_to: "@or",
+        credential: "work",
+      },
       true,
     ],
   ];
@@ -415,6 +475,7 @@ test("no tool result holds a secret value, a credential token or a host path (AC
     name: "scan-2",
     display_name: "S",
     description: "",
+    reports_to: "@or",
     credential: "work",
     projects: ["site"],
   });

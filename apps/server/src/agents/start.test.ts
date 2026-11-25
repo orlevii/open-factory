@@ -20,7 +20,7 @@ import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
-import { claimTestHandle } from "../test/handles.ts";
+import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
@@ -120,6 +120,7 @@ async function seedStartFixture() {
       config: {},
       runtime: "local",
       credentialId: "c1",
+      reportsToUser: await testManagerUserId(t.db),
     })
     .returning();
   if (!row) throw new Error("seed failed");
@@ -147,7 +148,7 @@ async function seedStartFixture() {
       description: "",
       template: "lead",
       config,
-      manager: null,
+      manager: { kind: "user" as const, handle: "or", name: "Or" },
       grants,
     },
   );
@@ -237,9 +238,10 @@ test("the manager is described in CLAUDE.md", async () => {
       config: {},
       runtime: "local",
       credentialId: "c1",
+      reportsToUser: await testManagerUserId(t.db),
     })
     .returning();
-  await t.sql`update agents set reports_to = ${mgr[0]?.id ?? ""} where id = ${agent.id}`;
+  await t.sql`update agents set reports_to = ${mgr[0]?.id ?? ""}, reports_to_user = null where id = ${agent.id}`;
   const spec = await prepareStart(agent, { agentToken: "tok" }); // stale row: prepareStart must reload
   const md = await import("node:fs").then((fs) =>
     fs.readFileSync(path.join(spec.cwd, ".claude-config/CLAUDE.md"), "utf8"),
@@ -259,9 +261,10 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
       config: {},
       runtime: "local",
       credentialId: "c1",
+      reportsToUser: await testManagerUserId(t.db),
     })
     .returning();
-  await t.sql`update agents set reports_to = ${mgr?.id ?? ""} where id = ${agent.id}`;
+  await t.sql`update agents set reports_to = ${mgr?.id ?? ""}, reports_to_user = null where id = ${agent.id}`;
   const sibling = { template: "lead", config: {}, runtime: "local" as const, credentialId: "c1" };
   await t.db.insert(schema.agents).values([
     {
@@ -544,7 +547,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
       description: "Builds the thing.",
       template: "dev",
       config,
-      manager: { slug: agent.slug, displayName: "Lead" },
+      manager: { kind: "agent", slug: agent.slug, displayName: "Lead" },
       grants: [{ name: "app", hostPath: repo }],
     },
   );
@@ -769,12 +772,14 @@ test.each([
     config: {},
     runtime: "local",
     credentialId: "c1",
+    reportsToUser: await testManagerUserId(t.db),
   });
   await t.db
     .update(schema.agents)
     .set({
       kind: "ephemeral",
       reportsTo: `top-${seq}`,
+      reportsToUser: null,
       terminatedAt: new Date(),
       terminatedBy: "@factory",
       credentialId: keepCredential ? "c1" : null,

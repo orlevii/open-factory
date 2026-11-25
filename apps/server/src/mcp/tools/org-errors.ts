@@ -5,7 +5,7 @@ import { toolError } from "../server.ts";
 /** The service's field names are the form's; a tool's parameters are named as the tool's input (spec §7.2). */
 const TOOL_FIELD: Record<string, string> = {
   slug: "name",
-  reportsTo: "manager",
+  reportsTo: "reports_to",
   displayName: "display_name",
 };
 

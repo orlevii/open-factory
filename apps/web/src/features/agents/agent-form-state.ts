@@ -23,6 +23,7 @@ import { type DraftKey, useSheetDraft } from "@/features/sheets/drafts";
 import { mergeServer } from "@/features/sheets/merge-server";
 import { templateQueryOptions, templatesQueryOptions } from "@/features/templates/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
+import { sessionQueryOptions } from "@/lib/session";
 
 export const FIELDS = [
   "template",
@@ -44,7 +45,7 @@ export type Values = {
   /** Identity colour 1..12, null is Auto. */
   color: number | null;
   description: string;
-  /** "" is "No manager". */
+  /** The manager's handle, an agent's or a human's; "" until one is chosen. */
   reportsTo: string;
   credential: string;
   projects: string[];
@@ -75,7 +76,7 @@ const storedOf = (a: AgentSummary): Stored => ({
   displayName: a.displayName,
   color: a.color,
   description: a.description,
-  reportsTo: a.reportsTo ?? "",
+  reportsTo: a.reportsTo.handle,
   credential: a.credential ?? "",
   projects: a.projects,
   manageOrg: a.manageOrg,
@@ -199,6 +200,7 @@ export function useAgentFormState({
     setPreselected(credentials[0]?.name ?? "");
   const projectList = useQuery(projectsQueryOptions);
   const secrets = useQuery({ ...secretsQueryOptions, enabled: create });
+  const me = useQuery(sessionQueryOptions).data?.user.handle;
 
   // References a restored draft (or an edit made earlier) holds that no longer point at anything read as empty, with
   // the reason under the field. Edit leaves a value alone while it is still the saved one: an archived manager stays.
@@ -340,7 +342,8 @@ export function useAgentFormState({
   function body(): CreateAgentBody | PatchAgentBody | null {
     const displayName = shown.displayName.trim();
     const description = shown.description.trim();
-    const reportsTo = shown.reportsTo || null;
+    // New agent: the signed-in human manages it unless another manager was picked.
+    const reportsTo = shown.reportsTo || me || "";
     if (create) {
       return {
         template: shown.template,
@@ -358,7 +361,7 @@ export function useAgentFormState({
     if (displayName !== b.displayName) patch.displayName = displayName;
     if (shown.color !== b.color) patch.color = shown.color;
     if (description !== b.description) patch.description = description;
-    if (reportsTo !== (b.reportsTo || null)) patch.reportsTo = reportsTo;
+    if (shown.reportsTo && shown.reportsTo !== b.reportsTo) patch.reportsTo = shown.reportsTo;
     if (shown.credential !== b.credential) patch.credential = shown.credential;
     if (!same(shown.projects, b.projects)) patch.projects = shown.projects;
     if (shown.manageOrg !== b.manageOrg) patch.manageOrg = shown.manageOrg;

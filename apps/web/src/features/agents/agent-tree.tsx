@@ -13,6 +13,9 @@ import { useLongPress } from "@/hooks/use-long-press";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
+/** The tree draws only agent managers: a human manager makes a root. */
+const managerSlug = (a: AgentSummary) => (a.reportsTo.kind === "agent" ? a.reportsTo.handle : "");
+
 /** Indentation per tree level inside the name cell; capped below `md` so names keep room. */
 const INDENT = 20;
 
@@ -237,12 +240,12 @@ const AgentTreeRow = memo(function AgentTreeRow({
               </span>
             )}
           </span>
-          {a.reportsTo && (
+          {a.reportsTo.kind === "agent" && (
             <span className="sr-only">
               {" "}
               {managerName
-                ? `reports to ${managerName} (@${a.reportsTo})`
-                : `reports to @${a.reportsTo}`}
+                ? `reports to ${managerName} (@${a.reportsTo.handle})`
+                : `reports to @${a.reportsTo.handle}`}
             </span>
           )}
         </span>
@@ -313,14 +316,14 @@ export function AgentTree({
   const bySlug = useMemo(() => new Map(agents.map((a) => [a.slug, a])), [agents]);
   // The shape (who is under whom) changes rarely; status frames don't touch it, so the depths and
   // tree lines stay the same arrays and the memoized rows skip.
-  const shape = agents.map((a) => `${a.slug}>${flat ? "" : (a.reportsTo ?? "")}`).join("\n");
+  const shape = agents.map((a) => `${a.slug}>${flat ? "" : managerSlug(a)}`).join("\n");
   // biome-ignore lint/correctness/useExhaustiveDependencies: `shape` is the key; `agents` is read for it
   const { levels, continues } = useMemo(() => {
     // Depth as drawn: a row whose manager isn't in this list starts a new root rather than hanging
     // under nothing. Server order is depth-first, so managers come first.
     const shown = new Map<string, number>();
     for (const a of agents) {
-      const m = !flat && a.reportsTo ? shown.get(a.reportsTo) : undefined;
+      const m = !flat && a.reportsTo.kind === "agent" ? shown.get(a.reportsTo.handle) : undefined;
       shown.set(a.slug, m === undefined ? 0 : m + 1);
     }
     const levels = agents.map((a) => shown.get(a.slug) ?? 0);
@@ -363,7 +366,7 @@ export function AgentTree({
         className="@container divide-y divide-border border-y border-border"
       >
         {agents.map((a, i) => {
-          const manager = a.reportsTo ? bySlug.get(a.reportsTo) : undefined;
+          const manager = a.reportsTo.kind === "agent" ? bySlug.get(a.reportsTo.handle) : undefined;
           return (
             <AgentTreeRow
               key={a.slug}

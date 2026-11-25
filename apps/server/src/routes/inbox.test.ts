@@ -6,6 +6,7 @@ import { makeTestApp, signUp } from "../test/helpers.ts";
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
 let cookie: string;
+let orId: string;
 let tokA: string;
 let url: string;
 beforeEach(async () => {
@@ -14,7 +15,9 @@ beforeEach(async () => {
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   await h.seedAgent({ slug: "ada" });
   await h.seedAgent({ slug: "bob" });
-  cookie = (await signUp(h.app, { handle: "or" })).cookie;
+  const or = await signUp(h.app, { handle: "or" });
+  cookie = or.cookie;
+  orId = or.user.id;
   await h.app.inject({
     method: "POST",
     url: "/api/messages",
@@ -154,6 +157,7 @@ test("GET /api/inbox pages items with a cursor; a bad cursor or limit is a 400, 
   expect(p2.nextCursor).toBeNull();
   expect(p1.chats).toEqual([]);
   expect("chats" in p2).toBe(false); // only the first page carries the chats
+  expect(p1.updates).toEqual([]); // no report's updates: the factory notices are items, not updates
   for (const i of [...p1.items, ...p2.items]) expect(i.kind).toBe("notice"); // never "message" (I1 §6.7)
 
   const forged = (s: string) => Buffer.from(s).toString("base64url");
@@ -438,4 +442,58 @@ test("GET /api/inbox/:id: the owner's item equals the list entry; another user's
   expect((await get("/api/inbox/nope")).statusCode).toBe(404);
   expect((await get("/api/inbox/unread-count")).json()).toHaveProperty("count");
   expect((await get(`/api/inbox/${mine.id}`, {})).statusCode).toBe(401);
+});
+
+/** A report of @or's forwards `n` updates, as its runtime does. */
+async function updatesFrom(slug: string, n: number, over: { fact?: "denied" } = {}) {
+  const a = await h.app.store.agentBySlug(slug);
+  if (!a) throw new Error(`no agent ${slug}`);
+  for (let i = 1; i <= n; i++)
+    await h.app.router.forward({ agentId: a.id, body: `${slug} update ${i}`, ...over });
+}
+
+test("a human manager's reports' updates come grouped per report as updates, never as items, for that user only", async () => {
+  await h.sql`update agents set reports_to_user = ${orId} where slug in ('ada', 'bob')`;
+  const sam = await signUp(h.app, { handle: "sam" });
+  await updatesFrom("ada", 3);
+  await updatesFrom("bob", 1);
+  await updatesFrom("ada", 1, { fact: "denied" });
+  const page = (await get("/api/inbox")).json();
+  expect(page.items).toEqual([]);
+  expect(page.chats).toEqual([]);
+  expect(
+    page.updates.map((u: { agent: { slug: string }; unread: number }) => [u.agent.slug, u.unread]),
+  ).toEqual([
+    ["ada", 4],
+    ["bob", 1],
+  ]);
+  expect(page.updates[0].latest.preview).toBe("ada update 1"); // a fact is counted for its subject; its text is the body
+  expect((await get("/api/inbox/unread-count")).json().count).toBe(5);
+  expect((await get("/api/inbox", { cookie: sam.cookie })).json().updates).toEqual([]);
+  expect((await get("/api/inbox/unread-count", { cookie: sam.cookie })).json().count).toBe(0);
+  // Only the first page carries them.
+  const more = (
+    await get(
+      `/api/inbox?before=${Buffer.from("2999-01-01T00:00:00.000Z|z").toString("base64url")}`,
+    )
+  ).json();
+  expect(more.updates).toBeUndefined();
+});
+
+test("read-from with kind member_update marks one report's updates read and leaves chats and other reports alone", async () => {
+  await h.sql`update agents set reports_to_user = ${orId} where slug in ('ada', 'bob')`;
+  await updatesFrom("ada", 2);
+  await updatesFrom("bob", 1);
+  await callTool(url, tokA, "send_message", { to: ["@or"], body: "a chat message" });
+  const upTo = (await get("/api/inbox")).json().updates[0].latest.createdAt;
+  const done = await h.app.inject({
+    method: "POST",
+    url: "/api/inbox/read-from/ada",
+    headers: { cookie },
+    payload: { upTo, kind: "member_update" },
+  });
+  expect(done.json().marked).toBe(2);
+  const after = (await get("/api/inbox")).json();
+  expect(after.updates.map((u: { agent: { slug: string } }) => u.agent.slug)).toEqual(["bob"]);
+  expect(after.chats).toEqual([expect.objectContaining({ unread: 1 })]);
 });

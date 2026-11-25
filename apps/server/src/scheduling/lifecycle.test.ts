@@ -38,7 +38,7 @@ test("terminating a spawned target soft-deletes its schedules and rejects its pe
   await boot();
   await h.seedAgent({ slug: "lead" });
   await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf("lead")} where slug = 'kid'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf("lead")}, reports_to_user = null where slug = 'kid'`;
   await h.sql`update agents set status = 'errored' where slug = 'kid'`; // keeps its row pending
   const { item } = await make("kid");
   await fireAt("2026-11-23T08:00:00Z");

@@ -19,10 +19,7 @@ export const createAgentToolSchema = z.object({
   name: slugRef.describe("The new agent's name (slug)"),
   display_name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500),
-  manager: z
-    .union([ref, z.null()])
-    .optional()
-    .describe('An agent name, "me" (the default), or null for top level'),
+  reports_to: ref.describe("Who it reports to: an agent or a person, as @handle"),
   credential: ref.describe("A credential's name"),
   projects: z.array(ref).optional().describe("Project names (default: the template's)"),
   config: agentOverlaySchema.optional().describe("The agent's overlay on its template"),
@@ -33,10 +30,7 @@ export const updateAgentToolSchema = z
     slug: slugRef,
     display_name: z.string().trim().min(1).max(80).optional(),
     description: z.string().trim().max(500).optional(),
-    manager: z
-      .union([ref, z.null()])
-      .optional()
-      .describe('An agent name, "me", or null for top level'),
+    reports_to: ref.optional().describe("Who it reports to now: an agent or a person, as @handle"),
     credential: ref.optional(),
     projects: z.array(ref).optional().describe("The full new list (replaces the old one)"),
     config: agentOverlaySchema

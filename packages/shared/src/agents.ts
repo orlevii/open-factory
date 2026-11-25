@@ -2,6 +2,7 @@ import { z } from "zod";
 import { avatarColorSchema } from "./avatar.ts";
 import { configDocSchema } from "./config.ts";
 import { sessionEventSchema } from "./events.ts";
+import { MSG } from "./messages.ts";
 import { nameSchema, slugSchema } from "./names.ts";
 import { liveCronSchema } from "./schedules.ts";
 import { templateIssueSchema } from "./templates.ts";
@@ -54,6 +55,24 @@ export const agentLiveShape = {
   restartChanges: z.array(z.string()),
 };
 
+/** I9 §4.5: who an agent reports to; never null. A persistent agent's manager is an agent or a human, an ephemeral agent's its spawner. `handle` is bare. */
+export const reportsToSchema = z.object({ kind: z.enum(["agent", "user"]), handle: z.string() });
+export type ReportsTo = z.infer<typeof reportsToSchema>;
+
+/** I9 §4.6: a resolved config value and where it comes from: the agent's own overlay, its template, or neither (Claude Code's default). */
+export const resolvedValueSchema = z.object({
+  value: z.string().nullable(),
+  source: z.enum(["agent", "template"]).nullable(),
+});
+export type ResolvedValue = z.infer<typeof resolvedValueSchema>;
+
+/** `"@handle"` of an agent or a person; the leading `@` is optional and dropped. Whether it exists is the service's to judge. */
+export const managerRefSchema = z
+  .string()
+  .trim()
+  .transform((s) => (s.startsWith("@") ? s.slice(1) : s))
+  .pipe(z.string().min(1, MSG.managerRequired).max(40, MSG.managerRequired));
+
 export const agentSummarySchema = z.object({
   slug: z.string(),
   displayName: z.string(),
@@ -64,7 +83,9 @@ export const agentSummarySchema = z.object({
   lastError: z.string().optional(),
   kind: z.enum(["persistent", "ephemeral"]),
   template: z.string(),
-  reportsTo: z.string().nullable(),
+  reportsTo: reportsToSchema,
+  model: resolvedValueSchema,
+  effort: resolvedValueSchema,
   reports: z.number().int().nonnegative().default(0),
   /** S8: open and in-progress tasks assigned to it (the session strip's link). */
   openTasks: z.number().int().nonnegative().default(0),
@@ -245,7 +266,7 @@ export const createAgentBodySchema = z.object({
   slug: slugSchema,
   displayName: z.string().trim().min(1, "Enter a display name.").max(80),
   description: z.string().trim().max(500),
-  reportsTo: slugSchema.nullable(),
+  reportsTo: managerRefSchema,
   credential: nameSchema,
   projects: z.array(nameSchema).optional(),
   manageOrg: z.boolean().optional(),
@@ -255,7 +276,7 @@ export const patchAgentBodySchema = z
   .strictObject({
     displayName: z.string().trim().min(1, "Enter a display name.").max(80),
     description: z.string().trim().max(500),
-    reportsTo: slugSchema.nullable(),
+    reportsTo: managerRefSchema,
     credential: nameSchema,
     projects: z.array(nameSchema),
     color: avatarColorSchema.nullable(),

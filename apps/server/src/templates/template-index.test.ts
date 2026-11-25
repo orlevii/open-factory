@@ -18,7 +18,7 @@ import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { loadConfig } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
-import { claimTestHandle } from "../test/handles.ts";
+import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import { configDocHash, type TemplateChange, TemplateIndex } from "./template-index.ts";
@@ -422,6 +422,7 @@ async function seedUser(
         template: "mgr-template",
         runtime: "local",
         credentialId: mgrCred,
+        reportsToUser: await testManagerUserId(t.db),
       })
       .returning({ id: schema.agents.id });
     await t.db.insert(schema.agents).values({
@@ -444,6 +445,7 @@ async function seedUser(
     template: o.template,
     runtime: "local",
     credentialId,
+    reportsToUser: await testManagerUserId(t.db),
     ...(o.archived ? { archivedAt: new Date() } : {}),
   });
 }

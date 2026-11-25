@@ -288,7 +288,7 @@ test("reload never clears the latch", async () => {
 test("reload latches a row terminated elsewhere", async () => {
   await h.makeRuntime();
   await h.t
-    .sql`update agents set kind = 'ephemeral', reports_to = ${h.agentId}, terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
+    .sql`update agents set kind = 'ephemeral', reports_to = ${h.agentId}, reports_to_user = null, terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
   await h.rt.reload();
   expect(h.rt.isTerminated()).toBe(true);
   expect(h.rt.live().status).toBe("terminated");

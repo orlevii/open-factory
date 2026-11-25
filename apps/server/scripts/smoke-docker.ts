@@ -376,7 +376,7 @@ try {
         slug: SLUG,
         displayName: "Smoke Dock",
         description: "Smoke Docker agent",
-        reportsTo: null,
+        reportsTo: "smoke",
         credential: "smoke",
       },
       { kind: "human", handle: "or" },

@@ -68,6 +68,19 @@ export class UserAdminService {
       // After last_enabled_user, so two admins disabling each other still get that 409.
       if (!enabled.some((u) => u.id === actorId)) throw actorDisabled();
       if (target.disabledAt === null) {
+        // I9 §4.5: a human who manages agents can't be disabled while they report to them; move them first.
+        const managed = await tx
+          .select({ slug: schema.agents.slug })
+          .from(schema.agents)
+          .where(and(eq(schema.agents.reportsToUser, targetId), isNull(schema.agents.terminatedAt)))
+          .orderBy(asc(schema.agents.slug));
+        if (managed.length)
+          throw new ApiError(
+            409,
+            "manages_agents",
+            `@${target.handle} manages ${managed.map((a) => `@${a.slug}`).join(", ")}. Move them to another manager first.`,
+            { agents: managed.map((a) => a.slug) },
+          );
         await tx
           .update(schema.users)
           .set({ disabledAt: now, disabledBy: actorId })

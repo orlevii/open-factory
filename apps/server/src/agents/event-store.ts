@@ -948,7 +948,7 @@ export class EventStore {
    */
   async createHumanMessage(
     m: {
-      kind: "message" | "system" | "task_comment" | "task_update";
+      kind: "message" | "system" | "task_comment" | "task_update" | "member_update";
       fromAgentId?: string | null;
       /** A human author (a human's mention in a task comment). */
       fromUserId?: string;
@@ -965,7 +965,7 @@ export class EventStore {
       /** A `kind: "message"` row's recipient list, as `@handle`s. */
       recipients?: string[];
       /** The inbox item's kind; `message` when not given. */
-      inboxKind?: "message" | "mention" | "task_event" | "credential";
+      inboxKind?: "message" | "mention" | "task_event" | "credential" | "member_update";
       body: string;
       urgent: boolean;
       fromToolUseId?: string | null;
@@ -985,6 +985,11 @@ export class EventStore {
         );
       if (m.kind === "message" && !m.recipients?.length)
         throw new Error("a human message needs its recipients");
+      if (m.kind === "member_update") {
+        if (m.to === "all") throw new Error("a member update goes to its one manager");
+        if (!m.fromAgentId === !(m.subjectAgentId && m.notice))
+          throw new Error("a member update is a report's text or a fact about it, not both");
+      }
       if (m.to === "all" && m.kind !== "system")
         throw new Error("only a factory fact goes to every human; address people by handle");
       if (m.kind === "task_update" && (authors > 0 || m.subjectAgentId))
@@ -1441,6 +1446,8 @@ export class EventStore {
     const senders = await this.senderEvents(page.map((r) => r.m));
     const items: InboxEntry[] = [];
     for (const r of page) {
+      // Member updates are the page's grouped `updates` (I9 §4.5), never items.
+      if (r.item.kind === "member_update") continue;
       // I3 §5.8: a credential notice is built first, so it never reaches the session link with an empty slug.
       if (r.m.subjectCredentialId && r.credName !== null) {
         items.push({
@@ -1508,7 +1515,13 @@ export class EventStore {
 
   /** One item of the user's inbox, or null when it does not exist or belongs to someone else. */
   async inboxItem(userId: string, id: string): Promise<InboxEntry | null> {
-    const rows = await this.inboxRows(and(eq(inboxItems.userId, userId), eq(inboxItems.id, id)));
+    const rows = await this.inboxRows(
+      and(
+        eq(inboxItems.userId, userId),
+        eq(inboxItems.id, id),
+        ne(inboxItems.kind, "member_update"),
+      ),
+    );
     return (await this.toEntries(rows))[0] ?? null;
   }
 
@@ -1521,7 +1534,12 @@ export class EventStore {
     before?: string,
     limit = 50,
     o: { unread?: boolean } = {},
-  ): Promise<{ chats?: UnreadChat[]; items: InboxEntry[]; nextCursor: string | null }> {
+  ): Promise<{
+    chats?: UnreadChat[];
+    updates?: UnreadChat[];
+    items: InboxEntry[];
+    nextCursor: string | null;
+  }> {
     let cursor: SQL | undefined;
     if (before) {
       const [at, id] = Buffer.from(before, "base64url").toString().split("|");
@@ -1531,9 +1549,9 @@ export class EventStore {
     const rows = await this.inboxRows(
       and(
         eq(inboxItems.userId, userId),
-        // Chat messages are the Chat's (I1 §6.7): they come back as `chats`, never as items. A factory notice
-        // (`system`) has no chat: it is an item of kind `notice`.
-        ne(messages.kind, "message"),
+        // Chat messages are the Chat's (I1 §6.7): they come back as `chats`, never as items. A report's member updates
+        // come back grouped as `updates` (I9 §4.5). A factory notice (`system`) has no chat: it is an item of kind `notice`.
+        notInArray(messages.kind, ["message", "member_update"]),
         cursor,
         o.unread ? isNull(inboxItems.readAt) : undefined,
       ),
@@ -1547,23 +1565,53 @@ export class EventStore {
       rows.length > limit && last
         ? Buffer.from(`${last.createdAtIso}|${last.item.id}`).toString("base64url")
         : null;
-    // `chats` is unpaginated: only the first page carries it.
-    return { ...(before ? {} : { chats: await this.unreadChats(userId) }), items, nextCursor };
+    // `chats` and `updates` are unpaginated: only the first page carries them.
+    if (before) return { items, nextCursor };
+    const [chats, updates] = await Promise.all([
+      this.unreadChats(userId),
+      this.unreadUpdates(userId),
+    ]);
+    return { chats, updates, items, nextCursor };
   }
 
   /**
    * I1 §6.7: every agent with unread messages to the user, newest first: how many, and the newest one (its body cut
    * to a plain-text preview). Unpaginated: one row per agent.
    */
-  async unreadChats(userId: string): Promise<UnreadChat[]> {
+  unreadChats(userId: string): Promise<UnreadChat[]> {
+    return this.unreadGroups(userId, "message");
+  }
+
+  /** I9 §4.5: the same grouping for a human manager's unread member updates, one row per report. */
+  unreadUpdates(userId: string): Promise<UnreadChat[]> {
+    return this.unreadGroups(userId, "member_update");
+  }
+
+  /** Unread inbox items of `kind` grouped by the agent they come from (a fact's subject, for a member update). */
+  private async unreadGroups(
+    userId: string,
+    kind: "message" | "member_update",
+  ): Promise<UnreadChat[]> {
     const fa = alias(agents, "fa");
+    // A chat message is from its agent; a member update is from the report, or about it (a fact). A factory notice
+    // (`system`, also an item of kind `message`) is neither: it has no sender, so it never groups.
+    const from =
+      kind === "message"
+        ? eq(fa.id, messages.fromAgentId)
+        : eq(fa.id, sql`coalesce(${messages.fromAgentId}, ${messages.subjectAgentId})`);
     const unread = and(
       eq(inboxItems.userId, userId),
       isNull(inboxItems.readAt),
-      eq(inboxItems.kind, "message"),
+      eq(inboxItems.kind, kind),
     );
     const [counts, latest] = await Promise.all([
-      this.unreadByAgent(userId),
+      this.db
+        .select({ slug: fa.slug, n: count() })
+        .from(inboxItems)
+        .innerJoin(messages, eq(messages.id, inboxItems.messageId))
+        .innerJoin(fa, from)
+        .where(unread)
+        .groupBy(fa.slug),
       this.db
         .selectDistinctOn([fa.slug], {
           slug: fa.slug,
@@ -1574,14 +1622,15 @@ export class EventStore {
         })
         .from(inboxItems)
         .innerJoin(messages, eq(messages.id, inboxItems.messageId))
-        .innerJoin(fa, eq(fa.id, messages.fromAgentId))
+        .innerJoin(fa, from)
         .where(unread)
         .orderBy(fa.slug, desc(inboxItems.createdAt), desc(inboxItems.id)),
     ]);
+    const n = new Map(counts.map((c) => [c.slug, c.n]));
     return latest
       .map((r) => ({
         slug: r.slug,
-        unread: counts[r.slug] ?? 0,
+        unread: n.get(r.slug) ?? 0,
         latest: {
           messageId: r.messageId,
           preview: Array.from(plainPreview(r.body)).slice(0, 280).join(""),
@@ -1626,13 +1675,15 @@ export class EventStore {
   }
 
   /**
-   * Marks the user's unread `message` items sent by the agent `slug`, created at or before `upTo`, read with one
-   * stamp. `null` for an unknown slug. Mentions, task events and items from other senders are untouched.
+   * Marks the user's unread `kind` items (chat messages, or member updates, I9 §4.5) from the agent `slug`, created at
+   * or before `upTo`, read with one stamp. `null` for an unknown slug. Mentions, task events and items from other
+   * agents are untouched.
    */
   async markReadFrom(
     userId: string,
     slug: string,
     upTo: string,
+    kind: "message" | "member_update" = "message",
   ): Promise<{ marked: number; readAt: string } | null> {
     if (!isCursorInstant(upTo)) throw new InvalidCursorError();
     const agent = await this.agentBySlug(slug);
@@ -1645,14 +1696,14 @@ export class EventStore {
         and(
           eq(inboxItems.userId, userId),
           isNull(inboxItems.readAt),
-          eq(inboxItems.kind, "message"),
+          eq(inboxItems.kind, kind),
           sql`${inboxItems.createdAt} <= ${upTo}::timestamptz`,
           inArray(
             inboxItems.messageId,
             this.db
               .select({ id: messages.id })
               .from(messages)
-              .where(eq(messages.fromAgentId, agent.id)),
+              .where(or(eq(messages.fromAgentId, agent.id), eq(messages.subjectAgentId, agent.id))),
           ),
         ),
       )

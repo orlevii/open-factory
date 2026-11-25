@@ -10,6 +10,7 @@ import { dockerStartError } from "../runtime/docker/errors.ts";
 import { MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "../scheduling/limits.ts";
 import { type DenyRules, type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
 import { maySpawn } from "../spawning/may-spawn.ts";
+import type { ManagerRef } from "../workspace/claude-md.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import type { MountCheckContext } from "../workspace/mounts.ts";
@@ -261,18 +262,26 @@ export function createPrepareStart(d: {
         }
       }
 
-      let manager: { slug: string; displayName: string } | null = null;
+      let manager: ManagerRef | undefined;
       if (agent.reportsTo) {
         const [m] = await d.db
           .select({ slug: schema.agents.slug, displayName: schema.agents.displayName })
           .from(schema.agents)
           .where(eq(schema.agents.id, agent.reportsTo));
-        manager = m ?? null;
+        if (m) manager = { kind: "agent", ...m };
+      } else if (agent.reportsToUser) {
+        const [u] = await d.db
+          .select({ handle: schema.users.handle, name: schema.users.name })
+          .from(schema.users)
+          .where(eq(schema.users.id, agent.reportsToUser));
+        if (u) manager = { kind: "user", ...u };
       }
+      if (!manager)
+        throw new AgentStartError(`@${agent.slug}'s manager no longer exists, so it can't start.`);
       const hood = await d.neighborhood.of(agent.id);
       // A spawned entry's manager is its spawner: this agent (a report) or this agent's manager (a peer).
       const slugs = new Map([[agent.id, agent.slug]]);
-      if (agent.reportsTo && manager) slugs.set(agent.reportsTo, manager.slug);
+      if (agent.reportsTo && manager.kind === "agent") slugs.set(agent.reportsTo, manager.slug);
       // The writer of a description is `description_by` joined to its slug (I7 §10), so a rename keeps the quoting.
       const writerIds = [
         ...new Set(

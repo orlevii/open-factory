@@ -73,7 +73,7 @@ beforeEach(async () => {
       templateSkills: [],
       library: { skills: {} },
     },
-    manager: null,
+    manager: { kind: "user" as const, handle: "or", name: "Or" },
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
     reports: [],

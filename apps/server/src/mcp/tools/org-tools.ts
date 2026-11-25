@@ -79,10 +79,6 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         return toolErrorOf(err);
       }
     };
-  /** `"me"` and an omitted manager are the caller; null is top level. */
-  const managerOf = (actor: AgentActor, m: string | null | undefined): string | null =>
-    m === null ? null : m === undefined || bare(m) === "me" ? actor.slug : bare(m);
-
   const tool = <S extends z.ZodType>(
     name: string,
     description: string,
@@ -178,7 +174,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           description: a.description,
           kind: a.kind,
           template: a.template,
-          manager: a.reportsTo,
+          reports_to: `@${a.reportsTo.handle}`,
           credential: a.credential,
           projects: a.projects,
           manage_org: a.manageOrg,
@@ -193,7 +189,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
     ),
     tool(
       "create_agent",
-      'Create a persistent agent from a template, the way a human does in New agent. The manager defaults to you ("me"); null makes it top level. It never gets manage_org.',
+      "Create a persistent agent from a template, the way a human does in New agent. reports_to is required: an agent or a person, as @handle. It never gets manage_org.",
       createAgentToolSchema,
       async (a, actor) => {
         const slug = bare(a.name);
@@ -203,7 +199,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
             slug,
             displayName: a.display_name,
             description: a.description,
-            reportsTo: managerOf(actor, a.manager),
+            reportsTo: bare(a.reports_to),
             credential: a.credential.trim(),
             ...(a.projects ? { projects: a.projects } : {}),
             ...(a.config ? { config: a.config } : {}),
@@ -227,7 +223,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         const patch: PatchAgentBody = {
           ...(a.display_name !== undefined ? { displayName: a.display_name } : {}),
           ...(a.description !== undefined ? { description: a.description } : {}),
-          ...(a.manager !== undefined ? { reportsTo: managerOf(actor, a.manager) } : {}),
+          ...(a.reports_to !== undefined ? { reportsTo: bare(a.reports_to) } : {}),
           ...(a.credential !== undefined ? { credential: a.credential.trim() } : {}),
           ...(a.projects !== undefined ? { projects: a.projects } : {}),
         };
@@ -241,7 +237,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         const fields: string[] = [
           ...(r.agent.displayName !== before.displayName ? ["display_name"] : []),
           ...(r.agent.description !== before.description ? ["description"] : []),
-          ...(r.agent.reportsTo !== before.reportsTo ? ["manager"] : []),
+          ...(r.agent.reportsTo.handle !== before.reportsTo.handle ? ["reports_to"] : []),
           ...(r.agent.credential !== before.credential ? ["credential"] : []),
           ...(same(r.agent.projects, before.projects) ? [] : ["projects"]),
         ];

@@ -263,7 +263,11 @@ function EditAgentForm({
     while (grew) {
       grew = false;
       for (const a of list) {
-        if (a.reportsTo && excluded.has(a.reportsTo) && !excluded.has(a.slug)) {
+        if (
+          a.reportsTo.kind === "agent" &&
+          excluded.has(a.reportsTo.handle) &&
+          !excluded.has(a.slug)
+        ) {
           excluded.add(a.slug);
           grew = true;
         }
@@ -291,7 +295,7 @@ function EditAgentForm({
   // A display name or description change also restarts the agent's live direct reports (their prompt names their
   // manager); only the running ones restart anything.
   const runningReports = (activeAgents.data ?? [])
-    .filter((a) => a.reportsTo === slug && isRunning(a))
+    .filter((a) => a.reportsTo.kind === "agent" && a.reportsTo.handle === slug && isRunning(a))
     .map((a) => `@${a.slug}`);
   // A colour change is identity only: it never restarts the agent (spec §11).
   const restartFields = changes.filter((f) => f !== "color");

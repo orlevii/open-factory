@@ -349,7 +349,10 @@ const many = () =>
     agentSummary({
       slug: `a${i}`,
       displayName: `Agent ${i}`,
-      reportsTo: i === 0 ? null : i < 14 ? `a${i - 1}` : `a${i % 14}`,
+      reportsTo:
+        i === 0
+          ? { kind: "user", handle: "or" }
+          : { kind: "agent", handle: i < 14 ? `a${i - 1}` : `a${i % 14}` },
     }),
   );
 

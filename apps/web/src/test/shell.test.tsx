@@ -213,7 +213,11 @@ const liveAgents = () =>
       json({
         agents: [
           agentSummary({ slug: "dev", displayName: "Dev agent" }),
-          agentSummary({ slug: "qa", displayName: "QA agent", reportsTo: "dev" }),
+          agentSummary({
+            slug: "qa",
+            displayName: "QA agent",
+            reportsTo: { kind: "agent", handle: "dev" },
+          }),
         ],
         running: { count: 0 },
       }),

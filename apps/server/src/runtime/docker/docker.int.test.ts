@@ -21,6 +21,7 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../../agents/event-store.ts";
+import { seedTestUser } from "../../test/handles.ts";
 import { makeTestApp } from "../../test/helpers.ts";
 import { asRunning } from "../../test/running.ts";
 import { agentWorkdir } from "../../workspace/paths.ts";
@@ -176,6 +177,7 @@ async function setup(o: {
     ...(o.local ? { FACTORY_CLAUDE_BIN: o.local.bin } : {}),
   };
   const t = await makeTestApp({ env });
+  await seedTestUser(t.db);
   const settings = fakeClaudeIn(workdir);
   writeTemplate(
     home,
@@ -199,7 +201,7 @@ async function setup(o: {
       slug,
       displayName: "Dock",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
       ...(o.grant ? { projects: ["app"] } : {}),
     },
@@ -234,6 +236,7 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
     FACTORY_CLI_BUNDLE: cliBundle,
   };
   const t = await makeTestApp({ env });
+  await seedTestUser(t.db);
   const fake = installFakeClaude({ workdir: repo, scenario });
   expect(fake.bin).toBe(env.FACTORY_DOCKER_CLAUDE_BIN);
   const secrets = "secrets:\n  - FAKE_CLAUDE_SCENARIO\n  - FAKE_CLAUDE_DIR\n";
@@ -255,7 +258,7 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
       slug: "lead",
       displayName: "Lead",
       description: "",
-      reportsTo: null,
+      reportsTo: "or",
       credential: "work",
       projects: ["app"],
     },
@@ -709,7 +712,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
         slug: "loc",
         displayName: "Loc",
         description: "",
-        reportsTo: null,
+        reportsTo: "or",
         credential: "work",
       },
       { kind: "human", handle: "or" },

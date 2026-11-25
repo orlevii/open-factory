@@ -7,6 +7,7 @@ import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { ApiError } from "../errors.ts";
+import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import type { ConfigService } from "./config-service.ts";
 import { OrgRefusedError } from "./errors.ts";
@@ -32,7 +33,7 @@ const body = (slug: string, template = "dev") => ({
   slug,
   displayName: slug,
   description: "",
-  reportsTo: null,
+  reportsTo: "or",
   credential: "work",
 });
 const rowOf = async (slug: string) => {
@@ -49,6 +50,7 @@ beforeAll(async () => {
   t = await makeTestApp({
     env: { FACTORY_CLAUDE_BIN: createFakeClaude({ scenario: "reply" }).bin },
   });
+  await seedTestUser(t.db);
   home = t.factoryHome;
   cfg = t.app.configs;
   const credId = randomUUID();
@@ -105,7 +107,11 @@ test("an agent can't remove an overlay deny rule, and nothing is written", async
 test("a spawned target is refused: Spawned agents can't be edited", async () => {
   await t.db
     .update(schema.agents)
-    .set({ kind: "ephemeral", reportsTo: hr.kind === "agent" ? hr.id : null })
+    .set({
+      kind: "ephemeral",
+      reportsTo: hr.kind === "agent" ? hr.id : null,
+      reportsToUser: null,
+    })
     .where(eq(schema.agents.slug, "loc"));
   try {
     await expect(cfg.saveOverlay("loc", {}, "x", human)).rejects.toMatchObject({
@@ -116,7 +122,7 @@ test("a spawned target is refused: Spawned agents can't be edited", async () => 
   } finally {
     await t.db
       .update(schema.agents)
-      .set({ kind: "persistent", reportsTo: null })
+      .set({ kind: "persistent", reportsTo: null, reportsToUser: "u-or" })
       .where(eq(schema.agents.slug, "loc"));
   }
 });

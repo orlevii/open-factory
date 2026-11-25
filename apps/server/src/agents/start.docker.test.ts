@@ -24,7 +24,7 @@ import {
 } from "../runtime/docker/exec-transport.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
-import { claimTestHandle, claimTestHandleSql } from "../test/handles.ts";
+import { claimTestHandle, claimTestHandleSql, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
@@ -144,6 +144,7 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
       config: {},
       runtime: "docker",
       credentialId: "c1",
+      reportsToUser: await testManagerUserId(t.db),
     })
     .returning();
   if (!agent) throw new Error("seed failed");
@@ -162,7 +163,7 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     description: "",
     template: "dock",
     config,
-    manager: null,
+    manager: { kind: "user" as const, handle: "or", name: "Or" },
     grants: [],
   };
   await workspace.materialize(

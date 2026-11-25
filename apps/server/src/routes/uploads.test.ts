@@ -38,7 +38,12 @@ beforeAll(async () => {
   const dev = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "dev"));
   await t.db
     .update(schema.agents)
-    .set({ kind: "ephemeral", reportsTo: dev[0]?.id, terminatedAt: new Date() })
+    .set({
+      kind: "ephemeral",
+      reportsTo: dev[0]?.id,
+      reportsToUser: null,
+      terminatedAt: new Date(),
+    })
     .where(eq(schema.agents.slug, "gone"));
   await t.db
     .update(schema.agents)

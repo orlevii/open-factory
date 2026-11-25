@@ -3,7 +3,7 @@ export const FIELD_MSG = {
   noFolder: "No folder at this path.",
   folderInUse: "Another project uses this folder.",
   chooseCredential: "Choose a credential.",
-  chooseManager: "Choose an active agent.",
+  chooseManager: "Choose an active agent or person.",
   projectRemoved: "A chosen project was removed.",
   slugInvalid: "Invalid slug.",
   slugTaken: "That slug is taken.",

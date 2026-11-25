@@ -297,7 +297,7 @@ test("success closes the sheet, clears the draft and navigates to the session", 
     slug: "team-lead",
     displayName: "Team Lead",
     description: "Leads the team",
-    reportsTo: null,
+    reportsTo: "alice", // no manager picked: the signed-in human manages it
     credential: "work",
   });
 });
@@ -584,7 +584,7 @@ test("the manager picker leaves out spawned agents", async () => {
         slug: "cto-ab12",
         displayName: "Dev · ab12",
         kind: "ephemeral",
-        reportsTo: "cto",
+        reportsTo: { kind: "agent", handle: "cto" },
         depth: 1,
       }),
     ],
@@ -959,7 +959,7 @@ test("the manager picker pads by depth, at most three levels, then marks deeper 
         slug,
         displayName: slug.toUpperCase(),
         depth,
-        ...(depth ? { reportsTo: chain[depth - 1] } : {}),
+        ...(depth ? { reportsTo: { kind: "agent", handle: chain[depth - 1] as string } } : {}),
       }),
     ),
   });

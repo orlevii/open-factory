@@ -185,7 +185,7 @@ describe("PUT", () => {
     // A spawned agent always reports to its spawner (agents_ephemeral_manager).
     await t.db
       .update(schema.agents)
-      .set({ kind: "ephemeral", reportsTo: lead?.id })
+      .set({ kind: "ephemeral", reportsTo: lead?.id, reportsToUser: null })
       .where(eq(schema.agents.slug, "kid"));
     const r = await put({}, overlayVersion({}), "kid");
     expect(r.statusCode).toBe(409);

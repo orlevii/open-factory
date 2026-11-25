@@ -22,7 +22,7 @@ beforeEach(async () => {
   const lead = await h.seedAgent({ slug: "lead" });
   for (const slug of ["ada", "bob"]) {
     const r = await h.seedAgent({ slug });
-    await h.sql`update agents set reports_to = ${lead.id} where id = ${r.id}`;
+    await h.sql`update agents set reports_to = ${lead.id}, reports_to_user = null where id = ${r.id}`;
   }
 });
 afterEach(() => h.close());
@@ -287,64 +287,96 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
   expect(all.peers.find((x: { handle: string }) => x.handle === "@ada")).toBeUndefined();
 });
 
-test("Router.forward: a report's text goes to its manager as a member_update; a top-level agent's errored goes to the humans once", async () => {
-  await signUp(h.app, { handle: "or" });
+test("Router.forward: a report's text and facts go to its manager agent as member_updates", async () => {
   const a = await h.app.store.agentBySlug("ada");
   const lead = await h.app.store.agentBySlug("lead");
   if (!a || !lead) throw new Error("seed");
   await h.app.router.forward({ agentId: a.id, body: "progress" });
   await h.app.router.forward({ agentId: a.id, fact: "denied", body: "Bash was denied for @ada." });
+  await h.app.router.forward({ agentId: a.id, fact: "errored", body: "@ada is errored." });
   const rows =
     await h.sql`select kind, from_agent_id, subject_agent_id, notice, body, state from messages where to_agent_id = ${lead.id} order by created_at`;
-  expect(rows).toEqual([
+  expect(rows.map((r) => [r.kind, r.from_agent_id === a.id, r.notice, r.body, r.state])).toEqual([
+    ["member_update", true, null, "progress", "pending"],
+    ["member_update", false, "denied", "Bash was denied for @ada.", "pending"],
+    ["member_update", false, "errored", "@ada is errored.", "pending"],
+  ]);
+  // A manager agent's report never reaches a human's inbox, errored or not.
+  expect(await h.sql`select 1 from inbox_items`).toHaveLength(0);
+});
+
+test("Router.forward: a human manager gets their report's text and facts in their own inbox only, and an errored episode as one notice for them alone", async () => {
+  const or = await signUp(h.app, { handle: "or" });
+  const sam = await signUp(h.app, { handle: "sam" });
+  const lead = await h.app.store.agentBySlug("lead");
+  if (!lead) throw new Error("seed");
+  await h.sql`update agents set reports_to_user = ${or.user.id} where id = ${lead.id}`;
+  const seen = { or: [] as ServerMessage[], sam: [] as ServerMessage[] };
+  h.app.bus.subscribeUser(or.user.id, (m) => seen.or.push(m));
+  h.app.bus.subscribeUser(sam.user.id, (m) => seen.sam.push(m));
+  const inboxOf = (userId: string) =>
+    h.sql`select i.kind as inbox_kind, m.kind, m.notice, m.from_agent_id, m.subject_agent_id, m.to_user_id, m.to_all_humans
+          from inbox_items i join messages m on m.id = i.message_id where i.user_id = ${userId} order by m.created_at`;
+
+  await h.app.router.forward({ agentId: lead.id, body: "top-level text" });
+  await h.app.router.forward({ agentId: lead.id, fact: "recovered", body: "@lead recovered." });
+  expect(await inboxOf(or.user.id)).toEqual([
     {
+      inbox_kind: "member_update",
       kind: "member_update",
-      from_agent_id: a.id,
-      subject_agent_id: null,
       notice: null,
-      body: "progress",
-      state: "pending",
+      from_agent_id: lead.id,
+      subject_agent_id: null,
+      to_user_id: or.user.id,
+      to_all_humans: false,
     },
     {
+      inbox_kind: "member_update",
       kind: "member_update",
+      notice: "recovered",
       from_agent_id: null,
-      subject_agent_id: a.id,
-      notice: "denied",
-      body: "Bash was denied for @ada.",
-      state: "pending",
+      subject_agent_id: lead.id,
+      to_user_id: or.user.id,
+      to_all_humans: false,
     },
   ]);
-  await h.app.router.forward({ agentId: lead.id, body: "top-level text" }); // stays in its session
-  await h.app.router.forward({ agentId: lead.id, fact: "recovered", body: "@lead recovered." }); // R4: quiet
   await h.app.router.forward({
     agentId: lead.id,
     fact: "errored",
     body: "@lead is errored and needs a human.",
   });
-  const toHumans =
-    await h.sql`select kind, notice, subject_agent_id, from_agent_id, state from messages where to_all_humans`;
-  expect(toHumans).toEqual([
-    {
+  expect(await inboxOf(or.user.id)).toHaveLength(3);
+  expect(await inboxOf(or.user.id)).toContainEqual(
+    expect.objectContaining({
+      inbox_kind: "message",
       kind: "system",
       notice: "agent_errored",
       subject_agent_id: lead.id,
-      from_agent_id: null,
-      state: "delivered",
-    },
-  ]);
-  expect(await h.sql`select 1 from inbox_items`).toHaveLength(1);
-  expect(frames).toContainEqual({ type: "inbox_changed" });
+      to_all_humans: false,
+    }),
+  );
+  // Nobody else hears of it: not the other human, not the seeded fixture user.
+  expect(await inboxOf(sam.user.id)).toEqual([]);
+  expect(await h.sql`select 1 from inbox_items`).toHaveLength(3);
+  expect(await h.sql`select 1 from messages where to_all_humans`).toHaveLength(0);
+  expect(seen.or.filter((m) => m.type === "inbox_changed")).toHaveLength(3);
+  expect(seen.sam).toEqual([]);
 });
 
-test("R4 (owner): a top-level agent's errored episode is one inbox item; a successful automatic recovery is none", async () => {
-  await signUp(h.app, { handle: "or" });
+test("R4 (owner): a human-managed agent's errored episode is one inbox item for its manager; a successful automatic recovery is none", async () => {
+  const or = await signUp(h.app, { handle: "or" });
   await startIdle("lead"); // signs up a second user, "hlead"
   const lead = await h.app.store.agentBySlug("lead");
   if (!lead) throw new Error("seed");
-  const users = 2;
+  await h.sql`update agents set reports_to_user = ${or.user.id} where id = ${lead.id}`;
   const items = async () =>
     (
       await h.sql`select i.user_id from inbox_items i join messages m on m.id = i.message_id
+                  where m.notice = 'agent_errored' and m.subject_agent_id = ${lead.id} and i.user_id = ${or.user.id}`
+    ).length;
+  const everyones = async () =>
+    (
+      await h.sql`select 1 from inbox_items i join messages m on m.id = i.message_id
                   where m.notice = 'agent_errored' and m.subject_agent_id = ${lead.id}`
     ).length;
   const crashMidTurn = async () => {
@@ -356,18 +388,19 @@ test("R4 (owner): a top-level agent's errored episode is one inbox item; a succe
     expect(driver.starts.filter((p) => p.spec.slug === "lead")).toHaveLength(starts);
     return proc("lead");
   };
-  // 1. A crash whose automatic attempt succeeds: nothing reaches the humans.
+  // 1. A crash whose automatic attempt succeeds: nothing reaches the manager's inbox as an errored notice.
   await crashMidTurn();
   (await nextAttempt(2))?.emit(ev.session("sess-lead"), ev.turn(), ev.usage(), ev.end());
   await settle("lead");
   expect(h.app.runtimes.statusOf(lead)).not.toBe("errored");
   expect(await items()).toBe(0);
-  // 2. A crash whose automatic attempt fails: errored, one inbox item per human.
+  // 2. A crash whose automatic attempt fails: errored, one inbox item, for the manager only.
   await crashMidTurn();
   (await nextAttempt(3))?.exit(1);
   await settle("lead");
   expect(h.app.runtimes.statusOf(lead)).toBe("errored");
-  expect(await items()).toBe(users);
+  expect(await items()).toBe(1);
+  expect(await everyones()).toBe(1);
   // 3. A human retry fails inside the same episode: nothing new.
   const { cookie } = await signUp(h.app, { handle: "sam" });
   const retry = () =>
@@ -380,8 +413,8 @@ test("R4 (owner): a top-level agent's errored episode is one inbox item; a succe
   await retry();
   (await nextAttempt(4))?.exit(1);
   await settle("lead");
-  expect(await items()).toBe(users);
-  // 4. A retry that succeeds ends the episode; the next errored episode is one more item per (now three) humans.
+  expect(await items()).toBe(1);
+  // 4. A retry that succeeds ends the episode; the next errored episode is one more item.
   await retry();
   (await nextAttempt(5))?.emit(ev.session("sess-lead"), ev.turn(), ev.usage(), ev.end());
   await settle("lead");
@@ -389,10 +422,8 @@ test("R4 (owner): a top-level agent's errored episode is one inbox item; a succe
   await crashMidTurn();
   (await nextAttempt(6))?.exit(1);
   await settle("lead");
-  expect(await items()).toBe(users + 3);
-  expect(
-    await h.sql`select 1 from messages where notice = 'agent_errored' and subject_agent_id = ${lead.id}`,
-  ).toHaveLength(2);
+  expect(await items()).toBe(2);
+  expect(await everyones()).toBe(2);
 });
 
 test("a report's top-level text is persisted for its manager and handed over to its runtime", async () => {

@@ -76,7 +76,10 @@ async function setup() {
     { agentId: lead.id, projectId: ids.web as string },
   ]);
   const pm = await app.seedAgent({ slug: "pm" });
-  await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
+  await app.db
+    .update(schema.agents)
+    .set({ reportsTo: lead.id, reportsToUser: null })
+    .where(eq(schema.agents.id, pm.id));
   return { t: app, driver, lead, pm };
 }
 
@@ -319,7 +322,10 @@ function gateMaterialize(app: T) {
 
 test("a spawn racing an archive of its spawner: the archive refuses or the spawn refuses, never an archived spawner with a live child", async () => {
   const { t, lead, pm } = await setup();
-  await t.db.update(schema.agents).set({ reportsTo: null }).where(eq(schema.agents.id, pm.id));
+  await t.db
+    .update(schema.agents)
+    .set({ reportsTo: null, reportsToUser: lead.reportsToUser })
+    .where(eq(schema.agents.id, pm.id));
   const g = gateMaterialize(t);
   const spawning = t.app.spawner.spawn(lead.id, args({ suffix: "race" }), null);
   await g.waitFor(1);
@@ -484,7 +490,7 @@ test("a template that is missing or invalid on disk is refused before anything i
   const before = folders(t);
   expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({
     ok: false,
-    message: "Template dev is missing or invalid; ask a human (list_peers lists them) to fix it.",
+    message: "Template dev is missing or invalid; ask your manager to fix it.",
   });
   expect(folders(t)).toEqual(before);
 });
@@ -495,7 +501,7 @@ test("I2 §6.2: a spawner whose current config can't be read refuses before anyt
   const before = folders(t);
   expect(await t.app.spawner.spawn(lead.id, args(), null)).toEqual({
     ok: false,
-    message: "Your configuration can't be read; ask a human (list_peers lists them) to fix it.",
+    message: "Your configuration can't be read; ask your manager to fix it.",
   });
   expect(folders(t)).toEqual(before);
 });
@@ -521,7 +527,7 @@ test("I2 §6.2: the allowlist is started's; secrets are the stricter of started 
 test("a caller with a manager is told to ask its manager", async () => {
   const { t, lead } = await setup();
   const boss = await t.seedAgent({ slug: "boss" });
-  await t.sql`update agents set reports_to = ${boss.id} where id = ${lead.id}`;
+  await t.sql`update agents set reports_to = ${boss.id}, reports_to_user = null where id = ${lead.id}`;
   writeTemplate(t.factoryHome, "dev", "name: dev\nruntime: nonsense\n");
   expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({
     ok: false,

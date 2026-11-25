@@ -4,7 +4,7 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandle } from "../test/handles.ts";
+import { claimTestHandle, seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { PolicyInputs } from "./policy-inputs.ts";
 
@@ -20,6 +20,7 @@ const writeTemplate = (name: string, yaml: string) => {
 
 beforeAll(async () => {
   t = await makeTestApp();
+  await seedTestUser(t.db);
   policy = new PolicyInputs({ db: t.db });
   writeTemplate("dockertpl", "name: dockertpl\ndisplay_name: D\nruntime: docker\n");
   writeTemplate("defaulted", "name: defaulted\ndisplay_name: D\n");
@@ -48,7 +49,7 @@ test("templateHasLocalAgents: true for an archived local agent, and for a spawne
   });
   const create = (slug: string, template: string) =>
     t.app.agents.create(
-      { template, slug, displayName: slug, description: "", reportsTo: null, credential: "work" },
+      { template, slug, displayName: slug, description: "", reportsTo: "or", credential: "work" },
       human,
     );
   expect(await policy.templateHasLocalAgents("localtpl")).toBe(false);

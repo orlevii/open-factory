@@ -8,6 +8,8 @@ beforeAll(async () => {
   tdb = await createMigratedTestDatabase();
   sql = postgres(tdb.url, { max: 1, onnotice: () => {} });
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1','c1','oauth_token',${Buffer.from("x")})`;
+  await sql`insert into handles (handle, kind) values ('boss','user')`;
+  await sql`insert into users (id, name, email, handle) values ('u0','Boss','boss@x.io','boss')`;
 });
 afterAll(async () => {
   await sql.end();
@@ -16,8 +18,8 @@ afterAll(async () => {
 
 test("an agent row needs a handles row", async () => {
   await expect(
-    sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
-        values ('a1','nohandle','A','t','{}','local','c1')`,
+    sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
+        values ('a1','nohandle','A','t','{}','local','c1','u0')`,
   ).rejects.toThrow(/foreign key/);
 });
 test("a user row needs a handles row", async () => {

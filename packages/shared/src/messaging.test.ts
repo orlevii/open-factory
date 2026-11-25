@@ -45,7 +45,7 @@ test("a merged member_update envelope with parts and a factory fact parse", () =
           slug: "dev",
           displayName: "Dev",
           relation: "peer",
-          left: { reason: "moved", to: null },
+          left: { reason: "moved", to: "or" },
         },
       },
     ],

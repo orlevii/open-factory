@@ -441,7 +441,7 @@ test("restart pending: a top line", async () => {
 });
 
 test("spawned: the template's configuration plus the spawner's limits, read-only, as of the next start", async () => {
-  agent = { ...agent, kind: "ephemeral", reportsTo: "lead" };
+  agent = { ...agent, kind: "ephemeral", reportsTo: { kind: "agent", handle: "lead" } };
   renderApp("/agents/ana/config", alice);
   expect(await screen.findByRole("heading", { level: 2, name: "Next start" })).toBeInTheDocument();
   expect(screen.getByText(/Spawned agents use their template's configuration/)).toHaveTextContent(

@@ -293,13 +293,13 @@ test("a peer event renders from subject, not from the body", async () => {
               slug: "b",
               displayName: "Builder",
               relation: "peer",
-              left: { reason: "moved", to: null },
+              left: { reason: "moved", to: "or" },
             },
           }),
         ],
       },
     ],
-    /left: now reports to the humans/,
+    /left: now reports to/,
   );
   expect(screen.queryByText("IGNORED PROSE")).toBeNull();
 });
@@ -796,7 +796,8 @@ test("?message= highlights the row holding that envelope, not the event's first 
 
 test("Agent details' manager is a link to its session", async () => {
   mockApi({
-    "GET /api/agents/dev": () => json(detail({ reportsTo: "lead", reports: 3 })),
+    "GET /api/agents/dev": () =>
+      json(detail({ reportsTo: { kind: "agent", handle: "lead" }, reports: 3 })),
     "GET /api/agents/dev/events?": () =>
       json({
         hasMore: { before: false, after: false },
@@ -804,7 +805,7 @@ test("Agent details' manager is a link to its session", async () => {
       }),
     "GET /api/agents?ended=exclude": () =>
       json({
-        agents: [agentSummary({ reportsTo: "lead", reports: 3 })],
+        agents: [agentSummary({ reportsTo: { kind: "agent", handle: "lead" }, reports: 3 })],
         running: { count: 1 },
       }),
   });

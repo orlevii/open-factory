@@ -42,7 +42,7 @@ const spawned = (over: Partial<AgentSummary> = {}): AgentSummary =>
     displayName: "Tech Lead · ab12",
     kind: "ephemeral",
     template: "tech-lead",
-    reportsTo: "lead",
+    reportsTo: { kind: "agent", handle: "lead" },
     depth: 1,
     ...over,
   });

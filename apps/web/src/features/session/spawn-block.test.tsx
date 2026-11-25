@@ -38,7 +38,7 @@ async function open(events: AnyEvent[], firstText: string | RegExp) {
             slug: "tech-lead-ab12",
             displayName: "Tech Lead · ab12",
             kind: "ephemeral",
-            reportsTo: "lead",
+            reportsTo: { kind: "agent", handle: "lead" },
           }),
         ],
         running: { count: 1 },

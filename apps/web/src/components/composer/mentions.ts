@@ -95,11 +95,10 @@ export function rankMentions(
       color: a.color,
     };
     const r = recentAt.get(a.slug);
-    // "Your reports": humans aren't stored as managers, so every root of the reporting line (which
-    // answers to the humans) counts as yours, as does an agent whose manager is your handle. In an org
-    // with several roots, each of them is "yours".
+    // "Your reports": an agent whose manager is a human (any human) counts as yours, as does an agent whose
+    // manager is your handle.
     if (r !== undefined) add(m, 0, r);
-    else add(m, a.reportsTo === null || a.reportsTo === me ? 1 : 2);
+    else add(m, a.reportsTo.kind === "user" || a.reportsTo.handle === me ? 1 : 2);
   }
   for (const h of humans) {
     if (h.disabledAt || h.handle === me) continue;

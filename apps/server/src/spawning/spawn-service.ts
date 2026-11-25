@@ -36,10 +36,6 @@ const notRunning = (slug: string) => fail(`@${slug} isn't running.`);
  * re-checks everything and writes the child, its grants, its brief, its `spawned` event and the peer rows. A spawned
  * agent never holds anything its spawner lacks (§6, `inheritFrom`).
  */
-/** Who an agent that can't fix a problem itself goes to: its manager, or else a person (spec §4.5). */
-const askFor = (agent: Pick<AgentRow, "reportsTo">) =>
-  agent.reportsTo ? "ask your manager" : "ask a human (list_peers lists them)";
-
 export class SpawnService {
   private readonly now: () => number;
 
@@ -79,7 +75,7 @@ export class SpawnService {
       current = await this.d.resolver.effective(caller);
     } catch (err) {
       this.d.log.warn({ err, agent: caller.slug }, "resolving the spawner's config failed");
-      return fail(`Your configuration can't be read; ${askFor(caller)} to fix it.`);
+      return fail(`Your configuration can't be read; ask your manager to fix it.`);
     }
     const desc = args.description.trim();
     if (!desc || desc.length > 500) return fail("Give a description of 1 to 500 characters.");
@@ -90,7 +86,7 @@ export class SpawnService {
     try {
       tpl = await this.d.templates.loadValid(args.template);
     } catch {
-      return fail(`Template ${args.template} is missing or invalid; ${askFor(caller)} to fix it.`);
+      return fail(`Template ${args.template} is missing or invalid; ask your manager to fix it.`);
     }
     // Pre-checks without a lock (spec §5.2 step 2): nothing is materialized for a refused spawn.
     const pre = await this.check(caller, started, current, tpl, this.d.db);
@@ -189,7 +185,7 @@ export class SpawnService {
           description,
           template,
           config: tpl.config,
-          manager: { slug: caller.slug, displayName: caller.displayName },
+          manager: { kind: "agent", slug: caller.slug, displayName: caller.displayName },
           grants: inherited.grants.map((g) => ({ name: g.name, hostPath: g.hostPath })),
         }),
       );
@@ -200,7 +196,7 @@ export class SpawnService {
       await this.discard(slug);
       if (err instanceof WorkspaceError || err instanceof FieldError) return fail(err.message);
       this.d.log.error({ err, agent: slug }, "materializing a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
+      return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
     }
   }
 
@@ -302,7 +298,7 @@ export class SpawnService {
       }
       await this.discard(slug);
       this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
-      return fail(`Setting up @${slug} failed; ${askFor(caller)} to check the factory log.`);
+      return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
     }
     if (out === "taken") {
       // A user's claim leaves our folder orphaned; an agent's claim means a winner owns it.

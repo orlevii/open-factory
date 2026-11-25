@@ -63,12 +63,17 @@ function humansLine(humans: OrgHuman[]): string[] {
   ];
 }
 
+/** I9 §4.5: who the agent reports to: an agent, or a human (never none). */
+export type ManagerRef =
+  | { kind: "agent"; slug: string; displayName: string }
+  | { kind: "user"; handle: string; name: string };
+
 export interface ClaudeMdInput {
   slug: string;
   displayName: string;
   description: string;
   template: string;
-  manager: { slug: string; displayName: string } | null;
+  manager: ManagerRef;
   workdir: string;
   projects: { name: string; hostPath: string }[];
   secretNames: string[];
@@ -160,11 +165,7 @@ function messagingSection(i: ClaudeMdInput): string[] {
     "## Messaging",
     "- Send with `mcp__factory__send_message` to one or more handles (`@agent` or `@person`, up to 10); every recipient sees the full list. `list_peers` lists the agents and the humans.",
     "- Your text output is not delivered to whoever messaged you: reply with `send_message`, or they never see it.",
-    ...(i.manager
-      ? [
-          "- All your text output is forwarded to your manager as updates, so it always knows what you are doing.",
-        ]
-      : []),
+    "- All your text output is forwarded to your manager as updates, so it always knows what you are doing.",
     ...(i.reports.length
       ? [
           `- Your reports' text arrives as \`member_update\` envelopes, ${updatesCadence(i.memberUpdateSeconds)}. \`peer_joined\`/\`peer_left\` notes tell you when your neighborhood changes.`,
@@ -224,9 +225,9 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
             ? `- Description, written by @${i.descriptionWrittenBy}: ${quoteDescription(i.description)}`
             : `- Description: ${inline(i.description)}`,
         ]),
-    i.manager
+    i.manager.kind === "agent"
       ? `- Manager: @${i.manager.slug} (${inline(i.manager.displayName)})`
-      : "- No manager: you report directly to the humans.",
+      : `- You report to @${i.manager.handle} (a human). Send them updates with \`send_message\`.`,
     `- Template: ${i.template}`,
     "",
     ...(spawner ? lifecycleSection(spawner.slug) : []),

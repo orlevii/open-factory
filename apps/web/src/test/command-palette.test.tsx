@@ -26,7 +26,7 @@ const task = (key: string, title: string, status: TaskSummary["status"] = "open"
 
 const live = [
   agentSummary({ slug: "dev", displayName: "Dev agent" }),
-  agentSummary({ slug: "devops", displayName: "Ops", reportsTo: "dev" }),
+  agentSummary({ slug: "devops", displayName: "Ops", reportsTo: { kind: "agent", handle: "dev" } }),
 ];
 const ended = [
   agentSummary({
@@ -391,7 +391,11 @@ test("ties keep the sidebar tree's order, not the server's", async () => {
       agents: [
         agentSummary({ slug: "zed-x", displayName: "Zed" }),
         agentSummary({ slug: "amy-x", displayName: "Amy" }),
-        agentSummary({ slug: "kid-x", displayName: "Kid", reportsTo: "zed-x" }),
+        agentSummary({
+          slug: "kid-x",
+          displayName: "Kid",
+          reportsTo: { kind: "agent", handle: "zed-x" },
+        }),
       ],
       running: { count: 0 },
     }),

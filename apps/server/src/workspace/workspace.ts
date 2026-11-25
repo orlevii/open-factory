@@ -9,7 +9,7 @@ import { FIELD_MSG } from "../field-messages.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
 import type { DenyRules } from "../spawning/inherit.ts";
 import { checkAgentFrontmatter, checkProjectSettings, scrubAgentFolders } from "./agent-folders.ts";
-import { buildClaudeMd, type OrgEntry, type OrgHuman } from "./claude-md.ts";
+import { buildClaudeMd, type ManagerRef, type OrgEntry, type OrgHuman } from "./claude-md.ts";
 import { backupDiffering, templateTargets, utcStamp, writeAtomic, writeTargets } from "./files.ts";
 import { linkProjects, linkSkills, resolveSkills, resolveTemplateSkills } from "./links.ts";
 import type { KeyedMutex } from "./lock.ts";
@@ -32,7 +32,7 @@ export interface PrepareInput {
   template: string;
   /** The merged template and overlay this start runs with (spec §6.3). */
   effective: Effective;
-  manager: { slug: string; displayName: string } | null;
+  manager: ManagerRef;
   grants: { name: string; hostPath: string }[];
   peers: OrgEntry[];
   reports: OrgEntry[];

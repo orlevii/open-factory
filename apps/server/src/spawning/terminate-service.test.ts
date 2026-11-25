@@ -50,7 +50,10 @@ async function setup() {
   await asRunning(app.app, lead);
   await app.db.insert(schema.agentProjectGrants).values({ agentId: lead.id, projectId });
   const pm = await app.seedAgent({ slug: "pm" });
-  await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
+  await app.db
+    .update(schema.agents)
+    .set({ reportsTo: lead.id, reportsToUser: null })
+    .where(eq(schema.agents.id, pm.id));
   return { t: app, driver, lead, pm };
 }
 

@@ -268,7 +268,11 @@ function Now({
 
 function Org({ agent }: { agent: AgentSummary }) {
   const slug = agent.slug;
-  const select = useCallback((l: AgentSummary[]) => l.filter((a) => a.reportsTo === slug), [slug]);
+  const select = useCallback(
+    (l: AgentSummary[]) =>
+      l.filter((a) => a.reportsTo.kind === "agent" && a.reportsTo.handle === slug),
+    [slug],
+  );
   // A cache read for the reports shown; the list is the sidebar's, never fetched from here.
   const reports = useQuery({
     ...agentsListQueryOptions("exclude"),
@@ -282,10 +286,10 @@ function Org({ agent }: { agent: AgentSummary }) {
         <span className="text-muted-foreground">
           {agent.kind === "ephemeral" ? "Spawned by" : "Reports to"}
         </span>
-        {agent.reportsTo ? (
-          <AgentChip slug={agent.reportsTo} link size={16} />
+        {agent.reportsTo.kind === "agent" ? (
+          <AgentChip slug={agent.reportsTo.handle} link size={16} />
         ) : (
-          <span>No manager</span>
+          <span>@{agent.reportsTo.handle}</span>
         )}
       </div>
       {agent.reports > 0 && (

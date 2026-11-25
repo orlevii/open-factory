@@ -529,7 +529,7 @@ try {
           slug,
           displayName: slug[0]?.toUpperCase() + slug.slice(1),
           description: `Smoke scheduling agent ${slug}`,
-          reportsTo: null,
+          reportsTo: "or",
           credential: "smoke",
         },
         { kind: "human", handle: "or" },

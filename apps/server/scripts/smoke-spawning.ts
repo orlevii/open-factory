@@ -549,7 +549,7 @@ try {
         slug: "lead",
         displayName: "Lead",
         description: "Smoke spawning lead",
-        reportsTo: null,
+        reportsTo: "or",
         credential: "smoke",
       },
     });

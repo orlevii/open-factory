@@ -7,6 +7,7 @@ import { createFakeClaude } from "@open-factory/harness/testing";
 import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import type { AgentService } from "./agent-service.ts";
 import { OrgRefusedError } from "./errors.ts";
@@ -33,7 +34,7 @@ const body = (slug: string, template = "dockertpl") => ({
   slug,
   displayName: slug,
   description: "",
-  reportsTo: null,
+  reportsTo: "or",
   credential: "work",
 });
 const rowOf = async (slug: string) => {
@@ -51,6 +52,7 @@ beforeAll(async () => {
     env: { FACTORY_CLAUDE_BIN: createFakeClaude({ scenario: "reply" }).bin },
   });
   home = t.factoryHome;
+  await seedTestUser(t.db);
   svc = t.app.agents;
   runtimes = t.app.runtimes;
   mkdtempSync(path.join(tmpdir(), "repo-"));
@@ -215,10 +217,68 @@ test("create with a config that fails the schema creates nothing, for a human to
   expect(await rowOf("badcfg")).toBeUndefined();
 });
 
-test("a null manager from an agent is top level", async () => {
-  expect(await svc.create({ ...body("top"), reportsTo: null }, hr)).toMatchObject({
-    reportsTo: null,
+test("an agent actor can make a human the manager of a new agent", async () => {
+  expect(await svc.create({ ...body("top"), reportsTo: "or" }, hr)).toMatchObject({
+    reportsTo: { kind: "user", handle: "or" },
     depth: 0,
+  });
+  const row = await rowOf("top");
+  expect(row?.reportsTo).toBeNull();
+  expect(row?.reportsToUser).toBe("u-or");
+});
+
+test("an agent can be created under, and moved to, a human; an unknown or disabled handle is refused with a field error", async () => {
+  await seedTestUser(t.db, { handle: "sam", name: "Sam" });
+  await svc.create(body("under-sam"), human);
+  expect(await svc.update("under-sam", { reportsTo: "sam" }, human)).toMatchObject({
+    reportsTo: { kind: "user", handle: "sam" },
+  });
+  expect(await rowOf("under-sam")).toMatchObject({ reportsTo: null, reportsToUser: "u-sam" });
+  await t.sql`update users set disabled_at = now() where handle = 'sam'`;
+  const refused = {
+    code: "validation_error",
+    extra: { fields: { reportsTo: expect.any(String) } },
+  };
+  await expect(svc.update("under-sam", { reportsTo: "ghost" }, human)).rejects.toMatchObject(
+    refused,
+  );
+  await expect(svc.update("target", { reportsTo: "sam" }, human)).rejects.toMatchObject(refused);
+  await expect(svc.create({ ...body("never-sam"), reportsTo: "sam" }, human)).rejects.toMatchObject(
+    refused,
+  );
+  expect(await rowOf("never-sam")).toBeUndefined();
+  expect((await rowOf("target"))?.reportsToUser).toBe("u-or");
+});
+
+test("model and effort come from the agent's overlay, else its template, else neither", async () => {
+  const dir = path.join(home, "templates", "modeled");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    path.join(dir, "template.yaml"),
+    "name: modeled\ndisplay_name: modeled\nruntime: local\nmodel: sonnet\neffort: high\n",
+  );
+  writeFileSync(path.join(dir, "AGENTS.md"), "# modeled\n");
+  await svc.create(body("mdl-tpl", "modeled"), human);
+  await svc.create(
+    { ...body("mdl-own", "modeled"), config: { template: { model: "opus" } } },
+    human,
+  );
+  await svc.create(body("mdl-none", "localtpl"), human);
+  const shown = async (slug: string) => {
+    const a = await svc.summary(slug);
+    return { model: a.model, effort: a.effort };
+  };
+  expect(await shown("mdl-tpl")).toEqual({
+    model: { value: "sonnet", source: "template" },
+    effort: { value: "high", source: "template" },
+  });
+  expect(await shown("mdl-own")).toEqual({
+    model: { value: "opus", source: "agent" },
+    effort: { value: "high", source: "template" },
+  });
+  expect(await shown("mdl-none")).toEqual({
+    model: { value: null, source: null },
+    effort: { value: null, source: null },
   });
 });
 
@@ -284,9 +344,9 @@ const heldBy = async (slug: string) =>
 const clearPeerRows = () => t.sql`delete from messages where kind in ('peer_joined','peer_left')`;
 
 test("an agent actor's create, move and archive name it in the peer events; the recipient who is the actor isn't told", async () => {
-  await svc.create({ ...body("pe-lead"), reportsTo: null }, human);
+  await svc.create({ ...body("pe-lead"), reportsTo: "or" }, human);
   await svc.create({ ...body("pe-dev"), reportsTo: "pe-lead" }, human);
-  await svc.create({ ...body("pe-boss"), reportsTo: null }, human);
+  await svc.create({ ...body("pe-boss"), reportsTo: "or" }, human);
   await clearPeerRows();
   await svc.create({ ...body("pe-pmo"), reportsTo: "pe-lead" }, hr);
   expect(await heldBy("pe-dev")).toEqual([
@@ -322,7 +382,7 @@ test("an agent actor's create, move and archive name it in the peer events; the 
 });
 
 test("a human's create names no actor in the peer events", async () => {
-  await svc.create({ ...body("hm-lead"), reportsTo: null }, human);
+  await svc.create({ ...body("hm-lead"), reportsTo: "or" }, human);
   await clearPeerRows();
   await svc.create({ ...body("hm-dev"), reportsTo: "hm-lead" }, human);
   expect(await heldBy("hm-lead")).toEqual([
@@ -349,7 +409,7 @@ test("an agent's create from a missing template gets the human's refusal, and no
 
 test("recordReportNotice: an archived manager gets no notice; an unloaded one gets one pending row for the report", async () => {
   await svc.create(body("mgr-live"), human);
-  await svc.create({ ...body("mgr-gone"), reportsTo: null }, human);
+  await svc.create({ ...body("mgr-gone"), reportsTo: "or" }, human);
   await svc.create({ ...body("rep-n"), reportsTo: "mgr-live" }, human);
   const [live, gone, rep] = await Promise.all(["mgr-live", "mgr-gone", "rep-n"].map(rowOf));
   await svc.archive("mgr-gone", human);

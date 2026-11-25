@@ -252,9 +252,18 @@ test("Now: a terminated agent shows no queued, paused or restart row (an end sta
 
 test("Org: the manager, up to 8 reports, and All N reports to the Agents page", async () => {
   const reports = Array.from({ length: 10 }, (_, i) =>
-    agentSummary({ slug: `r${i}`, displayName: `Report ${i}`, reportsTo: "lead" }),
+    agentSummary({
+      slug: `r${i}`,
+      displayName: `Report ${i}`,
+      reportsTo: { kind: "agent", handle: "lead" },
+    }),
   );
-  const lead = agentSummary({ slug: "lead", displayName: "Lead", reportsTo: "boss", reports: 10 });
+  const lead = agentSummary({
+    slug: "lead",
+    displayName: "Lead",
+    reportsTo: { kind: "agent", handle: "boss" },
+    reports: 10,
+  });
   setup({
     agent: lead,
     seed: (qc) =>
@@ -274,7 +283,11 @@ test("Org: the manager, up to 8 reports, and All N reports to the Agents page", 
 });
 
 test("Org: no link to all reports when they all fit", async () => {
-  const r = agentSummary({ slug: "r", displayName: "Report", reportsTo: "lead" });
+  const r = agentSummary({
+    slug: "r",
+    displayName: "Report",
+    reportsTo: { kind: "agent", handle: "lead" },
+  });
   const lead = agentSummary({ slug: "lead", reports: 1 });
   setup({ agent: lead, seed: (qc) => qc.setQueryData(["agents", "exclude"], [lead, r]) });
   const org = within(await section("Org"));
@@ -450,12 +463,14 @@ test("Runtime: a disabled local runtime explains itself in a Why popover (distin
   expect(screen.getByRole("button", { name: "Why does it restart?" })).toBeInTheDocument();
 });
 
-test("Org: a spawned agent says 'Spawned by'; a root has No manager", async () => {
-  const first = setup({ agent: agentSummary({ kind: "ephemeral", reportsTo: "lead" }) });
+test("Org: a spawned agent says 'Spawned by'; a human-managed agent names the human", async () => {
+  const first = setup({
+    agent: agentSummary({ kind: "ephemeral", reportsTo: { kind: "agent", handle: "lead" } }),
+  });
   expect(within(await section("Org")).getByText("Spawned by")).toBeInTheDocument();
   first.unmount();
-  setup({ agent: agentSummary({ reportsTo: null }) });
-  expect(within(await section("Org")).getByText("No manager")).toBeInTheDocument();
+  setup({ agent: agentSummary({ reportsTo: { kind: "user", handle: "or" } }) });
+  expect(within(await section("Org")).getByText("@or")).toBeInTheDocument();
 });
 
 test("Edit agent is an outline button for a persistent, unarchived agent only, and opens the sheet", async () => {

@@ -577,24 +577,22 @@ try {
     if (!r || errs.length) throw new Error(JSON.stringify(errs));
   });
   for (const [slug, reportsTo] of [
-    ["lead", null],
+    ["lead", "or"],
     ["ada", "lead"],
     ["bob", "lead"],
   ] as const) {
-    await step(
-      `1. agent ${slug} created${reportsTo ? ` (reports to ${reportsTo})` : " (top level)"}`,
-      () =>
-        app.agents.create(
-          {
-            template: "msg",
-            slug,
-            displayName: slug[0]?.toUpperCase() + slug.slice(1),
-            description: `Smoke messaging agent ${slug}`,
-            reportsTo,
-            credential: "smoke",
-          },
-          { kind: "human", handle: "or" },
-        ),
+    await step(`1. agent ${slug} created (reports to ${reportsTo})`, () =>
+      app.agents.create(
+        {
+          template: "msg",
+          slug,
+          displayName: slug[0]?.toUpperCase() + slug.slice(1),
+          description: `Smoke messaging agent ${slug}`,
+          reportsTo,
+          credential: "smoke",
+        },
+        { kind: "human", handle: "or" },
+      ),
     );
     ids.set(
       slug,

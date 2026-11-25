@@ -118,8 +118,8 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
 
 test("an agent author is the @slug in by", async () => {
   await claimTestHandleSql(t.sql, "author1", "agent");
-  await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
-              select 'auth1', 'author1', 'A', template, config, runtime, credential_id from agents where id = ${agentId}`;
+  await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
+              select 'auth1', 'author1', 'A', template, config, runtime, credential_id, reports_to_user from agents where id = ${agentId}`;
   const row = await scheduled({ authorAgentId: "auth1" });
   expect(row.authorLabel).toBe("@author1");
   expect(row.authorKind).toBe("agent");

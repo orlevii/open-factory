@@ -8,8 +8,9 @@ beforeAll(async () => {
   tdb = await createMigratedTestDatabase();
   sql = postgres(tdb.url, { max: 1, onnotice: () => {} });
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1','c1','oauth_token',${Buffer.from("x")}), ('c2','c2','oauth_token',${Buffer.from("x")})`;
-  await sql`insert into handles (handle, kind) values ('lead','agent'),('kid-abcd','agent')`;
-  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id) values ('lead','lead','Lead','t','{}','local','c1')`;
+  await sql`insert into handles (handle, kind) values ('lead','agent'),('kid-abcd','agent'),('or','user')`;
+  await sql`insert into users (id, name, email, handle) values ('u1','Or','or@x.io','or')`;
+  await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user) values ('lead','lead','Lead','t','{}','local','c1','u1')`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
             values ('kid','kid-abcd','Kid','t','{}','local','c2','ephemeral','lead', now(), 'lead')`;
 });
@@ -40,6 +41,36 @@ test("an ephemeral agent needs a manager; a persistent one can't be terminated",
   await expect(
     sql`update agents set terminated_at = now() where id = 'lead'`,
   ).rejects.toMatchObject({ code: "23514" });
+});
+const insertAs = (
+  id: string,
+  kind: string,
+  reportsTo: string | null,
+  reportsToUser: string | null,
+) =>
+  sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, reports_to_user)
+      values (${id}, ${id}, 'X', 't', '{}', 'local', 'c1', ${kind}, ${reportsTo}, ${reportsToUser})`;
+test.each([
+  ["a persistent agent with no manager", "persistent", null, null],
+  ["a persistent agent with two managers", "persistent", "lead", "u1"],
+  ["an ephemeral agent with a human manager", "ephemeral", null, "u1"],
+  ["an ephemeral agent with an agent and a human manager", "ephemeral", "lead", "u1"],
+])("%s is refused by the database", async (_name, kind, reportsTo, reportsToUser) => {
+  await expect(insertAs("bad-mgr", kind, reportsTo, reportsToUser)).rejects.toMatchObject({
+    code: "23514",
+  });
+});
+test.each([
+  ["a persistent agent reporting to an agent", "persistent", "lead", null],
+  ["a persistent agent reporting to a human", "persistent", null, "u1"],
+  ["an ephemeral agent reporting to its spawner", "ephemeral", "lead", null],
+])("%s is accepted", async (_name, kind, reportsTo, reportsToUser) => {
+  const id = `ok-${kind}-${reportsTo ?? "u"}`;
+  await sql`insert into handles (handle, kind) values (${id}, 'agent')`;
+  await insertAs(id, kind, reportsTo, reportsToUser);
+});
+test("a user who manages an agent can't be deleted", async () => {
+  await expect(sql`delete from users where id = 'u1'`).rejects.toMatchObject({ code: "23001" });
 });
 test("a live row can't have a null credential", async () => {
   await expect(sql`update agents set credential_id = null where id = 'lead'`).rejects.toMatchObject(

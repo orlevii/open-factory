@@ -33,7 +33,7 @@ test("a spawned agent's turn records the spawner's credential", async () => {
   await h.makeRuntime({
     seed: async (id) => {
       await h.t
-        .sql`update agents set kind = 'ephemeral', reports_to = 'spawner', credential_id = 'cred-spawner' where id = ${id}`;
+        .sql`update agents set kind = 'ephemeral', reports_to = 'spawner', reports_to_user = null, credential_id = 'cred-spawner' where id = ${id}`;
     },
   });
   await h.rt.reload();
@@ -70,7 +70,7 @@ test("after the credential row is deleted (agent terminated first), the turn's c
   // A terminated agent is ephemeral, so it reports to someone (a DB check).
   await insertAgent(h.t.sql, { id: "boss", slug: "boss" });
   await h.t
-    .sql`update agents set kind = 'ephemeral', reports_to = 'boss', terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
+    .sql`update agents set kind = 'ephemeral', reports_to = 'boss', reports_to_user = null, terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
   await h.t.sql`delete from credentials where id = ${`cred-${h.agentId}`}`;
   expect(await turnCredentials(h.agentId)).toEqual([null]);
 });

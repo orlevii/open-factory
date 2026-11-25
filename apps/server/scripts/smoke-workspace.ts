@@ -316,7 +316,7 @@ try {
         slug: "smoke-alpha",
         displayName: "Smoke Alpha",
         description: "Smoke agent alpha",
-        reportsTo: null,
+        reportsTo: "smoke",
         credential: "smoke-a",
       },
       { kind: "human", handle: "or" },

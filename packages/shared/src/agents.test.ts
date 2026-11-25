@@ -92,9 +92,29 @@ test("create body accepts manageOrg as a boolean", () => {
     slug: "boss",
     displayName: "Boss",
     description: "",
-    reportsTo: null,
+    reportsTo: "@or",
     credential: "default",
   };
   expect(createAgentBodySchema.parse({ ...valid, manageOrg: true }).manageOrg).toBe(true);
   expect(createAgentBodySchema.safeParse({ ...valid, manageOrg: "yes" }).success).toBe(false);
+});
+
+test.each([
+  ["@or", "or"],
+  ["or", "or"],
+  [" @lead-dev ", "lead-dev"],
+])("a manager reference %j is read as the handle %j", (given, handle) => {
+  expect(patchAgentBodySchema.parse({ reportsTo: given }).reportsTo).toBe(handle);
+});
+
+test.each([null, "", "@", "  "])("a create body without a manager (%j) is refused", (reportsTo) => {
+  const body = {
+    template: "lead",
+    slug: "boss",
+    displayName: "Boss",
+    description: "",
+    reportsTo,
+    credential: "default",
+  };
+  expect(createAgentBodySchema.safeParse(body).success).toBe(false);
 });

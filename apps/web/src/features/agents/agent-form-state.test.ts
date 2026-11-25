@@ -5,7 +5,9 @@ import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { useAgentFormState } from "@/features/agents/agent-form-state";
 import { resetDrafts } from "@/features/sheets/drafts";
+import { sessionQueryOptions } from "@/lib/session";
 import { agentSummary, mockWorld } from "@/test/agent-screens-fixtures";
+import { alice } from "@/test/render-app";
 
 beforeEach(() => {
   resetDrafts();
@@ -15,6 +17,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 function wrapper() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(sessionQueryOptions.queryKey, alice);
   return ({ children }: { children: ReactNode }) =>
     createElement(QueryClientProvider, { client }, children);
 }
@@ -96,7 +99,7 @@ test("New agent: the template fills untouched fields, and the slug is not prefil
     slug: "mine",
     displayName: "Mine",
     description: "Leads the team",
-    reportsTo: null,
+    reportsTo: "alice",
     credential: "work",
   });
 });

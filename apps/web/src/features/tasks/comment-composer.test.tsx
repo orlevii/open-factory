@@ -114,7 +114,7 @@ test("`@` completes a handle as `@slug ` from the cached agents and users lists"
       {
         slug: "dev",
         displayName: "Dev",
-        reportsTo: null,
+        reportsTo: { kind: "user", handle: "or" },
         template: "t",
         avatarVersion: null,
         archivedAt: null,

@@ -162,9 +162,19 @@ test("the model summary says where the model comes from", async () => {
 test("the manager picker leaves out the agent and its descendants", async () => {
   const agents = [
     agentSummary({ slug: "cto", displayName: "CTO" }),
-    lead({ reportsTo: "cto", depth: 1 }),
-    agentSummary({ slug: "dev-1", displayName: "Dev", reportsTo: "lead", depth: 2 }),
-    agentSummary({ slug: "other", displayName: "Other", reportsTo: "cto", depth: 1 }),
+    lead({ reportsTo: { kind: "agent", handle: "cto" }, depth: 1 }),
+    agentSummary({
+      slug: "dev-1",
+      displayName: "Dev",
+      reportsTo: { kind: "agent", handle: "lead" },
+      depth: 2,
+    }),
+    agentSummary({
+      slug: "other",
+      displayName: "Other",
+      reportsTo: { kind: "agent", handle: "cto" },
+      depth: 1,
+    }),
   ];
   await open({ agents });
   const select = field("Manager");
@@ -205,9 +215,24 @@ test("the restart help is there before any edit and unchanged by one, so nothing
   const { dialog } = await open({
     agents: [
       lead({ status: "working" }),
-      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "working", depth: 1 }),
-      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "idle", depth: 1 }),
-      agentSummary({ slug: "dev-3", reportsTo: "lead", status: "hibernated", depth: 1 }),
+      agentSummary({
+        slug: "dev-1",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "working",
+        depth: 1,
+      }),
+      agentSummary({
+        slug: "dev-2",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "idle",
+        depth: 1,
+      }),
+      agentSummary({
+        slug: "dev-3",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "hibernated",
+        depth: 1,
+      }),
     ],
     credentials: [credential("work"), credential("prod")],
   });
@@ -254,8 +279,18 @@ test("a text change restarts the running direct reports too", async () => {
   await open({
     agents: [
       lead({ status: "idle" }),
-      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "working", depth: 1 }),
-      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "hibernated", depth: 1 }),
+      agentSummary({
+        slug: "dev-1",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "working",
+        depth: 1,
+      }),
+      agentSummary({
+        slug: "dev-2",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "hibernated",
+        depth: 1,
+      }),
     ],
     credentials: [credential("work"), credential("prod")],
   });
@@ -275,8 +310,18 @@ test("a stopped agent's text change still restarts its running reports", async (
   await open({
     agents: [
       lead(),
-      agentSummary({ slug: "dev-1", reportsTo: "lead", status: "idle", depth: 1 }),
-      agentSummary({ slug: "dev-2", reportsTo: "lead", status: "working", depth: 1 }),
+      agentSummary({
+        slug: "dev-1",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "idle",
+        depth: 1,
+      }),
+      agentSummary({
+        slug: "dev-2",
+        reportsTo: { kind: "agent", handle: "lead" },
+        status: "working",
+        depth: 1,
+      }),
     ],
   });
   expect(

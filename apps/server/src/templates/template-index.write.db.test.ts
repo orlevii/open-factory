@@ -17,6 +17,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { OrgRefusedError } from "../agents/errors.ts";
 import { PolicyInputs } from "../agents/policy-inputs.ts";
+import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { fileHash, type TemplateIndex } from "./template-index.ts";
 
@@ -48,7 +49,7 @@ const idOf = async (slug: string) => {
   if (!r) throw new Error(`no agent ${slug}`);
   return r.id;
 };
-const agentOn = async (slug: string, template: string, reportsTo: string | null = null) => {
+const agentOn = async (slug: string, template: string, reportsTo = "or") => {
   await t.app.agents.create(
     { template, slug, displayName: slug, description: "", reportsTo, credential: "work" },
     human,
@@ -61,6 +62,7 @@ beforeAll(async () => {
   });
   home = t.factoryHome;
   idx = t.app.templates;
+  await seedTestUser(t.db);
   mkdtempSync(path.join(tmpdir(), "repo-"));
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({

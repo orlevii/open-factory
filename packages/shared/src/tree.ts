@@ -1,15 +1,21 @@
+import type { ReportsTo } from "./agents.ts";
+
 export interface TreeRow {
   slug: string;
   displayName: string;
-  reportsTo: string | null;
+  reportsTo: ReportsTo;
 }
 
-/** Depth-first from the roots (agents whose manager isn't in `rows`), siblings by display name. */
+/**
+ * Depth-first from the roots (agents whose manager is a human or isn't in `rows`), siblings by display name. A human
+ * manager is no node of the tree: its reports are roots.
+ */
 export function treeOrder(rows: TreeRow[]): { slug: string; depth: number }[] {
   const bySlug = new Set(rows.map((r) => r.slug));
   const children = new Map<string | null, TreeRow[]>();
   for (const r of rows) {
-    const parent = r.reportsTo && bySlug.has(r.reportsTo) ? r.reportsTo : null;
+    const parent =
+      r.reportsTo.kind === "agent" && bySlug.has(r.reportsTo.handle) ? r.reportsTo.handle : null;
     children.set(parent, [...(children.get(parent) ?? []), r]);
   }
   const out: { slug: string; depth: number }[] = [];

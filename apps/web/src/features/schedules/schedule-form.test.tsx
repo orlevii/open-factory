@@ -27,7 +27,12 @@ const agents = () =>
   json({
     agents: [
       agentSummary({ slug: "ceo", displayName: "CEO" }),
-      agentSummary({ slug: "kid", displayName: "Kid", kind: "ephemeral", reportsTo: "ceo" }),
+      agentSummary({
+        slug: "kid",
+        displayName: "Kid",
+        kind: "ephemeral",
+        reportsTo: { kind: "agent", handle: "ceo" },
+      }),
     ],
     more: false,
     running: { count: 0 },

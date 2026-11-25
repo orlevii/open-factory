@@ -16,8 +16,8 @@ beforeAll(async () => {
   await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('lead','agent')`;
   await sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
   await sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
-  await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id) values
-    ('a1','dev','Dev','t','{}','local','c1'),('a2','lead','Lead','t','{}','local','c1')`;
+  await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id,reports_to_user) values
+    ('a1','dev','Dev','t','{}','local','c1','u1'),('a2','lead','Lead','t','{}','local','c1','u1')`;
   await sql`insert into tasks (id,title,created_by_user_id) values ('t1','One','u1')`;
   await sql`insert into task_comments (id,task_id,author_agent_id,body) values ('k1','t1','a1','hi')`;
   await sql`insert into schedules (id,target_agent_id,cron,timezone,body,created_by_user_id,body_author_user_id,next_run_at)

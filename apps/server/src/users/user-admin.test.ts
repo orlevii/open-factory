@@ -64,6 +64,25 @@ describe("disable", () => {
     expect(await meStatus({ cookie: or.cookie })).toBe(200);
   });
 
+  test("a user who manages agents is refused with 409 manages_agents naming them; nothing is disabled or signed out", async () => {
+    await h.seedAgent({ slug: "ada", reportsToUser: al.user.id });
+    await h.seedAgent({ slug: "bob", reportsToUser: al.user.id });
+    await h.seedAgent({ slug: "cy", reportsToUser: or.user.id });
+    const res = await as(or, "POST", `/api/users/${al.user.id}/disable`);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatchObject({ code: "manages_agents", agents: ["ada", "bob"] });
+    expect(res.json().error.message).toContain("@ada, @bob");
+    expect(await disabledAtOf(al.user.id)).toBeNull();
+    expect(await meStatus({ cookie: al.cookie })).toBe(200);
+  });
+
+  test("once the agents are moved to another manager, the human can be disabled", async () => {
+    await h.seedAgent({ slug: "ada", reportsToUser: al.user.id });
+    expect((await as(or, "POST", `/api/users/${al.user.id}/disable`)).statusCode).toBe(409);
+    await h.sql`update agents set reports_to_user = ${or.user.id} where slug = 'ada'`;
+    expect((await as(or, "POST", `/api/users/${al.user.id}/disable`)).statusCode).toBe(200);
+  });
+
   test("a disabled user with a surviving session row still gets 401 (enforced on every request)", async () => {
     await h.db
       .update(schema.users)

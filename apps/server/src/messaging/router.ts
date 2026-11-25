@@ -52,7 +52,7 @@ export type PeerChange =
   | { kind: "spawned" }
   | { kind: "left"; reason: "archived"; by?: string }
   | { kind: "left"; reason: "terminated"; by: string }
-  | { kind: "moved"; to: string | null; by?: string };
+  | { kind: "moved"; to: string; by?: string };
 
 /** The subject's manager and peers before a change; recipients of `left`/`moved` come from it. */
 export type NeighborhoodSnapshot = { managerId: string | null; peerIds: string[] };
@@ -483,10 +483,12 @@ export class Router {
   }
 
   /**
-   * Spec §9.1: one forwarded item of a report, persisted before this resolves (the report's job awaits it, §16). With
-   * a manager agent, a `member_update` (the report's text as itself; a fact as `@factory` about it), handed over once
-   * boot is done and never awaited; the manager's runtime delivers it after the debounce, like a message (I9 §4.8). A top-level agent's `errored` goes to every human's inbox; anything else of a
-   * top-level agent stays in its session. The manager is read from the database: a change moves future rows only.
+   * Spec §9.1: one forwarded item of a report, persisted before this resolves (the report's job awaits it, §16). The
+   * manager is read from the database (a change moves future rows only). A manager agent gets a `member_update` (the
+   * report's text as itself; a fact as `@factory` about it), handed over once boot is done and never awaited; the
+   * manager's runtime delivers it after the debounce, like a message (I9 §4.8). A human manager gets the same as a
+   * `member_update` inbox item of their own, and an `errored` fact as an `agent_errored` notice: to that user only,
+   * never to the other humans (I9 §4.5).
    */
   async forward(f: Forward): Promise<void> {
     const agent = await this.d.store.agentById(f.agentId);
@@ -508,14 +510,15 @@ export class Router {
       return persisted;
     });
     if (out?.update) this.handOff(out.update);
-    if (out?.inbox) this.d.bus.publishAll({ type: "inbox_changed" });
+    for (const userId of out?.userIds ?? [])
+      this.d.bus.publishToUser(userId, { type: "inbox_changed" });
   }
 
   private async persistForward(
     agent: NonNullable<Awaited<ReturnType<EventStore["agentById"]>>>,
     f: Forward,
     tx: Tx,
-  ): Promise<{ update?: PendingRow; inbox?: true } | undefined> {
+  ): Promise<{ update?: PendingRow; userIds?: string[] } | undefined> {
     if (agent.reportsTo) {
       const update = await this.d.store.createOrgRow(
         {
@@ -528,20 +531,36 @@ export class Router {
       );
       return { update };
     }
-    if (f.fact !== "errored") return undefined;
-    await this.d.store.createHumanMessage(
-      {
-        kind: "system",
-        fromAgentId: null,
-        notice: "agent_errored",
-        subjectAgentId: f.agentId,
-        to: "all",
-        body: f.body,
-        urgent: false,
-      },
-      tx,
-    );
-    return { inbox: true };
+    if (!agent.reportsToUser) return undefined;
+    const to = { userId: agent.reportsToUser };
+    const { userIds } =
+      f.fact === "errored"
+        ? await this.d.store.createHumanMessage(
+            {
+              kind: "system",
+              fromAgentId: null,
+              notice: "agent_errored",
+              subjectAgentId: f.agentId,
+              to,
+              body: f.body,
+              urgent: false,
+            },
+            tx,
+          )
+        : await this.d.store.createHumanMessage(
+            {
+              kind: "member_update",
+              inboxKind: "member_update",
+              ...(f.fact
+                ? { subjectAgentId: f.agentId, notice: f.fact }
+                : { fromAgentId: f.agentId }),
+              to,
+              body: f.body,
+              urgent: false,
+            },
+            tx,
+          );
+    return { userIds };
   }
 
   /**

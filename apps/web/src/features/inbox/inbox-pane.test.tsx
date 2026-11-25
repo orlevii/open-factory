@@ -61,6 +61,7 @@ const row = (slug: string, name: string, unread: number) => ({
     archivedAt: null,
   },
   unread,
+  firstUnreadId: `${slug}-m3`,
   latest: { messageId: `${slug}-m3`, preview: `${slug} says 3`, createdAt: at(3), urgent: false },
 });
 

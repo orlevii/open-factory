@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { notify } from "@/components/ui/toaster";
-import { homeInboxQueryKey, inboxQueryKey } from "@/features/inbox/api";
+import { inboxQueryKey } from "@/features/inbox/api";
 import { credentialsQueryOptions } from "@/features/settings/api";
 import { resetSignIn } from "@/features/settings/sign-in/use-sign-in";
 import { FORM_MSG } from "@/lib/form-messages";
@@ -166,7 +166,6 @@ it("success closes the sheet with one toast and the restart note, and refetches 
   });
   const keys = invalidate.mock.calls.map((c) => c[0]?.queryKey);
   expect(keys).toContainEqual(inboxQueryKey);
-  expect(keys).toContainEqual(homeInboxQueryKey);
   expect(keys).toContainEqual(credentialsQueryOptions.queryKey);
 });
 

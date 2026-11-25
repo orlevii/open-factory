@@ -1,18 +1,17 @@
-import type { ChatRow } from "@open-factory/shared";
-import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { expiryState } from "@/features/settings/sign-in/expiry";
-import { homeInboxQueryOptions, type InboxItem, useOpenItem } from "./api";
+import { apiFetch, inboxPageSchema } from "@open-factory/shared";
+import { useRouter } from "@tanstack/react-router";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { postRead, useInboxCache } from "./api";
+import { type Burst, burstsOf } from "./notification-copy";
 
 const KEY = "of-notifications";
-const PREVIEW_CAP = 120;
-const COUNT = new Intl.NumberFormat();
 
 export const BLOCKED_NOTE =
   "Blocked by your browser. Allow notifications for this site to turn them on.";
 
-const supported = () => typeof Notification !== "undefined";
+/** The `Notification` class whose constructor threw (Android Chrome needs a service worker): unsupported from then on. */
+let broken: unknown;
+const supported = () => typeof Notification !== "undefined" && Notification !== broken;
 const listeners = new Set<() => void>();
 const emit = () => {
   for (const fn of listeners) fn();
@@ -51,12 +50,13 @@ export function useBrowserNotifications() {
     };
   }, []);
   const enabled = useSyncExternalStore(subscribe, isOn, () => false);
+  const isSupported = useSyncExternalStore(subscribe, supported, () => false);
   const isBlocked = useSyncExternalStore(
     subscribe,
     () => blocked,
     () => false,
   );
-  async function toggle() {
+  const toggle = useCallback(async () => {
     if (!supported()) return;
     if (isOn()) {
       setBlocked(false);
@@ -70,146 +70,151 @@ export function useBrowserNotifications() {
     } else {
       setBlocked(true);
     }
-  }
-  return { supported: supported(), enabled, blocked: isBlocked, toggle };
+  }, []);
+  return { supported: isSupported, enabled, blocked: isBlocked, toggle };
 }
-
-const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
-const cap = (s: string) => (s.length > PREVIEW_CAP ? `${s.slice(0, PREVIEW_CAP - 1)}…` : s);
-
-/** UI design §10's titles. Plain text only; agent text never becomes a URL or markup here. */
-export function notificationTitle(i: InboxItem): string {
-  if (i.kind === "mention")
-    return `@${i.from.name} mentioned you${i.task ? ` on ${i.task.key}` : ""}`;
-  if (i.kind === "task_event")
-    return `${i.task?.key ?? "A task"} ${i.fact === "cancelled" ? "was cancelled" : "is done"}`;
-  if (i.kind === "credential")
-    return expiryState(i.credential?.expiresAt ?? null, new Date()).tone === "crimson"
-      ? "Credential expired"
-      : "Credential expiring";
-  if (i.from.kind === "factory") return `Factory${i.about ? ` about @${i.about}` : ""}`;
-  // Only `notice` items from an agent reach here (`message` items are chats now).
-  return `@${i.from.name} messaged you`;
-}
-
-/** An unread chat's title: the agent's name and how many messages ("Ada · 3 new"). */
-export const chatNotificationTitle = (c: ChatRow): string =>
-  `${c.agent.displayName} · ${COUNT.format(c.unread)} new`;
-
-/** What the notifier has to show: unread items and unread chats. */
-type Unread = { items: readonly InboxItem[]; chats?: readonly ChatRow[] | undefined };
-type Opens = { item(item: InboxItem): void; chat(chat: ChatRow): void };
 
 /**
- * One notification per unread item and per chat message not seen before in this tab, only while the tab is
- * hidden and the switch is on. `tag` is the item id, or a chat's newest message id, so several open tabs
- * collapse into one. `seen` is updated either way.
+ * What this tab shows (spec §5.2): one notification per burst, replaced silently while its key stays unread,
+ * closed when the key is read or resolved. `seen` holds every item id of the bursts already counted.
  */
-export function notifyNew({ items, chats = [] }: Unread, seen: Set<string>, open: Opens) {
-  const show = isOn() && document.visibilityState === "hidden";
-  const fire = (title: string, preview: string, tag: string, onOpen: () => void) => {
-    const n = new Notification(title, { body: cap(oneLine(preview)), tag, icon: "/favicon.svg" });
-    n.onclick = () => {
-      window.focus();
-      n.close();
-      onOpen();
-    };
-  };
-  for (const item of items) {
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
-    if (show && !item.read)
-      fire(notificationTitle(item), item.preview, item.id, () => open.item(item));
+const idsOf = (b: Burst) => [...b.itemIds, b.newestId];
+
+export class Notifier {
+  private seen = new Set<string>();
+  private shown = new Map<string, { tag: string; n: Notification }>();
+  private ready = false;
+
+  constructor(private readonly onOpen: (b: Burst) => void) {}
+
+  /** True once what was unread at load (or when the switch turned on) has been taken as not new. */
+  get baselined(): boolean {
+    return this.ready;
   }
-  for (const chat of chats) {
-    const id = chat.latest.messageId;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    if (show && chat.unread > 0)
-      fire(chatNotificationTitle(chat), chat.latest.preview, id, () => open.chat(chat));
+
+  baseline(bs: Burst[]): void {
+    for (const b of bs) for (const id of idsOf(b)) this.seen.add(id);
+    this.ready = true;
+  }
+
+  update(bs: Burst[], visible: boolean): void {
+    const live = new Map(bs.filter((b) => !b.resolved).map((b) => [b.key, b]));
+    for (const key of [...this.shown.keys()]) if (!live.has(key)) this.drop(key);
+    for (const b of live.values()) {
+      const ids = idsOf(b);
+      if (ids.every((id) => this.seen.has(id))) {
+        // Partly read elsewhere: the old notification goes, and nothing new arrived to replace it.
+        if (this.shown.get(b.key)?.tag !== b.tag) this.drop(b.key);
+        continue;
+      }
+      for (const id of ids) this.seen.add(id);
+      if (visible || !isOn()) continue;
+      if (this.shown.get(b.key)?.tag !== b.tag) this.drop(b.key);
+      let n: Notification;
+      try {
+        n = new Notification(b.title, { body: b.body, tag: b.tag, icon: "/favicon.svg" });
+      } catch {
+        broken = Notification;
+        emit();
+        return;
+      }
+      n.onclick = () => {
+        window.focus();
+        n.close();
+        this.onOpen(b);
+      };
+      n.onclose = () => {
+        if (this.shown.get(b.key)?.n === n) this.shown.delete(b.key);
+      };
+      this.shown.set(b.key, { tag: b.tag, n });
+    }
+  }
+
+  closeAll(): void {
+    for (const key of [...this.shown.keys()]) this.drop(key);
+  }
+
+  /** Sign-out, or the switch turned off: close everything and forget what was seen. */
+  reset(): void {
+    this.closeAll();
+    this.seen.clear();
+    this.ready = false;
+  }
+
+  private drop(key: string) {
+    this.shown.get(key)?.n.close();
+    this.shown.delete(key);
   }
 }
 
-/** The app shell's half: baseline what is already unread, then notify on each `inbox_changed`. */
-export function useInboxNotifier() {
-  const qc = useQueryClient();
-  const navigate = useNavigate();
-  const open = useOpenItem();
-  const { enabled } = useBrowserNotifications();
-  const seen = useRef<Set<string> | null>(null);
-  const fetchUnread = useCallback(
-    () => qc.fetchQuery({ ...homeInboxQueryOptions, staleTime: 0 }),
-    [qc],
-  );
-  const opens = useMemo<Opens>(
-    () => ({
-      item(item) {
-        open(item);
-        const l = item.link;
-        switch (l.kind) {
-          case "task":
-            void navigate({
-              to: "/tasks/$key",
-              params: { key: l.key },
-              search: l.commentId ? { comment: l.commentId } : {},
-            });
-            return;
-          case "session":
-            if (l.seq === undefined)
-              void navigate({ to: "/agents/$slug/chat", params: { slug: l.agentSlug } });
-            else
-              void navigate({
-                to: "/agents/$slug/session",
-                params: { slug: l.agentSlug },
-                search: { event: l.seq },
-              });
-            return;
-          case "credential":
-            void navigate({ to: "/settings/credentials", search: { credential: l.name } });
-            return;
-          default: {
-            const unhandled: never = l;
-            return unhandled;
-          }
-        }
-      },
-      // The chat opens on the message; the Chat page reads it.
-      chat: (chat) =>
-        void navigate({
-          to: "/agents/$slug/chat",
-          params: { slug: chat.agent.slug },
-          search: { message: chat.latest.messageId },
-        }),
-    }),
-    [open, navigate],
-  );
-  // Baseline when the switch is on (at load, or when it is turned on): what is unread now is not "new".
-  useEffect(() => {
-    if (!enabled) {
-      seen.current = null;
-      return;
+let openBurst: (b: Burst) => void = () => {};
+/** The one notifier of this tab: sign-out (outside the app shell) must reach it, so it is module state. */
+const notifier = new Notifier((b) => openBurst(b));
+export const setNotifierOpen = (fn: (b: Burst) => void) => {
+  openBurst = fn;
+};
+
+// One fetch in flight; a frame during it schedules one trailing fetch. A reset invalidates what is in flight.
+let generation = 0;
+let inFlight = false;
+let trailing = false;
+
+export function resetNotifier() {
+  generation += 1;
+  trailing = false;
+  notifier.reset();
+}
+
+async function runFetch(): Promise<void> {
+  inFlight = true;
+  const mine = generation;
+  try {
+    const page = await apiFetch("/api/inbox?unread=true&notify=true", { schema: inboxPageSchema });
+    // The tab's state is read after the await: it may have been hidden, or switched off, meanwhile.
+    if (mine !== generation || !isOn()) return;
+    const bs = burstsOf({ chats: page.chats ?? [], items: page.items });
+    if (notifier.baselined) notifier.update(bs, document.visibilityState === "visible");
+    else notifier.baseline(bs);
+  } catch {
+    // The next frame tries again.
+  } finally {
+    inFlight = false;
+    if (trailing) {
+      trailing = false;
+      void runFetch();
     }
-    let live = true;
-    fetchUnread().then(
-      ({ items, chats = [] }) => {
-        if (live && !seen.current)
-          seen.current = new Set([
-            ...items.map((i) => i.id),
-            ...chats.map((c) => c.latest.messageId),
-          ]);
-      },
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, [enabled, fetchUnread]);
-  return useCallback(() => {
-    if (!isOn() || !seen.current) return;
-    const set = seen.current;
-    fetchUnread().then(
-      (unread) => notifyNew(unread, set, opens),
-      () => {},
-    );
-  }, [fetchUnread, opens]);
+  }
+}
+
+/** A cheap guard first: with the switch off nothing is fetched. */
+function requestRefresh() {
+  if (!isOn()) return;
+  if (inFlight) trailing = true;
+  else void runFetch();
+}
+
+/** The app shell's half: baseline what is already unread, then react to each `inbox_changed`. */
+export function useInboxNotifier() {
+  const router = useRouter();
+  const cache = useInboxCache();
+  const { enabled } = useBrowserNotifications();
+  useEffect(() => {
+    setNotifierOpen((b) => {
+      const query = new URLSearchParams(
+        Object.entries(b.open.search ?? {}).map(([k, v]) => [k, String(v)]),
+      ).toString();
+      void router.navigate({ href: query ? `${b.open.to}?${query}` : b.open.to });
+      if (b.itemIds.length === 0) return;
+      const ids = new Set(b.itemIds);
+      cache.setRead(ids, true, -ids.size);
+      for (const id of ids) postRead(id).catch(() => cache.setRead(new Set([id]), false, +1));
+    });
+    return () => setNotifierOpen(() => {});
+  }, [router, cache]);
+  // At load, or when the switch is turned on: what is unread now is not "new". Off: close and forget.
+  useEffect(() => {
+    if (enabled) requestRefresh();
+    else resetNotifier();
+  }, [enabled]);
+  return requestRefresh;
 }

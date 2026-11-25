@@ -50,7 +50,11 @@ import { Mark, Wordmark } from "@/components/wordmark";
 import { SidebarAgentTree } from "@/features/agents/sidebar-tree";
 import { useIsLiveAgent } from "@/features/agents/use-agent-index";
 import { useUnreadCount } from "@/features/inbox/api";
-import { BLOCKED_NOTE, useBrowserNotifications } from "@/features/inbox/notifications";
+import {
+  BLOCKED_NOTE,
+  resetNotifier,
+  useBrowserNotifications,
+} from "@/features/inbox/notifications";
 import { openPalette, prefetchPaletteData } from "@/features/palette/command-palette";
 import { resetUploads } from "@/features/session/uploads";
 import { resetSignIn } from "@/features/settings/sign-in/use-sign-in";
@@ -124,6 +128,8 @@ export function AppSidebar() {
     // In-flight uploads stop and every file of this user is dropped from memory (U3 §13.5).
     resetUploads();
     resetSheets();
+    // This tab's shown notifications close and what it had seen is forgotten.
+    resetNotifier();
     resetDrafts();
     // Every sign-in wait loop stops and this tab forgets which attempts it submitted (I3 §8.3, R3).
     resetSignIn();

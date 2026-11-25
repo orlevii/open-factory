@@ -256,7 +256,9 @@ export class EventStore {
     const rows = await tx
       .update(messages)
       .set({ state: "rejected" })
-      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
+      .where(
+        and(eq(messages.toAgentId, agentId), inArray(messages.state, ["pending", "loop_held"])),
+      )
       .returning({ from: messages.fromUserId });
     return [...new Set(rows.flatMap((r) => (r.from ? [r.from] : [])))];
   }
@@ -457,7 +459,7 @@ export class EventStore {
       .set({ state: "rejected" })
       .where(
         and(
-          eq(messages.state, "pending"),
+          inArray(messages.state, ["pending", "loop_held"]),
           inArray(
             messages.toAgentId,
             this.db.select({ id: agents.id }).from(agents).where(isNotNull(agents.terminatedAt)),
@@ -972,6 +974,8 @@ export class EventStore {
       subjectAgentId?: string;
       /** I3: the credential a `system` notice is about. */
       subjectCredentialId?: string;
+      /** The loop hold a `loop_held` notice is about (I8 §6.4). */
+      loopHoldId?: string;
       taskId?: string;
       commentId?: string;
       /** The message's timestamp when it must equal another written elsewhere (the expiry check); the clock otherwise. */
@@ -1025,6 +1029,7 @@ export class EventStore {
           notice: m.notice ?? null,
           subjectAgentId: m.subjectAgentId ?? null,
           subjectCredentialId: m.subjectCredentialId ?? null,
+          loopHoldId: m.loopHoldId ?? null,
           taskId: m.taskId ?? null,
           commentId: m.commentId ?? null,
           toUserId: m.to === "all" ? null : m.to.userId,
@@ -1199,7 +1204,8 @@ export class EventStore {
     if (existing) return existing;
     return this.insertNotice(m, this.db);
   }
-  private async insertNotice(
+  /** The always-insert half of `createNotice`: a new `system` row, inside `tx`. */
+  async insertNotice(
     m: { toAgentId: string; notice: NoticeType; body: string; subjectAgentId?: string },
     tx: Exec,
   ): Promise<MessageRow> {

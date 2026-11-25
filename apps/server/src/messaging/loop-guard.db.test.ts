@@ -1,6 +1,7 @@
 import { schema } from "@open-factory/db";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { EventStore } from "../agents/event-store.ts";
 import { insertAgent, insertSchedule } from "../agents/testing/rows.ts";
 import type { FactorySettings } from "../settings/factory-settings.ts";
 import { claimTestHandleSql } from "../test/handles.ts";
@@ -24,7 +25,7 @@ beforeAll(async () => {
   await claimTestHandleSql(t.sql, "or", "user");
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
   for (const id of ["a1", "a2", "a3"]) await insertAgent(t.sql, { id, slug: id });
-  const store = { clock: () => NOW } as never;
+  const store = new EventStore(t.db);
   deps = {
     settings: {
       loopGuardMessages: () => N,
@@ -301,6 +302,109 @@ describe("open and resumed holds", () => {
     await rows("a1", "a2", N, { at: ago(1) });
     await rows("a2", "a1", N + 1, { at: ago(1) });
     expect(await check("a1", "a2")).toMatchObject({ held: true, opened: true });
+  });
+});
+
+describe("notices on open", () => {
+  const trip = async (from: string, to: string) => {
+    await rows(from, to, N);
+    await rows(to, from, N + 1);
+    const r = await check(from, to);
+    if (!r.held || !r.opened) throw new Error("expected an opened hold");
+    return r;
+  };
+  const notices = (toAgent: string) =>
+    t.sql`select * from messages where to_agent_id = ${toAgent} and notice = 'loop_held'`;
+  const nextAgent = (() => {
+    let n = 0;
+    return async (
+      over: Parameters<typeof insertAgent>[1] extends infer A ? Partial<A> : never = {},
+    ) => {
+      const id = `n${++n}`;
+      await insertAgent(t.sql, { id, slug: id, ...over } as never);
+      return id;
+    };
+  })();
+
+  test("one human notice with the hold, and one inbox item per user", async () => {
+    await claimTestHandleSql(t.sql, "ana", "user");
+    await t.sql`insert into users (id, name, email, handle) values ('u2', 'Ana', 'ana@x.io', 'ana')`;
+    try {
+      const r = await trip("a1", "a2");
+      const msgs = await t.sql`select * from messages where notice = 'loop_held' and to_all_humans`;
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]).toMatchObject({
+        kind: "system",
+        from_agent_id: null,
+        subject_agent_id: "a1",
+        loop_hold_id: r.holdId,
+        body: `@a1 and @a2 exchanged ${2 * N + 2} messages in 5 minutes; further messages between them are held.`,
+      });
+      const items = await t.sql`select user_id from inbox_items where message_id = ${msgs[0]?.id}`;
+      expect(items.map((i) => i.user_id).sort()).toEqual(["u1", "u2"]);
+    } finally {
+      await t.sql`delete from inbox_items`;
+      await t.sql`delete from messages`;
+      await t.sql`delete from users where id = 'u2'`;
+    }
+  });
+
+  test("a manager gets a notice for the pair, with no hold link; a shared manager gets one", async () => {
+    const m = await nextAgent();
+    const x = await nextAgent({ reportsTo: m });
+    const y = await nextAgent({ reportsTo: m });
+    const r = await trip(x, y);
+    const [n] = await notices(m);
+    expect(await notices(m)).toHaveLength(1);
+    expect(n).toMatchObject({
+      kind: "system",
+      state: "pending",
+      subject_agent_id: x,
+      loop_hold_id: null,
+    });
+    expect(n?.body).toBe(
+      `@${x} and @${y} exchanged ${2 * N + 2} messages in 5 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox.`,
+    );
+    expect(r.managerRows.map((row) => [row.id, row.toAgentId])).toEqual([[n?.id, m]]);
+  });
+
+  test("a manager who is the other agent of the pair gets nothing", async () => {
+    const b = await nextAgent();
+    const a = await nextAgent({ reportsTo: b });
+    const r = await trip(a, b);
+    expect(await notices(b)).toHaveLength(0);
+    expect(r.managerRows).toEqual([]);
+  });
+
+  test("an archived or terminated manager gets nothing", async () => {
+    const m1 = await nextAgent({ archived: true });
+    const m2 = await nextAgent({ reportsTo: m1, terminatedAt: ago(1) });
+    const a = await nextAgent({ reportsTo: m1 });
+    const b = await nextAgent({ reportsTo: m2 });
+    const r = await trip(a, b);
+    expect(await notices(m1)).toHaveLength(0);
+    expect(await notices(m2)).toHaveLength(0);
+    expect(r.managerRows).toEqual([]);
+  });
+
+  test("two holds involving the same agent give its manager two notices", async () => {
+    const m = await nextAgent();
+    const a = await nextAgent({ reportsTo: m });
+    const b = await nextAgent();
+    const c = await nextAgent();
+    await trip(a, b);
+    await trip(a, c);
+    expect(await notices(m)).toHaveLength(2);
+  });
+
+  test("afterCommit with the real rows hands each manager's notice over", async () => {
+    const m = await nextAgent();
+    const a = await nextAgent({ reportsTo: m });
+    const b = await nextAgent();
+    const r = await trip(a, b);
+    guard.afterCommit([r]);
+    await vi.waitFor(() => expect(adopted).toEqual(r.managerRows.map((row) => row.id)));
+    expect(adopted).toHaveLength(1);
   });
 });
 

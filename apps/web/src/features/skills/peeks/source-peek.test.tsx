@@ -96,7 +96,7 @@ async function open(
   extra(mocks);
   const user = userEvent.setup();
   renderApp("/skills", alice);
-  await user.click(await screen.findByRole("button", { name: /acme\/skills/ }));
+  await user.click(await screen.findByRole("button", { name: /^acme\/skills/ }));
   await screen.findByRole("heading", { level: 3, name: "Source" });
   return { mocks, user };
 }
@@ -341,7 +341,7 @@ test("removing a source moves focus to the next source header and offers Undo fo
   expect(n?.text).toMatch(/^Removed acme\/skills and its 1\s+skill\.$/);
   expect(n?.durationMs).toBeGreaterThan(28_000);
   expect(n?.durationMs).toBeLessThanOrEqual(30_000);
-  await waitFor(() => expect(screen.getByRole("button", { name: /acme\/other/ })).toHaveFocus());
+  await waitFor(() => expect(screen.getByRole("button", { name: /^acme\/other/ })).toHaveFocus());
   // A toast shown by an earlier test may still be on screen: the newest one is last.
   await user.click((await screen.findAllByRole("button", { name: "Undo" })).at(-1) as HTMLElement);
   await waitFor(() =>

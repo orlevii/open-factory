@@ -16,7 +16,10 @@ vi.mock("@/lib/ws", () => ({
   },
 }));
 
-beforeEach(() => fakeMatchMedia.install(false));
+beforeEach(() => {
+  fakeMatchMedia.install(false);
+  localStorage.clear();
+});
 afterEach(() => vi.restoreAllMocks());
 
 const agents = () => json({ agents: [], more: false, running: { count: 0 } });
@@ -73,7 +76,7 @@ test("j and k visit source headers as well as skill rows", async () => {
   const lint = await screen.findByRole("button", { name: /^lint/ });
   lint.focus();
   await user.keyboard("j");
-  expect(screen.getByRole("button", { name: /acme\/skills/ })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^acme\/skills/ })).toHaveFocus();
   await user.keyboard("j");
   expect(screen.getByRole("button", { name: /^review/ })).toHaveFocus();
   await user.keyboard("k");
@@ -147,11 +150,11 @@ test("a source with several states shows the highest by precedence", async () =>
       sourceGroup(source("upd", { update: true }), [skill("b")]),
     ]),
   );
-  const both = await screen.findByRole("button", { name: /acme\/both/ });
+  const both = await screen.findByRole("button", { name: /^acme\/both/ });
   expect(within(both).getByText("Couldn't check")).toBeInTheDocument();
   expect(within(both).queryByText("Update available")).toBeNull();
   expect(
-    within(screen.getByRole("button", { name: /acme\/upd/ })).getByText("Update available"),
+    within(screen.getByRole("button", { name: /^acme\/upd/ })).getByText("Update available"),
   ).toBeInTheDocument();
 });
 
@@ -193,10 +196,10 @@ test("a source header shows its pin as a short sha, 'Live' for a folder, and the
       ),
     ]),
   );
-  const gh = await screen.findByRole("button", { name: /acme\/skills/ });
+  const gh = await screen.findByRole("button", { name: /^acme\/skills/ });
   expect(within(gh).getByText("0123456")).toBeInTheDocument();
   expect(within(gh).getByText("40 skills").textContent).toBe("40\u00a0skills");
-  const folder = screen.getByRole("button", { name: /\/srv\/skills/ });
+  const folder = screen.getByRole("button", { name: /^\/srv\/skills/ });
   expect(within(folder).getByText("Live")).toBeInTheDocument();
   expect(within(folder).getByText("1 skill").textContent).toBe("1\u00a0skill");
 });
@@ -301,11 +304,61 @@ test("a GitHub source shows what it is doing: Adding with no pin yet, Checking w
       sourceGroup(source("busy", { checking: { since: minuteAgo } }), [skill("a")]),
     ]),
   );
-  const adding = await screen.findByRole("button", { name: /acme\/new/ });
+  const adding = await screen.findByRole("button", { name: /^acme\/new/ });
   expect(within(adding).getByText("Adding…")).toBeInTheDocument();
   expect(within(adding).getByText(/^1m 0\ds$/)).toBeInTheDocument();
   expect(within(adding).queryByText("Live")).toBeNull();
-  const busy = screen.getByRole("button", { name: /acme\/busy/ });
+  const busy = screen.getByRole("button", { name: /^acme\/busy/ });
   expect(within(busy).getByText("Checking…")).toBeInTheDocument();
   expect(within(busy).getByText(/^1m 0\ds$/)).toBeInTheDocument();
+});
+
+test("a group's chevron collapses its list to the header, and the choice is remembered on the next visit", async () => {
+  const first = await open();
+  const toggle = await screen.findByRole("button", { name: "Skills in acme/skills" });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await userEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("list", { name: "acme/skills" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^review/ })).toBeNull();
+  // The header stays, with its count; the other groups are untouched.
+  expect(screen.getByRole("button", { name: /^acme\/skills/ })).toBeInTheDocument();
+  expect(screen.getByRole("list", { name: "Host" })).toBeInTheDocument();
+  first.unmount();
+  await open();
+  expect(await screen.findByRole("button", { name: "Skills in acme/skills" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Skills in acme/skills" }));
+  expect(screen.getByRole("button", { name: /^review/ })).toBeInTheDocument();
+});
+
+test("the filter lists skills whose name or description holds it, leaves out groups with none, and opens collapsed groups", async () => {
+  await open();
+  await userEvent.click(await screen.findByRole("button", { name: "Skills in acme/skills" }));
+  await userEvent.type(screen.getByRole("searchbox", { name: "Search skills" }), "REV");
+  await waitFor(() => expect(screen.getByRole("button", { name: /^review/ })).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /^deploy/ })).toBeNull();
+  expect(screen.queryByRole("list", { name: "Host" })).toBeNull();
+  expect(screen.queryByRole("list", { name: "Template dev" })).toBeNull();
+  await userEvent.clear(screen.getByRole("searchbox", { name: "Search skills" }));
+  await userEvent.type(screen.getByRole("searchbox", { name: "Search skills" }), "lint desc");
+  await waitFor(() => expect(screen.getByRole("button", { name: /^lint/ })).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /^review/ })).toBeNull();
+  // Cleared: everything is back, and the collapsed group is collapsed again.
+  await userEvent.clear(screen.getByRole("searchbox", { name: "Search skills" }));
+  await waitFor(() => expect(screen.getByRole("list", { name: "Host" })).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /^review/ })).toBeNull();
+});
+
+test("a filter matching a group's name lists the whole group; one matching nothing says so", async () => {
+  await open();
+  const filter = await screen.findByRole("searchbox", { name: "Search skills" });
+  await userEvent.type(filter, "acme");
+  await waitFor(() => expect(screen.getByRole("button", { name: /^deploy/ })).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: /^review/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^lint/ })).toBeNull();
+  await userEvent.type(filter, "zzz");
+  expect(await screen.findByText("No matches.")).toBeInTheDocument();
 });

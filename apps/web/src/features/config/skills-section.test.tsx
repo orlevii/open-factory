@@ -151,7 +151,7 @@ test("template mode: the ghost Add skill sits in the Skills label row, above the
   expect(trigger.compareDocumentPosition(rows) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
-test("options are grouped by source, a heading each", async () => {
+test("options are grouped by source, each group opening with a row that adds all of it", async () => {
   useLibrary();
   render(<Form />);
   await open();
@@ -160,9 +160,84 @@ test("options are grouped by source, a heading each", async () => {
     within(host)
       .getAllByRole("option")
       .map((o) => o.textContent),
-  ).toEqual([expect.stringContaining("tdd"), expect.stringContaining("review")]);
+  ).toEqual([
+    expect.stringContaining("Add all 2"),
+    expect.stringContaining("tdd"),
+    expect.stringContaining("review"),
+  ]);
   const gh = screen.getByRole("group", { name: "acme/x" });
-  expect(within(gh).getAllByRole("option")).toHaveLength(1);
+  expect(
+    within(gh)
+      .getAllByRole("option")
+      .map((o) => o.textContent),
+  ).toEqual([expect.stringContaining("Add 1"), expect.stringContaining("from-github")]);
+});
+
+const hostRow = () =>
+  within(screen.getByRole("group", { name: "Host" })).getAllByRole("option")[0] as HTMLElement;
+
+test("a group's row adds every skill of it in one pick, stays open and announces the count", async () => {
+  useLibrary();
+  const onValue = vi.fn();
+  render(<Form onValue={onValue} />);
+  const list = await open();
+  await userEvent.click(hostRow());
+  expect(last(onValue)).toEqual({ template: { skills: ["tdd", "review"] } });
+  expect(list).toBeInTheDocument();
+  expect(hostRow()).toHaveTextContent("All added");
+  expect(hostRow()).toHaveAttribute("aria-disabled", "true");
+  for (const name of [/tdd/, /review/])
+    expect(screen.getByRole("option", { name })).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("option", { name: /from-github/ })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(screen.getAllByRole("status").some((s) => s.textContent === "Added 2 from Host")).toBe(
+    true,
+  );
+});
+
+test("after a single pick, a group's row adds only what is left of the group", async () => {
+  useLibrary();
+  const onValue = vi.fn();
+  render(<Form onValue={onValue} />);
+  await open();
+  await userEvent.click(screen.getByRole("option", { name: /tdd/ }));
+  expect(hostRow()).toHaveTextContent("Add 1");
+  await userEvent.click(hostRow());
+  expect(last(onValue)).toEqual({ template: { skills: ["tdd", "review"] } });
+});
+
+test("while filtering, a group's row adds only the group's skills that match", async () => {
+  useLibrary();
+  const onValue = vi.fn();
+  render(<Form onValue={onValue} />);
+  await open();
+  await userEvent.keyboard("PR");
+  await waitFor(() => expect(hostRow()).toHaveTextContent("Add 1"));
+  await userEvent.click(hostRow());
+  expect(last(onValue)).toEqual({ template: { skills: ["review"] } });
+});
+
+test("on opening, Enter adds the first skill, not the first group", async () => {
+  useLibrary();
+  const onValue = vi.fn();
+  render(<Form onValue={onValue} />);
+  await open();
+  await userEvent.keyboard("{Enter}");
+  expect(last(onValue)).toEqual({ template: { skills: ["tdd"] } });
+});
+
+test("while filtering, Enter adds the best match, not its whole group", async () => {
+  useLibrary();
+  const onValue = vi.fn();
+  render(<Form onValue={onValue} />);
+  await open();
+  // "e" is in review's name and in tdd's description: both are in Host, review ranks first.
+  await userEvent.keyboard("e");
+  await waitFor(() => expect(hostRow()).toHaveTextContent("Add all 2"));
+  await userEvent.keyboard("{Enter}");
+  expect(last(onValue)).toEqual({ template: { skills: ["review"] } });
 });
 
 test("hidden, unusable, missing and template-named skills are left out, and the footer counts them", async () => {

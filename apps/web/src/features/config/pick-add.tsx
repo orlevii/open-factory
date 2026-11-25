@@ -62,6 +62,7 @@ export function PickAddMany({
   emptyText,
   renderOption,
   renderGroup,
+  groupRows,
   footer,
   picked,
   trigger,
@@ -74,6 +75,8 @@ export function PickAddMany({
   emptyText: string;
   renderOption?: (o: ComboOption) => ReactNode;
   renderGroup?: (group: string) => ReactNode;
+  /** Each group opens with a row that adds all of it in one pick; options show checkboxes. */
+  groupRows?: boolean;
   footer?: ReactNode;
   /** Every name already in the list (this agent's and the template's). */
   picked: readonly string[];
@@ -93,7 +96,7 @@ export function PickAddMany({
   const [said, setSaid] = useState("");
   const [refused, setRefused] = useState("");
   const [refusedValue, setRefusedValue] = useState("");
-  const multiple = useMemo(() => ({ added, announce: setSaid }), [added]);
+  const multiple = useMemo(() => ({ added, announce: setSaid, groupRows }), [added, groupRows]);
   const last = useRef<string>(undefined);
   return (
     <>

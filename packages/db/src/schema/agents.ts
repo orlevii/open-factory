@@ -168,6 +168,10 @@ export const sessionEvents = pgTable(
     // S7 §8: an agent's `terminated` event, found without reading its whole log (boot's crash-window query and
     // `ensureTerminatedEvent`). At most one row per terminated agent.
     index("session_events_terminated_idx").on(t.agentId).where(sql`${t.type} = 'terminated'`),
+    // Loop guard: an agent's operator input, read by the window count without scanning its whole log.
+    index("session_events_operator_input_idx")
+      .on(t.agentId, t.at)
+      .where(sql`${t.type} = 'operator_input'`),
   ],
 );
 
@@ -197,6 +201,8 @@ export const messages = pgTable(
     body: text("body").notNull(),
     urgent: boolean("urgent").notNull().default(false),
     state: text("state").notNull().default("pending"),
+    // Loop guard: the open loop hold this message is parked under (state 'loop_held').
+    loopHoldId: text("loop_hold_id").references((): AnyPgColumn => loopHolds.id),
     deliveredTurnId: text("delivered_turn_id").references(() => turns.id, { onDelete: "set null" }),
     // S8: task messages. (task_id, comment_id) is a composite foreign key to task_comments, added in SQL.
     taskId: text("task_id").references((): AnyPgColumn => tasks.id),
@@ -217,6 +223,10 @@ export const messages = pgTable(
   },
   (t) => [
     index("messages_to_agent_state_idx").on(t.toAgentId, t.state, t.createdAt),
+    // Loop guard: a schedule holds at most one undelivered row per agent, whether it is pending or loop_held.
+    uniqueIndex("messages_schedule_pending_idx")
+      .on(t.scheduleId, t.toAgentId)
+      .where(sql`${t.state} IN ('pending','loop_held') AND ${t.scheduleId} IS NOT NULL`),
     index("messages_from_agent_idx").on(t.fromAgentId, t.createdAt),
     // S10: turn attribution reads a closing turn's delivered messages.
     index("messages_delivered_turn_idx")
@@ -232,7 +242,30 @@ export const messages = pgTable(
     index("messages_chat_out_idx")
       .on(t.toUserId, t.fromAgentId, t.createdAt)
       .where(sql`${t.kind} = 'message'`),
+    // I8: Resume's flip and the inbox's hold counts look rows up by hold.
+    index("messages_loop_hold_idx").on(t.loopHoldId).where(sql`${t.loopHoldId} is not null`),
     check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipients} IS NOT NULL`),
+  ],
+);
+
+/** Loop guard: a held agent pair. At most one open hold per pair; resuming sets resumedAt. */
+export const loopHolds = pgTable(
+  "loop_holds",
+  {
+    id: text("id").primaryKey(),
+    agentA: text("agent_a")
+      .notNull()
+      .references(() => agents.id),
+    agentB: text("agent_b")
+      .notNull()
+      .references(() => agents.id),
+    openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
+    resumedAt: timestamp("resumed_at", { withTimezone: true }),
+    resumedBy: text("resumed_by").references(() => users.id),
+  },
+  (t) => [
+    check("loop_holds_order", sql`${t.agentA} < ${t.agentB}`),
+    uniqueIndex("loop_holds_open_unique").on(t.agentA, t.agentB).where(sql`${t.resumedAt} is null`),
   ],
 );
 

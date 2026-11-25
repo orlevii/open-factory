@@ -124,6 +124,27 @@ test("a pending recipient without a note still gets its line", async () => {
   expect(screen.getByRole("article")).toHaveTextContent("Not delivered yet to @y");
 });
 
+test("a held recipient reads 'Held by the loop guard' in place of its note", async () => {
+  await show(
+    row(
+      ["@b"],
+      [
+        {
+          to: "@b",
+          kind: "agent",
+          status: "held",
+          id: "m4",
+          note: "Held: you and @b exchanged 22 messages in 3 minutes with no human in between.",
+        },
+      ],
+    ),
+  );
+  const card = screen.getByRole("article");
+  expect(within(card).getByText("Held by the loop guard:")).toBeInTheDocument();
+  expect(within(card).getByText("@b", { selector: "span.font-mono" })).toBeInTheDocument();
+  expect(card.textContent).not.toContain("exchanged 22 messages");
+});
+
 test("a result element the schema doesn't know drops only itself", async () => {
   await show(
     row(

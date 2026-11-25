@@ -229,6 +229,13 @@ function sendNote(row: OutgoingRow, sent: SendResults | undefined): ReactNode {
           Not sent to {who}: {r.reason}
         </span>,
       ];
+    // Held by the loop guard: the status line wins over the note, which is written for the agent.
+    if (r.status === "held")
+      return [
+        <span key={who}>
+          Held by the loop guard: <span className="font-mono">{who}</span>
+        </span>,
+      ];
     // The server's note replaces the status text for that recipient (it already says what the status means).
     if (r.note) return [<span key={who}>{r.note}</span>];
     if (r.status === "pending")

@@ -189,3 +189,23 @@ test("dependencies and links come back through get_task", async () => {
     { key: "T-2", title: "Two", status: "open" },
   ]);
 });
+
+test("comment_task: a looping peer is listed under held, the comment is still posted", async () => {
+  await h.app.factorySettings.update({ loopGuardMessages: 2 }, (or as { userId: string }).userId);
+  await call("lead", "create_task", { title: "Plan", assignee: "lead" });
+  const send = (from: string, to: string) =>
+    h.app.router.send({ agentId: ids[from] as string }, [`@${to}`], "ping", false);
+  for (let i = 0; i < 2; i++) {
+    await send("dev", "qa");
+    await send("qa", "dev");
+  }
+  await send("qa", "dev");
+  const r = await call("dev", "comment_task", { id: "T-1", body: "@qa thoughts?" });
+  expect(r.err).toBe(false);
+  expect(r.json.delivered_to).toEqual(["lead"]);
+  expect(r.json.held).toHaveLength(1);
+  expect(r.json.held[0].to).toBe("@qa");
+  expect(r.json.held[0].note).toMatch(/^Held: you and @qa exchanged/);
+  const [c] = await h.sql`select body from task_comments where id = ${r.json.id}`;
+  expect(c?.body).toBe("@qa thoughts?");
+});

@@ -20,6 +20,7 @@ import {
   loadAttachments,
 } from "../uploads/attach.ts";
 import type { Forward } from "./forwarder.ts";
+import { type GuardResult, type LoopGuard, loopNotes, pairOf } from "./loop-guard.ts";
 import type { Neighborhood } from "./neighborhood.ts";
 import { type PeerLeft, peerBody } from "./peer-body.ts";
 import { HUMANS_SEND_REFUSAL, resolveName } from "./principals.ts";
@@ -41,6 +42,7 @@ export type RecipientResult =
     }
   | { to: string; kind: "agent"; status: "pending"; id: string; note: string }
   | { to: string; kind: "agent"; status: "start_failed"; id: string; note: string }
+  | { to: string; kind: "agent"; status: "held"; id: string; note: string }
   | { to: string; status: "refused"; reason: string; code: RefusalCode };
 
 /**
@@ -100,6 +102,7 @@ export class Router {
       bus: EventBus;
       log: FastifyBaseLogger;
       neighborhood: Neighborhood;
+      loopGuard: LoopGuard;
     },
   ) {}
 
@@ -184,11 +187,23 @@ export class Router {
       };
 
     const recipients = accepted.map((t) => t.to);
-    type Written = { target: Target; row?: PendingRow; humanRowId?: string; created: boolean };
+    type Written = {
+      target: Target;
+      row?: PendingRow;
+      humanRowId?: string;
+      created: boolean;
+      /** Set when the loop guard parked the row (agent sender only); it is never handed over. */
+      guard?: Extract<GuardResult, { held: true }>;
+    };
     let written: Written[];
     try {
       written = await this.d.store.transaction(async (tx) => {
         const out: Written[] = [];
+        if (!("userId" in from))
+          await this.d.loopGuard.lockPairs(
+            tx,
+            accepted.flatMap((t) => (t.agent ? [pairOf(from.agentId, t.agent.id)] : [])),
+          );
         for (const target of accepted) {
           if (target.user) {
             const { row } = await this.d.store.createHumanMessage(
@@ -243,6 +258,7 @@ export class Router {
               throw new AttachmentGoneError();
             out.push({ target, row: made.row, created: made.created });
           } else {
+            const verdict = await this.d.loopGuard.check(tx, from.agentId, agent.id);
             const row = await this.d.store.createMessage(
               {
                 from: { agentId: from.agentId },
@@ -251,10 +267,16 @@ export class Router {
                 body: fullBody,
                 urgent,
                 fromToolUseId: from.toolUseId ?? null,
+                ...(verdict.held ? { state: "loop_held", loopHoldId: verdict.holdId } : {}),
               },
               tx,
             );
-            out.push({ target, row, created: true });
+            out.push({
+              target,
+              row,
+              created: true,
+              ...(verdict.held ? { guard: verdict } : {}),
+            });
           }
         }
         return out;
@@ -269,6 +291,7 @@ export class Router {
       throw e;
     }
 
+    this.d.loopGuard.afterCommit(written.flatMap((w) => (w.guard ? [w.guard] : [])));
     for (const w of written)
       if (w.target.user) this.d.bus.publishToUser(w.target.user.userId, { type: "inbox_changed" });
     // I1 §6.5: the human party's chat with each agent on the other side changed.
@@ -298,7 +321,20 @@ export class Router {
           status: "inbox",
           id: w.humanRowId,
         });
-    const agentRows = written.filter((w) => w.row);
+    for (const w of written) {
+      const g = w.guard;
+      if (!g || !w.row) continue;
+      outcome.set(w.target, {
+        to: w.target.to,
+        kind: "agent",
+        status: "held",
+        id: w.row.id,
+        note: g.opened
+          ? loopNotes.tripping(w.target.to, g.counts.ab + g.counts.ba, g.counts.minutes)
+          : loopNotes.later(w.target.to),
+      });
+    }
+    const agentRows = written.filter((w) => w.row && !w.guard);
     if (agentRows.length) {
       await this.booted;
       // Only the request whose insert wrote the row hands it to the runtime; a concurrent repeat answers from the row.
@@ -648,6 +684,33 @@ export class Router {
   /** Hands committed held rows over (after the caller's commit), once boot is done; never awaited. */
   handOffHeldRows(rows: PendingRow[]): void {
     for (const row of rows) this.handOffHeld(row);
+  }
+
+  /**
+   * I8 §6.6: rows a human's Resume turned from `loop_held` to pending, handed over in the order given (`created_at`)
+   * once boot is done and unless shutdown has begun; never awaited. Delivered as the original insert would have:
+   * `agent_message`, `task_message` or `scheduled`. A failure is logged and the row stays pending.
+   */
+  handOffResumed(rows: PendingRow[]): void {
+    void this.booted.then(
+      async () => {
+        for (const row of rows) {
+          if (this.closed) return;
+          const reason =
+            row.kind === "task_comment"
+              ? "task_message"
+              : row.kind === "scheduled"
+                ? "scheduled"
+                : "agent_message";
+          try {
+            await this.d.runtimes.deliver(row, "agent", reason);
+          } catch (err) {
+            this.d.log.info({ err, message: row.id }, "a resumed message stays pending");
+          }
+        }
+      },
+      () => {}, // shutting down before boot finished: the rows are pending for the next boot
+    );
   }
 
   private async notify(

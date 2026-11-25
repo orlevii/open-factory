@@ -64,12 +64,16 @@ export const FACTORY_BOUNDS = {
   maxRunningAgents: [1, 64],
   defaultWarmWindowMinutes: [1, 1440],
   memberUpdateDebounceSeconds: [0, 86_400],
+  loopGuardMessages: [2, 1000],
+  loopGuardWindowMinutes: [1, 1440],
 } as const;
 
 export const factorySettingsSchema = z.object({
   maxRunningAgents: z.number().int(),
   defaultWarmWindowMinutes: z.number().int(),
   memberUpdateDebounceSeconds: z.number().int(),
+  loopGuardMessages: z.number().int(),
+  loopGuardWindowMinutes: z.number().int(),
   allowLocalRuntime: z.boolean(),
   updatedAt: z.string().nullable(),
   /** The @handle of the last editor. */
@@ -86,5 +90,7 @@ export const patchFactorySettingsSchema = z.strictObject({
   maxRunningAgents: bounded(FACTORY_BOUNDS.maxRunningAgents),
   defaultWarmWindowMinutes: bounded(FACTORY_BOUNDS.defaultWarmWindowMinutes),
   memberUpdateDebounceSeconds: bounded(FACTORY_BOUNDS.memberUpdateDebounceSeconds),
+  loopGuardMessages: bounded(FACTORY_BOUNDS.loopGuardMessages),
+  loopGuardWindowMinutes: bounded(FACTORY_BOUNDS.loopGuardWindowMinutes),
 });
 export type PatchFactorySettings = z.infer<typeof patchFactorySettingsSchema>;

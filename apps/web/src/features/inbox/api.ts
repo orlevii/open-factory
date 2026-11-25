@@ -1,4 +1,5 @@
 import {
+  ApiError,
   apiFetch,
   type ChatRow,
   inboxItemResponseSchema,
@@ -6,6 +7,7 @@ import {
   inboxPageSchema,
   readAllResponseSchema,
   readFromResponseSchema,
+  resumeLoopHoldResponseSchema,
   undoReadAllResponseSchema,
   unreadCountSchema,
 } from "@open-factory/shared";
@@ -15,10 +17,11 @@ import {
   type QueryClient,
   queryOptions,
   useInfiniteQuery,
+  useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { z } from "zod";
 import { chatQueryOptions } from "@/features/chat/api";
 import { taskDetailOptions } from "@/features/tasks/api";
@@ -263,4 +266,55 @@ export function useOpenItem() {
     },
     [cache],
   );
+}
+
+/** Resume a loop-guard hold (I8 §6.6): the 200's `sentOn` with the moment it answered (the pane shows
+ *  "Resumed by you · {at}" before the refetch brings `resumedAt`). The inbox and the item's own query refetch
+ *  after any outcome: a 409 means someone else resumed first, and its refetch brings who. */
+export function useResumeHold(holdId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const r = await apiFetch(`/api/loop-holds/${encodeURIComponent(holdId)}/resume`, {
+        method: "POST",
+        body: {},
+        schema: resumeLoopHoldResponseSchema,
+      });
+      return { sentOn: r.sentOn, at: new Date().toISOString() };
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: inboxQueryKey }),
+  });
+}
+
+/** Notices whose action lives only in the Inbox: their row links to `/inbox?item=<id>` at every width, and below
+ *  1024px the pane opens full-width. */
+export const FULL_WIDTH_NOTICES: readonly string[] = ["loop_held"];
+export const isFullWidthNotice = (item: InboxItem): boolean =>
+  item.notice !== undefined && FULL_WIDTH_NOTICES.includes(item.notice);
+
+/** The selected row from the loaded pages; re-renders only when that row changes. */
+export function useLoadedItem(id: string | undefined): InboxItem | undefined {
+  return useInfiniteQuery({
+    ...inboxQueryOptions,
+    select: useCallback(
+      (d: { pages: { items: InboxItem[] }[] }) =>
+        id === undefined ? undefined : d.pages.flatMap((p) => p.items).find((i) => i.id === id),
+      [id],
+    ),
+  }).data;
+}
+
+/**
+ * The item to show: the row from the loaded pages; else `GET /api/inbox/:id` (a deep link outside
+ * them, or a row a refetch dropped). A row that drops out keeps showing while that fetch runs, so
+ * the header never blanks; a 404 is `gone`.
+ */
+export function usePaneItem(id: string, loaded: InboxItem | undefined) {
+  const [kept, setKept] = useState(loaded);
+  if (loaded && loaded !== kept) setKept(loaded);
+  const fetched = useQuery({ ...inboxItemOptions(id), enabled: !loaded });
+  const gone = !loaded && fetched.error instanceof ApiError && fetched.error.status === 404;
+  // `kept` is always this id's row: PaneItem is keyed by id.
+  const item = loaded ?? (gone ? undefined : (fetched.data ?? kept));
+  return { item, gone, failed: !item && !gone && fetched.isError };
 }

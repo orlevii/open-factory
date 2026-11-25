@@ -7,7 +7,7 @@ import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { skipFocusPreload } from "@/lib/row-nav";
-import type { InboxItem } from "./api";
+import { type InboxItem, isFullWidthNotice } from "./api";
 import { aboutOf, credentialLine } from "./credential-notice";
 
 const PREVIEW_MAX = 280;
@@ -54,6 +54,11 @@ function SenderLine({ item }: { item: InboxItem }) {
   return (
     <>
       <Sender item={item} />
+      {item.loopHold && (
+        <span className="shrink-0 font-normal text-muted-foreground">
+          {item.loopHold.resumedAt ? "Resumed" : "Held"}
+        </span>
+      )}
       {item.urgent && (
         // 16px of text inside the border: the badge fits line one's 18px.
         <span className={`shrink-0 rounded-sm border border-border px-1.5 leading-4 ${muted}`}>
@@ -121,7 +126,8 @@ function labelOf(item: InboxItem, time: string, now: number): string {
     item.from.kind === "factory"
       ? `Factory${item.about ? ` about @${item.about}` : ""}`
       : `@${item.from.name}`;
-  return `${unread}From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}, ${time}`;
+  const hold = item.loopHold ? `, ${item.loopHold.resumedAt ? "resumed" : "held"}` : "";
+  return `${unread}From ${who} to ${item.to}${item.urgent ? ", urgent" : ""}${hold}, ${time}`;
 }
 
 // A grid row's single track would stretch to the 4.5rem minimum, and the lines' auto tracks with it
@@ -216,7 +222,7 @@ export const InboxRow = memo(function InboxRow({
   );
   return (
     <li className="border-b border-border last:border-b-0">
-      <RowLink link={item.link} common={common}>
+      <RowLink link={item.link} fullWidth={isFullWidthNotice(item)} id={item.id} common={common}>
         {body}
       </RowLink>
     </li>
@@ -229,13 +235,24 @@ type RowCommon = Omit<ComponentProps<typeof Link>, "to" | "params" | "search" | 
 /** The row's link, by kind; a new kind fails to compile here. */
 function RowLink({
   link,
+  fullWidth,
+  id,
   common,
   children,
 }: {
   link: InboxItem["link"];
+  /** A notice whose action lives only in the Inbox: the row opens its pane, at every width. */
+  fullWidth: boolean;
+  id: string;
   common: RowCommon;
   children: ReactNode;
 }) {
+  if (fullWidth)
+    return (
+      <Link to="/inbox" search={{ item: id }} {...common}>
+        {children}
+      </Link>
+    );
   switch (link.kind) {
     case "task":
       return (

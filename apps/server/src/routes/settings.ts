@@ -70,6 +70,8 @@ async function dto(app: FastifyInstance, db: Db): Promise<FactorySettingsDto> {
     maxRunningAgents: s.maxRunningAgents,
     defaultWarmWindowMinutes: s.defaultWarmWindowMinutes,
     memberUpdateDebounceSeconds: s.memberUpdateDebounceSeconds,
+    loopGuardMessages: s.loopGuardMessages,
+    loopGuardWindowMinutes: s.loopGuardWindowMinutes,
     allowLocalRuntime: localRuntimeAllowed(app.config),
     updatedAt: s.updatedAt?.toISOString() ?? null,
     updatedBy: editor ? `@${editor.handle}` : null,

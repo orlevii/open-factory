@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -54,6 +55,8 @@ import { sendMessageTool } from "./mcp/tools/send-message.ts";
 import { type SpawnPort, spawnAgentTool } from "./mcp/tools/spawn-agent.ts";
 import { taskTools } from "./mcp/tools/task-tools.ts";
 import { type TerminatePort, terminateAgentTool } from "./mcp/tools/terminate-agent.ts";
+import { LoopGuard } from "./messaging/loop-guard.ts";
+import { LoopResume } from "./messaging/loop-resume.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
 import { ProjectService } from "./projects/project-service.ts";
@@ -65,6 +68,7 @@ import { hostRoutes } from "./routes/host.ts";
 import { imagesRoutes } from "./routes/images.ts";
 import { inboxRoutes } from "./routes/inbox.ts";
 import { libraryRoutes } from "./routes/library.ts";
+import { loopHoldsRoutes } from "./routes/loop-holds.ts";
 import { meRoutes } from "./routes/me.ts";
 import { messagesRoutes } from "./routes/messages.ts";
 import { projectsRoutes } from "./routes/projects.ts";
@@ -325,7 +329,24 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     )
       void runtimes.settingsChanged();
   });
-  const router = new Router({ db: deps.db, store, runtimes, bus, log: app.log, neighborhood });
+  const loopGuard = new LoopGuard({
+    settings,
+    store,
+    bus,
+    runtimes,
+    log: app.log,
+    clock: () => store.clock(),
+    newId: randomUUID,
+  });
+  const router = new Router({
+    db: deps.db,
+    store,
+    runtimes,
+    bus,
+    log: app.log,
+    neighborhood,
+    loopGuard,
+  });
   // I2 §7.1: a template change is dispatched off the scan's path, on a per-template serial queue (never awaited there).
   const configChanges = new ConfigChanges({
     agents: dbConfigChangeAgents(deps.db, resolver),
@@ -344,6 +365,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     db: deps.db,
     store,
     schedules: scheduleStore,
+    loopGuard,
     runtimes,
     bus,
     log: app.log,
@@ -484,6 +506,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     runtimes,
     bus,
     log: app.log,
+    loopGuard,
   });
   app.decorate("tasks", tasks);
   // S7 §10.3: the spawned-agent sweep, started after boot reconciliation, stopped first on close.
@@ -647,6 +670,9 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   await app.register(imagesRoutes, { docker });
   await app.register(inboxRoutes);
   await app.register(setupRoutes, { db: deps.db });
+  await app.register(loopHoldsRoutes, {
+    resume: new LoopResume({ store, guard: loopGuard, router, bus }),
+  });
   await app.register(tasksRoutes);
   await app.register(schedulesRoutes);
   await app.register(messagesRoutes);

@@ -28,6 +28,8 @@ test("GET returns the defaults and the env-only local runtime flag", async () =>
     maxRunningAgents: 8,
     defaultWarmWindowMinutes: 70,
     memberUpdateDebounceSeconds: 30,
+    loopGuardMessages: 10,
+    loopGuardWindowMinutes: 10,
     allowLocalRuntime: true,
     updatedAt: null,
     updatedBy: null,
@@ -115,3 +117,30 @@ test.each([
     expect(agent.statusCode).toBe(401);
   },
 );
+
+test("PATCH saves the loop guard limit and window, and the guard reads them on its next check", async () => {
+  const r = await call("PATCH", { loopGuardMessages: 4, loopGuardWindowMinutes: 3 });
+  expect(r.statusCode).toBe(200);
+  expect(r.json()).toMatchObject({ loopGuardMessages: 4, loopGuardWindowMinutes: 3 });
+  expect(h.app.factorySettings.loopGuardMessages()).toBe(4);
+  expect(h.app.factorySettings.loopGuardWindowMs()).toBe(180_000);
+  expect((await call("GET")).json()).toMatchObject({
+    loopGuardMessages: 4,
+    loopGuardWindowMinutes: 3,
+  });
+});
+
+test.each([
+  ["loopGuardMessages", 1, "Enter a whole number from 2 to 1000."],
+  ["loopGuardMessages", 1001, "Enter a whole number from 2 to 1000."],
+  ["loopGuardWindowMinutes", 0, "Enter a whole number from 1 to 1440."],
+  ["loopGuardWindowMinutes", 1441, "Enter a whole number from 1 to 1440."],
+])("PATCH %s=%i is 400 with the field message", async (field, value, message) => {
+  const r = await call("PATCH", { [field]: value });
+  expect(r.statusCode).toBe(400);
+  expect(r.json().error).toMatchObject({
+    code: "invalid_settings",
+    fields: { [field]: message },
+  });
+  expect(h.app.factorySettings.get().updatedAt).toBeNull();
+});

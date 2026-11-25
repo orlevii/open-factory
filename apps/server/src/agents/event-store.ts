@@ -62,6 +62,7 @@ const {
   tasks,
   schedules,
   users,
+  loopHolds,
 } = schema;
 type MessageRow = typeof messages.$inferSelect;
 /** The one joined row shape the queue and the runtime use (spec §7.3): the row plus who sent it and what it is about. */
@@ -85,7 +86,7 @@ export interface MessageLookup {
   from: string;
   fromKind: "human" | "agent" | "factory";
   to: string;
-  state: "pending" | "delivered" | "rejected" | "cancelled";
+  state: "pending" | "loop_held" | "delivered" | "rejected" | "cancelled";
   recipientEvent?: { agentSlug: string; seq: number };
   senderEvent?: { agentSlug: string; seq: number };
   scheduleKey?: string;
@@ -103,6 +104,7 @@ export type UnreadChat = {
   /** The oldest unread message from the agent. */
   firstUnreadId: string;
 };
+type LoopHoldInfo = NonNullable<InboxItem["loopHold"]>;
 export interface InboxEntry {
   id: string;
   messageId: string;
@@ -122,6 +124,8 @@ export interface InboxEntry {
   notice?: string;
   /** The credential a `credential` item is about; `current` while its expiry notice has not been re-armed. */
   credential?: { name: string; expiresAt: string | null; current: boolean };
+  /** A `loop_held` notice's hold (I8 §6.4). */
+  loopHold?: InboxItem["loopHold"];
   link:
     | { kind: "session"; agentSlug: string; seq?: number }
     | { kind: "task"; key: string; commentId?: string }
@@ -256,7 +260,9 @@ export class EventStore {
     const rows = await tx
       .update(messages)
       .set({ state: "rejected" })
-      .where(and(eq(messages.toAgentId, agentId), eq(messages.state, "pending")))
+      .where(
+        and(eq(messages.toAgentId, agentId), inArray(messages.state, ["pending", "loop_held"])),
+      )
       .returning({ from: messages.fromUserId });
     return [...new Set(rows.flatMap((r) => (r.from ? [r.from] : [])))];
   }
@@ -457,7 +463,7 @@ export class EventStore {
       .set({ state: "rejected" })
       .where(
         and(
-          eq(messages.state, "pending"),
+          inArray(messages.state, ["pending", "loop_held"]),
           inArray(
             messages.toAgentId,
             this.db.select({ id: agents.id }).from(agents).where(isNotNull(agents.terminatedAt)),
@@ -815,6 +821,9 @@ export class EventStore {
       fromToolUseId?: string | null;
       clientMessageId?: string | null;
       attachments?: MessageAttachment[] | null;
+      /** `loop_held` parks the row under an open loop hold (I8 §6.3); it is never handed over. */
+      state?: "pending" | "loop_held";
+      loopHoldId?: string | null;
     },
     tx: Exec = this.db,
   ): Promise<PendingRow> {
@@ -822,6 +831,8 @@ export class EventStore {
     await tx.insert(messages).values({
       id,
       kind: "message",
+      ...(m.state ? { state: m.state } : {}),
+      loopHoldId: m.loopHoldId ?? null,
       clientMessageId: m.clientMessageId ?? null,
       attachments: m.attachments?.length ? m.attachments : null,
       ...("userId" in m.from ? { fromUserId: m.from.userId } : { fromAgentId: m.from.agentId }),
@@ -931,6 +942,9 @@ export class EventStore {
       from?: { userId: string } | { agentId: string };
       toAgentId: string;
       body: string;
+      /** `loop_held` parks the row under an open loop hold (I8 §6.3); it is never handed over. */
+      state?: "pending" | "loop_held";
+      loopHoldId?: string | null;
     },
   ): Promise<PendingRow> {
     const id = randomUUID();
@@ -944,6 +958,8 @@ export class EventStore {
       ...(m.from && "agentId" in m.from ? { fromAgentId: m.from.agentId } : {}),
       toAgentId: m.toAgentId,
       body: m.body,
+      ...(m.state ? { state: m.state } : {}),
+      loopHoldId: m.loopHoldId ?? null,
       createdAt: this.clock(),
     });
     return this.pendingRow(id, tx);
@@ -962,6 +978,8 @@ export class EventStore {
       subjectAgentId?: string;
       /** I3: the credential a `system` notice is about. */
       subjectCredentialId?: string;
+      /** The loop hold a `loop_held` notice is about (I8 §6.4). */
+      loopHoldId?: string;
       taskId?: string;
       commentId?: string;
       /** The message's timestamp when it must equal another written elsewhere (the expiry check); the clock otherwise. */
@@ -1015,6 +1033,7 @@ export class EventStore {
           notice: m.notice ?? null,
           subjectAgentId: m.subjectAgentId ?? null,
           subjectCredentialId: m.subjectCredentialId ?? null,
+          loopHoldId: m.loopHoldId ?? null,
           taskId: m.taskId ?? null,
           commentId: m.commentId ?? null,
           toUserId: m.to === "all" ? null : m.to.userId,
@@ -1189,7 +1208,8 @@ export class EventStore {
     if (existing) return existing;
     return this.insertNotice(m, this.db);
   }
-  private async insertNotice(
+  /** The always-insert half of `createNotice`: a new `system` row, inside `tx`. */
+  async insertNotice(
     m: { toAgentId: string; notice: NoticeType; body: string; subjectAgentId?: string },
     tx: Exec,
   ): Promise<MessageRow> {
@@ -1445,6 +1465,7 @@ export class EventStore {
     page: Awaited<ReturnType<EventStore["inboxRows"]>>,
   ): Promise<InboxEntry[]> {
     const senders = await this.senderEvents(page.map((r) => r.m));
+    const holds = await this.loopHoldsOf(page.map((r) => r.m));
     const items: InboxEntry[] = [];
     for (const r of page) {
       // I3 §5.8: a credential notice is built first, so it never reaches the session link with an empty slug.
@@ -1500,6 +1521,9 @@ export class EventStore {
         ...(task ? { task } : {}),
         ...(fact ? { fact } : {}),
         ...(r.m.kind === "system" && r.m.notice ? { notice: r.m.notice } : {}),
+        ...(r.m.notice === "loop_held" && r.m.loopHoldId && holds.get(r.m.loopHoldId)
+          ? { loopHold: holds.get(r.m.loopHoldId) }
+          : {}),
         link:
           task && r.item.kind !== "message"
             ? {
@@ -1511,6 +1535,54 @@ export class EventStore {
       });
     }
     return items;
+  }
+
+  /** I8 §6.4: the hold each `loop_held` notice is about, with its agents' live status and its rows' counts. */
+  private async loopHoldsOf(ms: MessageRow[]): Promise<Map<string, LoopHoldInfo>> {
+    const ids = [
+      ...new Set(
+        ms.flatMap((m) => (m.notice === "loop_held" && m.loopHoldId ? [m.loopHoldId] : [])),
+      ),
+    ];
+    const out = new Map<string, LoopHoldInfo>();
+    if (!ids.length) return out;
+    const aa = alias(agents, "aa");
+    const ab = alias(agents, "ab");
+    const rb = alias(users, "rb");
+    const rows = await this.db
+      .select({
+        id: loopHolds.id,
+        aSlug: aa.slug,
+        aEnded: sql<
+          string | null
+        >`case when ${aa.terminatedAt} is not null then 'terminated' when ${aa.archivedAt} is not null then 'archived' end`,
+        bSlug: ab.slug,
+        bEnded: sql<
+          string | null
+        >`case when ${ab.terminatedAt} is not null then 'terminated' when ${ab.archivedAt} is not null then 'archived' end`,
+        resumedAt: loopHolds.resumedAt,
+        resumedBy: rb.handle,
+        waiting: sql<number>`(select count(*)::int from messages m where m.loop_hold_id = ${loopHolds.id} and m.state = 'loop_held')`,
+        sentOn: sql<number>`(select count(*)::int from messages m where m.loop_hold_id = ${loopHolds.id} and m.kind <> 'system' and m.state not in ('loop_held', 'rejected'))`,
+      })
+      .from(loopHolds)
+      .innerJoin(aa, eq(aa.id, loopHolds.agentA))
+      .innerJoin(ab, eq(ab.id, loopHolds.agentB))
+      .leftJoin(rb, eq(rb.id, loopHolds.resumedBy))
+      .where(inArray(loopHolds.id, ids));
+    for (const r of rows)
+      out.set(r.id, {
+        id: r.id,
+        agents: [
+          { slug: r.aSlug, status: (r.aEnded as "terminated" | "archived" | null) ?? "live" },
+          { slug: r.bSlug, status: (r.bEnded as "terminated" | "archived" | null) ?? "live" },
+        ],
+        waiting: r.waiting,
+        sentOn: r.sentOn,
+        resumedAt: r.resumedAt?.toISOString() ?? null,
+        resumedBy: r.resumedBy ? `@${r.resumedBy}` : null,
+      });
+    return out;
   }
 
   /** One item of the user's inbox, or null when it does not exist or belongs to someone else. */

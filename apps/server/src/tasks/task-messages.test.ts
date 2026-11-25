@@ -196,6 +196,7 @@ test("handOffTaskRows waits for bootDone, does nothing after close, and a reject
     bus: h.app.bus,
     log: { info } as never,
     neighborhood: h.app.neighborhood,
+    loopGuard: {} as never, // these tests never send as an agent
   });
   const unhandled = vi.fn();
   process.on("unhandledRejection", unhandled);

@@ -1,10 +1,10 @@
 import type { ChatRow } from "@open-factory/shared";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
-import { chatSlugOf, type InboxItem, inboxQueryOptions } from "@/features/inbox/api";
+import { chatSlugOf, inboxQueryOptions, useLoadedItem } from "@/features/inbox/api";
 import { InboxList } from "@/features/inbox/inbox-list";
 import { InboxPane } from "@/features/inbox/inbox-pane";
 import {
@@ -12,13 +12,14 @@ import {
   MarkAllReadOutcome,
   useMarkAllRead,
 } from "@/features/inbox/mark-all-read";
+import { NarrowItem } from "@/features/inbox/narrow-item";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { setupQueryOptions } from "@/features/setup/api";
 import { useSetupVisible } from "@/features/setup/use-setup-visible";
 import { useMedia, WIDE } from "@/lib/breakpoints";
 
 export const Route = createFileRoute("/_app/inbox")({
-  // `item` is the reading pane's selection (≥1024). No loaderDeps: selecting never re-runs the loader.
+  // `item` is the reading pane's selection at every width. No loaderDeps: selecting never re-runs the loader.
   validateSearch: z.object({ item: z.string().min(1).optional().catch(undefined) }),
   // Only so the first load shows the route's pending mark; a failure is the list's own error line.
   loader: async ({ context }) => {
@@ -30,18 +31,6 @@ export const Route = createFileRoute("/_app/inbox")({
   },
   component: InboxPage,
 });
-
-/** The selected row from the loaded pages; re-renders only when that row changes. */
-function useLoadedItem(id: string | undefined): InboxItem | undefined {
-  return useInfiniteQuery({
-    ...inboxQueryOptions,
-    select: useCallback(
-      (d: { pages: { items: InboxItem[] }[] }) =>
-        id === undefined ? undefined : d.pages.flatMap((p) => p.items).find((i) => i.id === id),
-      [id],
-    ),
-  }).data;
-}
 
 /** The selected chat as a read row, for a chat with nothing unread (a reload, Back, a deep link): the list keeps
  *  it in view. It sits at the top, from when it was selected. */
@@ -84,20 +73,18 @@ function InboxPage() {
   const itemId = Route.useSearch({ select: (s) => s.item });
   const navigate = Route.useNavigate();
   const chatSlug = wide ? chatSlugOf(itemId) : undefined;
-  const item = useLoadedItem(wide && chatSlug === undefined ? itemId : undefined);
+  const item = useLoadedItem(chatSlug === undefined ? itemId : undefined);
   const selectedChat = useSelectedChat(chatSlug);
   const hasAgent = useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent }).data;
   const setup = useSetupVisible(hasAgent);
-
-  // Below 1024 rows navigate as before; a `?item=` from a wider window is dropped.
-  useEffect(() => {
-    if (!wide && itemId !== undefined) void navigate({ search: {}, replace: true });
-  }, [wide, itemId, navigate]);
 
   const onSelect = useCallback(
     (id: string, replace: boolean) => void navigate({ search: { item: id }, replace }),
     [navigate],
   );
+
+  // Below 1024 rows navigate to their target; a notice that lives only in the Inbox opens full-width.
+  if (!wide && itemId !== undefined) return <NarrowItem id={itemId} />;
 
   const header = (
     <PageHeader

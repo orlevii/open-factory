@@ -5,6 +5,8 @@ export type FactorySettingsValues = {
   maxRunningAgents: number;
   defaultWarmWindowMinutes: number;
   memberUpdateDebounceSeconds: number;
+  loopGuardMessages: number;
+  loopGuardWindowMinutes: number;
 };
 type Current = FactorySettingsValues & { updatedAt: Date | null; updatedBy: string | null };
 type Listener = (prev: FactorySettingsValues, next: FactorySettingsValues) => void;
@@ -15,6 +17,8 @@ const values = (c: Current): FactorySettingsValues => ({
   maxRunningAgents: c.maxRunningAgents,
   defaultWarmWindowMinutes: c.defaultWarmWindowMinutes,
   memberUpdateDebounceSeconds: c.memberUpdateDebounceSeconds,
+  loopGuardMessages: c.loopGuardMessages,
+  loopGuardWindowMinutes: c.loopGuardWindowMinutes,
 });
 const fromRow = (r: Current): Current => ({
   ...values(r),
@@ -52,6 +56,11 @@ export class FactorySettings {
   readonly defaultWarmWindowMinutes = (): number => this.current.defaultWarmWindowMinutes;
   /** The setting is stored in seconds; every consumer reads milliseconds. */
   readonly memberUpdateDebounceMs = (): number => this.current.memberUpdateDebounceSeconds * 1000;
+
+  /** Loop guard (I8 §6.1): the per-direction message count that trips a hold. */
+  readonly loopGuardMessages = (): number => this.current.loopGuardMessages;
+  /** Loop guard window; stored in minutes, read in milliseconds. */
+  readonly loopGuardWindowMs = (): number => this.current.loopGuardWindowMinutes * 60_000;
 
   /**
    * Writes the row, then swaps the copy (from what the row now holds), then calls the listeners. A listener that

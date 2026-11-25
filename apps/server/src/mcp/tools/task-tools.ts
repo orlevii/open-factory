@@ -89,7 +89,8 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
         server.registerTool(
           "create_task",
           {
-            description: "Create a task. Assigning it sends it to that agent's session.",
+            description:
+              "Create a task when work is worth tracking or handing off; for a quick question or request, just send a message. Assigning it sends it to that agent's session.",
             inputSchema: createTaskToolSchema,
           },
           (

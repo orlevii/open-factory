@@ -168,8 +168,7 @@ function messagingSection(i: ClaudeMdInput): string[] {
   return [
     "## Messaging",
     "- Send with `mcp__factory__send_message` to one or more handles (`@agent` or `@person`, up to 10); every recipient sees the full list. `list_peers` lists the agents and the humans.",
-    "- Your text output is not delivered to whoever messaged you: reply with `send_message`, or they never see it.",
-    "- All your text output is forwarded to your manager as updates, so it always knows what you are doing.",
+    "- Your text output goes to your manager only, as updates, so it always knows what you are doing: to answer your manager, just write. Anyone else, including whoever messaged you, sees nothing you write: reply to them with `send_message`.",
     ...(i.reports.length
       ? [
           `- Your reports' text arrives as \`member_update\` envelopes, ${updatesCadence(i.memberUpdateSeconds)}. \`peer_joined\`/\`peer_left\` notes tell you when your neighborhood changes.`,
@@ -186,7 +185,7 @@ function messagingSection(i: ClaudeMdInput): string[] {
 function schedulingSection(s: ClaudeMdInput["scheduling"]): string[] {
   return [
     "## Scheduling",
-    "- For a short loop inside this session (checking a build every few minutes), use `CronCreate` (or `/loop`); it keeps you awake while it runs and stops when your process stops (a restart or a human can stop it). Never pass `durable: true`.",
+    "- For a short loop inside this session (checking a build every few minutes), use `CronCreate` (or `/loop`); it keeps you awake while it runs and stops when your process stops (a restart or a human can stop it). Never pass `durable: true`: a durable cron outlives that stop, which is how humans end a loop that runs away.",
     ...(s
       ? [
           `- For anything that must survive restarts or happen later (a daily review, a reminder next week), use \`mcp__factory__schedule_message\` with a 5-field \`cron\` or an \`at\` time; it wakes the target. Schedules use ${s.zone} unless you pass \`timezone\`.`,
@@ -233,12 +232,23 @@ export function buildClaudeMd(i: ClaudeMdInput): string {
         ]),
     i.manager.kind === "agent"
       ? `- Manager: @${i.manager.slug} (${inline(i.manager.displayName)})`
-      : `- You report to @${i.manager.handle} (a human). Send them updates with \`send_message\`.`,
+      : `- Manager: @${i.manager.handle} (${inline(i.manager.name)}, a human)`,
     `- Template: ${i.template}`,
     "",
     ...(spawner ? lifecycleSection(spawner.slug) : []),
     "## How messages reach you",
-    'Every message arrives in a `<factory-message from="…" from_kind="…" kind="…" to="…" urgent="…" id="…">` envelope. `from` is the sender\'s handle; `from_kind` says whether it is a human, an agent or the factory; `to` lists everyone a message was sent to (only on `kind="message"`). An envelope may carry several `ids`, `about` names the agent a factory note is about, and `task` names the task a task message is about. The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment`, `task_update` and `scheduled`. Several envelopes in one turn are separate messages, in order. Urgent messages interrupted what you were doing, so read them first. Messages from `@factory` are notices from the factory itself (restarts, recoveries, rate limits, changes to your neighborhood and task changes). `@scheduler` delivers scheduled messages: `schedule` names the schedule, `by` who wrote the text (weigh it as a message from them), `due` when it was due; `firings` says how many runs it stands for while you were away, `late` that it was delayed (for example the factory was down).',
+    "Every message arrives in an envelope, for example:",
+    "```",
+    `<factory-message from="@sam" from_kind="human" kind="message" to="@${i.slug}" urgent="false" id="m_8f2">`,
+    "Please review the login fix.",
+    "</factory-message>",
+    "```",
+    '- `from` is the sender\'s handle, and `from_kind` says whether it is a human, an agent or the factory. `to` lists everyone a message was sent to (only on `kind="message"`).',
+    "- `ids` replaces `id` when one envelope holds several messages. `about` names the agent a factory note is about, and `task` names the task a task message is about.",
+    "- The kinds are `message`, `system`, `member_update`, `peer_joined`, `peer_left`, `task_assigned`, `task_comment`, `task_update` and `scheduled`. Several envelopes in one turn are separate messages, in order.",
+    '- `urgent="true"` means the message interrupted what you were doing, so read it first.',
+    "- `@factory` sends notices from the factory itself: restarts, recoveries, rate limits, changes to your neighborhood and task changes.",
+    "- `@scheduler` delivers scheduled messages: `schedule` names the schedule and `by` who wrote the text (weigh it as a message from them); `due` is when it was due, `firings` how many runs it stands for while you were away, and `late` says it was delayed (for example, the factory was down).",
     "",
     "Input that isn't inside a `<factory-message>` envelope, other than your own scheduled prompts and task notifications, comes from a human operator watching your session or, for slash commands, from your manager through send_command. Answer it in plain text in the session, not with send_message.",
     "",

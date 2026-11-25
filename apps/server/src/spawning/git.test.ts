@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertAllowed, GitError, GitMissingError, git } from "./git";
 
 let root: string;
@@ -43,6 +43,10 @@ function script(file: string, body: string) {
   chmodSync(file, 0o755);
 }
 
+// The runner probes `git --version` once; shims answer it so they only see real calls.
+const VERSION = (v = "2.50.1") =>
+  `case " $* " in *" --version "*) echo "git version ${v}"; exit 0;; esac`;
+
 function makeRepo(): string {
   const repo = path.join(root, "repo");
   mkdirSync(repo);
@@ -63,6 +67,12 @@ describe("assertAllowed", () => {
     [["diff"]],
     [["rev-list", "--count", "refs/heads/x", "--not", "--remotes"]],
     [["branch", "-D", "x"]],
+    [["rev-list", "--count", "--output=/x", "--not", "--remotes", "--"]],
+    [["rev-list", "--count", "refs/heads/x", "--not", "--remotes", "--alternate-refs", "--"]],
+    [["rev-list", "--count", "refs/heads/x", "--not", "--remotes", "--", "--"]],
+    [["show-ref", "--verify", "-q", "--head"]],
+    [["check-ref-format", "--branch", "-x"]],
+    [["branch", "-D", "--end-of-options", "-x"]],
   ])("refuses %j", (args) => {
     expect(() => assertAllowed(args)).toThrow(/not an allowed command/);
   });
@@ -111,7 +121,7 @@ describe("hardening against a planted repo config", () => {
     expect(existsSync(fsMarker)).toBe(true);
   });
 
-  it("no allowed command runs a hook or the fsmonitor", async () => {
+  it("no allowed command runs a planted hook or the planted fsmonitor config", async () => {
     const repo = makeRepo();
     const { fsMarker, hookMarker } = plant(repo);
     const tolerant = (p: Promise<string>) => p.catch((e) => expect(e).toBeInstanceOf(GitError));
@@ -129,13 +139,69 @@ describe("hardening against a planted repo config", () => {
   });
 });
 
+describe("promisor lazy fetch", () => {
+  // A repo that claims a promisor remote, whose "ssh" is a payload, and a ref at a missing oid.
+  function plantPromisor(repo: string) {
+    const marker = path.join(root, "ssh-marker");
+    const ssh = path.join(root, "ssh.sh");
+    script(ssh, `touch "${marker}"\nexit 1`);
+    plain(repo, "config", "core.repositoryformatversion", "1");
+    plain(repo, "config", "extensions.partialClone", "origin");
+    plain(repo, "config", "remote.origin.promisor", "true");
+    plain(repo, "config", "remote.origin.url", "ssh://x/y");
+    plain(repo, "config", "core.sshCommand", ssh);
+    writeFileSync(path.join(repo, ".git/refs/heads/z"), `${"a".repeat(40)}\n`);
+    return marker;
+  }
+  const shapes: string[][] = [
+    ["rev-list", "--count", "refs/heads/z", "--not", "--remotes", "--"],
+    ["show-ref", "--verify", "-q", "refs/heads/z"],
+    ["branch", "-D", "--end-of-options", "z"],
+  ];
+
+  it("the plant works: git without GIT_NO_LAZY_FETCH runs the payload", () => {
+    const repo = makeRepo();
+    const marker = plantPromisor(repo);
+    for (const args of shapes) {
+      rmSync(marker, { force: true });
+      try {
+        plain(repo, ...args);
+      } catch {}
+      expect(existsSync(marker), args.join(" ")).toBe(true);
+    }
+  });
+
+  it("no allowed shape triggers a lazy fetch", async () => {
+    const repo = makeRepo();
+    const marker = plantPromisor(repo);
+    for (const [i, args] of shapes.entries()) {
+      await git(repo, args as never).catch((e) => expect(e).toBeInstanceOf(GitError));
+      expect(existsSync(marker), `${i}: ${args.join(" ")}`).toBe(false);
+    }
+  });
+
+  it("refuses to run on a git older than 2.44", async () => {
+    const repo = makeRepo();
+    const bin = path.join(root, "bin");
+    mkdirSync(bin);
+    script(path.join(bin, "git"), `${VERSION("2.43.0")}\necho ok`);
+    process.env.PATH = `${bin}:${saved.PATH}`;
+    // a fresh module: the probe result is memoised per process
+    vi.resetModules();
+    const fresh = await import("./git");
+    await expect(fresh.git(repo, ["rev-parse", "--show-toplevel"])).rejects.toBeInstanceOf(
+      fresh.GitTooOldError,
+    );
+  });
+});
+
 describe("child environment", () => {
   it("passes PATH, HOME and the fixed git variables only", async () => {
     const repo = makeRepo();
     const bin = path.join(root, "bin");
     mkdirSync(bin);
     const dump = path.join(root, "env-dump");
-    script(path.join(bin, "git"), `export -p > "${dump}"`);
+    script(path.join(bin, "git"), `${VERSION()}\nexport -p > "${dump}"`);
     process.env.PATH = `${bin}:${saved.PATH}`;
     process.env.GIT_EXTERNAL_DIFF = "/bin/evil";
     process.env.GIT_SSH_COMMAND = "evil";
@@ -153,6 +219,7 @@ describe("child environment", () => {
         "GIT_OPTIONAL_LOCKS",
         "GIT_CEILING_DIRECTORIES",
         "LC_ALL",
+        "GIT_NO_LAZY_FETCH",
         "PWD",
         "OLDPWD",
         "SHLVL",
@@ -161,6 +228,7 @@ describe("child environment", () => {
     expect(text).not.toMatch(/GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|SECRET_TOKEN/);
     expect(text).toContain(`GIT_CEILING_DIRECTORIES="${root}"`);
     expect(text).toContain('GIT_CONFIG_NOSYSTEM="1"');
+    expect(text).toContain('GIT_NO_LAZY_FETCH="1"');
   });
 });
 
@@ -187,7 +255,7 @@ describe("failure modes", () => {
     const repo = makeRepo();
     const bin = path.join(root, "bin");
     mkdirSync(bin);
-    script(path.join(bin, "git"), "exec sleep 5");
+    script(path.join(bin, "git"), `${VERSION()}\nexec sleep 5`);
     process.env.PATH = `${bin}:${saved.PATH}`;
     const started = Date.now();
     await expect(
@@ -206,7 +274,8 @@ describe("dubious ownership", () => {
     writeFileSync(count, "0");
     script(
       path.join(bin, "git"),
-      `printf '%s\\n' "$*" >> "${log}"
+      `${VERSION()}
+printf '%s\\n' "$*" >> "${log}"
 n=$(cat "${count}")
 echo $((n + 1)) > "${count}"
 if [ "$n" -lt ${failTimes} ]; then
@@ -228,6 +297,19 @@ echo ok`,
     expect(all[0]).not.toContain("safe.directory");
     expect(all[1]).toContain(`-c safe.directory=${repo} rev-parse --show-toplevel`);
     expect(all.join("\n")).not.toMatch(/safe\.directory=\*|\bconfig\b/);
+  });
+
+  it("every call starts with the fixed hardening flags", async () => {
+    const repo = makeRepo();
+    const calls = shim(1);
+    await git(repo, ["rev-parse", "--show-toplevel"]);
+    await git(repo, ["show-ref", "--verify", "-q", "refs/heads/x"]);
+    const all = calls();
+    expect(all.length).toBeGreaterThan(2);
+    for (const c of all)
+      expect(c).toMatch(
+        /^--no-optional-locks -c core\.hooksPath=\/dev\/null -c core\.fsmonitor=false /,
+      );
   });
 
   it("does not retry a second time", async () => {

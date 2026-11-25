@@ -337,7 +337,7 @@ export class TaskService {
       .filter((u) => written.userIds.includes(u))
       .map((u) => `@${handles.get(u)}`);
     const held: CommentResult["held"] = [];
-    for (const g of written.held) {
+    for (const g of written.loopHeld) {
       const to = `@${await this.slugOf(g.toAgentId, tx)}`;
       held.push({
         to,
@@ -354,7 +354,7 @@ export class TaskService {
       agentRows: written.agentRows,
       userIds: written.userIds,
       keys: [taskKey(task.number)],
-      guards: written.held.map((g) => g.verdict),
+      guards: written.loopHeld.map((g) => g.verdict),
       result: {
         id: comment.id,
         createdAt: comment.createdAt,
@@ -816,10 +816,10 @@ export class TaskService {
   ): Promise<{
     agentRows: { row: PendingRow; wake: "human" | "task_message" }[];
     userIds: string[];
-    held: { toAgentId: string; verdict: Extract<GuardResult, { held: true }> }[];
+    loopHeld: { toAgentId: string; verdict: Extract<GuardResult, { held: true }> }[];
   }> {
     const agentRows: { row: PendingRow; wake: "human" | "task_message" }[] = [];
-    const held: { toAgentId: string; verdict: Extract<GuardResult, { held: true }> }[] = [];
+    const loopHeld: { toAgentId: string; verdict: Extract<GuardResult, { held: true }> }[] = [];
     const userIds = new Set<string>();
     // I8 §6.3: an agent's comment is counted and checked per agent recipient; every pair is locked first, once.
     const guarded = (p: PlannedRow): p is PlannedRow & { to: { agentId: string } } =>
@@ -849,7 +849,7 @@ export class TaskService {
           body: p.body,
           ...(verdict?.held ? { state: "loop_held", loopHoldId: verdict.holdId } : {}),
         });
-        if (verdict?.held) held.push({ toAgentId: p.to.agentId, verdict });
+        if (verdict?.held) loopHeld.push({ toAgentId: p.to.agentId, verdict });
         else agentRows.push({ row, wake: p.wake });
       } else {
         if (p.kind === "task_assigned") continue; // humans are never assignees
@@ -871,7 +871,7 @@ export class TaskService {
         userIds.add(p.to.userId);
       }
     }
-    return { agentRows, userIds: [...userIds], held };
+    return { agentRows, userIds: [...userIds], loopHeld };
   }
 
   private async labelOf(tx: Exec, p: Principal): Promise<string> {

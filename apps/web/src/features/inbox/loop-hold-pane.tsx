@@ -67,7 +67,7 @@ function ResumedLine({
   return (
     <p ref={statusRef} role="status" tabIndex={-1} className="text-sm">
       Resumed
-      {resumed.by === me ? (
+      {me !== "" && resumed.by === me ? (
         " by you"
       ) : resumed.by ? (
         <>

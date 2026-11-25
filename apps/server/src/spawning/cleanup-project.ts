@@ -79,6 +79,33 @@ async function isRealDir(p: string): Promise<boolean> {
   return !!st && st.isDirectory() && !st.isSymbolicLink();
 }
 
+/**
+ * Every path `git branch -D` writes for this branch must be a plain folder chain ending in a
+ * regular file (or nothing): git follows symlinks there, so a planted one would delete or
+ * rewrite files outside the repository.
+ */
+async function branchPathsPlain(common: string, branch: string): Promise<boolean> {
+  const parts = branch.split("/");
+  const chains = [
+    ["config"],
+    ["packed-refs"],
+    ["refs", "heads", ...parts],
+    ["logs", "refs", "heads", ...parts],
+  ];
+  for (const comps of chains) {
+    let cur = common;
+    for (const [i, c] of comps.entries()) {
+      cur = path.join(cur, c);
+      const st = await lstatOrNull(cur);
+      if (!st) break;
+      if (st.isSymbolicLink()) return false;
+      const last = i === comps.length - 1;
+      if (last ? !st.isFile() : !st.isDirectory()) return false;
+    }
+  }
+  return true;
+}
+
 const fail = (
   project: string,
   error: string,
@@ -296,6 +323,10 @@ export async function cleanupProject(
         ]),
       );
       if (n === 0) {
+        if (!(await branchPathsPlain(common, branch))) {
+          result.error ??= `couldn't check \`${branch}\`; left in place`;
+          continue;
+        }
         await git(repo, ["branch", "-D", "--end-of-options", branch]);
         result.deleted.push(branch);
       } else result.kept.push({ branch, commits: n });

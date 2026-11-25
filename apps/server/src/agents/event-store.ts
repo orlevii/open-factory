@@ -1467,9 +1467,12 @@ export class EventStore {
   private async toEntries(
     page: Awaited<ReturnType<EventStore["inboxRows"]>>,
   ): Promise<InboxEntry[]> {
-    const senders = await this.senderEvents(page.map((r) => r.m));
-    const holds = await this.loopHoldsOf(page.map((r) => r.m));
-    const cleanups = await this.cleanupsOf(page.map((r) => r.m));
+    const ms = page.map((r) => r.m);
+    const [senders, holds, cleanups] = await Promise.all([
+      this.senderEvents(ms),
+      this.loopHoldsOf(ms),
+      this.cleanupsOf(ms),
+    ]);
     const items: InboxEntry[] = [];
     for (const r of page) {
       // I3 §5.8: a credential notice is built first, so it never reaches the session link with an empty slug.

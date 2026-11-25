@@ -52,7 +52,7 @@ function ProjectLine({ r }: { r: ProjectResult }) {
   if (r.error) parts.push(r.error);
   if (parts.length === 0) parts.push("nothing to clean up");
   return (
-    <p className="pl-5">
+    <p className="pl-5 [overflow-wrap:anywhere]">
       {r.project}:{" "}
       {parts.map((p, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: positional list

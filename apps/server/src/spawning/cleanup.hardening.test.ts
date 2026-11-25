@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,6 +10,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -335,5 +337,52 @@ describe("a removal that fails", () => {
     } finally {
       chmodSync(locked, 0o700);
     }
+  });
+});
+
+describe("symlinks inside .git that branch -D would follow", () => {
+  const keptWithError = (r: Awaited<ReturnType<typeof cleanupProject>>) => {
+    expect(r?.deleted).toEqual([]);
+    expect(r?.error).toBe("couldn't check `keep`; left in place");
+    expect(g(repo, "show-ref", "--verify", "refs/heads/keep")).toContain("refs/heads/keep");
+  };
+
+  it("keeps the branch when logs/refs/heads is a symlink, and the outside file survives", async () => {
+    addWorktree("keep", { commits: 0, push: true });
+    const logs = path.join(repo, ".git/logs/refs/heads");
+    rmSync(logs, { recursive: true, force: true });
+    symlinkSync(victim, logs);
+    writeFileSync(path.join(victim, "keep"), "secret");
+    const r = await cleanupProject(project(), SLUG);
+    keptWithError(r);
+    expect(readFileSync(path.join(victim, "keep"), "utf8")).toBe("secret");
+  });
+
+  it("keeps the branch when config is a symlink, and the outside file is untouched", async () => {
+    addWorktree("keep", { commits: 0, push: true });
+    const target = path.join(victim, "cfg");
+    const configPath = path.join(repo, ".git/config");
+    writeFileSync(target, readFileSync(configPath));
+    const before = { ino: statSync(target).ino, text: readFileSync(target, "utf8") };
+    rmSync(configPath);
+    symlinkSync(target, configPath);
+    const r = await cleanupProject(project(), SLUG);
+    keptWithError(r);
+    expect(statSync(target).ino).toBe(before.ino);
+    expect(readFileSync(target, "utf8")).toBe(before.text);
+    expect(existsSync(`${target}.lock`)).toBe(false);
+  });
+
+  it("keeps the branch when refs/heads is a symlink, and no lock appears outside", async () => {
+    addWorktree("keep", { commits: 0, push: true });
+    const heads = path.join(repo, ".git/refs/heads");
+    cpSync(heads, path.join(victim, "heads"), { recursive: true });
+    rmSync(heads, { recursive: true });
+    symlinkSync(path.join(victim, "heads"), heads);
+    const before = readdirSync(path.join(victim, "heads")).sort();
+    const r = await cleanupProject(project(), SLUG);
+    keptWithError(r);
+    expect(readdirSync(path.join(victim, "heads")).sort()).toEqual(before);
+    expect(readdirSync(victim).filter((f) => f.endsWith(".lock"))).toEqual([]);
   });
 });

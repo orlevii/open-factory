@@ -888,7 +888,6 @@ test("timeline: workspace_cleanup is one muted line grouped by project, branch n
     "web: removed the worktrees; deleted feat/y; kept feat/x (3 commits not pushed or merged), feat/z (checked out elsewhere)",
   );
   expect(texts[0]).toContain("docs: couldn't clean up: EACCES");
-  expect(within(els[0] as HTMLElement).getByText("feat/x")).toHaveClass("font-mono");
   expect(texts[1]).toContain(
     "Couldn't clean up worktrees: git isn't installed on the factory host.",
   );

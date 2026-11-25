@@ -17,6 +17,7 @@ let seq = 0;
 const published: unknown[] = [];
 const adopted: string[] = [];
 let guard: LoopGuard;
+let deps: ConstructorParameters<typeof LoopGuard>[0];
 
 beforeAll(async () => {
   t = await createTestDb();
@@ -24,7 +25,7 @@ beforeAll(async () => {
   await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
   for (const id of ["a1", "a2", "a3"]) await insertAgent(t.sql, { id, slug: id });
   const store = { clock: () => NOW } as never;
-  guard = new LoopGuard({
+  deps = {
     settings: {
       loopGuardMessages: () => N,
       loopGuardWindowMs: () => WINDOW_MIN * 60_000,
@@ -35,7 +36,8 @@ beforeAll(async () => {
     log: { error: () => {}, warn: () => {}, info: () => {} } as never,
     clock: () => NOW,
     newId: () => `hold-${++seq}`,
-  });
+  };
+  guard = new LoopGuard(deps);
 });
 afterAll(() => t.close());
 beforeEach(async () => {
@@ -179,57 +181,86 @@ describe("resets", () => {
     await rows("a1", "a2", N);
     await rows("a2", "a1", N + 1);
   }
-  const verdict = async (resetAt: Date | null, apply?: () => Promise<void>) => {
+  const verdict = async (apply: () => Promise<void>) => {
     await flood();
-    if (apply) await apply();
-    void resetAt;
+    await apply();
     return check("a1", "a2");
   };
+  const notHeld = { held: false };
+  const tripped = { held: true, opened: true };
 
-  test("a human message to either agent resets", async () => {
-    expect(await verdict(null, () => row({ fromUser: "u1", to: "a2", at: ago(1) }))).toEqual({
-      held: false,
-    });
-    await t.sql`delete from messages`;
-    expect(await verdict(null, () => row({ fromUser: "u1", to: "a1", at: ago(1) }))).toEqual({
-      held: false,
-    });
+  test.each(["a1", "a2"])("a human message to %s resets", async (to) => {
+    expect(await verdict(() => row({ fromUser: "u1", to, at: ago(1) }))).toEqual(notHeld);
   });
 
-  test("a human's raw session input on either agent resets", async () => {
+  test.each(["a1", "a2"])("a human's raw session input on %s resets", async (agent) => {
     expect(
-      await verdict(null, async () => {
+      await verdict(async () => {
         await t.sql`insert into session_events (agent_id, seq, type, payload, at)
-                    values ('a1', 1, 'operator_input', '{"byKind":"human"}', ${ago(1).toISOString()})`;
+                    values (${agent}, 1, 'operator_input', '{"byKind":"human"}', ${ago(1).toISOString()})`;
       }),
-    ).toEqual({ held: false });
+    ).toEqual(notHeld);
   });
 
-  test("a human status change on a task assigned to either agent resets", async () => {
-    expect(
-      await verdict(null, async () => {
+  test.each(["a1", "a2"])(
+    "a human status change on a task assigned to %s resets",
+    async (assignee) => {
+      expect(
+        await verdict(async () => {
+          await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_user_id)
+                    values ('t1', 'T', ${assignee}, 'u1')`;
+          await t.sql`insert into task_events (id, task_id, actor_user_id, type, at)
+                    values ('e1', 't1', 'u1', 'status', ${ago(1).toISOString()})`;
+        }),
+      ).toEqual(notHeld);
+    },
+  );
+
+  const nonResets: [string, () => Promise<void>][] = [
+    ["a human message to a third agent", () => row({ fromUser: "u1", to: "a3", at: ago(1) })],
+    [
+      "a human's raw session input on a third agent",
+      async () => {
+        await t.sql`insert into session_events (agent_id, seq, type, payload, at)
+                    values ('a3', 1, 'operator_input', '{"byKind":"human"}', ${ago(1).toISOString()})`;
+      },
+    ],
+    [
+      "a human status change on a task assigned to a third agent",
+      async () => {
         await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_user_id)
-                    values ('t1', 'T', 'a2', 'u1')`;
+                    values ('t1', 'T', 'a3', 'u1')`;
         await t.sql`insert into task_events (id, task_id, actor_user_id, type, at)
                     values ('e1', 't1', 'u1', 'status', ${ago(1).toISOString()})`;
-      }),
-    ).toEqual({ held: false });
-  });
-
-  test("agent actions, comments, human schedules and agent operator input do not reset", async () => {
-    expect(
-      await verdict(null, async () => {
+      },
+    ],
+    [
+      "an agent's raw session input",
+      async () => {
         await t.sql`insert into session_events (agent_id, seq, type, payload, at)
                     values ('a1', 1, 'operator_input', '{"byKind":"agent"}', ${ago(1).toISOString()})`;
+      },
+    ],
+    [
+      "an agent's status change",
+      async () => {
         await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_user_id)
                     values ('t1', 'T', 'a2', 'u1')`;
         await t.sql`insert into task_events (id, task_id, actor_agent_id, type, at)
-                    values ('e1', 't1', 'a1', 'status', ${ago(1).toISOString()}),
-                           ('e2', 't1', 'a2', 'status', ${ago(1).toISOString()})`;
-        await row({ from: "a1", to: "a2", kind: "task_comment", at: ago(1) });
-        await row({ to: "a2", kind: "scheduled", authorUser: "u1", at: ago(1) });
-      }),
-    ).toMatchObject({ held: true, opened: true });
+                    values ('e1', 't1', 'a1', 'status', ${ago(1).toISOString()})`;
+      },
+    ],
+    [
+      "an agent's task comment",
+      () => row({ from: "a1", to: "a2", kind: "task_comment", at: ago(1) }),
+    ],
+    [
+      "a human's schedule",
+      () => row({ to: "a2", kind: "scheduled", authorUser: "u1", at: ago(1) }),
+    ],
+  ];
+  test.each(nonResets)("%s does not reset", async (_name, apply) => {
+    expect(await verdict(apply)).toMatchObject(tripped);
   });
 
   test("a reset between the rows leaves only the later ones to count", async () => {
@@ -285,6 +316,34 @@ describe("afterCommit", () => {
   test("an opened hold refreshes inboxes and hands the manager notices over", async () => {
     guard.afterCommit([{ held: false }, opened]);
     await vi.waitFor(() => expect(adopted).toEqual(["n1"]));
+    expect(published).toEqual([{ type: "inbox_changed" }]);
+  });
+
+  const failing = (over: Partial<ConstructorParameters<typeof LoopGuard>[0]>) => {
+    const error = vi.fn();
+    const g = new LoopGuard({ ...deps, log: { ...deps.log, error } as never, ...over });
+    return { g, error };
+  };
+
+  test("a failing inbox publish is logged and still hands the notices over", async () => {
+    const { g, error } = failing({
+      bus: {
+        publishAll: () => {
+          throw new Error("bus down");
+        },
+      },
+    });
+    expect(() => g.afterCommit([opened])).not.toThrow();
+    await vi.waitFor(() => expect(adopted).toEqual(["n1"]));
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  test("a rejected notice hand-over is logged and does not throw", async () => {
+    const { g, error } = failing({
+      runtimes: { adoptNotice: () => Promise.reject(new Error("no runtime")) },
+    });
+    expect(() => g.afterCommit([opened])).not.toThrow();
+    await vi.waitFor(() => expect(error).toHaveBeenCalledTimes(1));
     expect(published).toEqual([{ type: "inbox_changed" }]);
   });
 

@@ -256,6 +256,7 @@ const chat = (slug: string, name: string, o: Record<string, unknown> = {}) => ({
     ...((o.agent as object) ?? {}),
   },
   unread: 3,
+  firstUnreadId: `${slug}-m`,
   latest: {
     messageId: `${slug}-m`,
     preview: `${name} says hi`,

@@ -257,6 +257,7 @@ const chatRow = (slug: string, name: string, unread: number, createdAt: string) 
     archivedAt: null,
   },
   unread,
+  firstUnreadId: `${slug}-m`,
   latest: { messageId: `${slug}-m`, preview: `${name} says hi`, createdAt, urgent: false },
 });
 

@@ -28,6 +28,7 @@ export * from "./schedules.ts";
 export * from "./schemas.ts";
 export * from "./settings.ts";
 export * from "./settings-keys.ts";
+export * from "./setup.ts";
 export * from "./status.ts";
 export * from "./tasks.ts";
 export * from "./templates.ts";

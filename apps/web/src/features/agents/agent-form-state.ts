@@ -355,6 +355,7 @@ export function useAgentFormState({
         reportsTo,
         credential: shown.credential,
         ...(values.touched.projects ? { projects: shown.projects } : {}),
+        ...(shown.manageOrg ? { manageOrg: true } : {}),
       };
     }
     const b = base as Stored;

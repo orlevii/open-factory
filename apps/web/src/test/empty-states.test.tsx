@@ -16,6 +16,7 @@ test.each([
   ["/schedules", "Schedules", "No schedules yet."],
 ])("%s shows its heading and empty line", async (path, title, text) => {
   mockApi({
+    "GET /api/setup": () => json({ hasCredential: true, hasTemplate: true, hasAgent: true }),
     "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
     "GET /api/tasks?": () => json({ tasks: [], nextCursor: null }),
     "GET /api/schedules": () => json({ schedules: [], more: false }),

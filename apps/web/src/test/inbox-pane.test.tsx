@@ -56,6 +56,7 @@ beforeEach(() => {
   api = mockApi({
     "GET /api/inbox?": () => json({ chats: [], items, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: 5, byAgent: {} }),
+    "GET /api/setup": () => json({ hasCredential: true, hasTemplate: true, hasAgent: true }),
     // The pane loads what it shows; unanswered (404), an errored query refetches for every new
     // observer, which isn't what these tests are about.
     "GET /api/agents/dev": () => json(detail()),

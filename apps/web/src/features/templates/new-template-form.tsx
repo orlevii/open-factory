@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { deriveSlug } from "@/features/agents/derive-slug";
 import { FormFrame, type FormFrameKind } from "@/features/settings/forms/form-frame";
+import { setupQueryOptions } from "@/features/setup/api";
 import { refreshList, withItem, writeToList } from "@/features/sheets/add-to-list";
 import {
   clearDraft,
@@ -161,6 +162,7 @@ export function NewTemplateForm({
           description: v.description.trim() || undefined,
         });
         if (draftGeneration() !== generation) return;
+        void qc.invalidateQueries({ queryKey: setupQueryOptions.queryKey });
         // In the list before the parent's Template takes it (§7), then refetched in the background.
         const listKey = templatesQueryOptions.queryKey;
         await writeToList<TemplateList>(qc, listKey, (old) => ({

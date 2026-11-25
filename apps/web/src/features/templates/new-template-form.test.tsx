@@ -9,6 +9,7 @@ import { FORM_MSG } from "@/lib/form-messages.ts";
 import { createQueryClient } from "@/lib/query-client";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { SetupProbe } from "@/test/setup-probe";
 import { NewTemplateForm } from "./new-template-form";
 
 beforeEach(() => {
@@ -364,3 +365,33 @@ test.each(["Discard", "Change"])(
     expect(within(d).queryByText(FORM_MSG.enterDisplayName)).toBeNull();
   },
 );
+
+test("a template created leaves the setup answer stale: a mounted reader refetches it", async () => {
+  let setupAnswer = { hasCredential: true, hasTemplate: false, hasAgent: false };
+  mockApi({
+    "GET /api/templates": list(),
+    "POST /api/templates": created("priya-nair"),
+    "GET /api/setup": () => json(setupAnswer),
+  });
+  const onDone = vi.fn();
+  render(
+    <QueryClientProvider client={createQueryClient()}>
+      <SetupProbe />
+      <Sheet open onOpenChange={() => {}}>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>New template</SheetTitle>
+          </SheetHeader>
+          <NewTemplateForm frame="sheet" then="return" onDone={onDone} onCancel={vi.fn()} />
+        </SheetContent>
+      </Sheet>
+    </QueryClientProvider>,
+  );
+  const setup = await screen.findByLabelText("Setup");
+  await waitFor(() => expect(setup).toHaveTextContent('"hasTemplate":false'));
+  setupAnswer = { ...setupAnswer, hasTemplate: true };
+  const d = await dialog();
+  await userEvent.type(within(d).getByLabelText("Display name"), "Priya Nair{Enter}");
+  await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(setup).toHaveTextContent('"hasTemplate":true'));
+});

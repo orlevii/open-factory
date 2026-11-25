@@ -13,6 +13,8 @@ import {
   useMarkAllRead,
 } from "@/features/inbox/mark-all-read";
 import { agentDetailQueryOptions } from "@/features/session/api";
+import { setupQueryOptions } from "@/features/setup/api";
+import { useSetupVisible } from "@/features/setup/use-setup-visible";
 import { useMedia, WIDE } from "@/lib/breakpoints";
 
 export const Route = createFileRoute("/_app/inbox")({
@@ -20,7 +22,11 @@ export const Route = createFileRoute("/_app/inbox")({
   validateSearch: z.object({ item: z.string().min(1).optional().catch(undefined) }),
   // Only so the first load shows the route's pending mark; a failure is the list's own error line.
   loader: async ({ context }) => {
-    await context.queryClient.ensureInfiniteQueryData(inboxQueryOptions).catch(() => undefined);
+    const noop = () => undefined;
+    await Promise.all([
+      context.queryClient.ensureInfiniteQueryData(inboxQueryOptions).catch(noop),
+      context.queryClient.ensureQueryData(setupQueryOptions).catch(noop),
+    ]);
   },
   component: InboxPage,
 });
@@ -79,6 +85,8 @@ function InboxPage() {
   const chatSlug = wide ? chatSlugOf(itemId) : undefined;
   const item = useLoadedItem(wide && chatSlug === undefined ? itemId : undefined);
   const selectedChat = useSelectedChat(chatSlug);
+  const hasAgent = useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent }).data;
+  const setup = useSetupVisible(hasAgent);
 
   // Below 1024 rows navigate as before; a `?item=` from a wider window is dropped.
   useEffect(() => {
@@ -112,10 +120,15 @@ function InboxPage() {
           <div className="w-[23.75rem] max-w-[45%] shrink-0 overflow-y-auto border-r border-border">
             <div className="py-4">
               <div className="px-4">{outcome}</div>
-              <InboxList selectedId={itemId} selectedChat={selectedChat} onSelect={onSelect} />
+              <InboxList
+                setup={setup}
+                selectedId={itemId}
+                selectedChat={selectedChat}
+                onSelect={onSelect}
+              />
             </div>
           </div>
-          <InboxPane selectedId={itemId} item={item} />
+          <InboxPane setup={setup} selectedId={itemId} item={item} />
         </div>
       </div>
     );
@@ -124,7 +137,7 @@ function InboxPage() {
       {header}
       <PageBody>
         {outcome}
-        <InboxList />
+        <InboxList setup={setup} />
       </PageBody>
     </>
   );

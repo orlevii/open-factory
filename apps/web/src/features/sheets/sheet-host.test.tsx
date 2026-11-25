@@ -339,6 +339,50 @@ test("Add secret opened from a page returns focus to the field it filled, not to
   }
 });
 
+test("Add credential opened for a result with no sheet open serves itself: submitting closes it and returns focus to the opener", async () => {
+  mockApi({
+    "GET /api/credentials": () => json({ credentials: [] }),
+    "GET /api/claude-sign-in": () => json({ available: true, attempt: null }),
+    "POST /api/credentials": () =>
+      json(
+        {
+          credential: {
+            name: "work",
+            kind: "oauth_token",
+            lastVerifiedAt: "2026-11-23T12:00:00Z",
+            lastError: null,
+            expiresAt: null,
+            rejected: false,
+            usedBy: [],
+            archivedUsedBy: [],
+            rateLimit: null,
+          },
+        },
+        201,
+      ),
+  });
+  await shell();
+  const opener = document.createElement("button");
+  opener.textContent = "Add credential";
+  document.body.append(opener);
+  try {
+    opener.focus();
+    const done = vi.fn();
+    act(() => openSheetForResult({ kind: "add-credential" }, done));
+    const d = await screen.findByRole("dialog", { name: "Add credential" });
+    await userEvent.click(await within(d).findByRole("radio", { name: "Paste a token" }));
+    await userEvent.type(within(d).getByLabelText("Name"), "work");
+    await userEvent.type(within(d).getByLabelText("Token"), "sk-ant-oat01-SYNTHETIC{Enter}");
+    await waitFor(() => expect(done).toHaveBeenCalledWith("work"));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Add credential" })).toBeNull(),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+  } finally {
+    opener.remove();
+  }
+});
+
 test("a top-level sheet shows its entry's description", async () => {
   await shell();
   sheetBodies["new-task"] = {

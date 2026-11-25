@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SheetBody } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { AddressLine } from "@/features/agents/address-line";
@@ -42,6 +43,7 @@ import { AgentCombobox, type AgentOpt } from "@/features/agents/agent-combobox";
 import { useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions, createAgent } from "@/features/agents/api";
 import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
+import { MANAGE_ORG_HELP } from "@/features/agents/manage-org-help";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import {
   TemplateField,
@@ -53,6 +55,7 @@ import {
   projectsQueryOptions,
   usersQueryOptions,
 } from "@/features/settings/api";
+import { setupQueryOptions } from "@/features/setup/api";
 import { clearDraft, clearDraftIf, draftGeneration, peekDraft } from "@/features/sheets/drafts";
 import { SheetFormFooter } from "@/features/sheets/form-footer";
 import { MoreOptions } from "@/features/sheets/more-options";
@@ -269,6 +272,10 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     if (draftGeneration() !== generation) return;
     // The lists refetch in the background; the session view needn't wait for them.
     void qc.invalidateQueries({ queryKey: ["agents"] });
+    // An agent exists now: the first-run answer can't change back, so a cached one is flipped without a request.
+    // An in-flight refetch must not land after this and put the stale `false` back.
+    void qc.cancelQueries({ queryKey: setupQueryOptions.queryKey });
+    qc.setQueryData(setupQueryOptions.queryKey, (d) => d && { ...d, hasAgent: true });
     const open = stillOpen();
     // A late success clears the draft only if it still holds the submitted values; a New agent reopened on those
     // untouched values closes, so the same agent can't be created twice. Edits made since are kept.
@@ -440,6 +447,17 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               onAddProject={onAddProject}
             />
           </MoreOptions>
+          <FieldShell name="manageOrg" label="Can manage the org" help={MANAGE_ORG_HELP}>
+            {(a) => (
+              <Switch
+                id={a.id}
+                className="justify-self-start"
+                checked={shown.manageOrg}
+                aria-describedby={a.describedBy}
+                onCheckedChange={(v) => set("manageOrg", v)}
+              />
+            )}
+          </FieldShell>
         </fieldset>
       </SheetBody>
       <SheetFormFooter

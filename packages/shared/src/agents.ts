@@ -250,6 +250,7 @@ export const createAgentBodySchema = z.object({
   reportsTo: slugSchema.nullable(),
   credential: nameSchema,
   projects: z.array(nameSchema).optional(),
+  manageOrg: z.boolean().optional(),
 });
 export type CreateAgentBody = z.infer<typeof createAgentBodySchema>;
 export const patchAgentBodySchema = z

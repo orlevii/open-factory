@@ -17,6 +17,7 @@ import { createCredential } from "@/features/settings/api";
 import { isLiveCreate, signInQueryOptions } from "@/features/settings/sign-in/api";
 import { SignInPanel } from "@/features/settings/sign-in/sign-in-panel";
 import { useSignIn } from "@/features/settings/sign-in/use-sign-in";
+import { setupQueryOptions } from "@/features/setup/api";
 import { FORM_MSG } from "@/lib/form-messages.ts";
 import { FormFrame, type FormFrameKind } from "./form-frame";
 import { enterValueMessage, TokenField, valueNoun, verdictOf } from "./shared";
@@ -95,7 +96,12 @@ export function AddCredentialForm({
           : undefined,
     },
   });
-  const s = useSignIn({ purpose: "create", fields: f, outcome: o, onDone });
+  // Both paths (paste and sign-in) add a credential: the first-run state changes for Settings, the sheet and New agent.
+  const done = (c: CredentialSummary) => {
+    void qc.invalidateQueries({ queryKey: setupQueryOptions.queryKey });
+    onDone(c);
+  };
+  const s = useSignIn({ purpose: "create", fields: f, outcome: o, onDone: done });
   const signingIn = method === "sign_in";
   const busy = signingIn && (s.phase === "exchanging" || s.phase === "verifying");
   // Switching Method mid sign-in would show a paste body while its save still lands (onDone).
@@ -110,7 +116,7 @@ export function AddCredentialForm({
       const c = await createCredential({ name, kind: KIND_OF[m], value: values[m] });
       // The server ended this caller's sign-in attempt (spec §5.4).
       void qc.invalidateQueries({ queryKey: signInQueryOptions.queryKey });
-      onDone(c);
+      done(c);
     } catch (err) {
       setPending(false);
       const v = verdictOf(err);

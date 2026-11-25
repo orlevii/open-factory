@@ -344,6 +344,22 @@ test("no restored banner when the draft equals the server copy", () => {
   expect(caught.result.current.restored).toBe(false);
 });
 
+test("New agent: manageOrg is sent when on, and omitted when off", async () => {
+  const { result } = mount(create({ prefill: { template: "lead" } }));
+  await waitFor(() => expect(result.current.shown.displayName).toBe("Team Lead"));
+  act(() => result.current.set("slug", "mine"));
+  const onSubmit = vi.fn(async (_b: CreateAgentBody | PatchAgentBody) => undefined);
+  await act(async () => {
+    await result.current.submit(onSubmit);
+  });
+  expect(onSubmit.mock.lastCall?.[0]).not.toHaveProperty("manageOrg");
+  act(() => result.current.set("manageOrg", true));
+  await act(async () => {
+    await result.current.submit(onSubmit);
+  });
+  expect(onSubmit.mock.lastCall?.[0]).toHaveProperty("manageOrg", true);
+});
+
 test("manageOrg is an edit field: toggling it is the only change sent", async () => {
   const { result } = mount(edit());
   expect(result.current.changes).toEqual([]);

@@ -15,12 +15,16 @@ test("load reads the seeded row", async () => {
     maxRunningAgents: 8,
     defaultWarmWindowMinutes: 70,
     memberUpdateDebounceSeconds: 30,
+    loopGuardMessages: 10,
+    loopGuardWindowMinutes: 10,
     updatedAt: null,
     updatedBy: null,
   });
   expect(s.maxRunningAgents()).toBe(8);
   expect(s.defaultWarmWindowMinutes()).toBe(70);
   expect(s.memberUpdateDebounceMs()).toBe(30_000);
+  expect(s.loopGuardMessages()).toBe(10);
+  expect(s.loopGuardWindowMs()).toBe(600_000);
 });
 
 test("update persists, swaps the copy and tells the listeners", async () => {
@@ -42,8 +46,16 @@ test("update persists, swaps the copy and tells the listeners", async () => {
           maxRunningAgents: 8,
           defaultWarmWindowMinutes: 70,
           memberUpdateDebounceSeconds: 30,
+          loopGuardMessages: 10,
+          loopGuardWindowMinutes: 10,
         },
-        next: { maxRunningAgents: 2, defaultWarmWindowMinutes: 70, memberUpdateDebounceSeconds: 0 },
+        next: {
+          maxRunningAgents: 2,
+          defaultWarmWindowMinutes: 70,
+          memberUpdateDebounceSeconds: 0,
+          loopGuardMessages: 10,
+          loopGuardWindowMinutes: 10,
+        },
       },
     ]);
     const reloaded = await FactorySettings.load(t.db);

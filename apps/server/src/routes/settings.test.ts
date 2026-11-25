@@ -28,6 +28,8 @@ test("GET returns the defaults and the env-only local runtime flag", async () =>
     maxRunningAgents: 8,
     defaultWarmWindowMinutes: 70,
     memberUpdateDebounceSeconds: 30,
+    loopGuardMessages: 10,
+    loopGuardWindowMinutes: 10,
     allowLocalRuntime: true,
     updatedAt: null,
     updatedBy: null,

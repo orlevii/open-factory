@@ -24,8 +24,3 @@ export type Me = z.infer<typeof meSchema>;
 
 export const statusSchema = z.object({ version: z.string(), db: z.enum(["ok", "error"]) });
 export type Status = z.infer<typeof statusSchema>;
-
-export const apiErrorSchema = z.object({
-  error: z.object({ code: z.string(), message: z.string() }),
-});
-export type ApiErrorBody = z.infer<typeof apiErrorSchema>;

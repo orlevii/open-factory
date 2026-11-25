@@ -29,17 +29,14 @@ export const chatRowSchema = z.object({
   }),
 });
 export type ChatRow = z.infer<typeof chatRowSchema>;
-/**
- * I9 §4.5: one report's unread member updates to you (a human manager), grouped into one row ("3 updates from @ada"):
- * the report's summary, how many, and the newest. The same shape as a chat row. They never notify.
- */
-export const updateRowSchema = chatRowSchema;
-export type UpdateRow = ChatRow;
 export const inboxPageSchema = z.object({
   /** The unread chats: only on the first page (no `before`), unpaginated. */
   chats: z.array(chatRowSchema).optional(),
-  /** The unread member updates of your reports, one row per report: only on the first page, unpaginated. */
-  updates: z.array(updateRowSchema).optional(),
+  /**
+   * I9 §4.5: the unread member updates of your reports (you are a human manager), one chat-shaped row per
+   * report ("3 updates from @ada"): only on the first page, unpaginated. They never notify.
+   */
+  updates: z.array(chatRowSchema).optional(),
   items: z.array(inboxItemSchema),
   nextCursor: z.string().nullable(),
 });

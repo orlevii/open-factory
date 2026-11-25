@@ -282,7 +282,6 @@ export const resetPersonaResponseSchema = z.object({
   applied: z.enum(["now", "on_restart"]),
   backupDir: z.string().optional(),
 });
-export type ResetPersonaResponse = z.infer<typeof resetPersonaResponseSchema>;
 
 /** `GET /api/agents/:slug/config` (I2 §12.1). `doc` and `merged` are null while the template is invalid or missing. */
 export const agentConfigResponseSchema = z.object({

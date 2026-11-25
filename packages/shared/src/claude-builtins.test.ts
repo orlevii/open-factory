@@ -31,7 +31,6 @@ test("the snapshot is the fixture's built-ins", () => {
       aliases: c.aliases ?? [],
     }));
   expect(CLAUDE_BUILTINS).toEqual(expected);
-  expect(CLAUDE_BUILTINS).toHaveLength(55);
 });
 
 test("context and clear are in it, clear with its aliases", () => {

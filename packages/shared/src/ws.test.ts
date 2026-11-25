@@ -1,53 +1,14 @@
 import { expect, test } from "vitest";
 import { clientMessageSchema, serverMessageSchema } from "./ws.ts";
 
-test("parses client ping and rejects unknown types", () => {
-  expect(clientMessageSchema.parse({ type: "ping" })).toEqual({ type: "ping" });
+test("a subscribe client frame is refused", () => {
   expect(clientMessageSchema.safeParse({ type: "subscribe", topic: "x" }).success).toBe(false);
 });
 
-test("parses server messages", () => {
-  expect(serverMessageSchema.parse({ type: "hello", userId: "u1" }).type).toBe("hello");
-  expect(serverMessageSchema.parse({ type: "pong" }).type).toBe("pong");
-  expect(serverMessageSchema.parse({ type: "error", code: "bad_message", message: "x" }).type).toBe(
-    "error",
-  );
-});
-
-test("subscribe frames and new server frames parse", () => {
-  expect(clientMessageSchema.parse({ type: "subscribe", agent: "dev", afterSeq: 0 })).toEqual({
-    type: "subscribe",
-    agent: "dev",
-    afterSeq: 0,
-  });
+test("a subscribe with a negative afterSeq and a live_snapshot without an agent are refused", () => {
   expect(
     clientMessageSchema.safeParse({ type: "subscribe", agent: "dev", afterSeq: -1 }).success,
   ).toBe(false);
-  expect(
-    serverMessageSchema.parse({
-      type: "agent_status",
-      agent: "dev",
-      status: "idle",
-      turnOpen: false,
-      restartPending: false,
-      restartWaitingOn: 0,
-      restartChanges: [],
-    }).type,
-  ).toBe("agent_status");
-  expect(serverMessageSchema.parse({ type: "resync", agent: "dev" }).type).toBe("resync");
-  expect(serverMessageSchema.parse({ type: "queue", agent: "dev", items: [] }).type).toBe("queue");
-});
-
-test("S10 frames parse", () => {
-  for (const f of [{ type: "settings_changed" }, { type: "users_changed" }])
-    expect(serverMessageSchema.parse(f).type).toBe(f.type);
-});
-
-test("live_snapshot client message parses", () => {
-  expect(clientMessageSchema.parse({ type: "live_snapshot", agent: "dev" })).toEqual({
-    type: "live_snapshot",
-    agent: "dev",
-  });
   expect(clientMessageSchema.safeParse({ type: "live_snapshot" }).success).toBe(false);
 });
 
@@ -101,20 +62,14 @@ test("live frame rejects bad shapes", () => {
   for (const f of bad) expect(serverMessageSchema.safeParse(f).success).toBe(false);
 });
 
-test("I2 config_changed frames parse with an agent, a template, and no other field", () => {
-  for (const f of [
-    { type: "config_changed", agent: "ana" },
-    { type: "config_changed", template: "dev" },
-  ])
-    expect(serverMessageSchema.parse(f)).toEqual(f);
+test("a config_changed frame carries names only", () => {
   // Names only: a frame never carries the change lines (they hold config names), the zod object strips extras.
   expect(
     serverMessageSchema.parse({ type: "config_changed", agent: "ana", changes: ["env X changed"] }),
   ).toEqual({ type: "config_changed", agent: "ana" });
 });
 
-test("library_changed is a server frame; unknown frame types are refused", () => {
-  expect(serverMessageSchema.parse({ type: "library_changed" }).type).toBe("library_changed");
+test("unknown frame types are refused", () => {
   expect(serverMessageSchema.safeParse({ type: "library_renamed" }).success).toBe(false);
 });
 

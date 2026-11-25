@@ -114,11 +114,6 @@ function referencesIn(value: unknown, path: string[]): { path: string[]; name: s
   return [];
 }
 
-/** The refused env names that any string inside `value` references, in order of appearance, once each. */
-export const refusedReferences = (value: unknown): string[] => [
-  ...new Set(referencesIn(value, []).map((r) => r.name)),
-];
-
 const LOCAL_RUNTIME = "local";
 
 /** The one local-runtime predicate (rule 7) every write service calls for an agent actor. */

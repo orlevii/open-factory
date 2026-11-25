@@ -1,5 +1,0 @@
-0.0s spawn pid=98568 args=--model haiku --resume 00000000-0000-4000-8000-000000000000
-0.0s -> {"type":"user","message":{"role":"user","content":"hi"}}
-0.3s <- result/error_during_execution
-0.3s close stdin
-0.7s exit code=1 sig=null

@@ -261,14 +261,12 @@ export const factoryEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("mcp_unavailable"), status: z.string() }),
   z.object({ type: z.literal("interrupt_unconfirmed") }),
 ]);
-export type FactoryEvent = z.infer<typeof factoryEventSchema>;
 
 export const anyEventSchema = z.discriminatedUnion("type", [
   ...harnessEventSchema.options,
   ...factoryEventSchema.options,
 ]);
 export type AnyEvent = z.infer<typeof anyEventSchema>;
-export type AnyEventType = AnyEvent["type"];
 
 export const sessionEventSchema = z.object({
   seq: z.number().int().positive(),

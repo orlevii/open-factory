@@ -416,9 +416,7 @@ export function toolMetaOf(name: string, r: unknown): ToolMeta | undefined {
         });
       break;
     }
-    // `Task` is the subagent tool's older name: the same result shape.
-    case "Agent":
-    case "Task": {
+    case "Agent": {
       const agent = defined({
         tool: "Agent" as const,
         async: j.isAsync === true || j.status === "async_launched" ? true : undefined,

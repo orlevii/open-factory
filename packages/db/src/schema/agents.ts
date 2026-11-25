@@ -30,7 +30,6 @@ export type RuntimeJournal = {
   takenAt: string;
 };
 
-/** S3 subset of data-model.md's agents table; later specs add their columns. */
 export const agents = pgTable(
   "agents",
   {
@@ -42,7 +41,7 @@ export const agents = pgTable(
     displayName: text("display_name").notNull(),
     description: text("description").notNull().default(""),
     sessionId: text("session_id"),
-    /** Only 'hibernated' | 'errored' are stored in S3; working/idle are derived in memory. */
+    /** Only 'hibernated' | 'errored' are stored; working/idle are derived in memory. */
     status: text("status").notNull().default("hibernated"),
     kind: text("kind").notNull().default("persistent"),
     template: text("template").notNull(),

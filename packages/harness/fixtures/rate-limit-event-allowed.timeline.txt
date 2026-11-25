@@ -1,9 +1,0 @@
-0.0s spawn pid=17492 args=--model haiku
-0.0s -> {"type":"user","message":{"role":"user","content":"Reply with just the word pong."}}
-0.6s <- system/init
-0.7s <- system/commands_changed
-1.3s <- assistant
-1.3s <- rate_limit_event
-1.3s <- result/success
-1.3s close stdin
-2.3s exit code=0 sig=null

@@ -3,7 +3,6 @@ import {
   type AgentPolicyInput,
   agentPolicyIssues,
   isRefusedEnv,
-  refusedReferences,
   touchesLocalRuntime,
 } from "./agent-policy.ts";
 import type { AgentOverlay, ConfigDoc } from "./config.ts";
@@ -308,15 +307,6 @@ describe("rule 4: env names and references", () => {
     expect(isRefusedEnv("LOG_LEVEL")).toBe(false);
     expect(isRefusedEnv("HELPER_X")).toBe(false);
   });
-
-  test("refusedReferences finds references in nested strings and arrays only for refused names", () =>
-    expect(
-      refusedReferences({
-        args: ["--a=${PATH}", "${GH_TOKEN}"],
-        nested: { deep: ["x ${ANTHROPIC_API_KEY:-d} y"] },
-        n: 3,
-      }),
-    ).toEqual(["PATH", "ANTHROPIC_API_KEY"]));
 });
 
 describe("rule 5: MCP servers", () => {

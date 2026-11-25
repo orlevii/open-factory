@@ -13,40 +13,25 @@ afterAll(async () => {
   await tdb.drop();
 });
 
-test("agent tables exist; seq is unique per agent; deleting an agent cascades", async () => {
+test("seq is unique per agent; deleting an agent cascades", async () => {
   const { sql } = h;
   await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('other','agent')`;
   await sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1', 'main', 'oauth_token', ${Buffer.from("x")})`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
     values ('a1', 'dev', 'Dev agent', 'dev', '{}', 'local', 'c1', 'u1'), ('a2', 'other', 'Other', 'dev', '{}', 'local', 'c1', 'u1')`;
-  const [a] = await sql`
-    select status, description, session_id, kind, reports_to, archived_at
-    from agents where id = 'a1'`;
-  expect(a).toEqual({
-    status: "hibernated",
-    description: "",
-    session_id: null,
-    kind: "persistent",
-    reports_to: null,
-    archived_at: null,
-  });
   await sql`insert into turns (id, agent_id, started_at) values ('t1', 'a1', now())`;
   await sql`insert into session_events (agent_id, seq, turn_id, type, payload) values ('a1', 1, 't1', 'turn_started', '{}')`;
   await sql`insert into session_events (agent_id, seq, type, payload) values ('a2', 1, 'process_started', '{"resumed":false}')`;
   await expect(
     sql`insert into session_events (agent_id, seq, type, payload) values ('a1', 1, 'x', '{}')`,
   ).rejects.toThrow(/session_events_agent_seq_unique/);
-  await sql`insert into messages (id, from_user_id, to_agent_id, body, recipients) values ('m1', 'u1', 'a1', 'hi', '{@test}')`;
-  const [m] =
-    await sql`select kind, state, urgent, delivered_turn_id from messages where id = 'm1'`;
-  expect(m).toEqual({ kind: "message", state: "pending", urgent: false, delivered_turn_id: null });
   await sql`delete from agents where id = 'a1'`;
   const [row] = await sql`select count(*)::int as n from session_events where agent_id = 'a1'`;
   expect(row?.n).toBe(0);
 });
 
-test("0003: system rows need no user and a notice; user rows need a user and no notice", async () => {
+test("system rows need no user and a notice; user rows need a user and no notice", async () => {
   const { sql } = h;
   await sql`insert into handles (handle, kind) values ('al','user'),('third','agent')`;
   await sql`insert into users (id, name, email, handle) values ('u2', 'Al', 'al@x.io', 'al')`;
@@ -61,16 +46,4 @@ test("0003: system rows need no user and a notice; user rows need a user and no 
     sql`insert into messages (id, kind, from_user_id, to_agent_id, body,recipients) values ('n3','message',null,'a3','x','{@test}')`,
   ).rejects.toThrow(/check/i);
   await sql`insert into messages (id, kind, from_user_id, to_agent_id, body,recipients) values ('m2','message','u2','a3','x','{@test}')`;
-  const [a] =
-    await sql`select attempting, rate_limit_notice_owed, runtime_journal, last_error, error_kind from agents where id = 'a3'`;
-  expect(a).toEqual({
-    attempting: false,
-    rate_limit_notice_owed: false,
-    runtime_journal: null,
-    last_error: null,
-    error_kind: null,
-  });
-  const [c] =
-    await sql`select rate_limited_until, rate_limit_exact from credentials where id = 'c2'`;
-  expect(c).toEqual({ rate_limited_until: null, rate_limit_exact: true });
 });

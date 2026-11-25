@@ -6,7 +6,6 @@ export const hostInfoSchema = z.object({
   hostname: z.string(),
   home: z.string(),
 });
-export type HostInfo = z.infer<typeof hostInfoSchema>;
 
 /** A host path the factory accepts: absolute, `~`, or `~/…` (expanded server-side). */
 export const isHostPathShape = (p: string) => p.startsWith("/") || p === "~" || p.startsWith("~/");

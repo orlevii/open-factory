@@ -201,14 +201,14 @@ describe("child environment", () => {
     const bin = path.join(root, "bin");
     mkdirSync(bin);
     const dump = path.join(root, "env-dump");
-    script(path.join(bin, "git"), `${VERSION()}\nexport -p > "${dump}"`);
+    script(path.join(bin, "git"), `${VERSION()}\nenv > "${dump}"`);
     process.env.PATH = `${bin}:${saved.PATH}`;
     process.env.GIT_EXTERNAL_DIFF = "/bin/evil";
     process.env.GIT_SSH_COMMAND = "evil";
     process.env.SECRET_TOKEN = "s3cr3t";
     await git(repo, ["rev-parse", "--show-toplevel"]);
     const text = readFileSync(dump, "utf8");
-    const keys = [...text.matchAll(/^export ([A-Za-z_][A-Za-z0-9_]*)/gm)].map((m) => m[1]);
+    const keys = [...text.matchAll(/^([A-Za-z_][A-Za-z0-9_]*)=/gm)].map((m) => m[1]);
     for (const k of keys)
       expect([
         "PATH",
@@ -226,9 +226,9 @@ describe("child environment", () => {
         "_",
       ]).toContain(k);
     expect(text).not.toMatch(/GIT_EXTERNAL_DIFF|GIT_SSH_COMMAND|SECRET_TOKEN/);
-    expect(text).toContain(`GIT_CEILING_DIRECTORIES="${root}"`);
-    expect(text).toContain('GIT_CONFIG_NOSYSTEM="1"');
-    expect(text).toContain('GIT_NO_LAZY_FETCH="1"');
+    expect(text).toContain(`GIT_CEILING_DIRECTORIES=${root}\n`);
+    expect(text).toContain("GIT_CONFIG_NOSYSTEM=1\n");
+    expect(text).toContain("GIT_NO_LAZY_FETCH=1\n");
   });
 });
 

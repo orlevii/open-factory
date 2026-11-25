@@ -121,6 +121,8 @@ test("`@` completes a handle as `@slug ` from the cached agents and users lists"
       },
     ],
   );
+  // Dev reports to the viewer, so it ranks first once @dana is used.
+  qc.setQueryData(["session"], { user: { handle: "or" } });
   qc.setQueryData(["users"], [{ handle: "dana", name: "Dana", disabledAt: null }]);
   const { box } = setup(qc);
   await userEvent.type(box(), "cc @da");

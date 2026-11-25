@@ -493,6 +493,7 @@ test("updateWithOverlay: an overlay changed after validation rolls the identity 
     overlayVersion(before.config as never),
     hr,
   );
+  const eventsBeforeSave = await configEvents("dev-1");
   // A human saves in the window between validation and the transaction.
   await t.app.configs.saveOverlay(
     "dev-1",
@@ -500,7 +501,10 @@ test("updateWithOverlay: an overlay changed after validation rolls the identity 
     overlayVersion(before.config as never),
     human,
   );
-  const events = await configEvents("dev-1");
+  // The save's own `config_changed` line is appended through the agent's runtime after the call returns:
+  // wait for it, so only the rolled-back patch is measured below.
+  await vi.waitFor(async () => expect(await configEvents("dev-1")).toBe(eventsBeforeSave + 1));
+  const events = eventsBeforeSave + 1;
   const spy = vi.spyOn(t.app.bus, "publishAll");
   try {
     await expect(

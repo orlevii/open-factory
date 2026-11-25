@@ -19,7 +19,7 @@ export type GuardResult =
       opened: true;
       /** From the sender's view: `ab` is from → to, including the row being inserted. */
       counts: { ab: number; ba: number; minutes: number };
-      /** The managers' notice rows written in the hold's transaction (Task 3.5 fills them). */
+      /** The managers' notice rows written in the hold's transaction; handed over after commit. */
       managerRows: PendingRow[];
     };
 
@@ -123,13 +123,67 @@ export class LoopGuard {
       .values({ id: holdId, agentA: a, agentB: b, openedAt: this.d.store.clock() });
     const firsts = counted.map((r) => new Date(r.first).getTime());
     const first = new Date(Math.min(...firsts));
-    return {
-      held: true,
-      holdId,
-      opened: true,
-      counts: { ab, ba, minutes: minutesSince(first, now) },
-      managerRows: [],
-    };
+    const counts = { ab, ba, minutes: minutesSince(first, now) };
+    const managerRows = await this.onOpened(tx, holdId, from, to, counts);
+    return { held: true, holdId, opened: true, counts, managerRows };
+  }
+
+  /**
+   * Spec §6.4, in the hold's transaction: one `@factory` message for every human (one inbox item per user), and one new
+   * notice row per live manager of the pair (never the pair's own members). Returns the manager rows.
+   */
+  private async onOpened(
+    tx: Tx,
+    holdId: string,
+    from: string,
+    to: string,
+    counts: { ab: number; ba: number; minutes: number },
+  ): Promise<PendingRow[]> {
+    const pair = await tx.execute<{ id: string; slug: string; reports_to: string | null }>(
+      sql`select id, slug, reports_to from agents where id in (${from}, ${to})`,
+    );
+    const a = pair.find((r) => r.id === from);
+    const b = pair.find((r) => r.id === to);
+    if (!a || !b) throw new Error("loop guard: a pair member does not exist");
+    const total = counts.ab + counts.ba;
+    const exchanged = `@${a.slug} and @${b.slug} exchanged ${plural(total, "message", "messages")} in ${plural(counts.minutes, "minute", "minutes")}`;
+
+    await this.d.store.createHumanMessage(
+      {
+        kind: "system",
+        fromAgentId: null,
+        notice: "loop_held",
+        subjectAgentId: from,
+        loopHoldId: holdId,
+        to: "all",
+        body: `${exchanged}; further messages between them are held.`,
+        urgent: false,
+      },
+      tx,
+    );
+
+    const managerIds = [
+      ...new Set(
+        [a.reports_to, b.reports_to].filter((m): m is string => !!m && m !== from && m !== to),
+      ),
+    ];
+    if (!managerIds.length) return [];
+    const live = await tx.execute<{ id: string }>(
+      sql`select id from agents where id in (${sql.join(
+        managerIds.map((m) => sql`${m}`),
+        sql`, `,
+      )}) and archived_at is null and terminated_at is null order by id`,
+    );
+    const body = `${exchanged} with no human in between. Messages between them are held until a human resumes them in the Inbox.`;
+    const rows: PendingRow[] = [];
+    for (const m of live) {
+      const row = await this.d.store.insertNotice(
+        { toAgentId: m.id, notice: "loop_held", subjectAgentId: from, body },
+        tx,
+      );
+      rows.push(await this.d.store.pendingRow(row.id, tx));
+    }
+    return rows;
   }
 
   /**

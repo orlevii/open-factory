@@ -10,7 +10,8 @@ export type NoticeType =
   | "crons_stopped"
   | "compact_continue"
   | "config_changed"
-  | "report_config_changed";
+  | "report_config_changed"
+  | "loop_held";
 
 /** I2 §7.3: the fixed first line of the `config_changed` notice; every following line is one change, as "- …". */
 export const CONFIG_NOTICE_HEADER = "Your configuration changed:";

@@ -49,17 +49,40 @@ async function request(body: string) {
   return { id: row.id, from: `@${row.fromHandle}` };
 }
 
-test("a forwarded text names the requests its turn had received when it was written", async () => {
+/** A top-level tool call and its result: the boundary where Claude reads what was written mid-turn. */
+const toolStep = (id: string) => [
+  { type: "tool_call", toolUseId: id, name: "Bash", input: { command: "ls" } } as const,
+  { type: "tool_result", toolUseId: id, content: "ok", isError: false } as const,
+];
+
+test("a forwarded text names the requests the report had read when it wrote it: a mid-turn one after the next tool step", async () => {
   await idle();
   const m1 = await request("fix the login bug");
   h.driver.last.emit(ev.turn(), ev.text("reading the login code"));
   await h.rt.settled();
   const m2 = await request("also update the README");
+  h.driver.last.emit(ev.text("still on the login code"), ...toolStep("t1"));
   h.driver.last.emit(ev.text("the login bug is fixed"), ev.usage(), ev.end());
   await h.rt.settled();
   expect(h.forwarded).toEqual([
     { agentId: h.agentId, body: "reading the login code", re: [m1] },
+    { agentId: h.agentId, body: "still on the login code", re: [m1] },
     { agentId: h.agentId, body: "the login bug is fixed", re: [m1, m2] },
+  ]);
+});
+
+test("a request written after the turn's last tool step is the next turn's request", async () => {
+  await idle();
+  const m1 = await request("fix the login bug");
+  h.driver.last.emit(ev.turn(), ...toolStep("t1"));
+  await h.rt.settled();
+  const m2 = await request("also update the README");
+  h.driver.last.emit(ev.text("the login bug is fixed"), ev.usage(), ev.end());
+  h.driver.last.emit(ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
+  await h.rt.settled();
+  expect(h.forwarded).toEqual([
+    { agentId: h.agentId, body: "the login bug is fixed", re: [m1] },
+    { agentId: h.agentId, body: "README updated", re: [m2] },
   ]);
 });
 

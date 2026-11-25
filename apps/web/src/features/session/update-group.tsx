@@ -49,6 +49,7 @@ export function UpdateGroup({
   const latest = parts.at(-1);
   const collapsed = !all && parts.length > 1;
   const shown = collapsed ? items.filter((i) => i.type === "fact" || i === latest) : items;
+  const withLine = replyLines(shown);
   const written = parts[0]?.createdAt;
   const late =
     written !== undefined &&
@@ -89,9 +90,7 @@ export function UpdateGroup({
           >
             {item.type === "part" ? (
               <>
-                {!sameRequests(item, previousPart(shown, i)) && (
-                  <ReplyLine report={about} re={item.re} />
-                )}
+                {withLine.has(item) && <ReplyLine report={about} re={item.re} />}
                 <ClampedMarkdown source={item.body} limit={PART_CLAMP_LINES} />
               </>
             ) : (
@@ -119,12 +118,18 @@ export function UpdateGroup({
 
 type Part = Extract<Item, { type: "part" }>;
 
-const previousPart = (items: Item[], i: number): Part | undefined =>
-  items.slice(0, i).findLast((x): x is Part => x.type === "part");
-
-/** A part repeats no line when it answers the same requests as the part shown before it. */
-const sameRequests = (a: Part, b: Part | undefined) =>
-  b !== undefined && a.re.map((r) => r.id).join(" ") === b.re.map((r) => r.id).join(" ");
+/** The parts that show a reply line: a part repeats none when it answers the same requests as the part shown before it. */
+function replyLines(items: Item[]): Set<Part> {
+  const out = new Set<Part>();
+  let previous: string | undefined;
+  for (const item of items) {
+    if (item.type !== "part") continue;
+    const key = item.re.map((r) => r.id).join(" ");
+    if (key !== previous) out.add(item);
+    previous = key;
+  }
+  return out;
+}
 
 /**
  * Whose requests a report's text answers: each sender once, linked to their (first) request in the report's session.

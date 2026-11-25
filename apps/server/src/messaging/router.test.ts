@@ -454,6 +454,26 @@ test("a report's top-level text is persisted for its manager and handed over to 
   expect(handed.mock.calls[0]?.[0]).toMatchObject({ id: rows[0]?.id, kind: "member_update" });
 });
 
+test("a report's text to a human manager keeps the request it answers on the inbox row", async () => {
+  const { user: manager } = await signUp(h.app, { handle: "boss" });
+  const ada = await h.app.store.agentBySlug("ada");
+  await h.sql`update agents set reports_to = null, reports_to_user = ${manager.id} where id = ${ada?.id ?? ""}`;
+  const { cookie } = await signUp(h.app, { handle: "asker" });
+  await h.app.inject({
+    method: "POST",
+    url: "/api/messages",
+    headers: { cookie },
+    payload: { to: ["ada"], body: "update the README" },
+  });
+  const [asked] = await h.sql<{ id: string }[]>`
+    select id from messages where to_agent_id = ${ada?.id ?? ""} and kind = 'message'`;
+  proc("ada")?.emit(ev.session(), ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
+  await settle("ada");
+  const rows = await h.sql`
+    select body, re from messages where to_user_id = ${manager.id} and kind = 'member_update'`;
+  expect(rows).toEqual([{ body: "README updated", re: [{ id: asked?.id, from: "@asker" }] }]);
+});
+
 test("a recipient whose init fails after the commit doesn't fail the sender's call; the row stays pending", async () => {
   const tokA = await startIdle("ada");
   vi.spyOn(h.app.runtimes, "load").mockRejectedValue(new Error("init failed"));

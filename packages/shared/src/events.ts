@@ -184,6 +184,23 @@ export const harnessEventSchema = z.discriminatedUnion("type", [
 ]);
 export type HarnessEvent = z.infer<typeof harnessEventSchema>;
 
+/** One project's result of a spawned agent's worktree cleanup (spec §7.5). */
+export const projectResultSchema = z.object({
+  project: z.string(),
+  removed: z.boolean(),
+  deleted: z.array(z.string()),
+  kept: z.array(
+    z.object({
+      branch: z.string(),
+      commits: z.number().int().optional(),
+      reason: z.literal("elsewhere").optional(),
+    }),
+  ),
+  /** The sentence after "<project>: ". */
+  error: z.string().optional(),
+});
+export type ProjectResult = z.infer<typeof projectResultSchema>;
+
 /** Appended by the server, never produced by a driver. */
 export const factoryEventSchema = z.discriminatedUnion("type", [
   z.object({

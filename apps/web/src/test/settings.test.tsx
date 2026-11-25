@@ -965,6 +965,8 @@ test.each([
           maxRunningAgents: 8,
           defaultWarmWindowMinutes: 70,
           memberUpdateDebounceSeconds: 30,
+          loopGuardMessages: 10,
+          loopGuardWindowMinutes: 10,
           allowLocalRuntime: false,
           updatedAt: null,
           updatedBy: null,

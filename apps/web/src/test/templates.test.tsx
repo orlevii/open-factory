@@ -851,6 +851,8 @@ test("editor: the warm_window_minutes hint shows the live factory default", asyn
         maxRunningAgents: 8,
         defaultWarmWindowMinutes: 45,
         memberUpdateDebounceSeconds: 60,
+        loopGuardMessages: 10,
+        loopGuardWindowMinutes: 10,
         allowLocalRuntime: false,
         updatedAt: null,
         updatedBy: null,

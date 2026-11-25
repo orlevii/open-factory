@@ -45,7 +45,7 @@ export async function listSkillFiles(
 }
 
 /** Reads at most `cap + 1` bytes of a regular file, refusing a link at the file itself; null when it can't be read. */
-async function readCapped(file: string, cap: number): Promise<Buffer | null> {
+export async function readCapped(file: string, cap: number): Promise<Buffer | null> {
   let fh: Awaited<ReturnType<typeof open>> | undefined;
   try {
     // O_NONBLOCK: opening a FIFO without a writer would otherwise hang; the isFile check below refuses it.

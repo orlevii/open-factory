@@ -112,7 +112,6 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     runtime: "docker",
     ...(image ? { image } : {}),
     skills: [],
-    plugins: [],
   });
   const tdir = path.join(home, "templates/dock");
   mkdirSync(tdir, { recursive: true });
@@ -130,7 +129,6 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
       runtime: "docker",
       ...(image ? { image } : {}),
       skills: [],
-      plugins: [],
     }),
   );
   await t.db.insert(schema.credentials).values({
@@ -193,7 +191,13 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     labels: { [LABEL_CLAUDE_CODE_VERSION]: "2.1.327" },
   });
   // A non-root host user whatever runs the tests.
-  const containers = new ContainerManager({ docker, log: silentLog, uid: 501, gid: 20 });
+  const containers = new ContainerManager({
+    docker,
+    log: silentLog,
+    uid: 501,
+    gid: 20,
+    checkImage: async () => {},
+  });
   const realPrepare = workspace.prepare.bind(workspace);
   vi.spyOn(workspace, "prepare").mockImplementation(async (i) => {
     docker.mark("prepare");

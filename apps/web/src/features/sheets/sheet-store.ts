@@ -9,7 +9,8 @@ export type SheetSpec =
   | { kind: "edit-schedule"; key: string }
   | { kind: "new-template"; then: "open-editor" }
   | { kind: "sign-in-again"; name: string }
-  | { kind: "add-skills" };
+  | { kind: "add-skills" }
+  | { kind: "add-marketplace" };
 
 /** A sheet stacked on top of a parent sheet, returning a name to it. */
 export type ChildSpec =

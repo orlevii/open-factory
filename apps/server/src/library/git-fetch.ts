@@ -6,10 +6,10 @@ import { randomUUID } from "node:crypto";
 import { chmod, copyFile, lstat, mkdir, readdir, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { checkBranchName } from "@open-factory/shared";
+import { COMMIT_PATTERN as SHA } from "./common.ts";
 import { GitError, runGit } from "./git.ts";
 
 const OPERATION_BUDGET_MS = 180_000;
-const SHA = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 
 export interface GitFetchOptions {
   allowFile: boolean;

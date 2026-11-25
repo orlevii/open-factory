@@ -22,7 +22,13 @@ const list =
   () =>
     json({
       dir: "/d",
-      templates: names.map((name) => ({ name, errors: 0, warnings: 0, agentCount: 0 })),
+      templates: names.map((name) => ({
+        name,
+        errors: 0,
+        warnings: 0,
+        agentCount: 0,
+        pluginCount: 0,
+      })),
     });
 const created = (name: string) => () =>
   json(

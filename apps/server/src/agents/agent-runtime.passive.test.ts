@@ -55,6 +55,7 @@ async function make(o: { spawned?: boolean } = {}) {
       permissionMode: "auto",
       mounts: [],
       effective: testEffective(),
+      plugins: [],
     }),
     log: { debug() {}, info() {}, warn() {}, error() {} },
     slots: unlimitedSlots,

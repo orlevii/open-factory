@@ -372,7 +372,6 @@ const startedWith = (d: ConfigDoc, skills: Record<string, string>): Effective =>
   ({
     doc: d,
     config: {},
-    templatePlugins: [],
     templateSkills: [],
     library: { skills, plugins: {} },
   }) as never;

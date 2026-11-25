@@ -377,6 +377,7 @@ function deferred(): Deferred {
 
 const IMAGE = "open-factory-base:test";
 const MOUNT_CHECK: MountCheckContext = {
+  slug: "lead",
   workdir: "/nonexistent/of-test/workdir",
   grantedPaths: [],
   skillPaths: [],
@@ -428,7 +429,13 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
   const driver = new FakeDriver();
   const docker = new Docker(driver);
   docker.images.set(IMAGE, { id: "sha256:img", labels: {} });
-  const containers = new ContainerManager({ docker, log: silentLog, uid: 501, gid: 20 });
+  const containers = new ContainerManager({
+    docker,
+    log: silentLog,
+    uid: 501,
+    gid: 20,
+    checkImage: async () => {},
+  });
   const prepareEntered = deferred();
   const gates = {
     prepare: undefined as Deferred | undefined,

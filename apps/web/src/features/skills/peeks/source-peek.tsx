@@ -1,12 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useRef, useState } from "react";
-import { Elapsed } from "@/components/elapsed";
+import { useId, useState } from "react";
 import { ErrorLine } from "@/components/error-line";
-import { InlineOutcome } from "@/components/inline-outcome";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Button } from "@/components/ui/button";
 import { SheetBody, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Spinner } from "@/components/ui/spinner";
 import { notify } from "@/components/ui/toaster";
 import { UntrustedProse, visibleControls } from "@/components/untrusted-text";
 import { TimeAgo } from "@/features/settings/shared";
@@ -25,30 +22,20 @@ import {
 } from "@/lib/library";
 import { AddSkillsResults, type Found, useTicks } from "../add-skills-results";
 import { count, pinLabel, sourceLabel, usedByText } from "../format";
+import { neighbourKey, useLatest } from "../helpers";
 import { RowState } from "../row-state";
 import { skillKey } from "../use-peek";
-import { BackButton, failure, PinButton, Section, SkeletonRows } from "./sections";
+import {
+  BackButton,
+  failure,
+  type Line,
+  Outcome,
+  Pending,
+  PinButton,
+  Section,
+  SkeletonRows,
+} from "./sections";
 import { UpdateView } from "./update-view";
-
-type Line = { tone: "success" | "error"; node: React.ReactNode } | undefined;
-
-/** One inline outcome line (both live regions stay mounted so it is announced when it appears). */
-function Outcome({ line }: { line: Line }) {
-  return <InlineOutcome tone={line?.tone}>{line?.node}</InlineOutcome>;
-}
-
-/** The pending label of a running action: a spinner, and the elapsed time after 10 s. */
-function Pending({ label, since }: { label: string; since: number }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <Spinner size="text" />
-      {label}
-      <span aria-hidden="true">
-        <Elapsed since={new Date(since).toISOString()} hideUnderMs={10_000} />
-      </span>
-    </span>
-  );
-}
 
 /**
  * Find more skills (spec §10.3): the Add skills results step inline, with the source fixed. Its outcome is inline
@@ -158,15 +145,6 @@ function ClampedSubject({ text }: { text: string }) {
   );
 }
 
-/** The next source header after `id` in the page's list (else the one before it): where focus goes once it is gone. */
-function neighbourHeader(id: string): string | null {
-  const keys = [...document.querySelectorAll<HTMLElement>('[data-peek-key^="source:"]')]
-    .filter((el) => el.hasAttribute("data-row"))
-    .map((el) => el.dataset.peekKey ?? "");
-  const i = keys.indexOf(`source:${id}`);
-  return keys[i + 1] ?? keys[i - 1] ?? null;
-}
-
 /**
  * The Source peek (spec §10.3). The summary comes from the cached list row at once; the detail query refines it (its
  * GET can be slow when it must rebuild the update view, so that section has its own loading state). Check, Update,
@@ -222,8 +200,7 @@ export function SourcePeekBody({
     },
   });
   const restore = useMutation({ mutationFn: () => restoreSource(id), onSuccess: refresh });
-  const undoRemove = useRef(restore.mutateAsync);
-  undoRemove.current = restore.mutateAsync;
+  const undoRemove = useLatest(restore.mutateAsync);
 
   const kind = d?.kind ?? summary?.kind;
   const label = d || summary ? sourceLabel(d ?? (summary as NonNullable<typeof summary>)) : "";
@@ -260,7 +237,7 @@ export function SourcePeekBody({
   const onRemove = () => {
     if (inUse || remove.isPending) return;
     setRemoveLine(undefined);
-    const next = neighbourHeader(id);
+    const next = neighbourKey("source:", `source:${id}`);
     remove.mutate(
       { label, skills: skillCount },
       {

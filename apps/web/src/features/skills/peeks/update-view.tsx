@@ -12,7 +12,7 @@ type View = z.infer<typeof sourceUpdateViewSchema>;
 type Changed = View["changed"][number];
 
 /** One `+` or `−` line of a diff: the sign, then the text as untrusted code. */
-function DiffLine({ sign, text }: { sign: "+" | "−"; text: string }) {
+export function DiffLine({ sign, text }: { sign: "+" | "−"; text: string }) {
   return (
     <div className="flex gap-2">
       <span

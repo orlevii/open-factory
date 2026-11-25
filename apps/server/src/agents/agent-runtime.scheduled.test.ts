@@ -56,6 +56,7 @@ async function makeRuntime(opts: { status?: string; sessionId?: string } = {}) {
       permissionMode: "auto",
       mounts: [],
       effective: testEffective(),
+      plugins: [],
     }),
     log: silentLog,
     slots: unlimitedSlots,

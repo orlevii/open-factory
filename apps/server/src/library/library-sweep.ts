@@ -5,16 +5,23 @@
  */
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { tagSha, UNDO_MS } from "./common.ts";
 import { removeTree } from "./git-fetch.ts";
 import { LIBRARY_KEY, libraryLock } from "./locks.ts";
-import { type SourcesService, type SourcesStore, UNDO_MS } from "./sources-service.ts";
+import type { MarketplacesService } from "./marketplaces-service.ts";
+import { pluginSourcesRoot } from "./plugin-sources.ts";
+import type { SourcesService, SourcesStore } from "./sources-service.ts";
 
 const PREVIEW_MAX_AGE_MS = 60 * 60 * 1000;
 const HOURLY_MS = 60 * 60 * 1000;
+/** An external plugin source's checkout is a re-fetchable cache of what a peek read; it goes after a day. */
+const PLUGIN_SOURCE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export interface SweepDeps {
   sources: SourcesService;
   store: SourcesStore;
+  /** The marketplace registry (spec §7.1): its previews, soft deletes and checkouts are purged with the sources'. */
+  marketplaces?: MarketplacesService;
   factoryHome: string;
   /** Directories the loaded runtimes' `started.library` reference. */
   inUse: () => string[] | Promise<string[]>;
@@ -45,6 +52,31 @@ export async function skillDirsInUse(
   if (shas.size === 0) return [];
   const ids = await readdir(githubRoot).catch(() => [] as string[]);
   return ids.flatMap((id) => [...shas].map((sha) => path.join(githubRoot, id, sha)));
+}
+
+/**
+ * The marketplace checkouts the given running processes still use (spec §9.4): `started.library.plugins` records each
+ * plugin's pin as `commit:<sha>`, `tag:<name>` or `latest`/`live`. A commit or tag pin holds
+ * `<marketplacesRoot>/<marketplace>/<sha>` (a tag through the row's recorded tags); Latest and live hold none.
+ */
+export function marketplaceDirsInUse(
+  marketplacesRoot: string,
+  started: { library: { plugins: Record<string, string> } }[],
+  rows: { name: string; tags: Record<string, string> }[],
+): string[] {
+  const out = new Set<string>();
+  for (const s of started) {
+    for (const [key, pin] of Object.entries(s.library.plugins)) {
+      const name = key.slice(key.lastIndexOf("@") + 1);
+      const sha = pin.startsWith("commit:")
+        ? pin.slice("commit:".length)
+        : pin.startsWith("tag:")
+          ? tagSha(rows.find((r) => r.name === name)?.tags ?? {}, pin.slice("tag:".length))
+          : undefined;
+      if (sha) out.add(path.join(marketplacesRoot, name, sha));
+    }
+  }
+  return [...out];
 }
 
 export class LibrarySweep {
@@ -121,10 +153,16 @@ export class LibrarySweep {
         }
       }
       await this.purgeCaches();
+      if (this.d.marketplaces) {
+        const inUse = await this.d.inUse();
+        if (await this.d.marketplaces.purgeLocked({ boot: o.boot === true, inUse })) any = true;
+        await this.purgePluginSources(inUse);
+      }
       return any;
     });
     if (changed) this.d.publish?.();
     this.d.sources.dropOldPreviewMeta();
+    this.d.marketplaces?.dropOldPreviewMeta();
   }
 
   private async referenced(dir: string): Promise<boolean> {
@@ -139,6 +177,22 @@ export class LibrarySweep {
       const st = await stat(p).catch(() => undefined);
       if (!st || !(all || st.mtimeMs < cutoff)) continue;
       await removeTree(p).catch((e) => this.d.log?.(`removing preview ${name} failed`, e));
+    }
+  }
+
+  /** Checkouts of external plugin sources older than a day, unless a runtime still uses them. */
+  private async purgePluginSources(inUse: string[]): Promise<void> {
+    const root = pluginSourcesRoot(this.d.factoryHome);
+    const cutoff = this.now().getTime() - PLUGIN_SOURCE_MAX_AGE_MS;
+    for (const hash of await readdir(root).catch(() => [] as string[])) {
+      for (const sha of await readdir(path.join(root, hash)).catch(() => [] as string[])) {
+        const dir = path.join(root, hash, sha);
+        const st = await stat(dir).catch(() => undefined);
+        if (!st || st.mtimeMs >= cutoff || inUse.some((p) => within(dir, p))) continue;
+        await removeTree(dir).catch((e) =>
+          this.d.log?.(`removing plugin source ${hash} failed`, e),
+        );
+      }
     }
   }
 

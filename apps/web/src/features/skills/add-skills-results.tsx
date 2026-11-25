@@ -8,6 +8,7 @@ import { UntrustedProse, visibleControls } from "@/components/untrusted-text";
 import { TimeAgo } from "@/features/settings/shared";
 import { FORM_MSG } from "@/lib/form-messages";
 import { count } from "./format";
+import { focusAndReveal } from "./helpers";
 
 export type Found = z.infer<typeof foundSkillSchema>;
 
@@ -45,14 +46,6 @@ export function reasonOf(f: Found): string | undefined {
   if (f.reason === "taken") return `Name taken by ${f.takenBy ?? "another source"}`;
   if (f.reason === "link") return "It's a link";
   return f.detail;
-}
-
-/** The results label moves focus here when it mounts (a new Find remounts it by key). Module-level, so it is stable
- *  and never runs on a re-render. The focus is the announcement, so there is no live region as well. */
-function focusAndReveal(el: HTMLElement | null) {
-  if (!el) return;
-  el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: "nearest" });
 }
 
 /** One result: primitive props and a stable `onTick`, so a tick re-renders only its own row. */

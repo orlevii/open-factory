@@ -1,25 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
 import { ErrorLine } from "@/components/error-line";
+import { MiddleTruncate } from "@/components/middle-truncate";
 import { SheetBody, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { UntrustedCode, UntrustedProse } from "@/components/untrusted-text";
+import { UntrustedCode, UntrustedProse, visibleControls } from "@/components/untrusted-text";
 import { FORM_MSG } from "@/lib/form-messages";
 import {
   libraryQueryOptions,
   type SkillRowView,
   selectSkillRow,
+  skillFileQueryOptions,
   skillQueryOptions,
 } from "@/lib/library";
 import { count, pinLabel, sourceLabel } from "../format";
+import { LINK } from "../helpers";
 import { RowState } from "../row-state";
 import { sourceKey } from "../use-peek";
 import { FileView } from "./file-view";
-import { BackButton, Section, SkeletonRows } from "./sections";
+import { BackButton, Clamped, Section, SkeletonRows } from "./sections";
 
 const COLLAPSE_FILES = 20;
 const COLLAPSE_USERS = 8;
-const LINK = "underline underline-offset-2 hover:text-foreground";
 
 type Hook = { event: string; matcher: string; command: string };
 
@@ -39,36 +40,6 @@ function RunsCode({ hooks }: { hooks: Hook[] }) {
         ))}
       </ul>
     </Section>
-  );
-}
-
-/** A "Show all N" control that clamps a list past `limit`. */
-function Clamped<T>({
-  items,
-  limit,
-  render,
-}: {
-  items: T[];
-  limit: number;
-  render(item: T): React.ReactNode;
-}) {
-  const [all, setAll] = useState(false);
-  const shown = all ? items : items.slice(0, limit);
-  return (
-    <>
-      {shown.map(render)}
-      {!all && items.length > limit && (
-        <li>
-          <button
-            type="button"
-            onClick={() => setAll(true)}
-            className="py-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
-          >
-            Show all {items.length}
-          </button>
-        </li>
-      )}
-    </>
   );
 }
 
@@ -120,11 +91,9 @@ function FilesSection({
           render={(f) => (
             <FileView
               key={f.path}
-              group={group}
-              name={name}
               path={f.path}
               executable={f.executable}
-              pin={pin}
+              options={skillFileQueryOptions(group, name, f.path, pin)}
               inlineText={f.path === "SKILL.md" ? skillMd : undefined}
             />
           )}
@@ -213,7 +182,9 @@ export function SkillPeekBody({
     <>
       <SheetHeader className="items-center">
         {back !== null && <BackButton onBack={onBack} />}
-        <SheetTitle className="font-mono text-sm font-normal">{name}</SheetTitle>
+        <SheetTitle className="font-mono text-sm font-normal">
+          <MiddleTruncate text={visibleControls(name)} />
+        </SheetTitle>
       </SheetHeader>
       <SheetBody className="space-y-4">
         <div className="space-y-1">

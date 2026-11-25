@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -85,7 +86,6 @@ async function seedStartFixture() {
     runtime: "local",
     secrets: ["GH_TOKEN"],
     skills: [],
-    plugins: [],
   });
   const tdir = path.join(home, "templates/lead");
   mkdirSync(tdir, { recursive: true });
@@ -96,7 +96,6 @@ async function seedStartFixture() {
     runtime: "local",
     secrets: ["GH_TOKEN"],
     skills: [],
-    plugins: [],
   });
   await t.db.insert(schema.credentials).values({
     id: "c1",
@@ -195,6 +194,16 @@ test("assembles the spec: env has the decrypted credential and secret; files pre
   expect(spec.runtime).toBe("local");
   expect(existsSync(path.join(spec.cwd, ".claude-config/CLAUDE.md"))).toBe(true);
   expect(existsSync(path.join(spec.cwd, "projects/app"))).toBe(true);
+});
+
+test("the spec carries the plugin settings as --settings, the plugins dir env and the closure to check", async () => {
+  const spec = await prepareStart(agent, { agentToken: "tok" });
+  expect(spec.env.CLAUDE_CODE_PLUGIN_CACHE_DIR).toBe(
+    path.join(realpathSync(home), "state/agents", agent.slug, "plugins"),
+  );
+  expect(spec.env.DISABLE_AUTOUPDATER).toBe("1");
+  expect(JSON.parse(spec.settingsJson ?? "")).toMatchObject({ syncClaudeAiPlugins: false });
+  expect(spec.plugins).toEqual([]);
 });
 
 test("the child env is an allowlist: server secrets and own credentials never reach the agent", async () => {
@@ -433,7 +442,6 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
     secrets: ["GH_TOKEN", "NPM_TOKEN"],
     projects: ["app"],
     skills: [],
-    plugins: [],
     ...over,
   });
   const tdir = path.join(home, "templates/dev");
@@ -446,7 +454,6 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
     secrets: ["GH_TOKEN", "NPM_TOKEN"],
     projects: ["app"],
     skills: [],
-    plugins: [],
     ...over,
   });
   writeTemplateFile(

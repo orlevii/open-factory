@@ -16,8 +16,9 @@ export function buildMounts(i: {
   skillPaths: string[];
   /** Real paths of the template's own skill folders (`resolveTemplateSkills`), mounted read-only. */
   templateSkillPaths: string[];
-  /** From the effective config's `extraKnownMarketplaces`, which only the template declares. */
+  /** The registered directory marketplaces of the plugins in the agent's closure (spec §7.3 step 6). */
   declaredMarketplaceDirs: string[];
+  /** The agent's own plugins dir, `<FH>/state/agents/<slug>/plugins`: mounted read-write (spec §6.5). */
   pluginsDir: string;
   cliBundle: string;
 }): Mount[] {
@@ -27,7 +28,7 @@ export function buildMounts(i: {
     ...i.skillPaths.map((p) => ({ source: p, target: p, readOnly: true })),
     ...i.templateSkillPaths.map((p) => ({ source: p, target: p, readOnly: true })),
     ...i.declaredMarketplaceDirs.map((p) => ({ source: p, target: p, readOnly: true })),
-    { source: i.pluginsDir, target: i.pluginsDir, readOnly: true },
+    { source: i.pluginsDir, target: i.pluginsDir, readOnly: false },
     { source: i.cliBundle, target: CLI_BUNDLE_TARGET, readOnly: true },
   ];
   const seen = new Set<string>();
@@ -36,18 +37,6 @@ export function buildMounts(i: {
     seen.add(m.target);
     return true;
   });
-}
-
-/** The `directory` marketplaces a template's settings declare. Pass only the factory-owned copy. */
-export function declaredMarketplaceDirs(tplSettings: Record<string, unknown>): string[] {
-  const mk = tplSettings.extraKnownMarketplaces;
-  if (!mk || typeof mk !== "object" || Array.isArray(mk)) return [];
-  const dirs: string[] = [];
-  for (const entry of Object.values(mk as Record<string, unknown>)) {
-    const src = (entry as { source?: { source?: unknown; path?: unknown } } | null)?.source;
-    if (src?.source === "directory" && typeof src.path === "string") dirs.push(src.path);
-  }
-  return dirs;
 }
 
 /** `/var/run/docker.sock`, `~/.docker/run/docker.sock`, and the unix path of `DOCKER_HOST` when set. */
@@ -69,6 +58,8 @@ export class MountRefusedError extends WorkspaceError {
 }
 
 export interface MountCheckContext {
+  /** The agent being started: its plugins dir is the one `state/` location besides GitHub skills that may mount. */
+  slug: string;
   workdir: string;
   grantedPaths: string[];
   skillPaths: string[];
@@ -107,7 +98,7 @@ async function validTemplateSkills(templateDir: string, declared: string[]): Pro
 }
 
 const NOT_ALLOWED_IN_FACTORY_HOME =
-  "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or the plugin store";
+  "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or this agent's plugins dir";
 
 /** Spec §6.5: the GitHub skill class. `real` equals `join(realpath(<FH>/state/library/github), <id>,
  *  <sha>[, <name>])`, with every component from `<FH>/state` down a real directory (`lstat`, so a
@@ -131,10 +122,29 @@ async function isGithubSkill(factoryHome: string, real: string): Promise<boolean
   }
 }
 
+/** Spec §6.5: this agent's plugins dir, by exact location. `real` equals `<FH>/state/agents/<slug>/plugins` and every
+ *  component from `<FH>/state` down is a real directory (`lstat`, so a link fails). `factoryHome` is canonical. */
+async function isOwnPluginsDir(factoryHome: string, slug: string, real: string): Promise<boolean> {
+  const parts = ["agents", slug, "plugins"];
+  if (real !== path.join(factoryHome, "state", ...parts)) return false;
+  try {
+    let dir = path.join(factoryHome, "state");
+    if (!(await lstat(dir)).isDirectory()) return false;
+    for (const part of parts) {
+      dir = path.join(dir, part);
+      if (!(await lstat(dir)).isDirectory()) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Spec §11.4 (defence in depth): `realpath`s each source and refuses `/`, the host home,
  * FACTORY_HOME, FACTORY_HOME/state, a Docker socket, or an ancestor of any of them; anything under
- * FACTORY_HOME except this agent's workdir, its plugins dir and (read-only) a real template skill
+ * FACTORY_HOME except this agent's workdir, its own plugins dir (read-write, at exactly
+ * `<FH>/state/agents/<slug>/plugins`) and (read-only) a real template skill
  * folder at exactly `<templates>/<template>/skills/<name>` or (read-only) a GitHub skill checkout at
  * exactly `<FH>/state/library/github/<id>/<sha>[/<name>]`; and anything that isn't exactly one
  * of the allowed kinds with the expected read-only flag and target.
@@ -157,6 +167,7 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
   ];
   const workdir = await canon(ctx.workdir);
   const pluginsDir = await canon(ctx.pluginsDir);
+  const ownPlugins = (real: string) => isOwnPluginsDir(factoryHome, ctx.slug, real);
   const kind = async (paths: string[], readOnly: boolean, parity = true) =>
     (await Promise.all(paths.map(canon))).map((p) => ({ path: p, readOnly, parity }));
   const templateSkills = await validTemplateSkills(ctx.templateDir, ctx.templateSkillPaths);
@@ -165,9 +176,9 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
   const stateDir = await canon(path.join(ctx.factoryHome, "state"));
   const agentsDir = await canon(path.join(ctx.factoryHome, "agents"));
   const allowed = [
-    ...(await kind([ctx.workdir], false)),
+    ...(await kind([ctx.workdir, ctx.pluginsDir], false)),
     ...(await kind(ctx.grantedPaths, false)),
-    ...(await kind([...ctx.skillPaths, ...ctx.declaredMarketplaceDirs, ctx.pluginsDir], true)),
+    ...(await kind([...ctx.skillPaths, ...ctx.declaredMarketplaceDirs], true)),
     ...(await kind(templateSkills, true)),
     ...(await kind([ctx.cliBundle], true, false)),
   ];
@@ -187,6 +198,9 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
     // A source named inside the GitHub store must still be a checkout there once resolved: a link
     // swapped in for the store, an id or a sha resolves elsewhere and a declared path alone can't excuse it.
     const isGithub = m.readOnly && (await isGithubSkill(factoryHome, real));
+    // The plugins dir resolves to itself only at its exact location: a link in its place never excuses the mount.
+    const isPlugins = !m.readOnly && (await ownPlugins(real));
+    if (!m.readOnly && real === pluginsDir && !isPlugins) throw refuse(NOT_ALLOWED_IN_FACTORY_HOME);
     if (githubRoots.some((r) => m.source === r || isUnder(m.source, r)) && !isGithub)
       throw refuse(NOT_ALLOWED_IN_FACTORY_HOME);
     for (const f of forbidden) {
@@ -197,7 +211,7 @@ export async function checkMounts(mounts: Mount[], ctx: MountCheckContext): Prom
       for (const f of [stateDir, agentsDir, workdir])
         if (real === f || isUnder(real, f) || isUnder(f, real))
           throw refuse("it is inside the factory state or an agent's workdir");
-    } else if (isUnder(real, factoryHome) && real !== workdir && real !== pluginsDir && !isGithub)
+    } else if (isUnder(real, factoryHome) && real !== workdir && !isPlugins && !isGithub)
       throw refuse(NOT_ALLOWED_IN_FACTORY_HOME);
     const kinds = allowed.filter((a) => a.path === real);
     if (!kinds.length) throw refuse("it isn't one of the agent's allowed mounts");

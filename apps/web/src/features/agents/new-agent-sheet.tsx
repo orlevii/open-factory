@@ -43,7 +43,6 @@ import { useAgentFormState } from "@/features/agents/agent-form-state";
 import { agentsListQueryOptions, createAgent } from "@/features/agents/api";
 import { deriveSlug, useTakenNames } from "@/features/agents/derive-slug";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
-import { showOutput } from "@/features/agents/show-output";
 import {
   TemplateField,
   type TemplateOption,
@@ -118,7 +117,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     slugFor,
     form,
   });
-  const { values, shown, errors, set, blur, claim, pending, slow, config, pluginOutput } = s;
+  const { values, shown, errors, set, blur, claim, pending, config, pluginCount } = s;
   const { missingSecrets, noCredentials, credentials, staleNotes } = s;
   const detail = useQuery({
     ...templateQueryOptions(values.template),
@@ -325,6 +324,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
             {config && (
               <TemplateSummary
                 config={config}
+                pluginCount={pluginCount}
                 issues={detail.data?.issues ?? []}
                 missingSecrets={missingSecrets}
                 onAddSecret={onAddSecret}
@@ -449,26 +449,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
         restored={s.restored}
         onDiscard={s.discard}
         submitClassName="min-w-32"
-        outcome={{
-          ...s.outcome,
-          notice: slow ? "Installing plugins…" : undefined,
-          action: pluginOutput ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              onClick={() =>
-                showOutput({
-                  title: "Plugin install output",
-                  description: "The output of the failed plugin install.",
-                  output: pluginOutput,
-                })
-              }
-            >
-              Show output
-            </Button>
-          ) : undefined,
-        }}
+        outcome={s.outcome}
       />
     </form>
   );

@@ -375,77 +375,6 @@ test("on a phone, focus goes to the drawer content", async () => {
   await vi.waitFor(() => expect(dialog).toHaveFocus());
 });
 
-test("while creating, Installing plugins… appears beside the button after 3 s", async () => {
-  await openLead({
-    details: { lead: templateDetail(templateConfig({ plugins: ["superpowers@market"] })) },
-    extra: { "POST /api/agents": () => new Promise<Response>(() => {}) },
-  });
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  await user.click(createButton());
-  expect(await screen.findByRole("button", { name: /Creating…/ })).toBeInTheDocument();
-  expect(field("Display name")).toBeDisabled();
-  expect(screen.queryByText("Installing plugins…")).not.toBeInTheDocument();
-  await act(async () => {
-    vi.advanceTimersByTime(3000);
-  });
-  const notice = screen.getByText("Installing plugins…");
-  expect(notice.closest("[data-slot=sheet-footer]")).not.toBeNull();
-  expect(notice).toHaveAttribute("data-shown");
-});
-
-test("a plugin install failure is the footer's error, with Show output opening the output", async () => {
-  await openLead({
-    extra: {
-      "POST /api/agents": () =>
-        json(
-          {
-            error: {
-              code: "plugin_install_failed",
-              message: "Plugin install failed: superpowers@market.",
-              output: "npm ERR! nope",
-            },
-          },
-          502,
-        ),
-    },
-  });
-  await userEvent.click(createButton());
-  const msg = await screen.findByText("Plugin install failed: superpowers@market.");
-  const alert = msg.closest("[role=alert]") as HTMLElement;
-  expect(alert.closest("[data-slot=sheet-footer]")).not.toBeNull();
-  // The output is never inline: no details, no pre in the form.
-  expect(screen.queryByText("npm ERR! nope")).toBeNull();
-  await userEvent.click(within(alert).getByRole("button", { name: "Show output" }));
-  const out = await screen.findByRole("alertdialog", { name: "Plugin install output" });
-  expect(within(out).getByText("npm ERR! nope")).toBeInTheDocument();
-  // The dialog's store is module state: close it so the next test starts without it.
-  await userEvent.click(within(out).getByRole("button", { name: "Close" }));
-  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-});
-
-test("a plugin install failure with blank output has no Show output", async () => {
-  await openLead({
-    extra: {
-      "POST /api/agents": () =>
-        json(
-          {
-            error: {
-              code: "plugin_install_failed",
-              message: "Plugin install failed: superpowers@market.",
-              output: " \n",
-            },
-          },
-          502,
-        ),
-    },
-  });
-  await userEvent.click(createButton());
-  const msg = await screen.findByText("Plugin install failed: superpowers@market.");
-  const alert = msg.closest("[role=alert]") as HTMLElement;
-  expect(within(alert).queryByRole("button", { name: "Show output" })).toBeNull();
-});
-
 test("a failing submit with no credential chosen opens More options every time, and focuses Credential", async () => {
   mockWorld({ credentials: [credential("work"), credential("prod")] });
   const first = renderApp("/agents", alice);
@@ -883,13 +812,13 @@ test("the palette's New agent opens the sheet", async () => {
 test("a docker template shows the summary; a local one says Unsandboxed and the validator's warning", async () => {
   const { unmount } = await open(
     {
+      templates: [templateSummary("lead", 0, 1), templateSummary("writer")],
       details: {
         lead: templateDetail(
           templateConfig({
             runtime: "docker",
             model: "opus",
             skills: ["grilling"],
-            plugins: ["a@b"],
           }),
         ),
       },
@@ -918,37 +847,6 @@ test("a docker template shows the summary; a local one says Unsandboxed and the 
   );
   expect(await screen.findByText("Unsandboxed")).toBeInTheDocument();
   expect(screen.getByText("The local runtime is disabled on this factory.")).toBeInTheDocument();
-});
-
-test("the slow line is per attempt: a resubmit after a slow failure starts without it", async () => {
-  let n = 0;
-  const failNext: { current: () => void } = { current: () => {} };
-  await openLead({
-    details: { lead: templateDetail(templateConfig({ plugins: ["superpowers@market"] })) },
-    extra: {
-      "POST /api/agents": () => {
-        n++;
-        return new Promise<Response>((resolve) => {
-          failNext.current = () => resolve(json({ error: { code: "x", message: "boom" } }, 500));
-        });
-      },
-    },
-  });
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-  await user.click(createButton());
-  await screen.findByRole("button", { name: /Creating…/ });
-  await act(async () => {
-    vi.advanceTimersByTime(3000);
-  });
-  expect(screen.getByText("Installing plugins…")).toBeInTheDocument();
-  await act(async () => failNext.current());
-  await screen.findByRole("button", { name: "Create agent" });
-  expect(screen.queryByText("Installing plugins…")).not.toBeInTheDocument();
-  await user.click(createButton());
-  await screen.findByRole("button", { name: /Creating…/ });
-  expect(n).toBe(2);
-  expect(screen.queryByText("Installing plugins…")).not.toBeInTheDocument();
 });
 
 test("a touched Projects group sends its set", async () => {

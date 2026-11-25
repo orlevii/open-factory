@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { imageStatusSchema } from "./images.ts";
-import { PLUGIN_REF_PATTERN } from "./library.ts";
 import { MSG } from "./messages.ts";
 import { modelSchema } from "./models.ts";
 import { hostSkillSchema, nameSchema, secretNameSchema } from "./names.ts";
@@ -9,10 +8,6 @@ export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const TEMPLATE_FILES = ["template.yaml", "AGENTS.md", "settings.json", "mcp.json"] as const;
 export type TemplateFile = (typeof TEMPLATE_FILES)[number];
 export const templateFileSchema = z.enum(TEMPLATE_FILES);
-
-/** A plugin reference, `name@marketplace`. The form checks it with the same pattern. */
-export const PLUGIN_REF_MSG = "Use name@marketplace.";
-const pluginRef = z.string().regex(PLUGIN_REF_PATTERN, PLUGIN_REF_MSG);
 
 // The Docker image reference grammar (distribution/reference): `[registry[:port]/]path[:tag][@algo:hex]`.
 const domainPart = "(?:[a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])";
@@ -52,7 +47,6 @@ export const templateConfigSchema = z.object({
   projects: z.array(nameSchema),
   skills: z.array(hostSkillSchema),
   localSkills: z.boolean(),
-  plugins: z.array(pluginRef),
   secrets: z.array(secretNameSchema),
   canSpawn: z.array(nameSchema),
   maxLiveSpawns: z.number().int().min(0).max(50),
@@ -76,7 +70,6 @@ export const templateYamlShape = {
   projects: z.array(nameSchema).max(200).optional(),
   skills: z.array(hostSkillSchema).max(200).optional(),
   local_skills: z.boolean().optional(),
-  plugins: z.array(pluginRef).max(200).optional(),
   secrets: z.array(secretNameSchema).max(200).optional(),
   can_spawn: z.array(nameSchema).max(200).optional(),
   max_live_spawns: z.number().int().min(0).max(50).optional(),
@@ -93,7 +86,6 @@ export const templateYamlSchema = z
     projects: templateYamlShape.projects.default([]),
     skills: templateYamlShape.skills.default([]),
     local_skills: templateYamlShape.local_skills.default(true),
-    plugins: templateYamlShape.plugins.default([]),
     secrets: templateYamlShape.secrets.default([]),
     can_spawn: templateYamlShape.can_spawn.default([]),
     max_live_spawns: templateYamlShape.max_live_spawns.default(5),
@@ -111,7 +103,6 @@ export const templateYamlSchema = z
       projects: y.projects,
       skills: y.skills,
       localSkills: y.local_skills,
-      plugins: y.plugins,
       secrets: y.secrets,
       canSpawn: y.can_spawn,
       maxLiveSpawns: y.max_live_spawns,
@@ -126,6 +117,8 @@ export const templateIssueSchema = z.object({
   line: z.number().int().positive().optional(),
   column: z.number().int().positive().optional(),
   path: z.string().optional(),
+  /** A fix the page offers on the issue: open Add marketplace prefilled from the declaration (spec §7.4). */
+  action: z.literal("add_from_template").optional(),
 });
 export type TemplateIssue = z.infer<typeof templateIssueSchema>;
 
@@ -137,6 +130,8 @@ export const templateSummarySchema = z.object({
   errors: z.number().int(),
   warnings: z.number().int(),
   agentCount: z.number().int(),
+  /** The plugins its `settings.json` enables (`effectivePlugins`). */
+  pluginCount: z.number().int().nonnegative(),
   imageStatus: imageStatusSchema.optional(),
 });
 export const templatesListSchema = z.object({

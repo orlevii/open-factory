@@ -9,7 +9,7 @@ import { readAt, readList } from "./tolerant";
 /** The list fields: each binds one union list of the draft to a `ConfigList`. */
 export type ListFieldId = Extract<
   ConfigField,
-  "skills" | "plugins" | "allow" | "deny" | "trustNotes" | "envSecrets" | "canSpawn"
+  "skills" | "allow" | "deny" | "trustNotes" | "envSecrets" | "canSpawn"
 >;
 
 const asList = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);

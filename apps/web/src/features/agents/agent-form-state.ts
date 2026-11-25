@@ -14,7 +14,6 @@ import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { useOutcome } from "@/components/forms/form-outcome";
 import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { agentsListQueryOptions } from "@/features/agents/api";
-import { hasOutput } from "@/features/agents/show-output";
 import {
   credentialsQueryOptions,
   projectsQueryOptions,
@@ -163,8 +162,6 @@ export function useAgentFormState({
     draft.restored && !(start.base && same(start.values, start.base)),
   );
   const o = useOutcome();
-  /** A failed plugin install's output, as data: the sheet builds "Show output" from it during render. */
-  const [pluginOutput, setPluginOutput] = useState<string>();
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const mounted = useRef(true);
@@ -174,9 +171,6 @@ export function useAgentFormState({
       mounted.current = false;
     };
   }, []);
-  /** Sends, so a slow flag belongs to one send and a resubmit starts without it. */
-  const [sends, setSends] = useState(0);
-  const [firedFor, setFiredFor] = useState<number | null>(null);
 
   const templates = useQuery({ ...templatesQueryOptions, enabled: create });
   const detail = useQuery({
@@ -278,14 +272,10 @@ export function useAgentFormState({
     update({ touched: { ...latest.current.touched, [f]: true }, [f]: shown[f] });
   };
 
-  // "Installing plugins…" after 3 s of creating, only when the template installs any.
-  const pluginCount = create ? (config?.plugins.length ?? 0) : 0;
-  useEffect(() => {
-    if (!pending || pluginCount === 0) return;
-    const t = setTimeout(() => setFiredFor(sends), 3000);
-    return () => clearTimeout(t);
-  }, [pending, pluginCount, sends]);
-  const slow = pending && pluginCount > 0 && firedFor === sends;
+  /** The plugins the chosen template enables, for the template field's summary. */
+  const pluginCount = create
+    ? (templates.data?.templates.find((x) => x.name === values.template)?.pluginCount ?? 0)
+    : 0;
 
   function check(f: Field, v: Values): string | undefined {
     switch (f) {
@@ -324,12 +314,6 @@ export function useAgentFormState({
     checks: Object.fromEntries(FIELDS.map((x) => [x, () => check(x, shown)])),
   });
 
-  /** The submit's line and the plugin output its Show output opens: they go together. */
-  const clearOutcome = () => {
-    o.clear();
-    setPluginOutput(undefined);
-  };
-
   const set = <K extends Field>(field: K, v: Values[K]) => {
     update({
       [field]: v,
@@ -339,7 +323,7 @@ export function useAgentFormState({
     });
     f.change(field);
     // The line describes the last submit; an edit makes it stale, and a notice it hid comes back.
-    clearOutcome();
+    o.clear();
   };
 
   const setProjects = (next: string[]) => {
@@ -350,7 +334,7 @@ export function useAgentFormState({
         : {}),
     });
     f.change("projects");
-    clearOutcome();
+    o.clear();
   };
 
   function body(): CreateAgentBody | PatchAgentBody | null {
@@ -399,7 +383,7 @@ export function useAgentFormState({
   ): Promise<SubmitResult> {
     // A ref, not `pending`: a second Enter can arrive before the first one's state has rendered.
     if (inFlight.current || noCredentials) return "nothing";
-    clearOutcome();
+    o.clear();
     if (!f.submit()) return "invalid";
     const b = body();
     if (!b) {
@@ -407,7 +391,6 @@ export function useAgentFormState({
       return "nothing";
     }
     inFlight.current = true;
-    setSends((n) => n + 1);
     setPending(true);
     let saved: AgentSummary | undefined;
     try {
@@ -419,8 +402,6 @@ export function useAgentFormState({
       if (!(err instanceof ApiError)) o.fail(FORM_MSG.unreachable);
       else if (!f.server(err.body.fields as Record<string, string> | undefined)) {
         o.fail(err.message);
-        const output = err.body.output;
-        if (err.code === "plugin_install_failed" && hasOutput(output)) setPluginOutput(output);
       }
       return "failed";
     }
@@ -443,7 +424,7 @@ export function useAgentFormState({
     latest.current = fresh;
     setValues(fresh);
     f.reset();
-    clearOutcome();
+    o.clear();
     setRestored(false);
   }
 
@@ -459,9 +440,8 @@ export function useAgentFormState({
     setProjects,
     submit,
     pending,
-    slow,
     outcome: o.outcome,
-    pluginOutput,
+    pluginCount,
     config,
     missingSecrets,
     noCredentials,

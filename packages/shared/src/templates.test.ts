@@ -12,7 +12,6 @@ test("defaults and camelCase output", () => {
     projects: [],
     skills: [],
     localSkills: true,
-    plugins: [],
     secrets: [],
     canSpawn: [],
     maxLiveSpawns: 5,
@@ -31,7 +30,7 @@ test("strict: unknown keys and bad values are errors", () => {
     templateYamlSchema.safeParse({ name: "x1", display_name: "X", skills: [".."] }).success,
   ).toBe(false);
   expect(
-    templateYamlSchema.safeParse({ name: "x1", display_name: "X", plugins: ["nomarket"] }).success,
+    templateYamlSchema.safeParse({ name: "x1", display_name: "X", plugins: ["p@mk"] }).success,
   ).toBe(false);
   expect(
     templateYamlSchema.safeParse({ name: "x1", display_name: "X", secrets: ["PATH"] }).success,

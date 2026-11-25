@@ -1,11 +1,15 @@
 import { ApiError } from "@open-factory/shared";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Copy } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { CopyFailed, CopyIcon, useCopy } from "@/components/copy-feedback";
+import { Elapsed } from "@/components/elapsed";
+import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { LINK } from "../helpers";
 
 /** A peek section: separated from the one above by a rule and spacing, never a card. `action` sits in the label row. */
 export function Section({
@@ -77,8 +81,6 @@ export function SkeletonRows({ n }: { n: number }) {
   );
 }
 
-const LINK = "underline underline-offset-2 hover:text-foreground";
-
 /** "template dev, @ana and 2 more": at most three named, each a link to its page (where the fix is made). */
 export function UsersLine({ templates, agents }: { templates: string[]; agents: string[] }) {
   const all = [
@@ -139,4 +141,54 @@ export function failure(err: unknown, fallback: string): ReactNode {
       </>
     );
   return err.message;
+}
+
+/** A "Show all N" control that clamps a list past `limit`. */
+export function Clamped<T>({
+  items,
+  limit,
+  render,
+}: {
+  items: T[];
+  limit: number;
+  render(item: T): React.ReactNode;
+}) {
+  const [all, setAll] = useState(false);
+  const shown = all ? items : items.slice(0, limit);
+  return (
+    <>
+      {shown.map(render)}
+      {!all && items.length > limit && (
+        <li>
+          <button
+            type="button"
+            onClick={() => setAll(true)}
+            className="py-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            Show all {items.length}
+          </button>
+        </li>
+      )}
+    </>
+  );
+}
+
+export type Line = { tone: "success" | "error"; node: React.ReactNode } | undefined;
+
+/** One inline outcome line (both live regions stay mounted so it is announced when it appears). */
+export function Outcome({ line }: { line: Line }) {
+  return <InlineOutcome tone={line?.tone}>{line?.node}</InlineOutcome>;
+}
+
+/** The pending label of a running action: a spinner, and the elapsed time after 10 s. */
+export function Pending({ label, since }: { label: string; since: number }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Spinner size="text" />
+      {label}
+      <span aria-hidden="true">
+        <Elapsed since={new Date(since).toISOString()} hideUnderMs={10_000} />
+      </span>
+    </span>
+  );
 }

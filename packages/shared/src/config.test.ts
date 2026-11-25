@@ -13,7 +13,6 @@ describe("agentOverlaySchema", () => {
     "warm_window_minutes",
     "max_live_spawns",
     "skills",
-    "plugins",
     "can_spawn",
     "secrets",
   ])("accepts template.%s", (k) => {
@@ -23,7 +22,6 @@ describe("agentOverlaySchema", () => {
       warm_window_minutes: 30,
       max_live_spawns: 2,
       skills: ["release"],
-      plugins: ["x@y"],
       can_spawn: ["dev"],
       secrets: ["GH_TOKEN"],
     } as Record<string, unknown>;
@@ -41,6 +39,10 @@ describe("agentOverlaySchema", () => {
     "bogus",
   ])("refuses template.%s", (k) => {
     expect(agentOverlaySchema.safeParse({ template: { [k]: "x" } }).success).toBe(false);
+  });
+  it("refuses template.plugins as an unknown field: plugins live in settings.enabledPlugins", () => {
+    const r = agentOverlaySchema.safeParse({ template: { plugins: ["x@y"] } });
+    expect(r.error?.issues.map((i) => i.message)).toEqual([CONFIG_MSG.unknownField]);
   });
   it("refuses unknown top-level keys and extra mcp keys", () => {
     expect(agentOverlaySchema.safeParse({ other: {} }).success).toBe(false);

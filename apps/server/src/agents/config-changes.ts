@@ -115,8 +115,8 @@ export function dbConfigChangeAgents(
  * I2 §7.2: the one path for template changes and overlay saves. For one agent: the change lines (`describeChanges`,
  * secret-safe) go into a `config_changed` event and the passive notice, `nextImage` is refreshed, a running process is
  * asked to restart when what it started with differs, and a spawner whose secrets or deny rules changed restarts its
- * live children. Everything on a runtime's queue is scheduled, never awaited by `overlaySaved` (it may wait behind a
- * start installing a plugin); `templateChanged` runs off the scan path and awaits it.
+ * live children. Everything on a runtime's queue is scheduled, never awaited by `overlaySaved`; `templateChanged` runs
+ * off the scan path and awaits it.
  */
 export class ConfigChanges {
   constructor(
@@ -214,29 +214,21 @@ export class ConfigChanges {
   }
 
   /**
-   * The Library moved (spec §8.3): a GitHub update, an Undo that restores a name, a marketplace or plugin update. Called
-   * after the Library and store locks are released. The templates are rescanned first, so a skill that went missing
+   * The Library moved (spec §8.3): a GitHub update, an Undo that restores a name. Called
+   * after the Library lock is released. The templates are rescanned first, so a skill that went missing
    * shows as an issue. Then every non-archived, non-terminated agent that uses one of the names gets
    * `apply(agent, by, before, now)`: `before` is what its process started with when it runs, else its effective config
    * now with the changed names' refs replaced by `e.before` (captured by the caller before the mutation); `now` is a
    * fresh resolve. The event, the passive notice and, for a running agent, the restart check follow I2 §7.3.
    */
-  async libraryChanged(e: {
-    skills?: string[];
-    plugins?: string[];
-    by: string;
-    before?: Library;
-  }): Promise<void> {
+  async libraryChanged(e: { skills?: string[]; by: string; before?: Library }): Promise<void> {
     try {
       await this.d.templates.scan();
     } catch (err) {
       this.d.log.error({ err }, "rescanning templates after a library change failed");
     }
     const skills = new Set(e.skills);
-    const plugins = new Set(e.plugins);
-    const uses = (l: Library) =>
-      Object.keys(l.skills).some((n) => skills.has(n)) ||
-      Object.keys(l.plugins).some((k) => plugins.has(k));
+    const uses = (l: Library) => Object.keys(l.skills).some((n) => skills.has(n));
     const pick = (
       now: Record<string, string>,
       was: Record<string, string> | undefined,
@@ -258,7 +250,7 @@ export class ConfigChanges {
               doc: now.doc,
               library: {
                 skills: pick(now.library.skills, e.before?.skills, skills),
-                plugins: pick(now.library.plugins, e.before?.plugins, plugins),
+                plugins: now.library.plugins,
               },
             };
         const r = await this.apply(agent, e.by, before, now);

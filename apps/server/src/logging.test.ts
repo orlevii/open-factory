@@ -1,17 +1,10 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { createFakeClaude } from "@open-factory/harness/testing";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { ev, FakeDriver } from "./agents/testing/fake-driver.ts";
 import { makeTestApp } from "./test/helpers.ts";
-import { installPlugins } from "./workspace/plugins.ts";
 
-// Spec 11.1: credential values, secret values and plugin stderr never reach the log output.
+// Spec 11.1: credential values and secret values never reach the log output.
 const CRED = "sk-ant-oat01-SENTINEL-CREDENTIAL-VALUE";
 const SECRET = "SENTINEL-SECRET-VALUE-9f3a";
-const URL_CRED = "user:pass@host";
-const GH = "ghp_SENTINELPLUGINTOKEN123";
 
 const lines: string[] = [];
 const out = () => lines.join("");
@@ -73,30 +66,6 @@ test("POST /api/credentials and PUT /api/secrets/:name never log their values", 
   expect(out()).toContain('"msg":"incoming request"');
   expect(out()).not.toContain(CRED);
   expect(out()).not.toContain(SECRET);
-});
-
-test("a plugin install failure with URL credentials and a token in stderr is never logged raw", async () => {
-  const ref = `https://${URL_CRED}/${GH}@mk`;
-  const fake = createFakeClaude({ scenario: "reply", env: { FAKE_CLAUDE_PLUGIN_FAIL: ref } });
-  const cfg = mkdtempSync(path.join(tmpdir(), "cfg-"));
-  const err = await installPlugins({
-    claudeBin: fake.bin,
-    pluginsConfig: cfg,
-    plugins: [ref],
-    tplSettings: {
-      extraKnownMarketplaces: { mk: { source: { source: "directory", path: "/x/mk" } } },
-    },
-    hostHome: process.env.HOME,
-    path: process.env.PATH,
-  }).catch((e) => e);
-  expect(err.output).toContain("[redacted]");
-  // The way the app logs failures: the error itself, and its output field.
-  const log = t.app.log;
-  log.error({ err }, "plugin install failed");
-  log.warn({ output: err.output, detail: { output: err.output } }, "plugin output");
-  expect(out()).toContain("plugin install failed");
-  expect(out()).not.toContain("user:pass");
-  expect(out()).not.toContain(GH);
 });
 
 test("the new redact paths hide sentinels at every shape", () => {

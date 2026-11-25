@@ -496,6 +496,7 @@ function AgentConfigEditor({
             conflicts={d.conflicts}
             onShowRaw={onShowRaw}
             localSkills={localSkills}
+            runningPlugins={config.plugins}
             onEditorOpenChange={setEditorOpen}
           />
         </TabsContent>

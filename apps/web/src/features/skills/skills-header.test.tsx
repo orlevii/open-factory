@@ -1,11 +1,11 @@
 import type { ServerMessage } from "@open-factory/shared";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
-import { hostGroup, library, skill, source, sourceGroup } from "./fixtures";
+import { hostGroup, library, marketplaceRow, skill, source, sourceGroup } from "./fixtures";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 const ws = vi.hoisted(() => ({ push: (_m: ServerMessage) => {} }));
@@ -66,11 +66,51 @@ async function open(state: { data: unknown }) {
   return mocks;
 }
 
-test("there is no view switch in this release", async () => {
-  await open({ data: twelve() });
-  expect(screen.queryByRole("navigation", { name: /views/i })).toBeNull();
-});
+test.each([
+  ["/skills", "Skills", "Add skills"],
+  ["/skills/plugins", "Plugins", undefined],
+  ["/skills/marketplaces", "Marketplaces", "Add marketplace"],
+] as const)(
+  "%s marks its view current among the three view links, with its own add action",
+  async (path, current, add) => {
+    const state = { data: twelve() };
+    serve(state);
+    renderApp(path, alice);
+    await screen.findByRole("heading", { level: 1, name: "Skills" });
+    const nav = screen.getByRole("navigation", { name: "Skills views" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((l) => l.textContent)).toEqual(["Skills", "Plugins", "Marketplaces"]);
+    for (const l of links) {
+      if (l.textContent === current) expect(l).toHaveAttribute("aria-current", "page");
+      else expect(l).not.toHaveAttribute("aria-current");
+    }
+    for (const name of ["Add skills", "Add marketplace"])
+      if (name === add) expect(screen.getByRole("button", { name })).toBeInTheDocument();
+      else expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+  },
+);
 
+test("updates on another view are named and linked, those on this view scroll to the first", async () => {
+  const state = { data: twelve({ updates: 2 }) };
+  const mocks = serve(state);
+  mocks.on("GET /api/library/marketplaces", () =>
+    json({
+      marketplaces: [
+        marketplaceRow("acme", { updateCommit: "e4f5a6b1111111111111111111111111111111aa" }),
+      ],
+    }),
+  );
+  const user = userEvent.setup();
+  renderApp("/skills/marketplaces", alice);
+  await screen.findByRole("heading", { level: 1, name: "Skills" });
+  await user.click(screen.getByRole("button", { name: "Check for updates" }));
+  await waitFor(() => expect(line()).toHaveTextContent(/Checked 13 sources/));
+  expect(within(line()).getByRole("button", { name: /^1\supdate$/ })).toBeInTheDocument();
+  expect(within(line()).getByRole("link", { name: /^2\supdates in Skills$/ })).toHaveAttribute(
+    "href",
+    "/skills",
+  );
+});
 test("the actions have accessible names", async () => {
   await open({ data: twelve() });
   expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled();

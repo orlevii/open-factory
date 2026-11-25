@@ -1,4 +1,4 @@
-import type { ConfigDoc, TemplateIssue } from "@open-factory/shared";
+import type { AgentConfigResponse, ConfigDoc, TemplateIssue } from "@open-factory/shared";
 import { modelSchema } from "@open-factory/shared";
 import { createContext, type ReactNode, use, useCallback, useMemo, useRef } from "react";
 import { type FieldErrors, useFieldErrors } from "@/components/forms/use-field-errors";
@@ -20,6 +20,8 @@ export type ConfigFormProps = {
   base?: ConfigDoc | null;
   /** Agent mode: the template's name, for "From template dev · 40". */
   templateName?: string;
+  /** Agent mode: what the agent's merged config runs as plugins (pin, and the version the running process loaded). */
+  runningPlugins?: AgentConfigResponse["plugins"];
   /** A functional update of the whole draft (`useConfigDraft().setDraft`). */
   onChange: ConfigUpdate;
   readOnly?: boolean;
@@ -46,6 +48,10 @@ export type ConfigScope = {
   value: unknown;
   base: ConfigDoc | null;
   inheritedLabel: string;
+  /** The template's name (agent mode), for the plugin picker's lines. */
+  templateName: string | undefined;
+  /** Plugin key → the version the running process loaded. */
+  running: ReadonlyMap<string, string>;
   /** Set the value at a path from its previous value, keeping every other key. Stable while `onChange` is. */
   update: (path: readonly string[], next: (prev: unknown) => unknown) => void;
   byField: ReadonlyMap<ConfigField, FieldIssues>;
@@ -102,6 +108,7 @@ export function ConfigFormScope({
   conflicts,
   onShowRaw,
   onEditorOpenChange,
+  runningPlugins,
   children,
 }: ConfigFormProps & { children: ReactNode }) {
   const root = useRef<HTMLDivElement>(null);
@@ -155,12 +162,24 @@ export function ConfigFormScope({
     [conflicts],
   );
 
+  const running = useMemo(
+    () =>
+      new Map(
+        (runningPlugins ?? []).flatMap((p) =>
+          p.loaded === undefined ? [] : [[p.key, p.loaded] as const],
+        ),
+      ),
+    [runningPlugins],
+  );
+
   const scope: ConfigScope = {
     mode,
     readOnly,
     value,
     base: mode === "agent" ? base : null,
     inheritedLabel: templateName ? `From template ${templateName}` : "From template",
+    templateName,
+    running,
     update,
     byField,
     conflicts: conflictFields,

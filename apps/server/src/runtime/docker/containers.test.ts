@@ -34,12 +34,13 @@ let mgr: ContainerManager;
 beforeEach(() => {
   const factoryHome = tmp("of-t23-home-");
   const workdir = path.join(factoryHome, "agents", "lead");
-  const pluginsDir = path.join(factoryHome, "state", "agents", "lead", "plugins-config", "plugins");
+  const pluginsDir = path.join(factoryHome, "state", "agents", "lead", "plugins");
   mkdirSync(workdir, { recursive: true });
   mkdirSync(pluginsDir, { recursive: true });
   const cliBundle = path.join(tmp("of-t23-cli-"), "open-factory.js");
   writeFileSync(cliBundle, "");
   ctx = {
+    slug: "lead",
     workdir,
     grantedPaths: [],
     skillPaths: [],
@@ -54,7 +55,7 @@ beforeEach(() => {
   };
   mounts = [
     { source: workdir, target: workdir, readOnly: false },
-    { source: pluginsDir, target: pluginsDir, readOnly: true },
+    { source: pluginsDir, target: pluginsDir, readOnly: false },
     { source: cliBundle, target: CLI_BUNDLE_TARGET, readOnly: true },
   ];
   docker = new FakeDockerClient();
@@ -62,7 +63,7 @@ beforeEach(() => {
     id: "sha256:img1",
     labels: { "io.open-factory.claude-code.version": "2.1.327" },
   });
-  mgr = new ContainerManager({ docker, log, uid: 501, gid: 20 });
+  mgr = new ContainerManager({ docker, log, uid: 501, gid: 20, checkImage: async () => {} });
 });
 
 afterEach(() => {
@@ -92,6 +93,20 @@ const inputs = {
 
 test("container name: open-factory-<slug>-<first 8 of the agent id>", () => {
   expect(containerName("lead", AGENT)).toBe("open-factory-lead-01234567");
+});
+
+test("an image below the Claude Code floor fails the start before any container is created", async () => {
+  const checkImage = vi.fn(async () => {
+    throw new Error("Claude Code 2.1.1 is too old; update it to 2.1.331 or later.");
+  });
+  const strict = new ContainerManager({ docker, log, uid: 501, gid: 20, checkImage });
+  const err = await strict
+    .ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx })
+    .catch((e) => e);
+  expect(err).toBeInstanceOf(AgentStartError);
+  expect(err.message).toBe("Claude Code 2.1.1 is too old; update it to 2.1.331 or later.");
+  expect(checkImage).toHaveBeenCalledWith(IMAGE, "sha256:img1");
+  expect(docker.containers.size).toBe(0);
 });
 
 test("pinned create options and spec hash (changed? check the hardening, then update the pins)", () => {
@@ -335,7 +350,7 @@ test("root host user is refused, even when non-root ids are injected", async () 
         mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx }),
       ).rejects.toThrow("The factory runs as root; Docker agents need a non-root host user.");
       await expect(
-        new ContainerManager({ docker, log }).ensure({
+        new ContainerManager({ docker, log, checkImage: async () => {} }).ensure({
           agentId: AGENT,
           slug: "lead",
           image: IMAGE,

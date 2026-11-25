@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, test } from "vitest";
 import {
   buildMounts,
   checkMounts,
-  declaredMarketplaceDirs,
   dockerSocketPaths,
   type MountCheckContext,
   MountRefusedError,
@@ -13,7 +12,7 @@ import {
 
 const tmp = (p: string) => realpathSync(mkdtempSync(path.join(os.tmpdir(), p)));
 
-test("path parity; plugins dir and CLI bundle read-only; bundle at the fixed target", () => {
+test("path parity; the plugins dir writable, the CLI bundle read-only at the fixed target", () => {
   expect(
     buildMounts({
       workdir: "/w",
@@ -21,7 +20,7 @@ test("path parity; plugins dir and CLI bundle read-only; bundle at the fixed tar
       skillPaths: ["/real/skills/grilling"],
       templateSkillPaths: ["/fh/templates/t/skills/x"],
       declaredMarketplaceDirs: ["/mk"],
-      pluginsDir: "/fh/state/agents/a/plugins-config/plugins",
+      pluginsDir: "/fh/state/agents/a/plugins",
       cliBundle: "/repo/apps/cli/dist/open-factory.js",
     }),
   ).toEqual([
@@ -31,9 +30,9 @@ test("path parity; plugins dir and CLI bundle read-only; bundle at the fixed tar
     { source: "/fh/templates/t/skills/x", target: "/fh/templates/t/skills/x", readOnly: true },
     { source: "/mk", target: "/mk", readOnly: true },
     {
-      source: "/fh/state/agents/a/plugins-config/plugins",
-      target: "/fh/state/agents/a/plugins-config/plugins",
-      readOnly: true,
+      source: "/fh/state/agents/a/plugins",
+      target: "/fh/state/agents/a/plugins",
+      readOnly: false,
     },
     {
       source: "/repo/apps/cli/dist/open-factory.js",
@@ -41,19 +40,6 @@ test("path parity; plugins dir and CLI bundle read-only; bundle at the fixed tar
       readOnly: true,
     },
   ]);
-});
-
-test("declaredMarketplaceDirs keeps only directory sources", () => {
-  expect(
-    declaredMarketplaceDirs({
-      extraKnownMarketplaces: {
-        a: { source: { source: "directory", path: "/mk" } },
-        b: { source: { source: "github", repo: "o/r" } },
-        c: null,
-      },
-    }),
-  ).toEqual(["/mk"]);
-  expect(declaredMarketplaceDirs({})).toEqual([]);
 });
 
 test("dockerSocketPaths: the defaults plus a DOCKER_HOST unix path", () => {
@@ -72,12 +58,12 @@ let ctx: MountCheckContext;
 beforeEach(() => {
   home = tmp("of-mounts-");
   const workdir = path.join(home, "agents/lead");
-  const pluginsDir = path.join(home, "state/agents/lead/plugins-config/plugins");
+  const pluginsDir = path.join(home, "state/agents/lead/plugins");
   for (const d of [
     workdir,
     pluginsDir,
     path.join(home, "agents/other"),
-    path.join(home, "state/agents/other/plugins-config/plugins"),
+    path.join(home, "state/agents/other/plugins"),
   ])
     mkdirSync(d, { recursive: true });
   const repo = tmp("repo-");
@@ -96,6 +82,7 @@ beforeEach(() => {
   };
   ctx = {
     ...inputs,
+    slug: "lead",
     templateDir: path.join(home, "templates/t"),
     factoryHome: home,
     home: os.homedir(),
@@ -114,12 +101,12 @@ test.each([
   [
     "<home>/agents/other",
     "another agent's workdir",
-    "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or the plugin store",
+    "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or this agent's plugins dir",
   ],
   [
-    "<home>/state/agents/other/plugins-config/plugins",
+    "<home>/state/agents/other/plugins",
     "another agent's plugins",
-    "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or the plugin store",
+    "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or this agent's plugins dir",
   ],
 ])("refuses %s (%s)", async (raw, _kind, reason) => {
   const sock = path.join(tmp("sock-"), "docker.sock");
@@ -156,8 +143,8 @@ test("refuses a wrong read-only flag, a wrong target and an undeclared path", as
     checkMounts([{ source: inputs.workdir, target: inputs.workdir, readOnly: true }], ctx),
   ).rejects.toThrow("it must be writable");
   await expect(
-    checkMounts([{ source: inputs.pluginsDir, target: inputs.pluginsDir, readOnly: false }], ctx),
-  ).rejects.toThrow("it must be read-only");
+    checkMounts([{ source: inputs.pluginsDir, target: inputs.pluginsDir, readOnly: true }], ctx),
+  ).rejects.toThrow(MountRefusedError);
   await expect(
     checkMounts([{ source: repo, target: "/etc", readOnly: false }], ctx),
   ).rejects.toThrow("its target /etc isn't the allowed one");
@@ -263,13 +250,14 @@ describe("template skills", () => {
     tplDir = path.join(factory, "templates/t");
     skill = path.join(tplDir, "skills/x");
     const workdir = path.join(factory, "agents/lead");
-    const pluginsDir = path.join(factory, "state/agents/lead/plugins-config/plugins");
+    const pluginsDir = path.join(factory, "state/agents/lead/plugins");
     for (const d of [skill, workdir, pluginsDir, path.join(factory, "state/agents/bob")])
       mkdirSync(d, { recursive: true });
     mkdirSync(path.join(hostHome, ".ssh"));
     const cliBundle = path.join(tmp("cli-"), "open-factory.js");
     writeFileSync(cliBundle, "//");
     tctx = {
+      slug: "lead",
       workdir,
       grantedPaths: [],
       skillPaths: [],
@@ -308,7 +296,7 @@ describe("template skills", () => {
   // into the home would mount and a link into state would hit the exemption's own refusal instead.
   const OUTSIDE = "it isn't one of the agent's allowed mounts";
   const IN_FACTORY =
-    "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or the plugin store";
+    "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or this agent's plugins dir";
   test.each([
     ["a skill entry symlinked to ~/.ssh", "entry", () => path.join(hostHome, ".ssh"), OUTSIDE],
     [
@@ -406,14 +394,14 @@ describe("GitHub skills", () => {
   };
   const reason = (src: string, why: string) => `Mount ${src} isn't allowed: ${why}.`;
   const IN_FACTORY =
-    "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or the plugin store";
+    "it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or this agent's plugins dir";
 
   beforeEach(() => {
     hostHome = tmp("host-home-");
     const factory = path.join(hostHome, "open-factory");
     gh = path.join(factory, "state/library/github");
     const workdir = path.join(factory, "agents/lead");
-    const pluginsDir = path.join(factory, "state/agents/lead/plugins-config/plugins");
+    const pluginsDir = path.join(factory, "state/agents/lead/plugins");
     for (const d of [
       path.join(gh, "acme-skills/abc123/grilling"),
       workdir,
@@ -425,6 +413,7 @@ describe("GitHub skills", () => {
     const cliBundle = path.join(tmp("cli-"), "open-factory.js");
     writeFileSync(cliBundle, "//");
     gctx = {
+      slug: "lead",
       workdir,
       grantedPaths: [],
       skillPaths: [],
@@ -498,5 +487,81 @@ describe("GitHub skills", () => {
       declare(p);
       await expect(checkMounts([mountOf(p)], gctx)).rejects.toThrow(reason(p, why));
     }
+  });
+});
+
+// Spec §6.5: this agent's own plugins dir, read-write, at exactly `<FH>/state/agents/<slug>/plugins`.
+describe("the agent's plugins dir", () => {
+  let hostHome: string;
+  let pctx: MountCheckContext;
+  const rw = (source: string) => ({ source, target: source, readOnly: false });
+  const refused = (p: string) =>
+    `Mount ${p} isn't allowed: it is inside FACTORY_HOME and isn't this agent's workdir, a registered skill or this agent's plugins dir.`;
+
+  beforeEach(() => {
+    hostHome = tmp("host-home-");
+    const factory = path.join(hostHome, "open-factory");
+    const pluginsDir = path.join(factory, "state/agents/lead/plugins");
+    const workdir = path.join(factory, "agents/lead");
+    for (const d of [pluginsDir, workdir, path.join(factory, "state/agents/bob/plugins")])
+      mkdirSync(d, { recursive: true });
+    mkdirSync(path.join(hostHome, "elsewhere"));
+    const cliBundle = path.join(tmp("cli-"), "open-factory.js");
+    writeFileSync(cliBundle, "//");
+    pctx = {
+      slug: "lead",
+      workdir,
+      grantedPaths: [],
+      skillPaths: [],
+      templateSkillPaths: [],
+      templateDir: path.join(factory, "templates/t"),
+      declaredMarketplaceDirs: [],
+      pluginsDir,
+      cliBundle,
+      factoryHome: factory,
+      home: hostHome,
+      dockerSockets: [],
+    };
+  });
+
+  test("the agent's own plugins dir mounts read-write at its real path", async () => {
+    await expect(checkMounts([rw(pctx.pluginsDir)], pctx)).resolves.toEqual([rw(pctx.pluginsDir)]);
+  });
+
+  test("another agent's plugins dir and state/ are refused", async () => {
+    const bob = path.join(pctx.factoryHome, "state/agents/bob/plugins");
+    await expect(checkMounts([rw(bob)], { ...pctx, pluginsDir: bob })).rejects.toThrow(
+      refused(bob),
+    );
+    await expect(checkMounts([rw(bob)], pctx)).rejects.toThrow(MountRefusedError);
+    const state = path.join(pctx.factoryHome, "state");
+    await expect(checkMounts([rw(state)], pctx)).rejects.toThrow(
+      "it is the factory state directory",
+    );
+  });
+
+  test("a plugins dir swapped for a link is refused, wherever it points", async () => {
+    const elsewhere = path.join(hostHome, "elsewhere");
+    for (const to of [elsewhere, path.join(pctx.factoryHome, "state/agents/bob/plugins")]) {
+      rmSync(pctx.pluginsDir, { recursive: true, force: true });
+      symlinkSync(to, pctx.pluginsDir);
+      await expect(checkMounts([rw(pctx.pluginsDir)], pctx)).rejects.toThrow(MountRefusedError);
+    }
+  });
+
+  test("a link in place of state/agents/<slug> is refused too", async () => {
+    const dir = path.join(pctx.factoryHome, "state/agents/lead");
+    rmSync(dir, { recursive: true });
+    symlinkSync(path.join(hostHome, "elsewhere"), dir);
+    mkdirSync(path.join(hostHome, "elsewhere/plugins"));
+    await expect(checkMounts([rw(pctx.pluginsDir)], pctx)).rejects.toThrow(MountRefusedError);
+  });
+
+  test("the directory marketplaces of the closure mount read-only", async () => {
+    const mk = tmp("mk-");
+    const ro = { source: mk, target: mk, readOnly: true };
+    await expect(checkMounts([ro], { ...pctx, declaredMarketplaceDirs: [mk] })).resolves.toEqual([
+      ro,
+    ]);
   });
 });

@@ -4,22 +4,19 @@ import { memo } from "react";
 import { Elapsed } from "@/components/elapsed";
 import { Spinner } from "@/components/ui/spinner";
 
-type Look = { word: string; icon: "spinner" | "alert" | "update" | "warning" | "none" };
+type Look = { word: string; icon: "spinner" | "alert" | "update" | "warning" };
 
 /** Each state's word and icon (spec §10.2): a word plus an icon, never colour alone, never signal orange. */
 const LOOK: Record<RowStateName, Look> = {
   adding: { word: "Adding…", icon: "spinner" },
-  installing: { word: "Installing…", icon: "spinner" },
   checking: { word: "Checking…", icon: "spinner" },
-  add_failed: { word: "Couldn't add", icon: "alert" },
-  install_failed: { word: "Install failed", icon: "alert" },
   missing: { word: "Missing", icon: "alert" },
   unusable: { word: "Unusable", icon: "alert" },
+  refused: { word: "Can't use", icon: "alert" },
   check_failed: { word: "Couldn't check", icon: "alert" },
   update: { word: "Update available", icon: "update" },
   hidden: { word: "Hidden", icon: "warning" },
-  not_pinned: { word: "Not pinned", icon: "warning" },
-  not_installed: { word: "Not installed", icon: "none" },
+  cant_pin: { word: "Can't be pinned", icon: "warning" },
 };
 
 function StateIcon({ icon }: { icon: Look["icon"] }) {
@@ -32,8 +29,6 @@ function StateIcon({ icon }: { icon: Look["icon"] }) {
       return <ArrowUpCircle aria-hidden="true" className="size-3.5 shrink-0 text-info" />;
     case "warning":
       return <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />;
-    case "none":
-      return null;
   }
 }
 
@@ -49,7 +44,7 @@ export const RowState = memo(function RowState({
   const pending = icon === "spinner";
   return (
     <span
-      className={`flex shrink-0 items-center gap-1.5 text-[0.8125rem] ${pending || icon === "none" ? "text-muted-foreground" : ""}`}
+      className={`flex shrink-0 items-center gap-1.5 text-[0.8125rem] ${pending ? "text-muted-foreground" : ""}`}
     >
       <StateIcon icon={icon} />
       {word}

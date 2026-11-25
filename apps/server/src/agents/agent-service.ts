@@ -34,21 +34,19 @@ import type { TemplateIndex } from "../templates/template-index.ts";
 import { overlayIssues, overlaySchemaIssues } from "../templates/validate.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
-import { PluginInstallError } from "../workspace/plugins.ts";
 import type { MaterializeCheck, Workspace } from "../workspace/workspace.ts";
 import type { RuntimeLog } from "./agent-runtime.ts";
 import type { ConfigChanges } from "./config-changes.ts";
+import type { ConfigResolver } from "./config-resolver.ts";
 import type { EventBus } from "./event-bus.ts";
 import type { EventStore, Exec, Tx } from "./event-store.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 
 const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
 
-function pluginFailure(err: unknown): unknown {
-  if (err instanceof PluginInstallError)
-    return new ApiError(502, "plugin_install_failed", err.message, { output: err.output });
-  if (err instanceof WorkspaceError) return new ApiError(409, "template_invalid", err.message);
-  return err;
+/** A materialize failure as the API's: the template's folders didn't pass the workspace checks. */
+function materializeFailure(err: unknown): unknown {
+  return err instanceof WorkspaceError ? new ApiError(409, "template_invalid", err.message) : err;
 }
 
 /** S7 §9.3: a spawner's live spawned agents block its archive; terminate them, don't move them. */
@@ -105,6 +103,8 @@ export class AgentService {
       workspace: Workspace;
       lock: KeyedMutex;
       runtimes: AgentRuntimes;
+      /** `GET …/config` reads each plugin's pin through the Library resolve (spec §8.1). */
+      resolver: Pick<ConfigResolver, "libraryOf">;
       log: RuntimeLog;
       /** The one ContainerManager: a running container counts as a process for the persona-reset gate (spec §11.4). */
       containers?: Pick<ContainerManager, "isRunning">;
@@ -513,7 +513,7 @@ export class AgentService {
       // folder_exists means the folder isn't ours: leave it alone.
       if (!(err instanceof FieldError && err.code === "folder_exists"))
         await workspace.discard(b.slug).catch(() => {});
-      throw pluginFailure(err);
+      throw materializeFailure(err);
     }
 
     const id = randomUUID();
@@ -790,13 +790,14 @@ export class AgentService {
     return this.configView(row, overlay, base, await this.configIssues(row, overlay, base));
   }
 
-  private configView(
+  private async configView(
     row: AgentRow,
     overlay: Record<string, unknown>,
     base: { doc: ConfigDoc } | null,
     issues: AgentConfigResponse["issues"],
-  ): AgentConfigResponse {
+  ): Promise<AgentConfigResponse> {
     const parsed = agentOverlaySchema.safeParse(overlay);
+    const merged = base && parsed.success ? mergeConfig(base.doc, parsed.data) : null;
     return {
       overlay,
       version: overlayVersion(overlay as AgentOverlay),
@@ -805,9 +806,27 @@ export class AgentService {
         doc: base ? this.forEditing(base.doc) : null,
         valid: base !== null,
       },
-      merged: base && parsed.success ? this.forEditing(mergeConfig(base.doc, parsed.data)) : null,
+      merged: merged ? this.forEditing(merged) : null,
+      plugins: merged ? await this.pluginsOf(row.id, merged) : [],
       issues,
     };
+  }
+
+  /**
+   * Each plugin the config would run (enabled keys and the dependencies the Library read) with its pin, and the
+   * version it loaded at when the running process's first `init` listed it (spec §7.3 step 8, §8.1).
+   */
+  private async pluginsOf(
+    agentId: string,
+    merged: ConfigDoc,
+  ): Promise<AgentConfigResponse["plugins"]> {
+    const loaded = this.d.runtimes.loadedPluginsOf(agentId) ?? {};
+    const { plugins } = await this.d.resolver.libraryOf(merged);
+    return Object.entries(plugins).map(([key, pin]) => ({
+      key,
+      pin,
+      ...(Object.hasOwn(loaded, key) ? { loaded: loaded[key] as string } : {}),
+    }));
   }
 
   /**
@@ -856,7 +875,7 @@ export class AgentService {
       );
     }
     return {
-      ...this.configView({ ...row, config: overlay }, overlay, base, issues),
+      ...(await this.configView({ ...row, config: overlay }, overlay, base, issues)),
       ...applied,
       checked: base ? "full" : "schema",
     };

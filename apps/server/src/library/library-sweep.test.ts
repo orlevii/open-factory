@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SkillSourceRow } from "@open-factory/db";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { LibrarySweep, skillDirsInUse } from "./library-sweep.ts";
+import { LibrarySweep, marketplaceDirsInUse, skillDirsInUse } from "./library-sweep.ts";
 import { SourcesService, type SourcesStore } from "./sources-service.ts";
 import { memorySourcesStore } from "./testing/memory-sources-store.ts";
 
@@ -260,4 +260,36 @@ test("skillDirsInUse holds every source's directory for the hashes the running p
   ]);
   expect(await skillDirsInUse(root, [{ library: { skills: { x: "host" } } }])).toEqual([]);
   expect(await skillDirsInUse(path.join(fh, "nothing-here"), started)).toEqual([]);
+});
+
+test("a runtime's commit and tag pins hold their marketplace checkouts; Latest and live hold none", () => {
+  const sha = "b".repeat(40);
+  const tagSha = "c".repeat(40);
+  const started = [
+    {
+      library: {
+        plugins: {
+          "foo@acme": `commit:${sha}`,
+          "bar@acme": "tag:v1",
+          "baz@beta": "latest",
+          "qux@mine": "live",
+          "old@acme": "tag:gone",
+        },
+      },
+    },
+  ];
+  const rows: { name: string; tags: Record<string, string> }[] = [
+    { name: "acme", tags: { v1: tagSha } },
+    { name: "beta", tags: {} },
+  ];
+  expect(marketplaceDirsInUse("/mk", started, rows).sort()).toEqual(
+    [`/mk/acme/${sha}`, `/mk/acme/${tagSha}`].sort(),
+  );
+});
+
+test("a tag pin named like an Object.prototype member holds nothing", () => {
+  const started = [
+    { library: { plugins: { "foo@acme": "tag:constructor", "bar@acme": "tag:toString" } } },
+  ];
+  expect(marketplaceDirsInUse("/mk", started, [{ name: "acme", tags: {} }])).toEqual([]);
 });

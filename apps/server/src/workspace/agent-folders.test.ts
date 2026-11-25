@@ -68,10 +68,7 @@ describe("checkProjectSettings", () => {
     );
   });
 
-  test.each([
-    ["OPEN_FACTORY_URL", "OPEN_FACTORY_URL"],
-    [FACTORY_ENV_NAMES[0] as string, FACTORY_ENV_NAMES[0] as string],
-  ])("env.%s fails", async (name) => {
+  test.each(["OPEN_FACTORY_URL", ...FACTORY_ENV_NAMES])("env.%s fails", async (name) => {
     put(".claude/settings.json", JSON.stringify({ env: { [name]: "x" } }));
     await expect(checkProjectSettings(wd)).rejects.toThrow(`sets env.${name}, which`);
   });

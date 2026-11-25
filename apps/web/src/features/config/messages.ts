@@ -1,4 +1,4 @@
-import { CONFIG_MSG, MODEL_MSG, PLUGIN_REF_MSG } from "@open-factory/shared";
+import { CONFIG_MSG, MODEL_MSG } from "@open-factory/shared";
 
 /** Field notes of the Configuration form (I4 rules: at most 40 characters, no interpolated value). */
 export const CONFIG_FIELD_MSG = {
@@ -10,7 +10,6 @@ export const CONFIG_FIELD_MSG = {
   enterModel: "Enter a model.",
   warmWindowRange: "Use 1 to 1,440 minutes.",
   maxLiveSpawnsRange: "Use 0 to 50.",
-  pluginRef: PLUGIN_REF_MSG,
   envName: CONFIG_MSG.envName,
   factoryEnv: CONFIG_MSG.factoryEnv,
   factoryServer: CONFIG_MSG.factoryServer,
@@ -40,14 +39,27 @@ export const CONFIG_COPY = {
   showInRaw: "Show in Raw JSON",
   showFewer: "Show fewer",
   issuesHeading: "Issues the form can't show",
-  pluginsHelpAgent:
-    "Like formatter@acme. The marketplace must be declared in the template's settings.json.",
-  pluginsHelpTemplate: "Like formatter@acme. The marketplace must be declared in settings.json.",
   rulesHelp: "Like Bash(git push:*).",
   notesHelp: "Facts that help auto mode decide, like 'deploys go through CI'.",
   templateSkill: "Template skill",
   allSkillsAdded: "Every skill is already added.",
   noSkills: "No skills in Skills yet.",
+  addPlugin: "Add plugin",
+  allPluginsAdded: "Every plugin is already added.",
+  addMarketplacesInSkills: "Add marketplaces in Skills",
+  pinned: "Pinned",
+  changePin: "Change pin",
+  newerInSkills: "Newer in Skills:",
+  localLive: "Local folder, live",
+  useLatestItem: "Use Latest, auto-update…",
+  useLatest: "Use Latest",
+  view: "View",
+  notReadYet: "Contents not read yet",
+  couldntLoadDiff: "Couldn't load what changes.",
+  retry: "Retry",
+  noChangesShown: "Nothing in what Skills can read changes.",
+  pinningFromLatest:
+    "Latest follows whatever the marketplace holds now, so there is nothing to compare.",
   insertSecret: "Insert secret",
   secretsLoading: "Loading…",
   secretsLoadError: "Couldn't load secrets.",
@@ -63,6 +75,38 @@ export const CONFIG_COPY = {
   envHelp: "Saved as text in settings.json. Not for secrets.",
   done: "Done",
   cancel: "Cancel",
+} as const;
+
+/** The Plugins picker's lines (spec §10.5). */
+export const PLUGIN_COPY = {
+  noPlugins: (template: string) => `No plugins in ${template}'s marketplaces.`,
+  onlyFrom: (template: string) =>
+    `Only plugins from ${template}'s marketplaces. Add more in the template.`,
+  leftOut: (n: number) =>
+    `${n} ${n === 1 ? "plugin" : "plugins"} can't be used here: refused source.`,
+  cantPin: (key: string, mkt: string) =>
+    `${key} can't be pinned. Switch ${mkt} to Latest to add it.`,
+  tagOnly: (mkt: string) =>
+    `${mkt} can only be pinned to a tag. Fetch a tag in Skills, or use Latest.`,
+  notRead: (mkt: string) => `Skills hasn't read ${mkt} yet.`,
+  cantPinOption: "Can't be pinned",
+  pinTo: (ref: string, newest: boolean) => `Pin to ${ref}${newest ? " (newest in Skills)" : ""}…`,
+  pinHeading: (mkt: string, ref: string) => `Pin ${mkt} to ${ref}`,
+  pinPrimary: (ref: string) => `Pin to ${ref}`,
+  latestHeading: (mkt: string) => `Use Latest for ${mkt}`,
+  latestRisk: (mkt: string) =>
+    `Latest runs ${mkt}'s newest code at each restart, without review, with each agent's workspace and credentials in reach.`,
+  running: (version: string) => `running ${version}`,
+  needs: (n: number) => `Needs ${n} from the image`,
+  remove: (key: string) => `Remove ${key}`,
+  cantPinFirst: (key: string, mkt: string) =>
+    `${key} can't be pinned. Add another ${mkt} plugin first, then switch ${mkt} to Latest.`,
+  noPluginsInSkills: "No plugins in Skills yet.",
+  theTemplate: "the template",
+  runsCodeChanged: "Runs code changed",
+  loadingDiff: "Loading what changes",
+  notInCatalog: (at: string) => `Not in the catalog at ${at}`,
+  newSince: (at: string) => `New since ${at}`,
 } as const;
 
 /** "Adds GH_TOKEN to this agent's secrets." (spec §12.2), shown under the value an Insert secret filled. */

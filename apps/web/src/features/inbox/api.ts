@@ -28,7 +28,6 @@ type Page = z.infer<typeof inboxPageSchema>;
 
 export const inboxQueryKey = ["inbox"] as const;
 export const unreadQueryKey = ["inbox-unread"] as const;
-export const homeInboxQueryKey = ["inbox-home"] as const;
 
 /** Pages are merged by `id` (first occurrence wins), so a refetch that overlaps an older page, or a
  *  row that moved between pages, never shows twice. */
@@ -101,12 +100,6 @@ export function prefetchChat(qc: QueryClient, slug: string) {
     void qc.prefetchInfiniteQuery(chatQueryOptions(slug));
 }
 
-/** The 5 newest unread items and the unread chats: what the notifier reads. */
-export const homeInboxQueryOptions = queryOptions({
-  queryKey: homeInboxQueryKey,
-  queryFn: () => apiFetch("/api/inbox?unread=true&limit=5", { schema: inboxPageSchema }),
-});
-
 export type Unread = { count: number; byAgent: Record<string, number> };
 
 export const unreadCountQueryOptions = queryOptions({
@@ -165,7 +158,6 @@ export function useInboxCache() {
         inboxQueryKey,
         (d) => d && { ...d, pages: d.pages.map((p) => ({ ...p, items: flip(p.items) })) },
       );
-      qc.setQueryData<Page>(homeInboxQueryKey, (p) => p && { ...p, items: flip(p.items) });
     };
     return {
       setRead(ids: Set<string>, read: boolean, delta: number, items?: InboxItem[]) {
@@ -249,7 +241,7 @@ export function useInboxCache() {
         );
       },
       refetch() {
-        for (const key of [inboxQueryKey, unreadQueryKey, homeInboxQueryKey])
+        for (const key of [inboxQueryKey, unreadQueryKey])
           void qc.invalidateQueries({ queryKey: key });
       },
     };

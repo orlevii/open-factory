@@ -1,5 +1,5 @@
 import { apiFetch, inboxPageSchema } from "@open-factory/shared";
-import { useNavigate } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { postRead, useInboxCache } from "./api";
 import { type Burst, burstsOf } from "./notification-copy";
@@ -192,19 +192,22 @@ function requestRefresh() {
 
 /** The app shell's half: baseline what is already unread, then react to each `inbox_changed`. */
 export function useInboxNotifier() {
-  const navigate = useNavigate();
+  const router = useRouter();
   const cache = useInboxCache();
   const { enabled } = useBrowserNotifications();
   useEffect(() => {
     setNotifierOpen((b) => {
-      void navigate({ to: b.open.to, search: b.open.search } as never);
+      const query = new URLSearchParams(
+        Object.entries(b.open.search ?? {}).map(([k, v]) => [k, String(v)]),
+      ).toString();
+      void router.navigate({ href: query ? `${b.open.to}?${query}` : b.open.to });
       if (b.itemIds.length === 0) return;
       const ids = new Set(b.itemIds);
       cache.setRead(ids, true, -ids.size);
       for (const id of ids) postRead(id).catch(() => cache.setRead(new Set([id]), false, +1));
     });
     return () => setNotifierOpen(() => {});
-  }, [navigate, cache]);
+  }, [router, cache]);
   // At load, or when the switch is turned on: what is unread now is not "new". Off: close and forget.
   useEffect(() => {
     if (enabled) requestRefresh();

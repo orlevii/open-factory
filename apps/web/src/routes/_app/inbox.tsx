@@ -64,6 +64,7 @@ function useSelectedChat(slug: string | undefined): ChatRow | undefined {
         archivedAt: agent.archivedAt,
       },
       unread: 0,
+      firstUnreadId: "",
       latest: { messageId: "", preview: "", createdAt: stamp, urgent: false },
     };
   }, [agent, stamp]);

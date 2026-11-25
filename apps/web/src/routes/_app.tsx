@@ -94,7 +94,6 @@ function AppLayout() {
         if (m.type === "inbox_changed") {
           void qc.invalidateQueries({ queryKey: ["inbox"] });
           void qc.invalidateQueries({ queryKey: ["inbox-unread"] });
-          void qc.invalidateQueries({ queryKey: ["inbox-home"] });
           notify();
         }
         // I1: a chat on screen refreshes its newest page (one request in flight, one trailing).

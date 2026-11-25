@@ -28,6 +28,7 @@ import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import { ConfigResolver, type Effective } from "./config-resolver.ts";
 import { AgentStartError, forSpawnedAgent } from "./errors.ts";
+import { PolicyInputs } from "./policy-inputs.ts";
 import { createPrepareStart, deriveInheritance, type StartPreparer } from "./start.ts";
 
 const KEY = "k".repeat(40);
@@ -160,7 +161,12 @@ async function seedStartFixture() {
     LOG_LEVEL: "silent",
   });
   resolver = new ConfigResolver({
-    templates: new TemplateIndex({ db: t.db, config: factoryConfig, library }),
+    templates: new TemplateIndex({
+      db: t.db,
+      config: factoryConfig,
+      library,
+      policy: new PolicyInputs({ db: t.db, library }),
+    }),
     library,
   });
   const prepare = createPrepareStart({

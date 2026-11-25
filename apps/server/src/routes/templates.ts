@@ -1,5 +1,6 @@
 import path from "node:path";
 import {
+  type Actor,
   createTemplateBodySchema,
   effectivePlugins,
   issuesResponseSchema,
@@ -40,9 +41,9 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
   });
   // onRequest, not preHandler: auth must come before validation (401 before 400).
   app.addHook("onRequest", requireUser);
-  const handleOf = (req: FastifyRequest) => {
+  const humanOf = (req: FastifyRequest): Extract<Actor, { kind: "human" }> => {
     if (!req.user) throw new Error("requireUser did not set request.user");
-    return req.user.handle;
+    return { kind: "human", handle: req.user.handle };
   };
 
   app.get("/api/templates", { schema: { response: { 200: templatesListSchema } } }, async (req) => {
@@ -114,7 +115,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
     "/api/templates",
     { schema: { body: createTemplateBodySchema, response: { 201: templateDetailResponseSchema } } },
     async (req, reply) => {
-      await app.templates.create(req.body);
+      await app.templates.create(req.body, humanOf(req));
       return reply.code(201).send({ template: await app.templates.detail(req.body.name) });
     },
   );
@@ -134,7 +135,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
         req.params.file,
         req.body.content,
         req.body.baseHash,
-        `@${handleOf(req)}`,
+        humanOf(req),
       ),
   );
 
@@ -158,7 +159,7 @@ export const templatesRoutes: FastifyPluginAsyncZod<{ docker: DockerClient }> = 
         req.params.name,
         req.body.doc,
         req.body.baseHashes,
-        `@${handleOf(req)}`,
+        humanOf(req),
       );
       // At once, so an open template or agent page refreshes without waiting for the change flow (spec §7.1).
       if (changed) app.bus.publishAll({ type: "config_changed", template: req.params.name });

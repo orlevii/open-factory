@@ -1,19 +1,24 @@
 import type { AgentRow } from "@open-factory/db";
 import {
   type Actor,
+  actorBy,
   createAgentToolSchema,
+  createTemplateToolSchema,
   getAgentToolSchema,
   getTemplateToolSchema,
   LIBRARY_LIST_MAX,
   listLibraryToolSchema,
   type PatchAgentBody,
   updateAgentToolSchema,
+  writeTemplateFileToolSchema,
 } from "@open-factory/shared";
 import { z } from "zod";
 import type { AgentService } from "../../agents/agent-service.ts";
 import type { ConfigService } from "../../agents/config-service.ts";
 import { OrgRefusedError } from "../../agents/errors.ts";
+import type { EventBus } from "../../agents/event-bus.ts";
 import type { CredentialService } from "../../credentials/credential-service.ts";
+import { ApiError } from "../../errors.ts";
 import type { LibraryIndex } from "../../library/library-index.ts";
 import type { PluginsIndex } from "../../library/plugins-index.ts";
 import type { ProjectService } from "../../projects/project-service.ts";
@@ -38,6 +43,8 @@ export type OrgToolDeps = {
   credentials: CredentialService;
   secrets: SecretService;
   projects: ProjectService;
+  /** Template creation publishes its `org_action` toast here, after the commit (spec §8.3). */
+  bus: Pick<EventBus, "publishAll">;
 };
 
 type AgentActor = Extract<Actor, { kind: "agent" }>;
@@ -118,6 +125,46 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       async ({ name }) => {
         const v = await d.templates.orgView(name.trim());
         return { name: name.trim(), ...v };
+      },
+    ),
+    tool(
+      "create_template",
+      "Create a template: a new scaffold, or a copy of an existing one (from) with its files and skills. Returns its name and issues. Every human sees a toast.",
+      createTemplateToolSchema,
+      async (a, actor) => {
+        const b = {
+          name: a.name,
+          displayName: a.display_name,
+          ...(a.description !== undefined ? { description: a.description } : {}),
+        };
+        const { issues } =
+          a.from !== undefined
+            ? await d.templates.copyFrom(a.from, b, actor)
+            : await d.templates.create(b, actor);
+        d.bus.publishAll({
+          type: "org_action",
+          action: "template_created",
+          by: actorBy(actor),
+          subject: a.name,
+        });
+        return { name: a.name, issues };
+      },
+    ),
+    tool(
+      "write_template_file",
+      "Replace one of a template's four files (template.yaml, settings.json, mcp.json, AGENTS.md) with the whole new content. base_hash is the hash get_template gave you for it; null only for a file that doesn't exist yet. A write that causes an error is refused whole, and runtime, image and permission mode are for humans. Returns the new hash and the template's issues.",
+      writeTemplateFileToolSchema,
+      async (a, actor) => {
+        try {
+          return await d.templates.writeFile(a.name, a.file, a.content, a.base_hash, actor);
+        } catch (err) {
+          // A stale hash is a 409 for humans; the agent is told which file to re-read.
+          if (err instanceof ApiError && err.code === "changed_on_disk")
+            throw new OrgRefusedError(
+              `${a.file} changed since you read it; call get_template again.`,
+            );
+          throw err;
+        }
       },
     ),
     tool(

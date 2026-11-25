@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { agentOverlaySchema } from "./config.ts";
-import { TEMPLATE_FILES } from "./templates.ts";
+import { createTemplateBodySchema, TEMPLATE_FILES, templateFileSchema } from "./templates.ts";
 
 /**
  * MCP inputs of the org tools (I7 spec §7.1; snake_case like the task tools). Names stay loose strings: the services
@@ -62,6 +62,40 @@ export const listLibraryToolSchema = z.object({
 
 /** Every list in `list_library` is cut here, with `more: true` and a note to narrow `query`. */
 export const LIBRARY_LIST_MAX = 200;
+
+export const createTemplateToolSchema = z.object({
+  name: createTemplateBodySchema.shape.name.describe("The new template's name"),
+  display_name: z.string().trim().min(1).max(80).describe("The template's display name"),
+  description: z.string().trim().max(500).optional(),
+  from: ref
+    .optional()
+    .describe("A template to copy its files and skills from (default: a new scaffold)"),
+});
+
+/** `AGENTS.md` through the tool is at most this many bytes, so the JSON-escaped call fits the MCP body limit. */
+export const AGENTS_MD_MAX_BYTES = 256 * 1024;
+
+export const writeTemplateFileToolSchema = z
+  .object({
+    name: ref.describe("The template's name"),
+    file: templateFileSchema.describe("Which of the four files"),
+    content: z
+      .string()
+      .max(512 * 1024)
+      .describe("The whole new content of the file"),
+    base_hash: z
+      .string()
+      .nullable()
+      .describe("The hash get_template gave you; null only for a file that doesn't exist yet"),
+  })
+  .superRefine((v, ctx) => {
+    if (v.file === "AGENTS.md" && new TextEncoder().encode(v.content).length > AGENTS_MD_MAX_BYTES)
+      ctx.addIssue({
+        code: "custom",
+        path: ["content"],
+        message: "AGENTS.md is at most 256 KiB.",
+      });
+  });
 
 /** The files `get_template` returns and `write_template_file` accepts. */
 export const ORG_TEMPLATE_FILES = TEMPLATE_FILES;

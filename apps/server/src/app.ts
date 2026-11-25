@@ -266,10 +266,12 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   const journal = new ProcessJournal();
   const tokens = new AgentTokens();
   const neighborhood = new Neighborhood(deps.db);
+  const policy = new PolicyInputs({ db: deps.db, library });
   const templates: TemplateIndex = new TemplateIndex({
     db: deps.db,
     config,
     library,
+    policy,
     log: app.log,
   });
   const resolver = new ConfigResolver({ templates, library });
@@ -360,7 +362,6 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   });
   app.decorate("schedules", schedules);
   app.decorate("scheduler", scheduler);
-  const policy = new PolicyInputs({ db: deps.db, library });
   const agents = new AgentService({
     db: deps.db,
     templates,
@@ -672,6 +673,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
         credentials,
         secrets: app.secrets,
         projects: app.projects,
+        bus,
       },
       log: app.log,
     });

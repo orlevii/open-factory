@@ -13,6 +13,7 @@ import { AgentRuntime } from "../src/agents/agent-runtime.ts";
 import { ConfigResolver } from "../src/agents/config-resolver.ts";
 import { EventBus } from "../src/agents/event-bus.ts";
 import { EventStore } from "../src/agents/event-store.ts";
+import { PolicyInputs } from "../src/agents/policy-inputs.ts";
 import { createPrepareStart } from "../src/agents/start.ts";
 import { unlimitedSlots } from "../src/agents/testing/unlimited-slots.ts";
 import { loadConfig } from "../src/config.ts";
@@ -49,7 +50,12 @@ const library = new LibraryIndex({
   factoryHome: config.factoryHome,
   templates: () => templates,
 });
-const templates: TemplateIndex = new TemplateIndex({ db, config, library });
+const templates: TemplateIndex = new TemplateIndex({
+  db,
+  config,
+  library,
+  policy: new PolicyInputs({ db, library }),
+});
 const workspace = new Workspace({
   factoryHome: config.factoryHome,
   library,

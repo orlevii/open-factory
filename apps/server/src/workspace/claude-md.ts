@@ -108,6 +108,7 @@ function managingOrgSection(): string[] {
     "- Every change is recorded and shown to the humans and to the affected agents' managers.",
     "- You can add deny and ask rules but never remove them. The local runtime, runtime, image and permission mode, user accounts, secret values and manage_org itself are for humans.",
     "- Read before you write: `get_agent` returns the hash `update_agent` needs.",
+    "- With `mcp__factory__create_template` and `write_template_file` you can create and edit templates; `get_template` returns the hash `write_template_file` needs.",
     "- Your own changes restart you when you're idle (background tasks finished; crons are stopped), and you continue on your own.",
     "",
   ];

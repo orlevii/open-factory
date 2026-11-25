@@ -34,6 +34,7 @@ import { ConfigResolver } from "./config-resolver.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
 import { liveCredentialId } from "./live-credential.ts";
+import { PolicyInputs } from "./policy-inputs.ts";
 import { AgentRuntimes } from "./runtimes.ts";
 import { createPrepareStart, type PrepareStart } from "./start.ts";
 import { noForward, noopTokens, sendAs, silentLog } from "./testing/runtime-harness.ts";
@@ -209,7 +210,12 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     vault,
     workspace,
     resolver: new ConfigResolver({
-      templates: new TemplateIndex({ db: t.db, config: factoryConfig, library }),
+      templates: new TemplateIndex({
+        db: t.db,
+        config: factoryConfig,
+        library,
+        policy: new PolicyInputs({ db: t.db, library }),
+      }),
       library,
     }),
     lock,
@@ -231,7 +237,12 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
       claudeBin: factoryConfig.dockerClaudeBin,
       defaultImage: IMAGE,
       resolver: new ConfigResolver({
-        templates: new TemplateIndex({ db: t.db, config: factoryConfig, library }),
+        templates: new TemplateIndex({
+          db: t.db,
+          config: factoryConfig,
+          library,
+          policy: new PolicyInputs({ db: t.db, library }),
+        }),
         library,
       }),
     },

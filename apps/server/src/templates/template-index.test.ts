@@ -11,9 +11,10 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
-import { type ConfigDoc, describeDocChanges } from "@open-factory/shared";
+import { type Actor, type ConfigDoc, describeDocChanges } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { loadConfig } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
@@ -22,6 +23,7 @@ import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import { configDocHash, type TemplateChange, TemplateIndex } from "./template-index.ts";
 
+const human: Actor = { kind: "human", handle: "or" };
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let idx: TemplateIndex;
 let home: string;
@@ -46,7 +48,12 @@ beforeAll(async () => {
     FACTORY_HOST_CLAUDE_DIR: hostClaude,
   });
   library = hostOnlyLibrary(hostClaude, home);
-  idx = new TemplateIndex({ db: t.db, config: cfg, library });
+  idx = new TemplateIndex({
+    db: t.db,
+    config: cfg,
+    library,
+    policy: new PolicyInputs({ db: t.db, library }),
+  });
   idx.onChange((e) => {
     events.push(e);
   });
@@ -54,7 +61,7 @@ beforeAll(async () => {
 afterAll(() => t.close());
 
 test("create → scan → detail; on-disk edits and deletions show on the next scan", async () => {
-  await idx.create({ name: "tech-lead", displayName: "Tech Lead" });
+  await idx.create({ name: "tech-lead", displayName: "Tech Lead" }, human);
   expect(readFileSync(path.join(home, "templates/tech-lead/template.yaml"), "utf8")).toContain(
     "runtime: docker",
   );
@@ -69,13 +76,13 @@ test("create → scan → detail; on-disk edits and deletions show on the next s
   mkdirSync(path.join(home, "templates/not-a-template"));
   rows = await idx.scan();
   expect(rows.map((r) => r.name)).toEqual(["tech-lead"]);
-  await expect(idx.create({ name: "tech-lead", displayName: "X" })).rejects.toMatchObject({
+  await expect(idx.create({ name: "tech-lead", displayName: "X" }, human)).rejects.toMatchObject({
     code: "template_exists",
   });
 });
 
 test("writeFile: hash check, invalid content still written, optional file creation", async () => {
-  await idx.create({ name: "w1", displayName: "W" });
+  await idx.create({ name: "w1", displayName: "W" }, human);
   const d = await idx.detail("w1");
   const yaml = d.files.find((f) => f.file === "template.yaml");
   const res = await idx.writeFile(
@@ -83,18 +90,18 @@ test("writeFile: hash check, invalid content still written, optional file creati
     "template.yaml",
     "name: w1\ndisplay_name: W\nmodle: x\n",
     yaml?.hash ?? null,
-    "@or",
+    human,
   );
   expect(res.issues.some((i) => i.severity === "error")).toBe(true);
   await expect(
-    idx.writeFile("w1", "template.yaml", "x", yaml?.hash ?? null, "@or"),
+    idx.writeFile("w1", "template.yaml", "x", yaml?.hash ?? null, human),
   ).rejects.toMatchObject({ code: "changed_on_disk", extra: { currentHash: res.hash } });
-  await idx.writeFile("w1", "mcp.json", '{"mcpServers":{}}', null, "@or");
+  await idx.writeFile("w1", "mcp.json", '{"mcpServers":{}}', null, human);
   expect(existsSync(path.join(home, "templates/w1/mcp.json"))).toBe(true);
 });
 
 test("validate substitutes content without writing", async () => {
-  await idx.create({ name: "v1", displayName: "V" });
+  await idx.create({ name: "v1", displayName: "V" }, human);
   const issues = await idx.validate(
     "v1",
     "template.yaml",
@@ -105,7 +112,7 @@ test("validate substitutes content without writing", async () => {
 });
 
 test("remove deletes a folder, and only the link for a symlinked folder; 404 for gone templates", async () => {
-  await idx.create({ name: "r1", displayName: "R" });
+  await idx.create({ name: "r1", displayName: "R" }, human);
   await idx.remove("r1");
   expect(existsSync(path.join(home, "templates/r1"))).toBe(false);
   const outside = mkdtempSync(path.join(tmpdir(), "ext-"));
@@ -119,7 +126,7 @@ test("remove deletes a folder, and only the link for a symlinked folder; 404 for
 });
 
 test("content hash covers skills/ and files/", async () => {
-  await idx.create({ name: "h1", displayName: "H" });
+  await idx.create({ name: "h1", displayName: "H" }, human);
   const before = (await idx.scanOne("h1"))?.contentHash;
   mkdirSync(path.join(home, "templates/h1/files"), { recursive: true });
   writeFileSync(path.join(home, "templates/h1/files/x.txt"), "x");
@@ -135,10 +142,13 @@ test("content hash covers skills/ and files/", async () => {
 
 test("create round-trips long and special-character descriptions", async () => {
   const long = "word ".repeat(30).trim();
-  await idx.create({ name: "d-long", displayName: "D", description: long });
+  await idx.create({ name: "d-long", displayName: "D", description: long }, human);
   expect((await idx.detail("d-long")).config?.description).toBe(long);
   const special = "see #1: a thing, really";
-  await idx.create({ name: "d-spec", displayName: "Hash # and: colon", description: special });
+  await idx.create(
+    { name: "d-spec", displayName: "Hash # and: colon", description: special },
+    human,
+  );
   const d = await idx.detail("d-spec");
   expect(d.config?.description).toBe(special);
   expect(d.config?.displayName).toBe("Hash # and: colon");
@@ -152,14 +162,14 @@ test("create removes its folder when a later write fails", async () => {
       throw new Error("boom");
     },
   };
-  await expect(idx.create(b)).rejects.toThrow("boom");
+  await expect(idx.create(b, human)).rejects.toThrow("boom");
   expect(existsSync(path.join(home, "templates/bad-create"))).toBe(false);
 });
 
 test("names that fail the pattern are 404 everywhere", async () => {
   for (const n of ["../x", "A"]) {
     await expect(idx.detail(n)).rejects.toMatchObject({ code: "template_not_found" });
-    await expect(idx.writeFile(n, "AGENTS.md", "x", null, "@or")).rejects.toMatchObject({
+    await expect(idx.writeFile(n, "AGENTS.md", "x", null, human)).rejects.toMatchObject({
       status: 404,
     });
     await expect(idx.validate(n, "AGENTS.md", "x")).rejects.toMatchObject({ status: 404 });
@@ -168,8 +178,8 @@ test("names that fail the pattern are 404 everywhere", async () => {
 });
 
 test("scan prunes a row whose folder vanished; remove of a gone folder drops the stale row", async () => {
-  await idx.create({ name: "gone1", displayName: "G" });
-  await idx.create({ name: "gone2", displayName: "G" });
+  await idx.create({ name: "gone1", displayName: "G" }, human);
+  await idx.create({ name: "gone2", displayName: "G" }, human);
   await rm(path.join(home, "templates/gone1"), { recursive: true });
   expect((await idx.scan()).map((r) => r.name)).not.toContain("gone1");
   const hasRow = async (n: string) =>
@@ -182,8 +192,8 @@ test("scan prunes a row whose folder vanished; remove of a gone folder drops the
 });
 
 test("a folder that fails to index is skipped without pruning the others or its own row", async () => {
-  await idx.create({ name: "ok1", displayName: "O" });
-  await idx.create({ name: "flaky1", displayName: "F" });
+  await idx.create({ name: "ok1", displayName: "O" }, human);
+  await idx.create({ name: "flaky1", displayName: "F" }, human);
   expect((await idx.scan()).map((r) => r.name)).toContain("flaky1");
   const hasRow = async (n: string) =>
     (await t.db.select().from(schema.templates).where(eq(schema.templates.name, n))).length > 0;
@@ -219,7 +229,7 @@ test("a user image counts only as a direct child of images/: a link leaving it d
 });
 
 test("a change to skills fires onChange once, with before and after", async () => {
-  await idx.create({ name: "cd1", displayName: "C" });
+  await idx.create({ name: "cd1", displayName: "C" }, human);
   await idx.scanOne("cd1");
   await settle("cd1", 1);
   expect(eventsFor("cd1")[0]?.before).toBeNull();
@@ -237,7 +247,7 @@ test("a change to skills fires onChange once, with before and after", async () =
 });
 
 test("I2 §7.2: adding a skills/ folder fires onChange once; the diff says added template skill x", async () => {
-  await idx.create({ name: "cd-ls", displayName: "C" });
+  await idx.create({ name: "cd-ls", displayName: "C" }, human);
   await idx.scanOne("cd-ls");
   await settle("cd-ls", 1);
   expect(eventsFor("cd-ls")[0]?.after.template.local_skill_names).toEqual([]);
@@ -257,7 +267,7 @@ test("I2 §7.2: adding a skills/ folder fires onChange once; the diff says added
 });
 
 test("five concurrent scanOne calls after one edit fire exactly once", async () => {
-  await idx.create({ name: "cd2", displayName: "C" });
+  await idx.create({ name: "cd2", displayName: "C" }, human);
   await idx.scanOne("cd2");
   await settle("cd2", 1);
   writeFileSync(yamlPath("cd2"), yamlWith("cd2", "skills: [release]\n"));
@@ -268,7 +278,7 @@ test("five concurrent scanOne calls after one edit fire exactly once", async () 
 });
 
 test("an AGENTS.md edit moves content_hash but not last_valid_hash, and fires nothing", async () => {
-  await idx.create({ name: "cd3", displayName: "C" });
+  await idx.create({ name: "cd3", displayName: "C" }, human);
   const first = await idx.scanOne("cd3");
   await settle("cd3", 1);
   writeFileSync(path.join(home, "templates/cd3/AGENTS.md"), "# Changed\n");
@@ -281,7 +291,7 @@ test("an AGENTS.md edit moves content_hash but not last_valid_hash, and fires no
 });
 
 test("valid, invalid, valid again: no event while invalid, then before is the old doc", async () => {
-  await idx.create({ name: "cd4", displayName: "C" });
+  await idx.create({ name: "cd4", displayName: "C" }, human);
   const v1 = await idx.scanOne("cd4");
   await settle("cd4", 1);
   writeFileSync(yamlPath("cd4"), yamlWith("cd4", "modle: x\n"));
@@ -300,7 +310,7 @@ test("valid, invalid, valid again: no event while invalid, then before is the ol
 });
 
 test("returning to the same valid parse after an invalid one only flips valid back", async () => {
-  await idx.create({ name: "cd5", displayName: "C" });
+  await idx.create({ name: "cd5", displayName: "C" }, human);
   const original = readFileSync(yamlPath("cd5"), "utf8");
   await idx.scanOne("cd5");
   await settle("cd5", 1);
@@ -313,7 +323,7 @@ test("returning to the same valid parse after an invalid one only flips valid ba
 });
 
 test("a folder deleted and restored fires with before null", async () => {
-  await idx.create({ name: "cd6", displayName: "C" });
+  await idx.create({ name: "cd6", displayName: "C" }, human);
   await idx.scanOne("cd6");
   await settle("cd6", 1);
   const yaml = readFileSync(yamlPath("cd6"), "utf8");
@@ -329,7 +339,7 @@ test("a folder deleted and restored fires with before null", async () => {
 });
 
 test("a write through the API reports its author; scanOne never awaits listeners", async () => {
-  await idx.create({ name: "cd7", displayName: "C" });
+  await idx.create({ name: "cd7", displayName: "C" }, human);
   await idx.scanOne("cd7");
   await settle("cd7", 1);
   let release: () => void = () => {};
@@ -337,7 +347,12 @@ test("a write through the API reports its author; scanOne never awaits listeners
   const gate = new Promise<void>((r) => {
     release = r;
   });
-  const slow = new TemplateIndex({ db: t.db, config: cfg, library });
+  const slow = new TemplateIndex({
+    db: t.db,
+    config: cfg,
+    library,
+    policy: new PolicyInputs({ db: t.db, library }),
+  });
   const slowSeen: TemplateChange[] = [];
   slow.onChange(async (e) => {
     started = true;
@@ -347,13 +362,10 @@ test("a write through the API reports its author; scanOne never awaits listeners
   await slow.scanOne("cd7");
   const hash = (await idx.detail("cd7")).files.find((f) => f.file === "template.yaml")?.hash;
   const res = await Promise.race([
-    slow.writeFile(
-      "cd7",
-      "template.yaml",
-      yamlWith("cd7", "skills: [tdd]\n"),
-      hash ?? null,
-      "@ana",
-    ),
+    slow.writeFile("cd7", "template.yaml", yamlWith("cd7", "skills: [tdd]\n"), hash ?? null, {
+      kind: "human",
+      handle: "ana",
+    }),
     new Promise((r) => setTimeout(() => r("timeout"), 5000)),
   ]);
   expect(res).not.toBe("timeout");
@@ -365,7 +377,13 @@ test("a write through the API reports its author; scanOne never awaits listeners
 test("a failing listener is logged and does not stop the next one", async () => {
   const logged: unknown[] = [];
   const log = { error: (...a: unknown[]) => void logged.push(a) };
-  const own = new TemplateIndex({ db: t.db, config: cfg, library, log: log as never });
+  const own = new TemplateIndex({
+    db: t.db,
+    config: cfg,
+    library,
+    policy: new PolicyInputs({ db: t.db, library }),
+    log: log as never,
+  });
   const seen: string[] = [];
   own.onChange(() => {
     throw new Error("listener boom");
@@ -373,7 +391,7 @@ test("a failing listener is logged and does not stop the next one", async () => 
   own.onChange((e) => {
     seen.push(e.name);
   });
-  await idx.create({ name: "cd8", displayName: "C" });
+  await idx.create({ name: "cd8", displayName: "C" }, human);
   writeFileSync(
     path.join(home, "templates/cd8/mcp.json"),
     JSON.stringify({ mcpServers: { gh: { command: "x", env: { TOKEN: SECRET } } } }),
@@ -446,7 +464,7 @@ async function seedUser(
 }
 
 test("remove refuses with template_in_use while an agent, archived included, uses it", async () => {
-  await idx.create({ name: "use1", displayName: "U" });
+  await idx.create({ name: "use1", displayName: "U" }, human);
   await seedUser("ana", { template: "use1" });
   await seedUser("bo", { template: "use1", archived: true });
   await seedUser("cy", { template: "use1" });
@@ -459,14 +477,14 @@ test("remove refuses with template_in_use while an agent, archived included, use
 });
 
 test("terminated spawned agents don't block deletion", async () => {
-  await idx.create({ name: "use2", displayName: "U" });
+  await idx.create({ name: "use2", displayName: "U" }, human);
   await seedUser("dee", { template: "use2", terminated: true });
   await idx.remove("use2");
   expect(existsSync(path.join(home, "templates/use2"))).toBe(false);
 });
 
 test("a slow older scan cannot regress last_valid after a newer scan won", async () => {
-  await idx.create({ name: "cd9", displayName: "C" });
+  await idx.create({ name: "cd9", displayName: "C" }, human);
   await idx.scanOne("cd9");
   await settle("cd9", 1);
   writeFileSync(yamlPath("cd9"), yamlWith("cd9", "skills: [tdd]\n"));

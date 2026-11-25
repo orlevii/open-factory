@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { Dirent } from "node:fs";
+import { constants, type Dirent } from "node:fs";
 import {
   lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -14,11 +15,15 @@ import {
 import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import {
+  type Actor,
+  actorBy,
+  agentPolicyIssues,
   CONFIG_FILES,
   type ConfigDoc,
   type ConfigHashes,
   canonicalJson,
   isUserImageRef,
+  LOCAL_RUNTIME_REFUSAL,
   LOCAL_SKILL_NAMES,
   NAME_PATTERN,
   TEMPLATE_FILES,
@@ -27,11 +32,14 @@ import {
   type TemplateDetail,
   type TemplateFile,
   type TemplateIssue,
+  touchesLocalRuntime,
   yamlPart,
 } from "@open-factory/shared";
 import { and, asc, count, eq, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { stringify } from "yaml";
+import { OrgRefusedError } from "../agents/errors.ts";
+import type { PolicyInputs } from "../agents/policy-inputs.ts";
 import { type Config, localRuntimeAllowed } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import { imageDir } from "../images/context.ts";
@@ -40,7 +48,7 @@ import { avatarStat } from "./avatar.ts";
 import { KeyLock } from "./key-lock.ts";
 import { parseJson, parseYaml } from "./parse.ts";
 import { type ValidationContext, validateTemplate } from "./validate.ts";
-import { applyConfigToYaml } from "./yaml-write.ts";
+import { applyConfigToYaml, copyIdentityToYaml } from "./yaml-write.ts";
 
 export type TemplateRow = typeof schema.templates.$inferSelect;
 
@@ -58,6 +66,8 @@ export type TemplateChange = {
   before: ConfigDoc | null;
   after: ConfigDoc;
   by: string;
+  /** Who wrote it, for a write through the API; absent for a change found on disk (`by` is then FILE_CHANGE). */
+  actor?: Actor;
 };
 export type TemplateChangeListener = (e: TemplateChange) => void | Promise<void>;
 
@@ -72,6 +82,16 @@ async function isDir(p: string) {
     return (await stat(p)).isDirectory();
   } catch {
     return false;
+  }
+}
+
+/** Reads a file through a handle opened with `O_NOFOLLOW`: a link swapped in after the check fails (ELOOP). */
+async function readNoFollow(p: string): Promise<Buffer> {
+  const h = await open(p, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    return await h.readFile();
+  } finally {
+    await h.close();
   }
 }
 
@@ -112,11 +132,17 @@ export class TemplateIndex {
     LibraryIndex,
     "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt"
   >;
+  private readonly policy: Pick<
+    PolicyInputs,
+    "plugins" | "templateRuntimes" | "templateHasLocalAgents"
+  >;
   private readonly log: Pick<FastifyBaseLogger, "error"> | undefined;
   private readonly listeners: TemplateChangeListener[] = [];
   /**
    * One parse-upsert-CAS (and one row delete) at a time per template, so a scan always compares against what its
-   * predecessor wrote.
+   * predecessor wrote. Every template write (`writeFile`, `writeConfig`, `create`, `remove`) holds it too. NOT
+   * re-entrant: inside it call `indexLocked` and delete the row with the db, never `scanOne`, `index` or `scan`,
+   * and never take a second template's lock.
    */
   private readonly locks = new KeyLock();
   /** Per-template serial dispatch chains (in memory: a crash loses a pending dispatch, spec §7.1). */
@@ -127,9 +153,12 @@ export class TemplateIndex {
     config: Config;
     /** Skills are validated through the Library (spec §6.6). */
     library: Pick<LibraryIndex, "resolveSkill" | "marketplaces" | "marketplaceDir" | "catalogAt">;
+    /** What the agent policy reads (spec §7.3a): the Library's plugins, other templates' runtimes, local agents. */
+    policy: Pick<PolicyInputs, "plugins" | "templateRuntimes" | "templateHasLocalAgents">;
     log?: Pick<FastifyBaseLogger, "error">;
   }) {
     this.db = d.db;
+    this.policy = d.policy;
     this.library = d.library;
     this.config = d.config;
     this.log = d.log;
@@ -259,6 +288,7 @@ export class TemplateIndex {
     name: string,
     ctx: ValidationContext,
     by: string,
+    actor?: Actor,
   ): Promise<{
     row: TemplateRow;
     doc: ConfigDoc;
@@ -317,7 +347,8 @@ export class TemplateIndex {
           ),
         )
         .returning({ name: schema.templates.name });
-      if (won.length) this.dispatch({ name, before: row.lastValid, after: doc, by });
+      if (won.length)
+        this.dispatch({ name, before: row.lastValid, after: doc, by, ...(actor ? { actor } : {}) });
     } else if (!row.valid) {
       await this.db
         .update(schema.templates)
@@ -353,11 +384,14 @@ export class TemplateIndex {
 
   private async scanOneFull(name: string, by: string) {
     const dir = this.folder(name);
-    if (!(await isDir(dir)) || !(await readOrNull(path.join(dir, "template.yaml")))) {
-      await this.deleteRow(name);
-      return undefined;
-    }
-    return this.index(name, await this.context(), by);
+    // The existence check is under the lock, so a scan started during `create` waits for the finished template.
+    return this.locks.run(name, async () => {
+      if (!(await isDir(dir)) || !(await readOrNull(path.join(dir, "template.yaml")))) {
+        await this.deleteRowLocked(name);
+        return undefined;
+      }
+      return this.indexLocked(name, await this.context(), by);
+    });
   }
 
   async scanOne(name: string, by = FILE_CHANGE): Promise<TemplateRow | undefined> {
@@ -446,30 +480,117 @@ export class TemplateIndex {
     };
   }
 
+  /**
+   * Validate-first (spec §7.3a), for every caller, under the template's lock. A hash miss is a 409. The whole template
+   * is validated as it would be written; an agent actor is also judged by the agent policy and refused on the errors the
+   * write causes (absent from the current issues). A human's write is saved with errors, as the editor shows them.
+   * Then temp + rename and `indexLocked`, which hands the writer to the template change.
+   */
   async writeFile(
     name: string,
     file: TemplateFile,
     content: string,
     baseHash: string | null,
-    by: string,
+    actor: Actor,
   ): Promise<{ hash: string; issues: TemplateIssue[] }> {
     const dir = this.folder(name);
-    if (!(await isDir(dir))) throw notFound(name);
-    const target = path.join(dir, file);
-    const current = await readOrNull(target);
-    const currentHash = current ? fileHash(current) : null;
-    if (currentHash !== baseHash)
-      throw new ApiError(
-        409,
-        "changed_on_disk",
-        "Changed on disk since you opened it. Reload to see the changes.",
-        { currentHash },
-      );
-    const tmp = `${target}.${randomBytes(4).toString("hex")}.tmp`;
-    await writeFile(tmp, content);
-    await rename(tmp, target);
-    const row = await this.scanOne(name, by);
-    return { hash: fileHash(Buffer.from(content)), issues: row?.issues ?? [] };
+    return this.locks.run(name, async () => {
+      const ctx = await this.context();
+      if (!(await isDir(dir))) throw notFound(name);
+      const target = path.join(dir, file);
+      if (actor.kind === "agent") await this.refuseLinks(dir, name, target, file);
+      const current = await readOrNull(target);
+      const currentHash = current ? fileHash(current) : null;
+      if (currentHash !== baseHash)
+        throw new ApiError(
+          409,
+          "changed_on_disk",
+          "Changed on disk since you opened it. Reload to see the changes.",
+          { currentHash },
+        );
+      if (actor.kind === "agent") await this.refuseAgentWrite(dir, name, ctx, file, content);
+      const tmp = `${target}.${randomBytes(4).toString("hex")}.tmp`;
+      await writeFile(tmp, content);
+      await rename(tmp, target);
+      const full = await this.indexLocked(name, ctx, actorBy(actor), actor);
+      return { hash: fileHash(Buffer.from(content)), issues: full.row.issues };
+    });
+  }
+
+  /** An agent never writes through a link (matching `orgView`'s `lstat` rule). */
+  private async refuseLinks(dir: string, name: string, target: string, file: TemplateFile) {
+    if ((await lstat(dir)).isSymbolicLink())
+      throw new OrgRefusedError(`${name} is a link; ask a human.`);
+    const st = await lstat(target).catch(() => null);
+    if (st && !st.isFile()) throw new OrgRefusedError(`${file} is a link; ask a human.`);
+  }
+
+  /** Throws when an agent's write touches a local runtime or causes an error (policy included). Reads only. */
+  private async refuseAgentWrite(
+    dir: string,
+    name: string,
+    ctx: ValidationContext,
+    file: TemplateFile,
+    content: string,
+  ) {
+    const yamlText = await readOrNull(path.join(dir, "template.yaml"));
+    if (!yamlText || parseYaml(yamlText.toString("utf8")).error)
+      throw new OrgRefusedError("template.yaml has errors; ask a human to fix it.");
+    const was = await validateTemplate(dir, name, ctx);
+    const now = await validateTemplate(dir, name, ctx, { [file]: content });
+    const docOf = (v: typeof was): ConfigDoc => ({
+      template: { ...v.tplYaml, [LOCAL_SKILL_NAMES]: v.localSkillNames },
+      settings: v.tplSettings,
+      mcp: v.tplMcp,
+    });
+    const policyIssues = await this.agentPolicy(name, docOf(was), docOf(now));
+    const key = (i: TemplateIssue) => `${i.message}\0${i.path ?? ""}`;
+    const had = new Set(was.issues.map(key));
+    const caused = [...now.issues.filter((i) => i.severity === "error"), ...policyIssues].filter(
+      (i) => !had.has(key(i)),
+    );
+    if (caused.length)
+      throw new ApiError(400, "invalid_config", "The configuration has errors.", {
+        issues: caused,
+      });
+  }
+
+  /**
+   * The agent rules over a change from `before` to `after` of template `name`. A local runtime is refused outright
+   * (`OrgRefusedError`) when `before` is local or has local agents, or when the change adds a `can_spawn` entry that
+   * is local or missing (rule 8): entries `before` already had don't count, so an agent can still repair a broken
+   * template (spec §7.3a). A copy (`copying`) adds every entry to a new template. Anything else the policy objects
+   * to is returned. Reads only.
+   */
+  private async agentPolicy(name: string, before: ConfigDoc, after: ConfigDoc, copying = false) {
+    const spawns = (d: ConfigDoc) => {
+      const raw = yamlPart(d.template).can_spawn;
+      return Array.isArray(raw) ? raw.filter((n): n is string => typeof n === "string") : [];
+    };
+    const had = new Set(copying ? [] : spawns(before));
+    const runtime = yamlPart(before.template).runtime;
+    if (
+      touchesLocalRuntime({
+        templateRuntime: typeof runtime === "string" ? runtime : undefined,
+        templateHasLocalAgents: await this.policy.templateHasLocalAgents(name),
+        canSpawnRuntimes: await this.policy.templateRuntimes(
+          [...new Set(spawns(after))].filter((n) => !had.has(n)),
+        ),
+      })
+    )
+      throw new OrgRefusedError(LOCAL_RUNTIME_REFUSAL);
+    const y = yamlPart(before.template);
+    return agentPolicyIssues({
+      target: "template",
+      before,
+      after,
+      frozen: {
+        runtime: typeof y.runtime === "string" ? y.runtime : "docker",
+        image: typeof y.image === "string" ? y.image : null,
+        permission_mode: typeof y.permission_mode === "string" ? y.permission_mode : "auto",
+      },
+      plugins: await this.policy.plugins([after]),
+    });
   }
 
   /**
@@ -479,16 +600,18 @@ export class TemplateIndex {
    */
   async readConfig(name: string): Promise<TemplateConfigResponse> {
     const dir = this.folder(name);
-    if (!(await isDir(dir)) || !(await readOrNull(path.join(dir, "template.yaml")))) {
-      await this.deleteRow(name);
-      throw notFound(name);
-    }
-    const ctx = await this.context();
-    // Hashes and parse under one lock hold, so a save can't land between them.
-    const { hashes, full } = await this.locks.run(name, async () => ({
-      hashes: await this.configHashes(dir),
-      full: await this.indexLocked(name, ctx, FILE_CHANGE),
-    }));
+    // Existence, hashes and parse under one lock hold: a save can't land between them, and a read started during
+    // `create` waits for the finished template instead of reporting a 404.
+    const { hashes, full } = await this.locks.run(name, async () => {
+      if (!(await isDir(dir)) || !(await readOrNull(path.join(dir, "template.yaml")))) {
+        await this.deleteRowLocked(name);
+        throw notFound(name);
+      }
+      return {
+        hashes: await this.configHashes(dir),
+        full: await this.indexLocked(name, await this.context(), FILE_CHANGE),
+      };
+    });
     const { row, doc } = full;
     const rows = await this.db
       .select({ archived: isNotNull(schema.agents.archivedAt) })
@@ -525,13 +648,14 @@ export class TemplateIndex {
    * I2 §12.1 `PUT /api/templates/:name/config`. Under the template's lock: every base hash is checked (409
    * `changed_on_disk` with today's hashes), the three new texts are built and the whole template is validated as it
    * would be written (an error gives a 400 and nothing is written), then only the files whose content changed are
-   * written (temp + rename). The rescan after the lock fires the template change once. `by` is the caller's handle.
+   * written (temp + rename). The rescan inside the lock fires the template change once, with the caller as its actor.
+   * Human only, by type: no agent policy runs here, so no agent path exists (spec §7.3a).
    */
   async writeConfig(
     name: string,
     doc: ConfigDoc,
     baseHashes: ConfigHashes,
-    by: string,
+    actor: Extract<Actor, { kind: "human" }>,
   ): Promise<{ hashes: ConfigHashes; issues: TemplateIssue[]; changed: boolean }> {
     const dir = this.folder(name);
     if (!(await isDir(dir))) throw notFound(name);
@@ -612,8 +736,10 @@ export class TemplateIndex {
       } finally {
         await Promise.all(temps.map(([tmp]) => rm(tmp, { force: true })));
       }
-      // Even after a failed write the index must match the disk, and `by` is this caller's.
-      const row = await this.indexLocked(name, await this.context(), by).catch(() => undefined);
+      // Even after a failed write the index must match the disk, and the author is this caller.
+      const row = await this.indexLocked(name, await this.context(), actorBy(actor), actor).catch(
+        () => undefined,
+      );
       if (failure) throw failure;
       const after = { ...hashes };
       for (const [file, content] of Object.entries(next))
@@ -632,70 +758,196 @@ export class TemplateIndex {
     return (await validateTemplate(dir, name, await this.context(), { [file]: content })).issues;
   }
 
-  async create(b: { name: string; displayName: string; description?: string }): Promise<void> {
+  async create(
+    b: { name: string; displayName: string; description?: string },
+    actor: Actor,
+  ): Promise<{ issues: TemplateIssue[] }> {
     const dir = this.folder(b.name);
-    await mkdir(this.dir, { recursive: true });
-    try {
-      await mkdir(dir);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "EEXIST")
-        throw new ApiError(409, "template_exists", `A template named ${b.name} already exists.`);
-      throw e;
+    return this.locks.run(b.name, async () => {
+      await mkdir(this.dir, { recursive: true });
+      try {
+        await mkdir(dir);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EEXIST")
+          throw new ApiError(409, "template_exists", `A template named ${b.name} already exists.`);
+        throw e;
+      }
+      try {
+        const yaml = stringify(
+          {
+            name: b.name,
+            display_name: b.displayName,
+            description: b.description ?? "",
+            runtime: "docker",
+          },
+          { lineWidth: 0 },
+        );
+        await writeFile(path.join(dir, "template.yaml"), yaml);
+        await writeFile(path.join(dir, "AGENTS.md"), `# ${b.displayName}\n`);
+      } catch (e) {
+        await rm(dir, { recursive: true, force: true });
+        throw e;
+      }
+      const full = await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
+      return { issues: full.row.issues };
+    });
+  }
+
+  /**
+   * I7 §7.3: a new template from an existing one. The source is checked (`scanOneFull` takes only its lock) and
+   * `from === name` refused before the new name's lock is taken, and no step holds two locks, so crossed copies
+   * can't deadlock. Under the new name's lock: `mkdir` (EEXIST is a 409), then template.yaml (name, display_name and
+   * description rewritten through the YAML Document, comments kept), the other three files as bytes and `skills/`
+   * entry by entry, every one `lstat`ed: a link refuses the whole copy and the half-made folder is removed. `files/`
+   * and `avatar.svg` stay behind. The agent policy runs with `before` = `after` = the source's doc (empty today by
+   * construction, so a future rule applies to copies too).
+   */
+  async copyFrom(
+    from: string,
+    b: { name: string; displayName: string; description?: string },
+    actor: Actor,
+  ): Promise<{ issues: TemplateIssue[] }> {
+    const srcDir = this.folder(from);
+    const dir = this.folder(b.name);
+    const exists = () =>
+      new ApiError(409, "template_exists", `A template named ${b.name} already exists.`);
+    if (from === b.name) throw exists();
+    const src = await this.scanOneFull(from, FILE_CHANGE);
+    if (!src) throw notFound(from);
+    // Links first: a linked `skills/` is also a template error, and the refusal should say which link it is.
+    const files = await this.planCopy(srcDir);
+    if (src.row.issues.some((i) => i.severity === "error") || !src.row.config)
+      throw new ApiError(409, "template_invalid", `Template ${from} has errors; fix it first.`, {
+        issues: src.row.issues,
+      });
+    if (actor.kind === "agent") {
+      const issues = await this.agentPolicy(from, src.doc, src.doc, true);
+      if (issues.length)
+        throw new ApiError(400, "invalid_config", "The configuration has errors.", { issues });
     }
-    try {
-      const yaml = stringify(
-        {
-          name: b.name,
-          display_name: b.displayName,
-          description: b.description ?? "",
-          runtime: "docker",
-        },
-        { lineWidth: 0 },
+    return this.locks.run(b.name, async () => {
+      await mkdir(this.dir, { recursive: true });
+      try {
+        await mkdir(dir);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "EEXIST") throw exists();
+        throw e;
+      }
+      try {
+        await this.copyFiles(srcDir, dir, files, b);
+        if (actor.kind === "agent") await this.refuseCopied(from, src.doc, dir, b.name);
+      } catch (e) {
+        await rm(dir, { recursive: true, force: true });
+        throw e;
+      }
+      const full = await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
+      return { issues: full.row.issues };
+    });
+  }
+
+  /**
+   * The files a copy takes, as paths relative to the template: template.yaml, the three other files that exist and
+   * every file under `skills/`. `lstat` on every entry: a link (or anything that isn't a file or folder) refuses the
+   * whole copy. Hidden entries of `skills/` are skipped, like validation.
+   */
+  private async planCopy(srcDir: string): Promise<string[]> {
+    const notLink = (rel: string, what: "file" | "folder") =>
+      new ApiError(400, "invalid_template", `${rel} must be a ${what}, not a link.`);
+    const out: string[] = [];
+    for (const f of ["template.yaml", "settings.json", "mcp.json", "AGENTS.md"]) {
+      const st = await lstat(path.join(srcDir, f)).catch(() => null);
+      if (st && !st.isFile()) throw notLink(f, "file");
+      if (st) out.push(f);
+    }
+    const walk = async (rel: string) => {
+      for (const e of await readdir(path.join(srcDir, rel), { withFileTypes: true })) {
+        const r = `${rel}/${e.name}`;
+        if (e.isDirectory()) await walk(r);
+        else if (e.isFile()) out.push(r);
+        else throw notLink(r, "file");
+      }
+    };
+    const skills = await lstat(path.join(srcDir, "skills")).catch(() => null);
+    if (!skills) return out;
+    if (!skills.isDirectory()) throw notLink("skills/", "folder");
+    for (const entry of (await readdir(path.join(srcDir, "skills"))).sort()) {
+      if (entry.startsWith(".")) continue;
+      const rel = `skills/${entry}`;
+      if (!(await lstat(path.join(srcDir, rel))).isDirectory()) throw notLink(rel, "folder");
+      await walk(rel);
+    }
+    return out;
+  }
+
+  /** What was copied, not the snapshot: the new folder is validated and the agent rules run over it (spec §7.3). */
+  private async refuseCopied(from: string, before: ConfigDoc, dir: string, name: string) {
+    const v = await validateTemplate(dir, name, await this.context());
+    const doc: ConfigDoc = {
+      template: { ...v.tplYaml, [LOCAL_SKILL_NAMES]: v.localSkillNames },
+      settings: v.tplSettings,
+      mcp: v.tplMcp,
+    };
+    const issues = [
+      ...v.issues.filter((i) => i.severity === "error"),
+      ...(await this.agentPolicy(from, before, doc, true)),
+    ];
+    if (issues.length)
+      throw new ApiError(400, "invalid_config", "The configuration has errors.", { issues });
+  }
+
+  private async copyFiles(
+    srcDir: string,
+    dir: string,
+    files: string[],
+    b: { name: string; displayName: string; description?: string },
+  ) {
+    for (const rel of files) {
+      const bytes = await readNoFollow(path.join(srcDir, rel));
+      await mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+      await writeFile(
+        path.join(dir, rel),
+        rel === "template.yaml"
+          ? copyIdentityToYaml(bytes.toString("utf8"), b.name, b.displayName, b.description ?? "")
+          : bytes,
       );
-      await writeFile(path.join(dir, "template.yaml"), yaml);
-      await writeFile(path.join(dir, "AGENTS.md"), `# ${b.displayName}\n`);
-    } catch (e) {
-      await rm(dir, { recursive: true, force: true });
-      throw e;
     }
-    await this.scanOne(b.name);
   }
 
   async remove(name: string): Promise<void> {
     const dir = this.folder(name);
-    let st: Awaited<ReturnType<typeof lstat>>;
-    try {
-      st = await lstat(dir);
-    } catch {
-      await this.deleteRow(name);
-      throw notFound(name);
-    }
-    const users = await this.db
-      .select({ slug: schema.agents.slug, archived: isNotNull(schema.agents.archivedAt) })
-      .from(schema.agents)
-      .where(and(eq(schema.agents.template, name), isNull(schema.agents.terminatedAt)))
-      .orderBy(sql`${schema.agents.archivedAt} IS NOT NULL`, asc(schema.agents.createdAt));
-    const first = users[0];
-    if (first) {
-      const more = users.length > 1 ? ` and ${users.length - 1} more` : "";
-      const archived = users.filter((u) => u.archived).length;
-      const arch = archived ? ` (${archived} archived)` : "";
-      throw new ApiError(
-        409,
-        "template_in_use",
-        `@${first.slug}${more}${arch} ${users.length === 1 ? "uses" : "use"} this template. Archive and recreate them first.`,
-      );
-    }
-    if (st.isSymbolicLink()) await unlink(dir);
-    else await rm(dir, { recursive: true });
-    await this.deleteRow(name);
+    return this.locks.run(name, async () => {
+      let st: Awaited<ReturnType<typeof lstat>>;
+      try {
+        st = await lstat(dir);
+      } catch {
+        await this.deleteRowLocked(name);
+        throw notFound(name);
+      }
+      const users = await this.db
+        .select({ slug: schema.agents.slug, archived: isNotNull(schema.agents.archivedAt) })
+        .from(schema.agents)
+        .where(and(eq(schema.agents.template, name), isNull(schema.agents.terminatedAt)))
+        .orderBy(sql`${schema.agents.archivedAt} IS NOT NULL`, asc(schema.agents.createdAt));
+      const first = users[0];
+      if (first) {
+        const more = users.length > 1 ? ` and ${users.length - 1} more` : "";
+        const archived = users.filter((u) => u.archived).length;
+        const arch = archived ? ` (${archived} archived)` : "";
+        throw new ApiError(
+          409,
+          "template_in_use",
+          `@${first.slug}${more}${arch} ${users.length === 1 ? "uses" : "use"} this template. Archive and recreate them first.`,
+        );
+      }
+      if (st.isSymbolicLink()) await unlink(dir);
+      else await rm(dir, { recursive: true });
+      await this.deleteRowLocked(name);
+    });
   }
 
-  /** Under the template's lock, so an index in flight can't upsert the row back after the delete. */
-  private deleteRow(name: string) {
-    return this.locks.run(name, () =>
-      this.db.delete(schema.templates).where(eq(schema.templates.name, name)),
-    );
+  /** The row delete itself: the caller holds the template's lock, so an index in flight can't upsert it back. */
+  private async deleteRowLocked(name: string) {
+    await this.db.delete(schema.templates).where(eq(schema.templates.name, name));
   }
 
   /** For agent starts and creation: the validated template, its folder, its parts and its ConfigDoc. */

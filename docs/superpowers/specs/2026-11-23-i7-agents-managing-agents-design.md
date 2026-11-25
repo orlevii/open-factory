@@ -367,7 +367,7 @@ Registered together by `orgTools(d)` (`mcp/tools/org-tools.ts`, one file per gro
 
 **Every template write path takes the lock:**
 - `writeFile` (new);
-- I2's `PUT /api/templates/:name/config` (`writeConfig`, already under it; for an agent actor it would also run the policy, but no tool calls it);
+- I2's `PUT /api/templates/:name/config` (`writeConfig`, already under it; its `actor` is typed human-only, so no agent path exists and no policy runs there);
 - `create`, `copyFrom` and `remove` (new; `create` calls `indexLocked` inside, `remove` deletes the row inside).
 
 The policy's `can_spawn` runtime lookups read other templates' last valid parse from the DB index, never through their locks, so two templates that name each other can't deadlock.

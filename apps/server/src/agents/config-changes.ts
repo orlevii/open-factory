@@ -40,9 +40,16 @@ function inheritedChanged(a: ConfigDoc, b: ConfigDoc): boolean {
   );
 }
 
-/** The event's `by` for a template change (spec §7.3): "template dev", or "a file change in template dev". */
+/**
+ * The event's `by` for a template change (spec §7.3, §8.1): "@hr in template dev" for an agent's write, else "template
+ * dev", or "a file change in template dev".
+ */
 const templateBy = (e: TemplateChange) =>
-  e.by === FILE_CHANGE ? `a file change in template ${e.name}` : `template ${e.name}`;
+  e.actor?.kind === "agent"
+    ? `${actorBy(e.actor)} in template ${e.name}`
+    : e.by === FILE_CHANGE
+      ? `a file change in template ${e.name}`
+      : `template ${e.name}`;
 
 type Applied = { changes: string[]; restartChecked: boolean; done: Promise<void> };
 
@@ -178,6 +185,7 @@ export class ConfigChanges {
           by,
           e.before ? await this.snapshot(mergeConfig(e.before, overlay)) : null,
           await this.snapshot(mergeConfig(e.after, overlay)),
+          e.actor ?? null,
         );
         done.push(r.done);
       } catch (err) {
@@ -205,8 +213,6 @@ export class ConfigChanges {
       actorBy(actor),
       await this.snapshot(before),
       await this.snapshot(after),
-      // An agent that edits its own configuration is woken by the restart it asked for (spec §9.5).
-      actor.kind === "agent" && actor.id === agent.id,
       actor,
     );
     return { changes, restartChecked };
@@ -264,7 +270,7 @@ export class ConfigChanges {
                 plugins: now.library.plugins,
               },
             };
-        const r = await this.apply(agent, e.by, before, now);
+        const r = await this.apply(agent, e.by, before, now, null);
         done.push(r.done);
       } catch (err) {
         this.d.log.error({ err, agent: agent.slug }, "applying a library change failed");
@@ -278,10 +284,12 @@ export class ConfigChanges {
     by: string,
     before: ConfigSnapshot | null,
     after: ConfigSnapshot,
-    wake = false,
-    actor?: Actor,
+    /** Who made the change; null for a file change or a Library change. */
+    actor: Actor | null,
   ): Promise<Applied> {
     const { runtimes } = this.d;
+    // An agent that edits its own configuration is woken by the restart it asked for (spec §9.5).
+    const wake = actor?.kind === "agent" && actor.id === agent.id;
     const changes = before ? describeChanges(before, after) : [];
     if (before && !changes.length)
       return { changes, restartChecked: false, done: Promise.resolve() };
@@ -306,7 +314,7 @@ export class ConfigChanges {
       agent.reportsTo &&
       agent.reportsTo !== actor.id
     )
-      work.push(runtimes.recordReportNotice(agent.reportsTo, agent.id, by, changes));
+      work.push(runtimes.recordReportNotice(agent.reportsTo, agent.id, actorBy(actor), changes));
     if (agent.runtime === "docker") {
       const config = configOf(after.doc, agent.runtime);
       runtimes.setNextImage(agent.id, config ? runtimes.imageRef(config) : undefined);

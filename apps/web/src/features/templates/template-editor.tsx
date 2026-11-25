@@ -503,10 +503,7 @@ export function TemplateEditor({ template }: { template: TemplateDetail }) {
               isDirty={(f) => isDirty(files[f])}
               hasErrors={(f) => filesWithErrors.has(f)}
             />
-            <TabsList
-              variant="line"
-              className="h-9! w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0 @max-[40rem]:hidden"
-            >
+            <TabsList className="h-9! w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0 @max-[40rem]:hidden">
               <TabsTrigger
                 value="config"
                 className="h-full flex-none rounded-none px-2 text-[0.8125rem] font-normal text-muted-foreground data-[state=active]:text-foreground group-data-horizontal/tabs:after:bottom-0"

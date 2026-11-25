@@ -541,7 +541,7 @@ test("a live tool_result flips a subagent from Running to Failed; nested work sh
     resetSeq();
     return page([
       se({ type: "turn_started" }),
-      se({ type: "tool_call", toolUseId: "tu1", name: "Task", input: { description: "scan" } }),
+      se({ type: "tool_call", toolUseId: "tu1", name: "Agent", input: { description: "scan" } }),
       se({ type: "assistant_text", text: "nested voice", parentToolUseId: "tu1" }),
     ]);
   };
@@ -1036,7 +1036,7 @@ test("a stale list status turning into the loaded one is not announced", async (
   });
   const live = screen
     .getAllByRole("status")
-    .find((el) => el.getAttribute("aria-live") === "polite" && el.classList.contains("sr-only"));
+    .find((el) => el.getAttribute("aria-live") === "polite");
   expect(live).toBeDefined();
   expect(live?.textContent).toBe("");
 });

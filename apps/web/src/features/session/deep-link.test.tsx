@@ -18,7 +18,7 @@ const tool = (seq: number, children: Row[] = []): Row => ({
   kind: "tool",
   seq,
   at,
-  call: { type: "tool_call", toolUseId: `t${seq}`, name: "Task", input: { description: "scan" } },
+  call: { type: "tool_call", toolUseId: `t${seq}`, name: "Agent", input: { description: "scan" } },
   state: "done",
   children,
   key: `${seq}`,
@@ -26,8 +26,8 @@ const tool = (seq: number, children: Row[] = []): Row => ({
 const failure: Extract<AnyEvent, { type: "error" }> = {
   type: "error",
   source: "spawn",
-  code: "image_not_built",
-  message: "Image isn't built",
+  code: "authentication_failed",
+  message: "Sign-in failed",
 };
 const merged: Row = {
   kind: "error",
@@ -141,13 +141,6 @@ test("the timer only counts visible time: hidden, it makes no progress", async (
   expect(row).toHaveAttribute("data-arrived", "fading");
 });
 
-test("the tint no longer clears on a click elsewhere", async () => {
-  show([text(1), text(2)], 2);
-  await screen.findByText("Text 2");
-  fireEvent.pointerDown(screen.getByText("Text 1"));
-  expect(rowEl("2")).toHaveAttribute("data-arrived");
-});
-
 test("a link into a tool's children expands the holder and lands on the child", async () => {
   show([text(1), tool(2, [text(3), text(9)])], 9);
   await vi.waitFor(() => expect(rowEl("9")).toHaveFocus());
@@ -159,7 +152,7 @@ test("a link into a tool's children expands the holder and lands on the child", 
 
 test("a link into a merged failure lands on it", async () => {
   show([text(1), merged, text(7)], 5);
-  await screen.findByText(/Image isn't built/);
+  await screen.findByText(/Sign-in failed/);
   const row = rowEl("4") as HTMLElement;
   expect(row).toHaveFocus();
   expect(row).toHaveAttribute("data-arrived");

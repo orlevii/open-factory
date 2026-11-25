@@ -9,30 +9,11 @@ vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
 }));
 
-const where = (router: ReturnType<typeof renderApp>["router"]) => {
-  const l = router.state.location;
-  return `${l.pathname}${l.searchStr}${l.hash ? `#${l.hash}` : ""}`;
-};
-
-test.each([
-  ["/settings", "/settings/credentials"],
-  ["/settings#credentials", "/settings/credentials"],
-  ["/settings#secrets", "/settings/secrets"],
-  ["/settings?addSecret=X#secrets", "/settings/secrets?addSecret=X"],
-  ["/settings#projects", "/settings/projects"],
-  ["/settings#users", "/settings/users"],
-  ["/settings#usage", "/usage"],
-  ["/settings?days=7", "/usage?days=7"],
-  ["/settings?days=7#usage", "/usage?days=7"],
-  ["/settings#factory", "/settings/factory"],
-  ["/settings#nonsense", "/settings/credentials"],
-  ["/settings?days=bogus", "/settings/credentials"],
-])("%s → %s", async (from, to) => {
+test("bare /settings lands on the first section without a history entry", async () => {
   mockApi({ "GET /api/agents": () => json({ agents: [], running: { count: 0 } }) });
-  const { router } = renderApp(from, alice);
-  await waitFor(() => expect(where(router)).toBe(to));
+  const { router } = renderApp("/settings", alice);
+  await waitFor(() => expect(router.state.location.pathname).toBe("/settings/credentials"));
   await waitFor(() => expect(router.state.status).toBe("idle"));
-  // A replace: Back must not return to the redirecting URL.
   expect(router.history.canGoBack()).toBe(false);
 });
 

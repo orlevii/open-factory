@@ -385,9 +385,6 @@ test("openAt opens the menu hanging from the point, and the ⋯ reopens it from 
   act(() => ref.current?.openAt({ x: 40, y: 120 }));
   const menu = await screen.findByRole("menu", { name: "@dev" });
   expect(within(menu).getByRole("menuitem", { name: "Copy text" })).toBeInTheDocument();
-  const standIn = document.querySelector<HTMLElement>("[data-menu-stand-in]");
-  expect(standIn?.style.left).toBe("40px");
-  expect(standIn?.style.top).toBe("120px");
   await userEvent.keyboard("{Escape}");
   await vi.waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await openMenu(screen.getByRole("button", { name: "Row actions" }));

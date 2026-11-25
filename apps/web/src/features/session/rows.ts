@@ -323,7 +323,7 @@ function messageRows(se: SessionEvent, messages: Envelope[]): Row[] {
   return out;
 }
 
-const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
+const SUBAGENT_TOOLS = new Set(["Agent"]);
 
 /** The key a text block renders under (U3 §11.4): the live block and the persisted row that retires
  *  it share it, so React keeps the element (same DOM, selection and focus) at the handoff. */

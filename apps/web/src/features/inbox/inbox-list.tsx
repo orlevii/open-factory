@@ -15,8 +15,6 @@ import { ErrorLine } from "@/components/error-line";
 import { Button } from "@/components/ui/button";
 import { requestComposerFocus } from "@/features/session/session-commands";
 import { SetupBlock } from "@/features/setup/setup-steps";
-import type { SetupVisible } from "@/features/setup/use-setup-visible";
-import { useDocumentVisible } from "@/hooks/use-document-visible";
 import { onRowKeyDown } from "@/lib/row-nav";
 import { runInstantOn } from "@/lib/run-instant";
 import { sessionQueryOptions } from "@/lib/session";
@@ -83,7 +81,7 @@ function interleave(
   return rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 }
 
-/** The Inbox: a plain list of links, one per unread chat and per item sent to the humans (and factory
+/** The Inbox: a plain list of links, one per unread chat and per item sent to a human (and factory
  *  items), newest first. Arrow keys also move between rows; Tab reaches every row link as usual.
  *  With `onSelect` (the two-pane layout) a plain click, Enter or Space selects a row (push); an item is
  *  marked read at once, a chat by the pane after INBOX_DWELL_MS. `j`/`k` move the selection (replace).
@@ -93,10 +91,10 @@ export function InboxList({
   selectedId,
   selectedChat,
   onSelect,
-  setup,
+  showSetup,
 }: {
-  /** Whether the first-run steps show, from the page (it is the one that watches for them leaving). */
-  setup: SetupVisible;
+  /** Whether the first-run steps show: while no agent exists. */
+  showSetup: boolean;
   selectedId?: string;
   /** The selected chat when it has nothing unread (a reload, Back): a read row that keeps its place. */
   selectedChat?: ChatRow | undefined;
@@ -111,7 +109,6 @@ export function InboxList({
   const chats = useInboxChats();
   const updates = useInboxUpdates();
   const openUpdate = useOpenUpdate();
-  const visible = useDocumentVisible();
   const list = useRef<HTMLUListElement>(null);
   // The rows' times are relative to the minute: a number, so a selection doesn't re-render every row.
   const now = Math.floor(Date.now() / 60_000) * 60_000;
@@ -125,34 +122,13 @@ export function InboxList({
   if (inList) lastSelected.current = inList;
   else if (lastSelected.current?.agent.slug !== selectedSlug) lastSelected.current = undefined;
 
-  // A chat on screen in the pane doesn't bump its count: the one shown is capped at what it was when selected.
-  const [cap, setCap] = useState<{ id: string | undefined; n: number }>();
-  // It only ratchets down: once the pane has read the chat, a message that arrives while it is shown stays uncounted.
-  if (loaded && cap?.id !== selectedId) setCap({ id: selectedId, n: inList?.unread ?? 0 });
-  else if (cap && inList && inList.unread < cap.n) setCap({ id: cap.id, n: inList.unread });
-
   const live = useMemo(() => {
-    const shown = chats.map((c) =>
-      visible && cap && c.agent.slug === selectedSlug && cap.id === selectedId
-        ? { ...c, unread: Math.min(c.unread, cap.n) }
-        : c,
-    );
+    const shown = [...chats];
     const fallback = lastSelected.current ?? selectedChat;
     if (selectedSlug && !inList && fallback?.agent.slug === selectedSlug)
       shown.push({ ...fallback, unread: 0 });
     return interleave(shown, updates, items, q.hasNextPage);
-  }, [
-    chats,
-    updates,
-    items,
-    q.hasNextPage,
-    visible,
-    cap,
-    selectedId,
-    selectedSlug,
-    inList,
-    selectedChat,
-  ]);
+  }, [chats, updates, items, q.hasNextPage, selectedSlug, inList, selectedChat]);
   const held = useHeldList(live, rowKey, asRead, selectedId);
   const rows = held.rows;
 
@@ -275,7 +251,7 @@ export function InboxList({
       />
     ) : null;
   // Below 1024 (no `onSelect`) the steps sit at the top of the list and replace the empty line.
-  const steps = setup.shown && !onSelect ? <SetupBlock blockProps={setup.blockProps} /> : null;
+  const steps = showSetup && !onSelect ? <SetupBlock /> : null;
   if (rows.length === 0)
     return (
       <>
@@ -292,7 +268,7 @@ export function InboxList({
   };
   return (
     <div className="grid gap-4">
-      <div className="grid gap-4" {...setup.listProps}>
+      <div className="grid gap-4">
         {steps}
         <ul
           ref={list}

@@ -1,7 +1,6 @@
 import type { ServerMessage } from "@open-factory/shared";
 import { focusManager } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
@@ -166,7 +165,7 @@ test("first paint: the route waits for the setup answer, so the empty line never
 });
 
 test.each(["frame", "focus"] as const)(
-  "when an agent appears (%s), the steps leave at once if the pointer is outside the list",
+  "when an agent appears (%s), the steps leave at once",
   async (via) => {
     await visit(1280);
     await screen.findByRole("region", { name: "Set up your factory" });
@@ -175,78 +174,3 @@ test.each(["frame", "focus"] as const)(
     expect(screen.getByText("No item selected.")).toBeVisible();
   },
 );
-
-test("with the pointer over the list column the steps stay until it leaves", async () => {
-  boot({ items: true });
-  await visit(1280);
-  await screen.findByRole("region", { name: "Set up your factory" });
-  await waitFor(() => expect(row()).not.toBeNull());
-  const user = userEvent.setup();
-  await user.hover(row() as HTMLElement);
-  await agentAppears("frame");
-  expect(block()).not.toBeNull();
-  await user.unhover(row() as HTMLElement);
-  await waitFor(() => expect(block()).toBeNull());
-});
-
-test("narrow: with the pointer over the steps the block stays until it leaves", async () => {
-  boot({ items: true });
-  await visit(390);
-  const steps = await screen.findByRole("region", { name: "Set up your factory" });
-  await waitFor(() => expect(row()).not.toBeNull());
-  const step = within(steps).getByRole("button", { name: /Step 2 of 3/ });
-  const user = userEvent.setup();
-  await user.hover(step);
-  await agentAppears("frame");
-  expect(block()).not.toBeNull();
-  await user.unhover(step);
-  await waitFor(() => expect(block()).toBeNull());
-});
-
-test("with focus inside the list column the steps stay until it leaves", async () => {
-  boot({ items: true });
-  await visit(1280);
-  await screen.findByRole("region", { name: "Set up your factory" });
-  await waitFor(() => expect(row()).not.toBeNull());
-  act(() => row()?.focus());
-  await agentAppears("frame");
-  expect(block()).not.toBeNull();
-  act(() => row()?.blur());
-  await waitFor(() => expect(block()).toBeNull());
-});
-
-test("focus on a step does not hold the steps; it lands on the first Inbox row, never on the page", async () => {
-  boot({ items: true });
-  await visit(1280);
-  const steps = await screen.findByRole("region", { name: "Set up your factory" });
-  await waitFor(() => expect(row()).not.toBeNull());
-  act(() =>
-    within(steps)
-      .getByRole("button", { name: /Step 1 of 3/ })
-      .focus(),
-  );
-  // Where focus is the moment the steps are gone from the page.
-  let atRemoval: Element | null | undefined;
-  const watch = new MutationObserver(() => {
-    if (atRemoval === undefined && !block()) atRemoval = document.activeElement;
-  });
-  watch.observe(document.body, { subtree: true, childList: true });
-  await agentAppears("frame");
-  await waitFor(() => expect(block()).toBeNull());
-  watch.disconnect();
-  expect(document.activeElement).toBe(row());
-  expect(atRemoval).toBe(row());
-});
-
-test("with an empty Inbox focus lands on the page heading", async () => {
-  await visit(1280);
-  const steps = await screen.findByRole("region", { name: "Set up your factory" });
-  act(() =>
-    within(steps)
-      .getByRole("button", { name: /Step 2 of 3/ })
-      .focus(),
-  );
-  await agentAppears("frame");
-  await waitFor(() => expect(block()).toBeNull());
-  expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1, name: "Inbox" }));
-});

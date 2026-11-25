@@ -216,9 +216,8 @@ test("announcer and document title follow status frames; a no-op until change sa
   const live = () =>
     screen
       .getAllByRole("status")
-      .find(
-        (el) => el.getAttribute("aria-live") === "polite" && el.classList.contains("sr-only"),
-      ) as HTMLElement;
+      .filter((el) => el.getAttribute("aria-live") === "polite")
+      .at(-1) as HTMLElement;
   frame({ status: "rate_limited", rateLimitedUntil: todayAt(14, 30), rateLimitExact: false });
   await vi.waitFor(() =>
     expect(live()).toHaveTextContent("Dev agent is rate-limited, retrying at 14:30"),
@@ -244,7 +243,7 @@ test("header: a pulling agent says Pulling the image…", async () => {
   expect(await within(header).findByText("Pulling the image…")).toBeInTheDocument();
 });
 
-test("queued blocks: rate-limited (fallback) and waiting for a free slot", async () => {
+test("queued blocks: rate-limited (fallback) and waiting to start", async () => {
   const item: QueueItem = {
     id: "q1",
     kind: "message",
@@ -266,7 +265,7 @@ test("queued blocks: rate-limited (fallback) and waiting for a free slot", async
     await screen.findByText("Not delivered yet: rate-limited until 14:30"),
   ).toBeInTheDocument();
   frame({ status: "queued" });
-  expect(await screen.findByText("Not delivered yet: waiting for a free slot")).toBeInTheDocument();
+  expect(await screen.findByText("Not delivered yet: waiting to start")).toBeInTheDocument();
 });
 
 test("Factory notice: sender 'Factory', icon aria-hidden, never announced", async () => {

@@ -15,7 +15,6 @@ import {
 import { NarrowItem } from "@/features/inbox/narrow-item";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { setupQueryOptions } from "@/features/setup/api";
-import { useSetupVisible } from "@/features/setup/use-setup-visible";
 import { useMedia, WIDE } from "@/lib/breakpoints";
 
 export const Route = createFileRoute("/_app/inbox")({
@@ -75,8 +74,7 @@ function InboxPage() {
   const chatSlug = wide ? chatSlugOf(itemId) : undefined;
   const item = useLoadedItem(chatSlug === undefined ? itemId : undefined);
   const selectedChat = useSelectedChat(chatSlug);
-  const hasAgent = useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent }).data;
-  const setup = useSetupVisible(hasAgent);
+  const showSetup = useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent }).data === false;
 
   const onSelect = useCallback(
     (id: string, replace: boolean) => void navigate({ search: { item: id }, replace }),
@@ -109,14 +107,14 @@ function InboxPage() {
             <div className="py-4">
               {outcome}
               <InboxList
-                setup={setup}
+                showSetup={showSetup}
                 selectedId={itemId}
                 selectedChat={selectedChat}
                 onSelect={onSelect}
               />
             </div>
           </div>
-          <InboxPane setup={setup} selectedId={itemId} item={item} />
+          <InboxPane showSetup={showSetup} selectedId={itemId} item={item} />
         </div>
       </div>
     );
@@ -125,7 +123,7 @@ function InboxPage() {
       {header}
       <PageBody>
         {outcome}
-        <InboxList setup={setup} />
+        <InboxList showSetup={showSetup} />
       </PageBody>
     </>
   );

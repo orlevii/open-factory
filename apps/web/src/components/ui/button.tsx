@@ -15,7 +15,6 @@ const buttonVariants = cva(
           "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50 disabled:bg-transparent aria-disabled:not-aria-busy:bg-transparent aria-disabled:not-aria-busy:hover:bg-transparent dark:aria-disabled:not-aria-busy:hover:bg-transparent",
         destructive:
           "bg-destructive/10 text-destructive hover:bg-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 disabled:bg-card disabled:border-border aria-disabled:not-aria-busy:bg-card aria-disabled:not-aria-busy:border-border aria-disabled:not-aria-busy:hover:bg-card dark:disabled:bg-card dark:aria-disabled:not-aria-busy:bg-card dark:aria-disabled:not-aria-busy:hover:bg-card",
-        link: "text-primary underline-offset-4 hover:underline aria-disabled:not-aria-busy:hover:no-underline",
       },
       size: {
         default:
@@ -28,7 +27,6 @@ const buttonVariants = cva(
           "size-6 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
         "icon-sm":
           "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
-        "icon-lg": "size-9",
       },
     },
     defaultVariants: {
@@ -41,7 +39,7 @@ const buttonVariants = cva(
 /** Sizes under 40px that take the coarse-pointer `::after` expander (`hit-40` in styles.css, U4 §11.3): the glyph
  *  keeps its size and the hit box grows to 40×40. `default` and `lg` grow for real instead (`min-w-10` for a header
  *  action whose label goes sr-only on phones, leaving only its icon). */
-const EXPANDED = new Set(["icon", "icon-xs", "icon-sm", "icon-lg", "xs", "sm"])
+const EXPANDED = new Set(["icon", "icon-xs", "icon-sm", "xs", "sm"])
 
 /** A button inside a form: no expander (it would overlap a field or prose); on coarse pointers it grows to 40px
  *  with real padding instead, and the form's gaps make room. */

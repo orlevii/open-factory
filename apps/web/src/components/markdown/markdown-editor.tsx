@@ -45,10 +45,7 @@ export function MarkdownEditor(props: {
       data-invalid={props.invalid || undefined}
       className="field-edge-transition gap-0 overflow-hidden rounded-lg border border-input bg-card data-[invalid]:border-destructive focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20" // ui-contract:allow the frame shows focus-within; the textarea inside has no ring of its own
     >
-      <TabsList
-        variant="line"
-        className="h-9! w-full justify-start gap-1 rounded-none border-b bg-muted/50 p-0 px-2"
-      >
+      <TabsList className="h-9! w-full justify-start gap-1 rounded-none border-b bg-muted/50 p-0 px-2">
         <TabsTrigger value="write" className={triggerClass}>
           Write
         </TabsTrigger>

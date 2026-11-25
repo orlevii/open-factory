@@ -28,7 +28,7 @@ function ValidationState({ errors, warnings }: { errors: number; warnings: numbe
   );
 }
 
-/** A folder made on disk with a name the web's static routes take (`new`, `images`): `/templates/<name>` opens
+/** A folder made on disk with a name the web's static routes take (`new`): `/templates/<name>` opens
  *  that page instead, so the row isn't a link and says what to do. */
 function ReservedRow({ name }: { name: string }) {
   return (

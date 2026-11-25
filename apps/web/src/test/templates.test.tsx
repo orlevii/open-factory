@@ -93,7 +93,7 @@ Range.prototype.getBoundingClientRect ??= () => new DOMRect();
 const editorFor = (name: string) =>
   waitFor(() => {
     const el = screen.getByRole("textbox", { name });
-    expect(el).toHaveClass("cm-content");
+    expect(EditorView.findFromDOM(el)).not.toBeNull();
     return el;
   });
 const viewOf = (el: HTMLElement) => EditorView.findFromDOM(el) as EditorView;
@@ -113,7 +113,7 @@ const typeInto = (el: HTMLElement, text: string) => {
  *  it, the focus move itself is the test's. */
 const leaveEditor = () => {
   const el = document.activeElement as HTMLElement;
-  expect(el).toHaveClass("cm-content");
+  expect(EditorView.findFromDOM(el)).not.toBeNull();
   fireEvent.keyDown(el, { key: "Escape", code: "Escape", keyCode: 27 });
   expect(fireEvent.keyDown(el, { key: "Tab", code: "Tab", keyCode: 9 })).toBe(true); // not prevented
   act(() => el.blur());
@@ -326,17 +326,6 @@ test("template page: an oversize avatar.svg is named as ignored", async () => {
   await openTemplate();
   await editorFor("template.yaml");
   expect(screen.queryByText(/avatar\.svg ignored/)).toBeNull();
-});
-
-test("new template: /templates/new lands on the list with the sheet open", async () => {
-  mockApi(emptyList);
-  const { router } = renderApp("/templates/new", alice);
-  await sheetOf();
-  // The page behind a modal sheet is inert, so it is not in the accessibility tree.
-  expect(
-    await screen.findByRole("heading", { level: 1, name: "Templates", hidden: true }),
-  ).toBeInTheDocument();
-  expect(router.state.location.pathname).toBe("/templates");
 });
 
 test("new template: success closes the sheet and opens the editor", async () => {

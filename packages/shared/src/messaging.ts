@@ -132,7 +132,7 @@ export const messageLookupSchema = z.object({
   from: z.string(),
   fromKind: z.enum(["human", "agent", "factory"]),
   to: z.string(),
-  state: z.enum(["pending", "delivered", "rejected", "cancelled"]),
+  state: z.enum(["pending", "loop_held", "delivered", "rejected", "cancelled"]),
   recipientEvent: eventRefSchema.optional(),
   senderEvent: eventRefSchema.optional(),
   scheduleKey: z.string().optional(),

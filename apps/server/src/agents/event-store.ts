@@ -85,7 +85,7 @@ export interface MessageLookup {
   from: string;
   fromKind: "human" | "agent" | "factory";
   to: string;
-  state: "pending" | "delivered" | "rejected" | "cancelled";
+  state: "pending" | "loop_held" | "delivered" | "rejected" | "cancelled";
   recipientEvent?: { agentSlug: string; seq: number };
   senderEvent?: { agentSlug: string; seq: number };
   scheduleKey?: string;
@@ -815,6 +815,9 @@ export class EventStore {
       fromToolUseId?: string | null;
       clientMessageId?: string | null;
       attachments?: MessageAttachment[] | null;
+      /** `loop_held` parks the row under an open loop hold (I8 §6.3); it is never handed over. */
+      state?: "pending" | "loop_held";
+      loopHoldId?: string | null;
     },
     tx: Exec = this.db,
   ): Promise<PendingRow> {
@@ -822,6 +825,8 @@ export class EventStore {
     await tx.insert(messages).values({
       id,
       kind: "message",
+      ...(m.state ? { state: m.state } : {}),
+      loopHoldId: m.loopHoldId ?? null,
       clientMessageId: m.clientMessageId ?? null,
       attachments: m.attachments?.length ? m.attachments : null,
       ...("userId" in m.from ? { fromUserId: m.from.userId } : { fromAgentId: m.from.agentId }),

@@ -7,7 +7,7 @@ import { formatInboxTime } from "@/features/session/format";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { TaskBadge } from "@/features/tasks/task-badge";
 import { skipFocusPreload } from "@/lib/row-nav";
-import type { InboxItem } from "./api";
+import { type InboxItem, isFullWidthNotice } from "./api";
 import { aboutOf, credentialLine } from "./credential-notice";
 
 const PREVIEW_MAX = 280;
@@ -222,7 +222,7 @@ export const InboxRow = memo(function InboxRow({
   );
   return (
     <li className="border-b border-border last:border-b-0">
-      <RowLink link={item.link} common={common}>
+      <RowLink link={item.link} fullWidth={isFullWidthNotice(item)} id={item.id} common={common}>
         {body}
       </RowLink>
     </li>
@@ -235,13 +235,24 @@ type RowCommon = Omit<ComponentProps<typeof Link>, "to" | "params" | "search" | 
 /** The row's link, by kind; a new kind fails to compile here. */
 function RowLink({
   link,
+  fullWidth,
+  id,
   common,
   children,
 }: {
   link: InboxItem["link"];
+  /** A notice whose action lives only in the Inbox: the row opens its pane, at every width. */
+  fullWidth: boolean;
+  id: string;
   common: RowCommon;
   children: ReactNode;
 }) {
+  if (fullWidth)
+    return (
+      <Link to="/inbox" search={{ item: id }} {...common}>
+        {children}
+      </Link>
+    );
   switch (link.kind) {
     case "task":
       return (

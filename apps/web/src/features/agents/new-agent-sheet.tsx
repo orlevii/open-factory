@@ -243,6 +243,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
 
   // An unknown or broken template name counts as none (the field shows it unchosen).
   const chosen = templates.some((t) => t.name === values.template && t.errors === 0);
+  // The sheet's own focus on open isn't the user entering Display name: it doesn't claim the field from the prefill.
+  const focusingOnOpen = useRef(false);
   // Focus on open: phones the drawer content (the keyboard doesn't rise mid-slide); desktop Template when none is
   // chosen, else Display name. Not when focus is already somewhere in the sheet (the user moved it while the skeleton
   // showed). Once, on mount.
@@ -260,7 +262,9 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     const target =
       (chosen ? null : el.querySelector<HTMLElement>("#field-template")) ??
       el.querySelector<HTMLElement>("#field-displayName");
+    focusingOnOpen.current = true;
     target?.focus({ preventScroll: true });
+    focusingOnOpen.current = false;
   }, []);
 
   // The address field opens itself, focused, when Display name is left with a name that derives nothing.
@@ -433,7 +437,9 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               error={errors.displayName}
               value={shown.displayName}
               onChange={(e) => set("displayName", e.target.value)}
-              onFocus={() => claim("displayName")}
+              onFocus={() => {
+                if (!focusingOnOpen.current) claim("displayName");
+              }}
               onBlur={(e) => {
                 blur("displayName", e);
                 if (!values.touched.slug && shown.displayName.trim() !== "" && !shown.slug)

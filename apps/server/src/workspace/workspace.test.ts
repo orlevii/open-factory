@@ -747,3 +747,43 @@ test("the floor check runs once per binary: a second start doesn't ask claude ag
   await ws.prepare(x.prep);
   expect(readFileSync(count, "utf8").trim().split("\n")).toHaveLength(1);
 });
+
+test("deleteWorkspace runs beforeRemove after the pin check and before anything is removed", async () => {
+  const { ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  const order: string[] = [];
+  let existedBefore: boolean | undefined;
+  const deleted = await ws.deleteWorkspace(
+    "lead",
+    async () => {
+      order.push("pin check");
+      return true;
+    },
+    async () => void order.push("marked deleted"),
+    async () => {
+      order.push("before remove");
+      existedBefore = existsSync(ws.workdir("lead"));
+    },
+  );
+  expect(deleted).toBe(true);
+  expect(order).toEqual(["pin check", "before remove", "marked deleted"]);
+  expect(existedBefore).toBe(true);
+  expect(existsSync(ws.workdir("lead"))).toBe(false);
+});
+
+test("a pinned workspace is neither cleaned up nor removed", async () => {
+  const { ws, tpl, prep } = setup();
+  await ws.materialize("lead", "lead", tpl, prep);
+  let ran = false;
+  const deleted = await ws.deleteWorkspace(
+    "lead",
+    async () => false,
+    async () => {},
+    async () => {
+      ran = true;
+    },
+  );
+  expect(deleted).toBe(false);
+  expect(ran).toBe(false);
+  expect(existsSync(ws.workdir("lead"))).toBe(true);
+});

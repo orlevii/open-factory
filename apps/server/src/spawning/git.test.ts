@@ -232,6 +232,26 @@ describe("child environment", () => {
   });
 });
 
+describe("PATH lookup", () => {
+  it("ignores empty and relative entries, so a git planted in the repo is never run", async () => {
+    const repo = makeRepo();
+    const marker = path.join(root, "planted-ran");
+    script(path.join(repo, "git"), `touch "${marker}"\necho git version 2.50.0`);
+    process.env.PATH = `:.:bin:${path.dirname(process.execPath)}:${saved.PATH}`;
+    expect((await git(repo, ["rev-parse", "--show-toplevel"])).trim()).toBe(repo);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("is missing when only unsafe entries are left", async () => {
+    const repo = makeRepo();
+    script(path.join(repo, "git"), "echo git version 2.50.0");
+    process.env.PATH = `:.`;
+    await expect(git(repo, ["rev-parse", "--show-toplevel"])).rejects.toBeInstanceOf(
+      GitMissingError,
+    );
+  });
+});
+
 describe("failure modes", () => {
   it("does not take a plain subfolder of a parent repo for a repo", async () => {
     const repo = makeRepo();

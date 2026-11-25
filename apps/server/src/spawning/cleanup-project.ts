@@ -3,7 +3,7 @@ import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { type ProjectResult, slugSchema } from "@open-factory/shared";
 import { SafeFs } from "../workspace/safe-fs";
-import { GitError, git } from "./git";
+import { GitError, GitMissingError, GitTooOldError, git } from "./git";
 
 // Spec §7.5. SECURITY BOUNDARY: this deletes folders and branches in repos agents can write.
 // Paths and ids that git or the agent wrote are data, used only to match; the only things
@@ -92,7 +92,7 @@ const fail = (
   error,
 });
 
-/** null = nothing of ours there. A GitMissingError propagates (the caller reports it once for the host). */
+/** null = nothing of ours there. A GitMissingError/GitTooOldError propagates when something of ours is there (the caller reports it once for the host). */
 export async function cleanupProject(
   p: { name: string; hostPath: string },
   slug: string,
@@ -122,6 +122,8 @@ export async function cleanupProject(
     );
   } catch (err) {
     if (err instanceof GitError) return notOurs("couldn't clean up: not a git repository");
+    // A host without a suitable git is reported (once, by the caller) only when something of ours is here.
+    if ((err instanceof GitMissingError || err instanceof GitTooOldError) && !hasBase) return null;
     throw err;
   }
   // The repo's own `.git` must be a real folder that is also the common dir: a `.git` file,
@@ -299,7 +301,7 @@ export async function cleanupProject(
       } else result.kept.push({ branch, commits: n });
     } catch (err) {
       if (!(err instanceof GitError)) throw err;
-      result.error ??= `couldn't check ${branch}; left in place`;
+      result.error ??= `couldn't check \`${branch}\`; left in place`;
     }
   }
   return result;

@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanupProject } from "./cleanup-project";
+import { GitMissingError } from "./git";
 
 let root: string;
 let repo: string;
@@ -220,5 +221,24 @@ describe("cleanupProject", () => {
   it("returns null when nothing of ours is there", async () => {
     addWorktree("dev-zz99", "feat/o");
     expect(await cleanupProject(project(), "dev-ab12")).toBeNull();
+  });
+
+  describe("a host without git", () => {
+    const savedPath = process.env.PATH;
+    afterEach(() => {
+      process.env.PATH = savedPath;
+    });
+
+    it("reports nothing for a project where nothing of ours exists", async () => {
+      process.env.PATH = path.join(root, "no-bin");
+      expect(await cleanupProject(project(), "dev-ab12")).toBeNull();
+    });
+
+    it("still reports it when our folder is there", async () => {
+      addWorktree("dev-ab12", "feat/x");
+      process.env.PATH = path.join(root, "no-bin");
+      await expect(cleanupProject(project(), "dev-ab12")).rejects.toBeInstanceOf(GitMissingError);
+      expect(existsSync(ours("dev-ab12", "feat/x"))).toBe(true);
+    });
   });
 });

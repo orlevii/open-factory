@@ -249,6 +249,15 @@ test("a random suffix is 4 letters and the display name carries it", async () =>
   expect(child?.displayName).toBe(`Dev · ${r.slug.slice(4)}`);
 });
 
+test("a terminated agent's slug is never reused, so a worktree folder named for it is unambiguous", async () => {
+  const { t, lead } = await setup();
+  await seedChild(t, lead, "tech-lead-gone", { terminated: true });
+  expect(await t.app.spawner.spawn(lead.id, args({ suffix: "gone" }), null)).toEqual({
+    ok: false,
+    message: "@tech-lead-gone is taken; pick another suffix or leave it out.",
+  });
+});
+
 test("refusals spend nothing: template not allowed, taken explicit suffix, over max_live, rate, inheritance, shutdown", async () => {
   const s = await setup({ env: { FACTORY_MAX_SPAWNS_PER_HOUR: "3" } });
   const { t, lead } = s;

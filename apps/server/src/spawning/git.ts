@@ -87,9 +87,16 @@ export function assertAllowed(args: readonly string[]): void {
   if (!ok) throw new Error(`git ${args.join(" ")} is not an allowed command`);
 }
 
+// Empty and relative entries mean "the current directory" to a lookup; the cwd is a repo agents write to.
+const safePath = (p: string | undefined): string =>
+  (p ?? "")
+    .split(path.delimiter)
+    .filter((d) => d !== "" && path.isAbsolute(d))
+    .join(path.delimiter);
+
 function env(repo: string): NodeJS.ProcessEnv {
   return {
-    PATH: process.env.PATH,
+    PATH: safePath(process.env.PATH),
     HOME: process.env.HOME,
     GIT_PAGER: "cat",
     GIT_TERMINAL_PROMPT: "0",
@@ -104,11 +111,14 @@ function env(repo: string): NodeJS.ProcessEnv {
 }
 
 function run(repo: string, args: string[], timeoutMs: number): Promise<string> {
+  const childEnv = env(repo);
+  // An empty PATH makes the spawn look in the current directory (the repo): there is no git to run.
+  if (!childEnv.PATH) return Promise.reject(new GitMissingError());
   return new Promise<string>((resolve, reject) =>
     execFile(
       "git",
       args,
-      { cwd: repo, env: env(repo), timeout: timeoutMs, maxBuffer: 1 << 20, shell: false },
+      { cwd: repo, env: childEnv, timeout: timeoutMs, maxBuffer: 1 << 20, shell: false },
       (err, stdout, stderr) => {
         if (err && (err as NodeJS.ErrnoException).code === "ENOENT")
           return reject(new GitMissingError());

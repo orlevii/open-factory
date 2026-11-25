@@ -150,6 +150,27 @@ describe("event schemas", () => {
         resetsAt: 1,
       },
       { type: "interrupt_unconfirmed" },
+      {
+        type: "workspace_cleanup",
+        projects: [
+          {
+            project: "web",
+            removed: true,
+            deleted: ["feat/y"],
+            kept: [
+              { branch: "feat/x", commits: 3 },
+              { branch: "feat/z", reason: "elsewhere" },
+            ],
+          },
+          {
+            project: "docs",
+            removed: false,
+            deleted: [],
+            kept: [],
+            error: "couldn't clean up: not a git repository",
+          },
+        ],
+      },
     ];
     for (const s of samples) expect(anyEventSchema.parse(s)).toEqual(s);
   });

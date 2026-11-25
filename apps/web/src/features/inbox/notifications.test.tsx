@@ -69,7 +69,6 @@ const item = (n: number, o: Record<string, unknown> = {}): InboxItem =>
 
 test("titles by kind", () => {
   expect(notificationTitle(item(1))).toBe("@dev mentioned you on T-42");
-  expect(notificationTitle(item(1, { to: "@humans" }))).toBe("@dev mentioned @humans on T-42");
   expect(
     notificationTitle(
       item(1, { kind: "task_event", fact: "done", task: { key: "T-40", title: "x" } }),
@@ -85,9 +84,6 @@ test("titles by kind", () => {
       item(1, { kind: "message", task: undefined, link: { kind: "session", agentSlug: "dev" } }),
     ),
   ).toBe("@dev messaged you");
-  expect(notificationTitle(item(1, { kind: "message", to: "@humans", task: undefined }))).toBe(
-    "@dev messaged @humans",
-  );
   expect(
     notificationTitle(
       item(1, {

@@ -205,33 +205,21 @@ export class ScheduleService {
     }
     if (name === "") throw new ScheduleError("invalid_schedule", "Choose an agent.", 400, "target");
     const r = await resolveName(this.d.db, name);
-    switch (r.kind) {
-      case "agent":
-        return { id: r.agent.id, slug: r.agent.slug };
-      case "none":
-        throw notFound(r.name);
-      case "ambiguous":
-        throw new ScheduleError(
-          "ambiguous",
-          `'${r.name}' matches both an agent and a user; ask a human to rename one.`,
-          400,
-          "target",
-        );
-      case "reserved":
-        throw new ScheduleError(
-          "reserved",
-          `'${r.name}' is reserved and can't receive messages.`,
-          400,
-          "target",
-        );
-      default:
-        throw new ScheduleError(
-          "target_not_agent",
-          "Schedules can only be addressed to agents.",
-          400,
-          "target",
-        );
-    }
+    if (r.kind === "agent") return { id: r.agent.id, slug: r.agent.slug };
+    if (r.kind === "none" || r.kind === "channel") throw notFound(r.name);
+    if (r.kind === "reserved")
+      throw new ScheduleError(
+        "reserved",
+        `'${r.name}' is reserved and can't receive messages.`,
+        400,
+        "target",
+      );
+    throw new ScheduleError(
+      "target_not_agent",
+      "Schedules can only be addressed to agents.",
+      400,
+      "target",
+    );
   }
 
   private requireLive(t: LockedAgent) {

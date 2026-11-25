@@ -35,7 +35,10 @@ beforeEach(() => {
   reply = (url) =>
     url.endsWith("/interrupt")
       ? json({}, 202)
-      : json({ item: { id: "q", kind: "message", from: "@alice", createdAt: "x" } }, 202);
+      : json(
+          { item: { id: "q", kind: "message", from: "@alice", fromKind: "human", createdAt: "x" } },
+          202,
+        );
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -403,6 +406,7 @@ const accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
         id: "m1",
         kind: "message",
         from: "@alice",
+        fromKind: "human",
         body: "hello",
         clientMessageId,
         createdAt: new Date().toISOString(),
@@ -419,7 +423,15 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
   event: {
     type: "message_in",
     messages: [
-      { id: "m1", from: "@alice", kind: "message", urgent: false, body: "hello", clientMessageId },
+      {
+        id: "m1",
+        from: "@alice",
+        fromKind: "human",
+        kind: "message",
+        urgent: false,
+        body: "hello",
+        clientMessageId,
+      },
     ],
   },
 });
@@ -592,6 +604,7 @@ test("an aborted send whose item the queue already showed counts as sent", async
             id: "m1",
             kind: "message",
             from: "@alice",
+            fromKind: "human",
             body: "hello",
             clientMessageId: id,
             createdAt: new Date().toISOString(),
@@ -725,7 +738,12 @@ test("a command dispatches to POST /commands with the chosen name and the args, 
   qc.setQueryData(["agent-commands", "dev"], COMMANDS_RESPONSE);
   reply = (url) =>
     url.endsWith("/commands")
-      ? json({ item: { id: "c1", kind: "command", from: "@alice", createdAt: "x" } }, 202)
+      ? json(
+          {
+            item: { id: "c1", kind: "command", from: "@alice", fromKind: "human", createdAt: "x" },
+          },
+          202,
+        )
       : json(COMMANDS_RESPONSE);
   const { box } = setup(agentSummary());
   await userEvent.type(box, "/code");

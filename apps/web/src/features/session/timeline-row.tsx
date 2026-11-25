@@ -303,6 +303,7 @@ export function TimelineRow(props: TimelineRowProps) {
         <div {...rp}>
           <MessageBlock
             from={row.message.from}
+            fromKind={row.message.fromKind}
             // `task_assigned` and `task_update` are from the factory; a `task_comment` is from its author.
             system={isNoticeKind(row.message.kind)}
             body={row.message.body}
@@ -316,6 +317,7 @@ export function TimelineRow(props: TimelineRowProps) {
                   scheduled: {
                     key: row.message.scheduleKey,
                     by: row.message.by,
+                    byKind: row.message.byKind,
                     due: row.message.due,
                     late: row.message.late,
                     firings: row.message.firings,

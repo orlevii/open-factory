@@ -155,6 +155,7 @@ test("a message shows 7 rows around seq, the target highlighted and scrolled to 
             kind: "message",
             body: (b as { body: string }).body,
             from: "@alice",
+            fromKind: "human",
             createdAt: at(0),
           },
         },
@@ -220,7 +221,12 @@ test("a @factory message targets the subject agent", async () => {
   api.on(
     "POST /api/agents/ops/messages",
     validBody(sendMessageBodySchema, () =>
-      json({ item: { id: "q1", kind: "message", from: "@alice", createdAt: at(0) } }, 202),
+      json(
+        {
+          item: { id: "q1", kind: "message", from: "@alice", fromKind: "human", createdAt: at(0) },
+        },
+        202,
+      ),
     ),
   );
   await visit("/inbox?item=i1");
@@ -630,7 +636,16 @@ test("the excerpt's speaker lines know the agent and you: its name on head text,
         ev(1, { type: "assistant_text", text: "agent says" }),
         ev(2, {
           type: "message_in",
-          messages: [{ id: "x1", from: "@alice", kind: "message", body: "I reply", urgent: false }],
+          messages: [
+            {
+              id: "x1",
+              from: "@alice",
+              fromKind: "human",
+              kind: "message",
+              body: "I reply",
+              urgent: false,
+            },
+          ],
         }),
       ]),
     ),

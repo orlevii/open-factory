@@ -13,7 +13,7 @@ import { agentsListQueryOptions, agentsQueryOptions, endedMoreQueryOptions } fro
 import { formatTime } from "./format";
 import { useLongPressRegion } from "./long-press-region";
 import { rowOf } from "./row-of";
-import { SpeakerLine } from "./speaker-line";
+import { type PartyKind, type SenderKind, SpeakerLine, useSpeakers } from "./speaker-line";
 import { stripAttachedLines } from "./uploads";
 
 /** The `FixLink` underline: visible and muted, turning signal on hover. */
@@ -109,14 +109,24 @@ export function formatDue(due: string): string {
   return `${p.weekday} ${p.day} ${p.month} ${p.hour}:${p.minute} ${off}`;
 }
 
-/** Agent senders are bare slugs; humans are `@handle`, the factory `@factory`. */
-export const isAgentSender = (from: string) => !from.startsWith("@");
+/** Who scheduled a message, by the kind the envelope carries (`byKind`). */
+function ScheduledBy({ by, kind }: { by: string; kind: PartyKind }) {
+  const bare = by.startsWith("@") ? by.slice(1) : by;
+  return kind === "agent" ? (
+    <AgentLink slug={bare} />
+  ) : (
+    <span className="font-mono text-foreground">@{bare}</span>
+  );
+}
 
 /** Incoming input (UI design §4.1): on the ground with a 1px rule edge and 6px radius, never a bubble.
  *  The sender line is generic (`from` + badges), never the raw envelope XML. A `system` message is a
  *  notice from the factory itself (S5 UI design §3.5): sender "Factory", never Urgent, never orange. */
 export function MessageBlock(props: {
+  /** The sender's handle, with or without its `@`. */
   from: string;
+  /** What the sender is: the envelope's or the queue item's `fromKind`. */
+  fromKind: SenderKind;
   system?: boolean;
   body: string;
   urgent?: boolean;
@@ -129,6 +139,8 @@ export function MessageBlock(props: {
   scheduled?: {
     key: string;
     by?: string | undefined;
+    /** What `by` is (the envelope's `byKind`). */
+    byKind?: PartyKind | undefined;
     /** ISO 8601 with the schedule zone's offset (the envelope's `due`). */
     due?: string | undefined;
     late?: boolean | undefined;
@@ -149,6 +161,7 @@ export function MessageBlock(props: {
   const region = useLongPressRegion();
   const {
     from,
+    fromKind,
     system,
     body,
     urgent,
@@ -215,14 +228,9 @@ export function MessageBlock(props: {
   const extras = (
     <>
       {scheduled && <ScheduleBadge scheduleKey={scheduled.key} />}
-      {scheduled?.by && (
+      {scheduled?.by && scheduled.byKind && (
         <span className="text-muted-foreground">
-          by{" "}
-          {isAgentSender(scheduled.by) ? (
-            <AgentLink slug={scheduled.by} />
-          ) : (
-            <span className="font-mono text-foreground">{scheduled.by}</span>
-          )}
+          by <ScheduledBy by={scheduled.by} kind={scheduled.byKind} />
         </span>
       )}
       {badge}
@@ -259,7 +267,7 @@ export function MessageBlock(props: {
           {action && <span className="ml-auto">{action}</span>}
         </div>
       ) : (
-        <SpeakerLine from={from} at={at} status={status} action={action}>
+        <SpeakerLine from={from} fromKind={fromKind} at={at} status={status} action={action}>
           {extras}
         </SpeakerLine>
       )}

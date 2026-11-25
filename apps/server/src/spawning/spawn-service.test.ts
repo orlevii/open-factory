@@ -6,6 +6,7 @@ import { type AgentRow, schema } from "@open-factory/db";
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
+import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { templateCopyDir } from "../workspace/paths.ts";
 import { SpawnService } from "./spawn-service.ts";
@@ -117,6 +118,7 @@ const agentCount = async (app: T) => (await app.db.select().from(schema.agents))
 
 /** A spawned child row inserted directly (no folder): for the live count and the rate. */
 async function seedChild(app: T, lead: AgentRow, slug: string, o: { terminated?: boolean } = {}) {
+  await claimTestHandle(app.db, slug, "agent");
   await app.db.insert(schema.agents).values({
     id: randomUUID(),
     slug,
@@ -239,7 +241,8 @@ test("refusals spend nothing: template not allowed, taken explicit suffix, over 
   const afterRate = { folders: folders(t), agents: await agentCount(t) };
   expect(await spawn({})).toEqual({
     ok: false,
-    message: "You've spawned 3 agents in the last hour; ask @humans if you need more.",
+    message:
+      "You've spawned 3 agents in the last hour; ask a human (list_peers lists them) if you need more.",
   });
   expect(folders(t)).toEqual(afterRate.folders);
   expect(await agentCount(t)).toBe(afterRate.agents);
@@ -433,13 +436,84 @@ test("folder_exists: a random suffix retries, an explicit one is reported taken"
   });
 });
 
+test("a taken suffix retries the next name: a user claim at the pre-read, a claim that lands after it", async () => {
+  const { t, lead } = await setup();
+  // A user's claim holds the first name: the pre-read skips it.
+  await claimTestHandle(t.db, "tech-lead-aaaa", "user");
+  // A user claim lands after the pre-read (during materialize): the claim in the transaction refuses it.
+  const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
+  vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
+    if (a[0] === "tech-lead-bbbb") await claimTestHandle(t.db, "tech-lead-bbbb", "user");
+    return realMaterialize(...a);
+  });
+  const suffixes = ["aaaa", "bbbb", "dddd"];
+  const svc = new SpawnService({ ...serviceDeps(t), random: () => suffixes.shift() ?? "zzzz" });
+  expect(await svc.spawn(lead.id, args(), null)).toMatchObject({
+    ok: true,
+    slug: "tech-lead-dddd",
+  });
+  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-bbbb"))).toBe(false);
+  const [claim] = await t.sql`select kind from handles where handle = 'tech-lead-dddd'`;
+  expect(claim?.kind).toBe("agent");
+});
+
+test("an explicit suffix taken by a user claim after the pre-read is reported taken", async () => {
+  const { t, lead } = await setup();
+  const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
+  vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
+    await claimTestHandle(t.db, "tech-lead-mine", "user");
+    return realMaterialize(...a);
+  });
+  expect(await t.app.spawner.spawn(lead.id, args({ suffix: "mine" }), null)).toEqual({
+    ok: false,
+    message: "@tech-lead-mine is taken; pick another suffix or leave it out.",
+  });
+  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(false);
+});
+
+test("losing the slug unique index to a concurrent winner reports taken and keeps the winner's workspace", async () => {
+  const { t, lead } = await setup();
+  vi.spyOn(t.db, "transaction").mockImplementationOnce((async () => {
+    // The winner commits its agent (and its workspace) first; the loser's insert then hits the slug index.
+    await t.seedAgent({ slug: "tech-lead-mine" });
+    throw Object.assign(new Error("duplicate key"), {
+      code: "23505",
+      constraint_name: "agents_slug_unique",
+    });
+  }) as typeof t.db.transaction);
+  expect(await t.app.spawner.spawn(lead.id, args({ suffix: "mine" }), null)).toEqual({
+    ok: false,
+    message: "@tech-lead-mine is taken; pick another suffix or leave it out.",
+  });
+  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(true);
+});
+
+test("a refusal under the lock leaves no handle claim behind", async () => {
+  const { t, lead } = await setup();
+  // The pre-check passes; the re-check in the transaction refuses (the credential changed during materialize).
+  const svc = new SpawnService(serviceDeps(t));
+  const real = (svc as unknown as { check: (...a: unknown[]) => Promise<unknown> }).check.bind(svc);
+  let calls = 0;
+  vi.spyOn(svc as unknown as { check: () => Promise<unknown> }, "check").mockImplementation(
+    async (...a: unknown[]) =>
+      ++calls === 1 ? real(...a) : { ok: false, message: "refused under the lock" },
+  );
+  expect(await svc.spawn(lead.id, args({ suffix: "orph" }), null)).toEqual({
+    ok: false,
+    message: "refused under the lock",
+  });
+  expect(calls).toBe(2);
+  const [n] = await t.sql`select count(*)::int as n from handles where handle = 'tech-lead-orph'`;
+  expect(n?.n).toBe(0);
+});
+
 test("a template that is missing or invalid on disk is refused before anything is made", async () => {
   const { t, lead } = await setup();
   writeTemplate(t.factoryHome, "dev", "name: dev\nruntime: nonsense\n");
   const before = folders(t);
   expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({
     ok: false,
-    message: "Template dev is missing or invalid; ask @humans to fix it.",
+    message: "Template dev is missing or invalid; ask a human (list_peers lists them) to fix it.",
   });
   expect(folders(t)).toEqual(before);
 });
@@ -450,9 +524,26 @@ test("the spawner's template copy deny rules are read; an unreadable copy refuse
   const before = folders(t);
   expect(await t.app.spawner.spawn(lead.id, args(), null)).toEqual({
     ok: false,
-    message: "Your template copy can't be read; ask @humans to re-sync you.",
+    message:
+      "Your template copy can't be read; ask a human (list_peers lists them) to re-sync you.",
   });
   expect(folders(t)).toEqual(before);
+});
+
+test("a caller with a manager is told to ask its manager", async () => {
+  const { t, lead } = await setup();
+  const boss = await t.seedAgent({ slug: "boss" });
+  await t.sql`update agents set reports_to = ${boss.id} where id = ${lead.id}`;
+  writeTemplate(t.factoryHome, "dev", "name: dev\nruntime: nonsense\n");
+  expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({
+    ok: false,
+    message: "Template dev is missing or invalid; ask your manager to fix it.",
+  });
+  writeFileSync(path.join(templateCopyDir(t.factoryHome, "lead"), "settings.json"), "{not json");
+  expect(await t.app.spawner.spawn(lead.id, args(), null)).toEqual({
+    ok: false,
+    message: "Your template copy can't be read; ask your manager to re-sync you.",
+  });
 });
 
 function serviceDeps(app: T): ConstructorParameters<typeof SpawnService>[0] {

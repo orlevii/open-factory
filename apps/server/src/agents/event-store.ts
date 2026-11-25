@@ -74,11 +74,13 @@ export type PendingRow = MessageRow & {
   scheduleKey: string | null;
   scheduleZone: string | null;
   authorLabel: string | null;
+  authorKind: "human" | "agent" | null;
 };
 export interface MessageLookup {
   id: string;
   kind: MessageKind;
   from: string;
+  fromKind: "human" | "agent" | "factory";
   to: string;
   state: "pending" | "delivered" | "rejected" | "cancelled";
   recipientEvent?: { agentSlug: string; seq: number };
@@ -761,6 +763,8 @@ export class EventStore {
     m: {
       from: { userId: string } | { agentId: string };
       toAgentId: string;
+      /** The full recipient list as `@handle`s (what the envelope's `to` shows), this row's agent among them. */
+      recipients: string[];
       body: string;
       urgent: boolean;
       fromToolUseId?: string | null;
@@ -777,6 +781,7 @@ export class EventStore {
       attachments: m.attachments?.length ? m.attachments : null,
       ...("userId" in m.from ? { fromUserId: m.from.userId } : { fromAgentId: m.from.agentId }),
       toAgentId: m.toAgentId,
+      recipients: m.recipients,
       body: m.body,
       urgent: m.urgent,
       fromToolUseId: m.fromToolUseId ?? null,
@@ -786,13 +791,14 @@ export class EventStore {
   }
   /**
    * U3 §13.2: a human's send carrying the client's id. The unique partial index on (`from_user_id`,
-   * `client_message_id`) decides: a repeat (the same sender and id, at any later time, or concurrently) inserts
-   * nothing and returns the original row with `created: false`.
+   * `client_message_id`, `to_agent_id`) decides: a repeat (the same sender, id and recipient agent, at any later
+   * time, or concurrently) inserts nothing and returns the original row with `created: false`.
    */
   async createClientMessage(
     m: {
       fromUserId: string;
       toAgentId: string;
+      recipients: string[];
       body: string;
       urgent: boolean;
       clientMessageId: string;
@@ -810,31 +816,36 @@ export class EventStore {
         attachments: m.attachments?.length ? m.attachments : null,
         fromUserId: m.fromUserId,
         toAgentId: m.toAgentId,
+        recipients: m.recipients,
         body: m.body,
         urgent: m.urgent,
         createdAt: this.clock(),
       })
       .onConflictDoNothing({
-        target: [messages.fromUserId, messages.clientMessageId],
+        target: [messages.fromUserId, messages.clientMessageId, messages.toAgentId],
         where: sql`${messages.clientMessageId} is not null`,
       })
       .returning({ id: messages.id });
     if (inserted.length) return { row: await this.pendingRow(id, tx), created: true };
-    const existing = await this.byClientMessageId(m.fromUserId, m.clientMessageId, tx);
+    const existing = (await this.byClientMessageId(m.fromUserId, m.clientMessageId, tx)).find(
+      (r) => r.toAgentId === m.toAgentId,
+    );
     if (!existing)
       throw new Error(`client message ${m.clientMessageId} conflicted but isn't there`);
     return { row: existing, created: false };
   }
-  /** U3 §13.2: the joined row a sender's earlier send with this client id wrote, whatever its state. */
+  /** U3 §13.2: the joined rows (one per recipient agent) a sender's earlier send with this client id wrote, whatever their state. */
   async byClientMessageId(
     fromUserId: string,
     clientMessageId: string,
     tx: Exec = this.db,
-  ): Promise<PendingRow | undefined> {
-    const [r] = await this.joined(tx).where(
+  ): Promise<PendingRow[]> {
+    const rows = await this.joined(tx).where(
       and(eq(messages.fromUserId, fromUserId), eq(messages.clientMessageId, clientMessageId)),
     );
-    return r;
+    return rows.sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id),
+    );
   }
   /** A held peer or member-update row, pending until the runtime renders it (spec §8). Returns the joined row. */
   async createHeld(
@@ -906,9 +917,10 @@ export class EventStore {
       subjectAgentId?: string;
       taskId?: string;
       commentId?: string;
+      /** `"all"` (every user) is for factory facts (`kind: "system"`) only; people are addressed by handle. */
       to: { userId: string } | "all";
-      /** Never an addressee, however the row is addressed (the author of a comment that mentions `@humans`). */
-      exceptUserId?: string;
+      /** A `kind: "message"` row's recipient list, as `@handle`s. */
+      recipients?: string[];
       /** The inbox item's kind; `message` when not given. */
       inboxKind?: "message" | "mention" | "task_event";
       body: string;
@@ -916,7 +928,7 @@ export class EventStore {
       fromToolUseId?: string | null;
     },
     outer: Exec = this.db,
-  ): Promise<{ row: MessageRow | undefined; userIds: string[] }> {
+  ): Promise<{ row: MessageRow; userIds: string[] }> {
     return outer.transaction(async (tx) => {
       // Per kind, the sender columns the schema's CHECK allows, said as a sentence before the database says it.
       const authors = (m.fromAgentId ? 1 : 0) + (m.fromUserId ? 1 : 0);
@@ -924,6 +936,10 @@ export class EventStore {
         throw new Error(
           "a human message needs a sender agent; a factory fact needs its subject agent",
         );
+      if (m.kind === "message" && !m.recipients?.length)
+        throw new Error("a human message needs its recipients");
+      if (m.to === "all" && m.kind !== "system")
+        throw new Error("only a factory fact goes to every human; address people by handle");
       if (m.kind === "task_update" && (authors > 0 || m.subjectAgentId))
         throw new Error("a task update has no sender and no subject");
       if (m.kind === "task_comment" && authors !== 1)
@@ -934,9 +950,7 @@ export class EventStore {
         m.to === "all"
           ? await tx.select({ id: users.id }).from(users).orderBy(asc(users.id))
           : [{ id: m.to.userId }];
-      const userIds = targets.map((u) => u.id).filter((id) => id !== m.exceptUserId);
-      // The author is the only human addressed: nothing is written.
-      if (targets.length && !userIds.length) return { row: undefined, userIds: [] };
+      const userIds = targets.map((u) => u.id);
       const now = this.clock();
       const [row] = await tx
         .insert(messages)
@@ -951,6 +965,7 @@ export class EventStore {
           commentId: m.commentId ?? null,
           toUserId: m.to === "all" ? null : m.to.userId,
           toAllHumans: m.to === "all",
+          recipients: m.kind === "message" ? (m.recipients ?? null) : null,
           fromToolUseId: m.fromToolUseId ?? null,
           body: m.body,
           urgent: m.urgent,
@@ -1044,7 +1059,8 @@ export class EventStore {
           ...m,
           ...rest,
           scheduleKey: scheduleNumber === null ? null : formatKey("S", scheduleNumber),
-          authorLabel: authorHandle ? `@${authorHandle}` : authorSlug,
+          authorLabel: authorHandle ? `@${authorHandle}` : authorSlug ? `@${authorSlug}` : null,
+          authorKind: authorHandle ? "human" : authorSlug ? "agent" : null,
         }));
       },
     };
@@ -1206,8 +1222,20 @@ export class EventStore {
       from:
         m.kind === "scheduled"
           ? "@scheduler"
-          : (r.fromSlug ?? (r.fromHandle ? `@${r.fromHandle}` : "@factory")),
-      to: m.toAllHumans ? "@humans" : (r.toSlug ?? `@${r.toHandle ?? ""}`),
+          : r.fromSlug
+            ? `@${r.fromSlug}`
+            : r.fromHandle
+              ? `@${r.fromHandle}`
+              : "@factory",
+      fromKind:
+        m.kind === "scheduled"
+          ? "factory"
+          : r.fromSlug
+            ? "agent"
+            : r.fromHandle
+              ? "human"
+              : "factory",
+      to: m.toAllHumans ? "everyone" : r.toSlug ? `@${r.toSlug}` : `@${r.toHandle ?? ""}`,
       state: m.state as MessageLookup["state"],
     };
     if (r.scheduleNumber !== null) {
@@ -1336,7 +1364,7 @@ export class EventStore {
             ? { kind: "factory", name: "factory" }
             : { kind: "agent", name: r.fromSlug ?? "" },
         ...(r.subjectSlug ? { about: r.subjectSlug } : {}),
-        to: r.m.toAllHumans ? "@humans" : `@${r.toHandle ?? ""}`,
+        to: r.m.toAllHumans ? "everyone" : `@${r.toHandle ?? ""}`,
         preview: r.preview,
         urgent: r.m.urgent,
         createdAt: r.item.createdAt.toISOString(),

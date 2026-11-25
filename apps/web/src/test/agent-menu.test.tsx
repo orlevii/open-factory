@@ -258,7 +258,10 @@ test("Escape from the compact popover returns focus to the ⋯ button", async ()
 test("a successful Compact returns focus to the ⋯ button", async () => {
   mockApi({
     "POST /api/agents/dev/compact": () =>
-      json({ item: { id: "q", kind: "compact", from: "@alice", createdAt: "x" } }, 202),
+      json(
+        { item: { id: "q", kind: "compact", from: "@alice", fromKind: "human", createdAt: "x" } },
+        202,
+      ),
   });
   setup({ agent: agentSummary(), context: "session" });
   const u = userEvent.setup();
@@ -573,7 +576,16 @@ test("Restore mentions pending messages when the agent has some", async () => {
     "GET /api/agents/dev": () =>
       json({
         agent: agentSummary(),
-        queue: [{ id: "q1", kind: "message", body: "hi", from: "@alice", createdAt: "x" }],
+        queue: [
+          {
+            id: "q1",
+            kind: "message",
+            body: "hi",
+            from: "@alice",
+            fromKind: "human",
+            createdAt: "x",
+          },
+        ],
         lastSeq: 0,
       }),
   });

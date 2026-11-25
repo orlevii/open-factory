@@ -77,11 +77,11 @@ const cap = (s: string) => (s.length > PREVIEW_CAP ? `${s.slice(0, PREVIEW_CAP -
 /** UI design §10's titles. Plain text only; agent text never becomes a URL or markup here. */
 export function notificationTitle(i: InboxItem): string {
   if (i.kind === "mention")
-    return `@${i.from.name} mentioned ${i.to === "@humans" ? "@humans" : "you"}${i.task ? ` on ${i.task.key}` : ""}`;
+    return `@${i.from.name} mentioned you${i.task ? ` on ${i.task.key}` : ""}`;
   if (i.kind === "task_event")
     return `${i.task?.key ?? "A task"} ${i.fact === "cancelled" ? "was cancelled" : "is done"}`;
   if (i.from.kind === "factory") return `Factory${i.about ? ` about @${i.about}` : ""}`;
-  return `@${i.from.name} messaged ${i.to === "@humans" ? "@humans" : "you"}`;
+  return `@${i.from.name} messaged you`;
 }
 
 /**

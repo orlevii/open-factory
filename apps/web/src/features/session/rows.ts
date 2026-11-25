@@ -237,12 +237,18 @@ function endedTurns(events: SessionEvent[]) {
 
 export const SEND_MESSAGE_TOOL = "mcp__factory__send_message";
 
-/** A `send_message` call with a string `to` and `body` renders as an outgoing message; any other
- *  shape falls back to the generic tool row (UI design §2.5). */
+/** A `send_message` call with a list of string recipients and a string `body` renders as an outgoing
+ *  message; any other shape (a bare string `to` is one) falls back to the generic tool row (UI design §2.5). */
 export function isSendMessageCall(e: Ev<"tool_call">): boolean {
   if (e.name !== SEND_MESSAGE_TOOL) return false;
   const i = e.input as Record<string, unknown> | null;
-  return !!i && typeof i.to === "string" && typeof i.body === "string";
+  return (
+    !!i &&
+    Array.isArray(i.to) &&
+    i.to.length > 0 &&
+    i.to.every((t) => typeof t === "string") &&
+    typeof i.body === "string"
+  );
 }
 
 /** Speech: what a reader scrolled away from is waiting for (U3 §8.2): a message, an outgoing

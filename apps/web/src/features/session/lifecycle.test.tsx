@@ -268,6 +268,7 @@ test("queued blocks: rate-limited (fallback) and waiting for a free slot", async
     body: "pending body",
     urgent: false,
     from: "@or",
+    fromKind: "human",
     createdAt: "2026-11-19T09:00:00.000Z",
   };
   world({ status: "rate_limited", rateLimitedUntil: todayAt(14, 30), rateLimitExact: false }, [
@@ -291,6 +292,7 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
     kind: "notice",
     body: "Restarted by @or after an error.",
     from: "@factory",
+    fromKind: "factory",
     createdAt: "2026-11-19T09:00:00.000Z",
   };
   world({ status: "queued" }, [notice]);
@@ -302,6 +304,7 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
           {
             id: "m9",
             from: "@factory",
+            fromKind: "factory",
             kind: "system",
             urgent: true,
             body: "Your previous process stopped unexpectedly.",
@@ -341,6 +344,7 @@ const mine = (id: string, body: string): QueueItem => ({
   id,
   kind: "message",
   from: "@alice",
+  fromKind: "human",
   body,
   createdAt: todayAt(9, 59),
 });

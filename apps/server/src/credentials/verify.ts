@@ -68,7 +68,16 @@ export class CredentialVerifier {
     })();
     try {
       await proc
-        .send([{ id: "verify", from: "@factory", kind: "message", urgent: false, body: PROMPT }])
+        .send([
+          {
+            id: "verify",
+            from: "@factory",
+            fromKind: "factory",
+            kind: "message",
+            urgent: false,
+            body: PROMPT,
+          },
+        ])
         .catch(() => {});
       await Promise.race([
         done,

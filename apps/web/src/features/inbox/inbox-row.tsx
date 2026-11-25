@@ -38,15 +38,7 @@ function SenderLine({ item }: { item: InboxItem }) {
     return (
       <>
         <Sender item={item} />
-        <span className="shrink-0 text-muted-foreground">
-          {item.to === "@humans" ? (
-            <>
-              mentioned <span className="font-mono">@humans</span>
-            </>
-          ) : (
-            "mentioned you"
-          )}
-        </span>
+        <span className="shrink-0 text-muted-foreground">mentioned you</span>
       </>
     );
   if (item.kind === "task_event")
@@ -87,8 +79,7 @@ function labelOf(item: InboxItem, time: string): string {
   const unread = item.read ? "" : "Unread, ";
   const task = item.task ? `${item.task.key} ${item.task.title}` : "";
   if (item.kind === "mention") {
-    const what = item.to === "@humans" ? "mentioned @humans" : "mentioned you";
-    return `${unread}@${item.from.name} ${what} on ${task}, ${time}`;
+    return `${unread}@${item.from.name} mentioned you on ${task}, ${time}`;
   }
   if (item.kind === "task_event")
     return `${unread}Factory, ${item.fact === "cancelled" ? "cancelled" : "done"}, ${task}, ${time}`;

@@ -95,7 +95,7 @@ test("earlier pages prepend; status, queue and resync frames", () => {
     message: {
       type: "queue",
       agent: "dev",
-      items: [{ id: "q", kind: "compact", from: "@or", createdAt: "x" }],
+      items: [{ id: "q", kind: "compact", from: "@or", fromKind: "human", createdAt: "x" }],
     },
   });
   expect(s.queue).toHaveLength(1);
@@ -224,6 +224,7 @@ const qItem = (id: string) => ({
   body: id,
   urgent: false,
   from: "@or",
+  fromKind: "human" as const,
   createdAt: "2026-11-18T00:00:00.000Z",
 });
 
@@ -403,7 +404,14 @@ const sessionEvent = (seq: number, event: SessionEvent["event"]): SessionEvent =
 });
 const messageIn = (...ids: string[]): SessionEvent["event"] => ({
   type: "message_in",
-  messages: ids.map((id) => ({ id, from: "@or", kind: "message", urgent: false, body: id })),
+  messages: ids.map((id) => ({
+    id,
+    from: "@or",
+    fromKind: "human",
+    kind: "message",
+    urgent: false,
+    body: id,
+  })),
 });
 const turnEnd = (): SessionEvent["event"] => ({ type: "turn_end", isError: false, numTurns: 1 });
 const loaded = (
@@ -442,7 +450,15 @@ test("a merged envelope's ids hand off every matching queue item", () => {
   const ev10 = sessionEvent(10, {
     type: "message_in",
     messages: [
-      { id: "m1", ids: ["m1", "m2"], from: "@or", kind: "message", urgent: false, body: "x" },
+      {
+        id: "m1",
+        ids: ["m1", "m2"],
+        from: "@or",
+        fromKind: "human",
+        kind: "message",
+        urgent: false,
+        body: "x",
+      },
     ],
   });
   const s = sessionReducer(loaded({ queue: [qItem("m1"), qItem("m2")] }), frames([ev10]));
@@ -568,7 +584,7 @@ test("a windowed view counts speech in newSpeech: messages, agent text and sends
         type: "tool_call",
         toolUseId: "t1",
         name: "mcp__factory__send_message",
-        input: { to: "@or", body: "done" },
+        input: { to: ["@or"], body: "done" },
       } as SessionEvent["event"]),
       sessionEvent(23, {
         type: "tool_call",
@@ -741,6 +757,7 @@ test("a message_in echoing the id removes the block and its row is handed off", 
       {
         id: "m1",
         from: "@or",
+        fromKind: "human",
         kind: "message",
         urgent: false,
         body: "hello",
@@ -768,6 +785,7 @@ test("an unconfirmed send (15s abort) is remembered, and a late echo marks it la
       {
         id: "m1",
         from: "@or",
+        fromKind: "human",
         kind: "message",
         urgent: false,
         body: "hello",

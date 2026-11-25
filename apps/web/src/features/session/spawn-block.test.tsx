@@ -293,6 +293,7 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
           {
             id: "p1",
             from: "@factory",
+            fromKind: "factory",
             kind: "peer_left",
             urgent: false,
             about: "dev-cd34",

@@ -62,7 +62,7 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
   const stdin = fake.log().filter((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user");
   expect(stdin).toHaveLength(1);
   expect(JSON.parse(stdin[0]?.kind === "stdin" ? stdin[0].line : "{}").message.content).toMatch(
-    /^<factory-message from="@or" kind="message" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
+    /^<factory-message from="@or" from_kind="human" kind="message" to="@[a-z0-9-]+" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
   );
   const start = sessionStarts()[0];
   expect(start?.kind === "start" && start.env.DATABASE_URL).toBeUndefined();
@@ -264,7 +264,9 @@ test("assembled: graceful shutdown mid-turn → next boot delivers the factory_r
       l.includes("The factory restarted while you were working."),
     );
     expect(restartedNotices).toHaveLength(1);
-    expect(restartedNotices[0]).toMatch(/^<factory-message from="@factory" kind="system"/);
+    expect(restartedNotices[0]).toMatch(
+      /^<factory-message from="@factory" from_kind="factory" kind="system"/,
+    );
     expect(await notices()).toEqual([{ state: "delivered" }]);
     expect((await w.sql`select attempting from agents where slug = 'dev'`)[0]?.attempting).toBe(
       false,
@@ -291,8 +293,8 @@ test("assembled: a listen that fails after the boot woke an agent closes the app
     const agent = await w.seedAgent();
     const { user } = await w.signUpUser({ handle: "or" });
     await w.app.close();
-    await w.sql`insert into messages (id, from_user_id, to_agent_id, body, urgent)
-                values (${randomUUID()}, ${user.id}, ${agent.id}, 'waiting', false)`;
+    await w.sql`insert into messages (id, from_user_id, to_agent_id, body, urgent, recipients)
+                values (${randomUUID()}, ${user.id}, ${agent.id}, 'waiting', false, '{@test}')`;
     const next = await w.reopen({ env });
     await until(() => startsOf(f).length === 1); // the boot woke it before any listen
     const pid = startsOf(f)[0]?.pid ?? 0;

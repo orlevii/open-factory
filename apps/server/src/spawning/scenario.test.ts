@@ -153,21 +153,21 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   await settle("proxy-reviewer-r1");
   const tlProc = procOf("tech-lead-t1");
   const rvProc = procOf("proxy-reviewer-r1");
-  expect(tlProc.sent.flat().some((m) => m.kind === "message" && m.from === "lead")).toBe(true);
+  expect(tlProc.sent.flat().some((m) => m.kind === "message" && m.from === "@lead")).toBe(true);
   open(tlProc, "sess-tl");
   open(rvProc, "sess-rv");
   const ask = await call("tech-lead-t1", "send_message", {
-    to: "proxy-reviewer-r1",
+    to: ["proxy-reviewer-r1"],
     body: "Is plan.md the right scope?",
   });
   expect(ask.isError).toBe(false);
   await close("proxy-reviewer-r1", rvProc); // the message waits for the turn boundary, then wakes it
-  expect(rvProc.sent.flat().some((m) => m.kind === "message" && m.from === "tech-lead-t1")).toBe(
+  expect(rvProc.sent.flat().some((m) => m.kind === "message" && m.from === "@tech-lead-t1")).toBe(
     true,
   );
   open(rvProc, "sess-rv");
   const reply = await call("proxy-reviewer-r1", "send_message", {
-    to: "tech-lead-t1",
+    to: ["tech-lead-t1"],
     body: "Yes, ship it.",
   });
   expect(reply.isError).toBe(false);
@@ -176,7 +176,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   writeFileSync(path.join(repo, "plan.md"), "# Plan\n");
   await close("tech-lead-t1", tlProc, "Plan written to plan.md");
   expect(
-    tlProc.sent.flat().some((m) => m.kind === "message" && m.from === "proxy-reviewer-r1"),
+    tlProc.sent.flat().some((m) => m.kind === "message" && m.from === "@proxy-reviewer-r1"),
   ).toBe(true);
 
   // 3. The lead's next batches carry member updates from both children. The reviewer's came first and opened a turn;
@@ -188,8 +188,8 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     .flat()
     .filter((m) => m.kind === "member_update")
     .map((m) => m.from);
-  expect(updates).toContain("tech-lead-t1");
-  expect(updates).toContain("proxy-reviewer-r1");
+  expect(updates).toContain("@tech-lead-t1");
+  expect(updates).toContain("@proxy-reviewer-r1");
 
   // 4. The lead terminates both and spawns the developer.
   leadProc.emit(ev.turn());
@@ -217,7 +217,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   await settle("developer-d1");
   const devProc = procOf("developer-d1");
   expect(
-    devProc.sent.flat().some((m) => m.from === "lead" && m.body.includes("Implement plan.md")),
+    devProc.sent.flat().some((m) => m.from === "@lead" && m.body.includes("Implement plan.md")),
   ).toBe(true);
   open(devProc, "sess-dev");
   const wt = path.join(repo, ".worktrees", "developer-d1-impl");
@@ -239,12 +239,14 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
       .filter((m) => m.kind === "member_update")
       .map((m) => m.from),
   );
-  expect([...heard].sort()).toEqual(["developer-d1", "proxy-reviewer-r1", "tech-lead-t1"]);
+  expect([...heard].sort()).toEqual(["@developer-d1", "@proxy-reviewer-r1", "@tech-lead-t1"]);
   expect(await rows("lead", "peer_left")).toEqual([]);
   expect((await batches("lead")).flat().filter((m) => m.kind === "peer_left")).toEqual([]);
 
   const peers = await call("developer-d1", "list_peers", {});
   expect(
-    peers.out.agents.map((a: { slug: string; relation: string }) => [a.slug, a.relation]),
-  ).toEqual([["lead", "manager"]]);
+    peers.out.peers
+      .filter((p: { kind: string }) => p.kind === "agent")
+      .map((p: { handle: string; relation: string }) => [p.handle, p.relation]),
+  ).toEqual([["@lead", "manager"]]);
 });

@@ -4,6 +4,7 @@ import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
 import { count, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
 import { handleSignUp } from "./sign-up-gate.ts";
 
@@ -174,6 +175,7 @@ describe("with one user", () => {
     const fakeAuth = (body: unknown, create?: Record<string, string>) => ({
       handler: async () => {
         if (create) {
+          await claimTestHandle(h.db, create.handle as string, "user");
           await h.db.insert(schema.users).values({
             id: create.id as string,
             name: "Fake",

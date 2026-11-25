@@ -148,7 +148,9 @@ const initial: SessionEvent[] = [
     2,
     {
       type: "message_in",
-      messages: [{ id: "m1", from: "@or", kind: "message", urgent: false, body: "Hello" }],
+      messages: [
+        { id: "m1", from: "@or", fromKind: "human", kind: "message", urgent: false, body: "Hello" },
+      ],
     },
     null,
   ),
@@ -271,7 +273,17 @@ test("a queue frame renders no row and no markdown", async () => {
   push({
     type: "queue",
     agent: "dev",
-    items: [{ id: "q1", kind: "message", body: "next", urgent: false, from: "@or", createdAt: at }],
+    items: [
+      {
+        id: "q1",
+        kind: "message",
+        body: "next",
+        urgent: false,
+        from: "@or",
+        fromKind: "human",
+        createdAt: at,
+      },
+    ],
   });
   frame();
   expect(count.rows.size).toBe(0);

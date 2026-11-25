@@ -102,6 +102,8 @@ export const queueItemSchema = z.object({
   focus: z.string().optional(),
   urgent: z.boolean().optional(),
   from: z.string(),
+  /** What `from` is; the UI never guesses it from the handle. */
+  fromKind: z.enum(["human", "agent", "factory"]),
   taskKey: z.string().optional(),
   taskTitle: z.string().optional(),
   commentId: z.string().optional(),
@@ -148,7 +150,15 @@ export const sendMessageBodySchema = z.object({
   attachments: z.array(z.string().min(1).max(64)).max(10).optional(),
 });
 export const sendMessageToolSchema = z.object({
-  to: z.string().min(1).max(64),
+  to: z
+    .array(
+      z
+        .string()
+        .max(65)
+        .refine((s) => s.trim().length > 0, "Name a recipient"),
+    )
+    .min(1)
+    .max(10, "Send to at most 10 recipients at once."),
   body: sendMessageBodySchema.shape.body,
   urgent: z.boolean().default(false),
 });

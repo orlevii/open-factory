@@ -18,7 +18,9 @@ import { createFakeClaude } from "@open-factory/harness/testing";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
+import * as principals from "../messaging/principals.ts";
 import { ContainerManager } from "../runtime/docker/containers.ts";
+import { claimTestHandleSql } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { resyncPendingDir } from "../workspace/paths.ts";
 import type { AgentService } from "./agent-service.ts";
@@ -154,6 +156,26 @@ test.each([
       ...patch,
     }),
   ).rejects.toMatchObject(err);
+});
+
+test("create with a reserved slug is refused before any claim", async () => {
+  const spy = vi.spyOn(principals, "claimHandle");
+  try {
+    for (const slug of ["humans", "me", "scheduler"])
+      await expect(
+        svc.create({
+          template: "lead",
+          slug,
+          displayName: "X",
+          description: "",
+          reportsTo: null,
+          credential: "work",
+        }),
+      ).rejects.toMatchObject({ code: "validation_error" });
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 test("create race on one slug: one wins, the loser leaves the winner's folder intact", async () => {
@@ -482,6 +504,52 @@ test("create refuses a slug that is a human handle", async () => {
   ).rejects.toMatchObject({ code: "slug_taken" });
 });
 
+const createBody = (slug: string) => ({
+  template: "lead",
+  slug,
+  displayName: slug,
+  description: "",
+  reportsTo: null,
+  credential: "work",
+});
+const agentRows = async (slug: string) =>
+  t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
+
+test("create refuses a slug whose user claim is in flight (claim, no user row yet)", async () => {
+  await claimTestHandleSql(t.sql, "inflight", "user");
+  await expect(svc.create(createBody("inflight"))).rejects.toMatchObject({ code: "slug_taken" });
+  expect(await agentRows("inflight")).toEqual([]);
+  expect(existsSync(path.join(home, "agents/inflight"))).toBe(false);
+});
+
+test("create claims the slug in its transaction: the claim is an agent claim", async () => {
+  await svc.create(createBody("claimed-one"));
+  const [h] = await t.sql`select kind from handles where handle = 'claimed-one'`;
+  expect(h?.kind).toBe("agent");
+});
+
+test("two concurrent creates of one slug: one succeeds, the other is slug_taken, no duplicate", async () => {
+  const results = await Promise.allSettled([
+    svc.create(createBody("dup-race")),
+    svc.create(createBody("dup-race")),
+  ]);
+  expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+  const failed = results.find((r) => r.status === "rejected");
+  expect(failed).toMatchObject({ reason: { code: "slug_taken" } });
+  expect(await agentRows("dup-race")).toHaveLength(1);
+});
+
+test("a competing agent commits the slug while this create materialises: slug_taken, one row", async () => {
+  const spy = vi.spyOn(t.app.workspace, "materialize").mockImplementationOnce(async () => {
+    await claimTestHandleSql(t.sql, "late-dup", "agent");
+    await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id)
+                select 'late-dup-id', 'late-dup', 'x', 'lead', config, 'local', credential_id from agents where slug = 'lead'`;
+  });
+  await expect(svc.create(createBody("late-dup"))).rejects.toMatchObject({ code: "slug_taken" });
+  spy.mockRestore();
+  expect(await agentRows("late-dup")).toHaveLength(1);
+});
+
 async function createSpawner(slug: string) {
   await svc.create({
     template: "lead",
@@ -494,15 +562,14 @@ async function createSpawner(slug: string) {
   return idOf(slug);
 }
 /** A spawned child of `spawnerId`, inserted with `q` (a test transaction or the pool). */
-const insertChild = (
-  q: typeof t.sql,
-  spawnerId: string,
-  slug: string,
-  terminated = false,
-) => q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
+const insertChild = (q: typeof t.sql, spawnerId: string, slug: string, terminated = false) =>
+  claimTestHandleSql(q, slug, "agent").then(
+    () =>
+      q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
        select ${randomUUID()}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
               ${terminated ? new Date().toISOString() : null}::timestamptz, ${terminated ? "@factory" : null}
-       from agents where id = ${spawnerId}`;
+       from agents where id = ${spawnerId}`,
+  );
 
 /**
  * Resolves once `n` archives are waiting on the row lock `holder` holds: their own `for no key update` query, in a

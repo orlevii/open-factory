@@ -164,6 +164,7 @@ export const QueueItems = memo(function QueueItems({
             <>
               <MessageBlock
                 from={q.from}
+                fromKind={q.fromKind}
                 system={q.kind === "notice" || (q.taskKey !== undefined && q.from === "@factory")}
                 body={q.body ?? ""}
                 urgent={q.urgent}
@@ -239,6 +240,7 @@ export const QueueItems = memo(function QueueItems({
           <>
             <MessageBlock
               from={`@${self ?? "you"}`}
+              fromKind="human"
               body={b.body}
               urgent={b.urgent}
               brief

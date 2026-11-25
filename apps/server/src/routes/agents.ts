@@ -207,10 +207,12 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const u = user(req);
       try {
-        // For a human sender the Router resolves agents only: a user, `humans` or a reserved name is not found.
-        const r = await app.router.send(
+        // A human sender addresses agents only; the path's slug is the one recipient.
+        const {
+          results: [r],
+        } = await app.router.send(
           { userId: u.id, handle: u.handle },
-          req.params.slug,
+          [req.params.slug],
           req.body.body,
           req.body.urgent,
           {
@@ -218,18 +220,22 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
             ...(req.body.attachments?.length ? { attachments: req.body.attachments } : {}),
           },
         );
-        if (!r.ok) {
-          if (r.code === "invalid_attachment") return err(reply, 422, r.code, r.message);
+        if (!r) throw new Error("a send returned no result");
+        if (r.status === "refused") {
+          if (r.code === "invalid_attachment") return err(reply, 422, r.code, r.reason);
           // The `[attached: …]` lines pushed the body over the limit the schema checks without them.
-          if (r.code === "too_large") return err(reply, 400, "validation_error", r.message);
+          if (r.code === "too_large") return err(reply, 400, "validation_error", r.reason);
           if (r.code === "archived") {
             const e = new AgentArchivedError(req.params.slug);
             return err(reply, 409, "agent_archived", e.message);
           }
-          if (r.code === "terminated") return err(reply, 409, "agent_terminated", r.message);
+          if (r.code === "terminated") return err(reply, 409, "agent_terminated", r.reason);
           return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
         }
-        return reply.code(202).send(queueItemResponseSchema.parse({ item: r.item }));
+        if (r.status === "start_failed") return err(reply, 503, "agent_start_failed", r.note);
+        return reply
+          .code(202)
+          .send(queueItemResponseSchema.parse({ item: "item" in r ? r.item : undefined }));
       } catch (e) {
         if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);
         if (e instanceof AgentTerminatedError)

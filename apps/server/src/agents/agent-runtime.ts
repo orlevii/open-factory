@@ -195,14 +195,14 @@ export type AfterExit =
   | { kind: "internal" }; // S3's onJobFailure stop
 
 /**
- * A pending message row (S6 §8): `from` is the envelope sender (`@handle` for a human, the bare slug for an agent,
- * `@factory`); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
+ * A pending message row (S6 §8): `from` is the envelope sender (`@handle` for a human or an agent, `@factory`); `groupKey` the report a member update concerns; `about` the subject of a factory row; `subject` what
  * the UI needs for a peer event.
  */
 type MessageEntry = {
   kind: "message";
   row: MessageRow;
   from: string;
+  fromKind: "human" | "agent" | "factory";
   groupKey?: string;
   about?: string;
   subject?: Subject;
@@ -261,20 +261,26 @@ const ERRORED_WAKES: ReadonlySet<WakeReason> = new Set([
 function entryOf(r: PendingRow): MessageEntry {
   const { fromHandle, fromSlug, subjectSlug, subjectDisplayName, ...row } = r;
   let from: string;
+  let fromKind: MessageEntry["fromKind"] = "factory";
   if (row.kind === "system") from = "@factory";
   // S9: a scheduled row has no sender columns; it is from the scheduler (its author travels as `by`).
   else if (row.kind === "scheduled") from = "@scheduler";
-  else if (fromHandle) from = `@${fromHandle}`;
-  else if (fromSlug) from = fromSlug;
-  else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
+  else if (fromHandle) {
+    from = `@${fromHandle}`;
+    fromKind = "human";
+  } else if (fromSlug) {
+    from = `@${fromSlug}`;
+    fromKind = "agent";
+  } else if (row.kind === "message") throw new Error(`message ${row.id} has no sender`);
   else from = "@factory";
   const groupKey = fromSlug ?? subjectSlug ?? undefined;
   const entry: MessageEntry = {
     kind: "message",
     row,
     from,
+    fromKind,
     ...(groupKey ? { groupKey } : {}),
-    ...(subjectSlug ? { about: subjectSlug } : {}),
+    ...(subjectSlug ? { about: `@${subjectSlug}` } : {}),
   };
   if ((row.kind === "peer_joined" || row.kind === "peer_left") && subjectSlug) {
     const left = row.kind === "peer_left" ? peerLeftOf(row.body) : undefined;
@@ -302,12 +308,14 @@ const scheduleFieldsOf = (
     scheduleKey?: string | null;
     scheduleZone?: string | null;
     authorLabel?: string | null;
+    authorKind?: "human" | "agent" | null;
   },
 ) =>
   row.kind === "scheduled" && row.scheduleKey
     ? {
         scheduleKey: row.scheduleKey,
         ...(row.authorLabel ? { by: row.authorLabel } : {}),
+        ...(row.authorKind ? { byKind: row.authorKind } : {}),
         ...(row.dueAt ? { due: formatOffsetIso(row.dueAt, row.scheduleZone ?? "UTC") } : {}),
         ...(row.firings ? { firings: row.firings } : {}),
         ...(row.late ? { late: true } : {}),
@@ -328,6 +336,8 @@ const toBatchRow = (e: MessageEntry): BatchRow => ({
   id: e.row.id,
   kind: kindOf(e.row),
   from: e.from,
+  fromKind: e.fromKind,
+  ...(e.row.recipients ? { to: e.row.recipients } : {}),
   urgent: e.row.urgent,
   body: e.row.body,
   createdAt: e.row.createdAt,
@@ -746,6 +756,7 @@ export class AgentRuntime {
         kind: "message",
         row,
         from: "@factory",
+        fromKind: "factory",
       });
     }
     this.publishQueue();
@@ -763,7 +774,7 @@ export class AgentRuntime {
     const entry: CompactEntry = {
       kind: "compact",
       id: randomUUID(),
-      by: c.byHandle,
+      by: `@${c.byHandle}`,
       createdAt: new Date(),
       ...(c.focus ? { focus: c.focus } : {}),
     };
@@ -1710,6 +1721,7 @@ export class AgentRuntime {
         id: first.row.id,
         kind: "held",
         from: first.from,
+        fromKind: first.fromKind,
         count: g.length,
         createdAt: first.row.createdAt.toISOString(),
         ...(first.about ? { about: first.about } : {}),
@@ -1844,6 +1856,7 @@ export class AgentRuntime {
           body: e.row.body,
           urgent: e.row.urgent,
           from: e.from,
+          fromKind: e.fromKind,
           createdAt: e.row.createdAt.toISOString(),
           ...taskFieldsOf(e.row),
           ...queueScheduleOf(e.row),
@@ -1857,6 +1870,7 @@ export class AgentRuntime {
             kind: "command",
             body: e.text,
             from: `@${e.by}`,
+            fromKind: "human",
             createdAt: e.createdAt.toISOString(),
             ...(e.clientMessageId ? { clientMessageId: e.clientMessageId } : {}),
             ...(this.proc && this.turnOpen() ? { waitReason: "turn" as const } : {}),
@@ -1864,7 +1878,8 @@ export class AgentRuntime {
         : {
             id: e.id,
             kind: "compact",
-            from: `@${e.by}`,
+            from: e.by,
+            fromKind: "human",
             createdAt: e.createdAt.toISOString(),
             ...(e.focus ? { focus: e.focus } : {}),
           };
@@ -3574,7 +3589,7 @@ export class AgentRuntime {
         await this.append(null, {
           type: "control",
           cmd: "compact",
-          by: `@${head.by}`,
+          by: head.by,
           ...(head.focus ? { arg: head.focus } : {}),
         });
         this.publishQueue();

@@ -52,7 +52,9 @@ export type MessageAttachment = z.infer<typeof messageAttachmentSchema>;
 export const envelopeSchema = z.object({
   id: z.string(),
   from: z.string(),
+  fromKind: z.enum(["human", "agent", "factory"]),
   kind: z.enum(MESSAGE_KINDS),
+  to: z.array(z.string()).optional(),
   urgent: z.boolean(),
   body: z.string(),
   taskKey: z.string().optional(),
@@ -61,6 +63,8 @@ export const envelopeSchema = z.object({
   /** S9 `scheduled` rows: the schedule's key, its author, when it was due (zone offset), runs covered, delayed. */
   scheduleKey: z.string().optional(),
   by: z.string().optional(),
+  /** UI-only: what `by` is (a human or an agent). Never rendered into the model's text. */
+  byKind: z.enum(["human", "agent"]).optional(),
   due: z.string().optional(),
   firings: z.number().int().positive().optional(),
   late: z.boolean().optional(),
@@ -122,6 +126,7 @@ export const messageLookupSchema = z.object({
   id: z.string(),
   kind: z.enum(MESSAGE_KINDS),
   from: z.string(),
+  fromKind: z.enum(["human", "agent", "factory"]),
   to: z.string(),
   state: z.enum(["pending", "delivered", "rejected", "cancelled"]),
   recipientEvent: eventRefSchema.optional(),

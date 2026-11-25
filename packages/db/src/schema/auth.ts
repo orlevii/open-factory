@@ -7,6 +7,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { handles } from "./handles.ts";
 
 export const users = pgTable(
   "users",
@@ -16,7 +17,9 @@ export const users = pgTable(
     email: text("email").notNull().unique(),
     emailVerified: boolean("email_verified").notNull().default(false),
     image: text("image"),
-    handle: text("handle").notNull(),
+    handle: text("handle")
+      .notNull()
+      .references(() => handles.handle),
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
     disabledBy: text("disabled_by").references((): AnyPgColumn => users.id),
     createdAt: timestamp("created_at").notNull().defaultNow(),

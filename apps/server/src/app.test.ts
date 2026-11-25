@@ -230,7 +230,7 @@ test("an agent token never reaches the logs, on the agent listener or the REST A
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const url = `http://127.0.0.1:${t.app.agentListener.port}`;
     await callTool(url, token, "list_peers", {});
-    await callTool(url, token, "send_message", { to: "@h-dev", body: "for the inbox" });
+    await callTool(url, token, "send_message", { to: ["@h-dev"], body: "for the inbox" });
     await expect(callTool(url, `${token}x`, "list_peers", {})).rejects.toThrow("401");
     for (const route of ["/api/agents", "/api/inbox", "/api/messages/nope"]) {
       const r = await t.app.inject({

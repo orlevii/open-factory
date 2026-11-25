@@ -1,7 +1,10 @@
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
+import { insertAgent } from "../agents/testing/rows.ts";
+import * as principals from "../messaging/principals.ts";
 import { makeTestApp, signUp, TEST_ORIGIN, testInvite } from "../test/helpers.ts";
+import { signUpMutex } from "../users/sign-up-gate.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 beforeAll(async () => {
@@ -67,15 +70,21 @@ describe("sign-up and /api/me", () => {
   test.each(["Bob", "-x", "humans", "me", "scheduler", "a"])(
     "invalid or reserved handle %s is rejected",
     async (handle) => {
-      const res = await post("/api/auth/sign-up/email", {
-        invite: await testInvite(t.app),
-        name: "X",
-        handle,
-        email: `${handle}-${Date.now()}@example.com`,
-        password: "password123",
-      });
-      expect(res.statusCode).toBe(400);
-      expect(res.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+      const spy = vi.spyOn(principals, "claimHandle");
+      try {
+        const res = await post("/api/auth/sign-up/email", {
+          invite: await testInvite(t.app),
+          name: "X",
+          handle,
+          email: `${handle}-${Date.now()}@example.com`,
+          password: "password123",
+        });
+        expect(res.statusCode).toBe(400);
+        expect(res.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
     },
   );
 
@@ -213,5 +222,138 @@ describe("error shape", () => {
     });
     expect(res.statusCode).toBe(415);
     expect(res.json()).toMatchObject({ error: { code: "bad_request" } });
+  });
+});
+
+const countHandles = async (h: string) => {
+  const [r] = await t.sql`select count(*)::int as n from handles where handle = ${h}`;
+  return r?.n as number;
+};
+const signUpBody = async (handle: string, email = `${handle}-${Date.now()}@example.com`) => ({
+  invite: await testInvite(t.app),
+  name: "X",
+  handle,
+  email,
+  password: "password123",
+});
+
+describe("handle claims (spec §4.1)", () => {
+  test("sign-up with an agent's slug is 422 HANDLE_TAKEN", async () => {
+    await insertAgent(t.sql, { id: "agent-claim", slug: "agentclaim" });
+    await signUp(t.app, { handle: "someone-first" }); // an invite creator exists
+    const res = await post("/api/auth/sign-up/email", await signUpBody("agentclaim"));
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toMatchObject({ code: "HANDLE_TAKEN" });
+  });
+
+  test("a sign-up that fails with an email in use leaves a claim the next sign-up reclaims", async () => {
+    const first = await signUp(t.app, { handle: "orphan-owner" });
+    const res = await post(
+      "/api/auth/sign-up/email",
+      await signUpBody("orphan-claim", first.input.email),
+    );
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(await countHandles("orphan-claim")).toBe(1);
+    const [u] = await t.sql`select id from users where handle = 'orphan-claim'`;
+    expect(u).toBeUndefined();
+    await signUp(t.app, { handle: "orphan-claim" });
+    expect(await countHandles("orphan-claim")).toBe(1);
+  });
+
+  test("update-user with a handle and no session is 401 and leaves no handles row", async () => {
+    const res = await post("/api/auth/update-user", { handle: "squatter" });
+    expect(res.statusCode).toBe(401);
+    expect(await countHandles("squatter")).toBe(0);
+  });
+
+  test("update-user to an invalid handle is 400 and claims nothing", async () => {
+    const { cookie } = await signUp(t.app);
+    const spy = vi.spyOn(principals, "claimHandle");
+    try {
+      for (const handle of ["Bad_Handle", "humans"]) {
+        const res = await post("/api/auth/update-user", { handle }, { cookie });
+        expect(res.statusCode).toBe(400);
+        expect(await countHandles(handle)).toBe(0);
+      }
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("update-user keeping one's own handle is not a change", async () => {
+    const { cookie, user } = await signUp(t.app);
+    const spy = vi.spyOn(principals, "claimHandle");
+    try {
+      const res = await post(
+        "/api/auth/update-user",
+        { handle: user.handle, name: "Renamed" },
+        { cookie },
+      );
+      expect(res.statusCode).toBe(200);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("update-user to an agent's handle is 422 HANDLE_TAKEN; to a free one claims it", async () => {
+    const { cookie } = await signUp(t.app);
+    const taken = await post("/api/auth/update-user", { handle: "agentclaim" }, { cookie });
+    expect(taken.statusCode).toBe(422);
+    expect(taken.json()).toMatchObject({ code: "HANDLE_TAKEN" });
+    const ok = await post("/api/auth/update-user", { handle: "renamed-free" }, { cookie });
+    expect(ok.statusCode).toBe(200);
+    expect(await countHandles("renamed-free")).toBe(1);
+  });
+
+  test("the claim runs before better-auth writes the user, on sign-up and update-user", async () => {
+    const order: string[] = [];
+    const real = principals.claimHandle;
+    const spy = vi.spyOn(principals, "claimHandle").mockImplementation(async (...a) => {
+      order.push(`claim:${a[1]}`);
+      return real(...a);
+    });
+    const ctx = await t.app.auth.$context;
+    const adapter = ctx.internalAdapter;
+    const realCreate = adapter.createUser.bind(adapter);
+    const createSpy = vi.spyOn(adapter, "createUser").mockImplementation(async (...a) => {
+      order.push("createUser");
+      return realCreate(...a);
+    });
+    const realUpdate = adapter.updateUser.bind(adapter);
+    const updateSpy = vi.spyOn(adapter, "updateUser").mockImplementation(async (...a) => {
+      order.push("updateUser");
+      return realUpdate(...a);
+    });
+    try {
+      const { cookie } = await signUp(t.app, { handle: "order-one" });
+      await post("/api/auth/update-user", { handle: "order-two" }, { cookie });
+      expect(order).toEqual(["claim:order-one", "createUser", "claim:order-two", "updateUser"]);
+    } finally {
+      spy.mockRestore();
+      createSpy.mockRestore();
+      updateSpy.mockRestore();
+    }
+  });
+
+  test("update-user and sign-up are serialised under the same mutex key", async () => {
+    const keys: string[] = [];
+    const real = signUpMutex.run.bind(signUpMutex);
+    const spy = vi.spyOn(signUpMutex, "run").mockImplementation((key, fn) => {
+      keys.push(key);
+      return real(key, fn);
+    });
+    try {
+      const { cookie } = await signUp(t.app);
+      const [a, b] = await Promise.all([
+        post("/api/auth/update-user", { handle: "mutex-one" }, { cookie }),
+        post("/api/auth/update-user", { handle: "mutex-two" }, { cookie }),
+      ]);
+      expect([a.statusCode, b.statusCode]).toEqual([200, 200]);
+      expect(keys).toEqual(["sign-up", "sign-up", "sign-up"]); // the sign-up above, then both updates
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./auth.ts";
 import { credentials } from "./factory.ts";
+import { handles } from "./handles.ts";
 import { schedules } from "./schedules.ts";
 import { tasks } from "./tasks.ts";
 
@@ -33,7 +34,10 @@ export const agents = pgTable(
   "agents",
   {
     id: text("id").primaryKey(),
-    slug: text("slug").notNull().unique(),
+    slug: text("slug")
+      .notNull()
+      .unique()
+      .references(() => handles.handle),
     displayName: text("display_name").notNull(),
     description: text("description").notNull().default(""),
     sessionId: text("session_id"),
@@ -168,6 +172,8 @@ export const messages = pgTable(
     toAllHumans: boolean("to_all_humans").notNull().default(false),
     fromToolUseId: text("from_tool_use_id"),
     deliveredEventSeq: integer("delivered_event_seq"),
+    // I1: the full recipient list of a `kind='message'` row, as `@handle`s (a fan-out writes one row per agent).
+    recipients: text("recipients").array(),
     body: text("body").notNull(),
     urgent: boolean("urgent").notNull().default(false),
     state: text("state").notNull().default("pending"),
@@ -197,8 +203,9 @@ export const messages = pgTable(
       .on(t.deliveredTurnId)
       .where(sql`${t.deliveredTurnId} is not null`),
     uniqueIndex("messages_client_id_unique")
-      .on(t.fromUserId, t.clientMessageId)
+      .on(t.fromUserId, t.clientMessageId, t.toAgentId)
       .where(sql`${t.clientMessageId} is not null`),
+    check("messages_recipients", sql`${t.kind} <> 'message' OR ${t.recipients} IS NOT NULL`),
   ],
 );
 

@@ -47,12 +47,12 @@ async function aCalls(toolUseId: string, input: object) {
 }
 
 test("GET /api/inbox: newest first, link to the sender's send_message call, preview capped, human session only", async () => {
-  await aCalls("toolu_01X", { to: "@humans", body: "first" });
-  await callTool(url, tokA, "send_message", { to: "@or", body: "x".repeat(400), urgent: true });
+  await aCalls("toolu_01X", { to: ["@or"], body: "first" });
+  await callTool(url, tokA, "send_message", { to: ["@or"], body: "x".repeat(400), urgent: true });
   const r = await get("/api/inbox");
   expect(r.statusCode).toBe(200);
   const page = r.json();
-  expect(page.items.map((i: { to: string }) => i.to)).toEqual(["@or", "@humans"]);
+  expect(page.items.map((i: { to: string }) => i.to)).toEqual(["@or", "@or"]);
   expect(page.items[0]).toMatchObject({ urgent: true, from: { kind: "agent", name: "ada" } });
   expect(page.items[0].preview).toHaveLength(280);
   // No tool call recorded for the second send: the link names the sender's session only.
@@ -68,7 +68,7 @@ test("GET /api/inbox: newest first, link to the sender's send_message call, prev
 
 test("GET /api/inbox pages with a cursor; a bad cursor or limit is a 400, not a 500", async () => {
   for (let i = 0; i < 3; i += 1)
-    await callTool(url, tokA, "send_message", { to: "@or", body: `m${i}` });
+    await callTool(url, tokA, "send_message", { to: ["@or"], body: `m${i}` });
   const p1 = (await get("/api/inbox?limit=2")).json();
   expect(p1.items.map((i: { preview: string }) => i.preview)).toEqual(["m2", "m1"]);
   const p2 = (await get(`/api/inbox?limit=2&before=${p1.nextCursor}`)).json();
@@ -102,8 +102,8 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
   expect(missing.json().error.code).toBe("message_not_found");
 
   const out = JSON.parse(
-    (await aCalls("toolu_01Y", { to: "bob", body: "hello bob" })).content[0]?.text ?? "{}",
-  );
+    (await aCalls("toolu_01Y", { to: ["bob"], body: "hello bob" })).content[0]?.text ?? "{}",
+  ).results[0];
   // The send woke the hibernated `bob`: its start job, settled, has written the batch, and no session has begun.
   const b = await h.app.runtimes.bySlug("bob");
   await b?.settled();
@@ -116,8 +116,9 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
   expect(before).toEqual({
     id: out.id,
     kind: "message",
-    from: "ada",
-    to: "bob",
+    from: "@ada",
+    fromKind: "agent",
+    to: "@bob",
     state: "pending",
     senderEvent: { agentSlug: "ada", seq: expect.any(Number) },
   });
@@ -135,9 +136,9 @@ test("GET /api/messages/:id: 404, pending without recipientEvent, delivered with
 
 test("spec §5.1: a live agent token is refused by the inbox and message lookup routes", async () => {
   const out = JSON.parse(
-    (await callTool(url, tokA, "send_message", { to: "@or", body: "for or" })).content[0]?.text ??
+    (await callTool(url, tokA, "send_message", { to: ["@or"], body: "for or" })).content[0]?.text ??
       "{}",
-  );
+  ).results[0];
   const bearer = { authorization: `Bearer ${tokA}` };
   for (const path of ["/api/inbox", `/api/messages/${out.id}`]) {
     const r = await get(path, bearer);
@@ -207,7 +208,7 @@ test("a task event: done from an agent reaches the human creator with fact and a
 test("POST /api/inbox/:id/read marks only the caller's item, idempotently; another user's id is 404", async () => {
   const { or, agent, sam } = await actors();
   await h.app.tasks.create(or, { title: "t" });
-  await h.app.tasks.comment(agent, "T-1", "@humans hi");
+  await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
   const mine = ((await get("/api/inbox")).json().items as { id: string }[])[0]?.id as string;
   const theirs = (
     (await get("/api/inbox", { cookie: sam.cookie })).json().items as { id: string }[]
@@ -233,11 +234,11 @@ test("POST /api/inbox/:id/read marks only the caller's item, idempotently; anoth
 
 test("unread-count byAgent counts unread messages by sending agent only", async () => {
   const { or, agent } = await actors();
-  await aCalls("toolu_m1", { to: "@or", body: "one" });
-  await aCalls("toolu_m2", { to: "@humans", body: "two" });
+  await aCalls("toolu_m1", { to: ["@or"], body: "one" });
+  await aCalls("toolu_m2", { to: ["@or"], body: "two" });
   // A mention is a different inbox kind: it must not count toward byAgent.
   await h.app.tasks.create(or, { title: "t" });
-  await h.app.tasks.comment(agent, "T-1", "@humans hi");
+  await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
   const r = (await get("/api/inbox/unread-count")).json();
   expect(r.byAgent).toEqual({ ada: 2 });
   expect(r.count).toBeGreaterThanOrEqual(3);
@@ -280,7 +281,7 @@ test("read-all marks up to upTo (a newer item stays unread) and Undo restores ex
 });
 
 test("read-from marks that agent's unread messages up to upTo, idempotent, user-scoped", async () => {
-  await aCalls("toolu_r1", { to: "@or", body: "one" });
+  await aCalls("toolu_r1", { to: ["@or"], body: "one" });
   const sam = (await signUp(h.app, { handle: "sam" })).cookie;
   const upTo = new Date().toISOString();
   const readFrom = (c: string, slug = "ada", body: object = { upTo }) =>
@@ -295,13 +296,13 @@ test("read-from marks that agent's unread messages up to upTo, idempotent, user-
   expect((await readFrom(cookie, "ada", { upTo: "yesterday" })).statusCode).toBe(400);
   // A message after upTo stays unread.
   await new Promise((r) => setTimeout(r, 5));
-  await aCalls("toolu_r2", { to: "@or", body: "later" });
+  await aCalls("toolu_r2", { to: ["@or"], body: "later" });
   expect((await readFrom(cookie)).json().marked).toBe(0);
   expect((await get("/api/inbox/unread-count")).json().byAgent).toEqual({ ada: 1 });
 });
 
 test("read-from publishes inbox_changed only when it marked something", async () => {
-  await aCalls("toolu_r1", { to: "@or", body: "one" });
+  await aCalls("toolu_r1", { to: ["@or"], body: "one" });
   const orId = ((await get("/api/me")).json() as { id: string }).id;
   let n = 0;
   h.app.bus.subscribeUser(orId, (m) => m.type === "inbox_changed" && n++);
@@ -312,7 +313,7 @@ test("read-from publishes inbox_changed only when it marked something", async ()
   expect(n).toBe(1);
 });
 
-test("read changes reach the reading user's sockets only; new items reach everyone", async () => {
+test("read changes reach the reading user's sockets only; new items reach the users they are for", async () => {
   const { or, agent, sam } = await actors();
   const orId = or.userId;
   const got = { or: 0, sam: 0, all: 0 };
@@ -320,14 +321,14 @@ test("read changes reach the reading user's sockets only; new items reach everyo
   h.app.bus.subscribeUser(sam.user.id, () => got.sam++);
   h.app.bus.subscribeAll((m) => m.type === "inbox_changed" && got.all++);
   await h.app.tasks.create(or, { title: "t" });
-  await h.app.tasks.comment(agent, "T-1", "@humans hi");
-  expect(got.all).toBe(1);
-  expect(got.or + got.sam).toBe(0); // new rows publish to every socket, not through the per-user channel
+  await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
+  expect(got.all).toBe(0); // a new item goes to the users it was written for, never to every socket
+  expect(got).toMatchObject({ or: 1, sam: 1 });
   const mine = ((await get("/api/inbox")).json().items as { id: string }[])[0]?.id as string;
   await post(`/api/inbox/${mine}/read`);
-  expect(got).toEqual({ or: 1, sam: 0, all: 1 });
+  expect(got).toEqual({ or: 2, sam: 1, all: 0 });
   await post("/api/inbox/read-all", { upTo: "2999-01-01T00:00:00.000Z" });
-  expect(got.sam).toBe(0);
+  expect(got.sam).toBe(1);
 });
 
 test.each([
@@ -350,7 +351,7 @@ test.each([
 test("GET /api/inbox/:id: the owner's item equals the list entry; another user's or unknown id is 404; static routes still win", async () => {
   const { or, agent, sam } = await actors();
   await h.app.tasks.create(or, { title: "t" });
-  await h.app.tasks.comment(agent, "T-1", "@humans hi");
+  await h.app.tasks.comment(agent, "T-1", "@or @sam hi");
   const entries = (await get("/api/inbox")).json().items as { id: string }[];
   const mine = entries[0] as { id: string };
   const theirs = (

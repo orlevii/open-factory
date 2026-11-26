@@ -27,7 +27,17 @@ let agent: Partial<Parameters<typeof agentSummary>[0]>;
 let commands: unknown;
 let extraAgents: ReturnType<typeof agentSummary>[];
 
-const queued = (to: string) => ({ to: `@${to}`, status: "queued", id: `row-${to}` });
+/** The server names a recipient as a tag, `<@ref|handle>`; the ref here is a stand-in per handle. */
+const tagged = (handle: string) => {
+  if (handle === "dev") return `<@${DEV_REF}|dev>`; // the chat's own agent, as the principals cache knows it
+  const alphabet = "abcdefghjkmnpqrstvwxyz0123456789";
+  const ref = Array.from(
+    { length: 8 },
+    (_, k) => alphabet[(handle.charCodeAt(k % handle.length) + k) % 32],
+  );
+  return `<@${ref.join("")}|${handle}>`;
+};
+const queued = (to: string) => ({ to: tagged(to), status: "queued", id: `row-${to}` });
 const OPS = agentSummary({ slug: "ops", displayName: "Ops agent", template: "ops" });
 const QA = agentSummary({ slug: "qa", displayName: "QA agent", template: "qa" });
 
@@ -238,7 +248,7 @@ test("a refused extra recipient is named; the rest are sent", async () => {
     results: (b.to as string[]).map((t) =>
       t === "ops"
         ? {
-            to: "@ops",
+            to: tagged("ops"),
             status: "refused",
             code: "terminated",
             reason: "@ops was terminated and can't receive messages.",
@@ -259,7 +269,7 @@ test("each refused recipient gets its own line", async () => {
       t === "dev"
         ? queued(t)
         : {
-            to: `@${t}`,
+            to: tagged(t),
             status: "refused",
             code: t === "ops" ? "terminated" : "archived",
             reason: "x",
@@ -280,7 +290,7 @@ test("when the chat's agent is refused the draft stays, with the reason and who 
     results: (b.to as string[]).map((t) =>
       t === "dev"
         ? {
-            to: "@dev",
+            to: tagged("dev"),
             status: "refused",
             code: "archived",
             reason: "@dev is archived and can't receive messages.",
@@ -403,7 +413,9 @@ test("a refused add (a file is attached) leaves its note until you type or the f
 test("'Not sent to @x' goes when you type the next message", async () => {
   results = (b) => ({
     results: (b.to as string[]).map((t) =>
-      t === "ops" ? { to: "@ops", status: "refused", code: "terminated", reason: "x" } : queued(t),
+      t === "ops"
+        ? { to: tagged("ops"), status: "refused", code: "terminated", reason: "x" }
+        : queued(t),
     ),
   });
   renderApp("/agents/dev/chat", alice);
@@ -513,7 +525,7 @@ test("a leading /word is a note only for a command the loaded list knows", async
 
 test("a send the server could not start keeps its block, pending", async () => {
   results = (b) => ({
-    results: (b.to as string[]).map((t) => ({ to: `@${t}`, status: "start_failed", id: "r1" })),
+    results: (b.to as string[]).map((t) => ({ to: tagged(t), status: "start_failed", id: "r1" })),
   });
   renderApp("/agents/dev/chat", alice);
   await screen.findByText("Reply 2");

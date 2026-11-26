@@ -38,7 +38,7 @@ import {
 import { isCoarsePointer } from "@/lib/send-key";
 import { sessionQueryOptions } from "@/lib/session";
 import { recipientSource } from "./recipient-source";
-import { refusedBecause, sendMessages, slugOf } from "./send";
+import { handleOfResult, isResultFor, refusedBecause, sendMessages } from "./send";
 import { addSending, dropSending, lastSentText, refreshChat } from "./use-chat";
 
 export const FILES_ONE_AGENT = "Files go to one agent at a time";
@@ -47,7 +47,7 @@ const LEADING_COMMAND = /^\s*\/(\S+)/;
 
 /** "Not sent to @a: terminated. Not sent to @b: archived." One line per refused recipient. */
 const refusalLines = (rs: SendMessagesResponse["results"]) =>
-  rs.map((r) => `Not sent to @${slugOf(r.to)}: ${refusedBecause(r)}.`);
+  rs.map((r) => `Not sent to @${handleOfResult(r.to)}: ${refusedBecause(r)}.`);
 
 type Props = {
   slug: string;
@@ -165,13 +165,16 @@ export const ChatComposer = memo(function ChatComposer({
           attachments,
           signal: abort.signal,
         });
-        const mine = results.find((r) => slugOf(r.to) === slug);
+        const chatRef = refOfHandle(qc, slug);
+        const mine = results.find((r) => isResultFor(r.to, slug, chatRef));
         const refusedOthers = results.filter(
-          (r) => r.status === "refused" && slugOf(r.to) !== slug,
+          (r) => r.status === "refused" && !isResultFor(r.to, slug, chatRef),
         );
         if (mine?.status === "refused") {
           dropSending(qc, slug, clientMessageId);
-          const wentTo = results.filter((r) => r.status !== "refused").map((r) => slugOf(r.to));
+          const wentTo = results
+            .filter((r) => r.status !== "refused")
+            .map((r) => handleOfResult(r.to));
           throw new SubmitError(
             [
               mine.reason ?? `${agentName} didn't get this.`,

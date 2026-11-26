@@ -13,3 +13,13 @@ test.each([
 test.each(["k7x2m9q", "k7x2m9qdd", "k7x2m9q-", "uuuuuuuu", ""])("%s is not a ref", (raw) =>
   expect(normaliseRef(raw)).toBeUndefined(),
 );
+test("a ref ignores the UUID's leading bytes", () => {
+  expect(refOf("00000000-0000-4000-8000-0123456789ab")).toBe(
+    refOf("ffffffff-ffff-4fff-bfff-0123456789ab"),
+  );
+});
+test("a ref changes with the UUID's last 5 bytes", () => {
+  expect(refOf("00000000-0000-4000-8000-0123456789ab")).not.toBe(
+    refOf("00000000-0000-4000-8000-fedcba987654"),
+  );
+});

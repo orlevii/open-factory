@@ -2,7 +2,6 @@ import { z } from "zod";
 import { MSG } from "./messages.ts";
 
 /** Addresses the product uses (@humans, @me, @scheduler, @factory, @all, @system). Specs that add an address add it here. */
-// "unknown" is how a dangling tag renders.
 export const RESERVED_HANDLES = [
   "humans",
   "me",
@@ -10,7 +9,7 @@ export const RESERVED_HANDLES = [
   "factory",
   "all",
   "system",
-  "unknown",
+  "unknown", // how a dangling tag renders
 ] as const;
 
 export const HANDLE_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;

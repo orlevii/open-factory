@@ -435,7 +435,13 @@ function Thread({
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={scroller} data-chat-view className="h-full overflow-y-auto px-4 py-4 md:px-6">
+      {/* `relative`: an absolute descendant (a name's `sr-only` copy) is held and clipped here. Without
+          it the box escapes to the wrapper at its unscrolled place and stretches the page below. */}
+      <div
+        ref={scroller}
+        data-chat-view
+        className="relative h-full overflow-y-auto px-4 py-4 md:px-6"
+      >
         <div
           ref={log}
           role="log"

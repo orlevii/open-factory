@@ -478,7 +478,8 @@ export function Timeline(props: {
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={scroller} className="h-full overflow-y-auto px-4 py-4 md:px-6">
+      {/* `relative`: absolute descendants are held and clipped here, never stretching the page (as the Chat). */}
+      <div ref={scroller} className="relative h-full overflow-y-auto px-4 py-4 md:px-6">
         <div
           ref={log}
           role="log"

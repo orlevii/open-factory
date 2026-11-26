@@ -106,7 +106,12 @@ export class ConfigService {
     issues: AgentConfigResponse["issues"],
   ): AgentConfigResponse {
     const parsed = agentOverlaySchema.safeParse(overlay);
-    const merged = base && parsed.success ? mergeConfig(base.doc, parsed.data) : null;
+    // The agent's runtime, not the template's: it is fixed per agent (only a human switches it), and a template change
+    // never moves it.
+    const merged =
+      base && parsed.success
+        ? withRuntime(mergeConfig(base.doc, parsed.data), row.runtime)
+        : null;
     return {
       overlay,
       version: overlayVersion(overlay as AgentOverlay),
@@ -235,3 +240,8 @@ export class ConfigService {
     return plan.after();
   }
 }
+
+const withRuntime = (doc: ConfigDoc, runtime: AgentRow["runtime"]): ConfigDoc => ({
+  ...doc,
+  template: { ...doc.template, runtime },
+});

@@ -154,6 +154,19 @@ export const RUNTIME_COPY = {
   switchedToAuto: "Set to Auto: Bypass needs Docker",
 } as const;
 
+/** The agent Configure page's Runtime switch: the agent's own runtime, changed only here, with a restart. */
+export const AGENT_RUNTIME_COPY = {
+  note: "Switching restarts the agent once its current turn ends",
+  templateDiffers: (runtime: string) => `Its template says ${runtime}, which applies to new agents`,
+  bypassTemplate:
+    "Local isn't available: the template's permission mode is Bypass, which needs Docker",
+  toLocalTitle: (slug: string) => `Run @${slug} outside the sandbox?`,
+  toLocalBody:
+    "It restarts on this machine with your user's access: every file, repo and key you can reach, not only its workdir and projects.",
+  toLocalAction: (slug: string) => `Run @${slug} locally`,
+  failed: "Couldn't switch the runtime. Try again.",
+} as const;
+
 /** Empty uses the factory's default image: named once it is known, never as a placeholder. */
 export const imageNote = (defaultImage: string | undefined) =>
   defaultImage

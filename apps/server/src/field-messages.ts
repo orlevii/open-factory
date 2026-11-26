@@ -13,6 +13,8 @@ export const FIELD_MSG = {
   tokenRejected: "Claude rejected this token.",
   apiKeyRejected: "Claude rejected this API key.",
   claudeUnreachable: "Couldn't reach Claude. Try again.",
+  localDisabled: "Local is off on this factory.",
+  bypassNeedsDocker: "Bypass mode needs Docker.",
   /** A name the factory sets itself; only ever a factory-owned name or a secret name, never a value. */
   factoryEnv: (name: string) => `${name} is set by the factory.`,
 } as const;

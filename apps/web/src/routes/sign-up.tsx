@@ -177,7 +177,7 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
         autoCapitalize="none"
         autoCorrect="off"
         spellCheck={false}
-        maxLength={32}
+        maxLength={40}
         className="font-mono"
         value={values.handle}
         onChange={(e) => set("handle", e.target.value.toLowerCase())}

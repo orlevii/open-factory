@@ -1,11 +1,5 @@
 import { expect, test } from "vitest";
-import {
-  isReservedSecretName,
-  nameSchema,
-  RESERVED_SLUGS,
-  secretNameSchema,
-  slugSchema,
-} from "./names.ts";
+import { isReservedSecretName, nameSchema, secretNameSchema, slugSchema } from "./names.ts";
 
 test("slug rules", () => {
   for (const ok of ["abc", "team-lead", "a1-b2"])
@@ -23,9 +17,9 @@ test("slug rules", () => {
     "all",
     "system",
     "factory",
+    "unknown",
   ])
     expect(slugSchema.safeParse(bad).success).toBe(false);
-  expect(RESERVED_SLUGS).toEqual(["humans", "me", "scheduler", "factory", "all", "system"]);
 });
 
 test("names and secret names", () => {

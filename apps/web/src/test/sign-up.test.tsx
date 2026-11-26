@@ -276,5 +276,5 @@ test("an invalid handle shows the handle schema's first issue on blur", async ()
   const handle = await screen.findByLabelText("Handle");
   await user.type(handle, "x");
   await user.tab();
-  expect(handle).toHaveAccessibleDescription("Use 2 to 32 characters.");
+  expect(handle).toHaveAccessibleDescription("Use 2 to 40 characters");
 });

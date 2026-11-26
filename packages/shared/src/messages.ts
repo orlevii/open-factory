@@ -11,7 +11,7 @@ export const MSG = {
   slugReserved: "That slug is reserved.",
   managerUnknown: "Choose an active agent or person.",
   managerRequired: "Choose who this agent reports to.",
-  handleLength: "Use 2 to 32 characters.",
+  handleLength: "Use 2 to 40 characters",
   handleReserved: "That handle is reserved.",
   secretChars: "Use A–Z, 0–9 and underscores.",
   nameReserved: "That name is reserved.",

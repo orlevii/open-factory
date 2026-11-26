@@ -67,10 +67,10 @@ test("starts on demand, writes one envelope turn, and persists everything in seq
     [
       {
         id: expect.any(String),
-        from: "@or",
+        from: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
         fromKind: "human",
         kind: "message",
-        to: [expect.stringMatching(/^@/)],
+        to: [expect.stringMatching(/^<@[0-9a-z]{8}\|[a-z0-9-]+>$/)],
         urgent: false,
         body: "hello",
         parts: [{ id: expect.any(String), body: "hello", createdAt: expect.any(String) }],

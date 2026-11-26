@@ -9,7 +9,13 @@ import { FIELD_MSG } from "../field-messages.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
 import type { DenyRules } from "../spawning/inherit.ts";
 import { checkAgentFrontmatter, checkProjectSettings, scrubAgentFolders } from "./agent-folders.ts";
-import { buildClaudeMd, type ManagerRef, type OrgEntry, type OrgHuman } from "./claude-md.ts";
+import {
+  buildClaudeMd,
+  type ManagerRef,
+  type OrgEntry,
+  type OrgHuman,
+  type Tagged,
+} from "./claude-md.ts";
 import { backupDiffering, templateTargets, utcStamp, writeAtomic, writeTargets } from "./files.ts";
 import { linkProjects, linkSkills, resolveSkills, resolveTemplateSkills } from "./links.ts";
 import type { KeyedMutex } from "./lock.ts";
@@ -26,7 +32,10 @@ import { SafeFs } from "./safe-fs.ts";
 import { buildSettings } from "./settings.ts";
 
 export interface PrepareInput {
+  /** The directory key (the workdir is still named by it); the file names the agent by `self`. */
   slug: string;
+  /** The agent as CLAUDE.md names it: a tag with its current handle. */
+  self: Tagged;
   displayName: string;
   description: string;
   template: string;
@@ -41,7 +50,7 @@ export interface PrepareInput {
   mcpUrl: string;
   kind: "persistent" | "ephemeral";
   /** A spawned agent's spawner; null for a persistent agent. */
-  spawner: { slug: string } | null;
+  spawner: Tagged | null;
   /** Set for an agent that holds the spawn tools (S7 §11.3). */
   spawning: boolean;
   /** Set for a persistent agent (S9 §10.5); absent means none. */
@@ -52,8 +61,8 @@ export interface PrepareInput {
   secretNames: string[];
   /** The agent holds manage_org (I7 §10). */
   manageOrg: boolean;
-  /** The slug of the agent that last wrote this agent's own description, or null (I7 §10). */
-  descriptionWrittenBy: string | null;
+  /** The agent that last wrote this agent's own description, or null (I7 §10). */
+  descriptionWrittenBy: Tagged | null;
   /** The member-update debounce in seconds at this start (I9 §4.8). */
   memberUpdateSeconds: number;
 }
@@ -62,6 +71,7 @@ export interface PrepareInput {
 export type MaterializeCheck = Omit<
   PrepareInput,
   | "effective"
+  | "self"
   | "mcpUrl"
   | "peers"
   | "reports"
@@ -278,7 +288,7 @@ export class Workspace {
     await safe.writeFile(
       path.join(configRel, "CLAUDE.md"),
       buildClaudeMd({
-        slug: i.slug,
+        self: i.self,
         displayName: i.displayName,
         description: i.description,
         template: i.template,

@@ -17,6 +17,7 @@ import {
   type TaskNotice,
   taskKey,
 } from "@open-factory/shared";
+import { agentTagOf, tagOf } from "@open-factory/shared/tags";
 import {
   and,
   asc,
@@ -43,6 +44,7 @@ import {
   tagOfPrincipal,
   terminatorTag,
 } from "../principals/principal-store.ts";
+import { type AgentFacing, agentFacing, tagLookupFor } from "../principals/principal-text.ts";
 import { capPayload } from "./cap.ts";
 import { InvalidCursorError } from "./errors.ts";
 import { type NoticeType, parseConfigNotice, renderConfigNotice } from "./notices.ts";
@@ -82,17 +84,19 @@ export type PendingRow = MessageRow & {
   fromHandle: string | null;
   fromRef: string | null;
   fromKind: "human" | "agent" | null;
-  /** `kind='message'` rows: the full recipient list as `@handle`s (what the envelope's `to` shows). */
-  recipientLabels: string[] | null;
+  /** `kind='message'` rows: the full recipient list as `<@ref>` tags (what the envelope's `to` shows, rendered at delivery). */
+  recipientTags: string[] | null;
   subjectSlug: string | null;
+  /** The subject agent's ref (the envelope's `about`, rendered at delivery). */
+  subjectRef: string | null;
   subjectDisplayName: string | null;
   /** S8: the task a task message is about (`T-<number>`, its current title). */
   taskNumber: number | null;
   taskTitle: string | null;
-  /** S9: a `scheduled` row's schedule (`S-<number>`), its zone, and its author (`@handle` or slug). */
+  /** S9: a `scheduled` row's schedule (`S-<number>`), its zone, and its author (a `<@ref>` tag). */
   scheduleKey: string | null;
   scheduleZone: string | null;
-  authorLabel: string | null;
+  authorTag: string | null;
   authorKind: "human" | "agent" | null;
 };
 export interface MessageLookup {
@@ -159,6 +163,23 @@ export interface TurnClose {
 
 export class EventStore {
   constructor(private readonly db: Db) {}
+
+  /** For a tool result: tags for these handles and a renderer for stored text (spec §4.4). */
+  facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing> {
+    return agentFacing(this.db, want);
+  }
+
+  /** `<@ref|handle>` of the principal `id`, as an agent reads it. */
+  async agentTag(id: string): Promise<string> {
+    const p = await principalById(this.db, id);
+    if (!p) throw new Error(`No principal ${id}`);
+    return agentTagOf(p);
+  }
+
+  /** For rendering a delivery: one query for every ref in `texts` (spec §4.4). */
+  tagLookup(texts: readonly string[]) {
+    return tagLookupFor(this.db, texts);
+  }
 
   private lastStamp = 0;
   /** Server-clock stamp, strictly increasing within this process so created order is insert order (spec §7.3). */
@@ -1140,6 +1161,7 @@ export class EventStore {
     const sa = alias(agents, "sa");
     const au = alias(principals, "au");
     const fp = alias(principals, "fp");
+    const sp = alias(principals, "sp");
     const q = tx
       .select({
         m: messages,
@@ -1147,35 +1169,41 @@ export class EventStore {
         fromRef: fp.ref,
         fromKind: fp.kind,
         subjectSlug: sa.slug,
+        subjectRef: sp.ref,
         subjectDisplayName: sa.displayName,
         taskNumber: tasks.number,
         taskTitle: tasks.title,
         scheduleNumber: schedules.number,
         scheduleZone: schedules.timezone,
-        authorHandle: au.handle,
+        authorRef: au.ref,
         authorKind: au.kind,
       })
       .from(messages)
       .leftJoin(fp, eq(fp.id, messages.fromId))
       .leftJoin(sa, eq(sa.id, messages.subjectAgentId))
+      .leftJoin(sp, eq(sp.id, messages.subjectAgentId))
       .leftJoin(tasks, eq(tasks.id, messages.taskId))
       .leftJoin(schedules, eq(schedules.id, messages.scheduleId))
       .leftJoin(au, eq(au.id, messages.authorId));
     return {
       where: async (w: SQL | undefined, order: SQL[] = []): Promise<PendingRow[]> => {
         const rows = await q.where(w).orderBy(...order);
-        // One lookup names every recipient of every row (the envelope's `to`).
-        const handles = await principalsByIds(
+        // One lookup gives every recipient of every row its ref (the envelope's `to`).
+        const recipients = await principalsByIds(
           tx,
           rows.flatMap((r) => r.m.recipientIds ?? []),
         );
-        return rows.map(({ m, scheduleNumber, authorHandle, ...rest }) => ({
+        return rows.map(({ m, scheduleNumber, authorRef, ...rest }) => ({
           ...m,
           ...rest,
-          recipientLabels:
-            m.recipientIds?.map((id) => `@${handles.get(id)?.handle ?? "unknown"}`) ?? null,
+          recipientTags:
+            m.recipientIds?.map((id) => {
+              const p = recipients.get(id);
+              if (!p) throw new Error(`message ${m.id} names no principal ${id}`);
+              return tagOf(p.ref);
+            }) ?? null,
           scheduleKey: scheduleNumber === null ? null : formatKey("S", scheduleNumber),
-          authorLabel: authorHandle ? `@${authorHandle}` : null,
+          authorTag: authorRef ? tagOf(authorRef) : null,
         }));
       },
     };

@@ -12,7 +12,9 @@ export interface TerminatePort {
   terminateChild(
     callerId: string,
     targetArg: string,
-  ): Promise<{ ok: true; slug: string; warning?: string } | { ok: false; message: string }>;
+  ): Promise<
+    { ok: true; slug: string; tag: string; warning?: string } | { ok: false; message: string }
+  >;
 }
 
 /** `terminate_agent` (spec §7.1). Registered only for a caller that `maySpawn`; the port checks the target is its child. */
@@ -31,6 +33,7 @@ export function terminateAgentTool(d: { terminate: TerminatePort }): ToolRegistr
           if (!r.ok) return toolError(r.message);
           return textResult({
             slug: r.slug,
+            tag: r.tag,
             status: "terminated",
             ...(r.warning ? { warnings: [r.warning] } : {}),
           });

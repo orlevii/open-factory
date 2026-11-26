@@ -118,7 +118,11 @@ test("a human's task comment to an errored agent starts an attempt with the mess
   expect(proc("dev")).toBeDefined();
   expect(await startedReasons()).toContain("message");
   proc("dev")?.emit(...ev.fullTurn("sess-dev"));
-  expect(proc("dev")?.sent[0]?.[0]).toMatchObject({ from: "@or", kind: "task_comment", commentId });
+  expect(proc("dev")?.sent[0]?.[0]).toMatchObject({
+    from: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
+    kind: "task_comment",
+    commentId,
+  });
 });
 
 test("boot wakes an agent whose only pending row is a task row", async () => {

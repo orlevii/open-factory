@@ -26,6 +26,9 @@ import { createTestDb } from "../test/helpers.ts";
 import { principalSql, seedTestUser, testRef } from "../test/principals.ts";
 import { ATTEMPT_CUT_SHORT, reconcile } from "./reconcile.ts";
 
+/** An envelope sender is a tag; this test reads its handle. */
+const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
+
 /** The tag of the terminator `seedTestUser(db, "boss")` makes, as the stored events name it. */
 const BOSS = tagOf(testRef("u-boss"));
 
@@ -358,7 +361,7 @@ test("an agent mid-turn at crash gets factory_restarted and one boot_resume wake
   });
   // The notice leads the first batch, ahead of the older message.
   const p = boot.starts(id)[0] as FakeProcess;
-  expect(p.sent[0]?.map((m) => m.from)).toEqual(["@factory", "@or"]);
+  expect(p.sent[0]?.map((m) => handleOf(m.from))).toEqual(["@factory", "@or"]);
   expect(p.sent[0]?.[0]?.body).toBe(
     "The factory restarted while you were working. Check the state of that work and continue where you left off.",
   );

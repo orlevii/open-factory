@@ -252,7 +252,7 @@ test("a report's text reaches its manager naming the request it answers", async 
       expect(
         leadProc.sent.flat().find((m) => m.kind === "member_update" && m.body === "README updated")
           ?.re,
-      ).toEqual([{ id: asked?.id, from: `<@${asker?.ref}>` }]),
+      ).toEqual([{ id: asked?.id, from: `<@${asker?.ref}|asker>` }]),
     );
   } finally {
     await t.close();

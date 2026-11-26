@@ -125,6 +125,7 @@ test("a handler reached with a revoked caller row refuses with the sentence", as
   const regs = orgTools({
     loadAgent: async () => revoked,
     principalRef: async () => undefined,
+    facing: async () => ({ tag: (h) => `@${h}`, render: (x) => x }),
     agents: t.app.agents,
     config: t.app.configs,
     templates: t.app.templates,
@@ -214,10 +215,15 @@ test("update_agent moves an agent to a new manager and reports reports_to as cha
   expect(r.json).toMatchObject({ slug: "dev-1", changed: ["reports_to"] });
   const moved = await row("dev-1");
   expect(moved.reportsTo).toBe((await row("plain")).id);
-  expect((await call("hr-bot", "get_agent", { slug: "dev-1" })).json.reports_to).toBe("@plain");
+  const [plain] = await t.sql`select ref from principals where handle = 'plain'`;
+  expect((await call("hr-bot", "get_agent", { slug: "dev-1" })).json.reports_to).toBe(
+    `<@${plain?.ref}|plain>`,
+  );
   const back = await call("hr-bot", "update_agent", { slug: "dev-1", reports_to: "@or" });
   expect(back.json).toMatchObject({ changed: ["reports_to"] });
-  expect((await call("hr-bot", "get_agent", { slug: "dev-1" })).json.reports_to).toBe("@or");
+  expect((await call("hr-bot", "get_agent", { slug: "dev-1" })).json.reports_to).toMatch(
+    /^<@[0-9a-z]{8}\|or>$/,
+  );
 });
 
 test("create_agent with a taken name returns the human sentence as name: …", async () => {

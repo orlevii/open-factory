@@ -39,7 +39,7 @@ const utf8 = new TextEncoder();
 export function sendCommandTool(d: {
   caller: AgentRow;
   runtimes: AgentRuntimes;
-  store: Pick<EventStore, "agentByArg" | "agentCommands" | "principalTag">;
+  store: Pick<EventStore, "agentByArg" | "agentCommands" | "principalTag" | "agentTag">;
   /** The skill list: the running process's (`started`), else the resolver's (I2 §6.2). */
   resolver: Pick<ConfigResolver, "skillsOf">;
   spawned: boolean;
@@ -138,7 +138,7 @@ export function sendCommandTool(d: {
             throw e;
           }
           return textResult({
-            target: `@${target.slug}`,
+            target: await d.store.agentTag(target.id),
             status: "queued",
             note,
             ...(warning ? { warnings: [warning] } : {}),

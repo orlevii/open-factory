@@ -1,4 +1,4 @@
-import { tagOf } from "@open-factory/shared/tags";
+import { agentTagOf, tagOf } from "@open-factory/shared/tags";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../../test/helpers.ts";
@@ -51,7 +51,9 @@ const post = (url: string, payload: Record<string, unknown>) =>
 const startsOf = (slug: string) => drv.starts.filter((p) => p.spec.agentId === ids[slug]);
 /** What a process was sent, as [from, body] pairs in order. */
 const delivered = (p: { sent: { from: string; body: string }[][] }) =>
-  p.sent.flat().map((m) => [m.from, m.body]);
+  p.sent.flat().map((m) => [handleOf(m.from), m.body]);
+/** An envelope sender is a tag; the test reads its handle. */
+const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
 /** A report of lead that is running with a turn open (a cut restart interrupts it). */
 async function runningMidTurn(slug: string) {
   await post("/api/messages", { to: [slug], body: "work", urgent: false });
@@ -75,10 +77,10 @@ test("restart_agent is listed for persistent agents and not for a spawned one", 
 test("a direct report, spawned ones included, is restarted; a hibernated one reports not_running", async () => {
   expect(await call("lead", { target: "@dev" })).toMatchObject({
     err: false,
-    json: { target: "@dev", status: "not_running" },
+    json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/), status: "not_running" },
   });
   expect(await call("lead", { target: "kid" })).toMatchObject({
-    json: { target: "@kid", status: "not_running" },
+    json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|kid>$/), status: "not_running" },
   });
 });
 
@@ -97,7 +99,7 @@ test("with manage_org, any live agent is accepted", async () => {
   await h.sql`update agents set manage_org = true where slug = 'lead'`;
   expect(await call("lead", { target: "qa" })).toMatchObject({
     err: false,
-    json: { target: "@qa", status: "not_running" },
+    json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|qa>$/), status: "not_running" },
   });
 });
 
@@ -131,7 +133,7 @@ test("a terminated report gets the messaging sentence and is not restarted", asy
 test("a cut restart delivers the note from the caller after the restart notice", async () => {
   const p = await runningMidTurn("dev");
   expect(await call("lead", { target: "dev", note: "Rerun the tests." })).toMatchObject({
-    json: { target: "@dev", status: "restarting" },
+    json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/), status: "restarting" },
   });
   p.emit(ev.end()); // the turn ends: the stop begins and the exit makes the attempt
   await (await h.app.runtimes.bySlug("dev"))?.settled();
@@ -139,7 +141,12 @@ test("a cut restart delivers the note from the caller after the restart notice",
   expect(next).not.toBe(p);
   const got = delivered(next as (typeof drv.starts)[number]);
   expect(got).toEqual([
-    ["@factory", expect.stringContaining(`Restarted by ${tagOf(testRef(ids.lead as string))}`)],
+    [
+      "@factory",
+      expect.stringContaining(
+        `Restarted by ${agentTagOf({ ref: testRef(ids.lead as string), handle: "lead" })}`,
+      ),
+    ],
     ["@lead", "Rerun the tests."],
   ]);
 });
@@ -162,7 +169,7 @@ test("an errored report with a note restarts, resumes its session, and gets the 
   const before = startsOf("dev").length;
   expect(await call("lead", { target: "dev", note: "Rerun the tests." })).toMatchObject({
     err: false,
-    json: { target: "@dev", status: "restarting" },
+    json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/), status: "restarting" },
   });
   await rt?.settled();
   expect(startsOf("dev")).toHaveLength(before + 1);
@@ -170,7 +177,10 @@ test("an errored report with a note restarts, resumes its session, and gets the 
   expect(next.opts.resumeSessionId).toBe("sess-old");
   // The message that was pending when it errored is delivered too, between the notice and the note.
   expect(delivered(next)).toEqual([
-    ["@factory", `Restarted by ${tagOf(testRef(ids.lead as string))} after an error.`],
+    [
+      "@factory",
+      `Restarted by ${agentTagOf({ ref: testRef(ids.lead as string), handle: "lead" })} after an error.`,
+    ],
     ["@or", "again"],
     ["@lead", "Rerun the tests."],
   ]);
@@ -202,7 +212,7 @@ test("a refused restart (background work and no force) restarts nothing and send
     startsOf("dev")
       .at(-1)
       ?.sent.flat()
-      .map((m) => m.from),
+      .map((m) => handleOf(m.from)),
   ).not.toContain("@lead");
 });
 
@@ -215,7 +225,7 @@ test("force: true restarts the report with its background work stopped, and the 
   expect(
     await call("lead", { target: "dev", note: "Rerun the tests.", force: true }),
   ).toMatchObject({
-    json: { target: "@dev", status: "restarting" },
+    json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/), status: "restarting" },
   });
   await (await h.app.runtimes.bySlug("dev"))?.settled();
   const next = startsOf("dev").at(-1) as (typeof drv.starts)[number];
@@ -226,7 +236,7 @@ test("a resolver failure (a broken template) still restarts the report and recor
   const p = await runningMidTurn("dev");
   vi.spyOn(h.app.resolver, "effective").mockRejectedValueOnce(new Error("template is broken"));
   expect(await call("lead", { target: "dev" })).toMatchObject({
-    json: { target: "@dev", status: "restarting" },
+    json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/), status: "restarting" },
   });
   p.emit(ev.end());
   await (await h.app.runtimes.bySlug("dev"))?.settled();
@@ -332,14 +342,17 @@ test("restart_pending: the note goes to the running process; the restart follows
     startsOf("dev")
       .at(-1)
       ?.sent.flat()
-      .map((m) => m.from),
+      .map((m) => handleOf(m.from)),
   ).toContain("@lead");
 });
 
 test("restart_agent by plain handle warns; by its tag it does not", async () => {
   const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
   const tagged = await call("lead", { target: `<@${dev?.ref}|stale>` });
-  expect(tagged.json).toMatchObject({ target: "@dev", status: "not_running" });
+  expect(tagged.json).toMatchObject({
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
+    status: "not_running",
+  });
   expect(tagged.json).not.toHaveProperty("warnings");
   const plain = await call("lead", { target: "dev" });
   expect(plain.json.warnings).toEqual([

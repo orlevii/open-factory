@@ -1,5 +1,6 @@
 import type { AgentRow } from "@open-factory/db";
 import { type AgentStatus, listPeersToolSchema } from "@open-factory/shared";
+import { agentTagOf, renderTags } from "@open-factory/shared/tags";
 import { inline } from "../../messaging/inline.ts";
 import type { Neighborhood } from "../../messaging/neighborhood.ts";
 import {
@@ -23,7 +24,7 @@ export function listPeersTool(d: {
         "list_peers",
         {
           description:
-            'List who you can message: agents (your manager, peers and reports) and humans, each with a handle. Pass scope "all" to see every agent.',
+            'List who you can message: agents (your manager, peers and reports) and humans, each with a handle and a tag to write them as. Pass scope "all" to see every agent.',
           inputSchema: listPeersToolSchema,
         },
         async (args: { scope?: "neighborhood" | "all" }, tctx: ToolContext) => {
@@ -41,18 +42,27 @@ export function listPeersTool(d: {
             }
           }
           const humans = await d.neighborhood.humans();
+          const principals = await d.neighborhood.principalsOf(rows.map(([, a]) => a.id));
+          const listed = rows.map(([relation, a]) => {
+            const p = principals.get(a.id);
+            if (!p) throw new Error(`No principal ${a.id}`);
+            return { relation, a, p };
+          });
+          const lookup = await d.neighborhood.tagLookup(listed.map(({ a }) => a.description));
           return textResult({
             peers: [
-              ...rows.map(([relation, a]) => ({
-                handle: `@${a.slug}`,
+              ...listed.map(({ relation, a, p }) => ({
+                handle: `@${p.handle}`,
+                tag: agentTagOf(p),
                 kind: "agent" as const,
                 displayName: inline(a.displayName),
-                description: inline(a.description),
+                description: inline(renderTags(a.description, lookup, "agent")),
                 relation,
                 status: d.statusOf(a),
               })),
               ...humans.map((h) => ({
                 handle: `@${h.handle}`,
+                tag: agentTagOf(h),
                 kind: "human" as const,
                 name: inline(h.name),
               })),

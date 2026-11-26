@@ -13,6 +13,7 @@ import type { Router } from "../messaging/router.ts";
 import {
   createPrincipal,
   HandleTakenError,
+  principalById,
   principalsByHandles,
   tagOfPrincipal,
 } from "../principals/principal-store.ts";
@@ -197,6 +198,8 @@ export class SpawnService {
   ): Promise<"ok" | "taken" | Refused> {
     const { workspace } = this.d;
     try {
+      const spawner = await principalById(this.d.db, caller.id);
+      if (!spawner) throw new Error(`No principal ${caller.id}`);
       await workspace.lock.run(slug, () =>
         workspace.materialize(slug, slug, tpl, {
           slug,
@@ -204,7 +207,12 @@ export class SpawnService {
           description,
           template,
           config: tpl.config,
-          manager: { kind: "agent", slug: caller.slug, displayName: caller.displayName },
+          manager: {
+            kind: "agent",
+            ref: spawner.ref,
+            handle: spawner.handle,
+            displayName: caller.displayName,
+          },
           grants: inherited.grants.map((g) => ({ name: g.name, hostPath: g.hostPath })),
         }),
       );
@@ -336,7 +344,14 @@ export class SpawnService {
     const status = await router.handOffBrief(out.brief, out.child);
     router.handOffRows(out.peers);
     const note = droppedNote(out.inherited.dropped);
-    return { ok: true, slug, agentId: out.child.id, status, ...(note ? { note } : {}) };
+    return {
+      ok: true,
+      slug,
+      tag: await store.agentTag(out.child.id),
+      agentId: out.child.id,
+      status,
+      ...(note ? { note } : {}),
+    };
   }
 
   /** `discard` unless an agent already holds the slug: that winner's workspace is never deleted. */

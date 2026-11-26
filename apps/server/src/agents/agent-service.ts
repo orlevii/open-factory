@@ -77,8 +77,8 @@ function reportsToOf(r: AgentRow, m: Managers): ReportsTo {
 
 /** A resolved manager: an active persistent agent, or an enabled user. */
 type Manager =
-  | { kind: "agent"; row: AgentRow }
-  | { kind: "user"; id: string; handle: string; name: string };
+  | { kind: "agent"; row: AgentRow; ref: string; handle: string }
+  | { kind: "human"; id: string; ref: string; handle: string; name: string };
 
 const slugTaken = () => new FieldError("slug", FIELD_MSG.slugTaken, "slug_taken");
 
@@ -517,7 +517,7 @@ export class AgentService {
 
   /** In the write transaction: a human manager is still enabled (FOR SHARE serializes with a disable). */
   private async assertUserEnabled(tx: Tx, manager: Manager | undefined) {
-    if (manager?.kind !== "user") return;
+    if (manager?.kind !== "human") return;
     const rows = await tx
       .select({ id: schema.users.id })
       .from(schema.users)
@@ -560,7 +560,7 @@ export class AgentService {
         .from(schema.users)
         .where(and(eq(schema.users.id, p.id), isNull(schema.users.disabledAt)));
       if (!u) throw refuse();
-      return { kind: "user", ...u, handle: p.handle };
+      return { kind: "human", ...u, ref: p.ref, handle: p.handle };
     }
     const [m] = await this.d.db
       .select()
@@ -575,7 +575,7 @@ export class AgentService {
       );
     // S7 §9.3: no spawned managers, so reports never hang under an agent that gets terminated.
     if (!m) throw refuse();
-    return { kind: "agent", row: m };
+    return { kind: "agent", row: m, ref: p.ref, handle: p.handle };
   }
 
   /** Registered projects by name, in the order given; the first unknown name is a field error. */
@@ -682,8 +682,13 @@ export class AgentService {
       config: tpl.config,
       manager:
         manager.kind === "agent"
-          ? { kind: "agent", slug: manager.row.slug, displayName: manager.row.displayName }
-          : { kind: "user", handle: manager.handle, name: manager.name },
+          ? {
+              kind: "agent",
+              ref: manager.ref,
+              handle: manager.handle,
+              displayName: manager.row.displayName,
+            }
+          : { kind: "human", ref: manager.ref, handle: manager.handle, name: manager.name },
       grants: projects.map((p) => ({ name: p.name, hostPath: p.hostPath })),
     };
     try {

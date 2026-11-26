@@ -9,7 +9,7 @@ import {
 } from "@open-factory/shared";
 import { agentTagOf } from "@open-factory/shared/tags";
 import type { Principal } from "../../principals/principal-store.ts";
-import { UnknownTagsError } from "../../principals/principal-text.ts";
+import { type AgentFacing, UnknownTagsError } from "../../principals/principal-text.ts";
 import { TaskError } from "../../tasks/errors.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import type { TaskService } from "../../tasks/task-service.ts";
@@ -28,8 +28,8 @@ const listNote = (limit: number) =>
     ? "Showing the 200 most recently updated; narrow the filter."
     : `Showing the ${limit} most recently updated; pass a larger limit (max 200) or narrow the filter.`;
 
-const principal = (p: { kind: "agent" | "human"; handle: string }) =>
-  p.kind === "agent" ? p.handle : `@${p.handle}`;
+/** A principal as an agent reads it: `<@ref|handle>`. */
+const principal = (p: { ref: string; handle: string }) => agentTagOf(p);
 
 type TaskTools = {
   tasks: TaskService;
@@ -37,6 +37,8 @@ type TaskTools = {
   loadAgent(id: string): Promise<AgentRow | undefined>;
   /** The calling agent's principal: its ref and handle, which the actor carries. */
   loadPrincipal(id: string): Promise<Principal | undefined>;
+  /** Tags for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
+  facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
 };
 
 /**
@@ -44,9 +46,9 @@ type TaskTools = {
  * tool error with its sentence; `TaskService` is the only place that decides who may do what.
  */
 const NOT_REACHED_TEXT = {
-  archived: (n: string) => `@${n} is archived and can't receive messages.`,
-  terminated: (n: string) => `@${n} was terminated and can't receive messages.`,
-  too_many: (n: string) => `Too many tags in one comment; @${n} was left out.`,
+  archived: (n: string) => `${n} is archived and can't receive messages.`,
+  terminated: (n: string) => `${n} was terminated and can't receive messages.`,
+  too_many: (n: string) => `Too many tags in one comment; ${n} was left out.`,
 };
 /** One sentence per `not_reached` entry, so the tool's entries all have the same shape. */
 const notReachedText = (n: { name: string; reason: keyof typeof NOT_REACHED_TEXT }) =>
@@ -72,7 +74,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
       throw e;
     }
   };
-  const view = (r: {
+  const view = async (r: {
     task: {
       key: string;
       status: string;
@@ -82,13 +84,16 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
     };
     note?: string;
     warnings?: string[];
-  }) => ({
-    key: r.task.key,
-    status: r.task.status,
-    ...(r.task.assignee ? { assignee: r.task.assignee } : {}),
-    ...(r.task.assigneeEnded ? { assignee_ended: r.task.assigneeEnded } : {}),
-    blocked_by: r.task.blockedBy,
-  });
+  }) => {
+    const facing = await d.facing({ handles: r.task.assignee ? [r.task.assignee] : [] });
+    return {
+      key: r.task.key,
+      status: r.task.status,
+      ...(r.task.assignee ? { assignee: facing.tag(r.task.assignee) } : {}),
+      ...(r.task.assigneeEnded ? { assignee_ended: r.task.assigneeEnded } : {}),
+      blocked_by: r.task.blockedBy,
+    };
+  };
   return [
     {
       register(server: McpServer) {
@@ -117,7 +122,11 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 ...(args.depends_on ? { dependsOn: args.depends_on } : {}),
                 ...(args.links ? { links: args.links } : {}),
               });
-              return { ...view(r), ...(r.note ? { note: r.note } : {}), ...warned(r.warnings) };
+              return {
+                ...(await view(r)),
+                ...(r.note ? { note: r.note } : {}),
+                ...warned(r.warnings),
+              };
             }),
         );
         server.registerTool(
@@ -149,7 +158,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 ...(args.links ? { links: args.links } : {}),
               });
               return {
-                ...view(r),
+                ...(await view(r)),
                 changed: r.changed,
                 ...(r.note ? { note: r.note } : {}),
                 ...warned(r.warnings),
@@ -187,12 +196,15 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 },
                 warnings,
               );
+              const facing = await d.facing({
+                handles: page.items.flatMap((t) => (t.assignee ? [t.assignee.slug] : [])),
+              });
               return {
                 tasks: page.items.map((t) => ({
                   key: t.key,
                   title: t.title,
                   status: t.status,
-                  ...(t.assignee ? { assignee: t.assignee.slug } : {}),
+                  ...(t.assignee ? { assignee: facing.tag(t.assignee.slug) } : {}),
                   ...(t.assignee?.ended ? { assignee_ended: t.assignee.ended } : {}),
                   blocked_by: t.blockedBy,
                   created_by: principal(t.createdBy),
@@ -221,12 +233,20 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 },
               });
               const first = t.comments[0];
+              const facing = await d.facing({
+                handles: [
+                  ...(t.assignee ? [t.assignee.slug] : []),
+                  ...t.blocks.flatMap((x) => (x.assignee ? [x.assignee] : [])),
+                  ...t.links.flatMap((l) => (l.agent ? [l.agent.slug] : [])),
+                ],
+                texts: [t.body, ...t.comments.map((c) => c.body)],
+              });
               return {
                 key: t.key,
                 title: t.title,
-                body: t.body,
+                body: facing.render(t.body),
                 status: t.status,
-                ...(t.assignee ? { assignee: t.assignee.slug } : {}),
+                ...(t.assignee ? { assignee: facing.tag(t.assignee.slug) } : {}),
                 ...(t.assignee?.ended ? { assignee_ended: t.assignee.ended } : {}),
                 created_by: principal(t.createdBy),
                 created_at: t.createdAt.toISOString(),
@@ -241,19 +261,19 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                   key: x.key,
                   title: x.title,
                   status: x.status,
-                  ...(x.assignee ? { assignee: x.assignee } : {}),
+                  ...(x.assignee ? { assignee: facing.tag(x.assignee) } : {}),
                 })),
                 links: t.links.map((l) => ({
                   kind: l.kind,
                   ...(l.target ? { target: l.target } : {}),
-                  ...(l.agent ? { agent: l.agent.slug } : {}),
+                  ...(l.agent ? { agent: facing.tag(l.agent.slug) } : {}),
                   ...(l.title ? { title: l.title } : {}),
                   ...(l.agent?.ended ? { ended: l.agent.ended } : {}),
                 })),
                 comments: t.comments.map((c) => ({
                   id: c.id,
                   author: principal(c.author),
-                  body: c.body,
+                  body: facing.render(c.body),
                   created_at: c.createdAt.toISOString(),
                 })),
                 earlier_comments: t.earlierComments,
@@ -275,11 +295,17 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           (args: { id: string; body: string }, tctx: ToolContext) =>
             guard(async () => {
               const r = await d.tasks.comment(await actorOf(tctx), args.id, args.body);
+              const facing = await d.facing({
+                handles: [...r.deliveredTo, ...r.notReached.map((n) => n.name)],
+              });
               return {
                 id: r.id,
-                delivered_to: r.deliveredTo,
+                delivered_to: r.deliveredTo.map((h) => facing.tag(h)),
                 mentioned_humans: r.mentionedHumans.map(agentTagOf),
-                not_reached: r.notReached.map((n) => ({ ...n, detail: notReachedText(n) })),
+                not_reached: r.notReached.map((n) => {
+                  const name = facing.tag(n.name);
+                  return { ...n, name, detail: notReachedText({ ...n, name }) };
+                }),
                 held: r.held,
                 ...(r.note ? { note: r.note } : {}),
                 ...warned(r.warnings),

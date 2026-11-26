@@ -61,7 +61,12 @@ test("create_task acts as the token's agent; me assigns the caller and sends it 
     depends_on: [],
     links: [{ kind: "pr", target: "https://github.com/a/b/pull/1" }],
   });
-  expect(r.json).toEqual({ key: "T-1", status: "open", assignee: "lead", blocked_by: [] });
+  expect(r.json).toEqual({
+    key: "T-1",
+    status: "open",
+    assignee: expect.stringMatching(/^<@[0-9a-z]{8}\|lead>$/),
+    blocked_by: [],
+  });
   const [row] = await h.sql`select created_by_id from tasks`;
   expect(row?.created_by_id).toBe(ids.lead);
   expect((await h.sql`select 1 from messages where task_id is not null`).length).toBe(0);
@@ -105,11 +110,31 @@ test("comment_task reports a tagged human as reached", async () => {
   expect(r.json).toMatchObject({ mentioned_humans: [`<@${or.ref}|or>`], not_reached: [] });
 });
 
+test("get_task shows a tag in the body and in comments with the principal's current handle", async () => {
+  const [qa] = await h.sql`select ref from principals where handle = 'qa'`;
+  await call("lead", "create_task", {
+    title: "Plan",
+    body: `ask <@${qa?.ref}|stale-label>`,
+    assignee: "dev",
+  });
+  await call("dev", "comment_task", { id: "T-1", body: `<@${qa?.ref}> please look` });
+  await h.sql`update principals set handle = 'qa-renamed' where ref = ${qa?.ref as string}`;
+  try {
+    const t = (await call("dev", "get_task", { id: "T-1" })).json;
+    expect(t.body).toBe(`ask <@${qa?.ref}|qa-renamed>`);
+    expect(t.comments[0].body).toBe(`<@${qa?.ref}|qa-renamed> please look`);
+  } finally {
+    await h.sql`update principals set handle = 'qa' where ref = ${qa?.ref as string}`;
+  }
+});
+
 test("comment_task: a plain @handle reaches the agent and warns; an unknown ref is refused and nothing is posted", async () => {
   await call("lead", "create_task", { title: "Plan", assignee: "lead" });
   const [qa] = await h.sql`select ref from principals where handle = 'qa'`;
   const r = await call("dev", "comment_task", { id: "T-1", body: "@qa thoughts?" });
-  expect(r.json.delivered_to).toEqual(expect.arrayContaining(["qa"]));
+  expect(r.json.delivered_to).toEqual(
+    expect.arrayContaining([expect.stringMatching(/^<@[0-9a-z]{8}\|qa>$/)]),
+  );
   expect(r.json.warnings).toEqual([
     `Plain tag detected: @qa was resolved to <@${qa?.ref}|qa>. Tag as <@ref|handle>.`,
   ]);
@@ -173,7 +198,7 @@ test("get_task: the newest 50 comments, earlier ones through comments_before", a
   expect(t).toMatchObject({
     key: "T-1",
     body: "Brief",
-    created_by: "lead",
+    created_by: expect.stringMatching(/^<@[0-9a-z]{8}\|lead>$/),
     depends_on: [],
     blocks: [],
   });
@@ -200,7 +225,7 @@ test("dependencies and links come back through get_task", async () => {
   expect(two.blocked_by).toEqual(["T-1"]);
   expect(two.depends_on).toEqual([{ key: "T-1", title: "One", status: "open" }]);
   expect(two.links).toEqual([
-    { kind: "agent", agent: "dev" },
+    { kind: "agent", agent: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/) },
     { kind: "file", target: "docs/a.md", title: "A" },
   ]);
   expect((await call("qa", "get_task", { id: "1" })).json.blocks).toEqual([
@@ -220,7 +245,7 @@ test("comment_task: a looping peer is listed under held, the comment is still po
   await send("qa", "dev");
   const r = await call("dev", "comment_task", { id: "T-1", body: "@qa thoughts?" });
   expect(r.err).toBe(false);
-  expect(r.json.delivered_to).toEqual(["lead"]);
+  expect(r.json.delivered_to).toEqual([expect.stringMatching(/^<@[0-9a-z]{8}\|lead>$/)]);
   expect(r.json.held).toHaveLength(1);
   expect(r.json.held[0].to).toBe("@qa");
   expect(r.json.held[0].note).toMatch(/^Held: you and @qa exchanged/);
@@ -236,6 +261,6 @@ test("a task assignee given as a plain handle warns; given as its tag it does no
     `Plain tag detected: @dev was resolved to <@${dev?.ref}|dev>. Tag as <@ref|handle>.`,
   ]);
   const tagged = await call("lead", "create_task", { title: "B", assignee: `<@${dev?.ref}|old>` });
-  expect(tagged.json).toMatchObject({ assignee: "dev" });
+  expect(tagged.json).toMatchObject({ assignee: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/) });
   expect(tagged.json).not.toHaveProperty("warnings");
 });

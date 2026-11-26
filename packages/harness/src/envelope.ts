@@ -1,12 +1,27 @@
 import type { Envelope, MessageKind } from "@open-factory/shared";
+import { TAG_SHAPE } from "@open-factory/shared/tags";
 import type { FactoryMessage } from "./types.ts";
 
-const attr = (s: string) =>
+const escapeAttr = (s: string) =>
   s
     .replaceAll("&", "&amp;")
     .replaceAll('"', "&quot;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+
+/**
+ * An attribute value: an exact `<@ref>` / `<@ref|handle>` tag (a validated ref and handle, so it holds no quote or
+ * angle bracket beyond its own) is written as is; everything else is escaped.
+ */
+const attr = (s: string) => {
+  let out = "";
+  let at = 0;
+  for (const m of s.matchAll(TAG_SHAPE)) {
+    out += escapeAttr(s.slice(at, m.index)) + m[0];
+    at = m.index + m[0].length;
+  }
+  return out + escapeAttr(s.slice(at));
+};
 
 /** Any spelling of an opening or closing factory-message tag (case, inner spaces). */
 const TAG = /<(\s*\/?\s*)factory-message/gi;
@@ -59,7 +74,7 @@ export type BatchRow = {
   kind: MessageKind;
   from: string;
   fromKind: FactoryMessage["fromKind"];
-  /** The recipients of a `kind: "message"` row, as `@handle`s. */
+  /** The recipients of a `kind: "message"` row, as tags. */
   to?: string[];
   urgent: boolean;
   body: string;

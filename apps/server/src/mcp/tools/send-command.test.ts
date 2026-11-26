@@ -81,7 +81,7 @@ test('self by "me" and by its own handle; the entry is the agent\'s own', async 
     const r = await call("lead", "/context", target);
     expect(r.err, target).toBe(false);
     expect(r.json).toMatchObject({
-      target: "@lead",
+      target: expect.stringMatching(/^<@[0-9a-z]{8}\|lead>$/),
       status: "queued",
       note: "Your /context runs when this turn ends.",
     });
@@ -106,7 +106,7 @@ test("a self /compact says to write down where you are", async () => {
   await start("lead", true);
   const r = await call("lead", "/compact keep the plan", "me");
   expect(r.json).toEqual({
-    target: "@lead",
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|lead>$/),
     status: "queued",
     note: "Your /compact runs when this turn ends. Write down where you are before you end the turn.",
   });
@@ -124,7 +124,7 @@ test("a direct report: the note follows its state (hibernated, turn open)", asyn
   // hibernated: woken to run it
   const hib = await call("lead", "/context", "dev");
   expect(hib.json).toMatchObject({
-    target: "@dev",
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
     status: "queued",
     note: "Wakes @dev to run it.",
   });
@@ -140,7 +140,11 @@ test("a direct report: the note follows its state (hibernated, turn open)", asyn
 test("a direct report that is idle runs it now", async () => {
   await start("dev", false);
   const r = await call("lead", "/context", "@dev");
-  expect(r.json).toMatchObject({ target: "@dev", status: "queued", note: "Runs now." });
+  expect(r.json).toMatchObject({
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
+    status: "queued",
+    note: "Runs now.",
+  });
   expect(rawWrites("dev")).toEqual([{ kind: "raw", text: "/context" }]);
 });
 
@@ -154,7 +158,7 @@ test("an errored report holds it until it is restarted (restart_agent, or a huma
   const starts = drv.starts.length;
   const r = await call("lead", "/context", "dev");
   expect(r.json).toMatchObject({
-    target: "@dev",
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
     status: "queued",
     note: "@dev is errored; it runs after it is restarted (restart_agent, or a human).",
   });
@@ -165,7 +169,11 @@ test("a direct report named by its tag runs it with no warning; by a plain handl
   await start("dev", false);
   const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
   const tagged = await call("lead", "/context", `<@${dev?.ref}|stale>`);
-  expect(tagged.json).toEqual({ target: "@dev", status: "queued", note: "Runs now." });
+  expect(tagged.json).toEqual({
+    target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
+    status: "queued",
+    note: "Runs now.",
+  });
   const plain = await call("lead", "/context", "dev");
   expect(plain.json.warnings).toEqual([
     `Plain tag detected: @dev was resolved to <@${dev?.ref}|dev>. Tag as <@ref|handle>.`,
@@ -183,7 +191,7 @@ test("a ref nobody holds is refused with the fix-it error", async () => {
 test("a spawned report is a direct report too", async () => {
   const r = await call("lead", "/context", "kid");
   expect(r.err).toBe(false);
-  expect(r.json.target).toBe("@kid");
+  expect(r.json.target).toMatch(/^<@[0-9a-z]{8}\|kid>$/);
 });
 
 test("a target that is not the caller or its direct report is refused", async () => {

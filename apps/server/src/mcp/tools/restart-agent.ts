@@ -27,7 +27,7 @@ type RestartAgentDeps = {
   /** The caller read at call time: `manage_org` is decided from the fresh row (I7 §5.2). */
   loadAgent(id: string): Promise<AgentRow | undefined>;
   /** The target's row by name, read fresh (a runtime's row can be stale). */
-  store: Pick<EventStore, "agentByArg" | "principalTag">;
+  store: Pick<EventStore, "agentByArg" | "principalTag" | "agentTag">;
   runtimes: AgentRuntimes;
   resolver: Pick<ConfigResolver, "effective">;
   router: Pick<Router, "send">;
@@ -121,7 +121,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
               ]),
             ];
             return textResult({
-              target: `@${row.slug}`,
+              target: await d.store.agentTag(row.id),
               status: outcome.status,
               ...(outcome.note ? { note: outcome.note } : {}),
               ...(lost ? { note_delivered: false, note_error: lost } : {}),

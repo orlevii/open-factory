@@ -22,7 +22,7 @@ import { Neighborhood } from "../messaging/neighborhood.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
-import { seedTestPrincipal, testManagerUserId } from "../test/principals.ts";
+import { seedTestPrincipal, testManagerUserId, testRef } from "../test/principals.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import { ConfigResolver, type Effective } from "./config-resolver.ts";
@@ -148,7 +148,7 @@ async function seedStartFixture() {
       description: "",
       template: "lead",
       config,
-      manager: { kind: "user" as const, handle: "or", name: "Or" },
+      manager: { kind: "human" as const, ref: "k7x2m9qd", handle: "or", name: "Or" },
       grants,
     },
   );
@@ -246,7 +246,7 @@ test("the manager is described in CLAUDE.md", async () => {
   const md = await import("node:fs").then((fs) =>
     fs.readFileSync(path.join(spec.cwd, ".claude-config/CLAUDE.md"), "utf8"),
   );
-  expect(md).toContain("@boss");
+  expect(md).toContain(`- Manager: <@${testRef("mgr")}|boss> (The Boss)`);
 });
 
 test("a peer's description an agent wrote is quoted with that agent's current slug; a human-written one is not", async () => {
@@ -288,8 +288,10 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
   ]);
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
   const text = md(agent.slug);
-  expect(text).toContain(`- @dev (Dev), written by @${agent.slug}: "Builds."`);
-  expect(text).toContain("- @qa (QA): Tests.");
+  expect(text).toContain(
+    `- <@${testRef("dev-id")}|dev> (Dev), written by <@${testRef(agent.id)}|${agent.slug}>: "Builds."`,
+  );
+  expect(text).toContain(`- <@${testRef("qa-id")}|qa> (QA): Tests.`);
 });
 
 test("a manage_org agent's CLAUDE.md gets the Managing the org section; before the grant it has none", async () => {
@@ -548,7 +550,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
       description: "Builds the thing.",
       template: "dev",
       config,
-      manager: { kind: "agent", slug: agent.slug, displayName: "Lead" },
+      manager: { kind: "agent", ref: "k7x2m9qd", handle: agent.slug, displayName: "Lead" },
       grants: [{ name: "app", hostPath: repo }],
     },
   );
@@ -692,11 +694,13 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
   const lead = md(agent.slug);
   expect(lead).toContain("## Spawning");
-  expect(lead).toContain(`- @${child.slug} (Dev · ab), written by @${agent.slug}: "Ship 'it' now"`);
+  expect(lead).toContain(
+    `- <@${testRef(child.id)}|${child.slug}> (Dev · ab), written by <@${testRef(agent.id)}|${agent.slug}>: "Ship 'it' now"`,
+  );
   await prepareStart(child, { agentToken: "tok" });
   const own = md(child.slug);
   expect(own).toContain(
-    `You are a spawned agent: @${agent.slug} spawned you for one piece of work.`,
+    `You are a spawned agent: <@${testRef(agent.id)}|${agent.slug}> spawned you for one piece of work.`,
   );
   expect(own).toContain("## Your lifecycle");
   expect(own).not.toContain("## Spawning");

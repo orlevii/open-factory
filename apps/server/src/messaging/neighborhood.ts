@@ -1,6 +1,8 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Exec } from "../agents/event-store.ts";
+import { type Principal, principalsByIds } from "../principals/principal-store.ts";
+import { tagLookupFor } from "../principals/principal-text.ts";
 
 /** An agent that is neither archived nor terminated. */
 export const liveAgent = and(isNull(schema.agents.archivedAt), isNull(schema.agents.terminatedAt));
@@ -57,9 +59,23 @@ export class Neighborhood {
       .orderBy(asc(schema.agents.displayName), asc(schema.agents.slug));
   }
 
-  async humans(): Promise<{ handle: string; name: string }[]> {
+  /** The principals of these agents (their ref and current handle), by id. */
+  principalsOf(ids: readonly string[]): Promise<Map<string, Principal>> {
+    return principalsByIds(this.db, ids);
+  }
+
+  /** For rendering stored text as an agent reads it: one query for every ref in `texts`. */
+  tagLookup(texts: readonly string[]) {
+    return tagLookupFor(this.db, texts);
+  }
+
+  async humans(): Promise<{ ref: string; handle: string; name: string }[]> {
     return this.db
-      .select({ handle: schema.principals.handle, name: schema.users.name })
+      .select({
+        ref: schema.principals.ref,
+        handle: schema.principals.handle,
+        name: schema.users.name,
+      })
       .from(schema.users)
       .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
       .where(isNull(schema.users.disabledAt))

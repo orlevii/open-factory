@@ -75,13 +75,17 @@ test("AC 1: send_message to a hibernated agent wakes it with agent_message; the 
   expect(r.isError).toBeFalsy();
   const out = JSON.parse(text(r)).results[0];
   expect(out).toMatchObject({
-    to: "@bob",
+    to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/),
     kind: "agent",
     status: "queued",
     recipient_status: "hibernated",
   });
   await settle("bob");
-  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "@ada", kind: "message", body: "ping" });
+  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({
+    from: expect.stringMatching(/^<@[0-9a-z]{8}\|ada>$/),
+    kind: "message",
+    body: "ping",
+  });
   const b = await h.app.store.agentBySlug("bob");
   const started = (await h.app.store.after(b?.id ?? "", 0, 100)).map((e) => e.event);
   expect(started).toContainEqual(
@@ -115,7 +119,7 @@ test("an errored recipient: accepted and pending, no attempt, the note says so",
     text(await callTool(url, tokA, "send_message", { to: ["bob"], body: "are you ok" })),
   ).results[0];
   expect(out).toMatchObject({
-    to: "@bob",
+    to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/),
     kind: "agent",
     status: "pending",
     note: "@bob is errored; your message will be delivered after it is restarted (restart_agent, or a human).",
@@ -293,7 +297,12 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
     ["@lead", "manager"],
     ["@bob", "peer"],
   ]);
-  expect(near.peers).toContainEqual({ handle: "@or", kind: "human", name: "Or" });
+  expect(near.peers).toContainEqual({
+    handle: "@or",
+    tag: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
+    kind: "human",
+    name: "Or",
+  });
   expect(JSON.stringify(near)).not.toContain("@example.com"); // never emails
   const all = JSON.parse(text(await callTool(url, tokA, "list_peers", { scope: "all" })));
   expect(all.peers).toContainEqual(
@@ -485,7 +494,7 @@ test("a recipient whose init fails after the commit doesn't fail the sender's ca
   const r = await callTool(url, tokA, "send_message", { to: ["bob"], body: "still here" });
   expect(r.isError).toBeFalsy();
   expect(JSON.parse(text(r)).results[0]).toMatchObject({
-    to: "@bob",
+    to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/),
     status: "queued",
     recipient_status: "hibernated",
   });
@@ -755,7 +764,10 @@ test("deliver with a reason wakes with it: a spawned agent's first wake records 
   expect(started).toContainEqual(
     expect.objectContaining({ type: "process_started", reason: "spawned" }),
   );
-  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({ from: "@ada", body: "your brief" });
+  expect(proc("bob")?.sent[0]?.[0]).toMatchObject({
+    from: expect.stringMatching(/^<@[0-9a-z]{8}\|ada>$/),
+    body: "your brief",
+  });
 });
 
 describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () => {

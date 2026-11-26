@@ -1,16 +1,19 @@
 import { stat } from "node:fs/promises";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import type { AgentRuntimeSpec } from "@open-factory/harness";
-import { asc, eq, inArray } from "drizzle-orm";
+import { renderTags } from "@open-factory/shared/tags";
+import { asc, eq } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import type { Neighborhood } from "../messaging/neighborhood.ts";
+import { principalsByIds } from "../principals/principal-store.ts";
+import { tagLookupFor } from "../principals/principal-text.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import { MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "../scheduling/limits.ts";
 import { type DenyRules, type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
 import { maySpawn } from "../spawning/may-spawn.ts";
-import type { ManagerRef } from "../workspace/claude-md.ts";
+import type { ManagerRef, Tagged } from "../workspace/claude-md.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { KeyedMutex } from "../workspace/lock.ts";
 import type { MountCheckContext } from "../workspace/mounts.ts";
@@ -262,53 +265,59 @@ export function createPrepareStart(d: {
         }
       }
 
+      const hood = await d.neighborhood.of(agent.id);
+      const humans = await d.neighborhood.humans();
+      // Every principal this file names, in one query: tags show the current handle, whatever `agents.slug` says.
+      const spawnerId = spawned?.spawner.id;
+      const named = await principalsByIds(d.db, [
+        ...new Set([
+          agent.id,
+          agent.reportsTo,
+          ...(spawnerId ? [spawnerId] : []),
+          ...[agent, ...hood.peers, ...hood.reports].flatMap((a) =>
+            a.descriptionBy ? [a.descriptionBy] : [],
+          ),
+          ...hood.peers.map((a) => a.id),
+          ...hood.reports.map((a) => a.id),
+        ]),
+      ]);
+      const tagged = (id: string): Tagged => {
+        const p = named.get(id);
+        if (!p) throw new Error(`No principal ${id}`);
+        return { ref: p.ref, handle: p.handle };
+      };
       let manager: ManagerRef | undefined;
       const [m] = await d.db
-        .select({ slug: schema.agents.slug, displayName: schema.agents.displayName })
+        .select({ displayName: schema.agents.displayName })
         .from(schema.agents)
         .where(eq(schema.agents.id, agent.reportsTo));
-      if (m) manager = { kind: "agent", ...m };
+      if (m) manager = { kind: "agent", ...tagged(agent.reportsTo), ...m };
       else {
         const [u] = await d.db
-          .select({ handle: schema.principals.handle, name: schema.users.name })
+          .select({ name: schema.users.name })
           .from(schema.users)
-          .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
           .where(eq(schema.users.id, agent.reportsTo));
-        if (u) manager = { kind: "user", ...u };
+        if (u) manager = { kind: "human", ...tagged(agent.reportsTo), ...u };
       }
       if (!manager)
         throw new AgentStartError(`@${agent.slug}'s manager no longer exists, so it can't start.`);
-      const hood = await d.neighborhood.of(agent.id);
-      // A spawned entry's manager is its spawner: this agent (a report) or this agent's manager (a peer).
-      const slugs = new Map([[agent.id, agent.slug]]);
-      if (agent.reportsTo && manager.kind === "agent") slugs.set(agent.reportsTo, manager.slug);
-      // The writer of a description is `description_by` joined to its slug (I7 §10), so a rename keeps the quoting.
-      const writerIds = [
-        ...new Set(
-          [agent, ...hood.peers, ...hood.reports].flatMap((a) =>
-            a.descriptionBy ? [a.descriptionBy] : [],
-          ),
-        ),
-      ];
-      const writerSlugs = new Map<string, string>();
-      if (writerIds.length) {
-        const rows = await d.db
-          .select({ id: schema.agents.id, slug: schema.agents.slug })
-          .from(schema.agents)
-          .where(inArray(schema.agents.id, writerIds));
-        for (const r of rows) writerSlugs.set(r.id, r.slug);
-      }
-      const writtenBy = (a: AgentRow) =>
-        a.descriptionBy ? writerSlugs.get(a.descriptionBy) : undefined;
+      // Descriptions are stored with `<@ref>` tags: rendered once for the whole file.
+      const descriptions = await tagLookupFor(d.db, [
+        agent.description,
+        ...hood.peers.map((a) => a.description),
+        ...hood.reports.map((a) => a.description),
+      ]);
+      const show = (text: string) => renderTags(text, descriptions, "agent");
+      // The writer of a description is `description_by`, so a rename keeps the quoting (I7 §10).
+      const writtenBy = (a: AgentRow) => (a.descriptionBy ? tagged(a.descriptionBy) : undefined);
       const entry = (a: AgentRow) => {
         // A spawned agent's description was written by its spawner: every peer shares this agent's manager, so the
-        // lookup always resolves; the fallback still keeps the agent-written description quoted.
-        const writer =
-          a.kind === "ephemeral" ? (slugs.get(a.reportsTo ?? "") ?? "unknown") : writtenBy(a);
+        // principal is always among the ones read above.
+        const writer = a.kind === "ephemeral" ? tagged(a.reportsTo) : writtenBy(a);
         return {
-          slug: a.slug,
+          ...tagged(a.id),
           displayName: a.displayName,
-          description: a.description,
+          description: show(a.description),
           ...(writer ? { writtenBy: writer } : {}),
         };
       };
@@ -339,16 +348,17 @@ export function createPrepareStart(d: {
         prepared = await d.workspace.prepare({
           slug: agent.slug,
           displayName: agent.displayName,
-          description: agent.description,
+          description: show(agent.description),
           template: agent.template,
           effective,
           manager,
+          self: tagged(agent.id),
           grants,
           peers: hood.peers.map(entry),
           reports: hood.reports.map(entry),
-          humans: await d.neighborhood.humans(),
+          humans,
           kind: spawned ? "ephemeral" : "persistent",
-          spawner: spawned ? { slug: spawned.spawner.slug } : null,
+          spawner: spawned ? tagged(spawned.spawner.id) : null,
           spawning: maySpawn(agent, config),
           // S9 §10.5: only persistent agents hold the schedule tools.
           scheduling: spawned

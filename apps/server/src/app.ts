@@ -698,7 +698,7 @@ async function listenForAgents(
     tasks: TaskService;
     schedules: ScheduleService;
     /** The services the org tools call; the caller's own row is `store.agentById`. */
-    org: Omit<OrgToolDeps, "loadAgent" | "principalRef">;
+    org: Omit<OrgToolDeps, "loadAgent" | "principalRef" | "facing">;
     log: FastifyInstance["log"];
   },
 ) {
@@ -720,7 +720,7 @@ async function listenForAgents(
       // I2 §6.2: the spawn tools describe the running process, so they follow the config it started with.
       const started = d.runtimes.startedOf(caller.id)?.config;
       return [
-        sendMessageTool(d.router),
+        sendMessageTool(d.router, d.store),
         sendCommandTool({
           caller,
           runtimes: d.runtimes,
@@ -732,6 +732,7 @@ async function listenForAgents(
           tasks: d.tasks,
           loadAgent: (id) => d.store.agentById(id),
           loadPrincipal: (id) => principalById(d.db, id),
+          facing: (want) => d.store.facing(want),
         }),
         // Q12 and I7 §9.1: persistent agents only; a spawned agent never sees the schedule or restart tools.
         ...(caller.kind === "persistent"
@@ -750,6 +751,7 @@ async function listenForAgents(
                 schedules: d.schedules,
                 factoryZone: config.factoryTimezone,
                 loadAgent: (id) => d.store.agentById(id),
+                facing: (want) => d.store.facing(want),
               }),
             ]
           : []),
@@ -759,6 +761,7 @@ async function listenForAgents(
               ...d.org,
               loadAgent: (id) => d.store.agentById(id),
               principalRef: (id) => d.store.principalRef(id),
+              facing: (want) => d.store.facing(want),
             })
           : []),
         ...(started && maySpawn(caller, started)

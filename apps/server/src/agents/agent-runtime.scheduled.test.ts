@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
@@ -108,7 +108,7 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
     from: "@scheduler",
     kind: "scheduled",
     scheduleKey: row.scheduleKey,
-    by: "@or",
+    by: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
     byKind: "human",
     due: "2026-11-23T09:00:00+01:00",
     firings: 3,
@@ -116,12 +116,12 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
   });
 });
 
-test("an agent author is the @slug in by", async () => {
+test("an agent author is its tag in by", async () => {
   await t.sql.unsafe(principalSql("auth1", "agent", "author1"));
   await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
               select 'auth1', 'author1', 'A', template, config, runtime, credential_id, reports_to from agents where id = ${agentId}`;
   const row = await scheduled({ authorId: "auth1" });
-  expect(row.authorLabel).toBe("@author1");
+  expect(row.authorTag).toBe(`<@${testRef("auth1")}>`);
   expect(row.authorKind).toBe("agent");
 });
 

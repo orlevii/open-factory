@@ -110,7 +110,7 @@ test("a later human message goes out as one batch with the notice first, then th
   const batch = driver.last.sent[1] ?? [];
   expect(batch.map((m) => [m.kind, m.from])).toEqual([
     ["system", "@factory"],
-    ["message", "@or"],
+    ["message", `<@${testRef("u1")}|or>`],
   ]);
 });
 
@@ -172,8 +172,8 @@ test("recordReportNotice on a running idle manager queues the notice without sen
     [
       "system",
       "@factory",
-      `<@hr000000> changed ${tagOf(testRef(`rep${n}`))}'s configuration:\n- added skill tdd`,
+      `<@hr000000|unknown> changed <@${testRef(`rep${n}`)}|rep${n}>'s configuration:\n- added skill tdd`,
     ],
-    ["message", "@or", "hello again"],
+    ["message", `<@${testRef("u1")}|or>`, "hello again"],
   ]);
 });

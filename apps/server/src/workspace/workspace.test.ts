@@ -51,6 +51,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
   const tpl = { dir: tdir, config, tplSettings, tplMcp: { mcpServers: { x: { command: "x" } } } };
   const prep = {
     slug: "lead",
+    self: { ref: "p3dh8vcn", handle: "lead" },
     displayName: "Lead",
     description: "d",
     template: "lead",
@@ -61,7 +62,7 @@ function setup(fakeEnv: Record<string, string> = {}) {
       templateSkills: [],
       library: { skills: {} },
     },
-    manager: { kind: "user" as const, handle: "or", name: "Or" },
+    manager: { kind: "human" as const, ref: "k7x2m9qd", handle: "or", name: "Or" },
     grants: [{ name: "app", hostPath: repo }],
     peers: [],
     reports: [],
@@ -104,7 +105,9 @@ test("materialize then prepare: the full layout", async () => {
       },
     },
   });
-  expect(readFileSync(path.join(wd, ".claude-config/CLAUDE.md"), "utf8")).toContain("@lead");
+  expect(readFileSync(path.join(wd, ".claude-config/CLAUDE.md"), "utf8")).toContain(
+    "<@p3dh8vcn|lead>",
+  );
   expect(out.mounts.map((m) => m.target)).toEqual([
     wd,
     repo,

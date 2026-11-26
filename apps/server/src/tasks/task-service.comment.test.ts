@@ -61,11 +61,11 @@ test("a human's comment mentioning an agent reaches it as task_comment from the 
   await settle("dev", "qa");
   const sent = proc("qa")?.sent.flat()[0];
   expect(sent).toMatchObject({
-    from: "@or",
+    from: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
     kind: "task_comment",
     taskKey: "T-1",
     commentId: r.id,
-    body: `${tag("qa")} yes, go ahead`,
+    body: `<@${testRef(ids.qa as string)}|qa> yes, go ahead`,
   });
   const qa = await h.app.store.agentBySlug("qa");
   const started = (await h.app.store.after(qa?.id ?? "", 0, 100)).map((e) => e.event);

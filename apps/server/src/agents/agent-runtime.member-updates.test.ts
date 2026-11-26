@@ -185,7 +185,11 @@ test("the debounce runs from the oldest pending update; later ones go out in the
   await tick(1_500); // 30.5 s after "a", 10.5 s after "b"
   const last = h.driver.last.sent.at(-1) ?? [];
   expect(last).toHaveLength(1);
-  expect(last[0]).toMatchObject({ kind: "member_update", from: "@devrep", body: "a\n\nb" });
+  expect(last[0]).toMatchObject({
+    kind: "member_update",
+    from: `<@${testRef(REPORT)}|devrep>`,
+    body: "a\n\nb",
+  });
   expect(last[0]?.ids).toHaveLength(2);
 });
 
@@ -229,8 +233,8 @@ test("a factory fact renders with about and its fact code, in its report's group
   );
   await tick(DEBOUNCE + 500);
   expect(h.driver.last.sent.at(-1)?.map((m) => [m.from, m.about, m.fact])).toEqual([
-    ["@devrep", undefined, undefined],
-    ["@factory", "@devrep", "denied"],
+    [`<@${testRef(REPORT)}|devrep>`, undefined, undefined],
+    ["@factory", `<@${testRef(REPORT)}|devrep>`, "denied"],
   ]);
 });
 
@@ -446,7 +450,7 @@ test("a peer_left envelope carries its subject, with the move target read back f
   const env = (await messageIns()).at(-1)?.messages.find((m) => m.kind === "peer_left");
   expect(env).toMatchObject({
     from: "@factory",
-    body,
+    body: `<@${testRef(REPORT)}|devrep> (Dev agent) left: now reports to <@${testRef("leadx")}|unknown>.`,
     subject: {
       slug: "devrep",
       displayName: "Dev agent",

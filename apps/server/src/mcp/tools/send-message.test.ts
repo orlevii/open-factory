@@ -24,8 +24,13 @@ test("the result is {results} as JSON text, one entry per recipient in order", a
   expect(r.isError).toBeFalsy();
   const out = JSON.parse(text(r));
   expect(out.results).toMatchObject([
-    { to: "@or", kind: "human", status: "inbox" },
-    { to: "@bob", kind: "agent", status: "queued", recipient_status: "hibernated" },
+    { to: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/), kind: "human", status: "inbox" },
+    {
+      to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/),
+      kind: "agent",
+      status: "queued",
+      recipient_status: "hibernated",
+    },
   ]);
 });
 
@@ -82,7 +87,9 @@ test("send_message to a plain handle delivers and warns", async () => {
   const r = await callTool(url, tok, "send_message", { to: ["bob"], body: "hi" });
   expect(r.isError).toBeFalsy();
   const out = JSON.parse(text(r));
-  expect(out.results).toMatchObject([{ to: "@bob", status: "queued" }]);
+  expect(out.results).toMatchObject([
+    { to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/), status: "queued" },
+  ]);
   expect(out.warnings).toEqual([
     `Plain tag detected: @bob was resolved to <@${bob[0]?.ref}|bob>. Tag as <@ref|handle>.`,
   ]);
@@ -93,7 +100,9 @@ test("send_message to a tag delivers with no warning, even when its handle label
   const r = await callTool(url, tok, "send_message", { to: [`<@${bob?.ref}|old>`], body: "hi" });
   expect(r.isError).toBeFalsy();
   const out = JSON.parse(text(r));
-  expect(out.results).toMatchObject([{ to: "@bob", status: "queued" }]);
+  expect(out.results).toMatchObject([
+    { to: expect.stringMatching(/^<@[0-9a-z]{8}\|bob>$/), status: "queued" },
+  ]);
   expect(out).not.toHaveProperty("warnings");
 });
 

@@ -9,12 +9,14 @@ let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
 /** The signed-in human's tag: the factory-written texts and control events name it that way. */
 let orTag = "";
+let orAgentTag = "";
 const driver = new FakeDriver();
 beforeAll(async () => {
   t = await makeTestApp({ harnessDriver: driver });
   const signedUp = await t.signUpUser({ handle: "or" });
   cookie = signedUp.cookie;
   orTag = tagOf(testRef(signedUp.user.id));
+  orAgentTag = `<@${testRef(signedUp.user.id)}|or>`;
 });
 afterAll(() => t.close());
 
@@ -71,8 +73,8 @@ test("restart: an errored agent gets the restart notice first, control event, on
   expect(procsOf(rt)).toHaveLength(before + 1); // one attempt
   const p = lastProc(rt);
   expect(p.sent[0]?.map((m) => [m.from, m.body])).toEqual([
-    ["@factory", `Restarted by ${orTag} after an error.`],
-    ["@or", "hi"],
+    ["@factory", `Restarted by ${orAgentTag} after an error.`],
+    [orAgentTag, "hi"],
   ]);
   const evs = await events(rt);
   const control = evs.findIndex((e) => e.type === "control" && e.cmd === "restart");
@@ -183,7 +185,7 @@ test("restart of stop_failed releases its slot and the restart's wake follows; a
   const p2 = lastProc(rt);
   expect(p2.sent[0]?.[0]).toMatchObject({
     from: "@factory",
-    body: `Restarted by ${orTag} after an error. These crons were stopped: every 5 minutes.`,
+    body: `Restarted by ${orAgentTag} after an error. These crons were stopped: every 5 minutes.`,
   });
   p2.emit(ev.session(), ev.turn(), ev.end());
   await rt.settled();
@@ -293,8 +295,8 @@ test("restart with the failed start's process left: force stop, and its exit mak
   });
   expect(evs.map((e) => e.type)).not.toContain("background_work_lost"); // nothing was live
   expect(lastProc(rt).sent[0]?.map((m) => [m.from, m.body])).toEqual([
-    ["@factory", `Restarted by ${orTag} after an error.`],
-    ["@or", "hi"],
+    ["@factory", `Restarted by ${orAgentTag} after an error.`],
+    [orAgentTag, "hi"],
   ]);
   lastProc(rt).emit(ev.session(), ev.turn(), ev.end());
   await rt.settled();

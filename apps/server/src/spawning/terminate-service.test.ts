@@ -456,7 +456,11 @@ test("terminate_agent by its tag terminates silently; by a plain handle it warns
   const [bRef] = await t.sql`select ref from principals where handle = ${b.slug}`;
   const tagged = await callTool(url, token, "terminate_agent", { target: `<@${aRef?.ref}|stale>` });
   expect(tagged.isError).toBeFalsy();
-  expect(JSON.parse(tagged.content[0]?.text ?? "")).toEqual({ slug: a.slug, status: "terminated" });
+  expect(JSON.parse(tagged.content[0]?.text ?? "")).toEqual({
+    slug: a.slug,
+    tag: `<@${aRef?.ref}|${a.slug}>`,
+    status: "terminated",
+  });
   const plain = await callTool(url, token, "terminate_agent", { target: b.slug });
   expect(JSON.parse(plain.content[0]?.text ?? "").warnings).toEqual([
     `Plain tag detected: @${b.slug} was resolved to <@${bRef?.ref}|${b.slug}>. Tag as <@ref|handle>.`,

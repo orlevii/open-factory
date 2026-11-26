@@ -5,7 +5,7 @@ import {
   listSchedulesToolSchema,
   scheduleMessageToolSchema,
 } from "@open-factory/shared";
-import { UnknownTagsError } from "../../principals/principal-text.ts";
+import { type AgentFacing, UnknownTagsError } from "../../principals/principal-text.ts";
 import { ScheduleError } from "../../scheduling/errors.ts";
 import type { ScheduleService } from "../../scheduling/schedule-service.ts";
 import {
@@ -23,6 +23,8 @@ type ScheduleTools = {
   factoryZone: string;
   /** The calling agent, from the token (never from an argument). */
   loadAgent(id: string): Promise<AgentRow | undefined>;
+  /** Tags for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
+  facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
 };
 
 /**
@@ -78,9 +80,10 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
                 },
               );
               const i = r.item;
+              const facing = await d.facing({ handles: [i.target.slug] });
               return {
                 id: i.key,
-                to: i.target.slug,
+                to: facing.tag(i.target.slug),
                 ...(i.cron ? { cron: i.cron } : {}),
                 ...(i.at ? { at: formatOffsetIso(new Date(i.at), i.timezone) } : {}),
                 timezone: i.timezone,
@@ -97,7 +100,20 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
             inputSchema: listSchedulesToolSchema,
           },
           (_args: Record<string, never>, tctx: ToolContext) =>
-            guard(async () => d.schedules.listForAgent((await agentOf(tctx)).id)),
+            guard(async () => {
+              const views = await d.schedules.listForAgent((await agentOf(tctx)).id);
+              const facing = await d.facing({
+                handles: views.flatMap((v) => [v.to, v.created_by, v.by]),
+                texts: views.map((v) => v.body),
+              });
+              return views.map((v) => ({
+                ...v,
+                to: facing.tag(v.to),
+                created_by: facing.tag(v.created_by),
+                by: facing.tag(v.by),
+                body: facing.render(v.body),
+              }));
+            }),
         );
         server.registerTool(
           "cancel_schedule",

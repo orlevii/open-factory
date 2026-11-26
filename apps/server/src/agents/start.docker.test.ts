@@ -167,7 +167,7 @@ async function setup(
     description: "",
     template: "dock",
     config,
-    manager: { kind: "user" as const, handle: "or", name: "Or" },
+    manager: { kind: "human" as const, ref: "k7x2m9qd", handle: "or", name: "Or" },
     grants: [],
   };
   await workspace.materialize(

@@ -69,8 +69,12 @@ test("create assigned to a hibernated agent wakes it with the brief (AC 1)", asy
   const env = sentTo("dev");
   expect(env).toHaveLength(1);
   expect(env[0]).toMatchObject({ from: "@factory", kind: "task_assigned", taskKey: "T-1" });
-  expect(env[0]?.body).toContain(`${OR} assigned you T-1, created by ${OR}: "Plan the migration"`);
-  expect(env[0]?.body).toContain(`The task, written by ${OR}:\n> Line one\n> Line two`);
+  // Delivered with the author's current handle.
+  const orTag = `${OR.slice(0, -1)}|${(await h.sql`select handle from principals where ref = ${OR.slice(2, -1)}`)[0]?.handle}>`;
+  expect(env[0]?.body).toContain(
+    `${orTag} assigned you T-1, created by ${orTag}: "Plan the migration"`,
+  );
+  expect(env[0]?.body).toContain(`The task, written by ${orTag}:\n> Line one\n> Line two`);
   expect(frames).toContainEqual({ type: "tasks_changed", keys: ["T-1"] });
   const ev = await h.sql`select type from task_events order by at`;
   expect(ev.map((e) => e.type)).toEqual(["created", "assignee"]);

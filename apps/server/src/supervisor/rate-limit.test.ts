@@ -19,6 +19,9 @@ import { createTestDb } from "../test/helpers.ts";
 import { principalSql } from "../test/principals.ts";
 import { Supervisor } from "./supervisor.ts";
 
+/** An envelope sender is a tag; this test reads its handle. */
+const handleOf = (from: string) => from.replace(/^<@[0-9a-z]{8}\|(.+)>$/, "@$1");
+
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let store: EventStore;
 beforeAll(async () => {
@@ -295,7 +298,7 @@ test("the cut-off agent gets exactly one notice at reset, batched first with pen
   await w.until(() => w.proc(a).sent.length === 2);
   const name = (await credRow(liveCredentialId(a.agent)))?.name ?? "";
   const batch = w.proc(a).sent[1] ?? [];
-  expect(batch.map((m) => [m.from, m.kind, m.body])).toEqual([
+  expect(batch.map((m) => [handleOf(m.from), m.kind, m.body])).toEqual([
     [
       "@factory",
       "system",

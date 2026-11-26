@@ -3,7 +3,7 @@ import { renderEnvelopes } from "@open-factory/harness";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { CompactingError, NoOpenTurnError } from "./errors.ts";
 import { EventBus } from "./event-bus.ts";
@@ -79,6 +79,7 @@ async function makeRuntime(
   await rt.init();
   return rt;
 }
+const OR_TAG = `<@${testRef("u1")}|or>`;
 const send = (body: string, urgent = false) =>
   sendAs(store, rt, { fromUserId: "u1", fromHandle: "or", body, urgent });
 const events = async () =>
@@ -436,8 +437,8 @@ test("the first batch after a notice begins with it, even ahead of an older pend
   await send("new"); // starts the process
   expect(driver.last.sent[0]).toMatchObject([
     { from: "@factory", kind: "system", body: "it crashed" },
-    { from: "@or", kind: "message", body: "old" },
-    { from: "@or", kind: "message", body: "new" },
+    { from: OR_TAG, kind: "message", body: "old" },
+    { from: OR_TAG, kind: "message", body: "new" },
   ]);
 });
 
@@ -450,8 +451,8 @@ test("a notice is written ahead of older pending messages in one batch", async (
   await rt.postNotice("factory_restarted", "restarted");
   expect(driver.last.sent.at(-1)).toMatchObject([
     { from: "@factory", kind: "system", body: "restarted" },
-    { from: "@or", kind: "message", body: "a" },
-    { from: "@or", kind: "message", body: "b" },
+    { from: OR_TAG, kind: "message", body: "a" },
+    { from: OR_TAG, kind: "message", body: "b" },
   ]);
   const hist = (await events()).find(
     (e) => e.event.type === "message_in" && e.event.messages[0]?.kind === "system",
@@ -526,4 +527,28 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
   const text = renderEnvelopes(sent);
   expect(text).not.toContain(cid);
   expect(text).toBe(renderEnvelopes(sent.map(({ clientMessageId: _c, ...m }) => m)));
+});
+
+test("after a rename, a new delivery shows the new handle in from and in a body tag", async () => {
+  await t.sql.unsafe(principalSql("rn-human", "human", "rn-old"));
+  await t.sql`insert into users (id, name, email) values ('rn-human', 'Rn', 'rn@x.io')`;
+  await insertAgent(t.sql, { id: "rn-peer", slug: "rn-peer-old" });
+  const body = `ask <@${testRef("rn-peer")}> about it`;
+  const human = `<@${testRef("rn-human")}`;
+  const peer = `<@${testRef("rn-peer")}`;
+  await sendAs(store, rt, { fromUserId: "rn-human", body, urgent: false });
+  expect(driver.last.sent[0]?.[0]).toMatchObject({
+    from: `${human}|rn-old>`,
+    body: `ask ${peer}|rn-peer-old> about it`,
+  });
+  driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
+  await rt.settled();
+  // The endpoint comes in a later task: a rename is a write to principals.handle (agents.slug stays as it was).
+  await t.sql`update principals set handle = 'rn-new' where id = 'rn-human'`;
+  await t.sql`update principals set handle = 'rn-peer-new' where id = 'rn-peer'`;
+  await sendAs(store, rt, { fromUserId: "rn-human", body, urgent: false });
+  expect(driver.last.sent[1]?.[0]).toMatchObject({
+    from: `${human}|rn-new>`,
+    body: `ask ${peer}|rn-peer-new> about it`,
+  });
 });

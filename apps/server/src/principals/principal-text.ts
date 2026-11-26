@@ -1,6 +1,8 @@
 import {
+  agentTagOf,
   applyTags,
   plainTagWarning,
+  renderTags,
   scanTags,
   type TagLookup,
   type TagPrincipal,
@@ -83,4 +85,31 @@ export async function tagLookupFor(
   for (const t of texts) for (const tok of scanTags(t).tokens) refs.add(tok.ref);
   const byRef = await principalsByRefs(tx, [...refs]);
   return (ref) => byRef.get(ref);
+}
+
+/** What a tool result needs to show principals to an agent: tags for handles, and stored text with its tags rendered. */
+export type AgentFacing = {
+  /** The `<@ref|handle>` tag of a handle (bare or with `@`); `@handle` when no principal holds it (`@factory`). */
+  tag(handle: string): string;
+  /** Stored text with every `<@ref>` rendered as `<@ref|handle>`. */
+  render(text: string): string;
+};
+
+/** One query by handle and one by ref, for a tool result (spec §4.4). */
+export async function agentFacing(
+  tx: Tx,
+  want: { handles?: readonly string[]; texts?: readonly string[] },
+): Promise<AgentFacing> {
+  const bare = (h: string) => h.replace(/^@/, "");
+  const [byHandle, lookup] = await Promise.all([
+    principalsByHandles(tx, [...new Set((want.handles ?? []).map(bare))]),
+    tagLookupFor(tx, want.texts ?? []),
+  ]);
+  return {
+    tag: (h) => {
+      const p = byHandle.get(bare(h));
+      return p ? agentTagOf(p) : `@${bare(h)}`;
+    },
+    render: (text) => renderTags(text, lookup, "agent"),
+  };
 }

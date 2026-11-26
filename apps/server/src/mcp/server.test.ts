@@ -3,7 +3,7 @@ import { EventStore } from "../agents/event-store.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { callerOf, createFactoryMcp, toolUseIdOf } from "./server.ts";
 import { listPeersTool } from "./tools/list-peers.ts";
 
@@ -31,7 +31,7 @@ function rpc(method: string, params: unknown, id = 1) {
   });
 }
 
-test("list_peers reads the caller from authInfo and reports relations and status", async () => {
+test("list_peers returns each peer's tag, relation and status for the authenticated caller", async () => {
   const errors: Error[] = [];
   const mcp = createFactoryMcp({
     version: "0.0.0",
@@ -56,14 +56,15 @@ test("list_peers reads the caller from authInfo and reports relations and status
     peers: [
       {
         handle: "@lead",
+        tag: `<@${testRef("lead")}|lead>`,
         kind: "agent",
         displayName: "Lead",
         description: "",
         relation: "manager",
         status: "idle",
       },
-      { handle: "@ana", kind: "human", name: "Ana" },
-      { handle: "@or", kind: "human", name: "Or" },
+      { handle: "@ana", tag: `<@${testRef("u2")}|ana>`, kind: "human", name: "Ana" },
+      { handle: "@or", tag: `<@${testRef("u1")}|or>`, kind: "human", name: "Or" },
     ],
   });
   const lead = await call("lead", "all");

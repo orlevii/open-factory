@@ -12,6 +12,7 @@ import {
   updateAgentToolSchema,
   writeTemplateFileToolSchema,
 } from "@open-factory/shared";
+import { agentTagOf } from "@open-factory/shared/tags";
 import { z } from "zod";
 import type { AgentService } from "../../agents/agent-service.ts";
 import type { ConfigService } from "../../agents/config-service.ts";
@@ -20,6 +21,7 @@ import type { EventBus } from "../../agents/event-bus.ts";
 import type { CredentialService } from "../../credentials/credential-service.ts";
 import { ApiError } from "../../errors.ts";
 import type { LibraryIndex } from "../../library/library-index.ts";
+import type { AgentFacing } from "../../principals/principal-text.ts";
 import type { ProjectService } from "../../projects/project-service.ts";
 import type { SecretService } from "../../secrets/secret-service.ts";
 import type { TemplateIndex } from "../../templates/template-index.ts";
@@ -36,6 +38,8 @@ export type OrgToolDeps = {
   loadAgent(id: string): Promise<AgentRow | undefined>;
   /** The caller's principal ref: the agent actor is named by its tag in stored text. */
   principalRef(id: string): Promise<string | undefined>;
+  /** Tags for the handles a result names and a renderer for the stored text it returns (spec §4.4). */
+  facing(want: { handles?: readonly string[]; texts?: readonly string[] }): Promise<AgentFacing>;
   agents: AgentService;
   config: ConfigService;
   templates: TemplateIndex;
@@ -177,13 +181,15 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       async ({ slug }) => {
         const { handle: s, warning } = await d.agents.handleOf(slug);
         const [a, cfg] = await Promise.all([d.agents.summary(s), d.config.getConfig(s)]);
+        const facing = await d.facing({ handles: [a.slug], texts: [a.description] });
         return {
           slug: a.slug,
+          tag: facing.tag(a.slug),
           display_name: a.displayName,
-          description: a.description,
+          description: facing.render(a.description),
           kind: a.kind,
           template: a.template,
-          reports_to: `@${a.reportsTo.handle}`,
+          reports_to: agentTagOf(a.reportsTo),
           credential: a.credential,
           projects: a.projects,
           manage_org: a.manageOrg,
@@ -221,6 +227,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         );
         return {
           slug,
+          tag: (await d.facing({ handles: [slug] })).tag(slug),
           status: "created",
           note: `@${slug} is created and starts when it gets its first message.`,
           ...warned(manager.warning, ...tagWarnings),
@@ -266,6 +273,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           (identity && !before.archivedAt && before.status !== "hibernated");
         return {
           slug,
+          tag: (await d.facing({ handles: [slug] })).tag(slug),
           changed,
           restart,
           ...(r.config?.checked === "schema"
@@ -282,7 +290,12 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       async ({ slug }, actor) => {
         const { handle, warning } = await d.agents.handleOf(slug);
         const a = await d.agents.archive(handle, actor);
-        return { slug: a.slug, archived: true, ...warned(warning) };
+        return {
+          slug: a.slug,
+          tag: (await d.facing({ handles: [handle] })).tag(handle),
+          archived: true,
+          ...warned(warning),
+        };
       },
     ),
     tool(
@@ -292,7 +305,12 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       async ({ slug }, actor) => {
         const { handle, warning } = await d.agents.handleOf(slug);
         const a = await d.agents.unarchive(handle, actor);
-        return { slug: a.slug, archived: false, ...warned(warning) };
+        return {
+          slug: a.slug,
+          tag: (await d.facing({ handles: [handle] })).tag(handle),
+          archived: false,
+          ...warned(warning),
+        };
       },
     ),
     tool(

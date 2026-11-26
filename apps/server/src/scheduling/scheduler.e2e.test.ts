@@ -60,7 +60,7 @@ test("AC 1: a weekday cron in Europe/Berlin wakes a hibernated agent with the sc
     from: "@scheduler",
     kind: "scheduled",
     scheduleKey: item.key,
-    by: "@or",
+    by: expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/),
     due: "2026-11-23T09:00:00+01:00",
   });
   expect(first?.firings).toBe(1); // rendered only above 1

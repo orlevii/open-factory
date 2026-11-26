@@ -1,4 +1,5 @@
 import { sendMessageToolSchema } from "@open-factory/shared";
+import type { EventStore } from "../../agents/event-store.ts";
 import type { Router } from "../../messaging/router.ts";
 import { UnknownTagsError } from "../../principals/principal-text.ts";
 import {
@@ -15,7 +16,10 @@ import {
  * `send_message(to[], body, urgent?)` (spec §6.1, I1 §4.4). The sender is always the token's agent; returns once the row is
  * committed and handed to the recipient, never waiting for a wake or a start.
  */
-export function sendMessageTool(router: Pick<Router, "send">): ToolRegistration {
+export function sendMessageTool(
+  router: Pick<Router, "send">,
+  store: Pick<EventStore, "facing">,
+): ToolRegistration {
   return {
     register(server: McpServer) {
       server.registerTool(
@@ -43,7 +47,15 @@ export function sendMessageTool(router: Pick<Router, "send">): ToolRegistration 
             return toolError(
               results.map((r) => (r.status === "refused" ? r.reason : "")).join("\n"),
             );
-          return textResult({ results, ...(warnings.length ? { warnings } : {}) });
+          // Each recipient reads back as its tag, so the result can be passed on as written.
+          const delivered = results.filter((r) => r.status !== "refused");
+          const facing = await store.facing({ handles: delivered.map((r) => r.to) });
+          return textResult({
+            results: results.map((r) =>
+              r.status === "refused" ? r : { ...r, to: facing.tag(r.to) },
+            ),
+            ...(warnings.length ? { warnings } : {}),
+          });
         },
       );
     },

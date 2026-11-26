@@ -61,7 +61,7 @@ test("schedule_message defaults to the caller, the factory zone and a note for a
   const r = await call("dev", "schedule_message", { body: "Weekly review", cron: "0 9 * * 1-5" });
   expect(r.json).toEqual({
     id: expect.stringMatching(/^S-\d+$/),
-    to: "dev",
+    to: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/),
     cron: "0 9 * * 1-5",
     timezone: "Europe/Berlin",
     next_run: "2026-11-23T09:00:00+01:00",
@@ -83,13 +83,13 @@ test("at, to and me; an errored target gets its note; identity never comes from 
     created_by: "lead",
   });
   expect(a.json).toMatchObject({
-    to: "qa",
+    to: expect.stringMatching(/^<@[0-9a-z]{8}\|qa>$/),
     at: "2026-12-01T09:00:00+01:00",
     timezone: "Europe/Berlin",
   });
   expect(a.json.note).toBeUndefined();
   const me = await call("dev", "schedule_message", { body: "x", at: "2026-12-02T09:00", to: "me" });
-  expect(me.json.to).toBe("dev");
+  expect(me.json.to).toMatch(/^<@[0-9a-z]{8}\|dev>$/);
   await h.sql`update agents set status = 'errored' where slug = 'qa'`;
   const e = await call("dev", "schedule_message", { body: "x", at: "2026-12-03T09:00", to: "qa" });
   expect(e.json.note).toBe(
@@ -127,8 +127,8 @@ test("list_schedules shows what the caller created and what targets it; cancel_s
     by: string;
   }[];
   expect(list.map((x) => [x.id, x.yours, x.by])).toEqual([
-    [human, false, "@or"],
-    [mine, true, "dev"],
+    [human, false, expect.stringMatching(/^<@[0-9a-z]{8}\|or>$/)],
+    [mine, true, expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/)],
   ]);
   const no = await call("dev", "cancel_schedule", { id: human });
   expect(no).toMatchObject({

@@ -39,6 +39,8 @@ test("manager, peers and reports; archived and terminated excluded; top-level ag
   const ceo = await n.of("ceo");
   expect(ceo.manager).toBeNull();
   expect(ceo.peers.map((a) => a.slug)).toEqual(["ops"]);
-  expect(await n.humans()).toEqual([{ handle: "or", name: "Or" }]);
+  expect(await n.humans()).toEqual([
+    { ref: expect.stringMatching(/^[0-9a-z]{8}$/), handle: "or", name: "Or" },
+  ]);
   expect((await n.all()).map((a) => a.slug)).toEqual(["ceo", "dev", "lead", "ops", "pm"]);
 });

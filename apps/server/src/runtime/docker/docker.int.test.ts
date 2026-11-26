@@ -22,7 +22,6 @@ import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../../agents/event-store.ts";
 import { makeTestApp, runtimeOf } from "../../test/helpers.ts";
-import { seedTestUser } from "../../test/principals.ts";
 import { asRunning } from "../../test/running.ts";
 import { agentWorkdir } from "../../workspace/paths.ts";
 import { dockerodeClient } from "./client.ts";
@@ -178,7 +177,8 @@ async function setup(o: {
     ...(o.local ? { FACTORY_CLAUDE_BIN: o.local.bin } : {}),
   };
   const t = await makeTestApp({ env });
-  await seedTestUser(t.db, "or");
+  // Signing up makes the human `or` (principal and user); seeding one as well would take the handle twice.
+  const cookie = (await t.signUpUser({ handle: "or" })).cookie;
   writeTemplate(
     home,
     "dock",
@@ -215,7 +215,6 @@ async function setup(o: {
   const fake = installFakeClaude({ workdir, scenario: o.scenario });
   env.FACTORY_DOCKER_CLAUDE_BIN = fake.bin;
   const app = (await t.reopen({ env })).app;
-  const cookie = (await t.signUpUser({ handle: "or" })).cookie;
   const w: World = { t, app, env, home, handle, agentId, ref, workdir, fake, cookie };
   worlds.push(w);
   return w;
@@ -240,7 +239,8 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
     FACTORY_CLI_BUNDLE: cliBundle,
   };
   const t = await makeTestApp({ env });
-  await seedTestUser(t.db, "or");
+  // Signing up makes the human `or` (principal and user); seeding one as well would take the handle twice.
+  const cookie = (await t.signUpUser({ handle: "or" })).cookie;
   const fake = installFakeClaude({ workdir: repo, scenario });
   expect(fake.bin).toBe(env.FACTORY_DOCKER_CLAUDE_BIN);
   const secrets = "secrets:\n  - FAKE_CLAUDE_SCENARIO\n  - FAKE_CLAUDE_DIR\n";
@@ -274,7 +274,6 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
   const leadRow = await t.app.store.agentById(leadId);
   if (!leadRow) throw new Error("no lead");
   await asRunning(t.app, leadRow);
-  const cookie = (await t.signUpUser({ handle: "or" })).cookie;
 
   const r = await t.app.spawner.spawn(
     leadId,
@@ -307,6 +306,12 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
 const labelled = (agentId: string) =>
   dk.listContainers({ all: true, filters: { label: [`${LABEL_AGENT_ID}=${agentId}`] } });
 
+/** The human `or` that signing up created. */
+const orOf = async (db: TestApp["db"]) => {
+  const [r] = await db.select().from(schema.principals).where(eq(schema.principals.handle, "or"));
+  if (!r) throw new Error("no principal or");
+  return r;
+};
 const refOfAgent = async (db: TestApp["db"], agentId: string) => {
   const [r] = await db
     .select({ ref: schema.principals.ref })
@@ -436,7 +441,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       );
     expect(stdin).toHaveLength(1);
     expect(stdin[0].message.content).toMatch(
-      /^<factory-message from="@or" from_kind="human" kind="message" to="@[a-z0-9-]+" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
+      /^<factory-message from="<@[0-9a-z]{8}\|or>" from_kind="human" kind="message" to="<@[0-9a-z]{8}\|[a-z0-9-]+>" urgent="false" id="[0-9a-f-]+">\nhello\n<\/factory-message>$/,
     );
     const types = (await events(w)).map((e) => e.type);
     expect(types).toEqual([
@@ -531,7 +536,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     const repo = gitRepo();
     await w.app.projects.create({ name: "app", hostPath: repo });
     await w.app.agents.update(
-      w.handle,
+      w.ref,
       { projects: ["app"] },
       { kind: "human", ref: "k7x2m9qd", handle: "or" },
     );
@@ -675,16 +680,18 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     expect(await labelled(w.agentId)).toHaveLength(1);
     expect(w.app.runtimes.supervisor.running().count).toBe(1);
 
-    expect(await w.app.terminator.terminate(w.agentId, await seedTestUser(w.app.db, "or"))).toEqual(
-      { status: "terminated" },
-    );
+    expect(await w.app.terminator.terminate(w.agentId, await orOf(w.t.db))).toEqual({
+      status: "terminated",
+    });
     // The stop and the removal run in the background (spec §8 step 3): the container goes, running or not.
     await until(async () => expect(await labelled(w.agentId)).toEqual([]));
     await until(() => expect(w.app.runtimes.supervisor.running().count).toBe(0));
     await expect(inspect(w)).rejects.toMatchObject({ statusCode: 404 });
 
     const evs = await events(w);
-    expect(evs.filter((e) => e.type === "terminated")).toEqual([{ type: "terminated", by: "@or" }]);
+    expect(evs.filter((e) => e.type === "terminated")).toEqual([
+      { type: "terminated", by: `<@${(await orOf(w.t.db)).ref}>` },
+    ]);
     expect(exits(w.fake.log())).toEqual([0]);
     expect(w.app.runtimes.statusOf({ id: w.agentId, status: "hibernated" })).toBe("terminated");
   });
@@ -704,7 +711,8 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       // The termination committed with no app running (so no runtime loaded): exactly the state a crash between the
       // commit and the stop leaves (spec §8 crash safety). No `terminated` event, the container still there.
       const store = new EventStore(w.t.db);
-      await w.t.db.transaction((tx) => store.terminateRows(tx, w.agentId, "@or"));
+      const orId = (await orOf(w.t.db)).id;
+      await w.t.db.transaction((tx) => store.terminateRows(tx, w.agentId, orId));
       expect(await store.hasTerminatedEvent(w.agentId)).toBe(false);
 
       w.app = (await w.t.reopen({ env: w.env })).app;
@@ -713,7 +721,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       await expect(dk.getContainer(Id).inspect()).rejects.toMatchObject({ statusCode: 404 });
       const evs = await events(w);
       expect(evs.filter((e) => e.type === "terminated")).toEqual([
-        { type: "terminated", by: "@or" },
+        { type: "terminated", by: `<@${(await orOf(w.t.db)).ref}>` },
       ]);
       expect(evs.map((e) => e.type)).not.toContain("reconciled");
       expect(w.app.runtimes.supervisor.running().count).toBe(0);
@@ -738,6 +746,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
       { kind: "human", ref: "k7x2m9qd", handle: "or" },
     );
     const locId = await idOf(w.t.db, "loc");
+    const refs: Record<string, string> = { dock: w.ref, loc: await refOfAgent(w.t.db, locId) };
     await w.app.close();
 
     // The real server entry in a child process, killed mid-turn: what a crash leaves is real.
@@ -782,8 +791,11 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     for (const handle of ["dock", "loc"])
       await until(async () =>
         expect(
-          ((await (await api(`/api/agents/${handle}`)).json()) as { agent: { turnOpen: boolean } })
-            .agent.turnOpen,
+          (
+            (await (await api(`/api/agents/${refs[handle]}`)).json()) as {
+              agent: { turnOpen: boolean };
+            }
+          ).agent.turnOpen,
         ).toBe(true),
       );
     const localPid = starts(local.log())[0]?.pid ?? 0;

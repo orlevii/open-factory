@@ -206,3 +206,22 @@ test("validation: an empty or over-64-KB body, no recipients and eleven recipien
     (await post({ to: Array.from({ length: 11 }, (_, i) => `a${i}`), body: "x" })).statusCode,
   ).toBe(400);
 });
+
+test("a message with a tag reaches only its recipients", async () => {
+  const [ops] = await s.sql`select ref from principals where handle = 'ops'`;
+  const res = await post({ to: ["dev"], body: `ask <@${ops?.ref}> later` });
+  expect(res.statusCode).toBe(202);
+  const rows =
+    await s.sql`select to_id, body from messages where kind = 'message' and body like 'ask <@%' `;
+  expect(rows).toEqual([{ to_id: agentIds.dev, body: `ask <@${ops?.ref}> later` }]);
+});
+
+test("a body with an unknown ref is 400 and writes nothing", async () => {
+  const res = await post({ to: ["dev"], body: "ask <@zzzzzzzz> later" });
+  expect(res.statusCode).toBe(400);
+  expect(res.json().error).toMatchObject({
+    code: "unknown_tag",
+    fields: { body: "Tag isn't anyone here" },
+  });
+  expect(await s.sql`select id from messages where body like '%zzzzzzzz%'`).toEqual([]);
+});

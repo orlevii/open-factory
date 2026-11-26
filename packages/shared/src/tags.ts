@@ -107,16 +107,23 @@ export function scanTags(text: string): TagScan {
   const ranges = excludedRanges(text);
   const tokens: TagToken[] = [];
   const plain: PlainCandidate[] = [];
+  /** An escaped token is text, and its `@name` is not a mention either. */
+  const escaped: Range[] = [];
   for (const m of text.matchAll(TOKEN)) {
     const start = m.index ?? 0;
-    if (text[start - 1] === "\\" || inside(ranges, start)) continue;
     const end = start + m[0].length;
+    if (text[start - 1] === "\\") {
+      if (!inside(ranges, start)) escaped.push([start, end]);
+      continue;
+    }
+    if (inside(ranges, start)) continue;
     const name = (m[1] ?? "").toLowerCase();
     const ref = normaliseRef(name);
     if (ref) tokens.push({ ref, start, end, name });
     else if (HANDLE_PATTERN.test(name)) plain.push({ name, start, end });
   }
-  const taken: Range[] = [...tokens, ...plain].map((t) => [t.start, t.end]);
+  const taken: Range[] = [...tokens, ...plain].map((t): Range => [t.start, t.end]);
+  taken.push(...escaped);
   taken.sort((a, b) => a[0] - b[0]);
   for (const m of text.matchAll(MENTION)) {
     const start = m.index ?? 0;

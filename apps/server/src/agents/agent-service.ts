@@ -34,6 +34,7 @@ import {
   principalsByHandles,
   principalsByIds,
 } from "../principals/principal-store.ts";
+import { resolveField } from "../principals/principal-text.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { avatarStat } from "../templates/avatar.ts";
@@ -638,6 +639,7 @@ export class AgentService {
   async create(
     b: CreateAgentBody & { config?: AgentOverlay },
     actor: Actor,
+    warnings: string[] = [],
   ): Promise<AgentSummary> {
     const slugOk = slugSchema.safeParse(b.slug);
     if (!slugOk.success)
@@ -645,16 +647,23 @@ export class AgentService {
     if (b.manageOrg !== undefined && actor.kind === "agent")
       throw new OrgRefusedError("Only a human can grant manage_org.");
     if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor);
-    return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b, actor));
+    return this.d.lock.run(`create:${b.slug}`, () => this.createLocked(b, actor, warnings));
   }
 
   private async createLocked(
     b: CreateAgentBody & { config?: AgentOverlay },
     actor: Actor,
+    warnings: string[],
   ): Promise<AgentSummary> {
     const { db, workspace } = this.d;
     // The cheap pre-read before materialising; the principal insert in the transaction is the guarantee (spec §4.1).
     if ((await principalsByHandles(db, [b.slug])).size) throw slugTaken();
+    // Spec §4.3: the description's tags are stored as `<@ref>`; an unknown ref refuses the create.
+    b = {
+      ...b,
+      description: (await resolveField(db, b.description, actor.kind, "description", warnings))
+        .text,
+    };
     const tpl = await this.d.templates.loadValid(b.template);
     // Re-check under the lock against the template as just parsed: last_valid may have moved since the pre-check.
     if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor, tpl.config.runtime);
@@ -747,8 +756,13 @@ export class AgentService {
     return parsed.data;
   }
 
-  async update(slug: string, b: PatchAgentBody, actor: Actor): Promise<AgentSummary> {
-    const plan = await this.planUpdate(slug, b, actor);
+  async update(
+    slug: string,
+    b: PatchAgentBody,
+    actor: Actor,
+    warnings: string[] = [],
+  ): Promise<AgentSummary> {
+    const plan = await this.planUpdate(slug, b, actor, warnings);
     await this.d.db.transaction(async (tx) => {
       await this.lockAgent(tx, plan.row.id);
       await plan.write(tx);
@@ -767,8 +781,9 @@ export class AgentService {
     b: PatchAgentBody,
     c: OverlayPlan | undefined,
     actor: Actor,
+    warnings: string[] = [],
   ): Promise<{ agent: AgentSummary; config?: PutAgentConfigResponse }> {
-    const u = await this.planUpdate(slug, b, actor);
+    const u = await this.planUpdate(slug, b, actor, warnings);
     await this.d.db.transaction(async (tx) => {
       const locked = await this.lockAgent(tx, u.row.id);
       if (!locked) throw this.notFound(slug);
@@ -787,7 +802,12 @@ export class AgentService {
    * the caller's transaction after it locked the row (it locks nothing itself), `after()` the refresh, peer events and
    * restarts once that commits.
    */
-  async planUpdate(slug: string, b: PatchAgentBody, actor: Actor): Promise<UpdatePlan> {
+  async planUpdate(
+    slug: string,
+    b: PatchAgentBody,
+    actor: Actor,
+    warnings: string[] = [],
+  ): Promise<UpdatePlan> {
     const { db, runtimes } = this.d;
     if (b.manageOrg !== undefined && actor.kind === "agent")
       throw new OrgRefusedError("Only a human can grant manage_org.");
@@ -804,8 +824,13 @@ export class AgentService {
       set.displayName = b.displayName;
       changed.text = true;
     }
-    if (b.description !== undefined && b.description !== row.description) {
-      set.description = b.description;
+    // Spec §4.3: the description's tags are stored as `<@ref>`; an unknown ref refuses the change.
+    const description =
+      b.description === undefined
+        ? undefined
+        : (await resolveField(db, b.description, actor.kind, "description", warnings)).text;
+    if (description !== undefined && description !== row.description) {
+      set.description = description;
       set.descriptionBy = actor.kind === "agent" ? actor.id : null;
       changed.text = true;
     }

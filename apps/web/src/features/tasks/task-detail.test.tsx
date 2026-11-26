@@ -668,7 +668,7 @@ test("composer: Send disabled while empty, Ctrl-Enter posts at once, a failure p
             deliveredTo: ["dev"],
             mentionedHumans: [],
             notReached: [
-              { name: "nobody", reason: "unknown" },
+              { name: "old", reason: "archived" },
               { name: "kid", reason: "terminated" },
             ],
           },
@@ -693,7 +693,7 @@ test("composer: Send disabled while empty, Ctrl-Enter posts at once, a failure p
   fail = false;
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   expect(
-    await screen.findByText("Not reached: @nobody (no such name), @kid (terminated)."),
+    await screen.findByText("Not reached: @old (archived), @kid (terminated)."),
   ).toBeInTheDocument();
   expect(box).toHaveValue("");
 });

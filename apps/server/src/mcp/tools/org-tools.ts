@@ -199,6 +199,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       async (a, actor) => {
         const slug = a.name.trim().replace(/^@/, "");
         const manager = await d.agents.managerHandleOf(a.reports_to);
+        const tagWarnings: string[] = [];
         await d.agents.create(
           {
             template: a.template.trim(),
@@ -211,12 +212,13 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
             ...(a.config ? { config: a.config } : {}),
           },
           actor,
+          tagWarnings,
         );
         return {
           slug,
           status: "created",
           note: `@${slug} is created and starts when it gets its first message.`,
-          ...warned(manager.warning),
+          ...warned(manager.warning, ...tagWarnings),
         };
       },
     ),
@@ -240,7 +242,8 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           a.config !== undefined && a.base_hash !== undefined
             ? await d.config.planOverlay(slug, a.config, a.base_hash, actor)
             : undefined;
-        const r = await d.agents.updateWithOverlay(slug, patch, plan, actor);
+        const tagWarnings: string[] = [];
+        const r = await d.agents.updateWithOverlay(slug, patch, plan, actor, tagWarnings);
         const same = (x: string[], y: string[]) =>
           [...x].sort().join("\0") === [...y].sort().join("\0");
         const fields: string[] = [
@@ -263,7 +266,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           ...(r.config?.checked === "schema"
             ? { note: `Checked fully once ${before.template} is fixed.` }
             : {}),
-          ...warned(warning, manager?.warning),
+          ...warned(warning, manager?.warning, ...tagWarnings),
         };
       },
     ),

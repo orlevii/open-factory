@@ -5,7 +5,6 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./mentions": "./src/mentions.ts",
     "./tags": "./src/tags.ts"
   },
   "dependencies": {

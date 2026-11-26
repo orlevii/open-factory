@@ -86,8 +86,10 @@ test("update_task: null unassigns, a no-op reports changed [], an unrelated agen
   expect(no.text).toBe(
     "Only T-1's creator (@lead) or their managers can change it; comment on it instead.",
   );
-  expect((await call("qa", "comment_task", { id: "T-1", body: "FYI @or" })).json).toMatchObject({
-    mentioned_humans: ["@or"],
+  expect(
+    (await call("qa", "comment_task", { id: "T-1", body: `FYI <@${or.ref}>` })).json,
+  ).toMatchObject({
+    mentioned_humans: [`<@${or.ref}|or>`],
     delivered_to: [],
     not_reached: [],
   });
@@ -96,22 +98,27 @@ test("update_task: null unassigns, a no-op reports changed [], an unrelated agen
   );
 });
 
-test("comment_task: @humans is not reached, with the reason said in a sentence", async () => {
+test("comment_task reports a tagged human as reached", async () => {
   await call("lead", "create_task", { title: "Plan", assignee: "dev" });
-  const r = await call("dev", "comment_task", { id: "T-1", body: "@humans please look" });
+  const r = await call("dev", "comment_task", { id: "T-1", body: `look <@${or.ref}|or>` });
   expect(r.err).toBe(false);
-  expect(r.json).toMatchObject({ mentioned_humans: [], delivered_to: [] });
-  expect(r.json.not_reached).toEqual([
-    {
-      name: "humans",
-      reason: "reserved",
-      detail: "`@humans` isn't a handle. Mention people by handle; list_peers lists them.",
-    },
+  expect(r.json).toMatchObject({ mentioned_humans: [`<@${or.ref}|or>`], not_reached: [] });
+});
+
+test("comment_task: a plain @handle reaches the agent and warns; an unknown ref is refused and nothing is posted", async () => {
+  await call("lead", "create_task", { title: "Plan", assignee: "lead" });
+  const [qa] = await h.sql`select ref from principals where handle = 'qa'`;
+  const r = await call("dev", "comment_task", { id: "T-1", body: "@qa thoughts?" });
+  expect(r.json.delivered_to).toEqual(expect.arrayContaining(["qa"]));
+  expect(r.json.warnings).toEqual([
+    `Plain tag detected: @qa was resolved to <@${qa?.ref}|qa>. Tag as <@ref|handle>.`,
   ]);
-  const g = await call("dev", "comment_task", { id: "T-1", body: "@ghost look" });
-  expect(g.json.not_reached).toEqual([
-    { name: "ghost", reason: "unknown", detail: "No agent or user named '@ghost'." },
-  ]);
+  const bad = await call("dev", "comment_task", { id: "T-1", body: "<@zzzzzzzz> look" });
+  expect(bad.err).toBe(true);
+  expect(bad.text).toBe(
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+  );
+  expect((await h.sql`select id from task_comments`).length).toBe(1);
   const d = await mcpCall(url, tok.dev as string, "tools/list", {});
   const tool = (d.json.result.tools as { name: string; description: string }[]).find(
     (x) => x.name === "comment_task",
@@ -218,7 +225,8 @@ test("comment_task: a looping peer is listed under held, the comment is still po
   expect(r.json.held[0].to).toBe("@qa");
   expect(r.json.held[0].note).toMatch(/^Held: you and @qa exchanged/);
   const [c] = await h.sql`select body from task_comments where id = ${r.json.id}`;
-  expect(c?.body).toBe("@qa thoughts?");
+  const [qa] = await h.sql`select ref from principals where handle = 'qa'`;
+  expect(c?.body).toBe(`<@${qa?.ref}> thoughts?`);
 });
 
 test("a task assignee given as a plain handle warns; given as its tag it does not", async () => {

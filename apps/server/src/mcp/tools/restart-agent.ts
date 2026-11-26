@@ -1,4 +1,4 @@
-import type { AgentRow } from "@open-factory/db";
+import type { AgentRow, Db } from "@open-factory/db";
 import { restartAgentToolSchema } from "@open-factory/shared";
 import { unknownRefError } from "@open-factory/shared/tags";
 import type { ConfigResolver } from "../../agents/config-resolver.ts";
@@ -11,6 +11,7 @@ import type { EventStore } from "../../agents/event-store.ts";
 import { restartChanges, restartRuntimeAllowed } from "../../agents/restart-changes.ts";
 import type { AgentRuntimes } from "../../agents/runtimes.ts";
 import type { Router } from "../../messaging/router.ts";
+import { resolveText, UnknownTagsError } from "../../principals/principal-text.ts";
 import {
   callerOf,
   type McpServer,
@@ -30,6 +31,8 @@ type RestartAgentDeps = {
   runtimes: AgentRuntimes;
   resolver: Pick<ConfigResolver, "effective">;
   router: Pick<Router, "send">;
+  /** Checks the note's tags before anything restarts. */
+  db: Db;
   /** The local gate, read live (`() => config.allowLocalRuntime`). */
   localRuntimeAllowed(): boolean;
 };
@@ -72,6 +75,15 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
           if (row.terminatedAt)
             return toolError(`${label} was terminated and can't receive messages.`);
 
+          // An unknown tag in the note refuses the call before the restart: nothing happens, nothing is sent.
+          if (args.note !== undefined) {
+            try {
+              await resolveText(d.db, args.note, "agent");
+            } catch (e) {
+              if (e instanceof UnknownTagsError) return toolError(e.message);
+              throw e;
+            }
+          }
           const rt = await d.runtimes.load(row.id);
           if (!rt) throw new Error(`No runtime for ${label}`);
           const runtimeAllowed = restartRuntimeAllowed(row, d.localRuntimeAllowed());
@@ -96,17 +108,24 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             });
             // `send` reports a refusal or a failed wake in `results`; it doesn't throw. A lost instruction is
             // surfaced, so the caller doesn't believe it was delivered (the restart itself has happened).
-            const lost = noteFirst
+            const sent = noteFirst
               ? early
               : args.note
                 ? await sendNote(d, row.slug, args.note)
                 : undefined;
+            const lost = sent?.lost;
+            const warnings = [
+              ...new Set([
+                ...(found.kind === "agent" && found.warning ? [found.warning] : []),
+                ...(sent?.warnings ?? []),
+              ]),
+            ];
             return textResult({
               target: `@${row.slug}`,
               status: outcome.status,
               ...(outcome.note ? { note: outcome.note } : {}),
               ...(lost ? { note_delivered: false, note_error: lost } : {}),
-              ...(found.kind === "agent" && found.warning ? { warnings: [found.warning] } : {}),
+              ...(warnings.length ? { warnings } : {}),
             });
           } catch (e) {
             if (e instanceof RecoveryRefusedError) return toolError(e.message);
@@ -122,12 +141,17 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
   };
 }
 
-/** Sends the caller's note; returns a path-free sentence when it wasn't accepted, else undefined. */
-async function sendNote(d: RestartAgentDeps, slug: string, note: string) {
-  const { results } = await d.router.send({ agentId: d.caller.id }, [slug], note, false);
+/** Sends the caller's note: a path-free sentence when it wasn't accepted, and the tag warnings. */
+async function sendNote(
+  d: RestartAgentDeps,
+  slug: string,
+  note: string,
+): Promise<{ lost?: string; warnings: string[] }> {
+  const { results, warnings } = await d.router.send({ agentId: d.caller.id }, [slug], note, false);
   const r = results[0];
-  if (!r) return `Your note to @${slug} wasn't delivered.`;
-  if (r.status === "refused") return `Your note wasn't delivered: ${r.reason}`;
-  if (r.status === "start_failed") return `Your note is queued, but @${slug} couldn't be started.`;
-  return undefined;
+  if (!r) return { lost: `Your note to @${slug} wasn't delivered.`, warnings };
+  if (r.status === "refused") return { lost: `Your note wasn't delivered: ${r.reason}`, warnings };
+  if (r.status === "start_failed")
+    return { lost: `Your note is queued, but @${slug} couldn't be started.`, warnings };
+  return { warnings };
 }

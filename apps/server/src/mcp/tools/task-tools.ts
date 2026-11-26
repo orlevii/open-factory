@@ -7,8 +7,9 @@ import {
   type TaskStatus,
   updateTaskToolSchema,
 } from "@open-factory/shared";
-import { HUMANS_MENTION_REFUSAL } from "../../principals/principal-args.ts";
+import { agentTagOf } from "@open-factory/shared/tags";
 import type { Principal } from "../../principals/principal-store.ts";
+import { UnknownTagsError } from "../../principals/principal-text.ts";
 import { TaskError } from "../../tasks/errors.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import type { TaskService } from "../../tasks/task-service.ts";
@@ -43,13 +44,9 @@ type TaskTools = {
  * tool error with its sentence; `TaskService` is the only place that decides who may do what.
  */
 const NOT_REACHED_TEXT = {
-  unknown: (n: string) => `No agent or user named '@${n}'.`,
-  ambiguous: (n: string) => `'@${n}' matches more than one name.`,
   archived: (n: string) => `@${n} is archived and can't receive messages.`,
   terminated: (n: string) => `@${n} was terminated and can't receive messages.`,
-  reserved: (n: string) =>
-    n === "humans" ? HUMANS_MENTION_REFUSAL : `'${n}' is reserved and can't receive messages.`,
-  too_many: (n: string) => `Too many mentions in one comment; @${n} was left out.`,
+  too_many: (n: string) => `Too many tags in one comment; @${n} was left out.`,
 };
 /** One sentence per `not_reached` entry, so the tool's entries all have the same shape. */
 const notReachedText = (n: { name: string; reason: keyof typeof NOT_REACHED_TEXT }) =>
@@ -71,7 +68,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
     try {
       return textResult(await fn());
     } catch (e) {
-      if (e instanceof TaskError) return toolError(e.message);
+      if (e instanceof TaskError || e instanceof UnknownTagsError) return toolError(e.message);
       throw e;
     }
   };
@@ -272,7 +269,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           "comment_task",
           {
             description:
-              "Comment on a task. Use it to answer a task or a comment on it: your text output doesn't reach the thread. Mention @slug to bring an agent in, or @handle to reach a person; it also goes to the assignee.",
+              "Comment on a task. Use it to answer a task or a comment on it: your text output doesn't reach the thread. Tag an agent or a person as <@ref|handle> to bring them in; it also goes to the assignee.",
             inputSchema: commentTaskToolSchema,
           },
           (args: { id: string; body: string }, tctx: ToolContext) =>
@@ -281,10 +278,11 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
               return {
                 id: r.id,
                 delivered_to: r.deliveredTo,
-                mentioned_humans: r.mentionedHumans,
+                mentioned_humans: r.mentionedHumans.map(agentTagOf),
                 not_reached: r.notReached.map((n) => ({ ...n, detail: notReachedText(n) })),
                 held: r.held,
                 ...(r.note ? { note: r.note } : {}),
+                ...warned(r.warnings),
               };
             }),
         );

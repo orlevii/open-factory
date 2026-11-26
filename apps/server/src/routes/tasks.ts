@@ -148,7 +148,7 @@ export const tasksRoutes: FastifyPluginAsyncZod = async (app) => {
           type: "comment" as const,
           id: r.id,
           author: { kind: "human" as const, ref: actor.ref, handle: actor.handle },
-          body: req.body.body,
+          body: r.body,
           at: r.createdAt.toISOString(),
         },
         deliveredTo: r.deliveredTo,

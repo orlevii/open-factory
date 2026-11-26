@@ -8,11 +8,8 @@ import { isCoarsePointer } from "@/lib/send-key";
 import { postComment, taskDetailOptions, tasksQueryKey } from "./api";
 
 const REASON: Record<string, string> = {
-  unknown: "no such name",
-  ambiguous: "matches more than one",
   archived: "archived",
   terminated: "terminated",
-  reserved: "reserved name",
 };
 
 /** "Not reached: @x (no such name), @y (archived), and 3 more (over 50 mentions)." (only the reasons present). */

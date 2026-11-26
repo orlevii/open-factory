@@ -12,8 +12,6 @@ import {
 /** `@humans` was an address for every person; people are addressed by handle now (spec §4.5). */
 export const HUMANS_SEND_REFUSAL =
   "`@humans` isn't a handle. Message people by handle; list_peers lists them.";
-export const HUMANS_MENTION_REFUSAL =
-  "`@humans` isn't a handle. Mention people by handle; list_peers lists them.";
 
 export type ArgResolution =
   | { kind: "principal"; p: Principal; warning?: string }

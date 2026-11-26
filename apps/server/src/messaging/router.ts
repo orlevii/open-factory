@@ -14,6 +14,7 @@ import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts"
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { HUMANS_SEND_REFUSAL, resolveArgs } from "../principals/principal-args.ts";
 import { principalById } from "../principals/principal-store.ts";
+import { resolveField } from "../principals/principal-text.ts";
 import {
   attachmentOf,
   bodyWithAttachments,
@@ -169,6 +170,15 @@ export class Router {
           ),
         };
     }
+    // Spec §4.3: every tag in the body is stored as `<@ref>`. An unknown ref throws before anything is written.
+    const tagged = await resolveField(
+      this.d.db,
+      body,
+      "userId" in from ? "human" : "agent",
+      "body",
+      warnings,
+    );
+    body = tagged.text;
     const targets = await this.resolveTargets(from, to);
     for (const t of targets) if (t.warning) warnings.push(t.warning);
     const accepted = targets.filter((t) => !t.refused);

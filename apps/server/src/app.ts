@@ -743,6 +743,7 @@ async function listenForAgents(
                 runtimes: d.runtimes,
                 resolver: d.resolver,
                 router: d.router,
+                db: d.db,
                 localRuntimeAllowed: () => config.allowLocalRuntime,
               }),
               ...scheduleTools({

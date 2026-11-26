@@ -247,7 +247,7 @@ test("a mention item: from the agent or the human author, with the task and a de
   const { or, agent, samActor } = await actors();
   await h.app.tasks.create(or, { title: "Plan the migration", assignee: "ada" });
   const c1 = await h.app.tasks.comment(agent, "T-1", "@or can you confirm?");
-  const c2 = await h.app.tasks.comment(samActor, "T-1", "@or and me");
+  const c2 = await h.app.tasks.comment(samActor, "T-1", `<@${or.ref}> and me`);
   const items = (await get("/api/inbox")).json().items as Record<string, unknown>[];
   const mentions = items.filter((i) => i.kind === "mention");
   expect(mentions).toHaveLength(2);

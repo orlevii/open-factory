@@ -5,6 +5,7 @@ import {
   listSchedulesToolSchema,
   scheduleMessageToolSchema,
 } from "@open-factory/shared";
+import { UnknownTagsError } from "../../principals/principal-text.ts";
 import { ScheduleError } from "../../scheduling/errors.ts";
 import type { ScheduleService } from "../../scheduling/schedule-service.ts";
 import {
@@ -39,7 +40,7 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
     try {
       return textResult(await fn());
     } catch (e) {
-      if (e instanceof ScheduleError) return toolError(e.message);
+      if (e instanceof ScheduleError || e instanceof UnknownTagsError) return toolError(e.message);
       throw e;
     }
   };

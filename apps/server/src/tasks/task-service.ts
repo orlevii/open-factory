@@ -9,7 +9,6 @@ import {
   taskCommentBodySchema,
   taskKey,
 } from "@open-factory/shared";
-import { extractMentions } from "@open-factory/shared/mentions";
 import { unknownRefError } from "@open-factory/shared/tags";
 import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
@@ -18,8 +17,9 @@ import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts"
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type GuardResult, type LoopGuard, loopNotes, pairOf } from "../messaging/loop-guard.ts";
 import type { Router } from "../messaging/router.ts";
-import { resolveArg, resolveArgs } from "../principals/principal-args.ts";
-import { principalsByIds } from "../principals/principal-store.ts";
+import { resolveArg } from "../principals/principal-args.ts";
+import { principalsByIds, principalsByRefs } from "../principals/principal-store.ts";
+import { resolveField } from "../principals/principal-text.ts";
 import { blockedBy, isBlocked } from "./blocked.ts";
 import { TaskError } from "./errors.ts";
 import type { Who } from "./notifier.ts";
@@ -46,16 +46,17 @@ export type ChangeResult = {
 
 export type CommentResult = {
   id: string;
+  /** The stored text: every tag as `<@ref>`. */
+  body: string;
   createdAt: Date;
   deliveredTo: string[];
-  mentionedHumans: string[];
-  notReached: {
-    name: string;
-    reason: "unknown" | "ambiguous" | "archived" | "terminated" | "reserved" | "too_many";
-  }[];
+  mentionedHumans: { ref: string; handle: string }[];
+  notReached: { name: string; reason: "archived" | "terminated" | "too_many" }[];
   /** Agent recipients the loop guard parked (I8 §6.3): the comment is posted, their copy waits for a human's Resume. */
   held: { to: string; note: string }[];
   note?: string;
+  /** Plain-tag warnings for a name written without a tag; absent when there are none. */
+  warnings?: string[];
 };
 
 /** Spec §6.1: at most 50 distinct mentions are resolved per comment. */
@@ -212,10 +213,11 @@ export class TaskService {
   async comment(actor: Actor, key: string, body: string): Promise<CommentResult> {
     const parsed = taskCommentBodySchema.safeParse({ body });
     if (!parsed.success) throw validation(parsed.error);
-    const text = parsed.data.body;
-    const mentions = extractMentions(text);
+    const warnings: string[] = [];
     const out = await withDeadlockRetry(() =>
-      this.d.db.transaction((tx) => this.commentProcedure(tx, actor, key, text, mentions)),
+      this.d.db.transaction((tx) =>
+        this.commentProcedure(tx, actor, key, parsed.data.body, warnings),
+      ),
     );
     const notes = await this.finish(
       out,
@@ -224,15 +226,19 @@ export class TaskService {
         .flatMap((r) => (r.row.toId ? [r.row.toId] : [])),
     );
     this.d.loopGuard.afterCommit(out.guards);
-    return { ...out.result, ...(notes.length ? { note: notes.join(" ") } : {}) };
+    return {
+      ...out.result,
+      ...(notes.length ? { note: notes.join(" ") } : {}),
+      ...(warnings.length ? { warnings } : {}),
+    };
   }
 
   private async commentProcedure(
     tx: Tx,
     actor: Actor,
     key: string,
-    text: string,
-    mentions: { names: string[]; skipped: string[] },
+    raw: string,
+    warnings: string[],
   ) {
     const T = this.d.tasks;
     const n = parseTaskKey(key);
@@ -242,48 +248,40 @@ export class TaskService {
     const [task] = await T.lockTasks(tx, [pre.id]);
     if (!task) throw new TaskError("task_not_found", `No task ${key}.`, 404);
 
+    // The tags are the mentions: the stored text and the refs they name (an unknown ref refuses the comment).
+    const { text, refs } = await resolveField(tx, raw, actor.kind, "body", warnings);
     const notReached: CommentResult["notReached"] = [];
     const candidates: { id: string; slug: string }[] = [];
     const userIds: string[] = [];
-    const handles = new Map<string, string>();
+    const handles = new Map<string, { ref: string; handle: string }>();
     const isAuthorAgent = (id: string) => actor.kind === "agent" && actor.id === id;
     const isAuthorUser = (id: string) => actor.kind === "human" && actor.id === id;
-    const names = mentions.names.slice(0, MAX_MENTIONS);
-    const resolved = await resolveArgs(tx, names);
-    const principalIds = resolved.flatMap((r) => (r.kind === "principal" ? [r.p.id] : []));
-    const agentRows = principalIds.length
-      ? await tx.select().from(schema.agents).where(inArray(schema.agents.id, principalIds))
+    const tagged = await principalsByRefs(tx, refs);
+    const reached = refs.slice(0, MAX_MENTIONS).flatMap((r) => tagged.get(r) ?? []);
+    const agentRows = reached.length
+      ? await tx
+          .select()
+          .from(schema.agents)
+          .where(
+            inArray(
+              schema.agents.id,
+              reached.map((p) => p.id),
+            ),
+          )
       : [];
     const agentById = new Map(agentRows.map((a) => [a.id, a]));
-    for (const [i, r] of resolved.entries()) {
-      const name = names[i] as string;
-      switch (r.kind) {
-        case "principal": {
-          const agent = agentById.get(r.p.id);
-          if (!agent) {
-            if (!isAuthorUser(r.p.id) && !userIds.includes(r.p.id)) {
-              userIds.push(r.p.id);
-              handles.set(r.p.id, r.p.handle);
-            }
-          } else if (!isAuthorAgent(agent.id) && !candidates.some((c) => c.id === agent.id))
-            candidates.push({ id: agent.id, slug: r.p.handle });
-          break;
+    for (const p of reached) {
+      const agent = agentById.get(p.id);
+      if (!agent) {
+        if (!isAuthorUser(p.id) && !userIds.includes(p.id)) {
+          userIds.push(p.id);
+          handles.set(p.id, { ref: p.ref, handle: p.handle });
         }
-        case "reserved":
-          notReached.push({ name, reason: "reserved" });
-          break;
-        case "unknown_ref":
-        case "channel":
-        case "none":
-          notReached.push({ name, reason: "unknown" });
-          break;
-      }
+      } else if (!isAuthorAgent(agent.id) && !candidates.some((c) => c.id === agent.id))
+        candidates.push({ id: agent.id, slug: p.handle });
     }
-    for (const name of mentions.names.slice(MAX_MENTIONS))
-      notReached.push({ name, reason: "too_many" });
-    for (const name of mentions.skipped)
-      if (!mentions.names.includes(name) && !notReached.some((x) => x.name === name))
-        notReached.push({ name, reason: "unknown" });
+    for (const r of refs.slice(MAX_MENTIONS))
+      notReached.push({ name: tagged.get(r)?.handle ?? r, reason: "too_many" });
 
     // Step 5: agents FOR SHARE in one statement.
     const involved = new Set<string>(candidates.map((c) => c.id));
@@ -357,7 +355,7 @@ export class TaskService {
     }
     const mentionedHumans = userIds
       .filter((u) => written.userIds.includes(u))
-      .map((u) => `@${handles.get(u)}`);
+      .flatMap((u) => handles.get(u) ?? []);
     const held: CommentResult["held"] = [];
     for (const g of written.loopHeld) {
       const to = `@${await this.slugOf(g.toAgentId, tx)}`;
@@ -379,6 +377,7 @@ export class TaskService {
       guards: written.loopHeld.map((g) => g.verdict),
       result: {
         id: comment.id,
+        body: text,
         createdAt: comment.createdAt,
         deliveredTo,
         mentionedHumans,
@@ -402,6 +401,13 @@ export class TaskService {
     warnings: string[],
   ): Promise<Outcome> {
     const T = this.d.tasks;
+    // Spec §4.3: the tags in the title and the body are stored as `<@ref>`; an unknown ref refuses the write.
+    const tagged: Input = { ...input };
+    if (input.title !== undefined)
+      tagged.title = (await resolveField(tx, input.title, actor.kind, "title", warnings)).text;
+    if (input.body !== undefined)
+      tagged.body = (await resolveField(tx, input.body, actor.kind, "body", warnings)).text;
+    input = tagged;
     // 1. Unlocked read of the acted-on task; which rows to lock comes from the input.
     let pre: TaskRow | undefined;
     if (key !== null) {

@@ -11,7 +11,14 @@ import {
 
 export type SpawnArgs = { template: string; suffix?: string; description: string; prompt: string };
 export type SpawnResult =
-  | { ok: true; slug: string; agentId: string; status: AgentStatus; note?: string }
+  | {
+      ok: true;
+      slug: string;
+      agentId: string;
+      status: AgentStatus;
+      note?: string;
+      warnings?: string[];
+    }
   | { ok: false; message: string };
 export interface SpawnPort {
   spawn(callerId: string, args: SpawnArgs, toolUseId: string | null): Promise<SpawnResult>;
@@ -39,6 +46,7 @@ export function spawnAgentTool(d: {
             agent_id: r.agentId,
             status: r.status,
             ...(r.note ? { note: r.note } : {}),
+            ...(r.warnings?.length ? { warnings: r.warnings } : {}),
           });
         },
       );

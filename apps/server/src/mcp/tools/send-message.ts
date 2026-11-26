@@ -1,5 +1,6 @@
 import { sendMessageToolSchema } from "@open-factory/shared";
 import type { Router } from "../../messaging/router.ts";
+import { UnknownTagsError } from "../../principals/principal-text.ts";
 import {
   callerOf,
   type McpServer,
@@ -25,12 +26,19 @@ export function sendMessageTool(router: Pick<Router, "send">): ToolRegistration 
           inputSchema: sendMessageToolSchema,
         },
         async (args: { to: string[]; body: string; urgent?: boolean }, tctx: ToolContext) => {
-          const { results, warnings } = await router.send(
-            { agentId: callerOf(tctx), toolUseId: toolUseIdOf(tctx) },
-            args.to,
-            args.body,
-            args.urgent ?? false,
-          );
+          let sent: Awaited<ReturnType<typeof router.send>>;
+          try {
+            sent = await router.send(
+              { agentId: callerOf(tctx), toolUseId: toolUseIdOf(tctx) },
+              args.to,
+              args.body,
+              args.urgent ?? false,
+            );
+          } catch (e) {
+            if (e instanceof UnknownTagsError) return toolError(e.message);
+            throw e;
+          }
+          const { results, warnings } = sent;
           if (results.every((r) => r.status === "refused"))
             return toolError(
               results.map((r) => (r.status === "refused" ? r.reason : "")).join("\n"),

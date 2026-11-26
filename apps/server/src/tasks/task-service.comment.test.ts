@@ -29,6 +29,10 @@ beforeEach(async () => {
 });
 afterEach(() => h.close());
 
+/** A principal's stored tag (the test seeds derive a ref from the id). */
+const tag = (who: string) => `<@${testRef(ids[who] as string)}>`;
+const person = (who: string) => ({ ref: testRef(ids[who] as string), handle: who });
+
 const settle = async (...slugs: string[]) => {
   for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
 };
@@ -42,7 +46,7 @@ const taskRowsTo = (slug: string, kind: string) =>
 
 test("AC 2 (server side): an agent mentions a human: one unread mention item, nothing to the author", async () => {
   const r = await h.app.tasks.comment(agent("dev"), "T-1", "@or can you confirm?");
-  expect(r).toMatchObject({ deliveredTo: [], mentionedHumans: ["@or"], notReached: [] });
+  expect(r).toMatchObject({ deliveredTo: [], mentionedHumans: [person("or")], notReached: [] });
   const items = await inbox(ids.or as string);
   expect(items).toHaveLength(1);
   expect(items[0]).toMatchObject({ kind: "mention", read_at: null, comment_id: r.id });
@@ -52,7 +56,7 @@ test("AC 2 (server side): an agent mentions a human: one unread mention item, no
 
 test("a human's comment mentioning an agent reaches it as task_comment from the human, waking with message", async () => {
   await settle("dev");
-  const r = await h.app.tasks.comment(or, "T-1", "@qa yes, go ahead");
+  const r = await h.app.tasks.comment(or, "T-1", `${tag("qa")} yes, go ahead`);
   expect(r.deliveredTo).toEqual(["dev", "qa"]);
   await settle("dev", "qa");
   const sent = proc("qa")?.sent.flat()[0];
@@ -61,7 +65,7 @@ test("a human's comment mentioning an agent reaches it as task_comment from the 
     kind: "task_comment",
     taskKey: "T-1",
     commentId: r.id,
-    body: "@qa yes, go ahead",
+    body: `${tag("qa")} yes, go ahead`,
   });
   const qa = await h.app.store.agentBySlug("qa");
   const started = (await h.app.store.after(qa?.id ?? "", 0, 100)).map((e) => e.event);
@@ -80,12 +84,12 @@ test("an agent's comment to another agent wakes it with task_message", async () 
   );
 });
 
-test("a user mentioned alongside @humans gets one item; @humans is still not reached", async () => {
+test("a user tagged alongside @humans gets one item; @humans is plain text and reaches nobody", async () => {
   const r = await h.app.tasks.comment(agent("dev"), "T-1", "@sam @humans");
   expect(r).toMatchObject({
     deliveredTo: [],
-    mentionedHumans: ["@sam"],
-    notReached: [{ name: "humans", reason: "reserved" }],
+    mentionedHumans: [person("sam")],
+    notReached: [],
   });
   expect(await inbox(ids.sam as string)).toHaveLength(1);
   expect(await inbox(ids.or as string)).toHaveLength(0);
@@ -101,14 +105,13 @@ test("mentions in code create nothing", async () => {
   expect(await inbox(ids.sam as string)).toHaveLength(0);
 });
 
-test("not_reached: unknown, reserved, terminated and archived, in order", async () => {
+test("not_reached: a terminated and an archived agent, in order", async () => {
   const spawned = await h.seedAgent({ slug: "kid" });
+  ids.kid = spawned.id;
   await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, terminated_at = now(), terminated_by = null where id = ${spawned.id}`;
   await h.sql`update agents set archived_at = now() where slug = 'qa'`;
-  const r = await h.app.tasks.comment(or, "T-1", "@nobody @me @kid @qa done?");
+  const r = await h.app.tasks.comment(or, "T-1", `${tag("kid")} ${tag("qa")} done?`);
   expect(r.notReached).toEqual([
-    { name: "nobody", reason: "unknown" },
-    { name: "me", reason: "reserved" },
     { name: "kid", reason: "terminated" },
     { name: "qa", reason: "archived" },
   ]);
@@ -124,18 +127,21 @@ test("an ended assignee is reported and gets nothing", async () => {
   expect(await taskRowsTo("dev", "task_comment")).toHaveLength(before);
 });
 
-test("51 distinct mentions: 50 resolved, the rest too_many", async () => {
-  const body = Array.from({ length: 51 }, (_, i) => `@nobody${i}`).join(" ");
-  const r = await h.app.tasks.comment(or, "T-1", body);
-  expect(r.notReached.filter((x) => x.reason === "unknown")).toHaveLength(50);
-  expect(r.notReached.filter((x) => x.reason === "too_many")).toEqual([
-    { name: "nobody50", reason: "too_many" },
-  ]);
+test("51 distinct tags: 50 reached, the rest too_many", async () => {
+  const slugs: string[] = [];
+  for (let i = 0; i < 51; i++) {
+    const slug = `peer${i}`;
+    ids[slug] = (await h.seedAgent({ slug })).id;
+    slugs.push(slug);
+  }
+  const r = await h.app.tasks.comment(or, "T-1", slugs.map(tag).join(" "));
+  expect(r.deliveredTo).toHaveLength(51); // the assignee and the 50 first tags
+  expect(r.notReached).toEqual([{ name: "peer50", reason: "too_many" }]);
 });
 
 test("a mention after an escape in the same text node is still a mention; an escaped one is not", async () => {
-  const r = await h.app.tasks.comment(agent("dev"), "T-1", "\\* @sam and \\@or");
-  expect(r.mentionedHumans).toEqual(["@sam"]);
+  const r = await h.app.tasks.comment(agent("dev"), "T-1", `\\* @sam and \\@or and \\${tag("or")}`);
+  expect(r.mentionedHumans).toEqual([person("sam")]);
   expect(r.notReached).toEqual([]);
   expect(await inbox(ids.sam as string)).toHaveLength(1);
   expect(await inbox(ids.or as string)).toHaveLength(0);
@@ -183,7 +189,7 @@ describe("loop guard on task comments", () => {
       /^Held: you and @qa exchanged \d+ messages in 1 minute with no human in between/,
     );
     const [c] = await h.sql`select body from task_comments where id = ${r.id}`;
-    expect(c?.body).toBe("@qa what do you think?");
+    expect(c?.body).toBe(`${tag("qa")} what do you think?`);
     const rows = await taskRowsTo("qa", "task_comment");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ state: "loop_held" });
@@ -216,7 +222,7 @@ describe("loop guard on task comments", () => {
   test("a human comment is never checked, however many messages the pair exchanged", async () => {
     await loopDevQa();
     await h.app.tasks.comment(agent("dev"), "T-1", "@qa trip");
-    const r = await h.app.tasks.comment(or, "T-1", "@qa please");
+    const r = await h.app.tasks.comment(or, "T-1", `${tag("qa")} please`);
     expect(r.held).toEqual([]);
     expect(r.deliveredTo).toContain("qa");
   });

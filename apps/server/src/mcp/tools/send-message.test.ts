@@ -105,3 +105,23 @@ test("send_message to an unknown ref is refused with the fix-it error", async ()
   );
   expect(await h.sql`select id from messages where kind = 'message'`).toEqual([]);
 });
+
+test("send_message with an unknown tag is refused and nothing is sent", async () => {
+  const r = await callTool(url, tok, "send_message", { to: ["bob"], body: "ask <@zzzzzzzz> too" });
+  expect(r.isError).toBe(true);
+  expect(text(r)).toBe(
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+  );
+  expect(await h.sql`select id from messages where kind = 'message'`).toEqual([]);
+});
+
+test("send_message stores a plain @handle in the body as a tag and warns", async () => {
+  const [bob] = await h.sql`select ref from principals where handle = 'bob'`;
+  const r = await callTool(url, tok, "send_message", { to: ["bob"], body: "ask @bob later" });
+  expect(r.isError).toBeFalsy();
+  expect(JSON.parse(text(r)).warnings).toEqual([
+    `Plain tag detected: @bob was resolved to <@${bob?.ref}|bob>. Tag as <@ref|handle>.`,
+  ]);
+  const [row] = await h.sql`select body from messages where kind = 'message'`;
+  expect(row?.body).toBe(`ask <@${bob?.ref}> later`);
+});

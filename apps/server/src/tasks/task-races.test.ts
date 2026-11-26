@@ -104,7 +104,7 @@ test("archive vs a comment mentioning the archived agent, both orders", async ()
   await h.app.tasks.create(or, { title: "t" });
   // Archive first.
   await h.sql`update agents set archived_at = now() where slug = 'qa'`;
-  const first = await h.app.tasks.comment(or, "T-1", "@qa hello");
+  const first = await h.app.tasks.comment(or, "T-1", `<@${testRef(ids.qa as string)}> hello`);
   expect(first.notReached).toEqual([{ name: "qa", reason: "archived" }]);
   await h.sql`update agents set archived_at = null where slug = 'qa'`;
   // Comment first: the archive (an agent-row write) waits for our FOR SHARE, then the row is rejected at hand-off.
@@ -112,7 +112,7 @@ test("archive vs a comment mentioning the archived agent, both orders", async ()
     await tx`lock table messages in share mode`;
   });
   await a.ready;
-  const comment = outcome(h.app.tasks.comment(or, "T-1", "@qa again"));
+  const comment = outcome(h.app.tasks.comment(or, "T-1", `<@${testRef(ids.qa as string)}> again`));
   await waitForLocks(1);
   const archive = outcome(h.app.agents.archive("qa", { kind: "human", handle: "or" }));
   await waitForLocks(2);

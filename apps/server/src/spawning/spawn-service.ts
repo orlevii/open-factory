@@ -15,6 +15,7 @@ import {
   HandleTakenError,
   principalsByHandles,
 } from "../principals/principal-store.ts";
+import { resolveText, UnknownTagsError } from "../principals/principal-text.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { Workspace } from "../workspace/workspace.ts";
@@ -79,11 +80,26 @@ export class SpawnService {
       this.d.log.warn({ err, agent: caller.slug }, "resolving the spawner's config failed");
       return fail(`Your configuration can't be read; ask your manager to fix it.`);
     }
-    const desc = args.description.trim();
-    if (!desc || desc.length > 500) return fail("Give a description of 1 to 500 characters.");
+    const rawDesc = args.description.trim();
+    if (!rawDesc || rawDesc.length > 500) return fail("Give a description of 1 to 500 characters.");
     const body = sendMessagesBodySchema.shape.body.safeParse(args.prompt);
     if (!body.success) return fail(body.error.issues[0]?.message ?? "The prompt is invalid.");
-    const prompt = body.data;
+    // Spec §4.3: tags in the description and the brief are stored as `<@ref>`; an unknown ref refuses the spawn.
+    let desc: string;
+    let prompt: string;
+    const warnings: string[] = [];
+    try {
+      const [d, p] = await Promise.all([
+        resolveText(this.d.db, rawDesc, "agent"),
+        resolveText(this.d.db, body.data, "agent"),
+      ]);
+      desc = d.text;
+      prompt = p.text;
+      warnings.push(...new Set([...d.warnings, ...p.warnings]));
+    } catch (e) {
+      if (e instanceof UnknownTagsError) return fail(e.message);
+      throw e;
+    }
     let tpl: Template;
     try {
       tpl = await this.d.templates.loadValid(args.template);
@@ -127,7 +143,7 @@ export class SpawnService {
         if (named.explicit) return taken(named.slug);
         continue;
       }
-      return done;
+      return done.ok && warnings.length ? { ...done, warnings } : done;
     }
     return fail(`Couldn't find a free name for ${args.template}-xxxx; pass a suffix.`);
   }

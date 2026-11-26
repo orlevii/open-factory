@@ -16,6 +16,7 @@ import { unknownRefError } from "@open-factory/shared/tags";
 import { and, eq, or } from "drizzle-orm";
 import type { EventStore, Exec } from "../agents/event-store.ts";
 import { resolveArg } from "../principals/principal-args.ts";
+import { resolveField } from "../principals/principal-text.ts";
 import { withDeadlockRetry } from "../tasks/task-service.ts";
 import { ScheduleError } from "./errors.ts";
 import { AGENT_AT_HORIZON_MS, MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "./limits.ts";
@@ -97,14 +98,17 @@ export class ScheduleService {
   async create(actor: Actor, input: ScheduleInput): Promise<CreateResult> {
     const now = this.d.now();
     const when = this.checkTiming(actor, input, now);
-    const body = input.body;
-    if (bytes(body) < 1) throw new ScheduleError("invalid_schedule", MSG.messageEmpty, 400, "body");
-    if (bytes(body) > SCHEDULE_BODY_MAX)
-      throw new ScheduleError("invalid_schedule", MSG.bodyTooLong, 400, "body");
+    if (bytes(input.body) < 1)
+      throw new ScheduleError("invalid_schedule", MSG.messageEmpty, 400, "body");
     const target = await this.resolveTarget(actor, input.target);
+    const warnings: string[] = target.warning ? [target.warning] : [];
 
     const out = await withDeadlockRetry(() =>
       this.d.db.transaction(async (tx) => {
+        // Spec §4.3: the body's tags are stored as `<@ref>`; the limit counts the stored text.
+        const { text: body } = await resolveField(tx, input.body, actor.kind, "body", warnings);
+        if (bytes(body) > SCHEDULE_BODY_MAX)
+          throw new ScheduleError("invalid_schedule", MSG.bodyTooLong, 400, "body");
         const wants: LockWant[] = [{ id: target.id, mode: "share" }];
         if (isAgent(actor)) wants.push({ id: actor.id, mode: "update" });
         const locked = await this.d.schedules.lockAgents(tx, wants);
@@ -151,7 +155,7 @@ export class ScheduleService {
     return {
       item: this.toItem(out.rec),
       ...this.noteFor(actor, out.target, out.rec),
-      ...(target.warning ? { warnings: [target.warning] } : {}),
+      ...(warnings.length ? { warnings } : {}),
     };
   }
 
@@ -391,11 +395,13 @@ export class ScheduleService {
         if (!row || row.deletedAt) throw this.gone();
         const set: Partial<ScheduleRow> = { updatedAt: now };
         if (target) set.targetAgentId = target.id;
-        if (patch.body !== undefined && patch.body !== row.body) {
-          set.body = patch.body;
-          set.bodyAuthorId = actor.id;
-        } else if (patch.body !== undefined) {
+        if (patch.body !== undefined) {
+          const { text: body } = await resolveField(tx, patch.body, actor.kind, "body");
           // Unchanged text: the editor is not its author.
+          if (body !== row.body) {
+            set.body = body;
+            set.bodyAuthorId = actor.id;
+          }
         }
         if (
           patch.timezone !== undefined &&

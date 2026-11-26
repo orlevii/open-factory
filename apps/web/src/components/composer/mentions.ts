@@ -19,7 +19,7 @@ export type Mention =
   | { kind: "human"; handle: string; name: string };
 
 /** Before `@`: the start, or not a letter, digit, `_`, `/`, `.` or `@` (an email or a path never opens
- *  it, as `extractMentions` never reads one); then the handle typed so far, up to the caret. */
+ *  it, as the tag scanner never reads one); then the handle typed so far, up to the caret. */
 const AT_TOKEN = /(?:^|[^\p{L}\p{N}_/.@])@([A-Za-z0-9-]*)$/u;
 
 /** Where an `@` menu opens for this caret: the `@`'s index and the handle typed after it. */

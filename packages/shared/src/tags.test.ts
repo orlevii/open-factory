@@ -56,6 +56,13 @@ test.each([
   expect(scanTags(src).tokens.map((t) => t.ref)).toEqual(refs),
 );
 
+test("an escaped token leaves nothing behind: no token, no plain candidate, untouched text", () => {
+  expect(scanTags("\\<@k7x2m9qd>").plain).toEqual([]);
+  const src = "\\<@cmo-agent>";
+  expect(scanTags(src).plain).toEqual([]);
+  expect(applyTags(src, scanTags(src), L(cmo), { resolvePlain: true }).text).toBe(src);
+});
+
 test("applyTags strips labels and reports refs", () => {
   const src = "ask <@k7x2m9qd|old-name> now";
   expect(applyTags(src, scanTags(src), L(cmo), { resolvePlain: false })).toEqual({

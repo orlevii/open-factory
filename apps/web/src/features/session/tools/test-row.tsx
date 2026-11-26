@@ -1,6 +1,6 @@
 import type { AnyEvent, ToolMeta } from "@open-factory/shared";
-import { screen } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { screen } from "@testing-library/react";
 import { useState } from "react";
 import { createQueryClient } from "@/lib/query-client";
 import { se } from "@/test/session-fixtures";

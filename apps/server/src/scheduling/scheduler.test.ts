@@ -408,7 +408,7 @@ describe("loop guard on agent-authored schedules", () => {
           values (${`m-${from}-${i}`}, 'message', ${from}, ${to}, ${[to]}::text[], 'x', 'delivered', ${at})`;
   }
   const devSchedule = (over: Partial<Parameters<typeof insertSchedule>[1]> = {}) =>
-    sched1({ createdByAgentId: "dev", ...over });
+    sched1({ createdById: "dev", ...over });
   const scheduled = () =>
     t.sql`select id, state, firings, loop_hold_id from messages where kind = 'scheduled' order by created_at`;
 
@@ -453,7 +453,7 @@ describe("loop guard on agent-authored schedules", () => {
       id: "early",
       toAgentId: "ceo",
       scheduleId: "s1",
-      authorAgentId: "dev",
+      authorId: "dev",
       createdAt: new Date(FIRE.getTime() - 3_600_000),
     });
     await t.sql`insert into loop_holds (id, agent_a, agent_b, opened_at) values ('h0', 'ceo', 'dev', ${FIRE.toISOString()})`;

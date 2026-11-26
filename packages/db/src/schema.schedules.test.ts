@@ -20,11 +20,11 @@ beforeAll(async () => {
   await sql`insert into principals (id, kind, handle, ref) values ('a2', 'agent', 'lead', substr(md5('a2'::text), 1, 8))`;
   await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id,reports_to) values
     ('a1','dev','Dev','t','{}','local','c1','u1'),('a2','lead','Lead','t','{}','local','c1','u1')`;
-  await sql`insert into tasks (id,title,created_by_user_id) values ('t1','One','u1')`;
-  await sql`insert into task_comments (id,task_id,author_agent_id,body) values ('k1','t1','a1','hi')`;
-  await sql`insert into schedules (id,target_agent_id,cron,timezone,body,created_by_user_id,body_author_user_id,next_run_at)
+  await sql`insert into tasks (id,title,created_by_id) values ('t1','One','u1')`;
+  await sql`insert into task_comments (id,task_id,author_id,body) values ('k1','t1','a1','hi')`;
+  await sql`insert into schedules (id,target_agent_id,cron,timezone,body,created_by_id,body_author_id,next_run_at)
     values ('s1','a1','0 9 * * 1-5','Europe/Berlin','Review','u1','u1',now())`;
-  await sql`insert into schedules (id,target_agent_id,cron,timezone,body,created_by_user_id,body_author_user_id)
+  await sql`insert into schedules (id,target_agent_id,cron,timezone,body,created_by_id,body_author_id)
     values ('s2','a1','0 9 * * *','UTC','Other','u1','u1')`;
 });
 afterAll(() => close());
@@ -81,15 +81,15 @@ test("at most one pending row per schedule and target", async () => {
     values ('p3','scheduled','a2','s1','u1',now(),1,false,'x') returning id`);
 });
 
-test("schedules: exactly one of cron and run_at, one creator, one author", async () => {
-  await bad(sql`insert into schedules (id,target_agent_id,cron,run_at,timezone,body,created_by_user_id,body_author_user_id)
+test("schedules: exactly one of cron and run_at; a creator and an author are required", async () => {
+  await bad(sql`insert into schedules (id,target_agent_id,cron,run_at,timezone,body,created_by_id,body_author_id)
     values ('x1','a1','* * * * *',now(),'UTC','b','u1','u1')`);
-  await bad(sql`insert into schedules (id,target_agent_id,timezone,body,created_by_user_id,body_author_user_id)
+  await bad(sql`insert into schedules (id,target_agent_id,timezone,body,created_by_id,body_author_id)
     values ('x2','a1','UTC','b','u1','u1')`);
-  await bad(sql`insert into schedules (id,target_agent_id,cron,timezone,body,created_by_user_id,created_by_agent_id,body_author_user_id)
-    values ('x3','a1','* * * * *','UTC','b','u1','a1','u1')`);
-  await bad(sql`insert into schedules (id,target_agent_id,cron,timezone,body,created_by_user_id)
+  await bad(sql`insert into schedules (id,target_agent_id,cron,timezone,body,body_author_id)
+    values ('x3','a1','* * * * *','UTC','b','u1')`);
+  await bad(sql`insert into schedules (id,target_agent_id,cron,timezone,body,created_by_id)
     values ('x4','a1','* * * * *','UTC','b','u1')`);
-  await ok(sql`insert into schedules (id,target_agent_id,run_at,timezone,body,created_by_agent_id,body_author_agent_id)
+  await ok(sql`insert into schedules (id,target_agent_id,run_at,timezone,body,created_by_id,body_author_id)
     values ('x5','a1',now(),'UTC','b','a2','a2') returning id`);
 });

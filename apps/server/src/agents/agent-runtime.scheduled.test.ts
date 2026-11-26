@@ -120,7 +120,7 @@ test("an agent author is the @slug in by", async () => {
   await t.sql.unsafe(principalSql("auth1", "agent", "author1"));
   await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
               select 'auth1', 'author1', 'A', template, config, runtime, credential_id, reports_to from agents where id = ${agentId}`;
-  const row = await scheduled({ authorAgentId: "auth1" });
+  const row = await scheduled({ authorId: "auth1" });
   expect(row.authorLabel).toBe("@author1");
   expect(row.authorKind).toBe("agent");
 });

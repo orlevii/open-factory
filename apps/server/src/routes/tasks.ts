@@ -65,9 +65,9 @@ function toDetail(d: Detail, usage: TaskDetail["usage"]): TaskDetail {
  */
 export const tasksRoutes: FastifyPluginAsyncZod = async (app) => {
   app.addHook("onRequest", requireUser);
-  const actorOf = (req: { user?: { id: string; handle: string } }): Actor => {
+  const actorOf = (req: { user?: { id: string; ref: string; handle: string } }): Actor => {
     if (!req.user) throw new Error("requireUser did not set request.user");
-    return { kind: "user", userId: req.user.id, handle: req.user.handle };
+    return { kind: "human", id: req.user.id, ref: req.user.ref, handle: req.user.handle };
   };
   const detail = async (key: string) => {
     const d = await app.tasks.detail(key, { comments: "all", events: true });
@@ -147,7 +147,7 @@ export const tasksRoutes: FastifyPluginAsyncZod = async (app) => {
         comment: {
           type: "comment" as const,
           id: r.id,
-          author: { kind: "user" as const, handle: (actor as { handle: string }).handle },
+          author: { kind: "human" as const, ref: actor.ref, handle: actor.handle },
           body: req.body.body,
           at: r.createdAt.toISOString(),
         },

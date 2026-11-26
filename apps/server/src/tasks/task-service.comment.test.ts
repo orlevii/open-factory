@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 import { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
 
@@ -8,14 +9,19 @@ let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
 let or: Actor;
 const ids: Record<string, string> = {};
-const agent = (slug: string): Actor => ({ kind: "agent", agentId: ids[slug] as string, slug });
+const agent = (slug: string): Actor => ({
+  kind: "agent",
+  id: ids[slug] as string,
+  ref: testRef(ids[slug] as string),
+  handle: slug,
+});
 
 beforeEach(async () => {
   driver = new FakeDriver();
   h = await makeTestApp({ harnessDriver: driver });
   const u1 = await signUp(h.app, { handle: "or" });
   const u2 = await signUp(h.app, { handle: "sam" });
-  or = { kind: "user", userId: u1.user.id, handle: "or" };
+  or = { kind: "human", id: u1.user.id, ref: testRef(u1.user.id), handle: "or" };
   ids.or = u1.user.id;
   ids.sam = u2.user.id;
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;

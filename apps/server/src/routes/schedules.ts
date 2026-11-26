@@ -8,6 +8,7 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { requireUser } from "../auth/require-user.ts";
 import { ScheduleError } from "../scheduling/errors.ts";
+import type { Actor } from "../scheduling/schedule-service.ts";
 
 const keyParams = z.object({ key: z.string().min(1).max(20) });
 const listQuery = z.object({
@@ -21,9 +22,9 @@ const listQuery = z.object({
  */
 export const schedulesRoutes: FastifyPluginAsyncZod = async (app) => {
   app.addHook("onRequest", requireUser);
-  const actorOf = (req: { user?: { id: string } }) => {
+  const actorOf = (req: { user?: { id: string } }): Actor => {
     if (!req.user) throw new Error("requireUser did not set request.user");
-    return { userId: req.user.id };
+    return { kind: "human", id: req.user.id };
   };
   const one = { params: keyParams, response: { 200: scheduleResponseSchema } };
 

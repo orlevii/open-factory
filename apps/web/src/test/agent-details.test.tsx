@@ -47,7 +47,7 @@ const taskRow = (n: number) => ({
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
   updatedAt: "2026-11-20T10:00:00.000Z",
 });
 const scheduleRow = (n: number) => ({
@@ -60,8 +60,8 @@ const scheduleRow = (n: number) => ({
   lastFiredAt: null,
   paused: false,
   done: false,
-  createdBy: { kind: "user", handle: "or" },
-  bodyAuthor: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
+  bodyAuthor: { kind: "human", ref: "ref-or", handle: "or" },
   pendingFiring: false,
   state: "active",
 });

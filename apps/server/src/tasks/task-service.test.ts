@@ -2,6 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 import { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
 
@@ -11,7 +12,12 @@ let or: Actor;
 let sam: Actor;
 const ids: Record<string, string> = {};
 const frames: ServerMessage[] = [];
-const agent = (slug: string): Actor => ({ kind: "agent", agentId: ids[slug] as string, slug });
+const agent = (slug: string): Actor => ({
+  kind: "agent",
+  id: ids[slug] as string,
+  ref: testRef(ids[slug] as string),
+  handle: slug,
+});
 
 beforeEach(async () => {
   driver = new FakeDriver();
@@ -20,8 +26,8 @@ beforeEach(async () => {
   h.app.bus.subscribeAll((m) => frames.push(m));
   const u1 = await signUp(h.app, { handle: "or" });
   const u2 = await signUp(h.app, { handle: "sam" });
-  or = { kind: "user", userId: u1.user.id, handle: "or" };
-  sam = { kind: "user", userId: u2.user.id, handle: "sam" };
+  or = { kind: "human", id: u1.user.id, ref: testRef(u1.user.id), handle: "or" };
+  sam = { kind: "human", id: u2.user.id, ref: testRef(u2.user.id), handle: "sam" };
   ids.or = u1.user.id;
   ids.sam = u2.user.id;
   h.app.bus.subscribeUser(u2.user.id, (m) => frames.push(m));

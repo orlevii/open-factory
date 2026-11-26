@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { MAX_AGENT_SCHEDULES } from "./limits.ts";
 import { type Actor, ScheduleService } from "./schedule-service.ts";
 import { ScheduleStore } from "./schedule-store.ts";
@@ -12,8 +12,8 @@ let svc: ScheduleService;
 let clock = new Date("2026-11-20T10:00:00Z");
 let changed = 0;
 const NOW = new Date("2026-11-20T10:00:00Z");
-const or: Actor = { userId: "u1" };
-const agent = (id: string): Actor => ({ agentId: id });
+const or: Actor = { kind: "human", id: "u1" };
+const agent = (id: string): Actor => ({ kind: "agent", id });
 
 beforeAll(async () => {
   t = await createTestDb();
@@ -53,13 +53,13 @@ test("a human creates a weekday cron: authored by them, next run computed from t
     cron: "0 9 * * 1-5",
     timezone: "Europe/Berlin",
     nextRunAt: "2026-11-23T08:00:00.000Z",
-    createdBy: { kind: "user", handle: "or" },
-    bodyAuthor: { kind: "user", handle: "or" },
+    createdBy: { kind: "human", ref: testRef("u1"), handle: "or" },
+    bodyAuthor: { kind: "human", ref: testRef("u1"), handle: "or" },
     state: "active",
     target: { slug: "ceo" },
   });
-  const [row] = await t.sql`select created_by_user_id, body_author_user_id from schedules`;
-  expect(row).toEqual({ created_by_user_id: "u1", body_author_user_id: "u1" });
+  const [row] = await t.sql`select created_by_id, body_author_id from schedules`;
+  expect(row).toEqual({ created_by_id: "u1", body_author_id: "u1" });
   expect(changed).toBe(1);
 });
 
@@ -67,7 +67,7 @@ test("an agent's target defaults to itself, and 'me' and '@slug' resolve", async
   for (const to of [undefined, "me", "@dev", "dev"]) {
     const { item } = await svc.create(agent("dev"), { ...(to ? { target: to } : {}), ...weekday });
     expect(item.target.slug).toBe("dev");
-    expect(item.createdBy).toMatchObject({ kind: "agent", slug: "dev" });
+    expect(item.createdBy).toMatchObject({ kind: "agent", handle: "dev" });
   }
   const { item } = await svc.create(agent("dev"), { target: "@ceo", ...weekday });
   expect(item.target.slug).toBe("ceo");

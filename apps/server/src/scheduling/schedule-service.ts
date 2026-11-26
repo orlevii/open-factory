@@ -57,10 +57,10 @@ export type AgentScheduleView = {
   truncated?: true;
 };
 
-/** A principal as prose or the `by` attribute writes it: `@handle` for a human, the bare slug for an agent. */
+/** A principal as prose or the `by` attribute writes it: `@handle` for a human, the bare handle for an agent. */
 const label = (a: ScheduleRecord["createdBy"], at = false) =>
-  a.kind === "user" ? `@${a.handle}` : at ? `@${a.slug}` : a.slug;
-const isAgent = (a: Actor): a is { agentId: string } => "agentId" in a;
+  a.kind === "human" || at ? `@${a.handle}` : a.handle;
+const isAgent = (a: Actor) => a.kind === "agent";
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 
 const notFound = (name: string) =>
@@ -106,11 +106,11 @@ export class ScheduleService {
     const out = await withDeadlockRetry(() =>
       this.d.db.transaction(async (tx) => {
         const wants: LockWant[] = [{ id: target.id, mode: "share" }];
-        if (isAgent(actor)) wants.push({ id: actor.agentId, mode: "update" });
+        if (isAgent(actor)) wants.push({ id: actor.id, mode: "update" });
         const locked = await this.d.schedules.lockAgents(tx, wants);
         const byId = new Map(locked.map((a) => [a.id, a]));
         if (isAgent(actor)) {
-          const me = byId.get(actor.agentId);
+          const me = byId.get(actor.id);
           if (!me || me.archivedAt || me.terminatedAt)
             throw new ScheduleError(
               "ended",
@@ -125,7 +125,7 @@ export class ScheduleService {
         if (!t) throw notFound(target.slug);
         this.requireLive(t);
         if (isAgent(actor)) {
-          const n = await this.d.schedules.countActiveCreatedBy(tx, actor.agentId);
+          const n = await this.d.schedules.countActiveCreatedBy(tx, actor.id);
           if (n >= MAX_AGENT_SCHEDULES)
             throw new ScheduleError(
               "schedule_limit",
@@ -206,7 +206,7 @@ export class ScheduleService {
   ): Promise<{ id: string; slug: string; warning?: string }> {
     const name = raw?.trim() ?? "";
     if (isAgent(actor) && (name === "" || name === "me")) {
-      const me = await this.d.store.agentById(actor.agentId);
+      const me = await this.d.store.agentById(actor.id);
       if (!me)
         throw new ScheduleError("ended", "You can't schedule messages: you were terminated.", 409);
       return { id: me.id, slug: me.slug };
@@ -254,7 +254,7 @@ export class ScheduleService {
       return {
         note: `@${target.slug} is errored; it will see this after it is restarted (restart_agent, or a human).`,
       };
-    if (target.id === actor.agentId && rec.cron)
+    if (target.id === actor.id && rec.cron)
       return {
         note: "You will be woken at each run; cancel it with cancel_schedule when it is no longer needed.",
       };
@@ -298,7 +298,7 @@ export class ScheduleService {
       this.d.db,
       and(
         this.d.schedules.live(),
-        or(eq(schedules.createdByAgentId, agentId), eq(schedules.targetAgentId, agentId)),
+        or(eq(schedules.createdById, agentId), eq(schedules.targetAgentId, agentId)),
       ),
     );
     return rows
@@ -318,7 +318,7 @@ export class ScheduleService {
           timezone: r.timezone,
           next_run: r.nextRunAt ? formatOffsetIso(r.nextRunAt, r.timezone) : null,
           paused: r.pausedAt !== null,
-          yours: r.createdByAgentId === agentId,
+          yours: r.createdById === agentId,
           body: long ? chars.slice(0, TOOL_BODY_CAP).join("") : r.body,
           ...(long ? { truncated: true as const } : {}),
         };
@@ -364,7 +364,7 @@ export class ScheduleService {
    * Human edit (spec §6.3, Q18): only the fields present are validated and changed. Timing changes recompute
    * `next_run_at` from now; a body change makes the editor the author; a pending firing is never touched.
    */
-  async edit(actor: { userId: string }, key: string, patch: PatchInput): Promise<ScheduleItem> {
+  async edit(actor: Actor, key: string, patch: PatchInput): Promise<ScheduleItem> {
     const n = this.keyOrThrow(key);
     const now = this.d.now();
     if (patch.cron !== undefined && patch.at !== undefined)
@@ -393,8 +393,7 @@ export class ScheduleService {
         if (target) set.targetAgentId = target.id;
         if (patch.body !== undefined && patch.body !== row.body) {
           set.body = patch.body;
-          set.bodyAuthorUserId = actor.userId;
-          set.bodyAuthorAgentId = null;
+          set.bodyAuthorId = actor.id;
         } else if (patch.body !== undefined) {
           // Unchanged text: the editor is not its author.
         }
@@ -458,7 +457,7 @@ export class ScheduleService {
     return this.toItem(rec);
   }
 
-  async pause(_actor: { userId: string }, key: string): Promise<ScheduleItem> {
+  async pause(_actor: Actor, key: string): Promise<ScheduleItem> {
     return this.mutate(key, (row, now) => {
       if (isDone(row))
         throw new ScheduleError(
@@ -476,7 +475,7 @@ export class ScheduleService {
     });
   }
 
-  async resume(_actor: { userId: string }, key: string): Promise<ScheduleItem> {
+  async resume(_actor: Actor, key: string): Promise<ScheduleItem> {
     return this.mutate(
       key,
       (row, now) => {
@@ -500,7 +499,7 @@ export class ScheduleService {
   }
 
   /** Undo of a delete: humans only; refused when the target ended (R2); recomputes from now. */
-  async restore(_actor: { userId: string }, key: string): Promise<ScheduleItem> {
+  async restore(_actor: Actor, key: string): Promise<ScheduleItem> {
     const n = this.keyOrThrow(key);
     const probe = await this.d.schedules.recordByNumber(this.d.db, n);
     if (!probe) throw this.gone();
@@ -508,7 +507,7 @@ export class ScheduleService {
       this.d.db.transaction(async (tx) => {
         // Agents first (§12.1): the target FOR SHARE, and an agent creator FOR NO KEY UPDATE so the limit can't be raced.
         const wants: LockWant[] = [{ id: probe.targetAgentId, mode: "share" }];
-        if (probe.createdByAgentId) wants.push({ id: probe.createdByAgentId, mode: "update" });
+        if (probe.createdBy.kind === "agent") wants.push({ id: probe.createdById, mode: "update" });
         const locked = await this.d.schedules.lockAgents(tx, wants);
         const t = locked.find((a) => a.id === probe.targetAgentId);
         if (t?.terminatedAt)
@@ -520,7 +519,7 @@ export class ScheduleService {
           // A restore counts like a create toward an agent creator's 20 (delete + restore must not bypass it); a
           // one-shot that restores as done doesn't count.
           const asDone = row.runAt !== null && row.runAt.getTime() <= this.d.now().getTime();
-          const creator = locked.find((a) => a.id === row.createdByAgentId);
+          const creator = locked.find((a) => a.id === row.createdById);
           if (
             creator &&
             !asDone &&
@@ -548,14 +547,14 @@ export class ScheduleService {
     const id = n === null ? key : formatKey("S", n);
     if (!rec || rec.deletedAt)
       throw new ScheduleError("schedule_not_found", `There is no schedule ${id}.`, 404);
-    if (rec.createdByAgentId !== agentId)
+    if (rec.createdById !== agentId)
       throw new ScheduleError(
         "forbidden",
         `${id} was created by ${label(rec.createdBy, true)}; only its creator or a human can cancel it.`,
         403,
       );
     await this.mutate(key, (row, now) => {
-      if (row.createdByAgentId !== agentId)
+      if (row.createdById !== agentId)
         throw new ScheduleError(
           "forbidden",
           `${id} was created by someone else; only its creator or a human can cancel it.`,
@@ -620,11 +619,12 @@ export class ScheduleService {
       a.kind === "agent"
         ? {
             kind: "agent" as const,
-            slug: a.slug,
+            ref: a.ref,
+            handle: a.handle,
             archived: a.archivedAt !== null,
             terminated: a.terminatedAt !== null,
           }
-        : { kind: "user" as const, handle: a.handle };
+        : { kind: "human" as const, ref: a.ref, handle: a.handle };
     return {
       key: formatKey("S", r.number),
       target: {

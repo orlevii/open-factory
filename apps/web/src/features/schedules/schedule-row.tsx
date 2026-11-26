@@ -18,10 +18,10 @@ import { ScheduleState, STATE_VIEW } from "./schedule-state";
 import { ScheduleTime } from "./schedule-time";
 
 const who = (a: ScheduleAuthor) =>
-  a.kind === "user"
+  a.kind === "human"
     ? `@${a.handle}`
-    : `@${a.slug}${a.terminated ? " (terminated)" : a.archived ? " (archived)" : ""}`;
-const whoPlain = (a: ScheduleAuthor) => (a.kind === "user" ? `@${a.handle}` : `@${a.slug}`);
+    : `@${a.handle}${a.terminated ? " (terminated)" : a.archived ? " (archived)" : ""}`;
+const whoPlain = (a: ScheduleAuthor) => `@${a.handle}`;
 
 function when(s: ScheduleItem, now: Date) {
   const t = (iso: string) => <ScheduleTime at={iso} zone={s.timezone} now={now} />;

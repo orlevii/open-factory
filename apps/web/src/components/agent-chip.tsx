@@ -256,12 +256,12 @@ export function PrincipalChip({
   size,
   link,
 }: {
-  principal: { kind: "agent"; slug: string } | { kind: "user"; handle: string };
+  principal: { kind: "agent" | "human"; ref: string; handle: string };
   size?: Size;
   /** Links an agent to its page; a human has none. */
   link?: boolean;
 }) {
   if (principal.kind === "agent")
-    return <AgentChip slug={principal.slug} size={size} link={link} />;
+    return <AgentChip slug={principal.handle} size={size} link={link} />;
   return <span className="min-w-0 truncate">@{principal.handle}</span>;
 }

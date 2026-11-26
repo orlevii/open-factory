@@ -66,7 +66,7 @@ const task = {
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "alice" },
+  createdBy: { kind: "human", ref: "ref-alice", handle: "alice" },
   updatedAt: base.createdAt,
   body: "",
   createdAt: base.createdAt,

@@ -40,7 +40,6 @@ const list = (xs: string[]) =>
     sql`, `,
   );
 
-export type Principal = { agentId: string } | { userId: string };
 export type ResolvedLink = {
   kind: "url" | "pr" | "file" | "agent";
   target?: string;
@@ -79,7 +78,7 @@ export class TaskStore {
 
   async insertTask(
     tx: Exec,
-    t: { title: string; body: string; assigneeAgentId: string | null; createdBy: Principal },
+    t: { title: string; body: string; assigneeAgentId: string | null; createdById: string },
   ): Promise<TaskRow> {
     const now = this.d.clock();
     const [row] = await tx
@@ -89,8 +88,7 @@ export class TaskStore {
         title: t.title,
         body: t.body,
         assigneeAgentId: t.assigneeAgentId,
-        createdByAgentId: "agentId" in t.createdBy ? t.createdBy.agentId : null,
-        createdByUserId: "userId" in t.createdBy ? t.createdBy.userId : null,
+        createdById: t.createdById,
         createdAt: now,
         updatedAt: now,
       })
@@ -275,15 +273,14 @@ export class TaskStore {
 
   async insertComment(
     tx: Exec,
-    c: { taskId: string; author: Principal; body: string },
+    c: { taskId: string; authorId: string; body: string },
   ): Promise<TaskCommentRow> {
     const [row] = await tx
       .insert(taskComments)
       .values({
         id: randomUUID(),
         taskId: c.taskId,
-        authorAgentId: "agentId" in c.author ? c.author.agentId : null,
-        authorUserId: "userId" in c.author ? c.author.userId : null,
+        authorId: c.authorId,
         body: c.body,
         createdAt: this.d.clock(),
       })
@@ -293,15 +290,14 @@ export class TaskStore {
 
   async insertEvents(
     tx: Exec,
-    rows: { taskId: string; actor: Principal; type: EventType; from?: unknown; to?: unknown }[],
+    rows: { taskId: string; actorId: string; type: EventType; from?: unknown; to?: unknown }[],
   ): Promise<void> {
     if (!rows.length) return;
     await tx.insert(taskEvents).values(
       rows.map((r) => ({
         id: randomUUID(),
         taskId: r.taskId,
-        actorAgentId: "agentId" in r.actor ? r.actor.agentId : null,
-        actorUserId: "userId" in r.actor ? r.actor.userId : null,
+        actorId: r.actorId,
         type: r.type,
         fromValue: r.from ?? null,
         toValue: r.to ?? null,
@@ -311,15 +307,14 @@ export class TaskStore {
   }
 
   /** Who wrote the task's current body: the actor of its last `body` event, else of its `created` event. */
-  async bodyAuthor(tx: Exec, taskId: string): Promise<Principal | undefined> {
+  async bodyAuthor(tx: Exec, taskId: string): Promise<string | undefined> {
     const [e] = await tx
-      .select({ agentId: taskEvents.actorAgentId, userId: taskEvents.actorUserId })
+      .select({ actorId: taskEvents.actorId })
       .from(taskEvents)
       .where(and(eq(taskEvents.taskId, taskId), inArray(taskEvents.type, ["created", "body"])))
       .orderBy(desc(taskEvents.at), desc(taskEvents.id))
       .limit(1);
-    if (!e) return undefined;
-    return e.agentId ? { agentId: e.agentId } : { userId: e.userId as string };
+    return e?.actorId;
   }
 
   /** The agent managers above an agent, nearest first (the transitive `reports_to` chain, in the caller's transaction). A human manager ends the chain and isn't in it. */

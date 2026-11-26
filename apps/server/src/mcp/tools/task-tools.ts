@@ -8,6 +8,7 @@ import {
   updateTaskToolSchema,
 } from "@open-factory/shared";
 import { HUMANS_MENTION_REFUSAL } from "../../principals/principal-args.ts";
+import type { Principal } from "../../principals/principal-store.ts";
 import { TaskError } from "../../tasks/errors.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import type { TaskService } from "../../tasks/task-service.ts";
@@ -26,13 +27,15 @@ const listNote = (limit: number) =>
     ? "Showing the 200 most recently updated; narrow the filter."
     : `Showing the ${limit} most recently updated; pass a larger limit (max 200) or narrow the filter.`;
 
-const principal = (p: { kind: "agent"; slug: string } | { kind: "user"; handle: string }) =>
-  p.kind === "agent" ? p.slug : `@${p.handle}`;
+const principal = (p: { kind: "agent" | "human"; handle: string }) =>
+  p.kind === "agent" ? p.handle : `@${p.handle}`;
 
 type TaskTools = {
   tasks: TaskService;
   /** The calling agent, from the token (never from an argument). */
   loadAgent(id: string): Promise<AgentRow | undefined>;
+  /** The calling agent's principal: its ref and handle, which the actor carries. */
+  loadPrincipal(id: string): Promise<Principal | undefined>;
 };
 
 /**
@@ -60,8 +63,9 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
   const actorOf = async (tctx: ToolContext): Promise<Actor> => {
     const id = callerOf(tctx);
     const a = await d.loadAgent(id);
-    if (!a) throw new TaskError("ended", "You can't work on tasks: you were terminated.", 409);
-    return { kind: "agent", agentId: a.id, slug: a.slug };
+    const p = a && (await d.loadPrincipal(a.id));
+    if (!p) throw new TaskError("ended", "You can't work on tasks: you were terminated.", 409);
+    return { kind: "agent", id: p.id, ref: p.ref, handle: p.handle };
   };
   const guard = async <T>(fn: () => Promise<T>) => {
     try {

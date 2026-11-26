@@ -3,25 +3,24 @@ import { type Actor, canChange, forbiddenSentence } from "./permission.ts";
 
 const chain: Record<string, string[]> = { kid: ["dev", "lead"], dev: ["lead"], lead: [], qa: [] };
 const managersOf = (id: string) => chain[id] ?? [];
-const agent = (agentId: string): Actor => ({ kind: "agent", agentId, slug: agentId });
-const task = (createdByAgentId: string | null, assigneeAgentId: string | null) => ({
-  createdByAgentId,
+const agent = (id: string): Actor => ({ kind: "agent", id, ref: id, handle: id });
+const task = (createdById: string, assigneeAgentId: string | null) => ({
+  createdById,
   assigneeAgentId,
 });
 
 test("a human may always change", () => {
-  expect(canChange({ kind: "user", userId: "u", handle: "or" }, task(null, null), managersOf)).toBe(
-    true,
-  );
+  const or: Actor = { kind: "human", id: "u", ref: "ref-u", handle: "or" };
+  expect(canChange(or, task("dev", null), managersOf)).toBe(true);
 });
 test("the creator and the assignee may change", () => {
   expect(canChange(agent("qa"), task("qa", null), managersOf)).toBe(true);
-  expect(canChange(agent("qa"), task(null, "qa"), managersOf)).toBe(true);
+  expect(canChange(agent("qa"), task("dev", "qa"), managersOf)).toBe(true);
 });
 test("a manager above the creator or the assignee, transitively, may change", () => {
   expect(canChange(agent("lead"), task("kid", null), managersOf)).toBe(true);
-  expect(canChange(agent("lead"), task(null, "kid"), managersOf)).toBe(true);
-  expect(canChange(agent("dev"), task(null, "kid"), managersOf)).toBe(true);
+  expect(canChange(agent("lead"), task("dev", "kid"), managersOf)).toBe(true);
+  expect(canChange(agent("dev"), task("dev", "kid"), managersOf)).toBe(true);
 });
 test("an unrelated agent may not", () => {
   expect(canChange(agent("qa"), task("dev", "kid"), managersOf)).toBe(false);

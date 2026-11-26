@@ -327,13 +327,7 @@ function TaskFact({ item, task }: { item: InboxItem; task: TaskDetail }) {
     (a) => a.type === "event" && a.event === "status" && a.to === fact,
   );
   const by =
-    change?.type === "event"
-      ? change.actor
-      : item.from.kind === "agent"
-        ? { kind: "agent" as const, slug: item.from.handle }
-        : item.from.kind === "human"
-          ? { kind: "user" as const, handle: item.from.handle }
-          : undefined;
+    change?.type === "event" ? change.actor : item.from.kind === "factory" ? undefined : item.from;
   const when = change?.at ?? item.createdAt;
   return (
     <p data-testid="task-fact" className="min-w-0 text-sm">

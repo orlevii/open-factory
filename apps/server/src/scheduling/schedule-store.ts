@@ -30,7 +30,8 @@ import type { Exec } from "../agents/event-store.ts";
 
 const { schedules, agents, principals, messages } = schema;
 
-export type Actor = { agentId: string } | { userId: string };
+/** Who acts: a principal (spec §4.1). An agent's id is its `agents.id`. */
+export type Actor = { kind: "agent" | "human"; id: string };
 export type LockWant = { id: string; mode: "update" | "share" };
 export type LockedAgent = {
   id: string;
@@ -51,14 +52,21 @@ export type ScheduleRecord = ScheduleRow & {
     archivedAt: Date | null;
     terminatedAt: Date | null;
   };
-  createdBy:
-    | { kind: "agent"; slug: string; archivedAt: Date | null; terminatedAt: Date | null }
-    | { kind: "user"; handle: string };
-  bodyAuthor:
-    | { kind: "agent"; slug: string; archivedAt: Date | null; terminatedAt: Date | null }
-    | { kind: "user"; handle: string };
+  createdBy: SchedulePrincipal;
+  bodyAuthor: SchedulePrincipal;
   pendingFiring: boolean;
 };
+
+/** A principal on a schedule: an agent carries its archived and terminated state. */
+export type SchedulePrincipal =
+  | {
+      kind: "agent";
+      ref: string;
+      handle: string;
+      archivedAt: Date | null;
+      terminatedAt: Date | null;
+    }
+  | { kind: "human"; ref: string; handle: string };
 
 /** "Done": a one-shot whose time came (R5). */
 export const isDone = (s: Pick<ScheduleRow, "runAt" | "nextRunAt" | "deletedAt">) =>
@@ -109,7 +117,7 @@ export class ScheduleStore {
     const [r] = await tx
       .select({ n: sql<number>`count(*)::int` })
       .from(schedules)
-      .where(and(eq(schedules.createdByAgentId, agentId), this.live(), sql`not ${doneSql}`));
+      .where(and(eq(schedules.createdById, agentId), this.live(), sql`not ${doneSql}`));
     return r?.n ?? 0;
   }
 
@@ -126,8 +134,6 @@ export class ScheduleStore {
       now: Date;
     },
   ): Promise<ScheduleRow> {
-    const agent = "agentId" in s.actor ? s.actor.agentId : null;
-    const user = "userId" in s.actor ? s.actor.userId : null;
     const [row] = await tx
       .insert(schedules)
       .values({
@@ -137,10 +143,8 @@ export class ScheduleStore {
         runAt: s.runAt,
         timezone: s.timezone,
         body: s.body,
-        createdByAgentId: agent,
-        createdByUserId: user,
-        bodyAuthorAgentId: agent,
-        bodyAuthorUserId: user,
+        createdById: s.actor.id,
+        bodyAuthorId: s.actor.id,
         nextRunAt: s.nextRunAt,
         createdAt: s.now,
         updatedAt: s.now,
@@ -154,8 +158,8 @@ export class ScheduleStore {
     const ta = alias(agents, "ta");
     const ca = alias(agents, "ca");
     const ba = alias(agents, "ba");
-    const cu = alias(principals, "cu");
-    const bu = alias(principals, "bu");
+    const cp = alias(principals, "cp");
+    const bp = alias(principals, "bp");
     const rows = await tx
       .select({
         s: schedules,
@@ -166,29 +170,38 @@ export class ScheduleStore {
           archivedAt: ta.archivedAt,
           terminatedAt: ta.terminatedAt,
         },
-        ca: { slug: ca.slug, archivedAt: ca.archivedAt, terminatedAt: ca.terminatedAt },
-        ba: { slug: ba.slug, archivedAt: ba.archivedAt, terminatedAt: ba.terminatedAt },
-        cuHandle: cu.handle,
-        buHandle: bu.handle,
+        cp: { kind: cp.kind, ref: cp.ref, handle: cp.handle },
+        ca: { archivedAt: ca.archivedAt, terminatedAt: ca.terminatedAt },
+        bp: { kind: bp.kind, ref: bp.ref, handle: bp.handle },
+        ba: { archivedAt: ba.archivedAt, terminatedAt: ba.terminatedAt },
         pending: sql<boolean>`exists (select 1 from ${messages} where ${messages.scheduleId} = ${schedules.id} and ${messages.state} in ('pending', 'loop_held'))`,
       })
       .from(schedules)
       .innerJoin(ta, eq(ta.id, schedules.targetAgentId))
-      .leftJoin(ca, eq(ca.id, schedules.createdByAgentId))
-      .leftJoin(ba, eq(ba.id, schedules.bodyAuthorAgentId))
-      .leftJoin(cu, eq(cu.id, schedules.createdByUserId))
-      .leftJoin(bu, eq(bu.id, schedules.bodyAuthorUserId))
+      .innerJoin(cp, eq(cp.id, schedules.createdById))
+      .leftJoin(ca, eq(ca.id, schedules.createdById))
+      .innerJoin(bp, eq(bp.id, schedules.bodyAuthorId))
+      .leftJoin(ba, eq(ba.id, schedules.bodyAuthorId))
       .where(where)
       .orderBy(asc(schedules.number));
+    const principal = (
+      p: { kind: "agent" | "human"; ref: string; handle: string },
+      a: { archivedAt: Date | null; terminatedAt: Date | null } | null,
+    ): SchedulePrincipal =>
+      p.kind === "agent"
+        ? {
+            kind: "agent",
+            ref: p.ref,
+            handle: p.handle,
+            archivedAt: a?.archivedAt ?? null,
+            terminatedAt: a?.terminatedAt ?? null,
+          }
+        : { kind: "human", ref: p.ref, handle: p.handle };
     return rows.map((r) => ({
       ...r.s,
       target: r.ta,
-      createdBy: r.s.createdByAgentId
-        ? { kind: "agent" as const, ...r.ca }
-        : { kind: "user" as const, handle: r.cuHandle ?? "" },
-      bodyAuthor: r.s.bodyAuthorAgentId
-        ? { kind: "agent" as const, ...r.ba }
-        : { kind: "user" as const, handle: r.buHandle ?? "" },
+      createdBy: principal(r.cp, r.ca),
+      bodyAuthor: principal(r.bp, r.ba),
       pendingFiring: Boolean(r.pending),
     })) as ScheduleRecord[];
   }
@@ -312,7 +325,7 @@ export class ScheduleStore {
         .update(messages)
         .set({
           body: s.body,
-          authorId: s.bodyAuthorAgentId ?? s.bodyAuthorUserId,
+          authorId: s.bodyAuthorId,
           dueAt: f.due,
           firings: (pending.firings ?? 0) + f.missed,
           late: f.late,
@@ -328,7 +341,7 @@ export class ScheduleStore {
       kind: "scheduled",
       toId: s.targetAgentId,
       scheduleId: s.id,
-      authorId: s.bodyAuthorAgentId ?? s.bodyAuthorUserId,
+      authorId: s.bodyAuthorId,
       dueAt: f.due,
       firings: f.missed,
       late: f.late,

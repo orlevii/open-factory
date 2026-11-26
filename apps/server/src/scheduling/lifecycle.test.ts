@@ -32,7 +32,7 @@ const fireAt = async (iso: string) => {
 const rows = () =>
   h.sql`select id, state, firings, late, to_id from messages where kind = 'scheduled' order by created_at`;
 const make = (target: string, body = "Review", over: Record<string, unknown> = {}) =>
-  h.app.schedules.create({ userId }, { target, ...weekday, body, ...over });
+  h.app.schedules.create({ kind: "human", id: userId }, { target, ...weekday, body, ...over });
 const settle = async (slug: string) => (await h.app.runtimes.bySlug(slug))?.settled();
 
 test("terminating a spawned target soft-deletes its schedules and rejects its pending rows in the same transaction; Restore refuses", async () => {
@@ -49,7 +49,9 @@ test("terminating a spawned target soft-deletes its schedules and rejects its pe
   const got = await h.app.schedules.get(item.key, { includeDeleted: true });
   expect(got).toMatchObject({ deleted: true, nextRunAt: null, target: { terminated: true } });
   expect(await h.app.schedules.get(item.key)).toBeUndefined();
-  await expect(h.app.schedules.restore({ userId }, item.key)).rejects.toMatchObject({
+  await expect(
+    h.app.schedules.restore({ kind: "human", id: userId }, item.key),
+  ).rejects.toMatchObject({
     code: "target_ended",
     status: 409,
     message: "@kid was terminated.",
@@ -78,7 +80,7 @@ test("an archived persistent creator's schedules keep firing", async () => {
   await h.seedAgent({ slug: "ceo" });
   await h.seedAgent({ slug: "dev" });
   const { item } = await h.app.schedules.create(
-    { agentId: await idOf("dev") },
+    { kind: "agent", id: await idOf("dev") },
     { target: "ceo", ...weekday, body: "x" },
   );
   await h.app.agents.archive("dev", { kind: "human", handle: "or" });
@@ -86,7 +88,7 @@ test("an archived persistent creator's schedules keep firing", async () => {
   expect(await rows()).toHaveLength(1);
   expect((await h.app.schedules.get(item.key))?.createdBy).toMatchObject({
     kind: "agent",
-    slug: "dev",
+    handle: "dev",
     archived: true,
   });
 });

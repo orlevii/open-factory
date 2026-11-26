@@ -14,7 +14,7 @@ afterEach(() => vi.unstubAllGlobals());
 const at = "2026-11-19T09:10:00.000Z";
 const agents = () =>
   json({ agents: [agentSummary({ slug: "ceo" })], more: false, running: { count: 0 } });
-const user = { kind: "user", handle: "or" };
+const user = { kind: "human", ref: "ref-or", handle: "or" };
 const taskRow = {
   key: "T-1",
   title: "Task one",

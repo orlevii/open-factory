@@ -19,7 +19,7 @@ beforeAll(async () => {
   await sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
   await sql`insert into principals (id, kind, handle, ref) values ('a1', 'agent', 'dev', substr(md5('a1'::text), 1, 8))`;
   await sql`insert into agents (id,slug,display_name,template,config,runtime,credential_id,reports_to) values ('a1','dev','Dev','t','{}','local','c1','u1')`;
-  await sql`insert into tasks (id,title,created_by_user_id) values ('t1','One','u1')`;
+  await sql`insert into tasks (id,title,created_by_id) values ('t1','One','u1')`;
 });
 afterAll(() => close());
 

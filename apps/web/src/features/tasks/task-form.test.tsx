@@ -55,7 +55,7 @@ const summary = (n: number, status = "open") => ({
   status,
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
   updatedAt: "2026-11-19T10:00:00.000Z",
 });
 const detail = (n: number) => ({

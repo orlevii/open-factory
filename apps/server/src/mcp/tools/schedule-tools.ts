@@ -67,7 +67,7 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
               const me = await agentOf(tctx);
               const timezone = args.timezone ?? d.factoryZone;
               const r = await d.schedules.create(
-                { agentId: me.id },
+                { kind: "agent", id: me.id },
                 {
                   ...(args.to !== undefined ? { target: args.to } : {}),
                   ...(args.cron !== undefined ? { cron: args.cron } : {}),

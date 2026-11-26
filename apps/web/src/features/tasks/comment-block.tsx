@@ -7,7 +7,7 @@ import { RowMenu, type RowMenuItem } from "@/features/session/row-menu";
 
 type Comment = Extract<TaskActivity, { type: "comment" }>;
 
-export const authorName = (c: Comment["author"]) => (c.kind === "agent" ? c.slug : c.handle);
+export const authorName = (c: Comment["author"]) => c.handle;
 export const authorMention = (c: Comment["author"]) => `@${authorName(c)}`;
 
 /** A comment's menu: its deep link and its markdown source (U3 §7.5's row menu). */

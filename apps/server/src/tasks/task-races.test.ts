@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
-import { seedTestUser } from "../test/principals.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import type { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
 import { CONFLICT_SENTENCE } from "./task-service.ts";
@@ -9,12 +9,17 @@ import { CONFLICT_SENTENCE } from "./task-service.ts";
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let or: Actor;
 const ids: Record<string, string> = {};
-const agent = (slug: string): Actor => ({ kind: "agent", agentId: ids[slug] as string, slug });
+const agent = (slug: string): Actor => ({
+  kind: "agent",
+  id: ids[slug] as string,
+  ref: testRef(ids[slug] as string),
+  handle: slug,
+});
 
 beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver() });
   const u = await signUp(h.app, { handle: "or" });
-  or = { kind: "user", userId: u.user.id, handle: "or" };
+  or = { kind: "human", id: u.user.id, ref: testRef(u.user.id), handle: "or" };
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
   await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
 });

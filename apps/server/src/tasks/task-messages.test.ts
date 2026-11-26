@@ -14,7 +14,7 @@ beforeEach(async () => {
   const { user } = await signUp(h.app, { handle: "or" });
   creatorId = user.id;
   taskId = randomUUID();
-  await h.sql`insert into tasks (id, title, created_by_user_id) values (${taskId}, 'Plan the migration', ${creatorId})`;
+  await h.sql`insert into tasks (id, title, created_by_id) values (${taskId}, 'Plan the migration', ${creatorId})`;
   await h.seedAgent({ slug: "dev" });
 });
 afterEach(() => h.close());
@@ -105,7 +105,7 @@ test("a human's task comment to an errored agent starts an attempt with the mess
   await makeErrored();
   const a = await dev();
   const commentId = randomUUID();
-  await h.sql`insert into task_comments (id, task_id, author_user_id, body) values (${commentId}, ${taskId}, ${creatorId}, '@dev look')`;
+  await h.sql`insert into task_comments (id, task_id, author_id, body) values (${commentId}, ${taskId}, ${creatorId}, '@dev look')`;
   const row = await h.app.store.createTaskMessage(h.db, {
     kind: "task_comment",
     taskId,
@@ -146,7 +146,7 @@ test("createHumanMessage: a task_update to a user is a task_event inbox item", a
 test("createHumanMessage: `all` is for factory facts only; a comment can't address every human", async () => {
   await signUp(h.app, { handle: "sam" });
   const commentId = randomUUID();
-  await h.sql`insert into task_comments (id, task_id, author_user_id, body) values (${commentId}, ${taskId}, ${creatorId}, 'hi')`;
+  await h.sql`insert into task_comments (id, task_id, author_id, body) values (${commentId}, ${taskId}, ${creatorId}, 'hi')`;
   await expect(
     h.app.store.createHumanMessage({
       kind: "task_comment",

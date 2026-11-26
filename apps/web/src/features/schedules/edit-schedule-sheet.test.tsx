@@ -37,7 +37,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const user = { kind: "user", handle: "or" };
+const user = { kind: "human", ref: "ref-or", handle: "or" };
 const sched = (o: Record<string, unknown> = {}) => ({
   key: "S-3",
   target: { slug: "ceo", displayName: "CEO", archived: false, terminated: false },
@@ -296,7 +296,13 @@ test("an archived target stays selected as an extra option; the helper names the
     common(
       sched({
         target: { slug: "old", displayName: "Old", archived: true, terminated: false },
-        bodyAuthor: { kind: "agent", slug: "lead", archived: false, terminated: false },
+        bodyAuthor: {
+          kind: "agent",
+          ref: "ref-lead",
+          handle: "lead",
+          archived: false,
+          terminated: false,
+        },
         pendingFiring: true,
         state: "pending_errored",
       }),

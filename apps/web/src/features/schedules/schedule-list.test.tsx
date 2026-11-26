@@ -43,7 +43,7 @@ function mockApi(routes: Record<string, Handler>) {
 const withBare = (r: Record<string, Handler>) =>
   r["GET /api/schedules?"] ? { ...r, "GET /api/schedules": r["GET /api/schedules?"] } : r;
 
-const user = { kind: "user", handle: "or" };
+const user = { kind: "human", ref: "ref-or", handle: "or" };
 const sched = (n: number, o: Record<string, unknown> = {}) => ({
   key: `S-${n}`,
   target: { slug: "ceo", displayName: "CEO", archived: false, terminated: false },
@@ -82,7 +82,13 @@ test("a row is one button with a complete name; four lines carry the pattern, ne
           at: "2026-11-25T13:30:00.000Z",
           nextRunAt: "2026-11-25T13:30:00.000Z",
           state: "pending_errored",
-          createdBy: { kind: "agent", slug: "lead", archived: false, terminated: false },
+          createdBy: {
+            kind: "agent",
+            ref: "ref-lead",
+            handle: "lead",
+            archived: false,
+            terminated: false,
+          },
         }),
       ]),
   });

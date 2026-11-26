@@ -64,7 +64,7 @@ export async function insertTurn(
                     ${t.credentialId ?? null})`;
 }
 
-/** A schedule row (number from the sequence) for tests that don't go through the service. The creator and author are user `u1` unless given. */
+/** A schedule row (number from the sequence) for tests that don't go through the service. The creator and author are principal `u1` unless given. */
 export async function insertSchedule(
   sql: postgres.Sql,
   s: {
@@ -74,19 +74,17 @@ export async function insertSchedule(
     runAt?: Date;
     timezone?: string;
     body?: string;
-    createdByUserId?: string | null;
-    createdByAgentId?: string | null;
+    createdById?: string;
     nextRunAt?: Date | null;
     pausedAt?: Date | null;
     deletedAt?: Date | null;
   },
 ): Promise<void> {
-  const byAgent = s.createdByAgentId ?? null;
-  const byUser = byAgent ? null : (s.createdByUserId ?? "u1");
-  await sql`insert into schedules (id, target_agent_id, cron, run_at, timezone, body, created_by_agent_id, created_by_user_id,
-                                   body_author_agent_id, body_author_user_id, next_run_at, paused_at, deleted_at)
+  const by = s.createdById ?? "u1";
+  await sql`insert into schedules (id, target_agent_id, cron, run_at, timezone, body, created_by_id, body_author_id,
+                                   next_run_at, paused_at, deleted_at)
             values (${s.id}, ${s.targetAgentId}, ${s.cron ?? (s.runAt ? null : "0 9 * * *")}, ${iso(s.runAt)},
-                    ${s.timezone ?? "UTC"}, ${s.body ?? "Review"}, ${byAgent}, ${byUser}, ${byAgent}, ${byUser},
+                    ${s.timezone ?? "UTC"}, ${s.body ?? "Review"}, ${by}, ${by},
                     ${iso(s.nextRunAt)}, ${iso(s.pausedAt)}, ${iso(s.deletedAt)})`;
 }
 
@@ -98,8 +96,7 @@ export async function insertScheduledMessage(
     toAgentId: string;
     scheduleId: string;
     body?: string;
-    authorUserId?: string | null;
-    authorAgentId?: string | null;
+    authorId?: string;
     dueAt?: Date;
     firings?: number;
     late?: boolean;
@@ -107,10 +104,8 @@ export async function insertScheduledMessage(
     createdAt?: Date;
   },
 ): Promise<void> {
-  const byAgent = m.authorAgentId ?? null;
-  const byUser = byAgent ? null : (m.authorUserId ?? "u1");
   await sql`insert into messages (id, kind, to_id, schedule_id, author_id, due_at, firings, late, body, state, created_at)
-            values (${m.id}, 'scheduled', ${m.toAgentId}, ${m.scheduleId}, ${byAgent ?? byUser},
+            values (${m.id}, 'scheduled', ${m.toAgentId}, ${m.scheduleId}, ${m.authorId ?? "u1"},
                     ${iso(m.dueAt ?? new Date("2026-11-23T08:00:00Z"))}, ${m.firings ?? 1}, ${m.late ?? false},
                     ${m.body ?? "Review"}, ${m.state ?? "pending"}, ${iso(m.createdAt ?? new Date())})`;
 }

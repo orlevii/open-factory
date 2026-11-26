@@ -2,7 +2,9 @@ import type { TaskNotice, TaskStatus } from "@open-factory/shared";
 import { taskAssignedBody, taskUpdateBody, type UpdateLine } from "./bodies.ts";
 import type { Actor } from "./permission.ts";
 
-export type Recipient = { agentId: string } | { userId: string };
+/** A principal named by its id and kind (an agent's id is its `agents.id`). */
+export type Who = { kind: "agent" | "human"; id: string };
+export type Recipient = Who;
 
 export type PlannedRow = {
   kind: "task_assigned" | "task_comment" | "task_update";
@@ -10,7 +12,7 @@ export type PlannedRow = {
   to: Recipient;
   notice?: TaskNotice;
   commentId?: string;
-  from?: { agentId: string } | { userId: string };
+  from?: Who;
   body: string;
   inboxKind?: "mention" | "task_event";
   /** A human's comment to an agent wakes it as a human message; everything else as a task message. */
@@ -22,7 +24,7 @@ type TaskInfo = {
   key: string;
   title: string;
   body: string;
-  creator: { agentId: string } | { userId: string };
+  creator: Who;
   creatorLabel: string;
   bodyAuthorLabel: string;
   deps: { key: string; status: TaskStatus }[];
@@ -69,7 +71,7 @@ const PRECEDENCE: TaskNotice[] = [
 ];
 
 type Entry = {
-  to: { agentId: string } | { userId: string };
+  to: Who;
   taskId: string;
   key: string;
   title: string;
@@ -86,12 +88,12 @@ type Entry = {
  */
 export function plan(i: PlanInput): PlannedRow[] {
   const entries = new Map<string, Entry>();
-  const isActorAgent = (id: string) => i.actor.kind === "agent" && i.actor.agentId === id;
-  const isActorUser = (id: string) => i.actor.kind === "user" && i.actor.userId === id;
+  const isActorAgent = (id: string) => i.actor.kind === "agent" && i.actor.id === id;
+  const isActorHuman = (id: string) => i.actor.kind === "human" && i.actor.id === id;
   const agentOk = (id: string | null): id is string => !!id && !isActorAgent(id) && i.live.has(id);
 
   const entryFor = (to: Entry["to"], task: { id: string; key: string; title: string }): Entry => {
-    const k = `${"agentId" in to ? `a:${to.agentId}` : `u:${to.userId}`}|${task.id}`;
+    const k = `${to.kind === "agent" ? "a" : "u"}:${to.id}|${task.id}`;
     let e = entries.get(k);
     if (!e) {
       e = {
@@ -115,13 +117,15 @@ export function plan(i: PlanInput): PlannedRow[] {
   const { before, after } = i;
 
   if (!before) {
-    if (agentOk(after.assigneeId)) entryFor({ agentId: after.assigneeId }, t).assigned = true;
+    if (agentOk(after.assigneeId))
+      entryFor({ kind: "agent", id: after.assigneeId }, t).assigned = true;
   } else {
     // Assignment.
     if (before.assigneeId !== after.assigneeId) {
-      if (agentOk(after.assigneeId)) entryFor({ agentId: after.assigneeId }, t).assigned = true;
+      if (agentOk(after.assigneeId))
+        entryFor({ kind: "agent", id: after.assigneeId }, t).assigned = true;
       if (agentOk(before.assigneeId)) {
-        const e = entryFor({ agentId: before.assigneeId }, t);
+        const e = entryFor({ kind: "agent", id: before.assigneeId }, t);
         addLine(
           e,
           after.assigneeId
@@ -133,7 +137,7 @@ export function plan(i: PlanInput): PlannedRow[] {
     }
     // Changes the current assignee is told about.
     if (agentOk(after.assigneeId)) {
-      const e = entryFor({ agentId: after.assigneeId }, t);
+      const e = entryFor({ kind: "agent", id: after.assigneeId }, t);
       if (before.status !== after.status) statusLine(e, i, after.status);
       if (before.title !== after.title)
         addLine(e, { k: "renamed", actor: i.actorLabel, to: after.title }, "edited");
@@ -148,9 +152,9 @@ export function plan(i: PlanInput): PlannedRow[] {
       (after.status === "done" || after.status === "cancelled")
     ) {
       const c = i.task.creator;
-      if ("agentId" in c) {
-        if (agentOk(c.agentId)) statusLine(entryFor(c, t), i, after.status);
-      } else if (!isActorUser(c.userId)) {
+      if (c.kind === "agent") {
+        if (agentOk(c.id)) statusLine(entryFor(c, t), i, after.status);
+      } else if (!isActorHuman(c.id)) {
         const e = entryFor(c, t);
         e.inboxKind = "task_event";
         statusLine(e, i, after.status);
@@ -161,7 +165,7 @@ export function plan(i: PlanInput): PlannedRow[] {
   for (const u of i.unblocked) {
     if (!agentOk(u.assigneeId)) continue;
     addLine(
-      entryFor({ agentId: u.assigneeId }, { id: u.taskId, key: u.key, title: u.title }),
+      entryFor({ kind: "agent", id: u.assigneeId }, { id: u.taskId, key: u.key, title: u.title }),
       { k: "unblocked", cause: u.cause, how: u.how },
       "unblocked",
     );
@@ -206,6 +210,8 @@ export function plan(i: PlanInput): PlannedRow[] {
   return rows;
 }
 
+const isHumanActor = (i: PlanInput, id: string) => i.actor.kind === "human" && i.actor.id === id;
+
 function statusLine(e: Entry, i: PlanInput, to: TaskStatus) {
   const line: UpdateLine =
     to === "done" || to === "cancelled"
@@ -217,12 +223,12 @@ function statusLine(e: Entry, i: PlanInput, to: TaskStatus) {
 }
 
 function commentRows(i: PlanInput, c: NonNullable<PlanInput["comment"]>): PlannedRow[] {
-  const from = i.actor.kind === "agent" ? { agentId: i.actor.agentId } : { userId: i.actor.userId };
+  const from: Who = { kind: i.actor.kind, id: i.actor.id };
   const rows: PlannedRow[] = [];
   const agents: string[] = [];
   for (const id of [i.after.assigneeId, ...c.mentionedAgentIds]) {
     if (!id || agents.includes(id)) continue;
-    if (i.actor.kind === "agent" && i.actor.agentId === id) continue;
+    if (i.actor.kind === "agent" && i.actor.id === id) continue;
     if (!i.live.has(id)) continue;
     agents.push(id);
   }
@@ -230,20 +236,19 @@ function commentRows(i: PlanInput, c: NonNullable<PlanInput["comment"]>): Planne
     rows.push({
       kind: "task_comment",
       taskId: i.task.id,
-      to: { agentId },
+      to: { kind: "agent", id: agentId },
       commentId: c.id,
       from,
       body: c.body,
-      wake: i.actor.kind === "user" ? "human" : "task_message",
+      wake: i.actor.kind === "human" ? "human" : "task_message",
     });
   }
-  const authorId = i.actor.kind === "user" ? i.actor.userId : undefined;
   for (const userId of c.mentionedUserIds) {
-    if (userId === authorId) continue;
+    if (isHumanActor(i, userId)) continue;
     rows.push({
       kind: "task_comment",
       taskId: i.task.id,
-      to: { userId },
+      to: { kind: "human", id: userId },
       commentId: c.id,
       from,
       body: c.body,

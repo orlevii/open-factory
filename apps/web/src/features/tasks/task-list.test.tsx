@@ -38,7 +38,7 @@ const task = (n: number, o: Record<string, unknown> = {}) => ({
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
   updatedAt: new Date(2026, 10, 19, 14, 32).toISOString(),
   ...o,
 });
@@ -66,7 +66,10 @@ test("a row is one link with a complete name; status, assignee, blocked marker a
             assignee: { slug: "dev", displayName: "Dev" },
             blockedBy: ["T-41"],
           }),
-          task(41, { title: "Add usage export", createdBy: { kind: "agent", slug: "lead" } }),
+          task(41, {
+            title: "Add usage export",
+            createdBy: { kind: "agent", ref: "ref-lead", handle: "lead" },
+          }),
           task(40, { assignee: { slug: "gone", displayName: "Gone", ended: "terminated" } }),
         ]),
       ),
@@ -235,7 +238,7 @@ test("rows carry no nested anchors, even for an agent creator", async () => {
         page([
           task(41, {
             assignee: { slug: "dev", displayName: "Dev" },
-            createdBy: { kind: "agent", slug: "lead" },
+            createdBy: { kind: "agent", ref: "ref-lead", handle: "lead" },
           }),
         ]),
       ),

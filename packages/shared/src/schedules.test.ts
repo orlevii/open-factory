@@ -59,8 +59,14 @@ test("an item parses with either author kind", () => {
     pendingFiring: false,
     state: "active",
   };
-  const human = { kind: "user", handle: "or" };
-  const agent = { kind: "agent", slug: "ceo", archived: false, terminated: false };
+  const human = { kind: "human", ref: "ref-or", handle: "or" };
+  const agent = {
+    kind: "agent",
+    ref: "ref-ceo",
+    handle: "ceo",
+    archived: false,
+    terminated: false,
+  };
   expect(
     scheduleItemSchema.safeParse({ ...base, createdBy: human, bodyAuthor: agent }).success,
   ).toBe(true);

@@ -225,6 +225,13 @@
       "when": 1795712228383,
       "tag": "0031_noisy_obadiah_stane",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1795714019333,
+      "tag": "0032_stiff_pyro",
+      "breakpoints": true
     }
   ]
 }

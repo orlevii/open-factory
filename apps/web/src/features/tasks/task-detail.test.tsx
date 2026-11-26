@@ -37,7 +37,7 @@ const detail = (o: Over = {}) => ({
   status: "in_progress",
   assignee: { slug: "dev", displayName: "Dev" },
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
   updatedAt: at(9, 15),
   body: "The **brief**.",
   createdAt: at(9, 10),
@@ -48,14 +48,14 @@ const detail = (o: Over = {}) => ({
     {
       type: "event",
       id: "e1",
-      actor: { kind: "user", handle: "or" },
+      actor: { kind: "human", ref: "ref-or", handle: "or" },
       event: "created",
       at: at(9, 10),
     },
     {
       type: "event",
       id: "e2",
-      actor: { kind: "user", handle: "or" },
+      actor: { kind: "human", ref: "ref-or", handle: "or" },
       event: "assignee",
       from: null,
       to: "dev",
@@ -64,14 +64,14 @@ const detail = (o: Over = {}) => ({
     {
       type: "comment",
       id: "c1",
-      author: { kind: "agent", slug: "dev" },
+      author: { kind: "agent", ref: "ref-dev", handle: "dev" },
       body: "@or can you confirm?",
       at: at(9, 14),
     },
     {
       type: "event",
       id: "e3",
-      actor: { kind: "agent", slug: "dev" },
+      actor: { kind: "agent", ref: "ref-dev", handle: "dev" },
       event: "status",
       from: "open",
       to: "in_progress",
@@ -452,7 +452,7 @@ test("dependencies editor: the resolved badges render below the editor", async (
                 status: "open",
                 assignee: null,
                 blockedBy: [],
-                createdBy: { kind: "user", handle: "or" },
+                createdBy: { kind: "human", ref: "ref-or", handle: "or" },
                 updatedAt: at(9, 0),
               },
             ]
@@ -481,7 +481,7 @@ const t41 = {
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
   updatedAt: at(9, 0),
 };
 const invalid = (fields: Record<string, string>) =>
@@ -661,7 +661,7 @@ test("composer: Send disabled while empty, Ctrl-Enter posts at once, a failure p
             comment: {
               type: "comment",
               id: "c9",
-              author: { kind: "user", handle: "alice" },
+              author: { kind: "human", ref: "ref-alice", handle: "alice" },
               body: "ok",
               at: at(15, 0),
             },
@@ -704,7 +704,7 @@ const posted = (body: string) =>
       comment: {
         type: "comment",
         id: `c-${body}`,
-        author: { kind: "user", handle: "alice" },
+        author: { kind: "human", ref: "ref-alice", handle: "alice" },
         body,
         at: at(15, 0),
       },
@@ -837,14 +837,14 @@ test("?comment=<id> of an agent's comment: highlighted, focused, composer prefil
         {
           type: "comment",
           id: "c1",
-          author: { kind: "agent", slug: "dev" },
+          author: { kind: "agent", ref: "ref-dev", handle: "dev" },
           body: "from agent",
           at: at(9, 14),
         },
         {
           type: "comment",
           id: "c2",
-          author: { kind: "user", handle: "sam" },
+          author: { kind: "human", ref: "ref-sam", handle: "sam" },
           body: "from human",
           at: at(9, 16),
         },
@@ -893,7 +893,7 @@ test("tasks_changed refetches the open task and keeps the draft and an open edit
       {
         type: "comment",
         id: "c5",
-        author: { kind: "agent", slug: "dev" },
+        author: { kind: "agent", ref: "ref-dev", handle: "dev" },
         body: "done now",
         at: at(9, 40),
       },
@@ -975,7 +975,7 @@ test("agent text is inert: scripts, image handlers and javascript: links never r
         {
           type: "comment",
           id: "c1",
-          author: { kind: "agent", slug: "dev" },
+          author: { kind: "agent", ref: "ref-dev", handle: "dev" },
           body: evil,
           at: at(9, 14),
         },
@@ -1115,19 +1115,19 @@ test("an open task whose refetch says it no longer exists shows Task not found",
 test("an agent creator and an agent comment author link to the agent's page; a human one does not", async () => {
   world(() =>
     detail({
-      createdBy: { kind: "agent", slug: "lead" },
+      createdBy: { kind: "agent", ref: "ref-lead", handle: "lead" },
       activity: [
         {
           type: "comment",
           id: "c1",
-          author: { kind: "user", handle: "or" },
+          author: { kind: "human", ref: "ref-or", handle: "or" },
           body: "human words",
           at: at(9, 20),
         },
         {
           type: "comment",
           id: "c2",
-          author: { kind: "agent", slug: "dev" },
+          author: { kind: "agent", ref: "ref-dev", handle: "dev" },
           body: "agent words",
           at: at(9, 21),
         },
@@ -1155,14 +1155,14 @@ test("a human creator and comment author show as @handle without an avatar; an a
         {
           type: "comment",
           id: "c1",
-          author: { kind: "user", handle: "or" },
+          author: { kind: "human", ref: "ref-or", handle: "or" },
           body: "human words",
           at: at(9, 20),
         },
         {
           type: "comment",
           id: "c2",
-          author: { kind: "agent", slug: "dev" },
+          author: { kind: "agent", ref: "ref-dev", handle: "dev" },
           body: "agent words",
           at: at(9, 21),
         },

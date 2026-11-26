@@ -53,6 +53,7 @@ import { LoopGuard } from "./messaging/loop-guard.ts";
 import { LoopResume } from "./messaging/loop-resume.ts";
 import { Neighborhood } from "./messaging/neighborhood.ts";
 import { Router } from "./messaging/router.ts";
+import { principalById } from "./principals/principal-store.ts";
 import { ProjectService } from "./projects/project-service.ts";
 import { agentsRoutes } from "./routes/agents.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -608,6 +609,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   // its MCP servers only at startup. A bind failure fails the boot.
   try {
     agentListener = await listenForAgents(config, {
+      db: deps.db,
       docker,
       tokens,
       store,
@@ -683,6 +685,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
 async function listenForAgents(
   config: Config,
   d: {
+    db: Db;
     docker: ReturnType<typeof dockerodeClient>;
     tokens: AgentTokens;
     store: EventStore;
@@ -725,7 +728,11 @@ async function listenForAgents(
           resolver: d.resolver,
           spawned: caller.kind === "ephemeral",
         }),
-        ...taskTools({ tasks: d.tasks, loadAgent: (id) => d.store.agentById(id) }),
+        ...taskTools({
+          tasks: d.tasks,
+          loadAgent: (id) => d.store.agentById(id),
+          loadPrincipal: (id) => principalById(d.db, id),
+        }),
         // Q12 and I7 §9.1: persistent agents only; a spawned agent never sees the schedule or restart tools.
         ...(caller.kind === "persistent"
           ? [

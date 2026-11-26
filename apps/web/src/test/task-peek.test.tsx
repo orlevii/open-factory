@@ -28,7 +28,7 @@ const summary = (n: number) => ({
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
   updatedAt: at,
 });
 const detail = (n: number) => ({

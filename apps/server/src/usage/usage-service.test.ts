@@ -225,7 +225,7 @@ beforeAll(async () => {
               values ('c-z', 'zeta', 'oauth_token', ${Buffer.from("x")}, '2026-11-20T14:45:00Z')`;
   for (const k of TASKS) {
     const [row] = await t.sql<{ number: number }[]>`
-      insert into tasks (id, title, created_by_user_id) values (${k.id}, ${k.title}, 'u1') returning number`;
+      insert into tasks (id, title, created_by_id) values (${k.id}, ${k.title}, 'u1') returning number`;
     taskKey.set(k.id, `T-${row?.number}`);
   }
   for (const s of turns)

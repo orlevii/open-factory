@@ -142,10 +142,12 @@ export const taskAgentRefSchema = z.object({
   ended: z.enum(["archived", "terminated"]).optional(),
 });
 export type TaskAgentRef = z.infer<typeof taskAgentRefSchema>;
-export const taskPrincipalSchema = z.union([
-  z.object({ kind: z.literal("agent"), slug: z.string() }),
-  z.object({ kind: z.literal("user"), handle: z.string() }),
-]);
+/** A principal: its kind, its 8-char ref and its current handle (spec §4.1). */
+export const taskPrincipalSchema = z.object({
+  kind: z.enum(["agent", "human"]),
+  ref: z.string(),
+  handle: z.string(),
+});
 export type TaskPrincipal = z.infer<typeof taskPrincipalSchema>;
 export const taskSummarySchema = z.object({
   key: z.string(),

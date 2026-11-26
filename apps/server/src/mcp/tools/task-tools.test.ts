@@ -15,7 +15,8 @@ beforeEach(async () => {
   h = await makeTestApp({ harnessDriver: new FakeDriver() });
   url = `http://127.0.0.1:${h.app.agentListener.port}`;
   const u = await signUp(h.app, { handle: "or" });
-  or = { kind: "user", userId: u.user.id, handle: "or" };
+  const [orPrincipal] = await h.sql`select ref from principals where handle = 'or'`;
+  or = { kind: "human", id: u.user.id, ref: String(orPrincipal?.ref), handle: "or" };
   for (const slug of ["lead", "dev", "qa"]) {
     ids[slug] = (await h.seedAgent({ slug })).id;
     tok[slug] = h.app.agentTokens.mint(ids[slug] as string).token;
@@ -61,15 +62,15 @@ test("create_task acts as the token's agent; me assigns the caller and sends it 
     links: [{ kind: "pr", target: "https://github.com/a/b/pull/1" }],
   });
   expect(r.json).toEqual({ key: "T-1", status: "open", assignee: "lead", blocked_by: [] });
-  const [row] = await h.sql`select created_by_agent_id from tasks`;
-  expect(row?.created_by_agent_id).toBe(ids.lead);
+  const [row] = await h.sql`select created_by_id from tasks`;
+  expect(row?.created_by_id).toBe(ids.lead);
   expect((await h.sql`select 1 from messages where task_id is not null`).length).toBe(0);
   // Identity never comes from arguments.
   const spoof = await call("qa", "create_task", { title: "x", created_by: "lead" });
   expect(spoof.err).toBe(false);
-  expect(
-    (await h.sql`select created_by_agent_id from tasks where title = 'x'`)[0]?.created_by_agent_id,
-  ).toBe(ids.qa);
+  expect((await h.sql`select created_by_id from tasks where title = 'x'`)[0]?.created_by_id).toBe(
+    ids.qa,
+  );
 });
 
 test("update_task: null unassigns, a no-op reports changed [], an unrelated agent is refused but may comment", async () => {
@@ -140,6 +141,16 @@ test("list_tasks: defaults, filters and the more note", async () => {
   expect((await call("qa", "list_tasks", {})).json).toMatchObject({ more: false });
 });
 
+test("list_tasks filters by a creator given as a tag", async () => {
+  await h.app.tasks.create(or, { title: "D" });
+  await call("lead", "create_task", { title: "A" });
+  const [lead] = await h.sql`select ref from principals where handle = 'lead'`;
+  const keys = async (who: string, args: object) =>
+    ((await call(who, "list_tasks", args)).json.tasks as { key: string }[]).map((t) => t.key);
+  expect(await keys("qa", { created_by: `<@${or.ref}|or>` })).toEqual(["T-1"]);
+  expect(await keys("qa", { created_by: `<@${String(lead?.ref)}|lead>` })).toEqual(["T-2"]);
+});
+
 test("get_task: the newest 50 comments, earlier ones through comments_before", async () => {
   await call("lead", "create_task", { title: "Plan", body: "Brief" });
   for (let i = 1; i <= 60; i++) await h.app.tasks.comment(or, "T-1", `c${i}`);
@@ -191,7 +202,7 @@ test("dependencies and links come back through get_task", async () => {
 });
 
 test("comment_task: a looping peer is listed under held, the comment is still posted", async () => {
-  await h.app.factorySettings.update({ loopGuardMessages: 2 }, (or as { userId: string }).userId);
+  await h.app.factorySettings.update({ loopGuardMessages: 2 }, or.id);
   await call("lead", "create_task", { title: "Plan", assignee: "lead" });
   const send = (from: string, to: string) =>
     h.app.router.send({ agentId: ids[from] as string }, [`@${to}`], "ping", false);

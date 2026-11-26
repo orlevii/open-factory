@@ -67,7 +67,7 @@ beforeEach(() => {
         status: "open",
         assignee: null,
         blockedBy: [],
-        createdBy: { kind: "user", handle: "alice" },
+        createdBy: { kind: "human", ref: "ref-alice", handle: "alice" },
         updatedAt: at(0),
         body: "",
         createdAt: at(0),

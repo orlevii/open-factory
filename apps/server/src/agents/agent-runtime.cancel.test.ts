@@ -104,9 +104,9 @@ test("only kind='message' rows are cancellable: a human's task comment is not_se
   await stopped();
   const taskId = `t-${h.agentId}`;
   const commentId = `c-${h.agentId}`;
-  await h.t.sql`insert into tasks (id, title, created_by_user_id) values (${taskId}, 'T', 'u1')`;
+  await h.t.sql`insert into tasks (id, title, created_by_id) values (${taskId}, 'T', 'u1')`;
   await h.t
-    .sql`insert into task_comments (id, task_id, author_user_id, body) values (${commentId}, ${taskId}, 'u1', 'look')`;
+    .sql`insert into task_comments (id, task_id, author_id, body) values (${commentId}, ${taskId}, 'u1', 'look')`;
   const row = await h.store.createTaskMessage(h.t.db, {
     kind: "task_comment",
     taskId,

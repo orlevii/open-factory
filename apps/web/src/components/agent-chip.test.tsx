@@ -75,7 +75,9 @@ test("slug form falls back to @slug when unknown", () => {
 });
 
 test("a human principal renders the handle without an avatar", () => {
-  const { container } = wrap(<PrincipalChip principal={{ kind: "user", handle: "or" }} />);
+  const { container } = wrap(
+    <PrincipalChip principal={{ kind: "human", ref: "ref-or", handle: "or" }} />,
+  );
   expect(screen.getByText("@or")).toBeInTheDocument();
   expect(container.querySelector("svg")).toBeNull();
 });

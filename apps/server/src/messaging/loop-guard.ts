@@ -95,7 +95,8 @@ export class LoopGuard {
         (select max(at) from session_events
            where type = 'operator_input' and agent_id in (${a}, ${b}) and payload->>'byKind' = 'human'),
         (select max(e.at) from task_events e join tasks t on t.id = e.task_id
-           where e.type = 'status' and e.actor_user_id is not null and t.assignee_agent_id in (${a}, ${b}))
+           where e.type = 'status' and t.assignee_agent_id in (${a}, ${b})
+             and exists (select 1 from principals p where p.id = e.actor_id and p.kind = 'human'))
       ) as since`);
     const since = new Date(w?.since as Date | string).toISOString();
 

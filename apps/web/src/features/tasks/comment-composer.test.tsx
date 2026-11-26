@@ -23,7 +23,7 @@ beforeEach(() => {
           comment: {
             type: "comment",
             id: "c1",
-            author: { kind: "user", handle: "alice" },
+            author: { kind: "human", ref: "ref-alice", handle: "alice" },
             body: body.body,
             at: "2026-11-22T00:00:00.000Z",
           },
@@ -147,7 +147,7 @@ test("while a comment posts a muted Posting… status shows; Send keeps its labe
                 comment: {
                   type: "comment",
                   id: "c2",
-                  author: { kind: "user", handle: "alice" },
+                  author: { kind: "human", ref: "ref-alice", handle: "alice" },
                   body: "x",
                   at: "2026-11-22T00:00:00.000Z",
                 },

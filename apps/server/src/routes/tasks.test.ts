@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import WebSocket from "ws";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let or: Awaited<ReturnType<typeof signUp>>;
@@ -56,15 +57,27 @@ test("POST creates (201) as the human; the detail has history and the creator", 
     title: "Plan",
     status: "open",
     assignee: { slug: "dev" },
-    createdBy: { kind: "user", handle: "or" },
     blockedBy: [],
   });
+  expect(t.createdBy).toMatchObject({ kind: "human", handle: "or" });
   expect(t.activity.map((a) => (a.type === "event" ? a.event : a.type))).toEqual([
     "created",
     "assignee",
   ]);
   const assignee = t.activity[1];
   expect(assignee).toMatchObject({ event: "assignee", from: null, to: "dev" });
+});
+
+test("a task created by a human lists its creator as that human", async () => {
+  await create({ title: "Plan" });
+  const ref = testRef(or.user.id);
+  const list = (await call("GET", "/api/tasks")).json() as TaskPage;
+  expect(list.tasks[0]).toMatchObject({
+    key: "T-1",
+    createdBy: { kind: "human", ref, handle: "or" },
+  });
+  const detail = await call("GET", "/api/tasks/T-1");
+  expect(detail.json()).toMatchObject({ createdBy: { kind: "human", ref, handle: "or" } });
 });
 
 test("validation: a javascript: link is a 400 on links; an unknown dependency on dependsOn; an ended assignee is 409", async () => {
@@ -199,7 +212,11 @@ test("GET detail: activity oldest first with comments and history interleaved; b
   const c = await call("POST", "/api/tasks/T-1/comments", { body: "@dev look at this" });
   expect(c.statusCode).toBe(201);
   expect(c.json()).toMatchObject({
-    comment: { type: "comment", author: { kind: "user", handle: "or" }, body: "@dev look at this" },
+    comment: {
+      type: "comment",
+      author: { kind: "human", handle: "or" },
+      body: "@dev look at this",
+    },
     deliveredTo: ["dev"],
     mentionedHumans: [],
     notReached: [],

@@ -72,8 +72,8 @@ async function row(r: Row) {
   if (kind === "task_comment") {
     taskId = "tc";
     commentId = `c${seq}`;
-    await t.sql`insert into tasks (id, title, created_by_user_id) values ('tc', 'T', 'u1') on conflict do nothing`;
-    await t.sql`insert into task_comments (id, task_id, author_agent_id, body) values (${commentId}, 'tc', ${r.from ?? "a1"}, 'x')`;
+    await t.sql`insert into tasks (id, title, created_by_id) values ('tc', 'T', 'u1') on conflict do nothing`;
+    await t.sql`insert into task_comments (id, task_id, author_id, body) values (${commentId}, 'tc', ${r.from ?? "a1"}, 'x')`;
   }
   if (kind === "scheduled") {
     scheduleId = `s${seq}`;
@@ -208,9 +208,9 @@ describe("resets", () => {
     async (assignee) => {
       expect(
         await verdict(async () => {
-          await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_user_id)
+          await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_id)
                     values ('t1', 'T', ${assignee}, 'u1')`;
-          await t.sql`insert into task_events (id, task_id, actor_user_id, type, at)
+          await t.sql`insert into task_events (id, task_id, actor_id, type, at)
                     values ('e1', 't1', 'u1', 'status', ${ago(1).toISOString()})`;
         }),
       ).toEqual(notHeld);
@@ -229,9 +229,9 @@ describe("resets", () => {
     [
       "a human status change on a task assigned to a third agent",
       async () => {
-        await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_user_id)
+        await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_id)
                     values ('t1', 'T', 'a3', 'u1')`;
-        await t.sql`insert into task_events (id, task_id, actor_user_id, type, at)
+        await t.sql`insert into task_events (id, task_id, actor_id, type, at)
                     values ('e1', 't1', 'u1', 'status', ${ago(1).toISOString()})`;
       },
     ],
@@ -245,9 +245,9 @@ describe("resets", () => {
     [
       "an agent's status change",
       async () => {
-        await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_user_id)
+        await t.sql`insert into tasks (id, title, assignee_agent_id, created_by_id)
                     values ('t1', 'T', 'a2', 'u1')`;
-        await t.sql`insert into task_events (id, task_id, actor_agent_id, type, at)
+        await t.sql`insert into task_events (id, task_id, actor_id, type, at)
                     values ('e1', 't1', 'a1', 'status', ${ago(1).toISOString()})`;
       },
     ],

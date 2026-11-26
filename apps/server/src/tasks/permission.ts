@@ -1,6 +1,5 @@
-export type Actor =
-  | { kind: "agent"; agentId: string; slug: string }
-  | { kind: "user"; userId: string; handle: string };
+/** Who acts: a principal (spec §4.1). `id` is the principal's id, which for an agent is its `agents.id`. */
+export type Actor = { kind: "agent" | "human"; id: string; ref: string; handle: string };
 
 /**
  * Spec §6.3: who may change a task. Humans always; an agent when it is the creator, the current assignee, or a manager
@@ -9,13 +8,13 @@ export type Actor =
  */
 export function canChange(
   actor: Actor,
-  t: { createdByAgentId: string | null; assigneeAgentId: string | null },
+  t: { createdById: string; assigneeAgentId: string | null },
   managersOf: (agentId: string) => readonly string[],
 ): boolean {
-  if (actor.kind === "user") return true;
-  const id = actor.agentId;
-  if (t.createdByAgentId === id || t.assigneeAgentId === id) return true;
-  for (const who of [t.createdByAgentId, t.assigneeAgentId]) {
+  if (actor.kind === "human") return true;
+  const id = actor.id;
+  if (t.createdById === id || t.assigneeAgentId === id) return true;
+  for (const who of [t.createdById, t.assigneeAgentId]) {
     if (who && managersOf(who).includes(id)) return true;
   }
   return false;

@@ -2,6 +2,7 @@ import type { ScheduleItem, ServerMessage } from "@open-factory/shared";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let or: Awaited<ReturnType<typeof signUp>>;
@@ -61,7 +62,7 @@ test("POST creates (201) as the human and publishes schedules_changed once", asy
     cron: "0 9 * * 1-5",
     timezone: "Europe/Berlin",
     nextRunAt: "2026-11-23T08:00:00.000Z",
-    createdBy: { kind: "user", handle: "or" },
+    createdBy: { kind: "human", ref: testRef(or.user.id), handle: "or" },
     state: "active",
   });
   expect(changes()).toBe(1);

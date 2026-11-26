@@ -44,8 +44,8 @@ const item = {
   lastFiredAt: null,
   paused: false,
   done: false,
-  createdBy: { kind: "user", handle: "or" },
-  bodyAuthor: { kind: "user", handle: "or" },
+  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
+  bodyAuthor: { kind: "human", ref: "ref-or", handle: "or" },
   pendingFiring: false,
   state: "active",
 };

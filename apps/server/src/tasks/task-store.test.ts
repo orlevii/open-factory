@@ -29,7 +29,7 @@ afterAll(() => t.close());
 
 const mk = (title: string) =>
   t.db.transaction((tx) =>
-    store.insertTask(tx, { title, body: "", assigneeAgentId: null, createdBy: { userId: ids.or } }),
+    store.insertTask(tx, { title, body: "", assigneeAgentId: null, createdById: ids.or }),
   );
 const depend = (task: string, dep: string) =>
   t.db.insert(schema.taskDependencies).values({ taskId: task, dependsOnTaskId: dep });
@@ -172,8 +172,8 @@ test("replaceDependencies reports added and removed; replaceLinks keeps order", 
 test("comments and events insert with strictly increasing times", async () => {
   const a = await mk("e1");
   await store.insertEvents(t.db, [
-    { taskId: a.id, actor: { userId: ids.or }, type: "created" },
-    { taskId: a.id, actor: { agentId: ids.dev }, type: "status", from: "open", to: "done" },
+    { taskId: a.id, actorId: ids.or, type: "created" },
+    { taskId: a.id, actorId: ids.dev, type: "status", from: "open", to: "done" },
   ]);
   const ev = await t.db.select().from(schema.taskEvents).orderBy(sql`at`);
   const mine = ev.filter((e) => e.taskId === a.id);
@@ -181,9 +181,9 @@ test("comments and events insert with strictly increasing times", async () => {
   expect(mine[1]?.at.getTime()).toBeGreaterThan(mine[0]?.at.getTime() as number);
   const c = await store.insertComment(t.db, {
     taskId: a.id,
-    author: { agentId: ids.dev },
+    authorId: ids.dev,
     body: "hi",
   });
-  expect(c.authorAgentId).toBe(ids.dev);
+  expect(c.authorId).toBe(ids.dev);
   expect(c.createdAt.getTime()).toBeGreaterThan(mine[1]?.at.getTime() as number);
 });

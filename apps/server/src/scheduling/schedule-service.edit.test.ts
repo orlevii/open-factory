@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent, insertScheduledMessage } from "../agents/testing/rows.ts";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { MAX_AGENT_SCHEDULES } from "./limits.ts";
 import { type Actor, ScheduleService } from "./schedule-service.ts";
 import { ScheduleStore } from "./schedule-store.ts";
@@ -13,8 +13,8 @@ let clock: Date;
 let changed = 0;
 let statuses: Record<string, string> = {};
 const NOW = new Date("2026-11-20T10:00:00Z"); // Friday 11:00 Berlin
-const or: Actor & { userId: string } = { userId: "u1" };
-const agent = (id: string): Actor => ({ agentId: id });
+const or: Actor = { kind: "human", id: "u1" };
+const agent = (id: string): Actor => ({ kind: "agent", id });
 const weekday = { cron: "0 9 * * 1-5", timezone: "Europe/Berlin", body: "Review" };
 
 beforeAll(async () => {
@@ -59,12 +59,18 @@ const rejects = (
   m: Partial<{ code: string; status: number; message: string }>,
 ) => expect(p).rejects.toMatchObject(m);
 
-test("edit only the body: the editor becomes its author, creator and next run stay", async () => {
+test("editing a schedule body records the editor as its body author", async () => {
+  const s = await mk({}, agent("dev"));
+  const r = await svc.edit(or, s.key, { body: "New text" });
+  expect(r.bodyAuthor).toEqual({ kind: "human", ref: testRef("u1"), handle: "or" });
+  expect(await dbRow(s.key)).toMatchObject({ body_author_id: "u1", created_by_id: "dev" });
+});
+
+test("edit only the body: the creator and the next run stay", async () => {
   const s = await mk({}, agent("dev"));
   const r = await svc.edit(or, s.key, { body: "New text" });
   expect(r.body).toBe("New text");
-  expect(r.bodyAuthor).toEqual({ kind: "user", handle: "or" });
-  expect(r.createdBy).toMatchObject({ kind: "agent", slug: "dev" });
+  expect(r.createdBy).toMatchObject({ kind: "agent", handle: "dev" });
   expect(r.nextRunAt).toBe(s.nextRunAt);
 });
 

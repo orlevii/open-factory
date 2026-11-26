@@ -3,7 +3,9 @@ import { asc } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
+import type { Actor } from "../tasks/permission.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
@@ -227,19 +229,18 @@ const post = (path: string, payload: object = {}, c = cookie) =>
   h.app.inject({ method: "POST", url: path, headers: { cookie: c }, payload });
 async function actors() {
   const sam = await signUp(h.app, { handle: "sam" });
-  const or = {
-    kind: "user" as const,
-    userId: (await get("/api/me")).json().id as string,
-    handle: "or",
-  };
+  const orId = (await get("/api/me")).json().id as string;
+  const or: Actor = { kind: "human", id: orId, ref: testRef(orId), handle: "or" };
   const ada = await h.app.store.agentBySlug("ada");
-  const agent = { kind: "agent" as const, agentId: ada?.id ?? "", slug: "ada" };
-  return {
-    sam,
-    or,
-    agent,
-    samActor: { kind: "user" as const, userId: sam.user.id, handle: "sam" },
+  const adaId = ada?.id as string;
+  const agent: Actor = { kind: "agent", id: adaId, ref: testRef(adaId), handle: "ada" };
+  const samActor: Actor = {
+    kind: "human",
+    id: sam.user.id,
+    ref: testRef(sam.user.id),
+    handle: "sam",
   };
+  return { sam, or, agent, samActor };
 }
 
 test("a mention item: from the agent or the human author, with the task and a deep link to the comment", async () => {
@@ -390,7 +391,7 @@ test("read-from publishes inbox_changed only when it marked something", async ()
 
 test("read changes reach the reading user's sockets only; new items reach the users they are for", async () => {
   const { or, agent, sam } = await actors();
-  const orId = or.userId;
+  const orId = or.id;
   const got = { or: 0, sam: 0, all: 0 };
   h.app.bus.subscribeUser(orId, () => got.or++);
   h.app.bus.subscribeUser(sam.user.id, () => got.sam++);

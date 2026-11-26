@@ -32,7 +32,7 @@ import { ScheduleTime } from "./schedule-time";
 
 type Spec = { kind: "edit-schedule"; key: string; at?: string };
 
-const who = (a: ScheduleItem["createdBy"]) => (a.kind === "user" ? `@${a.handle}` : `@${a.slug}`);
+const who = (a: ScheduleItem["createdBy"]) => `@${a.handle}`;
 
 function Description({ s }: { s: ScheduleItem }) {
   return (

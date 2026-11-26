@@ -1,19 +1,25 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 import type { Actor } from "./permission.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
 let or: Actor;
 const ids: Record<string, string> = {};
-const agent = (slug: string): Actor => ({ kind: "agent", agentId: ids[slug] as string, slug });
+const agent = (slug: string): Actor => ({
+  kind: "agent",
+  id: ids[slug] as string,
+  ref: testRef(ids[slug] as string),
+  handle: slug,
+});
 
 beforeEach(async () => {
   driver = new FakeDriver();
   h = await makeTestApp({ harnessDriver: driver });
   const u = await signUp(h.app, { handle: "or" });
-  or = { kind: "user", userId: u.user.id, handle: "or" };
+  or = { kind: "human", id: u.user.id, ref: testRef(u.user.id), handle: "or" };
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
   await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
 });
@@ -139,7 +145,7 @@ test("shutdown begun: the change commits, nothing is handed over", async () => {
 test("a terminated caller whose request is already past the listener is refused", async () => {
   const kid = await h.seedAgent({ slug: "kid" });
   await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = ${kid.id}`;
-  const as: Actor = { kind: "agent", agentId: kid.id, slug: "kid" };
+  const as: Actor = { kind: "agent", id: kid.id, ref: testRef(kid.id), handle: "kid" };
   await h.app.tasks.create(as, { title: "t" });
   await h.sql`update agents set terminated_at = now(), terminated_by = null where id = ${kid.id}`;
   const sentence = "You can't work on tasks: you were terminated.";

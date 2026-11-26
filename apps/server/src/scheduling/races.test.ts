@@ -47,7 +47,7 @@ function hold(run: (tx: typeof h.sql) => Promise<void>) {
 }
 const kidId = async () => (await h.app.store.agentBySlug("kid"))?.id as string;
 const sched = (body = "v1") =>
-  h.app.schedules.create({ userId }, { target: "kid", ...weekday, body });
+  h.app.schedules.create({ kind: "human", id: userId }, { target: "kid", ...weekday, body });
 const msgs = () => h.sql`select state, firings from messages where kind = 'scheduled'`;
 
 test("termination first: the firing waits on the agent row, then finds the schedule deleted and writes nothing", async () => {

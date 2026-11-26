@@ -19,14 +19,14 @@ import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type GuardResult, type LoopGuard, loopNotes, pairOf } from "../messaging/loop-guard.ts";
 import type { Router } from "../messaging/router.ts";
 import { resolveArg, resolveArgs } from "../principals/principal-args.ts";
+import { principalsByIds } from "../principals/principal-store.ts";
 import { blockedBy, isBlocked } from "./blocked.ts";
 import { TaskError } from "./errors.ts";
+import type { Who } from "./notifier.ts";
 import { type PlannedRow, plan } from "./notifier.ts";
 import { type Actor, canChange, forbiddenSentence } from "./permission.ts";
 import { type ListFilter, TaskReads } from "./task-reads.ts";
-import type { EventType, Principal, ResolvedLink, TaskStore } from "./task-store.ts";
-
-const { agents } = schema;
+import type { EventType, ResolvedLink, TaskStore } from "./task-store.ts";
 
 export type TaskView = {
   key: string;
@@ -105,8 +105,9 @@ type Outcome = {
   assigneeEnded?: "archived" | "terminated";
 };
 
-const principalOf = (a: Actor): Principal =>
-  a.kind === "agent" ? { agentId: a.agentId } : { userId: a.userId };
+const principalOf = (a: Actor): Who => ({ kind: a.kind, id: a.id });
+/** The messages layer's shape for a sender or recipient. */
+const messageParty = (w: Who) => (w.kind === "agent" ? { agentId: w.id } : { userId: w.id });
 const sameSet = (a: string[], b: string[]) =>
   a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
 const settled = (s: TaskStatus) => s === "done" || s === "cancelled";
@@ -245,8 +246,8 @@ export class TaskService {
     const candidates: { id: string; slug: string }[] = [];
     const userIds: string[] = [];
     const handles = new Map<string, string>();
-    const isAuthorAgent = (id: string) => actor.kind === "agent" && actor.agentId === id;
-    const isAuthorUser = (id: string) => actor.kind === "user" && actor.userId === id;
+    const isAuthorAgent = (id: string) => actor.kind === "agent" && actor.id === id;
+    const isAuthorUser = (id: string) => actor.kind === "human" && actor.id === id;
     const names = mentions.names.slice(0, MAX_MENTIONS);
     const resolved = await resolveArgs(tx, names);
     const principalIds = resolved.flatMap((r) => (r.kind === "principal" ? [r.p.id] : []));
@@ -286,7 +287,7 @@ export class TaskService {
 
     // Step 5: agents FOR SHARE in one statement.
     const involved = new Set<string>(candidates.map((c) => c.id));
-    if (actor.kind === "agent") involved.add(actor.agentId);
+    if (actor.kind === "agent") involved.add(actor.id);
     if (task.assigneeAgentId) involved.add(task.assigneeAgentId);
     const locked = await T.lockAgents(tx, [...involved]);
     const ended = new Map<string, "archived" | "terminated">();
@@ -295,7 +296,7 @@ export class TaskService {
       else if (a.archivedAt) ended.set(a.id, "archived");
     }
     if (actor.kind === "agent") {
-      const e = ended.get(actor.agentId);
+      const e = ended.get(actor.id);
       if (e) throw new TaskError("ended", `You can't work on tasks: you were ${e}.`, 409);
     }
     const mentionedAgentIds: string[] = [];
@@ -313,7 +314,11 @@ export class TaskService {
 
     // Step 6.
     const principal = principalOf(actor);
-    const comment = await T.insertComment(tx, { taskId: task.id, author: principal, body: text });
+    const comment = await T.insertComment(tx, {
+      taskId: task.id,
+      authorId: principal.id,
+      body: text,
+    });
     await T.touch(tx, task.id);
     const deps = await T.dependencies(tx, task.id);
     const planned = await this.notify(tx, {
@@ -443,17 +448,12 @@ export class TaskService {
 
     if (before) {
       const managers = new Map<string, readonly string[]>();
-      for (const who of [before.createdByAgentId, before.assigneeAgentId])
+      for (const who of [before.createdById, before.assigneeAgentId])
         if (who) managers.set(who, await T.managerChain(tx, who));
       if (!canChange(actor, before, (id) => managers.get(id) ?? [])) {
-        const creator = await this.labelOf(
-          tx,
-          before.createdByAgentId
-            ? { agentId: before.createdByAgentId }
-            : { userId: before.createdByUserId as string },
-        );
+        const creator = await this.labelOf(tx, before.createdById);
         const assignee = before.assigneeAgentId
-          ? await this.labelOf(tx, { agentId: before.assigneeAgentId })
+          ? await this.labelOf(tx, before.assigneeAgentId)
           : null;
         throw new TaskError(
           "task_forbidden",
@@ -548,11 +548,11 @@ export class TaskService {
     }
 
     const involved = new Set<string>();
-    if (actor.kind === "agent") involved.add(actor.agentId);
+    if (actor.kind === "agent") involved.add(actor.id);
     for (const id of [
       cur.assigneeAgentId,
       next.assigneeAgentId,
-      before?.createdByAgentId ?? (actor.kind === "agent" ? actor.agentId : null),
+      before?.createdById ?? (actor.kind === "agent" ? actor.id : null),
       ...unblockedCandidates.map((x) => x.assigneeAgentId),
     ])
       if (id) involved.add(id);
@@ -563,7 +563,7 @@ export class TaskService {
       else if (a.archivedAt) ended.set(a.id, "archived");
     }
     if (actor.kind === "agent") {
-      const e = ended.get(actor.agentId);
+      const e = ended.get(actor.id);
       if (e) throw new TaskError("ended", `You can't work on tasks: you were ${e}.`, 409);
     }
     if (assigneeId && (!before || changedAssignee)) {
@@ -595,7 +595,7 @@ export class TaskService {
         title: next.title,
         body: next.body,
         assigneeAgentId: next.assigneeAgentId,
-        createdBy: principal,
+        createdById: principal.id,
       });
       events.push({ type: "created" });
       if (next.assigneeAgentId)
@@ -650,7 +650,7 @@ export class TaskService {
     if (links && (!before || changedLinks)) await T.replaceLinks(tx, row.id, links);
     await T.insertEvents(
       tx,
-      events.map((e) => ({ taskId: row.id, actor: principal, ...e })),
+      events.map((e) => ({ taskId: row.id, actorId: principal.id, ...e })),
     );
 
     // Current dependencies, links and blocked state, after the write.
@@ -743,9 +743,7 @@ export class TaskService {
       keys: [...new Set(keys)],
       assignedAgentIds: planned
         .filter((p) => p.kind === "task_assigned")
-        .flatMap((p) =>
-          "agentId" in (p.to as object) ? [(p.to as { agentId: string }).agentId] : [],
-        ),
+        .flatMap((p) => (p.to.kind === "agent" ? [p.to.id] : [])),
       ...(assigneeSlug ? { assigneeSlug } : {}),
       ...(assigneeEnded && changedNames.length ? { assigneeEnded } : {}),
     };
@@ -768,34 +766,32 @@ export class TaskService {
       comment?: Parameters<typeof plan>[0]["comment"];
     },
   ): Promise<PlannedRow[]> {
-    const agentIds = new Set<string>(
+    const authorId = i.bodyChanged
+      ? i.actor.id
+      : ((await this.d.tasks.bodyAuthor(tx, i.row.id)) ?? i.row.createdById);
+    const ids = new Set<string>(
       [
-        i.row.createdByAgentId,
+        i.row.createdById,
+        authorId,
         i.before?.assigneeId,
         i.next.assigneeAgentId,
-        i.actor.kind === "agent" ? i.actor.agentId : null,
+        i.actor.kind === "agent" ? i.actor.id : null,
         ...i.unblocked.map((u) => u.assigneeId),
       ].filter((x): x is string => !!x),
     );
-    const slugs = new Map<string, string>();
-    if (agentIds.size) {
-      const rows = await tx
-        .select({ id: agents.id, slug: agents.slug })
-        .from(agents)
-        .where(inArray(agents.id, [...agentIds]));
-      for (const r of rows) slugs.set(r.id, `@${r.slug}`);
-    }
-    const label = (id: string) => slugs.get(id) ?? id;
-    const creator: Principal = i.row.createdByAgentId
-      ? { agentId: i.row.createdByAgentId }
-      : { userId: i.row.createdByUserId as string };
-    const creatorLabel = await this.labelOf(tx, creator);
-    const author = i.bodyChanged
-      ? principalOf(i.actor)
-      : ((await this.d.tasks.bodyAuthor(tx, i.row.id)) ?? creator);
+    const people = await principalsByIds(tx, [...ids]);
+    const label = (id: string) => {
+      const p = people.get(id);
+      return p ? `@${p.handle}` : id;
+    };
+    const creatorPerson = people.get(i.row.createdById);
+    const creator: Who = {
+      kind: creatorPerson?.kind ?? "human",
+      id: i.row.createdById,
+    };
     return plan({
       actor: i.actor,
-      actorLabel: i.actor.kind === "agent" ? `@${i.actor.slug}` : `@${i.actor.handle}`,
+      actorLabel: `@${i.actor.handle}`,
       live: i.live,
       task: {
         id: i.row.id,
@@ -803,8 +799,8 @@ export class TaskService {
         title: i.next.title,
         body: i.next.body,
         creator,
-        creatorLabel,
-        bodyAuthorLabel: await this.labelOf(tx, author),
+        creatorLabel: label(i.row.createdById),
+        bodyAuthorLabel: label(authorId),
         deps: i.deps.map((x) => ({ key: taskKey(x.number), status: x.status })),
         blockedBy: i.blocked,
         links: i.links.map((l) => ({
@@ -840,34 +836,33 @@ export class TaskService {
     const loopHeld: { toAgentId: string; verdict: Extract<GuardResult, { held: true }> }[] = [];
     const userIds = new Set<string>();
     // I8 §6.3: an agent's comment is counted and checked per agent recipient; every pair is locked first, once.
-    const guarded = (p: PlannedRow): p is PlannedRow & { to: { agentId: string } } =>
+    const guarded = (p: PlannedRow): p is PlannedRow & { to: Who } =>
       p.kind === "task_comment" &&
       actor.kind === "agent" &&
-      typeof p.to === "object" &&
-      "agentId" in p.to &&
-      p.to.agentId !== actor.agentId;
+      p.to.kind === "agent" &&
+      p.to.id !== actor.id;
     if (actor.kind === "agent")
       await this.d.loopGuard.lockPairs(
         tx,
-        planned.filter(guarded).map((p) => pairOf(actor.agentId, p.to.agentId)),
+        planned.filter(guarded).map((p) => pairOf(actor.id, p.to.id)),
       );
     for (const p of planned) {
-      if (typeof p.to === "object" && "agentId" in p.to) {
+      if (p.to.kind === "agent") {
         const verdict =
           actor.kind === "agent" && guarded(p)
-            ? await this.d.loopGuard.check(tx, actor.agentId, p.to.agentId)
+            ? await this.d.loopGuard.check(tx, actor.id, p.to.id)
             : undefined;
         const row = await this.d.store.createTaskMessage(tx, {
           kind: p.kind,
           taskId: p.taskId,
           ...(p.commentId ? { commentId: p.commentId } : {}),
           ...(p.notice ? { notice: p.notice } : {}),
-          ...(p.from ? { from: p.from } : {}),
-          toAgentId: p.to.agentId,
+          ...(p.from ? { from: messageParty(p.from) } : {}),
+          toAgentId: p.to.id,
           body: p.body,
           ...(verdict?.held ? { state: "loop_held", loopHoldId: verdict.holdId } : {}),
         });
-        if (verdict?.held) loopHeld.push({ toAgentId: p.to.agentId, verdict });
+        if (verdict?.held) loopHeld.push({ toAgentId: p.to.id, verdict });
         else agentRows.push({ row, wake: p.wake });
       } else {
         if (p.kind === "task_assigned") continue; // humans are never assignees
@@ -877,29 +872,25 @@ export class TaskService {
             taskId: p.taskId,
             ...(p.commentId ? { commentId: p.commentId } : {}),
             ...(p.notice ? { notice: p.notice } : {}),
-            ...(p.from && "agentId" in p.from ? { fromAgentId: p.from.agentId } : {}),
-            ...(p.from && "userId" in p.from ? { fromUserId: p.from.userId } : {}),
-            to: { userId: p.to.userId },
+            ...(p.from?.kind === "agent" ? { fromAgentId: p.from.id } : {}),
+            ...(p.from?.kind === "human" ? { fromUserId: p.from.id } : {}),
+            to: { userId: p.to.id },
             ...(p.inboxKind ? { inboxKind: p.inboxKind } : {}),
             body: p.body,
             urgent: false,
           },
           tx,
         );
-        userIds.add(p.to.userId);
+        userIds.add(p.to.id);
       }
     }
     return { agentRows, userIds: [...userIds], loopHeld };
   }
 
-  private async labelOf(tx: Exec, p: Principal): Promise<string> {
-    if ("agentId" in p)
-      return `@${(await this.d.store.agentById(p.agentId, tx))?.slug ?? p.agentId}`;
-    const [u] = await tx
-      .select({ handle: schema.principals.handle })
-      .from(schema.principals)
-      .where(eq(schema.principals.id, p.userId));
-    return `@${u?.handle ?? p.userId}`;
+  /** `@handle` of a principal, read from `principals` (the interim `agents.slug` is never read here). */
+  private async labelOf(tx: Exec, id: string): Promise<string> {
+    const p = (await principalsByIds(tx, [id])).get(id);
+    return `@${p?.handle ?? id}`;
   }
 
   private async resolveDeps(tx: Exec, raw: string[], selfNumber?: number) {
@@ -969,7 +960,7 @@ export class TaskService {
   ): Promise<string | null | undefined> {
     if (raw === undefined || raw === null) return raw;
     const name = raw.trim().replace(/^@/, "");
-    if (name === "me" && actor.kind === "agent") return actor.agentId;
+    if (name === "me" && actor.kind === "agent") return actor.id;
     const r = await resolveArg(tx, raw);
     switch (r.kind) {
       case "principal": {

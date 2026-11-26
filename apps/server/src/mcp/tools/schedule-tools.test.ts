@@ -67,11 +67,10 @@ test("schedule_message defaults to the caller, the factory zone and a note for a
     next_run: "2026-11-23T09:00:00+01:00",
     note: "You will be woken at each run; cancel it with cancel_schedule when it is no longer needed.",
   });
-  const [row] =
-    await h.sql`select created_by_agent_id, body_author_agent_id, target_agent_id from schedules`;
+  const [row] = await h.sql`select created_by_id, body_author_id, target_agent_id from schedules`;
   expect(row).toEqual({
-    created_by_agent_id: ids.dev,
-    body_author_agent_id: ids.dev,
+    created_by_id: ids.dev,
+    body_author_id: ids.dev,
     target_agent_id: ids.dev,
   });
 });
@@ -96,8 +95,8 @@ test("at, to and me; an errored target gets its note; identity never comes from 
   expect(e.json.note).toBe(
     "@qa is errored; it will see this after it is restarted (restart_agent, or a human).",
   );
-  const rows = await h.sql`select created_by_agent_id from schedules`;
-  expect(new Set(rows.map((r) => r.created_by_agent_id))).toEqual(new Set([ids.dev]));
+  const rows = await h.sql`select created_by_id from schedules`;
+  expect(new Set(rows.map((r) => r.created_by_id))).toEqual(new Set([ids.dev]));
 });
 
 test("service refusals (the 15-minute floor, both-or-neither, bad cron) come back as tool errors with sentences", async () => {
@@ -116,7 +115,7 @@ test("list_schedules shows what the caller created and what targets it; cancel_s
   const mine = (await call("dev", "schedule_message", { body: "mine", cron: "0 9 * * *" })).json.id;
   const human = (
     await h.app.schedules.create(
-      { userId },
+      { kind: "human", id: userId },
       { target: "dev", cron: "0 8 * * *", timezone: "UTC", body: "from a human" },
     )
   ).item.key;

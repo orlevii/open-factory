@@ -308,7 +308,7 @@ export function TaskDetailView({
         (a) =>
           a.type === "comment" &&
           !seen.current?.has(a.id) &&
-          !(a.author.kind === "user" && a.author.handle === me),
+          !(a.author.kind === "human" && a.author.handle === me),
       );
       if (fresh && fresh.type === "comment")
         setAnnounce(`${authorMention(fresh.author)} commented`);

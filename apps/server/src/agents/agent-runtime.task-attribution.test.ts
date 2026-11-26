@@ -19,7 +19,7 @@ beforeEach(() => {
 
 async function newTask(title = "Plan the migration") {
   const id = randomUUID();
-  await h.t.sql`insert into tasks (id, title, created_by_user_id) values (${id}, ${title}, 'u1')`;
+  await h.t.sql`insert into tasks (id, title, created_by_id) values (${id}, ${title}, 'u1')`;
   return id;
 }
 /** A task message to the current runtime, handed over as the Router does (S8). */

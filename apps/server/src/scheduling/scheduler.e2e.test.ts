@@ -38,7 +38,7 @@ async function ceo() {
 
 test("AC 1: a weekday cron in Europe/Berlin wakes a hibernated agent with the scheduled envelope", async () => {
   const { item } = await h.app.schedules.create(
-    { userId },
+    { kind: "human", id: userId },
     {
       target: "ceo",
       cron: "0 9 * * 1-5",
@@ -71,7 +71,7 @@ test("AC 1: a weekday cron in Europe/Berlin wakes a hibernated agent with the sc
 
 test("catch-up: a server stopped across the next 09:00 fires once at boot, late, and moves on", async () => {
   const { item } = await h.app.schedules.create(
-    { userId },
+    { kind: "human", id: userId },
     { target: "ceo", cron: "0 9 * * 1-5", timezone: "Europe/Berlin", body: "Morning review" },
   );
   await h.app.close();

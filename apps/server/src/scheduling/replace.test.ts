@@ -38,13 +38,13 @@ const weekday = { cron: "0 9 * * 1-5", timezone: "Europe/Berlin" };
 test("AC 3: three firings while the target is errored leave one pending row with the current body, and start nothing", async () => {
   const dev = (await h.app.store.agentBySlug("dev"))?.id as string;
   const { item } = await h.app.schedules.create(
-    { agentId: dev },
+    { kind: "agent", id: dev },
     { target: "ceo", ...weekday, body: "v1" },
   );
   await fireAt("2026-11-23T08:00:00Z");
   const [first] = await pending();
   expect(first).toMatchObject({ firings: 1, body: "v1", author_id: dev });
-  await h.app.schedules.edit({ userId }, item.key, { body: "v2" });
+  await h.app.schedules.edit({ kind: "human", id: userId }, item.key, { body: "v2" });
   await fireAt("2026-11-24T08:00:00Z");
   await fireAt("2026-11-25T08:00:00Z");
   const rows = await pending();
@@ -73,13 +73,13 @@ test("AC 3: three firings while the target is errored leave one pending row with
 
 test("a pending row already written to a process that hasn't confirmed it is not replaced; nothing else is written", async () => {
   const { item } = await h.app.schedules.create(
-    { userId },
+    { kind: "human", id: userId },
     { target: "ceo", ...weekday, body: "v1" },
   );
   await fireAt("2026-11-23T08:00:00Z");
   const [first] = await pending();
   await h.sql`update messages set delivered_event_seq = 7 where id = ${first?.id as string}`;
-  await h.app.schedules.edit({ userId }, item.key, { body: "v2" });
+  await h.app.schedules.edit({ kind: "human", id: userId }, item.key, { body: "v2" });
   await fireAt("2026-11-24T08:00:00Z");
   const rows = await pending();
   expect(rows).toHaveLength(1);
@@ -90,7 +90,10 @@ test("a pending row already written to a process that hasn't confirmed it is not
 });
 
 test("two schedulers firing one schedule: one fires, the other skips it (SKIP LOCKED), never two pending rows", async () => {
-  await h.app.schedules.create({ userId }, { target: "ceo", ...weekday, body: "v1" });
+  await h.app.schedules.create(
+    { kind: "human", id: userId },
+    { target: "ceo", ...weekday, body: "v1" },
+  );
   const mk = () =>
     new Scheduler({
       db: h.db,

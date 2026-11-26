@@ -1,7 +1,7 @@
 import * as React from "react"
 import { cn } from "cn"
 import { Command as CommandPrimitive, defaultFilter } from "cmdk"
-import { CheckIcon, ChevronDownIcon, SearchIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon, MinusIcon, SearchIcon } from "lucide-react"
 import { FORM_MSG } from "@/lib/form-messages"
 import { lastInputModality } from "@/lib/input-modality"
 import { Popover, PopoverContent, PopoverTrigger } from "./popover"
@@ -22,14 +22,20 @@ type Side = "top" | "right" | "bottom" | "left"
 // A cmdk item's value is our option value behind a prefix that says whether it is fixed, so the
 // module-level filter keeps fixed options by looking at the value alone (no closure over props).
 const FIXED = "f:"
+// A multi-pick group's own row ("add the whole group") is keyed by its group behind its own prefix.
+const GROUP = "g:"
 const itemKey = (o: ComboOption) => (o.fixed ? FIXED : "o:") + o.value
+const groupKey = (group: string) => GROUP + group
+/** Rows that always match: a fixed option and a group's row. While filtering, neither keeps cmdk's highlight. */
+const pinned = (key: string) => key.startsWith(FIXED) || key.startsWith(GROUP)
 
 /** Fixed options always match with cmdk's top score, so its re-sort keeps them first. The rest rank by
  *  their label (the first keyword): the exact label, then a prefix, then a substring, then cmdk's fuzzy
  *  match (a weak tail). The other keywords (a description) match only as a whole-word-run substring, so
  *  a short query doesn't light up every description holding its letters in order. */
 function filter(value: string, search: string, keywords?: string[]) {
-  if (value.startsWith(FIXED)) return 1
+  // A group's row is rendered only while one of its options matches (ComboList decides), so it always matches.
+  if (pinned(value)) return 1
   const [label = "", ...rest] = keywords ?? []
   // A handle is typed with its `@`: it never counts as part of the query.
   const q = search.trim().replace(/^@/, "").toLowerCase()
@@ -69,20 +75,59 @@ const itemClass =
 const groupClass =
   "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-muted-foreground"
 
+/** A checkbox's look inside an option (the option is the control, so this draws only the state). Matches
+ *  Checkbox: a disabled checked box (an option already added) is muted. */
+function CheckMark({ state, disabled }: { state: boolean | "mixed"; disabled: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-checked={state === true ? "" : undefined}
+      data-mixed={state === "mixed" ? "" : undefined}
+      className={cn(
+        "flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-input bg-card [&>svg]:size-3.5",
+        "data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground data-mixed:border-primary data-mixed:bg-primary data-mixed:text-primary-foreground",
+        disabled && "data-checked:border-transparent data-checked:bg-muted-foreground data-checked:text-card",
+      )}
+    >
+      {state === true ? <CheckIcon /> : state === "mixed" ? <MinusIcon /> : null}
+    </span>
+  )
+}
+
 function ComboItem({
   option,
   selected,
   added,
+  checkbox,
   onCommit,
+  onUncommit,
   renderOption,
 }: {
   option: ComboOption
   selected: boolean
   /** Multi-pick: this option was picked in this opening; it stays listed, disabled, marked "Added". */
   added: boolean
+  /** Multi-pick with group rows: a checkbox on the left says whether it was added, in place of the check. */
+  checkbox: boolean
   onCommit: (value: string) => void
+  /** Multi-pick that can untick: an added option stays enabled, and picking it again removes it. */
+  onUncommit?: ((value: string) => void) | undefined
   renderOption?: ((option: ComboOption) => React.ReactNode) | undefined
 }) {
+  if (checkbox)
+    return (
+      <CommandPrimitive.Item
+        value={itemKey(option)}
+        keywords={[option.label, ...(option.keywords ?? [])]}
+        disabled={option.disabled || (added && !onUncommit)}
+        onSelect={() => (added && onUncommit ? onUncommit(option.value) : onCommit(option.value))}
+        className={cn(itemClass, "pr-2")}
+      >
+        <CheckMark state={added} disabled={added && !onUncommit} />
+        <span className="min-w-0 flex-1 truncate">{renderOption ? renderOption(option) : option.label}</span>
+        {added ? <span className="sr-only">, Added</span> : null}
+      </CommandPrimitive.Item>
+    )
   return (
     <CommandPrimitive.Item
       value={itemKey(option)}
@@ -102,6 +147,47 @@ function ComboItem({
   )
 }
 
+/**
+ * A multi-pick group's first row: picking it adds every option of the group that is still addable and matches the
+ * filter. Its box is checked once all of them are added and mixed while only some are.
+ */
+function GroupRow({
+  group,
+  heading,
+  toAdd,
+  toRemove,
+  someAdded,
+  onCommit,
+  onUncommit,
+}: {
+  group: string
+  heading: React.ReactNode
+  /** The group's options this row would add now. */
+  toAdd: string[]
+  /** Once nothing is left to add: the group's added options (that match the filter) this row would remove. */
+  toRemove: string[]
+  someAdded: boolean
+  onCommit: (group: string, values: string[]) => void
+  onUncommit?: ((group: string, values: string[]) => void) | undefined
+}) {
+  const done = toAdd.length === 0
+  const canRemove = done && !!onUncommit && toRemove.length > 0
+  return (
+    <CommandPrimitive.Item
+      value={groupKey(group)}
+      disabled={done && !canRemove}
+      onSelect={() => (canRemove ? onUncommit?.(group, toRemove) : onCommit(group, toAdd))}
+      className={cn(itemClass, "pr-2 font-medium")}
+    >
+      <CheckMark state={done ? true : someAdded ? "mixed" : false} disabled={done && !canRemove} />
+      <span className="flex min-w-0 flex-1">{heading}</span>
+      <span className="shrink-0 text-xs font-normal text-muted-foreground">
+        {done ? "All added" : `Add ${toAdd.length === 1 ? "1" : `all ${toAdd.length}`}`}
+      </span>
+    </CommandPrimitive.Item>
+  )
+}
+
 /** Mounted only while open, so the arranging runs per opening, not on every parent render. */
 function ComboList({
   label,
@@ -109,7 +195,11 @@ function ComboList({
   value,
   emptyText,
   added,
+  groupRows,
   onCommit,
+  onCommitGroup,
+  onUncommit,
+  onUncommitGroup,
   onSearch,
   renderOption,
   renderGroup,
@@ -122,7 +212,13 @@ function ComboList({
   emptyText?: string
   /** Multi-pick mode: the values picked so far. */
   added?: Set<string> | undefined
+  /** Multi-pick mode: each group opens with a row that adds the whole group (and options show checkboxes). */
+  groupRows?: boolean
   onCommit: (value: string) => void
+  onCommitGroup?: (group: string, values: string[]) => void
+  /** Multi-pick that can untick: removes an option added in this opening (the highlight stays). */
+  onUncommit?: ((value: string) => void) | undefined
+  onUncommitGroup?: ((group: string, values: string[]) => void) | undefined
   onSearch: () => void
   renderOption?: ((option: ComboOption) => React.ReactNode) | undefined
   renderGroup?: ((group: string) => React.ReactNode) | undefined
@@ -131,7 +227,11 @@ function ComboList({
   const { loose, groups } = React.useMemo(() => arrange(options, value), [options, value])
   const current = options.find((o) => o.value === value)
   const [search, setSearch] = React.useState("")
-  const [highlight, setHighlight] = React.useState(current ? itemKey(current) : "")
+  // With group rows, the first highlight is the first option, never a group's row: Enter at once adds one skill.
+  const firstOption = groupRows ? groups[0]?.[1][0] : undefined
+  const [highlight, setHighlight] = React.useState(
+    current ? itemKey(current) : firstOption ? itemKey(firstOption) : "",
+  )
   // Fixed options stay on top while filtering (score 1), so cmdk's "highlight the first row" would pick
   // "None" and Enter would commit it. While the highlight is cmdk's own (no arrow or pointer move since the
   // last keystroke), a fixed row is swapped for the best real match.
@@ -139,7 +239,7 @@ function ComboList({
   // Two steps (the fixed key lands in state first, then the swap) so cmdk, which only follows a changed
   // `value` prop, is told again each time it re-highlights the fixed row.
   React.useEffect(() => {
-    if (moved.current || !search || !highlight.startsWith(FIXED)) return
+    if (moved.current || !search || !pinned(highlight)) return
     let best: { key: string; score: number } | undefined
     for (const o of options) {
       if (o.fixed || o.disabled) continue
@@ -172,10 +272,24 @@ function ComboList({
       option={o}
       selected={o.value === value}
       added={added?.has(o.value) ?? false}
+      checkbox={!!groupRows}
       onCommit={commit}
+      onUncommit={onUncommit}
       renderOption={renderOption}
     />
   )
+  const matches = (o: ComboOption) =>
+    !search || filter(itemKey(o), search, [o.label, ...(o.keywords ?? [])]) > 0
+  // A group's pick moves the highlight to the first option after the group that can still be added.
+  const commitGroup = (group: string, values: string[]) => {
+    const at = groups.findIndex(([g]) => g === group)
+    const next = groups
+      .slice(at + 1)
+      .flatMap(([, members]) => members)
+      .find((o) => !o.disabled && !added?.has(o.value) && matches(o))
+    if (next) setHighlight(itemKey(next))
+    onCommitGroup?.(group, values)
+  }
   return (
     <CommandPrimitive
       label="Search"
@@ -207,15 +321,37 @@ function ComboList({
         {/* Ungrouped options sit in a heading-less group: cmdk's re-sort appends loose items after
             every group, which would push fixed options below a group while filtering. */}
         <CommandPrimitive.Group>{loose.map(item)}</CommandPrimitive.Group>
-        {groups.map(([group, members]) => (
-          <CommandPrimitive.Group
-            key={group}
-            heading={renderGroup ? renderGroup(group) : group}
-            className={groupClass}
-          >
-            {members.map(item)}
-          </CommandPrimitive.Group>
-        ))}
+        {groups.map(([group, members]) => {
+          const heading = renderGroup ? renderGroup(group) : group
+          if (!groupRows)
+            return (
+              <CommandPrimitive.Group key={group} heading={heading} className={groupClass}>
+                {members.map(item)}
+              </CommandPrimitive.Group>
+            )
+          const shown = members.filter(matches)
+          return (
+            // The heading still names the group for assistive tech; the group's row shows it.
+            <CommandPrimitive.Group
+              key={group}
+              heading={group}
+              className="not-first:mt-1 not-first:border-t not-first:border-border not-first:pt-1 [&_[cmdk-group-heading]]:sr-only"
+            >
+              {shown.length > 0 ? (
+                <GroupRow
+                  group={group}
+                  heading={heading}
+                  toAdd={shown.filter((o) => !o.disabled && !added?.has(o.value)).map((o) => o.value)}
+                  toRemove={shown.filter((o) => added?.has(o.value)).map((o) => o.value)}
+                  someAdded={members.some((o) => added?.has(o.value))}
+                  onCommit={commitGroup}
+                  onUncommit={onUncommitGroup}
+                />
+              ) : null}
+              {members.map(item)}
+            </CommandPrimitive.Group>
+          )
+        })}
       </CommandPrimitive.List>
       {footer}
     </CommandPrimitive>
@@ -272,7 +408,15 @@ function Combobox({
   /** Multi-pick: a pick calls `onValueChange` and `announce("Added <label>")` and keeps the popover open;
    *  picked options stay listed, disabled and marked "Added" until it closes, and are left out the next
    *  time it opens. The list is still a single-select listbox (never aria-multiselectable). */
-  multiple?: { added: Set<string>; announce: (label: string) => void }
+  multiple?: {
+    added: Set<string>
+    announce: (label: string) => void
+    /** Each group opens with a row that adds all of its options (that match the filter) in one pick, and
+     *  options show a checkbox. `onValueChange` is called once per added value. */
+    groupRows?: boolean
+    /** With group rows: picking an added option (or a fully added group's row) again removes it. */
+    remove?: (value: string) => void
+  }
   /** A caller-supplied trigger (one element) in place of the default Select-shaped button. */
   trigger?: React.ReactElement
   /** A heading per group, in place of its name (a stable function): a long path that truncates in the middle. */
@@ -336,6 +480,30 @@ function Combobox({
     onValueChange(next)
   }
 
+  const commitGroup = (group: string, values: string[]) => {
+    if (!multiple || values.length === 0) return
+    lockPlacement()
+    multiple.announce(`Added ${values.length === 1 ? (options.find((o) => o.value === values[0])?.label ?? values[0]) : `${values.length} from ${group}`}`)
+    for (const v of values) onValueChange(v)
+  }
+
+  const remove = multiple?.remove
+  const label = (v: string) => options.find((o) => o.value === v)?.label ?? v
+  const uncommit = remove
+    ? (v: string) => {
+        lockPlacement()
+        multiple.announce(`Removed ${label(v)}`)
+        remove(v)
+      }
+    : undefined
+  const uncommitGroup = remove
+    ? (group: string, values: string[]) => {
+        lockPlacement()
+        multiple.announce(`Removed ${values.length === 1 ? label(values[0] ?? "") : `${values.length} from ${group}`}`)
+        for (const v of values) remove(v)
+      }
+    : undefined
+
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild ref={triggerRef}>
@@ -389,7 +557,11 @@ function Combobox({
           // Multi: once something is listed, an empty result is the filter's, not an empty list.
           emptyText={isMulti && listed.length > 0 ? FORM_MSG.noMatches : emptyText}
           added={multiple?.added}
+          groupRows={multiple?.groupRows}
           onCommit={commit}
+          onCommitGroup={commitGroup}
+          onUncommit={uncommit}
+          onUncommitGroup={uncommitGroup}
           onSearch={lockPlacement}
           renderOption={renderOption}
           renderGroup={renderGroup}

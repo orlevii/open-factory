@@ -206,6 +206,7 @@ function SkillPicker({
       emptyText={emptyText}
       renderOption={renderSkill}
       renderGroup={renderGroup}
+      groupRows
       picked={picked}
       footer={
         leftOut > 0 ? (

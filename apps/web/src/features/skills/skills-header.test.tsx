@@ -144,5 +144,5 @@ test("'2 updates' moves focus to the first source with an update", async () => {
   state.data = twelve({ updates: 2 });
   act(() => ws.push({ type: "library_changed" }));
   await userEvent.click(await screen.findByRole("button", { name: /^2\s+updates$/ }));
-  expect(screen.getByRole("button", { name: /acme\/s0/ })).toHaveFocus();
+  expect(screen.getByRole("button", { name: /^acme\/s0/ })).toHaveFocus();
 });

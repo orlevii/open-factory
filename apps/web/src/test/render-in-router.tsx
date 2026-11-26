@@ -5,12 +5,17 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { createQueryClient } from "@/lib/query-client";
 
 /** Renders one component inside a minimal router that knows the task routes, so `Link`s resolve to hrefs. */
 export function renderInRouter(ui: ReactNode) {
-  const root = createRootRoute({ component: () => <>{ui}</> });
+  // Components here may read the principals cache (a task badge's title).
+  const qc = createQueryClient({ queries: { retry: false } });
+  const root = createRootRoute({ component: () => <QueryClientProvider client={qc}>{ui}</QueryClientProvider>,
+  });
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({

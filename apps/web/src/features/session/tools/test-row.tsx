@@ -1,6 +1,8 @@
 import type { AnyEvent, ToolMeta } from "@open-factory/shared";
 import { screen } from "@testing-library/react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { createQueryClient } from "@/lib/query-client";
 import { se } from "@/test/session-fixtures";
 import { buildRows, type ToolRow } from "../rows";
 import { ToolCallRow } from "../tool-call-row";
@@ -27,17 +29,19 @@ export function toolRow(
 
 /** Test helper: the row as the timeline renders it (`data-row` on its own button, the body its
  *  sibling), toggling like the timeline does. */
+const qc = createQueryClient({ queries: { retry: false } });
+
 export function RowHarness({ row, open = false }: { row: ToolRow; open?: boolean }) {
   const [expanded, setExpanded] = useState(open);
   return (
-    <div>
+    <QueryClientProvider client={qc}>
       <ToolCallRow
         row={row}
         expanded={expanded}
         onToggle={() => setExpanded((x) => !x)}
         rowProps={{ "data-row": row.key }}
       />
-    </div>
+    </QueryClientProvider>
   );
 }
 

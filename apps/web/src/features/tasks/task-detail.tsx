@@ -29,6 +29,7 @@ import { skippedLeave, useFieldErrors } from "@/components/forms/use-field-error
 import { Markdown } from "@/components/markdown/markdown";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { PageHeader } from "@/components/page-header";
+import { InlineTags } from "@/components/tag/inline-tags";
 import { usePlainTags } from "@/components/tag/plain-tags";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -401,7 +402,7 @@ function TitleBlock({
       ) : (
         <div className="flex min-w-0 items-start gap-2">
           <h2 className="min-w-0 font-heading text-xl leading-7 font-[650] tracking-[-0.015em] [overflow-wrap:anywhere]">
-            {task.title}
+            <InlineTags text={task.title} />
           </h2>
           <Button
             ref={edit}

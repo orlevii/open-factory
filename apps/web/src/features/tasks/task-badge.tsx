@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { usePlainTags } from "@/components/tag/plain-tags";
 import { LINK_CLASS } from "@/features/session/message-block";
 
 /**
@@ -17,6 +18,7 @@ export function TaskBadge({
   link?: boolean | { comment?: string | undefined };
   className?: string;
 }) {
+  const plain = usePlainTags(title ?? "");
   const body = (
     <>
       <span className="shrink-0 font-mono text-foreground">{taskKey}</span>
@@ -25,7 +27,7 @@ export function TaskBadge({
           <span aria-hidden="true" className="mx-1 shrink-0 text-muted-foreground">
             ·
           </span>
-          <span className="min-w-0 truncate text-foreground">{title}</span>
+          <span className="min-w-0 truncate text-foreground">{plain}</span>
         </>
       ) : null}
     </>
@@ -38,7 +40,7 @@ export function TaskBadge({
       to="/tasks/$key"
       params={{ key: taskKey }}
       search={comment ? { comment } : {}}
-      aria-label={`Task ${taskKey}${title ? `: ${title}` : ""}`}
+      aria-label={`Task ${taskKey}${title ? `: ${plain}` : ""}`}
       className={`${base} ${LINK_CLASS}`}
     >
       {body}

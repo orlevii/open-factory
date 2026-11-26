@@ -1,4 +1,4 @@
-import type { InboxItem } from "@open-factory/shared";
+import type { InboxItem, PrincipalItem } from "@open-factory/shared";
 import {
   hashKey,
   type InfiniteData,
@@ -9,24 +9,24 @@ import { useMemo } from "react";
 import type { CompletionItem, CompletionSource } from "@/components/composer/composer";
 import {
   acceptMention,
-  type Mention,
   type MentionAgent,
-  type MentionHuman,
   mentionOpensAt,
   rankMentions,
 } from "@/components/composer/mentions";
 import { inboxQueryKey } from "@/features/inbox/api";
+import {
+  type PrincipalsCache,
+  principalsQueryOptions,
+  requestPrincipal,
+} from "@/features/principals/api";
 import { agentsListQueryOptions } from "@/features/session/api";
-import { usersQueryOptions } from "@/features/settings/api";
 import { sessionQueryOptions } from "@/lib/session";
 
 // The `@` source over the app's query cache. It lives in features (not components/composer, which
-// keeps the pure matching and ranking) because it reads the inbox, agents, users and session data.
+// keeps the pure matching and ranking) because it reads the inbox, principals and session data.
 
-/** The users list is refreshed at most this often by an opening menu. */
-const USERS_STALE_MS = 60_000;
 const NO_AGENTS: MentionAgent[] = [];
-const NO_HUMANS: MentionHuman[] = [];
+const NO_PRINCIPALS: PrincipalItem[] = [];
 type InboxPage = {
   items: Pick<InboxItem, "from" | "createdAt">[];
   chats?: { agent: { handle: string }; latest: { createdAt: string } }[] | undefined;
@@ -45,49 +45,80 @@ function recentSenders(qc: QueryClient): string[] {
   return found.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).map((f) => f.handle);
 }
 
-const toItem = (m: Mention): CompletionItem => ({
-  id: m.handle,
-  label: m.name,
-  detail: `@${m.handle}`,
-  group: m.kind === "agent" ? "agents" : "humans",
-  ...(m.kind === "agent"
+const toItem = (p: PrincipalItem): CompletionItem => ({
+  id: p.ref,
+  label: p.name,
+  detail: `@${p.handle}`,
+  group: p.kind === "agent" ? "agents" : "humans",
+  ...(p.avatar
     ? {
         avatar: {
-          agentRef: m.ref,
-          template: m.template,
-          avatarVersion: m.avatarVersion,
-          color: m.color,
+          agentRef: p.ref,
+          template: p.avatar.template,
+          avatarVersion: p.avatar.avatarVersion,
+          color: p.avatar.color,
         },
       }
-    : {}),
+    : { human: { name: p.name } }),
 });
 
+/** What the menu note says picking does; the surface that owns the composer knows. */
+export type MentionNote = { note?: string };
+
 /**
- * The `@` source over the query cache (review notes M3, m11): `items(query)` reads the agents, users,
- * session and inbox data already cached when the menu asks (only while it is open), so nothing is
- * fetched per keystroke and no list frame renders the composer while the menu is closed. Task comments and the session both
- * insert `@handle ` (U3 §13.4).
+ * The `@` source over the query cache: it tags. `items(query)` ranks the live principals already cached
+ * when the menu asks (only while it is open), so nothing is fetched per keystroke and no list frame
+ * renders the composer while the menu is closed. A picked row is a tag range (`acceptTag`, `id` is the
+ * ref), stored and sent as `<@ref>`; `tagHandle` hydrates stored tags back to `@handle`.
  */
-export function mentionSource(qc: QueryClient, label: string): CompletionSource {
+export function mentionSource(qc: QueryClient, { note }: MentionNote = {}): CompletionSource {
+  const cache = () => qc.getQueryData<PrincipalsCache>(principalsQueryOptions.queryKey);
+  const principalsHash = hashKey(principalsQueryOptions.queryKey);
   return {
     trigger: "@",
-    label,
+    label: "Tag someone",
     opensAt: mentionOpensAt,
-    items: (query) =>
-      rankMentions(query, {
-        agents:
-          qc.getQueryData<MentionAgent[]>(agentsListQueryOptions("exclude").queryKey) ?? NO_AGENTS,
-        humans: qc.getQueryData<MentionHuman[]>(usersQueryOptions.queryKey) ?? NO_HUMANS,
-        me: qc.getQueryData(sessionQueryOptions.queryKey)?.user.handle,
+    items: (query) => {
+      const me = qc.getQueryData(sessionQueryOptions.queryKey)?.user.handle;
+      const agents = qc.getQueryData<MentionAgent[]>(agentsListQueryOptions("exclude").queryKey);
+      const reports = new Set(
+        (agents ?? NO_AGENTS).filter((a) => a.reportsTo.handle === me).map((a) => a.handle),
+      );
+      const everyone = cache()?.byRef.values();
+      return rankMentions(query, everyone ? [...everyone] : NO_PRINCIPALS, {
+        me,
         recent: recentSenders(qc),
-      }).map(toItem),
-    accept: (item, text, from, caret) => acceptMention(text, item.id, from, caret),
-    // While the menu is open: the users list loads once if nobody cached it (a task page visited
-    // first), and a change to either list re-reads the rows, so late data shows without a keystroke.
+        reports,
+      }).map(toItem);
+    },
+    // The row's detail is `@handle`.
+    acceptTag: (item) => ({ ref: item.id, handle: (item.detail ?? "").slice(1) }),
+    accept: (item, text, from, caret) =>
+      acceptMention(text, (item.detail ?? "").slice(1), from, caret),
+    tagHandle(ref) {
+      const found = cache()?.byRef.get(ref);
+      if (found) return found.handle;
+      // Not loaded yet: ask (everyone when there is no cache at all, else this ref in a batch).
+      if (cache()) requestPrincipal(qc, ref);
+      else void qc.prefetchQuery(principalsQueryOptions);
+      return undefined;
+    },
+    watchTags: (onChange) =>
+      qc.getQueryCache().subscribe((e) => {
+        if (
+          e.type === "updated" &&
+          e.action.type === "success" &&
+          e.query.queryHash === principalsHash
+        )
+          onChange();
+      }),
+    ...(note ? { menuNote: (rows: number) => (rows > 0 ? note : undefined) } : {}),
+    // While the menu is open: the principals load once if nobody cached them, and a change to them
+    // or to the agents list re-reads the rows, so late data shows without a keystroke.
     watch(onChange) {
-      void qc.prefetchQuery({ ...usersQueryOptions, staleTime: USERS_STALE_MS });
+      void qc.prefetchQuery(principalsQueryOptions);
       const watched = new Set([
-        hashKey(usersQueryOptions.queryKey),
+        principalsHash,
         hashKey(agentsListQueryOptions("exclude").queryKey),
       ]);
       return qc.getQueryCache().subscribe((e) => {
@@ -98,8 +129,9 @@ export function mentionSource(qc: QueryClient, label: string): CompletionSource 
   };
 }
 
-/** One `@` source per query client: identity-stable, so it never breaks the composer's `memo`. */
-export function useMentionSource(label: string): CompletionSource {
+/** One `@` source per query client and note: identity-stable, so it never breaks the composer's `memo`. */
+export function useMentionSource(opts: MentionNote = {}): CompletionSource {
   const qc = useQueryClient();
-  return useMemo(() => mentionSource(qc, label), [qc, label]);
+  const { note } = opts;
+  return useMemo(() => mentionSource(qc, note ? { note } : {}), [qc, note]);
 }

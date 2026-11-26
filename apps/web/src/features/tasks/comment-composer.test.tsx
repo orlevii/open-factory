@@ -107,34 +107,45 @@ test("the draft lives in localStorage under of-draft:v1:task:<key>", async () =>
   });
 });
 
-test("`@` completes a handle as `@handle ` from the cached agents and users lists", async () => {
+test("a picked tag shows as @handle and is posted as <@ref>; a typed @name that wasn't picked is posted as text", async () => {
   const qc = new QueryClient();
-  qc.setQueryData(
-    ["agents", "exclude"],
-    [
-      {
-        ref: refFor("dev"),
-        handle: "dev",
-        displayName: "Dev",
-        reportsTo: { kind: "human", ref: refFor("or"), handle: "or" },
-        template: "t",
-        avatarVersion: null,
-        archivedAt: null,
-      },
-    ],
-  );
+  const principal = (handle: string, kind: "agent" | "human", name: string, state = "live") => ({
+    id: handle,
+    ref: refFor(handle),
+    kind,
+    handle,
+    name,
+    state,
+    avatar: kind === "agent" ? { template: "t", avatarVersion: null, color: null } : null,
+  });
+  const list = [
+    principal("dev", "agent", "Dev"),
+    principal("dana", "human", "Dana"),
+    principal("or", "human", "Or"),
+    principal("dax", "human", "Dax", "disabled"),
+  ];
+  qc.setQueryData(["principals"], {
+    byRef: new Map(list.map((p) => [p.ref, p])),
+    unknown: new Set(),
+  });
   // Dev reports to the viewer, so it ranks first once @dana is used.
   qc.setQueryData(["session"], { user: { handle: "or" } });
-  qc.setQueryData(["users"], [{ handle: "dana", name: "Dana", disabledAt: null }]);
+  qc.setQueryData(["agents", "exclude"], [{ handle: "dev", reportsTo: { handle: "or" } }]);
   const { box } = setup(qc);
   await userEvent.type(box(), "cc @da");
   expect(screen.getByRole("option", { name: /Dana/ })).toBeInTheDocument();
+  expect(screen.queryByRole("option", { name: /Dax/ })).toBeNull();
   await userEvent.keyboard("{Tab}");
   expect(box()).toHaveValue("cc @dana ");
   await userEvent.type(box(), "and @");
   await userEvent.keyboard("{Enter}");
   expect(box()).toHaveValue("cc @dana and @dev ");
   expect(posts).toEqual([]);
+  await userEvent.type(box(), "and @ghost");
+  await userEvent.keyboard("{Escape}{Enter}");
+  await waitFor(() =>
+    expect(posts).toEqual([{ body: `cc <@${refFor("dana")}> and <@${refFor("dev")}> and @ghost` }]),
+  );
 });
 
 test("while a comment posts a muted Posting… status shows; Send keeps its label", async () => {

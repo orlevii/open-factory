@@ -1,11 +1,7 @@
+import type { PrincipalItem } from "@open-factory/shared";
 import type { QueryClient } from "@tanstack/react-query";
 import type { CompletionItem, CompletionSource } from "@/components/composer/composer";
-import {
-  type Mention,
-  type MentionAgent,
-  mentionOpensAt,
-  rankMentions,
-} from "@/components/composer/mentions";
+import { type MentionAgent, mentionOpensAt, rankMentions } from "@/components/composer/mentions";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { MAX_RECIPIENTS } from "@/lib/drafts";
 
@@ -13,6 +9,16 @@ export const AT_LABEL = "Add a recipient";
 export const MENU_NOTE = "Adds a recipient · Esc keeps it as text";
 export const FULL_NOTE = `A message goes to at most ${MAX_RECIPIENTS} agents.`;
 const NO_AGENTS: MentionAgent[] = [];
+
+const toPrincipal = (a: MentionAgent): PrincipalItem => ({
+  id: a.ref,
+  ref: a.ref,
+  kind: "agent",
+  handle: a.handle,
+  name: a.displayName || a.handle,
+  state: a.terminatedAt ? "terminated" : a.archivedAt ? "archived" : "live",
+  avatar: { template: a.template, avatarVersion: a.avatarVersion, color: a.color },
+});
 const HANDLE_TAIL = /^[A-Za-z0-9-]*/;
 
 type Held = {
@@ -38,27 +44,16 @@ export function recipientSource(qc: QueryClient, h: Held): CompletionSource {
     items(query) {
       if (full()) return [];
       const skip = new Set([h.agentRef, ...h.added()]);
-      return rankMentions(query, {
-        agents:
-          qc.getQueryData<MentionAgent[]>(agentsListQueryOptions("exclude").queryKey) ?? NO_AGENTS,
-        humans: [],
-        me: undefined,
-      })
-        .filter(
-          (m): m is Extract<Mention, { kind: "agent" }> => m.kind === "agent" && !skip.has(m.ref),
-        )
+      const agents = qc.getQueryData<MentionAgent[]>(agentsListQueryOptions("exclude").queryKey);
+      return rankMentions(query, (agents ?? NO_AGENTS).map(toPrincipal), { me: undefined })
+        .filter((m) => !skip.has(m.ref))
         .map(
           (m): CompletionItem => ({
             id: m.ref,
             label: `Add @${m.handle} as recipient`,
             detail: m.name,
             group: "agents",
-            avatar: {
-              agentRef: m.ref,
-              template: m.template,
-              avatarVersion: m.avatarVersion,
-              color: m.color,
-            },
+            ...(m.avatar ? { avatar: { agentRef: m.ref, ...m.avatar } } : {}),
           }),
         );
     },

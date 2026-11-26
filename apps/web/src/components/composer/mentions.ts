@@ -1,4 +1,4 @@
-import type { AgentSummary } from "@open-factory/shared";
+import type { AgentSummary, PrincipalItem } from "@open-factory/shared";
 
 /** The agent fields a mention reads (from the cached live agents list). */
 export type MentionAgent = Pick<
@@ -12,20 +12,6 @@ export type MentionAgent = Pick<
   | "color"
   | "archivedAt"
 > & { terminatedAt?: string | undefined };
-export type MentionHuman = { handle: string; name: string; disabledAt?: string | null };
-
-export type Mention =
-  | {
-      kind: "agent";
-      /** The agent's ref: what a recipient is stored and sent as. */
-      ref: string;
-      handle: string;
-      name: string;
-      template: string;
-      avatarVersion: string | null;
-      color: number | null;
-    }
-  | { kind: "human"; handle: string; name: string };
 
 /** Before `@`: the start, or not a letter, digit, `_`, `/`, `.` or `@` (an email or a path never opens
  *  it, as the tag scanner never reads one); then the handle typed so far, up to the caret. */
@@ -57,69 +43,54 @@ const isWordStart = (name: string, q: string) =>
   name.startsWith(q) || name.split(/[\s_-]+/).some((w) => w.startsWith(q));
 
 /** 0 a prefix match (the handle, or a word of the name), 1 a match inside either, -1 none. */
-function matchClass(m: Mention, q: string): number {
+function matchClass(p: PrincipalItem, q: string): number {
   if (!q) return 0;
-  const name = m.name.toLowerCase();
-  if (m.handle.startsWith(q) || isWordStart(name, q)) return 0;
-  return m.handle.includes(q) || name.includes(q) ? 1 : -1;
+  const name = p.name.toLowerCase();
+  if (p.handle.startsWith(q) || isWordStart(name, q)) return 0;
+  return p.handle.includes(q) || name.includes(q) ? 1 : -1;
 }
 
+const NO_HANDLES: ReadonlySet<string> = new Set();
+
 /**
- * U3 §13.4: live agents (archived and terminated ones never), and the enabled humans other than
- * you. Prefix matches first; within them your recent senders (newest first), then your reports
- * (agents whose manager is your handle), then
- * everyone alphabetically by name.
+ * U3 §13.4: the live principals (ended ones are never offered) other than you. Prefix matches
+ * first; within them your recent senders (newest first), then your reports, then everyone
+ * alphabetically by name.
  */
 export function rankMentions(
   query: string,
+  principals: readonly PrincipalItem[],
   {
-    agents,
-    humans,
     me,
     recent = [],
+    reports = NO_HANDLES,
   }: {
-    agents: readonly MentionAgent[];
-    humans: readonly MentionHuman[];
     me: string | undefined;
-    /** Agent handles that wrote to you, newest first. */
+    /** Handles that wrote to you, newest first. */
     recent?: readonly string[];
+    /** Handles of the agents that report to you. */
+    reports?: ReadonlySet<string>;
   },
-): Mention[] {
+): PrincipalItem[] {
   const q = query.toLowerCase();
   const recentAt = new Map<string, number>();
   for (const s of recent) if (!recentAt.has(s)) recentAt.set(s, recentAt.size);
-  const rows: { m: Mention; cls: number; tier: number; order: number }[] = [];
-  const add = (m: Mention, tier: number, order = 0) => {
-    const cls = matchClass(m, q);
-    if (cls >= 0) rows.push({ m, cls, tier, order });
-  };
-  for (const a of agents) {
-    if (a.archivedAt || a.terminatedAt) continue;
-    const m: Mention = {
-      kind: "agent",
-      ref: a.ref,
-      handle: a.handle,
-      name: a.displayName || a.handle,
-      template: a.template,
-      avatarVersion: a.avatarVersion,
-      color: a.color,
-    };
-    const r = recentAt.get(a.handle);
-    // "Your reports": the agents whose manager is your handle.
-    if (r !== undefined) add(m, 0, r);
-    else add(m, a.reportsTo.handle === me ? 1 : 2);
-  }
-  for (const h of humans) {
-    if (h.disabledAt || h.handle === me) continue;
-    add({ kind: "human", handle: h.handle, name: h.name || h.handle }, 2);
+  const rows: { p: PrincipalItem; cls: number; tier: number; order: number }[] = [];
+  for (const p of principals) {
+    if (p.state !== "live" || p.handle === me) continue;
+    const cls = matchClass(p, q);
+    if (cls < 0) continue;
+    const r = recentAt.get(p.handle);
+    if (r !== undefined) rows.push({ p, cls, tier: 0, order: r });
+    else rows.push({ p, cls, tier: reports.has(p.handle) ? 1 : 2, order: 0 });
   }
   rows.sort(
     (a, b) =>
       a.cls - b.cls ||
       a.tier - b.tier ||
       a.order - b.order ||
-      a.m.name.localeCompare(b.m.name) ||
-      a.m.handle.localeCompare(b.m.handle),
+      a.p.name.localeCompare(b.p.name) ||
+      a.p.handle.localeCompare(b.p.handle),
   );
-  return rows.map((r) => r.m);
+  return rows.map((r) => r.p);
 }

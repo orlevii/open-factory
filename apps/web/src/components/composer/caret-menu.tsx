@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
+import { HumanAvatar } from "@/components/human-avatar";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import type { CompletionItem } from "./composer";
@@ -23,7 +24,7 @@ export type CaretMenuHandle = {
   accept(enter?: boolean): boolean;
 };
 
-const COPY_PROPS = [
+export const COPY_PROPS = [
   "boxSizing",
   "borderTopWidth",
   "borderRightWidth",
@@ -348,6 +349,7 @@ function CommandRow({ item }: { item: CompletionItem }) {
 function MentionRow({ item }: { item: CompletionItem }) {
   return (
     <>
+      {item.human ? <HumanAvatar name={item.human.name} size={16} /> : null}
       {item.avatar ? (
         <AgentAvatar
           agentRef={item.avatar.agentRef}

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createUploadStore } from "@/features/session/uploads";
-import { readDraft } from "@/lib/drafts";
+import { readDraft, writeDraft } from "@/lib/drafts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { FakeXhr, file, holdFrames, installFakeXhr, lastXhr } from "@/test/fake-xhr";
 import { json, mockApi } from "@/test/mock-api";
@@ -1400,4 +1400,227 @@ test("a held Send is focusable and aria-disabled, its reason linked; pressing it
   await userEvent.click(send);
   expect(onSubmit).not.toHaveBeenCalled();
   expect(slot()).toHaveTextContent("Waiting for 1 upload");
+});
+
+// ---- Tags: atomic ranges over the text (principals and tags §4.5) ----
+
+const ADA = refFor("ada");
+const BOB = refFor("bob");
+const HANDLES: Record<string, string> = { [ADA]: "ada", [BOB]: "bob" };
+const TAGGING: CompletionSource = {
+  trigger: "@",
+  label: "Tag someone",
+  opensAt: mentionOpensAt,
+  items: (q) =>
+    [
+      { id: ADA, label: "Ada", detail: "@ada", group: "agents" },
+      { id: BOB, label: "Bob", detail: "@bob", group: "humans" },
+    ].filter((p) => p.detail.slice(1).startsWith(q)),
+  accept: (item, text, from, caret) => acceptMention(text, item.id, from, caret),
+  acceptTag: (item) => ({ ref: item.id, handle: (item.detail ?? "").slice(1) }),
+  tagHandle: (ref) => HANDLES[ref],
+};
+const TAGS = { at: TAGGING };
+const sentText = (onSubmit: ReturnType<typeof setup>["onSubmit"]) => onSubmit.mock.calls[0]?.[0];
+/** The caret moved to `at`, then the event that makes React report a selection (a click's mouseup, a key's keyup). */
+const caretAt = (box: HTMLElement, at: number, to = at, event: "mouseUp" | "keyUp" = "mouseUp") => {
+  (box as HTMLTextAreaElement).setSelectionRange(at, to);
+  fireEvent[event](box);
+};
+const undoKey = (box: HTMLElement) =>
+  fireEvent(
+    box,
+    new InputEvent("beforeinput", { inputType: "historyUndo", cancelable: true, bubbles: true }),
+  );
+async function pickAda(box: HTMLElement, before = "") {
+  await userEvent.type(box, `${before}@a`);
+  await userEvent.keyboard("{Tab}");
+}
+
+test("picking from @ inserts a tag that is sent as <@ref>", async () => {
+  const { box, onSubmit } = setup({ completions: TAGS });
+  await pickAda(box, "hi ");
+  expect(box).toHaveValue("hi @ada ");
+  await userEvent.type(box, "now{Enter}");
+  expect(sentText(onSubmit)).toBe(`hi <@${ADA}> now`);
+});
+
+test("typed @name that wasn't picked is sent as text", async () => {
+  const { box, onSubmit } = setup({ completions: TAGS });
+  await userEvent.type(box, "hi @ada{Escape}{Enter}");
+  expect(sentText(onSubmit)).toBe("hi @ada");
+});
+
+test("a click inside a tag puts the caret at its edge", async () => {
+  const { box } = setup({ completions: TAGS });
+  await pickAda(box);
+  fireEvent.mouseDown(box);
+  caretAt(box, 1);
+  expect((box as HTMLTextAreaElement).selectionStart).toBe(0);
+  caretAt(box, 3);
+  expect((box as HTMLTextAreaElement).selectionStart).toBe(4);
+});
+
+test("an arrow key moves the caret across a tag in one step", async () => {
+  const { box } = setup({ completions: TAGS });
+  await pickAda(box);
+  caretAt(box, 4);
+  fireEvent.keyDown(box, { key: "ArrowLeft" });
+  caretAt(box, 3, 3, "keyUp"); // the browser's own move: one character left, into the tag
+  expect((box as HTMLTextAreaElement).selectionStart).toBe(0);
+});
+
+test("a selection ending inside a tag grows to hold the whole tag", async () => {
+  const { box } = setup({ completions: TAGS });
+  await pickAda(box, "x ");
+  caretAt(box, 0, 4);
+  expect([
+    (box as HTMLTextAreaElement).selectionStart,
+    (box as HTMLTextAreaElement).selectionEnd,
+  ]).toEqual([0, 6]);
+});
+
+test("Backspace at a tag's end removes it whole", async () => {
+  const { box, onSubmit } = setup({ completions: TAGS });
+  await pickAda(box);
+  caretAt(box, 4);
+  fireEvent.keyDown(box, { key: "Backspace" });
+  expect(box).toHaveValue("");
+  await userEvent.type(box, "x{Enter}");
+  expect(sentText(onSubmit)).toBe("x");
+});
+
+test("Delete at a tag's start removes it whole, with its space", async () => {
+  const { box } = setup({ completions: TAGS });
+  await userEvent.type(box, "a ");
+  await pickAda(box);
+  caretAt(box, 2);
+  fireEvent.keyDown(box, { key: "Delete" });
+  expect(box).toHaveValue("a ");
+});
+
+test("undo after deleting a tag restores it as a tag", async () => {
+  const { box, onSubmit } = setup({ completions: TAGS });
+  await pickAda(box);
+  caretAt(box, 4);
+  fireEvent.keyDown(box, { key: "Backspace" });
+  expect(box).toHaveValue("");
+  const notPrevented = undoKey(box);
+  expect(notPrevented).toBe(false); // the browser's own undo was stopped
+  expect(box).toHaveValue("@ada ");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe(`<@${ADA}> `);
+});
+
+test("undo right after a pick brings back @query with the menu closed", async () => {
+  const { box } = setup({ completions: TAGS });
+  await pickAda(box);
+  expect(box).toHaveValue("@ada ");
+  undoKey(box);
+  expect(box).toHaveValue("@a");
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+test("Ctrl+Y redoes what undo took back", async () => {
+  const { box } = setup({ completions: TAGS });
+  await pickAda(box);
+  fireEvent.keyDown(box, { key: "z", ctrlKey: true });
+  expect(box).toHaveValue("@a");
+  fireEvent.keyDown(box, { key: "y", ctrlKey: true });
+  expect(box).toHaveValue("@ada ");
+});
+
+test("typing undoes a word at a time, and after a pause", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const user = userEvent.setup({ delay: null });
+  const { box } = setup({ completions: TAGS });
+  await user.type(box, "one two");
+  vi.setSystemTime(Date.now() + 600);
+  await user.type(box, "three");
+  fireEvent.keyDown(box, { key: "z", metaKey: true });
+  expect(box).toHaveValue("one two");
+  fireEvent.keyDown(box, { key: "z", metaKey: true });
+  expect(box).toHaveValue("one");
+  fireEvent.keyDown(box, { key: "z", metaKey: true, shiftKey: true });
+  expect(box).toHaveValue("one two");
+});
+
+test("pasting copied tags keeps them as tags", async () => {
+  const { box, onSubmit } = setup({ completions: TAGS });
+  const html = `<span data-of-tag="${ADA}">@ada</span> and <span data-of-tag="${BOB}">@bob</span>`;
+  fireEvent.paste(box, {
+    clipboardData: {
+      files: [],
+      getData: (t: string) => (t === "text/html" ? html : "@ada and @bob"),
+    },
+  });
+  expect(box).toHaveValue("@ada and @bob");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe(`<@${ADA}> and <@${BOB}>`);
+});
+
+test("a pasted stored tag in plain text becomes a tag", async () => {
+  const { box, onSubmit } = setup({ completions: TAGS });
+  fireEvent.paste(box, {
+    clipboardData: {
+      files: [],
+      getData: (t: string) => (t === "text/plain" ? `<@${BOB}|bob> hi` : ""),
+    },
+  });
+  expect(box).toHaveValue("@bob hi");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe(`<@${BOB}> hi`);
+});
+
+test("copying a tag writes @handle as text and a data-of-tag span as html", async () => {
+  const { box } = setup({ completions: TAGS });
+  await pickAda(box);
+  (box as HTMLTextAreaElement).setSelectionRange(0, 5);
+  const set = vi.fn();
+  fireEvent.copy(box, { clipboardData: { setData: set } });
+  expect(set).toHaveBeenCalledWith("text/plain", "@ada ");
+  expect(set).toHaveBeenCalledWith("text/html", `<span data-of-tag="${ADA}">@ada</span> `);
+});
+
+test("a draft with a tag hydrates back to @handle and sends <@ref>", async () => {
+  writeDraft("agent:dev", `hi <@${ADA}> there`);
+  const { box, onSubmit } = setup({ completions: TAGS });
+  expect(box).toHaveValue("hi @ada there");
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe(`hi <@${ADA}> there`);
+});
+
+test("a tag whose principal is still pending shows @… and takes its handle once known", async () => {
+  const late: Record<string, string> = {};
+  let notify = () => {};
+  const source: CompletionSource = {
+    ...TAGGING,
+    tagHandle: (ref) => late[ref],
+    watchTags: (cb) => {
+      notify = cb;
+      return () => {};
+    },
+  };
+  writeDraft("agent:dev", `hi <@${ADA}>`);
+  const { box } = setup({ completions: { at: source } });
+  expect(box).toHaveValue("hi @…");
+  late[ADA] = "ada";
+  act(() => notify());
+  expect(box).toHaveValue("hi @ada");
+});
+
+test("an IME composition that starts inside a tag turns it back into plain text", async () => {
+  const { box, onSubmit } = setup({ completions: TAGS });
+  await pickAda(box);
+  (box as HTMLTextAreaElement).setSelectionRange(2, 2); // no select event: the caret is left inside
+  fireEvent.compositionStart(box);
+  fireEvent.compositionEnd(box);
+  await userEvent.type(box, "{Enter}");
+  expect(sentText(onSubmit)).toBe("@ada ");
+});
+
+test("a composer without a tagging source leaves <@ref> text raw", async () => {
+  writeDraft("agent:dev", `see <@${ADA}>`);
+  const { box } = setup({ completions: { at: AT } });
+  expect(box).toHaveValue(`see <@${ADA}>`);
 });

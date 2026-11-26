@@ -1,6 +1,6 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { RESERVED_HANDLES } from "@open-factory/shared";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
@@ -11,39 +11,6 @@ export const HUMANS_SEND_REFUSAL =
   "`@humans` isn't a handle. Message people by handle; list_peers lists them.";
 export const HUMANS_MENTION_REFUSAL =
   "`@humans` isn't a handle. Mention people by handle; list_peers lists them.";
-
-/**
- * Agent slugs and human handles share one namespace (spec §4.1). Claims a handle for `kind`; false means taken.
- * A reclaim is allowed only within the same kind and only while nothing references the claim. Callers validate
- * first (`handleSchema`/`slugSchema` refuse reserved names), so this never sees one.
- */
-export async function claimHandle(
-  db: Db | Tx,
-  handle: string,
-  kind: "agent" | "user",
-): Promise<boolean> {
-  const rows = await db.execute(sql`
-    INSERT INTO handles (handle, kind) VALUES (${handle}, ${kind})
-    ON CONFLICT (handle) DO UPDATE SET claimed_at = now()
-      WHERE handles.kind = excluded.kind
-        AND NOT EXISTS (SELECT 1 FROM users  WHERE users.handle = handles.handle)
-        AND NOT EXISTS (SELECT 1 FROM agents WHERE agents.slug  = handles.handle)
-    RETURNING handle`);
-  return rows.length > 0;
-}
-
-/** The cheap pre-read: who holds this handle, if anyone. The claim is still the guarantee. */
-export async function handleKind(
-  db: Db | Tx,
-  handle: string,
-): Promise<"agent" | "user" | undefined> {
-  const [row] = await db
-    .select({ kind: schema.handles.kind })
-    .from(schema.handles)
-    .where(eq(schema.handles.handle, handle))
-    .limit(1);
-  return row?.kind as "agent" | "user" | undefined;
-}
 
 export type ResolvedName =
   | { kind: "agent"; agent: AgentRow }
@@ -60,19 +27,19 @@ export async function resolveName(db: Db | Tx, raw: string): Promise<ResolvedNam
   if (RESERVED.includes(name)) return { kind: "reserved", name };
   const [row] = await db
     .select({
-      kind: schema.handles.kind,
+      kind: schema.principals.kind,
       agent: schema.agents,
       userId: schema.users.id,
-      userHandle: schema.users.handle,
+      userHandle: schema.principals.handle,
       disabledAt: schema.users.disabledAt,
     })
-    .from(schema.handles)
-    .leftJoin(schema.agents, eq(schema.agents.slug, schema.handles.handle))
-    .leftJoin(schema.users, eq(schema.users.handle, schema.handles.handle))
-    .where(eq(schema.handles.handle, name))
+    .from(schema.principals)
+    .leftJoin(schema.agents, eq(schema.agents.id, schema.principals.id))
+    .leftJoin(schema.users, eq(schema.users.id, schema.principals.id))
+    .where(eq(schema.principals.handle, name))
     .limit(1);
   if (row?.kind === "agent" && row.agent) return { kind: "agent", agent: row.agent };
-  if (row?.kind === "user" && row.userId && row.userHandle)
+  if (row?.kind === "human" && row.userId && row.userHandle)
     return { kind: "user", userId: row.userId, handle: row.userHandle, disabled: !!row.disabledAt };
   return { kind: "none", name };
 }

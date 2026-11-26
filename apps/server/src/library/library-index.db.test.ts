@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { schema } from "@open-factory/db";
 import type { ConfigDoc } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { seedTestPrincipal, testManagerUserId } from "../test/principals.ts";
 import { LibraryIndex } from "./library-index.ts";
 
 let tdb: Awaited<ReturnType<typeof createTestDb>>;
@@ -37,9 +37,9 @@ test("the database store reads live sources and live agents, and usedBy counts t
     .values({ id: randomUUID(), name: "c", kind: "api_key", valueEnc: Buffer.from("x") })
     .returning();
   const agent = async (slug: string, o: { archivedAt?: Date; config?: object } = {}) => {
-    await claimTestHandle(db, slug, "agent");
+    const principal = await seedTestPrincipal(db, "agent", slug);
     await db.insert(schema.agents).values({
-      id: randomUUID(),
+      id: principal.id,
       slug,
       displayName: slug,
       template: "dev",

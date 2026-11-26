@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { claimTestHandleSql, testManagerUserIdSql } from "../../test/handles.ts";
+import { principalSql, testManagerUserIdSql } from "../../test/principals.ts";
 
 /** A minimal agent row (plus a credential row with a dummy blob) for tests that don't start real agents. */
 export async function insertAgent(
@@ -27,7 +27,7 @@ export async function insertAgent(
   const credId = `cred-${a.id}`;
   await sql`insert into credentials (id, name, kind, value_enc)
             values (${credId}, ${`cred-${a.id}`}, 'oauth_token', ${Buffer.from("dummy")})`;
-  await claimTestHandleSql(sql, a.slug, "agent");
+  await sql.unsafe(principalSql(a.id, "agent", a.slug));
   const kind = a.kind ?? (a.terminatedAt ? "ephemeral" : "persistent");
   const reportsToUser =
     kind === "persistent" && !a.reportsTo

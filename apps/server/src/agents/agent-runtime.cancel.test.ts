@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
+import { principalSql } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { deliverHuman, RuntimeHarness } from "./testing/runtime-harness.ts";
 import { RecordingSlots } from "./testing/slots.ts";
@@ -7,9 +7,8 @@ import { RecordingSlots } from "./testing/slots.ts";
 const h = new RuntimeHarness();
 beforeAll(async () => {
   await h.setup();
-  await claimTestHandleSql(h.t.sql, "sam", "user");
-  await h.t
-    .sql`insert into users (id, name, email, handle) values ('u2', 'Sam', 'sam@x.io', 'sam')`;
+  await h.t.sql.unsafe(principalSql("u2", "human", "sam"));
+  await h.t.sql`insert into users (id, name, email) values ('u2', 'Sam', 'sam@x.io')`;
 });
 afterAll(() => h.close());
 // The store's stamps are strictly increasing across tests, so each test's fake clock starts after the last one ended.

@@ -7,8 +7,8 @@ import { createFakeClaude } from "@open-factory/harness/testing";
 import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
-import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import type { AgentService } from "./agent-service.ts";
 import { OrgRefusedError } from "./errors.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
@@ -52,7 +52,7 @@ beforeAll(async () => {
     env: { FACTORY_CLAUDE_BIN: createFakeClaude({ scenario: "reply" }).bin },
   });
   home = t.factoryHome;
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   svc = t.app.agents;
   runtimes = t.app.runtimes;
   mkdtempSync(path.join(tmpdir(), "repo-"));
@@ -228,13 +228,13 @@ test("an agent actor can make a human the manager of a new agent", async () => {
 });
 
 test("an agent can be created under, and moved to, a human; an unknown or disabled handle is refused with a field error", async () => {
-  await seedTestUser(t.db, { handle: "sam", name: "Sam" });
+  await seedTestUser(t.db, "sam");
   await svc.create(body("under-sam"), human);
   expect(await svc.update("under-sam", { reportsTo: "sam" }, human)).toMatchObject({
     reportsTo: { kind: "user", handle: "sam" },
   });
   expect(await rowOf("under-sam")).toMatchObject({ reportsTo: null, reportsToUser: "u-sam" });
-  await t.sql`update users set disabled_at = now() where handle = 'sam'`;
+  await t.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'sam')`;
   const refused = {
     code: "validation_error",
     extra: { fields: { reportsTo: expect.any(String) } },
@@ -257,9 +257,9 @@ test("an agent can't report to itself, and a write that finds its human manager 
     extra: { fields: { reportsTo: expect.any(String) } },
   });
   // Resolution passed (the user was enabled), then a disable committed before the write: the write refuses.
-  await seedTestUser(t.db, { handle: "late", name: "Late" });
+  await seedTestUser(t.db, "late");
   const plan = await svc.planUpdate("self-mgr", { reportsTo: "late" }, human);
-  await t.sql`update users set disabled_at = now() where handle = 'late'`;
+  await t.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'late')`;
   await expect(t.db.transaction((tx) => plan.write(tx))).rejects.toMatchObject({
     code: "validation_error",
   });

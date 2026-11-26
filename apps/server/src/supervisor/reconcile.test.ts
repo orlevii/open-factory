@@ -21,8 +21,8 @@ import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { ProcessJournal } from "../runtime/local/journal.ts";
 import { ScheduleStore } from "../scheduling/schedule-store.ts";
 import { Reaper } from "../spawning/reaper.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { ATTEMPT_CUT_SHORT, reconcile } from "./reconcile.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -30,8 +30,8 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 

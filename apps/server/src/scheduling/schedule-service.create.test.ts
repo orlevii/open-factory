@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { MAX_AGENT_SCHEDULES } from "./limits.ts";
 import { type Actor, ScheduleService } from "./schedule-service.ts";
 import { ScheduleStore } from "./schedule-store.ts";
@@ -17,8 +17,8 @@ const agent = (id: string): Actor => ({ agentId: id });
 
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 beforeEach(async () => {

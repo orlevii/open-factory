@@ -6,8 +6,8 @@ import { MSG } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
-import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestPrincipal } from "../test/principals.ts";
 import { ProjectService } from "./project-service.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -181,7 +181,7 @@ test("a live spawned grantee blocks removal and is named with its spawner", asyn
     reportsTo: boss?.id,
     credentialId: cred?.id ?? null,
   });
-  await claimTestHandle(t.db, "tl-ab12", "agent");
+  await seedTestPrincipal(t.db, "agent", "tl-ab12", "tl-ab12-id");
   await t.db.insert(schema.agents).values(kid("tl-ab12"));
   await t.db
     .insert(schema.agentProjectGrants)

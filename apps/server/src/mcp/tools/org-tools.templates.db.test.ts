@@ -5,8 +5,8 @@ import { schema } from "@open-factory/db";
 import type { Actor } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
-import { seedTestUser } from "../../test/handles.ts";
 import { makeTestApp } from "../../test/helpers.ts";
+import { seedTestUser } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
 const TEMPLATE_TOOLS = ["create_template", "write_template_file"];
@@ -42,7 +42,7 @@ const hashOf = async (who: string, name: string, file: string) =>
 
 beforeAll(async () => {
   t = await makeTestApp();
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   url = `http://127.0.0.1:${t.app.agentListener.port}`;
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({

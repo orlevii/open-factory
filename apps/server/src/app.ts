@@ -107,6 +107,7 @@ import { wsRoutes } from "./ws/route.ts";
 declare module "fastify" {
   interface FastifyInstance {
     auth: Auth;
+    db: Db;
     config: Config;
     runtimes: AgentRuntimes;
     bus: EventBus;
@@ -211,6 +212,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorate("config", config);
+  app.decorate("db", deps.db);
   app.decorate("auth", createAuth(config, deps.db, deps.passwordHasher));
   registerErrorHandlers(app);
 

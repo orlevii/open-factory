@@ -19,8 +19,8 @@ const writers = (files: string[]) =>
     .map(rel)
     .sort();
 
-// Every row in agents.slug and users.handle must reference a claimed handle (spec §4.1), so each place that inserts
-// one claims through claimHandle first. This lists them: a new writer fails here until it claims and is named.
+// Every agent and user row references a principal that holds its handle (spec §4.1), so each place that inserts
+// an agent creates the principal first. This lists them: a new writer fails here until it does and is named.
 test("only agent create and spawn insert agents; the auth hook (better-auth) inserts users", () => {
   const production = walk(path.join(server, "src")).filter(
     (f) => !f.endsWith(".test.ts") && !/\/src\/(test|agents\/testing)\//.test(f),
@@ -30,10 +30,10 @@ test("only agent create and spawn insert agents; the auth hook (better-auth) ins
     "src/spawning/spawn-service.ts",
   ]);
   for (const f of ["agents/agent-service.ts", "spawning/spawn-service.ts"])
-    expect(readFileSync(path.join(server, "src", f), "utf8")).toContain("claimHandle(tx");
+    expect(readFileSync(path.join(server, "src", f), "utf8")).toContain("createPrincipal(tx");
 });
 
-test("fixtures and smoke scripts that insert agents or users claim through the test helper", () => {
+test("fixtures and smoke scripts that insert agents or users create their principals through the test helper", () => {
   const fixtures = [
     ...walk(path.join(server, "scripts")),
     ...walk(path.join(server, "src/test")),
@@ -41,5 +41,6 @@ test("fixtures and smoke scripts that insert agents or users claim through the t
   ];
   const inserting = fixtures.filter((f) => INSERT.test(readFileSync(f, "utf8")));
   expect(inserting.length).toBeGreaterThan(0);
-  for (const f of inserting) expect(readFileSync(f, "utf8"), rel(f)).toMatch(/claimTestHandle/);
+  for (const f of inserting)
+    expect(readFileSync(f, "utf8"), rel(f)).toMatch(/principalSql|seedTestPrincipal|seedTestUser/);
 });

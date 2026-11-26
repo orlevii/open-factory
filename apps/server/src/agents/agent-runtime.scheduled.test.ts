@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
@@ -16,8 +16,8 @@ let n = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 
@@ -117,7 +117,7 @@ test("a scheduled row wakes a hibernated agent with reason scheduled and renders
 });
 
 test("an agent author is the @slug in by", async () => {
-  await claimTestHandleSql(t.sql, "author1", "agent");
+  await t.sql.unsafe(principalSql("auth1", "agent", "author1"));
   await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
               select 'auth1', 'author1', 'A', template, config, runtime, credential_id, reports_to_user from agents where id = ${agentId}`;
   const row = await scheduled({ authorAgentId: "auth1" });

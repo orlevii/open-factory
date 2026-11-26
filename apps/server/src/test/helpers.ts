@@ -21,7 +21,7 @@ import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { hashToken } from "../users/invites.ts";
 import { agentConfigDir, agentWorkdir } from "../workspace/paths.ts";
 import type { Workspace } from "../workspace/workspace.ts";
-import { claimTestHandle, testManagerUserId } from "./handles.ts";
+import { seedTestPrincipal, testManagerUserId } from "./principals.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
 
@@ -185,11 +185,11 @@ export async function seedTestAgent(
     writeFileSync(path.join(tplDir, "template.yaml"), TEST_TEMPLATE_YAML);
     writeFileSync(path.join(tplDir, "AGENTS.md"), "# Test agent\n");
   }
-  await claimTestHandle(app.db, slug, "agent");
+  const principal = await seedTestPrincipal(app.db, "agent", slug);
   const [row] = await app.db
     .insert(schema.agents)
     .values({
-      id: randomUUID(),
+      id: principal.id,
       slug,
       displayName: "Test agent",
       description: "",

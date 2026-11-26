@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
@@ -22,12 +21,15 @@ import {
   treeOrder,
 } from "@open-factory/shared";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
-import { isSlugUnique } from "../db-errors.ts";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
-import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
+import {
+  createPrincipal,
+  HandleTakenError,
+  principalsByHandles,
+} from "../principals/principal-store.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { avatarStat } from "../templates/avatar.ts";
@@ -241,9 +243,9 @@ export class AgentService {
         : [],
       userIds.length
         ? this.d.db
-            .select({ id: schema.users.id, handle: schema.users.handle })
-            .from(schema.users)
-            .where(inArray(schema.users.id, userIds))
+            .select({ id: schema.principals.id, handle: schema.principals.handle })
+            .from(schema.principals)
+            .where(inArray(schema.principals.id, userIds))
         : [],
     ]);
     return {
@@ -530,14 +532,14 @@ export class AgentService {
   /** The manager a handle names: an active persistent agent or an enabled user; anything else is a field error. */
   private async resolveManager(handle: string): Promise<Manager> {
     const refuse = () => new FieldError("reportsTo", FIELD_MSG.chooseManager);
-    const kind = await handleKind(this.d.db, handle);
-    if (kind === "user") {
+    const principal = (await principalsByHandles(this.d.db, [handle])).get(handle);
+    if (principal?.kind === "human") {
       const [u] = await this.d.db
-        .select({ id: schema.users.id, handle: schema.users.handle, name: schema.users.name })
+        .select({ id: schema.users.id, name: schema.users.name })
         .from(schema.users)
-        .where(and(eq(schema.users.handle, handle), isNull(schema.users.disabledAt)));
+        .where(and(eq(schema.users.id, principal.id), isNull(schema.users.disabledAt)));
       if (!u) throw refuse();
-      return { kind: "user", ...u };
+      return { kind: "user", ...u, handle };
     }
     const [m] = await this.d.db
       .select()
@@ -633,8 +635,8 @@ export class AgentService {
     actor: Actor,
   ): Promise<AgentSummary> {
     const { db, workspace } = this.d;
-    // The cheap pre-read before materialising; the claim in the insert transaction is the guarantee (spec §4.1).
-    if (await handleKind(db, b.slug)) throw slugTaken();
+    // The cheap pre-read before materialising; the principal insert in the transaction is the guarantee (spec §4.1).
+    if ((await principalsByHandles(db, [b.slug])).size) throw slugTaken();
     const tpl = await this.d.templates.loadValid(b.template);
     // Re-check under the lock against the template as just parsed: last_valid may have moved since the pre-check.
     if (actor.kind === "agent") await this.assertCreateNotLocal(b, actor, tpl.config.runtime);
@@ -664,10 +666,10 @@ export class AgentService {
       throw materializeFailure(err, actor);
     }
 
-    const id = randomUUID();
+    let id: string;
     try {
-      await db.transaction(async (tx) => {
-        if (!(await claimHandle(tx, b.slug, "agent"))) throw slugTaken();
+      id = await db.transaction(async (tx) => {
+        const { id } = await createPrincipal(tx, "agent", b.slug);
         await this.assertUserEnabled(tx, manager);
         await tx.insert(schema.agents).values({
           id,
@@ -688,10 +690,11 @@ export class AgentService {
           await tx
             .insert(schema.agentProjectGrants)
             .values(projects.map((p) => ({ agentId: id, projectId: p.id })));
+        return id;
       });
     } catch (err) {
       await workspace.discard(b.slug).catch(() => {});
-      if (isSlugUnique(err)) throw slugTaken();
+      if (err instanceof HandleTakenError) throw slugTaken();
       throw err;
     }
     await this.peerEvents(id, { kind: "joined", ...this.byOf(actor) }, noPeers);

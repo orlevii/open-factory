@@ -14,8 +14,8 @@ import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { OrgRefusedError } from "../agents/errors.ts";
-import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import type { TemplateIndex } from "./template-index.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -62,7 +62,7 @@ beforeAll(async () => {
   });
   home = t.factoryHome;
   idx = t.app.templates;
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
     id: credId,

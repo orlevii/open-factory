@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { sendMessagesBodySchema } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
@@ -8,11 +7,14 @@ import type { EventStore, Exec, PendingRow } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { spawnerHolds } from "../agents/start.ts";
 import type { Config } from "../config.ts";
-import { isSlugUnique } from "../db-errors.ts";
 import { FieldError } from "../errors.ts";
 import type { SpawnArgs, SpawnResult } from "../mcp/tools/spawn-agent.ts";
-import { claimHandle, handleKind } from "../messaging/principals.ts";
 import type { Router } from "../messaging/router.ts";
+import {
+  createPrincipal,
+  HandleTakenError,
+  principalsByHandles,
+} from "../principals/principal-store.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
 import { WorkspaceError } from "../workspace/links.ts";
 import type { Workspace } from "../workspace/workspace.ts";
@@ -94,7 +96,7 @@ export class SpawnService {
     for (let attempt = 0; attempt < (args.suffix !== undefined ? 1 : 5); attempt++) {
       const named = spawnSlug(args.template, args.suffix, this.d.random);
       if (!named.ok) return fail(named.message);
-      if (await handleKind(this.d.db, named.slug)) {
+      if ((await principalsByHandles(this.d.db, [named.slug])).size) {
         if (named.explicit) return taken(named.slug);
         continue;
       }
@@ -212,7 +214,6 @@ export class SpawnService {
     toolUseId: string | null,
   ): Promise<SpawnResult | "taken"> {
     const { db, store, router } = this.d;
-    const id = randomUUID();
     const at = new Date(this.now());
     type Done = {
       ok: true;
@@ -244,8 +245,13 @@ export class SpawnService {
         // own start re-derives everything from its spawner (`deriveInheritance`, the stricter of started and current).
         const c = await this.check(spawner, started, current, tpl, tx);
         if (!c.ok) return c;
-        // Claim only once nothing can refuse any more: a refusal returns and commits, which would orphan the claim.
-        if (!(await claimHandle(tx, slug, "agent"))) return "taken";
+        // Create the principal only once nothing can refuse any more: a refusal returns and commits, which would orphan it.
+        const principal = await createPrincipal(tx, "agent", slug).catch((e) => {
+          if (e instanceof HandleTakenError) return null;
+          throw e;
+        });
+        if (!principal) return "taken";
+        const id = principal.id;
         const [child] = await tx
           .insert(schema.agents)
           .values({
@@ -291,17 +297,12 @@ export class SpawnService {
         return { ok: true, child, brief, peers, inherited: c.inherited };
       });
     } catch (err) {
-      // Lost the agents.slug unique index to a concurrent claimer that committed first: the workspace is theirs now.
-      if (isSlugUnique(err)) {
-        await this.discardUnlessWon(slug);
-        return "taken";
-      }
       await this.discard(slug);
       this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
       return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
     }
     if (out === "taken") {
-      // A user's claim leaves our folder orphaned; an agent's claim means a winner owns it.
+      // A human's handle leaves our folder orphaned; an agent's means a winner owns it.
       await this.discardUnlessWon(slug);
       return out;
     }
@@ -313,7 +314,7 @@ export class SpawnService {
     const status = await router.handOffBrief(out.brief, out.child);
     router.handOffRows(out.peers);
     const note = droppedNote(out.inherited.dropped);
-    return { ok: true, slug, agentId: id, status, ...(note ? { note } : {}) };
+    return { ok: true, slug, agentId: out.child.id, status, ...(note ? { note } : {}) };
   }
 
   /** `discard` unless an agent already holds the slug: that winner's workspace is never deleted. */

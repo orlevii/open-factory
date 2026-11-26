@@ -4,6 +4,7 @@ import type { ServerMessage, UserAdminItem } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
+import { principalsByHandles } from "../principals/principal-store.ts";
 import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
 
 /** S10 §9.4, §13, AC6: disable and enable users. */
@@ -290,7 +291,10 @@ describe("disabledAt can't be set by the user (V2)", () => {
     } catch {
       // Rejected outright (FIELD_NOT_ALLOWED) is fine too.
     }
-    const rows = await h.db.select().from(schema.users).where(eq(schema.users.handle, "eve"));
+    const eve = (await principalsByHandles(h.db, ["eve"])).get("eve");
+    const rows = eve
+      ? await h.db.select().from(schema.users).where(eq(schema.users.id, eve.id))
+      : [];
     expect(rows.every((r) => r.disabledAt === null)).toBe(true);
     if (created) expect(await meStatus({ cookie: created.cookie })).toBe(200);
   });

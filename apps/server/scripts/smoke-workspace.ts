@@ -22,7 +22,7 @@ import type { AnyEvent } from "@open-factory/shared";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { ApiError } from "../src/errors.ts";
-import { claimTestHandle } from "../src/test/handles.ts";
+import { principalSql } from "../src/test/principals.ts";
 import { agentConfigDir, agentWorkdir } from "../src/workspace/paths.ts";
 
 const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
@@ -230,8 +230,8 @@ try {
     harnessDriver: createClaudeDriver({ log: captureLog, transports: { local: localTransport } }),
   });
   appBuilt = true;
-  await claimTestHandle(conn.db, "smoke", "user");
-  await conn.sql`insert into users (id, name, email, handle) values ('smoke', 'Smoke', 'smoke@example.invalid', 'smoke')`;
+  await conn.sql.unsafe(principalSql("smoke", "human", "smoke"));
+  await conn.sql`insert into users (id, name, email) values ('smoke', 'Smoke', 'smoke@example.invalid')`;
   for (const slug of ["smoke-alpha", "smoke-beta"]) {
     const list: AnyEvent[] = [];
     events.set(slug, list);

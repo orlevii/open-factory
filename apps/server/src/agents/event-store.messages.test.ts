@@ -1,7 +1,7 @@
 import { messageLookupSchema } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { EventStore } from "./event-store.ts";
 import { insertAgent } from "./testing/rows.ts";
 
@@ -10,10 +10,10 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
-  await claimTestHandleSql(t.sql, "dana", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u2', 'Dana', 'd@x.io', 'dana')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
+  await t.sql.unsafe(principalSql("u2", "human", "dana"));
+  await t.sql`insert into users (id, name, email) values ('u2', 'Dana', 'd@x.io')`;
   for (const [id, slug] of [
     ["a1", "dev"],
     ["a2", "b"],

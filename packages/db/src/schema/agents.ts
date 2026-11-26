@@ -17,7 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { users } from "./auth.ts";
 import { credentials } from "./factory.ts";
-import { handles } from "./handles.ts";
+import { principals } from "./principals.ts";
 import { schedules } from "./schedules.ts";
 import { tasks } from "./tasks.ts";
 
@@ -33,11 +33,11 @@ export type RuntimeJournal = {
 export const agents = pgTable(
   "agents",
   {
-    id: text("id").primaryKey(),
-    slug: text("slug")
-      .notNull()
-      .unique()
-      .references(() => handles.handle),
+    id: text("id")
+      .primaryKey()
+      .references(() => principals.id),
+    /** Interim until the slug column is dropped: always equal to the principal's handle; read `principals.handle`. */
+    slug: text("slug").notNull().unique(),
     displayName: text("display_name").notNull(),
     description: text("description").notNull().default(""),
     sessionId: text("session_id"),

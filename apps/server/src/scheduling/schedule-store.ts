@@ -28,7 +28,7 @@ import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Exec } from "../agents/event-store.ts";
 
-const { schedules, agents, users, messages } = schema;
+const { schedules, agents, principals, messages } = schema;
 
 export type Actor = { agentId: string } | { userId: string };
 export type LockWant = { id: string; mode: "update" | "share" };
@@ -154,8 +154,8 @@ export class ScheduleStore {
     const ta = alias(agents, "ta");
     const ca = alias(agents, "ca");
     const ba = alias(agents, "ba");
-    const cu = alias(users, "cu");
-    const bu = alias(users, "bu");
+    const cu = alias(principals, "cu");
+    const bu = alias(principals, "bu");
     const rows = await tx
       .select({
         s: schedules,

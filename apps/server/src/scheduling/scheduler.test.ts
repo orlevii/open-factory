@@ -4,8 +4,8 @@ import { EventStore } from "../agents/event-store.ts";
 import { insertAgent, insertSchedule, insertScheduledMessage } from "../agents/testing/rows.ts";
 import { LoopGuard } from "../messaging/loop-guard.ts";
 import type { FactorySettings } from "../settings/factory-settings.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { ScheduleStore } from "./schedule-store.ts";
 import { Scheduler } from "./scheduler.ts";
 
@@ -22,8 +22,8 @@ const T0 = new Date("2026-11-20T10:00:00Z"); // Friday 11:00 Berlin
 
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 afterEach(async () => {

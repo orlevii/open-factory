@@ -113,7 +113,7 @@ describe("POST /api/loop-holds/:id/resume", () => {
       await h.sql`select distinct state from messages where loop_hold_id = ${holdId} and kind <> 'system'`;
     expect(states.map((r) => r.state)).toEqual(["pending"]);
     const [hold] =
-      await h.sql`select h.resumed_at, u.handle from loop_holds h join users u on u.id = h.resumed_by`;
+      await h.sql`select h.resumed_at, u.handle from loop_holds h join principals u on u.id = h.resumed_by`;
     expect(hold?.handle).toBe("or");
     expect(hold?.resumed_at).toBeTruthy();
     await vi.waitFor(() => expect(delivered).toHaveBeenCalledTimes(3));

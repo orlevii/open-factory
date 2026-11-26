@@ -2,9 +2,6 @@ import { screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import { alice, renderApp } from "@/test/render-app";
 
-vi.mock("@/lib/auth-client", () => ({
-  authClient: { getSession: vi.fn(async () => ({ data: null })) },
-}));
 const connectWs = vi.hoisted(() =>
   vi.fn(() => ({ close: vi.fn(), status: () => "open", send: () => true })),
 );

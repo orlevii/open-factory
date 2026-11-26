@@ -63,6 +63,7 @@ const {
   tasks,
   schedules,
   users,
+  principals,
   loopHolds,
 } = schema;
 type MessageRow = typeof messages.$inferSelect;
@@ -1112,11 +1113,12 @@ export class EventStore {
     const fa = alias(agents, "fa");
     const sa = alias(agents, "sa");
     const aa = alias(agents, "aa");
-    const au = alias(users, "au");
+    const au = alias(principals, "au");
+    const fp = alias(principals, "fp");
     const q = tx
       .select({
         m: messages,
-        fromHandle: users.handle,
+        fromHandle: fp.handle,
         fromSlug: fa.slug,
         subjectSlug: sa.slug,
         subjectDisplayName: sa.displayName,
@@ -1128,7 +1130,7 @@ export class EventStore {
         authorHandle: au.handle,
       })
       .from(messages)
-      .leftJoin(users, eq(users.id, messages.fromUserId))
+      .leftJoin(fp, eq(fp.id, messages.fromUserId))
       .leftJoin(fa, eq(fa.id, messages.fromAgentId))
       .leftJoin(sa, eq(sa.id, messages.subjectAgentId))
       .leftJoin(tasks, eq(tasks.id, messages.taskId))
@@ -1330,8 +1332,8 @@ export class EventStore {
   async messageLookup(id: string): Promise<MessageLookup | undefined> {
     const fa = alias(agents, "fa");
     const ta = alias(agents, "ta");
-    const fu = alias(users, "fu");
-    const tu = alias(users, "tu");
+    const fu = alias(principals, "fu");
+    const tu = alias(principals, "tu");
     const [r] = await this.db
       .select({
         m: messages,
@@ -1441,8 +1443,8 @@ export class EventStore {
   private inboxRows(where: SQL | undefined) {
     const fa = alias(agents, "fa");
     const sa = alias(agents, "sa");
-    const tu = alias(users, "tu");
-    const fu = alias(users, "fu");
+    const tu = alias(principals, "tu");
+    const fu = alias(principals, "fu");
     return this.db
       .select({
         item: inboxItems,
@@ -1560,7 +1562,7 @@ export class EventStore {
     if (!ids.length) return out;
     const aa = alias(agents, "aa");
     const ab = alias(agents, "ab");
-    const rb = alias(users, "rb");
+    const rb = alias(principals, "rb");
     const rows = await this.db
       .select({
         id: loopHolds.id,

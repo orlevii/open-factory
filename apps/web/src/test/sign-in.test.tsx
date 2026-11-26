@@ -4,22 +4,19 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 
-const auth = vi.hoisted(() => ({
-  getSession: vi.fn(),
-  signIn: { email: vi.fn() },
-}));
+const auth = vi.hoisted(() => ({ signIn: { email: vi.fn() } }));
 vi.mock("@/lib/auth-client", () => ({ authClient: auth }));
 vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
 }));
 
 let bootstrap = true;
+let api: ReturnType<typeof mockApi>;
 
 beforeEach(() => {
-  auth.getSession.mockReset();
   auth.signIn.email.mockReset();
   bootstrap = true;
-  mockApi({ "GET /api/auth/sign-up-state": () => json({ bootstrap, invite: "missing" }) });
+  api = mockApi({ "GET /api/auth/sign-up-state": () => json({ bootstrap, invite: "missing" }) });
 });
 
 async function signIn(email: string, password: string) {
@@ -101,7 +98,7 @@ test("the button shows the pending label while the request runs", async () => {
 
 test("a successful sign-in lands on the Inbox", async () => {
   auth.signIn.email.mockResolvedValue({ data: { user: alice.user }, error: null });
-  auth.getSession.mockResolvedValue({ data: alice });
+  api.on("GET /api/me", () => json(alice.user));
   const { router } = renderApp("/sign-in", null);
   await signIn("alice@example.com", "password123");
   await waitFor(() => expect(router.state.location.pathname).toBe("/inbox"));

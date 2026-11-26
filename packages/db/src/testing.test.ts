@@ -14,22 +14,22 @@ const open = async () => {
 
 /** Dirties a database the way a test would: rows, the seeded row changed, a sequence moved on. */
 async function dirty(sql: postgres.Sql) {
-  await sql`insert into handles (handle, kind) values ('or', 'user')`;
+  await sql`insert into principals (id, kind, handle, ref) values ('p1', 'human', 'or', 'aaaaaaaa')`;
   await sql`update factory_settings set settings = '{"loopGuardMessages": 99}'`;
   await sql`select nextval('task_number_seq')`;
 }
 
 async function state(sql: postgres.Sql) {
-  const [h] = await sql`select count(*)::int as n from handles`;
+  const [h] = await sql`select count(*)::int as n from principals`;
   const [f] = await sql`select settings from factory_settings where id = 1`;
   const [q] = await sql`select nextval('task_number_seq')::int as next`;
-  return { handles: h?.n, settings: f?.settings, nextTask: q?.next };
+  return { principals: h?.n, settings: f?.settings, nextTask: q?.next };
 }
 
 test("a claimed database starts as the template: no rows, the seeded row as migrated, sequences from the start", async () => {
   const fresh = await open();
   const expected = await state(fresh.sql);
-  expect(expected).toEqual({ handles: 0, settings: {}, nextTask: 1 });
+  expect(expected).toEqual({ principals: 0, settings: {}, nextTask: 1 });
   await dirty(fresh.sql);
   await fresh.sql.end();
   await fresh.db.release();

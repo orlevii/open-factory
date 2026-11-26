@@ -5,8 +5,8 @@ import { schema } from "@open-factory/db";
 import type { Actor } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
-import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import { OrgRefusedError } from "./errors.ts";
 
 /** Switching an agent between Docker and local (its Configure page): a human's explicit act, with the local rules. */
@@ -15,7 +15,7 @@ const human: Actor = { kind: "human", handle: "or" };
 
 async function factory(env: Record<string, string> = {}) {
   const t = await makeTestApp({ env });
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
     id: credId,

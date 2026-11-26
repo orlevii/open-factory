@@ -21,8 +21,8 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../../agents/event-store.ts";
-import { seedTestUser } from "../../test/handles.ts";
 import { makeTestApp } from "../../test/helpers.ts";
+import { seedTestUser } from "../../test/principals.ts";
 import { asRunning } from "../../test/running.ts";
 import { agentWorkdir } from "../../workspace/paths.ts";
 import { dockerodeClient } from "./client.ts";
@@ -177,7 +177,7 @@ async function setup(o: {
     ...(o.local ? { FACTORY_CLAUDE_BIN: o.local.bin } : {}),
   };
   const t = await makeTestApp({ env });
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   const settings = fakeClaudeIn(workdir);
   writeTemplate(
     home,
@@ -236,7 +236,7 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
     FACTORY_CLI_BUNDLE: cliBundle,
   };
   const t = await makeTestApp({ env });
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   const fake = installFakeClaude({ workdir: repo, scenario });
   expect(fake.bin).toBe(env.FACTORY_DOCKER_CLAUDE_BIN);
   const secrets = "secrets:\n  - FAKE_CLAUDE_SCENARIO\n  - FAKE_CLAUDE_DIR\n";

@@ -15,7 +15,7 @@ import { AgentChip, type ChipAgent } from "@/components/agent-chip";
 import { HumanAvatar } from "@/components/human-avatar";
 import { MiddleTruncate } from "@/components/middle-truncate";
 import { usersQueryOptions } from "@/features/settings/api";
-import type { Session } from "@/lib/auth-client";
+import type { Session } from "@/lib/session";
 import { sessionQueryOptions } from "@/lib/session";
 import { agentsListQueryOptions, endedMoreQueryOptions } from "./api";
 import { formatTime } from "./format";

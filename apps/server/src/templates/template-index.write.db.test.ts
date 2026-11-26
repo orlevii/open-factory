@@ -17,8 +17,8 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { OrgRefusedError } from "../agents/errors.ts";
 import { PolicyInputs } from "../agents/policy-inputs.ts";
-import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import { fileHash, type TemplateIndex } from "./template-index.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -62,7 +62,7 @@ beforeAll(async () => {
   });
   home = t.factoryHome;
   idx = t.app.templates;
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   mkdtempSync(path.join(tmpdir(), "repo-"));
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({

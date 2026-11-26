@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { claimTestHandle } from "../test/handles.ts";
+import { principalSql } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness, sendAs } from "./testing/runtime-harness.ts";
 
@@ -9,9 +9,8 @@ import { RuntimeHarness, sendAs } from "./testing/runtime-harness.ts";
 const h = new RuntimeHarness();
 beforeAll(async () => {
   await h.setup();
-  await claimTestHandle(h.t.db, "ann", "user");
-  await h.t
-    .sql`insert into users (id, name, email, handle) values ('u2', 'Ann', 'ann@x.io', 'ann')`;
+  await h.t.sql.unsafe(principalSql("u2", "human", "ann"));
+  await h.t.sql`insert into users (id, name, email) values ('u2', 'Ann', 'ann@x.io')`;
 });
 afterAll(() => h.close());
 beforeEach(() => {

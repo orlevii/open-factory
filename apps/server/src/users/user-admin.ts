@@ -18,13 +18,14 @@ export class UserAdminService {
 
   async list(): Promise<UserAdminItem[]> {
     const rows = await this.d.db
-      .select()
+      .select({ u: schema.users, handle: schema.principals.handle })
       .from(schema.users)
+      .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
       .orderBy(asc(schema.users.createdAt), asc(schema.users.id));
-    return rows.map((r) => ({
+    return rows.map(({ u: r, handle }) => ({
       id: r.id,
       name: r.name,
-      handle: r.handle,
+      handle,
       email: r.email,
       createdAt: r.createdAt.toISOString(),
       disabledAt: r.disabledAt?.toISOString() ?? null,
@@ -54,8 +55,9 @@ export class UserAdminService {
         .orderBy(asc(schema.users.id))
         .for("no key update");
       const [target] = await tx
-        .select({ handle: schema.users.handle, disabledAt: schema.users.disabledAt })
+        .select({ handle: schema.principals.handle, disabledAt: schema.users.disabledAt })
         .from(schema.users)
+        .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
         .where(eq(schema.users.id, targetId));
       if (!target) throw notFound();
       if (target.disabledAt === null && !enabled.some((u) => u.id !== targetId)) {

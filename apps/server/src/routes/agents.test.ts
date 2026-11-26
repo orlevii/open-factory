@@ -12,8 +12,8 @@ import { AgentEndedError } from "../agents/message-cancel.ts";
 import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
-import { claimTestHandleSql, seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { principalSql, seedTestUser } from "../test/principals.ts";
 import { png } from "../uploads/fixtures.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -229,9 +229,9 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
     }
     expect((await call("GET", "/api/agents/nobody")).statusCode).toBe(404);
     // A disabled person and a spawned agent are not managers either: 400 on the field.
-    await seedTestUser(t2.db, { handle: "off", name: "Off" });
-    await t2.sql`update users set disabled_at = now() where handle = 'off'`;
-    await t2.sql`insert into handles (handle, kind) values ('boss-kid1', 'agent')`;
+    await seedTestUser(t2.db, "off");
+    await t2.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'off')`;
+    await t2.sql.unsafe(principalSql("boss-kid1-id", "agent", "boss-kid1"));
     await t2.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
       select 'boss-kid1-id', 'boss-kid1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id
       from agents where slug = 'boss'`;
@@ -322,9 +322,10 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
   ) => s.app.inject({ method, url, headers: { cookie: c }, ...(payload ? { payload } : {}) });
   /** A live spawned agent of boss, with a workdir of its own. */
   const child = async (slug: string) => {
-    await claimTestHandleSql(s.sql, slug, "agent");
+    const id = randomUUID();
+    await s.sql.unsafe(principalSql(id, "agent", slug));
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to)
-      select ${randomUUID()}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id
+      select ${id}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id
       from agents where id = ${bossId}`;
     mkdirSync(path.join(s.factoryHome, "agents", slug), { recursive: true });
   };
@@ -477,10 +478,11 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
   });
 
   test("a terminated agent whose stop failed is stuck, loaded or not", async () => {
-    await claimTestHandleSql(s.sql, "boss-ff66", "agent");
+    const ffId = randomUUID();
+    await s.sql.unsafe(principalSql(ffId, "agent", "boss-ff66"));
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to,
         terminated_at, terminated_by, status, error_kind, last_error)
-      select ${randomUUID()}, 'boss-ff66', 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
+      select ${ffId}, 'boss-ff66', 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
         now(), '@or7', 'errored', 'stop_failed', 'x'
       from agents where id = ${bossId}`;
     const listed = (await call("GET", "/api/agents?ended=only")).json().agents;
@@ -508,19 +510,24 @@ describe("S7: the ended list is bounded", () => {
   const get = (url: string) => s.app.inject({ method: "GET", url, headers: { cookie: c } });
   /** `n` archived agents, `old-<i>`, the higher `i` the older. */
   const archived = async (n: number, from = 0) => {
-    await s.sql`insert into handles (handle, kind)
-      select 'old-' || i, 'agent' from generate_series(${from}::int, ${from + n - 1}::int) i on conflict do nothing`;
-    return s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user, archived_at)
-      select gen_random_uuid(), 'old-' || i, 'Old', template, config, runtime, credential_id, reports_to_user,
-             now() - make_interval(hours => 1 + i)
-      from agents, generate_series(${from}::int, ${from + n - 1}::int) i where slug = 'boss'`;
+    return s.sql`with ids as (
+        select gen_random_uuid()::text as id, i from generate_series(${from}::int, ${from + n - 1}::int) i
+      ), p as (
+        insert into principals (id, kind, handle, ref)
+        select id, 'agent', 'old-' || i, substr(md5(id), 1, 8) from ids
+      )
+      insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user, archived_at)
+      select ids.id, 'old-' || ids.i, 'Old', template, config, runtime, credential_id, reports_to_user,
+             now() - make_interval(hours => 1 + ids.i)
+      from agents, ids where slug = 'boss'`;
   };
 
   test("newest end first, archived and terminated together; at most 200 with more", async () => {
     await archived(199);
-    await claimTestHandleSql(s.sql, "boss-new1", "agent");
+    const newId = randomUUID();
+    await s.sql.unsafe(principalSql(newId, "agent", "boss-new1"));
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
-      select gen_random_uuid(), 'boss-new1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id, now(), '@factory'
+      select ${newId}, 'boss-new1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id, now(), '@factory'
       from agents where slug = 'boss'`;
     let r = (await get("/api/agents?ended=only")).json();
     expect(r.agents).toHaveLength(200);

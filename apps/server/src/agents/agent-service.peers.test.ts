@@ -3,8 +3,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import { FakeDriver } from "./testing/fake-driver.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
@@ -21,7 +21,7 @@ beforeEach(async () => {
     kind: "oauth_token",
     valueEnc: h.app.vault.seal("tok", `credentials:${credId}`),
   });
-  await seedTestUser(h.db);
+  await seedTestUser(h.db, "or");
   await create("lead", "Lead", "or");
   await create("dev", "Dev", "lead");
   await create("boss", "Boss", "or");
@@ -87,7 +87,7 @@ test("moving to a human manager: 'now reports to @or'; agents under the same hum
 });
 
 test("agents under different human managers are not peers", async () => {
-  await seedTestUser(h.db, { handle: "sam", name: "Sam" });
+  await seedTestUser(h.db, "sam");
   await create("sams-bot", "Sam's bot", "sam");
   expect(await held("lead")).toEqual([]);
   expect(await held("boss")).toEqual([]);

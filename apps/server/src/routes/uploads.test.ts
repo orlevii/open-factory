@@ -18,6 +18,7 @@ import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
+import { principalsByHandles } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
 import { heic, jpeg, png } from "../uploads/fixtures.ts";
@@ -415,7 +416,7 @@ describe("security review fixes", () => {
 
   test("I2: a failure after the file is written (the insert) removes the file", async () => {
     const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "ctl"));
-    const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+    const me = (await principalsByHandles(t.db, ["or"])).get("or");
     if (!agent || !me) throw new Error("seed");
     async function* one() {
       yield Buffer.from("x\n");
@@ -465,7 +466,7 @@ describe("security review fixes", () => {
       .select()
       .from(schema.agents)
       .where(eq(schema.agents.slug, "aliased"));
-    const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+    const me = (await principalsByHandles(t.db, ["or"])).get("or");
     if (!agent || !me) throw new Error("seed");
     async function* one() {
       yield Buffer.from("hello\n");
@@ -481,7 +482,7 @@ describe("security review fixes", () => {
   test("M1: at most 20 unsent uploads per agent and uploader; at most 3 streaming per agent", async () => {
     await t.seedAgent({ slug: "quota" });
     const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "quota"));
-    const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+    const me = (await principalsByHandles(t.db, ["or"])).get("or");
     if (!agent || !me) throw new Error("seed");
     await t.db.insert(schema.uploads).values(
       Array.from({ length: 20 }, (_, i) => ({
@@ -571,7 +572,7 @@ describe("security review fixes", () => {
 test("review m3: a stalled body is abandoned and its temp file deleted", async () => {
   await t.seedAgent({ slug: "stall" });
   const [agent] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "stall"));
-  const [me] = await t.db.select().from(schema.users).where(eq(schema.users.handle, "or"));
+  const me = (await principalsByHandles(t.db, ["or"])).get("or");
   if (!agent || !me) throw new Error("seed");
   async function* stalled() {
     yield Buffer.from("partial");

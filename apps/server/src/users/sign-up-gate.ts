@@ -1,9 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Db, schema } from "@open-factory/db";
-import type { SignUpState } from "@open-factory/shared";
-import { count, eq } from "drizzle-orm";
+import { handleSchema, MSG, type SignUpState } from "@open-factory/shared";
+import { count, sql } from "drizzle-orm";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { Auth } from "../auth/auth.ts";
+import { inputLengthError } from "../auth/options.ts";
+import {
+  createPrincipal,
+  HandleTakenError,
+  type Principal,
+} from "../principals/principal-store.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import type { InviteService } from "./invites.ts";
 
@@ -11,7 +17,7 @@ import type { InviteService } from "./invites.ts";
  * Set only by `handleSignUp`; better-auth's `user.create.before` refuses any user creation without it
  * (S10 §9.3 backstop), whatever path or endpoint reached better-auth.
  */
-export const signUpContext = new AsyncLocalStorage<{ allowed: boolean }>();
+export const signUpContext = new AsyncLocalStorage<{ allowed: boolean; userId: string }>();
 
 /** Correct only because the factory is one server process (ADR 0013); a multi-instance deployment must replace this with
  *  a Postgres advisory lock. */
@@ -39,8 +45,9 @@ export interface SignUpDeps {
 
 /**
  * The only way to create a user (S10 §9.3): serialized, invite-checked unless the factory has no users yet,
- * forwarded to better-auth without the `invite` field inside `signUpContext`, the invite marked used on
- * success, and `users_changed` published (S10 §11).
+ * given a principal (handle validated and claimed; it is the new user's id), forwarded to better-auth without the
+ * `invite` and `handle` fields inside `signUpContext`, the invite marked used on success (a failure removes the
+ * principal again), and `users_changed` published (S10 §11).
  */
 export async function handleSignUp(d: SignUpDeps, req: Request, body: unknown): Promise<Response> {
   return signUpMutex.run("sign-up", async () => {
@@ -62,6 +69,30 @@ export async function handleSignUp(d: SignUpDeps, req: Request, body: unknown): 
       inviteId = found.id;
     }
 
+    // Before the handle check, so a too-long name or email is named even when the handle is missing (spec §13.2).
+    const tooLong = inputLengthError("/sign-up/email", body);
+    if (tooLong) return Response.json(tooLong, { status: 400 });
+    // The handle is the principal's, not a better-auth field: validated and claimed here, then stripped from the body.
+    const handle = handleSchema.safeParse(fields?.handle);
+    if (!handle.success) {
+      return Response.json(
+        {
+          code: "VALIDATION_ERROR",
+          message: handle.error.issues[0]?.message ?? MSG.handleLength,
+        },
+        { status: 400 },
+      );
+    }
+    let principal: Principal;
+    try {
+      principal = await createPrincipal(d.db, "human", handle.data);
+    } catch (err) {
+      if (err instanceof HandleTakenError)
+        return Response.json({ code: "HANDLE_TAKEN", message: MSG.handleTaken }, { status: 422 });
+      throw err;
+    }
+    if (fields) delete fields.handle;
+
     const headers = new Headers(req.headers);
     headers.delete("content-length");
     const forwarded = new Request(req.url, {
@@ -69,42 +100,36 @@ export async function handleSignUp(d: SignUpDeps, req: Request, body: unknown): 
       headers,
       body: fields ? JSON.stringify(fields) : body === undefined ? undefined : JSON.stringify(body),
     });
-    const res = await signUpContext.run({ allowed: true }, () => d.auth.handler(forwarded));
+    let res: Response;
+    try {
+      res = await signUpContext.run({ allowed: true, userId: principal.id }, () =>
+        d.auth.handler(forwarded),
+      );
+    } catch (err) {
+      await dropUnusedPrincipal(d.db, principal.id);
+      throw err;
+    }
 
-    if (!res.ok) return res;
-    if (inviteId) {
-      const userId = await createdUserId(d.db, res, fields?.email);
-      if (userId === null) {
-        d.log.error(
-          { inviteId },
-          "sign-up succeeded but the new user wasn't found; invite not marked used",
-        );
-      } else if (!(await d.invites.markUsed(inviteId, userId))) {
-        d.log.error(
-          { inviteId, userId },
-          "sign-up succeeded but the invite was already marked used",
-        );
-      }
+    if (!res.ok) {
+      await dropUnusedPrincipal(d.db, principal.id);
+      return res;
+    }
+    if (inviteId && !(await d.invites.markUsed(inviteId, principal.id))) {
+      d.log.error(
+        { inviteId, userId: principal.id },
+        "sign-up succeeded but the invite was already marked used",
+      );
     }
     d.bus.publishAll({ type: "users_changed" });
     return res;
   });
 }
 
-/** The id in better-auth's 2xx body, or else the user with the submitted email (still under the mutex). */
-async function createdUserId(db: Db, res: Response, email: unknown): Promise<string | null> {
-  const created = (await res
-    .clone()
-    .json()
-    .catch(() => null)) as { user?: { id?: unknown } } | null;
-  const id = created?.user?.id;
-  if (typeof id === "string") return id;
-  if (typeof email !== "string") return null;
-  const [row] = await db
-    .select({ id: schema.users.id })
-    .from(schema.users)
-    .where(eq(schema.users.email, email.toLowerCase()));
-  return row?.id ?? null;
+/** A failed sign-up leaves no principal behind (a user row would have kept it). */
+async function dropUnusedPrincipal(db: Db, id: string): Promise<void> {
+  await db.execute(
+    sql`DELETE FROM principals WHERE id = ${id} AND NOT EXISTS (SELECT 1 FROM users WHERE users.id = ${id})`,
+  );
 }
 
 /** For the sign-up page (S10 §9.3); public. */

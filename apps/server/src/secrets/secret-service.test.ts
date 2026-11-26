@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestPrincipal } from "../test/principals.ts";
 import { SecretService } from "./secret-service.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -130,7 +130,7 @@ test("I2 §6.7: a secret only the template lists: its live agents and their live
     [kid, "tpl-kid", false],
     [gone, "tpl-gone", true],
   ] as const) {
-    await claimTestHandle(t.db, slug, "agent");
+    await seedTestPrincipal(t.db, "agent", slug, id);
     await t.db.insert(schema.agents).values({
       id,
       slug,

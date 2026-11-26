@@ -14,12 +14,3 @@ export const tags = (slugs: string[]) => slugs.map((s) => `@${s}`).join(", ");
  */
 export const inUseViolation = (e: unknown) =>
   pgCode(e, "23001") || pgCode(e, "23503") || pgCode(e, "23514");
-
-/** A unique violation on an agent's slug (the `agents.slug` index), as opposed to any other unique index. */
-export function isSlugUnique(e: unknown): boolean {
-  for (let x = e as { code?: string; constraint_name?: string; cause?: unknown } | undefined; x; ) {
-    if (x.code === "23505" && (x.constraint_name ?? "").includes("slug")) return true;
-    x = x.cause as typeof x;
-  }
-  return false;
-}

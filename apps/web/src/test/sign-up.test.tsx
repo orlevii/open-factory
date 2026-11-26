@@ -4,10 +4,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
 import { alice, renderApp } from "@/test/render-app";
 
-const auth = vi.hoisted(() => ({
-  getSession: vi.fn(),
-  signUp: { email: vi.fn() },
-}));
+const auth = vi.hoisted(() => ({ signUp: { email: vi.fn() } }));
 vi.mock("@/lib/auth-client", () => ({ authClient: auth }));
 vi.mock("@/lib/ws", () => ({
   connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
@@ -27,7 +24,6 @@ const gateError = (code: string, message: string) => ({
 });
 
 beforeEach(() => {
-  auth.getSession.mockReset();
   auth.signUp.email.mockReset();
   api = mockApi({});
   serve({ bootstrap: true, invite: "missing" });
@@ -118,13 +114,13 @@ test("an unknown server error is shown at form level", async () => {
 
 test("a successful sign-up refreshes the session and lands on the Inbox", async () => {
   auth.signUp.email.mockResolvedValue({ data: { user: alice.user }, error: null });
-  auth.getSession.mockResolvedValue({ data: alice });
+  api.on("GET /api/me", () => json(alice.user));
   api.on("GET /api/agents?", () => json({ agents: [], more: false, running: { count: 0 } }));
   const { router } = renderApp("/sign-up", null);
   await screen.findByLabelText("Name");
   await fill(valid);
   await waitFor(() => expect(router.state.location.pathname).toBe("/inbox"));
-  expect(auth.getSession).toHaveBeenCalled();
+  expect(api.calls.map((c) => c.url)).toContain("/api/me");
   await screen.findByRole("heading", { level: 1, name: "Inbox" });
 });
 
@@ -178,7 +174,7 @@ test("bootstrap shows the form with the first-user line, and asks for the state 
 test("a valid invite shows the form and sends the invite with the sign-up", async () => {
   serve({ bootstrap: false, invite: "valid" });
   auth.signUp.email.mockResolvedValue({ data: { user: alice.user }, error: null });
-  auth.getSession.mockResolvedValue({ data: alice });
+  api.on("GET /api/me", () => json(alice.user));
   renderApp("/sign-up?invite=tok_1", null);
   await screen.findByLabelText("Name");
   expect(screen.queryByText(FIRST_USER)).not.toBeInTheDocument();

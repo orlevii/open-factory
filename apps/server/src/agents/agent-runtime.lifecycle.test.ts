@@ -1,6 +1,6 @@
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
+import { principalSql } from "../test/principals.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { AgentArchivedError, AgentStartError, NoOpenTurnError } from "./errors.ts";
@@ -191,8 +191,7 @@ test.each([
       startError: new AgentStartError(message, fix, diagnosis),
       seed: async (id) => {
         await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
-        await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
-        await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
+        await t.sql.unsafe(principalSql(`lead-${id}`, "agent", `lead-${id}`));
         await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
                   select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to_user from agents where id = ${id}`;
         await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`}, reports_to_user = null where id = ${id}`;
@@ -220,7 +219,7 @@ test("a spawned agent keeps other fixes (secrets) unchanged", async () => {
     startError: new AgentStartError(message, "secrets"),
     seed: async (id) => {
       await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
-      await claimTestHandleSql(t.sql, `lead-${id}`, "agent");
+      await t.sql.unsafe(principalSql(`lead-${id}`, "agent", `lead-${id}`));
       await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
                   select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to_user from agents where id = ${id}`;
       await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`}, reports_to_user = null where id = ${id}`;

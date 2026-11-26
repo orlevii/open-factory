@@ -6,8 +6,9 @@ import { type AgentRow, schema } from "@open-factory/db";
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
-import { claimTestHandle } from "../test/handles.ts";
+import { principalsByHandles } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestPrincipal } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
 import { SpawnService } from "./spawn-service.ts";
 
@@ -123,9 +124,9 @@ const agentCount = async (app: T) => (await app.db.select().from(schema.agents))
 
 /** A spawned child row inserted directly (no folder): seeds children to show a spawn isn't refused for them. */
 async function seedChild(app: T, lead: AgentRow, slug: string, o: { terminated?: boolean } = {}) {
-  await claimTestHandle(app.db, slug, "agent");
+  const principal = await seedTestPrincipal(app.db, "agent", slug);
   await app.db.insert(schema.agents).values({
-    id: randomUUID(),
+    id: principal.id,
     slug,
     displayName: slug,
     template: "dev",
@@ -414,14 +415,14 @@ test("folder_exists: a random suffix retries, an explicit one is reported taken"
   });
 });
 
-test("a taken suffix retries the next name: a user claim at the pre-read, a claim that lands after it", async () => {
+test("a taken suffix retries the next name: a human holds one at the pre-read, another lands after it", async () => {
   const { t, lead } = await setup();
-  // A user's claim holds the first name: the pre-read skips it.
-  await claimTestHandle(t.db, "tech-lead-aaaa", "user");
-  // A user claim lands after the pre-read (during materialize): the claim in the transaction refuses it.
+  // A human's handle holds the first name: the pre-read skips it.
+  await seedTestPrincipal(t.db, "human", "tech-lead-aaaa");
+  // A human's handle lands after the pre-read (during materialize): the principal insert in the transaction refuses it.
   const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
   vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
-    if (a[0] === "tech-lead-bbbb") await claimTestHandle(t.db, "tech-lead-bbbb", "user");
+    if (a[0] === "tech-lead-bbbb") await seedTestPrincipal(t.db, "human", "tech-lead-bbbb");
     return realMaterialize(...a);
   });
   const suffixes = ["aaaa", "bbbb", "dddd"];
@@ -431,15 +432,15 @@ test("a taken suffix retries the next name: a user claim at the pre-read, a clai
     slug: "tech-lead-dddd",
   });
   expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-bbbb"))).toBe(false);
-  const [claim] = await t.sql`select kind from handles where handle = 'tech-lead-dddd'`;
-  expect(claim?.kind).toBe("agent");
+  const holder = (await principalsByHandles(t.db, ["tech-lead-dddd"])).get("tech-lead-dddd");
+  expect(holder?.kind).toBe("agent");
 });
 
-test("an explicit suffix taken by a user claim after the pre-read is reported taken", async () => {
+test("an explicit suffix taken by a human's handle after the pre-read is reported taken", async () => {
   const { t, lead } = await setup();
   const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
   vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
-    await claimTestHandle(t.db, "tech-lead-mine", "user");
+    await seedTestPrincipal(t.db, "human", "tech-lead-mine");
     return realMaterialize(...a);
   });
   expect(await t.app.spawner.spawn(lead.id, args({ suffix: "mine" }), null)).toEqual({
@@ -449,16 +450,15 @@ test("an explicit suffix taken by a user claim after the pre-read is reported ta
   expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(false);
 });
 
-test("losing the slug unique index to a concurrent winner reports taken and keeps the winner's workspace", async () => {
+test("an agent that takes the name after the pre-read is reported taken and keeps its workspace", async () => {
   const { t, lead } = await setup();
-  vi.spyOn(t.db, "transaction").mockImplementationOnce((async () => {
-    // The winner commits its agent (and its workspace) first; the loser's insert then hits the slug index.
+  const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
+  vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
+    const made = await realMaterialize(...a);
+    // The winner commits its agent (and writes its workspace) before the loser's transaction.
     await t.seedAgent({ slug: "tech-lead-mine" });
-    throw Object.assign(new Error("duplicate key"), {
-      code: "23505",
-      constraint_name: "agents_slug_unique",
-    });
-  }) as typeof t.db.transaction);
+    return made;
+  });
   expect(await t.app.spawner.spawn(lead.id, args({ suffix: "mine" }), null)).toEqual({
     ok: false,
     message: "@tech-lead-mine is taken; pick another suffix or leave it out.",
@@ -466,7 +466,7 @@ test("losing the slug unique index to a concurrent winner reports taken and keep
   expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(true);
 });
 
-test("a refusal under the lock leaves no handle claim behind", async () => {
+test("a refusal under the lock leaves no principal behind", async () => {
   const { t, lead } = await setup();
   // The pre-check passes; the re-check in the transaction refuses (the credential changed during materialize).
   const svc = new SpawnService(serviceDeps(t));
@@ -481,8 +481,7 @@ test("a refusal under the lock leaves no handle claim behind", async () => {
     message: "refused under the lock",
   });
   expect(calls).toBe(2);
-  const [n] = await t.sql`select count(*)::int as n from handles where handle = 'tech-lead-orph'`;
-  expect(n?.n).toBe(0);
+  expect((await principalsByHandles(t.db, ["tech-lead-orph"])).size).toBe(0);
 });
 
 test("a template that is missing or invalid on disk is refused before anything is made", async () => {

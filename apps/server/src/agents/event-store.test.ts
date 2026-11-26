@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { EventStore } from "./event-store.ts";
 import { insertAgent } from "./testing/rows.ts";
 
@@ -9,8 +9,8 @@ let store: EventStore;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
   await insertAgent(t.sql, { id: "a1", slug: "dev" });
   await insertAgent(t.sql, { id: "a2", slug: "b" });
 });

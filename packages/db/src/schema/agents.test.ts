@@ -15,9 +15,11 @@ afterAll(async () => {
 
 test("seq is unique per agent; deleting an agent cascades", async () => {
   const { sql } = h;
-  await sql`insert into handles (handle, kind) values ('or','user'),('dev','agent'),('other','agent')`;
-  await sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await sql`insert into principals (id, kind, handle, ref) values ('u1', 'human', 'or', substr(md5('u1'::text), 1, 8))`;
+  await sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c1', 'main', 'oauth_token', ${Buffer.from("x")})`;
+  await sql`insert into principals (id, kind, handle, ref) values ('a1', 'agent', 'dev', substr(md5('a1'::text), 1, 8))`;
+  await sql`insert into principals (id, kind, handle, ref) values ('a2', 'agent', 'other', substr(md5('a2'::text), 1, 8))`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
     values ('a1', 'dev', 'Dev agent', 'dev', '{}', 'local', 'c1', 'u1'), ('a2', 'other', 'Other', 'dev', '{}', 'local', 'c1', 'u1')`;
   await sql`insert into turns (id, agent_id, started_at) values ('t1', 'a1', now())`;
@@ -33,9 +35,10 @@ test("seq is unique per agent; deleting an agent cascades", async () => {
 
 test("system rows need no user and a notice; user rows need a user and no notice", async () => {
   const { sql } = h;
-  await sql`insert into handles (handle, kind) values ('al','user'),('third','agent')`;
-  await sql`insert into users (id, name, email, handle) values ('u2', 'Al', 'al@x.io', 'al')`;
+  await sql`insert into principals (id, kind, handle, ref) values ('u2', 'human', 'al', substr(md5('u2'::text), 1, 8))`;
+  await sql`insert into users (id, name, email) values ('u2', 'Al', 'al@x.io')`;
   await sql`insert into credentials (id, name, kind, value_enc) values ('c2', 'two', 'oauth_token', ${Buffer.from("x")})`;
+  await sql`insert into principals (id, kind, handle, ref) values ('a3', 'agent', 'third', substr(md5('a3'::text), 1, 8))`;
   await sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
     values ('a3', 'third', 'Third', 'dev', '{}', 'local', 'c2', 'u1')`;
   await sql`insert into messages (id, kind, from_user_id, to_agent_id, body, notice) values ('n1','system',null,'a3','x','crash')`;

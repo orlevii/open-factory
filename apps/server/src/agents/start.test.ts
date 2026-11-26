@@ -20,9 +20,9 @@ import { type Config, loadConfig } from "../config.ts";
 import { Vault } from "../crypto/vault.ts";
 import { Neighborhood } from "../messaging/neighborhood.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
-import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
+import { seedTestPrincipal, testManagerUserId } from "../test/principals.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import { ConfigResolver, type Effective } from "./config-resolver.ts";
@@ -109,7 +109,7 @@ async function seedStartFixture() {
     valueEnc: vault.seal("gh-1", "secrets:s1"),
   });
   await t.db.insert(schema.projects).values({ id: "p1", name: "app", hostPath: repo });
-  await claimTestHandle(t.db, slug, "agent");
+  await seedTestPrincipal(t.db, "agent", slug, `a-${seq}`);
   const [row] = await t.db
     .insert(schema.agents)
     .values({
@@ -227,7 +227,7 @@ test("an api_key credential sets ANTHROPIC_API_KEY only", async () => {
 });
 
 test("the manager is described in CLAUDE.md", async () => {
-  await claimTestHandle(t.db, "boss", "agent");
+  await seedTestPrincipal(t.db, "agent", "boss", "mgr");
   const mgr = await t.db
     .insert(schema.agents)
     .values({
@@ -250,7 +250,8 @@ test("the manager is described in CLAUDE.md", async () => {
 });
 
 test("a peer's description an agent wrote is quoted with that agent's current slug; a human-written one is not", async () => {
-  for (const slug of ["ceo", "dev", "qa"]) await claimTestHandle(t.db, slug, "agent");
+  for (const slug of ["ceo", "dev", "qa"])
+    await seedTestPrincipal(t.db, "agent", slug, `${slug}-id`);
   const [mgr] = await t.db
     .insert(schema.agents)
     .values({
@@ -514,7 +515,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
     JSON.stringify({ permissions: { deny: ["Bash(curl:*)"] } }),
   );
   const slug = `dev-ab${seq}`;
-  await claimTestHandle(t.db, slug, "agent");
+  await seedTestPrincipal(t.db, "agent", slug, `child-${seq}`);
   const [row] = await t.db
     .insert(schema.agents)
     .values({
@@ -763,7 +764,7 @@ test.each([
   // Only an ephemeral row can be terminated, and only a terminated row can have a null credential (CHECKs),
   // so the spawner here is itself spawned by a top agent.
   const child = await seedChild();
-  await claimTestHandle(t.db, `top-${seq}`, "agent");
+  await seedTestPrincipal(t.db, "agent", `top-${seq}`, `top-${seq}`);
   await t.db.insert(schema.agents).values({
     id: `top-${seq}`,
     slug: `top-${seq}`,

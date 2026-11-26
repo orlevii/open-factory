@@ -8,8 +8,8 @@ import { type Actor, overlayVersion } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { insertAgent } from "../../agents/testing/rows.ts";
-import { seedTestUser } from "../../test/handles.ts";
 import { makeTestApp } from "../../test/helpers.ts";
+import { seedTestUser } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
 // A secret reference as a config holds it, never expanded.
@@ -76,7 +76,7 @@ beforeAll(async () => {
     env: { FACTORY_CLAUDE_BIN: createFakeClaude({ scenario: "reply" }).bin },
   });
   url = `http://127.0.0.1:${t.app.agentListener.port}`;
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
     id: credId,
@@ -184,8 +184,8 @@ test("create_agent without reports_to is refused and creates nothing", async () 
 });
 
 test("create_agent and update_agent refuse an unknown handle, a disabled person and a spawned agent as the manager", async () => {
-  await seedTestUser(t.db, { handle: "off", name: "Off" });
-  await t.sql`update users set disabled_at = now() where handle = 'off'`;
+  await seedTestUser(t.db, "off");
+  await t.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'off')`;
   await t.app.agents.create(body("kid-parent"), human);
   await insertAgent(t.sql, {
     id: "kid-id",

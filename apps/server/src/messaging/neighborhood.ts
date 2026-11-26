@@ -63,9 +63,10 @@ export class Neighborhood {
 
   async humans(): Promise<{ handle: string; name: string }[]> {
     return this.db
-      .select({ handle: schema.users.handle, name: schema.users.name })
+      .select({ handle: schema.principals.handle, name: schema.users.name })
       .from(schema.users)
+      .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
       .where(isNull(schema.users.disabledAt))
-      .orderBy(asc(schema.users.name), asc(schema.users.handle));
+      .orderBy(asc(schema.users.name), asc(schema.principals.handle));
   }
 }

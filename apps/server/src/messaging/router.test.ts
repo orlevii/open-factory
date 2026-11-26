@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Tx } from "../agents/event-store.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
-import { claimTestHandle } from "../test/handles.ts";
+import { createPrincipal } from "../principals/principal-store.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
 import { LoopGuard } from "./loop-guard.ts";
 import { Router } from "./router.ts";
@@ -618,11 +618,11 @@ test("a message to a terminated agent is refused; a terminated sender can't send
 async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {}) {
   const lead = await h.app.store.agentBySlug("lead");
   if (!lead) throw new Error("no lead");
-  await claimTestHandle(tx, slug, "agent");
+  const { id } = await createPrincipal(tx, "agent", slug);
   const [row] = await tx
     .insert(schema.agents)
     .values({
-      id: randomUUID(),
+      id,
       slug,
       displayName: "Kid",
       description: "",
@@ -825,7 +825,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
 
   test("a disabled user is refused", async () => {
     await signUp(h.app, { handle: "gone" });
-    await h.sql`update users set disabled_at = now() where handle = 'gone'`;
+    await h.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'gone')`;
     const r = await sendAs("ada", ["gone"], "x");
     expect(r.results).toEqual([
       {

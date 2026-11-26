@@ -1,8 +1,8 @@
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { seedTestPrincipal } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
@@ -58,7 +58,7 @@ test("GET /api/setup: an archived agent still counts as hasAgent", async () => {
 test("GET /api/setup: a terminated ephemeral agent still counts as hasAgent", async () => {
   // seedAgent also seeds a credential; only hasAgent is asserted here.
   const boss = await h.seedAgent({ slug: "boss" });
-  await claimTestHandle(h.db, "eph", "agent");
+  await seedTestPrincipal(h.db, "agent", "eph", "eph-1");
   await h.db.insert(schema.agents).values({
     id: "eph-1",
     slug: "eph",

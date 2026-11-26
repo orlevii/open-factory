@@ -1,11 +1,13 @@
 import { fromNodeHeaders } from "better-auth/node";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { principalById } from "../principals/principal-store.ts";
 
 export interface RequestUser {
   id: string;
   email: string;
   name: string;
   handle: string;
+  ref: string;
 }
 
 declare module "fastify" {
@@ -24,12 +26,13 @@ export async function getUser(request: FastifyRequest): Promise<RequestUser | nu
     id: string;
     email: string;
     name: string;
-    handle: string;
     disabledAt?: Date | string | null;
   };
   // S10 §9.4: a disabled user is signed out on every request, even if a session row survived.
   if (u.disabledAt) return null;
-  return { id: u.id, email: u.email, name: u.name, handle: u.handle };
+  const principal = await principalById(request.server.db, u.id);
+  if (!principal) return null;
+  return { id: u.id, email: u.email, name: u.name, handle: principal.handle, ref: principal.ref };
 }
 
 export async function requireUser(request: FastifyRequest, reply: FastifyReply) {

@@ -13,13 +13,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
+import { refOf } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FIELD_MSG } from "../field-messages.ts";
-import * as principals from "../messaging/principals.ts";
+import { principalById, principalsByHandles } from "../principals/principal-store.ts";
 import { ContainerManager } from "../runtime/docker/containers.ts";
-import { claimTestHandleSql, seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { principalSql, seedTestPrincipal, seedTestUser } from "../test/principals.ts";
 import type { AgentService } from "./agent-service.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
 import { sendAs } from "./testing/runtime-harness.ts";
@@ -48,7 +49,7 @@ beforeAll(async () => {
   fake = createFakeClaude({ scenario: "reply" });
   t = await makeTestApp({ env: { FACTORY_CLAUDE_BIN: fake.bin } });
   home = t.factoryHome;
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   svc = t.app.agents;
   runtimes = t.app.runtimes;
   const repo = mkdtempSync(path.join(tmpdir(), "repo-"));
@@ -154,27 +155,23 @@ test.each([
   ).rejects.toMatchObject(err);
 });
 
-test("create with a reserved slug is refused before any claim", async () => {
-  const spy = vi.spyOn(principals, "claimHandle");
-  try {
-    for (const slug of ["humans", "me", "scheduler"])
-      await expect(
-        svc.create(
-          {
-            template: "lead",
-            slug,
-            displayName: "X",
-            description: "",
-            reportsTo: "or",
-            credential: "work",
-          },
-          { kind: "human", handle: "or" },
-        ),
-      ).rejects.toMatchObject({ code: "validation_error" });
-    expect(spy).not.toHaveBeenCalled();
-  } finally {
-    spy.mockRestore();
-  }
+test("create with a reserved slug is refused and creates no principal", async () => {
+  const slugs = ["humans", "me", "scheduler"];
+  for (const slug of slugs)
+    await expect(
+      svc.create(
+        {
+          template: "lead",
+          slug,
+          displayName: "X",
+          description: "",
+          reportsTo: "or",
+          credential: "work",
+        },
+        { kind: "human", handle: "or" },
+      ),
+    ).rejects.toMatchObject({ code: "validation_error" });
+  expect((await principalsByHandles(t.db, slugs)).size).toBe(0);
 });
 
 test("create: an existing folder → folder_exists, untouched", async () => {
@@ -573,8 +570,8 @@ const createBody = (slug: string) => ({
 const agentRows = async (slug: string) =>
   t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
 
-test("create refuses a slug whose user claim is in flight (claim, no user row yet)", async () => {
-  await claimTestHandleSql(t.sql, "inflight", "user");
+test("create refuses a slug held by a human principal that has no user row yet", async () => {
+  await seedTestPrincipal(t.db, "human", "inflight");
   await expect(
     svc.create(createBody("inflight"), { kind: "human", handle: "or" }),
   ).rejects.toMatchObject({ code: "slug_taken" });
@@ -582,10 +579,12 @@ test("create refuses a slug whose user claim is in flight (claim, no user row ye
   expect(existsSync(path.join(home, "agents/inflight"))).toBe(false);
 });
 
-test("create claims the slug in its transaction: the claim is an agent claim", async () => {
+test("creating an agent creates its principal with the agent's id and handle", async () => {
   await svc.create(createBody("claimed-one"), { kind: "human", handle: "or" });
-  const [h] = await t.sql`select kind from handles where handle = 'claimed-one'`;
-  expect(h?.kind).toBe("agent");
+  const [agent] = await agentRows("claimed-one");
+  const principal = await principalById(t.db, agent?.id ?? "");
+  expect(principal).toMatchObject({ kind: "agent", handle: "claimed-one" });
+  expect(principal?.ref).toBe(refOf(agent?.id ?? ""));
 });
 
 test("two concurrent creates of one slug: one succeeds, the other is slug_taken, no duplicate, the winner's folder intact", async () => {
@@ -602,7 +601,7 @@ test("two concurrent creates of one slug: one succeeds, the other is slug_taken,
 
 test("a competing agent commits the slug while this create materialises: slug_taken, one row", async () => {
   const spy = vi.spyOn(t.app.workspace, "materialize").mockImplementationOnce(async () => {
-    await claimTestHandleSql(t.sql, "late-dup", "agent");
+    await t.sql.unsafe(principalSql("late-dup-id", "agent", "late-dup"));
     await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
                 select 'late-dup-id', 'late-dup', 'x', 'lead', config, 'local', credential_id, reports_to_user from agents where slug = 'lead'`;
   });
@@ -637,8 +636,8 @@ const insertChild = async (
   slug: string,
   terminated = false,
 ) => {
-  await claimTestHandleSql(q, slug, "agent");
   const id = randomUUID();
+  await q.unsafe(principalSql(id, "agent", slug));
   await q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
        select ${id}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
               ${terminated ? new Date().toISOString() : null}::timestamptz, ${terminated ? "@factory" : null}

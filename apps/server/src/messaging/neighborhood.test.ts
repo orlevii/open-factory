@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { insertAgent } from "../agents/testing/rows.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { Neighborhood } from "./neighborhood.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id,name,email,handle) values ('u1','Or','or@x.io','or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1','Or','or@x.io')`;
   const a = (slug: string, reportsTo?: string, archived?: boolean, terminated?: boolean) =>
     insertAgent(t.sql, {
       id: slug,

@@ -4,8 +4,8 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { claimTestHandle, seedTestUser } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestPrincipal, seedTestUser } from "../test/principals.ts";
 import { PolicyInputs } from "./policy-inputs.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -20,7 +20,7 @@ const writeTemplate = (name: string, yaml: string) => {
 
 beforeAll(async () => {
   t = await makeTestApp();
-  await seedTestUser(t.db);
+  await seedTestUser(t.db, "or");
   policy = new PolicyInputs({ db: t.db });
   writeTemplate("dockertpl", "name: dockertpl\ndisplay_name: D\nruntime: docker\n");
   writeTemplate("defaulted", "name: defaulted\ndisplay_name: D\n");
@@ -61,7 +61,7 @@ test("templateHasLocalAgents: true for an archived local agent, and for a spawne
   await create("boss", "dockertpl");
   const [boss] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "boss"));
   const kid = randomUUID();
-  await claimTestHandle(t.db, "kid", "agent");
+  await seedTestPrincipal(t.db, "agent", "kid", kid);
   await t.db.insert(schema.agents).values({
     id: kid,
     slug: "kid",

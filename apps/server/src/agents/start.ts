@@ -271,8 +271,9 @@ export function createPrepareStart(d: {
         if (m) manager = { kind: "agent", ...m };
       } else if (agent.reportsToUser) {
         const [u] = await d.db
-          .select({ handle: schema.users.handle, name: schema.users.name })
+          .select({ handle: schema.principals.handle, name: schema.users.name })
           .from(schema.users)
+          .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
           .where(eq(schema.users.id, agent.reportsToUser));
         if (u) manager = { kind: "user", ...u };
       }

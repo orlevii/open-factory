@@ -18,9 +18,9 @@ import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { loadConfig } from "../config.ts";
 import { ApiError } from "../errors.ts";
 import type { LibraryIndex } from "../library/library-index.ts";
-import { claimTestHandle, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
+import { seedTestPrincipal, testManagerUserId } from "../test/principals.ts";
 import { configDocHash, type TemplateChange, TemplateIndex } from "./template-index.ts";
 
 const human: Actor = { kind: "human", handle: "or" };
@@ -395,7 +395,7 @@ async function seedUser(
   slug: string,
   o: { archived?: boolean; terminated?: boolean; template: string },
 ) {
-  await claimTestHandle(t.db, slug, "agent");
+  await seedTestPrincipal(t.db, "agent", slug, `id-${slug}`);
   const credentialId = `cred-${slug}`;
   await t.db.insert(schema.credentials).values({
     id: credentialId,
@@ -405,7 +405,7 @@ async function seedUser(
   });
   if (o.terminated) {
     const mgrSlug = `mgr-${slug}`;
-    await claimTestHandle(t.db, mgrSlug, "agent");
+    await seedTestPrincipal(t.db, "agent", mgrSlug, `id-${mgrSlug}`);
     const mgrCred = `cred-${mgrSlug}`;
     await t.db.insert(schema.credentials).values({
       id: mgrCred,

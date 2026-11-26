@@ -4,8 +4,8 @@ import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { FIELD_MSG } from "../field-messages.ts";
-import { claimTestHandle } from "../test/handles.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestPrincipal } from "../test/principals.ts";
 import { CredentialService } from "./credential-service.ts";
 import { CredentialVerifier, type VerifyResult } from "./verify.ts";
 
@@ -226,7 +226,7 @@ async function spawnedUsing(
 ) {
   const c = await rowOf(credentialName);
   const id = `${slug}-id`;
-  await claimTestHandle(t.db, slug, "agent");
+  await seedTestPrincipal(t.db, "agent", slug, id);
   await t.db.insert(schema.agents).values({
     id,
     slug,

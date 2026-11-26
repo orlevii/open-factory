@@ -10,7 +10,7 @@ import {
   taskKey,
 } from "@open-factory/shared";
 import { extractMentions } from "@open-factory/shared/mentions";
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
@@ -25,7 +25,7 @@ import { type Actor, canChange, forbiddenSentence } from "./permission.ts";
 import { type ListFilter, TaskReads } from "./task-reads.ts";
 import type { EventType, Principal, ResolvedLink, TaskStore } from "./task-store.ts";
 
-const { agents, users } = schema;
+const { agents } = schema;
 
 export type TaskView = {
   key: string;
@@ -878,9 +878,9 @@ export class TaskService {
     if ("agentId" in p)
       return `@${(await this.d.store.agentById(p.agentId, tx))?.slug ?? p.agentId}`;
     const [u] = await tx
-      .select({ handle: users.handle })
-      .from(users)
-      .where(inArray(users.id, [p.userId]));
+      .select({ handle: schema.principals.handle })
+      .from(schema.principals)
+      .where(eq(schema.principals.id, p.userId));
     return `@${u?.handle ?? p.userId}`;
   }
 

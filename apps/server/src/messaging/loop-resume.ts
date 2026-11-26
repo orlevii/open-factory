@@ -6,7 +6,7 @@ import { ApiError } from "../errors.ts";
 import type { LoopGuard } from "./loop-guard.ts";
 import type { Router } from "./router.ts";
 
-const { loopHolds, messages, users } = schema;
+const { loopHolds, messages, principals } = schema;
 
 /** Spec §6.6: a human resumes a held pair. */
 export class LoopResume {
@@ -32,9 +32,9 @@ export class LoopResume {
       if (locked.resumedAt) {
         const [by] = locked.resumedBy
           ? await tx
-              .select({ handle: users.handle })
-              .from(users)
-              .where(eq(users.id, locked.resumedBy))
+              .select({ handle: principals.handle })
+              .from(principals)
+              .where(eq(principals.id, locked.resumedBy))
           : [];
         throw new ApiError(409, "already_resumed", "This pair was already resumed.", {
           resumedBy: by ? `@${by.handle}` : "",

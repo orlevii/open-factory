@@ -171,7 +171,8 @@ test("start_failed keeps that recipient's row pending", async () => {
 });
 
 test("a retry with the same clientMessageId publishes no chat_changed", async () => {
-  const [u] = await s.sql`select id from users where handle = 'or'`;
+  const [u] =
+    await s.sql`select id from users where id = (select id from principals where handle = 'or')`;
   const frames: string[] = [];
   const off = s.app.bus.subscribeUser(u?.id as string, (m) => frames.push(m.type));
   const clientMessageId = randomUUID();

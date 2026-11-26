@@ -8,7 +8,7 @@ import { escapeLike } from "./like.ts";
 import type { Actor } from "./permission.ts";
 import type { TaskStore } from "./task-store.ts";
 
-const { tasks, agents, users, taskComments, taskEvents } = schema;
+const { tasks, agents, users, principals, taskComments, taskEvents } = schema;
 
 export type AgentRef = { slug: string; displayName: string; ended?: "archived" | "terminated" };
 export type PrincipalRef = { kind: "agent"; slug: string } | { kind: "user"; handle: string };
@@ -96,12 +96,12 @@ export class TaskReads {
         aArchived: aa.archivedAt,
         aTerminated: aa.terminatedAt,
         cSlug: ca.slug,
-        cHandle: users.handle,
+        cHandle: principals.handle,
       })
       .from(tasks)
       .leftJoin(aa, eq(aa.id, tasks.assigneeAgentId))
       .leftJoin(ca, eq(ca.id, tasks.createdByAgentId))
-      .leftJoin(users, eq(users.id, tasks.createdByUserId))
+      .leftJoin(principals, eq(principals.id, tasks.createdByUserId))
       .where(and(...where))
       .orderBy(desc(tasks.updatedAt), asc(tasks.id))
       .limit(limit + 1);
@@ -167,7 +167,10 @@ export class TaskReads {
       ? await db.select({ slug: agents.slug }).from(agents).where(eq(agents.id, t.createdByAgentId))
       : [];
     const [creatorUser] = t.createdByUserId
-      ? await db.select({ handle: users.handle }).from(users).where(eq(users.id, t.createdByUserId))
+      ? await db
+          .select({ handle: principals.handle })
+          .from(principals)
+          .where(eq(principals.id, t.createdByUserId))
       : [];
     const createdBy: PrincipalRef = creatorAgent
       ? { kind: "agent", slug: creatorAgent.slug }
@@ -223,14 +226,14 @@ export class TaskReads {
       body: taskComments.body,
       createdAt: taskComments.createdAt,
       agentSlug: ca.slug,
-      handle: users.handle,
+      handle: principals.handle,
     };
     const commentRows = async (extra?: SQL, newestFirstLimit?: number) => {
       const q = db
         .select(cols)
         .from(taskComments)
         .leftJoin(ca, eq(ca.id, taskComments.authorAgentId))
-        .leftJoin(users, eq(users.id, taskComments.authorUserId))
+        .leftJoin(principals, eq(principals.id, taskComments.authorUserId))
         .where(and(eq(taskComments.taskId, t.id), extra))
         .orderBy(
           ...(newestFirstLimit
@@ -328,11 +331,11 @@ export class TaskReads {
         to: taskEvents.toValue,
         at: taskEvents.at,
         agentSlug: ea.slug,
-        handle: users.handle,
+        handle: principals.handle,
       })
       .from(taskEvents)
       .leftJoin(ea, eq(ea.id, taskEvents.actorAgentId))
-      .leftJoin(users, eq(users.id, taskEvents.actorUserId))
+      .leftJoin(principals, eq(principals.id, taskEvents.actorUserId))
       .where(eq(taskEvents.taskId, taskId))
       .orderBy(asc(taskEvents.at), asc(taskEvents.id));
     const ids = new Set<string>();
@@ -400,7 +403,11 @@ export class TaskReads {
     if (name === "me")
       return actor.kind === "agent" ? { agentId: actor.agentId } : { userId: actor.userId };
     const [a] = await this.d.db.select({ id: agents.id }).from(agents).where(eq(agents.slug, name));
-    const [u] = await this.d.db.select({ id: users.id }).from(users).where(eq(users.handle, name));
+    const [u] = await this.d.db
+      .select({ id: users.id })
+      .from(users)
+      .innerJoin(principals, eq(principals.id, users.id))
+      .where(eq(principals.handle, name));
     if (a && u)
       throw new TaskError(
         "ambiguous",

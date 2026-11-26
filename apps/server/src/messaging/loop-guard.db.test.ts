@@ -4,8 +4,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vit
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent, insertSchedule } from "../agents/testing/rows.ts";
 import type { FactorySettings } from "../settings/factory-settings.ts";
-import { claimTestHandleSql } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
+import { principalSql } from "../test/principals.ts";
 import { type GuardResult, LoopGuard, pairOf } from "./loop-guard.ts";
 
 const N = 3;
@@ -22,8 +22,8 @@ let deps: ConstructorParameters<typeof LoopGuard>[0];
 
 beforeAll(async () => {
   t = await createTestDb();
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
   for (const id of ["a1", "a2", "a3"]) await insertAgent(t.sql, { id, slug: id });
   const store = new EventStore(t.db);
   deps = {
@@ -327,8 +327,8 @@ describe("notices on open", () => {
   })();
 
   test("one human notice with the hold, and one inbox item per user", async () => {
-    await claimTestHandleSql(t.sql, "ana", "user");
-    await t.sql`insert into users (id, name, email, handle) values ('u2', 'Ana', 'ana@x.io', 'ana')`;
+    await t.sql.unsafe(principalSql("u2", "human", "ana"));
+    await t.sql`insert into users (id, name, email) values ('u2', 'Ana', 'ana@x.io')`;
     try {
       const r = await trip("a1", "a2");
       const msgs = await t.sql`select * from messages where notice = 'loop_held' and to_all_humans`;

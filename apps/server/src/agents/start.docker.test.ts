@@ -24,9 +24,9 @@ import {
 } from "../runtime/docker/exec-transport.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
-import { claimTestHandle, claimTestHandleSql, testManagerUserId } from "../test/handles.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
+import { principalSql, seedTestPrincipal, testManagerUserId } from "../test/principals.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
@@ -55,8 +55,8 @@ let seq = 0;
 beforeAll(async () => {
   t = await createTestDb();
   store = new EventStore(t.db);
-  await claimTestHandleSql(t.sql, "or", "user");
-  await t.sql`insert into users (id, name, email, handle) values ('u1', 'Or', 'or@x.io', 'or')`;
+  await t.sql.unsafe(principalSql("u1", "human", "or"));
+  await t.sql`insert into users (id, name, email) values ('u1', 'Or', 'or@x.io')`;
 });
 afterAll(() => t.close());
 
@@ -137,7 +137,7 @@ async function setup(
     kind: "oauth_token",
     valueEnc: vault.seal("tok-1", "credentials:c1"),
   });
-  await claimTestHandle(t.db, slug, "agent");
+  await seedTestPrincipal(t.db, "agent", slug, `0123abcd-${seq}`);
   const [agent] = await t.db
     .insert(schema.agents)
     .values({

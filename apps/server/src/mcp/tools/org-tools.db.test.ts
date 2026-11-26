@@ -165,7 +165,7 @@ test.each([
 ])("create_agent reports to %s", async (n, reports_to, kind) => {
   const slug = `c-${n.replace(/\W+/g, "-")}`;
   const r = await call("hr-bot", "create_agent", createArgs(slug, { reports_to }));
-  expect(r.json).toEqual({
+  expect(r.json).toMatchObject({
     slug,
     status: "created",
     note: `@${slug} is created and starts when it gets its first message.`,
@@ -381,12 +381,12 @@ test("archive_agent and unarchive_agent follow the human rules; self-archive is 
   expect((await call("hr-bot", "archive_agent", { slug: "hr-bot" })).text).toBe(
     "Ask a human to archive you.",
   );
-  expect((await call("hr-bot", "archive_agent", { slug: "plain" })).json).toEqual({
+  expect((await call("hr-bot", "archive_agent", { slug: "plain" })).json).toMatchObject({
     slug: "plain",
     archived: true,
   });
   expect((await row("plain")).archivedAt).not.toBeNull();
-  expect((await call("hr-bot", "unarchive_agent", { slug: "plain" })).json).toEqual({
+  expect((await call("hr-bot", "unarchive_agent", { slug: "plain" })).json).toMatchObject({
     slug: "plain",
     archived: false,
   });
@@ -518,4 +518,38 @@ test("updateWithOverlay: an overlay changed after validation rolls the identity 
   } finally {
     spy.mockRestore();
   }
+});
+
+test("create_agent refuses an unknown ref as the manager with the fix-it sentence and creates nothing", async () => {
+  const r = await call(
+    "hr-bot",
+    "create_agent",
+    createArgs("ghosted", { reports_to: "<@zzzzzzzz>" }),
+  );
+  expect(r.err).toBe(true);
+  expect(r.text).toBe(
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+  );
+  expect(await t.sql`select 1 from agents where slug = 'ghosted'`).toHaveLength(0);
+});
+
+test("create_agent and get_agent warn on a plain handle and stay quiet for a tag", async () => {
+  const [boss] = await t.sql`select ref from principals where handle = 'hr-bot'`;
+  const warning = `Plain tag detected: @hr-bot was resolved to <@${boss?.ref}|hr-bot>. Tag as <@ref|handle>.`;
+  const plain = await call(
+    "hr-bot",
+    "create_agent",
+    createArgs("warned", { reports_to: "hr-bot" }),
+  );
+  expect(plain.json.warnings).toEqual([warning]);
+  const tagged = await call(
+    "hr-bot",
+    "create_agent",
+    createArgs("not-warned", { reports_to: `<@${boss?.ref}>` }),
+  );
+  expect(tagged.json).not.toHaveProperty("warnings");
+  expect((await call("hr-bot", "get_agent", { slug: "hr-bot" })).json.warnings).toEqual([warning]);
+  expect((await call("hr-bot", "get_agent", { slug: `<@${boss?.ref}>` })).json).not.toHaveProperty(
+    "warnings",
+  );
 });

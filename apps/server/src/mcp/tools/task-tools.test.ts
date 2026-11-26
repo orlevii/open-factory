@@ -209,3 +209,14 @@ test("comment_task: a looping peer is listed under held, the comment is still po
   const [c] = await h.sql`select body from task_comments where id = ${r.json.id}`;
   expect(c?.body).toBe("@qa thoughts?");
 });
+
+test("a task assignee given as a plain handle warns; given as its tag it does not", async () => {
+  const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
+  const plain = await call("lead", "create_task", { title: "A", assignee: "dev" });
+  expect(plain.json.warnings).toEqual([
+    `Plain tag detected: @dev was resolved to <@${dev?.ref}|dev>. Tag as <@ref|handle>.`,
+  ]);
+  const tagged = await call("lead", "create_task", { title: "B", assignee: `<@${dev?.ref}|old>` });
+  expect(tagged.json).toMatchObject({ assignee: "dev" });
+  expect(tagged.json).not.toHaveProperty("warnings");
+});

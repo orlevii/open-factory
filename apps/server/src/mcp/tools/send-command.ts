@@ -85,8 +85,11 @@ export function sendCommandTool(d: {
                   return toolError(`${label} was terminated and can't receive messages.`);
                 target = found.row;
               }
-            } else if (d.spawned)
-              return toolError(`${label} isn't you; you can only send a command to yourself.`);
+            } else {
+              label = `@${found.name}`;
+              if (d.spawned)
+                return toolError(`${label} isn't you; you can only send a command to yourself.`);
+            }
           }
           const self = target?.id === d.caller.id;
           if (!target) return toolError(`${label} isn't you or one of your direct reports.`);

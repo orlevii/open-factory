@@ -329,3 +329,20 @@ test("restart_pending: the note goes to the running process; the restart follows
       .map((m) => m.from),
   ).toContain("@lead");
 });
+
+test("restart_agent by plain handle warns; by its tag it does not", async () => {
+  const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
+  const tagged = await call("lead", { target: `<@${dev?.ref}|stale>` });
+  expect(tagged.json).toMatchObject({ target: "@dev", status: "not_running" });
+  expect(tagged.json).not.toHaveProperty("warnings");
+  const plain = await call("lead", { target: "dev" });
+  expect(plain.json.warnings).toEqual([
+    `Plain tag detected: @dev was resolved to <@${dev?.ref}|dev>. Tag as <@ref|handle>.`,
+  ]);
+});
+
+test("a person named by their full tag reads as their handle in the refusal", async () => {
+  const [or] = await h.sql`select ref from principals where handle = 'or'`;
+  const r = await call("lead", { target: `<@${or?.ref}|or>` });
+  expect(r).toMatchObject({ err: true, text: "@or isn't one of your direct reports." });
+});

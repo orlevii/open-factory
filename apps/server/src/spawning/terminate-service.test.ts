@@ -7,6 +7,7 @@ import { and, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentTerminatedError } from "../agents/errors.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
+import { callTool } from "../mcp/testing/mcp-client.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { asRunning } from "../test/running.ts";
@@ -164,11 +165,11 @@ test("terminate_agent: only your own spawned agents; idempotent; persistent agen
   expect(await t.app.terminator.terminateChild(lead.id, "@nobody")).toEqual(notYours("nobody"));
   expect((await t.app.store.agentById(child.id))?.terminatedAt).toBeNull();
 
-  expect(await t.app.terminator.terminateChild(lead.id, ` @${child.slug} `)).toEqual({
+  expect(await t.app.terminator.terminateChild(lead.id, ` @${child.slug} `)).toMatchObject({
     ok: true,
     slug: child.slug,
   });
-  expect(await t.app.terminator.terminateChild(lead.id, child.slug)).toEqual({
+  expect(await t.app.terminator.terminateChild(lead.id, child.slug)).toMatchObject({
     ok: true,
     slug: child.slug,
   });
@@ -439,4 +440,21 @@ test("boot rejects loop-held rows to terminated agents and leaves the others", a
   await t.app.store.rejectPendingToTerminated();
   expect(await stateOf(t, toA.id)).toBe("rejected");
   expect(await stateOf(t, toB.id)).toBe("loop_held");
+});
+
+test("terminate_agent by its tag terminates silently; by a plain handle it warns", async () => {
+  const { t, driver, lead } = await setup();
+  const url = `http://127.0.0.1:${t.app.agentListener.port}`;
+  const token = t.app.agentTokens.mint(lead.id).token;
+  const a = await spawnIdle(t, driver, lead, "w1");
+  const b = await spawnIdle(t, driver, lead, "w2");
+  const [aRef] = await t.sql`select ref from principals where handle = ${a.slug}`;
+  const [bRef] = await t.sql`select ref from principals where handle = ${b.slug}`;
+  const tagged = await callTool(url, token, "terminate_agent", { target: `<@${aRef?.ref}|stale>` });
+  expect(tagged.isError).toBeFalsy();
+  expect(JSON.parse(tagged.content[0]?.text ?? "")).toEqual({ slug: a.slug, status: "terminated" });
+  const plain = await callTool(url, token, "terminate_agent", { target: b.slug });
+  expect(JSON.parse(plain.content[0]?.text ?? "").warnings).toEqual([
+    `Plain tag detected: @${b.slug} was resolved to <@${bRef?.ref}|${b.slug}>. Tag as <@ref|handle>.`,
+  ]);
 });

@@ -533,14 +533,25 @@ export class AgentService {
 
   /** The manager a handle names: an active persistent agent or an enabled user; anything else is a field error. */
   /**
-   * The handle an org tool's agent argument names (a tag, a ref or a handle), for the services that take handles. A
-   * ref nobody holds is refused with the fix-it sentence; anything else that isn't an agent passes through as written,
-   * so the service answers with its usual "no agent named" sentence.
+   * The handle an org tool's agent argument names (a tag, a ref or a handle), for the services that take handles, with
+   * the plain-tag warning when it was a plain handle. A ref nobody holds is refused with the fix-it sentence; anything
+   * else that isn't an agent passes through as written, so the service answers with its usual "no agent named" sentence.
    */
-  async handleOf(raw: string): Promise<string> {
+  async handleOf(raw: string): Promise<{ handle: string; warning?: string }> {
     const r = await resolveAgentArg(this.d.db, raw);
     if (r.kind === "unknown_ref") throw new OrgRefusedError(unknownRefError(r.ref));
-    return r.kind === "agent" ? r.handle : r.name;
+    if (r.kind === "agent")
+      return { handle: r.handle, ...(r.warning ? { warning: r.warning } : {}) };
+    return { handle: r.name };
+  }
+
+  /** `handleOf` for a manager, who may be an agent or a person: an agent writer's unknown ref gets the fix-it sentence. */
+  async managerHandleOf(raw: string): Promise<{ handle: string; warning?: string }> {
+    const r = await resolveArg(this.d.db, raw);
+    if (r.kind === "unknown_ref") throw new OrgRefusedError(unknownRefError(r.ref));
+    if (r.kind === "principal")
+      return { handle: r.p.handle, ...(r.warning ? { warning: r.warning } : {}) };
+    return { handle: raw.trim().replace(/^@/, "") };
   }
 
   private async resolveManager(raw: string): Promise<Manager> {

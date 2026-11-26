@@ -33,7 +33,7 @@ export class TerminateService implements TerminatePort {
   async terminateChild(
     callerId: string,
     targetArg: string,
-  ): Promise<{ ok: true; slug: string } | { ok: false; message: string }> {
+  ): Promise<{ ok: true; slug: string; warning?: string } | { ok: false; message: string }> {
     const found = await this.d.store.agentByArg(targetArg);
     if (found.kind === "unknown_ref") return { ok: false, message: unknownRefError(found.ref) };
     const a = found.kind === "agent" ? found.row : undefined;
@@ -50,7 +50,11 @@ export class TerminateService implements TerminatePort {
       this.d.log.error({ err, agent: a.slug }, "terminating a spawned agent failed");
       return { ok: false, message: `@${a.slug} couldn't be terminated; try again.` };
     }
-    return { ok: true, slug: a.slug };
+    return {
+      ok: true,
+      slug: a.slug,
+      ...(found.kind === "agent" && found.warning ? { warning: found.warning } : {}),
+    };
   }
 
   /**

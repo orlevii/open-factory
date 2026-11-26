@@ -90,7 +90,7 @@ export const resolveArg = async (tx: Tx, raw: string): Promise<ArgResolution> =>
 export type AgentArg =
   | { kind: "agent"; row: AgentRow; handle: string; warning?: string }
   | { kind: "unknown_ref"; ref: string }
-  /** Not an agent: unknown, a person, reserved or a channel. `name` is the argument without its `@`. */
+  /** Not an agent: unknown, a person, reserved or a channel. `name` is the resolved handle, else the argument without its `@`. */
   | { kind: "not_agent"; name: string };
 
 /** `resolveArg` for a tool that names an agent: the agent's row (by id, fresh), or why it isn't one. */
@@ -107,5 +107,8 @@ export async function resolveAgentArg(tx: Tx, raw: string): Promise<AgentArg> {
         ...(r.warning ? { warning: r.warning } : {}),
       };
   }
-  return { kind: "not_agent", name: raw.trim().replace(/^@/, "") };
+  return {
+    kind: "not_agent",
+    name: r.kind === "principal" ? r.p.handle : raw.trim().replace(/^@/, ""),
+  };
 }

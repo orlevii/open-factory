@@ -52,12 +52,11 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
         async (args: { target: string; note?: string; force?: boolean }, tctx: ToolContext) => {
           if (callerOf(tctx) !== d.caller.id)
             throw new Error("restart_agent was built for another caller");
-          const wanted = args.target.trim().replace(/^@/, "");
           const manageOrg = (await d.loadAgent(d.caller.id))?.manageOrg === true;
           const found = await d.store.agentByArg(args.target);
           if (found.kind === "unknown_ref") return toolError(unknownRefError(found.ref));
           const row = found.kind === "agent" ? found.row : undefined;
-          const label = `@${found.kind === "agent" ? found.handle : wanted}`;
+          const label = `@${found.kind === "agent" ? found.handle : found.name}`;
           if (!row) {
             return toolError(
               manageOrg ? `No agent named ${label}.` : `${label} isn't one of your direct reports.`,
@@ -107,6 +106,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
               status: outcome.status,
               ...(outcome.note ? { note: outcome.note } : {}),
               ...(lost ? { note_delivered: false, note_error: lost } : {}),
+              ...(found.kind === "agent" && found.warning ? { warnings: [found.warning] } : {}),
             });
           } catch (e) {
             if (e instanceof RecoveryRefusedError) return toolError(e.message);

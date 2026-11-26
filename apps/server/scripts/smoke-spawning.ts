@@ -668,9 +668,9 @@ try {
     ask(
       "lead",
       [
-        "Call mcp__factory__terminate_agent with slug helper-one.",
-        'Call the tool mcp__factory__terminate_agent exactly once with {"slug": "helper-one"}. Then stop.',
-        'You must call mcp__factory__terminate_agent now with {"slug": "helper-one"}. No other tool.',
+        "Call mcp__factory__terminate_agent with target helper-one.",
+        'Call the tool mcp__factory__terminate_agent exactly once with {"target": "helper-one"}. Then stop.',
+        'You must call mcp__factory__terminate_agent now with {"target": "helper-one"}. No other tool.',
       ],
       (es) => okCalls(es, TERMINATE)[0],
     ),
@@ -855,8 +855,8 @@ try {
         () => terminated([TL, RV]),
         (left, n) =>
           n === 0
-            ? `Call mcp__factory__terminate_agent for each of: ${left.map((s) => JSON.stringify({ slug: s })).join(" and ")}. Then stop.`
-            : `You must call mcp__factory__terminate_agent now, once with each of ${left.map((s) => JSON.stringify({ slug: s })).join(" and ")}. No other tool.`,
+            ? `Call mcp__factory__terminate_agent for each of: ${left.map((s) => JSON.stringify({ target: s })).join(" and ")}. Then stop.`
+            : `You must call mcp__factory__terminate_agent now, once with each of ${left.map((s) => JSON.stringify({ target: s })).join(" and ")}. No other tool.`,
       ),
   );
   say(`    lead: ${toolTrace(t11)}`);

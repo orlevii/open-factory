@@ -36,11 +36,11 @@ import {
   TOO_MANY,
   type UploadSummary,
 } from "./attachments";
-import { type CaretAnchor, CaretMenu, type CaretMenuHandle, caretAnchor } from "./caret-menu";
+import { CaretMenu } from "./caret-menu";
 import { Recipients } from "./recipients";
 import { StopButton, type StopHandle } from "./stop-button";
 import { TagHighlighter } from "./tag-highlighter";
-import { useTagField } from "./use-tag-field";
+import { useTagMenu } from "./use-tag-menu";
 
 export const NETWORK_ERROR = "Can't reach the server. Check that it's running, then try again.";
 export const UNCONFIRMED = "Couldn't confirm the send. Retry sends it once.";
@@ -240,18 +240,7 @@ export type ComposerProps = {
   ref?: Ref<ComposerHandle>;
 };
 
-/** At most this many rows in a caret menu (U3 §13.3, §13.4). */
-const MAX_ROWS = 8;
-const NO_ITEMS: CompletionItem[] = [];
 const NO_SOURCES: CompletionSource[] = [];
-/** An open caret menu: its source, the trigger's index, the text typed after it, where it hangs. */
-type OpenMenu = { source: CompletionSource; from: number; query: string; anchor: CaretAnchor };
-
-/** Whether `text` still has the menu's token where it was typed. */
-function holds(m: OpenMenu, text: string): boolean {
-  const hit = m.source.opensAt(text, m.from + 1 + m.query.length);
-  return hit?.from === m.from && hit.query === m.query;
-}
 
 /** A send whose POST aborted: the box got `sent` back (as `box`, after `before`), and its files. */
 type Unconfirmed = { id: string; sent: string; box: string; before: string; taken?: TakenUploads };
@@ -400,100 +389,40 @@ export const Composer = memo(function Composer({
     () => (slash || at ? [slash, at].filter((c) => c !== undefined) : NO_SOURCES),
     [slash, at],
   );
-  // A paste never opens a menu (U3 §13.3): the change it makes is skipped, and so is the text it left
-  // until something is typed.
-  const pasted = useRef(false);
-  const pastedText = useRef<string | undefined>(undefined);
-  const [menuState, setMenu] = useState<OpenMenu | undefined>();
-  // The trigger whose menu Esc closed: typing on in that token doesn't bring it back.
-  const dismissedAt = useRef<number | undefined>(undefined);
-  // A tagging `@` source makes the box a tag field: it shows `@handle` over the stored `<@ref>` text.
-  const tag = useTagField({
+  // After an accept or the `@` button, where the caret goes and whether to look for a menu there.
+  const pendingCaret = useRef<{ at: number; look: boolean } | undefined>(undefined);
+  // The caret menus and the tag field, one hook (use-tag-menu.tsx): a tagging `@` source makes the box a tag field.
+  const {
+    tag,
+    menu,
+    menuOpen,
+    items,
+    menuNote,
+    menuRef,
+    combobox,
+    pick,
+    closeMenu,
+    clearMenu,
+    lookForMenu,
+    change,
+    select,
+    paste,
+    keyDown,
+    attach: setBox,
+  } = useTagMenu({
     value: text,
     setValue: setText,
-    enabled: at?.acceptTag !== undefined,
-    ...(at?.tagHandle ? { handleOf: at.tagHandle } : {}),
-    ...(at?.watchTags ? { subscribe: at.watchTags } : {}),
-    // After an undo the caret may sit in an `@query`: its menu stays closed, as after Esc.
-    onRestore: (restored, caret) => {
-      dismissedAt.current = at?.opensAt(restored, caret)?.from;
-      setMenu(undefined);
+    sources,
+    tagSource: at?.acceptTag ? at : undefined,
+    box: boxRef,
+    acceptPlain: (source, item, el, from, caret) => {
+      const r = source.accept(item, el.value, from, caret);
+      setText(r.text);
+      pendingCaret.current = { at: r.caret, look: false };
     },
   });
   const shown = tag.tagged.text;
-  const tagRef = tag.ref;
-  const setBox = useCallback(
-    (el: HTMLTextAreaElement | null) => {
-      boxRef.current = el;
-      const detach = tagRef(el);
-      // With a cleanup returned React doesn't call the ref with null: clear it there.
-      return () => {
-        detach?.();
-        boxRef.current = null;
-      };
-    },
-    [tagRef],
-  );
-  // The menu holds only while the text still has its token (a send, Reply or a draft change can
-  // replace the text without a keystroke): otherwise it is closed, whatever the state says.
-  const menu = menuState && holds(menuState, shown) ? menuState : undefined;
-  // Bumped when the open menu's data changes (the users list arriving, a renamed agent).
-  const [dataVersion, setDataVersion] = useState(0);
-  const watched = menu?.source;
-  useEffect(() => watched?.watch?.(() => setDataVersion((v) => v + 1)), [watched]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: dataVersion re-reads the source's data
-  const items = useMemo(() => {
-    if (!menu) return NO_ITEMS;
-    const rows = menu.source.items(menu.query);
-    return menu.source.allRows ? rows : rows.slice(0, MAX_ROWS);
-  }, [menu, dataVersion]);
-  const menuNote = useMemo(() => menu?.source.menuNote?.(items.length), [menu, items]);
-  const menuOpen = items.length > 0 || menuNote !== undefined;
-  const menuRef = useRef<CaretMenuHandle>(null);
-  // After an accept or the `@` button, where the caret goes and whether to look for a menu there.
-  const pendingCaret = useRef<{ at: number; look: boolean } | undefined>(undefined);
 
-  /** Opens, updates or closes the menu for the box's text and caret. */
-  const lookForMenu = (box: HTMLTextAreaElement) => {
-    if (box.value === pastedText.current) {
-      if (menuState) setMenu(undefined);
-      return;
-    }
-    const caret = box.selectionStart === box.selectionEnd ? box.selectionStart : null;
-    for (const source of caret === null ? NO_SOURCES : sources) {
-      const hit = source.opensAt(box.value, caret as number);
-      if (!hit || tag.onTag(hit.from, caret as number)) continue;
-      if (dismissedAt.current === hit.from) break;
-      dismissedAt.current = undefined;
-      if (menu?.source === source && menu.from === hit.from) {
-        if (menu.query !== hit.query) setMenu({ ...menu, query: hit.query });
-      } else setMenu({ source, ...hit, anchor: caretAnchor(box, hit.from) });
-      return;
-    }
-    if (caret !== null && !sources.some((c) => c.opensAt(box.value, caret))) {
-      dismissedAt.current = undefined;
-    }
-    if (menuState) setMenu(undefined);
-  };
-  const closeMenu = () => {
-    if (menu) dismissedAt.current = menu.from;
-    setMenu(undefined);
-  };
-  const pick = (item: CompletionItem) => {
-    const box = boxRef.current;
-    if (!box || !menu) return;
-    const caret = box.selectionStart ?? box.value.length;
-    setMenu(undefined);
-    if (menu.source.acceptTag) {
-      const { ref, handle } = menu.source.acceptTag(item);
-      tag.pickTag(menu.from, caret, ref, handle);
-    } else {
-      const r = menu.source.accept(item, box.value, menu.from, caret);
-      setText(r.text);
-      pendingCaret.current = { at: r.caret, look: false };
-    }
-    box.focus();
-  };
   /** The toolbar's `@`: inserts the trigger at the caret (after a space when it follows a word). */
   const insertTrigger = (trigger: string) => {
     setView("write");
@@ -625,7 +554,7 @@ export const Composer = memo(function Composer({
     // Optimistic: the box empties at once; the stored draft keeps the text until the server takes it.
     draft.hold(sent);
     setText("");
-    setMenu(undefined); // ⌥Enter or ⌘Enter sends as typed, with a menu open: it goes with the text
+    clearMenu(); // ⌥Enter or ⌘Enter sends as typed, with a menu open: it goes with the text
     setPending((n) => n + 1);
     let submitted: Promise<void>;
     try {
@@ -665,33 +594,7 @@ export const Composer = memo(function Composer({
   // ⌥Enter, Enter. Recall joins later.
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-    pasted.current = false; // a key before the change: what follows is typed (⌘V's paste comes after)
-    if (tag.keyDown(e)) return;
-    if (menuOpen && menu) {
-      const plain = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
-      if (plain && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-        e.preventDefault();
-        menuRef.current?.move(e.key === "ArrowDown" ? 1 : -1);
-        return;
-      }
-      // Tab commits too (Q43). In the `/` menu Enter takes only a name match; otherwise it sends the
-      // text as typed (below), and with no row Tab moves on.
-      if (plain && (e.key === "Enter" || e.key === "Tab")) {
-        if (menuRef.current?.accept(e.key === "Enter")) {
-          e.preventDefault();
-          return;
-        }
-        if (e.key === "Tab") return;
-      }
-      // Esc closes the menu first and leaves the text; it never goes on to stop the turn. The popover
-      // may already have closed it (its own Esc listener runs first).
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeMenu();
-        return;
-      }
-    }
+    if (keyDown(e)) return;
     if (e.key === "Escape") {
       // An open peek or popover took this Esc first (Radix marks it handled): let it just close.
       if (e.nativeEvent.defaultPrevented) return;
@@ -758,10 +661,7 @@ export const Composer = memo(function Composer({
       e.clipboardData.files.length > 0 && e.clipboardData.getData("text/plain") === "";
     if (!fileOnly) {
       // Tags in the paste go in as tags, with no change event; anything else is the browser's paste.
-      const left = tag.paste(e);
-      pasted.current = left === undefined;
-      // Tags went in with no change event: a menu stays shut for the text the paste left.
-      if (left !== undefined) pastedText.current = left;
+      paste(e);
       return;
     }
     e.preventDefault();
@@ -900,8 +800,7 @@ export const Composer = memo(function Composer({
                 value={shown}
                 {...tag.bind}
                 onChange={(e) => {
-                  const value = e.target.value;
-                  tag.change(e);
+                  change(e);
                   setError(undefined);
                   setFilesNote(false);
                   setAttachNote(undefined);
@@ -909,29 +808,17 @@ export const Composer = memo(function Composer({
                   onEdit?.();
                   setHeldShownFor(undefined);
                   setSentRefusal(undefined);
-                  if (pasted.current) {
-                    pasted.current = false;
-                    pastedText.current = value;
-                    if (menuState) setMenu(undefined);
-                    return;
-                  }
-                  pastedText.current = undefined;
-                  if (sources.length) lookForMenu(e.target);
                 }}
                 onSelect={
                   sources.length || tag.enabled
                     ? (e) => {
-                        tag.select(e.currentTarget);
-                        if (sources.length) lookForMenu(e.currentTarget);
+                        select(e.currentTarget);
                       }
                     : undefined
                 }
                 // A multiline combobox while it has caret menus (U3 §13.4); CaretMenu adds aria-controls
                 // and aria-activedescendant while one is open.
-                role={sources.length ? "combobox" : undefined}
-                aria-haspopup={sources.length ? "listbox" : undefined}
-                aria-expanded={sources.length ? menuOpen : undefined}
-                aria-autocomplete={sources.length ? "list" : undefined}
+                {...combobox}
                 onFocus={draft.bind.onFocus}
                 onBlur={() => {
                   draft.bind.onBlur();

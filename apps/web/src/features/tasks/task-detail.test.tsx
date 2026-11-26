@@ -360,16 +360,16 @@ test("description edit: Escape does not cancel; a failure keeps the text; Save t
   );
   renderApp("/tasks/T-42", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Edit description" }));
-  const area = screen.getByRole("textbox", { name: "Description" });
+  const area = screen.getByRole("combobox", { name: "Description" });
   expect(area).toHaveFocus();
   expect(screen.getByText("Saving sends the new description to @dev.")).toBeInTheDocument();
   await userEvent.clear(area);
   await userEvent.type(area, "Changed");
   await userEvent.keyboard("{Escape}");
-  expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue("Changed");
+  expect(screen.getByRole("combobox", { name: "Description" })).toHaveValue("Changed");
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText("Couldn't save. Try again.")).toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue("Changed");
+  expect(screen.getByRole("combobox", { name: "Description" })).toHaveValue("Changed");
   fail = false;
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByText("Changed")).toBeInTheDocument();
@@ -647,17 +647,32 @@ test("Escape closes a title's tag menu and keeps the @query as text, leaving the
   expect(screen.getByLabelText("Title")).toBe(input);
 });
 
+test("a task title is a combobox that is expanded while its tag menu is open; Esc collapses it", async () => {
+  world(() => detail({ title: "Ping" }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  const input = screen.getByRole("combobox", { name: "Title" });
+  await userEvent.clear(input);
+  expect(input).toHaveAttribute("aria-expanded", "false");
+  await userEvent.type(input, "@");
+  await screen.findByRole("listbox", { name: "Tag someone" });
+  expect(input).toHaveAttribute("aria-expanded", "true");
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("listbox", { name: "Tag someone" })).toBeNull();
+  expect(input).toHaveAttribute("aria-expanded", "false");
+});
+
 test("description editor: an over-long body on Save from Preview goes back to Write, marks the frame and focuses the textarea", async () => {
   const api = world();
   renderApp("/tasks/T-42", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Edit description" }));
-  const area = screen.getByRole("textbox", { name: "Description" });
+  const area = screen.getByRole("combobox", { name: "Description" });
   fireEvent.change(area, { target: { value: "x".repeat(70_000) } });
   const frame = area.closest("[data-slot=tabs]") as HTMLElement;
   await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
-  expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Description" })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Save" }));
-  const back = await screen.findByRole("textbox", { name: "Description" });
+  const back = await screen.findByRole("combobox", { name: "Description" });
   await waitFor(() => expect(back).toHaveFocus());
   expect(back).toHaveAttribute("aria-invalid", "true");
   expect(back).toHaveAccessibleDescription("Shorten this to 64 KB or less.");
@@ -669,7 +684,7 @@ test("description editor: leaving an edited, invalid body for Cancel doesn't val
   world();
   renderApp("/tasks/T-42", alice);
   await userEvent.click(await screen.findByRole("button", { name: "Edit description" }));
-  const area = screen.getByRole("textbox", { name: "Description" });
+  const area = screen.getByRole("combobox", { name: "Description" });
   fireEvent.change(area, { target: { value: "x".repeat(70_000) } });
   // A keyboard move: the blur's relatedTarget is Cancel, with no pointerdown to fall back on.
   act(() => screen.getByRole("button", { name: "Cancel" }).focus());
@@ -951,7 +966,7 @@ test("tasks_changed refetches the open task and keeps the draft and an open edit
   renderApp("/tasks/T-42", alice);
   await userEvent.type(await screen.findByRole("combobox", { name: "Comment" }), "my draft");
   await userEvent.click(screen.getByRole("button", { name: "Edit description" }));
-  await userEvent.type(screen.getByRole("textbox", { name: "Description" }), " more");
+  await userEvent.type(screen.getByRole("combobox", { name: "Description" }), " more");
   current = detail({
     status: "done",
     activity: [
@@ -968,7 +983,7 @@ test("tasks_changed refetches the open task and keeps the draft and an open edit
   act(() => ws.push({ type: "tasks_changed", keys: ["T-42"] }));
   expect(await screen.findByRole("button", { name: "Status: Done" })).toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "Comment" })).toHaveValue("my draft");
-  expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue("The **brief**. more");
+  expect(screen.getByRole("combobox", { name: "Description" })).toHaveValue("The **brief**. more");
   expect(await screen.findByText("@dev commented")).toBeInTheDocument();
 });
 

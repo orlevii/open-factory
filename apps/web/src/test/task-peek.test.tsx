@@ -233,15 +233,15 @@ test("Esc inside the peek's editors leaves the peek open: the description draft 
   space(r2);
   const sheet = await screen.findByRole("dialog", { name: "T-2" });
   await userEvent.click(await within(sheet).findByRole("button", { name: "Edit description" }));
-  const area = within(sheet).getByRole("textbox", { name: "Description" });
+  const area = within(sheet).getByRole("combobox", { name: "Description" });
   fireEvent.change(area, { target: { value: "A long draft" } });
   fireEvent.keyDown(area, { key: "Escape" });
   expect(screen.getByRole("dialog", { name: "T-2" })).toBe(sheet);
-  expect(within(sheet).getByRole("textbox", { name: "Description" })).toHaveValue("A long draft");
+  expect(within(sheet).getByRole("combobox", { name: "Description" })).toHaveValue("A long draft");
   await userEvent.click(within(sheet).getByRole("button", { name: "Edit title" }));
-  const title = within(sheet).getByRole("textbox", { name: "Title" });
+  const title = within(sheet).getByRole("combobox", { name: "Title" });
   fireEvent.keyDown(title, { key: "Escape" });
-  await waitFor(() => expect(within(sheet).queryByRole("textbox", { name: "Title" })).toBeNull());
+  await waitFor(() => expect(within(sheet).queryByRole("combobox", { name: "Title" })).toBeNull());
   expect(screen.getByRole("dialog", { name: "T-2" })).toBe(sheet);
 });
 

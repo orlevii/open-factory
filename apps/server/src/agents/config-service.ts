@@ -109,9 +109,7 @@ export class ConfigService {
     // The agent's runtime, not the template's: it is fixed per agent (only a human switches it), and a template change
     // never moves it.
     const merged =
-      base && parsed.success
-        ? withRuntime(mergeConfig(base.doc, parsed.data), row.runtime)
-        : null;
+      base && parsed.success ? withRuntime(mergeConfig(base.doc, parsed.data), row.runtime) : null;
     return {
       overlay,
       version: overlayVersion(overlay as AgentOverlay),

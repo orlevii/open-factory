@@ -332,7 +332,10 @@ test("an agent switched from Docker to local: its next start removes the old con
   expect(container(w)).toBeDefined();
   const execsBefore = execs(w).length;
 
-  await t.db.update(schema.agents).set({ runtime: "local" }).where(eq(schema.agents.id, w.agent.id));
+  await t.db
+    .update(schema.agents)
+    .set({ runtime: "local" })
+    .where(eq(schema.agents.id, w.agent.id));
   await w.runtimes.refresh(w.agent.id);
   await w.runtimes.requestRestart(w.agent.id);
   await send(w, "again");
@@ -347,7 +350,10 @@ test("an agent switched from Docker to local: its next start removes the old con
 
 test("a local start with Docker unreachable still starts: nothing can run in a daemon that is down", async () => {
   const w = await setup("reply", undefined, { FACTORY_ALLOW_LOCAL_RUNTIME: "true" });
-  await t.db.update(schema.agents).set({ runtime: "local" }).where(eq(schema.agents.id, w.agent.id));
+  await t.db
+    .update(schema.agents)
+    .set({ runtime: "local" })
+    .where(eq(schema.agents.id, w.agent.id));
   w.docker.down = Object.assign(new Error("connect ENOENT /var/run/docker.sock"), {
     code: "ENOENT",
     syscall: "connect",

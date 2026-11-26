@@ -31,7 +31,14 @@ async function factory(env: Record<string, string> = {}) {
   };
   const create = (slug: string, tpl: string) =>
     t.app.agents.create(
-      { template: tpl, slug, displayName: slug, description: "", reportsTo: "or", credential: "work" },
+      {
+        template: tpl,
+        slug,
+        displayName: slug,
+        description: "",
+        reportsTo: "or",
+        credential: "work",
+      },
       human,
     );
   const runtimeOf = async (slug: string) =>
@@ -80,7 +87,11 @@ describe("on a factory that allows local agents", () => {
     if (!asker) throw new Error("no asker");
     const before = await f.runtimeOf(slug);
     await expect(
-      f.t.app.agents.update(slug, { runtime: to }, { kind: "agent", id: asker.id, slug: asker.slug }),
+      f.t.app.agents.update(
+        slug,
+        { runtime: to },
+        { kind: "agent", id: asker.id, slug: asker.slug },
+      ),
     ).rejects.toBeInstanceOf(OrgRefusedError);
     expect(await f.runtimeOf(slug)).toBe(before);
   });

@@ -36,9 +36,9 @@ const everyone = [
 ];
 const handles = (q: string, o: { recent?: string[]; reports?: string[]; me?: string } = {}) =>
   rankMentions(q, everyone, {
-    me: o.me ?? "or",
-    recent: o.recent ?? [],
-    reports: new Set(o.reports ?? []),
+    me: refFor(o.me ?? "or"),
+    recent: (o.recent ?? []).map(refFor),
+    reports: new Set((o.reports ?? []).map(refFor)),
   }).map((p) => p.handle);
 
 function cached(...items: PrincipalItem[]) {
@@ -94,7 +94,7 @@ test("accepting replaces the typed token with `@handle `", () => {
 
 test("the source offers live principals from the cache with their ref, and a note when it has rows", () => {
   const qc = cached(...everyone);
-  qc.setQueryData(["session"], { user: { handle: "or" } });
+  qc.setQueryData(["session"], { user: { handle: "or", ref: refFor("or") } });
   const source = mentionSource(qc, { note: "A tag notifies them" });
   const rows = source.items("");
   expect(rows.map((r) => r.detail)).toEqual(["@alpha", "@bravo", "@dana", "@lead", "@zed"]);
@@ -104,14 +104,23 @@ test("the source offers live principals from the cache with their ref, and a not
   expect(source.menuNote?.(0)).toBeUndefined();
 });
 
-test("your reports come from the cached agents list, ahead of other agents", () => {
+test("your reports come from the cached agents list by manager ref, ahead of other agents", () => {
   const qc = cached(person("a", "A"), person("mine", "Mine"), person("theirs", "Theirs"));
-  qc.setQueryData(["session"], { user: { handle: "or" } });
+  qc.setQueryData(["session"], { user: { handle: "or", ref: refFor("or") } });
   qc.setQueryData(
     ["agents", "exclude"],
     [
-      { handle: "mine", reportsTo: { kind: "human", ref: refFor("or"), handle: "or" } },
-      { handle: "theirs", reportsTo: { kind: "human", ref: refFor("dana"), handle: "dana" } },
+      {
+        ref: refFor("mine"),
+        handle: "mine",
+        // Its manager's handle here is an older label: the ref is what says it is you.
+        reportsTo: { kind: "human", ref: refFor("or"), handle: "or-before-rename" },
+      },
+      {
+        ref: refFor("theirs"),
+        handle: "theirs",
+        reportsTo: { kind: "human", ref: refFor("dana"), handle: "dana" },
+      },
     ],
   );
   expect(

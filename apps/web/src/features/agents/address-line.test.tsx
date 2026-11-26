@@ -165,23 +165,31 @@ test("leaving the handle input passes the blur event on", async () => {
   expect(handleBlur.mock.calls[0]?.[0]).toHaveProperty("relatedTarget");
 });
 
-test("the avatar's handle settles after 300ms without typing", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+test("a new agent's line draws no face: its face comes from the ref the server makes", async () => {
+  const user = userEvent.setup();
   setup({ initialName: "Priya" });
-  const sig = () => document.querySelector("[data-agent-avatar]")?.innerHTML;
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(350);
-  });
-  const first = sig();
   await user.type(screen.getByLabelText("Name"), "x");
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(100);
-  });
   expect(line()).toHaveTextContent("@priyax");
-  expect(sig()).toBe(first);
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(250);
-  });
-  expect(sig()).not.toBe(first);
+  expect(document.querySelector("[data-agent-avatar]")).toBeNull();
+});
+
+test("the edit line draws the agent's own avatar, the template's avatar.svg when it has one", () => {
+  routes();
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <AddressLine
+        name="Dev"
+        handle="dev"
+        handleTouched
+        onHandle={() => {}}
+        agentRef="a1b2c3d4"
+        avatar={{ template: "lead", avatarVersion: "v1", color: 4 }}
+      />
+    </QueryClientProvider>,
+  );
+  expect(document.querySelector("[data-agent-avatar] img")).toHaveAttribute(
+    "src",
+    "/api/templates/lead/avatar.svg?v=v1",
+  );
 });

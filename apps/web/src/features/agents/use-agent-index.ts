@@ -36,11 +36,10 @@ export function useEndedAgent(ref: string): AgentSummary | undefined {
   return useQuery({ ...agentsListQueryOptions("only"), enabled: false, select }).data;
 }
 
-/** The agent's current handle for text: from the lists, else the principals cache; "…" while neither knows it. */
+/** The agent's current handle for text: the principals cache (a rename patches it at once), else the lists; "…" while neither knows it. */
 export function useHandle(ref: string): string {
+  const p = usePrincipal(ref).principal;
   const live = useAgent(ref);
   const ended = useEndedAgent(ref);
-  const known = live ?? ended;
-  const p = usePrincipal(known ? "" : ref).principal;
-  return known?.handle ?? p?.handle ?? "…";
+  return p?.handle ?? (live ?? ended)?.handle ?? "…";
 }

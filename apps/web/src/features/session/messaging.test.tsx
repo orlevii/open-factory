@@ -778,7 +778,7 @@ test("Tab walks the focused row's controls: the recipient link, then the row men
     "ping b",
   );
   const user = userEvent.setup();
-  const sender = await screen.findByRole("link", { name: /Builder/ });
+  const sender = await screen.findByRole("link", { name: /@b\b/ });
   await vi.waitFor(() => expect(sender).toHaveAttribute("tabindex", "0"));
   sender.focus();
   await user.tab();

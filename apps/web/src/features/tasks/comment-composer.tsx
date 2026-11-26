@@ -12,7 +12,7 @@ const REASON: Record<string, string> = {
   terminated: "terminated",
 };
 
-/** "Not reached: @x (no such name), @y (archived), and 3 more (over 50 mentions)." (only the reasons present). */
+/** "Not reached: @x (archived), @y (terminated), and 3 more (over 50 mentions)." (only the reasons present). */
 export function notReachedLine(list: TaskCommentResponse["notReached"]): string | undefined {
   if (!list.length) return undefined;
   const many = list.filter((n) => n.reason === "too_many").length;
@@ -52,7 +52,7 @@ export function CommentComposer({
   taskKey: string;
   /** After the server took the comment (the reading pane marks its item read). */
   onPosted?: () => void;
-  /** The current live assignee's agentRef, for the helper line. */
+  /** The current live assignee's handle, for the helper line. */
   assignee: string | undefined;
   /** Kept for callers: the shared composer starts at two lines and grows. */
   compact?: boolean;

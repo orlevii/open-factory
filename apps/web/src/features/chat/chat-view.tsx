@@ -156,6 +156,7 @@ function Thread({
   const chat = useChat(agentRef, { messageId });
   const { entries, working, live, windowed, status } = chat;
   const self = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
+  const selfRef = useQuery({ ...sessionQueryOptions, select: toUserRef }).data;
   const scroller = useRef<HTMLDivElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const loaded = status === "success";
@@ -340,6 +341,7 @@ function Thread({
               agentRef={agentRef}
               agentName={agentName}
               self={self}
+              selfRef={selfRef}
               live={live.has(key)}
               grouped={grouped}
               gap={grouped ? "mt-1" : rowGap(i === 0)}
@@ -361,6 +363,7 @@ function Thread({
       agentRef,
       agentName,
       self,
+      selfRef,
       tabKey,
       targetKey,
       arrival,

@@ -35,6 +35,18 @@ test("a single frame toasts at 2,000 ms, not before, and Open goes to the agent'
   expect(navigate).toHaveBeenCalledWith(`/agents/${refFor("dev")}/chat`);
 });
 
+test("an actor and a subject the principals cache doesn't know yet read as words, not a handle", () => {
+  const t = toasts();
+  t.onOrgAction({
+    type: "org_action",
+    action: "agent_created",
+    by: refFor("stranger"),
+    subject: refFor("newcomer"),
+  });
+  vi.advanceTimersByTime(2000);
+  expect(notify.mock.calls[0]?.[0].text).toBe("An agent created an agent");
+});
+
 test("three created frames from one actor in the window give one toast to the list", () => {
   const t = toasts();
   for (const subject of ["a", "b", "c"].map(refFor)) {

@@ -1,6 +1,13 @@
-import { screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, screen, within } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  mergePrincipals,
+  type PrincipalsCache,
+  principalsQueryOptions,
+} from "@/features/principals/api";
+import { principal } from "@/test/chat-fixtures";
 import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import { OutgoingMessage } from "./outgoing-message";
@@ -265,4 +272,42 @@ test("a send written with a tag, a ref or a plain handle matches its tagged resu
       "ada",
     ).find((i) => i.kind === "session"),
   ).toMatchObject({ to: "c4r01000", label: "View in @carol's session" });
+});
+
+test("a recipient named by a result's tag shows its live handle after a rename", async () => {
+  const qc = new QueryClient();
+  qc.setQueryData<PrincipalsCache>(principalsQueryOptions.queryKey, {
+    byRef: new Map([[refFor("bob"), principal(refFor("bob"), "bob")]]),
+    unknown: new Set(),
+  });
+  renderInRouter(
+    <QueryClientProvider client={qc}>
+      <TooltipProvider>
+        <SpeakerContext value={index}>
+          <OutgoingMessage
+            row={row(
+              ["bob"],
+              [
+                {
+                  to: `<@${refFor("bob")}|bob>`,
+                  kind: "agent",
+                  status: "queued",
+                  recipient_status: "idle",
+                  id: "m1",
+                },
+              ],
+            )}
+            showCall={false}
+            onToggleCall={() => {}}
+            rowProps={{}}
+          />
+        </SpeakerContext>
+      </TooltipProvider>
+    </QueryClientProvider>,
+  );
+  const line = (await screen.findByRole("article")).querySelector("[data-speaker-line]");
+  expect(within(line as HTMLElement).getByText("@bob")).toBeInTheDocument();
+  act(() => mergePrincipals(qc, [principal(refFor("bob"), "robert")]));
+  expect(await within(line as HTMLElement).findByText("@robert")).toBeInTheDocument();
+  expect(within(line as HTMLElement).queryByText("@bob")).toBeNull();
 });

@@ -1437,6 +1437,21 @@ async function pickAda(box: HTMLElement, before = "") {
   await userEvent.keyboard("{Tab}");
 }
 
+test("↑ recall puts the caret at the end of the shown text, whatever length the tag shows as", async () => {
+  const long = refFor("long");
+  const source: CompletionSource = {
+    ...TAGGING,
+    tagHandle: (ref) => (ref === long ? "a-very-long-handle-name" : HANDLES[ref]),
+  };
+  const { box } = setup({ completions: { at: source }, recall: () => `<@${long}> please` });
+  await userEvent.click(box);
+  await userEvent.keyboard("{ArrowUp}");
+  expect(box).toHaveValue("@a-very-long-handle-name please");
+  expect((box as HTMLTextAreaElement).selectionStart).toBe(
+    (box as HTMLTextAreaElement).value.length,
+  );
+});
+
 test("picking from @ inserts a tag that is sent as <@ref>", async () => {
   const { box, onSubmit } = setup({ completions: TAGS });
   await pickAda(box, "hi ");

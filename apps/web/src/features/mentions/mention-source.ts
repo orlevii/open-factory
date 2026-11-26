@@ -29,20 +29,20 @@ const NO_AGENTS: MentionAgent[] = [];
 const NO_PRINCIPALS: PrincipalItem[] = [];
 type InboxPage = {
   items: Pick<InboxItem, "from" | "createdAt">[];
-  chats?: { agent: { handle: string }; latest: { createdAt: string } }[] | undefined;
+  chats?: { agent: { ref: string }; latest: { createdAt: string } }[] | undefined;
 };
 
-/** Agents that wrote to you, newest first: your unread chats and the newest inbox items (a read of whatever
- *  the inbox already loaded). */
+/** Refs of the agents that wrote to you, newest first: your unread chats and the newest inbox items (a read of
+ *  whatever the inbox already loaded). */
 function recentSenders(qc: QueryClient): string[] {
   const pages = qc.getQueryData<InfiniteData<InboxPage>>(inboxQueryKey)?.pages ?? [];
-  const found: { handle: string; at: string }[] = [];
+  const found: { ref: string; at: string }[] = [];
   for (const p of pages) {
     for (const i of p.items)
-      if (i.from.kind === "agent") found.push({ handle: i.from.handle, at: i.createdAt });
-    for (const c of p.chats ?? []) found.push({ handle: c.agent.handle, at: c.latest.createdAt });
+      if (i.from.kind === "agent") found.push({ ref: i.from.ref, at: i.createdAt });
+    for (const c of p.chats ?? []) found.push({ ref: c.agent.ref, at: c.latest.createdAt });
   }
-  return found.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).map((f) => f.handle);
+  return found.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).map((f) => f.ref);
 }
 
 const toItem = (p: PrincipalItem): CompletionItem => ({
@@ -79,10 +79,10 @@ export function mentionSource(qc: QueryClient, { note }: MentionNote = {}): Comp
     label: "Tag someone",
     opensAt: mentionOpensAt,
     items: (query) => {
-      const me = qc.getQueryData(sessionQueryOptions.queryKey)?.user.handle;
+      const me = qc.getQueryData(sessionQueryOptions.queryKey)?.user.ref;
       const agents = qc.getQueryData<MentionAgent[]>(agentsListQueryOptions("exclude").queryKey);
       const reports = new Set(
-        (agents ?? NO_AGENTS).filter((a) => a.reportsTo.handle === me).map((a) => a.handle),
+        (agents ?? NO_AGENTS).filter((a) => a.reportsTo.ref === me).map((a) => a.ref),
       );
       const everyone = cache()?.byRef.values();
       return rankMentions(query, everyone ? [...everyone] : NO_PRINCIPALS, {

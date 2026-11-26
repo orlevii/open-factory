@@ -31,12 +31,28 @@ export const principalsQueryOptions = queryOptions({
   staleTime: Number.POSITIVE_INFINITY,
 });
 
-/** Adds principals (and refs known to be nobody) to a loaded cache; a cache that hasn't loaded fetches everyone anyway. */
+/**
+ * A list still loading may have been read before the change: once it lands it is fetched again, so the frame isn't
+ * lost. (A fetch in flight with no data yet isn't restarted by `invalidateQueries`, so this waits for it.)
+ */
+function refetchOnceLoaded(qc: QueryClient): void {
+  const queryKey = principalsQueryOptions.queryKey;
+  const loading = qc.isFetching({ queryKey }) ? qc.fetchQuery(principalsQueryOptions) : undefined;
+  void Promise.resolve(loading)
+    .catch(() => {})
+    .then(() => qc.invalidateQueries({ queryKey }));
+}
+
+/** Adds principals (and refs known to be nobody) to a loaded cache; one that hasn't loaded is fetched again instead. */
 export function mergePrincipals(
   qc: QueryClient,
   items: PrincipalItem[],
   unknownRefs: string[] = [],
 ): void {
+  if (!qc.getQueryData(principalsQueryOptions.queryKey)) {
+    refetchOnceLoaded(qc);
+    return;
+  }
   qc.setQueryData<PrincipalsCache>(principalsQueryOptions.queryKey, (old) => {
     if (!old) return old;
     const byRef = new Map(old.byRef);
@@ -66,6 +82,9 @@ export const HANDLE_QUERY_KEYS = [
   ["credentials"], // rows: usedBy and archivedUsedBy agent handles
   ["secrets"], // rows: usedBy and archivedUsedBy agent handles
   ["session"], // the signed-in person's own handle (`/api/me`)
+  ["projects"], // rows: grantedTo agent handles
+  ["templates"], // lists and details: the agents made from each template
+  ["library"], // skills and sources: the agents and people that use a skill
 ] as const;
 
 /** `principal_updated`: patches the principals cache with the item and refreshes every query that shows handles. */

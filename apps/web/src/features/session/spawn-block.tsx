@@ -1,9 +1,10 @@
+import { normaliseRef } from "@open-factory/shared";
 import { CircleX, GitFork } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import { Tag } from "@/components/tag/tag";
 import { useHandle } from "@/features/agents/use-agent-index";
-import { useRefOfHandle } from "@/features/principals/use-principal";
+import { usePrincipalLookup, useRefOfHandle } from "@/features/principals/use-principal";
 import { formatBy } from "./format-by";
 import { AgentLink, ClampedMarkdown } from "./message-block";
 import { CallBlock, FailedNote } from "./outgoing-message";
@@ -43,8 +44,11 @@ export function parseSpawnResult(result: SpawnRow["result"]) {
 /** An agent a tool call names by handle, tag or ref: a link when its ref is known, else its mono handle. */
 function NamedAgent({ name, label = false }: { name: string; label?: boolean }) {
   const refOfHandle = useRefOfHandle();
+  const lookup = usePrincipalLookup();
   const bare = name.replace(/^@/, "");
-  const ref = refOfWho(name) ?? refOfHandle(bare);
+  // A bare ref counts only when the cache knows it: a handle can be written like one.
+  const asRef = normaliseRef(bare);
+  const ref = refOfWho(name) ?? (asRef && lookup(asRef) ? asRef : undefined) ?? refOfHandle(bare);
   if (ref) return <AgentLink agentRef={ref} name={label} />;
   return <Mono>@{whoHandle(name)}</Mono>;
 }

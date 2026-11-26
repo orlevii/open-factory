@@ -111,3 +111,36 @@ test("Undo on the rename toast restores the old handle", async () => {
   await vi.mocked(notify).mock.calls.at(-1)?.[0].undo?.();
   expect(patchesMe(api)).toEqual([{ handle: "ally" }, { handle: "alice" }]);
 });
+
+test("a handle the server finds taken on save shows the field error and keeps the sheet open", async () => {
+  await open({
+    "PATCH /api/me": () =>
+      json(
+        {
+          error: {
+            code: "handle_taken",
+            message: "Another agent or person has this handle",
+            fields: { handle: "Another agent or person has this handle" },
+          },
+        },
+        409,
+      ),
+  });
+  await type("Handle", "ally");
+  await save();
+  expect(await screen.findByText("Another agent or person has this handle")).toBeInTheDocument();
+  expect(field("Handle")).toHaveAccessibleDescription("Another agent or person has this handle");
+  expect(screen.getByRole("dialog", { name: "Edit profile" })).toBeInTheDocument();
+});
+
+test("the user menu's Edit profile item opens the sheet", async () => {
+  mockWorld({
+    agents: [agentSummary({ handle: "dev" })],
+    extra: { "GET /api/principals": () => json({ principals: [principal("alice", "human")] }) },
+  });
+  renderApp("/agents", alice);
+  await screen.findByRole("heading", { level: 1, name: "Agents" });
+  await userEvent.click(await screen.findByRole("button", { name: /Alice/ }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Edit profile" }));
+  expect(await screen.findByRole("dialog", { name: "Edit profile" })).toBeInTheDocument();
+});

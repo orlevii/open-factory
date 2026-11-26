@@ -364,3 +364,14 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
   );
   expect(await within(left).findByRole("link", chat)).toBeInTheDocument();
 });
+
+test("a terminate that names its target by a bare ref shows the agent's handle, never the ref", async () => {
+  await open([{ type: "turn_started" }, terminate(TECH_LEAD_REF, "t1")], /Terminating/);
+  const line = screen.getByText(
+    (_, el) => el?.tagName === "P" && /^Terminating/.test(textOf(el) ?? ""),
+  );
+  expect(textOf(line)).toBe("Terminating @tech-lead-ab12…");
+  expect(
+    within(line).getByRole("link", { name: "Open @tech-lead-ab12's chat" }),
+  ).toBeInTheDocument();
+});

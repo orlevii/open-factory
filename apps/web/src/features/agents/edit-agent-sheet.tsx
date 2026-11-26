@@ -420,6 +420,11 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             handle={shown.handle}
             handleTouched
             agentRef={agentRef}
+            avatar={{
+              template: agent.template,
+              avatarVersion: agent.avatarVersion,
+              color: shown.color,
+            }}
             onHandle={(v) => set("handle", v)}
             onBlur={(e) => blur("handle", e)}
             error={errors.handle}

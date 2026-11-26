@@ -1,3 +1,5 @@
+import { normaliseRef } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { CircleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
@@ -64,19 +66,26 @@ function partiesOf(row: OutgoingRow, to: readonly string[]): readonly Party[] {
   let parties = recipientsOf.get(key);
   if (!parties) {
     // A result names its recipient as a tag; the call may have written a tag, a ref or a plain handle.
-    const byRef = new Map<string, { name: string; kind: PartyKind }>();
-    const byName = new Map<string, { name: string; kind: PartyKind }>();
+    type Found = { name: string; kind: PartyKind; ref: string | undefined };
+    const byRef = new Map<string, Found>();
+    const byName = new Map<string, Found>();
     for (const r of parseSendResults(row.result)?.results ?? [])
       if ("kind" in r) {
-        const entry = { name: whoName(r.to), kind: r.kind };
         const ref = parseWho(r.to)?.ref;
+        const entry = { name: whoName(r.to), kind: r.kind, ref };
         if (ref) byRef.set(ref, entry);
         byName.set(entry.name.toLowerCase(), entry);
       }
     parties = to.map((t) => {
-      const ref = parseWho(t)?.ref;
-      const found = (ref && byRef.get(ref)) || byName.get(whoName(t).toLowerCase());
-      return { handle: found?.name ?? whoName(t), kind: found?.kind };
+      const written = parseWho(t)?.ref ?? normaliseRef(t);
+      const found = (written && byRef.get(written)) || byName.get(whoName(t).toLowerCase());
+      // A known ref names the recipient by tag, so the line shows its live handle and links after a rename.
+      const ref = written ?? found?.ref;
+      return {
+        handle: found?.name ?? whoName(t),
+        kind: found?.kind,
+        ...(ref ? { tag: tagOf(ref) } : {}),
+      };
     });
     recipientsOf.set(key, parties);
   }

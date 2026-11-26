@@ -19,6 +19,8 @@ type Pending = { frame: OrgActionFrame; count: number; timer: ReturnType<typeof 
  * Toasts for what agents did to the org (spec §8.3; the frame names the actor and an agent by ref). One toast per (actor, action) window: "@hr created @dev" for one
  * subject, "@hr created 3 agents" for several. `dispose` clears every pending window.
  */
+const subjectName = (handle: string | undefined) => (handle ? `@${handle}` : "an agent");
+
 export function createOrgToasts(d: {
   notify: typeof notify;
   navigate: (to: string) => void;
@@ -30,12 +32,13 @@ export function createOrgToasts(d: {
   function show({ frame, count }: Pending) {
     const template = frame.action === "template_created";
     const verb = VERB[frame.action];
-    const by = `@${d.handleOf(frame.by) ?? "an agent"}`;
+    const byHandle = d.handleOf(frame.by);
+    const by = byHandle ? `@${byHandle}` : "An agent";
     if (count === 1) {
       d.notify({
         text: template
           ? `${by} ${verb} template ${frame.subject}`
-          : `${by} ${verb} @${d.handleOf(frame.subject) ?? "an agent"}`,
+          : `${by} ${verb} ${subjectName(d.handleOf(frame.subject))}`,
         action: {
           label: "Open",
           run: () =>

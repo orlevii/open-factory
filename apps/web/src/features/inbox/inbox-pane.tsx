@@ -301,7 +301,7 @@ function MentionReply({
   useEffect(() => {
     if (mention) replyRef.current?.prefill(mention);
   }, [mention, replyRef]);
-  const assignee = task.assignee && !task.assignee.ended ? task.assignee.ref : undefined;
+  const assignee = task.assignee && !task.assignee.ended ? task.assignee.handle : undefined;
   return (
     // Capped, scrolling within itself (the editor resizes): the body keeps most of the pane.
     <div

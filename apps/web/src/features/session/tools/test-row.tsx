@@ -29,10 +29,10 @@ export function toolRow(
 
 /** Test helper: the row as the timeline renders it (`data-row` on its own button, the body its
  *  sibling), toggling like the timeline does. */
-const qc = createQueryClient({ queries: { retry: false } });
-
 export function RowHarness({ row, open = false }: { row: ToolRow; open?: boolean }) {
   const [expanded, setExpanded] = useState(open);
+  // One client per mounted harness, so a test never reads what another left in the cache.
+  const [qc] = useState(() => createQueryClient({ queries: { retry: false } }));
   return (
     <QueryClientProvider client={qc}>
       <ToolCallRow

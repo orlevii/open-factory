@@ -38,24 +38,20 @@ type RecipientsView = { others: readonly string[]; text: string };
 const NO_RECIPIENTS: RecipientsView = { others: [], text: "" };
 
 /** Read from the principals cache by `select`, so a row re-renders only when its own view changes. Until
- *  the cache has loaded, or your handle is known, "you" can't be told from another recipient: nothing shows. */
+ *  your ref is known, "you" can't be told from another recipient: nothing shows. */
 function useRecipientsView(
   recipients: MessageEntry["recipients"],
   agentRef: string,
-  self: string | undefined,
+  selfRef: string | undefined,
 ): RecipientsView {
   const { data } = useQuery({
     ...principalsQueryOptions,
     select: (cache): RecipientsView => {
-      const handleOf = (ref: string) => cache.byRef.get(ref)?.handle;
-      const me = self?.toLowerCase();
       return {
         others:
-          self === undefined
+          selfRef === undefined
             ? []
-            : recipients
-                .filter((r) => r.ref !== agentRef && handleOf(r.ref)?.toLowerCase() !== me)
-                .map((r) => r.ref),
+            : recipients.filter((r) => r.ref !== agentRef && r.ref !== selfRef).map((r) => r.ref),
         text: recipients.map((r) => `@${handleText(cache, r.ref)}`).join(", "),
       };
     },
@@ -68,8 +64,10 @@ export type ChatRowProps = {
   agentRef: string;
   /** The chat's agent: the pending line names it. */
   agentName: string;
-  /** Your handle, without `@`. */
+  /** Your handle, without `@`: the sender's stand-in until the principals cache knows you. */
   self: string | undefined;
+  /** Your ref: the recipients that are you. */
+  selfRef: string | undefined;
   /** Arrived by a live frame: fades in once. A boolean, never the live Set. */
   live: boolean;
   /** Continues the message above: no speaker line. */
@@ -94,7 +92,7 @@ export type ChatRowProps = {
  * Memoised on primitives and stable handlers, so a refetch that changes one entry renders one row.
  */
 export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
-  const { entry, agentRef, self } = p;
+  const { entry, agentRef, self, selfRef } = p;
   const key = entryKey(entry);
   const mine = entry.from.kind === "human";
   // The sender's handle is the principals cache's, so a rename shows here without a refetch of the thread.
@@ -109,7 +107,7 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
   const { menu, press } = useRowLongPress();
   const statusId = useId();
   const rejectedId = useId();
-  const { others, text: recipientsText } = useRecipientsView(entry.recipients, agentRef, self);
+  const { others, text: recipientsText } = useRecipientsView(entry.recipients, agentRef, selfRef);
   const chips = entry.attachments?.length ? entry.attachments : undefined;
   const shown = useMemo(() => stripAttachedLines(entry.body, chips), [entry.body, chips]);
   const queued = entry.state === "pending" && !sending;

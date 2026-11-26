@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgentActions, useAgentShell } from "@/features/agents/agent-layout";
 import { ArchivedNotice } from "@/features/agents/archived-notice";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { useAgentSummary } from "@/features/agents/use-agent-summary";
 import { sessionQueryOptions } from "@/lib/session";
 import { TurnActivity } from "./activity-line";
@@ -84,6 +85,7 @@ export function SessionView({
   // loaded; its state takes over then. A summary the layout brought (a terminate, a pin, a refetch)
   // is adopted once, never an old one on a remount.
   const summary = useAgentSummary(agentRef);
+  const handleNow = useHandle(agentRef);
   const agent = loaded ?? summary;
   const { adoptAgent } = s;
   const seenAdopted = useRef(adopted);
@@ -95,7 +97,7 @@ export function SessionView({
   // The announcer hears the loaded agent only: a stale summary's status turning into the real one
   // isn't a transition.
   // The unmerged rows: a repeated failure folded into one timeline row is still announced (U3 §7.6).
-  const announce = useAnnouncer(agent?.displayName ?? agentRef, loaded, s.rawRows, !!loaded);
+  const announce = useAnnouncer(agent?.displayName ?? handleNow, loaded, s.rawRows, !!loaded);
   // Terminated while viewing (S7 UI design §5.3): by the spawner, another human or the TTL, never
   // by this human's own confirmed Terminate (that focuses Pin workspace when the dialog closes).
   // Open popovers and dialogs close as their controls unmount; focus goes to the read-only line.
@@ -133,7 +135,6 @@ export function SessionView({
     },
     [setRaceNotice, refreshAgent],
   );
-  const self = me?.user.handle;
   // Stored text names you by your tag (a command's sender, the operator input you typed).
   const selfTag = me ? tagOf(me.user.ref) : undefined;
   const selfRef = me?.user.ref;
@@ -146,13 +147,12 @@ export function SessionView({
           sending={sending}
           agent={agent}
           cancelled={cancelled}
-          self={self}
           selfTag={selfTag}
           onCancel={onCancel}
           onUndo={onUndo}
         />
       ) : null,
-    [queue, sending, agent, cancelled, self, selfTag, onCancel, onUndo],
+    [queue, sending, agent, cancelled, selfTag, onCancel, onUndo],
   );
   const pendingRows = useMemo(
     () => rawTailRows(queue, sending, cancelled, selfTag, onCancel),

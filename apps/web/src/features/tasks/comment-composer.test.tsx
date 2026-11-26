@@ -129,8 +129,11 @@ test("a picked tag shows as @handle and is posted as <@ref>; a typed @name that 
     unknown: new Set(),
   });
   // Dev reports to the viewer, so it ranks first once @dana is used.
-  qc.setQueryData(["session"], { user: { handle: "or" } });
-  qc.setQueryData(["agents", "exclude"], [{ handle: "dev", reportsTo: { handle: "or" } }]);
+  qc.setQueryData(["session"], { user: { handle: "or", ref: refFor("or") } });
+  qc.setQueryData(
+    ["agents", "exclude"],
+    [{ ref: refFor("dev"), handle: "dev", reportsTo: { ref: refFor("or"), handle: "or" } }],
+  );
   const { box } = setup(qc);
   await userEvent.type(box(), "cc @da");
   expect(screen.getByRole("option", { name: /Dana/ })).toBeInTheDocument();

@@ -106,11 +106,11 @@ export function ManagerCombobox({
 
   const people = useMemo((): Person[] => {
     const others = (users.data ?? [])
-      .filter((u) => !u.disabledAt && u.handle !== meHandle)
+      .filter((u) => !u.disabledAt && u.ref !== meRef)
       .map((u) => ({ ref: u.ref, handle: u.handle, name: u.name, you: false }));
     if (!meHandle || !meRef) return others;
     // You come from the session, so the pick works while the users list is loading or has failed.
-    const mine = users.data?.find((u) => u.handle === meHandle);
+    const mine = users.data?.find((u) => u.ref === meRef);
     return [
       { ref: meRef, handle: meHandle, name: mine?.name ?? meName ?? "", you: true },
       ...others,

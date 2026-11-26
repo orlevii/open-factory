@@ -47,7 +47,7 @@ test("each changed field validates on blur, with the form's messages", async () 
   await waitFor(() => expect(result.current.credentials).toBeDefined());
   act(() => result.current.set("handle", "Bad_Handle"));
   act(() => result.current.blur("handle"));
-  expect(result.current.errors.handle).toBeTruthy();
+  expect(result.current.errors.handle).toBe("Use lowercase letters, numbers and hyphens");
   // Untouched: leaving it says nothing.
   act(() => result.current.blur("displayName"));
   expect(result.current.errors.displayName).toBeUndefined();

@@ -18,7 +18,8 @@ export const refOfWho = (text: string): string | undefined => parseWho(text)?.re
 /** `@handle` for display: a tag shows its label, `@x` and `#x` stay, a bare handle gets its `@`. */
 export function whoName(text: string): string {
   const w = parseWho(text);
-  if (w) return `@${w.handle ?? w.ref}`;
+  // An unlabelled tag has no name to show here: a ref is never printed where a handle belongs.
+  if (w) return `@${w.handle ?? "…"}`;
   return /^[@#]/.test(text) ? text : `@${text}`;
 }
 

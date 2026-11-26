@@ -25,12 +25,11 @@ const messageReason = (q: QueueItem, fallback: string | undefined) =>
 
 /** Cancel is for a plain message or a command you sent: never another sender's, a task comment or a
  *  scheduled row (U3 §6.4, §13.3, Q26, Q39, D2). */
-const cancellable = (q: QueueItem, self: string | undefined, selfTag: string | undefined) =>
+const cancellable = (q: QueueItem, selfTag: string | undefined) =>
   (q.kind === "message" || q.kind === "raw") &&
-  // A raw send names its sender by tag; a message still names it by handle.
-  (q.kind === "raw"
-    ? selfTag !== undefined && q.from === selfTag
-    : self !== undefined && q.from === `@${self}`) &&
+  // A held item names its sender by tag.
+  selfTag !== undefined &&
+  q.from === selfTag &&
   q.taskKey === undefined &&
   q.scheduleKey === undefined;
 
@@ -46,7 +45,6 @@ export const QueueItems = memo(function QueueItems({
   items,
   agent,
   cancelled = NO_CANCELLED,
-  self,
   selfTag,
   onCancel,
   onUndo,
@@ -57,9 +55,7 @@ export const QueueItems = memo(function QueueItems({
   sending?: readonly SendingBlock[];
   agent: AgentSummary;
   cancelled?: ReadonlyMap<string, CancelledEntry>;
-  /** The viewer's handle: their own held messages offer Cancel. */
-  self?: string;
-  /** The signed-in human's tag: a raw send (a command) names its sender that way. */
+  /** The signed-in human's tag: held items name their sender that way, and your own offer Cancel. */
   selfTag?: string;
   onCancel?: (item: QueueItem) => void;
   onUndo?: (id: string, entry: CancelledEntry) => void;
@@ -135,7 +131,7 @@ export const QueueItems = memo(function QueueItems({
                   ) : undefined
                 }
                 action={
-                  onCancel && cancellable(q, self, selfTag) ? (
+                  onCancel && cancellable(q, selfTag) ? (
                     <Button
                       type="button"
                       variant="ghost"
@@ -173,7 +169,7 @@ export const QueueItems = memo(function QueueItems({
           // The queued item's shape (block, then the slot for its cancel error): nothing remounts.
           <>
             <MessageBlock
-              from={`@${self ?? "you"}`}
+              from={selfTag ?? "@you"}
               fromKind="human"
               body={b.body}
               urgent={b.urgent}

@@ -699,7 +699,7 @@ function StatusAndAssignee({
           onCommit={(ref) =>
             void apply(
               { assignee: ref },
-              ref ? `Assigned to @${lookup(ref)?.handle ?? ref}` : "Unassigned",
+              ref ? `Assigned to @${lookup(ref)?.handle ?? "…"}` : "Unassigned",
               { assignee: ref },
             )
           }

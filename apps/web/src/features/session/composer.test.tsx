@@ -1,4 +1,5 @@
 import type { AgentSummary, QueueItem, SessionEvent } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
@@ -72,7 +73,7 @@ beforeEach(() => {
                 item: {
                   id: "q",
                   kind: "message",
-                  from: "@alice",
+                  from: tagOf(refFor("alice")),
                   fromKind: "human",
                   createdAt: "x",
                 },
@@ -311,7 +312,12 @@ function Session({ agent }: { agent: AgentSummary }) {
   return (
     <>
       <div data-testid="queue">
-        <QueueItems items={s.queue} sending={s.sending} agent={agent} self="alice" />
+        <QueueItems
+          items={s.queue}
+          sending={s.sending}
+          agent={agent}
+          selfTag={tagOf(refFor("alice"))}
+        />
       </div>
       <Composer
         agentRef={refFor("dev")}
@@ -358,7 +364,7 @@ const _accepted202 = (clientMessageId: string, over: Partial<QueueItem> = {}) =>
           item: {
             id: "m1",
             kind: "message",
-            from: "@alice",
+            from: tagOf(refFor("alice")),
             fromKind: "human",
             body: "hello",
             clientMessageId,
@@ -380,7 +386,7 @@ const echoIn = (seq: number, clientMessageId: string): SessionEvent => ({
     messages: [
       envelope({
         id: "m1",
-        from: "@alice",
+        from: tagOf(refFor("alice")),
         fromKind: "human",
         kind: "message",
         urgent: false,
@@ -504,7 +510,7 @@ test("an aborted send whose item the queue already showed counts as sent", async
           {
             id: "m1",
             kind: "message",
-            from: "@alice",
+            from: tagOf(refFor("alice")),
             fromKind: "human",
             body: "hello",
             clientMessageId: id,

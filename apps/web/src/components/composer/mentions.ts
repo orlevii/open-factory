@@ -1,17 +1,7 @@
 import type { AgentSummary, PrincipalItem } from "@open-factory/shared";
 
 /** The agent fields a mention reads (from the cached live agents list). */
-export type MentionAgent = Pick<
-  AgentSummary,
-  | "ref"
-  | "handle"
-  | "displayName"
-  | "reportsTo"
-  | "template"
-  | "avatarVersion"
-  | "color"
-  | "archivedAt"
-> & { terminatedAt?: string | undefined };
+export type MentionAgent = Pick<AgentSummary, "ref" | "reportsTo">;
 
 /** Before `@`: the start, or not a letter, digit, `_`, `/`, `.` or `@` (an email or a path never opens
  *  it, as the tag scanner never reads one); then the handle typed so far, up to the caret. */
@@ -50,7 +40,7 @@ function matchClass(p: PrincipalItem, q: string): number {
   return p.handle.includes(q) || name.includes(q) ? 1 : -1;
 }
 
-const NO_HANDLES: ReadonlySet<string> = new Set();
+const NO_REFS: ReadonlySet<string> = new Set();
 
 /**
  * U3 §13.4: the live principals (ended ones are never offered) other than you. Prefix matches
@@ -63,12 +53,13 @@ export function rankMentions(
   {
     me,
     recent = [],
-    reports = NO_HANDLES,
+    reports = NO_REFS,
   }: {
+    /** Your ref. */
     me: string | undefined;
-    /** Handles that wrote to you, newest first. */
+    /** Refs that wrote to you, newest first. */
     recent?: readonly string[];
-    /** Handles of the agents that report to you. */
+    /** Refs of the agents that report to you. */
     reports?: ReadonlySet<string>;
   },
 ): PrincipalItem[] {
@@ -77,12 +68,12 @@ export function rankMentions(
   for (const s of recent) if (!recentAt.has(s)) recentAt.set(s, recentAt.size);
   const rows: { p: PrincipalItem; cls: number; tier: number; order: number }[] = [];
   for (const p of principals) {
-    if (p.state !== "live" || p.handle === me) continue;
+    if (p.state !== "live" || p.ref === me) continue;
     const cls = matchClass(p, q);
     if (cls < 0) continue;
-    const r = recentAt.get(p.handle);
+    const r = recentAt.get(p.ref);
     if (r !== undefined) rows.push({ p, cls, tier: 0, order: r });
-    else rows.push({ p, cls, tier: reports.has(p.handle) ? 1 : 2, order: 0 });
+    else rows.push({ p, cls, tier: reports.has(p.ref) ? 1 : 2, order: 0 });
   }
   rows.sort(
     (a, b) =>

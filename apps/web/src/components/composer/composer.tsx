@@ -396,7 +396,8 @@ export const Composer = memo(function Composer({
     [slash, at],
   );
   // After an accept or the `@` button, where the caret goes and whether to look for a menu there.
-  const pendingCaret = useRef<{ at: number; look: boolean } | undefined>(undefined);
+  /** `at: "end"` is the end of what the box shows: a stored text's length isn't the shown text's (tags are hydrated). */
+  const pendingCaret = useRef<{ at: number | "end"; look: boolean } | undefined>(undefined);
   // The caret menus and the tag field, one hook (use-tag-menu.tsx): a tagging `@` source makes the box a tag field.
   const {
     tag,
@@ -449,7 +450,8 @@ export const Composer = memo(function Composer({
     if (!p || !box) return;
     pendingCaret.current = undefined;
     box.focus();
-    box.setSelectionRange(p.at, p.at);
+    const at = p.at === "end" ? box.value.length : p.at;
+    box.setSelectionRange(at, at);
     if (p.look) lookForMenu(box);
   }, [text, view]);
 
@@ -640,7 +642,7 @@ export const Composer = memo(function Composer({
       if (t) {
         e.preventDefault();
         setText(t);
-        pendingCaret.current = { at: t.length, look: false };
+        pendingCaret.current = { at: "end", look: false };
       }
       return;
     }

@@ -1,3 +1,4 @@
+import { normaliseRef } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
@@ -95,7 +96,10 @@ const isActive = (pathname: string, to: string) => pathname === to || pathname.s
 export function matchSession(pathname: string): string | undefined {
   const m = /^\/agents\/([^/]+)(?:\/(?:chat|session))?\/?$/.exec(pathname);
   const agentRef = m?.[1];
-  return agentRef && agentRef !== "new" ? safeDecode(agentRef) : undefined;
+  if (!agentRef || agentRef === "new") return undefined;
+  // A typed or copied ref (any case, i/l/o) names the same agent the route's does.
+  const decoded = safeDecode(agentRef);
+  return normaliseRef(decoded) ?? decoded;
 }
 
 const parseCollapsed = (raw: string) =>

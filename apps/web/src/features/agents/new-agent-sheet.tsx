@@ -270,8 +270,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   }, []);
 
   // The address field opens itself, focused, when Display name is left with a name that derives nothing.
-  const [forceRef, setForceRef] = useState(false);
-  const onRefOpened = useCallback(() => setForceRef(false), []);
+  const [forceHandle, setForceHandle] = useState(false);
+  const onHandleOpened = useCallback(() => setForceHandle(false), []);
 
   // More options opens itself, once per reason, and says why (§6.2); the user can fold it again.
   const several = (credentials?.length ?? 0) > 1;
@@ -444,7 +444,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               onBlur={(e) => {
                 blur("displayName", e);
                 if (!values.touched.handle && shown.displayName.trim() !== "" && !shown.handle)
-                  setForceRef(true);
+                  setForceHandle(true);
               }}
               autoComplete="off"
             />
@@ -455,8 +455,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               onHandle={(v) => set("handle", v)}
               onBlur={(e) => blur("handle", e)}
               error={errors.handle}
-              forceOpen={forceRef}
-              onOpened={onRefOpened}
+              forceOpen={forceHandle}
+              onOpened={onHandleOpened}
             />
           </div>
           <FieldShell

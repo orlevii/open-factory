@@ -1,19 +1,31 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { tagOf } from "@open-factory/shared/tags";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
 
+// The sender chip reads the principals cache.
+let qc: QueryClient;
+const render = (ui: React.ReactElement) =>
+  rtlRender(ui, {
+    wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+  });
+
 beforeEach(() => {
+  qc = new QueryClient();
   vi.useFakeTimers({ toFake: ["Date", "setTimeout", "setInterval"] });
   vi.setSystemTime(new Date(2026, 10, 19, 14, 0));
 });
 afterEach(() => vi.useRealTimers());
 
+const ALICE = tagOf(refFor("alice"));
 const local = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOString();
 const msg = (o: Record<string, unknown>) =>
-  ({ kind: "message", from: "@alice", body: "hello", createdAt: local(13, 59), ...o }) as never;
+  ({ kind: "message", from: ALICE, body: "hello", createdAt: local(13, 59), ...o }) as never;
 
 test("a held message during a Stop says so, preferring its waitReason over the agent's status", () => {
   render(
@@ -47,7 +59,7 @@ test("three queued messages all show; five show two and '+3 more queued' expands
   vi.useRealTimers();
   const five = ["a", "b", "c", "d", "e"].map((id) => msg({ id, body: `body ${id}` }));
   const ui = (items: never[]) => (
-    <QueueItems items={items} agent={agentSummary()} self="alice" onCancel={() => {}} />
+    <QueueItems items={items} agent={agentSummary()} selfTag={ALICE} onCancel={() => {}} />
   );
   const { rerender } = render(ui(five.slice(0, 3)));
   expect(document.querySelectorAll("[data-message-block]")).toHaveLength(3);
@@ -79,7 +91,7 @@ test("Cancel only on your own held messages: not others', task comments, schedul
         msg({ id: "note", kind: "notice", body: "note" }),
       ]}
       agent={agentSummary()}
-      self="alice"
+      selfTag={ALICE}
       onCancel={onCancel}
     />,
   );
@@ -101,7 +113,7 @@ test("a cancelled message shows the line in its place with Undo; back in the box
       items={[msg({ id: "a", body: "a" }), c]}
       cancelled={new Map([["b", { item: b, index: 1 }]])}
       agent={agentSummary()}
-      self="alice"
+      selfTag={ALICE}
       onUndo={onUndo}
     />,
   );
@@ -120,7 +132,7 @@ test("a cancelled message shows the line in its place with Undo; back in the box
       items={[c]}
       cancelled={new Map([["b", { item: b, index: 0, inBox: true }]])}
       agent={agentSummary()}
-      self="alice"
+      selfTag={ALICE}
       onUndo={onUndo}
     />,
   );
@@ -135,7 +147,7 @@ test("a failed restore keeps the line, says why and drops Undo", () => {
         new Map([["b", { item: msg({ id: "b" }), index: 0, error: "This agent has ended." }]])
       }
       agent={agentSummary()}
-      self="alice"
+      selfTag={ALICE}
       onUndo={() => {}}
     />,
   );
@@ -158,7 +170,7 @@ test("a failed cancel shows the message again with the reason under it", () => {
         ])
       }
       agent={agentSummary()}
-      self="alice"
+      selfTag={ALICE}
     />,
   );
   expect(screen.getByText("b")).toBeInTheDocument();
@@ -178,7 +190,7 @@ test("a cancel that lost the race (the frame already dropped the item) still say
         ])
       }
       agent={agentSummary()}
-      self="alice"
+      selfTag={ALICE}
     />,
   );
   const alert = screen.getByRole("alert");
@@ -193,7 +205,7 @@ test("once restored, the line offers no second Undo", () => {
       items={[]}
       cancelled={new Map([["b", { item: msg({ id: "b" }), index: 0, restored: true }]])}
       agent={agentSummary()}
-      self="alice"
+      selfTag={ALICE}
       onUndo={() => {}}
     />,
   );
@@ -209,7 +221,7 @@ test("a failed restore moves focus from Undo to the error line", async () => {
       items={[]}
       cancelled={new Map([["b", e]])}
       agent={agentSummary()}
-      self="alice"
+      selfTag={ALICE}
       onUndo={() => {}}
     />
   );
@@ -234,7 +246,7 @@ test("after a successful Undo focus goes to the restored message's Cancel, else 
         items={items}
         cancelled={cancelled as never}
         agent={agentSummary()}
-        self="alice"
+        selfTag={ALICE}
         onCancel={() => {}}
         onUndo={() => {}}
       />
@@ -271,7 +283,7 @@ test("a raw queue item and a raw sending block draw nothing in the queue area", 
       items={[raw]}
       sending={[{ clientMessageId: "x", body: "hi", urgent: false, raw: true }]}
       agent={agentSummary()}
-      self="alice"
+      selfTag={ALICE}
     />,
   );
   expect(container).toBeEmptyDOMElement();

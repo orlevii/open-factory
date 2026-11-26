@@ -5,20 +5,42 @@ import { IN_FORM } from "@/components/ui/button";
 import { deriveHandle, useTakenNames } from "@/features/agents/derive-handle";
 
 const EMPTY: ReadonlySet<string> = new Set();
-const SETTLE_MS = 300;
 const HELP =
   "How agents and people tag this agent, like @team-lead. Lowercase letters, numbers and hyphens.";
 const EDIT_HELP = `${HELP} Everything already written shows the new handle. The old one is free for anyone.`;
 
-/** The value after it has stopped changing for `ms`, or at once on `flush` (blur). */
-function useDeferredSettle(value: string, ms: number): [string, () => void] {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setSettled(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return [settled, () => setSettled(value)];
+/** The avatar slot. A new agent has no face yet (it comes from the ref the server makes), so it shows a plain plate. */
+function Plate({
+  agentRef,
+  avatar,
+}: {
+  agentRef: string | undefined;
+  avatar: AddressAvatar | undefined;
+}) {
+  if (agentRef === undefined || !avatar)
+    return (
+      <span
+        aria-hidden="true"
+        className="inline-block size-5 shrink-0 rounded-full border border-border bg-card"
+      />
+    );
+  return (
+    <AgentAvatar
+      agentRef={agentRef}
+      template={avatar.template}
+      avatarVersion={avatar.avatarVersion}
+      color={avatar.color}
+      size={20}
+    />
+  );
 }
+
+/** What the edit line draws: the agent's own face, as the colour field shows it. */
+export type AddressAvatar = {
+  template: string;
+  avatarVersion: string | null;
+  color: number | null;
+};
 
 export function AddressLine({
   name,
@@ -30,6 +52,7 @@ export function AddressLine({
   forceOpen,
   onOpened,
   agentRef,
+  avatar,
 }: {
   name: string;
   handle: string;
@@ -43,13 +66,14 @@ export function AddressLine({
   onOpened?: () => void;
   /** Edit mode: the agent being renamed. The handle is its own, nothing derives from the name, and the help says what a rename does. */
   agentRef?: string;
+  /** Edit mode: the agent's template and colour, so the avatar here is the one the colour field shows. */
+  avatar?: AddressAvatar;
 }) {
   const edit = agentRef !== undefined;
   // Until the taken-sets answer, the derivation shows without a suffix (§6.3).
   const taken = useTakenNames(!edit);
   const shown = edit || handleTouched ? handle : deriveHandle(name, taken ?? EMPTY);
   const [open, setOpen] = useState(false);
-  const [avatarHandle, settleAvatar] = useDeferredSettle(shown, SETTLE_MS);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -66,7 +90,7 @@ export function AddressLine({
     return (
       <div className="flex items-start gap-2">
         <span className="mt-2.5">
-          <AgentAvatar agentRef={agentRef ?? avatarHandle} color={null} size={20} />
+          <Plate agentRef={agentRef} avatar={avatar} />
         </span>
         <div className="min-w-0 flex-1">
           <FormField
@@ -82,10 +106,7 @@ export function AddressLine({
             error={error}
             value={shown}
             onChange={(e) => onHandle(e.target.value)}
-            onBlur={(e) => {
-              settleAvatar();
-              onBlur?.(e);
-            }}
+            onBlur={onBlur}
           />
         </div>
       </div>
@@ -93,7 +114,7 @@ export function AddressLine({
   }
   return (
     <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-      <AgentAvatar agentRef={agentRef ?? avatarHandle} color={null} size={20} />
+      <Plate agentRef={agentRef} avatar={avatar} />
       <span className="min-w-0">
         {shown ? (
           <>

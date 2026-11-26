@@ -30,7 +30,6 @@ export const FORM_MSG = {
   chooseTemplateFirst: "Choose a template first",
   enterHandle: "Enter a handle.",
   handleTaken: "Another agent or person has this handle",
-  enterName: "Enter a name",
   chooseCredential: "Choose a credential.",
   chooseManager: "Choose a manager.",
   taskKeys: "Use task keys, like T-41.",

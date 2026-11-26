@@ -1,4 +1,5 @@
 import type { AgentSummary, QueueItem, ServerMessage } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -328,7 +329,7 @@ const mockEvents = (events: ReturnType<typeof se>[]) =>
 const mine = (id: string, body: string): QueueItem => ({
   id,
   kind: "message",
-  from: "@alice",
+  from: tagOf(refFor("alice")),
   fromKind: "human",
   body,
   createdAt: todayAt(9, 59),

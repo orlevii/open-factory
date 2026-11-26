@@ -160,7 +160,7 @@ const AgentTreeRow = memo(function AgentTreeRow({
         data-menu-open={menuOpen || undefined}
         className={cn(
           "of-row flex min-w-0 flex-1 data-focused:bg-accent data-menu-open:bg-accent min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm",
-          // md: two lines (status, name, cost; then agentRef, template, runtime under the name), so the
+          // md: two lines (status, name, cost; then handle, template, runtime under the name), so the
           // name keeps 8rem. The full columns need about 54rem of the tree itself, which a 1024px
           // window with the sidebar open doesn't give, so they key on the tree's width, not the window.
           "md:grid md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]",
@@ -297,9 +297,9 @@ export function AgentTree({
 }: {
   agents: AgentSummary[];
   flat?: boolean;
-  /** 7-day usage by agentRef; the cost cell stays empty until it arrives. */
+  /** 7-day usage by agent ref; the cost cell stays empty until it arrives. */
   usage?: Map<string, AgentUsageRow>;
-  /** A agentRef to scroll to and mark with the hover fill (Agent details' "All N reports", U2 §8.3). */
+  /** An agent ref to scroll to and mark with the hover fill (Agent details' "All N reports", U2 §8.3). */
   focus?: string;
 }) {
   const listRef = useRef<HTMLUListElement>(null);

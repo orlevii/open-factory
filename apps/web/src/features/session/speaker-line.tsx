@@ -256,7 +256,9 @@ const NAME_CLASS = "font-medium text-foreground";
 export type PartyKind = "agent" | "human";
 /** A sender can also be the factory itself. */
 export type SenderKind = PartyKind | "factory";
-export type Party = { handle: string; kind?: PartyKind | undefined };
+/** A recipient: its handle as written (labels and the several-recipients summary), and its `<@ref>` tag when the ref is
+ *  known, so the line shows the principal live. */
+export type Party = { handle: string; tag?: string; kind?: PartyKind | undefined };
 
 const bareHandle = (h: string) => (h.startsWith("@") ? h.slice(1) : h);
 
@@ -427,7 +429,7 @@ export const SpeakerLine = memo(function SpeakerLine({
                   {recipientSummary(to.map((r) => `@${bareHandle(r.handle)}`))}
                 </span>
               ) : (
-                <Speaker id={to[0].handle} kind={to[0].kind} self={false} />
+                <Speaker id={to[0].tag ?? to[0].handle} kind={to[0].kind} self={false} />
               )}
             </>
           )}

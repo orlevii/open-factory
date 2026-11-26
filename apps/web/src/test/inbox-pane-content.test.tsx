@@ -239,6 +239,13 @@ test("a mention by a human leaves the composer empty", async () => {
   expect(within(p).getByRole("combobox", { name: "Comment" })).toHaveValue("");
 });
 
+test("the reply composer says the comment goes to the assignee by handle, never by ref", async () => {
+  setup([mention(1, "h1", { kind: "human", ref: refFor("bob"), handle: "bob" })]);
+  await visit("/inbox?item=i1");
+  const box = await within(pane()).findByRole("combobox", { name: "Comment" });
+  expect(box).toHaveAccessibleDescription(/^Goes to @dev and anyone you tag\./);
+});
+
 test("a task event shows the fact and Open task, with no composer", async () => {
   setup([
     item(1, {

@@ -1,3 +1,4 @@
+import type { ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { mergePrincipals } from "@/features/principals/api";
@@ -16,8 +17,16 @@ import { alice, renderApp } from "@/test/render-app";
 import { onChatChanged } from "./use-chat";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
+const ws = vi.hoisted(() => ({
+  onMessage: undefined as undefined | ((m: ServerMessage) => void),
+}));
 vi.mock("@/lib/ws", () => ({
-  connectWs: (o: { onStatus?: (s: string) => void; onOpen?: () => void }) => {
+  connectWs: (o: {
+    onStatus?: (s: string) => void;
+    onOpen?: () => void;
+    onMessage?: (m: ServerMessage) => void;
+  }) => {
+    ws.onMessage = o.onMessage;
     setTimeout(() => {
       o.onStatus?.("open");
       o.onOpen?.();
@@ -141,10 +150,28 @@ test("after principal_updated, a chat speaker line shows the new handle", async 
   const line = () => row("m1")?.querySelector("[data-speaker-line]") as HTMLElement;
   await waitFor(() => expect(queryClient.getQueryData(["principals"])).toBeDefined());
   expect(within(line()).getByText("@dev")).toBeInTheDocument();
-  // Task 5.4 wires the frame; its handler merges the renamed principal like this.
+  // The frame's handler merges the renamed principal like this.
   act(() => mergePrincipals(queryClient, [principal(DEV_REF, "builder")]));
   expect(await within(line()).findByText("@builder")).toBeInTheDocument();
   expect(within(line()).queryByText("@dev")).toBeNull();
+});
+
+test("a principal_updated frame relabels a tag chip in a message body with no principals fetch", async () => {
+  stubChatApi({
+    principals: [principal(QA_REF, "qa")],
+    chat: () => page([chatMsg(1, { body: `ask <@${QA_REF}> about it` })]),
+  });
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
+  await screen.findByText(/about it/);
+  const chip = () => document.querySelector<HTMLElement>(`[data-of-tag="${QA_REF}"]`);
+  await waitFor(() => expect(chip()).toHaveTextContent("@qa"));
+  const principalFetches = () =>
+    vi.mocked(fetch).mock.calls.filter((c) => String(c[0]).startsWith("/api/principals")).length;
+  const before = principalFetches();
+  await waitFor(() => expect(ws.onMessage).toBeDefined());
+  act(() => ws.onMessage?.({ type: "principal_updated", principal: principal(QA_REF, "quality") }));
+  await waitFor(() => expect(chip()).toHaveTextContent("@quality"));
+  expect(principalFetches()).toBe(before);
 });
 
 test("the agent's reply is unboxed prose and never clamped", async () => {

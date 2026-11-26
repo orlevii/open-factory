@@ -29,7 +29,7 @@ const leadYaml = (projects: string[]) =>
   `name: lead\ndisplay_name: Lead\nruntime: local\ncan_spawn:\n  - dev\nprojects:\n${projects.map((p) => `  - ${p}\n`).join("")}`;
 
 /**
- * `lead` (created from its template: credential `work`, projects app and docs, may spawn `dev`, which asks for both).
+ * `lead` (created from its template: credential `work`, projects app and docs, may spawn `dev`, whose template lists only app).
  * A second credential `spare` exists.
  */
 async function setup() {
@@ -60,7 +60,8 @@ async function setup() {
   writeTemplate(
     app.factoryHome,
     "dev",
-    "name: dev\ndisplay_name: Dev\nruntime: local\nprojects:\n  - app\n  - docs\n",
+    // Lists only app: a child still gets every project its spawner holds.
+    "name: dev\ndisplay_name: Dev\nruntime: local\nprojects:\n  - app\n",
   );
   await app.app.agents.create(
     {
@@ -149,7 +150,7 @@ test("revoking one of the spawner's grants removes it from its children, and a r
   await child.rt.settled();
   expect(child.proc.stopped).toBe(true);
 
-  // Granting it back to the spawner gives it back to the child (spawner's grants ∩ the child's template).
+  // Granting it back to the spawner gives it back to the child (a child holds all its spawner's grants).
   await t.app.agents.update("lead", { projects: ["app", "docs"] }, { kind: "human", handle: "or" });
   expect(await grantIds(t, child.id)).toEqual([projects.app, projects.docs].sort());
 });

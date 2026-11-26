@@ -4,18 +4,21 @@ import type { TagRange } from "./tag-ranges";
 
 /**
  * The layer behind a tag field that paints each tag range with the chip's fill. It lays the same text out
- * as the textarea (the same font, padding and wrap, through `COPY_PROPS`, narrower by the scrollbar gutter)
- * and follows its scroll; its own text is transparent, so only the fills show, and the textarea's text, caret,
- * IME and spellcheck stay the browser's. Decorative: `aria-hidden`.
+ * as the field (the same font, padding and wrap, through `COPY_PROPS`, narrower by the scrollbar gutter)
+ * and follows its scroll; its own text is transparent, so only the fills show, and the field's text, caret,
+ * IME and spellcheck stay the browser's. A single-line input doesn't wrap and centres its line, like the input.
+ * Decorative: `aria-hidden`.
  */
 export function TagHighlighter({
   text,
   ranges,
   box,
+  multiline = true,
 }: {
   text: string;
   ranges: readonly TagRange[];
   box: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
+  multiline?: boolean;
 }) {
   const layer = useRef<HTMLDivElement>(null);
 
@@ -67,7 +70,7 @@ export function TagHighlighter({
       ref={layer}
       aria-hidden="true"
       data-tag-highlighter
-      className="pointer-events-none absolute inset-0 -z-10 overflow-hidden whitespace-pre-wrap break-words text-transparent"
+      className={`pointer-events-none absolute inset-0 -z-10 overflow-hidden text-transparent ${multiline ? "whitespace-pre-wrap break-words" : "flex items-center whitespace-pre"}`}
     >
       {parts}
       {/* A trailing newline only takes a line when something follows it. */}

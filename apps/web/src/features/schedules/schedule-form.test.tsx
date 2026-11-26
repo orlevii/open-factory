@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { clearDraft } from "@/features/sheets/drafts";
 import { closeSheet, openSheet } from "@/features/sheets/sheet-store";
+import { principal } from "@/test/chat-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
 import { refFor } from "@/test/refs";
@@ -49,6 +50,8 @@ const base = () => ({
   "GET /api/agents?": agents,
   "GET /api/schedules": () => json({ schedules: [], more: false }),
   "GET /api/schedules?": () => json({ schedules: [], more: false }),
+  "GET /api/principals": () =>
+    json({ principals: [principal(refFor("ceo"), "ceo"), principal(refFor("kid"), "kid")] }),
 });
 const item = {
   key: "S-8",
@@ -249,6 +252,19 @@ test("creating sends the form's values and closes the sheet", async () => {
   });
   expect(post?.body).toHaveProperty("timezone", expect.any(String));
   expect(screen.getByRole("heading", { name: "Schedules" })).toBeInTheDocument();
+});
+
+test("a schedule body's Preview renders the tag as a chip", async () => {
+  await openNew();
+  await pick("ceo");
+  const message = screen.getByLabelText("Message");
+  await userEvent.type(message, "Ask @ce");
+  await screen.findByRole("option", { name: /ceo/ });
+  await userEvent.keyboard("{Tab}");
+  expect(message).toHaveValue("Ask @ceo ");
+  const frame = message.closest("[data-slot=tabs]") as HTMLElement;
+  await userEvent.click(within(frame).getByRole("tab", { name: "Preview" }));
+  expect(await within(frame).findByRole("link", { name: "@ceo, ceo" })).toBeInTheDocument();
 });
 
 test("a server field error maps to its field", async () => {

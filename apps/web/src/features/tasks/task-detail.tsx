@@ -19,6 +19,7 @@ import {
   useState,
 } from "react";
 import { PrincipalChip } from "@/components/agent-chip";
+import { TagInput } from "@/components/composer/tag-field";
 import { FieldShell } from "@/components/field-shell";
 import {
   FormOutcome,
@@ -33,9 +34,9 @@ import { PageHeader } from "@/components/page-header";
 import { InlineTags } from "@/components/tag/inline-tags";
 import { usePlainTags } from "@/components/tag/plain-tags";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAgent } from "@/features/agents/use-agent-index";
+import { FIELD_TAG_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import { usePrincipalLookup } from "@/features/principals/use-principal";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { formatInboxTime } from "@/features/session/format";
@@ -436,6 +437,7 @@ function TitleEditor({
   onClose(): void;
 }) {
   const [text, setText] = useState(title);
+  const at = useMentionSource({ note: FIELD_TAG_NOTE });
   const [pending, setPending] = useState(false);
   const o = useOutcome();
   const form = useRef<HTMLDivElement>(null);
@@ -466,15 +468,16 @@ function TitleEditor({
       {/* The heading's place already names it: the label is for assistive tech. */}
       <FieldShell name="task-title" label="Title" hideLabel error={f.errors.title}>
         {(a) => (
-          <Input
+          <TagInput
             ref={input}
             id={a.id}
             value={text}
+            source={at}
             autoComplete="off"
             aria-invalid={a.invalid || undefined}
             aria-describedby={a.describedBy}
-            onChange={(e) => {
-              setText(e.target.value);
+            onValueChange={(next) => {
+              setText(next);
               f.change("title");
               o.clear();
             }}
@@ -559,6 +562,7 @@ function BodyEditor({
   save: Save;
   onClose(): void;
 }) {
+  const at = useMentionSource({ note: FIELD_TAG_NOTE });
   const [text, setText] = useState(body);
   const [pending, setPending] = useState(false);
   const [view, setView] = useState<"write" | "preview">("write");
@@ -600,6 +604,7 @@ function BodyEditor({
           <MarkdownEditor
             id={a.id}
             value={text}
+            tagSource={at}
             invalid={a.invalid}
             view={view}
             onViewChange={setView}

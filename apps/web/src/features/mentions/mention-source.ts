@@ -129,6 +129,9 @@ export function mentionSource(qc: QueryClient, { note }: MentionNote = {}): Comp
   };
 }
 
+/** The menu note for the fields that take a tag but aren't a message (a task title or body, a description, a schedule body). */
+export const FIELD_TAG_NOTE = "Esc keeps it as text";
+
 /** One `@` source per query client and note: identity-stable, so it never breaks the composer's `memo`. */
 export function useMentionSource(opts: MentionNote = {}): CompletionSource {
   const qc = useQueryClient();

@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { TagTextarea } from "@/components/composer/tag-field";
 import { ErrorLine } from "@/components/error-line";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
@@ -28,7 +29,6 @@ import {
 } from "@/components/ui/select";
 import { SheetBody, SheetClose, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { PartialSaveError, useAgentFormState } from "@/features/agents/agent-form-state";
 import {
@@ -45,6 +45,7 @@ import { ModelEffortFields } from "@/features/agents/model-effort-fields";
 import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import { NO_AGENT_LINE } from "@/features/config/messages";
 import { inboxQueryKey } from "@/features/inbox/api";
+import { FIELD_TAG_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { credentialsQueryOptions, projectsQueryOptions } from "@/features/settings/api";
 import { AddCredentialForm } from "@/features/settings/forms/add-credential-form";
@@ -178,6 +179,7 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
   const draftKey = `edit-agent:${agentRef}` as const;
   const form = useRef<HTMLFormElement>(null);
   const s = useAgentFormState({ mode: "edit", agent, draftKey, form });
+  const at = useMentionSource({ note: FIELD_TAG_NOTE });
   const { shown, errors, set, blur, claim, pending, changes } = s;
   const { noCredentials, credentials, staleNotes } = s;
   const activeAgents = useQuery(agentsListQueryOptions("exclude"));
@@ -431,15 +433,16 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
           </FieldShell>
           <FieldShell name="description" label="Description" error={errors.description}>
             {(a) => (
-              <Textarea
+              <TagTextarea
                 id={a.id}
                 name="description"
                 rows={3}
                 data-vaul-no-drag=""
+                source={at}
                 aria-invalid={a.invalid || undefined}
                 aria-describedby={a.describedBy}
                 value={shown.description}
-                onChange={(e) => set("description", e.target.value)}
+                onValueChange={(next) => set("description", next)}
                 onFocus={() => claim("description")}
                 onBlur={(e) => blur("description", e)}
               />

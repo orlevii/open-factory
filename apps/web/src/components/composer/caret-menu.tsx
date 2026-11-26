@@ -62,7 +62,10 @@ const clamp = (n: number, max: number) => Math.min(Math.max(n, 0), max);
  * from it); both are clamped to the textarea's visible content box when the line has scrolled out of
  * view.
  */
-export function caretAnchor(box: HTMLTextAreaElement, index: number): CaretAnchor {
+export function caretAnchor(
+  box: HTMLTextAreaElement | HTMLInputElement,
+  index: number,
+): CaretAnchor {
   const doc = box.ownerDocument;
   const mirror = doc.createElement("div");
   try {
@@ -78,7 +81,8 @@ export function caretAnchor(box: HTMLTextAreaElement, index: number): CaretAncho
     s.visibility = "hidden";
     s.top = "0";
     s.left = "-9999px";
-    s.whiteSpace = "pre-wrap";
+    // A single-line input never wraps, so its copy doesn't either.
+    s.whiteSpace = box instanceof HTMLInputElement ? "pre" : "pre-wrap";
     s.overflowWrap = "break-word";
     s.overflow = "hidden";
     mirror.textContent = box.value.slice(0, index);
@@ -139,7 +143,7 @@ export function CaretMenu({
   note?: string | undefined;
   onPick(item: CompletionItem): void;
   onClose(): void;
-  input: RefObject<HTMLTextAreaElement | null>;
+  input: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
   /** The listbox's name. */
   label: string;
   ref?: Ref<CaretMenuHandle>;

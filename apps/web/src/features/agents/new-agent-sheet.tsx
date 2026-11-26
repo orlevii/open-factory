@@ -22,6 +22,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
+import { TagTextarea } from "@/components/composer/tag-field";
 import { FieldShell } from "@/components/field-shell";
 import { FormField } from "@/components/form-field";
 import {
@@ -33,7 +34,6 @@ import {
 } from "@/components/ui/select";
 import { SheetBody } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { notify } from "@/components/ui/toaster";
 import { AddressLine } from "@/features/agents/address-line";
 import { useAgentFormState } from "@/features/agents/agent-form-state";
@@ -53,6 +53,7 @@ import {
   type TemplateOption,
   TemplateSummary,
 } from "@/features/agents/template-field";
+import { FIELD_TAG_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import {
   credentialsQueryOptions,
   projectsQueryOptions,
@@ -120,6 +121,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   const templates: TemplateOption[] = useSuspenseQuery(templatesQueryOptions).data.templates;
   const qc = useQueryClient();
   const router = useRouter();
+  const at = useMentionSource({ note: FIELD_TAG_NOTE });
   const taken = useTakenNames(true);
   // A list that failed can't hold the submit forever: it goes ahead without the suffix (the server still refuses).
   const takenFailed = useQueries({
@@ -477,15 +479,16 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
           <MoreOptions open={moreOpen} onOpenChange={setMoreOpen} reason={reason}>
             <FieldShell name="description" label="Description" error={errors.description}>
               {(a) => (
-                <Textarea
+                <TagTextarea
                   id={a.id}
                   name="description"
                   rows={3}
                   data-vaul-no-drag=""
+                  source={at}
                   aria-invalid={a.invalid || undefined}
                   aria-describedby={a.describedBy}
                   value={shown.description}
-                  onChange={(e) => set("description", e.target.value)}
+                  onValueChange={(next) => set("description", next)}
                   onFocus={() => claim("description")}
                   onBlur={(e) => blur("description", e)}
                 />

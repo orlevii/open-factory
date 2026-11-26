@@ -614,6 +614,39 @@ test("links editor: a bad row's message sits in that row's note, under its targe
   expect(patches(api)).toHaveLength(0);
 });
 
+test("editing a task title with a tag shows @handle and saves <@ref>", async () => {
+  const api = world(() => detail({ title: "Ping" }));
+  api.on("PATCH /api/tasks/T-42", () => json({ task: detail({ title: "Ping" }) }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  const input = screen.getByLabelText("Title");
+  await userEvent.clear(input);
+  await userEvent.type(input, "Ping @de");
+  await screen.findByRole("option", { name: /dev/ });
+  await userEvent.keyboard("{Tab}");
+  expect(input).toHaveValue("Ping @dev ");
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() => expect(patches(api)[0]?.body).toEqual({ title: `Ping <@${refFor("dev")}>` }));
+});
+
+test("Escape closes a title's tag menu and keeps the @query as text, leaving the title editor open", async () => {
+  world(() => detail({ title: "Ping" }));
+  renderApp("/tasks/T-42", alice);
+  await userEvent.click(await screen.findByRole("button", { name: "Edit title" }));
+  const input = screen.getByLabelText("Title");
+  await userEvent.clear(input);
+  await userEvent.type(input, "Ping @de");
+  await screen.findByRole("option", { name: /dev/ });
+  expect(screen.getByText("Esc keeps it as text")).toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("option", { name: /dev/ })).toBeNull();
+  expect(input).toHaveValue("Ping @de");
+  await userEvent.type(input, "v");
+  expect(input).toHaveValue("Ping @dev");
+  expect(screen.queryByRole("option", { name: /dev/ })).toBeNull();
+  expect(screen.getByLabelText("Title")).toBe(input);
+});
+
 test("description editor: an over-long body on Save from Preview goes back to Write, marks the frame and focuses the textarea", async () => {
   const api = world();
   renderApp("/tasks/T-42", alice);

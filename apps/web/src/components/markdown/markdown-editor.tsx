@@ -1,6 +1,7 @@
 import type { FocusEvent, KeyboardEventHandler, ReactNode, Ref } from "react";
+import type { CompletionSource } from "@/components/composer/composer";
+import { TagTextarea } from "@/components/composer/tag-field";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./markdown";
 
 const triggerClass =
@@ -34,6 +35,8 @@ export function MarkdownEditor(props: {
   /** Geist instead of mono in the textarea, for prose a person writes (a message, not code). */
   proportional?: boolean;
   invalid?: boolean;
+  /** The `@` source for a field that tags: the Write tab tags, and Preview shows the stored tags as chips. */
+  tagSource?: CompletionSource;
 }) {
   const { value, onChange, id, placeholder, view, onViewChange } = props;
   const minH = props.compact ? "min-h-24" : "min-h-40";
@@ -60,7 +63,7 @@ export function MarkdownEditor(props: {
         {props.writeSurface ? (
           props.writeSurface({ value, onChange, describedBy: props["aria-describedby"] })
         ) : (
-          <Textarea
+          <TagTextarea
             id={id}
             ref={props.textareaRef}
             onBlur={props.onBlur}
@@ -71,7 +74,8 @@ export function MarkdownEditor(props: {
             aria-describedby={props["aria-describedby"]}
             aria-invalid={props.invalid || undefined}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onValueChange={onChange}
+            source={props.tagSource}
             className={`field-sizing-fixed ${minH} resize-y rounded-none border-0 bg-transparent p-3 ${props.proportional ? "" : "font-mono "}text-[0.8125rem] leading-5 shadow-none focus-visible:ring-0 focus-visible:outline-none md:text-[0.8125rem] dark:bg-transparent`} // ui-contract:allow the frame shows focus-within
           />
         )}

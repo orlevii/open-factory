@@ -24,6 +24,7 @@ import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { MarkdownEditor } from "@/components/markdown/markdown-editor";
 import { SheetBody } from "@/components/ui/sheet";
 import { AgentCombobox } from "@/features/agents/agent-combobox";
+import { FIELD_TAG_NOTE, useMentionSource } from "@/features/mentions/mention-source";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { useSheetDraft } from "@/features/sheets/drafts";
 import { useFocusOnOpen } from "@/features/sheets/focus-on-open";
@@ -92,6 +93,7 @@ export function ScheduleForm({
   /** Another action (Delete) is in flight: Save waits. */
   locked?: boolean;
 }) {
+  const at = useMentionSource({ note: FIELD_TAG_NOTE });
   const create = !initial;
   const blank = (): FormValues => ({
     target: presetTarget ?? "",
@@ -387,6 +389,7 @@ export function ScheduleForm({
           <MarkdownEditor
             id={a.id}
             value={v.body}
+            tagSource={at}
             proportional
             invalid={Boolean(f.errors.body)}
             view={bodyView}

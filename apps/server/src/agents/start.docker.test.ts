@@ -690,8 +690,11 @@ test("a missing image that can't be pulled fails the start with a plain message"
   expect(await events(w)).toContainEqual({ type: "error", source: "spawn", message });
   expect(w.docker.ops()).not.toContain("prepare");
   expect(w.runtimes.supervisor.running().count).toBe(0);
-  const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, w.agent.id));
-  expect(row).toMatchObject({ status: "errored", errorKind: "start", lastError: message });
+  // The in-memory status is set first and the row written after it, so the row is waited for too.
+  await until(async () => {
+    const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, w.agent.id));
+    expect(row).toMatchObject({ status: "errored", errorKind: "start", lastError: message });
+  });
 });
 
 test("Docker unreachable: start fails with the DOCKER_HOST message", async () => {

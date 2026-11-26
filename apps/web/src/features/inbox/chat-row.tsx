@@ -16,8 +16,8 @@ const ended = (a: ChatRow["agent"]): string | undefined =>
   a.status === "terminated" ? "terminated" : a.archivedAt !== null ? "archived" : undefined;
 
 /** "3 updates from @ada" (I9 §4.5). */
-const updatesText = (n: number, slug: string) =>
-  `${COUNT.format(n)} ${n === 1 ? "update" : "updates"} from @${slug}`;
+const updatesText = (n: number, handle: string) =>
+  `${COUNT.format(n)} ${n === 1 ? "update" : "updates"} from @${handle}`;
 
 /**
  * One unread chat as an Inbox row (I1 §6.7): the item row's anatomy. Line one is the agent (16px chip,
@@ -37,7 +37,7 @@ export const ChatInboxRow = memo(function ChatInboxRow({
   row: ChatRow;
   /** Epoch ms rounded to the minute. */
   now: number;
-  onOpen(slug: string, e: MouseEvent): void;
+  onOpen(agentRef: string, e: MouseEvent): void;
   selected: boolean;
   /** A plain click selects (the pane), so the link's target isn't preloaded. */
   selectable: boolean;
@@ -49,12 +49,12 @@ export const ChatInboxRow = memo(function ChatInboxRow({
   const read = unread === 0;
   const at = new Date(latest.createdAt);
   const time = formatInboxTime(at, new Date(now));
-  const previewId = `inbox-preview-${updates ? "update" : "chat"}-${agent.slug}`;
+  const previewId = `inbox-preview-${updates ? "update" : "chat"}-${agent.ref}`;
   const state = ended(agent);
   const count = read
     ? ""
     : updates
-      ? updatesText(unread, agent.slug)
+      ? updatesText(unread, agent.handle)
       : `${COUNT.format(unread)} new`;
   const label = [
     read ? "" : "Unread",
@@ -70,9 +70,9 @@ export const ChatInboxRow = memo(function ChatInboxRow({
   return (
     <li className="border-b border-border last:border-b-0">
       <Link
-        to={updates ? "/agents/$slug/session" : "/agents/$slug/chat"}
-        params={{ slug: agent.slug }}
-        data-inbox-id={updates ? undefined : chatRowId(agent.slug)}
+        to={updates ? "/agents/$ref/session" : "/agents/$ref/chat"}
+        params={{ ref: agent.ref }}
+        data-inbox-id={updates ? undefined : chatRowId(agent.ref)}
         data-chat-row={updates ? undefined : ""}
         data-update-row={updates ? "" : undefined}
         data-row=""
@@ -81,7 +81,7 @@ export const ChatInboxRow = memo(function ChatInboxRow({
         aria-current={selected ? "true" : undefined}
         preload={selectable ? false : undefined}
         onFocus={skipFocusPreload}
-        onClick={(e) => onOpen(agent.slug, e)}
+        onClick={(e) => onOpen(agent.ref, e)}
         className={`${LINK_CLASS} ${ROW_GRID}`}
       >
         <span

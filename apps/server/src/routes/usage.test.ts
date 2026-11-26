@@ -11,6 +11,7 @@ import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { insertTurn } from "../agents/testing/rows.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { UNKNOWN_REF } from "../test/principals.ts";
 
 /** S10 §7, §13, AC1, AC8: the usage REST surface returns the service's numbers, human session only. */
 let h: Awaited<ReturnType<typeof makeTestApp>>;
@@ -79,7 +80,7 @@ test("GET /api/usage/agents returns own, spawned and total per agent", async () 
   await seedTurns();
   const r = await get("/api/usage/agents?days=7");
   expect(r.statusCode).toBe(200);
-  const lead = (r.json() as AgentsUsage).agents.find((a) => a.slug === "lead");
+  const lead = (r.json() as AgentsUsage).agents.find((a) => a.handle === "lead");
   expect(lead).toMatchObject({
     kind: "persistent",
     archived: false,
@@ -97,8 +98,8 @@ test("GET /api/usage/agents?window=rolling is the tree's rolling 7 days", async 
   });
   const cal = (await get("/api/usage/agents?days=7")).json() as AgentsUsage;
   const roll = (await get("/api/usage/agents?days=7&window=rolling")).json() as AgentsUsage;
-  expect(cal.agents.find((a) => a.slug === "lead")?.total.costUsd).toBe(0);
-  expect(roll.agents.find((a) => a.slug === "lead")?.total.costUsd).toBe(2);
+  expect(cal.agents.find((a) => a.handle === "lead")?.total.costUsd).toBe(0);
+  expect(roll.agents.find((a) => a.handle === "lead")?.total.costUsd).toBe(2);
 });
 
 test("window=rolling with days omitted is the rolling 7 days", async () => {
@@ -117,7 +118,7 @@ test("window=rolling with days omitted is the rolling 7 days", async () => {
   });
   const r = await get("/api/usage/agents?window=rolling");
   expect(r.statusCode).toBe(200);
-  expect((r.json() as AgentsUsage).agents.find((a) => a.slug === "lead")?.total.costUsd).toBe(2);
+  expect((r.json() as AgentsUsage).agents.find((a) => a.handle === "lead")?.total.costUsd).toBe(2);
 });
 
 test.each([
@@ -167,18 +168,23 @@ test("GET /api/usage/credentials returns totals, top agents and a null rate limi
   const row = body.credentials.find((c) => c.name === cred?.name);
   expect(row).toMatchObject({
     totals: totals(1.5, 1, 100, 50, 10, 5),
-    agents: [{ slug: "lead", costUsd: 1.5 }],
+    agents: [{ ref: h.seededRef("lead"), handle: "lead", costUsd: 1.5 }],
     rateLimit: null,
   });
   expect(body.unattributed).toEqual(totals(0.25, 1, 10, 5, 0, 0));
 });
 
-test("GET /api/agents/:slug/usage returns the agent page", async () => {
+test("GET /api/agents/:ref/usage returns the agent page", async () => {
   await seedTurns();
-  const r = await get("/api/agents/lead/usage?days=30");
+  const r = await get(`/api/agents/${h.seededRef("lead")}/usage?days=30`);
   expect(r.statusCode).toBe(200);
   const body = r.json() as AgentUsage;
-  expect(body.agent).toEqual({ slug: "lead", displayName: expect.any(String), kind: "persistent" });
+  expect(body.agent).toEqual({
+    ref: h.seededRef("lead"),
+    handle: "lead",
+    displayName: expect.any(String),
+    kind: "persistent",
+  });
   expect(body.total).toEqual(totals(1.75, 2, 110, 55, 10, 5));
   expect(body.daily).toHaveLength(30);
   expect(body.byModel).toEqual([{ model: "opus", ...totals(1.75, 2, 110, 55, 10, 5) }]);
@@ -188,15 +194,15 @@ test.each([
   "/api/usage/daily?days=14",
   "/api/usage/agents?days=14",
   "/api/usage/credentials?days=14",
-  "/api/agents/lead/usage?days=14",
+  "/api/agents/:lead/usage?days=14",
 ])("%s is 400 invalid_days", async (url) => {
-  const r = await get(url);
+  const r = await get(url.replace(":lead", h.seededRef("lead")));
   expect(r.statusCode).toBe(400);
   expect(r.json().error.code).toBe("invalid_days");
 });
 
-test("an unknown agent slug is 404", async () => {
-  expect((await get("/api/agents/nobody/usage?days=30")).statusCode).toBe(404);
+test("an unknown agent ref is 404", async () => {
+  expect((await get(`/api/agents/${UNKNOWN_REF}/usage?days=30`)).statusCode).toBe(404);
 });
 
 test("GET /api/tasks/:key has usage: null without turns, the closed turns' sum with them", async () => {
@@ -256,8 +262,9 @@ test.each([
   "/api/usage/daily?days=30",
   "/api/usage/agents?days=30",
   "/api/usage/credentials?days=30",
-  "/api/agents/lead/usage?days=30",
-])("%s needs a human session: no auth and a live agent token both get 401", async (url) => {
+  "/api/agents/:lead/usage?days=30",
+])("%s needs a human session: no auth and a live agent token both get 401", async (route) => {
+  const url = route.replace(":lead", h.seededRef("lead"));
   expect((await h.app.inject({ method: "GET", url })).statusCode).toBe(401);
   const { token } = h.app.agentTokens.mint(leadId);
   const agent = await h.app.inject({

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 import { testRef } from "../test/principals.ts";
 import { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
@@ -34,7 +34,7 @@ const tag = (who: string) => `<@${testRef(ids[who] as string)}>`;
 const person = (who: string) => ({ ref: testRef(ids[who] as string), handle: who });
 
 const settle = async (...slugs: string[]) => {
-  for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
+  for (const s of slugs) await (await runtimeOf(h.app, s))?.settled();
 };
 const proc = (slug: string) => driver.startsOf(slug).at(-1);
 const inbox = (userId: string) =>
@@ -67,7 +67,7 @@ test("a human's comment mentioning an agent reaches it as task_comment from the 
     commentId: r.id,
     body: `<@${testRef(ids.qa as string)}|qa> yes, go ahead`,
   });
-  const qa = await h.app.store.agentBySlug("qa");
+  const qa = await agentRowOf(h.app, "qa");
   const started = (await h.app.store.after(qa?.id ?? "", 0, 100)).map((e) => e.event);
   expect(started).toContainEqual(
     expect.objectContaining({ type: "process_started", reason: "message" }),
@@ -77,7 +77,7 @@ test("a human's comment mentioning an agent reaches it as task_comment from the 
 test("an agent's comment to another agent wakes it with task_message", async () => {
   await h.app.tasks.comment(agent("dev"), "T-1", "@qa please review");
   await settle("qa");
-  const qa = await h.app.store.agentBySlug("qa");
+  const qa = await agentRowOf(h.app, "qa");
   const started = (await h.app.store.after(qa?.id ?? "", 0, 100)).map((e) => e.event);
   expect(started).toContainEqual(
     expect.objectContaining({ type: "process_started", reason: "task_message" }),

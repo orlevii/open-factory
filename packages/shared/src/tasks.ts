@@ -137,7 +137,8 @@ export const taskCommentBodySchema = z.object({ body: commentBodySchema });
 /** Responses (REST). Dates are ISO strings. */
 export const taskStatusSchema = z.enum(TASK_STATUSES);
 export const taskAgentRefSchema = z.object({
-  slug: z.string(),
+  ref: z.string(),
+  handle: z.string(),
   displayName: z.string(),
   ended: z.enum(["archived", "terminated"]).optional(),
 });

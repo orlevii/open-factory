@@ -158,7 +158,7 @@ test("avatar route: headers, 404 when absent, 400 invalid name, 404 unknown", as
   await h.seedAgent({ slug: "pic" });
   const tplDir = path.join(h.factoryHome, "templates/test");
   const avatarOf = async () =>
-    (await get("/api/agents")).json().agents.find((a: { slug: string }) => a.slug === "pic")
+    (await get("/api/agents")).json().agents.find((a: { handle: string }) => a.handle === "pic")
       .avatarVersion;
   expect((await get("/api/templates/test/avatar.svg")).statusCode).toBe(404);
   expect((await get("/api/templates/test")).json().template.avatar).toEqual({

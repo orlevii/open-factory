@@ -33,7 +33,7 @@ function AgentsPage() {
   // The tree's 7-day cost column; a failure just leaves the cells empty.
   const usageData = useQuery(agentsUsageQuery("rolling7")).data;
   const usage = useMemo(
-    () => (usageData ? new Map(usageData.agents.map((r) => [r.slug, r])) : undefined),
+    () => (usageData ? new Map(usageData.agents.map((r) => [r.ref, r])) : undefined),
     [usageData],
   );
   return (

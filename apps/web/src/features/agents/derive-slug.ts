@@ -61,8 +61,8 @@ export function useTakenNames(enabled: boolean): ReadonlySet<string> | undefined
     () =>
       active.data && archived.data && users.data
         ? new Set([
-            ...active.data.map((a) => a.slug),
-            ...archived.data.map((a) => a.slug),
+            ...active.data.map((a) => a.handle),
+            ...archived.data.map((a) => a.handle),
             ...users.data.map((u) => u.handle),
             ...RESERVED_SLUGS,
           ])

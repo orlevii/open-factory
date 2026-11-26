@@ -11,12 +11,12 @@ import { postCompact } from "./api";
 
 /** No confirmation: Compact queues behind the current turn and the timeline shows it (UI §6). */
 export function CompactPopover({
-  slug,
+  agentRef,
   open: controlledOpen,
   onOpenChange,
   anchor,
 }: {
-  slug: string;
+  agentRef: string;
   /** Controlled open state; the agent menu's Compact item sets it. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -38,7 +38,7 @@ export function CompactPopover({
     setSubmitting(true);
     clear();
     try {
-      await postCompact(slug, focus.trim() || undefined);
+      await postCompact(agentRef, focus.trim() || undefined);
       setFocus("");
       setOpen(false);
     } catch (e) {

@@ -38,13 +38,13 @@ test("an agent renamed between two starts keeps its workdir and resumes its sess
       payload: { to: [to], body, urgent: false },
     });
   const idle = async () =>
-    (await t.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie } })).json()
+    (await t.app.inject({ method: "GET", url: `/api/agents/${ref}`, headers: { cookie } })).json()
       .agent.status === "idle";
 
   expect((await send("dev", "hello")).statusCode).toBe(202);
   await until(async () => sessionStarts().length === 1 && (await idle()));
   const events = (
-    await t.app.inject({ method: "GET", url: "/api/agents/dev/events", headers: { cookie } })
+    await t.app.inject({ method: "GET", url: `/api/agents/${ref}/events`, headers: { cookie } })
   ).json().events as { event: { type: string; sessionId?: string } }[];
   const sessionId = events.find((e) => e.event.type === "session_started")?.event.sessionId;
   expect(sessionId).toBeTruthy();

@@ -91,7 +91,7 @@ export type UploadStore = AttachmentStore & {
 };
 
 /** One agent's uploads (U3 §13.5). Exported for tests; the app uses `uploadsFor`. */
-export function createUploadStore(slug: string): UploadStore {
+export function createUploadStore(agentRef: string): UploadStore {
   const entries = new Map<string, Entry>();
   let keys: readonly string[] = [];
   let summary: UploadSummary = { count: 0, pending: 0, failed: 0 };
@@ -180,7 +180,7 @@ export function createUploadStore(slug: string): UploadStore {
     active++;
     const xhr = new XMLHttpRequest();
     e.xhr = xhr;
-    xhr.open("POST", `/api/agents/${encodeURIComponent(slug)}/uploads`);
+    xhr.open("POST", `/api/agents/${encodeURIComponent(agentRef)}/uploads`);
     xhr.withCredentials = true;
     xhr.setRequestHeader("content-type", "application/octet-stream");
     xhr.setRequestHeader("x-upload-name", encodeURIComponent(e.file.name));
@@ -333,10 +333,13 @@ export function createUploadStore(slug: string): UploadStore {
       e.xhr?.abort();
       const id = e.attachment?.uploadId;
       if (id)
-        void apiFetch(`/api/agents/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-          schema: z.unknown(),
-        }).catch(() => {}); // the 24h sweep deletes what this couldn't
+        void apiFetch(
+          `/api/agents/${encodeURIComponent(agentRef)}/uploads/${encodeURIComponent(id)}`,
+          {
+            method: "DELETE",
+            schema: z.unknown(),
+          },
+        ).catch(() => {}); // the 24h sweep deletes what this couldn't
       e.view.thumb?.close();
       notifyKey(k);
       changed();
@@ -415,12 +418,12 @@ export function createUploadStore(slug: string): UploadStore {
 }
 
 const stores = new Map<string, UploadStore>();
-const storeKey = (user: string | undefined, slug: string) => `${user ?? ""}:${slug}`;
+const storeKey = (user: string | undefined, agentRef: string) => `${user ?? ""}:${agentRef}`;
 /** The agent's uploads for this user, kept for the page's life, so leaving the session and coming back keeps
  *  them. Keyed by the user: another user signing in on this tab never sees them. */
-export function uploadsFor(user: string | undefined, slug: string): UploadStore {
-  const key = storeKey(user, slug);
-  const s = stores.get(key) ?? createUploadStore(slug);
+export function uploadsFor(user: string | undefined, agentRef: string): UploadStore {
+  const key = storeKey(user, agentRef);
+  const s = stores.get(key) ?? createUploadStore(agentRef);
   stores.set(key, s);
   return s;
 }

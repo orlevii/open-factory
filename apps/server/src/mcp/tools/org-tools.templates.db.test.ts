@@ -77,7 +77,7 @@ beforeAll(async () => {
     },
     human,
   );
-  await t.app.agents.update("hr-bot", { manageOrg: true }, human);
+  await t.app.agents.update(await t.refOf("hr-bot"), { manageOrg: true }, human);
   await t.app.agents.create(
     {
       template: "dev",
@@ -117,7 +117,12 @@ test("create_template without from writes the scaffold, lists it and publishes t
       expect.objectContaining({ name: "scaffold", valid: true }),
     );
     expect(orgFrames(spy)).toEqual([
-      { type: "org_action", action: "template_created", by: "@hr-bot", subject: "scaffold" },
+      {
+        type: "org_action",
+        action: "template_created",
+        by: await t.refOf("hr-bot"),
+        subject: "scaffold",
+      },
     ]);
   } finally {
     spy.mockRestore();
@@ -143,7 +148,12 @@ test("create_template with from copies the four files and skills, rewrites the i
     expect(existsSync(path.join(dirOf("copy-of-dev"), "skills", "helper", "SKILL.md"))).toBe(true);
     expect(existsSync(path.join(dirOf("copy-of-dev"), "files"))).toBe(false);
     expect(orgFrames(spy)).toEqual([
-      { type: "org_action", action: "template_created", by: "@hr-bot", subject: "copy-of-dev" },
+      {
+        type: "org_action",
+        action: "template_created",
+        by: await t.refOf("hr-bot"),
+        subject: "copy-of-dev",
+      },
     ]);
   } finally {
     spy.mockRestore();

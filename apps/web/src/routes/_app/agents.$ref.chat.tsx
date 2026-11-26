@@ -4,7 +4,7 @@ import { chatAroundQueryOptions, chatQueryOptions } from "@/features/chat/api";
 import { ChatView } from "@/features/chat/chat-view";
 import { refreshChat } from "@/features/chat/use-chat";
 
-export const Route = createFileRoute("/_app/agents/$slug/chat")({
+export const Route = createFileRoute("/_app/agents/$ref/chat")({
   validateSearch: z.object({
     // A message id: the thread opens around it.
     message: z.string().min(1).optional().catch(undefined),
@@ -16,18 +16,20 @@ export const Route = createFileRoute("/_app/agents/$slug/chat")({
   loader: async ({ context, params, deps }) => {
     const qc = context.queryClient;
     const opts = deps.message
-      ? chatAroundQueryOptions(params.slug, deps.message)
-      : chatQueryOptions(params.slug);
+      ? chatAroundQueryOptions(params.ref, deps.message)
+      : chatQueryOptions(params.ref);
     if (qc.getQueryData(opts.queryKey) === undefined) {
       await qc.prefetchInfiniteQuery(opts);
       return;
     }
-    if (!deps.message) void refreshChat(qc, params.slug, "other");
+    if (!deps.message) void refreshChat(qc, params.ref, "other");
   },
   component: function ChatRoute() {
-    const { slug } = Route.useParams();
+    const { ref: agentRef } = Route.useParams();
     const { message } = Route.useSearch();
     // A new `?message` remounts the view (never the layout).
-    return <ChatView key={`${slug}:${message ?? ""}`} slug={slug} messageId={message} />;
+    return (
+      <ChatView key={`${agentRef}:${message ?? ""}`} agentRef={agentRef} messageId={message} />
+    );
   },
 });

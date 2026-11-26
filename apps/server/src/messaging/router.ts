@@ -331,16 +331,13 @@ export class Router {
         if (w.created && w.target.agent)
           this.d.bus.publishToUser(from.userId, {
             type: "chat_changed",
-            agent: w.target.agent.slug,
+            agent: await this.d.store.refOfAgent(w.target.agent.id),
           });
     } else {
-      const me = await this.d.store.agentById(from.agentId);
+      const meRef = await this.d.store.refOfAgent(from.agentId);
       for (const w of written)
-        if (me && w.target.user)
-          this.d.bus.publishToUser(w.target.user.userId, {
-            type: "chat_changed",
-            agent: me.slug,
-          });
+        if (w.target.user)
+          this.d.bus.publishToUser(w.target.user.userId, { type: "chat_changed", agent: meRef });
     }
 
     const outcome = new Map<Target, RecipientResult>();

@@ -79,7 +79,7 @@ export function AgentMenu({
     onClose: () => void;
   };
 }) {
-  const slug = agent.slug;
+  const agentRef = agent.ref;
   const trigger = useRef<HTMLButtonElement>(null);
   const [compactOpen, setCompactOpen] = useState(false);
   // An item that opens an overlay taking focus (Compact…, Agent details as a sheet) hands over
@@ -110,7 +110,10 @@ export function AgentMenu({
   const canResetPersona = !spawned && !terminated;
   const canArchive = !spawned && live;
   const canRestore = archived && !terminated && !endedInList;
-  const editIntent = useMemo(() => sheetIntent("edit-agent", { kind: "edit-agent", slug }), [slug]);
+  const editIntent = useMemo(
+    () => sheetIntent("edit-agent", { kind: "edit-agent", agentRef }),
+    [agentRef],
+  );
 
   // An item that opens a sheet hands over once the menu has gone, as Compact… does. Focus goes back
   // to the ⋯ (or the row) first, so the sheet returns it there when it closes.
@@ -128,7 +131,7 @@ export function AgentMenu({
           key="new-task"
           opensOverlay
           {...newTaskIntent}
-          onSelect={() => openAfterClose(() => openSheet({ kind: "new-task", assignee: slug }))}
+          onSelect={() => openAfterClose(() => openSheet({ kind: "new-task", assignee: agentRef }))}
         >
           New task
         </AdaptiveMenuItem>,
@@ -136,7 +139,9 @@ export function AgentMenu({
           key="new-schedule"
           opensOverlay
           {...newScheduleIntent}
-          onSelect={() => openAfterClose(() => openSheet({ kind: "new-schedule", target: slug }))}
+          onSelect={() =>
+            openAfterClose(() => openSheet({ kind: "new-schedule", target: agentRef }))
+          }
         >
           New schedule
         </AdaptiveMenuItem>,
@@ -146,7 +151,7 @@ export function AgentMenu({
   if (context === "sidebar")
     views.push(
       <AdaptiveMenuItem key="open" asChild>
-        <Link to="/agents/$slug/session" params={{ slug }}>
+        <Link to="/agents/$ref/session" params={{ ref: agentRef }}>
           Open session
         </Link>
       </AdaptiveMenuItem>,
@@ -157,7 +162,7 @@ export function AgentMenu({
         key="edit"
         opensOverlay
         {...editIntent}
-        onSelect={() => openAfterClose(() => openSheet({ kind: "edit-agent", slug }))}
+        onSelect={() => openAfterClose(() => openSheet({ kind: "edit-agent", agentRef }))}
       >
         Edit
       </AdaptiveMenuItem>,
@@ -165,19 +170,19 @@ export function AgentMenu({
   if (canConfigure)
     views.push(
       <AdaptiveMenuItem key="configure" asChild>
-        <Link to="/agents/$slug/config" params={{ slug }}>
+        <Link to="/agents/$ref/config" params={{ ref: agentRef }}>
           Configure
         </Link>
       </AdaptiveMenuItem>,
     );
   views.push(
     <AdaptiveMenuItem key="usage" asChild>
-      <Link to="/agents/$slug/usage" params={{ slug }}>
+      <Link to="/agents/$ref/usage" params={{ ref: agentRef }}>
         Usage
       </Link>
     </AdaptiveMenuItem>,
     <AdaptiveMenuItem key="tasks" asChild>
-      <Link to="/tasks" search={{ assignee: slug }}>
+      <Link to="/tasks" search={{ assignee: agentRef }}>
         Open tasks
       </Link>
     </AdaptiveMenuItem>,
@@ -226,7 +231,7 @@ export function AgentMenu({
     );
   if (canRestart)
     views.push(
-      <AdaptiveMenuItem key="restart" onSelect={() => void restartAgentNow(slug, qc)}>
+      <AdaptiveMenuItem key="restart" onSelect={() => void restartAgentNow(agent, qc)}>
         Restart now
       </AdaptiveMenuItem>,
     );
@@ -259,7 +264,7 @@ export function AgentMenu({
     lifecycle.push(
       <AdaptiveMenuItem
         key="restore"
-        onSelect={() => void restoreAgent(slug, qc, { onChanged: onLifecycle })}
+        onSelect={() => void restoreAgent(agent, qc, { onChanged: onLifecycle })}
       >
         Restore
       </AdaptiveMenuItem>,
@@ -283,7 +288,7 @@ export function AgentMenu({
     const target = viewSwitchTarget(viewSwitch);
     nav.push(
       <AdaptiveMenuItem key="view" asChild>
-        <Link to={target.to} params={{ slug }}>
+        <Link to={target.to} params={{ ref: agentRef }}>
           {target.opens}
         </Link>
       </AdaptiveMenuItem>,
@@ -359,7 +364,7 @@ export function AgentMenu({
       </AdaptiveMenu>
       {canCompact && (
         <CompactPopover
-          slug={slug}
+          agentRef={agentRef}
           open={compactOpen}
           onOpenChange={setCompactOpen}
           anchor={trigger}
@@ -370,10 +375,10 @@ export function AgentMenu({
           open={resetOpen}
           onOpenChange={setResetOpen}
           title="Reset persona?"
-          body={`Replace @${slug}'s AGENTS.md with the template's. The current file is saved in state/agents/${slug}/persona/.`}
+          body={`Replace @${agent.handle}'s AGENTS.md with the template's. The current file is saved in state/agents/${agentRef}/persona/.`}
           confirmLabel="Reset persona"
           pendingLabel="Resetting…"
-          onConfirm={() => resetPersona(slug, qc, agent.template)}
+          onConfirm={() => resetPersona(agent, qc, agent.template)}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
             if (anchored) anchored.onClose();

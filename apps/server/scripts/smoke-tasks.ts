@@ -30,6 +30,7 @@ import Docker from "dockerode";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { bySlug } from "./by-slug.ts";
 
 const LOCAL = process.argv.includes("--local");
 const IMAGE = "open-factory-base:dev";
@@ -320,7 +321,7 @@ async function quiet(slugs: Slug[]) {
     async () => {
       const busy = [];
       for (const s of slugs) {
-        const rt = await app.runtimes.bySlug(s);
+        const rt = await bySlug(app, s);
         const l = rt?.live();
         if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
@@ -517,7 +518,7 @@ try {
 
   // 2. AC 1: a human creates T-1 assigned to hibernated dev; dev wakes with the task_assigned envelope.
   const devFrom = await lastSeq("dev");
-  const devBefore = (await app.runtimes.bySlug("dev"))?.live().status;
+  const devBefore = (await bySlug(app, "dev"))?.live().status;
   const created = await step("2. @or creates T-1 assigned to dev (POST /api/tasks)", async () => {
     const r = await api("POST", "/api/tasks", {
       title: "Smoke one",

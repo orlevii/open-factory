@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentHandleLink } from "@/features/agents/agent-handle-link";
 import { templateConfigQueryOptions } from "@/features/config/api";
 import { agentsPhrase, CONFIG_PAGE_COPY, TEMPLATE_TAB_COPY } from "@/features/config/messages";
 import { PageFooter } from "@/features/config/page-footer";
@@ -829,16 +830,11 @@ const TemplateHeader = memo(function TemplateHeader({
         ) : (
           <span className="flex flex-wrap gap-x-1.5">
             {`${agentsPhrase(template.agents.length)}:`}
-            {template.agents.map((slug, i) => (
-              <Link
-                key={slug}
-                to="/agents/$slug/chat"
-                params={{ slug }}
-                className="rounded-sm font-mono text-foreground underline-offset-2 hover:underline"
-              >
-                @{slug}
+            {template.agents.map((handle, i) => (
+              <AgentHandleLink key={handle} handle={handle}>
+                @{handle}
                 {i < template.agents.length - 1 ? "," : ""}
-              </Link>
+              </AgentHandleLink>
             ))}
           </span>
         )}

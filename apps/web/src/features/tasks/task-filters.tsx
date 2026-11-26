@@ -29,9 +29,9 @@ const CREATOR_FIXED: ComboOption[] = [
   { value: "", label: "Anyone", fixed: true },
   { value: "me", label: "Me", fixed: true },
 ];
-/** A human `@handle` (or bare handle) from the URL is text; anything else is an agent slug. */
+/** A human `@handle` (or bare handle) from the URL is text; anything else is an agent ref. */
 const creatorValue = (v: string): ReactNode =>
-  v.startsWith("@") ? v : <AgentChip slug={v} badge showSlug />;
+  v.startsWith("@") ? v : <AgentChip agentRef={v} badge showHandle />;
 
 export const isDefault = (f: TaskFilters) =>
   f.status === "open_in_progress" && !f.assignee && !f.unassigned && !f.creator;

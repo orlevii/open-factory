@@ -18,7 +18,7 @@ import { isDefault } from "./task-filters";
 
 function Assignee({ t }: { t: TaskSummary }) {
   if (!t.assignee) return <span className="text-muted-foreground">Unassigned</span>;
-  const chip = <AgentChip slug={t.assignee.slug} name={t.assignee.displayName} size={20} />;
+  const chip = <AgentChip agentRef={t.assignee.ref} name={t.assignee.displayName} size={20} />;
   if (t.assignee.ended)
     return (
       <span data-assignee className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
@@ -37,7 +37,7 @@ const BLOCKERS_SHOWN = 3;
 
 function label(t: TaskSummary, title: string) {
   const assignee = t.assignee
-    ? `assigned to @${t.assignee.slug}${t.assignee.ended ? ` (${t.assignee.ended})` : ""}`
+    ? `assigned to @${t.assignee.handle}${t.assignee.ended ? ` (${t.assignee.ended})` : ""}`
     : "unassigned";
   const blocked = t.blockedBy.length
     ? `, blocked by ${t.blockedBy.slice(0, BLOCKERS_SHOWN).join(", ")}${

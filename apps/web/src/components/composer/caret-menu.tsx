@@ -350,7 +350,7 @@ function MentionRow({ item }: { item: CompletionItem }) {
     <>
       {item.avatar ? (
         <AgentAvatar
-          slug={item.avatar.slug}
+          agentRef={item.avatar.agentRef}
           template={item.avatar.template}
           avatarVersion={item.avatar.avatarVersion}
           color={item.avatar.color ?? null}

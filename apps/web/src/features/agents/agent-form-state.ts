@@ -48,7 +48,7 @@ export type Values = {
   /** Identity colour 1..12, null is Auto. */
   color: number | null;
   description: string;
-  /** The manager's handle, an agent's or a human's; "" until one is chosen. */
+  /** The manager's ref, an agent's or a human's; "" until one is chosen. */
   reportsTo: string;
   credential: string;
   projects: string[];
@@ -92,11 +92,11 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 const storedOf = (a: AgentSummary): Stored => ({
   template: a.template,
-  slug: a.slug,
+  slug: a.handle,
   displayName: a.displayName,
   color: a.color,
   description: a.description,
-  reportsTo: a.reportsTo.handle,
+  reportsTo: a.reportsTo.ref,
   credential: a.credential ?? "",
   projects: a.projects,
   manageOrg: a.manageOrg,
@@ -242,7 +242,7 @@ export function useAgentFormState({
     setPreselected(credentials[0]?.name ?? "");
   const projectList = useQuery(projectsQueryOptions);
   const secrets = useQuery({ ...secretsQueryOptions, enabled: create });
-  const me = useQuery(sessionQueryOptions).data?.user.handle;
+  const me = useQuery(sessionQueryOptions).data?.user.ref;
   const users = useQuery(usersQueryOptions);
 
   // References a restored draft (or an edit made earlier) holds that no longer point at anything read as empty, with
@@ -260,13 +260,13 @@ export function useAgentFormState({
     users.data &&
     !activeAgents.data.some(
       (a) =>
-        a.slug === values.reportsTo &&
+        a.ref === values.reportsTo &&
         a.kind === "persistent" &&
         !a.archivedAt &&
         !a.terminatedAt &&
-        a.slug !== agent?.slug,
+        a.ref !== agent?.ref,
     ) &&
-    !users.data.some((u) => u.handle === values.reportsTo && !u.disabledAt)
+    !users.data.some((u) => u.ref === values.reportsTo && !u.disabledAt)
   )
     staleNotes.reportsTo = FORM_MSG.agentEnded;
   if (

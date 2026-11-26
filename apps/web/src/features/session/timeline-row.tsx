@@ -229,9 +229,15 @@ const FIX_LINK =
  * The agent's template page. The name comes from the session's own cached agent (no extra request once it is
  * loaded); before that, or if it can't be read, the Templates list.
  */
-function TemplateLink({ slug, label }: { slug: string; label: (template: string) => string }) {
+function TemplateLink({
+  agentRef,
+  label,
+}: {
+  agentRef: string;
+  label: (template: string) => string;
+}) {
   const { data: template } = useQuery({
-    ...agentDetailQueryOptions(slug),
+    ...agentDetailQueryOptions(agentRef),
     staleTime: Number.POSITIVE_INFINITY,
     select: (d) => d.agent.template,
   });
@@ -249,11 +255,11 @@ function TemplateLink({ slug, label }: { slug: string; label: (template: string)
 /** Where an error's `fix` points (spec §15, UI design §4.4). */
 function FixLink({
   fix,
-  slug,
+  agentRef,
   spawned,
 }: {
   fix: NonNullable<Extract<AnyEvent, { type: "error" }>["fix"]>;
-  slug: string;
+  agentRef: string;
   spawned?: boolean;
 }) {
   // A spawned agent can't be edited or configured (the server drops these fixes for it, spec §8):
@@ -266,8 +272,8 @@ function FixLink({
       <button
         type="button"
         className={cls}
-        {...sheetIntent("edit-agent", { kind: "edit-agent", slug })}
-        onClick={() => openSheet({ kind: "edit-agent", slug })}
+        {...sheetIntent("edit-agent", { kind: "edit-agent", agentRef })}
+        onClick={() => openSheet({ kind: "edit-agent", agentRef })}
       >
         Edit the agent
       </button>
@@ -278,12 +284,13 @@ function FixLink({
   // The agent's own configuration (an overlay that fails its schema).
   if (fix === "config")
     return (
-      <Link to="/agents/$slug/config" params={{ slug }} className={cls}>
+      <Link to="/agents/$ref/config" params={{ ref: agentRef }} className={cls}>
         {CONFIG_PAGE_COPY.openConfiguration}
       </Link>
     );
   // A template with errors, or a deleted one, is fixed on its page.
-  if (fix === "template") return <TemplateLink slug={slug} label={(t) => `Open template ${t}`} />;
+  if (fix === "template")
+    return <TemplateLink agentRef={agentRef} label={(t) => `Open template ${t}`} />;
   const target = {
     credentials: { to: "/settings/credentials", label: "Credentials" },
     secrets: { to: "/settings/secrets", label: "Secrets" },
@@ -298,7 +305,7 @@ function FixLink({
 }
 
 export interface TimelineRowProps {
-  slug: string;
+  agentRef: string;
   /** The session's agent is a spawned one (no edit page). */
   spawned?: boolean;
   row: Row;
@@ -336,7 +343,7 @@ export function TimelineRow(props: TimelineRowProps) {
             at={row.at}
             failed={failedIds.has(row.message.id)}
             attachments={row.message.attachments}
-            slug={props.slug}
+            agentRef={props.agentRef}
             {...(row.message.kind === "scheduled" && row.message.scheduleKey
               ? {
                   scheduled: {
@@ -371,7 +378,6 @@ export function TimelineRow(props: TimelineRowProps) {
     case "outgoing":
       return (
         <OutgoingMessage
-          slug={props.slug}
           row={row}
           showCall={expanded.has(row.key)}
           onToggleCall={() => toggle(row.key)}
@@ -381,7 +387,7 @@ export function TimelineRow(props: TimelineRowProps) {
     case "spawn":
       return (
         <SpawnBlock
-          slug={props.slug}
+          agentRef={props.agentRef}
           row={row}
           showCall={expanded.has(row.key)}
           onToggleCall={() => toggle(row.key)}
@@ -399,7 +405,6 @@ export function TimelineRow(props: TimelineRowProps) {
             capped={row.capped === true}
             head={row.head}
             at={row.at}
-            slug={props.slug}
           />
         </div>
       );
@@ -434,7 +439,7 @@ export function TimelineRow(props: TimelineRowProps) {
             <NestedRow
               key={c.key}
               row={c}
-              slug={props.slug}
+              agentRef={props.agentRef}
               focusable={rowProps(c).tabIndex === 0}
               callShown={expanded.has(c.key)}
               onToggleCall={() => toggle(c.key)}
@@ -470,7 +475,7 @@ export function TimelineRow(props: TimelineRowProps) {
               <NestedRow
                 key={c.key}
                 row={c}
-                slug={props.slug}
+                agentRef={props.agentRef}
                 focusable={rowProps(c).tabIndex === 0}
                 callShown={expanded.has(c.key)}
                 onToggleCall={() => toggle(c.key)}
@@ -502,7 +507,7 @@ export function TimelineRow(props: TimelineRowProps) {
               <NestedRow
                 key={c.key}
                 row={c}
-                slug={props.slug}
+                agentRef={props.agentRef}
                 focusable={rowProps(c).tabIndex === 0}
                 callShown={expanded.has(c.key)}
                 onToggleCall={() => toggle(c.key)}
@@ -533,7 +538,7 @@ export function TimelineRow(props: TimelineRowProps) {
           </p>
           {row.event.fix && (
             <p>
-              <FixLink fix={row.event.fix} slug={props.slug} spawned={props.spawned} />
+              <FixLink fix={row.event.fix} agentRef={props.agentRef} spawned={props.spawned} />
             </p>
           )}
           {row.event.detail && (

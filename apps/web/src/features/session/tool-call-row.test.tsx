@@ -1,6 +1,7 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import { resetSeq } from "@/test/session-fixtures";
 import type { Row, ToolRow } from "./rows";
 import { Timeline } from "./timeline";
@@ -43,7 +44,7 @@ test("a finished task on an MCP call: 'Finished' with the summary on the detail 
 function TimelineOf({ rows }: { rows: Row[] }) {
   return (
     <Timeline
-      slug="dev"
+      agentRef={refFor("dev")}
       rows={rows}
       failedIds={new Set()}
       interruptedEnds={new Set()}

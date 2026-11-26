@@ -12,7 +12,7 @@ test("returns a malformed escape unchanged instead of throwing", () => {
 });
 
 test("the palette and the sidebar read a malformed agent path without throwing", () => {
-  expect(agentPageOf("/agents/%zz/chat")).toEqual({ slug: "%zz", view: "chat" });
+  expect(agentPageOf("/agents/%zz/chat")).toEqual({ agentRef: "%zz", view: "chat" });
   expect(matchSession("/agents/%zz/chat")).toBe("%zz");
-  expect(agentPageOf("/agents/dev%20x/session")).toEqual({ slug: "dev x", view: "session" });
+  expect(agentPageOf("/agents/dev%20x/session")).toEqual({ agentRef: "dev x", view: "session" });
 });

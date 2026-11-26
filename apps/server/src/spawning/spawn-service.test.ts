@@ -8,7 +8,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { principalsByHandles } from "../principals/principal-store.ts";
-import { makeTestApp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp } from "../test/helpers.ts";
 import { seedTestPrincipal, testRef } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
 import { SpawnService } from "./spawn-service.ts";
@@ -146,7 +146,7 @@ test("spawn: child row, all the spawner's grants, brief, spawned event, peer row
     status: "hibernated",
     note: "Not passed on, because you don't hold them: secrets NPM_TOKEN; projects docs.",
   });
-  const child = await t.app.store.agentBySlug("tech-lead-x1");
+  const child = await agentRowOf(t.app, "tech-lead-x1");
   expect(r.ok && r.agentId).toBe(child?.id);
   expect(child).toMatchObject({
     kind: "ephemeral",
@@ -186,7 +186,7 @@ test("a random suffix is 4 letters and the display name carries it", async () =>
   if (!r.ok) throw new Error(r.message);
   expect(r.slug).toMatch(/^dev-[a-z]{4}$/);
   expect(r.note).toBeUndefined();
-  const child = await t.app.store.agentBySlug(r.slug);
+  const child = await agentRowOf(t.app, r.slug);
   expect(child?.displayName).toBe(`Dev · ${r.slug.slice(4)}`);
 });
 
@@ -331,10 +331,14 @@ test("a spawn racing an archive of its spawner: the archive refuses or the spawn
   const spawning = t.app.spawner.spawn(lead.id, args({ suffix: "race" }), null);
   await g.waitFor(1);
   // The archive commits while materialize is in flight: the spawn must refuse under its lock.
-  await t.app.agents.archive("lead", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await t.app.agents.archive(await t.refOf("lead"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   g.gate.resolve();
   expect(await spawning).toEqual({ ok: false, message: "You can't spawn agents." });
-  expect(await t.app.store.agentBySlug("tech-lead-race")).toBeUndefined();
+  expect(await agentRowOf(t.app, "tech-lead-race")).toBeUndefined();
   expect(folders(t)).not.toContain("tech-lead-race");
 
   // The other order: a committed spawn makes the archive refuse.
@@ -347,12 +351,12 @@ test("a spawn racing an archive of its spawner: the archive refuses or the spawn
   const r = await t.app.spawner.spawn(lead2.id, args({ template: "dev", suffix: "k" }), null);
   expect(r.ok).toBe(true);
   await expect(
-    t.app.agents.archive("lead2", { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+    t.app.agents.archive(await t.refOf("lead2"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   ).rejects.toMatchObject({
     status: 409,
     code: "has_reports",
   });
-  expect((await t.app.store.agentBySlug("lead2"))?.archivedAt).toBeNull();
+  expect((await agentRowOf(t.app, "lead2"))?.archivedAt).toBeNull();
 });
 
 test("a spawn racing a credential change: the child ends with the spawner's post-change credential", async () => {
@@ -368,13 +372,13 @@ test("a spawn racing a credential change: the child ends with the spawner's post
   const spawning = t.app.spawner.spawn(lead.id, args({ suffix: "cred" }), null);
   await g.waitFor(1);
   await t.app.agents.update(
-    "lead",
+    await t.refOf("lead"),
     { credential: "second" },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   g.gate.resolve();
   expect(await spawning).toMatchObject({ ok: true });
-  expect((await t.app.store.agentBySlug("tech-lead-cred"))?.credentialId).toBe(credId);
+  expect((await agentRowOf(t.app, "tech-lead-cred"))?.credentialId).toBe(credId);
 });
 
 test("a spawn racing a grant change: the child gets the spawner's post-change grants", async () => {
@@ -383,7 +387,7 @@ test("a spawn racing a grant change: the child gets the spawner's post-change gr
   const spawning = t.app.spawner.spawn(lead.id, args({ suffix: "gr" }), null);
   await g.waitFor(1);
   await t.app.agents.update(
-    "lead",
+    await t.refOf("lead"),
     { projects: ["web"] },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
@@ -393,7 +397,7 @@ test("a spawn racing a grant change: the child gets the spawner's post-change gr
     ok: true,
     note: "Not passed on, because you don't hold them: secrets NPM_TOKEN; projects app, docs.",
   });
-  const child = await t.app.store.agentBySlug("tech-lead-gr");
+  const child = await agentRowOf(t.app, "tech-lead-gr");
   expect(await grantNames(t, child?.id ?? "")).toEqual(["web"]);
 });
 

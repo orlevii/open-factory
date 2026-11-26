@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const userAdminItemSchema = z.object({
   id: z.string(),
+  /** The person's principal ref, what an agent's manager is named by. */
+  ref: z.string(),
   name: z.string(),
   handle: z.string(),
   email: z.string(),

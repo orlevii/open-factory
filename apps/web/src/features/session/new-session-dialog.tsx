@@ -1,25 +1,26 @@
 import { useRef } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import type { AgentKey } from "@/features/agents/lifecycle";
 import { postResetSession } from "./api";
 import { focusComposer } from "./composer";
 
 /** Start a new session (UI design §3.4): irreversible from the UI, so it is confirmed. Cancel returns
  *  focus to the button that opened it; a confirmed reset moves it to the composer. */
 export function NewSessionDialog({
-  slug,
+  agent,
   lastError,
   open,
   onOpenChange,
   onCancelFocus,
 }: {
-  slug: string;
+  agent: AgentKey;
   lastError?: string;
   open: boolean;
   onOpenChange(o: boolean): void;
   /** The dialog is opened without a Radix trigger, so the opener says where Cancel returns focus. */
   onCancelFocus(): void;
 }) {
-  const handle = `@${slug}`;
+  const handle = `@${agent.handle}`;
   const confirmed = useRef(false);
   return (
     <ConfirmDialog
@@ -40,7 +41,7 @@ export function NewSessionDialog({
       confirmLabel={`Start new session for ${handle}`}
       pendingLabel="Starting…"
       onConfirm={async () => {
-        await postResetSession(slug);
+        await postResetSession(agent.ref);
         confirmed.current = true;
       }}
       onCloseAutoFocus={(e) => {

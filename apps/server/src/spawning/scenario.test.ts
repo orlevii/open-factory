@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, expect, test } from "vitest";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
-import { makeTestApp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf } from "../test/helpers.ts";
 import { seedTestUser } from "../test/principals.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>> | undefined;
@@ -78,7 +78,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("no lead");
 
   const procOf = (slug: string) => {
@@ -87,8 +87,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     return p;
   };
   const tokenOf = (slug: string) => procOf(slug).spec.env.OPEN_FACTORY_AGENT_TOKEN as string;
-  const settle = async (slug: string) =>
-    void (await (await h.app.runtimes.bySlug(slug))?.settled());
+  const settle = async (slug: string) => void (await (await runtimeOf(h.app, slug))?.settled());
   const call = async (slug: string, name: string, args: object) => {
     const r = await callTool(url, tokenOf(slug), name, args);
     return { isError: r.isError ?? false, out: JSON.parse(r.content[0]?.text ?? "null") };
@@ -106,13 +105,13 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
     await close(slug, p, text);
   };
   const batches = async (slug: string) => {
-    const row = await h.app.store.agentBySlug(slug);
+    const row = await agentRowOf(h.app, slug);
     return (await h.app.store.after(row?.id ?? "", 0, 1000)).flatMap((e) =>
       e.event.type === "message_in" ? [e.event.messages] : [],
     );
   };
   const rows = async (slug: string, kind: string) => {
-    const row = await h.app.store.agentBySlug(slug);
+    const row = await agentRowOf(h.app, slug);
     return h.db
       .select()
       .from(schema.messages)
@@ -148,7 +147,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   expect(rv).toMatchObject({ isError: false, out: { slug: "proxy-reviewer-r1" } });
   // The first child hears (held) of the second joining; the second finds the first already there.
   const joined = async (slug: string, about: string) => {
-    const subject = await h.app.store.agentBySlug(about);
+    const subject = await agentRowOf(h.app, about);
     return (await rows(slug, "peer_joined")).filter((m) => m.subjectAgentId === subject?.id);
   };
   expect(await joined("tech-lead-t1", "proxy-reviewer-r1")).toHaveLength(1);
@@ -209,7 +208,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
       isError: false,
       out: { slug, status: "terminated" },
     });
-    const row = await h.app.store.agentBySlug(slug);
+    const row = await agentRowOf(h.app, slug);
     expect(row?.terminatedAt).toBeInstanceOf(Date);
     expect(row?.runtime).toBe("local"); // no container to remove
     await settle(slug);

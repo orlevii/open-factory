@@ -5,8 +5,10 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { readDraft, taskDraftKey } from "@/lib/drafts";
 import { FORM_MSG } from "@/lib/form-messages";
 import taskRouteSource from "@/routes/_app/tasks.$key.tsx?raw";
+import { principal } from "@/test/chat-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 import taskDetailSource from "./task-detail.tsx?raw";
@@ -35,9 +37,9 @@ const detail = (o: Over = {}) => ({
   key: "T-42",
   title: "Plan the billing migration",
   status: "in_progress",
-  assignee: { slug: "dev", displayName: "Dev" },
+  assignee: { ref: refFor("dev"), handle: "dev", displayName: "Dev" },
   blockedBy: [],
-  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
   updatedAt: at(9, 15),
   body: "The **brief**.",
   createdAt: at(9, 10),
@@ -48,14 +50,14 @@ const detail = (o: Over = {}) => ({
     {
       type: "event",
       id: "e1",
-      actor: { kind: "human", ref: "ref-or", handle: "or" },
+      actor: { kind: "human", ref: refFor("or"), handle: "or" },
       event: "created",
       at: at(9, 10),
     },
     {
       type: "event",
       id: "e2",
-      actor: { kind: "human", ref: "ref-or", handle: "or" },
+      actor: { kind: "human", ref: refFor("or"), handle: "or" },
       event: "assignee",
       from: null,
       to: "dev",
@@ -64,14 +66,14 @@ const detail = (o: Over = {}) => ({
     {
       type: "comment",
       id: "c1",
-      author: { kind: "agent", ref: "ref-dev", handle: "dev" },
+      author: { kind: "agent", ref: refFor("dev"), handle: "dev" },
       body: "@or can you confirm?",
       at: at(9, 14),
     },
     {
       type: "event",
       id: "e3",
-      actor: { kind: "agent", ref: "ref-dev", handle: "dev" },
+      actor: { kind: "agent", ref: refFor("dev"), handle: "dev" },
       event: "status",
       from: "open",
       to: "in_progress",
@@ -84,8 +86,8 @@ const detail = (o: Over = {}) => ({
 const agents = () =>
   json({
     agents: [
-      agentSummary({ slug: "dev", displayName: "Dev" }),
-      agentSummary({ slug: "qa", displayName: "QA" }),
+      agentSummary({ handle: "dev", displayName: "Dev" }),
+      agentSummary({ handle: "qa", displayName: "QA" }),
     ],
     more: false,
     running: { count: 0 },
@@ -93,6 +95,8 @@ const agents = () =>
 const world = (get: () => unknown = () => detail()) =>
   mockApi({
     "GET /api/agents?": agents,
+    "GET /api/principals": () =>
+      json({ principals: ["dev", "qa", "lead"].map((h) => principal(refFor(h), h)) }),
     "GET /api/tasks/T-42": () => json(get()),
     "GET /api/tasks?": () => json({ tasks: [], nextCursor: null }),
   });
@@ -147,7 +151,11 @@ test("Assignee: Enter on an item assigns it and says so; a failed commit reverts
         )
       : json({
           task: detail({
-            assignee: { slug: (b as { assignee: string }).assignee, displayName: "QA" },
+            assignee: {
+              ref: (b as { assignee: string }).assignee,
+              handle: "qa",
+              displayName: "QA",
+            },
           }),
         }),
   );
@@ -155,7 +163,7 @@ test("Assignee: Enter on an item assigns it and says so; a failed commit reverts
   await userEvent.click(await screen.findByRole("combobox", { name: "Assignee: @dev" }));
   await userEvent.click(await screen.findByRole("option", { name: /QA\s*@qa/ }));
   expect(await screen.findByText("Assigned to @qa")).toBeInTheDocument();
-  expect(patches(api)[0]?.body).toEqual({ assignee: "qa" });
+  expect(patches(api)[0]?.body).toEqual({ assignee: refFor("qa") });
   fail = true;
   await userEvent.click(screen.getByRole("combobox", { name: "Assignee: @qa" }));
   await userEvent.click(await screen.findByRole("option", { name: /Dev\s*@dev/ }));
@@ -183,7 +191,7 @@ test("Assignee picker: typeahead matches the slug, arrows only move the highligh
   );
   expect(patches(api)).toHaveLength(0);
   await userEvent.keyboard("{Enter}");
-  await waitFor(() => expect(patches(api)[0]?.body).toEqual({ assignee: "qa" }));
+  await waitFor(() => expect(patches(api)[0]?.body).toEqual({ assignee: refFor("qa") }));
 });
 
 test("focus stays on the status menu while a change saves and after it lands", async () => {
@@ -224,7 +232,11 @@ test("focus stays on the assignee picker while a change saves and after it lands
     () =>
       new Promise<Response>((resolve) => {
         land = () =>
-          resolve(json({ task: detail({ assignee: { slug: "qa", displayName: "QA" } }) }));
+          resolve(
+            json({
+              task: detail({ assignee: { ref: refFor("qa"), handle: "qa", displayName: "QA" } }),
+            }),
+          );
       }),
   );
   renderApp("/tasks/T-42", alice);
@@ -252,7 +264,11 @@ test("focus stays on the assignee picker while a change saves and after it lands
 });
 
 test("an ended assignee shows muted above a 'Choose an agent…' trigger", async () => {
-  world(() => detail({ assignee: { slug: "dev", displayName: "Dev", ended: "terminated" } }));
+  world(() =>
+    detail({
+      assignee: { ref: refFor("dev"), handle: "dev", displayName: "Dev", ended: "terminated" },
+    }),
+  );
   renderApp("/tasks/T-42", alice);
   expect(
     await screen.findByRole("combobox", { name: "Assignee: Choose an agent…" }),
@@ -264,7 +280,9 @@ test("an ended assignee shows muted above a 'Choose an agent…' trigger", async
 
 test("an ended assignee can still be unassigned", async () => {
   const api = world(() =>
-    detail({ assignee: { slug: "dev", displayName: "Dev", ended: "terminated" } }),
+    detail({
+      assignee: { ref: refFor("dev"), handle: "dev", displayName: "Dev", ended: "terminated" },
+    }),
   );
   api.on("PATCH /api/tasks/T-42", () => json({ task: detail({ assignee: null }) }));
   renderApp("/tasks/T-42", alice);
@@ -452,7 +470,7 @@ test("dependencies editor: the resolved badges render below the editor", async (
                 status: "open",
                 assignee: null,
                 blockedBy: [],
-                createdBy: { kind: "human", ref: "ref-or", handle: "or" },
+                createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
                 updatedAt: at(9, 0),
               },
             ]
@@ -481,7 +499,7 @@ const t41 = {
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
   updatedAt: at(9, 0),
 };
 const invalid = (fields: Record<string, string>) =>
@@ -661,7 +679,7 @@ test("composer: Send disabled while empty, Ctrl-Enter posts at once, a failure p
             comment: {
               type: "comment",
               id: "c9",
-              author: { kind: "human", ref: "ref-alice", handle: "alice" },
+              author: { kind: "human", ref: refFor("alice"), handle: "alice" },
               body: "ok",
               at: at(15, 0),
             },
@@ -704,7 +722,7 @@ const posted = (body: string) =>
       comment: {
         type: "comment",
         id: `c-${body}`,
-        author: { kind: "human", ref: "ref-alice", handle: "alice" },
+        author: { kind: "human", ref: refFor("alice"), handle: "alice" },
         body,
         at: at(15, 0),
       },
@@ -837,14 +855,14 @@ test("?comment=<id> of an agent's comment: highlighted, focused, composer prefil
         {
           type: "comment",
           id: "c1",
-          author: { kind: "agent", ref: "ref-dev", handle: "dev" },
+          author: { kind: "agent", ref: refFor("dev"), handle: "dev" },
           body: "from agent",
           at: at(9, 14),
         },
         {
           type: "comment",
           id: "c2",
-          author: { kind: "human", ref: "ref-sam", handle: "sam" },
+          author: { kind: "human", ref: refFor("sam"), handle: "sam" },
           body: "from human",
           at: at(9, 16),
         },
@@ -893,7 +911,7 @@ test("tasks_changed refetches the open task and keeps the draft and an open edit
       {
         type: "comment",
         id: "c5",
-        author: { kind: "agent", ref: "ref-dev", handle: "dev" },
+        author: { kind: "agent", ref: refFor("dev"), handle: "dev" },
         body: "done now",
         at: at(9, 40),
       },
@@ -940,7 +958,10 @@ test("dependencies, blocks and links are listed; blocked marker; editing links v
       links: [
         { kind: "pr", target: "https://github.com/acme/app/pull/12", title: "The PR" },
         { kind: "file", target: "docs/plan.md" },
-        { kind: "agent", agent: { slug: "dev", displayName: "Dev", ended: "terminated" } },
+        {
+          kind: "agent",
+          agent: { ref: refFor("dev"), handle: "dev", displayName: "Dev", ended: "terminated" },
+        },
       ],
     }),
   );
@@ -975,7 +996,7 @@ test("agent text is inert: scripts, image handlers and javascript: links never r
         {
           type: "comment",
           id: "c1",
-          author: { kind: "agent", ref: "ref-dev", handle: "dev" },
+          author: { kind: "agent", ref: refFor("dev"), handle: "dev" },
           body: evil,
           at: at(9, 14),
         },
@@ -1115,19 +1136,19 @@ test("an open task whose refetch says it no longer exists shows Task not found",
 test("an agent creator and an agent comment author link to the agent's page; a human one does not", async () => {
   world(() =>
     detail({
-      createdBy: { kind: "agent", ref: "ref-lead", handle: "lead" },
+      createdBy: { kind: "agent", ref: refFor("lead"), handle: "lead" },
       activity: [
         {
           type: "comment",
           id: "c1",
-          author: { kind: "human", ref: "ref-or", handle: "or" },
+          author: { kind: "human", ref: refFor("or"), handle: "or" },
           body: "human words",
           at: at(9, 20),
         },
         {
           type: "comment",
           id: "c2",
-          author: { kind: "agent", ref: "ref-dev", handle: "dev" },
+          author: { kind: "agent", ref: refFor("dev"), handle: "dev" },
           body: "agent words",
           at: at(9, 21),
         },
@@ -1140,11 +1161,11 @@ test("an agent creator and an agent comment author link to the agent's page; a h
   const agent = screen.getByRole("article", { name: "Comment from @dev" });
   expect(agent.querySelector("[data-comment-author] a")).toHaveAttribute(
     "href",
-    "/agents/dev/chat",
+    `/agents/${refFor("dev")}/chat`,
   );
   expect(document.querySelector("[data-created-by] a")).toHaveAttribute(
     "href",
-    "/agents/lead/chat",
+    `/agents/${refFor("lead")}/chat`,
   );
 });
 
@@ -1155,14 +1176,14 @@ test("a human creator and comment author show as @handle without an avatar; an a
         {
           type: "comment",
           id: "c1",
-          author: { kind: "human", ref: "ref-or", handle: "or" },
+          author: { kind: "human", ref: refFor("or"), handle: "or" },
           body: "human words",
           at: at(9, 20),
         },
         {
           type: "comment",
           id: "c2",
-          author: { kind: "agent", ref: "ref-dev", handle: "dev" },
+          author: { kind: "agent", ref: refFor("dev"), handle: "dev" },
           body: "agent words",
           at: at(9, 21),
         },

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import { envelope } from "@/test/session-fixtures";
 import { formatTime } from "./format";
@@ -95,7 +96,7 @@ test("Open in chat: on your own messages with this agent, and on a send to you",
   const chat = (row: Row, selfRef?: string) =>
     rowMenuItems(row, "dev", selfRef).filter((i) => i.kind === "chat");
   expect(chat(messageFrom(OR, "human"), "k7x2m9qd")).toEqual([
-    { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m4" },
+    { kind: "chat", label: "Open in chat", agentRef: "dev", messageId: "m4" },
   ]);
   // The ref counts, whatever label the envelope carried when it was written.
   expect(chat(messageFrom("<@k7x2m9qd|old-name>", "human"), "k7x2m9qd")).toHaveLength(1);
@@ -104,7 +105,7 @@ test("Open in chat: on your own messages with this agent, and on a send to you",
   expect(chat(messageFrom(OR, "human"))).toEqual([]);
   expect(chat(messageFrom("<@dev00000|lead>", "agent"), "k7x2m9qd")).toEqual([]);
   expect(chat(outgoing("@or", { results: [reached(OR, "human", "m5")] }), "k7x2m9qd")).toEqual([
-    { kind: "chat", label: "Open in chat", slug: "dev", messageId: "m5" },
+    { kind: "chat", label: "Open in chat", agentRef: "dev", messageId: "m5" },
   ]);
   expect(chat(outgoing("@sam", { results: [reached(SAM, "human")] }), "k7x2m9qd")).toEqual([]);
 });
@@ -131,7 +132,7 @@ test("outgoing: View tool call, and Open in inbox only when it went to a human",
     "View tool call",
     "Open in inbox",
   ]);
-  expect(labels(outgoing("@b", { results: [reached("@b", "agent")] }))).toEqual([
+  expect(labels(outgoing("@b", { results: [reached("<@b0b00001|b>", "agent")] }))).toEqual([
     "Copy link",
     "Copy text",
     "View tool call",
@@ -281,7 +282,7 @@ test("a refused clipboard says Couldn't copy inline", async () => {
 
 const timeline = (rows: Row[]) => (
   <Timeline
-    slug="dev"
+    agentRef={refFor("dev")}
     rows={rows}
     failedIds={new Set()}
     interruptedEnds={new Set()}

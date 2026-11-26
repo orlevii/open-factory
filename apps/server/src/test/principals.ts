@@ -23,6 +23,19 @@ export function principalSql(id: string, kind: PrincipalKind, handle: string): s
   return `insert into principals (id, kind, handle, ref) values (${quote(id)}, ${quote(kind)}, ${quote(handle)}, ${quote(testRef(id))}) on conflict do nothing`;
 }
 
+/** A well-formed ref that no principal holds. */
+export const UNKNOWN_REF = "zzzzzzzz";
+
+/** The ref of the principal with this handle: what URLs and services address an agent by. */
+export async function refOfHandle(db: Db, handle: string): Promise<string> {
+  const [p] = await db
+    .select({ ref: schema.principals.ref })
+    .from(schema.principals)
+    .where(eq(schema.principals.handle, handle));
+  if (!p) throw new Error(`no principal @${handle}`);
+  return p.ref;
+}
+
 /** A principal with the given id (a fresh UUID when omitted); the id may be any fixture string such as `u1`. */
 export async function seedTestPrincipal(
   db: Db,

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { CONFIG_PAGE_MSG } from "@/features/config/messages";
 import { type Handler, json, type MockApi, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { detail } from "@/test/session-fixtures";
 
@@ -46,13 +47,13 @@ const saved = (overlay: unknown, over: Record<string, unknown> = {}) =>
   });
 
 beforeEach(() => {
-  agent = { slug: "ana", displayName: "Ana", template: "dev", status: "hibernated" };
+  agent = { handle: "ana", displayName: "Ana", template: "dev", status: "hibernated" };
   config = cfg();
   put = (body) => saved((body as { overlay: unknown }).overlay);
   api = mockApi({
-    "GET /api/agents/ana": () => json(detail(agent)),
-    "GET /api/agents/ana/config": () => json(config),
-    "PUT /api/agents/ana/config": (b, u) => put(b, u),
+    [`GET /api/agents/${refFor("ana")}`]: () => json(detail(agent)),
+    [`GET /api/agents/${refFor("ana")}/config`]: () => json(config),
+    [`PUT /api/agents/${refFor("ana")}/config`]: (b, u) => put(b, u),
     "GET /api/templates/dev/config": () =>
       json({
         doc: DOC,
@@ -73,7 +74,7 @@ const save = () => screen.getByRole("button", { name: "Save changes" });
 const tab = (name: string) => screen.getByRole("tab", { name: new RegExp(name) });
 
 async function open() {
-  const r = renderApp("/agents/ana/config", alice);
+  const r = renderApp(`/agents/${refFor("ana")}/config`, alice);
   await screen.findByRole("heading", { level: 2, name: "Model" });
   return r;
 }
@@ -98,7 +99,10 @@ test("the page: header, tabs, the template's rows, and a footer in the flow whil
   await open();
   expect(screen.getByRole("heading", { level: 1, name: "Configuration" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "dev" })).toHaveAttribute("href", "/templates/dev");
-  expect(screen.getByRole("link", { name: "← @ana" })).toHaveAttribute("href", "/agents/ana/chat");
+  expect(screen.getByRole("link", { name: "← @ana" })).toHaveAttribute(
+    "href",
+    `/agents/${refFor("ana")}/chat`,
+  );
   expect(tab("Configuration")).toHaveAttribute("aria-selected", "true");
   expect(screen.getByText("reviewer")).toBeInTheDocument();
   // The template's own skills come from the template config GET.
@@ -260,7 +264,7 @@ test("drift: a refetch under my edits shows the conflict line with Reload, and t
     screen.getByText("Saving restarts @ana when idle to apply: warm window."),
   ).toBeInTheDocument();
   config = cfg({ overlay: { template: { model: "opus" } }, version: "v2" });
-  await queryClient.invalidateQueries({ queryKey: ["agent-config", "ana"] });
+  await queryClient.invalidateQueries({ queryKey: ["agent-config", refFor("ana")] });
   expect(await within(footer()).findByText(CONFIG_PAGE_MSG.changedSince)).toBeInTheDocument();
   expect(
     screen.getByText("Saving restarts @ana when idle to apply: warm window."),
@@ -433,14 +437,17 @@ test("spawned: the template's configuration plus the spawner's limits, read-only
   agent = {
     ...agent,
     kind: "ephemeral",
-    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+    reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
   };
-  renderApp("/agents/ana/config", alice);
+  renderApp(`/agents/${refFor("ana")}/config`, alice);
   expect(await screen.findByRole("heading", { level: 2, name: "Next start" })).toBeInTheDocument();
   expect(screen.getByText(/Spawned agents use their template's configuration/)).toHaveTextContent(
     "Spawned agents use their template's configuration, plus @lead's deny rules and secret limits.",
   );
-  expect(screen.getByRole("link", { name: "@lead" })).toHaveAttribute("href", "/agents/lead/chat");
+  expect(screen.getByRole("link", { name: "@lead" })).toHaveAttribute(
+    "href",
+    `/agents/${refFor("lead")}/chat`,
+  );
   const view = await waitFor(() => {
     const t = screen.getByRole("textbox", { name: "Next start" });
     expect(t).toHaveAttribute("readonly");
@@ -450,13 +457,13 @@ test("spawned: the template's configuration plus the spawner's limits, read-only
   expect(screen.queryByRole("tab")).toBeNull();
 });
 
-test("an unknown slug: There is no agent @x.", async () => {
-  api.on("GET /api/agents/x", () =>
+test("an unknown ref: No agent at this link.", async () => {
+  api.on(`GET /api/agents/${refFor("x")}`, () =>
     json({ error: { code: "agent_not_found", message: "No agent." } }, 404),
   );
-  api.on("GET /api/agents/x/config", () =>
+  api.on(`GET /api/agents/${refFor("x")}/config`, () =>
     json({ error: { code: "agent_not_found", message: "No agent." } }, 404),
   );
-  renderApp("/agents/x/config", alice);
-  expect(await screen.findByText("There is no agent @x.")).toBeInTheDocument();
+  renderApp(`/agents/${refFor("x")}/config`, alice);
+  expect(await screen.findByText("No agent at this link.")).toBeInTheDocument();
 });

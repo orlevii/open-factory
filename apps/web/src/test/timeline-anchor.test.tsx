@@ -5,6 +5,7 @@ import type { Row } from "@/features/session/rows";
 import { Timeline } from "@/features/session/timeline";
 import { installShortcuts } from "@/lib/shortcuts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
+import { refFor } from "@/test/refs";
 
 type RO = { cb: ResizeObserverCallback; targets: Element[] };
 const observers: RO[] = [];
@@ -56,7 +57,7 @@ const rows: Row[] = ["a", "b", "c"].map(
 function setup(more?: { onLoadEarlier(): Promise<boolean> }) {
   const view = render(
     <Timeline
-      slug="dev"
+      agentRef={refFor("dev")}
       rows={rows}
       failedIds={new Set()}
       interruptedEnds={new Set()}
@@ -188,7 +189,7 @@ function PanelTimeline() {
       <p>{panel.open ? "details open" : "details closed"}</p>
       <Timeline
         ref={panel.timeline}
-        slug="dev"
+        agentRef={refFor("dev")}
         rows={rows}
         failedIds={new Set()}
         interruptedEnds={new Set()}

@@ -30,7 +30,7 @@ export interface ReconcileDeps {
   /** Absent when the factory has no Docker runtime; step 2 is then skipped. */
   containers?: Pick<ContainerManager, "listOurs" | "stopListed" | "removeListed">;
   supervisor: Pick<Supervisor, "pause">;
-  runtimes: Pick<AgentRuntimes, "bySlug" | "load">;
+  runtimes: Pick<AgentRuntimes, "load">;
   /**
    * S6 §9.1: the Router's `forward`. Rows are persisted here; their hand-off to a manager waits for `bootDone()`, which
    * runs once this function has returned.
@@ -162,7 +162,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   for (const w of await d.store.bootWakes()) {
     if (reapFailed.has(w.id)) continue;
     try {
-      const rt = await d.runtimes.bySlug(w.slug);
+      const rt = await d.runtimes.load(w.id);
       await rt?.bootWake(w.resume ? "boot_resume" : "boot");
     } catch (err) {
       d.log.error({ err, agent: w.slug }, "boot wake failed");

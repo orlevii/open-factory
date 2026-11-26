@@ -16,6 +16,7 @@ import {
 } from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames, pickOption } from "@/test/select-helpers";
 
@@ -50,7 +51,7 @@ const saveButton = () => screen.getByRole("button", { name: /^(Save changes|Savi
 /** A stopped agent: saving it restarts nothing. */
 const lead = (over: Partial<AgentSummary> = {}) =>
   agentSummary({
-    slug: "lead",
+    handle: "lead",
     displayName: "Lead",
     description: "Leads",
     template: "lead",
@@ -67,7 +68,7 @@ async function open(world: World = {}, { slug = "lead", path = "/agents", form =
   const utils = renderApp(path, alice);
   if (path === "/agents") await screen.findByRole("heading", { level: 1, name: "Agents" });
   else await waitFor(() => expect(utils.router.state.status).toBe("idle"));
-  act(() => openSheet({ kind: "edit-agent", slug }));
+  act(() => openSheet({ kind: "edit-agent", agentRef: refFor(slug) }));
   const dialog = await sheet();
   if (form) {
     await within(dialog).findByRole("button", { name: "Save changes" });
@@ -89,7 +90,7 @@ function held() {
 const saved = (a: AgentSummary) => () => json({ agent: a });
 /** The session page's own reads, for a sheet opened over /agents/lead. */
 const sessionRoutes = {
-  "GET /api/agents/lead/events?": () =>
+  [`GET /api/agents/${refFor("lead")}/events?`]: () =>
     json({ events: [], hasMore: { before: false, after: false } }),
 };
 
@@ -103,7 +104,7 @@ async function rename(to: string) {
 test("header Edit agent, an @slug · Template description, every field and no template or slug input", async () => {
   const { dialog } = await open(
     {
-      agents: [lead({ slug: "a-very-long-agent-slug-that-wraps", template: "lead" })],
+      agents: [lead({ handle: "a-very-long-agent-slug-that-wraps", template: "lead" })],
     },
     { slug: "a-very-long-agent-slug-that-wraps" },
   );
@@ -127,18 +128,18 @@ test("header Edit agent, an @slug · Template description, every field and no te
 
 test("the manager picker leaves out the agent and its descendants", async () => {
   const agents = [
-    agentSummary({ slug: "cto", displayName: "CTO" }),
-    lead({ reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "cto" }, depth: 1 }),
+    agentSummary({ handle: "cto", displayName: "CTO" }),
+    lead({ reportsTo: { kind: "agent", ref: refFor("cto"), handle: "cto" }, depth: 1 }),
     agentSummary({
-      slug: "dev-1",
+      handle: "dev-1",
       displayName: "Dev",
-      reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+      reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
       depth: 2,
     }),
     agentSummary({
-      slug: "other",
+      handle: "other",
       displayName: "Other",
-      reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "cto" },
+      reportsTo: { kind: "agent", ref: refFor("cto"), handle: "cto" },
       depth: 1,
     }),
   ];
@@ -182,20 +183,20 @@ test("the restart help is there before any edit and unchanged by one, so nothing
     agents: [
       lead({ status: "working" }),
       agentSummary({
-        slug: "dev-1",
-        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+        handle: "dev-1",
+        reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
         status: "working",
         depth: 1,
       }),
       agentSummary({
-        slug: "dev-2",
-        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+        handle: "dev-2",
+        reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
         status: "idle",
         depth: 1,
       }),
       agentSummary({
-        slug: "dev-3",
-        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+        handle: "dev-3",
+        reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
         status: "hibernated",
         depth: 1,
       }),
@@ -225,7 +226,10 @@ test("the restart notice is the footer's notice; a save failure replaces it unti
   await open({
     agents: [lead({ status: "idle" })],
     credentials: [credential("work"), credential("prod")],
-    extra: { "PATCH /api/agents/lead": () => Promise.reject(new TypeError("Failed to fetch")) },
+    extra: {
+      [`PATCH /api/agents/${refFor("lead")}`]: () =>
+        Promise.reject(new TypeError("Failed to fetch")),
+    },
   });
   await pickOption(field("Credential"), /^prod/);
   const notice = await screen.findByText(SELF);
@@ -246,14 +250,14 @@ test("a text change restarts the running direct reports too", async () => {
     agents: [
       lead({ status: "idle" }),
       agentSummary({
-        slug: "dev-1",
-        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+        handle: "dev-1",
+        reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
         status: "working",
         depth: 1,
       }),
       agentSummary({
-        slug: "dev-2",
-        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+        handle: "dev-2",
+        reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
         status: "hibernated",
         depth: 1,
       }),
@@ -277,14 +281,14 @@ test("a stopped agent's text change still restarts its running reports", async (
     agents: [
       lead(),
       agentSummary({
-        slug: "dev-1",
-        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+        handle: "dev-1",
+        reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
         status: "idle",
         depth: 1,
       }),
       agentSummary({
-        slug: "dev-2",
-        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+        handle: "dev-2",
+        reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
         status: "working",
         depth: 1,
       }),
@@ -328,14 +332,14 @@ test("Nothing to save: no field changed. stays inline and sends nothing", async 
 
 test("save over another page closes the sheet, clears the draft, sends the diff and toasts Saved @slug.", async () => {
   const { api } = await open({
-    extra: { "PATCH /api/agents/lead": saved(lead({ displayName: "Boss" })) },
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ displayName: "Boss" })) },
   });
   await rename(" Boss ");
-  expect(hasDraft("edit-agent:lead")).toBe(true);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(true);
   await userEvent.click(saveButton());
   await waitFor(() => expect(getSheetState().parent).toBeUndefined());
   expect(patches(api)).toEqual([{ displayName: "Boss" }]);
-  expect(hasDraft("edit-agent:lead")).toBe(false);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(false);
   expect(vi.mocked(notify).mock.calls.map((c) => c[0].text)).toEqual(["Saved @lead."]);
 });
 
@@ -367,10 +371,10 @@ const templateConfig = {
 };
 const configRoutes = (overlay: Record<string, unknown> = {}) => ({
   "GET /api/templates/lead/config": () => json(templateConfig),
-  "GET /api/agents/lead/config": () => json(agentConfig(overlay)),
+  [`GET /api/agents/${refFor("lead")}/config`]: () => json(agentConfig(overlay)),
 });
 const puts = (api: { calls: { method: string; url: string; body: unknown }[] }) =>
-  api.calls.filter((c) => c.method === "PUT" && c.url === "/api/agents/lead/config");
+  api.calls.filter((c) => c.method === "PUT" && c.url === `/api/agents/${refFor("lead")}/config`);
 
 test("Model and Effort show what the agent overrides, each inherit option naming the template's value", async () => {
   await open({
@@ -395,7 +399,7 @@ test("a model change alone is saved through the agent's config, keeping its othe
   const { api } = await open({
     extra: {
       ...configRoutes(overlay),
-      "PUT /api/agents/lead/config": () =>
+      [`PUT /api/agents/${refFor("lead")}/config`]: () =>
         json(savedConfig({ ...overlay, template: { model: "opus" } })),
     },
   });
@@ -422,8 +426,8 @@ test("when the config write fails after the agent saved, the outcome says which 
   const { api } = await open({
     extra: {
       ...configRoutes(),
-      "PATCH /api/agents/lead": saved(lead({ displayName: "Boss" })),
-      "PUT /api/agents/lead/config": () =>
+      [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ displayName: "Boss" })),
+      [`PUT /api/agents/${refFor("lead")}/config`]: () =>
         reject
           ? json(
               { error: { code: "invalid_config", message: "The configuration has errors." } },
@@ -455,7 +459,7 @@ test("a config write that fails with nothing else saved says Model and Effort we
   await open({
     extra: {
       ...configRoutes(),
-      "PUT /api/agents/lead/config": () =>
+      [`PUT /api/agents/${refFor("lead")}/config`]: () =>
         json({ error: { code: "invalid_config", message: "The configuration has errors." } }, 400),
     },
   });
@@ -469,10 +473,15 @@ test("a config write that fails with nothing else saved says Model and Effort we
 
 test("on its own session, a display-name-only save toasts nothing", async () => {
   await open(
-    { extra: { ...sessionRoutes, "PATCH /api/agents/lead": saved(lead({ displayName: "Boss" })) } },
-    { path: "/agents/lead" },
+    {
+      extra: {
+        ...sessionRoutes,
+        [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ displayName: "Boss" })),
+      },
+    },
+    { path: `/agents/${refFor("lead")}` },
   );
-  expect(getSheetState().parent?.at).toBe("/agents/lead/chat");
+  expect(getSheetState().parent?.at).toBe(`/agents/${refFor("lead")}/chat`);
   await rename("Boss");
   await userEvent.click(saveButton());
   await waitFor(() => expect(getSheetState().parent).toBeUndefined());
@@ -481,8 +490,13 @@ test("on its own session, a display-name-only save toasts nothing", async () => 
 
 test("on its own session, any other field toasts Saved @slug.", async () => {
   await open(
-    { extra: { ...sessionRoutes, "PATCH /api/agents/lead": saved(lead({ description: "New" })) } },
-    { path: "/agents/lead" },
+    {
+      extra: {
+        ...sessionRoutes,
+        [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ description: "New" })),
+      },
+    },
+    { path: `/agents/${refFor("lead")}` },
   );
   await userEvent.clear(field("Description"));
   await userEvent.type(field("Description"), "New");
@@ -496,10 +510,12 @@ test("a save that restarts always says so, even display name only on its own ses
     {
       extra: {
         ...sessionRoutes,
-        "PATCH /api/agents/lead": saved(lead({ displayName: "Boss", restartPending: true })),
+        [`PATCH /api/agents/${refFor("lead")}`]: saved(
+          lead({ displayName: "Boss", restartPending: true }),
+        ),
       },
     },
-    { path: "/agents/lead" },
+    { path: `/agents/${refFor("lead")}` },
   );
   await rename("Boss");
   await userEvent.click(saveButton());
@@ -510,7 +526,9 @@ test("a save that restarts always says so, even display name only on its own ses
 test("a running agent's save says it restarts", async () => {
   await open({
     agents: [lead({ status: "idle" })],
-    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", displayName: "Boss" })) },
+    extra: {
+      [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ status: "idle", displayName: "Boss" })),
+    },
   });
   await rename("Boss");
   expect(screen.getByText(SELF)).toBeInTheDocument();
@@ -521,7 +539,7 @@ test("a running agent's save says it restarts", async () => {
 
 test("Enter twice while saving sends one PATCH", async () => {
   const patch = held();
-  const { api } = await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  const { api } = await open({ extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route } });
   await rename("Boss");
   await userEvent.type(field("Display name"), "{Enter}");
   await screen.findByRole("button", { name: /Saving…/ });
@@ -537,7 +555,7 @@ test("Enter twice while saving sends one PATCH", async () => {
 test("a server projects error shows under Projects", async () => {
   const { dialog } = await open({
     extra: {
-      "PATCH /api/agents/lead": () =>
+      [`PATCH /api/agents/${refFor("lead")}`]: () =>
         json(
           {
             error: {
@@ -566,7 +584,7 @@ test("a toggle sends the project array", async () => {
   const agent = lead({ projects: ["app", "docs"] });
   const { api } = await open({
     agents: [agent],
-    extra: { "PATCH /api/agents/lead": saved(lead()) },
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: saved(lead()) },
   });
   const group = screen.getByRole("group", { name: /Projects/ });
   await userEvent.click(within(group).getByRole("checkbox", { name: /docs/ }));
@@ -579,7 +597,7 @@ test("a toggle sends the project array", async () => {
 
 test("a late success toasts Saved @slug. and clears the draft when nothing reopened", async () => {
   const patch = held();
-  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await open({ extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route } });
   await rename("Boss");
   await userEvent.click(saveButton());
   await screen.findByRole("button", { name: /Saving…/ });
@@ -587,53 +605,53 @@ test("a late success toasts Saved @slug. and clears the draft when nothing reope
   await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
   await waitFor(() => expect(notify).toHaveBeenCalledOnce());
   expect(vi.mocked(notify).mock.calls[0]?.[0].text).toBe("Saved @lead.");
-  expect(hasDraft("edit-agent:lead")).toBe(false);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(false);
 });
 
 test("a late success keeps the draft of the same agent reopened and typed into meanwhile", async () => {
   const patch = held();
-  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await open({ extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route } });
   await rename("Boss");
   await userEvent.click(saveButton());
   await screen.findByRole("button", { name: /Saving…/ });
   act(() => closeSheet());
-  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
+  act(() => openSheet({ kind: "edit-agent", agentRef: refFor("lead") }));
   await sheet();
   await vi.waitFor(() => expect(field("Display name")).toBeEnabled());
   await rename("Second");
   act(() => closeSheet());
   await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
   await waitFor(() => expect(notify).toHaveBeenCalledOnce());
-  expect(hasDraft("edit-agent:lead")).toBe(true);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(true);
 });
 
 test("a late success over the same agent's Edit reopened on the sent values clears the draft and closes it", async () => {
   const patch = held();
-  const { api } = await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  const { api } = await open({ extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route } });
   await rename("Boss");
   await userEvent.click(saveButton());
   await screen.findByRole("button", { name: /Saving…/ });
   act(() => closeSheet());
-  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
+  act(() => openSheet({ kind: "edit-agent", agentRef: refFor("lead") }));
   await sheet();
   await vi.waitFor(() => expect(field("Display name")).toHaveValue("Boss"));
   await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
   await waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Saved @lead." }));
-  expect(hasDraft("edit-agent:lead")).toBe(false);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(false);
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit agent" })).toBeNull());
   expect(patches(api)).toHaveLength(1);
 });
 
 test("a save landing after a sign-out neither toasts nor touches a draft", async () => {
   const patch = held();
-  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await open({ extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route } });
   await rename("Boss");
   await userEvent.click(saveButton());
   await screen.findByRole("button", { name: /Saving…/ });
   act(() => closeSheet());
   act(() => resetDrafts());
   // The next user types the same value: the late success must not take it for the sent draft.
-  act(() => openSheet({ kind: "edit-agent", slug: "lead" }));
+  act(() => openSheet({ kind: "edit-agent", agentRef: refFor("lead") }));
   await sheet();
   await vi.waitFor(() => expect(field("Display name")).toBeEnabled());
   await rename("Boss");
@@ -642,13 +660,13 @@ test("a save landing after a sign-out neither toasts nor touches a draft", async
     await new Promise((r) => setTimeout(r, 50));
   });
   expect(notify).not.toHaveBeenCalled();
-  expect(hasDraft("edit-agent:lead")).toBe(true);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(true);
   expect(screen.getByRole("dialog", { name: "Edit agent" })).toBeInTheDocument();
 });
 
 test("a failed save landing after a sign-out doesn't toast", async () => {
   const patch = held();
-  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await open({ extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route } });
   await rename("Kept");
   await userEvent.click(saveButton());
   await screen.findByRole("button", { name: /Saving…/ });
@@ -666,23 +684,23 @@ test("a failed save landing after a sign-out doesn't toast", async () => {
 test("a late success still clears its draft when only another agent's Edit opened meanwhile", async () => {
   const patch = held();
   await open({
-    agents: [lead(), agentSummary({ slug: "other", displayName: "Other" })],
-    extra: { "PATCH /api/agents/lead": patch.route },
+    agents: [lead(), agentSummary({ handle: "other", displayName: "Other" })],
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route },
   });
   await rename("Boss");
   await userEvent.click(saveButton());
   await screen.findByRole("button", { name: /Saving…/ });
   act(() => closeSheet());
-  act(() => openSheet({ kind: "edit-agent", slug: "other" }));
+  act(() => openSheet({ kind: "edit-agent", agentRef: refFor("other") }));
   await sheet();
   await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
   await waitFor(() => expect(notify).toHaveBeenCalledOnce());
-  expect(hasDraft("edit-agent:lead")).toBe(false);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(false);
 });
 
 test("a late failure toasts the error with Open form, which reopens the kept draft", async () => {
   const patch = held();
-  await open({ extra: { "PATCH /api/agents/lead": patch.route } });
+  await open({ extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route } });
   await rename("Kept");
   await userEvent.click(saveButton());
   await screen.findByRole("button", { name: /Saving…/ });
@@ -694,7 +712,7 @@ test("a late failure toasts the error with Open form, which reopens the kept dra
   const toast = vi.mocked(notify).mock.calls[0]?.[0];
   expect(toast?.text).toBe("Couldn't save @lead: The server fell over.");
   expect(toast?.action?.label).toBe("Open form");
-  expect(hasDraft("edit-agent:lead")).toBe(true);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(true);
   act(() => toast?.action?.run());
   await sheet();
   expect(await screen.findByLabelText("Display name")).toHaveValue("Kept");
@@ -706,13 +724,13 @@ test("archived elsewhere while saving: success keeps the archived state open and
   const agent = lead();
   const { dialog, queryClient } = await open({
     agents: [agent],
-    extra: { "PATCH /api/agents/lead": patch.route },
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route },
   });
   await rename("Boss");
   await userEvent.click(saveButton());
   await screen.findByRole("button", { name: /Saving…/ });
   agent.archivedAt = "2026-11-20T10:00:00.000Z";
-  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", "lead"] }));
+  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", refFor("lead")] }));
   await within(dialog).findByText("This agent is archived.");
   await act(async () => patch.answer(json({ agent: lead({ displayName: "Boss" }) })));
   await waitFor(() => expect(notify).toHaveBeenCalledOnce());
@@ -725,13 +743,13 @@ test("archived elsewhere while saving: a failure toasts with Open form", async (
   const agent = lead();
   const { dialog, queryClient } = await open({
     agents: [agent],
-    extra: { "PATCH /api/agents/lead": patch.route },
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: patch.route },
   });
   await rename("Kept");
   await userEvent.click(saveButton());
   await screen.findByRole("button", { name: /Saving…/ });
   agent.archivedAt = "2026-11-20T10:00:00.000Z";
-  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", "lead"] }));
+  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", refFor("lead")] }));
   await within(dialog).findByText("This agent is archived.");
   await act(async () =>
     patch.answer(json({ error: { code: "agent_archived", message: "@lead is archived." } }, 409)),
@@ -740,7 +758,7 @@ test("archived elsewhere while saving: a failure toasts with Open form", async (
   const toast = vi.mocked(notify).mock.calls[0]?.[0];
   expect(toast?.text).toBe("Couldn't save @lead: @lead is archived.");
   expect(toast?.action?.label).toBe("Open form");
-  expect(hasDraft("edit-agent:lead")).toBe(true);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(true);
 });
 
 // --- States ---
@@ -752,7 +770,7 @@ test("an archived agent says so with a Restore button and no form; Restore bring
       agents: [],
       archived: [archived],
       extra: {
-        "POST /api/agents/lead/unarchive": () => {
+        [`POST /api/agents/${refFor("lead")}/unarchive`]: () => {
           archived.archivedAt = null;
           return json({ agent: archived });
         },
@@ -767,7 +785,9 @@ test("an archived agent says so with a Restore button and no form; Restore bring
   expect(await within(dialog).findByLabelText("Display name")).toHaveValue("Lead");
   // Restore went away with the notice: focus follows to the form.
   await waitFor(() => expect(field("Display name")).toHaveFocus());
-  expect(api.calls.filter((c) => c.url === "/api/agents/lead/unarchive")).toHaveLength(1);
+  expect(api.calls.filter((c) => c.url === `/api/agents/${refFor("lead")}/unarchive`)).toHaveLength(
+    1,
+  );
   expect(notify).not.toHaveBeenCalled();
 });
 
@@ -777,7 +797,7 @@ test("a refused Restore says why inline", async () => {
       agents: [],
       archived: [lead({ archivedAt: "2026-11-20T10:00:00.000Z" })],
       extra: {
-        "POST /api/agents/lead/unarchive": () =>
+        [`POST /api/agents/${refFor("lead")}/unarchive`]: () =>
           json({ error: { code: "manager_archived", message: "Its manager is archived." } }, 409),
       },
     },
@@ -797,17 +817,17 @@ test("a spawned agent can't be edited", async () => {
   expect(footerClose(dialog)).toBeInTheDocument();
 });
 
-test("an unknown slug: There is no agent @x.", async () => {
+test("an unknown ref: No agent at this link.", async () => {
   const { dialog } = await open(
     {
       extra: {
-        "GET /api/agents/x": () =>
+        [`GET /api/agents/${refFor("x")}`]: () =>
           json({ error: { code: "agent_not_found", message: "No agent x." } }, 404),
       },
     },
     { slug: "x", form: false },
   );
-  expect(await within(dialog).findByText("There is no agent @x.")).toBeInTheDocument();
+  expect(await within(dialog).findByText("No agent at this link.")).toBeInTheDocument();
   expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
 });
 
@@ -816,12 +836,12 @@ test("archived by another tab while open: the sheet flips and keeps the draft", 
   const { dialog, queryClient } = await open({ agents: [agent] });
   await rename("Half typed");
   agent.archivedAt = "2026-11-20T10:00:00.000Z";
-  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", "lead"] }));
+  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", refFor("lead")] }));
   expect(await within(dialog).findByText("This agent is archived.")).toBeInTheDocument();
   expect(within(dialog).queryByLabelText("Display name")).not.toBeInTheDocument();
-  expect(hasDraft("edit-agent:lead")).toBe(true);
+  expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(true);
   agent.archivedAt = null;
-  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", "lead"] }));
+  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", refFor("lead")] }));
   expect(await within(dialog).findByLabelText("Display name")).toHaveValue("Half typed");
 });
 
@@ -834,7 +854,7 @@ test("restored by another tab while focus is in the sheet: the form comes back w
   ).getByRole("button", { name: "Close" });
   x.focus();
   agent.archivedAt = null;
-  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", "lead"] }));
+  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", refFor("lead")] }));
   await within(dialog).findByLabelText("Display name");
   expect(x).toHaveFocus();
 });
@@ -844,12 +864,12 @@ test("deleted by another tab while open: the sheet flips to not found", async ()
   mockWorld({
     agents: [],
     extra: {
-      "GET /api/agents/lead": () =>
+      [`GET /api/agents/${refFor("lead")}`]: () =>
         json({ error: { code: "agent_not_found", message: "No agent lead." } }, 404),
     },
   });
-  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", "lead"] }));
-  expect(await within(dialog).findByText("There is no agent @lead.")).toBeInTheDocument();
+  await act(() => queryClient.invalidateQueries({ queryKey: ["agent", refFor("lead")] }));
+  expect(await within(dialog).findByText("No agent at this link.")).toBeInTheDocument();
 });
 
 test("focus on open goes to Display name", async () => {
@@ -891,7 +911,7 @@ test("a pasted token added inline is selected, focused and noted, and Save sends
         credentials.push(c);
         return json({ credential: c }, 201);
       },
-      "PATCH /api/agents/lead": () => json({ agent: lead({ credential: "prod" }) }),
+      [`PATCH /api/agents/${refFor("lead")}`]: () => json({ agent: lead({ credential: "prod" }) }),
     },
   });
   await userEvent.click(within(dialog).getByRole("button", { name: "Add credential" }));
@@ -953,7 +973,7 @@ const radio = (name: string) => screen.getByRole("radio", { name });
 test("Colour sits after Display name, names Auto's seeded hue, and sends color alone without a restart", async () => {
   const api = await open({
     agents: [lead({ status: "idle" })],
-    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 4 })) },
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ status: "idle", color: 4 })) },
   });
   const group = screen.getByRole("radiogroup", { name: /^Colour/ });
   expect(screen.getByText(/^Colour · Auto \(\w+\)$/)).toBeInTheDocument();
@@ -972,7 +992,7 @@ test("Colour sits after Display name, names Auto's seeded hue, and sends color a
 test("a saved colour invalidates the inbox list so chat rows recolour", async () => {
   const { queryClient } = await open({
     agents: [lead({ status: "idle" })],
-    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 4 })) },
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ status: "idle", color: 4 })) },
   });
   // A cached inbox list (inactive here, as when the sheet is over /agents): the save must mark it stale.
   const inboxKey = ["inbox", "list"];
@@ -1011,7 +1031,7 @@ test("an agent whose template has an avatar.svg gets the line, not the group", a
 test("a running agent's colour with another field still restarts", async () => {
   await open({
     agents: [lead({ status: "idle" })],
-    extra: { "PATCH /api/agents/lead": saved(lead({ status: "idle", color: 2 })) },
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ status: "idle", color: 2 })) },
   });
   await userEvent.click(radio("Moss"));
   await rename("Boss");
@@ -1020,7 +1040,7 @@ test("a running agent's colour with another field still restarts", async () => {
 
 test("Can manage the org: a switch described by the spec's help, and its change is sent", async () => {
   const { api } = await open({
-    extra: { "PATCH /api/agents/lead": saved(lead({ manageOrg: true })) },
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ manageOrg: true })) },
   });
   const sw = screen.getByRole("switch", { name: "Can manage the org" });
   expect(sw).not.toBeChecked();

@@ -6,13 +6,13 @@ export const TERMINATE_BODY =
 /** S7 UI design §5.2: names what is lost; the button names the action. A failure keeps it open
  *  with the error in ConfirmDialog's own alert line. */
 export function TerminateDialog({
-  slug,
+  handle,
   open,
   onOpenChange,
   onConfirm,
   onCloseAutoFocus,
 }: {
-  slug: string;
+  handle: string;
   open: boolean;
   onOpenChange(o: boolean): void;
   onConfirm(): Promise<void>;
@@ -22,9 +22,9 @@ export function TerminateDialog({
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`Terminate @${slug}?`}
+      title={`Terminate @${handle}?`}
       body={TERMINATE_BODY}
-      confirmLabel={`Terminate @${slug}`}
+      confirmLabel={`Terminate @${handle}`}
       pendingLabel="Terminating…"
       onConfirm={onConfirm}
       onCloseAutoFocus={onCloseAutoFocus}

@@ -9,7 +9,8 @@ import { inboxItemSchema } from "./messaging.ts";
  */
 export const chatRowSchema = z.object({
   agent: z.object({
-    slug: z.string(),
+    ref: z.string(),
+    handle: z.string(),
     displayName: z.string(),
     template: z.string(),
     avatarVersion: z.string().nullable(),

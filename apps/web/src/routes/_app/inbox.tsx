@@ -4,7 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { PageBody, PageHeader } from "@/components/page-header";
-import { chatSlugOf, inboxQueryOptions, useLoadedItem } from "@/features/inbox/api";
+import { chatRefOf, inboxQueryOptions, useLoadedItem } from "@/features/inbox/api";
 import { InboxList } from "@/features/inbox/inbox-list";
 import { InboxPane } from "@/features/inbox/inbox-pane";
 import {
@@ -33,22 +33,23 @@ export const Route = createFileRoute("/_app/inbox")({
 
 /** The selected chat as a read row, for a chat with nothing unread (a reload, Back, a deep link): the list keeps
  *  it in view. It sits at the top, from when it was selected. */
-function useSelectedChat(slug: string | undefined): ChatRow | undefined {
+function useSelectedChat(agentRef: string | undefined): ChatRow | undefined {
   const agent = useQuery({
-    ...agentDetailQueryOptions(slug ?? ""),
-    enabled: slug !== undefined,
+    ...agentDetailQueryOptions(agentRef ?? ""),
+    enabled: agentRef !== undefined,
     refetchOnWindowFocus: false,
     select: (d) => d.agent,
   }).data;
   // Stamped once per selection (adjusted during render on a change), so the row doesn't move when the agent changes.
-  const [stamped, setStamped] = useState<{ slug: string | undefined; at: string }>();
-  if (stamped?.slug !== slug) setStamped({ slug, at: new Date().toISOString() });
-  const stamp = stamped && stamped.slug === slug ? stamped.at : undefined;
+  const [stamped, setStamped] = useState<{ agentRef: string | undefined; at: string }>();
+  if (stamped?.agentRef !== agentRef) setStamped({ agentRef, at: new Date().toISOString() });
+  const stamp = stamped && stamped.agentRef === agentRef ? stamped.at : undefined;
   return useMemo(() => {
     if (!agent || !stamp) return undefined;
     return {
       agent: {
-        slug: agent.slug,
+        ref: agent.ref,
+        handle: agent.handle,
         displayName: agent.displayName,
         template: agent.template,
         avatarVersion: agent.avatarVersion,
@@ -71,9 +72,9 @@ function InboxPage() {
   const wide = useMedia(WIDE);
   const itemId = Route.useSearch({ select: (s) => s.item });
   const navigate = Route.useNavigate();
-  const chatSlug = wide ? chatSlugOf(itemId) : undefined;
-  const item = useLoadedItem(chatSlug === undefined ? itemId : undefined);
-  const selectedChat = useSelectedChat(chatSlug);
+  const chatRef = wide ? chatRefOf(itemId) : undefined;
+  const item = useLoadedItem(chatRef === undefined ? itemId : undefined);
+  const selectedChat = useSelectedChat(chatRef);
   const showSetup = useQuery({ ...setupQueryOptions, select: (s) => s.hasAgent }).data === false;
 
   const onSelect = useCallback(

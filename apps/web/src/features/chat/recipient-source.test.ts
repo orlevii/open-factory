@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { expect, test, vi } from "vitest";
 import { agentsListQueryOptions } from "@/features/session/api";
+import { refFor } from "@/test/refs";
 import { agentSummary } from "@/test/session-fixtures";
 import { FULL_NOTE, MENU_NOTE, recipientSource } from "./recipient-source";
 
@@ -10,7 +11,7 @@ function setup(added: string[], agents = ["dev", "ops", "qa", "old"]) {
     agentsListQueryOptions("exclude").queryKey,
     agents.map((slug) =>
       agentSummary({
-        slug,
+        handle: slug,
         displayName: slug,
         ...(slug === "old" ? { archivedAt: "2026-11-01T00:00:00.000Z" } : {}),
       }),
@@ -20,18 +21,18 @@ function setup(added: string[], agents = ["dev", "ops", "qa", "old"]) {
     added.push(s);
     return true;
   });
-  return { source: recipientSource(qc, { slug: "dev", added: () => added, add }), add };
+  return { source: recipientSource(qc, { agentRef: refFor("dev"), added: () => added, add }), add };
 }
 
 test("offers live agents without the chat's agent and the added ones", () => {
-  const { source } = setup(["ops"]);
-  expect(source.items("").map((i) => i.id)).toEqual(["qa"]);
+  const { source } = setup([refFor("ops")]);
+  expect(source.items("").map((i) => i.id)).toEqual([refFor("qa")]);
   expect(source.items("").map((i) => i.label)).toEqual(["Add @qa as recipient"]);
   expect(source.menuNote?.(1)).toBe(MENU_NOTE);
 });
 
 test("at ten recipients nothing is offered and the menu says so", () => {
-  const added = Array.from({ length: 9 }, (_, i) => `a${i}`);
+  const added = Array.from({ length: 9 }, (_, i) => refFor(`a${i}`));
   const { source } = setup(added);
   expect(source.items("")).toEqual([]);
   expect(source.menuNote?.(0)).toBe(FULL_NOTE);

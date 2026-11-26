@@ -15,6 +15,7 @@ import { AgentAvatar } from "@/components/agent-avatar";
 import { AgentChip, PrincipalChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { AgentName } from "@/features/agents/agent-tree";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { useAgentSummary } from "@/features/agents/use-agent-summary";
 import { ViewSwitch } from "@/features/agents/view-switch";
 import { ChatBody, type PaneOptions } from "@/features/chat/chat-view";
@@ -29,7 +30,7 @@ import { CommentBlock } from "@/features/tasks/comment-block";
 import { CommentComposer, type CommentComposerHandle } from "@/features/tasks/comment-composer";
 import { StatusLabel } from "@/features/tasks/status-label";
 import { INBOX_DWELL_MS, PREFETCH_REST_MS } from "@/lib/timing";
-import { chatSlugOf, type InboxItem, inboxQueryOptions, useOpenItem, usePaneItem } from "./api";
+import { chatRefOf, type InboxItem, inboxQueryOptions, useOpenItem, usePaneItem } from "./api";
 import { aboutOf } from "./credential-notice";
 import { LoopHoldPane } from "./loop-hold-pane";
 
@@ -51,7 +52,7 @@ function ExcerptSkeleton() {
 /** The sender as the pane's header shows it: a 20px chip for an agent, otherwise the name. */
 function Sender({ item }: { item: InboxItem }) {
   const about = aboutOf(item);
-  if (item.from.kind === "agent") return <AgentChip slug={item.from.handle} size={20} />;
+  if (item.from.kind === "agent") return <AgentChip agentRef={item.from.ref} size={20} />;
   if (item.from.kind === "factory")
     return (
       <span className="truncate">
@@ -90,13 +91,13 @@ function OpenLinkTarget({ link }: { link: InboxItem["link"] }) {
       );
     case "session":
       return link.seq === undefined ? (
-        <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }}>
+        <Link to="/agents/$ref/chat" params={{ ref: link.agentRef }}>
           Open chat
         </Link>
       ) : (
         <Link
-          to="/agents/$slug/session"
-          params={{ slug: link.agentSlug }}
+          to="/agents/$ref/session"
+          params={{ ref: link.agentRef }}
           search={{ event: link.seq }}
         >
           Open in session
@@ -229,7 +230,7 @@ function TaskHeader({ task }: { task: TaskDetail }) {
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[0.8125rem] leading-[1.125rem]">
         <StatusLabel status={task.status} />
         {task.assignee && (
-          <AgentChip slug={task.assignee.slug} name={task.assignee.displayName} size={16} />
+          <AgentChip agentRef={task.assignee.ref} name={task.assignee.displayName} size={16} />
         )}
       </div>
     </div>
@@ -299,7 +300,7 @@ function MentionReply({
   useEffect(() => {
     if (mention) replyRef.current?.prefill(mention);
   }, [mention, replyRef]);
-  const assignee = task.assignee && !task.assignee.ended ? task.assignee.slug : undefined;
+  const assignee = task.assignee && !task.assignee.ended ? task.assignee.ref : undefined;
   return (
     // Capped, scrolling within itself (the editor resizes): the body keeps most of the pane.
     <div
@@ -479,10 +480,10 @@ function useRested(selectedId: string | undefined) {
 
 /** A chat's row when it was opened, once the Inbox has loaded: its unread count and newest message,
  *  which is where the Chat opens. */
-function useOpenedUnread(slug: string): PaneOptions | undefined {
+function useOpenedUnread(agentRef: string): PaneOptions | undefined {
   const now = useInfiniteQuery({
     ...inboxQueryOptions,
-    select: (d) => d.pages[0]?.chats?.find((c) => c.agent.slug === slug),
+    select: (d) => d.pages[0]?.chats?.find((c) => c.agent.ref === agentRef),
   });
   const [opened, setOpened] = useState<PaneOptions>();
   if (now.isSuccess && opened === undefined)
@@ -491,8 +492,9 @@ function useOpenedUnread(slug: string): PaneOptions | undefined {
 }
 
 /** The 40px strip over a chat in the pane: avatar, name, status, a link to the page and the view switch. */
-function ChatStrip({ slug }: { slug: string }) {
-  const agent = useAgentSummary(slug);
+function ChatStrip({ agentRef }: { agentRef: string }) {
+  const agent = useAgentSummary(agentRef);
+  const handle = useHandle(agentRef);
   return (
     <div
       data-chat-strip
@@ -501,7 +503,7 @@ function ChatStrip({ slug }: { slug: string }) {
       {agent ? (
         <>
           <AgentAvatar
-            slug={agent.slug}
+            agentRef={agent.ref}
             template={agent.template}
             avatarVersion={agent.avatarVersion}
             color={agent.color}
@@ -515,32 +517,32 @@ function ChatStrip({ slug }: { slug: string }) {
           </span>
         </>
       ) : (
-        <span className="min-w-0 truncate font-mono">@{slug}</span>
+        <span className="min-w-0 truncate font-mono">@{handle}</span>
       )}
       <span className="ml-auto" />
       <Button asChild variant="outline" size="sm" className="shrink-0">
-        <Link to="/agents/$slug/chat" params={{ slug }}>
+        <Link to="/agents/$ref/chat" params={{ ref: agentRef }}>
           Open chat
         </Link>
       </Button>
-      <ViewSwitch slug={slug} view="chat" />
+      <ViewSwitch agentRef={agentRef} view="chat" />
     </div>
   );
 }
 
-/** A chat in the pane: the Chat (thread and composer) under the strip. Keyed by slug, so a retarget
+/** A chat in the pane: the Chat (thread and composer) under the strip. Keyed by agentRef, so a retarget
  *  swaps it instantly and nothing of the previous thread stays. It is read after the dwell. */
-function ChatPane({ slug, rested }: { slug: string; rested: boolean }) {
-  const pane = useOpenedUnread(slug);
+function ChatPane({ agentRef, rested }: { agentRef: string; rested: boolean }) {
+  const pane = useOpenedUnread(agentRef);
   const qc = useQueryClient();
   return (
     <>
-      <ChatStrip slug={slug} />
+      <ChatStrip agentRef={agentRef} />
       {pane && rested ? (
         <ChatBody
-          slug={slug}
+          agentRef={agentRef}
           pane={pane}
-          onRestored={() => void qc.invalidateQueries({ queryKey: ["agent", slug] })}
+          onRestored={() => void qc.invalidateQueries({ queryKey: ["agent", agentRef] })}
         />
       ) : (
         <Body>
@@ -569,7 +571,7 @@ export function InboxPane({
   item: InboxItem | undefined;
 }) {
   const rested = useRested(selectedId);
-  const chat = chatSlugOf(selectedId);
+  const chat = chatRefOf(selectedId);
   return (
     <section aria-label="Reading pane" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {selectedId === undefined ? (
@@ -581,7 +583,7 @@ export function InboxPane({
           <p className="px-4 py-6 text-sm text-muted-foreground md:px-6">No item selected.</p>
         )
       ) : chat ? (
-        <ChatPane key={selectedId} slug={chat} rested={rested} />
+        <ChatPane key={selectedId} agentRef={chat} rested={rested} />
       ) : (
         <PaneItem key={selectedId} id={selectedId} loaded={item} rested={rested} />
       )}

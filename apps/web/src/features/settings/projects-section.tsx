@@ -51,7 +51,9 @@ const NO_SPAWNERS = new Map<string, string>();
 const toSpawners = (agents: AgentSummary[]) =>
   new Map(
     agents.flatMap((a) =>
-      a.kind === "ephemeral" && a.reportsTo.kind === "agent" ? [[a.slug, a.reportsTo.handle]] : [],
+      a.kind === "ephemeral" && a.reportsTo.kind === "agent"
+        ? [[a.handle, a.reportsTo.handle]]
+        : [],
     ) as [string, string][],
   );
 
@@ -86,13 +88,13 @@ function InUseMessage({ grantedTo, archived }: { grantedTo: string[]; archived: 
     <>
       {grantedTo.length > 0 && (
         <>
-          Granted to <AgentLinks slugs={grantedTo} edit />. Remove the grant first.
+          Granted to <AgentLinks handles={grantedTo} edit />. Remove the grant first.
         </>
       )}
       {grantedTo.length > 0 && archived.length > 0 && " "}
       {archived.length > 0 && (
         <>
-          Archived agents <AgentLinks slugs={archived} edit /> still hold a grant.
+          Archived agents <AgentLinks handles={archived} edit /> still hold a grant.
         </>
       )}
     </>
@@ -165,7 +167,7 @@ export function ProjectsSection() {
   const qc = useQueryClient();
   const query = useQuery({ ...projectsQueryOptions, refetchOnMount: false }); // the settings loader just fetched it;
   const { data } = query;
-  // Only needed to name a spawned grantee's spawner; a failed list leaves the plain slugs.
+  // Only needed to name a spawned grantee's spawner; a failed list leaves the plain handles.
   const { data: spawners } = useQuery({
     ...agentsQueryOptions,
     select: toSpawners,

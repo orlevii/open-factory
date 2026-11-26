@@ -8,12 +8,12 @@ import type { AgentView } from "./view-memory";
 /** The view you would switch to: its label, what it opens, and its icon. */
 const OTHER = {
   chat: {
-    to: "/agents/$slug/session",
+    to: "/agents/$ref/session",
     label: "Session",
     opens: "Open session",
     Icon: SquareTerminal,
   },
-  session: { to: "/agents/$slug/chat", label: "Chat", opens: "Open chat", Icon: MessageSquare },
+  session: { to: "/agents/$ref/chat", label: "Chat", opens: "Open chat", Icon: MessageSquare },
 } as const;
 
 /** The other view's name and menu wording, for the ⋯ menu's copy of the switch. */
@@ -26,11 +26,11 @@ export const viewSwitchTarget = (view: AgentView) => OTHER[view];
  * tooltip. The session header sets `inMenu`: the switch hides below a 22rem header (which at 200% text is 704px, so a phone): the ⋯ menu then carries it.
  */
 export function ViewSwitch({
-  slug,
+  agentRef,
   view,
   inMenu = false,
 }: {
-  slug: string;
+  agentRef: string;
   view: AgentView;
   inMenu?: boolean;
 }) {
@@ -45,7 +45,7 @@ export function ViewSwitch({
           size="default"
           className={cn("@max-[24rem]:px-0 @max-[24rem]:w-8", inMenu && "@max-[22rem]:hidden")}
         >
-          <Link data-view-switch to={to.to} params={{ slug }}>
+          <Link data-view-switch to={to.to} params={{ ref: agentRef }}>
             <to.Icon aria-hidden="true" />
             {/* Both labels share one grid cell: the wider sets the width, the other is never seen. */}
             <span className="grid @max-[24rem]:sr-only">

@@ -22,19 +22,19 @@ function Block({ icon, children }: { icon: ReactNode; children: ReactNode }) {
 }
 
 /** "@ana is archived. Changes apply when it's restored." The form stays editable. */
-export function ArchivedBlock({ slug }: { slug: string }) {
+export function ArchivedBlock({ handle }: { handle: string }) {
   return (
     <Block icon={<Archive aria-hidden="true" className="text-muted-foreground" />}>
-      <p>{archivedLine(slug)}</p>
+      <p>{archivedLine(handle)}</p>
     </Block>
   );
 }
 
 /** R5: the template is broken or missing. The form is read-only with no inherited base; Raw stays editable. */
-export function BrokenTemplateBlock({ slug, template }: { slug: string; template: string }) {
+export function BrokenTemplateBlock({ handle, template }: { handle: string; template: string }) {
   return (
     <Block icon={<TriangleAlert aria-hidden="true" className="text-destructive" />}>
-      <p>{brokenTemplateLine(template, slug)}</p>
+      <p>{brokenTemplateLine(template, handle)}</p>
       <Link to="/templates/$name" params={{ name: template }} className={LINK}>
         {CONFIG_PAGE_COPY.openTemplate}
       </Link>
@@ -67,7 +67,7 @@ export function SpawnedConfig({ agent, merged }: { agent: AgentSummary; merged: 
     () => (merged === null ? null : `${JSON.stringify(merged, null, 2)}\n`),
     [merged],
   );
-  const spawner = agent.reportsTo.kind === "agent" ? agent.reportsTo.handle : null;
+  const spawner = agent.reportsTo.kind === "agent" ? agent.reportsTo : null;
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
       <p className="text-sm leading-5">
@@ -75,8 +75,8 @@ export function SpawnedConfig({ agent, merged }: { agent: AgentSummary; merged: 
         {spawner ? (
           <>
             {CONFIG_PAGE_COPY.spawnedPlus}{" "}
-            <Link to="/agents/$slug/chat" params={{ slug: spawner }} className={LINK}>
-              @{spawner}
+            <Link to="/agents/$ref/chat" params={{ ref: spawner.ref }} className={LINK}>
+              @{spawner.handle}
             </Link>
             {CONFIG_PAGE_COPY.spawnedLimits}
           </>
@@ -100,7 +100,7 @@ export function SpawnedConfig({ agent, merged }: { agent: AgentSummary; merged: 
           language="json"
           value={text}
           onChange={ignore}
-          fileKey={`agent:${agent.slug}:combined`}
+          fileKey={`agent:${agent.ref}:combined`}
           states={states}
           diagnostics={NO_DIAGS}
           readOnly

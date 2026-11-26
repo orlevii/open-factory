@@ -716,6 +716,7 @@ export class AgentRuntime {
   }
 
   async init() {
+    this.agentRef = await this.ref();
     // The row may have been terminated since it was read for the constructor.
     const r = await this.d.store.agentById(this.agent.id);
     if (r?.terminatedAt && !this.terminationCommitted) this.markTerminated({ committed: true });
@@ -2273,7 +2274,7 @@ export class AgentRuntime {
 
   statusFrame(): AgentStatusFrame {
     const l = this.live();
-    return { type: "agent_status", agent: this.agent.slug, ...l };
+    return { type: "agent_status", agent: this.agentRef, ...l };
   }
 
   queueItems(): QueueItem[] {
@@ -2449,7 +2450,7 @@ export class AgentRuntime {
       this.retireLive(event);
       this.d.bus.publish(this.agent.id, {
         type: "session_event",
-        agent: this.agent.slug,
+        agent: this.agentRef,
         event: dto,
       });
       this.endSubagentLive(event);
@@ -2521,7 +2522,7 @@ export class AgentRuntime {
   private publishQueue() {
     this.d.bus.publish(this.agent.id, {
       type: "queue",
-      agent: this.agent.slug,
+      agent: this.agentRef,
       items: this.queueItems(),
     });
   }
@@ -2868,7 +2869,7 @@ export class AgentRuntime {
         this.d.log.warn({ agent: this.agent.slug, dropped }, "dropped malformed command entries");
       this.d.bus.publish(this.agent.id, {
         type: "agent_commands_changed",
-        agent: this.agent.slug,
+        agent: this.agentRef,
       });
     } catch (err) {
       this.d.log.warn({ err, agent: this.agent.slug }, "storing the command list failed");
@@ -3014,6 +3015,9 @@ export class AgentRuntime {
     }
   }
 
+  /** The ref every frame names the agent by: read in `init()`, so a frame is only built from an initialised runtime. */
+  private agentRef = "";
+
   /** The ref its container is named by, read once from `principals` (it never changes). */
   private refOnce?: Promise<string>;
   private ref(): Promise<string> {
@@ -3079,12 +3083,12 @@ export class AgentRuntime {
   }
 
   private publishLive(body: LiveFrameBody) {
-    this.d.bus.publish(this.agent.id, { type: "live", agent: this.agent.slug, ...body });
+    this.d.bus.publish(this.agent.id, { type: "live", agent: this.agentRef, ...body });
   }
 
   /** The whole live state as a `reset` frame (U3 §11.3): sent after a subscribe's replay and on `live_snapshot`. */
   liveSnapshot(): LiveFrame {
-    return { type: "live", agent: this.agent.slug, ...this.liveState.snapshot() };
+    return { type: "live", agent: this.agentRef, ...this.liveState.snapshot() };
   }
 
   /** The stdout line of a persisted event (U3 §11.2); unknown (a driver without lines) clears everything. */
@@ -4410,7 +4414,7 @@ export class AgentRuntime {
     }
     this.d.bus.publish(this.agent.id, {
       type: "session_event",
-      agent: this.agent.slug,
+      agent: this.agentRef,
       event: dto,
     });
     this.lastActivityAt = Date.now();
@@ -4432,6 +4436,6 @@ export class AgentRuntime {
   /** I1 §6.5: each of these humans' chat with this agent changed (never anyone else). */
   chatChanged(userIds: Iterable<string | null>): void {
     for (const u of new Set(userIds))
-      if (u) this.d.bus.publishToUser(u, { type: "chat_changed", agent: this.agent.slug });
+      if (u) this.d.bus.publishToUser(u, { type: "chat_changed", agent: this.agentRef });
   }
 }

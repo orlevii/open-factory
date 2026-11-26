@@ -12,7 +12,7 @@ const NONE: Agents = [];
 const assignable = (data: Agents): Agents =>
   data
     .filter((a) => !a.archivedAt && !a.terminatedAt)
-    .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.slug.localeCompare(b.slug));
+    .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.handle.localeCompare(b.handle));
 
 /** Live agents sorted by display name (S4's order), spawned agents included (their " · ab12" tells them apart). */
 export function useAssignableAgents() {
@@ -20,7 +20,7 @@ export function useAssignableAgents() {
   return { agents: data ?? NONE, ...rest };
 }
 
-/** The muted mono `@slug` that follows a name in agent options and triggers. */
-export const Slug = ({ slug }: { slug: string }) => (
-  <span className="text-muted-foreground font-mono">@{slug}</span>
+/** The muted mono `@handle` that follows a name in agent options and triggers. */
+export const Handle = ({ handle }: { handle: string }) => (
+  <span className="text-muted-foreground font-mono">@{handle}</span>
 );

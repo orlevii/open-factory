@@ -422,7 +422,11 @@ test("terminating an agent rejects its loop-held rows; archiving leaves them hel
   expect(await t.app.store.pendingQueue(a.id)).not.toContainEqual(
     expect.objectContaining({ id: toA.id }),
   );
-  await t.app.agents.archive(b.slug, { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await t.app.agents.archive(await t.refOf(b.slug), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   expect(await stateOf(t, toB.id)).toBe("loop_held");
   await t.app.terminator.terminate(a.id, await seedTestUser(t.db, "or"));
   expect(await stateOf(t, toA.id)).toBe("rejected");

@@ -5,7 +5,7 @@ import { expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "./agents/testing/fake-driver.ts";
 import { AGENT_URL_ON_HUMAN_PORT_WARNING } from "./app.ts";
 import { callTool, mcpCall } from "./mcp/testing/mcp-client.ts";
-import { makeTestApp, signUp } from "./test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "./test/helpers.ts";
 
 test("buildApp canonicalizes FACTORY_HOME with realpath", async () => {
   const tmp = realpathSync(mkdtempSync(path.join(tmpdir(), "of-link-")));
@@ -76,7 +76,7 @@ async function startIdle(
   const p = driver.startsOf(slug).at(-1);
   if (!p) throw new Error(`${slug} not started`);
   p.emit(...ev.fullTurn());
-  await (await t.app.runtimes.bySlug(slug))?.settled();
+  await (await runtimeOf(t.app, slug))?.settled();
   return { proc: p, token: p.spec.env.OPEN_FACTORY_AGENT_TOKEN as string };
 }
 
@@ -142,7 +142,7 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
       "name: developer\ndisplay_name: Developer\nruntime: local\ncan_spawn:\n  - developer\n",
     );
     writeFileSync(path.join(tplDir, "AGENTS.md"), "# Developer\n");
-    const leadRow = await t.app.store.agentBySlug("lead");
+    const leadRow = await agentRowOf(t.app, "lead");
     const spawned = await t.app.spawner.spawn(
       leadRow?.id ?? "",
       { template: "developer", suffix: "e1", description: "Builds it", prompt: "Build it" },
@@ -153,7 +153,7 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
     await vi.waitFor(() => expect(driver.startsOf("developer-e1").length > 0).toBe(true));
     const p = driver.startsOf("developer-e1").at(-1);
     p?.emit(...ev.fullTurn());
-    await (await t.app.runtimes.bySlug("developer-e1"))?.settled();
+    await (await runtimeOf(t.app, "developer-e1"))?.settled();
     const r = await mcpCall(url, p?.spec.env.OPEN_FACTORY_AGENT_TOKEN as string, "tools/list", {});
     expect((r.json.result.tools as { name: string }[]).map((x) => x.name).sort()).toEqual(
       BASE_TOOLS,
@@ -211,7 +211,7 @@ test("the member update debounce setting reaches the runtimes: 0 writes a member
       fromAgentId: dev.id,
       body: "progress",
     });
-    const rt = await t.app.runtimes.bySlug("lead");
+    const rt = await runtimeOf(t.app, "lead");
     await rt?.receive(row);
     await vi.waitFor(() => expect(proc.sent.flat().map((m) => m.body)).toContain("progress"));
   } finally {
@@ -242,7 +242,7 @@ test("a report's text reaches its manager naming the request it answers", async 
       select id from messages where to_id = ${dev.id} and kind = 'message'`;
     const devProc = driver.startsOf("dev").at(-1);
     devProc?.emit(ev.session(), ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
-    await (await t.app.runtimes.bySlug("dev"))?.settled();
+    await (await runtimeOf(t.app, "dev"))?.settled();
     const [asker] = await t.sql<
       { ref: string }[]
     >`select ref from principals where handle = 'asker'`;

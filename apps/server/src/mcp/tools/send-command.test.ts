@@ -7,7 +7,7 @@ import {
   CommandsUnsupportedError,
 } from "../../agents/errors.ts";
 import { ev, FakeDriver } from "../../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../../test/helpers.ts";
+import { makeTestApp, runtimeOf, signUp } from "../../test/helpers.ts";
 import { testRef } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
@@ -43,7 +43,7 @@ const call = async (who: string, command: string, target: string) => {
   };
 };
 const rt = async (slug: string) => {
-  const r = await h.app.runtimes.bySlug(slug);
+  const r = await runtimeOf(h.app, slug);
   if (!r) throw new Error(`no runtime ${slug}`);
   return r;
 };
@@ -303,7 +303,7 @@ test("nobody can cancel an agent's queued command from the UI", async () => {
   for (const item of items) {
     const res = await h.app.inject({
       method: "DELETE",
-      url: `/api/agents/dev/queue/${item.id}`,
+      url: `/api/agents/${await h.refOf("dev")}/queue/${item.id}`,
       headers: { cookie },
     });
     expect(res.statusCode).toBe(403);

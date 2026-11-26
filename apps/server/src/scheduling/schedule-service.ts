@@ -6,6 +6,7 @@ import {
   MSG,
   minGapMinutes,
   nextRun,
+  normaliseRef,
   parseAt,
   parseKey,
   SCHEDULE_BODY_MAX,
@@ -276,7 +277,7 @@ export class ScheduleService {
     return this.toItem(r);
   }
 
-  /** Humans' list (spec §11): active by next run, then paused, then done newest first, then key; at most 500. */
+  /** Humans' list (spec §11; `target` is an agent's ref): active by next run, then paused, then done newest first, then key; at most 500. */
   async list(
     f: { target?: string; done?: boolean } = {},
   ): Promise<{ items: ScheduleItem[]; more: boolean }> {
@@ -285,7 +286,7 @@ export class ScheduleService {
     const at = (r: ScheduleRecord) => r.nextRunAt?.getTime() ?? Number.POSITIVE_INFINITY;
     const doneAt = (r: ScheduleRecord) => (r.lastFiredAt ?? r.runAt)?.getTime() ?? 0;
     const shown = rows
-      .filter((r) => (f.target ? r.target.slug === f.target : true))
+      .filter((r) => (f.target ? r.target.ref === normaliseRef(f.target) : true))
       .filter((r) => (f.done ? true : !isDone(r)))
       .sort(
         (a, b) =>
@@ -314,7 +315,7 @@ export class ScheduleService {
         const long = chars.length > TOOL_BODY_CAP;
         return {
           id: formatKey("S", r.number),
-          to: r.target.slug,
+          to: r.target.handle,
           created_by: label(r.createdBy),
           by: label(r.bodyAuthor),
           ...(r.cron ? { cron: r.cron } : {}),
@@ -634,7 +635,8 @@ export class ScheduleService {
     return {
       key: formatKey("S", r.number),
       target: {
-        slug: r.target.slug,
+        ref: r.target.ref,
+        handle: r.target.handle,
         displayName: r.target.displayName,
         archived: r.target.archivedAt !== null,
         terminated: r.target.terminatedAt !== null,

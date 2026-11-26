@@ -1,5 +1,6 @@
 import { act, render } from "@testing-library/react";
 import { expect, test } from "vitest";
+import { refFor } from "@/test/refs";
 import { envelope } from "@/test/session-fixtures";
 import { CAP_LINE } from "./agent-text";
 import type { Row } from "./rows";
@@ -48,7 +49,7 @@ type View = {
 function renderTimeline(v: View) {
   const el = (x: View) => (
     <Timeline
-      slug="dev"
+      agentRef={refFor("dev")}
       rows={x.rows}
       liveTexts={x.live}
       textHead
@@ -171,7 +172,7 @@ test("live rows sit after every persisted row, and only the first opens a speake
 test("a windowed view renders no live rows", () => {
   render(
     <Timeline
-      slug="dev"
+      agentRef={refFor("dev")}
       rows={base}
       liveTexts={[liveText("m1", 1, "Hello")]}
       windowed

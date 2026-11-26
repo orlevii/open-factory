@@ -3,10 +3,10 @@ import { infiniteQueryOptions } from "@tanstack/react-query";
 
 type ChatQuery = { before?: string; around?: string; limit?: number };
 
-export function fetchChat(slug: string, q: ChatQuery = {}) {
+export function fetchChat(ref: string, q: ChatQuery = {}) {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
-  return apiFetch(`/api/agents/${encodeURIComponent(slug)}/chat?${p}`, { schema: chatPageSchema });
+  return apiFetch(`/api/agents/${encodeURIComponent(ref)}/chat?${p}`, { schema: chatPageSchema });
 }
 
 /** The infinite chat queries are written by `use-chat` (the union), never refetched wholesale: no
@@ -25,21 +25,21 @@ const OWN_REFRESH = {
 const olderThan = (cursor: string) => ({ before: cursor });
 
 /** The newest page, then older ones by `nextCursor`. */
-export const chatQueryOptions = (slug: string) =>
+export const chatQueryOptions = (ref: string) =>
   infiniteQueryOptions({
-    queryKey: ["chat", slug],
-    queryFn: ({ pageParam }) => fetchChat(slug, pageParam ? olderThan(pageParam) : {}),
+    queryKey: ["chat", ref],
+    queryFn: ({ pageParam }) => fetchChat(ref, pageParam ? olderThan(pageParam) : {}),
     initialPageParam: "",
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     ...OWN_REFRESH,
   });
 
 /** The window around one message (`?message=`), then older pages like the newest query. */
-export const chatAroundQueryOptions = (slug: string, messageId: string) =>
+export const chatAroundQueryOptions = (ref: string, messageId: string) =>
   infiniteQueryOptions({
-    queryKey: ["chat", slug, "around", messageId],
+    queryKey: ["chat", ref, "around", messageId],
     queryFn: ({ pageParam }) =>
-      fetchChat(slug, pageParam ? olderThan(pageParam) : { around: messageId }),
+      fetchChat(ref, pageParam ? olderThan(pageParam) : { around: messageId }),
     initialPageParam: "",
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     ...OWN_REFRESH,

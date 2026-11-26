@@ -10,6 +10,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { type Handler, json, type MockApi, mockApi, validBody, validQuery } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { detail as agentDetail } from "@/test/session-fixtures";
 
@@ -43,12 +44,12 @@ const item = (n: number, o: Over = {}) => ({
   messageId: `m${n}`,
   kind: "notice",
   read: false,
-  from: { kind: "agent", ref: "dev00000", handle: "dev" },
+  from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
   to: "@alice",
   preview: `preview ${n}`,
   urgent: false,
   createdAt: at(50 - n),
-  link: { kind: "session", agentSlug: "dev", seq: 42 },
+  link: { kind: "session", agentRef: refFor("dev"), seq: 42 },
   ...o,
 });
 
@@ -56,7 +57,7 @@ const item = (n: number, o: Over = {}) => ({
 const events = (slug: string, from: number, to: number): SessionEvent[] =>
   Array.from({ length: to - from + 1 }, (_, i) => ({
     seq: from + i,
-    agentSlug: slug,
+    agentRef: refFor(slug),
     turnId: "t1",
     at: at(i),
     event: { type: "assistant_text", text: `${slug} event ${from + i}` },
@@ -85,9 +86,9 @@ const task = (o: Over = {}) => ({
   key: "T-7",
   title: "Seven",
   status: "in_progress",
-  assignee: { slug: "dev", displayName: "Dev agent" },
+  assignee: { ref: refFor("dev"), handle: "dev", displayName: "Dev agent" },
   blockedBy: [],
-  createdBy: { kind: "human", ref: "ref-alice", handle: "alice" },
+  createdBy: { kind: "human", ref: refFor("alice"), handle: "alice" },
   updatedAt: at(10),
   body: "",
   createdAt: at(0),
@@ -95,22 +96,22 @@ const task = (o: Over = {}) => ({
   blocks: [],
   links: [],
   activity: [
-    comment("c0", { kind: "human", ref: "ref-alice", handle: "alice" }, 1),
-    comment("c1", { kind: "agent", ref: "ref-ada", handle: "ada" }, 2),
-    comment("c2", { kind: "human", ref: "ref-alice", handle: "alice" }, 3),
-    comment("c3", { kind: "agent", ref: "ref-dev", handle: "dev" }, 4),
+    comment("c0", { kind: "human", ref: refFor("alice"), handle: "alice" }, 1),
+    comment("c1", { kind: "agent", ref: refFor("ada"), handle: "ada" }, 2),
+    comment("c2", { kind: "human", ref: refFor("alice"), handle: "alice" }, 3),
+    comment("c3", { kind: "agent", ref: refFor("dev"), handle: "dev" }, 4),
     {
       type: "event",
       id: "e1",
-      actor: { kind: "agent", ref: "ref-dev", handle: "dev" },
+      actor: { kind: "agent", ref: refFor("dev"), handle: "dev" },
       event: "status",
       from: "open",
       to: "in_progress",
       at: at(4),
     },
-    comment("c4", { kind: "agent", ref: "ref-ada", handle: "ada" }, 5),
-    comment("c5", { kind: "human", ref: "ref-bob", handle: "bob" }, 6),
-    comment("h1", { kind: "human", ref: "ref-bob", handle: "bob" }, 7),
+    comment("c4", { kind: "agent", ref: refFor("ada"), handle: "ada" }, 5),
+    comment("c5", { kind: "human", ref: refFor("bob"), handle: "bob" }, 6),
+    comment("h1", { kind: "human", ref: refFor("bob"), handle: "bob" }, 7),
   ],
   usage: null,
   ...o,
@@ -121,8 +122,8 @@ function setup(items: unknown[]) {
   api = mockApi({
     "GET /api/inbox?": () => json({ chats: [], items, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: items.length, byAgent: {} }),
-    "GET /api/agents/dev": () => json(agentDetail()),
-    "GET /api/agents/dev/events?": validQuery(eventsQuerySchema, eventsRoute("dev")),
+    [`GET /api/agents/${refFor("dev")}`]: () => json(agentDetail()),
+    [`GET /api/agents/${refFor("dev")}/events?`]: validQuery(eventsQuerySchema, eventsRoute("dev")),
     "GET /api/tasks/T-7": () => json(task()),
   });
   for (const i of items as { id: string }[])
@@ -152,7 +153,7 @@ const mention = (n: number, commentId: string, from: Over) =>
   });
 
 test("a mention shows the task header, the 3 comments before it and the comment, and a composer prefilled with the agent author", async () => {
-  setup([mention(1, "c4", { kind: "agent", ref: "ada00000", handle: "ada" })]);
+  setup([mention(1, "c4", { kind: "agent", ref: refFor("ada"), handle: "ada" })]);
   api.on(
     "POST /api/tasks/T-7/comments",
     validBody(taskCommentBodySchema, (b) =>
@@ -161,7 +162,7 @@ test("a mention shows the task header, the 3 comments before it and the comment,
           comment: {
             type: "comment",
             id: "c9",
-            author: { kind: "human", ref: "ref-alice", handle: "alice" },
+            author: { kind: "human", ref: refFor("alice"), handle: "alice" },
             body: (b as { body: string }).body,
             at: at(9),
           },
@@ -198,7 +199,7 @@ test("a mention shows the task header, the 3 comments before it and the comment,
 });
 
 test("a mention brings the mentioned comment to the top of the body", async () => {
-  setup([mention(1, "c4", { kind: "agent", ref: "ada00000", handle: "ada" })]);
+  setup([mention(1, "c4", { kind: "agent", ref: refFor("ada"), handle: "ada" })]);
   await visit("/inbox?item=i1");
   const p = pane();
   await waitFor(() => expect(within(p).getByText("comment c4")).toBeInTheDocument());
@@ -219,7 +220,7 @@ test("a mention brings the mentioned comment to the top of the body", async () =
 });
 
 test("a mention by a human leaves the composer empty", async () => {
-  setup([mention(1, "h1", { kind: "human", ref: "b0b00000", handle: "bob" })]);
+  setup([mention(1, "h1", { kind: "human", ref: refFor("bob"), handle: "bob" })]);
   await visit("/inbox?item=i1");
   const p = pane();
   await waitFor(() => expect(within(p).getByText("comment h1")).toBeInTheDocument());
@@ -230,7 +231,7 @@ test("a task event shows the fact and Open task, with no composer", async () => 
   setup([
     item(1, {
       kind: "task_event",
-      from: { kind: "agent", ref: "dev00000", handle: "dev" },
+      from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
       task: { key: "T-7", title: "Seven" },
       fact: "done",
       link: { kind: "task", key: "T-7" },
@@ -244,7 +245,7 @@ test("a task event shows the fact and Open task, with no composer", async () => 
           {
             type: "event",
             id: "e9",
-            actor: { kind: "agent", ref: "ref-dev", handle: "dev" },
+            actor: { kind: "agent", ref: refFor("dev"), handle: "dev" },
             event: "status",
             from: "in_progress",
             to: "done",
@@ -254,10 +255,25 @@ test("a task event shows the fact and Open task, with no composer", async () => 
       }),
     ),
   );
+  api.on("GET /api/principals", () =>
+    json({
+      principals: [
+        {
+          id: "d1",
+          ref: refFor("dev"),
+          kind: "agent",
+          handle: "dev",
+          name: "Dev",
+          state: "live",
+          avatar: null,
+        },
+      ],
+    }),
+  );
   await visit("/inbox?item=i1");
   const p = pane();
   const fact = await within(p).findByTestId("task-fact");
-  expect(fact).toHaveTextContent(/^Done by @?dev · /);
+  await waitFor(() => expect(fact).toHaveTextContent(/^Done by Dev · /));
   expect(within(p).getAllByRole("link", { name: "Open task" })[0]).toHaveAttribute(
     "href",
     "/tasks/T-7",
@@ -266,7 +282,7 @@ test("a task event shows the fact and Open task, with no composer", async () => 
 });
 
 test("switching items shows skeletons, never the previous body", async () => {
-  setup([item(1), mention(2, "c4", { kind: "agent", ref: "ada00000", handle: "ada" })]);
+  setup([item(1), mention(2, "c4", { kind: "agent", ref: refFor("ada"), handle: "ada" })]);
   let release: () => void = () => {};
   const held = new Promise<void>((r) => {
     release = r;
@@ -299,7 +315,7 @@ test("a notice shows its text and a link to the session, and has no composer", a
   expect(await within(p).findByText("Dev hit an error")).toBeInTheDocument();
   expect(within(p).getByRole("link", { name: "Open in session" })).toHaveAttribute(
     "href",
-    "/agents/dev/session?event=42",
+    `/agents/${refFor("dev")}/session?event=42`,
   );
   expect(within(p).queryByRole("textbox")).toBeNull();
   expect(within(p).queryByRole("combobox")).toBeNull();
@@ -308,14 +324,16 @@ test("a notice shows its text and a link to the session, and has no composer", a
 test("?item= outside the loaded pages fetches the item and shows it", async () => {
   setup([item(1)]);
   api.on("GET /api/inbox/far", () =>
-    json({ item: item(9, { id: "far", from: { kind: "agent", ref: "dev00000", handle: "dev" } }) }),
+    json({
+      item: item(9, { id: "far", from: { kind: "agent", ref: refFor("dev"), handle: "dev" } }),
+    }),
   );
   await visit("/inbox?item=far");
   const p = pane();
   await waitFor(() =>
     expect(within(p).getByRole("link", { name: "Open in session" })).toHaveAttribute(
       "href",
-      "/agents/dev/session?event=42",
+      `/agents/${refFor("dev")}/session?event=42`,
     ),
   );
   await waitFor(() => expect(within(p).getByText("preview 9")).toBeInTheDocument());
@@ -352,7 +370,7 @@ test("the selected row dropping out of the loaded pages keeps its header", async
 });
 
 test("a half-typed comment reply survives switching items; a posted one is cleared", async () => {
-  setup([mention(1, "c4", { kind: "agent", ref: "ada00000", handle: "ada" }), item(2)]);
+  setup([mention(1, "c4", { kind: "agent", ref: refFor("ada"), handle: "ada" }), item(2)]);
   api.on(
     "POST /api/tasks/T-7/comments",
     validBody(taskCommentBodySchema, (b) =>
@@ -361,7 +379,7 @@ test("a half-typed comment reply survives switching items; a posted one is clear
           comment: {
             type: "comment",
             id: "c9",
-            author: { kind: "human", ref: "ref-alice", handle: "alice" },
+            author: { kind: "human", ref: refFor("alice"), handle: "alice" },
             body: (b as { body: string }).body,
             at: at(9),
           },
@@ -391,14 +409,14 @@ test("a half-typed comment reply survives switching items; a posted one is clear
 }, 20_000);
 
 test("a mention whose comment is gone says so", async () => {
-  setup([mention(1, "c-gone", { kind: "agent", ref: "ada00000", handle: "ada" })]);
+  setup([mention(1, "c-gone", { kind: "agent", ref: refFor("ada"), handle: "ada" })]);
   await visit("/inbox?item=i1");
   expect(await within(pane()).findByText("This comment no longer exists.")).toBeInTheDocument();
   expect(within(pane()).getByRole("heading", { name: "Seven" })).toBeInTheDocument();
 });
 
 test("moving on cancels the request for the item passed over", async () => {
-  setup([mention(1, "c4", { kind: "agent", ref: "ada00000", handle: "ada" }), item(2)]);
+  setup([mention(1, "c4", { kind: "agent", ref: refFor("ada"), handle: "ada" }), item(2)]);
   // The task never answers: it is still in flight when the selection moves on.
   api.on("GET /api/tasks/T-7", () => new Promise<Response>(() => {}));
   const app = await visit("/inbox?item=i1");

@@ -55,6 +55,7 @@ function world(live: AgentRow[] = []) {
         events.push(event);
         return {} as never;
       },
+      refOfAgent: async () => "aaaaaaaa",
     },
     runtimes: {
       get: async () =>

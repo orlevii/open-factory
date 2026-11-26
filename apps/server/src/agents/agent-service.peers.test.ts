@@ -4,7 +4,7 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { tagOf } from "@open-factory/shared/tags";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { makeTestApp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp } from "../test/helpers.ts";
 import { seedTestUser, testRef } from "../test/principals.ts";
 import { FakeDriver } from "./testing/fake-driver.ts";
 
@@ -36,7 +36,7 @@ const held = async (slug: string) =>
                 where a.slug = ${slug} and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
 /** An agent's tag, as the factory writes it in a body (its principal's ref). */
-const tag = async (slug: string) => tagOf(testRef((await h.app.store.agentBySlug(slug))?.id ?? ""));
+const tag = async (slug: string) => tagOf(testRef((await agentRowOf(h.app, slug))?.id ?? ""));
 /** The signed-in human `or`'s tag. */
 const OR = tagOf(testRef("u-or"));
 function create(slug: string, displayName: string, reportsTo: string) {
@@ -68,7 +68,7 @@ test("create: peers get 'joined as your peer', the manager 'joined as your repor
 test("manager change: left the old neighborhood, joined the new; the moved agent gets no event but a restart", async () => {
   const restart = vi.spyOn(h.app.runtimes, "requestRestart");
   await h.app.agents.update(
-    "dev",
+    await h.refOf("dev"),
     { reportsTo: "boss" },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
@@ -87,7 +87,7 @@ test("manager change: left the old neighborhood, joined the new; the moved agent
 
 test("moving to a human manager: 'now reports to @or'; agents under the same human become peers", async () => {
   await h.app.agents.update(
-    "dev",
+    await h.refOf("dev"),
     { reportsTo: "or" },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
@@ -111,24 +111,40 @@ test("agents under different human managers are not peers", async () => {
 });
 
 test("archive and unarchive send left and joined; archived agents receive nothing", async () => {
-  await h.app.agents.archive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.archive(await h.refOf("dev"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   const dev_ = await tag("dev");
   expect(await held("lead")).toEqual([
     { kind: "peer_left", notice: "report", body: `${dev_} (Dev) left: archived.` },
   ]);
-  await h.app.agents.unarchive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.unarchive(await h.refOf("dev"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   expect((await held("lead")).at(-1)).toEqual({
     kind: "peer_joined",
     notice: "report",
     body: `${dev_} (Dev) joined as your report.`,
   });
-  await h.app.agents.archive("boss", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.archive(await h.refOf("boss"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   await create("new", "New", "or");
   expect(await held("boss")).toEqual([]);
 });
 
 test("summaries count non-archived direct reports", async () => {
-  expect((await h.app.agents.summary("lead")).reports).toBe(1);
-  await h.app.agents.archive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
-  expect((await h.app.agents.summary("lead")).reports).toBe(0);
+  expect((await h.app.agents.summary(await h.refOf("lead"))).reports).toBe(1);
+  await h.app.agents.archive(await h.refOf("dev"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
+  expect((await h.app.agents.summary(await h.refOf("lead"))).reports).toBe(0);
 });

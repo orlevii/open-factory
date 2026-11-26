@@ -39,9 +39,9 @@ export type RowMenuItem =
   /** Your inbox item for this send (to a human), by the message's id: shown only once found. */
   | { kind: "inbox"; label: string; messageId: string }
   /** The message in the recipient agent's session. */
-  | { kind: "session"; label: string; to: string; messageId: string }
+  | { kind: "session"; label: string; to: string; handle?: string; messageId: string }
   /** The message in your chat with this agent. */
-  | { kind: "chat"; label: string; slug: string; messageId: string }
+  | { kind: "chat"; label: string; agentRef: string; messageId: string }
   /** Everyone a send went to, in full: shown when the speaker line summarises them. */
   | { kind: "recipients"; label: string; text: string }
   /** The row's time, as a label: touch only, where the gutter time never shows. */
@@ -57,12 +57,12 @@ const clock = (iso: string) => {
  *  bodies: the markdown source), Copy command (Bash), View tool call (outgoing, spawn), View in the
  *  recipient's session (a delivered send to an agent), Open in inbox (a send to a human, when it is
  *  in your inbox), and the time on touch. */
-export function rowMenuItems(row: Row, slug: string, selfRef?: string): RowMenuItem[] {
+export function rowMenuItems(row: Row, agentRef: string, selfRef?: string): RowMenuItem[] {
   const items: RowMenuItem[] = [
     {
       kind: "copy",
       label: "Copy link",
-      text: `${location.origin}/agents/${encodeURIComponent(slug)}/session?event=${row.seq}`,
+      text: `${location.origin}/agents/${encodeURIComponent(agentRef)}/session?event=${row.seq}`,
     },
   ];
   if (row.kind === "text") items.push({ kind: "copy", label: "Copy text", text: row.text });
@@ -70,7 +70,7 @@ export function rowMenuItems(row: Row, slug: string, selfRef?: string): RowMenuI
     items.push({ kind: "copy", label: "Copy text", text: row.message.body });
     // A message from you to this agent is in your chat with it.
     if (selfRef && row.message.fromKind === "human" && refOfWho(row.message.from) === selfRef)
-      items.push({ kind: "chat", label: "Open in chat", slug, messageId: row.message.id });
+      items.push({ kind: "chat", label: "Open in chat", agentRef, messageId: row.message.id });
   }
   if (row.kind === "peer")
     items.push({ kind: "copy", label: "Copy text", text: row.envelope.body });
@@ -100,15 +100,19 @@ export function rowMenuItems(row: Row, slug: string, selfRef?: string): RowMenuI
         items.push({ kind: "inbox", label: "Open in inbox", messageId: only.id });
         // To you: the same message sits in your chat with this agent.
         if (selfRef && refOfWho(only.to) === selfRef)
-          items.push({ kind: "chat", label: "Open in chat", slug, messageId: only.id });
+          items.push({ kind: "chat", label: "Open in chat", agentRef, messageId: only.id });
       } else {
+        // The recipient's tag names its ref, which the session route is keyed by.
+        const to = refOfWho(only.to);
         const bare = whoHandle(only.to);
-        items.push({
-          kind: "session",
-          label: `View in @${bare}'s session`,
-          to: bare,
-          messageId: only.id,
-        });
+        if (to)
+          items.push({
+            kind: "session",
+            label: `View in @${bare}'s session`,
+            to,
+            handle: bare,
+            messageId: only.id,
+          });
       }
     }
   }
@@ -127,7 +131,7 @@ const at = (name: string, iso: string | undefined) => (iso ? `${name} · ${forma
 
 /** The row's name on the phone drawer's title line (U4 §11.1): "Message from @or · 17:55",
  *  "Bash · 17:55", the agent for its own text. */
-export function rowMenuTitle(row: Row, slug: string): string {
+export function rowMenuTitle(row: Row, handle: string): string {
   switch (row.kind) {
     case "message":
       return at(`Message from ${whoName(row.message.from)}`, row.at);
@@ -150,7 +154,7 @@ export function rowMenuTitle(row: Row, slug: string): string {
     case "tool":
       return at(row.call.name, row.at);
     case "text":
-      return at(whoName(slug), row.at);
+      return at(`@${handle}`, row.at);
     case "command":
       return at("Command", row.at);
     case "command_output":
@@ -436,10 +440,12 @@ function RowMenuContent({
             return (
               <AdaptiveMenuItem key={item.label} asChild>
                 <Link
-                  to="/agents/$slug/session"
-                  params={{ slug: item.to }}
+                  to="/agents/$ref/session"
+                  params={{ ref: item.to }}
                   search={{ message: item.messageId }}
-                  aria-label={`View this message in @${item.to}'s session`}
+                  aria-label={
+                    item.handle ? `View this message in @${item.handle}'s session` : undefined
+                  }
                 >
                   {item.label}
                 </Link>
@@ -449,8 +455,8 @@ function RowMenuContent({
             return (
               <AdaptiveMenuItem key={item.label} asChild>
                 <Link
-                  to="/agents/$slug/chat"
-                  params={{ slug: item.slug }}
+                  to="/agents/$ref/chat"
+                  params={{ ref: item.agentRef }}
                   search={{ message: item.messageId }}
                 >
                   {item.label}

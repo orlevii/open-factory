@@ -232,7 +232,7 @@ function Now({
               : "Restarts when idle to apply changes"}
             {waitingText(agent.restartWaitingOn)}
             <Why label="Why does it restart?">{RESTART_WHY}</Why>
-            <RestartNowButton slug={agent.slug} />
+            <RestartNowButton agent={agent} />
             {changes.length > 0 && (
               <span className="block basis-full pl-5 [overflow-wrap:anywhere]">
                 {changes.map((c) => (
@@ -292,11 +292,11 @@ function Human({ handle }: { handle: string }) {
 }
 
 function Org({ agent }: { agent: AgentSummary }) {
-  const slug = agent.slug;
+  const agentRef = agent.ref;
   const select = useCallback(
     (l: AgentSummary[]) =>
-      l.filter((a) => a.reportsTo.kind === "agent" && a.reportsTo.handle === slug),
-    [slug],
+      l.filter((a) => a.reportsTo.kind === "agent" && a.reportsTo.ref === agentRef),
+    [agentRef],
   );
   // A cache read for the reports shown; the list is the sidebar's, never fetched from here.
   const reports = useQuery({
@@ -312,7 +312,7 @@ function Org({ agent }: { agent: AgentSummary }) {
           {agent.kind === "ephemeral" ? "Spawned by" : "Reports to"}
         </span>
         {agent.reportsTo.kind === "agent" ? (
-          <AgentChip slug={agent.reportsTo.handle} link size={16} />
+          <AgentChip agentRef={agent.reportsTo.ref} link size={16} />
         ) : (
           <Human handle={agent.reportsTo.handle} />
         )}
@@ -320,14 +320,18 @@ function Org({ agent }: { agent: AgentSummary }) {
       {agent.reports > 0 && (
         <ul className="grid gap-1.5 @container">
           {shown.map((r) => (
-            <li key={r.slug} className="flex min-w-0">
+            <li key={r.ref} className="flex min-w-0">
               <AgentChip agent={r} link size={16} badge />
             </li>
           ))}
         </ul>
       )}
       {agent.reports > MAX_REPORTS && (
-        <Link to="/agents" search={{ focus: slug }} className={`justify-self-start ${LINK_CLASS}`}>
+        <Link
+          to="/agents"
+          search={{ focus: agentRef }}
+          className={`justify-self-start ${LINK_CLASS}`}
+        >
           All {agent.reports} reports
         </Link>
       )}
@@ -351,9 +355,9 @@ function openFromDetails(onClose: (() => void) | undefined, open: () => void) {
 
 function Work({ agent, onClose }: { agent: AgentSummary; onClose?: (() => void) | undefined }) {
   // Mounted only while Agent details is open, so these fetch only then; no count, nothing to ask.
-  const tasks = useQuery({ ...agentTasksOptions(agent.slug), enabled: agent.openTasks > 0 }).data;
+  const tasks = useQuery({ ...agentTasksOptions(agent.ref), enabled: agent.openTasks > 0 }).data;
   const schedules = useQuery({
-    ...schedulesListOptions({ target: agent.slug }),
+    ...schedulesListOptions({ target: agent.ref }),
     enabled: agent.scheduleCount > 0,
   }).data?.schedules;
   if (agent.openTasks === 0 && agent.scheduleCount === 0) return null;
@@ -383,7 +387,7 @@ function Work({ agent, onClose }: { agent: AgentSummary; onClose?: (() => void) 
           </ul>
           <Link
             to="/tasks"
-            search={{ assignee: agent.slug }}
+            search={{ assignee: agent.ref }}
             className={`justify-self-start ${LINK_CLASS}`}
           >
             All {plural(agent.openTasks, "task", "tasks")}
@@ -425,7 +429,7 @@ function Work({ agent, onClose }: { agent: AgentSummary; onClose?: (() => void) 
           </ul>
           <Link
             to="/schedules"
-            search={{ target: agent.slug }}
+            search={{ target: agent.ref }}
             className={`justify-self-start ${LINK_CLASS}`}
           >
             All {plural(agent.scheduleCount, "schedule", "schedules")}
@@ -439,10 +443,10 @@ function Work({ agent, onClose }: { agent: AgentSummary; onClose?: (() => void) 
 function Usage({ agent }: { agent: AgentSummary }) {
   // The 7-day row for this agent: null once loaded without one, undefined while loading. Mounted
   // only while Agent details is open, so the all-agents fetch runs only then.
-  const slug = agent.slug;
+  const agentRef = agent.ref;
   const select = useCallback(
-    (d: AgentsUsage) => d.agents.find((r) => r.slug === slug) ?? null,
-    [slug],
+    (d: AgentsUsage) => d.agents.find((r) => r.ref === agentRef) ?? null,
+    [agentRef],
   );
   const usage = useQuery({ ...agentsUsageQuery("rolling7"), select }).data;
   const t = usage && (usage.kind === "ephemeral" ? usage.own : usage.total);
@@ -454,8 +458,8 @@ function Usage({ agent }: { agent: AgentSummary }) {
           {cost ? `${cost} est. · 7d` : usage === undefined ? "" : "No turns in the last 7 days"}
         </span>
         <Link
-          to="/agents/$slug/usage"
-          params={{ slug: agent.slug }}
+          to="/agents/$ref/usage"
+          params={{ ref: agent.ref }}
           search={{}}
           className={LINK_CLASS}
         >
@@ -535,7 +539,7 @@ function Runtime({ agent }: { agent: AgentSummary }) {
           <>
             <dt className="text-muted-foreground">Configuration</dt>
             <dd className="min-w-0">
-              <Link to="/agents/$slug/config" params={{ slug: agent.slug }} className={LINK_CLASS}>
+              <Link to="/agents/$ref/config" params={{ ref: agent.ref }} className={LINK_CLASS}>
                 {CONFIG_PAGE_COPY.openConfiguration}
               </Link>
             </dd>
@@ -634,7 +638,7 @@ export function AgentDetails({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="grid gap-1 border-b border-border px-4 py-3 text-[0.8125rem] leading-[1.125rem]">
-          <p className="font-mono [overflow-wrap:anywhere]">@{agent.slug}</p>
+          <p className="font-mono [overflow-wrap:anywhere]">@{agent.handle}</p>
           {agent.description && <Description text={agent.description} />}
         </div>
         <Now agent={agent} stop={stop} onAgent={onAgent} />
@@ -648,8 +652,8 @@ export function AgentDetails({
           <Button
             type="button"
             variant="outline"
-            {...sheetIntent("edit-agent", { kind: "edit-agent", slug: agent.slug })}
-            onClick={() => openSheet({ kind: "edit-agent", slug: agent.slug })}
+            {...sheetIntent("edit-agent", { kind: "edit-agent", agentRef: agent.ref })}
+            onClick={() => openSheet({ kind: "edit-agent", agentRef: agent.ref })}
           >
             Edit agent
           </Button>
@@ -687,30 +691,32 @@ const ownsDetails = (modal: Element) => modal.id === AGENT_DETAILS_ID;
  * at its width's default. A sheet opened below 1024px stays a sheet until it closes (the U1 latch).
  * `]` toggles it while the page is mounted.
  */
-export function useAgentDetailsPanel(slug: string): AgentDetailsPanel {
+export function useAgentDetailsPanel(agentRef: string): AgentDetailsPanel {
   const xwide = useMedia(XWIDE);
   const wide = useMedia(WIDE);
   const mobile = useMedia(MOBILE);
   const [pref, setPref] = usePref<"open" | "closed">(AGENT_DETAILS_PREF, "open", parseOpenPref);
-  const [state, setState] = useState<{ slug: string; open: boolean; sheet: boolean } | null>(null);
+  const [state, setState] = useState<{ agentRef: string; open: boolean; sheet: boolean } | null>(
+    null,
+  );
   const byWidth: AgentDetailsMode = wide ? "inflow" : mobile ? "drawer" : "overlay";
   const fallback = xwide && pref === "open";
-  // Derived, never reset by an effect: the state applies to its own slug, or follows to the next one
+  // Derived, never reset by an effect: the state applies to its own agentRef, or follows to the next one
   // while open.
-  const carried = state !== null && (state.slug === slug || state.open);
+  const carried = state !== null && (state.agentRef === agentRef || state.open);
   const open = carried ? state.open : fallback;
   const latched = open && carried && state.sheet && byWidth === "inflow";
   const mode: AgentDetailsMode = latched ? "overlay" : byWidth;
 
-  const latest = useRef({ slug, open, xwide, fallback, mode });
-  latest.current = { slug, open, xwide, fallback, mode };
+  const latest = useRef({ agentRef, open, xwide, fallback, mode });
+  latest.current = { agentRef, open, xwide, fallback, mode };
   const timeline = useRef<TimelineHandle>(null);
   const setOpen = useCallback(
     (next: boolean) => {
       const c = latest.current;
       // Before the column resizes the timeline, so the top row keeps its place.
       timeline.current?.captureAnchor();
-      setState({ slug: c.slug, open: next, sheet: c.mode !== "inflow" });
+      setState({ agentRef: c.agentRef, open: next, sheet: c.mode !== "inflow" });
       // Remembered only for the column where it is open by default (not a latched sheet).
       if (c.xwide && c.mode === "inflow") setPref(next ? "open" : "closed");
     },

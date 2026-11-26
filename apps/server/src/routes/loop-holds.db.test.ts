@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, signUp } from "../test/helpers.ts";
 
 const N = 2;
 let h: Awaited<ReturnType<typeof makeTestApp>>;
@@ -16,7 +16,7 @@ beforeEach(async () => {
 });
 afterEach(() => h.close());
 
-const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id ?? "";
+const idOf = async (slug: string) => (await agentRowOf(h.app, slug))?.id ?? "";
 const send = async (from: string, to: string) =>
   (await h.app.router.send({ agentId: await idOf(from) }, [`@${to}`], "ping", false)).results[0];
 /** Ada sends N, bob N + 1, then ada's next send trips the guard both ways. */
@@ -56,8 +56,8 @@ describe("the inbox entry's loopHold", () => {
     expect((await entry()).loopHold).toEqual({
       id: holdId,
       agents: [
-        { slug: expect.stringMatching(/^(ada|bob)$/), status: "live" },
-        { slug: expect.stringMatching(/^(ada|bob)$/), status: "live" },
+        { ref: expect.any(String), handle: expect.stringMatching(/^(ada|bob)$/), status: "live" },
+        { ref: expect.any(String), handle: expect.stringMatching(/^(ada|bob)$/), status: "live" },
       ],
       waiting: 3,
       sentOn: 0,
@@ -66,25 +66,32 @@ describe("the inbox entry's loopHold", () => {
     });
   });
 
-  test("after Resume: sentOn is the rows sent on, waiting 0, resumedBy the handle with @; a fresh read says the same", async () => {
+  test("after Resume: sentOn is the rows sent on, waiting 0, resumedBy the human; a fresh read says the same", async () => {
     await openHold(2);
     await resume(holdId);
     const first = (await entry()).loopHold;
     const again = (await entry()).loopHold;
-    expect(first).toMatchObject({ waiting: 0, sentOn: 3, resumedBy: "@or" });
+    expect(first).toMatchObject({
+      waiting: 0,
+      sentOn: 3,
+      resumedBy: { ref: expect.any(String), handle: "or" },
+    });
     expect(first.resumedAt).toEqual(expect.any(String));
     expect(again).toEqual(first);
   });
 
   test("an archived or terminated agent shows its status", async () => {
     await openHold(0);
-    const [a, b] = (await entry()).loopHold.agents as [{ slug: string }, { slug: string }];
-    await h.sql`update agents set archived_at = now() where slug = ${a.slug}`;
-    await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf(a.slug)}, terminated_at = now(), terminated_by = null where slug = ${b.slug}`;
+    const [a, b] = (await entry()).loopHold.agents as [
+      { ref: string; handle: string },
+      { ref: string; handle: string },
+    ];
+    await h.sql`update agents set archived_at = now() where id = ${await idOf(a.handle)}`;
+    await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf(a.handle)}, terminated_at = now(), terminated_by = null where id = ${await idOf(b.handle)}`;
     const { agents } = (await entry()).loopHold;
     expect(agents).toEqual([
-      { slug: a.slug, status: "archived" },
-      { slug: b.slug, status: "terminated" },
+      { ...a, status: "archived" },
+      { ...b, status: "terminated" },
     ]);
   });
 

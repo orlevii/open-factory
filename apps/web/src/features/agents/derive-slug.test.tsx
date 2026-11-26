@@ -5,8 +5,8 @@ import { describe, expect, test, vi } from "vitest";
 import { deriveSlug, foldLetters, useTakenNames } from "./derive-slug";
 
 const lists = vi.hoisted(() => ({
-  exclude: Promise.resolve([{ slug: "alice" }]),
-  only: Promise.resolve([{ slug: "old-bot" }]),
+  exclude: Promise.resolve([{ handle: "alice" }]),
+  only: Promise.resolve([{ handle: "old-bot" }]),
   users: Promise.resolve([{ handle: "priya" }]),
   gate: { exclude: false, only: false, users: false },
 }));
@@ -18,7 +18,8 @@ const gated = <T,>(k: "exclude" | "only" | "users", v: () => T) =>
 vi.mock("@/features/agents/api", () => ({
   agentsListQueryOptions: (m: "exclude" | "only") => ({
     queryKey: ["agents", m],
-    queryFn: () => gated(m, () => (m === "exclude" ? [{ slug: "alice" }] : [{ slug: "old-bot" }])),
+    queryFn: () =>
+      gated(m, () => (m === "exclude" ? [{ handle: "alice" }] : [{ handle: "old-bot" }])),
   }),
 }));
 vi.mock("@/features/settings/api", () => ({

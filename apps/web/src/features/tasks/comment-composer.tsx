@@ -52,7 +52,7 @@ export function CommentComposer({
   taskKey: string;
   /** After the server took the comment (the reading pane marks its item read). */
   onPosted?: () => void;
-  /** The current live assignee's slug, for the helper line. */
+  /** The current live assignee's agentRef, for the helper line. */
   assignee: string | undefined;
   /** Kept for callers: the shared composer starts at two lines and grows. */
   compact?: boolean;
@@ -94,7 +94,7 @@ export function CommentComposer({
     },
     [qc, taskKey, onPosted],
   );
-  // `@` completes a handle as `@slug ` (routing as today, U3 §13.4).
+  // `@` completes a handle as `@handle ` (routing as today, U3 §13.4).
   const at = useMentionSource(COMMENT_AT_LABEL);
   const completions = useMemo(() => ({ at }), [at]);
   const coarse = isCoarsePointer();

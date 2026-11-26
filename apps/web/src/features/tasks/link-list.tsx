@@ -19,7 +19,7 @@ export function LinkList({ links }: { links: TaskLink[] }) {
           <span className="min-w-0 [overflow-wrap:anywhere]">
             {l.kind === "agent" && l.agent ? (
               <>
-                <AgentLink slug={l.agent.slug} />
+                <AgentLink agentRef={l.agent.ref} />
                 {l.agent.ended && <span className="text-muted-foreground"> · {l.agent.ended}</span>}
               </>
             ) : l.kind === "file" || !/^https?:\/\//.test(l.target ?? "") ? (

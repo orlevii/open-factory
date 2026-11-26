@@ -2,6 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { conversation, detail } from "@/test/session-fixtures";
 
@@ -53,8 +54,8 @@ beforeEach(() => {
         posted.push({ url, body: JSON.parse(String(init.body ?? "{}")) });
         return postReply(url);
       }
-      if (url === "/api/agents/dev") return json(detail(agentOver));
-      if (url.startsWith("/api/agents/dev/events")) return json(conversation());
+      if (url === `/api/agents/${refFor("dev")}`) return json(detail(agentOver));
+      if (url.startsWith(`/api/agents/${refFor("dev")}/events`)) return json(conversation());
       return json({}, 404);
     }),
   );
@@ -64,7 +65,7 @@ afterEach(() => vi.unstubAllGlobals());
 const box = () => screen.findByRole("combobox", { name: "Message to Dev agent" });
 
 test("Enter sends, Shift+Enter adds a newline, the box clears on 202", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const input = await box();
   await userEvent.type(input, "line one{Shift>}{Enter}{/Shift}line two");
   expect(input).toHaveValue("line one\nline two");
@@ -72,7 +73,7 @@ test("Enter sends, Shift+Enter adds a newline, the box clears on 202", async () 
   await vi.waitFor(() =>
     expect(posted).toEqual([
       {
-        url: "/api/agents/dev/input",
+        url: `/api/agents/${refFor("dev")}/input`,
         body: { text: "line one\nline two", clientMessageId: expect.any(String) },
       },
     ]),
@@ -81,7 +82,7 @@ test("Enter sends, Shift+Enter adds a newline, the box clears on 202", async () 
 });
 
 test("a 70 KB message is refused before sending, with the draft kept", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const input = await box();
   const big = "é".repeat(36_000);
   fireEvent.change(input, { target: { value: big } });
@@ -94,7 +95,7 @@ test("a 70 KB message is refused before sending, with the draft kept", async () 
 });
 
 test("the size error clears when the text is edited again", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const input = await box();
   fireEvent.change(input, { target: { value: "é".repeat(36_000) } });
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -104,7 +105,7 @@ test("the size error clears when the text is edited again", async () => {
 });
 
 test("503 clears the box (the message is queued); a 400 keeps the text and shows the error inline", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const input = await box();
   postReply = () =>
     json(
@@ -130,14 +131,16 @@ async function openCompact() {
 }
 
 test("Compact popover: focus moves to the input; Enter submits with the focus text", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await box();
   await openCompact();
   const focus = await screen.findByRole("textbox", { name: "Focus (optional)" });
   expect(focus).toHaveFocus();
   await userEvent.type(focus, "keep the API{Enter}");
   await vi.waitFor(() =>
-    expect(posted).toEqual([{ url: "/api/agents/dev/compact", body: { focus: "keep the API" } }]),
+    expect(posted).toEqual([
+      { url: `/api/agents/${refFor("dev")}/compact`, body: { focus: "keep the API" } },
+    ]),
   );
 });
 
@@ -158,7 +161,7 @@ const _status = (turnOpen: boolean) =>
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: turnOpen ? "working" : "idle",
       turnOpen,
       restartPending: false,
@@ -175,7 +178,7 @@ test("composer: on a coarse pointer Enter inserts a newline and only the button 
     matches: q === "(pointer: coarse)",
   })) as typeof window.matchMedia;
   try {
-    renderApp("/agents/dev/session", alice);
+    renderApp(`/agents/${refFor("dev")}/session`, alice);
     const input = await box();
     await userEvent.type(input, "a{Enter}b");
     expect(input).toHaveValue("a\nb");
@@ -188,7 +191,7 @@ test("composer: on a coarse pointer Enter inserts a newline and only the button 
 });
 
 test("composer: focus returns to the box after sending with the button", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const input = await box();
   await userEvent.type(input, "hi");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -197,7 +200,7 @@ test("composer: focus returns to the box after sending with the button", async (
 });
 
 test("composer: a network failure keeps the text and says the server is unreachable", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const input = await box();
   postReply = () => {
     throw new TypeError("Failed to fetch");
@@ -210,7 +213,7 @@ test("composer: a network failure keeps the text and says the server is unreacha
 });
 
 test("composer: text typed while the send is in flight is kept", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const input = await box();
   const d = deferred();
   postReply = () => d.promise;
@@ -222,7 +225,7 @@ test("composer: text typed while the send is in flight is kept", async () => {
 });
 
 test("compact: a second submit while one is in flight posts nothing; success closes it", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await box();
   await openCompact();
   const focus = await screen.findByRole("textbox", { name: "Focus (optional)" });
@@ -232,7 +235,7 @@ test("compact: a second submit while one is in flight posts nothing; success clo
   await vi.waitFor(() => expect(posted).toHaveLength(1));
   await userEvent.type(focus, "{Enter}");
   expect(posted).toHaveLength(1);
-  expect(posted[0]).toEqual({ url: "/api/agents/dev/compact", body: {} });
+  expect(posted[0]).toEqual({ url: `/api/agents/${refFor("dev")}/compact`, body: {} });
   d.resolve(
     json(
       { item: { id: "q", kind: "compact", from: "@alice", fromKind: "human", createdAt: "x" } },
@@ -245,7 +248,7 @@ test("compact: a second submit while one is in flight posts nothing; success clo
 });
 
 test("compact: an error shows inside the popover and it stays open", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await box();
   await openCompact();
   const focus = await screen.findByRole("textbox", { name: "Focus (optional)" });
@@ -260,18 +263,20 @@ test("compact: an error shows inside the popover and it stays open", async () =>
 
 test("Stop: posts one interrupt and re-enables when the turn closes and a new one opens", async () => {
   agentOver = { status: "working", turnOpen: true };
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await box();
   postReply = () => json({}, 202);
   await userEvent.click(stop());
-  await vi.waitFor(() => expect(posted).toEqual([{ url: "/api/agents/dev/interrupt", body: {} }]));
+  await vi.waitFor(() =>
+    expect(posted).toEqual([{ url: `/api/agents/${refFor("dev")}/interrupt`, body: {} }]),
+  );
   expect(stop()).toHaveAttribute("aria-disabled", "true");
   // Both frames land in one commit (spec §9.6): Stop still sees the turn change.
   act(() => {
     for (const open of [false, true])
       ws.onMessage?.({
         type: "agent_status",
-        agent: "dev",
+        agent: refFor("dev"),
         status: open ? "working" : "idle",
         turnOpen: open,
         restartPending: false,

@@ -34,6 +34,8 @@ import { usePlainTags } from "@/components/tag/plain-tags";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAgent } from "@/features/agents/use-agent-index";
+import { usePrincipalLookup } from "@/features/principals/use-principal";
 import { agentsListQueryOptions } from "@/features/session/api";
 import { formatInboxTime } from "@/features/session/format";
 import { LINK_CLASS } from "@/features/session/message-block";
@@ -317,7 +319,7 @@ export function TaskDetailView({
   }, [task, placeholder, me]);
 
   if (!task) return null;
-  const liveAssignee = task.assignee && !task.assignee.ended ? task.assignee.slug : undefined;
+  const liveAssignee = task.assignee && !task.assignee.ended ? task.assignee.handle : undefined;
   return (
     // A container (spec §12): two columns when the view itself is wide (the page), stacked in a peek.
     <div className="@container/task min-w-0">
@@ -644,6 +646,7 @@ function StatusAndAssignee({
   }>({});
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
+  const lookup = usePrincipalLookup();
   async function apply(body: PatchTaskBody, say: string, shown: typeof optimistic) {
     setError(undefined);
     setOptimistic(shown);
@@ -659,12 +662,17 @@ function StatusAndAssignee({
     }
   }
   const status = optimistic.status ?? task.status;
+  const chosen = useAgent(optimistic.assignee ?? "");
   const assignee =
     optimistic.assignee === undefined
       ? task.assignee
       : optimistic.assignee === null
         ? null
-        : { slug: optimistic.assignee, displayName: optimistic.assignee };
+        : {
+            ref: optimistic.assignee,
+            handle: chosen?.handle ?? "…",
+            displayName: chosen?.displayName ?? optimistic.assignee,
+          };
   return (
     <>
       <SideSection label="Status" flush>
@@ -682,10 +690,12 @@ function StatusAndAssignee({
           value={assignee}
           disabled={disabled}
           pending={pending}
-          onCommit={(slug) =>
-            void apply({ assignee: slug }, slug ? `Assigned to @${slug}` : "Unassigned", {
-              assignee: slug,
-            })
+          onCommit={(ref) =>
+            void apply(
+              { assignee: ref },
+              ref ? `Assigned to @${lookup(ref)?.handle ?? ref}` : "Unassigned",
+              { assignee: ref },
+            )
           }
         />
         {error && (
@@ -944,7 +954,7 @@ function LinksEditor({ task, save, onClose }: { task: Detail; save: Save; onClos
     task.links.map((l) =>
       newLinkRow({
         kind: l.kind,
-        target: l.kind === "agent" ? `@${l.agent?.slug ?? ""}` : (l.target ?? ""),
+        target: l.kind === "agent" ? `@${l.agent?.handle ?? ""}` : (l.target ?? ""),
         title: l.title ?? "",
       }),
     ),
@@ -960,7 +970,7 @@ function LinksEditor({ task, save, onClose }: { task: Detail; save: Save; onClos
   const known = useMemo(
     () =>
       active.data && ended.data
-        ? new Set([...active.data, ...ended.data].map((a) => a.slug))
+        ? new Set([...active.data, ...ended.data].map((a) => a.handle))
         : undefined,
     [active.data, ended.data],
   );

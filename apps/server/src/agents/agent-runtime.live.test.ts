@@ -1,6 +1,7 @@
 import type { LiveEvent, LiveEventBody } from "@open-factory/harness";
 import type { HarnessEvent, LiveFrame, ServerMessage } from "@open-factory/shared";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
+import { testRef } from "../test/principals.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
 import { ev, type FakeDriver } from "./testing/fake-driver.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
@@ -46,13 +47,13 @@ test("live text from the process is published and held for a snapshot", async ()
   expect(liveFrames()).toEqual([
     {
       type: "live",
-      agent: rt.agent.slug,
+      agent: testRef(rt.agent.id),
       texts: [{ messageId: "m1", index: 0, offset: 0, append: "Hello" }],
     },
   ]);
   expect(rt.liveSnapshot()).toEqual({
     type: "live",
-    agent: rt.agent.slug,
+    agent: testRef(rt.agent.id),
     reset: true,
     texts: [{ messageId: "m1", index: 0, offset: 0, append: "Hello" }],
     toolInput: null,

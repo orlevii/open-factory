@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { LoopGuard } from "../messaging/loop-guard.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 import { ScheduleStore } from "./schedule-store.ts";
 import { Scheduler } from "./scheduler.ts";
 
@@ -36,7 +36,7 @@ const pending = () =>
 const weekday = { cron: "0 9 * * 1-5", timezone: "Europe/Berlin" };
 
 test("AC 3: three firings while the target is errored leave one pending row with the current body, and start nothing", async () => {
-  const dev = (await h.app.store.agentBySlug("dev"))?.id as string;
+  const dev = (await agentRowOf(h.app, "dev"))?.id as string;
   const { item } = await h.app.schedules.create(
     { kind: "agent", id: dev },
     { target: "ceo", ...weekday, body: "v1" },
@@ -63,7 +63,7 @@ test("AC 3: three firings while the target is errored leave one pending row with
   const status = (await h.sql`select status, attempting from agents where slug = 'ceo'`)[0];
   expect(status).toEqual({ status: "errored", attempting: false });
   // the runtime's queued entry is refreshed too
-  const rt = await h.app.runtimes.bySlug("ceo");
+  const rt = await runtimeOf(h.app, "ceo");
   await rt?.settled(); // the hand-off itself was awaited by idle(); the runtime's own job queue is drained here
   expect(rt?.queueItems().find((q) => q.id === first?.id)).toMatchObject({
     firings: 3,

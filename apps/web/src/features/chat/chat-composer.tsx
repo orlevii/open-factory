@@ -20,7 +20,7 @@ import {
   type SubmitOptions,
   UNCONFIRMED,
 } from "@/components/composer/composer";
-import { refOfHandle } from "@/features/principals/api";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { postInterrupt } from "@/features/session/api";
 import { commandsQueryOptions, knownCommand } from "@/features/session/commands";
 import { SEND_TIMEOUT_MS } from "@/features/session/composer";
@@ -50,7 +50,7 @@ const refusalLines = (rs: SendMessagesResponse["results"]) =>
   rs.map((r) => `Not sent to @${handleOfResult(r.to)}: ${refusedBecause(r)}.`);
 
 type Props = {
-  slug: string;
+  agentRef: string;
   /** The chat's agent. */
   agentName: string;
   /** Your user id: the uploads are yours. */
@@ -78,7 +78,7 @@ type Refusal = { text: string; files?: number };
  * recipients. Primitive props only, so a thread change never renders it.
  */
 export const ChatComposer = memo(function ChatComposer({
-  slug,
+  agentRef,
   agentName,
   userId,
   working,
@@ -90,14 +90,15 @@ export const ChatComposer = memo(function ChatComposer({
   onSend,
 }: Props) {
   const qc = useQueryClient();
-  const draftKey = chatDraftKey(slug);
+  const handle = useHandle(agentRef);
+  const draftKey = chatDraftKey(agentRef);
   const inner = useRef<ComposerHandle>(null);
-  useEffect(() => registerComposerFocus(slug, () => inner.current?.focus()), [slug]);
-  const store = uploadsFor(userId, slug);
+  useEffect(() => registerComposerFocus(agentRef, () => inner.current?.focus()), [agentRef]);
+  const store = uploadsFor(userId, agentRef);
 
-  // The agents you added (slugs). Persisted beside the text; the ref is what handlers read.
+  // The agents you added (refs). Persisted beside the text; the ref is what handlers read.
   const [recipients, setRecipientsState] = useState(() =>
-    readRecipients(draftKey).filter((s) => s !== slug),
+    readRecipients(draftKey).filter((s) => s !== agentRef),
   );
   const recipientsRef = useRef(recipients);
   // One note from the last send or a refused add, shown in the note slot until the next change.
@@ -118,7 +119,7 @@ export const ChatComposer = memo(function ChatComposer({
   const source = useMemo(
     () =>
       recipientSource(qc, {
-        slug,
+        agentRef,
         added: () => recipientsRef.current,
         add(added) {
           if (store.summary().count > 0) {
@@ -129,7 +130,7 @@ export const ChatComposer = memo(function ChatComposer({
           return true;
         },
       }),
-    [qc, slug, store, onRecipientsChange],
+    [qc, agentRef, store, onRecipientsChange],
   );
   const completions = useMemo(() => ({ at: source }), [source]);
 
@@ -137,21 +138,21 @@ export const ChatComposer = memo(function ChatComposer({
     async (text: string, { urgent, clientMessageId, attachments }: SubmitOptions) => {
       const body = text.trim();
       const added = recipientsRef.current;
-      const to = [slug, ...added];
-      addSending(qc, slug, {
+      const to = [agentRef, ...added];
+      addSending(qc, agentRef, {
         kind: "message",
         id: clientMessageId,
         clientMessageId,
         from: { kind: "human", ref: qc.getQueryData(sessionQueryOptions.queryKey)?.user.ref ?? "" },
         body,
-        // Refs come from the principals cache; the server's row replaces this entry.
-        recipients: to.map((s) => ({ ref: refOfHandle(qc, s) ?? "" })),
+        // The server's row replaces this entry.
+        recipients: to.map((ref) => ({ ref })),
         urgent,
         createdAt: new Date().toISOString(),
         state: "pending",
         ...(attachments.length ? { attachments: store.describe(attachments) } : {}),
       } satisfies ChatEntry);
-      repinTimeline(slug); // sending follows the conversation again
+      repinTimeline(agentRef); // sending follows the conversation again
       onSend?.();
       setRefusal(undefined);
       const abort = new AbortController();
@@ -165,13 +166,12 @@ export const ChatComposer = memo(function ChatComposer({
           attachments,
           signal: abort.signal,
         });
-        const chatRef = refOfHandle(qc, slug);
-        const mine = results.find((r) => isResultFor(r.to, slug, chatRef));
+        const mine = results.find((r) => isResultFor(r.to, agentRef));
         const refusedOthers = results.filter(
-          (r) => r.status === "refused" && !isResultFor(r.to, slug, chatRef),
+          (r) => r.status === "refused" && !isResultFor(r.to, agentRef),
         );
         if (mine?.status === "refused") {
-          dropSending(qc, slug, clientMessageId);
+          dropSending(qc, agentRef, clientMessageId);
           const wentTo = results
             .filter((r) => r.status !== "refused")
             .map((r) => handleOfResult(r.to));
@@ -184,36 +184,36 @@ export const ChatComposer = memo(function ChatComposer({
           );
         }
         // The server's row takes the optimistic block's place (same key); nothing waits for the frame.
-        void refreshChat(qc, slug, "frame");
+        void refreshChat(qc, agentRef, "frame");
         if (refusedOthers.length) setRefusal({ text: refusalLines(refusedOthers).join(" ") });
       } catch (e) {
         if (e instanceof SubmitError) throw e;
-        dropSending(qc, slug, clientMessageId);
+        dropSending(qc, agentRef, clientMessageId);
         if (abort.signal.aborted) throw new SubmitError(UNCONFIRMED, { unconfirmed: true });
         throw new SubmitError(e instanceof ApiError ? e.message : NETWORK_ERROR);
       } finally {
         clearTimeout(timer);
       }
     },
-    [qc, slug, agentName, store, onSend],
+    [qc, agentRef, agentName, store, onSend],
   );
-  const recall = useCallback(() => lastSentText(qc, slug), [qc, slug]);
-  const onStop = useCallback(() => postInterrupt(slug), [slug]);
+  const recall = useCallback(() => lastSentText(qc, agentRef), [qc, agentRef]);
+  const onStop = useCallback(() => postInterrupt(agentRef), [agentRef]);
 
   // Stop resets when another turn starts to be the one that read your message.
   const [epoch, setEpoch] = useState({ key: workingKey, n: 0 });
   if (epoch.key !== workingKey) setEpoch({ key: workingKey, n: epoch.n + 1 });
 
   // The command list loads beside the chat: the note for a leading `/` reads it, and shows once it is in.
-  const commands = useQuery(commandsQueryOptions(slug)).data;
+  const commands = useQuery(commandsQueryOptions(agentRef)).data;
   // A leading `/` is text here: the note says where commands run, and carries the text there.
   const noteFor = useCallback(
     (text: string): ComposerNote | undefined => {
       const m = LEADING_COMMAND.exec(text);
       if (!m?.[1] || !knownCommand(commands, m[1])) return undefined;
       const carry = () => {
-        const there = readDraft(sessionDraftKey(slug));
-        writeDraft(sessionDraftKey(slug), there.trim() ? `${there}\n${text}` : text);
+        const there = readDraft(sessionDraftKey(agentRef));
+        writeDraft(sessionDraftKey(agentRef), there.trim() ? `${there}\n${text}` : text);
       };
       return {
         kind: "hint",
@@ -221,8 +221,8 @@ export const ChatComposer = memo(function ChatComposer({
           <>
             Commands run in the session ·{" "}
             <Link
-              to="/agents/$slug/session"
-              params={{ slug }}
+              to="/agents/$ref/session"
+              params={{ ref: agentRef }}
               className={LINK_CLASS}
               onClick={carry}
             >
@@ -232,7 +232,7 @@ export const ChatComposer = memo(function ChatComposer({
         ),
       };
     },
-    [slug, commands],
+    [agentRef, commands],
   );
   const note = useMemo<ComposerNote | undefined>(
     () =>
@@ -263,7 +263,7 @@ export const ChatComposer = memo(function ChatComposer({
           ? `Message ${agentName} and ${others} other${others === 1 ? "" : "s"}`
           : `Message ${agentName}`
       }
-      turnPlaceholder={`Sends after @${slug}'s current step`}
+      turnPlaceholder={`Sends after @${handle}'s current step`}
       onSubmit={onSubmit}
       waiting={waiting}
       turnOpen={turnOpen}

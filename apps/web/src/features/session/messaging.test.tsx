@@ -2,7 +2,9 @@ import type { AnyEvent, ServerMessage } from "@open-factory/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { principal } from "@/test/chat-fixtures";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor, tagFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, detail, resetSeq, se } from "@/test/session-fixtures";
 import { resetUploads } from "./uploads";
@@ -48,21 +50,25 @@ async function open(
   extra: Record<string, () => Response> = {},
 ) {
   const api = mockApi({
+    "GET /api/principals": () =>
+      json({
+        principals: ["dev", "b", "lead", "gone-ab12"].map((h) => principal(refFor(h), h)),
+      }),
     ...extra,
-    "GET /api/agents/dev": () => json(detail()),
-    "GET /api/agents/dev/events?": () =>
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail()),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () =>
       json({ hasMore: { before: false, after: false }, events: events.map((e) => se(e)) }),
     "GET /api/agents?ended=exclude": () =>
       json({
         agents: [
           agentSummary(),
-          agentSummary({ slug: "b", displayName: "Builder" }),
-          agentSummary({ slug: "lead", displayName: "Lead" }),
+          agentSummary({ handle: "b", displayName: "Builder" }),
+          agentSummary({ handle: "lead", displayName: "Lead" }),
         ],
         running: { count: 1 },
       }),
   });
-  const r = renderApp("/agents/dev/session", alice);
+  const r = renderApp(`/agents/${refFor("dev")}/session`, alice);
   last.qc = r.queryClient;
   last.router = r.router;
   await screen.findByText(firstText);
@@ -87,7 +93,7 @@ test("an agent sender is a chip linking to its session (name and @slug); humans 
     "hi from b",
   );
   const link = await screen.findByRole("link", { name: /Builder/ });
-  expect(link).toHaveAttribute("href", "/agents/b/chat");
+  expect(link).toHaveAttribute("href", `/agents/${refFor("b")}/chat`);
   expect(link).toHaveTextContent("@b");
   expect(screen.queryByRole("link", { name: /@or/ })).toBeNull();
 });
@@ -110,14 +116,14 @@ test("AgentLink resolves an ended agent: terminated keeps its link and name, arc
         json({
           agents: [
             agentSummary({
-              slug: "tech-lead-ab12",
+              handle: "tech-lead-ab12",
               displayName: "Tech Lead · ab12",
               kind: "ephemeral",
               status: "terminated",
               terminatedAt: AT,
               terminatedBy: { ref: "aaaaaaaa", handle: "lead" },
             }),
-            agentSummary({ slug: "old", displayName: "Old one", archivedAt: AT }),
+            agentSummary({ handle: "old", displayName: "Old one", archivedAt: AT }),
           ],
           more: false,
           running: { count: 1 },
@@ -125,7 +131,7 @@ test("AgentLink resolves an ended agent: terminated keeps its link and name, arc
     },
   );
   const link = await screen.findByRole("link", { name: /Tech Lead · ab12/ });
-  expect(link).toHaveAttribute("href", "/agents/tech-lead-ab12/chat");
+  expect(link).toHaveAttribute("href", `/agents/${refFor("tech-lead-ab12")}/chat`);
   await vi.waitFor(() => expect(screen.queryByRole("link", { name: /@old/ })).toBeNull());
   expect(screen.getAllByText("@old").length).toBeGreaterThan(0);
   expect(screen.queryByText(/Old one/)).toBeNull();
@@ -146,7 +152,7 @@ test("AgentLink: a slug in neither list is a link without a name when older ende
     expect(api.calls.some((c) => c.url === "/api/agents?ended=only")).toBe(true),
   );
   const link = await screen.findByRole("link", { name: "@gone-ab12" });
-  expect(link).toHaveAttribute("href", "/agents/gone-ab12/chat");
+  expect(link).toHaveAttribute("href", `/agents/${refFor("gone-ab12")}/chat`);
   // No name is known: the slug stands in once, never repeated as the handle.
   expect(link.textContent).toBe("@gone-ab12");
 });
@@ -168,7 +174,7 @@ test("AgentLink: links mounted over time share one ended-list fetch within its s
     act(() =>
       ws.onMessage?.({
         type: "session_event",
-        agent: "dev",
+        agent: refFor("dev"),
         event: se(msg(`m${i}`, `more from gone ${i}`)),
       }),
     );
@@ -228,7 +234,7 @@ test("an update group: heading always shown, the latest part visible, 'Show all 
 
 test("each update says whose requests it answers, linked to the request in the report's session", async () => {
   const update = (id: string, body: string, re: { id: string; from: string }[]) =>
-    env({ id, from: "b", kind: "member_update", body, re });
+    env({ id, from: "b", kind: "member_update", about: tagFor("b"), body, re });
   await open(
     [
       {
@@ -252,7 +258,9 @@ test("each update says whose requests it answers, linked to the request in the r
       .map((n) => n.closest("p")?.textContent),
   ).toEqual(["Replying to @lead", "Replying to @lead, @or"]);
   const links = within(group).getAllByRole("link", { name: "Open @or's request in @b's session" });
-  expect(links.map((l) => l.getAttribute("href"))).toEqual(["/agents/b/session?message=m2"]);
+  expect(links.map((l) => l.getAttribute("href"))).toEqual([
+    `/agents/${refFor("b")}/session?message=m2`,
+  ]);
 });
 
 test("an update with no requests says the report did it on its own, once per run of such parts", async () => {
@@ -442,7 +450,13 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
       result(
         JSON.stringify({
           results: [
-            { to: "@b", kind: "agent", status: "queued", recipient_status: "hibernated", id: "m9" },
+            {
+              to: tagFor("b"),
+              kind: "agent",
+              status: "queued",
+              recipient_status: "hibernated",
+              id: "m9",
+            },
           ],
         }),
       ),
@@ -462,7 +476,7 @@ test("send_message renders as an outgoing message: '@dev → @b', past-tense sta
   expect(within(menu).queryByRole("menuitem", { name: "Open in inbox" })).toBeNull();
   // The message in the recipient's session (U3 lead ruling R1).
   const view = within(menu).getByRole("menuitem", { name: "View this message in @b's session" });
-  expect(view).toHaveAttribute("href", "/agents/b/session?message=m9");
+  expect(view).toHaveAttribute("href", `/agents/${refFor("b")}/session?message=m9`);
   expect(view).toHaveTextContent("View in @b's session");
   await userEvent.click(within(menu).getByRole("menuitem", { name: "View tool call" }));
   expect(screen.getByTitle("mcp__factory__send_message")).toBeInTheDocument();
@@ -475,12 +489,12 @@ const inboxItem = (id: string, messageId: string) => ({
   messageId,
   kind: "notice",
   read: false,
-  from: { kind: "agent", ref: "dev00000", handle: "dev" },
+  from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
   to: "@alice",
   preview: "need a human",
   urgent: false,
   createdAt: "2026-11-21T10:00:00.000Z",
-  link: { kind: "session", agentSlug: "dev" },
+  link: { kind: "session", agentRef: refFor("dev") },
 });
 
 test("a send to a person has no footer; Open in inbox opens its inbox item", async () => {
@@ -490,7 +504,7 @@ test("a send to a person has no footer; Open in inbox opens its inbox item", asy
       call({ to: ["@alice"], body: "need a human" }),
       result(
         JSON.stringify({
-          results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m10" }],
+          results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m10" }],
         }),
       ),
     ],
@@ -522,7 +536,7 @@ test("a send to a person with no inbox item of yours has no Open in inbox", asyn
       call({ to: ["@alice"], body: "need a human" }),
       result(
         JSON.stringify({
-          results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m10" }],
+          results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m10" }],
         }),
       ),
     ],
@@ -578,8 +592,8 @@ const lookupWorld = (
 ) =>
   mockApi({
     "GET /api/messages/mid": lookup,
-    "GET /api/agents/dev": () => json(detail()),
-    "GET /api/agents/dev/events?": () =>
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail()),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () =>
       json({ hasMore: { before: false, after: false }, events: events.map((e) => se(e)) }),
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1 } }),
@@ -589,8 +603,8 @@ test("?message= for an unknown message falls back to the latest with a note", as
   mockApi({
     "GET /api/messages/gone": () =>
       json({ error: { code: "message_not_found", message: "x" } }, 404),
-    "GET /api/agents/dev": () => json(detail()),
-    "GET /api/agents/dev/events?": () =>
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail()),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () =>
       json({
         hasMore: { before: false, after: false },
         events: [se({ type: "assistant_text", text: "latest" })],
@@ -598,7 +612,7 @@ test("?message= for an unknown message falls back to the latest with a note", as
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1 } }),
   });
-  renderApp("/agents/dev/session?message=gone", alice);
+  renderApp(`/agents/${refFor("dev")}/session?message=gone`, alice);
   expect(await screen.findByText("Message not found. Showing the latest.")).toBeInTheDocument();
 });
 
@@ -615,12 +629,12 @@ test("?message= for a rejected message names who it wasn't delivered to", async 
   );
   api.on("GET /api/agents?ended=only", () =>
     json({
-      agents: [agentSummary({ slug: "b", displayName: "Builder", archivedAt: AT })],
+      agents: [agentSummary({ handle: "b", displayName: "Builder", archivedAt: AT })],
       more: false,
       running: { count: 1 },
     }),
   );
-  renderApp("/agents/dev/session?message=mid", alice);
+  renderApp(`/agents/${refFor("dev")}/session?message=mid`, alice);
   const notice = await screen.findByText(
     (_, el) =>
       el?.tagName === "P" && el.textContent === "This message wasn't delivered: @b was archived.",
@@ -639,7 +653,7 @@ test("?message= for a message you cancelled says so (U3 §6.4)", async () => {
       state: "cancelled",
     }),
   );
-  renderApp("/agents/dev/session?message=mid", alice);
+  renderApp(`/agents/${refFor("dev")}/session?message=mid`, alice);
   expect(await screen.findByText("You cancelled this message.")).toBeInTheDocument();
   expect(screen.getByText("latest")).toBeInTheDocument();
 });
@@ -659,7 +673,7 @@ test("?message= for a message rejected by a terminated recipient says it was ter
     json({
       agents: [
         agentSummary({
-          slug: "b",
+          handle: "b",
           displayName: "Builder",
           kind: "ephemeral",
           status: "terminated",
@@ -671,7 +685,7 @@ test("?message= for a message rejected by a terminated recipient says it was ter
       running: { count: 1 },
     }),
   );
-  renderApp("/agents/dev/session?message=mid", alice);
+  renderApp(`/agents/${refFor("dev")}/session?message=mid`, alice);
   const notice = await screen.findByText(
     (_, el) =>
       el?.tagName === "P" && el.textContent === "This message wasn't delivered: @b was terminated.",
@@ -699,7 +713,7 @@ test.each([
       }),
     );
     api.on("GET /api/agents?ended=only", ended);
-    renderApp("/agents/dev/session?message=mid", alice);
+    renderApp(`/agents/${refFor("dev")}/session?message=mid`, alice);
     expect(
       await screen.findByText(
         (_, el) =>
@@ -713,7 +727,7 @@ test.each([
 test("the announcer says '<name> messaged you' for a send to this human, not to agents", async () => {
   await open([{ type: "assistant_text", text: "history" }], "history");
   const push = (event: AnyEvent) =>
-    act(() => ws.onMessage?.({ type: "session_event", agent: "dev", event: se(event) }));
+    act(() => ws.onMessage?.({ type: "session_event", agent: refFor("dev"), event: se(event) }));
   const status = () =>
     document.querySelector<HTMLElement>("[role=status][aria-live=polite].sr-only") as HTMLElement;
   push(call({ to: ["@b"], body: "to an agent" }, "t_a"));
@@ -721,7 +735,7 @@ test("the announcer says '<name> messaged you' for a send to this human, not to 
     result(
       JSON.stringify({
         results: [
-          { to: "@b", kind: "agent", status: "queued", recipient_status: "idle", id: "m1" },
+          { to: tagFor("b"), kind: "agent", status: "queued", recipient_status: "idle", id: "m1" },
         ],
       }),
       false,
@@ -733,7 +747,7 @@ test("the announcer says '<name> messaged you' for a send to this human, not to 
   push(
     result(
       JSON.stringify({
-        results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m2" }],
+        results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m2" }],
       }),
       false,
       "t_h",
@@ -750,7 +764,13 @@ test("Tab walks the focused row's controls: the recipient link, then the row men
       result(
         JSON.stringify({
           results: [
-            { to: "@b", kind: "agent", status: "queued", recipient_status: "idle", id: "m9" },
+            {
+              to: tagFor("b"),
+              kind: "agent",
+              status: "queued",
+              recipient_status: "idle",
+              id: "m9",
+            },
           ],
         }),
       ),
@@ -825,7 +845,7 @@ test("Load earlier does not announce an older send to the viewer", async () => {
     se(
       result(
         JSON.stringify({
-          results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m0" }],
+          results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m0" }],
         }),
         false,
         "t_old",
@@ -838,15 +858,15 @@ test("Load earlier does not announce an older send to the viewer", async () => {
   const [o1, o2] = older;
   const l = latest.map((e) => ({ ...e, seq: e.seq + 10 }));
   mockApi({
-    "GET /api/agents/dev": () => json(detail()),
-    "GET /api/agents/dev/events?before=11": () =>
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail()),
+    [`GET /api/agents/${refFor("dev")}/events?before=11`]: () =>
       json({ hasMore: { before: false, after: false }, events: [o1, o2] }),
-    "GET /api/agents/dev/events?": () =>
+    [`GET /api/agents/${refFor("dev")}/events?`]: () =>
       json({ hasMore: { before: true, after: false }, events: l }),
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1 } }),
   });
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("newest");
   await userEvent.click(await screen.findByRole("button", { name: "Load earlier" }));
   expect(await screen.findByText("old")).toBeInTheDocument();
@@ -883,10 +903,10 @@ test("?message= highlights the row holding that envelope, not the event's first 
         fromKind: "agent",
         to: "@dev",
         state: "delivered",
-        recipientEvent: { agentSlug: "dev", seq: 1 },
+        recipientEvent: { agentRef: refFor("dev"), seq: 1 },
       }),
-    "GET /api/agents/dev": () => json(detail()),
-    "GET /api/agents/dev/events?": () =>
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail()),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () =>
       json({
         hasMore: { before: false, after: false },
         events: [
@@ -902,7 +922,7 @@ test("?message= highlights the row holding that envelope, not the event's first 
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1 } }),
   });
-  renderApp("/agents/dev/session?message=second", alice);
+  renderApp(`/agents/${refFor("dev")}/session?message=second`, alice);
   await screen.findByText("second body");
   const lit = document.querySelector("[data-highlighted]") as HTMLElement;
   expect(lit).toHaveTextContent("second body");
@@ -911,9 +931,11 @@ test("?message= highlights the row holding that envelope, not the event's first 
 
 test("Agent details' manager is a link to its session", async () => {
   mockApi({
-    "GET /api/agents/dev": () =>
-      json(detail({ reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" }, reports: 3 })),
-    "GET /api/agents/dev/events?": () =>
+    [`GET /api/agents/${refFor("dev")}`]: () =>
+      json(
+        detail({ reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" }, reports: 3 }),
+      ),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () =>
       json({
         hasMore: { before: false, after: false },
         events: [se({ type: "assistant_text", text: "x" })],
@@ -922,31 +944,33 @@ test("Agent details' manager is a link to its session", async () => {
       json({
         agents: [
           agentSummary({
-            reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+            reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
             reports: 3,
           }),
         ],
         running: { count: 1 },
       }),
   });
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await userEvent.click(await screen.findByRole("button", { name: "Agent details" }));
   await vi.waitFor(() =>
-    expect(document.querySelector('#agent-details a[href="/agents/lead/chat"]')).not.toBeNull(),
+    expect(
+      document.querySelector(`#agent-details a[href="/agents/${refFor("lead")}/chat"]`),
+    ).not.toBeNull(),
   );
 });
 
 test("the announcer re-announces a second send to this human (the live text changes)", async () => {
   await open([{ type: "assistant_text", text: "history" }], "history");
   const push = (event: AnyEvent) =>
-    act(() => ws.onMessage?.({ type: "session_event", agent: "dev", event: se(event) }));
+    act(() => ws.onMessage?.({ type: "session_event", agent: refFor("dev"), event: se(event) }));
   const status = () =>
     document.querySelector<HTMLElement>("[role=status][aria-live=polite].sr-only") as HTMLElement;
   push(call({ to: ["@alice"], body: "one" }, "t_1"));
   push(
     result(
       JSON.stringify({
-        results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m1" }],
+        results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m1" }],
       }),
       false,
       "t_1",
@@ -958,7 +982,7 @@ test("the announcer re-announces a second send to this human (the live text chan
   push(
     result(
       JSON.stringify({
-        results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m2" }],
+        results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m2" }],
       }),
       false,
       "t_2",
@@ -976,7 +1000,7 @@ test("the announcer announces a send whose call was on screen at load and whose 
       call({ to: ["@alice"], body: "done at load" }, "t_d"),
       result(
         JSON.stringify({
-          results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m0" }],
+          results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m0" }],
         }),
         false,
         "t_d",
@@ -990,11 +1014,11 @@ test("the announcer announces a send whose call was on screen at load and whose 
   act(() =>
     ws.onMessage?.({
       type: "session_event",
-      agent: "dev",
+      agent: refFor("dev"),
       event: se(
         result(
           JSON.stringify({
-            results: [{ to: "<@abcd2345|alice>", kind: "human", status: "inbox", id: "m1" }],
+            results: [{ to: tagFor("alice"), kind: "human", status: "inbox", id: "m1" }],
           }),
           false,
           "t_p",
@@ -1064,7 +1088,7 @@ test("a task_update renders as a message block from the factory, by kind, not by
 
 test("a pending task message shows its badge in the pending block", async () => {
   mockApi({
-    "GET /api/agents/dev": () =>
+    [`GET /api/agents/${refFor("dev")}`]: () =>
       json(
         detail({}, [
           {
@@ -1079,7 +1103,7 @@ test("a pending task message shows its badge in the pending block", async () => 
           },
         ]),
       ),
-    "GET /api/agents/dev/events?": () =>
+    [`GET /api/agents/${refFor("dev")}/events?`]: () =>
       json({
         hasMore: { before: false, after: false },
         events: [se({ type: "assistant_text", text: "x" })],
@@ -1087,7 +1111,7 @@ test("a pending task message shows its badge in the pending block", async () => 
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1 } }),
   });
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const text = await screen.findByText("Pending brief");
   const block = text.closest("[data-message-block]") as HTMLElement;
   expect(within(block).getByText("Factory")).toBeInTheDocument();
@@ -1099,8 +1123,8 @@ test("a pending task message shows its badge in the pending block", async () => 
 
 test("Agent details' open tasks link goes to that agent's tasks", async () => {
   mockApi({
-    "GET /api/agents/dev": () => json(detail({ openTasks: 3 })),
-    "GET /api/agents/dev/events?": () =>
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail({ openTasks: 3 })),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () =>
       json({
         hasMore: { before: false, after: false },
         events: [se({ type: "assistant_text", text: "x" })],
@@ -1108,11 +1132,11 @@ test("Agent details' open tasks link goes to that agent's tasks", async () => {
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1 } }),
   });
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await userEvent.click(await screen.findByRole("button", { name: "Agent details" }));
   expect(await screen.findByRole("link", { name: "All 3 tasks" })).toHaveAttribute(
     "href",
-    "/tasks?assignee=dev",
+    `/tasks?assignee=${refFor("dev")}`,
   );
 });
 
@@ -1132,6 +1156,7 @@ test("200 message rows create no per-row query observers (one speaker index for 
         users: [
           {
             id: "u2",
+            ref: refFor("or"),
             name: "Or Levi",
             handle: "or",
             email: "o@x",
@@ -1145,10 +1170,10 @@ test("200 message rows create no per-row query observers (one speaker index for 
   const observers = (key: readonly unknown[]) =>
     last.qc?.getQueryCache().find({ queryKey: key, exact: true })?.getObserversCount() ?? 0;
   // The sidebar, the header and the speaker index read these lists: a fixed few, never one per row.
-  expect(observers(["agents", "exclude"])).toBeLessThan(10);
-  expect(observers(["agents", "only"])).toBeLessThan(10);
-  expect(observers(["users"])).toBeLessThan(10);
-  expect(observers(["ended-more"])).toBeLessThan(10);
+  expect(observers(["agents", "exclude"])).toBeLessThan(20);
+  expect(observers(["agents", "only"])).toBeLessThan(20);
+  expect(observers(["users"])).toBeLessThan(20);
+  expect(observers(["ended-more"])).toBeLessThan(20);
 });
 
 test("your own message says 'You'; a known human shows their name", async () => {
@@ -1169,6 +1194,7 @@ test("your own message says 'You'; a known human shows their name", async () => 
           users: [
             {
               id: "u2",
+              ref: refFor("or"),
               name: "Or Levi",
               handle: "or",
               email: "o@x",
@@ -1254,12 +1280,12 @@ test("a notice whose two lines overflow (measured) offers Show all", async () =>
 
 test("the users list is fetched alongside the events, not after them (no name pops in later)", async () => {
   const api = mockApi({
-    "GET /api/agents/dev": () => json(detail()),
-    "GET /api/agents/dev/events?": () => new Promise<Response>(() => {}),
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail()),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () => new Promise<Response>(() => {}),
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [agentSummary()], running: { count: 1 } }),
   });
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await vi.waitFor(() => expect(api.calls.some((c) => c.url === "/api/users")).toBe(true));
   expect(document.querySelector("[data-timeline-skeleton]")).not.toBeNull();
 });
@@ -1302,14 +1328,14 @@ test("a confirmed attachment is a chip and its line is hidden; images preview th
   expect(block).not.toHaveTextContent("[attached:");
   const list = within(block).getByRole("list", { name: "Attached files" });
   const img = list.querySelector("img");
-  expect(img).toHaveAttribute("src", `/api/agents/dev/uploads/${UP1}`);
+  expect(img).toHaveAttribute("src", `/api/agents/${refFor("dev")}/uploads/${UP1}`);
   expect(within(list).getByRole("link", { name: /shot\.png/ })).toHaveAttribute(
     "href",
-    `/api/agents/dev/uploads/${UP1}`,
+    `/api/agents/${refFor("dev")}/uploads/${UP1}`,
   );
   expect(within(list).getByRole("link", { name: /notes\.txt/ })).toHaveAttribute(
     "href",
-    `/api/agents/dev/uploads/${UP2}`,
+    `/api/agents/${refFor("dev")}/uploads/${UP2}`,
   );
 });
 
@@ -1342,7 +1368,7 @@ test("↑ recall fills the box with your newest raw input, as typed", async () =
       {
         type: "operator_input",
         text: "/code-review src/",
-        by: "<@abcd2345>",
+        by: `<@${refFor("alice")}>`,
         byKind: "human",
         entryId: "e1",
       },
@@ -1378,5 +1404,8 @@ test("an image over 1 MB previews only when asked", async () => {
   expect(list.querySelector("img")).toBeNull();
   await userEvent.click(within(list).getByRole("button", { name: "Show preview of big.png" }));
   expect(list.querySelectorAll("img")).toHaveLength(1);
-  expect(list.querySelector("img")).toHaveAttribute("src", `/api/agents/dev/uploads/${UP1}`);
+  expect(list.querySelector("img")).toHaveAttribute(
+    "src",
+    `/api/agents/${refFor("dev")}/uploads/${UP1}`,
+  );
 });

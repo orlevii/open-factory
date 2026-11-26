@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp } from "../test/helpers.ts";
+import { makeTestApp, runtimeOf } from "../test/helpers.ts";
+import { UNKNOWN_REF } from "../test/principals.ts";
 
-// I1 §6.3: GET /api/agents/:slug/chat, one human's thread with an agent, turn outcomes, and `working`.
+// I1 §6.3: GET /api/agents/:ref/chat, one human's thread with an agent, turn outcomes, and `working`.
 describe("I1 §6.3: the chat thread", () => {
   let s: Awaited<ReturnType<typeof makeTestApp>>;
   const drv = new FakeDriver();
@@ -62,10 +63,10 @@ describe("I1 §6.3: the chat thread", () => {
         ${o.reason === undefined ? "completed" : o.reason}, ${o.seq ?? null})`;
     return id;
   }
-  const get = (qs = "", who: { cookie: string } | null = or, slug = "dev") =>
+  const get = async (qs = "", who: { cookie: string } | null = or, slug = "dev") =>
     s.app.inject({
       method: "GET",
-      url: `/api/agents/${slug}/chat${qs}`,
+      url: `/api/agents/${slug === "nobody" ? UNKNOWN_REF : await s.refOf(slug)}/chat${qs}`,
       headers: who ? { cookie: who.cookie } : {},
     });
   type Entry = { kind: string; id?: string; body?: string; key?: string; outcome?: string };
@@ -248,7 +249,7 @@ describe("I1 §6.3: the chat thread", () => {
         payload: { to: ["dev"], body: "please", urgent: false },
       });
       expect(sent.statusCode).toBeLessThan(300);
-      const rt = await s.app.runtimes.bySlug("dev");
+      const rt = await runtimeOf(s.app, "dev");
       const mid = (await s.sql`select id from messages where body = 'please'`)[0]?.id as string;
       const p = await page();
       expect(p.working).toMatchObject({ key: mid });
@@ -264,7 +265,7 @@ describe("I1 §6.3: the chat thread", () => {
     test("is dropped when its key already has an outcome in the page", async () => {
       const t1 = await turn(2, 3);
       const mid = await msg("user", "ask", 1, { turnId: t1 });
-      const rt = await s.app.runtimes.bySlug("dev");
+      const rt = await runtimeOf(s.app, "dev");
       const spy = vi
         .spyOn(rt as NonNullable<typeof rt>, "workingFor")
         .mockReturnValue({ key: mid, since: at(1) });
@@ -290,7 +291,7 @@ describe("I1 §6.3: the chat thread", () => {
     const { token } = s.app.agentTokens.mint(agentId);
     const r = await s.app.inject({
       method: "GET",
-      url: "/api/agents/dev/chat",
+      url: `/api/agents/${await s.refOf("dev")}/chat`,
       headers: { authorization: `Bearer ${token}` },
     });
     expect(r.statusCode).toBe(401);

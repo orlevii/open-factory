@@ -1,6 +1,6 @@
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness, sendAs } from "./testing/runtime-harness.ts";
 
@@ -29,7 +29,7 @@ async function start() {
   h.bus.subscribeUser("u1", (m) => u1.push(m));
   h.bus.subscribeUser("u2", (m) => u2.push(m));
 }
-const frame = () => ({ type: "chat_changed", agent: h.rt.agent.slug });
+const frame = () => ({ type: "chat_changed", agent: testRef(h.rt.agent.id) });
 const count = (got: ServerMessage[]) => got.filter((m) => m.type === "chat_changed").length;
 const sendU2 = (body: string) => sendAs(h.store, h.rt, { fromUserId: "u2", body, urgent: false });
 

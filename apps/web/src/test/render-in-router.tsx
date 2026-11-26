@@ -23,7 +23,7 @@ export function renderInRouter(ui: ReactNode) {
     routeTree: root.addChildren([
       stub("/tasks/$key"),
       stub("/tasks"),
-      stub("/agents/$slug"),
+      stub("/agents/$ref"),
       stub("/agents"),
       stub("/agents/new"),
     ]),

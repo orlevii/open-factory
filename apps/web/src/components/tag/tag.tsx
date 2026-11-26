@@ -32,7 +32,7 @@ function Handle({ p, ended }: { p: PrincipalItem; ended: boolean }) {
             <HumanAvatar name={p.name} size={16} />
           ) : (
             <AgentAvatar
-              slug={p.handle}
+              agentRef={p.ref}
               template={p.avatar?.template}
               avatarVersion={p.avatar?.avatarVersion}
               color={p.avatar?.color ?? null}
@@ -69,13 +69,7 @@ function FoundTag({ p, interactive }: { p: PrincipalItem; interactive: boolean }
   const tip = `${p.name} · ${ended ? ENDED[p.state as keyof typeof ENDED] : p.kind === "agent" ? "Agent" : "Person"}`;
   const trigger =
     p.kind === "agent" ? (
-      <Link
-        to="/agents/$slug/chat"
-        // Until the route is keyed by ref, the slug is the handle.
-        params={{ slug: p.handle }}
-        className={cn(cls, HOVER)}
-        {...marks}
-      >
+      <Link to="/agents/$ref/chat" params={{ ref: p.ref }} className={cn(cls, HOVER)} {...marks}>
         {body}
       </Link>
     ) : (

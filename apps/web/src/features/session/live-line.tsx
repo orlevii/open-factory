@@ -96,8 +96,8 @@ export function LiveLine({ fact, sessionOf }: { fact: LiveFact | null; sessionOf
       {sessionOf !== undefined && (
         // From the Chat: the fact's detail is in the session. Never shown in the Session itself.
         <Link
-          to="/agents/$slug/session"
-          params={{ slug: sessionOf }}
+          to="/agents/$ref/session"
+          params={{ ref: sessionOf }}
           className="hidden shrink-0 text-[0.8125rem] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline sm:block"
         >
           Open session
@@ -143,7 +143,7 @@ export function PinButton({
     Date.now() >= Date.parse(agent.workspaceGraceEndsAt);
 
   const request = async (pin: boolean) => {
-    const a = await setWorkspacePin(agent.slug, pin);
+    const a = await setWorkspacePin(agent.ref, pin);
     onAgent?.(a);
     setOutcome({ tone: "success", text: pin ? "Workspace pinned." : "Workspace unpinned." });
   };
@@ -196,7 +196,7 @@ export function PinButton({
         </div>
       )}
       <UnpinDialog
-        slug={agent.slug}
+        handle={agent.handle}
         open={confirm}
         onOpenChange={setConfirm}
         onConfirm={() => request(false)}

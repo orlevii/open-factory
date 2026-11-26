@@ -11,6 +11,7 @@ import {
   principal,
   stubChatApi,
 } from "@/test/chat-fixtures";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { onChatChanged } from "./use-chat";
 
@@ -47,7 +48,7 @@ const openMenu = async (r: HTMLElement | null) => {
 
 test("your message is unboxed under its speaker line 'You' and clamped at 40 lines", async () => {
   stubChatApi({ chat: () => page([mine(1, { body: paragraphs(60) })]) });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const r = (await waitFor(() => {
     const el = row("m1");
     expect(el).not.toBeNull();
@@ -81,7 +82,7 @@ test("a human message keeps its urgent badge, attachments and Also-to", async ()
         }),
       ]),
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const r = (await waitFor(() => {
     const el = row("m1");
     expect(el).not.toBeNull();
@@ -92,7 +93,7 @@ test("a human message keeps its urgent badge, attachments and Also-to", async ()
   const files = within(r).getByRole("list", { name: "Attached files" });
   expect(within(files).getByRole("link", { name: /notes\.txt/ })).toHaveAttribute(
     "href",
-    "/api/agents/dev/uploads/0a1b2c3d-0000-4000-8000-000000000001",
+    `/api/agents/${refFor("dev")}/uploads/0a1b2c3d-0000-4000-8000-000000000001`,
   );
   expect(within(r).queryByText(/\[attached:/)).toBeNull();
 });
@@ -124,7 +125,7 @@ test.each([
   ["an urgent message keeps its own speaker line", [mine(1), mine(2, { urgent: true })], 2],
 ] as const)("grouping: %s", async (_name, entries, lines) => {
   stubChatApi({ chat: () => page([...entries]) });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Ask 1");
   expect(speakerLines()).toBe(lines);
   // Every message still has its time on screen (a grouped one shows it on hover or focus).
@@ -135,7 +136,7 @@ test.each([
 
 test("after principal_updated, a chat speaker line shows the new handle", async () => {
   stubChatApi({ chat: () => page([chatMsg(1)]) });
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Reply 1");
   const line = () => row("m1")?.querySelector("[data-speaker-line]") as HTMLElement;
   await waitFor(() => expect(queryClient.getQueryData(["principals"])).toBeDefined());
@@ -148,7 +149,7 @@ test("after principal_updated, a chat speaker line shows the new handle", async 
 
 test("the agent's reply is unboxed prose and never clamped", async () => {
   stubChatApi({ chat: () => page([chatMsg(1, { body: paragraphs(60) })]) });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   expect(await screen.findByText("Paragraph 60")).toBeInTheDocument();
   const r = row("m1") as HTMLElement;
   expect(r.querySelector("[data-message-block]")).toBeNull();
@@ -164,7 +165,7 @@ test("'also to' counts the rest, and the full list is the accessible name and th
     chat: () =>
       page([chatMsg(1, { recipients: [{ ref: ALICE_REF }, ...refs.map((ref) => ({ ref }))] })]),
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const group = await screen.findByRole("group", { name: `Also to ${others.join(", ")}` });
   expect(group).toHaveTextContent("also to");
   expect(group).toHaveTextContent("and 8 others");
@@ -178,7 +179,7 @@ test("one other recipient reads 'also to @qa', with no count", async () => {
     principals: [principal(QA_REF, "qa")],
     chat: () => page([mine(1, { recipients: [{ ref: DEV_REF }, { ref: QA_REF }] })]),
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const group = await screen.findByRole("group", { name: "Also to @qa" });
   expect(group).toHaveTextContent("also to");
   expect(group).not.toHaveTextContent("others");
@@ -186,7 +187,7 @@ test("one other recipient reads 'also to @qa', with no count", async () => {
 
 test("the row menu: Copy text, Copy link to ?message=, View in session; no Recipients without others", async () => {
   stubChatApi({ chat: () => page([chatMsg(1)]) });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Reply 1");
   const menu = await openMenu(row("m1"));
   const items = within(menu)
@@ -195,11 +196,11 @@ test("the row menu: Copy text, Copy link to ?message=, View in session; no Recip
   expect(items).toEqual(["Copy text", "Copy link", "View in session"]);
   expect(screen.queryByText("Recipients")).toBeNull();
   const session = within(menu).getByText("View in session").closest("a");
-  expect(session).toHaveAttribute("href", "/agents/dev/session?message=m1");
+  expect(session).toHaveAttribute("href", `/agents/${refFor("dev")}/session?message=m1`);
   fireEvent.click(within(menu).getByText("Copy link"));
   await waitFor(() =>
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      `${location.origin}/agents/dev/chat?message=m1`,
+      `${location.origin}/agents/${refFor("dev")}/chat?message=m1`,
     ),
   );
 });
@@ -224,7 +225,7 @@ test("a pending message waits for the agent's step and cancels in place, with Un
         : json({});
     },
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const status = await screen.findByText("Waiting for Dev agent's current step");
   const r = row("m1") as HTMLElement;
   // The status replaces the time in the speaker line and describes the message.
@@ -237,8 +238,8 @@ test("a pending message waits for the agent's step and cancels in place, with Un
   fireEvent.click(screen.getByRole("button", { name: "Undo" }));
   expect(await screen.findByText("Ask 1")).toBeInTheDocument();
   expect(calls).toEqual([
-    "DELETE /api/agents/dev/queue/m1",
-    "POST /api/agents/dev/queue/m1/restore",
+    `DELETE /api/agents/${refFor("dev")}/queue/m1`,
+    `POST /api/agents/${refFor("dev")}/queue/m1/restore`,
   ]);
 });
 
@@ -246,7 +247,7 @@ test("a rejected message shows 'Not delivered: <reason>' and no Retry", async ()
   stubChatApi({
     chat: () => page([mine(1, { state: "rejected", rejectReason: "the agent was terminated" })]),
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   expect(await screen.findByText("Not delivered: the agent was terminated")).toBeInTheDocument();
   expect(row("m1")).toHaveAccessibleDescription("Not delivered: the agent was terminated");
   expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
@@ -255,10 +256,10 @@ test("a rejected message shows 'Not delivered: <reason>' and no Retry", async ()
 test("a held message's status becomes its time once delivered, announced politely", async () => {
   let state: "pending" | "delivered" = "pending";
   stubChatApi({ chat: () => page([mine(1, { state })]) });
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Waiting for Dev agent's current step");
   state = "delivered";
-  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: "dev" }));
+  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: refFor("dev") }));
   await waitFor(() =>
     expect(screen.queryByText("Waiting for Dev agent's current step")).toBeNull(),
   );
@@ -273,7 +274,7 @@ test("a held message's status becomes its time once delivered, announced politel
 
 test("the empty thread says so", async () => {
   stubChatApi({ chat: () => page([]) });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   expect(await screen.findByText("No messages with Dev agent yet.")).toBeInTheDocument();
 });
 
@@ -290,7 +291,7 @@ test("a failed load says so; Retry shows the skeleton, then the thread", async (
       return page([chatMsg(1)]);
     },
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   expect(await screen.findByText("Couldn't load this chat.")).toBeInTheDocument();
   fail = false;
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -308,7 +309,7 @@ test("?message= lands on the message with the arrival tint, and Jump to latest l
         ? page([chatMsg(1), chatMsg(2), chatMsg(3)], { newerCursor: "n" })
         : page([chatMsg(1), chatMsg(2), chatMsg(3), chatMsg(4)]),
   });
-  const { router } = renderApp("/agents/dev/chat?message=m2", alice);
+  const { router } = renderApp(`/agents/${refFor("dev")}/chat?message=m2`, alice);
   await screen.findByText("Reply 2");
   await waitFor(() => expect(row("m2")).toHaveAttribute("data-arrived"));
   expect(row("m1")).not.toHaveAttribute("data-arrived");
@@ -317,12 +318,12 @@ test("?message= lands on the message with the arrival tint, and Jump to latest l
   fireEvent.click(jump);
   await waitFor(() => expect(router.state.location.search).toEqual({}));
   expect(await screen.findByText("Reply 4")).toBeInTheDocument();
-  expect(requests).toContain("/api/agents/dev/chat?around=m2");
+  expect(requests).toContain(`/api/agents/${refFor("dev")}/chat?around=m2`);
 });
 
 test("a terminated agent's composer place is a read-only line", async () => {
   stubChatApi({ chat: () => page([chatMsg(1)]), agent: { status: "terminated" } });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   expect(
     await screen.findByText("This agent was terminated. The chat is read-only."),
   ).toBeInTheDocument();
@@ -333,7 +334,7 @@ test("an archived agent's composer place is the archived notice", async () => {
     chat: () => page([chatMsg(1)]),
     agent: { archivedAt: "2026-11-22T10:00:00.000Z" },
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   expect(await screen.findByText(/^This agent is archived\./)).toBeInTheDocument();
 });
 
@@ -355,7 +356,7 @@ test("a working line is the last row; the outcome takes its place in the same no
             },
           ]),
   });
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Ask 1");
   const line = await waitFor(() => {
     const el = document.querySelector<HTMLElement>("[data-status-line]");
@@ -366,7 +367,7 @@ test("a working line is the last row; the outcome takes its place in the same no
   expect(line).not.toHaveAttribute("data-live");
   expect(line.nextElementSibling).toBeNull();
   working = false;
-  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: "dev" }));
+  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: refFor("dev") }));
   await waitFor(() =>
     expect(document.querySelector("[data-status-line]")).toHaveAttribute(
       "data-status-line",
@@ -377,7 +378,10 @@ test("a working line is the last row; the outcome takes its place in the same no
   expect(document.querySelector("[data-status-line]")).toBe(line);
   expect(line).not.toHaveAttribute("data-live");
   expect(line).toHaveTextContent(/finished without replying · Open session$/);
-  expect(within(line).getByRole("link")).toHaveAttribute("href", "/agents/dev/session?event=7");
+  expect(within(line).getByRole("link")).toHaveAttribute(
+    "href",
+    `/agents/${refFor("dev")}/session?event=7`,
+  );
   expect(
     within(line).getByRole("link", { name: /^Open session at \d\d:\d\d$/ }),
   ).toBeInTheDocument();
@@ -401,24 +405,27 @@ test.each([
         },
       ]),
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const line = await waitFor(() => {
     const el = document.querySelector<HTMLElement>("[data-status-line]");
     expect(el).not.toBeNull();
     return el as HTMLElement;
   });
   expect(line).toHaveTextContent(text);
-  expect(within(line).getByRole("link")).toHaveAttribute("href", "/agents/dev/session");
+  expect(within(line).getByRole("link")).toHaveAttribute(
+    "href",
+    `/agents/${refFor("dev")}/session`,
+  );
 });
 
 test("a live message fades in; what was loaded does not", async () => {
   let thread = [chatMsg(1), chatMsg(2)];
   const { queryClient } =
-    (stubChatApi({ chat: () => page(thread) }), renderApp("/agents/dev/chat", alice));
+    (stubChatApi({ chat: () => page(thread) }), renderApp(`/agents/${refFor("dev")}/chat`, alice));
   await screen.findByText("Reply 2");
   expect(document.querySelector("[data-live]")).toBeNull();
   thread = [...thread, chatMsg(3)];
-  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: "dev" }));
+  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: refFor("dev") }));
   await screen.findByText("Reply 3");
   expect(row("m3")?.closest("[data-row-wrap]")).toHaveAttribute("data-live");
   expect(row("m2")?.closest("[data-row-wrap]")).not.toHaveAttribute("data-live");
@@ -427,13 +434,13 @@ test("a live message fades in; what was loaded does not", async () => {
 test("a live reply and an outcome are announced politely; a load announces nothing", async () => {
   let thread = [chatMsg(1)];
   const { queryClient } =
-    (stubChatApi({ chat: () => page(thread) }), renderApp("/agents/dev/chat", alice));
+    (stubChatApi({ chat: () => page(thread) }), renderApp(`/agents/${refFor("dev")}/chat`, alice));
   await screen.findByText("Reply 1");
   const status = () => document.querySelector<HTMLElement>('[data-chat-view] ~ [role="status"]');
   expect(status()).toHaveAttribute("aria-live", "polite");
   expect(status()).toHaveTextContent("");
   thread = [...thread, chatMsg(2)];
-  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: "dev" }));
+  act(() => onChatChanged(queryClient, { type: "chat_changed", agent: refFor("dev") }));
   await waitFor(() => expect(status()).toHaveTextContent("Dev agent: Reply 2"));
 });
 
@@ -444,7 +451,7 @@ test("Load earlier adds older messages above the loaded ones", async () => {
         ? page([chatMsg(1), chatMsg(2)])
         : page([chatMsg(3), chatMsg(4)], { nextCursor: "c" }),
   });
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   fireEvent.click(await screen.findByRole("button", { name: "Load earlier" }));
   await screen.findByText("Reply 1");
   const order = [...document.querySelectorAll("[data-row]")].map((r) => r.getAttribute("data-row"));
@@ -483,12 +490,13 @@ test("stick to the bottom; a reader who looked up gets Jump to latest with the c
   try {
     let thread = [chatMsg(1), chatMsg(2)];
     const { queryClient } =
-      (stubChatApi({ chat: () => page(thread) }), renderApp("/agents/dev/chat", alice));
+      (stubChatApi({ chat: () => page(thread) }),
+      renderApp(`/agents/${refFor("dev")}/chat`, alice));
     await screen.findByText("Reply 2");
     const scroller = document.querySelector<HTMLElement>("[data-chat-view]") as HTMLElement;
     // Pinned: a new message keeps the view at the bottom, no pill.
     thread = [...thread, chatMsg(3)];
-    act(() => onChatChanged(queryClient, { type: "chat_changed", agent: "dev" }));
+    act(() => onChatChanged(queryClient, { type: "chat_changed", agent: refFor("dev") }));
     await screen.findByText("Reply 3");
     expect(scroller.scrollTop).toBe(1000);
     expect(
@@ -497,7 +505,7 @@ test("stick to the bottom; a reader who looked up gets Jump to latest with the c
     // The reader looks up: the next message waits behind the pill.
     fireEvent.wheel(scroller, { deltaY: -50 });
     thread = [...thread, chatMsg(4)];
-    act(() => onChatChanged(queryClient, { type: "chat_changed", agent: "dev" }));
+    act(() => onChatChanged(queryClient, { type: "chat_changed", agent: refFor("dev") }));
     await screen.findByText("Reply 4");
     const pill = await screen.findByRole("button", { name: "1 new message" });
     expect(pill).toHaveAttribute("data-shown");

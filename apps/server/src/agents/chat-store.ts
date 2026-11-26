@@ -22,7 +22,6 @@ function decode(cursor: string): { at: string; id: string } {
 export interface ChatThread {
   agent: {
     id: string;
-    slug: string;
     archivedAt: Date | null;
     terminatedAt: Date | null;
   };

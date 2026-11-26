@@ -5,6 +5,7 @@ import { InlineOutcome } from "@/components/inline-outcome";
 import { Markdown } from "@/components/markdown/markdown";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { principalsQueryOptions } from "@/features/principals/api";
 import { usePrincipal } from "@/features/principals/use-principal";
 import { formatTime } from "@/features/session/format";
@@ -40,20 +41,20 @@ const NO_RECIPIENTS: RecipientsView = { others: [], text: "" };
  *  the cache has loaded, or your handle is known, "you" can't be told from another recipient: nothing shows. */
 function useRecipientsView(
   recipients: MessageEntry["recipients"],
-  slug: string,
+  agentRef: string,
   self: string | undefined,
 ): RecipientsView {
   const { data } = useQuery({
     ...principalsQueryOptions,
     select: (cache): RecipientsView => {
       const handleOf = (ref: string) => cache.byRef.get(ref)?.handle;
-      const skip = new Set([slug, self ?? ""].map((h) => h.toLowerCase()));
+      const me = self?.toLowerCase();
       return {
         others:
           self === undefined
             ? []
             : recipients
-                .filter((r) => !skip.has(handleOf(r.ref)?.toLowerCase() ?? ""))
+                .filter((r) => r.ref !== agentRef && handleOf(r.ref)?.toLowerCase() !== me)
                 .map((r) => r.ref),
         text: recipients.map((r) => `@${handleOf(r.ref) ?? "unknown"}`).join(", "),
       };
@@ -64,7 +65,7 @@ function useRecipientsView(
 
 export type ChatRowProps = {
   entry: MessageEntry;
-  slug: string;
+  agentRef: string;
   /** The chat's agent: the pending line names it. */
   agentName: string;
   /** Your handle, without `@`. */
@@ -93,21 +94,22 @@ export type ChatRowProps = {
  * Memoised on primitives and stable handlers, so a refetch that changes one entry renders one row.
  */
 export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
-  const { entry, slug, self } = p;
+  const { entry, agentRef, self } = p;
   const key = entryKey(entry);
   const mine = entry.from.kind === "human";
   // The sender's handle is the principals cache's, so a rename shows here without a refetch of the thread.
   // While the cache doesn't know the ref yet, the thread's own two parties stand in.
   const sender = usePrincipal(entry.from.ref);
+  const agentHandle = useHandle(agentRef);
   const fromHandle =
-    sender.status === "found" ? sender.principal.handle : mine ? (self ?? "") : slug;
+    sender.status === "found" ? sender.principal.handle : mine ? (self ?? "") : agentHandle;
   // Your send before the server's row: the delivered row's shape, its body muted; "Sending…" only when slow.
   const sending = isSending(entry);
   const { slow } = useSendPhase(sending);
   const { menu, press } = useRowLongPress();
   const statusId = useId();
   const rejectedId = useId();
-  const { others, text: recipientsText } = useRecipientsView(entry.recipients, slug, self);
+  const { others, text: recipientsText } = useRecipientsView(entry.recipients, agentRef, self);
   const chips = entry.attachments?.length ? entry.attachments : undefined;
   const shown = useMemo(() => stripAttachedLines(entry.body, chips), [entry.body, chips]);
   const queued = entry.state === "pending" && !sending;
@@ -226,7 +228,7 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
                 <Markdown source={shown} />
               )}
             </div>
-            {chips ? <AttachmentList slug={slug} attachments={chips} /> : null}
+            {chips ? <AttachmentList agentRef={agentRef} attachments={chips} /> : null}
           </div>
         </div>
       </InLongPressRow>
@@ -237,7 +239,7 @@ export const ChatRow = memo(function ChatRow(p: ChatRowProps) {
       )}
       <ChatRowMenu
         entry={entry}
-        slug={slug}
+        agentRef={agentRef}
         others={others}
         recipientsText={recipientsText}
         sender={fromHandle}

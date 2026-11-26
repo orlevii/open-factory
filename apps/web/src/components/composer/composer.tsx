@@ -95,7 +95,7 @@ export type CompletionItem = {
   disabled?: string;
   /** An agent row's face (16px). */
   avatar?: {
-    slug: string;
+    agentRef: string;
     template?: string;
     avatarVersion?: string | null;
     color?: number | null;
@@ -192,7 +192,7 @@ export type ComposerProps = {
   noFilesNote?: string;
   /** Files can't go with this send: the paperclip is aria-disabled and says why on pressing it. */
   attachBlocked?: string;
-  /** The agents you added to the send (slugs; the chat's own is `recipientsTo`): the "To:" row shows
+  /** The agents you added to the send (agentRefs; the chat's own is `recipientsTo`): the "To:" row shows
    *  with one. Backspace in an empty box selects the last, then removes it. */
   recipients?: readonly string[];
   /** The agent the chat is with, first in "To:". */
@@ -313,9 +313,9 @@ export const Composer = memo(function Composer({
   // The last added recipient chip is selected: the next Backspace in the empty box removes it.
   const [chipSelected, setChipSelected] = useState(false);
   const removeRecipient = useCallback(
-    (slug: string) => {
+    (agentRef: string) => {
       setChipSelected(false);
-      onRecipientsChange?.((recipientsRef.current ?? []).filter((r) => r !== slug));
+      onRecipientsChange?.((recipientsRef.current ?? []).filter((r) => r !== agentRef));
     },
     [onRecipientsChange],
   );

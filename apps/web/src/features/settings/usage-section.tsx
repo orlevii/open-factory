@@ -21,7 +21,7 @@ const cost = (t: Totals | undefined) => (t ? formatCost(t.costUsd, t.turns) : ""
 const byTotal = (a: AgentUsageRow, b: AgentUsageRow) =>
   b.total.costUsd - a.total.costUsd ||
   b.total.turns - a.total.turns ||
-  a.slug.localeCompare(b.slug);
+  a.handle.localeCompare(b.handle);
 
 /** An h3 and its real `<table>`, named by the heading. Wide tables scroll inside themselves. */
 function Table({
@@ -60,15 +60,15 @@ function Table({
   );
 }
 
-function AgentLink({ slug }: { slug: string }) {
+function AgentLink({ agentRef, handle }: { agentRef: string; handle: string }) {
   return (
     <Link
-      to="/agents/$slug/usage"
-      params={{ slug }}
+      to="/agents/$ref/usage"
+      params={{ ref: agentRef }}
       search={{}}
       className={`${linkClass} font-mono text-[0.8125rem]`}
     >
-      @{slug}
+      @{handle}
     </Link>
   );
 }
@@ -76,9 +76,9 @@ function AgentLink({ slug }: { slug: string }) {
 function AgentRow({ a, nested }: { a: AgentUsageRow; nested?: boolean }) {
   const label = a.archived ? "Archived" : a.terminated ? "Ended" : undefined;
   return (
-    <tr data-slug={a.slug}>
+    <tr data-ref={a.ref}>
       <td className={`${td} ${nested ? "pl-5" : ""}`}>
-        <AgentLink slug={a.slug} />
+        <AgentLink agentRef={a.ref} handle={a.handle} />
         {label && <span className="ml-2 text-[0.8125rem] text-muted-foreground">{label}</span>}
       </td>
       <td className={`${tdNum} ${wide}`}>{a.total.turns.toLocaleString("en-US")}</td>
@@ -114,20 +114,22 @@ function Chevron({ open }: { open: boolean }) {
 /** Spawned agents sit under their spawner (one level, S7); one whose spawner isn't listed stands
  *  alone. Children keep only those with usage, sorted like the top level. */
 function groupAgents(agents: AgentUsageRow[]) {
-  const listed = new Set(agents.map((a) => a.slug));
+  const listed = new Set(agents.map((a) => a.ref));
   const children = new Map<string, AgentUsageRow[]>();
   const tops: AgentUsageRow[] = [];
   for (const a of agents) {
-    if (a.kind === "ephemeral" && a.spawnerSlug && listed.has(a.spawnerSlug)) {
+    if (a.kind === "ephemeral" && a.spawner && listed.has(a.spawner.ref)) {
       if (a.total.turns === 0) continue;
-      const kids = children.get(a.spawnerSlug);
+      const kids = children.get(a.spawner.ref);
       if (kids) kids.push(a);
-      else children.set(a.spawnerSlug, [a]);
+      else children.set(a.spawner.ref, [a]);
     } else tops.push(a);
   }
   for (const kids of children.values()) kids.sort(byTotal);
   const used = tops.filter((a) => a.total.turns > 0).sort(byTotal);
-  const idle = tops.filter((a) => a.total.turns === 0).sort((a, b) => a.slug.localeCompare(b.slug));
+  const idle = tops
+    .filter((a) => a.total.turns === 0)
+    .sort((a, b) => a.handle.localeCompare(b.handle));
   return { used, idle, children };
 }
 
@@ -136,11 +138,11 @@ function AgentsTable({ agents }: { agents: AgentUsageRow[] }) {
   const [showIdle, setShowIdle] = useState(false);
 
   const { used, idle, children } = useMemo(() => groupAgents(agents), [agents]);
-  const toggle = (slug: string) =>
+  const toggle = (agentRef: string) =>
     setOpenSpawners((s) => {
       const next = new Set(s);
-      if (next.has(slug)) next.delete(slug);
-      else next.add(slug);
+      if (next.has(agentRef)) next.delete(agentRef);
+      else next.add(agentRef);
       return next;
     });
 
@@ -158,11 +160,11 @@ function AgentsTable({ agents }: { agents: AgentUsageRow[] }) {
       }
     >
       {used.map((a) => {
-        const kids = children.get(a.slug) ?? [];
-        const open = openSpawners.has(a.slug);
+        const kids = children.get(a.ref) ?? [];
+        const open = openSpawners.has(a.ref);
         const noun = kids.length === 1 ? "spawned agent" : "spawned agents";
         return (
-          <Fragment key={a.slug}>
+          <Fragment key={a.ref}>
             <AgentRow a={a} />
             {kids.length > 0 && (
               <DisclosureRow nested>
@@ -171,15 +173,15 @@ function AgentsTable({ agents }: { agents: AgentUsageRow[] }) {
                   variant="ghost"
                   size="sm"
                   aria-expanded={open}
-                  onClick={() => toggle(a.slug)}
+                  onClick={() => toggle(a.ref)}
                 >
                   <Chevron open={open} />
                   {/* The name stays constant; aria-expanded and the chevron carry the state. */}
-                  {`Show ${kids.length} ${noun} of @${a.slug}`}
+                  {`Show ${kids.length} ${noun} of @${a.handle}`}
                 </Button>
               </DisclosureRow>
             )}
-            {open && kids.map((k) => <AgentRow key={k.slug} a={k} nested />)}
+            {open && kids.map((k) => <AgentRow key={k.ref} a={k} nested />)}
           </Fragment>
         );
       })}
@@ -200,7 +202,7 @@ function AgentsTable({ agents }: { agents: AgentUsageRow[] }) {
           </Button>
         </DisclosureRow>
       )}
-      {showIdle && idle.map((a) => <AgentRow key={a.slug} a={a} />)}
+      {showIdle && idle.map((a) => <AgentRow key={a.ref} a={a} />)}
     </Table>
   );
 }
@@ -242,9 +244,9 @@ function CredentialsTable({ data }: { data: CredentialsUsage }) {
             <td className={tdNum}>{cost(c.totals)}</td>
             <td className={`${td} ${wide}`}>
               {c.agents.map((a, i) => (
-                <Fragment key={a.slug}>
+                <Fragment key={a.ref}>
                   {i > 0 && ", "}
-                  <AgentLink slug={a.slug} />
+                  <AgentLink agentRef={a.ref} handle={a.handle} />
                 </Fragment>
               ))}
             </td>

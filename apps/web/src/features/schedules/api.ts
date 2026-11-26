@@ -55,8 +55,8 @@ export const resumeSchedule = (key: string) => one(url(key, "/resume"), "POST");
 export const deleteSchedule = (key: string) => one(url(key), "DELETE");
 export const restoreSchedule = (key: string) => one(url(key, "/restore"), "POST");
 
-export const stopCrons = (slug: string) =>
-  apiFetch(`/api/agents/${encodeURIComponent(slug)}/stop-crons`, {
+export const stopCrons = (ref: string) =>
+  apiFetch(`/api/agents/${encodeURIComponent(ref)}/stop-crons`, {
     method: "POST",
     schema: stopCronsResponseSchema,
   });

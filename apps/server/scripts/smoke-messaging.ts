@@ -30,6 +30,7 @@ import Docker from "dockerode";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { bySlug } from "./by-slug.ts";
 
 const LOCAL = process.argv.includes("--local");
 const IMAGE = "open-factory-base:dev";
@@ -371,7 +372,7 @@ async function quiet(slugs: Slug[]) {
     async () => {
       const busy = [];
       for (const s of slugs) {
-        const rt = await app.runtimes.bySlug(s);
+        const rt = await bySlug(app, s);
         const l = rt?.live();
         if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
@@ -602,7 +603,7 @@ try {
 
   // 2. AC1: ada → hibernated bob with mcp__factory__send_message; bob wakes and replies.
   const bobFrom = await lastSeq("bob");
-  const bobStatus = (await app.runtimes.bySlug("bob"))?.live().status;
+  const bobStatus = (await bySlug(app, "bob"))?.live().status;
   const t2 = await step("2. ada sends to bob with mcp__factory__send_message", () =>
     ask(
       "ada",

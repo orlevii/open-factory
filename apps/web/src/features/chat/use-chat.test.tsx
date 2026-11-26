@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { WsContext, type WsHub } from "@/lib/ws-context";
+import { refFor } from "@/test/refs";
 import { onChatChanged, refreshChat, useChat } from "./use-chat";
 
 const at = (i: number) => new Date(Date.UTC(2026, 10, 23, 9, 0, i)).toISOString();
@@ -65,7 +66,7 @@ function setup() {
       <WsContext.Provider value={hub}>{children}</WsContext.Provider>
     </QueryClientProvider>
   );
-  const hook = renderHook(() => useChat("ada"), { wrapper });
+  const hook = renderHook(() => useChat(refFor("ada")), { wrapper });
   return {
     qc,
     hook,
@@ -75,7 +76,8 @@ function setup() {
     },
   };
 }
-const frame = (qc: QueryClient) => onChatChanged(qc, { type: "chat_changed", agent: "ada" });
+const frame = (qc: QueryClient) =>
+  onChatChanged(qc, { type: "chat_changed", agent: refFor("ada") });
 const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 20))));
 
 test("60 entries arriving between frames refetch until they meet the cache", async () => {
@@ -85,7 +87,10 @@ test("60 entries arriving between frames refetch until they meet the cache", asy
   requests = [];
   frame(qc);
   await waitFor(() => expect(hook.result.current.entries).toHaveLength(110));
-  expect(requests).toEqual(["/api/agents/ada/chat?", "/api/agents/ada/chat?before=60"]);
+  expect(requests).toEqual([
+    `/api/agents/${refFor("ada")}/chat?`,
+    `/api/agents/${refFor("ada")}/chat?before=60`,
+  ]);
   expect(hook.result.current.entries.map((e) => (e as { id: string }).id).slice(0, 3)).toEqual([
     "m1",
     "m2",
@@ -157,8 +162,8 @@ test("a frame for a chat nobody has open fetches nothing", async () => {
 
 test("refreshChat with no cache loads the thread", async () => {
   const qc = new QueryClient();
-  await refreshChat(qc, "ada", "other");
-  expect(requests).toEqual(["/api/agents/ada/chat?"]);
+  await refreshChat(qc, refFor("ada"), "other");
+  expect(requests).toEqual([`/api/agents/${refFor("ada")}/chat?`]);
 });
 
 test("loadEarlier prepends older entries and none of them is live", async () => {

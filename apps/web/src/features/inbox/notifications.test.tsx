@@ -3,6 +3,7 @@ import { act, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import type { InboxItem } from "./api";
 import { type Burst, burstsOf } from "./notification-copy";
@@ -64,7 +65,8 @@ const chatRow = (
   over: { slug?: string; name?: string; unread?: number; first?: string; latest?: string } = {},
 ): ChatRow => ({
   agent: {
-    slug: over.slug ?? "ada",
+    ref: refFor(over.slug ?? "ada"),
+    handle: over.slug ?? "ada",
     displayName: over.name ?? "Ada",
     template: "ada",
     avatarVersion: null,
@@ -91,7 +93,7 @@ const item = (o: Record<string, unknown> = {}): InboxItem => {
     messageId: `m${n}`,
     kind: "mention",
     read: false,
-    from: { kind: "human", ref: "abcd2345", handle: "alice" },
+    from: { kind: "human", ref: refFor("alice"), handle: "alice" },
     to: "@or",
     preview: PREVIEW,
     urgent: false,
@@ -108,7 +110,7 @@ const errored = (about: string) =>
     about,
     from: { kind: "factory" },
     task: undefined,
-    link: { kind: "session", agentSlug: about },
+    link: { kind: "session", agentRef: refFor(about) },
   });
 const credential = (name: string) =>
   item({
@@ -136,7 +138,7 @@ test("a visible tab shows nothing; a hidden one shows one notification with the 
   expect(shown).toHaveLength(0);
   new Notifier(() => {}).update(bursts(page), false);
   expect(shown.map((s) => [s.title, s.opts.body, s.opts.tag])).toEqual([
-    ["Ada", "1 new message", "chat:ada:ada-m1"],
+    ["Ada", "1 new message", `chat:${refFor("ada")}:ada-m1`],
     ["@dev", "Hit an error", `error:dev:${failed.id}`],
   ]);
   for (const s of shown) {
@@ -164,7 +166,7 @@ test("a chat that was read closes its notification; the next message is a new ta
   expect(shown[0]?.n.close).toHaveBeenCalledOnce();
   notifier.update(bursts({ chats: [chatRow({ first: "ada-m5", latest: "ada-m5" })] }), false);
   expect(shown).toHaveLength(2);
-  expect(shown[1]?.opts.tag).toBe("chat:ada:ada-m5");
+  expect(shown[1]?.opts.tag).toBe(`chat:${refFor("ada")}:ada-m5`);
 });
 
 test("a chat partly read elsewhere closes the old notification and shows nothing new", () => {
@@ -237,12 +239,12 @@ test("a resolved hold closes its notification", () => {
       notice: "loop_held",
       from: { kind: "factory" },
       task: undefined,
-      link: { kind: "session", agentSlug: "a" },
+      link: { kind: "session", agentRef: refFor("a") },
       loopHold: {
         id: "h1",
         agents: [
-          { slug: "a", status: "live" },
-          { slug: "b", status: "live" },
+          { ref: refFor("a"), handle: "a", status: "live" },
+          { ref: refFor("b"), handle: "b", status: "live" },
         ],
         waiting: 2,
         sentOn: 1,
@@ -292,7 +294,7 @@ async function boot(
       return json(snapshot);
     },
     "POST /api/inbox/": () => json({ ok: true }),
-    "GET /api/agents/ada/chat?": () =>
+    [`GET /api/agents/${refFor("ada")}/chat?`]: () =>
       json({ entries: [], nextCursor: null, newerCursor: null, working: null }),
     "GET /api/credentials": () => json({ credentials: [] }),
   });
@@ -344,7 +346,7 @@ test("task events and other facts never notify", async () => {
         notice: "factory_restarted",
         from: { kind: "factory" },
         task: undefined,
-        link: { kind: "session", agentSlug: "dev" },
+        link: { kind: "session", agentRef: refFor("dev") },
       }),
       credential("work"),
     ],
@@ -419,7 +421,9 @@ test("clicking a chat notification focuses, opens the chat at the first unread m
   act(() => shown[0]?.n.onclick?.());
   expect(window.focus).toHaveBeenCalled();
   expect(shown[0]?.n.close).toHaveBeenCalled();
-  await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/ada/chat"));
+  await waitFor(() =>
+    expect(app.router.state.location.pathname).toBe(`/agents/${refFor("ada")}/chat`),
+  );
   expect(app.router.state.location.search).toEqual({ message: "ada-m1" });
   expect(api.calls.filter((c) => c.method === "POST")).toEqual([]);
 });
@@ -451,7 +455,9 @@ test("clicking an error notification opens the agent's session and marks the ite
   await frame();
   await waitFor(() => expect(shown).toHaveLength(1));
   act(() => shown[0]?.n.onclick?.());
-  await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/dev/session"));
+  await waitFor(() =>
+    expect(app.router.state.location.pathname).toBe(`/agents/${refFor("dev")}/session`),
+  );
   await waitFor(() =>
     expect(api.calls.some((c) => c.method === "POST" && c.url === `/api/inbox/${e.id}/read`)).toBe(
       true,

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
-import { makeTestApp } from "../test/helpers.ts";
+import { makeTestApp, runtimeOf } from "../test/helpers.ts";
 import { FakeDriver } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { sendAs } from "./testing/runtime-harness.ts";
@@ -12,7 +12,7 @@ beforeAll(async () => {
 });
 afterAll(() => t.close());
 
-test("get never creates a runtime; bySlug caches one per agent; liveFields has defaults without one", async () => {
+test("get never creates a runtime; byRef caches one per agent; liveFields has defaults without one", async () => {
   const [row] = await t.sql`select id, status from agents where slug = 'dev'`;
   const id = String(row?.id);
   expect(await t.app.runtimes.get(id)).toBeUndefined();
@@ -31,10 +31,10 @@ test("get never creates a runtime; bySlug caches one per agent; liveFields has d
   await t.app.runtimes.refresh(id); // no-op without a runtime
   await t.app.runtimes.requestRestart(id); // likewise
   expect(await t.app.runtimes.get(id)).toBeUndefined();
-  const a = await t.app.runtimes.bySlug("dev");
-  expect(await t.app.runtimes.bySlug("dev")).toBe(a);
+  const a = await runtimeOf(t.app, "dev");
+  expect(await runtimeOf(t.app, "dev")).toBe(a);
   expect(await t.app.runtimes.get(id)).toBe(a);
-  expect(await t.app.runtimes.bySlug("nope")).toBeUndefined();
+  expect(await runtimeOf(t.app, "nope")).toBeUndefined();
   await t.sql`update agents set display_name = 'Renamed' where id = ${id}`;
   await t.app.runtimes.refresh(id);
   expect(a?.agent.displayName).toBe("Renamed");
@@ -49,8 +49,8 @@ test("the first GET /api/agents after boot carries runtimeDisabled for a local a
   const list = async () => {
     const r = await t.app.inject({ method: "GET", url: "/api/agents", headers: { cookie } });
     expect(r.statusCode).toBe(200);
-    return (r.json() as { agents: { slug: string; runtimeDisabled?: string }[] }).agents.find(
-      (a) => a.slug === "gated",
+    return (r.json() as { agents: { handle: string; runtimeDisabled?: string }[] }).agents.find(
+      (a) => a.handle === "gated",
     );
   };
   config.allowLocalRuntime = false;
@@ -66,7 +66,7 @@ test("the first GET /api/agents after boot carries runtimeDisabled for a local a
 
 test("app.close stops running agents gracefully", async () => {
   const u = await t.signUpUser();
-  const rt = await t.app.runtimes.bySlug("dev");
+  const rt = await runtimeOf(t.app, "dev");
   await sendAs(t.app.store, rt, {
     fromUserId: u.user.id,
     fromHandle: u.user.handle,
@@ -86,8 +86,8 @@ test("a rejected init is evicted, so the next lookup retries", async () => {
   await insertAgent(t.sql, { id: "agent-b", slug: "b" });
   const spy = vi.spyOn(t.app.store, "pendingQueue").mockRejectedValueOnce(new Error("db blip"));
   try {
-    await expect(t.app.runtimes.bySlug("b")).rejects.toThrow("db blip");
-    const rt = await t.app.runtimes.bySlug("b");
+    await expect(runtimeOf(t.app, "b")).rejects.toThrow("db blip");
+    const rt = await runtimeOf(t.app, "b");
     expect(rt?.agent.slug).toBe("b");
     expect(spy).toHaveBeenCalledTimes(2);
   } finally {
@@ -105,11 +105,11 @@ test("stopAll still stops healthy runtimes when another init fails", async () =>
       }),
   );
   try {
-    const pendingC = t.app.runtimes.bySlug("c");
+    const pendingC = runtimeOf(t.app, "c");
     pendingC.catch(() => {});
     await vi.waitFor(() => expect(rejectInit).toBeDefined());
     const u = await t.signUpUser();
-    const dev = await t.app.runtimes.bySlug("dev");
+    const dev = await runtimeOf(t.app, "dev");
     const before = driver.starts.length;
     await sendAs(t.app.store, dev, {
       fromUserId: u.user.id,

@@ -106,6 +106,7 @@ function world(o: { agents?: AgentRow[]; children?: Record<string, string[]> } =
         appendedToStore.push({ agentId, event });
         return {} as never;
       },
+      refOfAgent: async (id: string) => testRef(id),
     },
     runtimes: {
       get: async (id: string) => {
@@ -201,9 +202,9 @@ test("a new skill: every live agent of the template, persistent and spawned, get
   ]);
   expect(w.frames).toEqual([
     { type: "config_changed", template: "dev" },
-    { type: "config_changed", agent: running.slug },
-    { type: "config_changed", agent: idle.slug },
-    { type: "config_changed", agent: spawned.slug },
+    { type: "config_changed", agent: testRef(running.id) },
+    { type: "config_changed", agent: testRef(idle.id) },
+    { type: "config_changed", agent: testRef(spawned.id) },
   ]);
 });
 
@@ -332,7 +333,7 @@ test("an overlay save on an archived agent writes the event only", async () => {
   ]);
   expect([w.notices, w.restarts]).toEqual([[], []]);
   expect(w.nextImage.size).toBe(0);
-  expect(w.frames).toEqual([{ type: "config_changed", agent: a.slug }]);
+  expect(w.frames).toEqual([{ type: "config_changed", agent: testRef(a.id) }]);
 });
 
 test("nextImage is refreshed with the image the new config resolves to", async () => {

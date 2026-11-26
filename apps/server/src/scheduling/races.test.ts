@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, signUp } from "../test/helpers.ts";
 import { seedTestUser } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
@@ -45,7 +45,7 @@ function hold(run: (tx: typeof h.sql) => Promise<void>) {
   });
   return { ready: isReady, release, done };
 }
-const kidId = async () => (await h.app.store.agentBySlug("kid"))?.id as string;
+const kidId = async () => (await agentRowOf(h.app, "kid"))?.id as string;
 const sched = (body = "v1") =>
   h.app.schedules.create({ kind: "human", id: userId }, { target: "kid", ...weekday, body });
 const msgs = () => h.sql`select state, firings from messages where kind = 'scheduled'`;

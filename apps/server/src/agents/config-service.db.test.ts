@@ -41,7 +41,7 @@ const rowOf = async (slug: string) => {
   if (!r) throw new Error(`no agent ${slug}`);
   return r;
 };
-const versionOf = async (slug: string) => (await cfg.getConfig(slug)).version;
+const versionOf = async (slug: string) => (await cfg.getConfig(await t.refOf(slug))).version;
 const events = (agentId: string) =>
   t.sql<{ payload: { by: string; changes: string[] } }[]>`
     select payload from session_events where agent_id = ${agentId} and type = 'config_changed'`;
@@ -82,10 +82,10 @@ const refusal = async (p: Promise<unknown>): Promise<ApiError> => {
 };
 
 test("a stale baseVersion is refused to an agent as an org refusal and to a human as 409 config_changed", async () => {
-  await expect(cfg.saveOverlay("dev", {}, "stale", hr)).rejects.toThrow(
+  await expect(cfg.saveOverlay(await t.refOf("dev"), {}, "stale", hr)).rejects.toThrow(
     new OrgRefusedError("@dev's configuration changed since you read it; call get_agent again."),
   );
-  const err = await refusal(cfg.saveOverlay("dev", {}, "stale", human));
+  const err = await refusal(cfg.saveOverlay(await t.refOf("dev"), {}, "stale", human));
   expect(err).toMatchObject({
     status: 409,
     code: "config_changed",
@@ -97,7 +97,7 @@ test("an agent can't remove an overlay deny rule, and nothing is written", async
   const stored = { settings: { permissions: { deny: ["Bash(rm:*)"] } } };
   await t.db.update(schema.agents).set({ config: stored }).where(eq(schema.agents.slug, "dev"));
   const version = await versionOf("dev");
-  const err = await refusal(cfg.saveOverlay("dev", {}, version, hr));
+  const err = await refusal(cfg.saveOverlay(await t.refOf("dev"), {}, version, hr));
   expect(err).toMatchObject({ status: 400, code: "invalid_config" });
   expect(JSON.stringify(err.extra)).toContain("Deny rules can only be removed by a human.");
   expect((await rowOf("dev")).config).toEqual(stored);
@@ -113,7 +113,7 @@ test("a spawned target is refused: Spawned agents can't be edited", async () => 
     })
     .where(eq(schema.agents.slug, "loc"));
   try {
-    await expect(cfg.saveOverlay("loc", {}, "x", human)).rejects.toMatchObject({
+    await expect(cfg.saveOverlay(await t.refOf("loc"), {}, "x", human)).rejects.toMatchObject({
       status: 409,
       code: "ephemeral_agent",
       message: "Spawned agents can't be edited; terminate it instead.",
@@ -127,24 +127,26 @@ test("a spawned target is refused: Spawned agents can't be edited", async () => 
 });
 
 test("an agent can't save the overlay of a local agent; a human can", async () => {
-  await expect(cfg.saveOverlay("loc", {}, await versionOf("loc"), hr)).rejects.toThrow(
-    new OrgRefusedError(LOCAL_RUNTIME_REFUSAL),
-  );
-  await expect(cfg.saveOverlay("loc", {}, await versionOf("loc"), human)).resolves.toMatchObject({
+  await expect(
+    cfg.saveOverlay(await t.refOf("loc"), {}, await versionOf("loc"), hr),
+  ).rejects.toThrow(new OrgRefusedError(LOCAL_RUNTIME_REFUSAL));
+  await expect(
+    cfg.saveOverlay(await t.refOf("loc"), {}, await versionOf("loc"), human),
+  ).resolves.toMatchObject({
     checked: "full",
   });
 });
 
 test("an agent can't give an overlay a can_spawn that names a local template", async () => {
   const overlay = { template: { can_spawn: ["localtpl"] } };
-  await expect(cfg.saveOverlay("dev", overlay, await versionOf("dev"), hr)).rejects.toThrow(
-    new OrgRefusedError(LOCAL_RUNTIME_REFUSAL),
-  );
+  await expect(
+    cfg.saveOverlay(await t.refOf("dev"), overlay, await versionOf("dev"), hr),
+  ).rejects.toThrow(new OrgRefusedError(LOCAL_RUNTIME_REFUSAL));
 });
 
 test("a valid agent save writes the overlay and a config_changed event by the agent", async () => {
   const overlay = { template: { model: "opus" } };
-  const out = await cfg.saveOverlay("dev", overlay, await versionOf("dev"), hr);
+  const out = await cfg.saveOverlay(await t.refOf("dev"), overlay, await versionOf("dev"), hr);
   expect(out).toMatchObject({ overlay, checked: "full" });
   const dev = await rowOf("dev");
   expect(dev.config).toEqual(overlay);
@@ -157,7 +159,7 @@ test("a valid agent save writes the overlay and a config_changed event by the ag
 
 test("a human save attributes the event to the human", async () => {
   const dev = await rowOf("dev");
-  await cfg.saveOverlay("dev", {}, await versionOf("dev"), human);
+  await cfg.saveOverlay(await t.refOf("dev"), {}, await versionOf("dev"), human);
   await vi.waitFor(async () =>
     expect((await events(dev.id)).map((e) => e.payload.by)).toContain(`<@${human.ref}>`),
   );
@@ -165,7 +167,7 @@ test("a human save attributes the event to the human", async () => {
 
 test("a save whose version went stale under the lock is refused and writes nothing", async () => {
   const plan = await cfg.planOverlay(
-    "dev",
+    await t.refOf("dev"),
     { template: { model: "sonnet" } },
     await versionOf("dev"),
     human,
@@ -188,18 +190,18 @@ test("with an invalid template the agent policy still applies to an overlay; a h
   writeFileSync(path.join(tdir, "template.yaml"), "name: [unclosed\n");
   try {
     const version = await versionOf("dev");
-    const removed = await refusal(cfg.saveOverlay("dev", {}, version, hr));
+    const removed = await refusal(cfg.saveOverlay(await t.refOf("dev"), {}, version, hr));
     expect(removed).toMatchObject({ status: 400, code: "invalid_config" });
     expect(JSON.stringify(removed.extra)).toContain("Deny rules can only be removed by a human.");
     expect((await rowOf("dev")).config).toEqual(stored);
 
     const env = { ...stored, settings: { ...stored.settings, env: { HTTPS_PROXY: "http://x" } } };
-    const proxied = await refusal(cfg.saveOverlay("dev", env, version, hr));
+    const proxied = await refusal(cfg.saveOverlay(await t.refOf("dev"), env, version, hr));
     expect(proxied).toMatchObject({ status: 400, code: "invalid_config" });
     expect(JSON.stringify(proxied.extra)).toContain("HTTPS_PROXY");
     expect((await rowOf("dev")).config).toEqual(stored);
 
-    await cfg.saveOverlay("dev", {}, version, human);
+    await cfg.saveOverlay(await t.refOf("dev"), {}, version, human);
     expect((await rowOf("dev")).config).toEqual({});
   } finally {
     writeFileSync(path.join(tdir, "template.yaml"), good);
@@ -208,7 +210,7 @@ test("with an invalid template the agent policy still applies to an overlay; a h
 });
 
 test("an agent's save that goes stale between planning and the row lock is an org refusal", async () => {
-  const plan = await cfg.planOverlay("dev", {}, await versionOf("dev"), hr);
+  const plan = await cfg.planOverlay(await t.refOf("dev"), {}, await versionOf("dev"), hr);
   await t.db
     .update(schema.agents)
     .set({ config: { template: { can_spawn: ["x"] } } })

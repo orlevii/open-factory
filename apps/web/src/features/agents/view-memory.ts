@@ -8,14 +8,14 @@ export type ViewPosition = { top: number; pinned: boolean };
  *  at a switch and nothing renders when it changes. Reset on a reload, which is fine. */
 const memory = new Map<string, Partial<Record<AgentView, ViewPosition>>>();
 
-export const readViewPosition = (slug: string, view: AgentView): ViewPosition | undefined =>
-  memory.get(slug)?.[view];
+export const readViewPosition = (ref: string, view: AgentView): ViewPosition | undefined =>
+  memory.get(ref)?.[view];
 
-export function writeViewPosition(slug: string, view: AgentView, position: ViewPosition): void {
-  // Mutated in place: this runs on every scroll event and allocates no object per call for a seen slug.
-  const places = memory.get(slug);
+export function writeViewPosition(ref: string, view: AgentView, position: ViewPosition): void {
+  // Mutated in place: this runs on every scroll event and allocates no object per call for a seen ref.
+  const places = memory.get(ref);
   if (places) places[view] = position;
-  else memory.set(slug, { [view]: position });
+  else memory.set(ref, { [view]: position });
 }
 
 /** Forgets every place (a test's router starts from a clean slate). */
@@ -23,7 +23,7 @@ export const clearViewPositions = () => memory.clear();
 
 /** Records the scroller's position and pin on every scroll (a plain write: no state, no render). */
 export function useRememberPosition(
-  slug: string,
+  ref: string,
   view: AgentView,
   scroller: RefObject<HTMLElement | null>,
   isPinned: () => boolean,
@@ -33,8 +33,8 @@ export function useRememberPosition(
   useEffect(() => {
     const el = scroller.current;
     if (!el || !enabled) return;
-    const write = () => writeViewPosition(slug, view, { top: el.scrollTop, pinned: isPinned() });
+    const write = () => writeViewPosition(ref, view, { top: el.scrollTop, pinned: isPinned() });
     el.addEventListener("scroll", write, { passive: true });
     return () => el.removeEventListener("scroll", write);
-  }, [slug, view, scroller, isPinned, enabled]);
+  }, [ref, view, scroller, isPinned, enabled]);
 }

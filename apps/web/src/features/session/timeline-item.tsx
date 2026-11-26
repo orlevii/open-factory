@@ -14,7 +14,7 @@ export type RowProgress = SubagentProgress | readonly (SubagentProgress | undefi
 
 export type TimelineItemProps = {
   row: Row;
-  slug: string;
+  agentRef: string;
   spawned?: boolean;
   /** This item holds the deep-link target (the row itself, or one of its children). */
   lit: boolean;
@@ -56,7 +56,7 @@ export function itemPropsEqual(a: TimelineItemProps, b: TimelineItemProps): bool
 function contentPropsEqual(a: TimelineItemProps, b: TimelineItemProps): boolean {
   if (
     a.row !== b.row ||
-    a.slug !== b.slug ||
+    a.agentRef !== b.agentRef ||
     a.spawned !== b.spawned ||
     a.lit !== b.lit ||
     a.arrivedKey !== b.arrivedKey ||
@@ -140,7 +140,7 @@ export const TimelineItem = memo(function TimelineItem(p: TimelineItemProps) {
 const ItemContent = memo(function ItemContent(
   p: TimelineItemProps & { menuRef: RefObject<RowMenuHandle | null> },
 ) {
-  const { row, slug, toggle } = p;
+  const { row, agentRef, toggle } = p;
   const onToggleCall = useCallback(() => toggle(row.key), [toggle, row.key]);
   // A live block or a raw send without a row has no seq to link to yet: its time and ⋯ come with the row.
   const chrome = !(row.kind === "text" && row.live) && !(row.kind === "command" && row.pending);
@@ -148,7 +148,7 @@ const ItemContent = memo(function ItemContent(
     <>
       {chrome && !isCard(row) && <RowGutter />}
       <TimelineRow
-        slug={p.slug}
+        agentRef={p.agentRef}
         spawned={p.spawned}
         row={row}
         expanded={p.expanded}
@@ -178,7 +178,7 @@ const ItemContent = memo(function ItemContent(
       {chrome && (
         <RowChrome
           row={row}
-          slug={slug}
+          agentRef={agentRef}
           focusable={row.key === p.tabKey}
           callShown={p.expanded.has(row.key)}
           onToggleCall={onToggleCall}

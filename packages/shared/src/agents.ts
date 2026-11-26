@@ -4,6 +4,7 @@ import { configDocSchema } from "./config.ts";
 import { sessionEventSchema } from "./events.ts";
 import { MSG } from "./messages.ts";
 import { nameSchema, slugSchema } from "./names.ts";
+import { normaliseRef } from "./ref.ts";
 import { liveCronSchema } from "./schedules.ts";
 import { templateIssueSchema } from "./templates.ts";
 
@@ -70,15 +71,18 @@ export const resolvedValueSchema = z.object({
 });
 export type ResolvedValue = z.infer<typeof resolvedValueSchema>;
 
-/** `"@handle"` of an agent or a person; the leading `@` is optional and dropped. Whether it exists is the service's to judge. */
+/** The ref of an agent or a person (a typed or copied one is normalised). Whether it exists is the service's to judge. */
 export const managerRefSchema = z
   .string()
   .trim()
-  .transform((s) => (s.startsWith("@") ? s.slice(1) : s))
-  .pipe(z.string().min(1, MSG.managerRequired).max(40, MSG.managerUnknown));
+  .min(1, MSG.managerRequired)
+  .transform((s) => normaliseRef(s) ?? "")
+  .pipe(z.string().min(1, MSG.managerUnknown));
 
 export const agentSummarySchema = z.object({
-  slug: z.string(),
+  /** The agent's principal ref: what URLs and protocol keys name it by. `handle` is its current, renamable name. */
+  ref: z.string(),
+  handle: z.string(),
   displayName: z.string(),
   description: z.string(),
   status: agentStatusSchema,
@@ -172,6 +176,7 @@ export type EventsPage = z.infer<typeof eventsPageSchema>;
 
 /** I1 §6.6: one human message to one to ten agents; attachments only with a single recipient. */
 export const sendMessagesBodySchema = z.object({
+  /** Refs of the recipients (agents or people). */
   to: z.array(z.string().min(1).max(65)).min(1).max(10),
   body: z
     .string()
@@ -180,7 +185,7 @@ export const sendMessagesBodySchema = z.object({
     .refine((s) => utf8.encode(s).length <= MAX_BODY_BYTES, "Message is larger than 64 KB"),
   urgent: z.boolean().default(false),
   clientMessageId: z.string().uuid().optional(),
-  /** U3 §13.5: upload ids from `POST /api/agents/:slug/uploads`, at most 10. */
+  /** U3 §13.5: upload ids from `POST /api/agents/:ref/uploads`, at most 10. */
   attachments: z.array(z.string().min(1).max(64)).max(10).optional(),
 });
 /** Why a recipient was refused: the router's codes, so a client never parses `reason`. */
@@ -290,7 +295,7 @@ export const resetPersonaResponseSchema = z.object({
   backupDir: z.string().optional(),
 });
 
-/** `GET /api/agents/:slug/config` (I2 §12.1). `doc` and `merged` are null while the template is invalid or missing. */
+/** `GET /api/agents/:ref/config` (I2 §12.1). `doc` and `merged` are null while the template is invalid or missing. */
 export const agentConfigResponseSchema = z.object({
   overlay: z.record(z.string(), z.unknown()),
   version: z.string(),
@@ -305,7 +310,7 @@ export const agentConfigResponseSchema = z.object({
 export type AgentConfigResponse = z.infer<typeof agentConfigResponseSchema>;
 
 /**
- * `PUT /api/agents/:slug/config`. `overlay` is checked by `agentOverlaySchema` in the service, so a bad one answers
+ * `PUT /api/agents/:ref/config`. `overlay` is checked by `agentOverlaySchema` in the service, so a bad one answers
  * with `issues` (paths and constant messages) instead of a generic body error.
  */
 export const putAgentConfigBodySchema = z.object({

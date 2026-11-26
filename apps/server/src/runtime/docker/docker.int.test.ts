@@ -21,7 +21,7 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../../agents/event-store.ts";
-import { makeTestApp } from "../../test/helpers.ts";
+import { makeTestApp, runtimeOf } from "../../test/helpers.ts";
 import { seedTestUser } from "../../test/principals.ts";
 import { asRunning } from "../../test/running.ts";
 import { agentWorkdir } from "../../workspace/paths.ts";
@@ -325,7 +325,7 @@ const idOf = async (db: TestApp["db"], slug: string) => {
 };
 
 const runtime = async (w: World, slug = w.slug) => {
-  const rt = await w.app.runtimes.bySlug(slug);
+  const rt = await runtimeOf(w.app, slug);
   if (!rt) throw new Error(`no runtime ${slug}`);
   return rt;
 };

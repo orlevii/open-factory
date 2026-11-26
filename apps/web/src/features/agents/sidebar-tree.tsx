@@ -28,7 +28,7 @@ import {
   isExpanded,
   MAX_INDENT_LEVEL,
   pruneStored,
-  railSlugs,
+  railRefs,
   type TreeNode,
   visibleNodes,
   workingCounts,
@@ -62,15 +62,11 @@ function parseStored(raw: string): Record<string, boolean> | undefined {
 /** The list reduced to what the tree's shape depends on, as one string: a status frame leaves it
  *  equal, so the tree re-renders only when an agent is added, removed, renamed or moved. */
 const shapeKeyOf = (list: AgentSummary[]) =>
-  JSON.stringify(list.map((a) => [a.slug, a.displayName, a.reportsTo]));
+  JSON.stringify(list.map((a) => [a.ref, a.handle, a.displayName, a.reportsTo]));
 
 const parseShape = (key: string): TreeRow[] =>
-  (JSON.parse(key) as [string, string, TreeRow["reportsTo"]][]).map(
-    ([slug, displayName, reportsTo]) => ({
-      slug,
-      displayName,
-      reportsTo,
-    }),
+  (JSON.parse(key) as [string, string, string, TreeRow["reportsTo"]][]).map(
+    ([ref, handle, displayName, reportsTo]) => ({ ref, handle, displayName, reportsTo }),
   );
 
 /** The shape key, or undefined while the live list loads. */
@@ -120,7 +116,7 @@ type Via = "pointer" | "keyboard";
 type Point = { x: number; y: number };
 
 export const SidebarAgentRow = memo(function SidebarAgentRow({
-  slug,
+  agentRef,
   level,
   hasChildren,
   expanded,
@@ -135,7 +131,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   onToggle,
   onMenu,
 }: {
-  slug: string;
+  agentRef: string;
   level: number;
   hasChildren: boolean;
   expanded: boolean;
@@ -149,25 +145,25 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   menuOpen: boolean;
   /** Set past the indent cap, where the tooltip names the manager. */
   managerName: string | null;
-  onToggle: (slug: string, via: Via) => void;
+  onToggle: (agentRef: string, via: Via) => void;
   /** Opens the tree's one AgentMenu on this row; a long-press names the point it hangs from. */
-  onMenu: (slug: string, at?: Point) => void;
+  onMenu: (agentRef: string, at?: Point) => void;
 }) {
-  const agent = useAgent(slug);
+  const agent = useAgent(agentRef);
   // On touch the row's only menu path (its ⋯ shows on fine pointers only, U4 §11.2).
-  const onLongPress = useCallback((at: Point) => onMenu(slug, at), [onMenu, slug]);
+  const onLongPress = useCallback((at: Point) => onMenu(agentRef, at), [onMenu, agentRef]);
   const press = useLongPress(onLongPress);
-  const unread = useUnreadByAgent(slug);
+  const unread = useUnreadByAgent(agentRef);
   if (!agent) return null;
   const name = agent.displayName;
   return (
     <li role="none">
       <Link
-        to="/agents/$slug/chat"
-        params={{ slug }}
+        to="/agents/$ref/chat"
+        params={{ ref: agentRef }}
         role="treeitem"
         {...press}
-        data-agent-row={slug}
+        data-agent-row={agentRef}
         data-longpress-region=""
         data-menu-anchor=""
         data-menu-open={menuOpen || undefined}
@@ -199,7 +195,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              onToggle(slug, "pointer");
+              onToggle(agentRef, "pointer");
             }}
           >
             <ChevronRight className={cn("size-3.5", expanded && "rotate-90")} />
@@ -208,7 +204,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           <span aria-hidden="true" className="size-4 shrink-0" />
         )}
         <AgentAvatar
-          slug={slug}
+          agentRef={agentRef}
           template={agent.template}
           avatarVersion={agent.avatarVersion}
           color={agent.color}
@@ -267,7 +263,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            onMenu(slug);
+            onMenu(agentRef);
           }}
         >
           <MoreHorizontal aria-hidden="true" className="size-4" />
@@ -277,9 +273,9 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   );
 });
 
-const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: boolean }) {
-  const agent = useAgent(slug);
-  const unread = useUnreadByAgent(slug);
+const RailRow = memo(function RailRow({ agentRef, active }: { agentRef: string; active: boolean }) {
+  const agent = useAgent(agentRef);
+  const unread = useUnreadByAgent(agentRef);
   // The Radix tooltip mounts only while a pointer is over the link, so rail rows carry no root at
   // rest. It unmounts on leave, not on close (Radix closes on pointer down; see HoverTip).
   const [tip, setTip] = useState(false);
@@ -288,8 +284,8 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
   return (
     <li>
       <Link
-        to="/agents/$slug/chat"
-        params={{ slug }}
+        to="/agents/$ref/chat"
+        params={{ ref: agentRef }}
         data-active={active || undefined}
         aria-current={active ? "page" : undefined}
         onPointerEnter={() => setTip(true)}
@@ -301,7 +297,7 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
         ) : null}
         <span className="relative flex">
           <AgentAvatar
-            slug={slug}
+            agentRef={agentRef}
             template={agent.template}
             avatarVersion={agent.avatarVersion}
             color={agent.color}
@@ -325,7 +321,7 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
             <TooltipTrigger asChild>
               <span aria-hidden="true" className="absolute inset-0" />
             </TooltipTrigger>
-            <TooltipContent side="right">{`${agent.displayName} · @${slug} · ${status}`}</TooltipContent>
+            <TooltipContent side="right">{`${agent.displayName} · @${agent.handle} · ${status}`}</TooltipContent>
           </Tooltip>
         ) : null}
       </Link>
@@ -336,28 +332,28 @@ const RailRow = memo(function RailRow({ slug, active }: { slug: string; active: 
 const selectByAgent = (d: Unread) => d.byAgent;
 
 /** The collapsed rail's glance: mounted only while the rail is collapsed, so its selects run only then. */
-function AgentRail({ nodes, activeSlug }: { nodes: TreeNode[]; activeSlug?: string }) {
+function AgentRail({ nodes, activeRef }: { nodes: TreeNode[]; activeRef?: string }) {
   const byAgent =
     useQuery({ ...unreadCountQueryOptions, select: selectByAgent, refetchOnMount: false }).data ??
     NO_UNREAD;
   const select = useCallback(
     (list: AgentSummary[]) => {
       const idx = agentIndex(list);
-      return railSlugs(nodes, {
-        active: activeSlug ?? null,
+      return railRefs(nodes, {
+        active: activeRef ?? null,
         unread: (s) => byAgent[s] ?? 0,
         statusOf: (s) => idx.get(s)?.status,
       });
     },
-    [nodes, activeSlug, byAgent],
+    [nodes, activeRef, byAgent],
   );
-  const slugs =
+  const agentRefs =
     useQuery({ ...agentsListQueryOptions("exclude"), refetchOnMount: false, select }).data ?? [];
   return (
     <nav aria-label="Agents">
       <ul className="flex flex-col items-center gap-1">
-        {slugs.map((s) => (
-          <RailRow key={s} slug={s} active={s === activeSlug} />
+        {agentRefs.map((s) => (
+          <RailRow key={s} agentRef={s} active={s === activeRef} />
         ))}
       </ul>
     </nav>
@@ -367,29 +363,29 @@ function AgentRail({ nodes, activeSlug }: { nodes: TreeNode[]; activeSlug?: stri
 function rowsIn(ul: HTMLElement | null): HTMLElement[] {
   return ul ? [...ul.querySelectorAll<HTMLElement>("[data-agent-row]")] : [];
 }
-const rowOf = (ul: HTMLElement | null, slug: string) =>
-  rowsIn(ul).find((el) => el.dataset.agentRow === slug);
+const rowOf = (ul: HTMLElement | null, agentRef: string) =>
+  rowsIn(ul).find((el) => el.dataset.agentRow === agentRef);
 
 /** The live agents as the reporting tree (WAI-APG treeview, rendered flat), or the rail's glance. */
 export const SidebarAgentTree = memo(function SidebarAgentTree({
-  activeSlug,
+  activeRef,
   collapsedRail,
 }: {
-  activeSlug?: string;
+  activeRef?: string;
   collapsedRail: boolean;
 }) {
   const { isMobile, setOpenMobile } = useSidebar();
   const shapeKey = useShapeKey();
   const shape = useMemo(() => (shapeKey ? parseShape(shapeKey) : []), [shapeKey]);
   const nodes = useMemo(() => buildTree(shape), [shape]);
-  const bySlug = useMemo(() => new Map(nodes.map((n) => [n.slug, n])), [nodes]);
-  const names = useMemo(() => new Map(shape.map((r) => [r.slug, r.displayName])), [shape]);
+  const byRef = useMemo(() => new Map(nodes.map((n) => [n.ref, n])), [nodes]);
+  const names = useMemo(() => new Map(shape.map((r) => [r.ref, r.displayName])), [shape]);
   const positions = useMemo(() => {
     const siblings = new Map<string | null, string[]>();
     for (const n of nodes) {
       const list = siblings.get(n.parent);
-      if (list) list.push(n.slug);
-      else siblings.set(n.parent, [n.slug]);
+      if (list) list.push(n.ref);
+      else siblings.set(n.parent, [n.ref]);
     }
     const out = new Map<string, [number, number]>();
     for (const list of siblings.values())
@@ -402,15 +398,15 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
   const [stored, setStored] = usePref(EXPANDED_KEY, NO_STORED, parseStored, JSON.stringify);
   // Ancestors the user closed while they were revealed for this active agent; a new navigation reveals again.
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(NO_SET);
-  const [dismissedFor, setDismissedFor] = useState(activeSlug);
-  if (dismissedFor !== activeSlug) {
-    setDismissedFor(activeSlug);
+  const [dismissedFor, setDismissedFor] = useState(activeRef);
+  if (dismissedFor !== activeRef) {
+    setDismissedFor(activeRef);
     setDismissed(NO_SET);
   }
   const revealed = useMemo<ReadonlySet<string>>(() => {
-    if (!activeSlug) return NO_SET;
-    return new Set(ancestorsOf(nodes, activeSlug).filter((s) => !dismissed.has(s)));
-  }, [nodes, activeSlug, dismissed]);
+    if (!activeRef) return NO_SET;
+    return new Set(ancestorsOf(nodes, activeRef).filter((s) => !dismissed.has(s)));
+  }, [nodes, activeRef, dismissed]);
   const visible = useMemo(() => visibleNodes(nodes, stored, revealed), [nodes, stored, revealed]);
 
   const countsSelect = useCallback(
@@ -421,56 +417,59 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
         nodes,
         (s) => idx.get(s)?.status,
         (s) => {
-          const n = bySlug.get(s);
+          const n = byRef.get(s);
           return n ? isExpanded(n, stored, revealed) : false;
         },
       );
     },
-    [collapsedRail, nodes, bySlug, stored, revealed],
+    [collapsedRail, nodes, byRef, stored, revealed],
   );
   const counts =
     useQuery({ ...agentsListQueryOptions("exclude"), refetchOnMount: false, select: countsSelect })
       .data ?? NO_COUNTS;
 
-  const [focusSlug, setFocusSlug] = useState<string | null>(null);
+  const [focusRef, setFocusRef] = useState<string | null>(null);
   const [pointerToggled, setPointerToggled] = useState<string | null>(null);
-  // One AgentMenu for the tree, opened on the row named here. The slug outlives the close so the
+  // One AgentMenu for the tree, opened on the row named here. The agentRef outlives the close so the
   // menu keeps its content for the exit animation.
-  const [menu, setMenu] = useState<{ slug: string | null; open: boolean; at?: Point }>({
-    slug: null,
+  const [menu, setMenu] = useState<{ agentRef: string | null; open: boolean; at?: Point }>({
+    agentRef: null,
     open: false,
   });
-  const menuSlug = menu.open ? menu.slug : null;
-  const openMenu = useCallback((slug: string, at?: Point) => setMenu({ slug, open: true, at }), []);
+  const menuRef = menu.open ? menu.agentRef : null;
+  const openMenu = useCallback(
+    (agentRef: string, at?: Point) => setMenu({ agentRef, open: true, at }),
+    [],
+  );
 
   // Read by the stable toggle, so rows never see a new callback.
-  const latest = useRef({ nodes, bySlug, stored, revealed, setStored });
+  const latest = useRef({ nodes, byRef, stored, revealed, setStored });
   useLayoutEffect(() => {
-    latest.current = { nodes, bySlug, stored, revealed, setStored };
+    latest.current = { nodes, byRef, stored, revealed, setStored };
   });
-  const toggle = useCallback((slug: string, via: Via) => {
-    const { nodes, bySlug, stored, revealed, setStored } = latest.current;
-    const node = bySlug.get(slug);
+  const toggle = useCallback((agentRef: string, via: Via) => {
+    const { nodes, byRef, stored, revealed, setStored } = latest.current;
+    const node = byRef.get(agentRef);
     if (!node?.hasChildren) return;
     const next = !isExpanded(node, stored, revealed);
-    if (!next && revealed.has(slug)) setDismissed((d) => new Set([...d, slug]));
-    setStored(pruneStored({ ...stored, [slug]: next }, new Set(nodes.map((n) => n.slug))));
-    setPointerToggled(via === "pointer" ? slug : null);
+    if (!next && revealed.has(agentRef)) setDismissed((d) => new Set([...d, agentRef]));
+    setStored(pruneStored({ ...stored, [agentRef]: next }, new Set(nodes.map((n) => n.ref))));
+    setPointerToggled(via === "pointer" ? agentRef : null);
   }, []);
 
   const ulRef = useRef<HTMLUListElement>(null);
   const loaded = shapeKey !== undefined;
   // The menu's agent left the list: the tree's own state closes (state only, no effect), so the row
   // drops its selected look and the agent coming back never reopens the menu by itself.
-  if (menu.open && menu.slug && loaded && !bySlug.has(menu.slug))
+  if (menu.open && menu.agentRef && loaded && !byRef.has(menu.agentRef))
     setMenu((m) => ({ ...m, open: false }));
   useEffect(() => {
-    if (!activeSlug || !loaded) return;
+    if (!activeRef || !loaded) return;
     const id = requestAnimationFrame(() =>
-      rowOf(ulRef.current, activeSlug)?.scrollIntoView({ block: "nearest" }),
+      rowOf(ulRef.current, activeRef)?.scrollIntoView({ block: "nearest" }),
     );
     return () => cancelAnimationFrame(id);
-  }, [activeSlug, loaded]);
+  }, [activeRef, loaded]);
 
   if (!loaded)
     return (
@@ -497,63 +496,64 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
         </button>
       </div>
     );
-  if (collapsedRail) return <AgentRail nodes={nodes} activeSlug={activeSlug} />;
+  if (collapsedRail) return <AgentRail nodes={nodes} activeRef={activeRef} />;
 
-  const visibleSlugs = new Set(visible.map((n) => n.slug));
+  const visibleRefs = new Set(visible.map((n) => n.ref));
   const tabStop =
-    focusSlug && visibleSlugs.has(focusSlug)
-      ? focusSlug
-      : activeSlug && visibleSlugs.has(activeSlug)
-        ? activeSlug
-        : visible[0]?.slug;
+    focusRef && visibleRefs.has(focusRef)
+      ? focusRef
+      : activeRef && visibleRefs.has(activeRef)
+        ? activeRef
+        : visible[0]?.ref;
 
   // A row that has gone (its agent left the list with the menu open) hands focus to the tab stop.
-  const focusRow = (slug: string) => {
-    const el = rowOf(ulRef.current, slug) ?? (tabStop ? rowOf(ulRef.current, tabStop) : undefined);
+  const focusRow = (agentRef: string) => {
+    const el =
+      rowOf(ulRef.current, agentRef) ?? (tabStop ? rowOf(ulRef.current, tabStop) : undefined);
     if (!el) return;
-    setFocusSlug(el.dataset.agentRow ?? slug);
+    setFocusRef(el.dataset.agentRow ?? agentRef);
     el.focus();
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
-    const slug = (e.target as HTMLElement).closest<HTMLElement>("[data-agent-row]")?.dataset
+    const agentRef = (e.target as HTMLElement).closest<HTMLElement>("[data-agent-row]")?.dataset
       .agentRow;
-    const i = visible.findIndex((n) => n.slug === slug);
+    const i = visible.findIndex((n) => n.ref === agentRef);
     const n = visible[i];
-    if (!slug || !n) return;
+    if (!agentRef || !n) return;
     if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
       e.preventDefault();
-      openMenu(slug);
+      openMenu(agentRef);
       return;
     }
     const open = n.hasChildren && isExpanded(n, stored, revealed);
     let target: string | null | undefined;
     switch (e.key) {
       case "ArrowDown":
-        target = visible[i + 1]?.slug;
+        target = visible[i + 1]?.ref;
         break;
       case "ArrowUp":
-        target = visible[i - 1]?.slug;
+        target = visible[i - 1]?.ref;
         break;
       case "Home":
-        target = visible[0]?.slug;
+        target = visible[0]?.ref;
         break;
       case "End":
-        target = visible.at(-1)?.slug;
+        target = visible.at(-1)?.ref;
         break;
       case "ArrowRight":
-        if (open) target = visible[i + 1]?.slug;
-        else if (n.hasChildren) toggle(slug, "keyboard");
+        if (open) target = visible[i + 1]?.ref;
+        else if (n.hasChildren) toggle(agentRef, "keyboard");
         break;
       case "ArrowLeft":
-        if (open) toggle(slug, "keyboard");
+        if (open) toggle(agentRef, "keyboard");
         else target = n.parent;
         break;
       default: {
         if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey || !/\S/.test(e.key)) return;
         const ch = e.key.toLowerCase();
         const order = [...visible.slice(i + 1), ...visible.slice(0, i + 1)];
-        target = order.find((v) => names.get(v.slug)?.toLowerCase().startsWith(ch))?.slug;
+        target = order.find((v) => names.get(v.ref)?.toLowerCase().startsWith(ch))?.ref;
       }
     }
     e.preventDefault();
@@ -577,25 +577,25 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
         onClick={onClick}
         onFocus={(e) => {
           const s = (e.target as HTMLElement).dataset.agentRow;
-          if (s) setFocusSlug(s);
+          if (s) setFocusRef(s);
         }}
       >
         {visible.map((n) => {
-          const [posinset, setsize] = positions.get(n.slug) ?? [1, 1];
+          const [posinset, setsize] = positions.get(n.ref) ?? [1, 1];
           return (
             <SidebarAgentRow
-              key={n.slug}
-              slug={n.slug}
+              key={n.ref}
+              agentRef={n.ref}
               level={n.level}
               hasChildren={n.hasChildren}
               expanded={n.hasChildren && isExpanded(n, stored, revealed)}
-              active={n.slug === activeSlug}
-              tabbable={n.slug === tabStop}
+              active={n.ref === activeRef}
+              tabbable={n.ref === tabStop}
               posinset={posinset}
               setsize={setsize}
-              working={counts[n.slug] ?? 0}
-              pointerToggled={n.slug === pointerToggled}
-              menuOpen={n.slug === menuSlug}
+              working={counts[n.ref] ?? 0}
+              pointerToggled={n.ref === pointerToggled}
+              menuOpen={n.ref === menuRef}
               managerName={
                 n.level > MAX_INDENT_LEVEL && n.parent ? (names.get(n.parent) ?? null) : null
               }
@@ -605,12 +605,12 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
           );
         })}
       </ul>
-      {menu.slug ? (
+      {menu.agentRef ? (
         <TreeAgentMenu
-          slug={menu.slug}
+          agentRef={menu.agentRef}
           open={menu.open}
           onOpenChange={(open) => setMenu((m) => ({ ...m, open }))}
-          anchor={rowOf(ulRef.current, menu.slug) ?? null}
+          anchor={rowOf(ulRef.current, menu.agentRef) ?? null}
           point={menu.at}
           onClose={focusRow}
         />
@@ -620,29 +620,29 @@ export const SidebarAgentTree = memo(function SidebarAgentTree({
 });
 
 /** The tree's one AgentMenu. It subscribes to its agent itself, so that agent's status frames
- *  re-render the menu only, not the tree (the slug outlives the close for the exit animation).
+ *  re-render the menu only, not the tree (the agentRef outlives the close for the exit animation).
  *  When the agent leaves the list (terminated, archived, deleted) the menu closes: its open state is
  *  derived here, and the last copy of the agent keeps its content through the exit. */
 function TreeAgentMenu({
-  slug,
+  agentRef,
   open,
   onOpenChange,
   anchor,
   point,
   onClose,
 }: {
-  slug: string;
+  agentRef: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   anchor: HTMLElement | null;
   /** A long-press's point: the dropdown hangs from it. */
   point?: Point;
-  onClose: (slug: string) => void;
+  onClose: (agentRef: string) => void;
 }) {
-  const agent = useAgent(slug);
+  const agent = useAgent(agentRef);
   const [last, setLast] = useState(agent);
   if (agent && agent !== last) setLast(agent);
-  const shown = agent ?? (last?.slug === slug ? last : undefined);
+  const shown = agent ?? (last?.ref === agentRef ? last : undefined);
   if (!shown) return null;
   const present = agent !== undefined && agent.status !== "terminated";
   return (
@@ -654,7 +654,7 @@ function TreeAgentMenu({
         onOpenChange,
         anchor,
         point,
-        onClose: () => onClose(slug),
+        onClose: () => onClose(agentRef),
       }}
     />
   );

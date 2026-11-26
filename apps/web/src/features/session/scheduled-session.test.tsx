@@ -12,7 +12,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
+import { principal } from "@/test/chat-fixtures";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor, tagFor } from "@/test/refs";
 import { envelope, resetSeq, se } from "@/test/session-fixtures";
 import { QueueItems } from "./queue-items";
 import { buildRows } from "./rows";
@@ -35,6 +37,7 @@ beforeEach(() => {
             state: "live",
             avatar: null,
           },
+          ...["lead", "gone-ab12"].map((h) => principal(refFor(h), h)),
         ],
       }),
   });
@@ -46,7 +49,7 @@ function inRouter(ui: React.ReactNode) {
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
-    routeTree: root.addChildren([stub("/agents/$slug"), stub("/tasks/$key")]),
+    routeTree: root.addChildren([stub("/agents/$ref"), stub("/tasks/$key")]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   return render(
@@ -79,7 +82,8 @@ const scheduled = (o: Record<string, unknown> = {}): AnyEvent => ({
 const speakers = buildSpeakerIndex({
   live: [
     {
-      slug: "lead",
+      ref: refFor("lead"),
+      handle: "lead",
       displayName: "Lead",
       template: "lead",
       kind: "persistent",
@@ -94,7 +98,7 @@ function renderEvents(events: AnyEvent[]) {
       {rows.map((row) => (
         <div key={row.key} data-row>
           <TimelineRow
-            slug="dev"
+            agentRef={refFor("dev")}
             row={row}
             expanded={new Set()}
             toggle={() => {}}
@@ -121,21 +125,24 @@ test("a delivered scheduled block: Scheduler, the S-3 badge opening the schedule
 
 test("late and firings add the notes; an agent author links to its session", async () => {
   const { container } = renderEvents([
-    scheduled({ late: true, firings: 3, by: "@lead", byKind: "agent" }),
+    scheduled({ late: true, firings: 3, by: tagFor("lead"), byKind: "agent" }),
   ]);
   await screen.findByText("Scheduler");
   expect(container.textContent).toContain(
     "due Mon 23 Nov 09:00 UTC+01:00 · delivered late · covers 3 runs",
   );
-  expect(screen.getByRole("link", { name: /lead/ })).toHaveAttribute("href", "/agents/lead/chat");
+  expect(await screen.findByRole("link", { name: /lead/ })).toHaveAttribute(
+    "href",
+    `/agents/${refFor("lead")}/chat`,
+  );
 });
 
 test("an ended agent author, named by byKind, still reads as an agent (a chip, not a plain handle)", async () => {
-  renderEvents([scheduled({ by: "@gone-ab12", byKind: "agent" })]);
+  renderEvents([scheduled({ by: tagFor("gone-ab12"), byKind: "agent" })]);
   await screen.findByText("Scheduler");
-  expect(screen.getByRole("link", { name: /gone-ab12/ })).toHaveAttribute(
+  expect(await screen.findByRole("link", { name: /gone-ab12/ })).toHaveAttribute(
     "href",
-    "/agents/gone-ab12/chat",
+    `/agents/${refFor("gone-ab12")}/chat`,
   );
 });
 

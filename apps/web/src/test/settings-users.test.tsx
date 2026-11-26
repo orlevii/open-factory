@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { Session } from "@/lib/session";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { type Handler, json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/ws", () => ({
@@ -27,6 +28,7 @@ const me: Session = {
 
 const joined = new Date(2026, 10, 19, 9, 0).toISOString();
 const user = (o: Partial<UserAdminItem> & { id: string; handle: string }): UserAdminItem => ({
+  ref: refFor(o.handle),
   name: o.handle,
   email: `${o.handle}@example.com`,
   createdAt: joined,

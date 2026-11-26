@@ -35,6 +35,7 @@ import Docker from "dockerode";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { bySlug } from "./by-slug.ts";
 
 const LOCAL = process.argv.includes("--local");
 const IMAGE = "open-factory-base:dev";
@@ -323,7 +324,7 @@ async function quiet(slugs: string[]) {
     async () => {
       const busy = [];
       for (const s of slugs) {
-        const rt = await app.runtimes.bySlug(s);
+        const rt = await bySlug(app, s);
         const l = rt?.live();
         if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }

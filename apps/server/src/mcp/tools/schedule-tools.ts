@@ -80,10 +80,10 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
                 },
               );
               const i = r.item;
-              const facing = await d.facing({ handles: [i.target.slug] });
+              const facing = await d.facing({ handles: [i.target.handle] });
               return {
                 id: i.key,
-                to: facing.tag(i.target.slug),
+                to: facing.tag(i.target.handle),
                 ...(i.cron ? { cron: i.cron } : {}),
                 ...(i.at ? { at: formatOffsetIso(new Date(i.at), i.timezone) } : {}),
                 timezone: i.timezone,

@@ -3,7 +3,7 @@ import { useSyncExternalStore } from "react";
 /** What a top-level create/edit sheet can show. */
 export type SheetSpec =
   | { kind: "new-agent"; template?: string }
-  | { kind: "edit-agent"; slug: string }
+  | { kind: "edit-agent"; agentRef: string }
   | { kind: "new-task"; assignee?: string }
   | { kind: "new-schedule"; target?: string }
   | { kind: "edit-schedule"; key: string }

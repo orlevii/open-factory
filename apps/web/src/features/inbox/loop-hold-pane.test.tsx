@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { formatInboxTime } from "@/features/session/format";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -25,17 +26,20 @@ const BODY =
 
 type Hold = {
   id: string;
-  agents: [{ slug: string; status: string }, { slug: string; status: string }];
+  agents: [
+    { ref: string; handle: string; status: string },
+    { ref: string; handle: string; status: string },
+  ];
   waiting: number;
   sentOn: number;
   resumedAt: string | null;
-  resumedBy: string | null;
+  resumedBy: { ref: string; handle: string } | null;
 };
 const hold = (o: Partial<Hold> = {}): Hold => ({
   id: "h1",
   agents: [
-    { slug: "a", status: "live" },
-    { slug: "b", status: "live" },
+    { ref: refFor("a"), handle: "a", status: "live" },
+    { ref: refFor("b"), handle: "b", status: "live" },
   ],
   waiting: 4,
   sentOn: 0,
@@ -56,19 +60,19 @@ const holdItem = (o: Partial<Hold> = {}) => ({
   createdAt: new Date(2026, 10, 25, 13, 50).toISOString(),
   notice: "loop_held",
   loopHold: hold(o),
-  link: { kind: "session", agentSlug: "a" },
+  link: { kind: "session", agentRef: refFor("a") },
 });
 const other = {
   id: "i2",
   messageId: "m-i2",
   kind: "notice",
   read: true,
-  from: { kind: "agent", ref: "dev00000", handle: "dev" },
+  from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
   to: "@alice",
   preview: "other item",
   urgent: false,
   createdAt: new Date(2026, 10, 25, 13, 40).toISOString(),
-  link: { kind: "session", agentSlug: "dev", seq: 4 },
+  link: { kind: "session", agentRef: refFor("dev"), seq: 4 },
 };
 
 let items: unknown[];
@@ -116,11 +120,11 @@ test("the pane has the text and two session links, but no composer and no header
   expect(p).toHaveTextContent(BODY);
   expect(within(p).getByRole("link", { name: "Open @a's session" })).toHaveAttribute(
     "href",
-    "/agents/a/session",
+    `/agents/${refFor("a")}/session`,
   );
   expect(within(p).getByRole("link", { name: "Open @b's session" })).toHaveAttribute(
     "href",
-    "/agents/b/session",
+    `/agents/${refFor("b")}/session`,
   );
   expect(within(p).queryByRole("link", { name: /^Open (chat|in session)$/ })).toBeNull();
   expect(within(p).queryByRole("combobox")).toBeNull();
@@ -130,8 +134,8 @@ test("the pane has the text and two session links, but no composer and no header
 test("a terminated agent is named, and what is waiting still shows", async () => {
   await open({
     agents: [
-      { slug: "a", status: "live" },
-      { slug: "b", status: "terminated" },
+      { ref: refFor("a"), handle: "a", status: "live" },
+      { ref: refFor("b"), handle: "b", status: "terminated" },
     ],
     waiting: 1,
   });
@@ -194,7 +198,12 @@ test("a 409 shows who resumed first, from the error body, with no failure line",
 
 test("another human's earlier Resume shows from the hold: its count, a date when not today, a full-timestamp title", async () => {
   const at = new Date(2026, 10, 24, 9, 5);
-  await open({ resumedAt: at.toISOString(), resumedBy: "@ana", sentOn: 3, waiting: 0 });
+  await open({
+    resumedAt: at.toISOString(),
+    resumedBy: { ref: refFor("ana"), handle: "ana" },
+    sentOn: 3,
+    waiting: 0,
+  });
   const status = within(pane()).getByRole("status");
   expect(status).toHaveTextContent("Resumed by @ana · Yesterday 09:05 · 3 messages sent on");
   expect(within(status).getByText("Yesterday 09:05")).toHaveAttribute("title", at.toLocaleString());
@@ -205,7 +214,7 @@ test("another human's earlier Resume shows from the hold: its count, a date when
 test("your own earlier Resume, seen after a reload, says you", async () => {
   await open({
     resumedAt: new Date(2026, 10, 25, 14, 30).toISOString(),
-    resumedBy: "@alice",
+    resumedBy: { ref: refFor("alice"), handle: "alice" },
     sentOn: 2,
     waiting: 0,
   });
@@ -257,7 +266,10 @@ test("navigating away mid-Resume and back shows the button until inbox_changed b
   await user().click(screen.getByRole("link", { name: /From Factory about @a/ }));
   expect(await resumeButton()).not.toHaveAttribute("aria-disabled");
   items = [
-    holdItem({ resumedAt: new Date(2026, 10, 25, 14, 30).toISOString(), resumedBy: "@alice" }),
+    holdItem({
+      resumedAt: new Date(2026, 10, 25, 14, 30).toISOString(),
+      resumedBy: { ref: refFor("alice"), handle: "alice" },
+    }),
     other,
   ];
   await act(async () => {

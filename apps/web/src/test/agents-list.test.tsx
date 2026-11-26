@@ -13,6 +13,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { AgentTree } from "@/features/agents/agent-tree";
 import { mockWorld } from "@/test/agent-screens-fixtures";
 import { longPress } from "@/test/long-press";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 
@@ -23,7 +24,7 @@ vi.mock("@/components/agent-chip", async (importOriginal) => {
   return {
     ...mod,
     AgentChip: (p: Parameters<typeof mod.AgentChip>[0]) => {
-      chipRenders.push("agent" in p ? p.agent.slug : p.slug);
+      chipRenders.push("agent" in p ? p.agent.ref : p.agentRef);
       return mod.AgentChip(p);
     },
   };
@@ -57,7 +58,7 @@ test("lists agents with status label, slug and the unsandboxed badge", async () 
   );
   renderApp("/agents", alice);
   const row = await screen.findByRole("link", { name: /Dev agent/ });
-  expect(row).toHaveAttribute("href", "/agents/dev/chat");
+  expect(row).toHaveAttribute("href", `/agents/${refFor("dev")}/chat`);
   expect(within(row).getByText("Working")).toBeInTheDocument();
   expect(within(row).getAllByText("@dev").length).toBeGreaterThan(0);
   expect(within(row).getByText("developer")).toBeInTheDocument();
@@ -80,7 +81,7 @@ test("a pushed agent_status frame turns the row's Working into Idle", async () =
   act(() =>
     pushFrame({
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "idle",
       turnOpen: false,
       restartPending: false,
@@ -118,7 +119,7 @@ test("Agents list: inline note priority, '3 running' before the radio pair, hidd
     }));
   listWith([
     agentSummary({
-      slug: "a",
+      handle: "a",
       displayName: "Disabled",
       runtimeDisabled: "The local runtime is disabled on this factory.",
       status: "rate_limited",
@@ -126,7 +127,7 @@ test("Agents list: inline note priority, '3 running' before the radio pair, hidd
       waitingOn: { tasks: tasks(2), crons: 2 },
     }),
     agentSummary({
-      slug: "b",
+      handle: "b",
       displayName: "Paused",
       status: "rate_limited",
       rateLimitedUntil: until,
@@ -134,16 +135,16 @@ test("Agents list: inline note priority, '3 running' before the radio pair, hidd
       waitingOn: { tasks: tasks(2), crons: 2 },
     }),
     agentSummary({
-      slug: "c",
+      handle: "c",
       displayName: "Exact",
       status: "rate_limited",
       rateLimitedUntil: until,
       rateLimitExact: true,
     }),
-    agentSummary({ slug: "d", displayName: "Busy", waitingOn: { tasks: tasks(2), crons: 2 } }),
-    agentSummary({ slug: "e", displayName: "One", waitingOn: { tasks: tasks(1), crons: 0 } }),
-    agentSummary({ slug: "f", displayName: "Pinned", waitingOn: { tasks: [], crons: 1 } }),
-    agentSummary({ slug: "g", displayName: "Plain" }),
+    agentSummary({ handle: "d", displayName: "Busy", waitingOn: { tasks: tasks(2), crons: 2 } }),
+    agentSummary({ handle: "e", displayName: "One", waitingOn: { tasks: tasks(1), crons: 0 } }),
+    agentSummary({ handle: "f", displayName: "Pinned", waitingOn: { tasks: [], crons: 1 } }),
+    agentSummary({ handle: "g", displayName: "Plain" }),
   ]);
   const { router } = renderApp("/agents", alice);
   const note = async (name: string) => {
@@ -192,7 +193,7 @@ test("a terminated frame shows Terminated (no dot) at once, then the list refetc
       if (!url.startsWith("/api/agents")) return json({ count: 0 });
       if (calls++ > 0) await held;
       return json({
-        agents: calls > 1 ? [] : [agentSummary({ slug: "x-ab12", displayName: "X · ab12" })],
+        agents: calls > 1 ? [] : [agentSummary({ handle: "x-ab12", displayName: "X · ab12" })],
         running: { count: 0 },
       });
     }),
@@ -202,7 +203,7 @@ test("a terminated frame shows Terminated (no dot) at once, then the list refetc
   act(() =>
     pushFrame({
       type: "agent_status",
-      agent: "x-ab12",
+      agent: refFor("x-ab12"),
       status: "terminated",
       turnOpen: false,
       restartPending: false,
@@ -228,14 +229,14 @@ test("?focus scrolls that agent's row into view and marks it for the visit", asy
     vi.fn(async () =>
       json({
         agents: [
-          agentSummary({ slug: "lead", displayName: "Lead agent" }),
-          agentSummary({ slug: "other", displayName: "Other agent" }),
+          agentSummary({ handle: "lead", displayName: "Lead agent" }),
+          agentSummary({ handle: "other", displayName: "Other agent" }),
         ],
         running: { count: 0 },
       }),
     ),
   );
-  renderApp("/agents?focus=lead", alice);
+  renderApp(`/agents?focus=${refFor("lead")}`, alice);
   const main = await screen.findByRole("main");
   const lead = await within(main).findByRole("link", { name: /Lead agent/ });
   await waitFor(() => expect(scrolled.some((el) => lead.contains(el) || el === lead)).toBe(true));
@@ -257,14 +258,16 @@ test("each Agents row has a ⋯ beside its link that opens the agent's menu", as
   const more = await within(main).findByRole("button", { name: "Actions for Dev agent" });
   // A sibling of the row's link, never inside it.
   expect(more.closest("a")).toBeNull();
-  expect(more.closest("li")?.querySelector('a[href="/agents/dev/chat"]')).not.toBeNull();
+  expect(
+    more.closest("li")?.querySelector(`a[href="/agents/${refFor("dev")}/chat"]`),
+  ).not.toBeNull();
   await userEvent.click(more);
   const menu = await screen.findByRole("menu");
   // The full layout is pinned in agent-menu.test.tsx; here: it is this agent's menu.
   expect(within(menu).getByRole("menuitem", { name: "Archive…" })).toBeInTheDocument();
   expect(within(menu).getByRole("menuitem", { name: "Usage" })).toHaveAttribute(
     "href",
-    "/agents/dev/usage",
+    `/agents/${refFor("dev")}/usage`,
   );
 });
 
@@ -272,17 +275,17 @@ test("Ended view: an archived row's menu restores it and toasts; a terminated ro
   const api = mockWorld({
     agents: [],
     archived: [
-      agentSummary({ slug: "old", displayName: "Old one", archivedAt: "2026-11-01T10:00:00Z" }),
+      agentSummary({ handle: "old", displayName: "Old one", archivedAt: "2026-11-01T10:00:00Z" }),
       agentSummary({
-        slug: "gone",
+        handle: "gone",
         displayName: "Gone one",
         status: "terminated",
         terminatedAt: "2026-11-02T10:00:00Z",
       }),
     ],
     extra: {
-      "POST /api/agents/old/unarchive": () =>
-        new Response(JSON.stringify({ agent: agentSummary({ slug: "old" }) }), {
+      [`POST /api/agents/${refFor("old")}/unarchive`]: () =>
+        new Response(JSON.stringify({ agent: agentSummary({ handle: "old" }) }), {
           headers: { "content-type": "application/json" },
         }),
     },
@@ -306,9 +309,11 @@ test("Ended view: an archived row's menu restores it and toasts; a terminated ro
   ]);
   await u.click(within(menu).getByRole("menuitem", { name: "Restore" }));
   expect(await screen.findByText("Restored @old.")).toBeInTheDocument();
-  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/old/unarchive")).toBe(
-    true,
-  );
+  expect(
+    api.calls.some(
+      (c) => c.method === "POST" && c.url === `/api/agents/${refFor("old")}/unarchive`,
+    ),
+  ).toBe(true);
 });
 
 test("/agents?unknownKey=1 loads the page normally", async () => {
@@ -347,12 +352,15 @@ function renderTree(initial: AgentSummary[]) {
 const many = () =>
   Array.from({ length: 214 }, (_, i) =>
     agentSummary({
-      slug: `a${i}`,
+      handle: `a${i}`,
       displayName: `Agent ${i}`,
       reportsTo:
         i === 0
-          ? { kind: "human", ref: "hhhhhhhh", handle: "or" }
-          : { kind: "agent", ref: "aaaaaaaa", handle: i < 14 ? `a${i - 1}` : `a${i % 14}` },
+          ? { kind: "human", ref: refFor("or"), handle: "or" }
+          : (() => {
+              const parent = i < 14 ? `a${i - 1}` : `a${i % 14}`;
+              return { kind: "agent" as const, ref: refFor(parent), handle: parent };
+            })(),
     }),
   );
 
@@ -379,8 +387,8 @@ test("one agent's status frame re-renders exactly one row", async () => {
   const { update } = renderTree(many());
   await screen.findByRole("list", { name: "Agents" });
   chipRenders.length = 0;
-  update((list) => list.map((a) => (a.slug === "a20" ? { ...a, status: "working" } : a)));
-  await waitFor(() => expect(chipRenders).toEqual(["a20"]));
+  update((list) => list.map((a) => (a.handle === "a20" ? { ...a, status: "working" } : a)));
+  await waitFor(() => expect(chipRenders).toEqual([refFor("a20")]));
 });
 
 test.each([
@@ -411,7 +419,7 @@ test("touch: a 500ms press on an Agents row opens its menu at the point and does
   );
   const { router } = renderTree(many());
   const list = await screen.findByRole("list", { name: "Agents" });
-  const link = list.querySelector('[data-agent-link="a7"]') as HTMLElement;
+  const link = list.querySelector(`[data-agent-link="${refFor("a7")}"]`) as HTMLElement;
   expect(link).toHaveAttribute("data-longpress-region");
   chipRenders.length = 0;
   longPress(link, { x: 30, y: 70 });
@@ -419,7 +427,7 @@ test("touch: a 500ms press on an Agents row opens its menu at the point and does
   const point = document.querySelector<HTMLElement>("[data-menu-stand-in].size-0");
   expect(point?.style.left).toBe("30px");
   // Only the pressed row re-renders (its menu-open flag), never the others.
-  expect(chipRenders).toEqual(["a7"]);
+  expect(chipRenders).toEqual([refFor("a7")]);
   expect(router.state.location.pathname).toBe("/");
 });
 
@@ -430,7 +438,7 @@ test("a mouse press on an Agents row opens nothing", async () => {
   );
   renderTree(many());
   const list = await screen.findByRole("list", { name: "Agents" });
-  const link = list.querySelector('[data-agent-link="a7"]') as HTMLElement;
+  const link = list.querySelector(`[data-agent-link="${refFor("a7")}"]`) as HTMLElement;
   longPress(link, { pointerType: "mouse", hold: 700, release: false });
   expect(link).not.toHaveAttribute("data-pressed");
   expect(screen.queryByRole("menu")).toBeNull();

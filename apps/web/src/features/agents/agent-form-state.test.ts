@@ -8,6 +8,7 @@ import { resetDrafts } from "@/features/sheets/drafts";
 import { sessionQueryOptions } from "@/lib/session";
 import { agentSummary, mockWorld } from "@/test/agent-screens-fixtures";
 import { json } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice } from "@/test/render-app";
 
 beforeEach(() => {
@@ -33,11 +34,11 @@ const create = (over: Partial<Args> = {}): Args => ({
   form,
   ...over,
 });
-const lead = agentSummary({ slug: "lead", displayName: "Lead", description: "Leads" });
+const lead = agentSummary({ handle: "lead", displayName: "Lead", description: "Leads" });
 const edit = (agent = lead): Args => ({
   mode: "edit",
   agent,
-  draftKey: `edit-agent:${agent.slug}`,
+  draftKey: `edit-agent:${agent.handle}`,
   form,
 });
 
@@ -101,7 +102,7 @@ test("New agent: the template fills untouched fields, and the slug is not prefil
       slug: "mine",
       displayName: "Mine",
       description: "Leads the team",
-      reportsTo: "alice",
+      reportsTo: refFor("alice"),
       credential: "work",
     },
     undefined,
@@ -400,7 +401,7 @@ test("Edit: a model override alone is a config write with no agent patch; undoin
 
 test("Edit: an agent's own model starts as the override, and inheriting again writes an empty one", async () => {
   const own = agentSummary({
-    slug: "lead",
+    handle: "lead",
     model: { value: "opus", source: "agent" },
     effort: { value: "high", source: "template" },
   });

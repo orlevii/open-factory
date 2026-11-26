@@ -2,12 +2,12 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 
 /** S7 UI design §5.3: Unpin after the grace deletes the workspace within minutes, so it confirms. */
 export function UnpinDialog({
-  slug,
+  handle,
   open,
   onOpenChange,
   onConfirm,
 }: {
-  slug: string;
+  handle: string;
   open: boolean;
   onOpenChange(o: boolean): void;
   onConfirm(): Promise<void>;
@@ -16,7 +16,7 @@ export function UnpinDialog({
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`Unpin and delete @${slug}'s workspace?`}
+      title={`Unpin and delete @${handle}'s workspace?`}
       body="Its files and Claude config are removed within 10 minutes; its session history stays."
       confirmLabel="Delete workspace"
       pendingLabel="Unpinning…"

@@ -46,7 +46,8 @@ export type LockedAgent = {
 /** A schedule with the names the item needs. */
 export type ScheduleRecord = ScheduleRow & {
   target: {
-    slug: string;
+    ref: string;
+    handle: string;
     displayName: string;
     status: string;
     archivedAt: Date | null;
@@ -160,11 +161,13 @@ export class ScheduleStore {
     const ba = alias(agents, "ba");
     const cp = alias(principals, "cp");
     const bp = alias(principals, "bp");
+    const tp = alias(principals, "tp");
     const rows = await tx
       .select({
         s: schedules,
         ta: {
-          slug: ta.slug,
+          ref: tp.ref,
+          handle: tp.handle,
           displayName: ta.displayName,
           status: ta.status,
           archivedAt: ta.archivedAt,
@@ -178,6 +181,7 @@ export class ScheduleStore {
       })
       .from(schedules)
       .innerJoin(ta, eq(ta.id, schedules.targetAgentId))
+      .innerJoin(tp, eq(tp.id, schedules.targetAgentId))
       .innerJoin(cp, eq(cp.id, schedules.createdById))
       .leftJoin(ca, eq(ca.id, schedules.createdById))
       .innerJoin(bp, eq(bp.id, schedules.bodyAuthorId))

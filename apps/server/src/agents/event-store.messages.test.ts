@@ -1,7 +1,7 @@
 import { messageLookupSchema } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { EventStore } from "./event-store.ts";
 import { insertAgent } from "./testing/rows.ts";
 
@@ -145,7 +145,7 @@ test("inboxPage pages newest first with a cursor; chat messages come back as cha
   expect(p1.items.every((i) => i.kind === "notice")).toBe(true); // a factory notice is `notice`, never `message`
   expect(p1.chats).toEqual([
     expect.objectContaining({
-      slug: "dev",
+      ref: testRef("a1"),
       unread: 1,
       latest: expect.objectContaining({ preview: "a chat message" }),
     }),
@@ -167,7 +167,10 @@ test("markPending clears delivered_event_seq; rejected is a state", async () => 
   });
   await store.markDelivered([m.id]);
   await store.setDeliveredEventSeq([m.id], 7);
-  expect((await store.messageLookup(m.id))?.recipientEvent).toEqual({ agentSlug: "b", seq: 7 });
+  expect((await store.messageLookup(m.id))?.recipientEvent).toEqual({
+    agentRef: testRef("a2"),
+    seq: 7,
+  });
   await store.markPending([m.id]);
   expect((await store.messageLookup(m.id))?.recipientEvent).toBeUndefined();
   await store.markRejected(m.id);
@@ -270,7 +273,7 @@ test("factory inbox items link the subject's session; unlinkable human rows are 
   expect((await store.inboxPage("u1")).items[0]).toMatchObject({
     from: { kind: "factory" },
     about: "dev",
-    link: { agentSlug: "dev" },
+    link: { agentRef: testRef("a1") },
   });
   await expect(
     store.createHumanMessage({

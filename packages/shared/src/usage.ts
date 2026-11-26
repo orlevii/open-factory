@@ -25,10 +25,11 @@ export type DailyUsage = z.infer<typeof dailyUsageSchema>;
 
 const agentKind = z.enum(["persistent", "ephemeral"]);
 export const agentUsageRowSchema = z.object({
-  slug: z.string(),
+  ref: z.string(),
+  handle: z.string(),
   displayName: z.string(),
   kind: agentKind,
-  spawnerSlug: z.string().optional(),
+  spawner: z.object({ ref: z.string(), handle: z.string() }).optional(),
   archived: z.boolean(),
   terminated: z.boolean(),
   own: totalsSchema,
@@ -52,7 +53,7 @@ export const credentialUsageRowSchema = z.object({
   name: z.string(),
   kind: z.enum(["oauth_token", "api_key"]),
   totals: totalsSchema,
-  agents: z.array(z.object({ slug: z.string(), costUsd: z.number() })),
+  agents: z.array(z.object({ ref: z.string(), handle: z.string(), costUsd: z.number() })),
   rateLimit: rateLimitStateSchema.nullable(),
   pausedUntil: z.string().optional(),
   pauseExact: z.boolean().optional(),
@@ -65,7 +66,12 @@ export const credentialsUsageSchema = z.object({
 export type CredentialsUsage = z.infer<typeof credentialsUsageSchema>;
 
 export const agentUsageSchema = z.object({
-  agent: z.object({ slug: z.string(), displayName: z.string(), kind: agentKind }),
+  agent: z.object({
+    ref: z.string(),
+    handle: z.string(),
+    displayName: z.string(),
+    kind: agentKind,
+  }),
   timezone: z.string(),
   total: totalsSchema,
   own: totalsSchema,
@@ -74,7 +80,12 @@ export const agentUsageSchema = z.object({
   byModel: z.array(totalsSchema.extend({ model: z.string().nullable() })),
   byTask: z.array(totalsSchema.extend({ key: z.string(), title: z.string() })),
   spawned: z.array(
-    totalsSchema.extend({ slug: z.string(), displayName: z.string(), terminated: z.boolean() }),
+    totalsSchema.extend({
+      ref: z.string(),
+      handle: z.string(),
+      displayName: z.string(),
+      terminated: z.boolean(),
+    }),
   ),
 });
 export type AgentUsage = z.infer<typeof agentUsageSchema>;

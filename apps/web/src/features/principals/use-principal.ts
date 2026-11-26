@@ -1,6 +1,6 @@
 import { normaliseRef, type PrincipalItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { principalsQueryOptions, requestPrincipal } from "./api";
 
 export type PrincipalLookup =
@@ -39,4 +39,14 @@ export function usePrincipalLookup(): (ref: string) => { ref: string; handle: st
     },
     [byRef],
   );
+}
+
+/** The ref of whoever holds a handle, from the loaded cache: for a server list that names agents by handle. */
+export function useRefOfHandle(): (handle: string) => string | undefined {
+  const { data } = useQuery(principalsQueryOptions);
+  const byHandle = useMemo(
+    () => new Map([...(data?.byRef.values() ?? [])].map((p) => [p.handle, p.ref])),
+    [data],
+  );
+  return useCallback((handle) => byHandle.get(handle), [byHandle]);
 }

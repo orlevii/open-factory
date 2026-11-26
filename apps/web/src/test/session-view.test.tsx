@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { flushStatusFrames } from "@/features/agents/status-frames";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import {
   agentSummary,
@@ -52,8 +53,8 @@ beforeEach(() => {
   ws.sent = [];
   ws.connects = true;
   routes = {
-    "/api/agents/dev": () => json(detail()),
-    "/api/agents/dev/events?": () => json(conversation()),
+    [`/api/agents/${refFor("dev")}`]: () => json(detail()),
+    [`/api/agents/${refFor("dev")}/events?`]: () => json(conversation()),
   };
   vi.stubGlobal(
     "fetch",
@@ -73,7 +74,7 @@ afterEach(() => {
 });
 
 test("renders the conversation: sender badge, collapsed tool call, text, compaction marker; never raw XML", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
   const log = await screen.findByRole("log", { name: "Session" });
   // the heading comes from the agent detail; the events are a second request, so wait for the first row
@@ -93,15 +94,15 @@ test("renders the conversation: sender badge, collapsed tool call, text, compact
 });
 
 test("subscribes from the newest seq and appends live events", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() =>
-    expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 10 }),
+    expect(ws.sent).toContainEqual({ type: "subscribe", agent: refFor("dev"), afterSeq: 10 }),
   );
   act(() =>
     ws.onMessage?.({
       type: "session_event",
-      agent: "dev",
+      agent: refFor("dev"),
       event: { ...se({ type: "assistant_text", text: "Live text" }), seq: 11 },
     }),
   );
@@ -109,7 +110,7 @@ test("subscribes from the newest seq and appends live events", async () => {
 });
 
 test("an open turn shows the activity line under the last row, above the queue; a status frame removes it", async () => {
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json(
       detail({ status: "working", turnOpen: true }, [
         {
@@ -123,7 +124,7 @@ test("an open turn shows the activity line under the last row, above the queue; 
         },
       ]),
     );
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   const line = document.querySelector("[data-activity-line]");
   expect(line).toBeInTheDocument();
@@ -143,7 +144,7 @@ test("an open turn shows the activity line under the last row, above the queue; 
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "idle",
       turnOpen: false,
       restartPending: false,
@@ -157,13 +158,13 @@ test("an open turn shows the activity line under the last row, above the queue; 
 });
 
 test("an activity line that appears from a live frame fades in", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ status: "idle", turnOpen: false }));
-  renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}`] = () => json(detail({ status: "idle", turnOpen: false }));
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "working",
       turnOpen: true,
       restartPending: false,
@@ -177,30 +178,32 @@ test("an activity line that appears from a live frame fades in", async () => {
 });
 
 test("no activity line while no turn is open, or in a windowed view", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: false }));
-  const first = renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}`] = () =>
+    json(detail({ status: "working", turnOpen: false }));
+  const first = renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument();
   first.unmount();
-  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }));
-  routes["/api/agents/dev/events?around=5"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
+    json(detail({ status: "working", turnOpen: true }));
+  routes[`/api/agents/${refFor("dev")}/events?around=5`] = () =>
     json({ ...conversation(), hasMore: { before: true, after: true } });
-  renderApp("/agents/dev/session?event=5", alice);
+  renderApp(`/agents/${refFor("dev")}/session?event=5`, alice);
   await screen.findByText("Two entries.");
   expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument();
 });
 
 test("deep link loads a window around the event and highlights it", async () => {
-  routes["/api/agents/dev/events?around=5"] = () =>
+  routes[`/api/agents/${refFor("dev")}/events?around=5`] = () =>
     json({ ...conversation(), hasMore: { before: true, after: true } });
-  renderApp("/agents/dev/session?event=5", alice);
+  renderApp(`/agents/${refFor("dev")}/session?event=5`, alice);
   await screen.findByText("Two entries.");
   expect(vi.mocked(fetch).mock.calls.some(([u]) => String(u).includes("around=5"))).toBe(true);
   expect(document.getElementById("event-5")).toHaveAttribute("data-highlighted", "true");
   act(() =>
     ws.onMessage?.({
       type: "session_event",
-      agent: "dev",
+      agent: refFor("dev"),
       event: { ...se({ type: "assistant_text", text: "Later" }), seq: 11 },
     }),
   );
@@ -211,21 +214,21 @@ test("deep link loads a window around the event and highlights it", async () => 
 });
 
 test("a windowed view subscribes from the agent's lastSeq, not the highest seq on screen", async () => {
-  routes["/api/agents/dev"] = () => json(detail({}, [], 42));
-  routes["/api/agents/dev/events?around=5"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () => json(detail({}, [], 42));
+  routes[`/api/agents/${refFor("dev")}/events?around=5`] = () =>
     json({ ...conversation(), hasMore: { before: true, after: true } });
-  renderApp("/agents/dev/session?event=5", alice);
+  renderApp(`/agents/${refFor("dev")}/session?event=5`, alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() =>
-    expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 42 }),
+    expect(ws.sent).toContainEqual({ type: "subscribe", agent: refFor("dev"), afterSeq: 42 }),
   );
-  expect(ws.sent).not.toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 10 });
+  expect(ws.sent).not.toContainEqual({ type: "subscribe", agent: refFor("dev"), afterSeq: 10 });
 });
 
 test("a deep link focuses its row, and a click elsewhere doesn't take the target away", async () => {
-  routes["/api/agents/dev/events?around=5"] = () =>
+  routes[`/api/agents/${refFor("dev")}/events?around=5`] = () =>
     json({ ...conversation(), hasMore: { before: true, after: true } });
-  renderApp("/agents/dev/session?event=5", alice);
+  renderApp(`/agents/${refFor("dev")}/session?event=5`, alice);
   await screen.findByText("Two entries.");
   const wrap = document.getElementById("event-5") as HTMLElement;
   const row = wrap.querySelector("[data-row]") as HTMLElement;
@@ -236,9 +239,9 @@ test("a deep link focuses its row, and a click elsewhere doesn't take the target
 });
 
 test("Jump to latest leaves the window and loads the newest page", async () => {
-  routes["/api/agents/dev/events?around=5"] = () =>
+  routes[`/api/agents/${refFor("dev")}/events?around=5`] = () =>
     json({ ...conversation(), hasMore: { before: true, after: true } });
-  const { router } = renderApp("/agents/dev/session?event=5", alice);
+  const { router } = renderApp(`/agents/${refFor("dev")}/session?event=5`, alice);
   await screen.findByText("Two entries.");
   await userEvent.click(await screen.findByRole("button", { name: "Jump to latest" }));
   await vi.waitFor(() => expect(router.state.location.search).toEqual({}));
@@ -251,9 +254,9 @@ test("Jump to latest leaves the window and loads the newest page", async () => {
 });
 
 test("a missing deep-link event falls back to the latest page with a note", async () => {
-  routes["/api/agents/dev/events?around=999"] = () =>
+  routes[`/api/agents/${refFor("dev")}/events?around=999`] = () =>
     json({ error: { code: "event_not_found", message: "x" } }, 404);
-  renderApp("/agents/dev/session?event=999", alice);
+  renderApp(`/agents/${refFor("dev")}/session?event=999`, alice);
   expect(
     await screen.findByText("Event 999 isn't in this session. Showing the latest."),
   ).toBeInTheDocument();
@@ -262,13 +265,16 @@ test("a missing deep-link event falls back to the latest page with a note", asyn
 });
 
 test("an unknown agent shows the not-found state", async () => {
-  routes["/api/agents/dev"] = () => json({ error: { code: "agent_not_found", message: "x" } }, 404);
-  renderApp("/agents/dev/session", alice);
-  expect(await screen.findByRole("heading", { name: "Page not found." })).toBeInTheDocument();
+  routes[`/api/agents/${refFor("dev")}`] = () =>
+    json({ error: { code: "agent_not_found", message: "x" } }, 404);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
+  expect(
+    await screen.findByRole("heading", { name: "No agent at this link." }),
+  ).toBeInTheDocument();
 });
 
 test("queued messages come only from queue frames and say they aren't delivered", async () => {
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json(
       detail({ status: "errored", lastError: "Set CLAUDE_CODE_OAUTH_TOKEN to run agents" }, [
         {
@@ -282,17 +288,17 @@ test("queued messages come only from queue frames and say they aren't delivered"
         },
       ]),
     );
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   expect(await screen.findByText("pending body")).toBeInTheDocument();
   expect(
     screen.getByText("Not delivered yet: Set CLAUDE_CODE_OAUTH_TOKEN to run agents"),
   ).toBeInTheDocument();
-  act(() => ws.onMessage?.({ type: "queue", agent: "dev", items: [] }));
+  act(() => ws.onMessage?.({ type: "queue", agent: refFor("dev"), items: [] }));
   await vi.waitFor(() => expect(screen.queryByText("pending body")).not.toBeInTheDocument());
 });
 
 test("keyboard: the timeline is one tab stop with arrow-key roving focus", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   const rows = screen.getByRole("log", { name: "Session" }).querySelectorAll("[data-row]");
   expect([...rows].filter((r) => r.getAttribute("tabindex") === "0")).toHaveLength(1);
@@ -304,35 +310,37 @@ test("keyboard: the timeline is one tab stop with arrow-key roving focus", async
 });
 
 const live = (seq: number, event: Parameters<typeof se>[0]) =>
-  act(() => ws.onMessage?.({ type: "session_event", agent: "dev", event: { ...se(event), seq } }));
+  act(() =>
+    ws.onMessage?.({ type: "session_event", agent: refFor("dev"), event: { ...se(event), seq } }),
+  );
 const windowAround5 = () => {
-  routes["/api/agents/dev/events?around=5"] = () =>
+  routes[`/api/agents/${refFor("dev")}/events?around=5`] = () =>
     json({ ...conversation(), hasMore: { before: true, after: true } });
 };
 const page = (events: ReturnType<typeof se>[], before = false) =>
   json({ events, hasMore: { before, after: false } });
 
 test("a server restart: a reload that hits a 502 keeps the session on screen and retries when the socket is back", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json({ error: { code: "bad_gateway", message: "Bad Gateway" } }, 502);
-  act(() => ws.onMessage?.({ type: "resync", agent: "dev" }));
+  act(() => ws.onMessage?.({ type: "resync", agent: refFor("dev") }));
   expect(await screen.findByText(/Couldn't load this session/)).toBeInTheDocument();
   expect(screen.getByText("Two entries.")).toBeInTheDocument(); // the last data stays
   expect(screen.queryByRole("heading", { name: "Something went wrong." })).toBeNull();
-  routes["/api/agents/dev"] = () => json(detail());
+  routes[`/api/agents/${refFor("dev")}`] = () => json(detail());
   act(() => ws.reopen());
   await vi.waitFor(() => expect(screen.queryByText(/Couldn't load this session/)).toBeNull());
   expect(screen.getByText("Two entries.")).toBeInTheDocument();
 });
 
 test("a first load that fails before the server is back retries itself on reconnect", async () => {
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json({ error: { code: "bad_gateway", message: "Bad Gateway" } }, 502);
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   expect(await screen.findByText(/Couldn't load this session/)).toBeInTheDocument();
-  routes["/api/agents/dev"] = () => json(detail());
+  routes[`/api/agents/${refFor("dev")}`] = () => json(detail());
   act(() => ws.reopen());
   expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
   expect(screen.queryByText(/Couldn't load this session/)).toBeNull();
@@ -340,10 +348,10 @@ test("a first load that fails before the server is back retries itself on reconn
 
 test("window mode: a reconnect resubscribes after the newest counted seq and doesn't double count", async () => {
   windowAround5();
-  renderApp("/agents/dev/session?event=5", alice);
+  renderApp(`/agents/${refFor("dev")}/session?event=5`, alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() =>
-    expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 10 }),
+    expect(ws.sent).toContainEqual({ type: "subscribe", agent: refFor("dev"), afterSeq: 10 }),
   );
   live(11, { type: "assistant_text", text: "a" });
   live(12, { type: "assistant_text", text: "b" });
@@ -352,7 +360,7 @@ test("window mode: a reconnect resubscribes after the newest counted seq and doe
   ws.sent = [];
   act(() => ws.reopen());
   await vi.waitFor(() =>
-    expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 12 }),
+    expect(ws.sent).toContainEqual({ type: "subscribe", agent: refFor("dev"), afterSeq: 12 }),
   );
   live(12, { type: "assistant_text", text: "b" }); // replay
   expect(await screen.findByRole("button", { name: "2 new messages" })).toHaveAttribute(
@@ -362,12 +370,12 @@ test("window mode: a reconnect resubscribes after the newest counted seq and doe
 
 test("a resync while windowed reloads the same window", async () => {
   windowAround5();
-  renderApp("/agents/dev/session?event=5", alice);
+  renderApp(`/agents/${refFor("dev")}/session?event=5`, alice);
   await screen.findByText("Two entries.");
   const arounds = () =>
     vi.mocked(fetch).mock.calls.filter(([u]) => String(u).includes("around=5")).length;
   expect(arounds()).toBe(1);
-  act(() => ws.onMessage?.({ type: "resync", agent: "dev" }));
+  act(() => ws.onMessage?.({ type: "resync", agent: refFor("dev") }));
   await vi.waitFor(() => expect(arounds()).toBe(2));
   expect(await screen.findByRole("button", { name: "Jump to latest" })).toHaveAttribute(
     "data-shown",
@@ -375,21 +383,21 @@ test("a resync while windowed reloads the same window", async () => {
 });
 
 test("Load earlier prepends without a new-events pill; a failure says so and a later success clears it", async () => {
-  routes["/api/agents/dev/events?"] = () =>
+  routes[`/api/agents/${refFor("dev")}/events?`] = () =>
     json({
       ...conversation(),
       events: conversation().events.map((e) => ({ ...e, seq: e.seq + 10 })),
       hasMore: { before: true, after: false },
     });
-  routes["/api/agents/dev/events?before=11"] = () =>
+  routes[`/api/agents/${refFor("dev")}/events?before=11`] = () =>
     json({ error: { code: "internal", message: "boom" } }, 500);
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   await userEvent.click(screen.getByRole("button", { name: "Load earlier" }));
   expect(await screen.findByText("Couldn't load earlier events.")).toBeInTheDocument();
   expect(screen.queryByText(/Couldn't load this session/)).not.toBeInTheDocument();
   resetSeq();
-  routes["/api/agents/dev/events?before=11"] = () =>
+  routes[`/api/agents/${refFor("dev")}/events?before=11`] = () =>
     page([{ ...se({ type: "assistant_text", text: "Earlier text" }), seq: 3 }]);
   await userEvent.click(screen.getByRole("button", { name: "Load earlier" }));
   expect(await screen.findByText("Earlier text")).toBeInTheDocument();
@@ -399,7 +407,7 @@ test("Load earlier prepends without a new-events pill; a failure says so and a l
 });
 
 test("scrolled up, live rows are counted into the pill (singular, then plural)", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   const scroller = screen.getByRole("log", { name: "Session" }).parentElement as HTMLElement;
   Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 2000 });
@@ -431,7 +439,7 @@ test("pinned to the bottom, a content resize (queued block, working line) keeps 
       disconnect() {}
     },
   );
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   const scroller = screen.getByRole("log", { name: "Session" }).parentElement as HTMLElement;
   Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 900 });
@@ -442,7 +450,7 @@ test("pinned to the bottom, a content resize (queued block, working line) keeps 
 });
 
 test("Tab leaves the timeline: only the active row, its controls and its row menu are tabbable; Enter enters a row", async () => {
-  routes["/api/agents/dev/events?"] = () => {
+  routes[`/api/agents/${refFor("dev")}/events?`] = () => {
     const c = conversation();
     resetSeq();
     return page([
@@ -469,7 +477,7 @@ test("Tab leaves the timeline: only the active row, its controls and its row men
       },
     ]);
   };
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("docs");
   const log = screen.getByRole("log", { name: "Session" });
   await userEvent.click(within(log).getByRole("button", { name: /ls -la/ })); // expanded: code plates
@@ -490,9 +498,9 @@ test("Tab leaves the timeline: only the active row, its controls and its row men
 });
 
 test("a deep link to a seq without its own row tints the nearest later row", async () => {
-  routes["/api/agents/dev/events?around=8"] = () =>
+  routes[`/api/agents/${refFor("dev")}/events?around=8`] = () =>
     json({ ...conversation(), hasMore: { before: false, after: false } });
-  renderApp("/agents/dev/session?event=8", alice); // seq 8 is `usage`, not rendered
+  renderApp(`/agents/${refFor("dev")}/session?event=8`, alice); // seq 8 is `usage`, not rendered
   await screen.findByText("Two entries.");
   // The turn's footer (the turn_end, seq 9) is the nearest later row.
   expect(document.getElementById("event-9")).toHaveAttribute("data-highlighted", "true");
@@ -503,7 +511,7 @@ test("Copy link says so inline when the clipboard refuses", async () => {
     configurable: true,
     value: { writeText: vi.fn(() => Promise.reject(new Error("denied"))) },
   });
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   const row = document.getElementById("event-7") as HTMLElement;
   fireEvent.pointerDown(within(row).getByRole("button", { name: "Row actions" }), {
@@ -515,7 +523,7 @@ test("Copy link says so inline when the clipboard refuses", async () => {
 });
 
 test("a capped tool input shows its truncation note", async () => {
-  routes["/api/agents/dev/events?"] = () => {
+  routes[`/api/agents/${refFor("dev")}/events?`] = () => {
     resetSeq();
     return page([
       se({ type: "turn_started" }),
@@ -525,19 +533,19 @@ test("a capped tool input shows its truncation note", async () => {
       },
     ]);
   };
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await userEvent.click(await screen.findByRole("button", { name: /echo/ }));
   expect(screen.getByText("Truncated (1.2 MB)")).toBeInTheDocument();
 });
 
 test("an invalid ?event is ignored", async () => {
-  renderApp("/agents/dev/session?event=abc", alice);
+  renderApp(`/agents/${refFor("dev")}/session?event=abc`, alice);
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
   expect(document.querySelector("[data-highlighted]")).not.toBeInTheDocument();
 });
 
 test("a live tool_result flips a subagent from Running to Failed; nested work shows only when expanded", async () => {
-  routes["/api/agents/dev/events?"] = () => {
+  routes[`/api/agents/${refFor("dev")}/events?`] = () => {
     resetSeq();
     return page([
       se({ type: "turn_started" }),
@@ -545,15 +553,16 @@ test("a live tool_result flips a subagent from Running to Failed; nested work sh
       se({ type: "assistant_text", text: "nested voice", parentToolUseId: "tu1" }),
     ]);
   };
-  routes["/api/agents/dev"] = () => json(detail({ status: "working", turnOpen: true }, [], 3));
-  renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}`] = () =>
+    json(detail({ status: "working", turnOpen: true }, [], 3));
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const tool = await screen.findByRole("button", { name: /Subagent in this session/ });
   expect(within(tool).getByText("Running")).toBeInTheDocument();
   expect(screen.queryByText("nested voice")).not.toBeInTheDocument();
   await userEvent.click(tool);
   expect(screen.getByText("nested voice")).toBeInTheDocument();
   await vi.waitFor(() =>
-    expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 3 }),
+    expect(ws.sent).toContainEqual({ type: "subscribe", agent: refFor("dev"), afterSeq: 3 }),
   );
   live(4, { type: "tool_result", toolUseId: "tu1", content: "bad", isError: true });
   expect(await within(tool).findByText("Failed")).toBeInTheDocument();
@@ -577,8 +586,8 @@ const accepted = (body: string) => () =>
 
 test("disconnected: an accepted raw input shows as queued at once", async () => {
   ws.connects = false;
-  routes["/api/agents/dev/input"] = accepted("offline hello");
-  renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}/input`] = accepted("offline hello");
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   await userEvent.type(screen.getByRole("combobox", { name: /Message to/ }), "offline hello");
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -590,8 +599,8 @@ test("disconnected: an accepted raw input shows as queued at once", async () => 
 });
 
 test("connected: the 202's item replaces the Sending block, once (U3 §13.2)", async () => {
-  routes["/api/agents/dev/input"] = accepted("online hello");
-  renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}/input`] = accepted("online hello");
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() => expect(ws.sent.length).toBeGreaterThan(0));
   await userEvent.type(screen.getByRole("combobox", { name: /Message to/ }), "online hello");
@@ -604,7 +613,7 @@ test("connected: the 202's item replaces the Sending block, once (U3 §13.2)", a
 // --- S4 additions (UI design §4.4) ---
 
 test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (it is in the composer), ⋯", async () => {
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json(
       detail({
         status: "working",
@@ -618,7 +627,7 @@ test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (i
         },
       }),
     );
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   const header = screen.getByRole("banner");
   expect(within(header).getByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
@@ -644,11 +653,11 @@ test("header: avatar without badge, name, StatusBadge, one live fact, no Stop (i
 });
 
 test("header: no Stop while no turn is open; Restart when errored, its failure a toast", async () => {
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json(detail({ status: "errored", lastError: "Boom\nmore", errorKind: "crash" }));
-  routes["/api/agents/dev/restart"] = () =>
+  routes[`/api/agents/${refFor("dev")}/restart`] = () =>
     json({ error: { code: "restart_failed", message: "No slot." } }, 500);
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   const header = screen.getByRole("banner");
   expect(screen.queryByRole("button", { name: /Stop/ })).not.toBeInTheDocument();
@@ -659,7 +668,7 @@ test("header: no Stop while no turn is open; Restart when errored, its failure a
 });
 
 test("header: a terminated agent's Pin is its own button, outside the live line", async () => {
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json(
       detail({
         kind: "ephemeral",
@@ -669,7 +678,7 @@ test("header: a terminated agent's Pin is its own button, outside the live line"
         workspaceGraceEndsAt: "2099-11-21T09:00:00.000Z",
       }),
     );
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   const header = screen.getByRole("banner");
   const pin = within(header).getByRole("button", { name: /Pin workspace/ });
@@ -681,14 +690,14 @@ test("header: a terminated agent's Pin is its own button, outside the live line"
 });
 
 test("restart pending arrives by frame; a frame clears it", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   expect(screen.queryByText(/Restarts when idle/)).not.toBeInTheDocument();
   const frame = (restartPending: boolean, restartWaitingOn: number) =>
     act(() =>
       ws.onMessage?.({
         type: "agent_status",
-        agent: "dev",
+        agent: refFor("dev"),
         status: "working",
         turnOpen: true,
         restartPending,
@@ -703,8 +712,9 @@ test("restart pending arrives by frame; a frame clears it", async () => {
 });
 
 test("archived: the composer is replaced by a notice with a Restore button; no Compact or Stop", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
-  renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}`] = () =>
+    json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   expect(screen.getByText(/This agent is archived\./).textContent).toBe(
     "This agent is archived. Restore it to send messages.",
@@ -719,13 +729,13 @@ test("archived: the composer is replaced by a notice with a Restore button; no C
 
 test("archived: Restore restores in place and the composer comes back", async () => {
   let archived = true;
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json(detail({ archivedAt: archived ? "2026-11-19T10:00:00.000Z" : null }));
-  routes["/api/agents/dev/unarchive"] = () => {
+  routes[`/api/agents/${refFor("dev")}/unarchive`] = () => {
     archived = false;
     return json({ agent: agentSummary() });
   };
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
   await vi.waitFor(() =>
     expect(screen.queryByText(/This agent is archived\./)).not.toBeInTheDocument(),
@@ -737,8 +747,9 @@ test("archived: Restore restores in place and the composer comes back", async ()
 });
 
 test("archived: a refused Restore says why inline, and the button stays", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
-  routes["/api/agents/dev/unarchive"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
+    json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
+  routes[`/api/agents/${refFor("dev")}/unarchive`] = () =>
     json(
       {
         error: {
@@ -748,7 +759,7 @@ test("archived: a refused Restore says why inline, and the button stays", async 
       },
       409,
     );
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
   const line = await screen.findByText(
     "Couldn't restore @dev: Its manager @boss is archived. Change its manager first.",
@@ -759,13 +770,13 @@ test("archived: a refused Restore says why inline, and the button stays", async 
 
 test("archived: Restore from the session's menu restores, toasts, and brings the composer back", async () => {
   let archived = true;
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json(detail({ archivedAt: archived ? "2026-11-19T10:00:00.000Z" : null }));
-  routes["/api/agents/dev/unarchive"] = () => {
+  routes[`/api/agents/${refFor("dev")}/unarchive`] = () => {
     archived = false;
     return json({ agent: agentSummary() });
   };
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await userEvent.click(await screen.findByRole("button", { name: "Actions for Dev agent" }));
   await userEvent.click(await screen.findByRole("menuitem", { name: "Restore" }));
   expect(await screen.findByText("Restored @dev.")).toBeInTheDocument();
@@ -776,13 +787,13 @@ test("archived: Restore from the session's menu restores, toasts, and brings the
 
 test("Archive from the session's menu swaps the composer for the archived notice", async () => {
   let archived = false;
-  routes["/api/agents/dev"] = () =>
+  routes[`/api/agents/${refFor("dev")}`] = () =>
     json(detail({ archivedAt: archived ? "2026-11-19T10:00:00.000Z" : null }));
-  routes["/api/agents/dev/archive"] = () => {
+  routes[`/api/agents/${refFor("dev")}/archive`] = () => {
     archived = true;
     return json({ agent: agentSummary({ archivedAt: "2026-11-19T10:00:00.000Z" }) });
   };
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await userEvent.click(await screen.findByRole("button", { name: "Actions for Dev agent" }));
   await userEvent.click(await screen.findByRole("menuitem", { name: "Archive…" }));
   expect(await screen.findByText("Archived @dev.")).toBeInTheDocument();
@@ -790,15 +801,16 @@ test("Archive from the session's menu swaps the composer for the archived notice
 });
 
 test("archived with no events: the empty line doesn't point at a composer", async () => {
-  routes["/api/agents/dev"] = () => json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
-  routes["/api/agents/dev/events?"] = () => page([]);
-  renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}`] = () =>
+    json(detail({ archivedAt: "2026-11-19T10:00:00.000Z" }));
+  routes[`/api/agents/${refFor("dev")}/events?`] = () => page([]);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   expect(await screen.findByText("No messages yet.")).toBeInTheDocument();
   expect(screen.queryByText(/Send the first one below/)).not.toBeInTheDocument();
 });
 
 test("a paired denial shows inside its call: Denied state and the reason line; no standalone row", async () => {
-  routes["/api/agents/dev/events?"] = () => {
+  routes[`/api/agents/${refFor("dev")}/events?`] = () => {
     resetSeq();
     return page([
       se({ type: "turn_started" }),
@@ -822,8 +834,8 @@ test("a paired denial shows inside its call: Denied state and the reason line; n
       se({ type: "turn_end", isError: false, numTurns: 1 }),
     ]);
   };
-  routes["/api/agents/dev"] = () => json(detail({}, [], 7));
-  renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}`] = () => json(detail({}, [], 7));
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   // A Read row names its file, not the tool (spec §9.2); the full path is the name's title.
   const read = (await screen.findByTitle("/etc/x")).closest("button") as HTMLElement;
   expect(within(read).getByText("Denied")).toBeInTheDocument();
@@ -846,43 +858,43 @@ test.each([
   ["secrets", "Open Settings → Secrets", "/settings/secrets"],
   ["credentials", "Open Settings → Credentials", "/settings/credentials"],
   ["projects", "Open Settings → Projects", "/settings/projects"],
-  ["config", "Open configuration", "/agents/dev/config"],
+  ["config", "Open configuration", `/agents/${refFor("dev")}/config`],
   ["template", "Open template dev", "/templates/dev"],
 ] as const)("an error with fix %s links to %s", async (fix, linkName, href) => {
-  routes["/api/agents/dev/events?"] = errorPage({
+  routes[`/api/agents/${refFor("dev")}/events?`] = errorPage({
     type: "error",
     source: "spawn",
     message: "It failed.",
     fix,
   });
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   expect(await screen.findByRole("link", { name: linkName })).toHaveAttribute("href", href);
   // Only fix: edit_agent is a button that opens the sheet.
   expect(screen.queryByRole("button", { name: "Edit the agent" })).not.toBeInTheDocument();
 });
 
 test("a resume error shows its message in the timeline", async () => {
-  routes["/api/agents/dev/events?"] = errorPage({
+  routes[`/api/agents/${refFor("dev")}/events?`] = errorPage({
     type: "error",
     source: "resume",
     message: "No conversation found",
   });
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   expect(await screen.findByText("No conversation found")).toBeInTheDocument();
 });
 
 test("an error with fix edit_agent opens Edit agent", async () => {
-  routes["/api/agents/dev/events?"] = errorPage({
+  routes[`/api/agents/${refFor("dev")}/events?`] = errorPage({
     type: "error",
     source: "spawn",
     message: "The host skill x is missing.",
     fix: "edit_agent",
   });
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const fix = await screen.findByRole("button", { name: "Edit the agent" });
   expect(screen.queryByRole("link", { name: "Edit the agent" })).not.toBeInTheDocument();
   await userEvent.click(fix);
-  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", agentRef: refFor("dev") });
 });
 
 /** A response the test releases by hand; every request before or after the release gets a copy. */
@@ -900,16 +912,16 @@ const listed = () => json({ agents: [agentSummary()], more: false, running: { co
 test("with the agents list cached, the session renders its header from the summary while the detail loads", async () => {
   routes["/api/agents?"] = listed;
   const gate = held();
-  routes["/api/agents/dev"] = gate.respond;
+  routes[`/api/agents/${refFor("dev")}`] = gate.respond;
   const { router } = renderApp("/agents", alice);
   await screen.findByRole("link", { name: /Dev agent/ });
-  await act(() => router.navigate({ to: "/agents/$slug/session", params: { slug: "dev" } }));
+  await act(() => router.navigate({ to: "/agents/$ref/session", params: { ref: refFor("dev") } }));
   // No route pending screen: the header and strip come from the list's summary.
   expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
   expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
   expect(document.querySelector("[data-timeline-skeleton] [data-slot=skeleton]")).not.toBeNull();
   // Plain visit: the events page is requested alongside the detail, not after it.
-  await vi.waitFor(() => expect(requested("/api/agents/dev/events?")).toBe(1));
+  await vi.waitFor(() => expect(requested(`/api/agents/${refFor("dev")}/events?`)).toBe(1));
   gate.release(json(detail()));
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
   expect(document.querySelector("[data-timeline-skeleton]")).not.toBeInTheDocument();
@@ -917,13 +929,13 @@ test("with the agents list cached, the session renders its header from the summa
 
 test("with nothing cached, the route still waits for the detail", async () => {
   const gate = held();
-  routes["/api/agents/dev"] = gate.respond;
-  renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}`] = gate.respond;
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await act(async () => {
     await new Promise((r) => setTimeout(r, 50));
   });
   expect(screen.queryByRole("heading", { level: 1, name: "Dev agent" })).not.toBeInTheDocument();
-  expect(requested("/api/agents/dev/events?")).toBe(0);
+  expect(requested(`/api/agents/${refFor("dev")}/events?`)).toBe(0);
   gate.release(json(detail()));
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
 });
@@ -932,8 +944,8 @@ test("a cold load renders from the detail the route waited for while the session
   // The loader's GET answers; the view's own fresh read (for lastSeq) is held.
   const gate = held();
   let calls = 0;
-  routes["/api/agents/dev"] = () => (++calls === 1 ? json(detail()) : gate.respond());
-  renderApp("/agents/dev/session", alice);
+  routes[`/api/agents/${refFor("dev")}`] = () => (++calls === 1 ? json(detail()) : gate.respond());
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   expect(await screen.findByRole("heading", { level: 1, name: "Dev agent" })).toBeInTheDocument();
   await vi.waitFor(() => expect(detailRequests()).toBe(2));
   expect(document.querySelector("[data-timeline-skeleton] [data-slot=skeleton]")).not.toBeNull();
@@ -942,28 +954,29 @@ test("a cold load renders from the detail the route waited for while the session
   gate.release(json(detail()));
   expect(await screen.findByText("Two entries.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
-  localStorage.removeItem("of-draft:v1:agent:dev"); // the unsent draft would carry into the next test
+  localStorage.removeItem(`of-draft:v1:agent:${refFor("dev")}`); // the unsent draft would carry into the next test
 });
 
 test("a cached summary whose agent turns out not to exist shows Agent not found", async () => {
   routes["/api/agents?"] = listed;
-  routes["/api/agents/dev"] = () => json({ error: { code: "agent_not_found", message: "x" } }, 404);
+  routes[`/api/agents/${refFor("dev")}`] = () =>
+    json({ error: { code: "agent_not_found", message: "x" } }, 404);
   const { router } = renderApp("/agents", alice);
   await screen.findByRole("link", { name: /Dev agent/ });
-  await act(() => router.navigate({ to: "/agents/$slug/session", params: { slug: "dev" } }));
+  await act(() => router.navigate({ to: "/agents/$ref/session", params: { ref: refFor("dev") } }));
   expect(await screen.findByRole("heading", { name: "Agent not found." })).toBeInTheDocument();
 });
 
 test("?message= resolves the message before asking for the events window", async () => {
-  routes["/api/agents/dev/events?around=5"] = () => json(conversation());
+  routes[`/api/agents/${refFor("dev")}/events?around=5`] = () => json(conversation());
   const gate = held();
   routes["/api/messages/m1"] = gate.respond;
-  renderApp("/agents/dev/session?message=m1", alice);
+  renderApp(`/agents/${refFor("dev")}/session?message=m1`, alice);
   await vi.waitFor(() => expect(requested("/api/messages/m1")).toBe(1));
   await act(async () => {
     await new Promise((r) => setTimeout(r, 30));
   });
-  expect(requested("/api/agents/dev/events?")).toBe(0);
+  expect(requested(`/api/agents/${refFor("dev")}/events?`)).toBe(0);
   gate.release(
     json({
       id: "m1",
@@ -972,14 +985,14 @@ test("?message= resolves the message before asking for the events window", async
       fromKind: "agent",
       to: "@dev",
       state: "delivered",
-      recipientEvent: { agentSlug: "dev", seq: 5 },
+      recipientEvent: { agentRef: refFor("dev"), seq: 5 },
     }),
   );
   await vi.waitFor(() => expect(requested("around=5")).toBe(1));
 });
 
 test("?message= on a reply from this agent opens its sending call", async () => {
-  routes["/api/agents/dev/events?around=7"] = () => json(conversation());
+  routes[`/api/agents/${refFor("dev")}/events?around=7`] = () => json(conversation());
   routes["/api/messages/m2"] = () =>
     json({
       id: "m2",
@@ -988,14 +1001,14 @@ test("?message= on a reply from this agent opens its sending call", async () => 
       fromKind: "agent",
       to: "@alice",
       state: "delivered",
-      senderEvent: { agentSlug: "dev", seq: 7 },
+      senderEvent: { agentRef: refFor("dev"), seq: 7 },
     });
-  renderApp("/agents/dev/session?message=m2", alice);
+  renderApp(`/agents/${refFor("dev")}/session?message=m2`, alice);
   await vi.waitFor(() => expect(requested("around=7")).toBe(1));
 });
 
 const detailRequests = () =>
-  vi.mocked(fetch).mock.calls.filter(([u]) => String(u) === "/api/agents/dev").length;
+  vi.mocked(fetch).mock.calls.filter(([u]) => String(u) === `/api/agents/${refFor("dev")}`).length;
 /** Hover intent: the router preloads after its delay. */
 const hover = async (link: HTMLElement) => {
   fireEvent.mouseEnter(link);
@@ -1015,7 +1028,9 @@ test("hovering a cached agent's link fetches its detail once, however often; the
   await hover(link);
   expect(detailRequests()).toBe(1);
   fireEvent.click(link);
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/dev/chat"));
+  await vi.waitFor(() =>
+    expect(router.state.location.pathname).toBe(`/agents/${refFor("dev")}/chat`),
+  );
   // The hover's warm-up, then the layout's own fresh read: never one per hover.
   await vi.waitFor(() => expect(detailRequests()).toBe(2));
 });
@@ -1029,7 +1044,7 @@ test("a stale list status turning into the loaded one is not announced", async (
     });
   const { router } = renderApp("/agents", alice);
   await screen.findByRole("link", { name: /Dev agent/ });
-  await act(() => router.navigate({ to: "/agents/$slug/session", params: { slug: "dev" } }));
+  await act(() => router.navigate({ to: "/agents/$ref/session", params: { ref: refFor("dev") } }));
   await screen.findByText("Two entries.");
   await act(async () => {
     await new Promise((r) => setTimeout(r, 30));
@@ -1044,10 +1059,10 @@ test("a stale list status turning into the loaded one is not announced", async (
 test("the composer can't send until the session has loaded", async () => {
   routes["/api/agents?"] = listed;
   const gate = held();
-  routes["/api/agents/dev"] = gate.respond;
+  routes[`/api/agents/${refFor("dev")}`] = gate.respond;
   const { router } = renderApp("/agents", alice);
   await screen.findByRole("link", { name: /Dev agent/ });
-  await act(() => router.navigate({ to: "/agents/$slug/session", params: { slug: "dev" } }));
+  await act(() => router.navigate({ to: "/agents/$ref/session", params: { ref: refFor("dev") } }));
   const box = await screen.findByRole("combobox", { name: "Message to Dev agent" });
   await userEvent.type(box, "early");
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
@@ -1061,30 +1076,34 @@ test("the composer can't send until the session has loaded", async () => {
 
 test("?event= asks for its window only after the detail", async () => {
   routes["/api/agents?"] = listed;
-  routes["/api/agents/dev/events?around=5"] = () => json(conversation());
+  routes[`/api/agents/${refFor("dev")}/events?around=5`] = () => json(conversation());
   const gate = held();
-  routes["/api/agents/dev"] = gate.respond;
+  routes[`/api/agents/${refFor("dev")}`] = gate.respond;
   const { router } = renderApp("/agents", alice);
   await screen.findByRole("link", { name: /Dev agent/ });
   await act(() =>
-    router.navigate({ to: "/agents/$slug/session", params: { slug: "dev" }, search: { event: 5 } }),
+    router.navigate({
+      to: "/agents/$ref/session",
+      params: { ref: refFor("dev") },
+      search: { event: 5 },
+    }),
   );
   await screen.findByRole("heading", { level: 1, name: "Dev agent" });
   await act(async () => {
     await new Promise((r) => setTimeout(r, 30));
   });
-  expect(requested("/api/agents/dev/events?")).toBe(0);
+  expect(requested(`/api/agents/${refFor("dev")}/events?`)).toBe(0);
   gate.release(json(detail()));
   await vi.waitFor(() => expect(requested("around=5")).toBe(1));
-  expect(requested("/api/agents/dev/events?")).toBe(1);
+  expect(requested(`/api/agents/${refFor("dev")}/events?`)).toBe(1);
 });
 
 test("a saved summary written to the agent's detail cache (Edit agent over the session) renames the header at once", async () => {
-  const { queryClient } = renderApp("/agents/dev/session", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByRole("heading", { level: 1, name: "Dev agent" });
   await screen.findByText("Two entries.");
   act(() =>
-    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+    queryClient.setQueryData<AgentDetail>(["agent", refFor("dev")], (d) =>
       d ? { ...d, agent: { ...d.agent, displayName: "Renamed" } } : d,
     ),
   );
@@ -1092,15 +1111,15 @@ test("a saved summary written to the agent's detail cache (Edit agent over the s
 });
 
 test("a status-frame write to the detail cache never overwrites the session's live turn fields", async () => {
-  const { queryClient } = renderApp("/agents/dev/session", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   await vi.waitFor(() =>
-    expect(ws.sent).toContainEqual({ type: "subscribe", agent: "dev", afterSeq: 10 }),
+    expect(ws.sent).toContainEqual({ type: "subscribe", agent: refFor("dev"), afterSeq: 10 }),
   );
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "working",
       turnOpen: true,
       turnStartedAt: new Date(Date.now() - 65_000).toISOString(),
@@ -1115,13 +1134,13 @@ test("a status-frame write to the detail cache never overwrites the session's li
   await vi.waitFor(() => expect(line()).toHaveTextContent(/1m/));
   // The global status-frame writer patches the cached detail without the live turn fields (a manual write).
   act(() =>
-    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+    queryClient.setQueryData<AgentDetail>(["agent", refFor("dev")], (d) =>
       d ? { ...d, agent: { ...d.agent, status: "working", turnOpen: true } } : d,
     ),
   );
   // An Edit save afterwards still renames the header, and keeps the turn live too.
   act(() =>
-    queryClient.setQueryData<AgentDetail>(["agent", "dev"], (d) =>
+    queryClient.setQueryData<AgentDetail>(["agent", refFor("dev")], (d) =>
       d ? { ...d, agent: { ...d.agent, displayName: "Renamed" } } : d,
     ),
   );
@@ -1134,13 +1153,13 @@ test("a status-frame write to the detail cache never overwrites the session's li
 // keep its live values whichever of the two rAF flushes lands last.
 const nextFrame = () => act(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
 test("a status flush into the detail cache keeps the open turn's elapsed timer", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   expect(document.querySelector("[data-activity-line]")).not.toBeInTheDocument();
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "working",
       turnOpen: true,
       turnStartedAt: new Date(Date.now() - 5000).toISOString(),
@@ -1158,12 +1177,12 @@ test("a status flush into the detail cache keeps the open turn's elapsed timer",
 });
 
 test("a status flush into the detail cache keeps a running compaction", async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
   act(() =>
     ws.onMessage?.({
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "working",
       turnOpen: true,
       compacting: true,

@@ -103,7 +103,7 @@ export function sendCommandTool(d: {
           if (cls.kind === "command" && cls.name === "compact" && cls.args.length > MAX_FOCUS_CHARS)
             return toolError(`The compact focus is longer than ${MAX_FOCUS_CHARS} characters.`);
 
-          const rt = await d.runtimes.bySlug(target.slug);
+          const rt = await d.runtimes.load(target.id);
           if (!rt) return toolError(`${label} isn't you or one of your direct reports.`);
           const live = rt.live();
           const note = noteFor({

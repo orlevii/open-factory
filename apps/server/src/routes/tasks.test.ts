@@ -56,7 +56,7 @@ test("POST creates (201) as the human; the detail has history and the creator", 
     key: "T-1",
     title: "Plan",
     status: "open",
-    assignee: { slug: "dev" },
+    assignee: { handle: "dev" },
     blockedBy: [],
   });
   expect(t.createdBy).toMatchObject({ kind: "human", ref: expect.any(String), handle: "or" });
@@ -283,10 +283,10 @@ test("GET /api/agents carries openTasks", async () => {
   await create({ title: "b", assignee: "dev" });
   await call("PATCH", "/api/tasks/T-2", { status: "done" });
   const agents = (await call("GET", "/api/agents")).json().agents as {
-    slug: string;
+    handle: string;
     openTasks: number;
   }[];
-  expect(Object.fromEntries(agents.map((a) => [a.slug, a.openTasks]))).toEqual({
+  expect(Object.fromEntries(agents.map((a) => [a.handle, a.openTasks]))).toEqual({
     lead: 0,
     dev: 1,
     qa: 0,

@@ -7,20 +7,20 @@ import { agentDetailQueryOptions, summaryFromAgentsList } from "@/features/sessi
  *  events, the queue or a chat refetch. Until the detail is cached it is the list's summary (a plain
  *  read: the detail arrives within the same visit and takes over). */
 export function useAgentSummary(
-  slug: string,
+  ref: string,
   /** A view mounting beside the layout reads what the layout fetched; it never fetches it again. */
   o: { refetchOnMount?: false } = {},
 ): AgentSummary | undefined {
   const qc = useQueryClient();
   const { data } = useQuery({
-    ...agentDetailQueryOptions(slug),
+    ...agentDetailQueryOptions(ref),
     ...o,
     // Frames keep it current; a focus or a reconnect refetching it would only be a second GET.
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     select: selectAgent,
   });
-  return data ?? summaryFromAgentsList(qc, slug);
+  return data ?? summaryFromAgentsList(qc, ref);
 }
 
 const selectAgent = (d: { agent: AgentSummary }) => d.agent;

@@ -15,6 +15,7 @@ import { InvalidCursorError } from "../agents/errors.ts";
 import { requireUser } from "../auth/require-user.ts";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
+import { NO_AGENT_AT_REF, refParams } from "./ref-params.ts";
 
 const inboxQuerySchema = z.object({
   before: z.string().min(1).optional(),
@@ -50,12 +51,13 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
         const { chats: unread, updates: unreadUpdates, ...rest } = page;
         const withAgent = (rows: typeof unread) =>
           Promise.all(
-            (rows ?? []).map(async ({ slug, ...row }) => {
-              const a = await app.agents.summary(slug);
+            (rows ?? []).map(async ({ ref, ...row }) => {
+              const a = await app.agents.summary(ref);
               return {
                 ...row,
                 agent: {
-                  slug: a.slug,
+                  ref: a.ref,
+                  handle: a.handle,
                   displayName: a.displayName,
                   template: a.template,
                   avatarVersion: a.avatarVersion,
@@ -108,10 +110,10 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.post(
-    "/api/inbox/read-from/:slug",
+    "/api/inbox/read-from/:ref",
     {
       schema: {
-        params: z.object({ slug: z.string().min(1).max(64) }),
+        params: refParams,
         body: readFromBodySchema,
         response: { 200: readFromResponseSchema },
       },
@@ -121,11 +123,11 @@ export const inboxRoutes: FastifyPluginAsyncZod = async (app) => {
       try {
         const r = await app.store.markReadFrom(
           userId,
-          req.params.slug,
+          req.params.ref,
           req.body.upTo,
           req.body.kind,
         );
-        if (!r) throw new ApiError(404, "agent_not_found", "No such agent");
+        if (!r) throw new ApiError(404, "agent_not_found", NO_AGENT_AT_REF);
         if (r.marked) app.bus.publishToUser(userId, { type: "inbox_changed" });
         return r;
       } catch (err) {

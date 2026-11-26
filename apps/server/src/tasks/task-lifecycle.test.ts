@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 import { testRef } from "../test/principals.ts";
 import type { Actor } from "./permission.ts";
 
@@ -26,12 +26,12 @@ beforeEach(async () => {
 afterEach(() => h.close());
 
 const settle = async (...slugs: string[]) => {
-  for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
+  for (const s of slugs) await (await runtimeOf(h.app, s))?.settled();
 };
 const procs = (slug: string) => driver.startsOf(slug);
 const proc = (slug: string) => procs(slug).at(-1);
 const reasons = async (slug: string) => {
-  const a = await h.app.store.agentBySlug(slug);
+  const a = await agentRowOf(h.app, slug);
   return (await h.app.store.after(a?.id ?? "", 0, 200))
     .map((e) => e.event)
     .flatMap((e) => (e.type === "process_started" ? [e.reason] : []));
@@ -42,7 +42,7 @@ const rows = (slug: string) =>
 const makeErrored = (slug = "dev") =>
   h.sql`update agents set status = 'errored', last_error = 'boom', error_kind = 'crashed' where slug = ${slug}`;
 const messageIns = async (slug: string) => {
-  const a = await h.app.store.agentBySlug(slug);
+  const a = await agentRowOf(h.app, slug);
   return (await h.app.store.after(a?.id ?? "", 0, 500)).flatMap((e) =>
     e.event.type === "message_in" ? e.event.messages : [],
   );
@@ -108,7 +108,7 @@ test("a rate-limited credential: the row waits", async () => {
   await h.app.tasks.update(or, "T-1", { status: "in_progress" });
   await settle("dev");
   expect(p?.sent.length).toBe(sentBefore);
-  expect((await h.app.runtimes.bySlug("dev"))?.live().status).toBe("rate_limited");
+  expect((await runtimeOf(h.app, "dev"))?.live().status).toBe("rate_limited");
   expect((await rows("dev")).at(-1)).toMatchObject({ kind: "task_update", state: "pending" });
 });
 
@@ -121,15 +121,15 @@ test("a server stop between commit and hand-off: the next boot delivers the row 
   const id = (await rows("dev"))[0]?.id as string;
   await h.app.close();
   const next = await h.reopen();
-  await (await next.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(next.app, "dev"))?.settled();
   await vi.waitFor(async () => expect(procs("dev")).toHaveLength(1));
-  await (await next.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(next.app, "dev"))?.settled();
   const ins = (await messageIns("dev")).filter((m) => m.id === id || m.ids?.includes(id));
   expect(ins).toHaveLength(1);
   procs("dev")
     .at(-1)
     ?.emit(...ev.fullTurn("sess-dev"));
-  await (await next.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(next.app, "dev"))?.settled();
   expect((await rows("dev"))[0]?.state).toBe("delivered");
 });
 
@@ -172,7 +172,7 @@ test("a spawner terminating its child: pending task rows are rejected, the task 
   });
   expect((await rows("kid")).map((x) => x.state)).toEqual(["rejected"]);
   const t = await h.app.tasks.detail("T-1", { comments: "all" });
-  expect(t.assignee).toMatchObject({ slug: "kid", ended: "terminated" });
+  expect(t.assignee).toMatchObject({ handle: "kid", ended: "terminated" });
   const r = await h.app.tasks.update(agent("lead"), "T-1", { status: "in_progress" });
   expect(r.changed).toEqual(["status"]);
   expect(r.task.assigneeEnded).toBe("terminated");
@@ -184,12 +184,20 @@ test("unarchive is not retroactive: nothing was written while the agent was arch
   await settle("dev");
   proc("dev")?.emit(...ev.fullTurn("sess-dev"));
   await settle("dev");
-  await h.app.agents.archive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.archive(await h.refOf("dev"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   const before = (await rows("dev")).length;
   await h.app.tasks.update(or, "T-1", { status: "in_progress" });
   await h.app.tasks.comment(or, "T-1", "@dev hello");
   expect((await rows("dev")).length).toBe(before);
-  await h.app.agents.unarchive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.unarchive(await h.refOf("dev"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   await settle("dev");
   expect((await rows("dev")).length).toBe(before);
 });
@@ -202,7 +210,7 @@ test("start a new session with only a task_update queued starts an attempt (S5's
   await h.app.tasks.update(or, "T-1", { status: "in_progress" });
   await settle("dev");
   expect(procs("dev")).toHaveLength(0);
-  const rt = await h.app.runtimes.bySlug("dev");
+  const rt = await runtimeOf(h.app, "dev");
   await rt?.resetSession({ by: "<@or>" });
   await settle("dev");
   expect(await reasons("dev")).toContain("reset");

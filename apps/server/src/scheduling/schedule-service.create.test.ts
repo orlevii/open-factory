@@ -56,7 +56,7 @@ test("a human creates a weekday cron: authored by them, next run computed from t
     createdBy: { kind: "human", ref: testRef("u1"), handle: "or" },
     bodyAuthor: { kind: "human", ref: testRef("u1"), handle: "or" },
     state: "active",
-    target: { slug: "ceo" },
+    target: { handle: "ceo", ref: testRef("ceo") },
   });
   const [row] = await t.sql`select created_by_id, body_author_id from schedules`;
   expect(row).toEqual({ created_by_id: "u1", body_author_id: "u1" });
@@ -66,11 +66,11 @@ test("a human creates a weekday cron: authored by them, next run computed from t
 test("an agent's target defaults to itself, and 'me' and '@slug' resolve", async () => {
   for (const to of [undefined, "me", "@dev", "dev"]) {
     const { item } = await svc.create(agent("dev"), { ...(to ? { target: to } : {}), ...weekday });
-    expect(item.target.slug).toBe("dev");
+    expect(item.target.handle).toBe("dev");
     expect(item.createdBy).toMatchObject({ kind: "agent", handle: "dev" });
   }
   const { item } = await svc.create(agent("dev"), { target: "@ceo", ...weekday });
-  expect(item.target.slug).toBe("ceo");
+  expect(item.target.handle).toBe("ceo");
 });
 
 test("a note for an agent: recurring to itself, and an errored target", async () => {
@@ -201,7 +201,7 @@ test("a caller terminated meanwhile is refused", async () => {
 test("a spawned agent can be a target", async () => {
   await t.sql`update agents set kind = 'ephemeral', reports_to = 'ceo' where id = 'dev'`;
   const { item } = await svc.create(or, { target: "dev", ...weekday });
-  expect(item.target.slug).toBe("dev");
+  expect(item.target.handle).toBe("dev");
 });
 
 async function waitForLocks(n: number): Promise<void> {

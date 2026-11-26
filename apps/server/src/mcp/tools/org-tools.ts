@@ -179,12 +179,12 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Read an agent: its identity, manager, credential and projects by name, its overlay with overlay_hash (pass it back as base_hash to change config), its effective configuration (references, never values) and issues.",
       getAgentToolSchema,
       async ({ slug }) => {
-        const { handle: s, tag, warning } = await d.agents.handleOf(slug);
-        const [a, cfg] = await Promise.all([d.agents.summary(s), d.config.getConfig(s)]);
+        const { ref, tag, warning } = await d.agents.agentOf(slug);
+        const [a, cfg] = await Promise.all([d.agents.summary(ref), d.config.getConfig(ref)]);
         const facing = await d.facing({ texts: [a.description] });
         return {
-          slug: a.slug,
-          tag: tag ?? `@${a.slug}`,
+          slug: a.handle,
+          tag,
           display_name: a.displayName,
           description: facing.render(a.description),
           kind: a.kind,
@@ -240,10 +240,10 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Change an agent. A field you leave out is unchanged. config replaces the agent's whole overlay, so start from the one get_agent returned and pass its overlay_hash as base_hash. Everything is validated first and written together, or nothing is. The result's restart is a hint that a restart was requested, not a guarantee (an errored or hibernated agent does not restart).",
       updateAgentToolSchema,
       async (a, actor) => {
-        const { handle: slug, tag, warning } = await d.agents.handleOf(a.slug);
+        const { ref, handle: slug, tag, warning } = await d.agents.agentOf(a.slug);
         const manager =
           a.reports_to !== undefined ? await d.agents.managerHandleOf(a.reports_to) : undefined;
-        const before = await d.agents.summary(slug);
+        const before = await d.agents.summary(ref);
         const patch: PatchAgentBody = {
           ...(a.display_name !== undefined ? { displayName: a.display_name } : {}),
           ...(a.description !== undefined ? { description: a.description } : {}),
@@ -253,10 +253,10 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
         };
         const plan =
           a.config !== undefined && a.base_hash !== undefined
-            ? await d.config.planOverlay(slug, a.config, a.base_hash, actor)
+            ? await d.config.planOverlay(ref, a.config, a.base_hash, actor)
             : undefined;
         const tagWarnings: string[] = [];
-        const r = await d.agents.updateWithOverlay(slug, patch, plan, actor, tagWarnings);
+        const r = await d.agents.updateWithOverlay(ref, patch, plan, actor, tagWarnings);
         const same = (x: string[], y: string[]) =>
           [...x].sort().join("\0") === [...y].sort().join("\0");
         const fields: string[] = [
@@ -274,7 +274,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
           (identity && !before.archivedAt && before.status !== "hibernated");
         return {
           slug,
-          tag: tag ?? `@${slug}`,
+          tag,
           changed,
           restart,
           ...(r.config?.checked === "schema"
@@ -289,11 +289,11 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Archive an agent (not yourself). Refused while it has reports; the refusal names them.",
       getAgentToolSchema,
       async ({ slug }, actor) => {
-        const { handle, tag, warning } = await d.agents.handleOf(slug);
-        const a = await d.agents.archive(handle, actor);
+        const { ref, tag, warning } = await d.agents.agentOf(slug);
+        const a = await d.agents.archive(ref, actor);
         return {
-          slug: a.slug,
-          tag: tag ?? `@${handle}`,
+          slug: a.handle,
+          tag,
           archived: true,
           ...warned(warning),
         };
@@ -304,11 +304,11 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Unarchive an agent. Refused when its manager is archived, or when it can manage the org.",
       getAgentToolSchema,
       async ({ slug }, actor) => {
-        const { handle, tag, warning } = await d.agents.handleOf(slug);
-        const a = await d.agents.unarchive(handle, actor);
+        const { ref, tag, warning } = await d.agents.agentOf(slug);
+        const a = await d.agents.unarchive(ref, actor);
         return {
-          slug: a.slug,
-          tag: tag ?? `@${handle}`,
+          slug: a.handle,
+          tag,
           archived: false,
           ...warned(warning),
         };

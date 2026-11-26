@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import WebSocket from "ws";
 import { listenOrClose } from "../shutdown.ts";
-import { makeTestApp, TEST_ORIGIN } from "../test/helpers.ts";
+import { agentRefOf, makeTestApp, TEST_ORIGIN } from "../test/helpers.ts";
 
 const fake = createFakeClaude({ scenario: "reply" });
 let t: Awaited<ReturnType<typeof makeTestApp>>;
@@ -44,7 +44,9 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
     if (f.type === "session_event") seen.push(f.event.seq);
   });
   await new Promise((r) => ws.once("open", r));
-  ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+  ws.send(
+    JSON.stringify({ type: "subscribe", agent: await agentRefOf(t.app, "dev"), afterSeq: 0 }),
+  );
 
   const res = await t.app.inject({
     method: "POST",
@@ -55,8 +57,13 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
   expect(res.statusCode).toBe(202);
   await until(
     async () =>
-      (await t.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie } })).json()
-        .agent.status === "idle",
+      (
+        await t.app.inject({
+          method: "GET",
+          url: `/api/agents/${await agentRefOf(t.app, "dev")}`,
+          headers: { cookie },
+        })
+      ).json().agent.status === "idle",
   );
 
   const stdin = fake.log().filter((e) => e.kind === "stdin" && JSON.parse(e.line).type === "user");
@@ -72,7 +79,11 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
   );
 
   const page = (
-    await t.app.inject({ method: "GET", url: "/api/agents/dev/events", headers: { cookie } })
+    await t.app.inject({
+      method: "GET",
+      url: `/api/agents/${await agentRefOf(t.app, "dev")}/events`,
+      headers: { cookie },
+    })
   ).json();
   const types = page.events.map((e: { event: { type: string } }) => e.event.type);
   expect(types).toEqual([
@@ -92,7 +103,11 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
 
 test("server restart: graceful stop, then the next message resumes the same session", async () => {
   const before = (
-    await t.app.inject({ method: "GET", url: "/api/agents/dev/events", headers: { cookie } })
+    await t.app.inject({
+      method: "GET",
+      url: `/api/agents/${await agentRefOf(t.app, "dev")}/events`,
+      headers: { cookie },
+    })
   ).json();
   const sessionId = before.events.find(
     (e: { event: { type: string } }) => e.event.type === "session_started",
@@ -134,8 +149,13 @@ const alive = (pid: number) => {
 const startsOf = (f: FakeClaude) =>
   f.log().flatMap((e) => (e.kind === "start" && !e.argv.includes("--version") ? [e] : []));
 const statusOf = async (app: FastifyInstance, c: string) =>
-  (await app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c } })).json().agent
-    .status;
+  (
+    await app.inject({
+      method: "GET",
+      url: `/api/agents/${await agentRefOf(app, "dev")}`,
+      headers: { cookie: c },
+    })
+  ).json().agent.status;
 const post = (app: FastifyInstance, c: string, body: string) =>
   app.inject({
     method: "POST",
@@ -202,7 +222,7 @@ test("assembled: a server that died mid-turn: the next boot reaps the leftover c
     const page = (
       await next.app.inject({
         method: "GET",
-        url: "/api/agents/dev/events",
+        url: `/api/agents/${await agentRefOf(next.app, "dev")}/events`,
         headers: { cookie: c },
       })
     ).json();
@@ -238,7 +258,11 @@ test("assembled: graceful shutdown mid-turn → next boot delivers the factory_r
     await until(
       async () =>
         (
-          await w.app.inject({ method: "GET", url: "/api/agents/dev", headers: { cookie: c } })
+          await w.app.inject({
+            method: "GET",
+            url: `/api/agents/${await agentRefOf(w.app, "dev")}`,
+            headers: { cookie: c },
+          })
         ).json().agent.turnOpen === true,
     );
     // Close stdin, 3 s of grace, SIGTERM: the turn is cut short by the shutdown.

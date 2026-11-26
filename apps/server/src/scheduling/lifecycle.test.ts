@@ -1,6 +1,12 @@
 import { afterEach, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp, type TestAppOptions } from "../test/helpers.ts";
+import {
+  agentRowOf,
+  makeTestApp,
+  runtimeOf,
+  signUp,
+  type TestAppOptions,
+} from "../test/helpers.ts";
 import { seedTestUser } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
@@ -23,7 +29,7 @@ async function boot(factorySettings: TestAppOptions["factorySettings"] = {}) {
 }
 afterEach(() => h.close());
 
-const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id as string;
+const idOf = async (slug: string) => (await agentRowOf(h.app, slug))?.id as string;
 const fireAt = async (iso: string) => {
   clock = new Date(iso);
   await h.app.scheduler.tick();
@@ -33,7 +39,7 @@ const rows = () =>
   h.sql`select id, state, firings, late, to_id from messages where kind = 'scheduled' order by created_at`;
 const make = (target: string, body = "Review", over: Record<string, unknown> = {}) =>
   h.app.schedules.create({ kind: "human", id: userId }, { target, ...weekday, body, ...over });
-const settle = async (slug: string) => (await h.app.runtimes.bySlug(slug))?.settled();
+const settle = async (slug: string) => (await runtimeOf(h.app, slug))?.settled();
 
 test("terminating a spawned target soft-deletes its schedules and rejects its pending rows in the same transaction; Restore refuses", async () => {
   await boot();
@@ -62,12 +68,20 @@ test("archived target: firings skip; unarchive recomputes from now without catch
   await boot();
   await h.seedAgent({ slug: "ceo" });
   const { item } = await make("ceo");
-  await h.app.agents.archive("ceo", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.archive(await h.refOf("ceo"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   await fireAt("2026-11-23T08:00:00Z");
   expect(await rows()).toHaveLength(0);
   expect((await h.app.schedules.get(item.key))?.state).toBe("skipped_archived");
   clock = new Date("2026-11-26T12:00:00Z"); // three runs passed while archived
-  await h.app.agents.unarchive("ceo", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.unarchive(await h.refOf("ceo"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   const s = await h.app.schedules.get(item.key);
   expect(s).toMatchObject({ state: "active", nextRunAt: "2026-11-27T08:00:00.000Z" });
   await h.app.scheduler.tick();
@@ -83,7 +97,11 @@ test("an archived persistent creator's schedules keep firing", async () => {
     { kind: "agent", id: await idOf("dev") },
     { target: "ceo", ...weekday, body: "x" },
   );
-  await h.app.agents.archive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.archive(await h.refOf("dev"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   await fireAt("2026-11-23T08:00:00Z");
   expect(await rows()).toHaveLength(1);
   expect((await h.app.schedules.get(item.key))?.createdBy).toMatchObject({
@@ -110,7 +128,7 @@ test("an errored target: the row is pending and the item says so; no attempt sta
 test("a mid-turn target gets the row written at once", async () => {
   await boot();
   await h.seedAgent({ slug: "ceo" });
-  await h.app.runtimes.bySlug("ceo");
+  await runtimeOf(h.app, "ceo");
   const row = await h.app.store.createMessage({
     from: { userId },
     toAgentId: await idOf("ceo"),
@@ -118,7 +136,7 @@ test("a mid-turn target gets the row written at once", async () => {
     body: "go",
     urgent: false,
   });
-  await (await h.app.runtimes.bySlug("ceo"))?.deliver(await h.app.store.pendingRow(row.id), {
+  await (await runtimeOf(h.app, "ceo"))?.deliver(await h.app.store.pendingRow(row.id), {
     sender: "human",
     fromLabel: "@or",
   });
@@ -162,7 +180,7 @@ test("a server stopped between commit and hand-off: boot wakes the target and de
   // the next boot: bootWakes counts the scheduled row and wakes the target
   const wakes = await h.app.store.bootWakes();
   expect(wakes.map((w) => w.slug)).toEqual(["ceo"]);
-  await (await h.app.runtimes.bySlug("ceo"))?.bootWake("boot");
+  await (await runtimeOf(h.app, "ceo"))?.bootWake("boot");
   await settle("ceo");
   expect(driver.starts).toHaveLength(1);
   const p = driver.starts.at(-1);

@@ -25,7 +25,7 @@ export const outcomeSentence = (name: string, outcome: Outcome) =>
  * keeps its element. The elapsed time is its own component: a tick renders nothing else.
  */
 export const TurnLine = memo(function TurnLine({
-  slug,
+  agentRef,
   name,
   at,
   outcome,
@@ -33,7 +33,7 @@ export const TurnLine = memo(function TurnLine({
   live,
   gap,
 }: {
-  slug: string;
+  agentRef: string;
   name: string;
   /** `working.since`, or the turn's `endedAt`. */
   at: string;
@@ -75,8 +75,8 @@ export const TurnLine = memo(function TurnLine({
       <span className="shrink-0 whitespace-nowrap">
         <span className="whitespace-pre"> · </span>
         <Link
-          to="/agents/$slug/session"
-          params={{ slug }}
+          to="/agents/$ref/session"
+          params={{ ref: agentRef }}
           search={eventSeq != null ? { event: eventSeq } : {}}
           aria-label={`Open session at ${formatTime(at)}`}
           className="shrink-0 underline underline-offset-4 decoration-muted-foreground hover:text-foreground hover:decoration-ring"

@@ -4,6 +4,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -30,12 +31,12 @@ const item = {
   messageId: "m1",
   kind: "notice",
   read: false,
-  from: { kind: "agent", ref: "dev00000", handle: "dev" },
+  from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
   to: "@alice",
   preview: "preview one",
   urgent: false,
   createdAt: new Date(2026, 10, 19, 14, 0).toISOString(),
-  link: { kind: "session", agentSlug: "dev", seq: 41 },
+  link: { kind: "session", agentRef: refFor("dev"), seq: 41 },
 };
 const none = { hasCredential: false, hasTemplate: false, hasAgent: false };
 const row = () => document.querySelector<HTMLElement>('a[data-inbox-id="i1"]');

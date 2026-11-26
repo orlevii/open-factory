@@ -1,6 +1,7 @@
 import type { AnyEvent } from "@open-factory/shared";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import type { Row } from "./rows";
 import { Timeline } from "./timeline";
@@ -45,7 +46,7 @@ const rowEl = (key: string) => document.querySelector<HTMLElement>(`[data-row="$
 function show(rows: Row[], highlightSeq: number) {
   return renderInRouter(
     <Timeline
-      slug="dev"
+      agentRef={refFor("dev")}
       rows={rows}
       failedIds={new Set()}
       interruptedEnds={new Set()}

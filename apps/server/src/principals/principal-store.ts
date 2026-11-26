@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Db, schema } from "@open-factory/db";
+import { type AgentRow, type Db, schema } from "@open-factory/db";
 import { refOf } from "@open-factory/shared";
 import { tagOf } from "@open-factory/shared/tags";
 import { eq, inArray } from "drizzle-orm";
@@ -104,6 +104,16 @@ export async function principalsByRefs(
     .from(schema.principals)
     .where(inArray(schema.principals.ref, [...refs]));
   return new Map(rows.map((r) => [r.ref, toPrincipal(r)]));
+}
+
+/** The agent row whose principal has this ref (already normalised), or undefined. */
+export async function agentRowByRef(tx: Tx, ref: string): Promise<AgentRow | undefined> {
+  const [found] = await tx
+    .select({ agent: schema.agents })
+    .from(schema.principals)
+    .innerJoin(schema.agents, eq(schema.agents.id, schema.principals.id))
+    .where(eq(schema.principals.ref, ref));
+  return found?.agent;
 }
 
 /** Keyed by handle. */

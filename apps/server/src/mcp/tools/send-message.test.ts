@@ -43,7 +43,11 @@ test("every recipient refused is a tool error with one line per reason", async (
     "Channels aren't supported yet.",
   ]);
   // an archived recipient is refused too, and nothing is written for it
-  await h.app.agents.archive("bob", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.archive(await h.refOf("bob"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   const archived = await callTool(url, tok, "send_message", { to: ["bob"], body: "x" });
   expect(archived.isError).toBe(true);
   expect(text(archived)).toBe("@bob is archived and can't receive messages.");

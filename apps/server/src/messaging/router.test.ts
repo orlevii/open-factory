@@ -7,7 +7,7 @@ import type { Tx } from "../agents/event-store.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
 import { createPrincipal } from "../principals/principal-store.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 import { testRef } from "../test/principals.ts";
 import { LoopGuard } from "./loop-guard.ts";
 import { Router } from "./router.ts";
@@ -42,7 +42,7 @@ const guardOf = () =>
   });
 const proc = (slug: string) => driver.startsOf(slug).at(-1);
 const settle = async (...slugs: string[]) => {
-  for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
+  for (const s of slugs) await (await runtimeOf(h.app, s))?.settled();
 };
 /** Starts `slug` with a human message and returns its live token. */
 async function startIdle(slug: string) {
@@ -93,7 +93,7 @@ test("AC 1: send_message to a hibernated agent wakes it with agent_message; the 
     kind: "message",
     body: "ping",
   });
-  const b = await h.app.store.agentBySlug("bob");
+  const b = await agentRowOf(h.app, "bob");
   const started = (await h.app.store.after(b?.id ?? "", 0, 100)).map((e) => e.event);
   expect(started).toContainEqual(
     expect.objectContaining({ type: "process_started", reason: "agent_message" }),
@@ -105,7 +105,7 @@ test("AC 1: send_message to a hibernated agent wakes it with agent_message; the 
 
 test("an agent id smuggled in the tool arguments is ignored: the caller is the token's agent", async () => {
   const tokA = await startIdle("ada");
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   const r = await callTool(url, tokA, "send_message", {
     to: ["bob"],
     body: "who am I",
@@ -113,7 +113,7 @@ test("an agent id smuggled in the tool arguments is ignored: the caller is the t
     from: "lead",
   });
   const out = JSON.parse(text(r)).results[0];
-  const a = await h.app.store.agentBySlug("ada");
+  const a = await agentRowOf(h.app, "ada");
   expect((await h.sql`select from_id from messages where id = ${out.id}`)[0]).toEqual({
     from_id: a?.id,
   });
@@ -147,14 +147,14 @@ test("AC 3: an urgent message from an agent interrupts a working recipient", asy
   await callTool(url, tokA, "send_message", { to: ["lead"], body: "stop!", urgent: true });
   await settle("lead");
   expect(proc("lead")?.controls).toContainEqual({ kind: "control", cmd: "interrupt" });
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   const events = (await h.app.store.after(lead?.id ?? "", 0, 200)).map((e) => e.event);
   expect(events).toContainEqual({ type: "control", cmd: "interrupt", by: "@ada" });
 });
 
 test("a row loaded by init() and handed over again is written once and still wakes the agent", async () => {
-  const b = await h.app.store.agentBySlug("bob");
-  const a = await h.app.store.agentBySlug("ada");
+  const b = await agentRowOf(h.app, "bob");
+  const a = await agentRowOf(h.app, "ada");
   if (!a || !b) throw new Error("seed");
   const row = await h.app.store.createMessage({
     from: { agentId: a.id },
@@ -179,7 +179,7 @@ test("hand-offs wait for bootDone", async () => {
     neighborhood: h.app.neighborhood,
     loopGuard: guardOf(),
   });
-  const a = await h.app.store.agentBySlug("ada");
+  const a = await agentRowOf(h.app, "ada");
   const create = h.app.store.createMessage.bind(h.app.store);
   let committed!: () => void;
   const commit = new Promise<void>((r) => {
@@ -216,8 +216,8 @@ test("after close() no hand-off runs: rows committed during shutdown stay pendin
   });
   router.bootDone();
   router.close();
-  const a = await h.app.store.agentBySlug("ada");
-  const lead = await h.app.store.agentBySlug("lead");
+  const a = await agentRowOf(h.app, "ada");
+  const lead = await agentRowOf(h.app, "lead");
   if (!a || !lead) throw new Error("seed");
   const delivered = vi.spyOn(h.app.runtimes, "deliver");
   const held = vi.spyOn(h.app.runtimes, "receive");
@@ -238,7 +238,7 @@ test("after close() no hand-off runs: rows committed during shutdown stay pendin
 
 test("an errored fact and its reported flag commit together: a failed flag write leaves no inbox item to re-report", async () => {
   await signUp(h.app, { handle: "or" });
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("seed");
   vi.spyOn(h.app.store, "setErroredReported").mockRejectedValueOnce(new Error("db blip"));
   const frames0 = frames.length;
@@ -259,8 +259,8 @@ test("an errored fact and its reported flag commit together: a failed flag write
 });
 
 test("archive between resolve and hand-off marks the row rejected", async () => {
-  const a = await h.app.store.agentBySlug("ada");
-  const b = await h.app.store.agentBySlug("bob");
+  const a = await agentRowOf(h.app, "ada");
+  const b = await agentRowOf(h.app, "bob");
   if (!a || !b) throw new Error("seed");
   const row = await h.app.store.createMessage({
     from: { agentId: a.id },
@@ -269,7 +269,11 @@ test("archive between resolve and hand-off marks the row rejected", async () => 
     body: "late",
     urgent: false,
   });
-  await h.app.agents.archive("bob", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await h.app.agents.archive(await h.refOf("bob"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   await h.app.runtimes.deliver(row, "agent");
   await settle("bob");
   expect((await h.sql`select state from messages where id = ${row.id}`)[0]?.state).toBe("rejected");
@@ -319,8 +323,8 @@ test("AC 4: list_peers returns relations, scope all, and the humans every time",
 });
 
 test("Router.forward: a report's text and facts go to its manager agent as member_updates", async () => {
-  const a = await h.app.store.agentBySlug("ada");
-  const lead = await h.app.store.agentBySlug("lead");
+  const a = await agentRowOf(h.app, "ada");
+  const lead = await agentRowOf(h.app, "lead");
   if (!a || !lead) throw new Error("seed");
   await h.app.router.forward({ agentId: a.id, body: "progress" });
   await h.app.router.forward({ agentId: a.id, fact: "denied", body: "Bash was denied for @ada." });
@@ -339,7 +343,7 @@ test("Router.forward: a report's text and facts go to its manager agent as membe
 test("Router.forward: a human manager gets their report's text and facts in their own inbox only, and an errored episode as one notice for them alone", async () => {
   const or = await signUp(h.app, { handle: "or" });
   const sam = await signUp(h.app, { handle: "sam" });
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("seed");
   await h.sql`update agents set reports_to = ${or.user.id} where id = ${lead.id}`;
   const seen = { or: [] as ServerMessage[], sam: [] as ServerMessage[] };
@@ -397,7 +401,7 @@ test("Router.forward: a human manager gets their report's text and facts in thei
 test("R4 (owner): a human-managed agent's errored episode is one inbox item for its manager; a successful automatic recovery is none", async () => {
   const or = await signUp(h.app, { handle: "or" });
   await startIdle("lead"); // signs up a second user, "hlead"
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("seed");
   await h.sql`update agents set reports_to = ${or.user.id} where id = ${lead.id}`;
   const items = async () =>
@@ -463,10 +467,10 @@ test("a report's top-level text is persisted for its manager and handed over to 
   const handed = vi.spyOn(h.app.runtimes, "receive");
   proc("ada")?.emit(ev.turn(), ev.text("halfway there"), ev.usage(), ev.end());
   await settle("ada", "lead");
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   const rows =
     await h.sql`select id, from_id, body from messages where to_id = ${lead?.id ?? ""} and kind = 'member_update'`;
-  const ada = await h.app.store.agentBySlug("ada");
+  const ada = await agentRowOf(h.app, "ada");
   expect(rows).toEqual([{ id: expect.any(String), from_id: ada?.id, body: "halfway there" }]);
   expect(handed).toHaveBeenCalledTimes(1);
   expect(handed.mock.calls[0]?.[0]).toMatchObject({ id: rows[0]?.id, kind: "member_update" });
@@ -474,7 +478,7 @@ test("a report's top-level text is persisted for its manager and handed over to 
 
 test("a member update's re stores the sender's tag: a report's text to a human manager keeps the request it answers on the inbox row", async () => {
   const { user: manager } = await signUp(h.app, { handle: "boss" });
-  const ada = await h.app.store.agentBySlug("ada");
+  const ada = await agentRowOf(h.app, "ada");
   await h.sql`update agents set reports_to = ${manager.id} where id = ${ada?.id ?? ""}`;
   const { cookie } = await signUp(h.app, { handle: "asker" });
   await h.app.inject({
@@ -533,8 +537,8 @@ test("receive: a recipient that fails to load is logged, never thrown or unhandl
 });
 
 test("reconcile forwards factory_restarted lost work to the manager", async () => {
-  const a = await h.app.store.agentBySlug("ada");
-  const lead = await h.app.store.agentBySlug("lead");
+  const a = await agentRowOf(h.app, "ada");
+  const lead = await agentRowOf(h.app, "lead");
   if (!a || !lead) throw new Error("seed");
   await h.app.store.setRuntimeJournal(a.id, {
     tasks: [{ taskId: "t1", description: "pnpm test" }],
@@ -557,7 +561,7 @@ test("reconcile forwards factory_restarted lost work to the manager", async () =
 test("R4 (owner): a restart that cuts short a human retry inside a reported episode adds no inbox item", async () => {
   await signUp(h.app, { handle: "or" });
   await startIdle("lead"); // a second user, "hlead"
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("seed");
   proc("lead")?.emit(ev.turn());
   proc("lead")?.exit(137);
@@ -580,7 +584,7 @@ test("R4 (owner): a restart that cuts short a human retry inside a reported epis
 
 test("errored_reported clears with the error, so the next episode is reported", async () => {
   await startIdle("lead");
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("seed");
   proc("lead")?.emit(ev.turn());
   proc("lead")?.exit(137);
@@ -602,7 +606,7 @@ test("errored_reported clears with the error, so the next episode is reported", 
 });
 
 test("a message to a terminated agent is refused; a terminated sender can't send and writes nothing", async () => {
-  const ada = await h.app.store.agentBySlug("ada");
+  const ada = await agentRowOf(h.app, "ada");
   await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'bob'`;
   const toGone = await sendPlain({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
   expect(toGone.results).toEqual([
@@ -637,7 +641,7 @@ test("a message to a terminated agent is refused; a terminated sender can't send
 
 /** A spawned child of `lead` inserted inside `tx` (it shares lead's credential). */
 async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {}) {
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("no lead");
   const { id } = await createPrincipal(tx, "agent", slug);
   const [row] = await tx
@@ -662,7 +666,7 @@ async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {})
 const heldRows = () =>
   h.sql`select a.slug as "to", m.kind, m.notice, m.body from messages m join agents a on a.id = m.to_id
         where m.kind in ('peer_joined','peer_left') order by a.slug`;
-const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id ?? "";
+const idOf = async (slug: string) => (await agentRowOf(h.app, slug))?.id ?? "";
 
 test("persistPeerEvents runs in the caller's transaction: it sees a child inserted there, and its rows roll back with it", async () => {
   const rollback = new Error("rollback");
@@ -694,7 +698,7 @@ test("persistPeerEvents runs in the caller's transaction: it sees a child insert
     },
   ]);
   expect(await heldRows()).toEqual([]);
-  expect(await h.app.store.agentBySlug("kid-ab12")).toBeUndefined();
+  expect(await agentRowOf(h.app, "kid-ab12")).toBeUndefined();
 });
 
 test("persistPeerEvents: excludeManager skips the spawner; the rows commit with the caller and are handed off after", async () => {
@@ -779,7 +783,7 @@ test("deliver with a reason wakes with it: a spawned agent's first wake records 
 
 describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () => {
   const sendAs = async (slug: string, to: string[], body = "hello all") => {
-    const a = await h.app.store.agentBySlug(slug);
+    const a = await agentRowOf(h.app, slug);
     return sendPlain({ agentId: a?.id ?? "" }, to, body, false);
   };
   const rowsOf = (body: string) =>
@@ -898,7 +902,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
     h.app.bus.subscribeUser(or.user.id, (m) => got.or?.push(m));
     h.app.bus.subscribeUser(sam.user.id, (m) => got.sam?.push(m));
     await sendAs("ada", ["or"], "to-or");
-    expect(got.or).toContainEqual({ type: "chat_changed", agent: "ada" });
+    expect(got.or).toContainEqual({ type: "chat_changed", agent: await h.refOf("ada") });
     expect(got.sam).toEqual([]);
     got.or = [];
     await h.app.inject({
@@ -907,7 +911,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
       headers: { cookie: sam.cookie },
       payload: { to: ["bob"], body: "hi bob" },
     });
-    expect(got.sam).toContainEqual({ type: "chat_changed", agent: "bob" });
+    expect(got.sam).toContainEqual({ type: "chat_changed", agent: await h.refOf("bob") });
     expect(got.or.filter((m) => m.type === "chat_changed")).toEqual([]);
   });
 
@@ -1006,7 +1010,7 @@ describe("loop guard on list sends", () => {
     await h.app.factorySettings.update({ loopGuardMessages: N }, me.user.id);
     await h.seedAgent({ slug: "cy" });
   });
-  const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id ?? "";
+  const idOf = async (slug: string) => (await agentRowOf(h.app, slug))?.id ?? "";
   const send = async (from: string, to: string[]) =>
     (await sendPlain({ agentId: await idOf(from) }, to, "ping", false)).results;
   /** Each direction sends N messages and bob one more, so the next send from ada exceeds N both ways. */
@@ -1083,7 +1087,7 @@ describe("loop guard on list sends", () => {
 
 test("send_message names each recipient by tag and an unknown name as written", async () => {
   const tokA = await startIdle("ada");
-  const bob = await h.app.store.agentBySlug("bob");
+  const bob = await agentRowOf(h.app, "bob");
   const out = JSON.parse(
     rawText(await callTool(url, tokA, "send_message", { to: ["bob", "ghost"], body: "hi" })),
   ).results;

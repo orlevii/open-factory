@@ -15,7 +15,7 @@ const clock = (iso: string) => {
  *  the session), Recipients when the message went to others too, and the time on touch. */
 export function chatMenuItems(
   entry: MessageEntry,
-  slug: string,
+  agentRef: string,
   others: readonly string[],
   recipientsText: string,
 ): RowMenuItem[] {
@@ -24,11 +24,11 @@ export function chatMenuItems(
     {
       kind: "copy",
       label: "Copy link",
-      text: `${location.origin}/agents/${encodeURIComponent(slug)}/chat?message=${encodeURIComponent(entry.id)}`,
+      text: `${location.origin}/agents/${encodeURIComponent(agentRef)}/chat?message=${encodeURIComponent(entry.id)}`,
     },
   ];
   if (entry.state === "delivered")
-    items.push({ kind: "session", label: "View in session", to: slug, messageId: entry.id });
+    items.push({ kind: "session", label: "View in session", to: agentRef, messageId: entry.id });
   if (others.length > 0)
     items.push({ kind: "recipients", label: "Recipients", text: recipientsText });
   items.push({ kind: "time", label: `Sent ${clock(entry.createdAt)}` });
@@ -38,7 +38,7 @@ export function chatMenuItems(
 /** The one ⋯ of a chat row, built from the shared row menu. The list is built when the menu first opens. */
 export function ChatRowMenu({
   entry,
-  slug,
+  agentRef,
   others,
   recipientsText,
   sender,
@@ -46,7 +46,7 @@ export function ChatRowMenu({
   menuRef,
 }: {
   entry: MessageEntry;
-  slug: string;
+  agentRef: string;
   /** The refs of everyone else the message went to. */
   others: readonly string[];
   /** Every recipient's handle, for Copy of the Recipients item. */
@@ -57,8 +57,8 @@ export function ChatRowMenu({
   menuRef: Ref<RowMenuHandle>;
 }) {
   const items = useCallback(
-    () => chatMenuItems(entry, slug, others, recipientsText),
-    [entry, slug, others, recipientsText],
+    () => chatMenuItems(entry, agentRef, others, recipientsText),
+    [entry, agentRef, others, recipientsText],
   );
   const title = useCallback(
     () => `Message from @${sender} · ${formatTime(entry.createdAt)}`,

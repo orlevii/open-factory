@@ -22,7 +22,7 @@ export function whoName(text: string): string {
   return /^[@#]/.test(text) ? text : `@${text}`;
 }
 
-/** The bare handle (no `@`) of a tag's label or a plain handle, for links keyed by handle. */
+/** The bare handle (no `@`) of a tag's label or a plain handle. */
 export const whoHandle = (text: string): string => whoName(text).replace(/^@/, "");
 
 /** Two writings of the same principal: the same ref, else the same name. */

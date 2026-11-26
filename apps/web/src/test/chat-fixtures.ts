@@ -1,13 +1,14 @@
 import type { AgentSummary, ChatEntry, ChatPage, PrincipalItem } from "@open-factory/shared";
 import { vi } from "vitest";
+import { refFor } from "@/test/refs";
 import { agentSummary, conversation, detail } from "./session-fixtures";
 
 const at = (i: number) => new Date(Date.UTC(2026, 10, 23, 9, 0, i)).toISOString();
 type Message = Extract<ChatEntry, { kind: "message" }>;
 
 /** The dev agent's ref and alice's (the signed-in test user's, see `render-app`). */
-export const DEV_REF = "d3v00000";
-export const ALICE_REF = "abcd2345";
+export const DEV_REF = refFor("dev");
+export const ALICE_REF = refFor("alice");
 export const principal = (
   ref: string,
   handle: string,
@@ -69,7 +70,7 @@ export function stubChatApi(stub: Stub) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.startsWith("/api/agents/dev/chat")) {
+      if (url.startsWith(`/api/agents/${refFor("dev")}/chat`)) {
         requests.push(url);
         const r = await stub.chat(url);
         return r instanceof Response ? r : json(r);
@@ -84,8 +85,8 @@ export function stubChatApi(stub: Stub) {
         });
       const other = stub.other?.(url, init);
       if (other) return other;
-      if (url === "/api/agents/dev") return json(detail(stub.agent));
-      if (url.startsWith("/api/agents/dev/events")) return json(conversation());
+      if (url === `/api/agents/${refFor("dev")}`) return json(detail(stub.agent));
+      if (url.startsWith(`/api/agents/${refFor("dev")}/events`)) return json(conversation());
       if (url.startsWith("/api/agents?"))
         return json({
           agents: [agentSummary(stub.agent)],

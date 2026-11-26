@@ -6,6 +6,7 @@ import { clearDraft, hasDraft, peekDraft, resetDrafts } from "@/features/sheets/
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { pickComboOption, pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
@@ -20,11 +21,11 @@ vi.mock("@/components/ui/toaster", async (orig) => ({
 }));
 
 const live = [
-  agentSummary({ slug: "ceo", displayName: "CEO" }),
-  agentSummary({ slug: "dev", displayName: "Dev" }),
+  agentSummary({ handle: "ceo", displayName: "CEO" }),
+  agentSummary({ handle: "dev", displayName: "Dev" }),
 ];
 const gone = agentSummary({
-  slug: "old",
+  handle: "old",
   displayName: "Old",
   terminatedAt: "2026-11-01T00:00:00Z",
 });
@@ -36,7 +37,13 @@ const agents = (url?: string) =>
   });
 const item = {
   key: "S-8",
-  target: { slug: "ceo", displayName: "CEO", archived: false, terminated: false },
+  target: {
+    ref: refFor("ceo"),
+    handle: "ceo",
+    displayName: "CEO",
+    archived: false,
+    terminated: false,
+  },
   cron: "0 9 * * *",
   timezone: "Europe/Berlin",
   body: "Review",
@@ -44,8 +51,8 @@ const item = {
   lastFiredAt: null,
   paused: false,
   done: false,
-  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
-  bodyAuthor: { kind: "human", ref: "ref-or", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
+  bodyAuthor: { kind: "human", ref: refFor("or"), handle: "or" },
   pendingFiring: false,
   state: "active",
 };
@@ -88,7 +95,7 @@ test("the Schedules header button opens New schedule", async () => {
 
 test("the target filter on the list prefills Target", async () => {
   mockApi(base());
-  renderApp("/schedules?target=dev", alice);
+  renderApp(`/schedules?target=${refFor("dev")}`, alice);
   await userEvent.click(await screen.findByRole("button", { name: "New schedule" }));
   await waitFor(async () => expect(await target()).toHaveTextContent("Dev"));
 });
@@ -97,12 +104,12 @@ test("the spec's target fills an empty draft only; a draft keeps its own", async
   mockApi(base());
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
-  act(() => openSheet({ kind: "new-schedule", target: "dev" }));
+  act(() => openSheet({ kind: "new-schedule", target: refFor("dev") }));
   await waitFor(async () => expect(await target()).toHaveTextContent("Dev"));
   await userEvent.type(screen.getByLabelText("Message"), "Mine");
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
-  act(() => openSheet({ kind: "new-schedule", target: "ceo" }));
+  act(() => openSheet({ kind: "new-schedule", target: refFor("ceo") }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   expect(await target()).toHaveTextContent("Dev");
 });
@@ -112,7 +119,7 @@ test("an ended target stays empty and says so, without looping the render", asyn
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
   const before = api.calls.filter((c) => c.url.includes("ended=only")).length;
-  act(() => openSheet({ kind: "new-schedule", target: "old" }));
+  act(() => openSheet({ kind: "new-schedule", target: refFor("old") }));
   expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   expect(await target()).toHaveTextContent("Choose an agent…");
   expect(await target()).toHaveAttribute("aria-invalid", "true");
@@ -126,7 +133,7 @@ test("a stale target blocks the submit and focuses Target until another is picke
   });
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
-  act(() => openSheet({ kind: "new-schedule", target: "old" }));
+  act(() => openSheet({ kind: "new-schedule", target: refFor("old") }));
   expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   await pickOption(screen.getByRole("combobox", { name: "Repeats" }), "Daily at 09:00");
   await userEvent.type(screen.getByLabelText("Message"), "Review");
@@ -143,7 +150,7 @@ test("an unknown target stays empty and says so", async () => {
   mockApi(base());
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
-  act(() => openSheet({ kind: "new-schedule", target: "nobody" }));
+  act(() => openSheet({ kind: "new-schedule", target: refFor("nobody") }));
   expect(await screen.findByText("No such agent; pick another.")).toBeInTheDocument();
   expect(await target()).toHaveTextContent("Choose an agent…");
 });
@@ -152,12 +159,12 @@ test("a stale target cleared from the spec leaves no draft, so the next target s
   mockApi(base());
   renderApp("/inbox", alice);
   await screen.findByRole("heading", { level: 1 });
-  act(() => openSheet({ kind: "new-schedule", target: "old" }));
+  act(() => openSheet({ kind: "new-schedule", target: refFor("old") }));
   expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   expect(hasDraft("new-schedule")).toBe(false);
-  act(() => openSheet({ kind: "new-schedule", target: "dev" }));
+  act(() => openSheet({ kind: "new-schedule", target: refFor("dev") }));
   await waitFor(async () => expect(await target()).toHaveTextContent("Dev"));
   expect(screen.queryByText(/Draft restored/)).toBeNull();
 });
@@ -170,14 +177,14 @@ test("Discard over a stale preset leaves no phantom draft", async () => {
   await userEvent.type(await screen.findByLabelText("Message"), "Mine");
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
-  act(() => openSheet({ kind: "new-schedule", target: "old" }));
+  act(() => openSheet({ kind: "new-schedule", target: refFor("old") }));
   expect(await screen.findByText(/Draft restored/)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
   expect(await screen.findByText("That agent has ended; pick another.")).toBeInTheDocument();
   act(() => closeSheet());
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   expect(hasDraft("new-schedule")).toBe(false);
-  act(() => openSheet({ kind: "new-schedule", target: "dev" }));
+  act(() => openSheet({ kind: "new-schedule", target: refFor("dev") }));
   expect(await target()).toHaveTextContent("Dev");
   expect(screen.queryByText(/Draft restored/)).toBeNull();
 });
@@ -189,7 +196,7 @@ test("success closes, clears the draft and toasts Created with Open for the Edit
   await fillAndSubmit();
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "New schedule" })).toBeNull());
   expect(api.calls.find((c) => c.method === "POST")?.body).toMatchObject({
-    target: "ceo",
+    target: refFor("ceo"),
     cron: "0 9 * * *",
     body: "Review",
   });

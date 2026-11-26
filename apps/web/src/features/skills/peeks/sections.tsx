@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AgentHandleLink } from "@/features/agents/agent-handle-link";
 import { LINK } from "../helpers";
 
 /** A peek section: separated from the one above by a rule and spacing, never a card. `action` sits in the label row. */
@@ -88,9 +89,9 @@ export function UsersLine({ templates, agents }: { templates: string[]; agents: 
     ...agents.map((a) => ({
       id: `a:${a}`,
       node: (
-        <Link to="/agents/$slug" params={{ slug: a }} className={LINK}>
+        <AgentHandleLink handle={a} to="/agents/$ref" className={LINK}>
           @{a}
-        </Link>
+        </AgentHandleLink>
       ),
     })),
   ];

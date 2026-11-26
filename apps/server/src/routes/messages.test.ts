@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp } from "../test/helpers.ts";
+import { makeTestApp, runtimeOf } from "../test/helpers.ts";
 
 // I1 §6.6: POST /api/messages, a human's message to one to ten agents.
 
@@ -83,7 +83,11 @@ test("the human REST send resolves only agents: each refused target is its own r
     ]);
   }
   await s.seedAgent({ slug: "shelved" });
-  await s.app.agents.archive("shelved", { kind: "human", ref: "k7x2m9qd", handle: "or" });
+  await s.app.agents.archive(await s.refOf("shelved"), {
+    kind: "human",
+    ref: "k7x2m9qd",
+    handle: "or",
+  });
   expect((await one("shelved")).json().results).toEqual([
     {
       to: expect.stringMatching(/^<@[0-9a-z]{8}\|shelved>$/),
@@ -177,7 +181,11 @@ test("start_failed keeps that recipient's row pending", async () => {
     ).toEqual(["pending"]);
     // The agent is errored with the fix text, and the message stays queued for when it recovers.
     const detail = (
-      await t2.app.inject({ method: "GET", url: "/api/agents/bad", headers: { cookie } })
+      await t2.app.inject({
+        method: "GET",
+        url: `/api/agents/${await t2.refOf("bad")}`,
+        headers: { cookie },
+      })
     ).json();
     expect(detail.queue.map((q: { body: string }) => q.body)).toEqual(["partly"]);
     expect(detail.agent).toMatchObject({ status: "errored", lastError: reason });
@@ -193,11 +201,11 @@ test("a retry with the same clientMessageId publishes no chat_changed", async ()
   const off = s.app.bus.subscribeUser(u?.id as string, (m) => frames.push(m.type));
   const clientMessageId = randomUUID();
   await post({ to: ["ops"], body: "quiet retry", clientMessageId });
-  await (await s.app.runtimes.bySlug("ops"))?.settled();
+  await (await runtimeOf(s.app, "ops"))?.settled();
   const first = frames.filter((t) => t === "chat_changed").length;
   expect(first).toBeGreaterThan(0);
   await post({ to: ["ops"], body: "quiet retry", clientMessageId });
-  await (await s.app.runtimes.bySlug("ops"))?.settled();
+  await (await runtimeOf(s.app, "ops"))?.settled();
   expect(frames.filter((t) => t === "chat_changed")).toHaveLength(first);
   off();
 });

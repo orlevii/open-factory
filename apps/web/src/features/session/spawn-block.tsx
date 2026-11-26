@@ -2,12 +2,15 @@ import { CircleX, GitFork } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import { Tag } from "@/components/tag/tag";
+import { useHandle } from "@/features/agents/use-agent-index";
+import { useRefOfHandle } from "@/features/principals/use-principal";
 import { formatBy } from "./format-by";
 import { AgentLink, ClampedMarkdown } from "./message-block";
 import { CallBlock, FailedNote } from "./outgoing-message";
 import { QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
 import { denialText } from "./tool-call-row";
+import { refOfWho, whoHandle } from "./who";
 
 type SpawnRow = Extract<Row, { kind: "spawn" }>;
 type TerminateRow = Extract<Row, { kind: "terminate" }>;
@@ -18,20 +21,32 @@ const Mono = ({ children }: { children: ReactNode }) => (
 
 const spawnResultSchema = z.object({
   slug: z.string(),
+  tag: z.string().optional(),
   status: z.string(),
   note: z.string().optional(),
 });
 
-/** The tool's success result (`{ slug, agent_id, status, note? }`; the id is never shown), or
- *  undefined for an error or odd text. */
+/** The tool's success result (`{ slug, tag, agent_id, status, note? }`; the id is never shown), or
+ *  undefined for an error or odd text. `ref` is the spawned agent's, read from its tag. */
 export function parseSpawnResult(result: SpawnRow["result"]) {
   if (!result || result.isError) return undefined;
   try {
     const r = spawnResultSchema.safeParse(JSON.parse(result.content));
-    return r.success ? r.data : undefined;
+    if (!r.success) return undefined;
+    const { slug, tag, ...rest } = r.data;
+    return { ...rest, handle: slug, ref: tag ? refOfWho(tag) : undefined };
   } catch {
     return undefined;
   }
+}
+
+/** An agent a tool call names by handle, tag or ref: a link when its ref is known, else its mono handle. */
+function NamedAgent({ name, label = false }: { name: string; label?: boolean }) {
+  const refOfHandle = useRefOfHandle();
+  const bare = name.replace(/^@/, "");
+  const ref = refOfWho(name) ?? refOfHandle(bare);
+  if (ref) return <AgentLink agentRef={ref} name={label} />;
+  return <Mono>@{whoHandle(name)}</Mono>;
 }
 
 /** Who did it, inside a sentence: a principal's tag is a chip showing its current handle; a word stays plain mono. */
@@ -53,13 +68,13 @@ export function terminatedPhrase(by: string): ReactNode {
 /** The agent's own `spawn_agent` call (S7 UI design §4.1), on the outgoing-block shell: a GitFork
  *  sender line, the description as plain text, the brief as Markdown and a past-tense footer. */
 export function SpawnBlock({
-  slug,
+  agentRef,
   row,
   showCall,
   onToggleCall,
   rowProps,
 }: {
-  slug: string;
+  agentRef: string;
   row: SpawnRow;
   showCall: boolean;
   onToggleCall(): void;
@@ -69,15 +84,16 @@ export function SpawnBlock({
   const spawned = parseSpawnResult(row.result);
   const failed = row.result?.isError === true || !!row.denial;
   const tpl = input.template;
+  const handle = useHandle(agentRef);
   const label = spawned
-    ? `@${slug} spawned @${spawned.slug}`
+    ? `@${handle} spawned @${spawned.handle}`
     : failed
-      ? `@${slug}'s spawn from ${tpl} failed`
+      ? `@${handle}'s spawn from ${tpl} failed`
       : row.result
-        ? `@${slug} spawned from ${tpl}`
+        ? `@${handle} spawned from ${tpl}`
         : row.turnOpen
-          ? `@${slug} is spawning from ${tpl}`
-          : `@${slug}'s spawn from ${tpl} has no result`;
+          ? `@${handle} is spawning from ${tpl}`
+          : `@${handle}'s spawn from ${tpl} has no result`;
   return (
     <CallBlock
       row={row}
@@ -89,11 +105,15 @@ export function SpawnBlock({
         <>
           <GitFork aria-hidden="true" className="size-3.5 text-muted-foreground" />
           <span>
-            <Mono>@{slug}</Mono>{" "}
+            <Mono>@{handle}</Mono>{" "}
             {spawned ? (
               <>
                 <span className="text-muted-foreground">spawned</span>{" "}
-                <AgentLink slug={spawned.slug} name />
+                {spawned.ref ? (
+                  <AgentLink agentRef={spawned.ref} name />
+                ) : (
+                  <Mono>@{spawned.handle}</Mono>
+                )}
               </>
             ) : (
               <>
@@ -130,7 +150,7 @@ function Footer({ row, spawned }: { row: SpawnRow; spawned: ReturnType<typeof pa
       <span>
         {spawned?.status === "rate_limited" ? (
           <>
-            Spawned · <span className="font-mono">@{spawned.slug}</span> was rate-limited
+            Spawned · <span className="font-mono">@{spawned.handle}</span> was rate-limited
           </>
         ) : (
           "Spawned"
@@ -149,8 +169,8 @@ export function TerminateLine({
   row: TerminateRow;
   rowProps: Record<string, unknown>;
 }) {
-  const target = (row.call.input as { slug: string }).slug.replace(/^@/, "");
-  const who = <AgentLink slug={target} />;
+  const target = (row.call.input as { slug: string }).slug;
+  const who = <NamedAgent name={target} />;
   const failed = row.result?.isError === true || !!row.denial;
   let text: ReactNode;
   if (failed)

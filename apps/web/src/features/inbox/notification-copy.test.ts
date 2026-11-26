@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import {
   burstsOf,
   capTitle,
@@ -14,7 +15,8 @@ const PREVIEW = "SECRET-PREVIEW-MARKER-7431";
 
 const chat = (over: Partial<ChatFixture> & { slug?: string; name?: string } = {}): ChatFixture => ({
   agent: {
-    slug: over.slug ?? "ada",
+    ref: refFor(over.slug ?? "ada"),
+    handle: over.slug ?? "ada",
     displayName: over.name ?? "Ada",
     template: "developer",
     avatarVersion: null,
@@ -41,12 +43,12 @@ const item = (over: Partial<ItemFixture> = {}): ItemFixture => {
     messageId: `msg-${seq}`,
     kind: "notice",
     read: false,
-    from: { kind: "agent", ref: "dev00000", handle: "dev" },
+    from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
     to: "me",
     preview: PREVIEW,
     urgent: false,
     createdAt: `2026-11-25T10:${String(seq).padStart(2, "0")}:00.000Z`,
-    link: { kind: "session", agentSlug: "dev" },
+    link: { kind: "session", agentRef: refFor("dev") },
     ...over,
   };
 };
@@ -54,7 +56,7 @@ const item = (over: Partial<ItemFixture> = {}): ItemFixture => {
 const mention = (over: Partial<ItemFixture> = {}) =>
   item({
     kind: "mention",
-    from: { kind: "agent", ref: "dev00000", handle: "dev" },
+    from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
     task: { key: "T-42", title: "Ship it" },
     link: { kind: "task", key: "T-42", commentId: "c-1" },
     ...over,
@@ -87,12 +89,12 @@ const loopItem = (
     kind: "notice",
     notice: "loop_held",
     from: { kind: "factory" },
-    link: { kind: "session", agentSlug: "a" },
+    link: { kind: "session", agentRef: refFor("a") },
     loopHold: {
       id: holdId,
       agents: [
-        { slug: "a", status: "live" },
-        { slug: "b", status: "live" },
+        { ref: refFor("a"), handle: "a", status: "live" },
+        { ref: refFor("b"), handle: "b", status: "live" },
       ],
       waiting: 2,
       sentOn: 3,
@@ -119,13 +121,13 @@ describe("chat bursts", () => {
       items: [],
     });
     expect(b).toMatchObject({
-      key: "chat:ada",
-      tag: "chat:ada:m-first",
+      key: `chat:${refFor("ada")}`,
+      tag: `chat:${refFor("ada")}:m-first`,
       title: "Ada",
       body: "3 new messages",
       newestId: "m-latest",
       itemIds: [],
-      open: { to: "/agents/ada/chat", search: { message: "m-first" } },
+      open: { to: `/agents/${refFor("ada")}/chat`, search: { message: "m-first" } },
     });
   });
 
@@ -175,8 +177,8 @@ describe("mention bursts", () => {
     const [b] = burstsOf({
       chats: [],
       items: [
-        mention({ from: { kind: "agent", ref: "dev00000", handle: "dev" } }),
-        mention({ from: { kind: "agent", ref: "qa00000", handle: "qa" } }),
+        mention({ from: { kind: "agent", ref: refFor("dev"), handle: "dev" } }),
+        mention({ from: { kind: "agent", ref: refFor("qa"), handle: "qa" } }),
       ],
     });
     expect(b?.title).toBe("T-42");
@@ -194,7 +196,7 @@ describe("error bursts", () => {
       key: "error:dev",
       title: "@dev",
       body: "Hit an error",
-      open: { to: "/agents/dev/session" },
+      open: { to: `/agents/${refFor("dev")}/session` },
     });
   });
 });
@@ -244,7 +246,12 @@ describe("loop bursts", () => {
   test("a resumed hold is marked resolved so the notifier can close it", () => {
     const [b] = burstsOf({
       chats: [],
-      items: [loopItem("h-9", { resumedAt: "2026-11-25T11:00:00.000Z", resumedBy: "@ana" })],
+      items: [
+        loopItem("h-9", {
+          resumedAt: "2026-11-25T11:00:00.000Z",
+          resumedBy: { ref: refFor("ana"), handle: "ana" },
+        }),
+      ],
     });
     expect(b?.resolved).toBe(true);
   });

@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { closeSheet } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 
@@ -13,8 +14,8 @@ afterEach(() => vi.unstubAllGlobals());
 
 const at = "2026-11-19T09:10:00.000Z";
 const agents = () =>
-  json({ agents: [agentSummary({ slug: "ceo" })], more: false, running: { count: 0 } });
-const user = { kind: "human", ref: "ref-or", handle: "or" };
+  json({ agents: [agentSummary({ handle: "ceo" })], more: false, running: { count: 0 } });
+const user = { kind: "human", ref: refFor("or"), handle: "or" };
 const taskRow = {
   key: "T-1",
   title: "Task one",
@@ -36,7 +37,13 @@ const taskDetail = {
 };
 const schedule = {
   key: "S-1",
-  target: { slug: "ceo", displayName: "CEO", archived: false, terminated: false },
+  target: {
+    ref: refFor("ceo"),
+    handle: "ceo",
+    displayName: "CEO",
+    archived: false,
+    terminated: false,
+  },
   cron: "0 9 * * 1-5",
   timezone: "Europe/Berlin",
   body: "Morning review",

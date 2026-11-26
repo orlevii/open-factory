@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { EventStore } from "./event-store.ts";
 import { insertAgent } from "./testing/rows.ts";
 
@@ -22,7 +22,7 @@ test("append assigns seq 1..n per agent, independently", async () => {
   const f1 = await store.append("a2", null, { type: "turn_started" });
   expect([e1.seq, e2.seq, f1.seq]).toEqual([1, 2, 1]);
   expect(e1).toMatchObject({
-    agentSlug: "dev",
+    agentRef: testRef("a1"),
     turnId: null,
     event: { type: "process_started", resumed: false },
   });

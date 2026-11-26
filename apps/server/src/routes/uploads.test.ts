@@ -20,6 +20,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { principalsByHandles } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { UNKNOWN_REF } from "../test/principals.ts";
 import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
 import { heic, jpeg, png } from "../uploads/fixtures.ts";
 import { UploadService } from "../uploads/service.ts";
@@ -53,6 +54,8 @@ beforeAll(async () => {
 });
 afterAll(() => t.close());
 
+/** A seeded agent's ref; "nope" names nobody: a well-formed ref no agent has. */
+const ref = (slug: string) => (slug === "nope" ? UNKNOWN_REF : t.seededRef(slug));
 const wd = (slug: string) => t.seededWorkdir(slug);
 const uploadsDir = (slug: string) => path.join(wd(slug), ".factory/uploads");
 const listUploads = (slug: string) =>
@@ -66,7 +69,7 @@ const upload = (
 ) =>
   t.app.inject({
     method: "POST",
-    url: `/api/agents/${slug}/uploads`,
+    url: `/api/agents/${ref(slug)}/uploads`,
     headers: {
       cookie: o.cookie ?? or,
       "content-type": "application/octet-stream",
@@ -76,9 +79,17 @@ const upload = (
     payload,
   });
 const get = (slug: string, id: string, cookie = or) =>
-  t.app.inject({ method: "GET", url: `/api/agents/${slug}/uploads/${id}`, headers: { cookie } });
+  t.app.inject({
+    method: "GET",
+    url: `/api/agents/${ref(slug)}/uploads/${id}`,
+    headers: { cookie },
+  });
 const del = (slug: string, id: string, cookie = or) =>
-  t.app.inject({ method: "DELETE", url: `/api/agents/${slug}/uploads/${id}`, headers: { cookie } });
+  t.app.inject({
+    method: "DELETE",
+    url: `/api/agents/${ref(slug)}/uploads/${id}`,
+    headers: { cookie },
+  });
 
 test("POST stores a PNG under .factory/uploads with a safe name and answers its info", async () => {
   const data = png(640, 480);
@@ -121,7 +132,7 @@ test("a JPEG and UTF-8 text are accepted by content (sniff.test.ts owns every ty
 test("auth, a missing agent and an ended agent: the messaging access check", async () => {
   const anon = await t.app.inject({
     method: "POST",
-    url: "/api/agents/dev/uploads",
+    url: `/api/agents/${await t.refOf("dev")}/uploads`,
     headers: { "content-type": "application/octet-stream", "x-upload-name": "a.txt" },
     payload: Buffer.from("x"),
   });
@@ -140,7 +151,7 @@ test("auth, a missing agent and an ended agent: the messaging access check", asy
 test("the name header is required and must decode", async () => {
   const none = await t.app.inject({
     method: "POST",
-    url: "/api/agents/dev/uploads",
+    url: `/api/agents/${await t.refOf("dev")}/uploads`,
     headers: { cookie: or, "content-type": "application/octet-stream" },
     payload: Buffer.from("x"),
   });
@@ -365,7 +376,7 @@ test("over real HTTP: a chunked body crossing 20 MiB gets its 413 and the connec
         host: "127.0.0.1",
         port,
         method: "POST",
-        path: "/api/agents/ops/uploads",
+        path: `/api/agents/${ref("ops")}/uploads`,
         headers: {
           cookie: or,
           "content-type": "application/octet-stream",
@@ -558,7 +569,7 @@ describe("security review fixes", () => {
   test("M7: a body that isn't application/octet-stream is 415", async () => {
     const res = await t.app.inject({
       method: "POST",
-      url: "/api/agents/dev/uploads",
+      url: `/api/agents/${await t.refOf("dev")}/uploads`,
       headers: { cookie: or, "content-type": "text/plain", "x-upload-name": "a.txt" },
       payload: "hello",
     });

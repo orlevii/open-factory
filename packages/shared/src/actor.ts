@@ -9,5 +9,5 @@ export type Actor =
 /** How the actor is named in a stored body or event: its tag, `<@ref>`, so the handle shown is always current. */
 export const actorTag = (a: Actor): string => `<@${a.ref}>`;
 
-/** How the org bus names the actor (`@handle` or `@slug`); stored text uses `actorTag`. */
-export const actorBy = (a: Actor): string => `@${a.kind === "human" ? a.handle : a.slug}`;
+/** How the org bus names the actor: its ref, which the browser resolves to the current handle. */
+export const actorBy = (a: Actor): string => a.ref;

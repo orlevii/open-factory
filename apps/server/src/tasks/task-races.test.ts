@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 import { seedTestUser, testRef } from "../test/principals.ts";
 import type { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
@@ -115,7 +115,7 @@ test("archive vs a comment mentioning the archived agent, both orders", async ()
   const comment = outcome(h.app.tasks.comment(or, "T-1", `<@${testRef(ids.qa as string)}> again`));
   await waitForLocks(1);
   const archive = outcome(
-    h.app.agents.archive("qa", { kind: "human", ref: "k7x2m9qd", handle: "or" }),
+    h.app.agents.archive(await h.refOf("qa"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   );
   await waitForLocks(2);
   a.release();
@@ -123,7 +123,7 @@ test("archive vs a comment mentioning the archived agent, both orders", async ()
   const c = await comment;
   expect(c.ok).toBe(true);
   expect(((await archive) as { ok: boolean }).ok).toBe(true);
-  await (await h.app.runtimes.bySlug("qa"))?.settled();
+  await (await runtimeOf(h.app, "qa"))?.settled();
   // The hand-off races the archive's commit, so the row is rejected or still pending (delivered after an unarchive);
   // what can never happen is a write into the archived agent's session.
   expect((await kinds("qa")).map((k) => k.state)).not.toContain("delivered");

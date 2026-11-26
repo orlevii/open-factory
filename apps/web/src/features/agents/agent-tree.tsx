@@ -14,7 +14,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 
 /** The tree draws only agent managers: a human manager makes a root. */
-const managerSlug = (a: AgentSummary) => (a.reportsTo.kind === "agent" ? a.reportsTo.handle : "");
+const managerRef = (a: AgentSummary) => (a.reportsTo.kind === "agent" ? a.reportsTo.ref : "");
 
 /** Indentation per tree level inside the name cell; capped below `md` so names keep room. */
 const INDENT = 20;
@@ -23,7 +23,7 @@ type Point = { x: number; y: number };
 const DESKTOP_DEPTH_CAP = 8;
 const MOBILE_DEPTH_CAP = 3;
 
-const slugStem = (s: string) => s.replace(/-[a-z0-9]{4}$/, "");
+const handleStem = (s: string) => s.replace(/-[a-z0-9]{4}$/, "");
 
 /** For each row, which ancestor levels (1..level-1) have a later sibling, so their vertical line
  *  continues through it. One backward pass: `later[j]` is whether a level-j row follows with no
@@ -137,10 +137,10 @@ const AgentTreeRow = memo(function AgentTreeRow({
   focused: boolean;
   now: Date;
   menuOpen: boolean;
-  onMenu: (slug: string, anchor?: HTMLElement, at?: Point) => void;
+  onMenu: (agentRef: string, anchor?: HTMLElement, at?: Point) => void;
 }) {
   // A long-press on the row opens the list's one menu at the press point (U4 §11.2).
-  const onLongPress = useCallback((at: Point) => onMenu(a.slug, undefined, at), [onMenu, a.slug]);
+  const onLongPress = useCallback((at: Point) => onMenu(a.ref, undefined, at), [onMenu, a.ref]);
   const press = useLongPress(onLongPress);
   const depth = Math.min(level, cap);
   const beyond = level > cap;
@@ -151,16 +151,16 @@ const AgentTreeRow = memo(function AgentTreeRow({
   return (
     <li className="flex items-center">
       <Link
-        to="/agents/$slug/chat"
-        params={{ slug: a.slug }}
+        to="/agents/$ref/chat"
+        params={{ ref: a.ref }}
         {...press}
         data-longpress-region=""
-        data-agent-link={a.slug}
+        data-agent-link={a.ref}
         data-focused={focused || undefined}
         data-menu-open={menuOpen || undefined}
         className={cn(
           "of-row flex min-w-0 flex-1 data-focused:bg-accent data-menu-open:bg-accent min-h-11 flex-wrap items-center gap-x-4 gap-y-0.5 px-2 py-2 text-sm",
-          // md: two lines (status, name, cost; then slug, template, runtime under the name), so the
+          // md: two lines (status, name, cost; then agentRef, template, runtime under the name), so the
           // name keeps 8rem. The full columns need about 54rem of the tree itself, which a 1024px
           // window with the sidebar open doesn't give, so they key on the tree's width, not the window.
           "md:grid md:grid-cols-[7rem_minmax(8rem,1fr)_4rem]",
@@ -227,7 +227,7 @@ const AgentTreeRow = memo(function AgentTreeRow({
             )}
             {/* The full name for a name cut to a few characters on a phone (U4 §11.6). */}
             <span title={a.displayName} className="flex min-w-0">
-              <AgentChip agent={a} showSlug />
+              <AgentChip agent={a} showHandle />
             </span>
             {/* Inline, not a second line, so live updates never change the row height. It
                   gives way (truncates) before the name does. */}
@@ -252,7 +252,7 @@ const AgentTreeRow = memo(function AgentTreeRow({
         {/* A second line below md and in the two-line grid; grid cells in the full one. */}
         <span className="flex min-w-0 max-w-full basis-full flex-wrap items-center gap-x-4 gap-y-0.5 md:col-start-2 @min-[54rem]:contents">
           <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">
-            {a.template !== slugStem(a.slug) ? a.template : null}
+            {a.template !== handleStem(a.handle) ? a.template : null}
           </span>
           <span className="md:justify-self-end">
             {a.runtime === "local" ? <UnsandboxedBadge /> : null}
@@ -274,9 +274,9 @@ const AgentTreeRow = memo(function AgentTreeRow({
         aria-label={`Actions for ${a.displayName}`}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
-        data-row-more={a.slug}
+        data-row-more={a.ref}
         className="mx-1 shrink-0 text-muted-foreground pointer-coarse:size-8"
-        onClick={(e) => onMenu(a.slug, e.currentTarget)}
+        onClick={(e) => onMenu(a.ref, e.currentTarget)}
       >
         <MoreHorizontal aria-hidden="true" />
       </Button>
@@ -297,13 +297,13 @@ export function AgentTree({
 }: {
   agents: AgentSummary[];
   flat?: boolean;
-  /** 7-day usage by slug; the cost cell stays empty until it arrives. */
+  /** 7-day usage by agentRef; the cost cell stays empty until it arrives. */
   usage?: Map<string, AgentUsageRow>;
-  /** A slug to scroll to and mark with the hover fill (Agent details' "All N reports", U2 §8.3). */
+  /** A agentRef to scroll to and mark with the hover fill (Agent details' "All N reports", U2 §8.3). */
   focus?: string;
 }) {
   const listRef = useRef<HTMLUListElement>(null);
-  const focusPresent = focus !== undefined && agents.some((a) => a.slug === focus);
+  const focusPresent = focus !== undefined && agents.some((a) => a.ref === focus);
   useEffect(() => {
     if (!focus || !focusPresent) return;
     listRef.current
@@ -313,51 +313,55 @@ export function AgentTree({
   const isMobile = useIsMobile();
   // One clock per list: the ended notes' days are relative to it.
   const now = useMemo(() => new Date(), []);
-  const bySlug = useMemo(() => new Map(agents.map((a) => [a.slug, a])), [agents]);
+  const byRef = useMemo(() => new Map(agents.map((a) => [a.ref, a])), [agents]);
   // The shape (who is under whom) changes rarely; status frames don't touch it, so the depths and
   // tree lines stay the same arrays and the memoized rows skip.
-  const shape = agents.map((a) => `${a.slug}>${flat ? "" : managerSlug(a)}`).join("\n");
+  const shape = agents.map((a) => `${a.ref}>${flat ? "" : managerRef(a)}`).join("\n");
   // biome-ignore lint/correctness/useExhaustiveDependencies: `shape` is the key; `agents` is read for it
   const { levels, continues } = useMemo(() => {
     // Depth as drawn: a row whose manager isn't in this list starts a new root rather than hanging
     // under nothing. Server order is depth-first, so managers come first.
     const shown = new Map<string, number>();
     for (const a of agents) {
-      const m = !flat && a.reportsTo.kind === "agent" ? shown.get(a.reportsTo.handle) : undefined;
-      shown.set(a.slug, m === undefined ? 0 : m + 1);
+      const m = !flat && a.reportsTo.kind === "agent" ? shown.get(a.reportsTo.ref) : undefined;
+      shown.set(a.ref, m === undefined ? 0 : m + 1);
     }
-    const levels = agents.map((a) => shown.get(a.slug) ?? 0);
+    const levels = agents.map((a) => shown.get(a.ref) ?? 0);
     return { levels, continues: continuations(levels) };
   }, [shape]);
   const cap = isMobile ? MOBILE_DEPTH_CAP : DESKTOP_DEPTH_CAP;
 
-  // One AgentMenu for the list, opened on the row named here. The slug outlives the close so the
+  // One AgentMenu for the list, opened on the row named here. The agentRef outlives the close so the
   // menu keeps its content for the exit animation.
   const [menu, setMenu] = useState<{
-    slug: string | null;
+    agentRef: string | null;
     open: boolean;
     anchor: HTMLElement | null;
     at?: Point;
-  }>({ slug: null, open: false, anchor: null });
-  const menuSlug = menu.open ? menu.slug : null;
+  }>({ agentRef: null, open: false, anchor: null });
+  const menuRef = menu.open ? menu.agentRef : null;
   const openMenu = useCallback(
-    (slug: string, anchor?: HTMLElement, at?: Point) =>
+    (agentRef: string, anchor?: HTMLElement, at?: Point) =>
       setMenu({
-        slug,
+        agentRef,
         open: true,
         at,
         anchor:
           anchor ??
-          listRef.current?.querySelector<HTMLElement>(`[data-row-more="${CSS.escape(slug)}"]`) ??
+          listRef.current?.querySelector<HTMLElement>(
+            `[data-row-more="${CSS.escape(agentRef)}"]`,
+          ) ??
           null,
       }),
     [],
   );
   const onMenuOpenChange = useCallback((open: boolean) => setMenu((m) => ({ ...m, open })), []);
-  const onMenuClose = useCallback((slug: string) => {
-    listRef.current?.querySelector<HTMLElement>(`[data-row-more="${CSS.escape(slug)}"]`)?.focus();
+  const onMenuClose = useCallback((agentRef: string) => {
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-row-more="${CSS.escape(agentRef)}"]`)
+      ?.focus();
   }, []);
-  const menuAgent = menu.slug ? bySlug.get(menu.slug) : undefined;
+  const menuAgent = menu.agentRef ? byRef.get(menu.agentRef) : undefined;
   return (
     <>
       <ul
@@ -366,21 +370,21 @@ export function AgentTree({
         className="@container divide-y divide-border border-y border-border"
       >
         {agents.map((a, i) => {
-          const manager = a.reportsTo.kind === "agent" ? bySlug.get(a.reportsTo.handle) : undefined;
+          const manager = a.reportsTo.kind === "agent" ? byRef.get(a.reportsTo.ref) : undefined;
           return (
             <AgentTreeRow
-              key={a.slug}
+              key={a.ref}
               agent={a}
               level={levels[i] ?? 0}
               cap={cap}
               continues={continues[i] ?? NO_CONTINUES}
               managerName={manager?.displayName}
-              usageRow={usage?.get(a.slug)}
+              usageRow={usage?.get(a.ref)}
               usageLoaded={usage !== undefined}
               flat={flat}
-              focused={a.slug === focus}
+              focused={a.ref === focus}
               now={now}
-              menuOpen={a.slug === menuSlug}
+              menuOpen={a.ref === menuRef}
               onMenu={openMenu}
             />
           );
@@ -395,7 +399,7 @@ export function AgentTree({
             onOpenChange: onMenuOpenChange,
             anchor: menu.anchor,
             point: menu.at,
-            onClose: () => onMenuClose(menuAgent.slug),
+            onClose: () => onMenuClose(menuAgent.ref),
           }}
         />
       ) : null}

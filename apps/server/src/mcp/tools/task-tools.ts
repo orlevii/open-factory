@@ -197,14 +197,14 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 warnings,
               );
               const facing = await d.facing({
-                handles: page.items.flatMap((t) => (t.assignee ? [t.assignee.slug] : [])),
+                handles: page.items.flatMap((t) => (t.assignee ? [t.assignee.handle] : [])),
               });
               return {
                 tasks: page.items.map((t) => ({
                   key: t.key,
                   title: t.title,
                   status: t.status,
-                  ...(t.assignee ? { assignee: facing.tag(t.assignee.slug) } : {}),
+                  ...(t.assignee ? { assignee: facing.tag(t.assignee.handle) } : {}),
                   ...(t.assignee?.ended ? { assignee_ended: t.assignee.ended } : {}),
                   blocked_by: t.blockedBy,
                   created_by: principal(t.createdBy),
@@ -235,9 +235,9 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
               const first = t.comments[0];
               const facing = await d.facing({
                 handles: [
-                  ...(t.assignee ? [t.assignee.slug] : []),
+                  ...(t.assignee ? [t.assignee.handle] : []),
                   ...t.blocks.flatMap((x) => (x.assignee ? [x.assignee] : [])),
-                  ...t.links.flatMap((l) => (l.agent ? [l.agent.slug] : [])),
+                  ...t.links.flatMap((l) => (l.agent ? [l.agent.handle] : [])),
                 ],
                 texts: [t.body, ...t.comments.map((c) => c.body)],
               });
@@ -246,7 +246,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 title: t.title,
                 body: facing.render(t.body),
                 status: t.status,
-                ...(t.assignee ? { assignee: facing.tag(t.assignee.slug) } : {}),
+                ...(t.assignee ? { assignee: facing.tag(t.assignee.handle) } : {}),
                 ...(t.assignee?.ended ? { assignee_ended: t.assignee.ended } : {}),
                 created_by: principal(t.createdBy),
                 created_at: t.createdAt.toISOString(),
@@ -266,7 +266,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 links: t.links.map((l) => ({
                   kind: l.kind,
                   ...(l.target ? { target: l.target } : {}),
-                  ...(l.agent ? { agent: facing.tag(l.agent.slug) } : {}),
+                  ...(l.agent ? { agent: facing.tag(l.agent.handle) } : {}),
                   ...(l.title ? { title: l.title } : {}),
                   ...(l.agent?.ended ? { ended: l.agent.ended } : {}),
                 })),

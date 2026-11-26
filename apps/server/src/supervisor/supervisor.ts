@@ -25,7 +25,7 @@ export interface SupervisorDeps {
   /** The reset's durable side (spec §7.2): owed agents, the credential's name, clearing the columns. */
   rateLimits: Pick<EventStore, "owedAgents" | "credentialName" | "clearCredentialPause">;
   /** Loads an agent's runtime (an owed agent may be hibernated and not loaded). */
-  load(slug: string): Promise<AgentRuntime | undefined>;
+  load(agentId: string): Promise<AgentRuntime | undefined>;
   /**
    * Docker images (spec §11.2): `refOf` is the image a Docker agent starts from (undefined for a local agent);
    * `ensure` pulls it only when it is missing locally, and rejects with the start error a failed pull is.
@@ -246,7 +246,7 @@ export class Supervisor implements SlotPort {
           // A later window replaced this one meanwhile: the flags stay, so its reset writes the true time.
           if (this.pauses.get(credentialId) !== p) return;
           try {
-            const rt = this.d.runtimes.get(a.id) ?? (await this.d.load(a.slug));
+            const rt = this.d.runtimes.get(a.id) ?? (await this.d.load(a.id));
             await rt?.rateLimitReset(
               { credential: name, ...(p.exact ? { at: new Date(p.until) } : {}) },
               () => !this.closed && this.pauses.get(credentialId) === p,

@@ -7,6 +7,7 @@ import { readDraft } from "@/lib/drafts";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { FakeXhr, file, holdFrames, installFakeXhr, lastXhr } from "@/test/fake-xhr";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { NO_FOLDERS, TOO_MANY } from "./attachments";
 import {
   type CompletionItem,
@@ -731,7 +732,7 @@ test("the toolbar's `/` button opens the menu in an empty box", async () => {
 function setupFiles(over: Partial<Parameters<typeof Composer>[0]> = {}) {
   installFakeXhr();
   const frames = holdFrames();
-  const store = createUploadStore("dev");
+  const store = createUploadStore(refFor("dev"));
   const r = setup({ attachments: store, ...over });
   const frame = r.box.closest("[data-composer-frame]") as HTMLElement;
   return { ...r, store, frames, frame };
@@ -760,7 +761,7 @@ test("a files-only paste attaches them as chips, max 12rem wide", () => {
   expect(pasteFiles(box, [file("notes.txt")])).toBe(false);
   expect(chips()).toHaveLength(1);
   expect(chips()[0]).toHaveTextContent("notes.txt");
-  expect(lastXhr().url).toBe("/api/agents/dev/uploads");
+  expect(lastXhr().url).toBe(`/api/agents/${refFor("dev")}/uploads`);
 });
 
 test("a file name is text: markup and bidi overrides are never interpreted", () => {
@@ -988,14 +989,14 @@ test("Send carries the finished uploads; a failed send puts the chips back", asy
 });
 
 test("removing a finished chip deletes the upload on the server", async () => {
-  const api = mockApi({ "DELETE /api/agents/dev/uploads/u1": () => json({}, 204) });
+  const api = mockApi({ [`DELETE /api/agents/${refFor("dev")}/uploads/u1`]: () => json({}, 204) });
   const { box } = setupFiles();
   pasteFiles(box, [file("a.txt")]);
   act(() => lastXhr().respond(201, ok("u1", "a.txt")));
   await userEvent.click(screen.getByRole("button", { name: "Remove a.txt" }));
   await vi.waitFor(() =>
     expect(api.calls).toContainEqual(
-      expect.objectContaining({ method: "DELETE", url: "/api/agents/dev/uploads/u1" }),
+      expect.objectContaining({ method: "DELETE", url: `/api/agents/${refFor("dev")}/uploads/u1` }),
     ),
   );
 });
@@ -1003,7 +1004,7 @@ test("removing a finished chip deletes the upload on the server", async () => {
 test("leaving keeps the uploads: a remounted composer shows them again", () => {
   installFakeXhr();
   holdFrames();
-  const store = createUploadStore("dev");
+  const store = createUploadStore(refFor("dev"));
   const props = {
     draftKey: "agent:dev",
     placeholder: "p",
@@ -1192,7 +1193,7 @@ test("on a phone attach, / and @ are 40px ghost icons and there is no Write/Prev
   try {
     setup({
       preview: true,
-      attachments: createUploadStore("dev"),
+      attachments: createUploadStore(refFor("dev")),
       completions: { slash: SLASH, at: AT },
       hintMode: "coarse",
       turnOpen: true,

@@ -7,6 +7,7 @@ import { resetLibraryChanged } from "@/lib/library";
 import type { WsOptions } from "@/lib/ws";
 import { useWs, type WsHub } from "@/lib/ws-context";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -89,7 +90,7 @@ test("hub fans frames out to listeners; unsubscribe removes one; send follows th
 const status = (agent: string, turnOpen: boolean): ServerMessage =>
   ({
     type: "agent_status",
-    agent,
+    agent: refFor(agent),
     status: "working",
     turnOpen,
     restartPending: false,
@@ -145,7 +146,7 @@ test("a first false frame is not an edge; the first open invalidates nothing, a 
   const filters = spy.mock.calls[0]?.[0];
   const predicate = filters?.predicate as unknown as (q: { queryKey: unknown[] }) => boolean;
   expect(predicate({ queryKey: ["agents"] })).toBe(true);
-  expect(predicate({ queryKey: ["chat", "dev"] })).toBe(false);
+  expect(predicate({ queryKey: ["chat", refFor("dev")] })).toBe(false);
 });
 
 test("a reconnect refetches the mounted inbox list, and not a first open", async () => {
@@ -164,8 +165,8 @@ test("a reconnect refetches the mounted inbox list, and not a first open", async
 
 test("a turn open at connect (per the cached agents list) is seen ending", async () => {
   const { usage, qc } = await mounted();
-  qc.setQueryData(["agents", "exclude"], [{ slug: "dev", turnOpen: true }]);
-  qc.setQueryData(["agents", "only"], [{ slug: "old", turnOpen: false }]);
+  qc.setQueryData(["agents", "exclude"], [{ ref: refFor("dev"), handle: "dev", turnOpen: true }]);
+  qc.setQueryData(["agents", "only"], [{ ref: refFor("old"), handle: "old", turnOpen: false }]);
   vi.useFakeTimers();
   try {
     act(() => h.opts?.onMessage?.(status("old", false))); // cached closed: no edge
@@ -188,21 +189,21 @@ test("admin frames invalidate their keys", async () => {
 test("config_changed invalidates the agent's and the template's configuration, and that template's agent pages", async () => {
   const { qc } = await mounted();
   const agentCfg = (template: string) => ({ template: { name: template } });
-  qc.setQueryData(["agent-config", "ana"], agentCfg("dev"));
-  qc.setQueryData(["agent-config", "bo"], agentCfg("ops"));
-  qc.setQueryData(["agent-config", "cy"], agentCfg("dev"));
+  qc.setQueryData(["agent-config", refFor("ana")], agentCfg("dev"));
+  qc.setQueryData(["agent-config", refFor("bo")], agentCfg("ops"));
+  qc.setQueryData(["agent-config", refFor("cy")], agentCfg("dev"));
   qc.setQueryData(["template-config", "dev"], {});
   qc.setQueryData(["template-config", "ops"], {});
   const stale = (key: string[]) => qc.getQueryState(key)?.isInvalidated;
-  act(() => h.opts?.onMessage?.({ type: "config_changed", agent: "bo" }));
-  expect(stale(["agent-config", "bo"])).toBe(true);
-  expect(stale(["agent-config", "ana"])).toBe(false);
+  act(() => h.opts?.onMessage?.({ type: "config_changed", agent: refFor("bo") }));
+  expect(stale(["agent-config", refFor("bo")])).toBe(true);
+  expect(stale(["agent-config", refFor("ana")])).toBe(false);
   expect(stale(["template-config", "ops"])).toBe(false);
   act(() => h.opts?.onMessage?.({ type: "config_changed", template: "dev" }));
   expect(stale(["template-config", "dev"])).toBe(true);
   // The agents on template dev (a template turning broken sends no per-agent frame); not ops's.
-  expect(stale(["agent-config", "ana"])).toBe(true);
-  expect(stale(["agent-config", "cy"])).toBe(true);
+  expect(stale(["agent-config", refFor("ana")])).toBe(true);
+  expect(stale(["agent-config", refFor("cy")])).toBe(true);
   expect(stale(["template-config", "ops"])).toBe(false);
 });
 
@@ -213,7 +214,7 @@ test("a config_changed frame alone refreshes the Skills lists once, 250 ms after
   vi.useFakeTimers();
   try {
     act(() => h.opts?.onMessage?.({ type: "config_changed", template: "dev" }));
-    act(() => h.opts?.onMessage?.({ type: "config_changed", agent: "bo" }));
+    act(() => h.opts?.onMessage?.({ type: "config_changed", agent: refFor("bo") }));
     vi.advanceTimersByTime(249);
     expect(library()).toBe(0);
     vi.advanceTimersByTime(1);
@@ -230,7 +231,10 @@ test("unmounting the layout flushes queued status frames", async () => {
   mockApi({ "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }) });
   const { unmount, queryClient: qc } = renderApp("/inbox", alice);
   await screen.findByText("probe 0");
-  qc.setQueryData(["agents", "exclude"], [{ slug: "dev", status: "idle", turnOpen: false }]);
+  qc.setQueryData(
+    ["agents", "exclude"],
+    [{ ref: refFor("dev"), handle: "dev", status: "idle", turnOpen: false }],
+  );
   // Queued for the next animation frame, which never runs before the unmount below.
   act(() => h.opts?.onMessage?.(status("dev", true)));
   const listed = () => qc.getQueryData<{ status: string }[]>(["agents", "exclude"])?.[0]?.status;
@@ -242,13 +246,13 @@ test("unmounting the layout flushes queued status frames", async () => {
 test("a reconnect ends a pending restart whose status frame was dropped", async () => {
   mockApi({
     "GET /api/inbox?": () => json({ chats: [], items: [], nextCursor: null }),
-    "POST /api/agents/dev/restart": () => json({ status: "restarting" }, 202),
+    [`POST /api/agents/${refFor("dev")}/restart`]: () => json({ status: "restarting" }, 202),
   });
   renderApp("/inbox", alice);
   await screen.findByText("probe 0");
-  const { result } = renderHook(() => useRestartPending("dev"));
+  const { result } = renderHook(() => useRestartPending(refFor("dev")));
   try {
-    await act(() => restartAgentNow("dev", new QueryClient()));
+    await act(() => restartAgentNow({ ref: refFor("dev"), handle: "dev" }, new QueryClient()));
     expect(result.current).toBe(true); // the response is in; the status frame never comes
     act(() => h.opts?.onOpen?.());
     expect(result.current).toBe(false);

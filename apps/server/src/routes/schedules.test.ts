@@ -2,7 +2,7 @@ import type { ScheduleItem, ServerMessage } from "@open-factory/shared";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
-import { testRef } from "../test/principals.ts";
+import { testRef, UNKNOWN_REF } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let or: Awaited<ReturnType<typeof signUp>>;
@@ -38,7 +38,7 @@ test.each([
   ["POST", "/api/schedules/S-1/resume"],
   ["DELETE", "/api/schedules/S-1"],
   ["POST", "/api/schedules/S-1/restore"],
-  ["POST", "/api/agents/ceo/stop-crons"],
+  ["POST", `/api/agents/${UNKNOWN_REF}/stop-crons`],
 ] as const)(
   "%s %s needs a human session: no auth and a live agent token both get 401",
   async (method, url) => {
@@ -141,7 +141,7 @@ test("list: ?done and ?target reach the query (order is the service test's)", as
     );
   expect(await keys()).not.toContain(once.key);
   expect(await keys("?done=true")).toContain(once.key);
-  expect(await keys("?target=dev")).toEqual([sooner.key]);
+  expect(await keys(`?target=${h.seededRef("dev")}`)).toEqual([sooner.key]);
 });
 
 test("the agent summary counts schedules targeting it that are neither deleted nor done", async () => {
@@ -152,14 +152,14 @@ test("the agent summary counts schedules targeting it that are neither deleted n
   const gone = await create();
   await call("DELETE", `/api/schedules/${gone.key}`);
   void a;
-  const summary = (await call("GET", "/api/agents/ceo")).json();
+  const summary = (await call("GET", `/api/agents/${await h.refOf("ceo")}`)).json();
   expect(summary.agent.scheduleCount).toBe(2);
   expect(summary.agent.crons).toEqual([]);
 });
 
 test("stop-crons: 409 no_crons for an agent without crons, 404 for an unknown agent", async () => {
-  const r = await call("POST", "/api/agents/ceo/stop-crons");
+  const r = await call("POST", `/api/agents/${await h.refOf("ceo")}/stop-crons`);
   expect(r.statusCode).toBe(409);
   expect(r.json().error).toMatchObject({ code: "no_crons", message: "@ceo has no crons." });
-  expect((await call("POST", "/api/agents/nobody/stop-crons")).statusCode).toBe(404);
+  expect((await call("POST", `/api/agents/${UNKNOWN_REF}/stop-crons`)).statusCode).toBe(404);
 });

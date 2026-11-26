@@ -18,12 +18,13 @@ export class UserAdminService {
 
   async list(): Promise<UserAdminItem[]> {
     const rows = await this.d.db
-      .select({ u: schema.users, handle: schema.principals.handle })
+      .select({ u: schema.users, handle: schema.principals.handle, ref: schema.principals.ref })
       .from(schema.users)
       .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
       .orderBy(asc(schema.users.createdAt), asc(schema.users.id));
-    return rows.map(({ u: r, handle }) => ({
+    return rows.map(({ u: r, handle, ref }) => ({
       id: r.id,
+      ref,
       name: r.name,
       handle,
       email: r.email,

@@ -21,7 +21,7 @@ import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { hashToken } from "../users/invites.ts";
 import { agentConfigDir, agentWorkdir } from "../workspace/paths.ts";
 import type { Workspace } from "../workspace/workspace.ts";
-import { seedTestPrincipal, testManagerUserId, testRef } from "./principals.ts";
+import { refOfHandle, seedTestPrincipal, testManagerUserId, testRef } from "./principals.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
 
@@ -121,6 +121,7 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
   const first = await build(opts);
   const opened = [first];
   const seeded = new Map<string, string>();
+  const seededRefs = new Map<string, string>();
   return {
     ...first,
     factoryHome,
@@ -137,7 +138,14 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
         o,
       );
       seeded.set(row.slug, agentWorkdir(factoryHome, testRef(row.id)));
+      seededRefs.set(row.slug, testRef(row.id));
       return row;
+    },
+    /** The ref of an agent made by `seedAgent`, synchronously (a URL's `:ref`). */
+    seededRef(slug: string): string {
+      const ref = seededRefs.get(slug);
+      if (!ref) throw new Error(`no seeded agent ${slug}`);
+      return ref;
     },
     /** The workdir of an agent made by `seedAgent`: named by its ref, not its handle. */
     seededWorkdir(slug: string): string {
@@ -146,6 +154,8 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
       return dir;
     },
     signUpUser: (input?: Partial<SignUpInput>) => signUp(first.app, input),
+    /** The ref of the agent or person with this handle: what routes and services address an agent by. */
+    refOf: (handle: string) => refOfHandle(first.db, handle),
     /** A second app on the same DB and FACTORY_HOME (the first should be closed first). */
     /** Reopens over the same database; `factorySettings` is not re-applied (a PATCH before the restart persists). */
     async reopen(o: TestAppOptions = { ...opts, factorySettings: undefined }) {
@@ -275,4 +285,23 @@ export async function createTestDb() {
       await tdb.release();
     },
   };
+}
+
+/** The agent row with this handle (what a test names an agent by), or undefined. */
+export async function agentRowOf(app: Pick<FastifyInstance, "store">, handle: string) {
+  const r = await app.store.agentByArg(handle);
+  return r.kind === "agent" ? r.row : undefined;
+}
+
+/** The runtime of the agent with this handle, created on first use. */
+export async function runtimeOf(app: Pick<FastifyInstance, "store" | "runtimes">, handle: string) {
+  const row = await agentRowOf(app, handle);
+  return row ? app.runtimes.load(row.id) : undefined;
+}
+
+/** The ref of the agent with this handle, for a test that holds only the app. */
+export async function agentRefOf(app: Pick<FastifyInstance, "store">, handle: string) {
+  const row = await agentRowOf(app, handle);
+  if (!row) throw new Error(`no agent @${handle}`);
+  return app.store.refOfAgent(row.id);
 }

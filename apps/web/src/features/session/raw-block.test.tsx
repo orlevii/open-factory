@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { createQueryClient } from "@/lib/query-client";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { rawTailRows } from "./raw-tail";
 import { buildRows } from "./rows";
 import { SLOW_SEND_MS, YOUNG_ITEM_MS } from "./send-phase";
@@ -54,7 +55,7 @@ const block = { clientMessageId: CID, body: "/context", urgent: false, raw: true
 const operatorInput = [
   {
     seq: 5,
-    agentSlug: "dev",
+    agentRef: refFor("dev"),
     turnId: null,
     at: "2026-11-19T14:00:01.000Z",
     event: {
@@ -72,7 +73,7 @@ const view = (o: { rows?: never; pending?: ReturnType<typeof rawTailRows> }) => 
   <QueryClientProvider client={createQueryClient({ queries: { retry: false } })}>
     <TooltipProvider>
       <Timeline
-        slug="dev"
+        agentRef={refFor("dev")}
         rows={o.rows ? buildRows(o.rows).rows : []}
         pendingRows={o.pending}
         failedIds={new Set()}
@@ -178,7 +179,7 @@ const agentItem = {
 const agentInput = [
   {
     seq: 6,
-    agentSlug: "dev",
+    agentRef: refFor("dev"),
     turnId: null,
     at: "2026-11-19T14:00:01.000Z",
     event: {

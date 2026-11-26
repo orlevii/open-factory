@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { testRef } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { RuntimeHarness, sendAs } from "./testing/runtime-harness.ts";
 
@@ -270,6 +271,9 @@ test("subscribers are told once the agent's command list is stored", async () =>
     }),
   );
   await vi.waitFor(() =>
-    expect(h.frames).toContainEqual({ type: "agent_commands_changed", agent: h.rt.agent.slug }),
+    expect(h.frames).toContainEqual({
+      type: "agent_commands_changed",
+      agent: testRef(h.rt.agent.id),
+    }),
   );
 });

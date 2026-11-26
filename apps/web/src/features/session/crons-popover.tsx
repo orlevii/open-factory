@@ -45,7 +45,7 @@ export function CronsSegment({ agent, stop }: { agent: AgentSummary; stop: StopC
           className="text-muted-foreground underline-offset-4 hover:underline"
         >
           {n} {noun}
-          {agent.stopCronsPending && ` · stopping when @${agent.slug}'s current work finishes`}
+          {agent.stopCronsPending && ` · stopping when @${agent.handle}'s current work finishes`}
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -65,12 +65,12 @@ export function CronsSegment({ agent, stop }: { agent: AgentSummary; stop: StopC
         </ul>
         <p className="border-t border-border pt-2 text-muted-foreground">
           {zoneNote && <>Cron times are in the server's zone ({agent.cronZone}). </>}
-          They stop when the process stops. Stopping them hibernates @{agent.slug} once its current
-          work is done.
+          They stop when the process stops. Stopping them hibernates @{agent.handle} once its
+          current work is done.
         </p>
         {agent.stopCronsPending ? (
           <p className="text-muted-foreground">
-            Stopping when @{agent.slug}'s current work finishes.
+            Stopping when @{agent.handle}'s current work finishes.
           </p>
         ) : (
           <Button variant="ghost" className="justify-self-end" onClick={() => stop.openConfirm()}>

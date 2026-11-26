@@ -13,7 +13,12 @@ import type { TaskStore } from "./task-store.ts";
 
 const { tasks, agents, principals, taskComments, taskEvents } = schema;
 
-export type AgentRef = { slug: string; displayName: string; ended?: "archived" | "terminated" };
+export type AgentRef = {
+  ref: string;
+  handle: string;
+  displayName: string;
+  ended?: "archived" | "terminated";
+};
 /** A principal as the task API names it: its kind, ref and current handle. */
 export type PrincipalRef = { kind: PrincipalKind; ref: string; handle: string };
 export type TaskSummary = {
@@ -65,6 +70,7 @@ export class TaskReads {
     const db = this.d.db;
     const limit = Math.min(Math.max(f.limit ?? 50, 1), 200);
     const aa = alias(agents, "aa");
+    const ap = alias(principals, "ap");
     const cp = alias(principals, "cp");
     const where: (SQL | undefined)[] = [];
     if (f.keys) {
@@ -90,7 +96,8 @@ export class TaskReads {
     const rows = await db
       .select({
         t: tasks,
-        aSlug: aa.slug,
+        aRef: ap.ref,
+        aHandle: ap.handle,
         aName: aa.displayName,
         aArchived: aa.archivedAt,
         aTerminated: aa.terminatedAt,
@@ -100,6 +107,7 @@ export class TaskReads {
       })
       .from(tasks)
       .leftJoin(aa, eq(aa.id, tasks.assigneeAgentId))
+      .leftJoin(ap, eq(ap.id, tasks.assigneeAgentId))
       .innerJoin(cp, eq(cp.id, tasks.createdById))
       .where(and(...where))
       .orderBy(desc(tasks.updatedAt), asc(tasks.id))
@@ -111,16 +119,22 @@ export class TaskReads {
     );
     const items = page.map((r) => {
       const status = r.t.status as TaskStatus;
-      const e = r.aSlug
+      const e = r.aRef
         ? ended({ archivedAt: r.aArchived, terminatedAt: r.aTerminated })
         : undefined;
       return {
         key: taskKey(r.t.number),
         title: r.t.title,
         status,
-        assignee: r.aSlug
-          ? { slug: r.aSlug, displayName: r.aName as string, ...(e ? { ended: e } : {}) }
-          : null,
+        assignee:
+          r.aRef && r.aHandle
+            ? {
+                ref: r.aRef,
+                handle: r.aHandle,
+                displayName: r.aName as string,
+                ...(e ? { ended: e } : {}),
+              }
+            : null,
         blockedBy: blockedBy(
           status,
           (deps.get(r.t.id) ?? []).map((x) => ({ key: taskKey(x.number), status: x.status })),
@@ -153,13 +167,16 @@ export class TaskReads {
     const [a] = t.assigneeAgentId
       ? await db.select().from(aa).where(eq(aa.id, t.assigneeAgentId))
       : [];
-    const assignee: AgentRef | null = a
-      ? {
-          slug: a.slug,
-          displayName: a.displayName,
-          ...(ended(a) ? { ended: ended(a) as "archived" | "terminated" } : {}),
-        }
-      : null;
+    const assigneeP = a ? await principalById(db, a.id) : undefined;
+    const assignee: AgentRef | null =
+      a && assigneeP
+        ? {
+            ref: assigneeP.ref,
+            handle: assigneeP.handle,
+            displayName: a.displayName,
+            ...(ended(a) ? { ended: ended(a) as "archived" | "terminated" } : {}),
+          }
+        : null;
     const createdBy = await this.principalRef(t.createdById);
 
     const deps = await this.d.tasks.dependencies(db, t.id);
@@ -186,10 +203,11 @@ export class TaskReads {
     const links = (await this.d.tasks.links(db, t.id)).map((l) => ({
       kind: l.kind,
       ...(l.target ? { target: l.target } : {}),
-      ...(l.agentSlug
+      ...(l.agentRef && l.agentHandle
         ? {
             agent: {
-              slug: l.agentSlug,
+              ref: l.agentRef,
+              handle: l.agentHandle,
               displayName: l.agentDisplayName as string,
               ...(ended({ archivedAt: l.agentArchivedAt, terminatedAt: l.agentTerminatedAt })
                 ? {

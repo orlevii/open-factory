@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { Router } from "../messaging/router.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { agentRowOf, makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
@@ -21,7 +21,7 @@ afterEach(() => h.close());
 
 const proc = (slug: string) => driver.startsOf(slug).at(-1);
 async function dev() {
-  const a = await h.app.store.agentBySlug("dev");
+  const a = await agentRowOf(h.app, "dev");
   if (!a) throw new Error("seed");
   return a;
 }
@@ -50,7 +50,7 @@ async function handOff(
     h.app.router.handOffTaskRows([{ row, wake }]);
     await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(1));
     await deliver.mock.results[0]?.value;
-    await (await h.app.runtimes.bySlug("dev"))?.settled();
+    await (await runtimeOf(h.app, "dev"))?.settled();
   } finally {
     deliver.mockRestore();
   }

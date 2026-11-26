@@ -14,6 +14,11 @@ import { agentConfigQueryOptions, templateConfigQueryOptions } from "@/features/
 import { useInboxNotifier } from "@/features/inbox/notifications";
 import { createOrgToasts } from "@/features/org/org-toasts";
 import { CommandPalette } from "@/features/palette/command-palette";
+import {
+  type PrincipalsCache,
+  principalsQueryOptions,
+  requestPrincipal,
+} from "@/features/principals/api";
 import { summaryFromAgentsList } from "@/features/session/api";
 import { invalidateCommands } from "@/features/session/commands";
 import { dropUploadsExcept } from "@/features/session/uploads";
@@ -45,10 +50,10 @@ export const Route = createFileRoute("/_app")({
 const USAGE_DEBOUNCE_MS = 5000;
 
 /** `turnOpen` for an agent as the cached agent lists or detail last saw it; undefined when uncached. */
-function cachedTurnOpen(qc: QueryClient, slug: string): boolean | undefined {
+function cachedTurnOpen(qc: QueryClient, agentRef: string): boolean | undefined {
   return (
-    summaryFromAgentsList(qc, slug)?.turnOpen ??
-    qc.getQueryData<AgentDetail>(["agent", slug])?.agent.turnOpen
+    summaryFromAgentsList(qc, agentRef)?.turnOpen ??
+    qc.getQueryData<AgentDetail>(["agent", agentRef])?.agent.turnOpen
   );
 }
 
@@ -77,7 +82,13 @@ function AppLayout() {
   // A file dropped outside the composer never navigates away from the app (U3 §13.5).
   useEffect(() => installFileDropGuard(), []);
   useEffect(() => {
-    const orgToasts = createOrgToasts({ notify: toast, navigate: (to) => navigate({ to }) });
+    const orgToasts = createOrgToasts({
+      notify: toast,
+      navigate: (to) => navigate({ to }),
+      // The frame names the actor and the agent by ref; their handles come from the principals cache.
+      handleOf: (ref) =>
+        qc.getQueryData<PrincipalsCache>(principalsQueryOptions.queryKey)?.byRef.get(ref)?.handle,
+    });
     const connection = connectWs({
       // A failed check (5xx, network) rejects; connectWs then keeps retrying instead of signing out.
       hasSession: async () => {
@@ -149,6 +160,9 @@ function AppLayout() {
         }
         // I7: an agent changed the org: one merged toast per actor window; the lists it touched refetch.
         if (m.type === "org_action") {
+          // The toast shows up 2 s from now: by then the cache knows who these are.
+          requestPrincipal(qc, m.by);
+          if (m.action !== "template_created") requestPrincipal(qc, m.subject);
           orgToasts.onOrgAction(m);
           // An org action means an agent exists: only a cache still saying otherwise needs the refetch.
           if (qc.getQueryData(setupQueryOptions.queryKey)?.hasAgent === false)

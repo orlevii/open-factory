@@ -1,5 +1,6 @@
 import type { AnyEvent, SessionEvent } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { refFor } from "@/test/refs";
 import { envelope } from "@/test/session-fixtures";
 import { childrenOf } from "./display-passes";
 import {
@@ -17,7 +18,7 @@ const at = "2026-11-18T10:00:00.000Z";
 const rowsOf = (evs: SessionEvent[]): Row[] => buildRows(evs).rows;
 const e = (event: AnyEvent, turnId: string | null = "t1"): SessionEvent => ({
   seq: ++seq,
-  agentSlug: "dev",
+  agentRef: refFor("dev"),
   turnId,
   at,
   event,

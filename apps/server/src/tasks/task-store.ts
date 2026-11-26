@@ -28,7 +28,7 @@ import type { TaskStatus } from "@open-factory/shared";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Exec } from "../agents/event-store.ts";
 
-const { tasks, taskDependencies, taskLinks, taskComments, taskEvents, agents } = schema;
+const { tasks, taskDependencies, taskLinks, taskComments, taskEvents, agents, principals } = schema;
 
 /** The fixed key of the dependency-edit advisory lock (spec §6.4). */
 export const TASK_GRAPH_LOCK = 0x5348_0008;
@@ -260,13 +260,15 @@ export class TaskStore {
         target: taskLinks.target,
         title: taskLinks.title,
         agentId: taskLinks.agentId,
-        agentSlug: agents.slug,
+        agentRef: principals.ref,
+        agentHandle: principals.handle,
         agentDisplayName: agents.displayName,
         agentArchivedAt: agents.archivedAt,
         agentTerminatedAt: agents.terminatedAt,
       })
       .from(taskLinks)
       .leftJoin(agents, eq(agents.id, taskLinks.agentId))
+      .leftJoin(principals, eq(principals.id, taskLinks.agentId))
       .where(eq(taskLinks.taskId, taskId))
       .orderBy(asc(taskLinks.position));
   }

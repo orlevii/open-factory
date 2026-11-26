@@ -3,6 +3,7 @@ import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary, detail, envelope, resetSeq, se } from "@/test/session-fixtures";
 
@@ -25,22 +26,23 @@ afterEach(() => {
 });
 
 /** The spawned agent's ref: the events name it by its tag, `<@ref>`, and the principals cache resolves that tag. */
-const TECH_LEAD_REF = "tab12345";
+const TECH_LEAD_REF = refFor("tech-lead-ab12");
 /** Opens /agents/lead with these events; `@tech-lead-ab12` is a live spawned agent. */
 async function open(events: AnyEvent[], firstText: string | RegExp) {
   const api = mockApi({
-    "GET /api/agents/lead": () => json(detail({ slug: "lead", displayName: "Lead" })),
-    "GET /api/agents/lead/events?": () =>
+    [`GET /api/agents/${refFor("lead")}`]: () =>
+      json(detail({ handle: "lead", displayName: "Lead" })),
+    [`GET /api/agents/${refFor("lead")}/events?`]: () =>
       json({ hasMore: { before: false, after: false }, events: events.map((e) => se(e)) }),
     "GET /api/agents?ended=exclude": () =>
       json({
         agents: [
-          agentSummary({ slug: "lead", displayName: "Lead" }),
+          agentSummary({ handle: "lead", displayName: "Lead" }),
           agentSummary({
-            slug: "tech-lead-ab12",
+            handle: "tech-lead-ab12",
             displayName: "Tech Lead · ab12",
             kind: "ephemeral",
-            reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+            reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
           }),
         ],
         running: { count: 1 },
@@ -61,7 +63,7 @@ async function open(events: AnyEvent[], firstText: string | RegExp) {
         ],
       }),
   });
-  renderApp("/agents/lead/session", alice);
+  renderApp(`/agents/${refFor("lead")}/session`, alice);
   await screen.findByText(firstText);
   return api;
 }
@@ -86,7 +88,13 @@ const result = (content: string, isError = false, toolUseId = "toolu_s"): AnyEve
   isError,
 });
 const ok = (o: Record<string, unknown> = {}) =>
-  JSON.stringify({ slug: "tech-lead-ab12", agent_id: "0f9e-secret-id", status: "idle", ...o });
+  JSON.stringify({
+    slug: "tech-lead-ab12",
+    tag: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
+    agent_id: "0f9e-secret-id",
+    status: "idle",
+    ...o,
+  });
 const textOf = (el: Element) => el.textContent?.replace(/\s+/g, " ").trim();
 /** The sender line's sentence, without its time. */
 function senderOf(block: HTMLElement) {
@@ -107,7 +115,7 @@ test("a spawn renders as a block: GitFork sender line with the child's link and 
   expect(within(sender).getByText("@lead")).toBeInTheDocument();
   expect(within(block).getByRole("link", { name: "Open @tech-lead-ab12's chat" })).toHaveAttribute(
     "href",
-    "/agents/tech-lead-ab12/chat",
+    `/agents/${TECH_LEAD_REF}/chat`,
   );
   // The description is plain text, the brief goes through Markdown.
   const description = within(block).getByText("Writes the S8 spec");
@@ -258,7 +266,15 @@ test("terminate_agent is one quiet line with a CircleX: done, running, failed, n
     [
       { type: "turn_started" },
       terminate("tech-lead-ab12", "t1"),
-      result(JSON.stringify({ slug: "tech-lead-ab12", status: "terminated" }), false, "t1"),
+      result(
+        JSON.stringify({
+          slug: "tech-lead-ab12",
+          tag: `<@${refFor("tech-lead-ab12")}|tech-lead-ab12>`,
+          status: "terminated",
+        }),
+        false,
+        "t1",
+      ),
       terminate("nobody", "t2"),
       result("No spawned agent named @nobody. Call list_peers to see your reports.", true, "t2"),
       // A later turn ends t3 unanswered; t4 is in the open one (the fixture's events share a turn id).
@@ -332,7 +348,7 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
   expect(spawned.querySelector("svg.lucide-git-fork")).not.toBeNull();
   expect(await within(spawned).findByRole("link", chat)).toHaveAttribute(
     "href",
-    "/agents/tech-lead-ab12/chat",
+    `/agents/${TECH_LEAD_REF}/chat`,
   );
   expect(within(spawned).getByText("tech-lead")).toBeInTheDocument();
   const terminated = screen.getByText(
@@ -340,7 +356,7 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
   );
   expect(await within(terminated).findByRole("link", chat)).toHaveAttribute(
     "href",
-    "/agents/tech-lead-ab12/chat",
+    `/agents/${TECH_LEAD_REF}/chat`,
   );
   const left = screen.getByText(
     (_, el) =>

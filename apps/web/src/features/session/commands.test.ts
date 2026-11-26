@@ -1,6 +1,7 @@
 import type { AgentCommandsResponse, Command } from "@open-factory/shared";
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, expect, test, vi } from "vitest";
+import { refFor } from "@/test/refs";
 import {
   COMMANDS_FAILED,
   commandSource,
@@ -36,7 +37,7 @@ const LIST: Command[] = [
 
 let qc: QueryClient;
 const respond = (over: Partial<AgentCommandsResponse> = {}) =>
-  qc.setQueryData(commandsQueryOptions("dev").queryKey, {
+  qc.setQueryData(commandsQueryOptions(refFor("dev")).queryKey, {
     commands: LIST,
     source: "session",
     at: "2026-11-21T10:00:00.000Z",
@@ -81,7 +82,7 @@ test("aliases match and name themselves on the canonical row", () => {
 
 test("rows: `/name`, the argument hint, the description without its source tag, the alias", () => {
   respond();
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   const [review] = src.items("rev");
   expect(review).toMatchObject({
     id: "code-review",
@@ -99,7 +100,7 @@ test("rows: `/name`, the argument hint, the description without its source tag, 
 
 test("accepting a row inserts `/name ` and puts the caret after it; nothing else", () => {
   respond();
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   const [review] = src.items("code");
   expect(review && src.accept(review, "/code", 0, 5)).toEqual({
     text: "/code-review ",
@@ -109,7 +110,7 @@ test("accepting a row inserts `/name ` and puts the caret after it; nothing else
 
 test("Enter sends a name or alias typed in full, and text that matched only part of a name or a description", () => {
   respond();
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   expect(src.items("context")[0]?.enterSends).toBe(true);
   expect(src.items("cost")[0]).toMatchObject({ id: "usage", enterSends: true });
   expect(src.items("con")[0]?.enterSends).toBeUndefined(); // a prefix: Enter accepts it
@@ -121,7 +122,7 @@ test("denied names show only when typed in full, disabled with their reason", ()
   respond({
     commands: [...LIST, cmd("clear", { builtin: true, denied: reason, aliases: ["reset"] })],
   });
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   expect(src.items("").some((i) => i.id === "clear")).toBe(false);
   expect(src.items("cle").some((i) => i.id === "clear")).toBe(false);
   expect(src.items("clear")[0]).toMatchObject({ id: "clear", disabled: reason, detail: reason });
@@ -129,7 +130,7 @@ test("denied names show only when typed in full, disabled with their reason", ()
 });
 
 test("a denied first token is refused with the denylist's reason once it is complete", () => {
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   const refusal = (reason: string) => ({ kind: "refusal", text: reason });
   expect(src.textNote?.("/clear ")).toEqual(
     refusal("/clear isn't available: each agent keeps one session."),
@@ -151,7 +152,7 @@ test("a denied first token is refused with the denylist's reason once it is comp
 });
 
 test("menu notes: the empty state, From template, Commands as of …", () => {
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   // Not loaded yet: nothing to say.
   expect(src.menuNote?.(0)).toBeUndefined();
   respond({ commands: [], source: "template", at: null });
@@ -178,10 +179,12 @@ test("watch loads the list once and reports when it changes", async () => {
   );
   vi.stubGlobal("fetch", fetchMock);
   const onChange = vi.fn();
-  const stop = commandSource(qc, "dev").watch?.(onChange);
+  const stop = commandSource(qc, refFor("dev")).watch?.(onChange);
   await vi.waitFor(() => expect(onChange).toHaveBeenCalled());
   expect(fetchMock).toHaveBeenCalledTimes(1);
-  expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe("/api/agents/dev/commands");
+  expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe(
+    `/api/agents/${refFor("dev")}/commands`,
+  );
   stop?.();
   vi.unstubAllGlobals();
 });
@@ -191,8 +194,8 @@ test("a list that failed to load says so in the menu", async () => {
     "fetch",
     vi.fn(async () => new Response("{}", { status: 500 })),
   );
-  await qc.prefetchQuery({ ...commandsQueryOptions("dev"), retry: false });
-  const src = commandSource(qc, "dev");
+  await qc.prefetchQuery({ ...commandsQueryOptions(refFor("dev")), retry: false });
+  const src = commandSource(qc, refFor("dev"));
   expect(COMMANDS_FAILED).toBe("Couldn't load this agent's commands.");
   expect(src.menuNote?.(0)).toBe(COMMANDS_FAILED);
   vi.unstubAllGlobals();
@@ -200,7 +203,7 @@ test("a list that failed to load says so in the menu", async () => {
 
 test("browsing (`/` alone) groups the rows Skills, Commands, Factory, each headed once; a query ranks flat", () => {
   respond();
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   const all = src.items("");
   expect(all.map((i) => i.group)).toEqual([
     "Skills",
@@ -219,7 +222,7 @@ test("browsing (`/` alone) groups the rows Skills, Commands, Factory, each heade
 });
 
 test("watch hears a failed load too", async () => {
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   const heard = vi.fn();
   vi.stubGlobal(
     "fetch",
@@ -236,9 +239,9 @@ test("watch hears a failed load too", async () => {
 
 test("agent_commands_changed invalidates that agent's list only", () => {
   const spy = vi.spyOn(qc, "invalidateQueries");
-  invalidateCommands(qc, { type: "agent_commands_changed", agent: "dev" });
-  expect(spy).toHaveBeenCalledWith({ queryKey: ["agent-commands", "dev"] });
-  invalidateCommands(qc, { type: "agent_status", agent: "dev" } as never);
+  invalidateCommands(qc, { type: "agent_commands_changed", agent: refFor("dev") });
+  expect(spy).toHaveBeenCalledWith({ queryKey: ["agent-commands", refFor("dev")] });
+  invalidateCommands(qc, { type: "agent_status", agent: refFor("dev") } as never);
   expect(spy).toHaveBeenCalledTimes(1);
 });
 
@@ -259,12 +262,12 @@ test("an open menu fetches the list again when the agent starts", async () => {
       );
     }),
   );
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   const onChange = vi.fn();
   const stop = src.watch?.(onChange);
   await vi.waitFor(() => expect(src.items("").length).toBe(0));
   await vi.waitFor(() => expect(onChange).toHaveBeenCalled());
-  invalidateCommands(qc, { type: "agent_commands_changed", agent: "dev" });
+  invalidateCommands(qc, { type: "agent_commands_changed", agent: refFor("dev") });
   await vi.waitFor(() => expect(src.items("").length).toBeGreaterThan(0));
   expect(n).toBe(2);
   stop?.();
@@ -290,10 +293,10 @@ test("an invalidation cancels a fetch under way, so the old list never wins", as
       status: 200,
       headers: { "content-type": "application/json" },
     });
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   const stop = src.watch?.(() => {});
   await vi.waitFor(() => expect(held).toHaveLength(1)); // the menu's GET, held open
-  invalidateCommands(qc, { type: "agent_commands_changed", agent: "dev" });
+  invalidateCommands(qc, { type: "agent_commands_changed", agent: refFor("dev") });
   await vi.waitFor(() => expect(held).toHaveLength(2));
   held[0]?.(body([cmd("old")])); // answered before the start: too late
   held[1]?.(body([cmd("fresh")]));
@@ -304,7 +307,7 @@ test("an invalidation cancels a fetch under way, so the old list never wins", as
 
 test("a known command over several lines is refused before sending; unknown text and compact", () => {
   respond();
-  const src = commandSource(qc, "dev");
+  const src = commandSource(qc, refFor("dev"));
   expect(src.textNote?.("/context\nfoo")).toEqual({ kind: "refusal", text: ONE_LINE });
   expect(src.textNote?.("/COST\u2028x")).toEqual({ kind: "refusal", text: ONE_LINE });
   expect(src.textNote?.("/compact\nfocus")).toEqual({ kind: "refusal", text: ONE_LINE });
@@ -313,5 +316,5 @@ test("a known command over several lines is refused before sending; unknown text
   expect(src.textNote?.("/Users/or/log.txt\nx")).toBeUndefined();
   // Before the list loads nothing is known; the server still refuses.
   qc.clear();
-  expect(commandSource(qc, "dev").textNote?.("/context\nfoo")).toBeUndefined();
+  expect(commandSource(qc, refFor("dev")).textNote?.("/context\nfoo")).toBeUndefined();
 });

@@ -73,7 +73,7 @@ async function renderMd(ui: ReactNode) {
   });
   const chat = createRoute({
     getParentRoute: () => root,
-    path: "/agents/$slug/chat",
+    path: "/agents/$ref/chat",
     component: () => null,
   });
   const router = createRouter({
@@ -89,7 +89,7 @@ test("a tag renders as a link to the agent's chat named by its current handle", 
   setup([DEV]);
   await renderMd(<Markdown source={`Ask <@${DEV.ref}|stale-handle> please`} />);
   const link = await screen.findByRole("link", { name: "@dev, Dev Agent" });
-  expect(link).toHaveAttribute("href", "/agents/dev/chat");
+  expect(link).toHaveAttribute("href", `/agents/${DEV.ref}/chat`);
   expect(screen.queryByText(/stale-handle/)).toBeNull();
 });
 

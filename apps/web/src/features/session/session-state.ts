@@ -67,7 +67,7 @@ export interface LiveState {
 }
 
 export interface SessionState {
-  slug: string | undefined;
+  agentRef: string | undefined;
   events: Map<number, SessionEvent>;
   /** `events` by seq; a new array only when the events change, appended in the live case. */
   ordered: SessionEvent[];
@@ -125,7 +125,7 @@ export const NO_LIVE: LiveState = { texts: NO_TEXTS, subagents: NO_SUBAGENTS };
 const BULK = 10;
 
 export const initialSessionState: SessionState = {
-  slug: undefined,
+  agentRef: undefined,
   events: new Map(),
   ordered: [],
   hasMoreBefore: false,
@@ -655,7 +655,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         withAgent(
           {
             ...initialSessionState,
-            slug: a.detail.agent.slug,
+            agentRef: a.detail.agent.ref,
             ...withEvents(initialSessionState, a.page.events),
             hasMoreBefore: a.page.hasMore.before,
             windowed: a.mode === "window" && a.page.hasMore.after,
@@ -667,11 +667,11 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
             stopEpoch: s.stopEpoch,
             // A reload of the same session (a resync) keeps your cancelled lines; leaving drops them.
             cancelled:
-              s.slug === a.detail.agent.slug
+              s.agentRef === a.detail.agent.ref
                 ? pruneCancelled(s.cancelled, a.detail.queue)
                 : NO_CANCELLED,
             // ...and its sends in flight, which the reloaded queue may already hold.
-            ...(s.slug === a.detail.agent.slug
+            ...(s.agentRef === a.detail.agent.ref
               ? { sending: s.sending, awaiting: s.awaiting, landed: s.landed }
               : {}),
             liveAfter: a.page.events.reduce((m, e) => Math.max(m, e.seq), 0),
@@ -753,7 +753,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
       return { ...s, cancelled: cancelled.size ? cancelled : NO_CANCELLED };
     }
     case "agent":
-      return s.agent && a.agent.slug === s.slug ? withAgent(s, a.agent) : s;
+      return s.agent && a.agent.ref === s.agentRef ? withAgent(s, a.agent) : s;
     case "agent_edited":
       return s.agent && !sameEdited(editedFields(s.agent), a.fields)
         ? withAgent(s, { ...s.agent, ...a.fields })
@@ -765,7 +765,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
     }
     case "frame": {
       const m = a.message;
-      if (!("agent" in m) || m.agent !== s.slug) return s;
+      if (!("agent" in m) || m.agent !== s.agentRef) return s;
       if (m.type === "live") return applyLiveFrame(s, m);
       if (m.type === "session_event") {
         // Gaps are the server's job: on a missed range it sends `resync`, so no gap detection here.
@@ -819,7 +819,7 @@ export function sessionReducer(s: SessionState, a: SessionAction): SessionState 
         }
       };
       for (const m of a.messages) {
-        if (m.type === "session_event" && m.agent === next.slug && !next.windowed) {
+        if (m.type === "session_event" && m.agent === next.agentRef && !next.windowed) {
           pending.push(m.event);
           continue;
         }
@@ -841,7 +841,7 @@ function loadedLive(
   s: SessionState,
   a: Extract<SessionAction, { type: "loaded" }>,
 ): Pick<SessionState, "live" | "retired" | "snapshotWanted"> {
-  const same = s.slug === a.detail.agent.slug;
+  const same = s.agentRef === a.detail.agent.ref;
   const retired = seedRetired(same ? s.retired : NONE, a.page.events);
   const keep = same && !(a.mode === "window" && a.page.hasMore.after);
   const texts = keep ? withoutKeys(s.live.texts, retired) : NO_TEXTS;

@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -28,7 +29,7 @@ const summary = (n: number) => ({
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
   updatedAt: at,
 });
 const detail = (n: number) => ({

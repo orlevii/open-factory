@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ServerMessage } from "@open-factory/shared";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { testRef } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
@@ -236,7 +237,7 @@ test("V4: on the exit path, no agent_status says turnOpen false before the turn 
   });
   const frames: boolean[] = []; // `closed` as each turnOpen:false frame left the runtime
   const off = h.bus.subscribeAll((m: ServerMessage) => {
-    if (m.type === "agent_status" && m.agent === h.rt.agent.slug && m.turnOpen === false)
+    if (m.type === "agent_status" && m.agent === testRef(h.rt.agent.id) && m.turnOpen === false)
       frames.push(closed);
   });
   h.driver.last.exit(1, "boom"); // a crash: the leftovers are cleaned up

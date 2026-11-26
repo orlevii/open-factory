@@ -1,4 +1,3 @@
-import { slugSchema } from "@open-factory/shared";
 import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -8,9 +7,9 @@ import { UploadAgentEndedError, UploadLimitError } from "../uploads/service.ts";
 import { IMAGE_TOO_LARGE, type Refusal } from "../uploads/sniff.ts";
 import { MAX_UPLOAD_BYTES, UploadExistsError, UploadTooLargeError } from "../uploads/store.ts";
 import { WorkspaceError } from "../workspace/safe-fs.ts";
+import { NO_AGENT_AT_REF, refParams, refSchema } from "./ref-params.ts";
 
-const slugParams = z.object({ slug: slugSchema });
-const uploadParams = z.object({ slug: slugSchema, id: z.string().min(1).max(64) });
+const uploadParams = z.object({ ref: refSchema, id: z.string().min(1).max(64) });
 const err = (reply: FastifyReply, status: number, code: string, message: string) =>
   reply.code(status).send({ error: { code, message } });
 const TOO_LARGE = "The file is larger than 20 MB.";
@@ -60,7 +59,7 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
     return req.user;
   };
 
-  app.post("/api/agents/:slug/uploads", { schema: { params: slugParams } }, async (req, reply) => {
+  app.post("/api/agents/:ref/uploads", { schema: { params: refParams } }, async (req, reply) => {
     // Review M7: another type was already consumed by Fastify's own parsers; say so instead of "empty".
     if (!String(req.headers["content-type"] ?? "").startsWith("application/octet-stream"))
       return err(
@@ -86,11 +85,22 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
     if (name.length > MAX_NAME_CHARS)
       return err(reply, 400, "validation_error", "The file name is too long.");
 
-    const agent = await app.store.agentBySlug(req.params.slug);
-    if (!agent) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+    const agent = await app.store.agentByRef(req.params.ref);
+    if (!agent) return err(reply, 404, "agent_not_found", NO_AGENT_AT_REF);
     if (agent.terminatedAt)
-      return err(reply, 409, "agent_terminated", `@${agent.slug} was terminated.`);
-    if (agent.archivedAt) return err(reply, 409, "agent_archived", `@${agent.slug} is archived.`);
+      return err(
+        reply,
+        409,
+        "agent_terminated",
+        `@${await app.store.handleOfAgent(agent.id)} was terminated.`,
+      );
+    if (agent.archivedAt)
+      return err(
+        reply,
+        409,
+        "agent_archived",
+        `@${await app.store.handleOfAgent(agent.id)} is archived.`,
+      );
 
     try {
       const r = await app.uploads.create(agent, user(req).id, name, bodyStream(req.raw));
@@ -108,7 +118,7 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
       if (e instanceof UploadExistsError) return err(reply, 409, "upload_exists", e.message);
       if (e instanceof WorkspaceError) {
         // The message reaches the chip: the server's absolute paths stay in the log (finding D16).
-        req.log.warn({ err: e, agent: agent.slug }, "upload refused: unsafe workspace");
+        req.log.warn({ err: e, agent: req.params.ref }, "upload refused: unsafe workspace");
         return err(reply, 409, "unsafe_workspace", UNSAFE_WORKSPACE);
       }
       throw e;
@@ -116,11 +126,11 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
   });
 
   app.get(
-    "/api/agents/:slug/uploads/:id",
+    "/api/agents/:ref/uploads/:id",
     { schema: { params: uploadParams } },
     async (req, reply) => {
-      const agent = await app.store.agentBySlug(req.params.slug);
-      if (!agent) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const agent = await app.store.agentByRef(req.params.ref);
+      if (!agent) return err(reply, 404, "agent_not_found", NO_AGENT_AT_REF);
       const row = await app.uploads.get(agent.id, req.params.id);
       if (!row || (row.messageId === null && row.uploaderId !== user(req).id))
         return err(reply, 404, "upload_not_found", "No such upload.");
@@ -146,11 +156,11 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
   );
 
   app.delete(
-    "/api/agents/:slug/uploads/:id",
+    "/api/agents/:ref/uploads/:id",
     { schema: { params: uploadParams } },
     async (req, reply) => {
-      const agent = await app.store.agentBySlug(req.params.slug);
-      if (!agent) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
+      const agent = await app.store.agentByRef(req.params.ref);
+      if (!agent) return err(reply, 404, "agent_not_found", NO_AGENT_AT_REF);
       const me = user(req).id;
       const row = await app.uploads.get(agent.id, req.params.id);
       if (!row || (row.messageId === null && row.uploaderId !== me))

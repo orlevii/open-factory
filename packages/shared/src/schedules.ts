@@ -70,7 +70,8 @@ export type ScheduleAuthor = z.infer<typeof scheduleAuthorSchema>;
 export const scheduleItemSchema = z.object({
   key: z.string(),
   target: z.object({
-    slug: z.string(),
+    ref: z.string(),
+    handle: z.string(),
     displayName: z.string(),
     archived: z.boolean(),
     terminated: z.boolean(),

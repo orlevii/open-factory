@@ -66,13 +66,13 @@ export function useStopCrons(agent: AgentSummary | undefined): StopCrons {
     async function run() {
       if (!agent) return;
       try {
-        const r = await stopCrons(agent.slug);
+        const r = await stopCrons(agent.ref);
         setOutcome({
           key: Date.now(),
           text:
             r.status === "stopped"
-              ? `Stopped @${agent.slug}'s crons.`
-              : `@${agent.slug}'s crons stop when its current work finishes.`,
+              ? `Stopped @${agent.handle}'s crons.`
+              : `@${agent.handle}'s crons stop when its current work finishes.`,
         });
       } catch (e) {
         // The crons ended, or are ending, meanwhile: the goal is met.
@@ -114,7 +114,7 @@ export const CronsStopLayer = memo(function CronsStopLayer({
   return (
     <>
       <StopCronsDialog
-        slug={agent.slug}
+        handle={agent.handle}
         crons={agent.crons}
         // Nothing left to stop (they ended while it was open): close rather than read "Stop 0 crons".
         open={stop.confirm && agent.crons.length > 0}

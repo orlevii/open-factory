@@ -7,6 +7,7 @@ import { createQueryClient } from "@/lib/query-client";
 import { agentSummary } from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { useSheetDraft } from "./drafts";
 import { SheetFormFooter } from "./form-footer";
@@ -259,9 +260,9 @@ test("intent prefetch has its own freshness window: hover, press and open fetch 
   const api = mockApi({
     "GET /api/credentials": () => json({ credentials: [] }),
     "GET /api/projects": () => json({ projects: [] }),
-    "GET /api/agents/lead": () =>
+    [`GET /api/agents/${refFor("lead")}`]: () =>
       json({
-        agent: agentSummary({ slug: "lead" }),
+        agent: agentSummary({ handle: "lead" }),
         queue: [],
         lastSeq: 0,
       }),
@@ -270,7 +271,7 @@ test("intent prefetch has its own freshness window: hover, press and open fetch 
   const qc = createQueryClient({ queries: { retry: false } });
   const prefetch = restoreBodies["edit-agent"]?.prefetch;
   for (let i = 0; i < 3; i++) {
-    prefetch?.(qc, { kind: "edit-agent", slug: "lead" });
+    prefetch?.(qc, { kind: "edit-agent", agentRef: refFor("lead") });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0));
     });
@@ -278,7 +279,7 @@ test("intent prefetch has its own freshness window: hover, press and open fetch 
   const gets = (url: string) => api.calls.filter((c) => c.url === url).length;
   expect(gets("/api/credentials")).toBe(1);
   expect(gets("/api/projects")).toBe(1);
-  expect(gets("/api/agents/lead")).toBe(1);
+  expect(gets(`/api/agents/${refFor("lead")}`)).toBe(1);
 });
 
 test("each open has its own opener: one started from the page body doesn't return focus to the last one's", async () => {

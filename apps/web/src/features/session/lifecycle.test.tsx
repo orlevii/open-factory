@@ -3,6 +3,7 @@ import { act, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { conversation, detail, envelope, resetSeq, se } from "@/test/session-fixtures";
 
@@ -23,8 +24,8 @@ const todayAt = (h: number, m: number) => new Date(2026, 10, 19, h, m).toISOStri
 let api: MockApi;
 const world = (over: Partial<AgentSummary> = {}, queue: QueueItem[] = []) => {
   api = mockApi({
-    "GET /api/agents/dev": () => json(detail(over, queue)),
-    "GET /api/agents/dev/events?": () => json(conversation()),
+    [`GET /api/agents/${refFor("dev")}`]: () => json(detail(over, queue)),
+    [`GET /api/agents/${refFor("dev")}/events?`]: () => json(conversation()),
     "GET /api/agents?ended=exclude": () =>
       json({ agents: [detail(over).agent], running: { count: 8 } }),
   });
@@ -39,14 +40,14 @@ afterEach(() => {
 });
 
 const open = async () => {
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   await screen.findByText("Two entries.");
 };
 const push = (m: ServerMessage) => act(() => ws.onMessage?.(m));
 const frame = (over: Partial<Extract<ServerMessage, { type: "agent_status" }>>) =>
   push({
     type: "agent_status",
-    agent: "dev",
+    agent: refFor("dev"),
     status: "idle",
     turnOpen: false,
     restartPending: false,
@@ -97,14 +98,14 @@ test("Restart hidden for resume_unrecoverable and when runtimeDisabled", async (
 
 test("Restart posts, reads Restarting… and moves focus to the composer", async () => {
   world({ status: "errored", errorKind: "crash" });
-  api.on("POST /api/agents/dev/restart", () => json({ status: "restarting" }, 202));
+  api.on(`POST /api/agents/${refFor("dev")}/restart`, () => json({ status: "restarting" }, 202));
   await open();
   await userEvent.click(screen.getByRole("button", { name: "Restart" }));
   const pending = await screen.findByRole("button", { name: "Restarting…" });
   expect(pending).toHaveAttribute("aria-disabled", "true");
-  expect(api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/dev/restart")).toBe(
-    true,
-  );
+  expect(
+    api.calls.some((c) => c.method === "POST" && c.url === `/api/agents/${refFor("dev")}/restart`),
+  ).toBe(true);
   await vi.waitFor(() => expect(composer()).toHaveFocus());
   frame({ status: "queued" });
   await vi.waitFor(() =>
@@ -114,13 +115,13 @@ test("Restart posts, reads Restarting… and moves focus to the composer", async
 
 test("Restarting… ends on the next error event (failed restart)", async () => {
   world({ status: "errored", errorKind: "crash" });
-  api.on("POST /api/agents/dev/restart", () => json({ status: "restarting" }, 202));
+  api.on(`POST /api/agents/${refFor("dev")}/restart`, () => json({ status: "restarting" }, 202));
   await open();
   await userEvent.click(screen.getByRole("button", { name: "Restart" }));
   await screen.findByRole("button", { name: "Restarting…" });
   push({
     type: "session_event",
-    agent: "dev",
+    agent: refFor("dev"),
     event: { ...se({ type: "error", source: "spawn", message: "Couldn't start" }, null), seq: 11 },
   });
   expect(await screen.findByRole("button", { name: "Restart" })).not.toHaveAttribute(
@@ -131,7 +132,7 @@ test("Restarting… ends on the next error event (failed restart)", async () => 
 
 test("Restart: a failure toasts naming the agent, and the button comes back", async () => {
   world({ status: "errored", errorKind: "crash" });
-  api.on("POST /api/agents/dev/restart", () =>
+  api.on(`POST /api/agents/${refFor("dev")}/restart`, () =>
     json({ error: { code: "attempt_in_progress", message: "A restart is already running." } }, 409),
   );
   await open();
@@ -146,12 +147,14 @@ test("Restart: a failure toasts naming the agent, and the button comes back", as
 
 test("dialog copy names the agent and the loss; Cancel focused; confirm moves focus to the composer", async () => {
   world({
-    slug: "dev",
+    handle: "dev",
     status: "errored",
     errorKind: "resume_unrecoverable",
     lastError: "No conversation found with session ID 1234",
   });
-  api.on("POST /api/agents/dev/reset-session", () => json({ status: "restarting" }, 202));
+  api.on(`POST /api/agents/${refFor("dev")}/reset-session`, () =>
+    json({ status: "restarting" }, 202),
+  );
   await open();
   const trigger = screen.getByRole("button", { name: "Start a new session" });
   await userEvent.click(trigger);
@@ -177,7 +180,9 @@ test("dialog copy names the agent and the loss; Cancel focused; confirm moves fo
   await userEvent.click(within(again).getByRole("button", { name: "Start new session for @dev" }));
   await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   expect(
-    api.calls.some((c) => c.method === "POST" && c.url === "/api/agents/dev/reset-session"),
+    api.calls.some(
+      (c) => c.method === "POST" && c.url === `/api/agents/${refFor("dev")}/reset-session`,
+    ),
   ).toBe(true);
   await vi.waitFor(() => expect(composer()).toHaveFocus());
 });
@@ -186,7 +191,7 @@ test("a confirmed reset whose status frame beats the response still closes the d
   world({ status: "errored", errorKind: "resume", lastError: "Resume failed" });
   let stillOpen = false;
   // The server publishes the new status inside the job, before it replies 202.
-  api.on("POST /api/agents/dev/reset-session", async () => {
+  api.on(`POST /api/agents/${refFor("dev")}/reset-session`, async () => {
     frame({ status: "queued" });
     // Let the frame render (the recovery buttons go) before the response lands. `hidden`: the modal
     // hides the page from the accessibility tree, which would make this pass before the frame lands.
@@ -296,7 +301,7 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
       null,
     ),
   ]);
-  renderApp("/agents/dev/session", alice);
+  renderApp(`/agents/${refFor("dev")}/session`, alice);
   const delivered = await screen.findByText("Your previous process stopped unexpectedly.");
   const block = delivered.closest("[data-message-block]") as HTMLElement;
   expect(within(block).getByText("Factory")).toBeInTheDocument();
@@ -314,7 +319,7 @@ test("Factory notice: sender 'Factory', icon aria-hidden, never announced", asyn
 });
 
 const mockEvents = (events: ReturnType<typeof se>[]) =>
-  api.on("GET /api/agents/dev/events?", () => {
+  api.on(`GET /api/agents/${refFor("dev")}/events?`, () => {
     resetSeq();
     return json({ events, hasMore: { before: false, after: false } });
   });
@@ -330,24 +335,28 @@ const mine = (id: string, body: string): QueueItem => ({
 });
 /** A queue frame, committed: frames are batched per animation frame. */
 const queueOf = async (items: QueueItem[]) => {
-  push({ type: "queue", agent: "dev", items });
+  push({ type: "queue", agent: refFor("dev"), items });
   await act(() => new Promise((r) => requestAnimationFrame(() => r(null))));
 };
 
 test("Cancel moves the text into an empty box; Undo restores it and empties the box if unchanged", async () => {
   vi.useRealTimers();
   world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
-  api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
-  api.on("POST /api/agents/dev/queue/m1/restore", () => json(null, 204));
+  api.on(`DELETE /api/agents/${refFor("dev")}/queue/m1`, () =>
+    json({ item: mine("m1", "Ship it") }),
+  );
+  api.on(`POST /api/agents/${refFor("dev")}/queue/m1/restore`, () => json(null, 204));
   await open();
   await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
   // One commit: the message is gone, the line is in its place, the text is in the box.
   expect(screen.queryByText("Ship it", { selector: "p" })).toBeNull();
   expect(screen.getByText("Message cancelled · back in the box.")).toBeInTheDocument();
   expect(composer()).toHaveValue("Ship it");
-  expect(api.calls.some((c) => c.method === "DELETE" && c.url === "/api/agents/dev/queue/m1")).toBe(
-    true,
-  );
+  expect(
+    api.calls.some(
+      (c) => c.method === "DELETE" && c.url === `/api/agents/${refFor("dev")}/queue/m1`,
+    ),
+  ).toBe(true);
   await queueOf([]);
   expect(screen.getByText("Message cancelled · back in the box.")).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Undo" }));
@@ -362,8 +371,10 @@ test("Cancel moves the text into an empty box; Undo restores it and empties the 
 test("Cancel with text in the box leaves it; the line goes on your next send", async () => {
   vi.useRealTimers();
   world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
-  api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
-  api.on("POST /api/agents/dev/input", () => json({ item: mine("m2", "draft") }, 202));
+  api.on(`DELETE /api/agents/${refFor("dev")}/queue/m1`, () =>
+    json({ item: mine("m1", "Ship it") }),
+  );
+  api.on(`POST /api/agents/${refFor("dev")}/input`, () => json({ item: mine("m2", "draft") }, 202));
   await open();
   await userEvent.type(composer(), "draft");
   await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
@@ -378,15 +389,19 @@ test("Cancel with text in the box leaves it; the line goes on your next send", a
 test("Undo leaves a box edited since the Cancel alone", async () => {
   vi.useRealTimers();
   world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
-  api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
-  api.on("POST /api/agents/dev/queue/m1/restore", () => json(null, 204));
+  api.on(`DELETE /api/agents/${refFor("dev")}/queue/m1`, () =>
+    json({ item: mine("m1", "Ship it") }),
+  );
+  api.on(`POST /api/agents/${refFor("dev")}/queue/m1/restore`, () => json(null, 204));
   await open();
   await userEvent.click(await screen.findByRole("button", { name: "Cancel" }));
   await queueOf([]);
   await userEvent.type(composer(), " now");
   await userEvent.click(screen.getByRole("button", { name: "Undo" }));
   await vi.waitFor(() =>
-    expect(api.calls.some((c) => c.url === "/api/agents/dev/queue/m1/restore")).toBe(true),
+    expect(api.calls.some((c) => c.url === `/api/agents/${refFor("dev")}/queue/m1/restore`)).toBe(
+      true,
+    ),
   );
   await queueOf([mine("m1", "Ship it")]);
   expect(screen.queryByText(/Message cancelled/)).toBeNull();
@@ -396,8 +411,10 @@ test("Undo leaves a box edited since the Cancel alone", async () => {
 test("a failed Undo keeps the line, says why and drops Undo", async () => {
   vi.useRealTimers();
   world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
-  api.on("DELETE /api/agents/dev/queue/m1", () => json({ item: mine("m1", "Ship it") }));
-  api.on("POST /api/agents/dev/queue/m1/restore", () =>
+  api.on(`DELETE /api/agents/${refFor("dev")}/queue/m1`, () =>
+    json({ item: mine("m1", "Ship it") }),
+  );
+  api.on(`POST /api/agents/${refFor("dev")}/queue/m1/restore`, () =>
     json({ error: { code: "agent_ended", message: "This agent has ended." } }, 409),
   );
   await open();
@@ -415,7 +432,7 @@ test("a failed Undo keeps the line, says why and drops Undo", async () => {
 test("a failed Cancel brings the message back with the reason, and takes its text out of the box", async () => {
   vi.useRealTimers();
   world({ status: "working", turnOpen: true }, [mine("m1", "Ship it")]);
-  api.on("DELETE /api/agents/dev/queue/m1", () =>
+  api.on(`DELETE /api/agents/${refFor("dev")}/queue/m1`, () =>
     json({ error: { code: "already_delivered", message: "It was already delivered." } }, 409),
   );
   await open();

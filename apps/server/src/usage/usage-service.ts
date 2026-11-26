@@ -166,11 +166,13 @@ export class UsageService {
     const p = this.params();
     const r = await this.rows(
       sql`with w as (select agent_id, ${SUMS} from turns where ${this.counted(p, window)} group by agent_id)
-        select a.slug, a.display_name, a.kind, sp.slug as spawner_slug,
+        select ap.ref, ap.handle, a.display_name, a.kind, spp.ref as spawner_ref, spp.handle as spawner_handle,
                a.archived_at is not null as archived, a.terminated_at is not null as terminated,
                ${prefixed("own")}, s.*
         from agents a
+        join principals ap on ap.id = a.id
         left join agents sp on a.kind = 'ephemeral' and sp.id = a.reports_to
+        left join principals spp on spp.id = sp.id
         left join w on w.agent_id = a.id
         left join lateral (
           select ${prefixed("spawned")} from (
@@ -178,17 +180,20 @@ export class UsageService {
             where a.kind = 'persistent' and c.kind = 'ephemeral' and c.reports_to = a.id) q
         ) s on true
         where w.agent_id is not null or s."spawnedTurns" > 0 or (a.kind = 'persistent' and a.archived_at is null)
-        order by coalesce(w."costUsd", 0) + s."spawnedCostUsd" desc, a.slug`,
+        order by coalesce(w."costUsd", 0) + s."spawnedCostUsd" desc, ap.handle`,
     );
     return {
       agents: r.map((a): AgentUsageRow => {
         const own = totals(a, "own");
         const spawned = a.kind === "persistent" ? totals(a, "spawned") : undefined;
         return {
-          slug: String(a.slug),
+          ref: String(a.ref),
+          handle: String(a.handle),
           displayName: String(a.display_name),
           kind: spawned ? "persistent" : "ephemeral",
-          ...(a.spawner_slug ? { spawnerSlug: String(a.spawner_slug) } : {}),
+          ...(a.spawner_ref
+            ? { spawner: { ref: String(a.spawner_ref), handle: String(a.spawner_handle) } }
+            : {}),
           archived: Boolean(a.archived),
           terminated: Boolean(a.terminated),
           own,
@@ -218,11 +223,11 @@ export class UsageService {
         from cr
         left join lateral (select ${RESUM} from w where w.credential_id is not distinct from cr.id) tot on true
         left join lateral (
-          select coalesce(json_agg(json_build_object('slug', q.slug, 'costUsd', q.cost)
-                                   order by q.cost desc, q.slug), '[]'::json) as agents
-          from (select a.slug, w."costUsd" as cost from w join agents a on a.id = w.agent_id
+          select coalesce(json_agg(json_build_object('ref', q.ref, 'handle', q.handle, 'costUsd', q.cost)
+                                   order by q.cost desc, q.handle), '[]'::json) as agents
+          from (select p.ref, p.handle, w."costUsd" as cost from w join principals p on p.id = w.agent_id
                 where w.credential_id = cr.id
-                order by w."costUsd" desc, a.slug limit 5) q
+                order by w."costUsd" desc, p.handle limit 5) q
         ) top on true
         order by cr.unattributed, cr.name`,
     );
@@ -234,7 +239,11 @@ export class UsageService {
           name: String(c.name),
           kind: c.kind === "api_key" ? "api_key" : "oauth_token",
           totals: totals(c),
-          agents: arr(c.agents).map((a) => ({ slug: String(a.slug), costUsd: Number(a.costUsd) })),
+          agents: arr(c.agents).map((a) => ({
+            ref: String(a.ref),
+            handle: String(a.handle),
+            costUsd: Number(a.costUsd),
+          })),
           ...toRateLimitState(
             {
               rlStatus: (c.rl_status ?? null) as "allowed" | "allowed_warning" | "rejected" | null,
@@ -253,12 +262,13 @@ export class UsageService {
   }
 
   /** One agent's page: spawner scope for a persistent agent, its own turns for a spawned one. */
-  async agent(slug: string, days: UsageDays): Promise<AgentUsage | undefined> {
+  async agent(ref: string, days: UsageDays): Promise<AgentUsage | undefined> {
     const p = this.params();
     const totalsJson = (from: SQL) =>
       sql`(select row_to_json(z) from (select ${SUMS} from ${from}) z)`;
     const [r] = await this.rows(
-      sql`with a as (select id, slug, display_name, kind from agents where slug = ${slug}),
+      sql`with a as (select a.id, p.ref, p.handle, a.display_name, a.kind
+                     from agents a join principals p on p.id = a.id where p.ref = ${ref}),
         scope as (
           select id from a
           union all
@@ -266,7 +276,7 @@ export class UsageService {
         ),
         t as (select * from turns
               where agent_id in (select id from scope) and ${this.counted(p, { kind: "calendar", days })})
-        select a.slug, a.display_name, a.kind,
+        select a.ref, a.handle, a.display_name, a.kind,
           ${totalsJson(sql`t`)} as total,
           ${totalsJson(sql`t where t.agent_id = (select id from a)`)} as own,
           (select coalesce(json_agg(row_to_json(dd)), '[]'::json) from (${this.dailySeries(p, days)}) dd) as daily,
@@ -277,17 +287,18 @@ export class UsageService {
              from t join tasks tk on tk.id = t.task_id
              group by tk.id, tk.number, tk.title
              order by "costUsd" desc, tk.number limit 20) k) as by_task,
-          (select coalesce(json_agg(row_to_json(c) order by c."costUsd" desc, c.slug), '[]'::json) from (
-             select ag.slug, ag.display_name as "displayName", ag.terminated_at is not null as terminated, ${SUMS}
-             from t join agents ag on ag.id = t.agent_id
+          (select coalesce(json_agg(row_to_json(c) order by c."costUsd" desc, c.handle), '[]'::json) from (
+             select ap.ref, ap.handle, ag.display_name as "displayName", ag.terminated_at is not null as terminated, ${SUMS}
+             from t join agents ag on ag.id = t.agent_id join principals ap on ap.id = ag.id
              where ag.id <> (select id from a)
-             group by ag.id, ag.slug, ag.display_name, ag.terminated_at) c) as spawned
+             group by ag.id, ap.ref, ap.handle, ag.display_name, ag.terminated_at) c) as spawned
         from a`,
     );
     if (!r) return undefined;
     return {
       agent: {
-        slug: String(r.slug),
+        ref: String(r.ref),
+        handle: String(r.handle),
         displayName: String(r.display_name),
         kind: r.kind === "ephemeral" ? "ephemeral" : "persistent",
       },
@@ -306,7 +317,8 @@ export class UsageService {
         ...totals(k),
       })),
       spawned: arr(r.spawned).map((c) => ({
-        slug: String(c.slug),
+        ref: String(c.ref),
+        handle: String(c.handle),
         displayName: String(c.displayName),
         terminated: Boolean(c.terminated),
         ...totals(c),

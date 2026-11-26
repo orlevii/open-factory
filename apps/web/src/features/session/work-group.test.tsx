@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
+import { refFor } from "@/test/refs";
 import { groupWork } from "./display-passes";
 import type { Row } from "./rows";
 import { Timeline } from "./timeline";
@@ -25,7 +26,7 @@ const sh = (seq: number): ToolR => ({
 
 function timeline(rows: Row[]) {
   const props = {
-    slug: "dev",
+    agentRef: refFor("dev"),
     failedIds: new Set<string>(),
     interruptedEnds: new Set<number>(),
     hasMoreBefore: false,

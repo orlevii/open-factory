@@ -5,13 +5,13 @@ import { senderHandle } from "./api";
 export type LoopHold = {
   id: string;
   agents: [
-    { slug: string; status: "live" | "archived" | "terminated" },
-    { slug: string; status: "live" | "archived" | "terminated" },
+    { ref: string; handle: string; status: "live" | "archived" | "terminated" },
+    { ref: string; handle: string; status: "live" | "archived" | "terminated" },
   ];
   waiting: number;
   sentOn: number;
   resumedAt: string | null;
-  resumedBy: string | null;
+  resumedBy: { ref: string; handle: string } | null;
 };
 
 /** Until PR 3 adds `inboxItemSchema.loopHold`, the notifier's item is the shared one plus the hold's shape. */
@@ -48,15 +48,15 @@ const counted = (n: number, one: string, many: (formatted: string) => string) =>
   PLURAL.select(n) === "one" ? one : many(NUM.format(n));
 
 const chatBurst = (c: NotifiableChat): Burst => {
-  const slug = c.agent.slug;
+  const agentRef = c.agent.ref;
   return {
-    key: `chat:${slug}`,
-    tag: `chat:${slug}:${c.firstUnreadId}`,
+    key: `chat:${agentRef}`,
+    tag: `chat:${agentRef}:${c.firstUnreadId}`,
     title: capTitle(c.agent.displayName, "name"),
     body: counted(c.unread, "1 new message", (n) => `${n} new messages`),
     newestId: c.latest.messageId,
     itemIds: [],
-    open: { to: `/agents/${slug}/chat`, search: { message: c.firstUnreadId } },
+    open: { to: `/agents/${agentRef}/chat`, search: { message: c.firstUnreadId } },
   };
 };
 
@@ -90,7 +90,7 @@ function itemBurst(key: string, kind: Kind, sorted: NotifiableItem[]): Burst | u
       return {
         key,
         tag: key,
-        title: capTitle(`@${a.slug} and @${b.slug}`, "handle"),
+        title: capTitle(`@${a.handle} and @${b.handle}`, "handle"),
         body: "Messages between them are held",
         newestId: newest.id,
         itemIds,
@@ -106,7 +106,10 @@ function itemBurst(key: string, kind: Kind, sorted: NotifiableItem[]): Burst | u
         body: "Hit an error",
         newestId: newest.id,
         itemIds,
-        open: { to: `/agents/${oldest.about}/session` },
+        // The item's link names the errored agent by ref; `about` is only its handle, for the title.
+        open: {
+          to: oldest.link.kind === "session" ? `/agents/${oldest.link.agentRef}/session` : "/inbox",
+        },
       };
     case "credential": {
       const credential = oldest.credential;

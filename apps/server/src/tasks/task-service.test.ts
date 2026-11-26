@@ -2,7 +2,7 @@ import type { ServerMessage } from "@open-factory/shared";
 import { tagOf } from "@open-factory/shared/tags";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../test/helpers.ts";
+import { makeTestApp, runtimeOf, signUp } from "../test/helpers.ts";
 import { testRef } from "../test/principals.ts";
 import { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
@@ -41,7 +41,7 @@ beforeEach(async () => {
 afterEach(() => h.close());
 
 const settle = async (...slugs: string[]) => {
-  for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
+  for (const s of slugs) await (await runtimeOf(h.app, s))?.settled();
 };
 const proc = (slug: string) => driver.startsOf(slug).at(-1);
 const sentTo = (slug: string) => (proc(slug)?.sent ?? []).flat();

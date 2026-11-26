@@ -41,6 +41,7 @@ import { resolveAgentArg } from "../principals/principal-args.ts";
 import {
   principalById,
   principalsByIds,
+  principalsByRefs,
   tagOfPrincipal,
   terminatorTag,
 } from "../principals/principal-store.ts";
@@ -106,8 +107,8 @@ export interface MessageLookup {
   fromKind: "human" | "agent" | "factory";
   to: string;
   state: "pending" | "loop_held" | "delivered" | "rejected" | "cancelled";
-  recipientEvent?: { agentSlug: string; seq: number };
-  senderEvent?: { agentSlug: string; seq: number };
+  recipientEvent?: { agentRef: string; seq: number };
+  senderEvent?: { agentRef: string; seq: number };
   scheduleKey?: string;
   firings?: number;
   late?: boolean;
@@ -117,7 +118,8 @@ export interface MessageLookup {
 /** How much of a message body `plainPreview` reads: generous, so a fence or link closing late still renders. */
 const PREVIEW_PREFIX = 20_000;
 export type UnreadChat = {
-  slug: string;
+  /** The agent's ref. */
+  ref: string;
   unread: number;
   latest: { messageId: string; preview: string; createdAt: string; urgent: boolean };
   /** The oldest unread message from the agent. */
@@ -146,7 +148,7 @@ export interface InboxEntry {
   /** A `loop_held` notice's hold (I8 §6.4). */
   loopHold?: InboxItem["loopHold"];
   link:
-    | { kind: "session"; agentSlug: string; seq?: number }
+    | { kind: "session"; agentRef: string; seq?: number }
     | { kind: "task"; key: string; commentId?: string }
     | { kind: "credential"; name: string };
 }
@@ -198,8 +200,10 @@ export class EventStore {
   async listAgents() {
     return this.db.select().from(agents).orderBy(asc(agents.slug));
   }
-  async agentBySlug(slug: string) {
-    return (await this.db.select().from(agents).where(eq(agents.slug, slug)))[0];
+  /** The agent whose principal has this ref (already normalised), if any. */
+  async agentByRef(ref: string) {
+    const p = (await principalsByRefs(this.db, [ref])).get(ref);
+    return p?.kind === "agent" ? this.agentById(p.id) : undefined;
   }
   /** The agent a tool argument names (a tag, a ref or a handle), or why it names none. */
   async agentByArg(raw: string) {
@@ -210,6 +214,12 @@ export class EventStore {
     const p = await principalById(tx, agentId);
     if (!p) throw new Error(`No principal ${agentId}`);
     return p.ref;
+  }
+  /** The agent's current handle, read from `principals`. */
+  async handleOfAgent(agentId: string, tx: Exec = this.db): Promise<string> {
+    const p = await principalById(tx, agentId);
+    if (!p) throw new Error(`No principal ${agentId}`);
+    return p.handle;
   }
   /** Inside `tx` when given (S7 §5.7: a call in a locked transaction must not use its own connection). */
   async agentById(id: string, tx: Exec = this.db) {
@@ -684,15 +694,15 @@ export class EventStore {
     const stored = truncated ? { ...payload, truncated } : payload;
     // Seq = max + 1 in the same statement. Safe because the agent's serial job queue is the only writer;
     // the unique index turns any violation of that into a loud failure.
-    const [row] = await tx.execute<{ seq: number; at: Date; slug: string }>(sql`
+    const [row] = await tx.execute<{ seq: number; at: Date; ref: string }>(sql`
       insert into session_events (agent_id, seq, turn_id, type, payload)
       select ${agentId}, coalesce(max(seq), 0) + 1, ${turnId}, ${event.type}, ${JSON.stringify(stored)}::jsonb
       from session_events where agent_id = ${agentId}
-      returning seq, at, (select slug from agents where id = ${agentId}) as slug`);
+      returning seq, at, (select ref from principals where id = ${agentId}) as ref`);
     if (!row) throw new Error("append returned no row");
     return {
       seq: Number(row.seq),
-      agentSlug: row.slug,
+      agentRef: row.ref,
       turnId,
       at: new Date(row.at).toISOString(),
       // Live frames must equal replayed history, so the DTO carries the capped payload (spec §6.4).
@@ -713,14 +723,14 @@ export class EventStore {
     agentId: string,
     rows: (typeof sessionEvents.$inferSelect)[],
   ): Promise<SessionEvent[]> {
-    const agent = await this.agentById(agentId);
+    const agentRef = await this.refOfAgent(agentId);
     return rows.map((r) => {
       const { truncated, ...rest } = r.payload as Record<string, unknown> & {
         truncated?: Record<string, number>;
       };
       return {
         seq: r.seq,
-        agentSlug: agent?.slug ?? "",
+        agentRef,
         turnId: r.turnId,
         at: r.at.toISOString(),
         event: anyEventSchema.parse({ type: r.type, ...rest }),
@@ -1398,6 +1408,7 @@ export class EventStore {
         fromHandle: fp.handle,
         fromKind: fp.kind,
         toHandle: tp.handle,
+        toRef: tp.ref,
         toKind: tp.kind,
         scheduleNumber: schedules.number,
       })
@@ -1422,25 +1433,18 @@ export class EventStore {
       if (m.late) out.late = true;
       if (m.dueAt) out.dueAt = m.dueAt.toISOString();
     }
-    if (
-      m.state === "delivered" &&
-      m.deliveredEventSeq !== null &&
-      r.toKind === "agent" &&
-      r.toHandle
-    )
-      out.recipientEvent = { agentSlug: r.toHandle, seq: m.deliveredEventSeq };
+    if (m.state === "delivered" && m.deliveredEventSeq !== null && r.toKind === "agent" && r.toRef)
+      out.recipientEvent = { agentRef: r.toRef, seq: m.deliveredEventSeq };
     const sender = await this.senderEvent(m);
     if (sender) out.senderEvent = sender;
     return out;
   }
-  private async senderEvent(
-    m: MessageRow,
-  ): Promise<{ agentSlug: string; seq: number } | undefined> {
+  private async senderEvent(m: MessageRow): Promise<{ agentRef: string; seq: number } | undefined> {
     if (!m.fromId || !m.fromToolUseId) return undefined;
     const [row] = await this.db
-      .select({ seq: sessionEvents.seq, slug: agents.slug })
+      .select({ seq: sessionEvents.seq, ref: principals.ref })
       .from(sessionEvents)
-      .innerJoin(agents, eq(agents.id, sessionEvents.agentId))
+      .innerJoin(principals, eq(principals.id, sessionEvents.agentId))
       .where(
         and(
           eq(sessionEvents.agentId, m.fromId),
@@ -1449,15 +1453,15 @@ export class EventStore {
         ),
       )
       .limit(1);
-    return row ? { agentSlug: row.slug, seq: row.seq } : undefined;
+    return row ? { agentRef: row.ref, seq: row.seq } : undefined;
   }
 
   /** The sender's tool-call events for several messages in one query, by message id. */
   private async senderEvents(
     rows: MessageRow[],
-  ): Promise<Map<string, { agentSlug: string; seq: number }>> {
+  ): Promise<Map<string, { agentRef: string; seq: number }>> {
     const withCall = rows.filter((m) => m.fromId && m.fromToolUseId);
-    const out = new Map<string, { agentSlug: string; seq: number }>();
+    const out = new Map<string, { agentRef: string; seq: number }>();
     if (!withCall.length) return out;
     const pairs = sql.join(
       withCall.map((m) => sql`(${m.fromId}, ${m.fromToolUseId})`),
@@ -1468,10 +1472,10 @@ export class EventStore {
         agentId: sessionEvents.agentId,
         toolUseId: sql<string>`${sessionEvents.payload}->>'toolUseId'`,
         seq: sessionEvents.seq,
-        slug: agents.slug,
+        ref: principals.ref,
       })
       .from(sessionEvents)
-      .innerJoin(agents, eq(agents.id, sessionEvents.agentId))
+      .innerJoin(principals, eq(principals.id, sessionEvents.agentId))
       .where(
         and(
           eq(sessionEvents.type, "tool_call"),
@@ -1481,7 +1485,7 @@ export class EventStore {
       .orderBy(asc(sessionEvents.seq));
     for (const m of withCall) {
       const f = found.find((x) => x.agentId === m.fromId && x.toolUseId === m.fromToolUseId);
-      if (f) out.set(m.id, { agentSlug: f.slug, seq: f.seq });
+      if (f) out.set(m.id, { agentRef: f.ref, seq: f.seq });
     }
     return out;
   }
@@ -1489,6 +1493,7 @@ export class EventStore {
   /** The inbox item rows (item, message and the joined names) matching `where`, unordered. */
   private inboxRows(where: SQL | undefined) {
     const sa = alias(agents, "sa");
+    const sp = alias(principals, "sp");
     const tu = alias(principals, "tu");
     const fu = alias(principals, "fu");
     return this.db
@@ -1499,6 +1504,7 @@ export class EventStore {
         fromRef: fu.ref,
         fromKind: fu.kind,
         subjectSlug: sa.slug,
+        subjectRef: sp.ref,
         toHandle: tu.handle,
         credName: credentials.name,
         credExpiresAt: credentials.expiresAt,
@@ -1512,6 +1518,7 @@ export class EventStore {
       .innerJoin(messages, eq(messages.id, inboxItems.messageId))
       .leftJoin(fu, eq(fu.id, messages.fromId))
       .leftJoin(sa, eq(sa.id, messages.subjectAgentId))
+      .leftJoin(sp, eq(sp.id, messages.subjectAgentId))
       .leftJoin(tu, eq(tu.id, messages.toId))
       .leftJoin(credentials, eq(credentials.id, messages.subjectCredentialId))
       .leftJoin(tasks, eq(tasks.id, messages.taskId))
@@ -1552,9 +1559,9 @@ export class EventStore {
       // By kind and sender columns: a human-authored mention is that human, not the factory.
       const factory = !r.fromHandle || r.m.kind === "system" || r.m.kind === "task_update";
       const sender = senders.get(r.m.id);
-      const fromAgent = r.fromKind === "agent" ? r.fromHandle : null;
-      const agentSlug =
-        sender?.agentSlug ?? (factory ? r.subjectSlug : fromAgent) ?? r.subjectSlug ?? "";
+      const fromAgent = r.fromKind === "agent" ? r.fromRef : null;
+      const agentRef =
+        sender?.agentRef ?? (factory ? r.subjectRef : fromAgent) ?? r.subjectRef ?? "";
       const task =
         r.taskNumber !== null && r.taskTitle !== null
           ? { key: taskKey(r.taskNumber), title: r.taskTitle }
@@ -1590,7 +1597,7 @@ export class EventStore {
                 key: task.key,
                 ...(r.item.kind === "mention" && r.m.commentId ? { commentId: r.m.commentId } : {}),
               }
-            : { kind: "session", agentSlug, ...(sender ? { seq: sender.seq } : {}) },
+            : { kind: "session", agentRef, ...(sender ? { seq: sender.seq } : {}) },
       });
     }
     return items;
@@ -1607,39 +1614,57 @@ export class EventStore {
     if (!ids.length) return out;
     const aa = alias(agents, "aa");
     const ab = alias(agents, "ab");
+    const pa = alias(principals, "pa");
+    const pb = alias(principals, "pb");
     const rb = alias(principals, "rb");
     const rows = await this.db
       .select({
         id: loopHolds.id,
-        aSlug: aa.slug,
+        aRef: pa.ref,
+        aHandle: pa.handle,
         aEnded: sql<
           string | null
         >`case when ${aa.terminatedAt} is not null then 'terminated' when ${aa.archivedAt} is not null then 'archived' end`,
-        bSlug: ab.slug,
+        bRef: pb.ref,
+        bHandle: pb.handle,
         bEnded: sql<
           string | null
         >`case when ${ab.terminatedAt} is not null then 'terminated' when ${ab.archivedAt} is not null then 'archived' end`,
         resumedAt: loopHolds.resumedAt,
-        resumedBy: rb.handle,
+        resumedByRef: rb.ref,
+        resumedByHandle: rb.handle,
         waiting: sql<number>`(select count(*)::int from messages m where m.loop_hold_id = ${loopHolds.id} and m.state = 'loop_held')`,
         sentOn: sql<number>`(select count(*)::int from messages m where m.loop_hold_id = ${loopHolds.id} and m.kind <> 'system' and m.state not in ('loop_held', 'rejected'))`,
       })
       .from(loopHolds)
       .innerJoin(aa, eq(aa.id, loopHolds.agentA))
       .innerJoin(ab, eq(ab.id, loopHolds.agentB))
+      .innerJoin(pa, eq(pa.id, aa.id))
+      .innerJoin(pb, eq(pb.id, ab.id))
       .leftJoin(rb, eq(rb.id, loopHolds.resumedBy))
       .where(inArray(loopHolds.id, ids));
     for (const r of rows)
       out.set(r.id, {
         id: r.id,
         agents: [
-          { slug: r.aSlug, status: (r.aEnded as "terminated" | "archived" | null) ?? "live" },
-          { slug: r.bSlug, status: (r.bEnded as "terminated" | "archived" | null) ?? "live" },
+          {
+            ref: r.aRef,
+            handle: r.aHandle,
+            status: (r.aEnded as "terminated" | "archived" | null) ?? "live",
+          },
+          {
+            ref: r.bRef,
+            handle: r.bHandle,
+            status: (r.bEnded as "terminated" | "archived" | null) ?? "live",
+          },
         ],
         waiting: r.waiting,
         sentOn: r.sentOn,
         resumedAt: r.resumedAt?.toISOString() ?? null,
-        resumedBy: r.resumedBy ? `@${r.resumedBy}` : null,
+        resumedBy:
+          r.resumedByRef && r.resumedByHandle
+            ? { ref: r.resumedByRef, handle: r.resumedByHandle }
+            : null,
       });
     return out;
   }
@@ -1734,6 +1759,7 @@ export class EventStore {
     kind: "message" | "member_update",
   ): Promise<UnreadChat[]> {
     const fa = alias(agents, "fa");
+    const fp = alias(principals, "fp");
     // A chat message is from its agent; a member update is from the report, or about it (a fact). A factory notice
     // (`system`, also an item of kind `message`) is neither: it has no sender, so it never groups.
     const from =
@@ -1747,15 +1773,16 @@ export class EventStore {
     );
     const [counts, latest, oldest] = await Promise.all([
       this.db
-        .select({ slug: fa.slug, n: count() })
+        .select({ ref: fp.ref, n: count() })
         .from(inboxItems)
         .innerJoin(messages, eq(messages.id, inboxItems.messageId))
         .innerJoin(fa, from)
+        .innerJoin(fp, eq(fp.id, fa.id))
         .where(unread)
-        .groupBy(fa.slug),
+        .groupBy(fp.ref),
       this.db
-        .selectDistinctOn([fa.slug], {
-          slug: fa.slug,
+        .selectDistinctOn([fp.ref], {
+          ref: fp.ref,
           messageId: messages.id,
           body: sql<string>`left(${messages.body}, ${PREVIEW_PREFIX})`,
           urgent: messages.urgent,
@@ -1764,23 +1791,25 @@ export class EventStore {
         .from(inboxItems)
         .innerJoin(messages, eq(messages.id, inboxItems.messageId))
         .innerJoin(fa, from)
+        .innerJoin(fp, eq(fp.id, fa.id))
         .where(unread)
-        .orderBy(fa.slug, desc(inboxItems.createdAt), desc(inboxItems.id)),
+        .orderBy(fp.ref, desc(inboxItems.createdAt), desc(inboxItems.id)),
       this.db
-        .selectDistinctOn([fa.slug], { slug: fa.slug, messageId: messages.id })
+        .selectDistinctOn([fp.ref], { ref: fp.ref, messageId: messages.id })
         .from(inboxItems)
         .innerJoin(messages, eq(messages.id, inboxItems.messageId))
         .innerJoin(fa, from)
+        .innerJoin(fp, eq(fp.id, fa.id))
         .where(unread)
-        .orderBy(fa.slug, asc(inboxItems.createdAt), asc(inboxItems.id)),
+        .orderBy(fp.ref, asc(inboxItems.createdAt), asc(inboxItems.id)),
     ]);
-    const n = new Map(counts.map((c) => [c.slug, c.n]));
-    const firstUnread = new Map(oldest.map((r) => [r.slug, r.messageId]));
+    const n = new Map(counts.map((c) => [c.ref, c.n]));
+    const firstUnread = new Map(oldest.map((r) => [r.ref, r.messageId]));
     return latest
       .map((r) => ({
-        slug: r.slug,
-        unread: n.get(r.slug) ?? 0,
-        firstUnreadId: firstUnread.get(r.slug) ?? r.messageId,
+        ref: r.ref,
+        unread: n.get(r.ref) ?? 0,
+        firstUnreadId: firstUnread.get(r.ref) ?? r.messageId,
         latest: {
           messageId: r.messageId,
           preview: Array.from(plainPreview(r.body)).slice(0, 280).join(""),
@@ -1825,18 +1854,18 @@ export class EventStore {
   }
 
   /**
-   * Marks the user's unread `kind` items (chat messages, or member updates, I9 §4.5) from the agent `slug`, created at
-   * or before `upTo`, read with one stamp. `null` for an unknown slug. Mentions, task events and items from other
+   * Marks the user's unread `kind` items (chat messages, or member updates, I9 §4.5) from the agent `ref`, created at
+   * or before `upTo`, read with one stamp. `null` for an unknown ref. Mentions, task events and items from other
    * agents are untouched.
    */
   async markReadFrom(
     userId: string,
-    slug: string,
+    ref: string,
     upTo: string,
     kind: "message" | "member_update" = "message",
   ): Promise<{ marked: number; readAt: string } | null> {
     if (!isCursorInstant(upTo)) throw new InvalidCursorError();
-    const agent = await this.agentBySlug(slug);
+    const agent = await this.agentByRef(ref);
     if (!agent) return null;
     const readAt = this.clock();
     const rows = await this.db
@@ -1884,14 +1913,14 @@ export class EventStore {
     return r?.n ?? 0;
   }
 
-  /** Unread `message`-kind inbox items per sending agent slug (mentions, task events and factory items excluded). */
+  /** Unread `message`-kind inbox items per sending agent ref (mentions, task events and factory items excluded). */
   async unreadByAgent(userId: string): Promise<Record<string, number>> {
-    const fa = alias(agents, "fa");
+    const fa = alias(principals, "fa");
     const rows = await this.db
-      .select({ slug: fa.slug, n: count() })
+      .select({ ref: fa.ref, n: count() })
       .from(inboxItems)
       .innerJoin(messages, eq(messages.id, inboxItems.messageId))
-      .innerJoin(fa, eq(fa.id, messages.fromId))
+      .innerJoin(fa, and(eq(fa.id, messages.fromId), eq(fa.kind, "agent")))
       .where(
         and(
           eq(inboxItems.userId, userId),
@@ -1899,7 +1928,7 @@ export class EventStore {
           eq(inboxItems.kind, "message"),
         ),
       )
-      .groupBy(fa.slug);
-    return Object.fromEntries(rows.map((r) => [r.slug, r.n]));
+      .groupBy(fa.ref);
+    return Object.fromEntries(rows.map((r) => [r.ref, r.n]));
   }
 }

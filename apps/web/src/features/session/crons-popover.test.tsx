@@ -13,6 +13,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
 import { browserZone } from "@/features/schedules/format";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { agentSummary } from "@/test/session-fixtures";
 import { CronsSegment } from "./crons-popover";
 import { CronsStopLayer, useStopCrons } from "./stop-crons";
@@ -77,7 +78,7 @@ function strip(over: Record<string, unknown> = {}) {
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
-    routeTree: root.addChildren([stub("/schedules"), stub("/agents/$slug"), stub("/tasks")]),
+    routeTree: root.addChildren([stub("/schedules"), stub("/agents/$ref"), stub("/tasks")]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   return render(
@@ -124,7 +125,9 @@ test("while the stop is pending the segment says so and the popover has no Stop 
 });
 
 test("Stop closes the popover, opens the confirmation with Cancel focused, then stops and announces it", async () => {
-  const api = mockApi({ "POST /api/agents/dev/stop-crons": () => json({ status: "stopped" }) });
+  const api = mockApi({
+    [`POST /api/agents/${refFor("dev")}/stop-crons`]: () => json({ status: "stopped" }),
+  });
   strip();
   const u = userEvent.setup();
   await u.click(await screen.findByRole("button", { name: "2 crons: show and stop" }));
@@ -140,13 +143,13 @@ test("Stop closes the popover, opens the confirmation with Cancel focused, then 
   await waitFor(() => expect(within(dlg).getByRole("button", { name: "Cancel" })).toHaveFocus());
   await u.click(within(dlg).getByRole("button", { name: "Stop 2 crons" }));
   await waitFor(() =>
-    expect(api.calls.some((c) => c.url === "/api/agents/dev/stop-crons")).toBe(true),
+    expect(api.calls.some((c) => c.url === `/api/agents/${refFor("dev")}/stop-crons`)).toBe(true),
   );
   expect(await screen.findByText("Stopped @dev's crons.")).toBeInTheDocument();
 });
 
 test("the confirmation's focus return does nothing once the segment has unmounted", async () => {
-  mockApi({ "POST /api/agents/dev/stop-crons": () => json({ status: "stopped" }) });
+  mockApi({ [`POST /api/agents/${refFor("dev")}/stop-crons`]: () => json({ status: "stopped" }) });
   // A composer outside the segment's tree, standing in for the next page's (or the next test's).
   const other = document.body.appendChild(document.createElement("div"));
   other.id = "composer";
@@ -170,7 +173,7 @@ test("the confirmation's focus return does nothing once the segment has unmounte
 
 test("a pending stop is announced as pending; no_crons and stopping count as done; other failures stay in the dialog", async () => {
   const api = mockApi({
-    "POST /api/agents/dev/stop-crons": () => json({ status: "pending" }),
+    [`POST /api/agents/${refFor("dev")}/stop-crons`]: () => json({ status: "pending" }),
   });
   strip();
   const u = userEvent.setup();
@@ -182,7 +185,7 @@ test("a pending stop is announced as pending; no_crons and stopping count as don
   expect(
     await screen.findByText("@dev's crons stop when its current work finishes."),
   ).toBeInTheDocument();
-  api.on("POST /api/agents/dev/stop-crons", () =>
+  api.on(`POST /api/agents/${refFor("dev")}/stop-crons`, () =>
     json({ error: { code: "no_crons", message: "x" } }, 409),
   );
   await u.click(await screen.findByRole("button", { name: "2 crons: show and stop" }));
@@ -191,7 +194,7 @@ test("a pending stop is announced as pending; no_crons and stopping count as don
     within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Stop 2 crons" }),
   );
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-  api.on("POST /api/agents/dev/stop-crons", () =>
+  api.on(`POST /api/agents/${refFor("dev")}/stop-crons`, () =>
     json({ error: { code: "boom", message: "x" } }, 500),
   );
   await u.click(await screen.findByRole("button", { name: "2 crons: show and stop" }));
@@ -207,8 +210,8 @@ test("a pending stop is announced as pending; no_crons and stopping count as don
 });
 
 test("the outcome stays while the crons are gone and clears when new ones appear", async () => {
-  mockApi({ "POST /api/agents/dev/stop-crons": () => json({ status: "stopped" }) });
-  const withCrons = (n: number) => agentSummary({ slug: "dev", crons: crons.slice(0, n) });
+  mockApi({ [`POST /api/agents/${refFor("dev")}/stop-crons`]: () => json({ status: "stopped" }) });
+  const withCrons = (n: number) => agentSummary({ handle: "dev", crons: crons.slice(0, n) });
   const { result, rerender } = renderHook(({ agent }) => useStopCrons(agent), {
     initialProps: { agent: withCrons(2) },
   });
@@ -244,7 +247,7 @@ function Live() {
 }
 
 test("when the segment's Stop is gone as the confirmation closes, focus goes to the composer", async () => {
-  mockApi({ "POST /api/agents/dev/stop-crons": () => json({ status: "stopped" }) });
+  mockApi({ [`POST /api/agents/${refFor("dev")}/stop-crons`]: () => json({ status: "stopped" }) });
   const root = createRootRoute({ component: Live });
   const router = createRouter({
     routeTree: root.addChildren([

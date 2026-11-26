@@ -11,9 +11,9 @@ const PREFIX = "of-draft:v1:";
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const THROTTLE_MS = 150;
 
-export const sessionDraftKey = (slug: string) => `session:${slug}`;
+export const sessionDraftKey = (agentRef: string) => `session:${agentRef}`;
 export const taskDraftKey = (taskKey: string) => `task:${taskKey}`;
-export const chatDraftKey = (slug: string) => `chat:${slug}`;
+export const chatDraftKey = (agentRef: string) => `chat:${agentRef}`;
 /** The most agents one chat message goes to, the chat's own included (I1 §6.6). */
 export const MAX_RECIPIENTS = 10;
 
@@ -51,7 +51,7 @@ function read(key: string): Stored {
 
 export const readDraft = (key: string): string => read(key).text;
 
-/** The chat's added recipients (slugs; the chat's own agent is implicit). */
+/** The chat's added recipients (agentRefs; the chat's own agent is implicit). */
 export const readRecipients = (key: string): string[] => read(key).recipients;
 
 function store(key: string, text: string, recipients: string[]): void {

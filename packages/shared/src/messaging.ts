@@ -101,16 +101,24 @@ export const INBOX_KINDS = ["notice", "mention", "task_event", "credential"] as 
 export const loopHoldSchema = z.object({
   id: z.string(),
   agents: z.tuple([
-    z.object({ slug: z.string(), status: z.enum(["live", "terminated", "archived"]) }),
-    z.object({ slug: z.string(), status: z.enum(["live", "terminated", "archived"]) }),
+    z.object({
+      ref: z.string(),
+      handle: z.string(),
+      status: z.enum(["live", "terminated", "archived"]),
+    }),
+    z.object({
+      ref: z.string(),
+      handle: z.string(),
+      status: z.enum(["live", "terminated", "archived"]),
+    }),
   ]),
   /** Rows still `loop_held` on this hold. */
   waiting: z.number().int(),
   /** Rows whose state is neither `loop_held` nor `rejected`. */
   sentOn: z.number().int(),
   resumedAt: z.string().nullable(),
-  /** The resuming human's handle with `@`. */
-  resumedBy: z.string().nullable(),
+  /** The resuming human. */
+  resumedBy: z.object({ ref: z.string(), handle: z.string() }).nullable(),
 });
 export const resumeLoopHoldResponseSchema = z.object({ sentOn: z.number().int() });
 
@@ -144,7 +152,7 @@ export const inboxItemSchema = z.object({
   link: z.discriminatedUnion("kind", [
     z.object({
       kind: z.literal("session"),
-      agentSlug: z.string(),
+      agentRef: z.string(),
       seq: z.number().int().optional(),
     }),
     z.object({ kind: z.literal("task"), key: z.string(), commentId: z.string().optional() }),
@@ -167,7 +175,7 @@ export const readFromBodySchema = z.object({
   kind: z.enum(["message", "member_update"]).default("message"),
 });
 export const readFromResponseSchema = z.object({ marked: z.number().int(), readAt: z.string() });
-export const eventRefSchema = z.object({ agentSlug: z.string(), seq: z.number().int() });
+export const eventRefSchema = z.object({ agentRef: z.string(), seq: z.number().int() });
 export const messageLookupSchema = z.object({
   id: z.string(),
   kind: z.enum(MESSAGE_KINDS),

@@ -16,12 +16,12 @@ const NO_AGENTS: MentionAgent[] = [];
 const HANDLE_TAIL = /^[A-Za-z0-9-]*/;
 
 type Held = {
-  /** The chat's agent. */
-  slug: string;
+  /** The chat's agent (its ref). */
+  agentRef: string;
   /** The recipients added so far (read when the menu asks, never captured). */
   added(): readonly string[];
   /** Adds one; false when it was refused (files attached). */
-  add(slug: string): boolean;
+  add(agentRef: string): boolean;
 };
 
 /**
@@ -37,7 +37,7 @@ export function recipientSource(qc: QueryClient, h: Held): CompletionSource {
     opensAt: mentionOpensAt,
     items(query) {
       if (full()) return [];
-      const skip = new Set([h.slug, ...h.added()]);
+      const skip = new Set([h.agentRef, ...h.added()]);
       return rankMentions(query, {
         agents:
           qc.getQueryData<MentionAgent[]>(agentsListQueryOptions("exclude").queryKey) ?? NO_AGENTS,
@@ -45,17 +45,16 @@ export function recipientSource(qc: QueryClient, h: Held): CompletionSource {
         me: undefined,
       })
         .filter(
-          (m): m is Extract<Mention, { kind: "agent" }> =>
-            m.kind === "agent" && !skip.has(m.handle),
+          (m): m is Extract<Mention, { kind: "agent" }> => m.kind === "agent" && !skip.has(m.ref),
         )
         .map(
           (m): CompletionItem => ({
-            id: m.handle,
+            id: m.ref,
             label: `Add @${m.handle} as recipient`,
             detail: m.name,
             group: "agents",
             avatar: {
-              slug: m.handle,
+              agentRef: m.ref,
               template: m.template,
               avatarVersion: m.avatarVersion,
               color: m.color,

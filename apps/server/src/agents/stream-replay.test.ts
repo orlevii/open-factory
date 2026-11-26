@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { type LiveFrame, liveKey, type ServerMessage } from "@open-factory/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { testRef } from "../test/principals.ts";
 import { LIVE_INTERVAL_MS } from "./live-state.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
 import {
@@ -92,7 +93,7 @@ interface Replayed {
 
 async function replay(name: string, lines: readonly TraceLine[]): Promise<Replayed> {
   await h.makeRuntime({ holdTimeoutMs: 60_000 });
-  const slug = h.rt.agent.slug;
+  const slug = testRef(h.rt.agent.id);
   const norm = normalizer(slug);
   const ours = (m: ServerMessage) =>
     (m.type === "session_event" || m.type === "live") && m.agent === slug;

@@ -10,7 +10,7 @@ type Event = Extract<Activity, { type: "event" }>;
 
 const Who = ({ p }: { p: TaskPrincipal }) =>
   p.kind === "agent" ? (
-    <AgentLink slug={p.handle} />
+    <AgentLink agentRef={p.ref} />
   ) : (
     <span className="font-mono">@{p.handle}</span>
   );

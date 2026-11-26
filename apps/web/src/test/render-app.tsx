@@ -6,6 +6,7 @@ import { clearViewPositions } from "@/features/agents/view-memory";
 import { createQueryClient } from "@/lib/query-client";
 import { type Session, sessionQueryOptions } from "@/lib/session";
 import { createAppRouter } from "@/router";
+import { refFor } from "@/test/refs";
 
 type AppRouter = ReturnType<typeof createAppRouter>;
 const rendered = new Set<AppRouter>();
@@ -24,7 +25,13 @@ afterEach(async () => {
 });
 
 export const alice: Session = {
-  user: { id: "u1", name: "Alice", handle: "alice", email: "alice@example.com", ref: "abcd2345" },
+  user: {
+    id: "u1",
+    name: "Alice",
+    handle: "alice",
+    email: "alice@example.com",
+    ref: refFor("alice"),
+  },
 };
 
 /** Renders the real route tree at `path` with the session query pre-seeded. `undefined` leaves the

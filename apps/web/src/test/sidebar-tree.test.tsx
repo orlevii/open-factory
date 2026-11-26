@@ -20,6 +20,7 @@ import { createQueryClient } from "@/lib/query-client";
 import { endAnimation } from "@/test/end-animation";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { longPress } from "@/test/long-press";
+import { refFor } from "@/test/refs";
 import { agentSummary } from "@/test/session-fixtures";
 
 // Render probes: the tree reads `of-tree-expanded` once per render, a row reads its unread count
@@ -47,23 +48,23 @@ vi.mock("@/features/inbox/api", async (orig) => {
 });
 
 const agents = (over: Partial<Record<string, Partial<AgentSummary>>> = {}) => [
-  agentSummary({ slug: "a", displayName: "Alpha", ...over.a }),
+  agentSummary({ handle: "a", displayName: "Alpha", ...over.a }),
   agentSummary({
-    slug: "b",
+    handle: "b",
     displayName: "Bravo",
-    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "a" },
+    reportsTo: { kind: "agent", ref: refFor("a"), handle: "a" },
     ...over.b,
   }),
   agentSummary({
-    slug: "c",
+    handle: "c",
     displayName: "Charlie",
-    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "b" },
+    reportsTo: { kind: "agent", ref: refFor("b"), handle: "b" },
     ...over.c,
   }),
   agentSummary({
-    slug: "s",
+    handle: "s",
     displayName: "Sierra",
-    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "b" },
+    reportsTo: { kind: "agent", ref: refFor("b"), handle: "b" },
     ...over.s,
   }),
 ];
@@ -71,7 +72,7 @@ const agents = (over: Partial<Record<string, Partial<AgentSummary>>> = {}) => [
 type Frame = Extract<ServerMessage, { type: "agent_status" }>;
 const frame = (agent: string, status: Frame["status"]): Frame => ({
   type: "agent_status",
-  agent,
+  agent: refFor(agent),
   status,
   turnOpen: status === "working",
   restartPending: false,
@@ -88,13 +89,13 @@ const host = {
 function Host() {
   const [active, setActive] = useState(host.initial);
   host.set = setActive;
-  return <SidebarAgentTree activeSlug={active} collapsedRail={host.collapsedRail} />;
+  return <SidebarAgentTree activeRef={active} collapsedRail={host.collapsedRail} />;
 }
 
 function setup({
   list = agents() as AgentSummary[] | null,
   byAgent = {} as Record<string, number>,
-  activeSlug = undefined as string | undefined,
+  activeRef = undefined as string | undefined,
   collapsedRail = false,
 } = {}) {
   const qc: QueryClient = createQueryClient({ queries: { retry: false, staleTime: Infinity } });
@@ -103,15 +104,15 @@ function setup({
     count: Object.values(byAgent).reduce((s, n) => s + n, 0),
     byAgent,
   });
-  host.initial = activeSlug;
+  host.initial = activeRef;
   host.collapsedRail = collapsedRail;
   const root = createRootRoute({ component: Host });
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
     routeTree: root.addChildren([
-      stub("/agents/$slug"),
-      stub("/agents/$slug/usage"),
+      stub("/agents/$ref"),
+      stub("/agents/$ref/usage"),
       stub("/tasks"),
       stub("/agents/new"),
       stub("/agents"),
@@ -139,7 +140,7 @@ async function push(qc: QueryClient, f: Frame) {
 }
 
 const row = (name: string) => screen.getByRole("treeitem", { name: new RegExp(`^${name}`) });
-const rowEl = (slug: string) => document.querySelector(`[data-agent-row="${slug}"]`);
+const rowEl = (handle: string) => document.querySelector(`[data-agent-row="${refFor(handle)}"]`);
 const stored = () => localStorage.getItem("of-tree-expanded");
 const resetProbe = () => {
   probe.tree = 0;
@@ -165,7 +166,7 @@ test("A open, B collapsed with a working count named '1 working'", async () => {
   expect(row("Bravo")).toHaveAttribute("aria-level", "2");
   expect(row("Bravo")).toHaveAttribute("aria-setsize", "1");
   expect(row("Bravo")).toHaveAttribute("aria-posinset", "1");
-  expect(row("Bravo")).toHaveAttribute("href", "/agents/b/chat");
+  expect(row("Bravo")).toHaveAttribute("href", `/agents/${refFor("b")}/chat`);
   expect(screen.getByRole("navigation", { name: "Agents" })).toContainElement(
     screen.getByRole("tree"),
   );
@@ -186,7 +187,7 @@ test("chevron click toggles without navigating", async () => {
 });
 
 test("toggle persists; revealed ancestors don't", async () => {
-  setup({ activeSlug: "c" });
+  setup({ activeRef: refFor("c") });
   await screen.findByRole("tree");
   expect(row("Charlie")).toHaveAttribute("aria-current", "page");
   expect(row("Bravo")).toHaveAttribute("aria-expanded", "true");
@@ -194,16 +195,16 @@ test("toggle persists; revealed ancestors don't", async () => {
   // Collapsing a revealed ancestor is the user's toggle: it closes and persists.
   await userEvent.click(row("Bravo").querySelector("[data-chevron]") as HTMLElement);
   expect(screen.queryByRole("treeitem", { name: /^Charlie/ })).toBeNull();
-  expect(JSON.parse(stored() as string)).toEqual({ b: false });
+  expect(JSON.parse(stored() as string)).toEqual({ [refFor("b")]: false });
 });
 
 test("a new navigation reveals the active agent again, even back to one whose ancestor was closed", async () => {
-  const { navigate } = setup({ activeSlug: "c" });
+  const { navigate } = setup({ activeRef: refFor("c") });
   await screen.findByRole("tree");
   await userEvent.click(row("Bravo").querySelector("[data-chevron]") as HTMLElement);
   expect(screen.queryByRole("treeitem", { name: /^Charlie/ })).toBeNull();
-  await navigate("a");
-  await navigate("c");
+  await navigate(refFor("a"));
+  await navigate(refFor("c"));
   expect(row("Charlie")).toHaveAttribute("aria-current", "page");
   expect(row("Bravo")).toHaveAttribute("aria-expanded", "true");
 });
@@ -213,7 +214,7 @@ test("a user toggle writes only that slug, pruned to live agents", async () => {
   setup();
   await screen.findByRole("tree");
   await userEvent.click(row("Bravo").querySelector("[data-chevron]") as HTMLElement);
-  expect(JSON.parse(stored() as string)).toEqual({ b: true });
+  expect(JSON.parse(stored() as string)).toEqual({ [refFor("b")]: true });
 });
 
 test("APG keys: one tab stop, ↓/↑, →/← open/close and move, Home/End, Enter navigates", async () => {
@@ -250,16 +251,18 @@ test("APG keys: one tab stop, ↓/↑, →/← open/close and move, Home/End, En
   await userEvent.keyboard("{ArrowLeft}");
   expect(row("Alpha")).toHaveFocus();
   await userEvent.keyboard("{Enter}");
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a/chat"));
+  await vi.waitFor(() =>
+    expect(router.state.location.pathname).toBe(`/agents/${refFor("a")}/chat`),
+  );
 });
 
 test("with B expanded, an agent_status frame re-renders C's row only", async () => {
-  localStorage.setItem("of-tree-expanded", JSON.stringify({ b: true }));
+  localStorage.setItem("of-tree-expanded", JSON.stringify({ [refFor("b")]: true }));
   const { qc } = setup();
   await screen.findByRole("tree");
   resetProbe();
   await push(qc, frame("c", "working"));
-  expect(probe.rows).toEqual({ c: 1 });
+  expect(probe.rows).toEqual({ [refFor("c")]: 1 });
   expect(probe.tree).toBe(0);
 });
 
@@ -268,7 +271,7 @@ test("B collapsed: a working child re-renders B's row and the tree once", async 
   await screen.findByRole("tree");
   resetProbe();
   await push(qc, frame("c", "working"));
-  expect(probe.rows).toEqual({ b: 1 });
+  expect(probe.rows).toEqual({ [refFor("b")]: 1 });
   expect(probe.tree).toBe(1);
   expect(screen.getByText("1 working", { selector: ".sr-only" })).toBeInTheDocument();
 });
@@ -280,11 +283,14 @@ test("the tree renders 0 times on a frame that changes no count and no rail memb
   // Alpha is an open root: its own status is no one's working count.
   await push(qc, frame("a", "working"));
   expect(probe.tree).toBe(0);
-  expect(probe.rows).toEqual({ a: 1 });
+  expect(probe.rows).toEqual({ [refFor("a")]: 1 });
 });
 
 test("unread count from byAgent, capped at 99+, part of the row's name; a working report is counted", async () => {
-  setup({ list: agents({ c: { status: "working" } }), byAgent: { a: 3, b: 120 } });
+  setup({
+    list: agents({ c: { status: "working" } }),
+    byAgent: { [refFor("a")]: 3, [refFor("b")]: 120 },
+  });
   await screen.findByRole("tree");
   expect(within(row("Alpha")).getByText("3")).toBeInTheDocument();
   expect(within(row("Bravo")).getByText("99+")).toBeInTheDocument();
@@ -315,16 +321,16 @@ test("loading: three skeleton rows", async () => {
 test("collapsed rail: only the active agent, unread and badge-worthy agents, avatar only", async () => {
   setup({
     list: agents({ a: { status: "working" } }),
-    byAgent: { s: 2 },
-    activeSlug: "c",
+    byAgent: { [refFor("s")]: 2 },
+    activeRef: refFor("c"),
     collapsedRail: true,
   });
   const rail = await screen.findByRole("navigation", { name: "Agents" });
   const links = within(rail).getAllByRole("link");
   expect(links.map((l) => l.getAttribute("href"))).toEqual([
-    "/agents/a/chat",
-    "/agents/c/chat",
-    "/agents/s/chat",
+    `/agents/${refFor("a")}/chat`,
+    `/agents/${refFor("c")}/chat`,
+    `/agents/${refFor("s")}/chat`,
   ]);
   expect(links[1]).toHaveAttribute("aria-current", "page");
   expect(links[0]).toHaveAccessibleName(/Alpha/);
@@ -352,7 +358,9 @@ test("a click through the rail's open tooltip still follows the link", async () 
   await screen.findByRole("tooltip");
   const trigger = link.querySelector("[data-slot=tooltip-trigger]") as HTMLElement;
   await userEvent.click(trigger);
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/a/chat"));
+  await vi.waitFor(() =>
+    expect(router.state.location.pathname).toBe(`/agents/${refFor("a")}/chat`),
+  );
 });
 
 test("a click on a collapsed manager's working count follows the row's link", async () => {
@@ -364,11 +372,13 @@ test("a click on a collapsed manager's working count follows the row's link", as
   await screen.findByRole("tooltip");
   const trigger = row("Bravo").querySelector("[data-slot=tooltip-trigger]") as HTMLElement;
   await userEvent.click(trigger);
-  await vi.waitFor(() => expect(router.state.location.pathname).toBe("/agents/b/chat"));
+  await vi.waitFor(() =>
+    expect(router.state.location.pathname).toBe(`/agents/${refFor("b")}/chat`),
+  );
 });
 
 test("each row carries a ⋯ that is out of the tab order; it opens the sidebar menu on its own row", async () => {
-  setup({ activeSlug: "a" });
+  setup({ activeRef: refFor("a") });
   const user = userEvent.setup();
   await screen.findByRole("tree");
   const more = screen.getByRole("button", { name: "Actions for Alpha" });
@@ -383,7 +393,7 @@ test("each row carries a ⋯ that is out of the tab order; it opens the sidebar 
 });
 
 test("one menu for the tree: opening it on another row moves it, rows hold no menu of their own", async () => {
-  setup({ activeSlug: "a" });
+  setup({ activeRef: refFor("a") });
   const user = userEvent.setup();
   await screen.findByRole("tree");
   await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
@@ -397,7 +407,7 @@ test("one menu for the tree: opening it on another row moves it, rows hold no me
 });
 
 test("Shift+F10 and the Context Menu key open the menu for the focused row; Esc returns focus to the row", async () => {
-  setup({ activeSlug: "a" });
+  setup({ activeRef: refFor("a") });
   const user = userEvent.setup();
   await screen.findByRole("tree");
   row("Alpha").focus();
@@ -411,7 +421,7 @@ test("Shift+F10 and the Context Menu key open the menu for the focused row; Esc 
 });
 
 test("after a row's menu closes, a frame for that agent doesn't re-render the tree", async () => {
-  const { qc } = setup({ activeSlug: "a" });
+  const { qc } = setup({ activeRef: refFor("a") });
   const user = userEvent.setup();
   await screen.findByRole("tree");
   await user.click(screen.getByRole("button", { name: "Actions for Alpha" }));
@@ -425,7 +435,7 @@ test("after a row's menu closes, a frame for that agent doesn't re-render the tr
 });
 
 test("right-click keeps the browser's own menu", async () => {
-  setup({ activeSlug: "a" });
+  setup({ activeRef: refFor("a") });
   await screen.findByRole("tree");
   // fireEvent returns false when a handler called preventDefault.
   expect(fireEvent.contextMenu(row("Alpha"))).toBe(true);
@@ -433,7 +443,7 @@ test("right-click keeps the browser's own menu", async () => {
 });
 
 test("the menu keeps its place over the row while it closes", async () => {
-  setup({ activeSlug: "a" });
+  setup({ activeRef: refFor("a") });
   const user = userEvent.setup();
   await screen.findByRole("tree");
   const el = rowEl("a") as HTMLElement;
@@ -452,7 +462,7 @@ test("the menu keeps its place over the row while it closes", async () => {
 test("the menu closes when its agent leaves the list (terminated by a status frame)", async () => {
   // The refetch the terminate triggers never settles: the frame alone must close it.
   vi.stubGlobal("fetch", () => new Promise(() => {}));
-  const { qc } = setup({ activeSlug: "c" });
+  const { qc } = setup({ activeRef: refFor("c") });
   const user = userEvent.setup();
   await screen.findByRole("tree");
   await user.click(screen.getByRole("button", { name: "Actions for Charlie" }));
@@ -465,7 +475,7 @@ test("the menu closes when its agent leaves the list (terminated by a status fra
 });
 
 test("the menu closes when its agent is dropped from the list by a refetch", async () => {
-  const { qc } = setup({ activeSlug: "c" });
+  const { qc } = setup({ activeRef: refFor("c") });
   const user = userEvent.setup();
   await screen.findByRole("tree");
   await user.click(screen.getByRole("button", { name: "Actions for Charlie" }));
@@ -473,14 +483,14 @@ test("the menu closes when its agent is dropped from the list by a refetch", asy
   act(() => {
     qc.setQueryData(
       ["agents", "exclude"],
-      agents().filter((a) => a.slug !== "c"),
+      agents().filter((a) => a.handle !== "c"),
     );
   });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 });
 
 test("an agent dropped while its menu is open and then back doesn't reopen it; focus stays in the tree", async () => {
-  const { qc } = setup({ activeSlug: "a" });
+  const { qc } = setup({ activeRef: refFor("a") });
   const user = userEvent.setup();
   await screen.findByRole("tree");
   row("Alpha").focus();
@@ -489,8 +499,8 @@ test("an agent dropped while its menu is open and then back doesn't reopen it; f
   act(() => {
     qc.setQueryData(
       ["agents", "exclude"],
-      agents({ b: { reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" } } }).filter(
-        (a) => a.slug !== "a",
+      agents({ b: { reportsTo: { kind: "human", ref: refFor("or"), handle: "or" } } }).filter(
+        (a) => a.handle !== "a",
       ),
     );
   });
@@ -511,7 +521,7 @@ test("phone: a row's menu is a drawer titled with the agent's name", async () =>
   const original = window.matchMedia;
   fakeMatchMedia.install(true, { coarse: true });
   try {
-    setup({ activeSlug: "a" });
+    setup({ activeRef: refFor("a") });
     await screen.findByRole("tree");
     fireEvent.click(screen.getByRole("button", { name: "Actions for Bravo" }));
     const drawer = await screen.findByRole("dialog", { name: "Bravo" });
@@ -523,7 +533,7 @@ test("phone: a row's menu is a drawer titled with the agent's name", async () =>
 });
 
 test("touch: a 500ms press on a row opens its menu at the press point and doesn't navigate", async () => {
-  const { router } = setup({ activeSlug: "a" });
+  const { router } = setup({ activeRef: refFor("a") });
   await screen.findByRole("tree");
   const el = rowEl("b") as HTMLElement;
   expect(el).toHaveAttribute("data-longpress-region");
@@ -531,7 +541,7 @@ test("touch: a 500ms press on a row opens its menu at the press point and doesn'
   longPress(el, { x: 40, y: 60 });
   expect(await screen.findByRole("menu", { name: "Bravo" })).toBeInTheDocument();
   // Only the pressed row re-renders (its menu-open flag).
-  expect(Object.keys(probe.rows)).toEqual(["b"]);
+  expect(Object.keys(probe.rows)).toEqual([refFor("b")]);
   expect(rowEl("b")).toHaveAttribute("data-menu-open");
   // The dropdown hangs from the point, not the row's edge.
   const point = document.querySelector<HTMLElement>("[data-menu-stand-in].size-0");
@@ -541,7 +551,7 @@ test("touch: a 500ms press on a row opens its menu at the press point and doesn'
 });
 
 test("touch: a press shows the pressed fill on the row after 80ms; a mouse press does nothing", async () => {
-  const { router } = setup({ activeSlug: "a" });
+  const { router } = setup({ activeRef: refFor("a") });
   await screen.findByRole("tree");
   const el = rowEl("b") as HTMLElement;
   longPress(el, { hold: 80, release: false });
@@ -555,7 +565,7 @@ test("touch: a press shows the pressed fill on the row after 80ms; a mouse press
 });
 
 test("touch: closing a long-pressed row's dropdown returns focus to that row, not <body>", async () => {
-  setup({ activeSlug: "a" });
+  setup({ activeRef: refFor("a") });
   await screen.findByRole("tree");
   longPress(rowEl("b") as HTMLElement, { x: 40, y: 60 });
   fireEvent.keyDown(await screen.findByRole("menu", { name: "Bravo" }), { key: "Escape" });
@@ -567,7 +577,7 @@ test("phone: closing a long-pressed row's drawer returns focus to that row, not 
   const original = window.matchMedia;
   fakeMatchMedia.install(true, { coarse: true });
   try {
-    setup({ activeSlug: "a" });
+    setup({ activeRef: refFor("a") });
     await screen.findByRole("tree");
     longPress(rowEl("b") as HTMLElement, { x: 40, y: 60 });
     const drawer = await screen.findByRole("dialog", { name: "Bravo" });

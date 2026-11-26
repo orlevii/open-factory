@@ -4,6 +4,7 @@ import { type ReactNode, useContext } from "react";
 import { expect, test, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { sessionQueryOptions } from "@/lib/session";
+import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import { agentSummary } from "@/test/session-fixtures";
 import {
@@ -15,12 +16,25 @@ import {
 } from "./speaker-line";
 
 const AT = "2026-11-19T14:02:00.000Z";
-const dev = { slug: "dev", displayName: "Developer", template: "dev", kind: "persistent" as const };
+const dev = {
+  ref: refFor("dev"),
+  handle: "dev",
+  displayName: "Developer",
+  template: "dev",
+  kind: "persistent" as const,
+};
 const index = buildSpeakerIndex({
   sessionAgent: { ...dev, avatarVersion: null },
   selfHandle: "alice",
   live: [
-    { slug: "b", displayName: "Builder", template: "dev", kind: "persistent", avatarVersion: null },
+    {
+      ref: refFor("b"),
+      handle: "b",
+      displayName: "Builder",
+      template: "dev",
+      kind: "persistent",
+      avatarVersion: null,
+    },
   ],
   ended: [],
   users: [
@@ -43,7 +57,7 @@ test("an agent sender: an avatar, the name, the @slug, a time; a link to its ses
   await show(<SpeakerLine from="b" fromKind="agent" at={AT} />);
   const l = line();
   const link = within(l).getByRole("link");
-  expect(link).toHaveAttribute("href", "/agents/b/chat");
+  expect(link).toHaveAttribute("href", `/agents/${refFor("b")}/chat`);
   expect(link).toHaveTextContent("Builder");
   const avatar = l.querySelector<HTMLElement>("[style*='width: 20px']");
   expect(avatar).not.toBeNull();
@@ -110,7 +124,7 @@ test("an outgoing card reads 'Name → Recipient': You for you, an agent as a li
   expect(text(lines[0])).toMatch(/^Developer.*@dev.*You$/);
   expect(within(lines[1] as HTMLElement).getByRole("link", { name: /Builder/ })).toHaveAttribute(
     "href",
-    "/agents/b/chat",
+    `/agents/${refFor("b")}/chat`,
   );
 });
 
@@ -127,9 +141,12 @@ test("a sender's kind decides how it shows, whatever its sigil: an `@` agent is 
   ] as HTMLElement[];
   expect(within(explicit as HTMLElement).getByRole("link")).toHaveAttribute(
     "href",
-    "/agents/b/chat",
+    `/agents/${refFor("b")}/chat`,
   );
-  expect(within(looked as HTMLElement).getByRole("link")).toHaveAttribute("href", "/agents/b/chat");
+  expect(within(looked as HTMLElement).getByRole("link")).toHaveAttribute(
+    "href",
+    `/agents/${refFor("b")}/chat`,
+  );
   expect(within(human as HTMLElement).queryByRole("link")).toBeNull();
   expect(within(human as HTMLElement).getByText("@zed")).toBeInTheDocument();
 });
@@ -186,14 +203,14 @@ function Probe() {
 
 test("the provider's index survives a status frame; a name change builds a new one (m7)", async () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const b = agentSummary({ slug: "b", displayName: "Builder" });
+  const b = agentSummary({ handle: "b", displayName: "Builder" });
   qc.setQueryData(["agents", "exclude"], [agentSummary(), b]);
   qc.setQueryData(["users"], []);
   seen.length = 0;
   render(
     <QueryClientProvider client={qc}>
       <SpeakerProvider
-        slug="dev"
+        agentRef={refFor("dev")}
         displayName="Dev agent"
         template="dev"
         kind="persistent"
@@ -247,7 +264,7 @@ test("the provider reads your handle itself, and asks for the ended list only on
     renderInRouter(
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <SpeakerProvider slug="dev">
+          <SpeakerProvider agentRef={refFor("dev")}>
             <SpeakerLine from="gone" fromKind="agent" at={AT} />
             <SpeakerLine from="@alice" fromKind="human" at={AT} />
           </SpeakerProvider>

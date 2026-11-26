@@ -9,12 +9,13 @@ import {
 } from "@/features/agents/status-frames";
 import { runningQueryKey } from "@/features/session/api";
 import { createQueryClient } from "@/lib/query-client";
+import { refFor } from "@/test/refs";
 import { agentSummary } from "@/test/session-fixtures";
 
 type Frame = Extract<ServerMessage, { type: "agent_status" }>;
 const frame = (agent: string, status: Frame["status"], over: Partial<Frame> = {}): Frame => ({
   type: "agent_status",
-  agent,
+  agent: refFor(agent),
   status,
   turnOpen: status === "working",
   restartPending: false,
@@ -35,7 +36,10 @@ beforeEach(() => {
   qc = createQueryClient({ queries: { retry: false } });
   qc.setQueryData(
     ["agents", "exclude"],
-    [agentSummary({ slug: "ada", status: "idle" }), agentSummary({ slug: "bob", status: "idle" })],
+    [
+      agentSummary({ handle: "ada", status: "idle" }),
+      agentSummary({ handle: "bob", status: "idle" }),
+    ],
   );
 });
 afterEach(() => {
@@ -52,18 +56,21 @@ test("frames in one animation frame coalesce: one list write, last frame per slu
   expect(spy).not.toHaveBeenCalled();
   vi.advanceTimersToNextFrame();
   expect(spy).toHaveBeenCalledTimes(1);
-  expect(list().find((a) => a.slug === "ada")?.status).toBe("idle");
-  expect(list().find((a) => a.slug === "bob")?.status).toBe("working");
+  expect(list().find((a) => a.handle === "ada")?.status).toBe("idle");
+  expect(list().find((a) => a.handle === "bob")?.status).toBe("working");
 });
 
 test("unchanged agents keep their object identity", () => {
-  qc.setQueryData(["agents", "exclude"], [...list(), agentSummary({ slug: "cy", status: "idle" })]);
+  qc.setQueryData(
+    ["agents", "exclude"],
+    [...list(), agentSummary({ handle: "cy", status: "idle" })],
+  );
   const before = list();
   applyStatusFrames(qc, [frame("ada", "working")]);
   const after = list();
-  expect(after.find((a) => a.slug === "ada")).not.toBe(before.find((a) => a.slug === "ada"));
-  expect(after.find((a) => a.slug === "bob")).toBe(before.find((a) => a.slug === "bob"));
-  expect(after.find((a) => a.slug === "cy")).toBe(before.find((a) => a.slug === "cy"));
+  expect(after.find((a) => a.handle === "ada")).not.toBe(before.find((a) => a.handle === "ada"));
+  expect(after.find((a) => a.handle === "bob")).toBe(before.find((a) => a.handle === "bob"));
+  expect(after.find((a) => a.handle === "cy")).toBe(before.find((a) => a.handle === "cy"));
 });
 
 test("entering terminated is computed against the state before the batch; ['agents'] invalidated once per batch", () => {
@@ -84,18 +91,20 @@ test("an uncached slug invalidates ['agents'] once per batch, not once per frame
   const spy = vi.spyOn(qc, "invalidateQueries");
   applyStatusFrames(qc, [frame("new1", "idle"), frame("new2", "idle"), frame("new1", "working")]);
   expect(invalidations(["agents"])(spy)).toBe(1);
-  expect(invalidations(["agent", "new1"])(spy)).toBe(1);
-  expect(invalidations(["agent", "new2"])(spy)).toBe(1);
+  expect(invalidations(["agent", refFor("new1")])(spy)).toBe(1);
+  expect(invalidations(["agent", refFor("new2")])(spy)).toBe(1);
 });
 
 test("cached detail is patched once per slug; an uncached detail is invalidated", () => {
-  qc.setQueryData(["agent", "ada"], { agent: agentSummary({ slug: "ada" }) });
+  qc.setQueryData(["agent", refFor("ada")], { agent: agentSummary({ handle: "ada" }) });
   const spy = vi.spyOn(qc, "setQueryData");
   const inv = vi.spyOn(qc, "invalidateQueries");
   applyStatusFrames(qc, [frame("ada", "working"), frame("ada", "idle"), frame("bob", "idle")]);
   expect(spy.mock.calls.filter(([k]) => (k as string[])[0] === "agent")).toHaveLength(1);
-  expect(qc.getQueryData<{ agent: AgentSummary }>(["agent", "ada"])?.agent.status).toBe("idle");
-  expect(invalidations(["agent", "bob"])(inv)).toBe(1);
+  expect(qc.getQueryData<{ agent: AgentSummary }>(["agent", refFor("ada")])?.agent.status).toBe(
+    "idle",
+  );
+  expect(invalidations(["agent", refFor("bob")])(inv)).toBe(1);
 });
 
 test("the newest supervisor frame sets the running count", () => {
@@ -151,21 +160,21 @@ test("a pending animation frame is flushed when the tab turns hidden (visibility
 });
 
 test("a frame without lastError clears it, in the list and the detail", () => {
-  const withErr = agentSummary({ slug: "ada", status: "errored", lastError: "boom" });
+  const withErr = agentSummary({ handle: "ada", status: "errored", lastError: "boom" });
   qc.setQueryData(["agents", "exclude"], [withErr]);
-  qc.setQueryData(["agent", "ada"], { agent: withErr });
+  qc.setQueryData(["agent", refFor("ada")], { agent: withErr });
   applyStatusFrames(qc, [frame("ada", "idle")]);
   expect(list()[0]?.lastError).toBeUndefined();
   expect(
-    qc.getQueryData<{ agent: AgentSummary }>(["agent", "ada"])?.agent.lastError,
+    qc.getQueryData<{ agent: AgentSummary }>(["agent", refFor("ada")])?.agent.lastError,
   ).toBeUndefined();
 });
 
 test("restartPending and restartWaitingOn fold into the list and the detail", () => {
-  qc.setQueryData(["agent", "ada"], { agent: agentSummary({ slug: "ada" }) });
+  qc.setQueryData(["agent", refFor("ada")], { agent: agentSummary({ handle: "ada" }) });
   applyStatusFrames(qc, [frame("ada", "idle", { restartPending: true, restartWaitingOn: 2 })]);
   expect(list()[0]).toMatchObject({ restartPending: true, restartWaitingOn: 2 });
-  expect(qc.getQueryData<{ agent: AgentSummary }>(["agent", "ada"])?.agent).toMatchObject({
+  expect(qc.getQueryData<{ agent: AgentSummary }>(["agent", refFor("ada")])?.agent).toMatchObject({
     restartPending: true,
     restartWaitingOn: 2,
     restartChanges: [],
@@ -173,13 +182,13 @@ test("restartPending and restartWaitingOn fold into the list and the detail", ()
 });
 
 test("every cached list variant is patched, others untouched", () => {
-  qc.setQueryData(["agents", "only"], [agentSummary({ slug: "ada", status: "working" })]);
-  qc.setQueryData(["agents", "include"], [agentSummary({ slug: "ada", status: "working" })]);
-  const other = agentSummary({ slug: "zed", status: "idle" });
+  qc.setQueryData(["agents", "only"], [agentSummary({ handle: "ada", status: "working" })]);
+  qc.setQueryData(["agents", "include"], [agentSummary({ handle: "ada", status: "working" })]);
+  const other = agentSummary({ handle: "zed", status: "idle" });
   qc.setQueryData(["agents", "other"], [other]);
   applyStatusFrames(qc, [frame("ada", "idle", { restartPending: true, restartWaitingOn: 1 })]);
   for (const v of ["exclude", "only", "include"]) {
-    const row = qc.getQueryData<AgentSummary[]>(["agents", v])?.find((a) => a.slug === "ada");
+    const row = qc.getQueryData<AgentSummary[]>(["agents", v])?.find((a) => a.handle === "ada");
     expect(row, v).toMatchObject({ status: "idle", restartWaitingOn: 1 });
   }
   expect(qc.getQueryData<AgentSummary[]>(["agents", "other"])?.[0]).toBe(other);

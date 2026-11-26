@@ -63,8 +63,8 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
   },
   "edit-agent": {
     load: () => import("@/features/agents/edit-agent-sheet"),
-    prefetch(qc, spec: { slug?: string }) {
-      if (spec.slug) warm(qc, agentDetailQueryOptions(spec.slug));
+    prefetch(qc, spec: { agentRef?: string }) {
+      if (spec.agentRef) warm(qc, agentDetailQueryOptions(spec.agentRef));
       warm(qc, agentsListQueryOptions("exclude"));
       warm(qc, credentialsQueryOptions);
       warm(qc, projectsQueryOptions);

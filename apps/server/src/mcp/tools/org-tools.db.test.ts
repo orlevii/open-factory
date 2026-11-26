@@ -91,7 +91,7 @@ beforeAll(async () => {
   writeTemplate("lead");
   await t.app.templates.scan();
   await t.app.agents.create(body("hr-bot"), human);
-  await t.app.agents.update("hr-bot", { manageOrg: true }, human);
+  await t.app.agents.update(await t.refOf("hr-bot"), { manageOrg: true }, human);
   await t.app.agents.create(body("plain"), human);
   await t.app.agents.create(body("dev-1"), human);
   for (const s of ["hr-bot", "plain"]) tok[s] = t.app.agentTokens.mint((await row(s)).id).token;
@@ -107,10 +107,10 @@ test("only a manage_org caller lists the nine org tools", async () => {
 
 test("a flag turned off after tools/list makes the call an unknown-tool error", async () => {
   await t.app.agents.create(body("temp"), human);
-  await t.app.agents.update("temp", { manageOrg: true }, human);
+  await t.app.agents.update(await t.refOf("temp"), { manageOrg: true }, human);
   tok.temp = t.app.agentTokens.mint((await row("temp")).id).token;
   expect(await names("temp")).toContain("get_agent");
-  await t.app.agents.update("temp", { manageOrg: false }, human);
+  await t.app.agents.update(await t.refOf("temp"), { manageOrg: false }, human);
   const r = await mcpCall(url, tok.temp as string, "tools/call", {
     name: "get_agent",
     arguments: { slug: "hr-bot" },
@@ -313,9 +313,9 @@ test("update_agent: identity and config together write both and list the changes
 });
 
 test("get_agent: overlay_hash is the overlay version, references stay literal, credential and projects are names", async () => {
-  await t.app.agents.update("dev-1", { projects: ["site"] }, human);
+  await t.app.agents.update(await t.refOf("dev-1"), { projects: ["site"] }, human);
   await t.app.configs.saveOverlay(
-    "dev-1",
+    await t.refOf("dev-1"),
     {
       template: { model: "opus" },
       settings: {
@@ -499,7 +499,7 @@ test("updateWithOverlay: an overlay changed after validation rolls the identity 
   };
   const before = await row("dev-1");
   const plan = await t.app.configs.planOverlay(
-    "dev-1",
+    await t.refOf("dev-1"),
     { template: { model: "haiku" } },
     overlayVersion(before.config as never),
     hr,
@@ -507,7 +507,7 @@ test("updateWithOverlay: an overlay changed after validation rolls the identity 
   const eventsBeforeSave = await configEvents("dev-1");
   // A human saves in the window between validation and the transaction.
   await t.app.configs.saveOverlay(
-    "dev-1",
+    await t.refOf("dev-1"),
     { template: { model: "sonnet" } },
     overlayVersion(before.config as never),
     human,
@@ -519,7 +519,12 @@ test("updateWithOverlay: an overlay changed after validation rolls the identity 
   const spy = vi.spyOn(t.app.bus, "publishAll");
   try {
     await expect(
-      t.app.agents.updateWithOverlay("dev-1", { displayName: "Half written" }, plan, hr),
+      t.app.agents.updateWithOverlay(
+        await t.refOf("dev-1"),
+        { displayName: "Half written" },
+        plan,
+        hr,
+      ),
     ).rejects.toThrow("@dev-1's configuration changed since you read it; call get_agent again.");
     const after = await row("dev-1");
     expect(after.displayName).toBe(before.displayName);

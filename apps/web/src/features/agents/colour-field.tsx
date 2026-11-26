@@ -21,9 +21,9 @@ const HUES = OPTIONS.slice(1);
 const HUE_NAME = new Map(AVATAR_HUES.map((h) => [h.index, h.name]));
 
 /** "Teal", or "Auto (Jade)": the legend row always names what the avatar will wear. */
-export function colourName(value: number | null, slug: string): string {
+export function colourName(value: number | null, agentRef: string): string {
   return value === null
-    ? `Auto (${HUE_NAME.get(partsFor(slug).fill) ?? ""})`
+    ? `Auto (${HUE_NAME.get(partsFor(agentRef).fill) ?? ""})`
     : (HUE_NAME.get(value) ?? "");
 }
 
@@ -32,11 +32,11 @@ const SWATCH =
 
 const Swatch = memo(function Swatch({
   option,
-  slug,
+  agentRef,
   checked,
 }: {
   option: Option;
-  slug: string;
+  agentRef: string;
   checked: boolean;
 }) {
   return (
@@ -56,7 +56,7 @@ const Swatch = memo(function Swatch({
             checked && "ring-2 ring-foreground ring-offset-2 ring-offset-popover",
           )}
         >
-          <AgentAvatar slug={slug} color={option.value} size={24} />
+          <AgentAvatar agentRef={agentRef} color={option.value} size={24} />
         </button>
       </TooltipTrigger>
       <TooltipContent>{option.name}</TooltipContent>
@@ -69,13 +69,13 @@ const Swatch = memo(function Swatch({
  * handling by delegation, so the memoised swatches take no callbacks; an arrow key moves and selects.
  */
 export function ColourField({
-  slug,
+  agentRef,
   value,
   onChange,
   avatarVersion,
   error,
 }: {
-  slug: string;
+  agentRef: string;
   value: number | null;
   onChange: (value: number | null) => void;
   /** The agent's avatar version: set when the template's avatar.svg wins, and then there is no choice to make. */
@@ -115,7 +115,7 @@ export function ColourField({
   };
 
   return (
-    <FieldShell name="color" legend label={`Colour · ${colourName(value, slug)}`} error={error}>
+    <FieldShell name="color" legend label={`Colour · ${colourName(value, agentRef)}`} error={error}>
       {() => (
         <div
           ref={group}
@@ -125,10 +125,10 @@ export function ColourField({
           onClick={onClick}
           onKeyDown={onKeyDown}
         >
-          <Swatch option={AUTO} slug={slug} checked={value === null} />
+          <Swatch option={AUTO} agentRef={agentRef} checked={value === null} />
           <div className="grid grid-cols-6 gap-0">
             {HUES.map((o) => (
-              <Swatch key={o.value} option={o} slug={slug} checked={value === o.value} />
+              <Swatch key={o.value} option={o} agentRef={agentRef} checked={value === o.value} />
             ))}
           </div>
         </div>

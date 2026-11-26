@@ -6,6 +6,7 @@ import { closeSheet, openSheet } from "@/features/sheets/sheet-store";
 import { agentSummary, mockWorld, type World } from "@/test/agent-screens-fixtures";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { comboOptionNames } from "@/test/select-helpers";
 
@@ -25,6 +26,7 @@ afterEach(() => {
 
 const user = (handle: string, name: string, disabledAt: string | null = null) => ({
   id: handle,
+  ref: refFor(handle),
   name,
   handle,
   email: `${handle}@example.com`,
@@ -37,13 +39,13 @@ const USERS = [
   user("zed", "Zed Gone", "2026-11-10T00:00:00.000Z"),
 ];
 const AGENTS = [
-  agentSummary({ slug: "cto", displayName: "CTO" }),
+  agentSummary({ handle: "cto", displayName: "CTO" }),
   agentSummary({
-    slug: "lead",
+    handle: "lead",
     displayName: "Lead",
     template: "lead",
     status: "hibernated",
-    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "cto" },
+    reportsTo: { kind: "agent", ref: refFor("cto"), handle: "cto" },
     depth: 1,
   }),
 ];
@@ -63,7 +65,7 @@ async function openEdit(world: World = {}, slug = "lead") {
   mockWorld({ agents: AGENTS, users: USERS, ...world });
   renderApp("/agents", alice);
   await screen.findByRole("heading", { level: 1, name: "Agents" });
-  act(() => openSheet({ kind: "edit-agent", slug }));
+  act(() => openSheet({ kind: "edit-agent", agentRef: refFor(slug) }));
   const dialog = await screen.findByRole("dialog", { name: "Edit agent" });
   await within(dialog).findByRole("button", { name: "Save changes" });
   const manager = await screen.findByLabelText("Manager");
@@ -102,7 +104,7 @@ test.each([
   await userEvent.type(await screen.findByPlaceholderText("Search…"), query);
   await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(expected.length));
   expect(screen.getAllByRole("option").map((o) => o.getAttribute("data-value"))).toEqual(
-    expected.map((e) => `o:${e.split("@").at(-1)}`),
+    expected.map((e) => `o:${refFor(e.split("@").at(-1) as string)}`),
   );
 });
 
@@ -128,16 +130,16 @@ test("Edit leaves the agent and its descendants out, and shows the saved human m
     agents: [
       AGENTS[0] as (typeof AGENTS)[number],
       agentSummary({
-        slug: "lead",
+        handle: "lead",
         displayName: "Lead",
         template: "lead",
         status: "hibernated",
-        reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "bob" },
+        reportsTo: { kind: "human", ref: refFor("bob"), handle: "bob" },
       }),
       agentSummary({
-        slug: "dev",
+        handle: "dev",
         displayName: "Dev",
-        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+        reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
         depth: 1,
       }),
     ],
@@ -155,11 +157,11 @@ test("a saved human manager shows as a plain handle, not archived, while the use
   const manager = await openEdit({
     agents: [
       agentSummary({
-        slug: "lead",
+        handle: "lead",
         displayName: "Lead",
         template: "lead",
         status: "hibernated",
-        reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "bob" },
+        reportsTo: { kind: "human", ref: refFor("bob"), handle: "bob" },
       }),
     ],
     extra: {
@@ -174,11 +176,11 @@ test("a saved manager who has since been disabled stays shown, named as disabled
   const manager = await openEdit({
     agents: [
       agentSummary({
-        slug: "lead",
+        handle: "lead",
         displayName: "Lead",
         template: "lead",
         status: "hibernated",
-        reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "zed" },
+        reportsTo: { kind: "human", ref: refFor("zed"), handle: "zed" },
       }),
     ],
   });

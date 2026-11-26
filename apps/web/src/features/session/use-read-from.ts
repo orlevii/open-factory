@@ -10,7 +10,7 @@ const subscribeVisibility = (cb: () => void) => {
 };
 const isVisible = () => document.visibilityState !== "hidden";
 
-type Pending = { slug: string; upTo: string };
+type Pending = { agentRef: string; upTo: string };
 
 /**
  * Viewing a session or a chat marks that agent's messages to the viewer read (spec §2.3, I1 §6.7). Runs
@@ -23,11 +23,11 @@ type Pending = { slug: string; upTo: string };
  * are the truth, and is not retried until a newer time, another agent or the tab coming back.
  */
 export function useReadFrom(
-  slug: string,
+  agentRef: string,
   newestAt: string | undefined,
   { delayMs = 0 }: { delayMs?: number } = {},
 ): void {
-  const hasUnread = useUnreadByAgent(slug) > 0;
+  const hasUnread = useUnreadByAgent(agentRef) > 0;
   const visible = useSyncExternalStore(subscribeVisibility, isVisible, () => true);
   const cache = useInboxCache();
   const state = useRef({
@@ -35,7 +35,7 @@ export function useReadFrom(
     lastAt: 0,
     timer: undefined as ReturnType<typeof setTimeout> | undefined,
     pending: undefined as Pending | undefined,
-    /** The call that last failed: not repeated until the newest event or the slug changes, or the tab returns. */
+    /** The call that last failed: not repeated until the newest event or the agentRef changes, or the tab returns. */
     failed: undefined as Pending | undefined,
     /** The newest time a call has been made for, for this agent. */
     upTo: undefined as string | undefined,
@@ -46,7 +46,7 @@ export function useReadFrom(
   const request = useCallback(
     (want: Pending) => {
       const st = state.current;
-      if (st.failed?.slug === want.slug && st.failed.upTo === want.upTo) return;
+      if (st.failed?.agentRef === want.agentRef && st.failed.upTo === want.upTo) return;
       st.pending = want;
       if (st.inFlight || st.timer !== undefined) return;
       const flush = () => {
@@ -59,8 +59,8 @@ export function useReadFrom(
         st.inFlight = true;
         st.lastAt = Date.now();
         st.upTo = next.upTo;
-        cache.readFrom(next.slug);
-        postReadFrom(next.slug, next.upTo)
+        cache.readFrom(next.agentRef);
+        postReadFrom(next.agentRef, next.upTo)
           .catch(() => {
             st.failed = next;
             st.upTo = undefined;
@@ -93,16 +93,16 @@ export function useReadFrom(
     if (st.upTo !== undefined && newestAt <= st.upTo) return;
     const post = () => {
       st.armed = undefined;
-      request({ slug, upTo: newestAt });
+      request({ agentRef, upTo: newestAt });
     };
     if (delayMs <= 0) return post();
     st.armed = newestAt;
     const timer = setTimeout(post, delayMs);
     return () => clearTimeout(timer);
-  }, [slug, hasUnread, newestAt, visible, delayMs, request]);
+  }, [agentRef, hasUnread, newestAt, visible, delayMs, request]);
 
   // Another agent's session, or leaving: the trailing call for this one is dropped.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: slug is the trigger, not a read
+  // biome-ignore lint/correctness/useExhaustiveDependencies: agentRef is the trigger, not a read
   useEffect(
     () => () => {
       const st = state.current;
@@ -112,6 +112,6 @@ export function useReadFrom(
       st.upTo = undefined;
       st.armed = undefined;
     },
-    [slug],
+    [agentRef],
   );
 }

@@ -1,5 +1,5 @@
 import websocket from "@fastify/websocket";
-import { clientMessageSchema, type ServerMessage } from "@open-factory/shared";
+import { clientMessageSchema, normaliseRef, type ServerMessage } from "@open-factory/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { trustedOrigins } from "../auth/origins.ts";
 import { getUser } from "../auth/require-user.ts";
@@ -85,11 +85,11 @@ export async function wsRoutes(app: FastifyInstance) {
         throw err;
       };
       const rt = await app.runtimes
-        .bySlug(agent)
+        .byRef(normaliseRef(agent) ?? "")
         .catch((err) => (current() ? failed(err) : undefined));
       if (!current()) return;
       if (!rt)
-        return send({ type: "error", code: "agent_not_found", message: `No agent named ${agent}` });
+        return send({ type: "error", code: "agent_not_found", message: "No agent at this ref" });
       let live = false;
       let cancelled = false;
       let lastSent = afterSeq;

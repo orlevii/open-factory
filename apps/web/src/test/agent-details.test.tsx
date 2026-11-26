@@ -15,6 +15,7 @@ import { AgentDetails } from "@/features/session/agent-details";
 import { type StopCrons, useStopCrons } from "@/features/session/stop-crons";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { json, mockApi, validQuery } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { agentSummary } from "@/test/session-fixtures";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -31,7 +32,8 @@ const totals = {
   cacheReadTokens: 0,
 };
 const usageRow = (over: Partial<AgentUsageRow> = {}): AgentUsageRow => ({
-  slug: "dev",
+  ref: refFor("dev"),
+  handle: "dev",
   displayName: "Dev agent",
   kind: "persistent",
   archived: false,
@@ -47,12 +49,18 @@ const taskRow = (n: number) => ({
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
   updatedAt: "2026-11-20T10:00:00.000Z",
 });
 const scheduleRow = (n: number) => ({
   key: `S-${n}`,
-  target: { slug: "dev", displayName: "Dev agent", archived: false, terminated: false },
+  target: {
+    ref: refFor("dev"),
+    handle: "dev",
+    displayName: "Dev agent",
+    archived: false,
+    terminated: false,
+  },
   cron: "0 9 * * *",
   timezone: "UTC",
   body: "x",
@@ -60,8 +68,8 @@ const scheduleRow = (n: number) => ({
   lastFiredAt: null,
   paused: false,
   done: false,
-  createdBy: { kind: "human", ref: "ref-or", handle: "or" },
-  bodyAuthor: { kind: "human", ref: "ref-or", handle: "or" },
+  createdBy: { kind: "human", ref: refFor("or"), handle: "or" },
+  bodyAuthor: { kind: "human", ref: refFor("or"), handle: "or" },
   pendingFiring: false,
   state: "active",
 });
@@ -105,8 +113,8 @@ function setup(props: Props = {}) {
       stub("/schedules"),
       stub("/templates/$name"),
       stub("/agents/"),
-      stub("/agents/$slug"),
-      stub("/agents/$slug/usage"),
+      stub("/agents/$ref"),
+      stub("/agents/$ref/usage"),
     ]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
@@ -119,7 +127,7 @@ const section = async (name: string) => {
 };
 
 test("a 48px strip titled Agent details, with the agent's @slug and description", async () => {
-  setup({ agent: agentSummary({ slug: "lead", description: "Keeps the roadmap moving." }) });
+  setup({ agent: agentSummary({ handle: "lead", description: "Keeps the roadmap moving." }) });
   expect(await screen.findByRole("heading", { name: "Agent details" })).toBeInTheDocument();
   expect(screen.getByText("@lead")).toBeInTheDocument();
   expect(screen.getByText("Keeps the roadmap moving.")).toBeInTheDocument();
@@ -253,15 +261,15 @@ test("Now: a terminated agent shows no queued, paused or restart row (an end sta
 test("Org: the manager, up to 8 reports, and All N reports to the Agents page", async () => {
   const reports = Array.from({ length: 10 }, (_, i) =>
     agentSummary({
-      slug: `r${i}`,
+      handle: `r${i}`,
       displayName: `Report ${i}`,
-      reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+      reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
     }),
   );
   const lead = agentSummary({
-    slug: "lead",
+    handle: "lead",
     displayName: "Lead",
-    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "boss" },
+    reportsTo: { kind: "agent", ref: refFor("boss"), handle: "boss" },
     reports: 10,
   });
   setup({
@@ -269,26 +277,29 @@ test("Org: the manager, up to 8 reports, and All N reports to the Agents page", 
     seed: (qc) =>
       qc.setQueryData(
         ["agents", "exclude"],
-        [lead, agentSummary({ slug: "boss", displayName: "Big Boss" }), ...reports],
+        [lead, agentSummary({ handle: "boss", displayName: "Big Boss" }), ...reports],
       ),
   });
   const org = within(await section("Org"));
   expect(org.getByText("Reports to")).toBeInTheDocument();
-  expect(org.getByRole("link", { name: /Big Boss/ })).toHaveAttribute("href", "/agents/boss/chat");
+  expect(org.getByRole("link", { name: /Big Boss/ })).toHaveAttribute(
+    "href",
+    `/agents/${refFor("boss")}/chat`,
+  );
   expect(org.getAllByRole("link", { name: /^Report \d$/ })).toHaveLength(8);
   expect(org.getByRole("link", { name: "All 10 reports" })).toHaveAttribute(
     "href",
-    "/agents?focus=lead",
+    `/agents?focus=${refFor("lead")}`,
   );
 });
 
 test("Org: no link to all reports when they all fit", async () => {
   const r = agentSummary({
-    slug: "r",
+    handle: "r",
     displayName: "Report",
-    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+    reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
   });
-  const lead = agentSummary({ slug: "lead", reports: 1 });
+  const lead = agentSummary({ handle: "lead", reports: 1 });
   setup({ agent: lead, seed: (qc) => qc.setQueryData(["agents", "exclude"], [lead, r]) });
   const org = within(await section("Org"));
   expect(org.getByRole("link", { name: /Report/ })).toBeInTheDocument();
@@ -310,17 +321,17 @@ test("Work: at most 5 tasks and 5 schedules, with the counts that link to the fu
   expect(await work.findAllByRole("button", { name: /^S-\d/ })).toHaveLength(5);
   expect(work.getByRole("link", { name: "All 9 tasks" })).toHaveAttribute(
     "href",
-    "/tasks?assignee=dev",
+    `/tasks?assignee=${refFor("dev")}`,
   );
   expect(work.getByRole("link", { name: "All 7 schedules" })).toHaveAttribute(
     "href",
-    "/schedules?target=dev",
+    `/schedules?target=${refFor("dev")}`,
   );
   await userEvent.click(work.getByRole("button", { name: "S-2" }));
   expect(getSheetState().parent).toMatchObject({ kind: "edit-schedule", key: "S-2" });
   const taskCall = api.calls.find((c) => c.url.startsWith("/api/tasks"));
   const q = new URL(taskCall?.url ?? "", "http://x").searchParams;
-  expect(q.get("assignee")).toBe("dev");
+  expect(q.get("assignee")).toBe(refFor("dev"));
   expect(q.get("limit")).toBe("5");
   // Open and in progress is the server's default: no status parameter.
   expect(q.has("status")).toBe(false);
@@ -376,7 +387,10 @@ test("Usage: the 7-day estimate with a link to the usage page", async () => {
   setup({ usage: usageRow() });
   const usage = within(await section("Usage"));
   expect(usage.getByText(/\$4\.12 est\./)).toBeInTheDocument();
-  expect(usage.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
+  expect(usage.getByRole("link", { name: /Usage/ })).toHaveAttribute(
+    "href",
+    `/agents/${refFor("dev")}/usage`,
+  );
 });
 
 test("Usage: still links while loading or with no turns, and shows no estimate", async () => {
@@ -384,7 +398,7 @@ test("Usage: still links while loading or with no turns, and shows no estimate",
   const whileLoading = within(await section("Usage"));
   expect(whileLoading.getByRole("link", { name: /Usage/ })).toHaveAttribute(
     "href",
-    "/agents/dev/usage",
+    `/agents/${refFor("dev")}/usage`,
   );
   expect(whileLoading.queryByText(/est\./)).toBeNull();
   loading.unmount();
@@ -393,7 +407,10 @@ test("Usage: still links while loading or with no turns, and shows no estimate",
   const noTurns = within(await section("Usage"));
   expect(noTurns.getByText("No turns in the last 7 days")).toBeInTheDocument();
   expect(noTurns.queryByText(/est\./)).toBeNull();
-  expect(noTurns.getByRole("link", { name: /Usage/ })).toHaveAttribute("href", "/agents/dev/usage");
+  expect(noTurns.getByRole("link", { name: /Usage/ })).toHaveAttribute(
+    "href",
+    `/agents/${refFor("dev")}/usage`,
+  );
 });
 
 test("Runtime: template, credential and projects; Unsandboxed only for a local agent", async () => {
@@ -421,13 +438,14 @@ test("Runtime: template, credential and projects; Unsandboxed only for a local a
 
 test("Org: a human manager shows their initials avatar, name and handle, not a link", async () => {
   setup({
-    agent: agentSummary({ reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" } }),
+    agent: agentSummary({ reportsTo: { kind: "human", ref: refFor("or"), handle: "or" } }),
     seed: (qc) =>
       qc.setQueryData(
         ["users"],
         [
           {
             id: "u1",
+            ref: refFor("or"),
             name: "Or Levi",
             handle: "or",
             email: "or@example.com",
@@ -546,12 +564,12 @@ test("Runtime: the image's Copy button copies the whole reference", async () => 
 });
 
 test("Runtime: a Configuration row opens the agent's Configuration page", async () => {
-  setup({ agent: agentSummary({ slug: "ana" }) });
+  setup({ agent: agentSummary({ handle: "ana" }) });
   const rt = within(await section("Runtime"));
   expect(rt.getByText("Configuration")).toBeInTheDocument();
   expect(rt.getByRole("link", { name: "Open configuration" })).toHaveAttribute(
     "href",
-    "/agents/ana/config",
+    `/agents/${refFor("ana")}/config`,
   );
 });
 
@@ -593,12 +611,12 @@ test("Org: a spawned agent says 'Spawned by'; a human-managed agent names the hu
   const first = setup({
     agent: agentSummary({
       kind: "ephemeral",
-      reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+      reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
     }),
   });
   expect(within(await section("Org")).getByText("Spawned by")).toBeInTheDocument();
   first.unmount();
-  setup({ agent: agentSummary({ reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" } }) });
+  setup({ agent: agentSummary({ reportsTo: { kind: "human", ref: refFor("or"), handle: "or" } }) });
   expect(within(await section("Org")).getByText("@or")).toBeInTheDocument();
 });
 
@@ -607,7 +625,7 @@ test("Edit agent is an outline button for a persistent, unarchived agent only, a
   const edit = await screen.findByRole("button", { name: "Edit agent" });
   expect(edit).toHaveAttribute("data-variant", "outline");
   await userEvent.click(edit);
-  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" });
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", agentRef: refFor("dev") });
   first.unmount();
   const second = setup({ agent: agentSummary({ kind: "ephemeral" }) });
   await screen.findByRole("heading", { name: "Agent details" });
@@ -619,14 +637,14 @@ test("Edit agent is an outline button for a persistent, unarchived agent only, a
 });
 
 test("Runtime: 'Manages the org: Yes' shows only for an agent that manages the org", async () => {
-  setup({ agent: agentSummary({ slug: "lead", manageOrg: true }) });
+  setup({ agent: agentSummary({ handle: "lead", manageOrg: true }) });
   const runtime = within(await section("Runtime"));
   expect(runtime.getByText("Manages the org")).toBeInTheDocument();
   expect(runtime.getByText("Yes")).toBeInTheDocument();
 });
 
 test("Runtime: no Manages the org row when the flag is off", async () => {
-  setup({ agent: agentSummary({ slug: "lead", manageOrg: false }) });
+  setup({ agent: agentSummary({ handle: "lead", manageOrg: false }) });
   await section("Runtime");
   expect(screen.queryByText("Manages the org")).not.toBeInTheDocument();
 });

@@ -32,7 +32,7 @@ function Sender({ item }: { item: InboxItem }) {
         )}
       </>
     );
-  if (item.from.kind === "agent") return <AgentChip slug={item.from.handle} size={16} />;
+  if (item.from.kind === "agent") return <AgentChip agentRef={item.from.ref} size={16} />;
   return <span className="truncate font-mono">@{item.from.handle}</span>;
 }
 
@@ -270,13 +270,13 @@ function RowLink({
       );
     case "session":
       return link.seq === undefined ? (
-        <Link to="/agents/$slug/chat" params={{ slug: link.agentSlug }} {...common}>
+        <Link to="/agents/$ref/chat" params={{ ref: link.agentRef }} {...common}>
           {children}
         </Link>
       ) : (
         <Link
-          to="/agents/$slug/session"
-          params={{ slug: link.agentSlug }}
+          to="/agents/$ref/session"
+          params={{ ref: link.agentRef }}
           search={{ event: link.seq }}
           {...common}
         >

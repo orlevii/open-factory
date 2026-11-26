@@ -24,6 +24,7 @@ import { loadConfig } from "../src/config.ts";
 import { ApiError } from "../src/errors.ts";
 import { principalSql } from "../src/test/principals.ts";
 import { agentConfigDir, agentWorkdir } from "../src/workspace/paths.ts";
+import { bySlug } from "./by-slug.ts";
 
 const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 if (!token) {
@@ -111,7 +112,7 @@ function cleanup(): Promise<void> {
       // app.close() runs runtimes.stopAll() (onClose hook); then no process may be running.
       try {
         const rts = await Promise.all(
-          ["smoke-alpha", "smoke-beta"].map((s) => app.runtimes.bySlug(s).catch(() => undefined)),
+          ["smoke-alpha", "smoke-beta"].map((s) => bySlug(app, s).catch(() => undefined)),
         );
         let closeErr = "";
         await app.close().catch((e) => {
@@ -156,7 +157,7 @@ const events = new Map<string, AnyEvent[]>();
 async function turn(slug: string, body: string, ms = 240_000): Promise<AnyEvent[]> {
   const list = events.get(slug) ?? [];
   const from = list.length;
-  const rt = await app.runtimes.bySlug(slug);
+  const rt = await bySlug(app, slug);
   if (!rt) throw new Error(`no runtime for ${slug}`);
   const [sent] = (await app.router.send({ userId: "smoke", handle: "smoke" }, [slug], body, false))
     .results;

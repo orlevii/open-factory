@@ -16,6 +16,7 @@ import { FormOutcome, type Outcome } from "@/components/forms/form-outcome";
 import { AdaptiveMenu } from "@/components/ui/adaptive-menu";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { useRefOfHandle } from "@/features/principals/use-principal";
 import { sheetIntent } from "@/features/sheets/sheet-bodies";
 import { openSheet } from "@/features/sheets/sheet-store";
 import { pickRowOutsideFields, useLongPressMenu } from "@/hooks/use-long-press-menu";
@@ -31,8 +32,8 @@ export const KIND_LABEL: Record<CredentialKind, string> = {
 };
 
 /** "@a", "@a and @b", "@a, @b and @c". */
-export const tags = (slugs: string[]) => {
-  const t = slugs.map((s) => `@${s}`);
+export const tags = (handles: string[]) => {
+  const t = handles.map((s) => `@${s}`);
   return t.length <= 1 ? (t[0] ?? "") : `${t.slice(0, -1).join(", ")} and ${t.at(-1)}`;
 };
 
@@ -43,15 +44,15 @@ export const cappedList = (items: string[], max = 3) => {
   return `${items.slice(0, max).join(", ")}${rest > 0 ? ` +${rest} more` : ""}`;
 };
 
-const list = (slugs: string[]) => cappedList(slugs.map((s) => `@${s}`));
+const list = (handles: string[]) => cappedList(handles.map((s) => `@${s}`));
 
 /** "@lead restarts when idle; past three agents: "@a, @b, @c +1 more restart ..." to use it. Its crons from this session stop." */
-export const restartNote = (slugs: string[]) =>
-  slugs.length === 0
+export const restartNote = (handles: string[]) =>
+  handles.length === 0
     ? ""
-    : slugs.length === 1
-      ? `${list(slugs)} restarts when idle to use it. Its crons from this session stop.`
-      : `${list(slugs)} restart when idle to use it. Their crons from this session stop.`;
+    : handles.length === 1
+      ? `${list(handles)} restarts when idle to use it. Its crons from this session stop.`
+      : `${list(handles)} restart when idle to use it. Their crons from this session stop.`;
 
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
@@ -81,33 +82,36 @@ export function TimeAgo({ iso }: { iso: string }) {
   );
 }
 
-/** Agent handles as links, joined "@a, @b". `edit` makes each a button opening Edit agent (where a fix is made). */
-export function AgentLinks({ slugs, edit }: { slugs: string[]; edit?: boolean }) {
+/** Agent handles as links, joined "@a, @b". `edit` makes each a button opening Edit agent (where a fix is made). A
+ *  handle nobody holds any more (or not loaded yet) is plain text. */
+export function AgentLinks({ handles, edit }: { handles: string[]; edit?: boolean }) {
+  const refOf = useRefOfHandle();
   return (
     <>
-      {slugs.map((s, i) => (
-        <span key={s}>
-          {i > 0 && ", "}
-          {edit ? (
-            <button
-              type="button"
-              className={`${monoClass} ${linkClass}`}
-              {...sheetIntent("edit-agent", { kind: "edit-agent", slug: s })}
-              onClick={() => openSheet({ kind: "edit-agent", slug: s })}
-            >
-              @{s}
-            </button>
-          ) : (
-            <Link
-              to="/agents/$slug/chat"
-              params={{ slug: s }}
-              className={`${monoClass} ${linkClass}`}
-            >
-              @{s}
-            </Link>
-          )}
-        </span>
-      ))}
+      {handles.map((h, i) => {
+        const ref = refOf(h);
+        return (
+          <span key={h}>
+            {i > 0 && ", "}
+            {!ref ? (
+              <span className={monoClass}>@{h}</span>
+            ) : edit ? (
+              <button
+                type="button"
+                className={`${monoClass} ${linkClass}`}
+                {...sheetIntent("edit-agent", { kind: "edit-agent", agentRef: ref })}
+                onClick={() => openSheet({ kind: "edit-agent", agentRef: ref })}
+              >
+                @{h}
+              </button>
+            ) : (
+              <Link to="/agents/$ref/chat" params={{ ref }} className={`${monoClass} ${linkClass}`}>
+                @{h}
+              </Link>
+            )}
+          </span>
+        );
+      })}
     </>
   );
 }
@@ -128,7 +132,7 @@ export function Usage({
     <span className={`${smallClass} text-muted-foreground`}>
       {active.length > 0 ? (
         <>
-          {verb} <AgentLinks slugs={active} />
+          {verb} <AgentLinks handles={active} />
         </>
       ) : (
         none
@@ -136,7 +140,7 @@ export function Usage({
       {archived.length > 0 && (
         <>
           {" · archived: "}
-          <AgentLinks slugs={archived} />
+          <AgentLinks handles={archived} />
         </>
       )}
     </span>

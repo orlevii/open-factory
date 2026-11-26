@@ -3,13 +3,22 @@ import type { AgentSummary } from "@open-factory/shared";
 /** The agent fields a mention reads (from the cached live agents list). */
 export type MentionAgent = Pick<
   AgentSummary,
-  "slug" | "displayName" | "reportsTo" | "template" | "avatarVersion" | "color" | "archivedAt"
+  | "ref"
+  | "handle"
+  | "displayName"
+  | "reportsTo"
+  | "template"
+  | "avatarVersion"
+  | "color"
+  | "archivedAt"
 > & { terminatedAt?: string | undefined };
 export type MentionHuman = { handle: string; name: string; disabledAt?: string | null };
 
 export type Mention =
   | {
       kind: "agent";
+      /** The agent's ref: what a recipient is stored and sent as. */
+      ref: string;
       handle: string;
       name: string;
       template: string;
@@ -72,7 +81,7 @@ export function rankMentions(
     agents: readonly MentionAgent[];
     humans: readonly MentionHuman[];
     me: string | undefined;
-    /** Agent slugs that wrote to you, newest first. */
+    /** Agent handles that wrote to you, newest first. */
     recent?: readonly string[];
   },
 ): Mention[] {
@@ -88,13 +97,14 @@ export function rankMentions(
     if (a.archivedAt || a.terminatedAt) continue;
     const m: Mention = {
       kind: "agent",
-      handle: a.slug,
-      name: a.displayName || a.slug,
+      ref: a.ref,
+      handle: a.handle,
+      name: a.displayName || a.handle,
       template: a.template,
       avatarVersion: a.avatarVersion,
       color: a.color,
     };
-    const r = recentAt.get(a.slug);
+    const r = recentAt.get(a.handle);
     // "Your reports": the agents whose manager is your handle.
     if (r !== undefined) add(m, 0, r);
     else add(m, a.reportsTo.handle === me ? 1 : 2);

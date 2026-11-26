@@ -72,7 +72,7 @@ export function TaskForm({
   const ended = useQuery(agentsListQueryOptions("only"));
   const known =
     active.data && ended.data
-      ? new Set([...active.data, ...ended.data].map((a) => a.slug))
+      ? new Set([...active.data, ...ended.data].map((a) => a.handle))
       : undefined;
 
   /** Writes through a ref, so the draft never lags a render. */
@@ -97,12 +97,12 @@ export function TaskForm({
     v.assignee &&
       active.data &&
       ended.data &&
-      !active.data.some((a) => a.slug === v.assignee && !a.archivedAt && !a.terminatedAt),
+      !active.data.some((a) => a.ref === v.assignee && !a.archivedAt && !a.terminatedAt),
   );
   const assignee = stale ? "" : v.assignee;
-  const staleSlug = v.assignee;
+  const staleRef = v.assignee;
   const staleEnded =
-    stale && [...(active.data ?? []), ...(ended.data ?? [])].some((a) => a.slug === staleSlug);
+    stale && [...(active.data ?? []), ...(ended.data ?? [])].some((a) => a.ref === staleRef);
   const staleError = stale ? (staleEnded ? FORM_MSG.agentEnded : FORM_MSG.agentMissing) : undefined;
   // Guarded, not left to the updater's bail-out: any setState call during render schedules another render, even one
   // whose updater returns the same state, so an unguarded call loops.
@@ -112,7 +112,7 @@ export function TaskForm({
     if (!staleError) return;
     // A stale prefill cleared is not an edit: the cleared form is the new baseline, so it leaves no draft. `restored`
     // is the form's own state, so after Discard the prefill counts as a fresh one.
-    if (!restored && staleSlug === prefill?.assignee)
+    if (!restored && staleRef === prefill?.assignee)
       draft.rebase({ ...blank(prefill), assignee: "" });
     update({ assignee: "" });
   }, [staleError]);

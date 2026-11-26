@@ -15,6 +15,7 @@ import {
 import { createPortal } from "react-dom";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { PageHeader } from "@/components/page-header";
+import { useHandle } from "@/features/agents/use-agent-index";
 import { rememberAgent } from "@/features/palette/recent";
 import {
   AGENT_DETAILS_ID,
@@ -67,25 +68,26 @@ export const useAgentShell = () => need(useContext(ShellContext));
 const viewOf = (routeId: string | undefined): AgentView =>
   routeId?.endsWith("/session") ? "session" : "chat";
 
-/** The layout of `/agents/$slug`: the header, Agent details and its sheet, the notices, and the view
+/** The layout of `/agents/$ref`: the header, Agent details and its sheet, the notices, and the view
  *  (Outlet). It stays mounted across a Chat/Session switch and across `?event=` and `?message=`
  *  (which remount the views only), so the header never remounts for them. */
 export function AgentLayout({
-  slug,
+  agentRef,
   children = <Outlet />,
 }: {
-  slug: string;
+  agentRef: string;
   /** The view; the route's Outlet unless a test mounts one directly. */
   children?: ReactNode;
 }) {
   const qc = useQueryClient();
-  const agent = useAgentSummary(slug);
+  const agent = useAgentSummary(agentRef);
+  const handle = useHandle(agentRef);
   const view = useRouterState({ select: (s) => viewOf(s.matches.at(-1)?.routeId) });
   // Agent details' state and its sheet live here, above the views, so an open panel stays open
   // across agents and the sheet swaps its content in place (U2 §8.1).
-  const panel = useAgentDetailsPanel(slug);
+  const panel = useAgentDetailsPanel(agentRef);
   const [sheetHost, setSheetHost] = useState<HTMLDivElement | null>(null);
-  useEffect(() => rememberAgent(slug), [slug]);
+  useEffect(() => rememberAgent(agentRef), [agentRef]);
   // The header's actions report here, in a notice row under it: a Pin outcome.
   const [pinOutcome, setPinOutcome] = useState<PinOutcome>();
   const [raceNotice, setRaceNotice] = useState<string>();
@@ -98,7 +100,7 @@ export function AgentLayout({
 
   const onAgent = useCallback(
     (a: AgentSummary) => {
-      qc.setQueryData<AgentDetail>(["agent", a.slug], (d) => (d ? { ...d, agent: a } : d));
+      qc.setQueryData<AgentDetail>(["agent", a.ref], (d) => (d ? { ...d, agent: a } : d));
       void qc.invalidateQueries({ queryKey: ["agents"] });
       setAdopted({ agent: a });
     },
@@ -106,11 +108,11 @@ export function AgentLayout({
   );
   const refreshAgent = useCallback(
     () =>
-      qc.fetchQuery({ ...agentDetailQueryOptions(slug), staleTime: 0 }).then(
+      qc.fetchQuery({ ...agentDetailQueryOptions(agentRef), staleTime: 0 }).then(
         (d) => setAdopted({ agent: d.agent }),
         () => {},
       ),
-    [qc, slug],
+    [qc, agentRef],
   );
   // A status frame says `terminated` but carries no termination fields (who, when, the workspace):
   // fetch them once. A failure leaves the strip without its sentence; the next load fills it.
@@ -179,7 +181,7 @@ export function AgentLayout({
                 onLifecycle={refreshAgent}
               />
             ) : (
-              <PageHeader title={slug} />
+              <PageHeader title={`@${handle}`} />
             )}
             {terminated && (
               // Mounted while terminated (before it fills) so the outcome is announced.

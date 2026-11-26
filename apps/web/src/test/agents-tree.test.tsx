@@ -10,6 +10,7 @@ import {
   type World,
 } from "@/test/agent-screens-fixtures";
 import { json } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
@@ -23,23 +24,23 @@ afterEach(() => {
 
 const tree = [
   agentSummary({
-    slug: "lead",
+    handle: "lead",
     displayName: "Team Lead",
     template: "tech-lead",
     status: "working",
     turnOpen: true,
   }),
   agentSummary({
-    slug: "dev-1",
+    handle: "dev-1",
     displayName: "Developer",
     template: "developer",
-    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+    reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
     depth: 1,
     restartPending: true,
     restartWaitingOn: 1,
   }),
   agentSummary({
-    slug: "reviewer",
+    handle: "reviewer",
     displayName: "Reviewer",
     template: "proxy-reviewer",
     runtime: "docker",
@@ -57,9 +58,9 @@ test("rows keep server order and indent the name cell by depth", async () => {
   renderApp("/agents", alice);
   const links = await rows();
   expect(links.map((l) => l.getAttribute("href"))).toEqual([
-    "/agents/lead/chat",
-    "/agents/dev-1/chat",
-    "/agents/reviewer/chat",
+    `/agents/${refFor("lead")}/chat`,
+    `/agents/${refFor("dev-1")}/chat`,
+    `/agents/${refFor("reviewer")}/chat`,
   ]);
   const nameCell = (l: HTMLElement) => l.querySelector<HTMLElement>("[data-depth]");
   expect(nameCell(links[0] as HTMLElement)?.style.paddingLeft).toBe("0px");
@@ -89,7 +90,7 @@ test("restartPending shows the restart icon with hidden text", async () => {
 test("the Active / Ended radio pair writes ?ended=only and lists ended agents", async () => {
   const api = mockWorld({
     agents: tree,
-    archived: [agentSummary({ slug: "old", displayName: "Old one", archivedAt: "2026-11-01" })],
+    archived: [agentSummary({ handle: "old", displayName: "Old one", archivedAt: "2026-11-01" })],
   });
   const { router } = renderApp("/agents", alice);
   await rows();
@@ -132,9 +133,9 @@ test("ended view: a report whose manager isn't listed isn't indented but names i
   mockWorld({
     archived: [
       agentSummary({
-        slug: "old",
+        handle: "old",
         displayName: "Old one",
-        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+        reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
         depth: 1,
         archivedAt: "2026-11-01",
       }),
@@ -157,7 +158,7 @@ describe("the Ended view (S7 UI design §3)", () => {
     agentSummary({
       kind: "ephemeral",
       status: "terminated",
-      reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+      reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
       depth: 1,
       template: "tech-lead",
       terminatedAt: at(19),
@@ -167,23 +168,23 @@ describe("the Ended view (S7 UI design §3)", () => {
     });
   const ended = [
     spawned({
-      slug: "tech-lead-ab12",
+      handle: "tech-lead-ab12",
       displayName: "Tech Lead · ab12",
       workspaceGraceEndsAt: at(22),
     }),
     spawned({
-      slug: "tech-lead-cd34",
+      handle: "tech-lead-cd34",
       displayName: "Tech Lead · cd34",
       workspacePinned: true,
       workspaceGraceEndsAt: at(22),
     }),
     spawned({
-      slug: "tech-lead-ef56",
+      handle: "tech-lead-ef56",
       displayName: "Tech Lead · ef56",
       workspaceGraceEndsAt: at(17),
       workspaceDeletedAt: at(17, 14, 40),
     }),
-    agentSummary({ slug: "old", displayName: "Old one", archivedAt: at(19, 9) }),
+    agentSummary({ handle: "old", displayName: "Old one", archivedAt: at(19, 9) }),
   ];
   const endedWorld = (agents: typeof ended, more = false) =>
     mockWorld({
@@ -198,10 +199,10 @@ describe("the Ended view (S7 UI design §3)", () => {
     renderApp("/agents?ended=only", alice);
     const links = await rows();
     expect(links.map((l) => l.getAttribute("href"))).toEqual([
-      "/agents/tech-lead-ab12/chat",
-      "/agents/tech-lead-cd34/chat",
-      "/agents/tech-lead-ef56/chat",
-      "/agents/old/chat",
+      `/agents/${refFor("tech-lead-ab12")}/chat`,
+      `/agents/${refFor("tech-lead-cd34")}/chat`,
+      `/agents/${refFor("tech-lead-ef56")}/chat`,
+      `/agents/${refFor("old")}/chat`,
     ]);
     // Flat: no row is indented, even though the spawned ones report to @lead.
     for (const l of links)
@@ -222,7 +223,7 @@ describe("the Ended view (S7 UI design §3)", () => {
   test("a workspace past its grace but not deleted yet is due for deletion, never 'kept until' a past day", async () => {
     endedWorld([
       spawned({
-        slug: "tech-lead-gh78",
+        handle: "tech-lead-gh78",
         displayName: "Tech Lead · gh78",
         terminatedAt: at(16),
         workspaceGraceEndsAt: at(19),
@@ -264,7 +265,8 @@ describe("usage in the tree (S10 §12.1)", () => {
     spawned?: ReturnType<typeof t>,
     total = own,
   ) => ({
-    slug,
+    ref: refFor(slug),
+    handle: slug,
     displayName: slug,
     kind,
     archived: false,
@@ -276,14 +278,14 @@ describe("usage in the tree (S10 §12.1)", () => {
   const usageWorld = () =>
     mockWorld({
       agents: [
-        agentSummary({ slug: "lead", displayName: "Team Lead" }),
+        agentSummary({ handle: "lead", displayName: "Team Lead" }),
         agentSummary({
-          slug: "dev-1",
+          handle: "dev-1",
           displayName: "Developer",
-          reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+          reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
           depth: 1,
         }),
-        agentSummary({ slug: "idle", displayName: "Idle one" }),
+        agentSummary({ handle: "idle", displayName: "Idle one" }),
       ],
       extra: {
         "GET /api/usage/agents?window=rolling": () =>
@@ -321,8 +323,8 @@ describe("usage in the tree (S10 §12.1)", () => {
     ["Ended list", "/agents?ended=only"],
   ])("the muted line above the %s explains the column", async (_view, url) => {
     mockWorld({
-      agents: [agentSummary({ slug: "lead", displayName: "Team Lead" })],
-      archived: [agentSummary({ slug: "old", displayName: "Old", status: "terminated" })],
+      agents: [agentSummary({ handle: "lead", displayName: "Team Lead" })],
+      archived: [agentSummary({ handle: "old", displayName: "Old", status: "terminated" })],
       extra: { "GET /api/usage/agents?window=rolling": () => json({ agents: [] }) },
     });
     renderApp(url, alice);
@@ -337,8 +339,8 @@ describe("usage in the tree (S10 §12.1)", () => {
   test("an agent with no row in the loaded usage shows a dash; nothing while usage hasn't loaded", async () => {
     mockWorld({
       agents: [
-        agentSummary({ slug: "lead", displayName: "Team Lead" }),
-        agentSummary({ slug: "solo", displayName: "Solo" }),
+        agentSummary({ handle: "lead", displayName: "Team Lead" }),
+        agentSummary({ handle: "solo", displayName: "Solo" }),
       ],
       extra: {
         "GET /api/usage/agents?window=rolling": () =>
@@ -355,7 +357,7 @@ describe("usage in the tree (S10 §12.1)", () => {
 
   test("the cost cell stays empty while usage fails to load", async () => {
     mockWorld({
-      agents: [agentSummary({ slug: "solo", displayName: "Solo" })],
+      agents: [agentSummary({ handle: "solo", displayName: "Solo" })],
       extra: {
         "GET /api/usage/agents?window=rolling": () => json({ error: { code: "x" } }, 500),
       },
@@ -369,7 +371,7 @@ describe("usage in the tree (S10 §12.1)", () => {
 
 describe("Agents page identity and tree lines (U2 §7)", () => {
   const A = (slug: string, over: Parameters<typeof agentSummary>[0] = {}) =>
-    agentSummary({ slug, displayName: slug, ...over });
+    agentSummary({ handle: slug, displayName: slug, ...over });
   const lines = (l: HTMLElement) => l.querySelectorAll("[data-tree-line]").length;
 
   test("template shown only when it differs from the slug stem", async () => {
@@ -395,11 +397,11 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
     mockWorld({
       agents: [
         A("root"),
-        A("a", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "root" } }),
-        A("a1", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "a" } }),
-        A("a2", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "a" } }),
-        A("b", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "root" } }),
-        A("b1", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "b" } }),
+        A("a", { reportsTo: { kind: "agent", ref: refFor("root"), handle: "root" } }),
+        A("a1", { reportsTo: { kind: "agent", ref: refFor("a"), handle: "a" } }),
+        A("a2", { reportsTo: { kind: "agent", ref: refFor("a"), handle: "a" } }),
+        A("b", { reportsTo: { kind: "agent", ref: refFor("root"), handle: "root" } }),
+        A("b1", { reportsTo: { kind: "agent", ref: refFor("b"), handle: "b" } }),
       ],
     });
     renderApp("/agents", alice);
@@ -424,7 +426,9 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
     const chain = Array.from({ length: 12 }, (_, i) =>
       A(
         i === 0 ? "n0" : `n${i}`,
-        i === 0 ? {} : { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: `n${i - 1}` } },
+        i === 0
+          ? {}
+          : { reportsTo: { kind: "agent", ref: refFor(`n${i - 1}`), handle: `n${i - 1}` } },
       ),
     );
     mockWorld({ agents: chain });

@@ -76,7 +76,7 @@ test("edit only the body: the creator and the next run stay", async () => {
 
 test("edit only the target is re-checked live", async () => {
   const s = await mk();
-  expect((await svc.edit(or, s.key, { target: "dev" })).target.slug).toBe("dev");
+  expect((await svc.edit(or, s.key, { target: "dev" })).target.handle).toBe("dev");
   await insertAgent(t.sql, { id: "old", slug: "old", archived: true });
   await rejects(svc.edit(or, s.key, { target: "old" }), { code: "target_ended" });
   await rejects(svc.edit(or, s.key, { target: "nobody" }), { code: "target_not_found" });
@@ -289,7 +289,7 @@ test("list states, order, target and done filters", async () => {
     [d2.key, "done", false],
     [d1.key, "done", true],
   ]);
-  expect((await svc.list({ target: "dev" })).items.map((i) => i.key)).toEqual([arch.key]);
+  expect((await svc.list({ target: testRef("dev") })).items.map((i) => i.key)).toEqual([arch.key]);
 });
 
 test("listForAgent: created by it or targeting it, not done, newest first; bodies capped at 2,000 characters", async () => {

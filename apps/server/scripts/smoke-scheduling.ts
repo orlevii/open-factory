@@ -34,6 +34,7 @@ import Docker from "dockerode";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { LABEL_AGENT_ID } from "../src/runtime/docker/containers.ts";
+import { bySlug } from "./by-slug.ts";
 
 const LOCAL = process.argv.includes("--local");
 const EARLY = process.argv.includes("--early");
@@ -316,7 +317,7 @@ async function quiet(slugs: Slug[]) {
     async () => {
       const busy = [];
       for (const s of slugs) {
-        const rt = await app.runtimes.bySlug(s);
+        const rt = await bySlug(app, s);
         const l = rt?.live();
         if (l?.turnOpen || l?.status === "working" || rt?.hasDeliverable()) busy.push(s);
       }
@@ -544,7 +545,7 @@ try {
   if (PHASES.has("early")) {
     // 1. A human creates a one-shot at now + 90 s to hibernated ceo through POST /api/schedules.
     const ceoFrom = await lastSeq("ceo");
-    const ceoBefore = (await app.runtimes.bySlug("ceo"))?.live().status;
+    const ceoBefore = (await bySlug(app, "ceo"))?.live().status;
     const at = new Date(Date.now() + 90_000).toISOString();
     const created = await step(
       "2. @or creates a one-shot at now + 90 s for ceo (POST /api/schedules)",
@@ -827,7 +828,7 @@ try {
     );
     await step("7. ceo stays up past its 1-minute warm window", async () => {
       await sleep(90_000);
-      const st = (await app.runtimes.bySlug("ceo"))?.live().status;
+      const st = (await bySlug(app, "ceo"))?.live().status;
       if (st === "hibernated") throw new Error("ceo hibernated while a cron was live");
     });
     const before = await lastSeq("ceo");

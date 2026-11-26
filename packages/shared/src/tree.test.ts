@@ -1,20 +1,41 @@
 import { expect, test } from "vitest";
 import { treeOrder } from "./tree.ts";
 
-const agent = (handle: string) => ({ kind: "agent" as const, ref: "aaaaaaaa", handle });
-const user = (handle: string) => ({ kind: "human" as const, ref: "hhhhhhhh", handle });
+const agent = (ref: string) => ({ kind: "agent" as const, ref, handle: `h-${ref}` });
+const user = (ref: string) => ({ kind: "human" as const, ref, handle: `h-${ref}` });
+const row = (
+  ref: string,
+  displayName: string,
+  reportsTo: ReturnType<typeof agent> | ReturnType<typeof user>,
+) => ({
+  ref,
+  handle: `h-${ref}`,
+  displayName,
+  reportsTo,
+});
 
 test("depth-first, siblings by display name; a human or unknown manager makes a root", () => {
   const rows = [
-    { slug: "dev", displayName: "Dev", reportsTo: agent("lead") },
-    { slug: "lead", displayName: "Lead", reportsTo: user("or") },
-    { slug: "alpha", displayName: "Alpha", reportsTo: agent("lead") },
-    { slug: "orphan", displayName: "Orphan", reportsTo: agent("archived-boss") },
+    row("devdevde", "Dev", agent("leadlead")),
+    row("leadlead", "Lead", user("orhuman1")),
+    row("alphalph", "Alpha", agent("leadlead")),
+    row("orphanor", "Orphan", agent("archived")),
   ];
   expect(treeOrder(rows)).toEqual([
-    { slug: "lead", depth: 0 },
-    { slug: "alpha", depth: 1 },
-    { slug: "dev", depth: 1 },
-    { slug: "orphan", depth: 0 },
+    { ref: "leadlead", depth: 0 },
+    { ref: "alphalph", depth: 1 },
+    { ref: "devdevde", depth: 1 },
+    { ref: "orphanor", depth: 0 },
+  ]);
+});
+
+test("a renamed agent keeps its place under its manager", () => {
+  const rows = [
+    { ...row("leadlead", "Lead", user("orhuman1")), handle: "boss" },
+    row("devdevde", "Dev", agent("leadlead")),
+  ];
+  expect(treeOrder(rows)).toEqual([
+    { ref: "leadlead", depth: 0 },
+    { ref: "devdevde", depth: 1 },
   ]);
 });

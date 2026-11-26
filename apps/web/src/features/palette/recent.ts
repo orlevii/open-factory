@@ -11,9 +11,9 @@ export function readRecentAgents(): string[] {
   }
 }
 
-/** Moves `slug` to the front (a session was opened). */
-export function rememberAgent(slug: string) {
-  const next = [slug, ...readRecentAgents().filter((s) => s !== slug)].slice(0, MAX_RECENT);
+/** Moves `agentRef` to the front (a session was opened). */
+export function rememberAgent(agentRef: string) {
+  const next = [agentRef, ...readRecentAgents().filter((s) => s !== agentRef)].slice(0, MAX_RECENT);
   try {
     localStorage.setItem(RECENT_AGENTS_PREF, JSON.stringify(next));
   } catch {

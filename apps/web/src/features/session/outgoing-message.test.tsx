@@ -1,6 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import { expect, test } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { refFor } from "@/test/refs";
 import { renderInRouter } from "@/test/render-in-router";
 import { OutgoingMessage } from "./outgoing-message";
 import { rowMenuItems } from "./row-menu";
@@ -9,8 +10,23 @@ import { buildSpeakerIndex, SpeakerContext } from "./speaker-line";
 
 const AT = "2026-11-23T10:00:00.000Z";
 const index = buildSpeakerIndex({
-  sessionAgent: { slug: "ada", displayName: "Ada", template: "dev", avatarVersion: null },
-  live: [{ slug: "x", displayName: "X", template: "dev", kind: "persistent", avatarVersion: null }],
+  sessionAgent: {
+    ref: refFor("ada"),
+    handle: "ada",
+    displayName: "Ada",
+    template: "dev",
+    avatarVersion: null,
+  },
+  live: [
+    {
+      ref: refFor("x"),
+      handle: "x",
+      displayName: "X",
+      template: "dev",
+      kind: "persistent",
+      avatarVersion: null,
+    },
+  ],
   ended: [],
   users: [],
 });
@@ -45,13 +61,7 @@ async function show(r: OutgoingRow) {
   renderInRouter(
     <TooltipProvider>
       <SpeakerContext value={index}>
-        <OutgoingMessage
-          slug="ada"
-          row={r}
-          showCall={false}
-          onToggleCall={() => {}}
-          rowProps={{}}
-        />
+        <OutgoingMessage row={r} showCall={false} onToggleCall={() => {}} rowProps={{}} />
       </SpeakerContext>
     </TooltipProvider>,
   );
@@ -254,5 +264,5 @@ test("a send written with a tag, a ref or a plain handle matches its tagged resu
       ),
       "ada",
     ).find((i) => i.kind === "session"),
-  ).toMatchObject({ to: "carol", label: "View in @carol's session" });
+  ).toMatchObject({ to: "c4r01000", label: "View in @carol's session" });
 });

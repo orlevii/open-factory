@@ -1,13 +1,15 @@
 import { QueryClient } from "@tanstack/react-query";
 import { expect, test, vi } from "vitest";
 import { mentionSource } from "@/features/mentions/mention-source";
+import { refFor } from "@/test/refs";
 import { acceptMention, type MentionAgent, mentionOpensAt, rankMentions } from "./mentions";
 
-const agent = (slug: string, displayName: string, over: Partial<MentionAgent> = {}) =>
+const agent = (handle: string, displayName: string, over: Partial<MentionAgent> = {}) =>
   ({
-    slug,
+    ref: refFor(handle),
+    handle,
     displayName,
-    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+    reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
     template: "t",
     avatarVersion: null,
     archivedAt: null,
@@ -16,7 +18,7 @@ const agent = (slug: string, displayName: string, over: Partial<MentionAgent> = 
 
 const agents = [
   agent("zed", "Zed"),
-  agent("lead", "Lead", { reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" } }),
+  agent("lead", "Lead", { reportsTo: { kind: "human", ref: refFor("or"), handle: "or" } }),
   agent("alpha", "Alpha"),
   agent("bravo", "Bravo"),
   agent("gone", "Gone", { terminatedAt: "2026-01-01T00:00:00Z" }),
@@ -41,7 +43,7 @@ test("without recent senders your reports lead, then everyone by name", () => {
 test("an agent reporting to you counts as your report", () => {
   const list = [
     agent("a", "A"),
-    agent("b", "B", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "or" } }),
+    agent("b", "B", { reportsTo: { kind: "agent", ref: refFor("or"), handle: "or" } }),
   ];
   expect(rankMentions("", { agents: list, humans: [], me: "or" }).map((m) => m.handle)).toEqual([
     "b",
@@ -52,8 +54,10 @@ test("an agent reporting to you counts as your report", () => {
 test("an agent managed by another human is not your report", () => {
   const list = [
     agent("a", "A"),
-    agent("mine", "Mine", { reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" } }),
-    agent("theirs", "Theirs", { reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "dana" } }),
+    agent("mine", "Mine", { reportsTo: { kind: "human", ref: refFor("or"), handle: "or" } }),
+    agent("theirs", "Theirs", {
+      reportsTo: { kind: "human", ref: refFor("dana"), handle: "dana" },
+    }),
   ];
   expect(rankMentions("", { agents: list, humans: [], me: "or" }).map((m) => m.handle)).toEqual([
     "mine",
@@ -107,7 +111,7 @@ test("recent agent senders come from the cached inbox", () => {
       {
         items: [
           {
-            from: { kind: "agent", ref: "z00000", handle: "z" },
+            from: { kind: "agent", ref: refFor("z"), handle: "z" },
             createdAt: "2026-11-19T10:00:00Z",
           },
         ],
@@ -126,10 +130,10 @@ test("an agent whose unread chat is newer than the inbox items ranks first", () 
   qc.setQueryData(["inbox"], {
     pages: [
       {
-        chats: [{ agent: { slug: "m" }, latest: { createdAt: "2026-11-19T12:00:00Z" } }],
+        chats: [{ agent: { handle: "m" }, latest: { createdAt: "2026-11-19T12:00:00Z" } }],
         items: [
           {
-            from: { kind: "agent", ref: "z00000", handle: "z" },
+            from: { kind: "agent", ref: refFor("z"), handle: "z" },
             createdAt: "2026-11-19T10:00:00Z",
           },
         ],
@@ -156,6 +160,7 @@ test("watching loads the users list once if it isn't cached and reports changes 
       users: [
         {
           id: "u1",
+          ref: refFor("dana"),
           name: "Dana",
           handle: "dana",
           email: "d@x",

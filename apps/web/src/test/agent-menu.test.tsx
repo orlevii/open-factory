@@ -17,6 +17,7 @@ import { CronsStopLayer, useStopCrons } from "@/features/session/stop-crons";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { agentSummary } from "@/test/session-fixtures";
 
 const notify = vi.hoisted(() => vi.fn());
@@ -76,11 +77,7 @@ function setup(props: Parameters<typeof Harness>[0]) {
   const stub = (path: string) =>
     createRoute({ getParentRoute: () => root, path, component: () => null });
   const router = createRouter({
-    routeTree: root.addChildren([
-      stub("/tasks"),
-      stub("/agents/$slug"),
-      stub("/agents/$slug/usage"),
-    ]),
+    routeTree: root.addChildren([stub("/tasks"), stub("/agents/$ref"), stub("/agents/$ref/usage")]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -207,7 +204,7 @@ test("Agent details calls back", async () => {
 
 test("Terminate… only for a live spawned agent in the session, crimson with a separator, confirms", async () => {
   const api = mockApi({
-    "POST /api/agents/dev/terminate": () =>
+    [`POST /api/agents/${refFor("dev")}/terminate`]: () =>
       json({ agent: agentSummary({ kind: "ephemeral", status: "terminated" }) }),
   });
   const onTerminateStart = vi.fn();
@@ -224,7 +221,7 @@ test("Terminate… only for a live spawned agent in the session, crimson with a 
   await u.click(within(dlg).getByRole("button", { name: "Terminate @dev" }));
   await vi.waitFor(() => expect(onTerminated).toHaveBeenCalledOnce());
   expect(onTerminateStart).toHaveBeenCalledOnce();
-  expect(api.calls.some((c) => c.url === "/api/agents/dev/terminate")).toBe(true);
+  expect(api.calls.some((c) => c.url === `/api/agents/${refFor("dev")}/terminate`)).toBe(true);
   view.unmount();
 });
 
@@ -275,7 +272,7 @@ test("Escape from the compact popover closes it and returns focus to the ⋯ but
 
 test("a successful Compact returns focus to the ⋯ button", async () => {
   mockApi({
-    "POST /api/agents/dev/compact": () =>
+    [`POST /api/agents/${refFor("dev")}/compact`]: () =>
       json(
         { item: { id: "q", kind: "compact", from: "@alice", fromKind: "human", createdAt: "x" } },
         202,
@@ -345,7 +342,7 @@ test("Configure opens the agent's Configuration page", async () => {
   const menu = await openMenu(userEvent.setup());
   expect(within(menu).getByRole("menuitem", { name: "Configure" })).toHaveAttribute(
     "href",
-    "/agents/dev/config",
+    `/agents/${refFor("dev")}/config`,
   );
 });
 
@@ -363,13 +360,13 @@ test("New task and New schedule open their sheets prefilled with the agent", asy
   await openMenu(u);
   await u.click(screen.getByRole("menuitem", { name: "New task" }));
   await vi.waitFor(() =>
-    expect(getSheetState().parent).toMatchObject({ kind: "new-task", assignee: "dev" }),
+    expect(getSheetState().parent).toMatchObject({ kind: "new-task", assignee: refFor("dev") }),
   );
   resetSheets();
   await openMenu(u);
   await u.click(screen.getByRole("menuitem", { name: "New schedule" }));
   await vi.waitFor(() =>
-    expect(getSheetState().parent).toMatchObject({ kind: "new-schedule", target: "dev" }),
+    expect(getSheetState().parent).toMatchObject({ kind: "new-schedule", target: refFor("dev") }),
   );
 });
 
@@ -384,15 +381,15 @@ test.each(["session", "sidebar", "list"] as const)(
     expect(edit).not.toHaveAttribute("href");
     await u.click(edit);
     await vi.waitFor(() =>
-      expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "dev" }),
+      expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", agentRef: refFor("dev") }),
     );
   },
 );
 
 test("Archive… archives at once (no confirmation, as before) and toasts with an Undo that restores", async () => {
   const api = mockApi({
-    "POST /api/agents/dev/archive": () => json({ agent: archived() }),
-    "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }),
+    [`POST /api/agents/${refFor("dev")}/archive`]: () => json({ agent: archived() }),
+    [`POST /api/agents/${refFor("dev")}/unarchive`]: () => json({ agent: agentSummary() }),
   });
   setup({ agent: agentSummary(), context: "sidebar" });
   const u = userEvent.setup();
@@ -403,10 +400,10 @@ test("Archive… archives at once (no confirmation, as before) and toasts with a
   const n = notify.mock.calls[0]?.[0];
   expect(n.text).toBe("Archived @dev.");
   expect(api.calls.filter((c) => c.method === "POST").map((c) => c.url)).toEqual([
-    "/api/agents/dev/archive",
+    `/api/agents/${refFor("dev")}/archive`,
   ]);
   await n.undo();
-  expect(api.calls.some((c) => c.url === "/api/agents/dev/unarchive")).toBe(true);
+  expect(api.calls.some((c) => c.url === `/api/agents/${refFor("dev")}/unarchive`)).toBe(true);
 });
 
 test.each([
@@ -420,7 +417,7 @@ test.each([
   "a failed archive (%s) toasts the server's message, naming the agent",
   async (_name, message, reports) => {
     mockApi({
-      "POST /api/agents/dev/archive": () =>
+      [`POST /api/agents/${refFor("dev")}/archive`]: () =>
         json({ error: { code: "has_reports", message, reports } }, 409),
     });
     setup({ agent: agentSummary(), context: "list" });
@@ -451,8 +448,8 @@ test("a network failure on archive says the server can't be reached", async () =
 
 test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
   const api = mockApi({
-    "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }),
-    "GET /api/agents/dev": () =>
+    [`POST /api/agents/${refFor("dev")}/unarchive`]: () => json({ agent: agentSummary() }),
+    [`GET /api/agents/${refFor("dev")}`]: () =>
       json({
         agent: agentSummary(),
         queue: [],
@@ -464,7 +461,7 @@ test("Restore in an archived agent's menu toasts Restored @slug.", async () => {
   await openMenu(u);
   await u.click(screen.getByRole("menuitem", { name: "Restore" }));
   await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text: "Restored @dev." }));
-  expect(api.calls.some((c) => c.url === "/api/agents/dev/unarchive")).toBe(true);
+  expect(api.calls.some((c) => c.url === `/api/agents/${refFor("dev")}/unarchive`)).toBe(true);
 });
 
 test("Reset persona… is offered for live and archived agents, never for a spawned or terminated one", async () => {
@@ -486,7 +483,7 @@ test("Reset persona… confirms with the spec copy, cancel sends nothing", async
   await u.click(screen.getByRole("menuitem", { name: "Reset persona…" }));
   const dialog = await screen.findByRole("alertdialog", { name: "Reset persona?" });
   expect(dialog).toHaveTextContent(
-    "Replace @dev's AGENTS.md with the template's. The current file is saved in state/agents/dev/persona/.",
+    `Replace @dev's AGENTS.md with the template's. The current file is saved in state/agents/${refFor("dev")}/persona/.`,
   );
   expect(within(dialog).getByRole("button", { name: "Reset persona" })).toBeInTheDocument();
   await u.click(within(dialog).getByRole("button", { name: "Cancel" }));
@@ -503,7 +500,7 @@ test.each([
   [{ applied: "now" }, "Persona reset."],
   [{ applied: "on_restart" }, "Persona resets when @dev restarts."],
 ])("confirming Reset persona posts once and toasts %o", async (r, text) => {
-  const api = mockApi({ "POST /api/agents/dev/reset-persona": () => json(r) });
+  const api = mockApi({ [`POST /api/agents/${refFor("dev")}/reset-persona`]: () => json(r) });
   setup({ agent: agentSummary(), context: "session" });
   const u = userEvent.setup();
   await openMenu(u);
@@ -511,7 +508,9 @@ test.each([
   const dialog = await screen.findByRole("alertdialog", { name: "Reset persona?" });
   await u.click(within(dialog).getByRole("button", { name: "Reset persona" }));
   await vi.waitFor(() => expect(notify).toHaveBeenCalledWith({ text }));
-  expect(api.calls.filter((c) => c.url === "/api/agents/dev/reset-persona")).toHaveLength(1);
+  expect(
+    api.calls.filter((c) => c.url === `/api/agents/${refFor("dev")}/reset-persona`),
+  ).toHaveLength(1);
   await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
 });
 
@@ -522,7 +521,8 @@ test.each([
   ["agent_not_found", "No agent named dev"],
 ])("a reset refused with %s toasts the server's own reason", async (code, message) => {
   mockApi({
-    "POST /api/agents/dev/reset-persona": () => json({ error: { code, message } }, 409),
+    [`POST /api/agents/${refFor("dev")}/reset-persona`]: () =>
+      json({ error: { code, message } }, 409),
   });
   setup({ agent: agentSummary({ template: "developer" }), context: "session" });
   const u = userEvent.setup();
@@ -540,7 +540,7 @@ test.each([
 test("a restore made while another is in flight reports that restore's outcome, not a success", async () => {
   let release: () => void = () => {};
   const api = mockApi({
-    "POST /api/agents/dev/unarchive": () =>
+    [`POST /api/agents/${refFor("dev")}/unarchive`]: () =>
       new Promise<Response>((r) => {
         release = () =>
           r(
@@ -549,19 +549,21 @@ test("a restore made while another is in flight reports that restore's outcome, 
       }),
   });
   const qc = new QueryClient();
-  const fromMenu = restoreAgent("dev", qc);
-  const inline = restoreAgent("dev", qc, { inline: true });
+  const fromMenu = restoreAgent({ ref: refFor("dev"), handle: "dev" }, qc);
+  const inline = restoreAgent({ ref: refFor("dev"), handle: "dev" }, qc, { inline: true });
   await vi.waitFor(() => expect(api.calls).toHaveLength(1));
   release();
   expect(await inline).toBe("Couldn't restore @dev: Its manager is archived.");
   expect(await fromMenu).toBe("Couldn't restore @dev: Its manager is archived.");
-  expect(api.calls.filter((c) => c.url === "/api/agents/dev/unarchive")).toHaveLength(1);
+  expect(api.calls.filter((c) => c.url === `/api/agents/${refFor("dev")}/unarchive`)).toHaveLength(
+    1,
+  );
 });
 
 test("a second Archive while the first is in flight sends one request", async () => {
   let release: () => void = () => {};
   const api = mockApi({
-    "POST /api/agents/dev/archive": () =>
+    [`POST /api/agents/${refFor("dev")}/archive`]: () =>
       new Promise<Response>((r) => {
         release = () => r(json({ agent: archived() }));
       }),
@@ -574,13 +576,13 @@ test("a second Archive while the first is in flight sends one request", async ()
   await u.click(screen.getByRole("menuitem", { name: "Archive…" }));
   release();
   await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce());
-  expect(api.calls.filter((c) => c.url === "/api/agents/dev/archive")).toHaveLength(1);
+  expect(api.calls.filter((c) => c.url === `/api/agents/${refFor("dev")}/archive`)).toHaveLength(1);
 });
 
 test("Restore mentions pending messages when the agent has some", async () => {
   mockApi({
-    "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }),
-    "GET /api/agents/dev": () =>
+    [`POST /api/agents/${refFor("dev")}/unarchive`]: () => json({ agent: agentSummary() }),
+    [`GET /api/agents/${refFor("dev")}`]: () =>
       json({
         agent: agentSummary(),
         queue: [
@@ -649,12 +651,14 @@ test("phone: New task closes the drawer instantly, then opens its sheet prefille
   expect(content).toHaveAttribute("data-instant");
   endExit(content);
   await vi.waitFor(() =>
-    expect(getSheetState().parent).toMatchObject({ kind: "new-task", assignee: "dev" }),
+    expect(getSheetState().parent).toMatchObject({ kind: "new-task", assignee: refFor("dev") }),
   );
 });
 
 test("phone: Restore opens no overlay, so the drawer closes normally", async () => {
-  mockApi({ "POST /api/agents/dev/unarchive": () => json({ agent: agentSummary() }) });
+  mockApi({
+    [`POST /api/agents/${refFor("dev")}/unarchive`]: () => json({ agent: agentSummary() }),
+  });
   fakeMatchMedia.install(true, { coarse: true });
   setup({ agent: archived(), context: "session" });
   const drawer = await openDrawer();
@@ -743,7 +747,7 @@ test.each([
 
 test("Restart now posts without force and toasts the outcome", async () => {
   const api = mockApi({
-    "POST /api/agents/dev/restart": () => json({ status: "restarted_idle" }, 202),
+    [`POST /api/agents/${refFor("dev")}/restart`]: () => json({ status: "restarted_idle" }, 202),
   });
   setup({ agent: agentSummary(), context: "session" });
   const u = userEvent.setup();
@@ -754,13 +758,14 @@ test("Restart now posts without force and toasts the outcome", async () => {
       text: "@dev restarted; its next start uses the latest config.",
     }),
   );
-  expect(api.calls.find((c) => c.url === "/api/agents/dev/restart")?.body).toEqual({});
+  expect(api.calls.find((c) => c.url === `/api/agents/${refFor("dev")}/restart`)?.body).toEqual({});
 });
 
 test("a 409 lost_work that arrives after the menu unmounted still opens the confirm for that agent", async () => {
   let release: (r: Response) => void = () => {};
   mockApi({
-    "POST /api/agents/dev/restart": () => new Promise<Response>((r) => (release = r)),
+    [`POST /api/agents/${refFor("dev")}/restart`]: () =>
+      new Promise<Response>((r) => (release = r)),
   });
   const view = setup({ agent: agentSummary(), context: "session" });
   const u = userEvent.setup();
@@ -782,7 +787,7 @@ test("a 409 lost_work that arrives after the menu unmounted still opens the conf
 test("a 409 lost_work that arrives after the menu moved to another agent still targets the original slug", async () => {
   let release: (r: Response) => void = () => {};
   const api = mockApi({
-    "POST /api/agents/dev/restart": (body) =>
+    [`POST /api/agents/${refFor("dev")}/restart`]: (body) =>
       (body as { force?: boolean })?.force
         ? json({ status: "restarting" }, 202)
         : new Promise<Response>((r) => (release = r)),
@@ -793,7 +798,7 @@ test("a 409 lost_work that arrives after the menu moved to another agent still t
   await u.click(screen.getByRole("menuitem", { name: "Restart now" }));
   // The menu's agent changes while the request is out.
   view.unmount();
-  setup({ agent: agentSummary({ slug: "ops", displayName: "Ops agent" }), context: "session" });
+  setup({ agent: agentSummary({ handle: "ops", displayName: "Ops agent" }), context: "session" });
   render(<RestartConfirmHost />);
   await act(async () =>
     release(
@@ -810,10 +815,10 @@ test("a 409 lost_work that arrives after the menu moved to another agent still t
       api.calls.some(
         (c) =>
           c.method === "POST" &&
-          c.url === "/api/agents/dev/restart" &&
+          c.url === `/api/agents/${refFor("dev")}/restart` &&
           (c.body as { force?: boolean })?.force,
       ),
     ).toBe(true),
   );
-  expect(api.calls.some((c) => c.url === "/api/agents/ops/restart")).toBe(false);
+  expect(api.calls.some((c) => c.url === `/api/agents/${refFor("ops")}/restart`)).toBe(false);
 });

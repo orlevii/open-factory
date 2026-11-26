@@ -3,7 +3,8 @@ import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import WebSocket from "ws";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { sendAs } from "../agents/testing/runtime-harness.ts";
-import { makeTestApp, signUp, TEST_ORIGIN } from "../test/helpers.ts";
+import { makeTestApp, runtimeOf, signUp, TEST_ORIGIN } from "../test/helpers.ts";
+import { UNKNOWN_REF } from "../test/principals.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let url: string;
@@ -147,7 +148,7 @@ describe("agent subscriptions", () => {
     frames.filter((f) => f.type === "session_event").map((f) => (f.event as { seq: number }).seq);
 
   test("subscribe replays from afterSeq, then streams live, with no gaps or duplicates", async () => {
-    const rt = await a.app.runtimes.bySlug("dev");
+    const rt = await runtimeOf(a.app, "dev");
     await sendAs(a.app.store, rt, {
       fromUserId: s.user.id,
       fromHandle: s.user.handle,
@@ -157,7 +158,7 @@ describe("agent subscriptions", () => {
     driver.last.emit(ev.session(), ev.turn(), ev.text("a"), ev.usage(), ev.end());
     await rt?.settled(); // seq 1..7 exist
     const c = await connect();
-    c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 2 }));
+    c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: 2 }));
     // live events written while the replay is being read
     await sendAs(a.app.store, rt, {
       fromUserId: s.user.id,
@@ -174,7 +175,7 @@ describe("agent subscriptions", () => {
   });
 
   test("events committed before and after the replay read are each sent exactly once, in order", async () => {
-    const rt = await a.app.runtimes.bySlug("dev");
+    const rt = await runtimeOf(a.app, "dev");
     if (!rt) throw new Error("no dev runtime");
     const start = await a.app.store.lastSeq(rt.agent.id);
     const store = a.app.store;
@@ -192,7 +193,9 @@ describe("agent subscriptions", () => {
     });
     try {
       const c = await connect();
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: start - 1 }));
+      c.ws.send(
+        JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: start - 1 }),
+      );
       await c.waitFor((f) => f.type === "session_event", 1 + 2 + 3 + 20);
       await rt.settled();
       await new Promise((r) => setTimeout(r, 100));
@@ -207,7 +210,7 @@ describe("agent subscriptions", () => {
 
   test("agent_status reaches sockets that didn't subscribe", async () => {
     const c = await connect();
-    const rt = await a.app.runtimes.bySlug("dev");
+    const rt = await runtimeOf(a.app, "dev");
     driver.last.emit(ev.turn());
     await rt?.settled();
     await c.waitFor((f) => f.type === "agent_status" && f.turnOpen === true);
@@ -245,20 +248,20 @@ describe("agent subscriptions", () => {
   const settle = () => new Promise((r) => setTimeout(r, 100));
 
   test("unsubscribe stops live events and removes the listener", async () => {
-    const rt = await a.app.runtimes.bySlug("dev");
+    const rt = await runtimeOf(a.app, "dev");
     if (!rt) throw new Error("no dev runtime");
     const c = await connect();
     c.ws.send(
       JSON.stringify({
         type: "subscribe",
-        agent: "dev",
+        agent: a.seededRef("dev"),
         afterSeq: await a.app.store.lastSeq(rt.agent.id),
       }),
     );
     await c.waitFor((f) => f.type === "queue");
     await settle();
     expect(devListeners()).toBe(1);
-    c.ws.send(JSON.stringify({ type: "unsubscribe", agent: "dev" }));
+    c.ws.send(JSON.stringify({ type: "unsubscribe", agent: a.seededRef("dev") }));
     await until(() => devListeners() === 0);
     driver.last.emit(ev.text("after-unsubscribe"));
     await rt.settled();
@@ -269,10 +272,10 @@ describe("agent subscriptions", () => {
 
   test("closing while the agent lookup is pending leaves no bus listener", async () => {
     const allBefore = a.app.bus.listenerCount();
-    const h = hold(a.app.runtimes, "bySlug");
+    const h = hold(a.app.runtimes, "byRef");
     try {
       const c = await connect();
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: 0 }));
       await h.started;
       c.ws.close();
       await until(() => a.app.bus.listenerCount() === allBefore);
@@ -286,20 +289,20 @@ describe("agent subscriptions", () => {
   });
 
   test("an unsubscribe that arrives while the agent lookup is pending wins", async () => {
-    const rt = await a.app.runtimes.bySlug("dev");
+    const rt = await runtimeOf(a.app, "dev");
     if (!rt) throw new Error("no dev runtime");
-    const h = hold(a.app.runtimes, "bySlug");
+    const h = hold(a.app.runtimes, "byRef");
     try {
       const c = await connect();
       c.ws.send(
         JSON.stringify({
           type: "subscribe",
-          agent: "dev",
+          agent: a.seededRef("dev"),
           afterSeq: await a.app.store.lastSeq(rt.agent.id),
         }),
       );
       await h.started;
-      c.ws.send(JSON.stringify({ type: "unsubscribe", agent: "dev" }));
+      c.ws.send(JSON.stringify({ type: "unsubscribe", agent: a.seededRef("dev") }));
       await settle();
       h.release();
       await settle();
@@ -320,7 +323,7 @@ describe("agent subscriptions", () => {
     const h = hold(a.app.store, "after");
     try {
       const c = await connect();
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: 0 }));
       await h.started;
       expect(devListeners()).toBe(1);
       c.ws.close();
@@ -335,15 +338,15 @@ describe("agent subscriptions", () => {
   });
 
   test("a resubscribe cancels the in-flight replay of the earlier subscribe", async () => {
-    const rt = await a.app.runtimes.bySlug("dev");
+    const rt = await runtimeOf(a.app, "dev");
     if (!rt) throw new Error("no dev runtime");
     const last = await a.app.store.lastSeq(rt.agent.id);
     const h = hold(a.app.store, "after");
     try {
       const c = await connect();
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: 0 }));
       await h.started;
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: last }));
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: last }));
       await c.waitFor((f) => f.type === "queue", 2);
       await settle();
       h.release();
@@ -363,15 +366,15 @@ describe("agent subscriptions", () => {
   });
 
   test("the later of two subscribes wins even when its agent lookup finishes first", async () => {
-    const rt = await a.app.runtimes.bySlug("dev");
+    const rt = await runtimeOf(a.app, "dev");
     if (!rt) throw new Error("no dev runtime");
     const last = await a.app.store.lastSeq(rt.agent.id);
-    const h = hold(a.app.runtimes, "bySlug"); // holds only the first subscribe's lookup
+    const h = hold(a.app.runtimes, "byRef"); // holds only the first subscribe's lookup
     try {
       const c = await connect();
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: 0 }));
       await h.started;
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: last }));
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: last }));
       await c.waitFor((f) => f.type === "queue");
       h.release();
       await settle();
@@ -390,7 +393,7 @@ describe("agent subscriptions", () => {
     const spy = vi.spyOn(a.app.store, "lastSeq").mockRejectedValueOnce(new Error("db down"));
     try {
       const c = await connect();
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+      c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: 0 }));
       await c.waitFor((f) => f.type === "error" && f.code === "internal_error");
       await settle();
       expect(devListeners()).toBe(0);
@@ -401,20 +404,27 @@ describe("agent subscriptions", () => {
   });
 
   test("a gap over 1000 events gets resync instead of a replay", async () => {
-    const rt = await a.app.runtimes.bySlug("dev");
+    const rt = await runtimeOf(a.app, "dev");
     const id = rt?.agent.id ?? "";
     for (let i = 0; i < 1001; i++)
       await a.app.store.append(id, null, { type: "background_tasks", tasks: [] });
     const c = await connect();
-    c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+    c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: 0 }));
     await c.waitFor((f) => f.type === "resync");
     expect(seqs(c.frames)).toEqual([]);
     c.ws.close();
   });
 
+  test("a handle is not an address: subscribing by handle is agent_not_found", async () => {
+    const c = await connect();
+    c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: 0 }));
+    await c.waitFor((f) => f.type === "error" && f.code === "agent_not_found");
+    c.ws.close();
+  });
+
   test("unknown agent", async () => {
     const c = await connect();
-    c.ws.send(JSON.stringify({ type: "subscribe", agent: "nope", afterSeq: 0 }));
+    c.ws.send(JSON.stringify({ type: "subscribe", agent: UNKNOWN_REF, afterSeq: 0 }));
     await c.waitFor((f) => f.type === "error" && f.code === "agent_not_found");
     c.ws.close();
   });
@@ -423,7 +433,7 @@ describe("agent subscriptions", () => {
     let line = 1000;
     /** An open turn on the dev agent with "so far" streamed into a fresh block; returns its message id. */
     async function midAnswer() {
-      const rt = await a.app.runtimes.bySlug("dev");
+      const rt = await runtimeOf(a.app, "dev");
       if (!rt) throw new Error("no dev runtime");
       // a fresh turn, so earlier tests' blocks are gone
       if (rt.live().turnOpen) driver.last.emitAt(++line, ev.usage(), ev.end());
@@ -443,14 +453,16 @@ describe("agent subscriptions", () => {
     const lives = (frames: Record<string, unknown>[]) => frames.filter((f) => f.type === "live");
     /** A few events back, so the replay is a replay (earlier tests wrote over 1000 events). */
     const recent = async () => {
-      const rt = await a.app.runtimes.bySlug("dev");
+      const rt = await runtimeOf(a.app, "dev");
       return Math.max(0, (await a.app.store.lastSeq(rt?.agent.id ?? "")) - 3);
     };
 
     test("subscribing mid-answer gets the replay, then one reset with the text so far", async () => {
       const { rt, messageId } = await midAnswer();
       const c = await connect();
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: await recent() }));
+      c.ws.send(
+        JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: await recent() }),
+      );
       await c.waitFor((f) => f.type === "live");
       const last = await a.app.store.lastSeq(rt.agent.id);
       const types = c.frames.map((f) => f.type);
@@ -460,7 +472,7 @@ describe("agent subscriptions", () => {
       expect(lives(c.frames)).toEqual([
         expect.objectContaining({
           type: "live",
-          agent: "dev",
+          agent: a.seededRef("dev"),
           reset: true,
           texts: [{ messageId, index: 0, offset: 0, append: "so far" }],
         }),
@@ -470,7 +482,7 @@ describe("agent subscriptions", () => {
       await c.waitFor((f) => f.type === "live", 2);
       expect(lives(c.frames)[1]).toEqual({
         type: "live",
-        agent: "dev",
+        agent: a.seededRef("dev"),
         texts: [{ messageId, index: 0, offset: 6, append: "!" }],
       });
       c.ws.close();
@@ -482,7 +494,7 @@ describe("agent subscriptions", () => {
       try {
         const afterSeq = await recent();
         const c = await connect();
-        c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq }));
+        c.ws.send(JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq }));
         await h.started;
         delta(messageId, " and");
         await settle();
@@ -509,16 +521,16 @@ describe("agent subscriptions", () => {
       c.ws.send(
         JSON.stringify({
           type: "subscribe",
-          agent: "dev",
+          agent: a.seededRef("dev"),
           afterSeq: await a.app.store.lastSeq(rt.agent.id),
         }),
       );
       await c.waitFor((f) => f.type === "live");
-      c.ws.send(JSON.stringify({ type: "live_snapshot", agent: "dev" }));
+      c.ws.send(JSON.stringify({ type: "live_snapshot", agent: a.seededRef("dev") }));
       const [, second] = await c.waitFor((f) => f.type === "live", 2);
       expect(second).toMatchObject({
         type: "live",
-        agent: "dev",
+        agent: a.seededRef("dev"),
         reset: true,
         texts: [{ messageId, index: 0, offset: 0, append: "so far" }],
       });
@@ -531,7 +543,7 @@ describe("agent subscriptions", () => {
       c.ws.send(
         JSON.stringify({
           type: "subscribe",
-          agent: "dev",
+          agent: a.seededRef("dev"),
           afterSeq: await a.app.store.lastSeq(rt.agent.id),
         }),
       );
@@ -545,17 +557,19 @@ describe("agent subscriptions", () => {
     test("a socket not subscribed to the agent gets no live frames and no snapshot", async () => {
       const { messageId } = await midAnswer();
       const c = await connect();
-      c.ws.send(JSON.stringify({ type: "live_snapshot", agent: "dev" }));
+      c.ws.send(JSON.stringify({ type: "live_snapshot", agent: a.seededRef("dev") }));
       delta(messageId, " unseen");
       await settle();
       // after an unsubscribe too
       const listeners = devListeners();
-      c.ws.send(JSON.stringify({ type: "subscribe", agent: "dev", afterSeq: await recent() }));
+      c.ws.send(
+        JSON.stringify({ type: "subscribe", agent: a.seededRef("dev"), afterSeq: await recent() }),
+      );
       await c.waitFor((f) => f.type === "live");
-      c.ws.send(JSON.stringify({ type: "unsubscribe", agent: "dev" }));
+      c.ws.send(JSON.stringify({ type: "unsubscribe", agent: a.seededRef("dev") }));
       await until(() => devListeners() === listeners);
       const before = lives(c.frames).length;
-      c.ws.send(JSON.stringify({ type: "live_snapshot", agent: "dev" }));
+      c.ws.send(JSON.stringify({ type: "live_snapshot", agent: a.seededRef("dev") }));
       delta(messageId, " still unseen");
       await settle();
       expect(lives(c.frames)).toHaveLength(before);

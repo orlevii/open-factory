@@ -111,7 +111,7 @@ export const QueueItems = memo(function QueueItems({
                 body={q.body ?? ""}
                 urgent={q.urgent}
                 brief
-                slug={agent.slug}
+                agentRef={agent.ref}
                 // The reason once, on the first held block; the rest only say they wait (U3 §7.6).
                 {...(young
                   ? {}
@@ -179,7 +179,7 @@ export const QueueItems = memo(function QueueItems({
               urgent={b.urgent}
               brief
               attachments={b.attachments}
-              slug={agent.slug}
+              agentRef={agent.ref}
               sending={
                 slow ? { label: b.urgent ? "Sending · will interrupt the turn" : "Sending…" } : {}
               }

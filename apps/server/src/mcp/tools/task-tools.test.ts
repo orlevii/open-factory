@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../../agents/testing/fake-driver.ts";
 import type { Actor } from "../../tasks/permission.ts";
-import { makeTestApp, signUp } from "../../test/helpers.ts";
+import { agentRowOf, makeTestApp, signUp } from "../../test/helpers.ts";
 import { asRunning } from "../../test/running.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
@@ -47,7 +47,7 @@ test("a spawner lists the spawn tools only while its process runs with them", as
   const base = await names("qa"); // the full base list is asserted in app.test.ts
   // I2 §6.2: the spawn tools follow the config the running process started with.
   await h.sql`update agents set config = '{"template":{"can_spawn":["test"]}}'::jsonb where slug = 'lead'`;
-  const lead = await h.app.store.agentBySlug("lead");
+  const lead = await agentRowOf(h.app, "lead");
   if (!lead) throw new Error("no lead");
   expect(await names("lead")).toEqual(base);
   await asRunning(h.app, lead);

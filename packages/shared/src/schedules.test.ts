@@ -48,7 +48,13 @@ test("create requires a timezone", () => {
 test("an item parses with either author kind", () => {
   const base = {
     key: "S-1",
-    target: { slug: "ceo", displayName: "CEO", archived: false, terminated: false },
+    target: {
+      ref: "ceoceoce",
+      handle: "ceo",
+      displayName: "CEO",
+      archived: false,
+      terminated: false,
+    },
     cron: "0 9 * * *",
     timezone: "UTC",
     body: "x",

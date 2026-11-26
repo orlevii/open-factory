@@ -9,14 +9,16 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { TOASTER_LABEL } from "@/components/ui/toaster";
 import { getSheetState, resetSheets } from "@/features/sheets/sheet-store";
+import { principal } from "@/test/chat-fixtures";
 import { endAnimation } from "@/test/end-animation";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { longPress } from "@/test/long-press";
 import { type Handler, json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { agentSummary } from "@/test/session-fixtures";
 
-const agentRow = (slug: string) => agentSummary({ slug, displayName: slug });
+const agentRow = (slug: string) => agentSummary({ handle: slug, displayName: slug });
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
 vi.mock("@/lib/ws", () => ({
@@ -73,6 +75,7 @@ function world(w: World = {}) {
     "GET /api/credentials": () => json({ credentials: state.credentials }),
     "GET /api/secrets": () => json({ secrets: state.secrets }),
     "GET /api/projects": () => json({ projects: state.projects }),
+    "GET /api/principals": () => json({ principals: [principal(refFor("lead"), "lead")] }),
     ...w.extra,
   });
   return { api, state };
@@ -253,7 +256,7 @@ test("credential row: Verify visible, Replace token and Delete… in the menu; u
   );
   expect(within(row(region, "work")).getByRole("link", { name: "@lead" })).toHaveAttribute(
     "href",
-    "/agents/lead/chat",
+    `/agents/${refFor("lead")}/chat`,
   );
 
   await userEvent.click(
@@ -350,7 +353,7 @@ test("a credential taken while the dialog was open shows a crimson row line link
   const handle = within(alert).getByRole("button", { name: "@lead" });
   expect(handle).toHaveAttribute("type", "button");
   await userEvent.click(handle);
-  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", slug: "lead" });
+  expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", agentRef: refFor("lead") });
 });
 
 test("secrets are write-only rows; Update saves a new value and says who restarts", async () => {
@@ -594,12 +597,12 @@ test("projects: a live spawned grantee is named through its spawner in Remove's 
             {
               ...agentRow("lead"),
               kind: "persistent",
-              reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" },
+              reportsTo: { kind: "human", ref: refFor("or"), handle: "or" },
             },
             {
               ...agentRow("tech-lead-ab12"),
               kind: "ephemeral",
-              reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+              reportsTo: { kind: "agent", ref: refFor("lead"), handle: "lead" },
             },
           ],
           running: { count: 0 },

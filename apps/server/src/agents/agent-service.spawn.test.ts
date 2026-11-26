@@ -118,7 +118,7 @@ test("a spawner's credential change rewrites its live children in the same trans
   expect((await row(t, child.slug)).credentialId).toBe(creds.work);
 
   await t.app.agents.update(
-    "lead",
+    await t.refOf("lead"),
     { credential: "spare" },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
@@ -150,7 +150,7 @@ test("revoking one of the spawner's grants removes it from its children, and a r
   expect(await grantIds(t, child.id)).toEqual([projects.app, projects.docs].sort());
 
   await t.app.agents.update(
-    "lead",
+    await t.refOf("lead"),
     { projects: ["app"] },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
@@ -160,7 +160,7 @@ test("revoking one of the spawner's grants removes it from its children, and a r
 
   // Granting it back to the spawner gives it back to the child (a child holds all its spawner's grants).
   await t.app.agents.update(
-    "lead",
+    await t.refOf("lead"),
     { projects: ["app", "docs"] },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
@@ -214,7 +214,7 @@ test("a child's forward holding its own row lock doesn't deadlock with a spawner
   });
   await childLocked;
   const update = t.app.agents.update(
-    "lead",
+    await t.refOf("lead"),
     { credential: "spare" },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );

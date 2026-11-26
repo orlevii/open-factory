@@ -4,7 +4,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { SheetDescription } from "@/components/ui/sheet";
 import { notify } from "@/components/ui/toaster";
-import { useAgent, useIsLiveAgent } from "@/features/agents/use-agent-index";
+import { useAgent, useHandle, useIsLiveAgent } from "@/features/agents/use-agent-index";
 import {
   clearDraft,
   clearDraftIf,
@@ -20,13 +20,14 @@ import { TaskForm } from "./task-form";
 type Spec = { kind: "new-task"; assignee?: string };
 
 /** "For Ada" under the title when the sheet was opened for an agent; not once the prefill proves stale. */
-function ForAgent({ slug }: { slug: string }) {
-  const agent = useAgent(slug);
-  const live = useIsLiveAgent(slug);
+function ForAgent({ agentRef }: { agentRef: string }) {
+  const agent = useAgent(agentRef);
+  const live = useIsLiveAgent(agentRef);
+  const handle = useHandle(agentRef);
   if (live === false) return null;
   return (
     <SheetDescription className="px-4 pt-3">
-      For {agent?.displayName || `@${slug}`}
+      For {agent?.displayName || `@${handle}`}
     </SheetDescription>
   );
 }
@@ -46,7 +47,7 @@ export default function NewTaskSheet({ spec, sheetId, close }: BodyProps<Spec>) 
   const [fresh, setFresh] = useState(() => !hasDraft("new-task"));
   return (
     <>
-      {spec.assignee && fresh && <ForAgent slug={spec.assignee} />}
+      {spec.assignee && fresh && <ForAgent agentRef={spec.assignee} />}
       <TaskForm
         draftKey="new-task"
         prefill={spec.assignee ? { assignee: spec.assignee } : undefined}

@@ -5,6 +5,7 @@ import { createRef } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { FILES_NOTE } from "@/components/composer/composer";
 import { readDraft, taskDraftKey } from "@/lib/drafts";
+import { refFor } from "@/test/refs";
 import { CommentComposer, type CommentComposerHandle } from "./comment-composer";
 
 const json = (data: unknown, status = 200) =>
@@ -23,7 +24,7 @@ beforeEach(() => {
           comment: {
             type: "comment",
             id: "c1",
-            author: { kind: "human", ref: "ref-alice", handle: "alice" },
+            author: { kind: "human", ref: refFor("alice"), handle: "alice" },
             body: body.body,
             at: "2026-11-22T00:00:00.000Z",
           },
@@ -112,9 +113,10 @@ test("`@` completes a handle as `@slug ` from the cached agents and users lists"
     ["agents", "exclude"],
     [
       {
-        slug: "dev",
+        ref: refFor("dev"),
+        handle: "dev",
         displayName: "Dev",
-        reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" },
+        reportsTo: { kind: "human", ref: refFor("or"), handle: "or" },
         template: "t",
         avatarVersion: null,
         archivedAt: null,
@@ -147,7 +149,7 @@ test("while a comment posts a muted Posting… status shows; Send keeps its labe
                 comment: {
                   type: "comment",
                   id: "c2",
-                  author: { kind: "human", ref: "ref-alice", handle: "alice" },
+                  author: { kind: "human", ref: refFor("alice"), handle: "alice" },
                   body: "x",
                   at: "2026-11-22T00:00:00.000Z",
                 },

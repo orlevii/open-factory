@@ -1,7 +1,7 @@
 import { agentTagOf, tagOf } from "@open-factory/shared/tags";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../../agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "../../test/helpers.ts";
+import { makeTestApp, runtimeOf, signUp } from "../../test/helpers.ts";
 import { testRef } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
@@ -60,7 +60,7 @@ async function runningMidTurn(slug: string) {
   const p = startsOf(slug).at(-1);
   if (!p) throw new Error("never started");
   p.emit(ev.session(), ev.turn());
-  await (await h.app.runtimes.bySlug(slug))?.settled();
+  await (await runtimeOf(h.app, slug))?.settled();
   return p;
 }
 
@@ -136,7 +136,7 @@ test("a cut restart delivers the note from the caller after the restart notice",
     json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/), status: "restarting" },
   });
   p.emit(ev.end()); // the turn ends: the stop begins and the exit makes the attempt
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   const next = startsOf("dev").at(-1);
   expect(next).not.toBe(p);
   const got = delivered(next as (typeof drv.starts)[number]);
@@ -156,7 +156,7 @@ test("an errored report with a note restarts, resumes its session, and gets the 
   startsOf("dev")
     .at(-1)
     ?.emit(...ev.fullTurn("sess-old"));
-  const rt = await h.app.runtimes.bySlug("dev");
+  const rt = await runtimeOf(h.app, "dev");
   await rt?.settled();
   await rt?.hibernate("apply_changes");
   await rt?.settled();
@@ -201,7 +201,7 @@ test("a refused restart (background work and no force) restarts nothing and send
   startsOf("dev")
     .at(-1)
     ?.emit(...ev.fullTurn(), ev.background([{ taskId: "t1", description: "pnpm test" }]));
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   const before = startsOf("dev").length;
   const r = await call("lead", { target: "dev", note: "Rerun the tests." });
   expect(r).toMatchObject({ err: true });
@@ -221,13 +221,13 @@ test("force: true restarts the report with its background work stopped, and the 
   startsOf("dev")
     .at(-1)
     ?.emit(...ev.fullTurn(), ev.background([{ taskId: "t1", description: "pnpm test" }]));
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   expect(
     await call("lead", { target: "dev", note: "Rerun the tests.", force: true }),
   ).toMatchObject({
     json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/), status: "restarting" },
   });
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   const next = startsOf("dev").at(-1) as (typeof drv.starts)[number];
   expect(delivered(next).at(-1)).toEqual(["@lead", "Rerun the tests."]);
 });
@@ -239,7 +239,7 @@ test("a resolver failure (a broken template) still restarts the report and recor
     json: { target: expect.stringMatching(/^<@[0-9a-z]{8}\|dev>$/), status: "restarting" },
   });
   p.emit(ev.end());
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   const events = (await h.app.store.after(ids.dev as string, 0, 1000)).map((e) => e.event);
   expect(events).toContainEqual({
     type: "control",
@@ -252,7 +252,7 @@ test("a hibernated report: the note wakes it, and it is the first message it get
   expect(await call("lead", { target: "dev", note: "Start on the plan." })).toMatchObject({
     json: { status: "not_running" },
   });
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   const started = startsOf("dev").at(-1);
   expect(started && delivered(started)).toEqual([["@lead", "Start on the plan."]]);
 });
@@ -285,7 +285,7 @@ test("a refused note is surfaced in the result, and the restart still happened",
     },
   });
   p.emit(ev.end());
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   expect(startsOf("dev").at(-1)).not.toBe(p);
 });
 
@@ -305,18 +305,18 @@ test("a note whose recipient can't be started is reported as queued, in a fixed 
     ),
   });
   p.emit(ev.end());
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
 });
 
 test("an idle report: the restart notice comes before the note on the next process", async () => {
   await post("/api/messages", { to: ["dev"], body: "hi", urgent: false });
   const p = startsOf("dev").at(-1);
   p?.emit(...ev.fullTurn());
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   await h.sql`update agents set config = ${JSON.stringify({ template: { model: "opus" } })}::jsonb where slug = 'dev'`;
   const r = await call("lead", { target: "dev", note: "Pick up the new model." });
   expect(r.json).toMatchObject({ status: "restarted_idle" });
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   const next = startsOf("dev").at(-1);
   expect(next).not.toBe(p);
   expect(delivered(next as (typeof drv.starts)[number])).toEqual([
@@ -334,7 +334,7 @@ test("restart_pending: the note goes to the running process; the restart follows
     ev.background([]),
     ev.taskFinished("t1"),
   );
-  await (await h.app.runtimes.bySlug("dev"))?.settled();
+  await (await runtimeOf(h.app, "dev"))?.settled();
   const r = await call("lead", { target: "dev", note: "After the task." });
   expect(r).toMatchObject({ json: { status: "restart_pending" } });
   expect(r.json.note).toContain("restarts in a moment");

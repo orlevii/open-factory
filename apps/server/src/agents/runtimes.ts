@@ -150,7 +150,7 @@ export class AgentRuntimes {
       // with a null credential_id), is never paused by, nor counted under, any real credential's rate limit.
       credentialOf: (id) => this.loaded.get(id)?.agent.credentialId ?? "",
       rateLimits: d.store,
-      load: (slug) => this.bySlug(slug),
+      load: (id) => this.load(id),
       ...(d.docker ? { images: this.images(d.docker) } : {}),
     });
   }
@@ -180,12 +180,13 @@ export class AgentRuntimes {
     };
   }
 
-  async bySlug(slug: string): Promise<AgentRuntime | undefined> {
-    const row = await this.d.store.agentBySlug(slug);
+  /** The runtime of the agent with this ref (already normalised), created and initialised on first use. */
+  async byRef(ref: string): Promise<AgentRuntime | undefined> {
+    const row = await this.d.store.agentByRef(ref);
     return row ? this.runtimeOf(row) : undefined;
   }
 
-  /** `bySlug` by id: the runtime, created and initialised on first use. */
+  /** `byRef` by id: the runtime, created and initialised on first use. */
   async load(agentId: string): Promise<AgentRuntime | undefined> {
     const loaded = this.byId.get(agentId);
     if (loaded) return loaded;

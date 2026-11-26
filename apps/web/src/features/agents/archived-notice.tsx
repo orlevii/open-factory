@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { InlineOutcome } from "@/components/inline-outcome";
 import { Button } from "@/components/ui/button";
-import { restoreAgent } from "@/features/agents/lifecycle";
+import { type AgentKey, restoreAgent } from "@/features/agents/lifecycle";
 
 const COMPOSER_INPUT = '#composer [role="combobox"], #composer textarea';
 
@@ -35,10 +35,10 @@ function focusComposerWhenReady(from: Element | null) {
  * the composer.
  */
 export function ArchivedNotice({
-  slug,
+  agent,
   onRestored,
 }: {
-  slug: string;
+  agent: AgentKey;
   /** For a view that holds its own copy of the agent (the session), to pick up the restored one. */
   onRestored?: () => void;
 }) {
@@ -49,7 +49,7 @@ export function ArchivedNotice({
   async function restore() {
     if (busy.current) return;
     busy.current = true;
-    setOutcome({ tone: "pending", text: `Restoring @${slug}…` });
+    setOutcome({ tone: "pending", text: `Restoring @${agent.handle}…` });
     // The Restore button goes away with the notice: focus follows to the composer that replaces it,
     // unless the user has moved on meanwhile.
     const active = document.activeElement;
@@ -58,7 +58,7 @@ export function ArchivedNotice({
       document.activeElement === document.body ||
       document.activeElement === active ||
       !!box.current?.contains(document.activeElement);
-    const failed = await restoreAgent(slug, qc, { inline: true, onChanged: onRestored });
+    const failed = await restoreAgent(agent, qc, { inline: true, onChanged: onRestored });
     busy.current = false;
     setOutcome(failed ? { tone: "error", text: failed } : undefined);
     if (!failed && held()) focusComposerWhenReady(active);

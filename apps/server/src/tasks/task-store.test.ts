@@ -162,7 +162,7 @@ test("replaceDependencies reports added and removed; replaceLinks keeps order", 
     { kind: "file", target: "a.md" },
   ]);
   const links = await store.links(t.db, a.id);
-  expect(links.map((l) => [l.kind, l.target ?? l.agentSlug])).toEqual([
+  expect(links.map((l) => [l.kind, l.target ?? l.agentHandle])).toEqual([
     ["url", "https://x.io"],
     ["agent", "dev"],
     ["file", "a.md"],

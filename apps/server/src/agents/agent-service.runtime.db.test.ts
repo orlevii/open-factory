@@ -60,13 +60,15 @@ describe("on a factory that allows local agents", () => {
     await f.create("mover", "dock");
     const spy = vi.spyOn(f.t.app.runtimes, "requestRestart").mockResolvedValue(undefined);
     try {
-      expect(await f.t.app.agents.update("mover", { runtime: "local" }, human)).toMatchObject({
+      expect(
+        await f.t.app.agents.update(await f.t.refOf("mover"), { runtime: "local" }, human),
+      ).toMatchObject({
         runtime: "local",
       });
       expect(await f.runtimeOf("mover")).toBe("local");
       expect(spy).toHaveBeenCalledOnce();
       spy.mockClear();
-      await f.t.app.agents.update("mover", { runtime: "local" }, human);
+      await f.t.app.agents.update(await f.t.refOf("mover"), { runtime: "local" }, human);
       expect(spy).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
@@ -88,7 +90,7 @@ describe("on a factory that allows local agents", () => {
     const before = await f.runtimeOf(slug);
     await expect(
       f.t.app.agents.update(
-        slug,
+        await f.t.refOf(slug),
         { runtime: to },
         { kind: "agent", id: asker.id, ref: testRef(asker.id), slug: asker.slug },
       ),
@@ -100,7 +102,7 @@ describe("on a factory that allows local agents", () => {
     await f.create("byp", "bypass");
     const res = await f.t.app.inject({
       method: "PATCH",
-      url: "/api/agents/byp",
+      url: `/api/agents/${await f.t.refOf("byp")}`,
       headers: { cookie: (await f.t.signUpUser({ handle: "or-bp" })).cookie },
       payload: { runtime: "local" },
     });
@@ -111,8 +113,8 @@ describe("on a factory that allows local agents", () => {
 
   test("Combined shows the agent's runtime, not its template's", async () => {
     await f.create("stayer", "loc");
-    await f.t.app.agents.update("stayer", { runtime: "docker" }, human);
-    const view = await f.t.app.configs.getConfig("stayer");
+    await f.t.app.agents.update(await f.t.refOf("stayer"), { runtime: "docker" }, human);
+    const view = await f.t.app.configs.getConfig(await f.t.refOf("stayer"));
     expect(view.template.doc?.template.runtime).toBe("local");
     expect(view.merged?.template.runtime).toBe("docker");
   });
@@ -125,7 +127,7 @@ test("a factory that doesn't allow local agents refuses the switch: 400 on runti
     await f.create("held", "dock");
     const res = await f.t.app.inject({
       method: "PATCH",
-      url: "/api/agents/held",
+      url: `/api/agents/${await f.t.refOf("held")}`,
       headers: { cookie: (await f.t.signUpUser({ handle: "or-off" })).cookie },
       payload: { runtime: "local" },
     });

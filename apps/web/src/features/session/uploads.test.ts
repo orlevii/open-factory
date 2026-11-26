@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { NETWORK_ERROR } from "@/components/composer/composer";
 import { FakeXhr, file, holdFrames, installFakeXhr, lastXhr } from "@/test/fake-xhr";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import {
   createUploadStore,
   dropUploadsExcept,
@@ -33,12 +34,12 @@ const only = (s: ReturnType<typeof createUploadStore>) => {
 };
 
 test("a file is POSTed raw, its name percent-encoded, with the session's cookie", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   const f = file("résumé ].txt");
   expect(s.add([f])).toBe(1);
   const x = lastXhr();
   expect(x.method).toBe("POST");
-  expect(x.url).toBe("/api/agents/dev/uploads");
+  expect(x.url).toBe(`/api/agents/${refFor("dev")}/uploads`);
   expect(x.headers["content-type"]).toBe("application/octet-stream");
   expect(x.headers["x-upload-name"]).toBe(encodeURIComponent("résumé ].txt"));
   expect(x.withCredentials).toBe(true);
@@ -48,7 +49,7 @@ test("a file is POSTed raw, its name percent-encoded, with the session's cookie"
 });
 
 test("progress reaches only that upload's listeners, once per animation frame", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt"), file("b.txt")]);
   const [a, b] = s.keys() as [string, string];
   const onList = vi.fn();
@@ -71,7 +72,7 @@ test("progress reaches only that upload's listeners, once per animation frame", 
 });
 
 test("a 201 makes the upload done; its attachment is described for the send", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt")]);
   const onList = vi.fn();
   s.subscribe(onList);
@@ -84,7 +85,7 @@ test("a 201 makes the upload done; its attachment is described for the send", ()
 });
 
 test("a refusal of the file shows the server's reason and offers no Retry", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("p.heic", 10, "image/heic"), file("big.png", 10, "image/png")]);
   const [a, b] = s.keys() as [string, string];
   (FakeXhr.all[0] as FakeXhr).respond(415, {
@@ -105,7 +106,7 @@ test("a refusal of the file shows the server's reason and offers no Retry", () =
 });
 
 test.each([408, 429, 500, 503])("a %i can be retried: Retry sends the file again", (status) => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt")]);
   lastXhr().respond(status, { error: { message: "Try again." } });
   const k = only(s);
@@ -116,7 +117,7 @@ test.each([408, 429, 500, 503])("a %i can be retried: Retry sends the file again
 });
 
 test("a status change keeps the list's identity; only adding or removing a file changes it", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt")]);
   const keys = s.keys();
   lastXhr().respond(201, ok("u1"));
@@ -127,7 +128,7 @@ test("a status change keeps the list's identity; only adding or removing a file 
 
 test("a delivered message's uploads leave the composer without being deleted", () => {
   const api = mockApi({});
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt"), file("b.txt")]);
   (FakeXhr.all[0] as FakeXhr).respond(201, ok("u1"));
   (FakeXhr.all[1] as FakeXhr).respond(201, ok("u2", "b.txt"));
@@ -138,10 +139,10 @@ test("a delivered message's uploads leave the composer without being deleted", (
 });
 
 test("a user change aborts every other user's uploads, disarms beforeunload and forgets their files", () => {
-  const s = uploadsFor("u-alice", "dev");
+  const s = uploadsFor("u-alice", refFor("dev"));
   s.add([file("secret.txt")]);
   const x = lastXhr();
-  const bob = uploadsFor("u-bob", "dev");
+  const bob = uploadsFor("u-bob", refFor("dev"));
   expect(bob).not.toBe(s);
   expect(bob.keys()).toEqual([]);
   dropUploadsExcept("u-bob");
@@ -150,14 +151,14 @@ test("a user change aborts every other user's uploads, disarms beforeunload and 
   const ev = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(ev);
   expect(ev.defaultPrevented).toBe(false);
-  expect(uploadsFor("u-bob", "dev")).toBe(bob); // the kept user's store is untouched
-  expect(uploadsFor("u-alice", "dev")).not.toBe(s);
+  expect(uploadsFor("u-bob", refFor("dev"))).toBe(bob); // the kept user's store is untouched
+  expect(uploadsFor("u-alice", refFor("dev"))).not.toBe(s);
   resetUploads();
-  expect(uploadsFor("u-bob", "dev")).not.toBe(bob);
+  expect(uploadsFor("u-bob", refFor("dev"))).not.toBe(bob);
 });
 
 test("a non-JSON 413 (a proxy's limit) says so; a network error says the server can't be reached", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("big.txt"), file("b.txt")]);
   const [a, b] = s.keys() as [string, string];
   (FakeXhr.all[0] as FakeXhr).respond(413, "<html>Request Entity Too Large</html>");
@@ -167,8 +168,8 @@ test("a non-JSON 413 (a proxy's limit) says so; a network error says the server 
 });
 
 test("removing aborts an upload in flight, and deletes a finished one on the server", async () => {
-  const api = mockApi({ "DELETE /api/agents/dev/uploads/u2": () => json({}, 204) });
-  const s = createUploadStore("dev");
+  const api = mockApi({ [`DELETE /api/agents/${refFor("dev")}/uploads/u2`]: () => json({}, 204) });
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt"), file("b.txt")]);
   const [a, b] = s.keys() as [string, string];
   (FakeXhr.all[1] as FakeXhr).respond(201, ok("u2", "b.txt"));
@@ -178,13 +179,13 @@ test("removing aborts an upload in flight, and deletes a finished one on the ser
   expect(s.keys()).toEqual([]);
   await vi.waitFor(() =>
     expect(api.calls).toContainEqual(
-      expect.objectContaining({ method: "DELETE", url: "/api/agents/dev/uploads/u2" }),
+      expect.objectContaining({ method: "DELETE", url: `/api/agents/${refFor("dev")}/uploads/u2` }),
     ),
   );
 });
 
 test("an empty file fails at once without a request and can only be removed", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("empty.txt", 0)]);
   expect(FakeXhr.all).toHaveLength(0);
   expect(s.get(only(s))).toMatchObject({
@@ -195,7 +196,7 @@ test("an empty file fails at once without a request and can only be removed", ()
 });
 
 test("at most 10 files per message", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   const files = Array.from({ length: 12 }, (_, i) => file(`f${i}.txt`));
   expect(s.add(files.slice(0, 4))).toBe(4);
   expect(s.add(files.slice(4))).toBe(6);
@@ -204,7 +205,7 @@ test("at most 10 files per message", () => {
 });
 
 test("leaving the page asks while an upload is in flight, and not after", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt")]);
   const ev = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(ev);
@@ -216,7 +217,7 @@ test("leaving the page asks while an upload is in flight, and not after", () => 
 });
 
 test("take hands the finished uploads to a send; restore puts them back, settle forgets them", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt")]);
   lastXhr().respond(201, ok("u1"));
   const taken = s.take();
@@ -230,15 +231,15 @@ test("take hands the finished uploads to a send; restore puts them back, settle 
 });
 
 test("the store is per agent and outlives the composer", () => {
-  expect(uploadsFor("u1", "dev")).toBe(uploadsFor("u1", "dev"));
-  expect(uploadsFor("u1", "dev")).not.toBe(uploadsFor("u1", "other"));
+  expect(uploadsFor("u1", refFor("dev"))).toBe(uploadsFor("u1", refFor("dev")));
+  expect(uploadsFor("u1", refFor("dev"))).not.toBe(uploadsFor("u1", refFor("other")));
 });
 
 test("an image gets a 64px-wide bitmap thumbnail; never the full-size file", async () => {
   const bitmap = { width: 64, height: 48, close: vi.fn() };
   const createImageBitmap = vi.fn(async () => bitmap);
   vi.stubGlobal("createImageBitmap", createImageBitmap);
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   const img = file("shot.png", 20, "image/png");
   s.add([img, file("notes.txt")]);
   expect(createImageBitmap).toHaveBeenCalledTimes(1);
@@ -269,7 +270,7 @@ test("recall is your newest operator_input in the loaded timeline, as typed", ()
   const ev = (seq: number, by: string, text: string) =>
     ({
       seq,
-      agentSlug: "dev",
+      agentRef: refFor("dev"),
       turnId: null,
       at: "2026-11-22T10:00:00.000Z",
       event: { type: "operator_input", text, by, byKind: "human", entryId: `e${seq}` },
@@ -286,7 +287,7 @@ test("recall is your newest operator_input in the loaded timeline, as typed", ()
 });
 
 test("at most 3 files upload at once; the rest wait at 0% and start as slots free", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add(Array.from({ length: 5 }, (_, i) => file(`f${i}.txt`)));
   expect(FakeXhr.all).toHaveLength(3);
   const keys = s.keys();
@@ -301,7 +302,7 @@ test("at most 3 files upload at once; the rest wait at 0% and start as slots fre
 });
 
 test("a waiting file removed before its turn never uploads", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add(Array.from({ length: 4 }, (_, i) => file(`f${i}.txt`)));
   s.remove(s.keys()[3] as string);
   (FakeXhr.all[0] as FakeXhr).respond(201, ok("u0", "f0.txt"));
@@ -309,7 +310,7 @@ test("a waiting file removed before its turn never uploads", () => {
 });
 
 test("a 429 too_many_uploads waits for a slot and tries again by itself", () => {
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt"), file("b.txt")]);
   const [a, b] = FakeXhr.all as [FakeXhr, FakeXhr];
   b.respond(429, {
@@ -328,7 +329,7 @@ test("a 429 too_many_uploads waits for a slot and tries again by itself", () => 
 
 test("a 429 with nothing of ours in flight retries after a pause, and gives up after a few tries", () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  const s = createUploadStore("dev");
+  const s = createUploadStore(refFor("dev"));
   s.add([file("a.txt")]);
   const busy = { error: { code: "too_many_uploads", message: "Too many uploads at once." } };
   for (let i = 0; i < 3; i++) {
@@ -346,7 +347,7 @@ test("uploads used since a point are the ones on messages from your ref, whateve
   const msg = (seq: number, from: string, uploadId: string) =>
     ({
       seq,
-      agentSlug: "dev",
+      agentRef: refFor("dev"),
       turnId: null,
       at: "2026-11-22T10:00:00.000Z",
       event: {

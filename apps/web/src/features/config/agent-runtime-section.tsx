@@ -50,10 +50,10 @@ export function AgentRuntimeSection({
     .join(". ");
 
   async function switchTo(to: Runtime) {
-    await updateAgent(agent.slug, { runtime: to });
+    await updateAgent(agent.ref, { runtime: to });
     await Promise.all([
-      qc.invalidateQueries({ queryKey: ["agent", agent.slug] }),
-      qc.invalidateQueries({ queryKey: ["agent-config", agent.slug] }),
+      qc.invalidateQueries({ queryKey: ["agent", agent.ref] }),
+      qc.invalidateQueries({ queryKey: ["agent-config", agent.ref] }),
       qc.invalidateQueries({ queryKey: ["agents"] }),
     ]);
   }
@@ -88,9 +88,9 @@ export function AgentRuntimeSection({
       <ConfirmDialog
         open={asking}
         onOpenChange={setAsking}
-        title={AGENT_RUNTIME_COPY.toLocalTitle(agent.slug)}
+        title={AGENT_RUNTIME_COPY.toLocalTitle(agent.handle)}
         body={AGENT_RUNTIME_COPY.toLocalBody}
-        confirmLabel={AGENT_RUNTIME_COPY.toLocalAction(agent.slug)}
+        confirmLabel={AGENT_RUNTIME_COPY.toLocalAction(agent.handle)}
         pendingLabel="Switching…"
         onConfirm={() => switchTo("local")}
       />

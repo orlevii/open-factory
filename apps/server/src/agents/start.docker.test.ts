@@ -26,7 +26,12 @@ import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { TemplateIndex } from "../templates/template-index.ts";
 import { createTestDb } from "../test/helpers.ts";
 import { hostOnlyLibrary } from "../test/library.ts";
-import { principalSql, seedTestPrincipal, testManagerUserId } from "../test/principals.ts";
+import {
+  principalSql,
+  refOfHandle,
+  seedTestPrincipal,
+  testManagerUserId,
+} from "../test/principals.ts";
 import { KeyedMutex } from "../workspace/lock.ts";
 import { Workspace } from "../workspace/workspace.ts";
 import type { AgentRuntime } from "./agent-runtime.ts";
@@ -248,7 +253,7 @@ async function setup(
       }),
     },
   });
-  const rt = await runtimes.bySlug(slug);
+  const rt = await runtimes.byRef(await refOfHandle(t.db, slug));
   if (!rt) throw new Error("no runtime");
   world = {
     docker,

@@ -5,7 +5,7 @@ import { formatTime } from "./format";
 import { useLongPressRegion } from "./long-press-region";
 import { ClampedMarkdown } from "./message-block";
 import type { Row } from "./rows";
-import { type Party, type PartyKind, SpeakerLine } from "./speaker-line";
+import { type Party, type PartyKind, SpeakerLine, useSpeakers } from "./speaker-line";
 import { denialText, ToolCallRow } from "./tool-call-row";
 import { parseWho, whoName } from "./who";
 
@@ -94,13 +94,11 @@ const STATUS_TEXT: Record<string, string> = {
  *  line, the body as written, and a status line only when there is something to say. The call, the
  *  inbox and the links live in the row menu (U3 §7.5). */
 export function OutgoingMessage({
-  slug,
   row,
   showCall,
   onToggleCall,
   rowProps,
 }: {
-  slug: string;
   row: OutgoingRow;
   showCall: boolean;
   onToggleCall(): void;
@@ -110,16 +108,17 @@ export function OutgoingMessage({
   const sent = parseSendResults(row.result);
   const parties = partiesOf(row, input.to);
   const failed = row.result?.isError === true;
+  const handle = useSpeakers().sessionAgent?.handle ?? "…";
   return (
     <CallBlock
       row={row}
-      label={`Message from @${slug} to ${parties.map((p) => p.handle).join(", ")}`}
+      label={`Message from @${handle} to ${parties.map((p) => p.handle).join(", ")}`}
       showCall={showCall}
       onToggleCall={onToggleCall}
       rowProps={rowProps}
       header={
         // "Name → Recipient" (U3 §7.2): "You" for you; several: "Name → @a, @b +8" (I1 §4.7).
-        <SpeakerLine from={slug} fromKind="agent" self to={parties} at={row.at}>
+        <SpeakerLine from={handle} fromKind="agent" self to={parties} at={row.at}>
           {input.urgent === true && (
             <span className="rounded-sm border border-border px-1.5 text-foreground">Urgent</span>
           )}

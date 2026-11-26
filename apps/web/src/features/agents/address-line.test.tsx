@@ -18,7 +18,7 @@ function routes(taken: string[] = []) {
   mockApi({
     "GET /api/agents?ended=exclude": () =>
       json({
-        agents: taken.map((slug) => agentSummary({ slug })),
+        agents: taken.map((slug) => agentSummary({ handle: slug })),
         running: { count: 0 },
         more: false,
       }),

@@ -7,6 +7,9 @@ import { PageBody, PageHeader } from "@/components/page-header";
 import { ResourceNotFound } from "@/components/route-states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BackToAgent } from "@/features/agents/back-to-agent";
+import { agentRefParams } from "@/features/agents/ref-params";
+import { useHandle } from "@/features/agents/use-agent-index";
+import { NO_AGENT_LINE } from "@/features/config/messages";
 import { agentUsageQuery } from "@/features/usage/api";
 import { EstimateLine } from "@/features/usage/estimate-line";
 import { RangeFilter } from "@/features/usage/range-filter";
@@ -20,37 +23,39 @@ const searchSchema = z.object({
   days: usageDaysSchema.optional().catch(undefined),
 });
 
-// `$slug_` keeps this page out of the session view's layout: it's a sibling, not a child.
-export const Route = createFileRoute("/_app/agents/$slug_/usage")({
+// `$ref_` keeps this page out of the session view's layout: it's a sibling, not a child.
+export const Route = createFileRoute("/_app/agents/$ref_/usage")({
+  params: agentRefParams,
   validateSearch: searchSchema,
-  // Only so the first load shows the pending mark and an unknown slug the not-found state. No
+  // Only so the first load shows the pending mark and an unknown agentRef the not-found state. No
   // loaderDeps: a range switch must not block the navigation (the page keeps the previous data).
   loader: async ({ context, params, location }) => {
     const days = searchSchema.parse(location.search).days ?? DEFAULT_DAYS;
     try {
-      await context.queryClient.ensureQueryData(agentUsageQuery(params.slug, days));
+      await context.queryClient.ensureQueryData(agentUsageQuery(params.ref, days));
     } catch (e) {
       if (e instanceof ApiError && e.code === "agent_not_found") throw notFound();
       // Anything else: the page shows the error line.
     }
   },
   notFoundComponent: () => (
-    <ResourceNotFound title="Agent not found." backTo="/agents" backLabel="Back to agents" />
+    <ResourceNotFound title={NO_AGENT_LINE} backTo="/agents" backLabel="Back to agents" />
   ),
   component: AgentUsagePage,
 });
 
 function AgentUsagePage() {
-  const { slug } = Route.useParams();
+  const { ref: agentRef } = Route.useParams();
   const days = Route.useSearch().days ?? DEFAULT_DAYS;
   const navigate = useNavigate();
   const q = useQuery({
-    ...agentUsageQuery(slug, days),
+    ...agentUsageQuery(agentRef, days),
     // Another range of the same agent stays on screen while the new one loads; another agent's never.
-    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === slug ? prev : undefined),
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === agentRef ? prev : undefined),
   });
   const data = q.data;
-  const name = data?.agent.displayName ?? `@${slug}`;
+  const handle = useHandle(agentRef);
+  const name = data?.agent.displayName ?? `@${handle}`;
   // The range the data on screen covers: the previous one while a switch loads.
   const shownDays = (data?.daily.length ?? days) as UsageDays;
   return (
@@ -59,13 +64,13 @@ function AgentUsagePage() {
       <PageBody>
         <div className="grid gap-6">
           <div className="grid gap-3">
-            <BackToAgent slug={slug} />
+            <BackToAgent agentRef={agentRef} handle={data?.agent.handle} />
             <RangeFilter
               value={days}
               onChange={(d) =>
                 void navigate({
-                  to: "/agents/$slug/usage",
-                  params: { slug },
+                  to: "/agents/$ref/usage",
+                  params: { ref: agentRef },
                   search: d === DEFAULT_DAYS ? {} : { days: d },
                 })
               }
@@ -73,7 +78,7 @@ function AgentUsagePage() {
           </div>
           {!data && q.isError && (
             <ErrorLine
-              text={`Couldn't load usage for @${slug}.`}
+              text={`Couldn't load usage for @${handle}.`}
               onRetry={() => void q.refetch()}
             />
           )}

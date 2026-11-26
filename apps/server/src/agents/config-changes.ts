@@ -131,7 +131,7 @@ export class ConfigChanges {
   constructor(
     private readonly d: {
       agents: ConfigChangeAgents;
-      store: Pick<EventStore, "append">;
+      store: Pick<EventStore, "append" | "refOfAgent">;
       runtimes: Pick<
         AgentRuntimes,
         | "get"
@@ -298,7 +298,10 @@ export class ConfigChanges {
       else await this.d.store.append(agent.id, null, { type: "config_changed", by, changes });
       // The agent frame goes with an event only. A restart-check-only change (`before: null`) shows up through the
       // agent's own status frame (`restartPending`, `restartChanges`), which the runtime publishes.
-      this.d.bus.publishAll({ type: "config_changed", agent: agent.slug });
+      this.d.bus.publishAll({
+        type: "config_changed",
+        agent: await this.d.store.refOfAgent(agent.id),
+      });
     }
     if (agent.archivedAt || agent.terminatedAt)
       return { changes, restartChecked: false, done: this.settle(agent, work) };

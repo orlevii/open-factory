@@ -2,6 +2,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { enqueueStatusFrame } from "@/features/agents/status-frames";
 import { chatMsg, mine, page, stubChatApi } from "@/test/chat-fixtures";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { onChatChanged } from "./use-chat";
 
@@ -49,14 +50,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 const frame = (qc: Parameters<typeof onChatChanged>[0]) =>
-  act(() => onChatChanged(qc, { type: "chat_changed", agent: "dev" }));
+  act(() => onChatChanged(qc, { type: "chat_changed", agent: refFor("dev") }));
 const nodes = () => [...document.querySelectorAll("[data-row]")];
 /** The principals list arrives after the first paint and re-renders every row once; the tests measure after it. */
 const principalsLoaded = (qc: Parameters<typeof onChatChanged>[0]) =>
   waitFor(() => expect(qc.getQueryData(["principals"])).toBeDefined());
 
 test("one new entry renders one row: one markdown, every other row's element kept", async () => {
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Reply 50");
   await principalsLoaded(queryClient);
   const before = nodes();
@@ -72,7 +73,7 @@ test("one new entry renders one row: one markdown, every other row's element kep
 });
 
 test("a refetch that changes nothing renders no markdown", async () => {
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Reply 50");
   await principalsLoaded(queryClient);
   count.markdown = [];
@@ -85,7 +86,7 @@ test("a refetch that changes nothing renders no markdown", async () => {
 
 test("a pending message turning delivered re-renders only that row", async () => {
   thread = [...thread, mine(51, { state: "pending" })];
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Ask 51");
   await principalsLoaded(queryClient);
   count.markdown = [];
@@ -96,14 +97,14 @@ test("a pending message turning delivered re-renders only that row", async () =>
 });
 
 test("an agent_status frame renders no markdown", async () => {
-  const { queryClient } = renderApp("/agents/dev/chat", alice);
+  const { queryClient } = renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Reply 50");
   await principalsLoaded(queryClient);
   count.markdown = [];
   await act(async () => {
     enqueueStatusFrame(queryClient, {
       type: "agent_status",
-      agent: "dev",
+      agent: refFor("dev"),
       status: "working",
       turnOpen: true,
       restartPending: false,
@@ -117,7 +118,7 @@ test("an agent_status frame renders no markdown", async () => {
 
 test("the working line's tick renders no row and no markdown", async () => {
   working = { key: "m1", since: new Date().toISOString() };
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Reply 50");
   await waitFor(() => expect(document.querySelector("[data-status-line]")).not.toBeNull());
   const line = document.querySelector("[data-status-line]") as HTMLElement;
@@ -131,7 +132,7 @@ test("the working line's tick renders no row and no markdown", async () => {
 });
 
 test("the highlighter warms once when the Chat opens", async () => {
-  renderApp("/agents/dev/chat", alice);
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await screen.findByText("Reply 50");
   expect(count.warm).toBe(1);
 });

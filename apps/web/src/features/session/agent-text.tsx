@@ -1,6 +1,6 @@
 import { memo, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BlockMarkdown } from "@/components/markdown/block-markdown";
-import { SpeakerLine } from "./speaker-line";
+import { SpeakerLine, useSpeakers } from "./speaker-line";
 
 /** The muted line under a block cut at 64 KiB, live and persisted alike (U3 §11.2, Q44). */
 export const CAP_LINE = "Cut at 64 KB; the full text stayed with the agent.";
@@ -54,7 +54,6 @@ export const AgentText = memo(function AgentText({
   capped = false,
   head,
   at,
-  slug,
 }: {
   text: string;
   live?: boolean;
@@ -62,15 +61,14 @@ export const AgentText = memo(function AgentText({
   /** Opens a speaker line (U3 §7.2). */
   head: boolean;
   at?: string;
-  /** The session's agent, the speaker. */
-  slug: string;
 }) {
   const body = useRef<HTMLDivElement>(null);
   const shown = useHeldWhileSelected(body, text, live);
+  const handle = useSpeakers().sessionAgent?.handle ?? "…";
   return (
     <>
       {/* The turn's first text, and the first after an incoming message (U3 §7.2). */}
-      {head && <SpeakerLine from={slug} fromKind="agent" self at={at} />}
+      {head && <SpeakerLine from={handle} fromKind="agent" self at={at} />}
       <div ref={body} dir="auto">
         <BlockMarkdown text={shown} live={live} />
       </div>

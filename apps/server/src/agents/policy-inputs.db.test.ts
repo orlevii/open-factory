@@ -54,7 +54,7 @@ test("templateHasLocalAgents: true for an archived local agent, and for a spawne
     );
   expect(await policy.templateHasLocalAgents("localtpl")).toBe(false);
   await create("loc", "localtpl");
-  await t.app.agents.archive("loc", human);
+  await t.app.agents.archive(await t.refOf("loc"), human);
   expect(await policy.templateHasLocalAgents("localtpl")).toBe(true);
   expect(await policy.templateHasLocalAgents("dockertpl")).toBe(false);
 

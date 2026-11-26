@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { FakeDriver } from "./agents/testing/fake-driver.ts";
-import { makeTestApp, signUp } from "./test/helpers.ts";
+import { makeTestApp, runtimeOf, signUp } from "./test/helpers.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>> | undefined;
 afterEach(async () => {
@@ -39,7 +39,7 @@ test("spec §5.3: a boot wake starts the agent with .mcp.json pointing at an age
     return start(spec, opts);
   };
   const next = await h.reopen({ harnessDriver: probe });
-  await (await next.app.runtimes.bySlug("ada"))?.settled();
+  await (await runtimeOf(next.app, "ada"))?.settled();
   await Promise.all(pending);
 
   expect(probe.starts).toHaveLength(1);

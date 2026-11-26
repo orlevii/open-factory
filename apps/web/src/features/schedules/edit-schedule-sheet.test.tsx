@@ -7,6 +7,7 @@ import { clearDraft, hasDraft, resetDrafts } from "@/features/sheets/drafts";
 import { closeSheet, getSheetState, openSheet } from "@/features/sheets/sheet-store";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { pickOption } from "@/test/select-helpers";
 import { agentSummary } from "@/test/session-fixtures";
@@ -37,10 +38,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const user = { kind: "human", ref: "ref-or", handle: "or" };
+const user = { kind: "human", ref: refFor("or"), handle: "or" };
 const sched = (o: Record<string, unknown> = {}) => ({
   key: "S-3",
-  target: { slug: "ceo", displayName: "CEO", archived: false, terminated: false },
+  target: {
+    ref: refFor("ceo"),
+    handle: "ceo",
+    displayName: "CEO",
+    archived: false,
+    terminated: false,
+  },
   cron: "0 9 * * 1-5",
   timezone: "Europe/Berlin",
   body: "Morning review\nsecond line",
@@ -56,7 +63,7 @@ const sched = (o: Record<string, unknown> = {}) => ({
 });
 const agents = () =>
   json({
-    agents: [agentSummary({ slug: "ceo", displayName: "CEO" })],
+    agents: [agentSummary({ handle: "ceo", displayName: "CEO" })],
     more: false,
     running: { count: 0 },
   });
@@ -295,7 +302,13 @@ test("an archived target stays selected as an extra option; the helper names the
   mockApi(
     common(
       sched({
-        target: { slug: "old", displayName: "Old", archived: true, terminated: false },
+        target: {
+          ref: refFor("old"),
+          handle: "old",
+          displayName: "Old",
+          archived: true,
+          terminated: false,
+        },
         bodyAuthor: {
           kind: "agent",
           ref: "ref-lead",
@@ -401,7 +414,13 @@ test("deleted with a terminated target offers no Restore", async () => {
     common(
       sched({
         deleted: true,
-        target: { slug: "kid", displayName: "Kid", archived: false, terminated: true },
+        target: {
+          ref: refFor("kid"),
+          handle: "kid",
+          displayName: "Kid",
+          archived: false,
+          terminated: true,
+        },
       }),
     ),
   );

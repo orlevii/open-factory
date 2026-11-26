@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { fakeMatchMedia } from "@/test/fake-match-media";
 import { json, type MockApi, mockApi } from "@/test/mock-api";
+import { refFor } from "@/test/refs";
 import { alice, renderApp } from "@/test/render-app";
 import { detail } from "@/test/session-fixtures";
 
@@ -41,21 +42,21 @@ const hold = {
   loopHold: {
     id: "h1",
     agents: [
-      { slug: "a", status: "live" },
-      { slug: "b", status: "live" },
+      { ref: refFor("a"), handle: "a", status: "live" },
+      { ref: refFor("b"), handle: "b", status: "live" },
     ],
     waiting: 4,
     sentOn: 0,
     resumedAt: null,
     resumedBy: null,
   },
-  link: { kind: "session", agentSlug: "a" },
+  link: { kind: "session", agentRef: refFor("a") },
 };
 const mention = {
   ...base,
   id: "men1",
   kind: "mention",
-  from: { kind: "agent", ref: "dev00000", handle: "dev" },
+  from: { kind: "agent", ref: refFor("dev"), handle: "dev" },
   preview: "ping",
   task: { key: "T-7", title: "Seven" },
   link: { kind: "task", key: "T-7", commentId: "c1" },
@@ -66,7 +67,7 @@ const task = {
   status: "open",
   assignee: null,
   blockedBy: [],
-  createdBy: { kind: "human", ref: "ref-alice", handle: "alice" },
+  createdBy: { kind: "human", ref: refFor("alice"), handle: "alice" },
   updatedAt: base.createdAt,
   body: "",
   createdAt: base.createdAt,
@@ -87,7 +88,7 @@ beforeEach(() => {
     "GET /api/inbox?": () => json({ chats: [], items, nextCursor: null }),
     "GET /api/inbox/unread-count": () => json({ count: 0, byAgent: {} }),
     "GET /api/inbox/old1": () => json({ item: later }),
-    "GET /api/agents/ada": () => json(detail()),
+    [`GET /api/agents/${refFor("ada")}`]: () => json(detail()),
     "GET /api/tasks/T-7": () => json(task),
     "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0, max: 8 } }),
   });
@@ -97,8 +98,10 @@ const itemFetches = () => api.calls.filter((c) => /^\/api\/inbox\/(?!unread)/.te
 
 test("below 1024 a chat id goes to the Chat without fetching an item", async () => {
   fakeMatchMedia.installWidth(390);
-  const app = renderApp("/inbox?item=chat:ada", alice);
-  await waitFor(() => expect(app.router.state.location.pathname).toBe("/agents/ada/chat"));
+  const app = renderApp(`/inbox?item=chat:${refFor("ada")}`, alice);
+  await waitFor(() =>
+    expect(app.router.state.location.pathname).toBe(`/agents/${refFor("ada")}/chat`),
+  );
   expect(itemFetches()).toHaveLength(0);
 });
 

@@ -3,13 +3,13 @@ import { CircleAlert } from "lucide-react";
 import { type CSSProperties, memo, useState } from "react";
 import { type BotParts, botParts } from "../lib/factory-bot";
 
-/** Parts are a pure function of the slug, so one result serves every avatar of that agent. */
+/** Parts are a pure function of the agent's ref (stable across renames), so one result serves every avatar of that agent. */
 const PARTS = new Map<string, BotParts>();
-export function partsFor(slug: string): BotParts {
-  let p = PARTS.get(slug);
+export function partsFor(agentRef: string): BotParts {
+  let p = PARTS.get(agentRef);
   if (!p) {
-    p = botParts(slug);
-    PARTS.set(slug, p);
+    p = botParts(agentRef);
+    PARTS.set(agentRef, p);
   }
   return p;
 }
@@ -68,15 +68,15 @@ const ACCESSORIES = [
 ];
 
 const BotSvg = memo(function BotSvg({
-  slug,
+  agentRef,
   color,
   size,
 }: {
-  slug: string;
+  agentRef: string;
   color: number | null;
   size: number;
 }) {
-  const p = partsFor(slug);
+  const p = partsFor(agentRef);
   return (
     <svg
       viewBox="0 0 24 24"
@@ -169,17 +169,17 @@ function badgeFor(status: AgentStatus, avatar: 16 | 20 | 24) {
 }
 
 export const AgentAvatar = memo(function AgentAvatar({
-  slug,
+  agentRef,
   template,
   avatarVersion,
   color,
   size,
   status,
 }: {
-  slug: string;
+  agentRef: string;
   template?: string;
   avatarVersion?: string | null;
-  /** The chosen identity colour 1..12, null for Auto (seeded from the slug). Required so no call site forgets it. */
+  /** The chosen identity colour 1..12, null for Auto (seeded from the agentRef). Required so no call site forgets it. */
   color: number | null;
   size: 16 | 20 | 24;
   status?: AgentStatus;
@@ -204,7 +204,7 @@ export const AgentAvatar = memo(function AgentAvatar({
             : undefined
         }
       >
-        <BotSvg slug={slug} color={color} size={size} />
+        <BotSvg agentRef={agentRef} color={color} size={size} />
         {src ? <OverrideImg key={src} src={src} /> : null}
       </span>
       {status && badge ? (

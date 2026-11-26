@@ -268,8 +268,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
   }, []);
 
   // The address field opens itself, focused, when Display name is left with a name that derives nothing.
-  const [forceSlug, setForceSlug] = useState(false);
-  const onSlugOpened = useCallback(() => setForceSlug(false), []);
+  const [forceRef, setForceRef] = useState(false);
+  const onRefOpened = useCallback(() => setForceRef(false), []);
 
   // More options opens itself, once per reason, and says why (§6.2); the user can fold it again.
   const several = (credentials?.length ?? 0) > 1;
@@ -347,7 +347,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
     let notSet: string | undefined;
     if (modelEffort)
       try {
-        await saveModelEffort(qc, agent.slug, modelEffort);
+        await saveModelEffort(qc, agent.ref, modelEffort);
       } catch (err) {
         notSet = err instanceof ApiError ? err.message : FORM_MSG.unreachable;
       }
@@ -363,13 +363,12 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
       !getSheetState().child // a stacked child the user opened on it (and its input) stays
     )
       closeSheet();
-    const go = () =>
-      void router.navigate({ to: "/agents/$slug/chat", params: { slug: agent.slug } });
-    const created = `Created @${agent.slug}.`;
+    const go = () => void router.navigate({ to: "/agents/$ref/chat", params: { ref: agent.ref } });
+    const created = `Created @${agent.handle}.`;
     if (notSet) {
       // Said in a toast either way: the sheet closes onto the session.
       const configure = () =>
-        void router.navigate({ to: "/agents/$slug/config", params: { slug: agent.slug } });
+        void router.navigate({ to: "/agents/$ref/config", params: { ref: agent.ref } });
       if (open) {
         closeSheet();
         go();
@@ -443,7 +442,7 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               onBlur={(e) => {
                 blur("displayName", e);
                 if (!values.touched.slug && shown.displayName.trim() !== "" && !shown.slug)
-                  setForceSlug(true);
+                  setForceRef(true);
               }}
               autoComplete="off"
             />
@@ -454,8 +453,8 @@ function NewAgentForm({ spec, sheetId }: BodyProps<Spec>) {
               onSlug={(v) => set("slug", v)}
               onBlur={(e) => blur("slug", e)}
               error={errors.slug}
-              forceOpen={forceSlug}
-              onOpened={onSlugOpened}
+              forceOpen={forceRef}
+              onOpened={onRefOpened}
             />
           </div>
           <FieldShell

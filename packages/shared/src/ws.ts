@@ -7,6 +7,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ping") }),
   z.object({
     type: z.literal("subscribe"),
+    /** The agent's ref; every `agent` in this protocol is one. */
     agent: z.string(),
     afterSeq: z.number().int().nonnegative(),
   }),
@@ -120,7 +121,7 @@ export const serverMessageSchema = z.discriminatedUnion("type", [
   }),
   /**
    * I7 §8.3: an agent created, archived or unarchived an agent, or created a template. Published only for agent
-   * actors (a human's own action already toasts in their browser); `by` is the actor's `@slug`.
+   * actors (a human's own action already toasts in their browser); `by` and `subject` are the actor's and the agent's refs.
    */
   z.object({
     type: z.literal("org_action"),

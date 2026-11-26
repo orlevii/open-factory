@@ -259,6 +259,7 @@ test("GET /api/users lists every user with disabledAt", async () => {
   expect(users.map((u) => u.handle).sort()).toEqual(["al", "or"]);
   expect(users.find((u) => u.handle === "or")).toEqual({
     id: or.user.id,
+    ref: or.user.ref,
     name: or.input.name,
     handle: "or",
     email: or.input.email,

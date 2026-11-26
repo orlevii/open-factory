@@ -33,11 +33,11 @@ export const credentialsUsageQuery = (days: UsageDays) =>
       apiFetch(`/api/usage/credentials?days=${days}`, { schema: credentialsUsageSchema }),
   });
 
-export const agentUsageQuery = (slug: string, days: UsageDays) =>
+export const agentUsageQuery = (ref: string, days: UsageDays) =>
   queryOptions({
-    queryKey: ["usage", "agent", slug, days],
+    queryKey: ["usage", "agent", ref, days],
     queryFn: () =>
-      apiFetch(`/api/agents/${encodeURIComponent(slug)}/usage?days=${days}`, {
+      apiFetch(`/api/agents/${encodeURIComponent(ref)}/usage?days=${days}`, {
         schema: agentUsageSchema,
       }),
   });

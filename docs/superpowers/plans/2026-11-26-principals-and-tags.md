@@ -279,7 +279,7 @@ test.each([
   - `spawning/spawn-service.ts`
   - `db-errors.ts` (`isSlugUnique` → `isHandleTaken`)
   - `test/helpers.ts` (`seedTestAgent`), `agents/testing/rows.ts` (`insertAgent`), `agents/testing/runtime-harness.ts`
-  - every importer of `test/handles.ts`
+  - every importer of `test/handles.ts` (including `agents/agent-service.runtime.db.test.ts` from #209)
   - the raw `insert into agents` / `insert into users` test files (13 + 37; list with `grep -rln "insert into agents\|insert into users" apps packages --include=*.ts`)
   - the `packages/db` schema tests that insert `handles`
 - Migration: `0029_*` (generated)
@@ -776,7 +776,7 @@ export async function tagLookupFor(tx: Tx, texts: readonly string[]): Promise<(r
 - `workspace/workspace.ts`: the lock key, `workdir`, `materialize`, `discard`, `deleteWorkspace`, `resetPersona`, `applyPersona` and `prepare` take a ref; `PrepareInput` gets `ref` + `handle`.
 - `agents/agent-service.ts`, `spawning/spawn-service.ts`. **Order:** open the transaction → `createPrincipal` → `materialize(ref)` under `lock.run(ref)` → insert → commit. On failure, `discard(ref)`; the transaction rollback removes the principal.
 - `spawning/reaper.ts`, `agents/start.ts`, `uploads/service.ts`, `routes/agents.ts` (pin).
-- `runtime/docker/containers.ts`: `containerName(ref) = \`open-factory-${ref}\``; drop `LABEL_SLUG`; methods take `(agentId, ref)`; `ours()` checks the agent-id label. Also `exec-transport.ts`, `agents/runtimes.ts`, `agents/agent-runtime.ts` (1876, 2905, 2938, 2961).
+- `runtime/docker/containers.ts`: `containerName(ref) = \`open-factory-${ref}\``; drop `LABEL_SLUG`; methods take `(agentId, ref)`; `ours()` checks the agent-id label. Also `exec-transport.ts`, `agents/runtimes.ts`, `agents/agent-runtime.ts` (1876, 2905, 2938, 2961), and both calls in `agents/start.ts` (`stopIfRunning` and, since #209, `remove` for a local start).
 - `agents/runtime-spec.ts`: `GIT_*_NAME` = handle; email `${ref}@open-factory.local`; `AgentRuntimeSpec.slug` → `ref` (`packages/harness/src/types.ts:12` and the log ctx).
 - `workspace/settings.ts`: the system prompt names the handle.
 - `agents/event-bus.ts`: per-agent channels keyed by agent id (the WS protocol is unchanged here; Task 5.2 moves it to refs).
@@ -814,7 +814,8 @@ export async function tagLookupFor(tx: Tx, texts: readonly string[]): Promise<(r
 - Rename `routes/_app/agents.$slug*.tsx` → `agents.$ref*.tsx` and regenerate `routeTree.gen.ts`.
 - Every `to="/agents/$slug/…" params={{ slug }}` → `$ref` (agent-chip, `Tag`, agent-menu, agent-tree, back-to-agent, new-agent-sheet, sidebar-tree, view-switch, chat-composer, chat-view, turn-line, config-states, inbox/*, command-palette, schedule-row, session/*, settings/shared, usage-section, skills peeks, template-editor, usage-tables).
 - String paths: `notification-copy.ts`, `org-toasts.ts`, `edit-agent-sheet.tsx` `AGENT_PAGES`, `app-sidebar.tsx` `matchSession`, `inbox/api.ts` `chatSlugOf` → `chatRefOf`.
-- Query keys `["agent", ref]`, `["chat", ref]`, `["usage", "agent", ref, days]`.
+- Query keys `["agent", ref]`, `["agent-config", ref]`, `["chat", ref]`, `["usage", "agent", ref, days]`.
+- `features/config/agent-runtime-section.tsx` (#209): `updateAgent(ref, …)`, invalidations by ref; its dialog title names the handle.
 - `use-agent-index.ts` by ref; `lib/ws.ts` subscriptions by ref.
 - `AgentAvatar` seeds from the id (`botParts(id)`), and so does `colour-field.tsx`.
 - Not-found copy: "No agent at this link".
@@ -857,7 +858,7 @@ export async function tagLookupFor(tx: Tx, texts: readonly string[]): Promise<(r
 **Files:**
 - Server:
   - Create `principals/principal-events.ts` (`publishPrincipal(bus, db, id)`: the full `PrincipalItem`, **after commit**).
-  - Modify `routes/agents.ts` (PATCH accepts `handle`), `routes/me.ts` (`PATCH /api/me`), `packages/shared/src/ws.ts` (`{ type: "principal_updated", principal: principalItemSchema }`), `packages/shared/src/principals.ts` (`patchMeBodySchema`).
+  - Modify `routes/agents.ts` (PATCH accepts `handle` beside the human-only `runtime` from #209; both may come in one body), `routes/me.ts` (`PATCH /api/me`), `packages/shared/src/ws.ts` (`{ type: "principal_updated", principal: principalItemSchema }`), `packages/shared/src/principals.ts` (`patchMeBodySchema`).
   - `publishPrincipal` is called on: agent create, spawn, sign-up, a handle or name change, archive, unarchive, terminate, disable, enable.
 - Web:
   - `features/principals/api.ts`: `HANDLE_QUERY_KEYS = [["agents"], ["agent"], ["inbox"], ["tasks"], ["task"], ["schedules"], ["usage"], ["users"], ["session"], ["loop-holds"]]`. Confirm each key against `features/*/api.ts` and list every query that renders a handle field; chats are excluded because they read from the cache.

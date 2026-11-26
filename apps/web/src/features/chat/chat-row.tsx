@@ -6,7 +6,7 @@ import { Markdown } from "@/components/markdown/markdown";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useHandle } from "@/features/agents/use-agent-index";
-import { principalsQueryOptions } from "@/features/principals/api";
+import { handleText, principalsQueryOptions } from "@/features/principals/api";
 import { usePrincipal } from "@/features/principals/use-principal";
 import { formatTime } from "@/features/session/format";
 import { InLongPressRow } from "@/features/session/long-press-region";
@@ -56,7 +56,7 @@ function useRecipientsView(
             : recipients
                 .filter((r) => r.ref !== agentRef && handleOf(r.ref)?.toLowerCase() !== me)
                 .map((r) => r.ref),
-        text: recipients.map((r) => `@${handleOf(r.ref) ?? "unknown"}`).join(", "),
+        text: recipients.map((r) => `@${handleText(cache, r.ref)}`).join(", "),
       };
     },
   });

@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { Tag } from "@/components/tag/tag";
-import { usePrincipalLookup } from "@/features/principals/use-principal";
+import { useHandleText } from "@/features/principals/use-principal";
 
 const PLURAL = new Intl.PluralRules("en");
 const COUNT = new Intl.NumberFormat("en");
@@ -9,11 +9,11 @@ const COUNT = new Intl.NumberFormat("en");
  *  many more. The full list is the group's accessible name and the row menu's Recipients item.
  *  `others` are principal refs: the handles come from the principals cache. */
 export const AlsoTo = memo(function AlsoTo({ others }: { others: readonly string[] }) {
-  const lookup = usePrincipalLookup();
+  const handleOf = useHandleText();
   const first = others[0];
   if (first === undefined) return null;
   const more = others.length - 1;
-  const names = others.map((ref) => `@${lookup(ref)?.handle ?? "unknown"}`);
+  const names = others.map((ref) => `@${handleOf(ref)}`);
   return (
     // biome-ignore lint/a11y/useSemanticElements: a fieldset is a form control group; this names a phrase inside a line.
     <span

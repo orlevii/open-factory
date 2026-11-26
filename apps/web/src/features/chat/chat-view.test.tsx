@@ -185,6 +185,33 @@ test("one other recipient reads 'also to @qa', with no count", async () => {
   expect(group).not.toHaveTextContent("others");
 });
 
+test("a recipient the cache can't name yet reads '@…', and '@unknown' only once the server says nobody has it", async () => {
+  const GHOST = "0gh00000";
+  stubChatApi({
+    principals: [principal(QA_REF, "qa")],
+    chat: () =>
+      page([mine(1, { recipients: [{ ref: DEV_REF }, { ref: GHOST }, { ref: QA_REF }] })]),
+  });
+  const base = fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+  let answer: (r: Response) => void = () => {};
+  let asked = false;
+  vi.stubGlobal("fetch", (u: string, i?: RequestInit) =>
+    u.includes(`/api/principals?refs=`)
+      ? new Promise<Response>((r) => {
+          asked = true;
+          answer = r;
+        })
+      : base(u, i),
+  );
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
+  // Once the list has loaded (it names @qa), the ghost is still only pending.
+  await screen.findByRole("group", { name: "Also to @…, @qa" });
+  expect(document.body).not.toHaveTextContent("@unknown");
+  await waitFor(() => expect(asked).toBe(true));
+  await act(async () => answer(json({ principals: [] })));
+  await screen.findByRole("group", { name: "Also to @unknown, @qa" });
+});
+
 test("the row menu: Copy text, Copy link to ?message=, View in session; no Recipients without others", async () => {
   stubChatApi({ chat: () => page([chatMsg(1)]) });
   renderApp(`/agents/${refFor("dev")}/chat`, alice);

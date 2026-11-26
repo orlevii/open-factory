@@ -13,6 +13,10 @@ export interface PrincipalsCache {
   unknown: Set<string>;
 }
 
+/** The handle to print for a ref: "…" while it is only pending, "unknown" once the server said it is nobody. */
+export const handleText = (cache: PrincipalsCache, ref: string): string =>
+  cache.byRef.get(ref)?.handle ?? (cache.unknown.has(ref) ? "unknown" : "…");
+
 /** Everyone, fetched once; tags that name someone newer join through `requestPrincipal`'s batches. */
 export const principalsQueryOptions = queryOptions({
   queryKey: ["principals"],

@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { AgentChip } from "@/components/agent-chip";
 import { Button } from "@/components/ui/button";
 import { useHandle } from "@/features/agents/use-agent-index";
@@ -52,6 +52,7 @@ export const Recipients = memo(function Recipients({
   recipients,
   selected,
   onRemove,
+  add,
 }: {
   primaryName: string;
   /** Refs of the agents you added, in order. */
@@ -59,6 +60,8 @@ export const Recipients = memo(function Recipients({
   /** The last chip is selected: the next Backspace removes it. */
   selected: boolean;
   onRemove(agentRef: string): void;
+  /** The "Add" control that ends the row. */
+  add?: ReactNode;
 }) {
   const [prev, setPrev] = useState(recipients);
   const [prevSelected, setPrevSelected] = useState(selected);
@@ -139,6 +142,7 @@ export const Recipients = memo(function Recipients({
               +{hidden}
             </Button>
           )}
+          {add}
         </div>
       )}
     </>

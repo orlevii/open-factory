@@ -85,42 +85,86 @@ afterEach(() => vi.unstubAllGlobals());
 const box = () => screen.findByRole("combobox", { name: "Message to Dev agent" });
 const note = () => document.querySelector<HTMLElement>("[data-composer-hint]");
 const toRow = () => document.querySelector<HTMLElement>("[data-recipients]");
+/** Adds an agent through the "Add recipient" picker, then closes it. */
 async function addRecipient(handle: string) {
-  const input = await box();
-  await userEvent.type(input, `@${handle.slice(0, 2)}`);
-  await userEvent.click(
-    await screen.findByRole("option", { name: new RegExp(`Add @${handle} as`) }),
-  );
-  return input;
+  await userEvent.click(await screen.findByRole("button", { name: "Add recipient" }));
+  await userEvent.click(await screen.findByRole("option", { name: new RegExp(`@${handle}$`) }));
+  await userEvent.keyboard("{Escape}");
+  return box();
 }
 
 test("no 'To:' row with one recipient; the toolbar has @ and attach, no /", async () => {
   renderApp(`/agents/${refFor("dev")}/chat`, alice);
   await box();
   expect(toRow()).toBeNull();
-  expect(screen.getByRole("button", { name: "Add a recipient" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Add recipient" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Tag someone" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /command/i })).toBeNull();
   expect(await box()).toHaveAttribute("placeholder", "Message Dev agent");
 });
 
-test("accepting @ops adds a recipient: the token goes, the row opens, it is announced", async () => {
+test("picking from @ in chat inserts a tag and adds no recipient", async () => {
   renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const input = await box();
   await userEvent.type(input, "hello @op");
+  const menu = await screen.findByRole("listbox", { name: "Tag someone" });
+  expect(screen.getByText("A tag doesn't send · Esc keeps it as text")).toBeInTheDocument();
+  await userEvent.click(within(menu).getByRole("option", { name: /ops/ }));
+  expect(toRow()).toBeNull();
+  await userEvent.type(input, "go{Enter}");
+  await waitFor(() => expect(sent).toHaveLength(1));
+  expect(sent[0]?.body).toMatchObject({
+    to: [refFor("dev")],
+    body: `hello <@${refFor("ops")}> go`,
+  });
+});
+
+test("Add recipient adds an agent and announces it", async () => {
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
+  await box();
+  await userEvent.click(screen.getByRole("button", { name: "Add recipient" }));
   const menu = await screen.findByRole("listbox");
-  expect(screen.getByText("Adds a recipient · Esc keeps it as text")).toBeInTheDocument();
-  // The chat's own agent is not offered.
-  expect(within(menu).queryByRole("option", { name: /Add @dev as/ })).toBeNull();
-  await userEvent.click(within(menu).getByRole("option", { name: /Add @ops as recipient/ }));
-  expect(input).toHaveValue("hello ");
+  // The chat's own agent is not offered; the others are, and the footer says who gets messages.
+  expect(within(menu).queryByRole("option", { name: /@dev$/ })).toBeNull();
+  expect(
+    screen.getByText("Only live agents get messages · Up to 10 per message"),
+  ).toBeInTheDocument();
+  await userEvent.click(within(menu).getByRole("option", { name: /@ops$/ }));
+  expect(screen.getByRole("listbox")).toBeInTheDocument(); // stays open for the next pick
+  expect(screen.getByRole("option", { name: /@ops.*Added/ })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(toRow()).toHaveTextContent("To: Dev agent");
   expect(within(toRow() as HTMLElement).getByRole("button", { name: "Remove @ops" })).toBeVisible();
   expect(screen.getByText("Also sending to @ops")).toBeInTheDocument();
-  expect(input).toHaveAttribute("placeholder", "Message Dev agent and 1 other");
-  // Added ones are not offered twice.
-  await userEvent.type(input, "@o");
-  expect(screen.queryByRole("option", { name: /Add @ops as/ })).toBeNull();
+  expect(await box()).toHaveAttribute("placeholder", "Message Dev agent and 1 other");
+  // Reopened, an added agent is left out.
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(screen.getAllByRole("button", { name: "Add" })[0] as HTMLElement);
+  expect(
+    within(await screen.findByRole("listbox")).queryByRole("option", { name: /@ops$/ }),
+  ).toBeNull();
+});
+
+test("Add recipient offers only live agents", async () => {
+  extraAgents = [agentSummary({ handle: "gone", displayName: "Gone", template: "ops" })];
+  const gone = principal(refFor("gone"), "gone");
+  const base = fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+  vi.stubGlobal("fetch", async (u: string, i?: RequestInit) => {
+    if (u.startsWith("/api/principals")) {
+      const body = (await (await base(u, i)).json()) as { principals: unknown[] };
+      return json({ ...body, principals: [...body.principals, { ...gone, state: "terminated" }] });
+    }
+    return base(u, i);
+  });
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
+  await box();
+  await userEvent.click(screen.getByRole("button", { name: "Add recipient" }));
+  const menu = await screen.findByRole("listbox");
+  expect(within(menu).getByRole("option", { name: /@ops$/ })).toBeInTheDocument();
+  expect(within(menu).queryByRole("option", { name: /@gone$/ })).toBeNull();
 });
 
 test("Esc keeps a typed @name as text", async () => {
@@ -149,8 +193,8 @@ test("Backspace in an empty box selects the last chip, then removes it", async (
 
 test("typing clears the chip's selection", async () => {
   renderApp(`/agents/${refFor("dev")}/chat`, alice);
-  await addRecipient("ops");
-  const input = await box();
+  const input = await addRecipient("ops");
+  await userEvent.click(input);
   await userEvent.keyboard("{Backspace}");
   expect(document.querySelector(`[data-recipient="${refFor("ops")}"]`)).toHaveAttribute(
     "data-selected",
@@ -408,24 +452,25 @@ const paste = (input: HTMLElement, files: File[]) =>
     clipboardData: { files, getData: () => "", types: ["Files"] },
   });
 
-test("a refused add (a file is attached) leaves its note until you type or the file goes", async () => {
+test("Add recipient is aria-disabled while files are attached; pressing says why until you type or the file goes", async () => {
   installFakeXhr();
   renderApp(`/agents/${refFor("dev")}/chat`, alice);
   const input = await box();
   paste(input, [new File(["x"], "notes.txt", { type: "text/plain" })]);
-  await userEvent.type(input, "@op");
-  await userEvent.click(await screen.findByRole("option", { name: /Add @ops as/ }));
+  const add = screen.getByRole("button", { name: "Add recipient" });
+  await waitFor(() => expect(add).toHaveAttribute("aria-disabled", "true"));
+  await userEvent.click(add);
+  expect(screen.queryByRole("listbox")).toBeNull();
   expect(note()).toHaveTextContent("Files go to one agent at a time");
   expect(toRow()).toBeNull();
   await userEvent.type(input, "x");
   expect(note()).not.toHaveTextContent("Files go to one agent at a time");
-  // The same note goes when the file does.
-  await userEvent.clear(input);
-  await userEvent.type(input, "@op");
-  await userEvent.click(await screen.findByRole("option", { name: /Add @ops as/ }));
+  // The same note goes when the file does, and adding works again.
+  await userEvent.click(add);
   expect(note()).toHaveTextContent("Files go to one agent at a time");
   await userEvent.click(screen.getByRole("button", { name: /^(Cancel|Remove) notes.txt$/ }));
   expect(note()).not.toHaveTextContent("Files go to one agent at a time");
+  expect(add).not.toHaveAttribute("aria-disabled");
 });
 
 test("'Not sent to @x' goes when you type the next message", async () => {
@@ -463,23 +508,42 @@ test("the touch hint points at Stop only where Stop shows", async () => {
   await waitFor(() => expect(document.body).toHaveTextContent("Stop first to interrupt"));
 });
 
-test("a message can go to ten agents, the chat's own included; the eleventh is refused in the menu", async () => {
+test("Add recipient is aria-disabled with its reason at 10 recipients; a message still goes to all ten", async () => {
   extraAgents = Array.from({ length: 7 }, (_, i) =>
     agentSummary({ handle: `a${i}`, displayName: `Agent ${i}`, template: "ops" }),
   );
   renderApp(`/agents/${refFor("dev")}/chat`, alice);
-  let input = await addRecipient("ops");
+  await addRecipient("ops");
   await addRecipient("qa");
-  for (let i = 0; i < 7; i++) input = await addRecipient(`a${i}`);
+  for (let i = 0; i < 7; i++) await addRecipient(`a${i}`);
   expect(document.querySelectorAll("[data-recipient]")).toHaveLength(9);
-  await userEvent.type(input, "@a");
-  expect(await screen.findByText("A message goes to at most 10 agents.")).toBeInTheDocument();
-  expect(screen.queryByRole("option")).toBeNull();
-  await userEvent.keyboard("{Escape}");
-  await userEvent.clear(input);
-  await userEvent.type(input, "all{Enter}");
+  const add = screen.getByRole("button", { name: "Add recipient" });
+  expect(add).toHaveAttribute("aria-disabled", "true");
+  await userEvent.click(add);
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(note()).toHaveTextContent("A message goes to at most 10 agents.");
+  await userEvent.type(await box(), "all{Enter}");
   await waitFor(() => expect(sent).toHaveLength(1));
   expect(sent[0]?.body.to).toHaveLength(10);
+});
+
+test("your message shows at once, from you and also to the agents you added, while the send is out", async () => {
+  let release: (r: Response) => void = () => {};
+  const base = fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>;
+  vi.stubGlobal("fetch", (u: string, i?: RequestInit) =>
+    u === "/api/messages"
+      ? new Promise<Response>((r) => {
+          release = r;
+        })
+      : base(u, i),
+  );
+  renderApp(`/agents/${refFor("dev")}/chat`, alice);
+  const input = await addRecipient("ops");
+  await userEvent.type(input, "hi{Enter}");
+  const group = await screen.findByRole("group", { name: "Also to @ops" });
+  expect(group.closest("[data-row]")).toHaveTextContent("You");
+  expect(document.body).not.toHaveTextContent("@unknown");
+  release(json({ results: [] }, 202));
 });
 
 test("the first Backspace announces the selected chip; leaving the box clears it", async () => {

@@ -21,6 +21,7 @@ import {
   UNCONFIRMED,
 } from "@/components/composer/composer";
 import { useHandle } from "@/features/agents/use-agent-index";
+import { useMentionSource } from "@/features/mentions/mention-source";
 import { postInterrupt } from "@/features/session/api";
 import { commandsQueryOptions, knownCommand } from "@/features/session/commands";
 import { SEND_TIMEOUT_MS } from "@/features/session/composer";
@@ -29,6 +30,7 @@ import { registerComposerFocus, repinTimeline } from "@/features/session/session
 import { uploadsFor } from "@/features/session/uploads";
 import {
   chatDraftKey,
+  MAX_RECIPIENTS,
   readDraft,
   readRecipients,
   sessionDraftKey,
@@ -36,11 +38,11 @@ import {
   writeRecipients,
 } from "@/lib/drafts";
 import { isCoarsePointer } from "@/lib/send-key";
-import { sessionQueryOptions } from "@/lib/session";
-import { recipientSource } from "./recipient-source";
+import { AddRecipient, FULL_NOTE } from "./add-recipient";
 import { handleOfResult, isResultFor, refusedBecause, sendMessages } from "./send";
 import { addSending, dropSending, lastSentText, refreshChat } from "./use-chat";
 
+const TAG_NOTE = "A tag doesn't send · Esc keeps it as text";
 export const FILES_ONE_AGENT = "Files go to one agent at a time";
 /** A leading `/token`, the whole text up to its first whitespace. */
 const LEADING_COMMAND = /^\s*\/(\S+)/;
@@ -55,6 +57,8 @@ type Props = {
   agentName: string;
   /** Your user id: the uploads are yours. */
   userId: string | undefined;
+  /** Your ref, from `/api/me`: the sender of your optimistic message. Sending waits until it is known. */
+  userRef: string | undefined;
   /** The turn that read your message is running: Stop shows, Esc stops it. */
   working: boolean;
   /** The key of that turn (Stop resets when it changes). */
@@ -81,6 +85,7 @@ export const ChatComposer = memo(function ChatComposer({
   agentRef,
   agentName,
   userId,
+  userRef,
   working,
   workingKey,
   turnOpen,
@@ -91,6 +96,7 @@ export const ChatComposer = memo(function ChatComposer({
 }: Props) {
   const qc = useQueryClient();
   const handle = useHandle(agentRef);
+  const mentionSource = useMentionSource({ note: TAG_NOTE });
   const draftKey = chatDraftKey(agentRef);
   const inner = useRef<ComposerHandle>(null);
   useEffect(() => registerComposerFocus(agentRef, () => inner.current?.focus()), [agentRef]);
@@ -116,34 +122,66 @@ export const ChatComposer = memo(function ChatComposer({
     },
     [draftKey],
   );
-  const source = useMemo(
-    () =>
-      recipientSource(qc, {
-        agentRef,
-        added: () => recipientsRef.current,
-        add(added) {
-          if (store.summary().count > 0) {
-            setRefusal({ text: FILES_ONE_AGENT, files: fileCountRef.current });
-            return false;
-          }
-          onRecipientsChange([...recipientsRef.current, added]);
-          return true;
-        },
-      }),
-    [qc, agentRef, store, onRecipientsChange],
+  const completions = useMemo(() => ({ at: mentionSource }), [mentionSource]);
+  // Adding is held at ten agents (the chat's own included, as the server counts) and while files are
+  // attached; the button stays focusable and pressing it says why in the note slot.
+  const held =
+    recipients.length + 1 >= MAX_RECIPIENTS
+      ? FULL_NOTE
+      : fileCount > 0
+        ? FILES_ONE_AGENT
+        : undefined;
+  const onAdd = useCallback(
+    (ref: string) => onRecipientsChange([...recipientsRef.current, ref]),
+    [onRecipientsChange],
   );
-  const completions = useMemo(() => ({ at: source }), [source]);
+  const onHeld = useCallback(
+    (reason: string) =>
+      setRefusal(
+        reason === FILES_ONE_AGENT
+          ? { text: reason, files: fileCountRef.current }
+          : { text: reason },
+      ),
+    [],
+  );
+  const addRecipient = useMemo(
+    () => (
+      <AddRecipient
+        agentRef={agentRef}
+        recipients={recipients}
+        held={held}
+        onAdd={onAdd}
+        onHeld={onHeld}
+      />
+    ),
+    [agentRef, recipients, held, onAdd, onHeld],
+  );
+  const addRecipientCompact = useMemo(
+    () => (
+      <AddRecipient
+        compact
+        agentRef={agentRef}
+        recipients={recipients}
+        held={held}
+        onAdd={onAdd}
+        onHeld={onHeld}
+      />
+    ),
+    [agentRef, recipients, held, onAdd, onHeld],
+  );
 
   const onSubmit = useCallback(
     async (text: string, { urgent, clientMessageId, attachments }: SubmitOptions) => {
       const body = text.trim();
+      // Sending waits for the session, so this is known; a blank ref is never written.
+      if (userRef === undefined) throw new SubmitError(NETWORK_ERROR);
       const added = recipientsRef.current;
       const to = [agentRef, ...added];
       addSending(qc, agentRef, {
         kind: "message",
         id: clientMessageId,
         clientMessageId,
-        from: { kind: "human", ref: qc.getQueryData(sessionQueryOptions.queryKey)?.user.ref ?? "" },
+        from: { kind: "human", ref: userRef },
         body,
         // The server's row replaces this entry.
         recipients: to.map((ref) => ({ ref })),
@@ -195,7 +233,7 @@ export const ChatComposer = memo(function ChatComposer({
         clearTimeout(timer);
       }
     },
-    [qc, agentRef, agentName, store, onSend],
+    [qc, agentRef, agentName, userRef, store, onSend],
   );
   const recall = useCallback(() => lastSentText(qc, agentRef), [qc, agentRef]);
   const onStop = useCallback(() => postInterrupt(agentRef), [agentRef]);
@@ -278,6 +316,8 @@ export const ChatComposer = memo(function ChatComposer({
       recipients={recipients}
       recipientsTo={agentName}
       onRecipientsChange={onRecipientsChange}
+      toolbarStart={addRecipient}
+      recipientsAdd={addRecipientCompact}
       onEdit={onEdit}
       noteFor={noteFor}
       note={note}

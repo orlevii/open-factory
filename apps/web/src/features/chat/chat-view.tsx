@@ -37,6 +37,7 @@ import { outcomeSentence, TurnLine } from "./turn-line";
 import { refreshChat, useChat, useWorkingKey } from "./use-chat";
 
 const toHandle = (s: { user: { handle: string } } | null) => s?.user.handle;
+const toUserRef = (s: { user: { ref: string } } | null) => s?.user.ref;
 const toUserId = (s: { user: { id: string } } | null) => s?.user.id;
 const failureText = (e: unknown) => (e instanceof ApiError ? e.message : NETWORK_ERROR);
 const NO_NOTES: ReadonlyMap<string, CancelNote> = new Map();
@@ -82,6 +83,7 @@ export function ChatBody({
   const terminated = agent?.status === "terminated";
   const session = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
   const userId = useQuery({ ...sessionQueryOptions, select: toUserId }).data;
+  const userRef = useQuery({ ...sessionQueryOptions, select: toUserRef }).data;
   const turn = useWorkingKey(agentRef, messageId === undefined);
   // From a `?message=` window the newest page is what a send lands in: the chat goes back to it.
   const navigate = useNavigate();
@@ -124,6 +126,7 @@ export function ChatBody({
           agentRef={agentRef}
           agentName={agent?.displayName ?? `@${handle}`}
           userId={userId}
+          userRef={userRef}
           working={turn.key !== undefined}
           workingKey={turn.key}
           turnOpen={agent?.turnOpen === true}

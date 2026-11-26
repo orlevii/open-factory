@@ -116,7 +116,12 @@ export class ChatStore {
       t.user.id,
       ...picked.flatMap(({ m }) => m.recipientIds ?? []),
     ]);
-    const refOf = (id: string) => refs.get(id)?.ref ?? "";
+    // The foreign keys make a missing principal impossible: fail loudly rather than write a blank ref.
+    const refOf = (id: string) => {
+      const ref = refs.get(id)?.ref;
+      if (ref === undefined) throw new Error(`No principal for ${id}`);
+      return ref;
+    };
     const entries: Array<{ at: string; entry: ChatEntry }> = picked.map(({ m, iso }) => ({
       at: iso,
       entry: {

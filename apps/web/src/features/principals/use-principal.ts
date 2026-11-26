@@ -1,7 +1,7 @@
 import { normaliseRef, type PrincipalItem } from "@open-factory/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo } from "react";
-import { principalsQueryOptions, requestPrincipal } from "./api";
+import { handleText, principalsQueryOptions, requestPrincipal } from "./api";
 
 export type PrincipalLookup =
   | { status: "pending"; principal?: undefined }
@@ -49,4 +49,10 @@ export function useRefOfHandle(): (handle: string) => string | undefined {
     [data],
   );
   return useCallback((handle) => byHandle.get(handle), [byHandle]);
+}
+
+/** For rendering a ref as `@handle` text: "…" while it is pending, "unknown" once the cache confirms nobody has it. */
+export function useHandleText(): (ref: string) => string {
+  const { data } = useQuery(principalsQueryOptions);
+  return useCallback((ref) => (data ? handleText(data, ref) : "…"), [data]);
 }

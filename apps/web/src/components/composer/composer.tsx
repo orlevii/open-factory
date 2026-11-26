@@ -51,7 +51,7 @@ export const UNCONFIRMED_EDITED =
 export const FILES_NOTE = "Files can be sent in an agent's session";
 /** A phone's composer controls are 40px (U4 §11.4). The coarse-pointer form too: `size="icon"` sets
  *  `pointer-coarse:size-9`, which would otherwise beat a bare `size-10` on a touch screen (evidence D1). */
-const PHONE_ICON = "size-10 pointer-coarse:size-10";
+export const PHONE_ICON = "size-10 pointer-coarse:size-10";
 
 const NO_LANDED: ReadonlySet<string> = new Set();
 const NO_UPLOADS: UploadSummary = { count: 0, pending: 0, failed: 0 };
@@ -210,6 +210,10 @@ export type ComposerProps = {
   recipientsTo?: string;
   /** A stable setter. */
   onRecipientsChange?(next: readonly string[]): void;
+  /** A control at the start of the toolbar, left of `@` (the chat's "Add recipient"; a stable element). */
+  toolbarStart?: ReactNode;
+  /** The control that ends the "To:" row once it shows (a stable element). */
+  recipientsAdd?: ReactNode;
   /** The user edited the text: a note the caller holds goes (a stable callback). */
   onEdit?(): void;
   /** A note for the text as it stands (a leading `/` in the chat); cheap, it runs on every render. */
@@ -268,6 +272,8 @@ export const Composer = memo(function Composer({
   recipients,
   recipientsTo = "",
   onRecipientsChange,
+  toolbarStart,
+  recipientsAdd,
   onEdit,
   noteFor,
   recall,
@@ -788,6 +794,7 @@ export const Composer = memo(function Composer({
               recipients={recipients}
               selected={chipSelected}
               onRemove={removeRecipient}
+              add={recipientsAdd}
             />
           )}
           {attachments && <AttachmentChips store={attachments} />}
@@ -860,6 +867,7 @@ export const Composer = memo(function Composer({
             // its width across turn edges, so where it wraps never changes with a turn.
             className="mx-1 mb-1 flex min-h-8 flex-wrap items-center gap-x-2 gap-y-1 pointer-coarse:min-h-9"
           >
+            {toolbarStart}
             {slash?.label ? (
               // Starts a command in an empty box (the `/` menu opens only for a whole-box token).
               <Button

@@ -15,9 +15,9 @@ const issueLine = (i: TemplateIssue) => {
 };
 
 /**
- * An org service's refusal as a tool error (spec §7.2): a `FieldError` becomes "handle: Another agent or person has this handle", an
- * `invalid_config` lists its error issues as `path: message` lines, any other `ApiError` (`OrgRefusedError`
- * included) is its own sentence. Anything else is a bug and is rethrown: the SDK answers it without the message.
+ * An org service's refusal as a tool error (spec §7.2): a `FieldError` becomes `<field>: <message>` (for example
+ * "handle: Another agent or person has this handle"), an `invalid_config` lists its error issues as
+ * `path: message` lines, any other `ApiError` (`OrgRefusedError` included) is its own sentence. Anything else is a bug and is rethrown: the SDK answers it without the message.
  */
 export function toolErrorOf(err: unknown): ReturnType<typeof toolError> {
   if (err instanceof FieldError) {

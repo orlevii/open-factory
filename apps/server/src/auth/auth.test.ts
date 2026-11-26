@@ -132,11 +132,15 @@ describe("name and email lengths (spec §13.2)", () => {
     });
   });
 
-  test("update-user with an 81-character name is 400 NAME_TOO_LONG", async () => {
-    const { cookie } = await signUp(t.app);
-    const res = await post("/api/auth/update-user", { name: "n".repeat(81) }, { cookie });
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toMatchObject({ code: "NAME_TOO_LONG" });
+  test("updating the name through /update-user is refused and changes nothing", async () => {
+    const { cookie, user } = await signUp(t.app);
+    for (const body of [{ name: "Renamed" }, { handle: "renamed" }]) {
+      const res = await post("/api/auth/update-user", body, { cookie });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: "USE_PATCH_ME" });
+    }
+    const me = await t.app.inject({ method: "GET", url: "/api/me", headers: { cookie } });
+    expect(me.json()).toMatchObject({ name: user.name, handle: user.handle });
   });
 
   test("update-user without a name succeeds for a user whose stored name is 120 characters", async () => {

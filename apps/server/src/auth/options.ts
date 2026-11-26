@@ -44,6 +44,10 @@ export function inputLengthError(
   return null;
 }
 
+function ownsIdentity(body: unknown): boolean {
+  return Boolean(body && typeof body === "object" && ("name" in body || "handle" in body));
+}
+
 export function authOptions(p: AuthOptionParams) {
   return {
     secret: p.secret,
@@ -102,6 +106,12 @@ export function authOptions(p: AuthOptionParams) {
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        // The name and handle belong to principals and are written only by PATCH /api/me, which tells the browsers.
+        if (ctx.path === "/update-user" && ownsIdentity(ctx.body))
+          throw new APIError("BAD_REQUEST", {
+            code: "USE_PATCH_ME",
+            message: "Change your name or handle with PATCH /api/me.",
+          });
         const tooLong = inputLengthError(ctx.path, ctx.body);
         if (tooLong) throw new APIError("BAD_REQUEST", tooLong);
       }),

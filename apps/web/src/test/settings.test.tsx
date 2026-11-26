@@ -4,7 +4,7 @@ import {
   type ProjectSummary,
   type SecretSummary,
 } from "@open-factory/shared";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { TOASTER_LABEL } from "@/components/ui/toaster";
@@ -21,8 +21,12 @@ import { agentSummary } from "@/test/session-fixtures";
 const agentRow = (handle: string) => agentSummary({ handle: handle, displayName: handle });
 
 vi.mock("@/lib/auth-client", () => ({ authClient: { getSession: vi.fn() } }));
+let pushFrame: (m: unknown) => void = () => {};
 vi.mock("@/lib/ws", () => ({
-  connectWs: () => ({ close() {}, status: () => "open", send: () => true }),
+  connectWs: (o: { onMessage?: (m: unknown) => void }) => {
+    pushFrame = (m) => o.onMessage?.(m);
+    return { close() {}, status: () => "open", send: () => true };
+  },
 }));
 afterEach(() => {
   resetSheets();
@@ -355,6 +359,31 @@ test("a credential taken while the dialog was open shows a crimson row line link
   await userEvent.click(handle);
   expect(getSheetState().parent).toMatchObject({ kind: "edit-agent", agentRef: refFor("lead") });
 });
+
+test.each([
+  ["credentials", "Credentials", "work"],
+  ["secrets", "Secrets", "GH_TOKEN"],
+] as const)(
+  "after principal_updated, the %s section shows the agent's new handle",
+  async (page, title, name) => {
+    const { state } = world({
+      credentials: [cred({ name: "work", usedBy: ["lead"] })],
+      secrets: [secret({ name: "GH_TOKEN", usedBy: ["lead"] })],
+    });
+    renderApp(`/settings/${page}`, alice);
+    const region = await section(title);
+    await waitFor(() => expect(row(region, name)).toHaveTextContent("Used by @lead"));
+    state.credentials = [cred({ name: "work", usedBy: ["builder"] })];
+    state.secrets = [secret({ name: "GH_TOKEN", usedBy: ["builder"] })];
+    act(() =>
+      pushFrame({
+        type: "principal_updated",
+        principal: { ...principal(refFor("lead"), "builder"), kind: "agent" },
+      }),
+    );
+    await waitFor(() => expect(row(region, name)).toHaveTextContent("Used by @builder"));
+  },
+);
 
 test("secrets are write-only rows; Update saves a new value and says who restarts", async () => {
   const { api } = world({

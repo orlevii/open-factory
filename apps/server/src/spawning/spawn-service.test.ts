@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { schema } from "@open-factory/db";
+import type { ServerMessage } from "@open-factory/shared";
 import { tagOf } from "@open-factory/shared/tags";
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
@@ -182,6 +183,21 @@ test("spawn: child row, all the spawner's grants, brief, spawned event, peer row
   expect(await peerRowsTo(t, lead.id)).toEqual([]);
   const ref = await t.app.store.refOfAgent(child.id);
   expect(existsSync(path.join(t.factoryHome, "agents", ref, "AGENTS.md"))).toBe(true);
+});
+
+test("a successful spawn publishes principal_updated for the new agent, a refused one doesn't", async () => {
+  const { t, lead } = await setup();
+  const seen: ServerMessage[] = [];
+  t.app.bus.subscribeAll((m) => seen.push(m));
+  await t.app.spawner.spawn(lead.id, args({ template: "ghost", suffix: "no" }), null);
+  expect(seen.filter((m) => m.type === "principal_updated")).toEqual([]);
+  await t.app.spawner.spawn(lead.id, args({ suffix: "p1" }), null);
+  expect(seen.filter((m) => m.type === "principal_updated")).toEqual([
+    {
+      type: "principal_updated",
+      principal: expect.objectContaining({ handle: "tech-lead-p1", kind: "agent", state: "live" }),
+    },
+  ]);
 });
 
 test("a random suffix is 4 letters and the display name carries it", async () => {

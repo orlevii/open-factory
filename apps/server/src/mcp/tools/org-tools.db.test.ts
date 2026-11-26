@@ -191,6 +191,13 @@ test("create_agent without reports_to is refused and creates nothing", async () 
   ).toHaveLength(0);
 });
 
+test("update_agent given a handle can't rename the agent", async () => {
+  const before = (await row("dev-1")).handle;
+  await call("hr-bot", "update_agent", { target: "dev-1", handle: "renamed" }).catch(() => {});
+  expect((await row("dev-1")).handle).toBe(before);
+  expect(await t.sql`select 1 from principals where handle = 'renamed'`).toHaveLength(0);
+});
+
 test("create_agent and update_agent refuse an unknown handle, a disabled person and a spawned agent as the manager", async () => {
   await seedTestUser(t.db, "off");
   await t.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'off')`;

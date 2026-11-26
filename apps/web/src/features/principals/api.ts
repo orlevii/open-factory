@@ -59,6 +59,8 @@ export const HANDLE_QUERY_KEYS = [
   ["schedules"], // lists and details: target, creator, owner
   ["usage"], // per-agent and per-credential rows: handle, spawner
   ["users"], // the admin list: each person's handle
+  ["credentials"], // rows: usedBy and archivedUsedBy agent handles
+  ["secrets"], // rows: usedBy and archivedUsedBy agent handles
   ["session"], // the signed-in person's own handle (`/api/me`)
 ] as const;
 

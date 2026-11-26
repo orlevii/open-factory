@@ -40,7 +40,7 @@ const guardOf = () =>
     clock: () => new Date(),
     newId: randomUUID,
   });
-const proc = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug).at(-1);
+const proc = (slug: string) => driver.startsOf(slug).at(-1);
 const settle = async (...slugs: string[]) => {
   for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
 };
@@ -416,7 +416,7 @@ test("R4 (owner): a human-managed agent's errored episode is one inbox item for 
     await settle("lead");
   };
   const nextAttempt = async (starts: number) => {
-    expect(driver.starts.filter((p) => p.spec.slug === "lead")).toHaveLength(starts);
+    expect(driver.startsOf("lead")).toHaveLength(starts);
     return proc("lead");
   };
   // 1. A crash whose automatic attempt succeeds: nothing reaches the manager's inbox as an errored notice.

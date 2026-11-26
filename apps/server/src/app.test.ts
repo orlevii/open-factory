@@ -73,7 +73,7 @@ async function startIdle(
     headers: { cookie },
     payload: { to: [slug], body: "hi" },
   });
-  const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
+  const p = driver.startsOf(slug).at(-1);
   if (!p) throw new Error(`${slug} not started`);
   p.emit(...ev.fullTurn());
   await (await t.app.runtimes.bySlug(slug))?.settled();
@@ -150,10 +150,8 @@ test("tools per caller: spawner sees two more with the enum, others the messagin
     );
     expect(spawned).toMatchObject({ ok: true, slug: "developer-e1" });
     // The brief wakes it: take that process's token once its first turn is over.
-    await vi.waitFor(() =>
-      expect(driver.starts.some((s) => s.spec.slug === "developer-e1")).toBe(true),
-    );
-    const p = driver.starts.filter((s) => s.spec.slug === "developer-e1").at(-1);
+    await vi.waitFor(() => expect(driver.startsOf("developer-e1").length > 0).toBe(true));
+    const p = driver.startsOf("developer-e1").at(-1);
     p?.emit(...ev.fullTurn());
     await (await t.app.runtimes.bySlug("developer-e1"))?.settled();
     const r = await mcpCall(url, p?.spec.env.OPEN_FACTORY_AGENT_TOKEN as string, "tools/list", {});
@@ -242,7 +240,7 @@ test("a report's text reaches its manager naming the request it answers", async 
     expect(res.statusCode).toBeLessThan(300);
     const [asked] = await t.sql<{ id: string }[]>`
       select id from messages where to_id = ${dev.id} and kind = 'message'`;
-    const devProc = driver.starts.filter((s) => s.spec.slug === "dev").at(-1);
+    const devProc = driver.startsOf("dev").at(-1);
     devProc?.emit(ev.session(), ev.turn(), ev.text("README updated"), ev.usage(), ev.end());
     await (await t.app.runtimes.bySlug("dev"))?.settled();
     const [asker] = await t.sql<

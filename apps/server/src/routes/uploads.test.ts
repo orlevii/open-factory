@@ -23,7 +23,6 @@ import { makeTestApp } from "../test/helpers.ts";
 import { bodyStream, UploadIdleError } from "../uploads/body-stream.ts";
 import { heic, jpeg, png } from "../uploads/fixtures.ts";
 import { UploadService } from "../uploads/service.ts";
-import { agentWorkdir } from "../workspace/paths.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let or: string;
@@ -54,7 +53,7 @@ beforeAll(async () => {
 });
 afterAll(() => t.close());
 
-const wd = (slug: string) => agentWorkdir(t.factoryHome, slug);
+const wd = (slug: string) => t.seededWorkdir(slug);
 const uploadsDir = (slug: string) => path.join(wd(slug), ".factory/uploads");
 const listUploads = (slug: string) =>
   existsSync(uploadsDir(slug)) ? readdirSync(uploadsDir(slug)) : [];

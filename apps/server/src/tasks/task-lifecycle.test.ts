@@ -28,7 +28,7 @@ afterEach(() => h.close());
 const settle = async (...slugs: string[]) => {
   for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
 };
-const procs = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug);
+const procs = (slug: string) => driver.startsOf(slug);
 const proc = (slug: string) => procs(slug).at(-1);
 const reasons = async (slug: string) => {
   const a = await h.app.store.agentBySlug(slug);

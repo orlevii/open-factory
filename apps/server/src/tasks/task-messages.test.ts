@@ -19,7 +19,7 @@ beforeEach(async () => {
 });
 afterEach(() => h.close());
 
-const proc = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug).at(-1);
+const proc = (slug: string) => driver.startsOf(slug).at(-1);
 async function dev() {
   const a = await h.app.store.agentBySlug("dev");
   if (!a) throw new Error("seed");
@@ -97,7 +97,7 @@ test("to an errored agent a task_message stays pending and starts no attempt", a
   await handOff(row, "task_message");
   const [a] = await h.sql`select status, attempting from agents where slug = 'dev'`;
   expect(a).toEqual({ status: "errored", attempting: false });
-  expect(driver.starts.filter((p) => p.spec.slug === "dev")).toHaveLength(0);
+  expect(driver.startsOf("dev")).toHaveLength(0);
   expect((await h.sql`select state from messages where id = ${row.id}`)[0]?.state).toBe("pending");
 });
 

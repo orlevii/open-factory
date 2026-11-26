@@ -24,7 +24,8 @@ test("env is the allowlist plus config dir, credential, secrets and git identity
     serverEnv,
     {
       configDir: "/w/.claude-config",
-      slug: "lead",
+      handle: "lead",
+      ref: "p3dh8vcn",
       credential: { kind: "oauth_token", value: "agent-token" },
       secrets: { GH_TOKEN: "gh" },
       agentToken: "t",
@@ -45,8 +46,8 @@ test("env is the allowlist plus config dir, credential, secrets and git identity
     GH_TOKEN: "gh",
     GIT_AUTHOR_NAME: "lead",
     GIT_COMMITTER_NAME: "lead",
-    GIT_AUTHOR_EMAIL: "lead@open-factory.local",
-    GIT_COMMITTER_EMAIL: "lead@open-factory.local",
+    GIT_AUTHOR_EMAIL: "p3dh8vcn@open-factory.local",
+    GIT_COMMITTER_EMAIL: "p3dh8vcn@open-factory.local",
     OPEN_FACTORY_AGENT_TOKEN: "t",
   });
 });
@@ -67,7 +68,8 @@ test.each([
       serverEnv,
       {
         configDir: "/c",
-        slug: "a1",
+        handle: "a1",
+        ref: "p3dh8vcn",
         credential: { kind: "oauth_token", value: "factory-token" },
         agentToken: "t",
         secrets: { [name]: "evil" },
@@ -91,7 +93,8 @@ test("api_key credentials set ANTHROPIC_API_KEY and never the OAuth var", () => 
     serverEnv,
     {
       configDir: "/c",
-      slug: "a1",
+      handle: "a1",
+      ref: "p3dh8vcn",
       credential: { kind: "api_key", value: "k" },
       secrets: {},
       agentToken: "t",
@@ -110,7 +113,8 @@ test("the server's own ANTHROPIC_*/CLAUDE_* never leak; exactly one credential v
       serverEnv,
       {
         configDir: "/c",
-        slug: "a1",
+        handle: "a1",
+        ref: "p3dh8vcn",
         credential: { kind, value: "agent" },
         secrets: {},
         agentToken: "t",
@@ -131,7 +135,8 @@ test("two agents with different credentials get their own values", () => {
     {},
     {
       configDir: "/a",
-      slug: "aa",
+      handle: "aa",
+      ref: "p3dh8vcn",
       credential: { kind: "oauth_token", value: "A" },
       secrets: {},
       agentToken: "t",
@@ -142,7 +147,8 @@ test("two agents with different credentials get their own values", () => {
     {},
     {
       configDir: "/b",
-      slug: "bb",
+      handle: "bb",
+      ref: "p3dh8vcn",
       credential: { kind: "oauth_token", value: "B" },
       secrets: {},
       agentToken: "t",
@@ -154,7 +160,8 @@ test("two agents with different credentials get their own values", () => {
 
 const extra = {
   configDir: "/w/.claude-config",
-  slug: "lead",
+  handle: "lead",
+  ref: "p3dh8vcn",
   credential: { kind: "oauth_token" as const, value: "agent-token" },
   secrets: { GH_TOKEN: "gh" },
   agentToken: "t",
@@ -225,7 +232,7 @@ test("runtime spec from the snapshot", () => {
   expect(
     buildRuntimeSpec({
       agentId: "1",
-      slug: "lead",
+      ref: "p3dh8vcn",
       workdir: "/w",
       env: {},
       claudeBin: "claude",
@@ -234,7 +241,7 @@ test("runtime spec from the snapshot", () => {
     }),
   ).toEqual({
     agentId: "1",
-    slug: "lead",
+    ref: "p3dh8vcn",
     cwd: "/w",
     env: {},
     claudeBin: "claude",
@@ -250,7 +257,7 @@ test("model and effort are omitted when the snapshot sets none", () => {
   const config = templateYamlSchema.parse({ name: "lead", display_name: "L", runtime: "local" });
   const spec = buildRuntimeSpec({
     agentId: "1",
-    slug: "lead",
+    ref: "p3dh8vcn",
     workdir: "/w",
     env: {},
     claudeBin: "claude",
@@ -269,7 +276,8 @@ test.each([
     serverEnv,
     {
       configDir: "/w/.claude-config",
-      slug: "lead",
+      handle: "lead",
+      ref: "p3dh8vcn",
       credential: { kind, value: "v" },
       secrets: { GH_TOKEN: "gh" },
       agentUrl: "http://host:1",

@@ -249,14 +249,19 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   const setPin =
     (pinned: boolean) => async (req: { params: { slug: string } }, reply: FastifyReply) => {
       const slug = req.params.slug;
-      const outcome = await app.workspace.lock.run(slug, async () => {
-        const row = await app.store.agentBySlug(slug);
-        if (!row) return "not_found" as const;
-        if (!row.terminatedAt) return "not_terminated" as const;
-        if (row.workspaceDeletedAt) return "workspace_deleted" as const;
-        await app.store.setWorkspacePinned(row.id, pinned);
-        return "ok" as const;
-      });
+      const found = await app.store.agentBySlug(slug);
+      if (!found) return err(reply, 404, "agent_not_found", `No agent named ${slug}`);
+      const outcome = await app.workspace.lock.run(
+        await app.store.refOfAgent(found.id),
+        async () => {
+          const row = await app.store.agentById(found.id);
+          if (!row) return "not_found" as const;
+          if (!row.terminatedAt) return "not_terminated" as const;
+          if (row.workspaceDeletedAt) return "workspace_deleted" as const;
+          await app.store.setWorkspacePinned(row.id, pinned);
+          return "ok" as const;
+        },
+      );
       if (outcome === "not_found")
         return err(reply, 404, "agent_not_found", `No agent named ${slug}`);
       if (outcome === "not_terminated")

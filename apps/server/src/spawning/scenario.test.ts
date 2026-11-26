@@ -82,7 +82,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   if (!lead) throw new Error("no lead");
 
   const procOf = (slug: string) => {
-    const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
+    const p = driver.startsOf(slug).at(-1);
     if (!p) throw new Error(`${slug} not started`);
     return p;
   };

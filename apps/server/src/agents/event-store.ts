@@ -205,6 +205,12 @@ export class EventStore {
   async agentByArg(raw: string) {
     return resolveAgentArg(this.db, raw);
   }
+  /** The ref an agent's workdir, state dir, container and locks are named by (spec §4.4), read from `principals`. */
+  async refOfAgent(agentId: string, tx: Exec = this.db): Promise<string> {
+    const p = await principalById(tx, agentId);
+    if (!p) throw new Error(`No principal ${agentId}`);
+    return p.ref;
+  }
   /** Inside `tx` when given (S7 §5.7: a call in a locked transaction must not use its own connection). */
   async agentById(id: string, tx: Exec = this.db) {
     return (await tx.select().from(agents).where(eq(agents.id, id)))[0];

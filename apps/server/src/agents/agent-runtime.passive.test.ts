@@ -49,7 +49,7 @@ async function make(o: { spawned?: boolean } = {}) {
     prepareStart: async (a) => ({
       credentialId: liveCredentialId(a),
       agentId: a.id,
-      slug: a.slug,
+      ref: a.id,
       cwd: "/w",
       env: {},
       claudeBin: "claude",

@@ -24,7 +24,7 @@ import path from "node:path";
 import { Writable } from "node:stream";
 import { createDb, MIGRATIONS_DIR, migrate } from "@open-factory/db";
 import { createTestDatabase } from "@open-factory/db/testing";
-import type { AnyEvent, SessionEvent } from "@open-factory/shared";
+import { type AnyEvent, refOf, type SessionEvent } from "@open-factory/shared";
 import Docker from "dockerode";
 import { buildApp } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
@@ -266,7 +266,7 @@ async function turn(body: string, ms = 240_000): Promise<{ from: number; events:
   return { from, events: got };
 }
 
-const inspect = () => dk.getContainer(containerName(SLUG, agentId)).inspect();
+const inspect = () => dk.getContainer(containerName(refOf(agentId))).inspect();
 const exec = async (cmd: string[], user = "agent") =>
   client.execRun((await inspect()).Id, { cmd, user });
 /** pid, comm, start time (clock ticks since boot: shared with the host kernel) and command line. */
@@ -383,7 +383,7 @@ try {
     ),
   );
   agentId = String((await conn.sql`select id from agents where slug = ${SLUG}`)[0]?.id ?? "");
-  const workdir = agentWorkdir(config.factoryHome, SLUG);
+  const workdir = agentWorkdir(config.factoryHome, refOf(agentId));
 
   // 1. Remember a word, use the skill.
   const t1 = await step("1. first turn (container created, real claude in it) completes", () =>

@@ -40,7 +40,7 @@ async function make(runtime: "local" | "docker" = "local") {
     prepareStart: async (a) => ({
       credentialId: liveCredentialId(a),
       agentId: a.id,
-      slug: a.slug,
+      ref: a.id,
       cwd: "/w",
       env: {},
       claudeBin: "claude",

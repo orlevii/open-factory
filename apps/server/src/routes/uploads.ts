@@ -155,7 +155,7 @@ export const uploadsRoutes: FastifyPluginAsyncZod = async (app) => {
       const row = await app.uploads.get(agent.id, req.params.id);
       if (!row || (row.messageId === null && row.uploaderId !== me))
         return err(reply, 404, "upload_not_found", "No such upload.");
-      const outcome = await app.uploads.removeUnsent(agent.slug, row, me);
+      const outcome = await app.uploads.removeUnsent(agent.id, row, me);
       if (outcome === "not_uploader")
         return err(
           reply,

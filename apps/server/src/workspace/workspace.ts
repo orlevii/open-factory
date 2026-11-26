@@ -32,8 +32,10 @@ import { SafeFs } from "./safe-fs.ts";
 import { buildSettings } from "./settings.ts";
 
 export interface PrepareInput {
-  /** The directory key (the workdir is still named by it); the file names the agent by `self`. */
-  slug: string;
+  /** The directory key: the workdir, the state dir and the lock are named by it, so a rename keeps them. */
+  ref: string;
+  /** The agent's handle at this start (the system prompt and the git identity name it). */
+  handle: string;
   /** The agent as CLAUDE.md names it: a tag with its current handle. */
   self: Tagged;
   displayName: string;
@@ -70,6 +72,7 @@ export interface PrepareInput {
 /** What `materialize` checks: the prepare input minus what only a start knows. */
 export type MaterializeCheck = Omit<
   PrepareInput,
+  | "ref"
   | "effective"
   | "self"
   | "mcpUrl"
@@ -95,8 +98,7 @@ export interface TemplateSource {
 }
 
 export class Workspace {
-  /** PLAN DECISION: callers lock on the slug, which is unique and immutable, so the lock can be
-   *  taken before the agent row exists (normally locks key on stable ids). */
+  /** Callers lock on the agent's ref (unique, immutable), so the lock can be taken before the agent row exists. */
   readonly lock: KeyedMutex;
   private readonly serverEnv: NodeJS.ProcessEnv;
   private readonly log: { warn: (o: object, msg: string) => void };
@@ -118,18 +120,13 @@ export class Workspace {
     this.log = d.log ?? { warn: () => {} };
   }
 
-  workdir(slug: string): string {
-    return agentWorkdir(this.d.factoryHome, slug);
+  workdir(ref: string): string {
+    return agentWorkdir(this.d.factoryHome, ref);
   }
 
   /** Claims the folder (non-recursive mkdir; EEXIST → FieldError("slug", …, "folder_exists")), copies, checks. */
-  async materialize(
-    _agentKey: string,
-    slug: string,
-    tpl: TemplateSource,
-    check: MaterializeCheck,
-  ): Promise<void> {
-    const workdir = this.workdir(slug);
+  async materialize(ref: string, tpl: TemplateSource, check: MaterializeCheck): Promise<void> {
+    const workdir = this.workdir(ref);
     await mkdir(path.join(this.d.factoryHome, "agents"), { recursive: true });
     try {
       await mkdir(workdir);
@@ -155,26 +152,26 @@ export class Workspace {
 
   /** Removes a folder this process created (only call after a successful materialize claim).
    *  Never follows a link the folder holds (or a link in its place). */
-  async discard(slug: string): Promise<void> {
-    await new SafeFs(this.workdir(slug)).removeAll();
+  async discard(ref: string): Promise<void> {
+    await new SafeFs(this.workdir(ref)).removeAll();
   }
 
   /**
    * S7 §10.3 step 3: a terminated agent's workspace after the grace. The one Workspace method that takes the lock
-   * itself: under `lock.run(slug)` it re-reads the pin (`stillUnpinned`; the pin route takes the same lock, so a pin
+   * itself: under `lock.run(ref)` it re-reads the pin (`stillUnpinned`; the pin route takes the same lock, so a pin
    * that returned success always keeps the workspace), then removes the workdir (`.claude-config` and its session
    * JSONL included) and the factory's state for it, each through `SafeFs.removeAll` (a link is removed as a link,
    * never followed), then records the deletion (`markDeleted`) before the lock is released. False when pinned.
    */
   async deleteWorkspace(
-    slug: string,
+    ref: string,
     stillUnpinned: () => Promise<boolean>,
     markDeleted: () => Promise<void>,
   ): Promise<boolean> {
-    return this.lock.run(slug, async () => {
+    return this.lock.run(ref, async () => {
       if (!(await stillUnpinned())) return false;
-      await new SafeFs(this.workdir(slug)).removeAll();
-      await new SafeFs(agentStateDir(this.d.factoryHome, slug)).removeAll();
+      await new SafeFs(this.workdir(ref)).removeAll();
+      await new SafeFs(agentStateDir(this.d.factoryHome, ref)).removeAll();
       await markDeleted();
       return true;
     });
@@ -183,22 +180,22 @@ export class Workspace {
   /**
    * Reset persona (spec §9), under the caller-held lock. `tplAgentsMd` is the template's AGENTS.md. Either replace
    * the agent's AGENTS.md at once (`canWriteNow`: nothing can race the write; the file it replaces is saved under
-   * `state/agents/<slug>/persona/<stamp>/`) or stage the template's file in `persona-pending/` for the next
+   * `state/agents/<ref>/persona/<stamp>/`) or stage the template's file in `persona-pending/` for the next
    * `prepare`. `backupDir` is relative to FACTORY_HOME and absent when there was no differing file to save; `changed` is false only
    * when the file already matched.
    */
   async resetPersona(
-    slug: string,
+    ref: string,
     tplAgentsMd: string,
     opts: { canWriteNow: boolean },
   ): Promise<{ applied: "now" | "on_restart"; backupDir?: string; changed: boolean }> {
     const data = await readFile(tplAgentsMd);
-    const pending = personaPendingDir(this.d.factoryHome, slug);
+    const pending = personaPendingDir(this.d.factoryHome, ref);
     if (!opts.canWriteNow) {
       await writeAtomic(path.join(pending, "AGENTS.md"), data);
       return { applied: "on_restart", changed: true };
     }
-    const { backupDir, changed } = await this.applyPersona(slug, data);
+    const { backupDir, changed } = await this.applyPersona(ref, data);
     // A fresh reset supersedes anything staged earlier, but only once it applied: a failed apply keeps the old one.
     await rm(pending, { recursive: true, force: true });
     return { applied: "now", changed, ...(backupDir ? { backupDir } : {}) };
@@ -206,15 +203,15 @@ export class Workspace {
 
   /** Saves the AGENTS.md being replaced (a link is saved as a link), then writes the new one through SafeFs. */
   private async applyPersona(
-    slug: string,
+    ref: string,
     data: Buffer,
   ): Promise<{ backupDir?: string; changed: boolean }> {
-    const workdir = this.workdir(slug);
+    const workdir = this.workdir(ref);
     // A missing file is recreated: that is a change with nothing to back up.
     const existed = (await new SafeFs(workdir).entry("AGENTS.md")) !== null;
     const backup = await backupDiffering(
       workdir,
-      personaRoot(this.d.factoryHome, slug),
+      personaRoot(this.d.factoryHome, ref),
       [{ to: "AGENTS.md", data }],
       utcStamp(),
     );
@@ -226,8 +223,8 @@ export class Workspace {
   }
 
   /** A reset staged while the agent ran: applied first, then removed. A failure keeps it staged. */
-  private async applyPendingPersona(slug: string): Promise<void> {
-    const pending = personaPendingDir(this.d.factoryHome, slug);
+  private async applyPendingPersona(ref: string): Promise<void> {
+    const pending = personaPendingDir(this.d.factoryHome, ref);
     let data: Buffer;
     try {
       data = await readFile(path.join(pending, "AGENTS.md"));
@@ -235,13 +232,13 @@ export class Workspace {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
       throw err;
     }
-    await this.applyPersona(slug, data);
+    await this.applyPersona(ref, data);
     await rm(pending, { recursive: true, force: true });
   }
 
   /**
    * Lock contract: no Workspace method takes a lock itself except `deleteWorkspace`. Callers must hold
-   * `lock.run(slug, …)` around materialize, reset-persona and prepare (createPrepareStart does so for prepare).
+   * `lock.run(ref, …)` around materialize, reset-persona and prepare (createPrepareStart does so for prepare).
    */
   async prepare(i: PrepareInput): Promise<{
     workdir: string;
@@ -250,12 +247,12 @@ export class Workspace {
     /** Docker only: the context `mounts` passed `checkMounts` with, for the pre-start re-check. */
     mountCheck?: MountCheckContext;
   }> {
-    const workdir = this.workdir(i.slug);
+    const workdir = this.workdir(i.ref);
     const configDir = agentConfigDir(workdir);
     const configRel = path.relative(workdir, configDir);
     const safe = new SafeFs(workdir);
     const { config, doc } = i.effective;
-    await this.applyPendingPersona(i.slug);
+    await this.applyPendingPersona(i.ref);
     // Spec 7.3 step 3, in this order: link the skills, then check and scrub the agent's own folders.
     const skills = await resolveSkills(this.d.library, config.skills, i.effective.templateSkills);
     const templateDir = path.join(this.d.factoryHome, "templates", i.template);
@@ -273,7 +270,7 @@ export class Workspace {
     const grantedPaths = i.grants.map((g) => g.hostPath);
     const settings = buildSettings({
       tpl: doc.settings,
-      slug: i.slug,
+      handle: i.handle,
       workdir,
       permissionMode: config.permissionMode,
       grantedPaths,

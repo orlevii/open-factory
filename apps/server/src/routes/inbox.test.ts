@@ -37,7 +37,7 @@ afterEach(() => h.close());
 const get = (path: string, headers: Record<string, string> = { cookie }) =>
   h.app.inject({ method: "GET", url: path, headers });
 const procOf = (slug: string) => {
-  const p = driver.starts.filter((s) => s.spec.slug === slug).at(-1);
+  const p = driver.startsOf(slug).at(-1);
   if (!p) throw new Error(`${slug} not started`);
   return p;
 };

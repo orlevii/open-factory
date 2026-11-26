@@ -43,7 +43,7 @@ afterEach(() => h.close());
 const settle = async (...slugs: string[]) => {
   for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
 };
-const proc = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug).at(-1);
+const proc = (slug: string) => driver.startsOf(slug).at(-1);
 const sentTo = (slug: string) => (proc(slug)?.sent ?? []).flat();
 const rowsTo = (slug: string) =>
   h.sql`select m.kind, m.notice, m.body, m.state from messages m join agents a on a.id = m.to_id

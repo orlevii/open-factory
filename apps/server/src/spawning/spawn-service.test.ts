@@ -176,7 +176,8 @@ test("spawn: child row, all the spawner's grants, brief, spawned event, peer row
     expect.objectContaining({ kind: "peer_joined", subjectAgentId: child.id, notice: "peer" }),
   ]);
   expect(await peerRowsTo(t, lead.id)).toEqual([]);
-  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-x1", "AGENTS.md"))).toBe(true);
+  const ref = await t.app.store.refOfAgent(child.id);
+  expect(existsSync(path.join(t.factoryHome, "agents", ref, "AGENTS.md"))).toBe(true);
 });
 
 test("a random suffix is 4 letters and the display name carries it", async () => {
@@ -304,7 +305,7 @@ function gateMaterialize(app: T) {
   let want = 1;
   vi.spyOn(app.app.workspace, "materialize").mockImplementation(async (...a) => {
     await real(...a);
-    started.push(a[1]);
+    started.push(a[2].handle);
     if (started.length >= want) entered.resolve();
     await gate.promise;
   });
@@ -396,24 +397,9 @@ test("a spawn racing a grant change: the child gets the spawner's post-change gr
   expect(await grantNames(t, child?.id ?? "")).toEqual(["web"]);
 });
 
-test("folder_exists: a random suffix retries, an explicit one is reported taken", async () => {
+test("five taken names in a row: the spawn gives up and asks for a suffix", async () => {
   const { t, lead } = await setup();
-  mkdirSync(path.join(t.factoryHome, "agents", "tech-lead-aaaa"));
-  mkdirSync(path.join(t.factoryHome, "agents", "tech-lead-mine"));
-  const suffixes = ["aaaa", "bbbb"];
-  const svc = new SpawnService({ ...serviceDeps(t), random: () => suffixes.shift() ?? "zzzz" });
-  expect(await svc.spawn(lead.id, args(), null)).toMatchObject({
-    ok: true,
-    slug: "tech-lead-bbbb",
-  });
-  // The folder that isn't ours is left alone.
-  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-aaaa"))).toBe(true);
-  expect(await svc.spawn(lead.id, args({ suffix: "mine" }), null)).toEqual({
-    ok: false,
-    message: "@tech-lead-mine is taken; pick another suffix or leave it out.",
-  });
-  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(true);
-  // Five collisions in a row: give up and ask for a suffix.
+  await seedTestPrincipal(t.db, "human", "tech-lead-aaaa");
   const stuck = new SpawnService({ ...serviceDeps(t), random: () => "aaaa" });
   expect(await stuck.spawn(lead.id, args(), null)).toEqual({
     ok: false,
@@ -428,22 +414,25 @@ test("a taken suffix retries the next name: a human holds one at the pre-read, a
   // A human's handle lands after the pre-read (during materialize): the principal insert in the transaction refuses it.
   const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
   vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
-    if (a[0] === "tech-lead-bbbb") await seedTestPrincipal(t.db, "human", "tech-lead-bbbb");
+    if (a[2].handle === "tech-lead-bbbb") await seedTestPrincipal(t.db, "human", "tech-lead-bbbb");
     return realMaterialize(...a);
   });
+  const before = folders(t);
   const suffixes = ["aaaa", "bbbb", "dddd"];
   const svc = new SpawnService({ ...serviceDeps(t), random: () => suffixes.shift() ?? "zzzz" });
   expect(await svc.spawn(lead.id, args(), null)).toMatchObject({
     ok: true,
     slug: "tech-lead-dddd",
   });
-  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-bbbb"))).toBe(false);
+  // Only the winner's folder was added: the one made for the refused name was removed.
+  expect(folders(t)).toHaveLength(before.length + 1);
   const holder = (await principalsByHandles(t.db, ["tech-lead-dddd"])).get("tech-lead-dddd");
   expect(holder?.kind).toBe("agent");
 });
 
 test("an explicit suffix taken by a human's handle after the pre-read is reported taken", async () => {
   const { t, lead } = await setup();
+  const before = folders(t);
   const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
   vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
     await seedTestPrincipal(t.db, "human", "tech-lead-mine");
@@ -453,23 +442,25 @@ test("an explicit suffix taken by a human's handle after the pre-read is reporte
     ok: false,
     message: "@tech-lead-mine is taken; pick another suffix or leave it out.",
   });
-  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(false);
+  expect(folders(t)).toEqual(before);
 });
 
-test("an agent that takes the name after the pre-read is reported taken and keeps its workspace", async () => {
+test("an agent that takes the name after the pre-read is reported taken; its workspace stays and the loser's folder goes", async () => {
   const { t, lead } = await setup();
+  let winner: AgentRow | undefined;
+  const before = folders(t);
   const realMaterialize = t.app.workspace.materialize.bind(t.app.workspace);
   vi.spyOn(t.app.workspace, "materialize").mockImplementation(async (...a) => {
     const made = await realMaterialize(...a);
     // The winner commits its agent (and writes its workspace) before the loser's transaction.
-    await t.seedAgent({ slug: "tech-lead-mine" });
+    winner = await t.seedAgent({ slug: "tech-lead-mine" });
     return made;
   });
   expect(await t.app.spawner.spawn(lead.id, args({ suffix: "mine" }), null)).toEqual({
     ok: false,
     message: "@tech-lead-mine is taken; pick another suffix or leave it out.",
   });
-  expect(existsSync(path.join(t.factoryHome, "agents", "tech-lead-mine"))).toBe(true);
+  expect(folders(t)).toEqual([...before, await t.app.store.refOfAgent(winner?.id ?? "")].sort());
 });
 
 test("a refusal under the lock leaves no principal behind", async () => {

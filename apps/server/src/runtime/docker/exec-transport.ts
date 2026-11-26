@@ -161,7 +161,7 @@ export function dockerTransport(d: {
         // Exited already: the container may be running this agent's next process.
         if (settled) return;
         // `container.stop({t: 5})`: Docker SIGTERMs tini, and the namespace goes with it (V8).
-        await d.containers.stop(spec.agentId, spec.slug);
+        await d.containers.stop(spec.agentId, spec.ref);
       },
     };
   };

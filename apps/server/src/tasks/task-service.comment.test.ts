@@ -36,7 +36,7 @@ const person = (who: string) => ({ ref: testRef(ids[who] as string), handle: who
 const settle = async (...slugs: string[]) => {
   for (const s of slugs) await (await h.app.runtimes.bySlug(s))?.settled();
 };
-const proc = (slug: string) => driver.starts.filter((p) => p.spec.slug === slug).at(-1);
+const proc = (slug: string) => driver.startsOf(slug).at(-1);
 const inbox = (userId: string) =>
   h.sql`select i.kind, i.read_at, m.body, m.from_id, m.from_id, m.comment_id
     from inbox_items i join messages m on m.id = i.message_id where i.user_id = ${userId} order by i.created_at`;

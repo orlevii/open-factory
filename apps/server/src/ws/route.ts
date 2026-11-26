@@ -103,7 +103,7 @@ export async function wsRoutes(app: FastifyInstance) {
         send(m);
       };
       // U3 §11.3: live frames that arrive during the replay are dropped; the snapshot sent after it supersedes them.
-      const off = app.bus.subscribe(agent, (m) => {
+      const off = app.bus.subscribe(rt.agent.id, (m) => {
         if (live) forward(m);
         else if (m.type !== "live") buffer.push(m);
       });

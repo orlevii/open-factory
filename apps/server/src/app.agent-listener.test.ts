@@ -43,7 +43,7 @@ test("spec §5.3: a boot wake starts the agent with .mcp.json pointing at an age
   await Promise.all(pending);
 
   expect(probe.starts).toHaveLength(1);
-  expect(probe.last.spec.slug).toBe("ada");
+  expect(probe.last.spec.env.GIT_AUTHOR_NAME).toBe("ada");
   expect(seenAtStart).toEqual([{ port: next.app.agentListener.port, status: 200 }]);
   expect(mcpUrlOf(probe.last.spec.cwd).toString()).toBe(
     `http://127.0.0.1:${next.app.agentListener.port}/mcp`,

@@ -6,7 +6,7 @@ import { asc, eq } from "drizzle-orm";
 import { type Config, LOCAL_RUNTIME_START_MESSAGE } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import type { Neighborhood } from "../messaging/neighborhood.ts";
-import { principalsByIds } from "../principals/principal-store.ts";
+import { principalById, principalsByIds } from "../principals/principal-store.ts";
 import { tagLookupFor } from "../principals/principal-text.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
@@ -173,7 +173,7 @@ export async function deriveInheritance(
 }
 
 /**
- * Builds the spec for one process start. Holds the agent's workspace lock (keyed by slug)
+ * Builds the spec for one process start. Holds the agent's workspace lock (keyed by ref)
  * around the whole thing, since Workspace methods take no lock themselves.
  * Never log the spec or its env: it carries decrypted credentials and secrets.
  */
@@ -192,8 +192,12 @@ export function createPrepareStart(d: {
   serverEnv?: NodeJS.ProcessEnv;
 }): PrepareStart {
   const serverEnv = d.serverEnv ?? process.env;
-  return (stale, { agentToken, loaded }) =>
-    d.lock.run(stale.slug, async () => {
+  return async (stale, { agentToken, loaded }) => {
+    // The lock is named by the ref, which `principals` holds and a rename never changes.
+    const lockPrincipal = await principalById(d.db, stale.id);
+    if (!lockPrincipal) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
+    const lockRef = lockPrincipal.ref;
+    return d.lock.run(lockRef, async () => {
       const [agent] = await d.db.select().from(schema.agents).where(eq(schema.agents.id, stale.id));
       if (!agent) throw new AgentStartError(`Agent @${stale.slug} no longer exists.`);
       if (agent.archivedAt) throw new AgentArchivedError(agent.slug);
@@ -286,6 +290,8 @@ export function createPrepareStart(d: {
         if (!p) throw new Error(`No principal ${id}`);
         return { ref: p.ref, handle: p.handle };
       };
+      const self = tagged(agent.id);
+      const ref = self.ref;
       let manager: ManagerRef | undefined;
       const [m] = await d.db
         .select({ displayName: schema.agents.displayName })
@@ -337,8 +343,8 @@ export function createPrepareStart(d: {
       // A local start removes the container left from when the agent ran in Docker (a human switched its runtime), so
       // no Claude runs in it beside the local one and no stale container stays. An unreachable daemon runs nothing.
       try {
-        if (docker) await d.containers?.stopIfRunning(agent.id, agent.slug);
-        else await d.containers?.remove(agent.id, agent.slug);
+        if (docker) await d.containers?.stopIfRunning(agent.id, ref);
+        else await d.containers?.remove(agent.id, ref);
       } catch (err) {
         if (docker || !dockerUnreachable(err)) throw dockerStartError(err);
       }
@@ -346,13 +352,14 @@ export function createPrepareStart(d: {
       let prepared: Awaited<ReturnType<Workspace["prepare"]>>;
       try {
         prepared = await d.workspace.prepare({
-          slug: agent.slug,
+          ref,
+          handle: self.handle,
           displayName: agent.displayName,
           description: show(agent.description),
           template: agent.template,
           effective,
           manager,
-          self: tagged(agent.id),
+          self,
           grants,
           peers: hood.peers.map(entry),
           reports: hood.reports.map(entry),
@@ -391,13 +398,14 @@ export function createPrepareStart(d: {
 
       const spec = buildRuntimeSpec({
         agentId: agent.id,
-        slug: agent.slug,
+        ref,
         workdir: prepared.workdir,
         env: buildAgentEnv(
           serverEnv,
           {
             configDir: prepared.configDir,
-            slug: agent.slug,
+            handle: self.handle,
+            ref,
             credential: { kind: cred.kind, value: credentialValue },
             secrets,
             agentUrl: d.config.agentUrl,
@@ -421,4 +429,5 @@ export function createPrepareStart(d: {
           }
         : { ...spec, credentialId, effective };
     });
+  };
 }

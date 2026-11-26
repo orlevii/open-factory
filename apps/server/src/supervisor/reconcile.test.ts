@@ -570,7 +570,7 @@ test("S7 §8: a failed removal of a terminated agent's container makes it stop_f
 /** A terminated Docker agent's leftover container, under the name the runtime's removal looks it up by. */
 async function dockerLeftover(b: Boot, id: string, running: boolean): Promise<string> {
   await t.sql`update agents set runtime = 'docker' where id = ${id}`;
-  const name = containerName((await row(id)).slug, id);
+  const name = containerName(testRef(id));
   putContainer(b, name, id, running);
   return name;
 }

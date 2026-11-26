@@ -65,10 +65,10 @@ function fakeDocker(o: { pidFile?: string; comm?: string; killCode?: number; exe
       return s.stream;
     },
   };
-  const stops: { agentId: string; slug: string }[] = [];
+  const stops: { agentId: string; ref: string }[] = [];
   const containers = {
-    async stop(agentId: string, slug: string) {
-      stops.push({ agentId, slug });
+    async stop(agentId: string, ref: string) {
+      stops.push({ agentId, ref });
     },
   } as unknown as ContainerManager;
   return { client: client as DockerClient, containers, execs, streams, stops, s };
@@ -76,7 +76,7 @@ function fakeDocker(o: { pidFile?: string; comm?: string; killCode?: number; exe
 
 const spec: AgentRuntimeSpec = {
   agentId: "a1",
-  slug: "dev",
+  ref: "dev",
   cwd: "/home/agent/workspace",
   env: { CLAUDE_CONFIG_DIR: "/home/agent/workspace/.claude-config", OPEN_FACTORY_URL: "http://x" },
   claudeBin: "/usr/local/bin/claude",
@@ -269,7 +269,7 @@ test("forceKill stops the agent's container (t: 5 via ContainerManager); not aft
   const d = fakeDocker({});
   const t = transport(d);
   await t.forceKill();
-  expect(d.stops).toEqual([{ agentId: "a1", slug: "dev" }]);
+  expect(d.stops).toEqual([{ agentId: "a1", ref: "dev" }]);
   d.s.finish(137);
   await t.exit;
   await t.forceKill();

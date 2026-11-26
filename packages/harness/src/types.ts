@@ -9,7 +9,7 @@ export interface Mount {
 
 export interface AgentRuntimeSpec {
   agentId: string;
-  slug: string;
+  ref: string;
   cwd: string;
   /** The complete child env. Nothing from process.env is merged in. */
   env: Record<string, string>;

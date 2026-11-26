@@ -90,7 +90,7 @@ export const okSpec = (
 ): PreparedSpec => ({
   credentialId: a.credentialId ?? `cred-${a.id}`,
   agentId: a.id,
-  slug: a.slug,
+  ref: a.id,
   cwd: "/w",
   env: { TOKEN_SEEN: "yes" },
   claudeBin: "claude",
@@ -205,7 +205,7 @@ export class RuntimeHarness {
     this.bus.subscribeAll((m) => frames.push(m));
     const agent = await this.store.agentById(this.agentId);
     if (!agent) throw new Error("no agent");
-    this.bus.subscribe(agent.slug, (m) => frames.push(m));
+    this.bus.subscribe(agent.id, (m) => frames.push(m));
     this.rt = new AgentRuntime({
       agent,
       store: this.store,

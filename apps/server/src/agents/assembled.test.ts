@@ -68,7 +68,7 @@ test("message API → envelope on stdin → persisted events with seq → WS fra
   expect(start?.kind === "start" && start.env.DATABASE_URL).toBeUndefined();
   expect(start?.kind === "start" && start.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("test-token");
   expect(start?.kind === "start" && start.env.CLAUDE_CONFIG_DIR).toBe(
-    path.join(t.factoryHome, "agents", "dev", ".claude-config"),
+    path.join(t.seededWorkdir("dev"), ".claude-config"),
   );
 
   const page = (

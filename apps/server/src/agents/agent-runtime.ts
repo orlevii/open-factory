@@ -91,7 +91,7 @@ export interface RuntimeDeps {
   store: EventStore;
   bus: EventBus;
   driver: HarnessDriver;
-  /** Builds the spec for a process start. It takes the agent's slug lock itself: never call it while holding that lock. */
+  /** Builds the spec for a process start. It takes the agent's ref lock itself: never call it while holding that lock. */
   prepareStart: StartPreparer;
   /** Per-launch agent tokens (spec §5.2): minted before each start, revoked when that process exits. */
   tokens: Pick<AgentTokens, "mint" | "revoke">;
@@ -529,7 +529,7 @@ export class AgentRuntime {
   private proc: HarnessProcess | undefined;
   private deadProc: HarnessProcess | undefined;
   private sessionStarted = false; // session_started seen for this process
-  private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the slug lock)
+  private starting = false; // a start is between its API job and the spawn (prepare may be waiting on the ref lock)
   private openTurnId: string | undefined;
   /** U3 §5.2: when the open turn's `turn_started` was stored (ISO); set and cleared with `openTurnId`. */
   private turnStartedAt: string | undefined;
@@ -1921,7 +1921,7 @@ export class AgentRuntime {
       if (target.runtime === "docker" || o.container) {
         // Never counted as removed: the container may still run, so the sweep must retry (stop_failed keeps the slot).
         if (!this.d.docker) throw new Error("the Docker runtime isn't configured");
-        const removed = await this.d.docker.containers.remove(this.agent.id, this.agent.slug);
+        const removed = await this.d.docker.containers.remove(this.agent.id, await this.ref());
         if (removed) done = { ...done, container: "removed" };
       }
     } catch (err) {
@@ -2447,7 +2447,7 @@ export class AgentRuntime {
     const dto = await this.d.store.append(this.agent.id, turnId ?? null, event, tx);
     if (!tx) {
       this.retireLive(event);
-      this.d.bus.publish(this.agent.slug, {
+      this.d.bus.publish(this.agent.id, {
         type: "session_event",
         agent: this.agent.slug,
         event: dto,
@@ -2519,7 +2519,7 @@ export class AgentRuntime {
   }
 
   private publishQueue() {
-    this.d.bus.publish(this.agent.slug, {
+    this.d.bus.publish(this.agent.id, {
       type: "queue",
       agent: this.agent.slug,
       items: this.queueItems(),
@@ -2756,7 +2756,7 @@ export class AgentRuntime {
     generation: number,
     onLaunched: () => void,
   ): Promise<boolean> {
-    // prepareStart takes the agent's slug lock (KeyedMutex is not re-entrant). The runtime never holds that
+    // prepareStart takes the agent's ref lock (KeyedMutex is not re-entrant). The runtime never holds that
     // lock: it has no handle to it, and its own serialization is the job queue.
     // I2 §7.3: stamped before the prepare reads the config, so a change landing during the prepare is held for the next
     // process (the start may have read the config before it).
@@ -2866,7 +2866,7 @@ export class AgentRuntime {
       );
       if (dropped)
         this.d.log.warn({ agent: this.agent.slug, dropped }, "dropped malformed command entries");
-      this.d.bus.publish(this.agent.slug, {
+      this.d.bus.publish(this.agent.id, {
         type: "agent_commands_changed",
         agent: this.agent.slug,
       });
@@ -2952,7 +2952,7 @@ export class AgentRuntime {
     try {
       const r = await docker.containers.ensure({
         agentId: this.agent.id,
-        slug: this.agent.slug,
+        ref: await this.ref(),
         image: launch.image,
         mounts: spec.mounts,
         mountCheck: launch.mountCheck,
@@ -2983,7 +2983,7 @@ export class AgentRuntime {
    */
   private async stopUnlaunchedContainer(): Promise<boolean> {
     try {
-      await this.d.docker?.containers.stopIfRunning(this.agent.id, this.agent.slug);
+      await this.d.docker?.containers.stopIfRunning(this.agent.id, await this.ref());
       return true;
     } catch (err) {
       this.d.log.error(
@@ -3006,12 +3006,19 @@ export class AgentRuntime {
   private async removeContainer(): Promise<boolean> {
     if (this.cleanupTarget().runtime !== "docker" || !this.d.docker) return false;
     try {
-      await this.d.docker.containers.forceRemove(this.agent.id, this.agent.slug);
+      await this.d.docker.containers.forceRemove(this.agent.id, await this.ref());
       return true;
     } catch (err) {
       this.d.log.error({ err, agent: this.agent.slug }, "removing the container failed");
       return false;
     }
+  }
+
+  /** The ref its container is named by, read once from `principals` (it never changes). */
+  private refOnce?: Promise<string>;
+  private ref(): Promise<string> {
+    this.refOnce ??= this.d.store.refOfAgent(this.agent.id);
+    return this.refOnce;
   }
 
   /** The agent as the cleanup port sees it: with the runtime its last process ran under. */
@@ -3072,7 +3079,7 @@ export class AgentRuntime {
   }
 
   private publishLive(body: LiveFrameBody) {
-    this.d.bus.publish(this.agent.slug, { type: "live", agent: this.agent.slug, ...body });
+    this.d.bus.publish(this.agent.id, { type: "live", agent: this.agent.slug, ...body });
   }
 
   /** The whole live state as a `reset` frame (U3 §11.3): sent after a subscribe's replay and on `live_snapshot`. */
@@ -4401,7 +4408,7 @@ export class AgentRuntime {
       this.queue.unshift(...batch);
       throw err;
     }
-    this.d.bus.publish(this.agent.slug, {
+    this.d.bus.publish(this.agent.id, {
       type: "session_event",
       agent: this.agent.slug,
       event: dto,

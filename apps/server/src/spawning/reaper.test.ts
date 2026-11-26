@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { type AgentRow, schema } from "@open-factory/db";
+import { refOf } from "@open-factory/shared";
 import { tagOf } from "@open-factory/shared/tags";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -44,6 +45,7 @@ const writeTemplate = (home: string, name: string, y: string) => {
 interface Child {
   id: string;
   slug: string;
+  ref: string;
   rt: AgentRuntime;
   proc: FakeProcess;
 }
@@ -90,7 +92,7 @@ async function setup() {
     const proc = procsOf(r.agentId).at(-1) as FakeProcess;
     proc.emit(...ev.fullTurn(`sess-${suffix}`));
     await rt.settled();
-    return { id: r.agentId, slug: r.slug, rt, proc };
+    return { id: r.agentId, slug: r.slug, ref: refOf(r.agentId), rt, proc };
   }
   /** Spawned, then hibernated: no process, no slot. */
   async function spawnHibernated(suffix: string): Promise<Child> {
@@ -382,29 +384,29 @@ test("workspace deleted after the grace, not when pinned; unpin after grace dele
   const ws = s.t.app.workspace;
   const outside = mkdtempSync(path.join(tmpdir(), "of-outside-"));
   writeFileSync(path.join(outside, "keep.txt"), "not the agent's");
-  symlinkSync(outside, path.join(ws.workdir(a.slug), "planted"));
+  symlinkSync(outside, path.join(ws.workdir(a.ref), "planted"));
   // The factory-owned state folder (persona backups live there once a reset happened).
-  const stateA = agentStateDir(s.t.factoryHome, a.slug);
+  const stateA = agentStateDir(s.t.factoryHome, a.ref);
   mkdirSync(path.join(stateA, "persona"), { recursive: true });
   await s.t.app.store.setWorkspacePinned(b.id, true);
 
   now = Date.now() + 3 * day - 60_000; // inside the grace
   await s.reaper.run();
-  expect(existsSync(ws.workdir(a.slug))).toBe(true);
+  expect(existsSync(ws.workdir(a.ref))).toBe(true);
 
   now += 2 * 60_000; // past it
   await s.reaper.run();
-  expect(existsSync(ws.workdir(a.slug))).toBe(false);
+  expect(existsSync(ws.workdir(a.ref))).toBe(false);
   expect(existsSync(stateA)).toBe(false);
   expect(existsSync(path.join(outside, "keep.txt"))).toBe(true); // the link went, not its target
   expect((await s.row(a.id)).workspaceDeletedAt).toEqual(new Date(now));
-  expect(existsSync(ws.workdir(b.slug))).toBe(true); // pinned
+  expect(existsSync(ws.workdir(b.ref))).toBe(true); // pinned
   expect((await s.row(b.id)).workspaceDeletedAt).toBeNull();
 
   await s.t.app.store.setWorkspacePinned(b.id, false);
   now += SWEEP_INTERVAL_MS;
   await s.reaper.run();
-  expect(existsSync(ws.workdir(b.slug))).toBe(false);
+  expect(existsSync(ws.workdir(b.ref))).toBe(false);
   expect((await s.row(b.id)).workspaceDeletedAt).toEqual(new Date(now));
 });
 
@@ -414,16 +416,16 @@ test("a pin that lands after the candidate was read unpinned keeps the workspace
   await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await c.rt.settled();
   const ws = s.t.app.workspace;
-  mkdirSync(path.join(agentStateDir(s.t.factoryHome, c.slug), "persona"), { recursive: true });
+  mkdirSync(path.join(agentStateDir(s.t.factoryHome, c.ref), "persona"), { recursive: true });
   const observed: boolean[] = [];
   const original = ws.deleteWorkspace.bind(ws);
-  vi.spyOn(ws, "deleteWorkspace").mockImplementation(async (slug, stillUnpinned, markDeleted) => {
+  vi.spyOn(ws, "deleteWorkspace").mockImplementation(async (ref, stillUnpinned, markDeleted) => {
     // The candidate query read it unpinned; the guard agrees before the race.
     observed.push(await stillUnpinned());
     // The pin route (Task 16's shape) takes the workspace lock first and pins.
-    await ws.lock.run(slug, () => s.t.app.store.setWorkspacePinned(c.id, true));
+    await ws.lock.run(ref, () => s.t.app.store.setWorkspacePinned(c.id, true));
     return original(
-      slug,
+      ref,
       async () => {
         const v = await stillUnpinned();
         observed.push(v);
@@ -435,8 +437,8 @@ test("a pin that lands after the candidate was read unpinned keeps the workspace
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   expect(observed).toEqual([true, false]);
-  expect(existsSync(ws.workdir(c.slug))).toBe(true);
-  expect(existsSync(agentStateDir(s.t.factoryHome, c.slug))).toBe(true);
+  expect(existsSync(ws.workdir(c.ref))).toBe(true);
+  expect(existsSync(agentStateDir(s.t.factoryHome, c.ref))).toBe(true);
   expect((await s.row(c.id)).workspaceDeletedAt).toBeNull();
 });
 
@@ -454,10 +456,10 @@ test("a failing deletion is logged and retried by the next run", async () => {
     expect.objectContaining({ agent: c.slug }),
     "deleting a workspace failed; retrying next sweep",
   );
-  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(true);
+  expect(existsSync(s.t.app.workspace.workdir(c.ref))).toBe(true);
   expect((await s.row(c.id)).workspaceDeletedAt).toBeNull();
   await s.reaper.run();
-  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(false);
+  expect(existsSync(s.t.app.workspace.workdir(c.ref))).toBe(false);
   expect((await s.row(c.id)).workspaceDeletedAt).not.toBeNull();
 });
 
@@ -531,7 +533,7 @@ test("a stuck agent's workspace is kept past the grace until it is cleared", asy
   now = Date.now() + 3 * day + 1;
   await s.reaper.run();
   await c.rt.settled();
-  expect(existsSync(s.t.app.workspace.workdir(c.slug))).toBe(true);
+  expect(existsSync(s.t.app.workspace.workdir(c.ref))).toBe(true);
   expect((await s.row(c.id)).workspaceDeletedAt).toBeNull();
 });
 

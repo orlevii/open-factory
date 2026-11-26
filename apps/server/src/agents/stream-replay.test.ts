@@ -98,7 +98,7 @@ async function replay(name: string, lines: readonly TraceLine[]): Promise<Replay
     (m.type === "session_event" || m.type === "live") && m.agent === slug;
   const frames: ServerMessage[] = [];
   const snapshots: StreamFixture["snapshots"] = [];
-  const off = h.bus.subscribe(slug, (m) => {
+  const off = h.bus.subscribe(h.rt.agent.id, (m) => {
     if (ours(m)) frames.push(norm(m));
   });
   let droppedByKey = 0;

@@ -18,7 +18,7 @@ const schedulerTimers = {
   },
 };
 const opts = () => ({ harnessDriver: driver, clock: () => clock, schedulerTimers });
-const proc = () => driver.starts.filter((p) => p.spec.slug === "ceo").at(-1);
+const proc = () => driver.startsOf("ceo").at(-1);
 
 beforeEach(async () => {
   clock = new Date("2026-11-20T10:00:00Z");

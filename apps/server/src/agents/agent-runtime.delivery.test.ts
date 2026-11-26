@@ -49,7 +49,7 @@ async function makeRuntime(
   bus.subscribeAll((m) => frames.push(m));
   const agent = await store.agentById(agentId);
   if (!agent) throw new Error("no agent");
-  bus.subscribe(agent.slug, (m) => frames.push(m));
+  bus.subscribe(agent.id, (m) => frames.push(m));
   rt = new AgentRuntime({
     tokens: noopTokens,
     forward: noForward,
@@ -62,7 +62,7 @@ async function makeRuntime(
       return {
         credentialId: liveCredentialId(a),
         agentId: a.id,
-        slug: a.slug,
+        ref: a.id,
         cwd: "/w",
         env: { TOKEN_SEEN: "yes" },
         claudeBin: "claude",

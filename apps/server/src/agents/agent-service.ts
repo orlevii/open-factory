@@ -32,6 +32,7 @@ import {
   createPrincipal,
   HandleTakenError,
   type Principal,
+  principalById,
   principalsByHandles,
   principalsByIds,
   tagOfPrincipal,
@@ -679,7 +680,7 @@ export class AgentService {
     const config = b.config ? await this.checkedOverlay(b.config, tpl, actor) : {};
 
     const prep: MaterializeCheck = {
-      slug: b.slug,
+      handle: b.slug,
       displayName: b.displayName,
       description: b.description,
       template: b.template,
@@ -695,19 +696,21 @@ export class AgentService {
           : { kind: "human", ref: manager.ref, handle: manager.handle, name: manager.name },
       grants: projects.map((p) => ({ name: p.name, hostPath: p.hostPath })),
     };
-    try {
-      await workspace.lock.run(b.slug, () => workspace.materialize(b.slug, b.slug, tpl, prep));
-    } catch (err) {
-      // folder_exists means the folder isn't ours: leave it alone.
-      if (!(err instanceof FieldError && err.code === "folder_exists"))
-        await workspace.discard(b.slug).catch(() => {});
-      throw materializeFailure(err, actor);
-    }
-
+    // Spec §4.4: the principal first (it settles the handle and gives the ref the folder is named by), then the
+    // folder under the ref's lock, then the rows. A failure after the folder removes it; the rollback removes the
+    // principal.
+    const made: { ref?: string; stage: "principal" | "folder" | "rows" } = { stage: "principal" };
     let id: string;
     try {
       id = await db.transaction(async (tx) => {
-        const { id } = await createPrincipal(tx, "agent", b.slug);
+        const principal = await createPrincipal(tx, "agent", b.slug);
+        const { id } = principal;
+        made.ref = principal.ref;
+        made.stage = "folder";
+        await workspace.lock.run(principal.ref, () =>
+          workspace.materialize(principal.ref, tpl, prep),
+        );
+        made.stage = "rows";
         await this.assertUserEnabled(tx, manager);
         await tx.insert(schema.agents).values({
           id,
@@ -730,9 +733,12 @@ export class AgentService {
         return id;
       });
     } catch (err) {
-      await workspace.discard(b.slug).catch(() => {});
       if (err instanceof HandleTakenError) throw slugTaken();
-      throw err;
+      // folder_exists means the folder isn't ours: leave it alone.
+      const foreign = err instanceof FieldError && err.code === "folder_exists";
+      if (made.ref && made.stage !== "principal" && !foreign)
+        await workspace.discard(made.ref).catch(() => {});
+      throw made.stage === "folder" ? materializeFailure(err, actor) : err;
     }
     await this.peerEvents(id, { kind: "joined", ...this.byOf(actor) }, noPeers);
     this.orgAction(actor, "agent_created", b.slug);
@@ -958,12 +964,19 @@ export class AgentService {
     }
   }
 
+  /** The ref its workdir, container and workspace lock are named by (spec §4.4). */
+  private async refOf(agentId: string): Promise<string> {
+    const p = await principalById(this.d.db, agentId);
+    if (!p) throw new Error(`No principal ${agentId}`);
+    return p.ref;
+  }
+
   /** Fails closed: a Docker agent whose container state can't be read (Docker down) is treated as running. */
   private async containerRunning(row: AgentRow): Promise<boolean> {
     if (row.runtime !== "docker") return false;
     if (!this.d.containers) return true;
     try {
-      return await this.d.containers.isRunning(row.id, row.slug);
+      return await this.d.containers.isRunning(row.id, await this.refOf(row.id));
     } catch (err) {
       this.d.log.warn(
         { err, agent: row.slug },
@@ -1004,12 +1017,13 @@ export class AgentService {
     if (!(await templateFileOk())) throw badTemplate();
     let r: Awaited<ReturnType<Workspace["resetPersona"]>>;
     try {
-      r = await workspace.lock.run(slug, async () => {
+      const ref = await this.refOf(row.id);
+      r = await workspace.lock.run(ref, async () => {
         // Decided under the lock every start also takes, so a start can't slip in between. Docker: the container
         // must not be running either (spec §11.4 part 4).
         const rt = await runtimes.get(row.id);
         const canWriteNow = !rt?.hasProcess() && !(await this.containerRunning(row));
-        return workspace.resetPersona(slug, agentsMd, { canWriteNow });
+        return workspace.resetPersona(ref, agentsMd, { canWriteNow });
       });
     } catch (err) {
       // The template file went away after the check above: the template's fault, not the workdir's.

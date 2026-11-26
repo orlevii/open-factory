@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { type AgentRow, type Db, schema } from "@open-factory/db";
-import { sendMessagesBodySchema } from "@open-factory/shared";
+import { refOf, sendMessagesBodySchema } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { ConfigResolver, Effective } from "../agents/config-resolver.ts";
@@ -118,7 +119,12 @@ export class SpawnService {
         if (named.explicit) return taken(named.slug);
         continue;
       }
+      // The folder is named by the ref, which the id fixes before any row exists (spec §4.4); the principal is
+      // created from this id only once nothing can refuse any more.
+      const id = randomUUID();
+      const ref = refOf(id);
       const made = await this.materialize(
+        ref,
         named.slug,
         args.template,
         desc,
@@ -126,14 +132,11 @@ export class SpawnService {
         caller,
         pre.inherited,
       );
-      if (made === "taken") {
-        if (named.explicit) return taken(named.slug);
-        continue;
-      }
       if (made !== "ok") return made;
       const done = await this.insert(
         caller,
         current,
+        id,
         named.slug,
         args.template,
         desc,
@@ -187,22 +190,23 @@ export class SpawnService {
     return { ok: true, inherited };
   }
 
-  /** S4's materialize under the workspace lock. `folder_exists` is a collision; any other failure removes the folder. */
+  /** S4's materialize under the workspace lock. `folder_exists` leaves the folder alone; any other failure removes it. */
   private async materialize(
+    ref: string,
     slug: string,
     template: string,
     description: string,
     tpl: Template,
     caller: AgentRow,
     inherited: Granted,
-  ): Promise<"ok" | "taken" | Refused> {
+  ): Promise<"ok" | Refused> {
     const { workspace } = this.d;
     try {
       const spawner = await principalById(this.d.db, caller.id);
       if (!spawner) throw new Error(`No principal ${caller.id}`);
-      await workspace.lock.run(slug, () =>
-        workspace.materialize(slug, slug, tpl, {
-          slug,
+      await workspace.lock.run(ref, () =>
+        workspace.materialize(ref, tpl, {
+          handle: slug,
           displayName: displayName(tpl, slug, template),
           description,
           template,
@@ -219,8 +223,9 @@ export class SpawnService {
       return "ok";
     } catch (err) {
       // folder_exists: the folder isn't ours (a crash's leftover or a human's); never remove it.
-      if (err instanceof FieldError && err.code === "folder_exists") return "taken";
-      await this.discard(slug);
+      if (!(err instanceof FieldError && err.code === "folder_exists")) await this.discard(ref);
+      if (err instanceof FieldError && err.code === "folder_exists")
+        return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
       if (err instanceof WorkspaceError || err instanceof FieldError) return fail(err.message);
       this.d.log.error({ err, agent: slug }, "materializing a spawned agent failed");
       return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
@@ -231,6 +236,7 @@ export class SpawnService {
   private async insert(
     caller: AgentRow,
     current: Effective,
+    newId: string,
     slug: string,
     template: string,
     description: string,
@@ -271,7 +277,7 @@ export class SpawnService {
         const c = await this.check(spawner, started, current, tpl, tx);
         if (!c.ok) return c;
         // Create the principal only once nothing can refuse any more: a refusal returns and commits, which would orphan it.
-        const principal = await createPrincipal(tx, "agent", slug).catch((e) => {
+        const principal = await createPrincipal(tx, "agent", slug, () => newId).catch((e) => {
           if (e instanceof HandleTakenError) return null;
           throw e;
         });
@@ -327,17 +333,17 @@ export class SpawnService {
         return { ok: true, child, brief, peers, inherited: c.inherited };
       });
     } catch (err) {
-      await this.discard(slug);
+      await this.discard(refOf(newId));
       this.d.log.error({ err, agent: slug }, "inserting a spawned agent failed");
       return fail(`Setting up @${slug} failed; ask your manager to check the factory log.`);
     }
     if (out === "taken") {
-      // A human's handle leaves our folder orphaned; an agent's means a winner owns it.
-      await this.discardUnlessWon(slug);
+      // The folder is named by this spawn's own ref, so it is ours whoever won the handle.
+      await this.discard(refOf(newId));
       return out;
     }
     if (!out.ok) {
-      await this.discard(slug);
+      await this.discard(refOf(newId));
       return out;
     }
     // §5.2 step 5: the status before the hand-off; both hand-offs are enqueued after boot, never awaited.
@@ -354,18 +360,12 @@ export class SpawnService {
     };
   }
 
-  /** `discard` unless an agent already holds the slug: that winner's workspace is never deleted. */
-  private async discardUnlessWon(slug: string): Promise<void> {
-    if (await this.d.store.agentBySlug(slug)) return;
-    await this.discard(slug);
-  }
-
   /** Best effort: the folder was made by this spawn's materialize. */
-  private async discard(slug: string): Promise<void> {
+  private async discard(ref: string): Promise<void> {
     try {
-      await this.d.workspace.lock.run(slug, () => this.d.workspace.discard(slug));
+      await this.d.workspace.lock.run(ref, () => this.d.workspace.discard(ref));
     } catch (err) {
-      this.d.log.error({ err, agent: slug }, "removing a refused spawn's folder failed");
+      this.d.log.error({ err, agent: ref }, "removing a refused spawn's folder failed");
     }
   }
 }

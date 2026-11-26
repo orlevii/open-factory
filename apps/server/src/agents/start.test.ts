@@ -139,11 +139,10 @@ async function seedStartFixture() {
   });
   const grants = [{ name: "app", hostPath: repo }];
   await workspace.materialize(
-    agent.id,
-    slug,
+    testRef(agent.id),
     { dir: tdir, config, tplSettings: {}, tplMcp: { mcpServers: {} } },
     {
-      slug,
+      handle: slug,
       displayName: "Lead",
       description: "",
       template: "lead",
@@ -196,7 +195,7 @@ test("assembles the spec: env has the decrypted credential and secret; files pre
   expect(spec.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("tok-1");
   expect(spec.credentialId).toBe("c1");
   expect(spec.env.GH_TOKEN).toBe("gh-1");
-  expect(spec.cwd).toBe(path.join(home, "agents", agent.slug));
+  expect(spec.cwd).toBe(path.join(home, "agents", testRef(agent.id)));
   expect(spec.runtime).toBe("local");
   expect(existsSync(path.join(spec.cwd, ".claude-config/CLAUDE.md"))).toBe(true);
   expect(existsSync(path.join(spec.cwd, "projects/app"))).toBe(true);
@@ -216,7 +215,9 @@ test("the child env is an allowlist: server secrets and own credentials never re
   expect(["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"].filter((k) => k in env)).toEqual([
     "CLAUDE_CODE_OAUTH_TOKEN",
   ]);
-  expect(env.CLAUDE_CONFIG_DIR).toBe(path.join(home, "agents", agent.slug, ".claude-config"));
+  expect(env.CLAUDE_CONFIG_DIR).toBe(
+    path.join(home, "agents", testRef(agent.id), ".claude-config"),
+  );
 });
 
 test("an api_key credential sets ANTHROPIC_API_KEY only", async () => {
@@ -287,7 +288,7 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
     },
   ]);
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  const text = md(agent.slug);
+  const text = md(agent);
   expect(text).toContain(
     `- <@${testRef("dev-id")}|dev> (Dev), written by <@${testRef(agent.id)}|${agent.slug}>: "Builds."`,
   );
@@ -296,10 +297,10 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
 
 test("a manage_org agent's CLAUDE.md gets the Managing the org section; before the grant it has none", async () => {
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  expect(md(agent.slug)).not.toContain("## Managing the org");
+  expect(md(agent)).not.toContain("## Managing the org");
   await t.sql`update agents set manage_org = true where id = ${agent.id}`;
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  expect(md(agent.slug)).toContain("## Managing the org\n- A human gave you manage_org.");
+  expect(md(agent)).toContain("## Managing the org\n- A human gave you manage_org.");
 });
 
 test.each([
@@ -348,7 +349,7 @@ test("archived agents never start", async () => {
 test("prepare runs under the workspace lock for the agent's slug", async () => {
   let release = () => {};
   const held = lock.run(
-    agent.slug,
+    testRef(agent.id),
     () =>
       new Promise<void>((r) => {
         release = r;
@@ -409,7 +410,7 @@ test("prepare writes the template plus the overlay: a deny rule appended and an 
     })
     .where(eq(schema.agents.id, agent.id));
   const spec = await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  const deny = settingsOf(agent.slug).permissions.deny;
+  const deny = settingsOf(agent).permissions.deny;
   expect(deny).toEqual(expect.arrayContaining(["Bash(rm:*)", "WebFetch"]));
   expect(deny.indexOf("Bash(rm:*)")).toBeLessThan(deny.indexOf("WebFetch"));
   const mcp = JSON.parse(readFileSync(path.join(spec.cwd, ".mcp.json"), "utf8"));
@@ -419,7 +420,7 @@ test("prepare writes the template plus the overlay: a deny rule appended and an 
 
 test("prepare fails closed when .claude-config is a symlink to a host dir", async () => {
   const hostDir = mkdtempSync(path.join(tmpdir(), "host-"));
-  const workdir = workspace.workdir(agent.slug);
+  const workdir = workspace.workdir(testRef(agent.id));
   rmSync(`${workdir}/.claude-config`, { recursive: true, force: true });
   symlinkSync(hostDir, `${workdir}/.claude-config`);
   await expect(prepareStart(agent, { agentToken: "tok" })).rejects.toThrow(AgentStartError);
@@ -469,11 +470,14 @@ const readlinkOrNull = (p: string) => {
   }
 };
 const leadTemplateSettings = () => path.join(home, "templates/lead/settings.json");
-const md = (slug: string) =>
-  readFileSync(path.join(workspace.workdir(slug), ".claude-config/CLAUDE.md"), "utf8");
-const settingsOf = (slug: string) =>
+const md = (a: { id: string }) =>
+  readFileSync(path.join(workspace.workdir(testRef(a.id)), ".claude-config/CLAUDE.md"), "utf8");
+const settingsOf = (a: { id: string }) =>
   JSON.parse(
-    readFileSync(path.join(workspace.workdir(slug), ".claude-config/settings.json"), "utf8"),
+    readFileSync(
+      path.join(workspace.workdir(testRef(a.id)), ".claude-config/settings.json"),
+      "utf8",
+    ),
   );
 
 /** The fixture's lead (secrets [GH_TOKEN], grant `app`, template deny `Bash(rm:*)`) spawned a child. */
@@ -536,8 +540,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
   if (!row) throw new Error("seed failed");
   await t.db.insert(schema.agentProjectGrants).values({ agentId: row.id, projectId: "p1" });
   await workspace.materialize(
-    row.id,
-    slug,
+    testRef(row.id),
     {
       dir: tdir,
       config,
@@ -545,7 +548,7 @@ async function seedChild(over: Record<string, unknown> = {}): Promise<AgentRow> 
       tplMcp: { mcpServers: {} },
     },
     {
-      slug,
+      handle: slug,
       displayName: "Dev · ab",
       description: "Builds the thing.",
       template: "dev",
@@ -563,12 +566,14 @@ test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny 
   expect(spec.env.GH_TOKEN).toBe("gh-1");
   expect(spec.env.NPM_TOKEN).toBeUndefined();
   expect(Object.values(spec.env)).not.toContain("npm-1");
-  const settings = settingsOf(child.slug);
+  const settings = settingsOf(child);
   expect(settings.permissions.deny).toContain("Bash(rm:*)");
   expect(settings.permissions.deny).toContain("Bash(curl:*)");
   expect(settings.autoMode.hard_deny).toEqual(["$defaults", "Never push to main"]);
-  expect(md(child.slug)).toContain("Environment variables provided to you: GH_TOKEN.");
-  expect(readlinkOrNull(path.join(workspace.workdir(child.slug), "projects/app"))).not.toBeNull();
+  expect(md(child)).toContain("Environment variables provided to you: GH_TOKEN.");
+  expect(
+    readlinkOrNull(path.join(workspace.workdir(testRef(child.id)), "projects/app")),
+  ).not.toBeNull();
   // Revoked directly, without syncChildren: the child's start drops the grant anyway.
   await t.db
     .delete(schema.agentProjectGrants)
@@ -579,8 +584,10 @@ test("a child's start: secrets ∩ spawner's (a dropped one doesn't fail), deny 
       ),
     );
   await prepareStart(child, { agentToken: "tok" });
-  expect(readlinkOrNull(path.join(workspace.workdir(child.slug), "projects/app"))).toBeNull();
-  expect(md(child.slug)).toContain("No projects are granted to you.");
+  expect(
+    readlinkOrNull(path.join(workspace.workdir(testRef(child.id)), "projects/app")),
+  ).toBeNull();
+  expect(md(child)).toContain("No projects are granted to you.");
 });
 
 test("a child's start uses its spawner's current credential, even when its own row lags (no syncChildren)", async () => {
@@ -607,7 +614,7 @@ test("the spawner's current deny rules reach the child at its next start (no sna
   await prepareStart(child, { agentToken: "tok" });
   writeFileSync(leadTemplateSettings(), JSON.stringify({ permissions: { deny: ["WebFetch"] } }));
   await prepareStart(child, { agentToken: "tok" });
-  const deny = settingsOf(child.slug).permissions.deny;
+  const deny = settingsOf(child).permissions.deny;
   expect(deny).toContain("WebFetch");
   expect(deny).not.toContain("Bash(rm:*)");
   expect(deny).toContain("Bash(curl:*)");
@@ -692,13 +699,13 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
     .set({ description: 'Ship "it" <now>' })
     .where(eq(schema.agents.id, child.id));
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  const lead = md(agent.slug);
+  const lead = md(agent);
   expect(lead).toContain("## Spawning");
   expect(lead).toContain(
     `- <@${testRef(child.id)}|${child.slug}> (Dev · ab), written by <@${testRef(agent.id)}|${agent.slug}>: "Ship 'it' now"`,
   );
   await prepareStart(child, { agentToken: "tok" });
-  const own = md(child.slug);
+  const own = md(child);
   expect(own).toContain(
     `You are a spawned agent: <@${testRef(agent.id)}|${agent.slug}> spawned you for one piece of work.`,
   );
@@ -708,7 +715,7 @@ test("a spawner's CLAUDE.md has the Spawning section; its spawned report is quot
 
 test("a persistent agent without can_spawn has no Spawning section", async () => {
   await prepareStart(agent, { agentToken: "tok" });
-  expect(md(agent.slug)).not.toContain("## Spawning");
+  expect(md(agent)).not.toContain("## Spawning");
 });
 
 const setConfig = (id: string, config: Record<string, unknown>) =>
@@ -813,7 +820,7 @@ test("a loaded spawner counts as started ∩ current for secrets and started ∪
   const spec = await prepareStart(child, { agentToken: "tok" });
   expect(spec.env.GH_TOKEN).toBe("gh-1");
   expect(spec.env.NPM_TOKEN).toBeUndefined(); // gained since it started: not yet held by the running process
-  const deny = settingsOf(child.slug).permissions.deny;
+  const deny = settingsOf(child).permissions.deny;
   expect(deny).toEqual(expect.arrayContaining(["Bash(rm:*)", "WebFetch", "Bash(curl:*)"]));
 });
 
@@ -827,7 +834,7 @@ test("a spawner that isn't loaded counts as its current config alone", async () 
   const spec = await prepareStart(child, { agentToken: "tok" });
   expect(spec.env.GH_TOKEN).toBe("gh-1");
   expect(spec.env.NPM_TOKEN).toBe("npm-1");
-  const deny = settingsOf(child.slug).permissions.deny;
+  const deny = settingsOf(child).permissions.deny;
   expect(deny).toContain("WebFetch");
   expect(deny).not.toContain("Bash(rm:*)");
 });
@@ -839,7 +846,7 @@ test("spawning is computed from the effective config being prepared, not from st
     .set({ config: { template: { can_spawn: ["dev"] } } })
     .where(eq(schema.agents.id, agent.id));
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
-  expect(md(agent.slug)).toContain("## Spawning");
+  expect(md(agent)).toContain("## Spawning");
 });
 
 test("a spawner that dropped a secret and a deny rule since it started: the child still gets neither secret, and keeps the deny rule", async () => {
@@ -850,7 +857,7 @@ test("a spawner that dropped a secret and a deny rule since it started: the chil
   const spec = await prepareStart(child, { agentToken: "tok" });
   expect(spec.env.GH_TOKEN).toBeUndefined();
   expect(spec.env.NPM_TOKEN).toBeUndefined();
-  expect(settingsOf(child.slug).permissions.deny).toContain("Bash(rm:*)");
+  expect(settingsOf(child).permissions.deny).toContain("Bash(rm:*)");
 });
 
 test("the stricter permission mode of started and current counts: a spawner that was auto at start still refuses a bypass child", async () => {

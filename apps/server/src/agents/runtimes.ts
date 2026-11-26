@@ -96,10 +96,11 @@ export function localCleanup(
  */
 export function dockerCleanup(
   containers: Pick<ContainerManager, "stopIfRunning">,
+  store: Pick<EventStore, "refOfAgent">,
 ): (agent: AgentRow) => Promise<CleanupResult | undefined> {
   return async (agent) => {
     if (agent.runtime !== "docker") return undefined;
-    return (await containers.stopIfRunning(agent.id, agent.slug))
+    return (await containers.stopIfRunning(agent.id, await store.refOfAgent(agent.id)))
       ? { container: "stopped" }
       : undefined;
   };
@@ -362,7 +363,9 @@ export class AgentRuntimes {
   /** One cleanup port for both runtimes: the local journal reap and the Docker container stop, by the agent's runtime. */
   private cleanupDeps(): { cleanup?: (agent: AgentRow) => Promise<CleanupResult | undefined> } {
     const local = this.d.journal ? localCleanup(this.d.store, this.d.journal) : undefined;
-    const docker = this.d.docker ? dockerCleanup(this.d.docker.containers) : undefined;
+    const docker = this.d.docker
+      ? dockerCleanup(this.d.docker.containers, this.d.store)
+      : undefined;
     if (!local && !docker) return {};
     return {
       cleanup: async (agent) => (agent.runtime === "docker" ? docker?.(agent) : local?.(agent)),

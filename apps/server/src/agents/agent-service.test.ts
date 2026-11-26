@@ -45,6 +45,10 @@ const idOf = async (slug: string) => {
   return r.id;
 };
 
+const refFor = async (slug: string) => refOf(await idOf(slug));
+const workdirOf = async (slug: string) => path.join(home, "agents", await refFor(slug));
+const stateOf = async (slug: string) => path.join(home, "state", "agents", await refFor(slug));
+
 beforeAll(async () => {
   fake = createFakeClaude({ scenario: "reply" });
   t = await makeTestApp({ env: { FACTORY_CLAUDE_BIN: fake.bin } });
@@ -87,7 +91,8 @@ test("create: layout on disk, rows, grants default; then summary in tree order",
     depth: 0,
     archivedAt: null,
   });
-  expect(existsSync(path.join(home, "agents/lead/AGENTS.md"))).toBe(true);
+  expect(existsSync(path.join(await workdirOf("lead"), "AGENTS.md"))).toBe(true);
+  expect(existsSync(path.join(home, "agents", "lead"))).toBe(false);
   const b = await svc.create(
     {
       template: "lead",
@@ -174,23 +179,23 @@ test("create with a reserved slug is refused and creates no principal", async ()
   expect((await principalsByHandles(t.db, slugs)).size).toBe(0);
 });
 
-test("create: an existing folder → folder_exists, untouched", async () => {
-  mkdirSync(path.join(home, "agents/occupied"), { recursive: true });
-  writeFileSync(path.join(home, "agents/occupied/keep.txt"), "k");
-  await expect(
-    svc.create(
-      {
-        template: "lead",
-        slug: "occupied",
-        displayName: "O",
-        description: "",
-        reportsTo: "or",
-        credential: "work",
-      },
-      { kind: "human", ref: "k7x2m9qd", handle: "or" },
-    ),
-  ).rejects.toMatchObject({ code: "folder_exists" });
-  expect(existsSync(path.join(home, "agents/occupied/keep.txt"))).toBe(true);
+test("create: a folder that carries the handle's name is no collision and stays untouched", async () => {
+  const named = path.join(home, "agents", "occupied");
+  mkdirSync(named, { recursive: true });
+  writeFileSync(path.join(named, "keep.txt"), "k");
+  await svc.create(
+    {
+      template: "lead",
+      slug: "occupied",
+      displayName: "O",
+      description: "",
+      reportsTo: "or",
+      credential: "work",
+    },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
+  expect(existsSync(path.join(named, "keep.txt"))).toBe(true);
+  expect(existsSync(path.join(await workdirOf("occupied"), "AGENTS.md"))).toBe(true);
 });
 
 test("update: cycle rejected", async () => {
@@ -328,20 +333,22 @@ async function pendingConfigLines(slug: string): Promise<string[]> {
       .filter((l) => l.startsWith("- ")),
   );
 }
-const personaBackups = (slug: string) => {
-  const dir = path.join(home, "state/agents", slug, "persona");
+const personaBackups = async (slug: string) => {
+  const dir = path.join(await stateOf(slug), "persona");
   return existsSync(dir) ? readdirSync(dir) : [];
 };
 
 test("reset persona of a hibernated agent applies at once, saves the old file and records the notice line", async () => {
   await makeStageAgent("persona-a");
-  const agentsMd = path.join(home, "agents/persona-a/AGENTS.md");
+  const agentsMd = path.join(await workdirOf("persona-a"), "AGENTS.md");
   writeFileSync(agentsMd, "edited");
   const restart = vi.spyOn(runtimes, "requestRestart");
   try {
     const r = await svc.resetPersona("persona-a", "@or");
     expect(r.applied).toBe("now");
-    expect(r.backupDir).toMatch(/^state\/agents\/persona-a\/persona\/\d{4}-/);
+    expect(r.backupDir).toMatch(
+      new RegExp(`^state/agents/${await refFor("persona-a")}/persona/\\d{4}-`),
+    );
     expect(readFileSync(agentsMd, "utf8")).toBe("# persona-a\n");
     expect(readFileSync(path.join(home, r.backupDir ?? "", "AGENTS.md"), "utf8")).toBe("edited");
     await vi.waitFor(async () =>
@@ -352,7 +359,7 @@ test("reset persona of a hibernated agent applies at once, saves the old file an
     expect(restart).not.toHaveBeenCalled();
     // Nothing differs now: no second backup, no change.
     expect(await svc.resetPersona("persona-a", "@or")).toEqual({ applied: "now" });
-    expect(personaBackups("persona-a")).toHaveLength(1);
+    expect(await personaBackups("persona-a")).toHaveLength(1);
   } finally {
     restart.mockRestore();
   }
@@ -360,7 +367,7 @@ test("reset persona of a hibernated agent applies at once, saves the old file an
 
 test("reset persona of a running agent stages the file, asks for a restart and applies at the next prepare", async () => {
   await makeStageAgent("persona-b");
-  const agentsMd = path.join(home, "agents/persona-b/AGENTS.md");
+  const agentsMd = path.join(await workdirOf("persona-b"), "AGENTS.md");
   const OLD = readFileSync(agentsMd, "utf8");
   await startAndStop("persona-b", true);
   writeFileSync(path.join(home, "templates/persona-b/AGENTS.md"), "# NEW\n");
@@ -371,7 +378,7 @@ test("reset persona of a running agent stages the file, asks for a restart and a
     expect(r).toEqual({ applied: "on_restart" });
     expect(readFileSync(agentsMd, "utf8")).toBe(OLD);
     expect(
-      readFileSync(path.join(home, "state/agents/persona-b/persona-pending/AGENTS.md"), "utf8"),
+      readFileSync(path.join(await stateOf("persona-b"), "persona-pending/AGENTS.md"), "utf8"),
     ).toBe("# NEW\n");
     const id = await idOf("persona-b");
     await vi.waitFor(() =>
@@ -383,11 +390,11 @@ test("reset persona of a running agent stages the file, asks for a restart and a
   await startAndStop("persona-b", false);
   await startAndStop("persona-b", true);
   expect(readFileSync(agentsMd, "utf8")).toBe("# NEW\n");
-  expect(existsSync(path.join(home, "state/agents/persona-b/persona-pending"))).toBe(false);
-  const [stamp] = personaBackups("persona-b");
+  expect(existsSync(path.join(await stateOf("persona-b"), "persona-pending"))).toBe(false);
+  const [stamp] = await personaBackups("persona-b");
   expect(
     readFileSync(
-      path.join(home, "state/agents/persona-b/persona", stamp ?? "", "AGENTS.md"),
+      path.join(await stateOf("persona-b"), "persona", stamp ?? "", "AGENTS.md"),
       "utf8",
     ),
   ).toBe(OLD);
@@ -411,7 +418,7 @@ test("reset persona of a Docker agent stages while its container runs, or when D
   try {
     running.mockResolvedValue(true);
     expect((await svc.resetPersona("dock-p", "@or")).applied).toBe("on_restart");
-    expect(running).toHaveBeenCalledWith(await idOf("dock-p"), "dock-p");
+    expect(running).toHaveBeenCalledWith(await idOf("dock-p"), await refFor("dock-p"));
     running.mockRejectedValue(new Error("connect ECONNREFUSED /var/run/docker.sock"));
     expect((await svc.resetPersona("dock-p", "@or")).applied).toBe("on_restart");
     running.mockResolvedValue(false);
@@ -423,10 +430,12 @@ test("reset persona of a Docker agent stages while its container runs, or when D
 
 test("reset persona: an archived agent is allowed (no notice), a broken or AGENTS.md-less template is 409", async () => {
   await makeStageAgent("persona-c");
-  writeFileSync(path.join(home, "agents/persona-c/AGENTS.md"), "edited");
+  writeFileSync(path.join(await workdirOf("persona-c"), "AGENTS.md"), "edited");
   await svc.archive("persona-c", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   expect((await svc.resetPersona("persona-c", "@or")).applied).toBe("now");
-  expect(readFileSync(path.join(home, "agents/persona-c/AGENTS.md"), "utf8")).toBe("# persona-c\n");
+  expect(readFileSync(path.join(await workdirOf("persona-c"), "AGENTS.md"), "utf8")).toBe(
+    "# persona-c\n",
+  );
   expect(await pendingConfigLines("persona-c")).toEqual([]);
   // Unarchived again so the archived list stays the later archive tests' own.
   await svc.unarchive("persona-c", { kind: "human", ref: "k7x2m9qd", handle: "or" });
@@ -451,7 +460,7 @@ test("reset persona: an archived agent is allowed (no notice), a broken or AGENT
 
 test("reset persona: a symlinked template AGENTS.md is refused, and an unloaded agent still gets the event", async () => {
   await makeStageAgent("persona-e");
-  writeFileSync(path.join(home, "agents/persona-e/AGENTS.md"), "edited");
+  writeFileSync(path.join(await workdirOf("persona-e"), "AGENTS.md"), "edited");
   const real = path.join(home, "templates/persona-e/real.md");
   writeFileSync(real, "# linked\n");
   rmSync(path.join(home, "templates/persona-e/AGENTS.md"));
@@ -475,7 +484,7 @@ test("reset persona: a symlinked template AGENTS.md is refused, and an unloaded 
 
 test("reset persona: a recreated (missing) AGENTS.md records the notice without a saved-file claim", async () => {
   await makeStageAgent("persona-f");
-  rmSync(path.join(home, "agents/persona-f/AGENTS.md"));
+  rmSync(path.join(await workdirOf("persona-f"), "AGENTS.md"));
   expect(await svc.resetPersona("persona-f", "@or")).toEqual({ applied: "now" });
   await vi.waitFor(async () =>
     expect(await pendingConfigLines("persona-f")).toEqual([
@@ -486,7 +495,7 @@ test("reset persona: a recreated (missing) AGENTS.md records the notice without 
 
 test("reset persona refuses an agent whose workdir is a link, writing nothing through it", async () => {
   await makeStageAgent("persona-d");
-  const wd = path.join(home, "agents/persona-d");
+  const wd = await workdirOf("persona-d");
   const outside = mkdtempSync(path.join(tmpdir(), "outside-"));
   rmSync(wd, { recursive: true });
   symlinkSync(outside, wd);
@@ -600,11 +609,12 @@ const agentRows = async (slug: string) =>
 
 test("create refuses a slug held by a human principal that has no user row yet", async () => {
   await seedTestPrincipal(t.db, "human", "inflight");
+  const folders = readdirSync(path.join(home, "agents"));
   await expect(
     svc.create(createBody("inflight"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   ).rejects.toMatchObject({ code: "slug_taken" });
   expect(await agentRows("inflight")).toEqual([]);
-  expect(existsSync(path.join(home, "agents/inflight"))).toBe(false);
+  expect(readdirSync(path.join(home, "agents"))).toEqual(folders);
 });
 
 test("creating an agent creates its principal with the agent's id and handle", async () => {
@@ -624,20 +634,7 @@ test("two concurrent creates of one slug: one succeeds, the other is slug_taken,
   const failed = results.find((r) => r.status === "rejected");
   expect(failed).toMatchObject({ reason: { code: "slug_taken" } });
   expect(await agentRows("dup-race")).toHaveLength(1);
-  expect(existsSync(path.join(home, "agents/dup-race/AGENTS.md"))).toBe(true);
-});
-
-test("a competing agent commits the slug while this create materialises: slug_taken, one row", async () => {
-  const spy = vi.spyOn(t.app.workspace, "materialize").mockImplementationOnce(async () => {
-    await t.sql.unsafe(principalSql("late-dup-id", "agent", "late-dup"));
-    await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
-                select 'late-dup-id', 'late-dup', 'x', 'lead', config, 'local', credential_id, reports_to from agents where slug = 'lead'`;
-  });
-  await expect(
-    svc.create(createBody("late-dup"), { kind: "human", ref: "k7x2m9qd", handle: "or" }),
-  ).rejects.toMatchObject({ code: "slug_taken" });
-  spy.mockRestore();
-  expect(await agentRows("late-dup")).toHaveLength(1);
+  expect(existsSync(path.join(await workdirOf("dup-race"), "AGENTS.md"))).toBe(true);
 });
 
 async function createSpawner(slug: string) {

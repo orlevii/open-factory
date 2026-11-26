@@ -64,6 +64,8 @@ interface World {
   home: string;
   slug: string;
   agentId: string;
+  /** The agent's ref: its workdir and container are named by it. */
+  ref: string;
   workdir: string;
   fake: WorkdirFakeClaude;
   cookie: string;
@@ -165,20 +167,18 @@ async function setup(o: {
 }): Promise<World> {
   const home = tmp("of-dint-");
   const slug = "dock";
-  const workdir = agentWorkdir(home, slug);
   const cliBundle = path.join(tmp("of-cli-"), "open-factory.js");
   writeFileSync(cliBundle, "// cli\n");
   const env: Record<string, string> = {
     FACTORY_HOME: home,
     FACTORY_DEFAULT_IMAGE: IMAGE,
-    // Known before the workdir exists: the fake is copied there once the agent is created.
-    FACTORY_DOCKER_CLAUDE_BIN: fakeClaudeIn(workdir).bin,
+    // The workdir is named by the agent's ref, known only once it is created: the app is reopened with the real path.
+    FACTORY_DOCKER_CLAUDE_BIN: "/unset/claude",
     FACTORY_CLI_BUNDLE: cliBundle,
     ...(o.local ? { FACTORY_CLAUDE_BIN: o.local.bin } : {}),
   };
   const t = await makeTestApp({ env });
   await seedTestUser(t.db, "or");
-  const settings = fakeClaudeIn(workdir);
   writeTemplate(
     home,
     "dock",
@@ -191,9 +191,6 @@ async function setup(o: {
     kind: "oauth_token",
     valueEnc: t.app.vault.seal("tok-docker", `credentials:${credId}`),
   });
-  // The fake's settings are ordinary factory secrets: they reach the exec env through buildAgentEnv.
-  await t.app.secrets.put("FAKE_CLAUDE_SCENARIO", settings.scenario);
-  await t.app.secrets.put("FAKE_CLAUDE_DIR", settings.dir);
   if (o.grant) await t.app.projects.create({ name: "app", hostPath: gitRepo() });
   await t.app.agents.create(
     {
@@ -207,12 +204,19 @@ async function setup(o: {
     },
     { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
-  const fake = installFakeClaude({ workdir, scenario: o.scenario });
-  expect(fake.bin).toBe(env.FACTORY_DOCKER_CLAUDE_BIN);
   const agentId = await idOf(t.db, slug);
   agentIds.add(agentId);
+  const ref = await refOfAgent(t.db, agentId);
+  const workdir = agentWorkdir(home, ref);
+  const settings = fakeClaudeIn(workdir);
+  // The fake's settings are ordinary factory secrets: they reach the exec env through buildAgentEnv.
+  await t.app.secrets.put("FAKE_CLAUDE_SCENARIO", settings.scenario);
+  await t.app.secrets.put("FAKE_CLAUDE_DIR", settings.dir);
+  const fake = installFakeClaude({ workdir, scenario: o.scenario });
+  env.FACTORY_DOCKER_CLAUDE_BIN = fake.bin;
+  const app = (await t.reopen({ env })).app;
   const cookie = (await t.signUpUser({ handle: "or" })).cookie;
-  const w: World = { t, app: t.app, env, home, slug, agentId, workdir, fake, cookie };
+  const w: World = { t, app, env, home, slug, agentId, ref, workdir, fake, cookie };
   worlds.push(w);
   return w;
 }
@@ -279,6 +283,7 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
   );
   if (!r.ok) throw new Error(r.message);
   agentIds.add(r.agentId);
+  const ref = await refOfAgent(t.db, r.agentId);
   const w: World = {
     t,
     app: t.app,
@@ -286,7 +291,8 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
     home,
     slug: r.slug,
     agentId: r.agentId,
-    workdir: agentWorkdir(home, r.slug),
+    ref,
+    workdir: agentWorkdir(home, ref),
     fake,
     cookie,
   };
@@ -301,6 +307,14 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
 const labelled = (agentId: string) =>
   dk.listContainers({ all: true, filters: { label: [`${LABEL_AGENT_ID}=${agentId}`] } });
 
+const refOfAgent = async (db: TestApp["db"], agentId: string) => {
+  const [r] = await db
+    .select({ ref: schema.principals.ref })
+    .from(schema.principals)
+    .where(eq(schema.principals.id, agentId));
+  if (!r) throw new Error(`no principal ${agentId}`);
+  return r.ref;
+};
 const idOf = async (db: TestApp["db"], slug: string) => {
   const [r] = await db
     .select({ id: schema.agents.id })
@@ -330,7 +344,7 @@ const starts = (log: FakeLogEntry[]) =>
   log.flatMap((e) => (e.kind === "start" && !e.argv.includes("--version") ? [e] : []));
 const exits = (log: FakeLogEntry[]) => log.flatMap((e) => (e.kind === "exit" ? [e.code] : []));
 
-const name = (w: World) => containerName(w.slug, w.agentId);
+const name = (w: World) => containerName(w.ref);
 const inspect = (w: World) => dk.getContainer(name(w)).inspect();
 const exec = async (w: World, cmd: string[], user = "agent") =>
   client.execRun((await inspect(w)).Id, { cmd, user });

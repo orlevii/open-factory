@@ -66,7 +66,7 @@ test("the persisted assistant_text retires its block before its session_event is
   driver.last.emitLive(textStart(2, "m1", 0), textDelta(3, "m1", 0, "Hello"));
   await tick();
   let seen: string[] | undefined;
-  const off = h.bus.subscribe(rt.agent.slug, (m: ServerMessage) => {
+  const off = h.bus.subscribe(rt.agent.id, (m: ServerMessage) => {
     if (m.type === "session_event" && m.event.event.type === "assistant_text") seen = liveTexts();
   });
   driver.last.emitAt(4, keyed("Hello", "m1", 0));
@@ -191,7 +191,7 @@ test("the turn_end reset is published right after the turn_end row, before any l
   driver.last.emitLive(textStart(2, "m1", 0), textDelta(3, "m1", 0, "orphan"));
   await tick();
   let resetRightAfter: boolean | undefined;
-  const off = h.bus.subscribe(rt.agent.slug, (m: ServerMessage) => {
+  const off = h.bus.subscribe(rt.agent.id, (m: ServerMessage) => {
     if (m.type !== "session_event" || m.event.event.type !== "turn_end") return;
     const before = liveFrames().length;
     queueMicrotask(() => {

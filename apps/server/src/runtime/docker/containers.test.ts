@@ -70,7 +70,7 @@ const until = async (cond: () => boolean) => {
 };
 
 const inputs = {
-  name: "open-factory-lead-01234567",
+  name: "open-factory-p3dh8vcn",
   image: IMAGE,
   imageId: "sha256:img1",
   mounts: [
@@ -80,22 +80,20 @@ const inputs = {
   uid: 501,
   gid: 20,
   agentId: AGENT,
-  slug: "lead",
   specHash: "abc123",
 };
 
-test("container name: open-factory-<slug>-<first 8 of the agent id>", () => {
-  expect(containerName("lead", AGENT)).toBe("open-factory-lead-01234567");
+test("a container is named open-factory-<ref>", () => {
+  expect(containerName("p3dh8vcn")).toBe("open-factory-p3dh8vcn");
 });
 
 test("pinned create options and spec hash (changed? check the hardening, then update the pins)", () => {
   expect(createOptions(inputs)).toEqual({
-    name: "open-factory-lead-01234567",
+    name: "open-factory-p3dh8vcn",
     Image: "sha256:img1", // the hashed id, never the (retaggable) ref
     Env: ["HOST_UID=501", "HOST_GID=20"],
     Labels: {
       "io.open-factory.agent-id": AGENT,
-      "io.open-factory.slug": "lead",
       "io.open-factory.spec-hash": "abc123",
       "io.open-factory.image-id": "sha256:img1",
       "io.open-factory.image": IMAGE,
@@ -133,7 +131,7 @@ test("spec hash changes on image id, mounts and uid; not on anything else passed
     }),
   ).not.toBe(h);
   // Extra properties (an agent id, a slug, an image ref) never reach the hash.
-  expect(specHash({ ...base, agentId: "x", slug: "y", image: "z" } as typeof base)).toBe(h);
+  expect(specHash({ ...base, agentId: "x", ref: "y", image: "z" } as typeof base)).toBe(h);
 });
 
 test("pull only when missing", async () => {
@@ -154,7 +152,7 @@ test("pull only when missing", async () => {
 test("first ensure creates with the checked mounts, starts and waits for the ready marker as root", async () => {
   const r = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
@@ -166,7 +164,7 @@ test("first ensure creates with the checked mounts, starts and waits for the rea
     claudeCodeVersion: "2.1.327",
   });
   const create = docker.calls.find((c) => c.op === "create")?.args[0] as ContainerCreateOptions;
-  expect(create.name).toBe("open-factory-lead-01234567");
+  expect(create.name).toBe("open-factory-p3dh8vcn");
   expect(create.Image).toBe("sha256:img1");
   expect(create.HostConfig?.Mounts?.map((m) => [m.Source, m.Target, m.ReadOnly]).sort()).toEqual(
     mounts.map((m) => [m.source, m.target, m.readOnly]).sort(),
@@ -184,18 +182,18 @@ test("first ensure creates with the checked mounts, starts and waits for the rea
 test("re-creates on hash change, starts on match", async () => {
   const first = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
   });
-  await mgr.stop(AGENT, "lead");
+  await mgr.stop(AGENT, "p3dh8vcn");
 
   // Same spec: the stopped container is started again, not re-created.
   docker.calls = [];
   const again = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
@@ -209,7 +207,7 @@ test("re-creates on hash change, starts on match", async () => {
   docker.calls = [];
   const re = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
@@ -225,7 +223,7 @@ test("re-creates on hash change, starts on match", async () => {
   const grantCtx = { ...ctx, grantedPaths: [proj] };
   const r3 = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts: [...mounts, { source: proj, target: proj, readOnly: false }],
     mountCheck: grantCtx,
@@ -234,15 +232,15 @@ test("re-creates on hash change, starts on match", async () => {
 });
 
 test("checkMounts runs on every ensure, including reuse of a stopped container", async () => {
-  await mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx });
-  await mgr.stop(AGENT, "lead");
+  await mgr.ensure({ agentId: AGENT, ref: "p3dh8vcn", image: IMAGE, mounts, mountCheck: ctx });
+  await mgr.stop(AGENT, "p3dh8vcn");
   docker.calls = [];
   // The same inputs, but the workdir was swapped for a link to the host home after prepare: the reuse of the
   // stopped container must fail closed, unstarted (bind sources resolve again at every start).
   renameSync(ctx.workdir, `${ctx.workdir}.moved`);
   symlinkSync(ctx.home, ctx.workdir);
   await expect(
-    mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx }),
+    mgr.ensure({ agentId: AGENT, ref: "p3dh8vcn", image: IMAGE, mounts, mountCheck: ctx }),
   ).rejects.toThrow(MountRefusedError);
   expect(docker.ops()).not.toContain("start");
   expect(docker.ops()).not.toContain("create");
@@ -253,7 +251,7 @@ test("a mount that isn't allowed never reaches create", async () => {
   await expect(
     mgr.ensure({
       agentId: AGENT,
-      slug: "lead",
+      ref: "p3dh8vcn",
       image: IMAGE,
       mounts: [...mounts, { source: home, target: home, readOnly: false }],
       mountCheck: ctx,
@@ -265,7 +263,7 @@ test("a mount that isn't allowed never reaches create", async () => {
 test("a running container with the same spec is reused without a start", async () => {
   const first = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
@@ -273,7 +271,7 @@ test("a running container with the same spec is reused without a start", async (
   docker.calls = [];
   const r = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
@@ -287,7 +285,7 @@ test("ready timeout surfaces the container logs", async () => {
   fakeClock();
   docker.ready = () => false;
   docker.logs = "entrypoint: usermod failed\n";
-  const p = mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx });
+  const p = mgr.ensure({ agentId: AGENT, ref: "p3dh8vcn", image: IMAGE, mounts, mountCheck: ctx });
   const caught = p.catch((e: unknown) => e);
   await until(() => docker.ops().includes("execRun"));
   await vi.advanceTimersByTimeAsync(29_000);
@@ -310,7 +308,7 @@ test("a container that exits before it is ready fails the start with its logs", 
     return false;
   };
   docker.logs = "tini: exec failed\n";
-  const p = mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx });
+  const p = mgr.ensure({ agentId: AGENT, ref: "p3dh8vcn", image: IMAGE, mounts, mountCheck: ctx });
   const caught = p.catch((e: unknown) => e);
   await until(() => docker.ops().includes("execRun"));
   await vi.advanceTimersByTimeAsync(1_000);
@@ -325,12 +323,12 @@ test("root host user is refused, even when non-root ids are injected", async () 
     try {
       // `mgr` was built with injected non-root ids (501/20): they don't hide the server's own root id.
       await expect(
-        mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx }),
+        mgr.ensure({ agentId: AGENT, ref: "p3dh8vcn", image: IMAGE, mounts, mountCheck: ctx }),
       ).rejects.toThrow("The factory runs as root; Docker agents need a non-root host user.");
       await expect(
         new ContainerManager({ docker, log }).ensure({
           agentId: AGENT,
-          slug: "lead",
+          ref: "p3dh8vcn",
           image: IMAGE,
           mounts,
           mountCheck: ctx,
@@ -346,27 +344,27 @@ test("root host user is refused, even when non-root ids are injected", async () 
 
 test("a missing image fails the start (the pull runs before, outside ensure)", async () => {
   await expect(
-    mgr.ensure({ agentId: AGENT, slug: "lead", image: "nope:1", mounts, mountCheck: ctx }),
+    mgr.ensure({ agentId: AGENT, ref: "p3dh8vcn", image: "nope:1", mounts, mountCheck: ctx }),
   ).rejects.toBeInstanceOf(AgentStartError);
   expect(docker.ops()).not.toContain("pull");
 });
 
 test("stop, stopIfRunning, isRunning and listOurs", async () => {
-  expect(await mgr.stopIfRunning(AGENT, "lead")).toBe(false);
-  expect(await mgr.isRunning(AGENT, "lead")).toBe(false);
+  expect(await mgr.stopIfRunning(AGENT, "p3dh8vcn")).toBe(false);
+  expect(await mgr.isRunning(AGENT, "p3dh8vcn")).toBe(false);
   const { containerId } = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
   });
-  expect(await mgr.isRunning(AGENT, "lead")).toBe(true);
+  expect(await mgr.isRunning(AGENT, "p3dh8vcn")).toBe(true);
   expect(await mgr.listOurs()).toEqual([{ id: containerId, agentId: AGENT, running: true }]);
-  expect(await mgr.stopIfRunning(AGENT, "lead")).toBe(true);
+  expect(await mgr.stopIfRunning(AGENT, "p3dh8vcn")).toBe(true);
   expect(docker.calls.at(-1)).toEqual({ op: "stop", args: [containerId, 5] });
-  expect(await mgr.stopIfRunning(AGENT, "lead")).toBe(false);
-  await mgr.stop(AGENT, "lead"); // a stopped container: no error
+  expect(await mgr.stopIfRunning(AGENT, "p3dh8vcn")).toBe(false);
+  await mgr.stop(AGENT, "p3dh8vcn"); // a stopped container: no error
   await mgr.stop("ffffffff-none", "ghost"); // no container: no error
   expect(docker.calls.filter((c) => c.op === "listByLabel").map((c) => c.args[0])).toEqual([
     "io.open-factory.agent-id",
@@ -374,10 +372,10 @@ test("stop, stopIfRunning, isRunning and listOurs", async () => {
 });
 
 test("a container stop that never answers is bounded", async () => {
-  await mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx });
+  await mgr.ensure({ agentId: AGENT, ref: "p3dh8vcn", image: IMAGE, mounts, mountCheck: ctx });
   docker.stop = () => new Promise<void>(() => {});
   fakeClock();
-  const caught = mgr.stop(AGENT, "lead").catch((e: unknown) => e);
+  const caught = mgr.stop(AGENT, "p3dh8vcn").catch((e: unknown) => e);
   await vi.advanceTimersByTimeAsync(20_000);
   const err = await caught;
   expect(err).toBeInstanceOf(Error);
@@ -389,7 +387,7 @@ test("a ready check the daemon never answers can't outlast the 30 s deadline", a
   docker.execRun = () => new Promise(() => {});
   docker.logs = "still booting\n";
   const caught = mgr
-    .ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx })
+    .ensure({ agentId: AGENT, ref: "p3dh8vcn", image: IMAGE, mounts, mountCheck: ctx })
     .catch((e: unknown) => e);
   await until(() => docker.ops().includes("start"));
   await vi.advanceTimersByTimeAsync(31_000);
@@ -400,7 +398,7 @@ test("a ready check the daemon never answers can't outlast the 30 s deadline", a
 });
 
 test("a container with the agent's name that the factory didn't create is never reused, stopped or removed", async () => {
-  const name = containerName("lead", AGENT);
+  const name = containerName("p3dh8vcn");
   const foreign: Record<string, string>[] = [{}, { "io.open-factory.agent-id": "someone-else" }];
   for (const labels of foreign) {
     docker.containers.set(name, {
@@ -413,11 +411,11 @@ test("a container with the agent's name that the factory didn't create is never 
     docker.calls = [];
     const msg = `A container named ${name} exists that the factory didn't create.`;
     await expect(
-      mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx }),
+      mgr.ensure({ agentId: AGENT, ref: "p3dh8vcn", image: IMAGE, mounts, mountCheck: ctx }),
     ).rejects.toThrow(msg);
-    await expect(mgr.stopIfRunning(AGENT, "lead")).rejects.toThrow(msg);
-    await expect(mgr.stop(AGENT, "lead")).rejects.toThrow(msg);
-    await expect(mgr.forceRemove(AGENT, "lead")).rejects.toThrow(msg);
+    await expect(mgr.stopIfRunning(AGENT, "p3dh8vcn")).rejects.toThrow(msg);
+    await expect(mgr.stop(AGENT, "p3dh8vcn")).rejects.toThrow(msg);
+    await expect(mgr.forceRemove(AGENT, "p3dh8vcn")).rejects.toThrow(msg);
     expect(docker.ops()).not.toContain("stop");
     expect(docker.ops()).not.toContain("remove");
     expect(docker.ops()).not.toContain("start");
@@ -426,30 +424,30 @@ test("a container with the agent's name that the factory didn't create is never 
 });
 
 test("forceRemove removes the agent's running container with force; a missing one is fine", async () => {
-  expect(await mgr.forceRemove(AGENT, "lead")).toBe(false);
+  expect(await mgr.forceRemove(AGENT, "p3dh8vcn")).toBe(false);
   const { containerId } = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
   });
-  expect(await mgr.forceRemove(AGENT, "lead")).toBe(true);
+  expect(await mgr.forceRemove(AGENT, "p3dh8vcn")).toBe(true);
   expect(docker.calls.at(-1)).toEqual({ op: "remove", args: [containerId, { force: true }] });
   expect(docker.containers.size).toBe(0);
 });
 
 test("remove (termination) stops a running container, then removes it; a missing one is fine", async () => {
-  expect(await mgr.remove(AGENT, "lead")).toBe(false);
+  expect(await mgr.remove(AGENT, "p3dh8vcn")).toBe(false);
   const { containerId } = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
   });
   docker.calls = [];
-  expect(await mgr.remove(AGENT, "lead")).toBe(true);
+  expect(await mgr.remove(AGENT, "p3dh8vcn")).toBe(true);
   expect(docker.calls.filter((c) => c.op !== "findContainer")).toEqual([
     { op: "stop", args: [containerId, 5] },
     { op: "remove", args: [containerId, undefined] }, // not forced: it was stopped first
@@ -460,19 +458,19 @@ test("remove (termination) stops a running container, then removes it; a missing
 test("remove of a stopped container skips the stop; removeListed removes by id with force", async () => {
   const { containerId } = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
   });
-  await mgr.stop(AGENT, "lead");
+  await mgr.stop(AGENT, "p3dh8vcn");
   docker.calls = [];
-  await mgr.remove(AGENT, "lead");
+  await mgr.remove(AGENT, "p3dh8vcn");
   expect(docker.ops().filter((op) => op !== "findContainer")).toEqual(["remove"]);
 
   const again = await mgr.ensure({
     agentId: AGENT,
-    slug: "lead",
+    ref: "p3dh8vcn",
     image: IMAGE,
     mounts,
     mountCheck: ctx,
@@ -485,11 +483,11 @@ test("remove of a stopped container skips the stop; removeListed removes by id w
 });
 
 test("a removal that never answers is bounded", async () => {
-  await mgr.ensure({ agentId: AGENT, slug: "lead", image: IMAGE, mounts, mountCheck: ctx });
-  await mgr.stop(AGENT, "lead");
+  await mgr.ensure({ agentId: AGENT, ref: "p3dh8vcn", image: IMAGE, mounts, mountCheck: ctx });
+  await mgr.stop(AGENT, "p3dh8vcn");
   docker.remove = () => new Promise<void>(() => {});
   fakeClock();
-  const caught = mgr.remove(AGENT, "lead").catch((e: unknown) => e);
+  const caught = mgr.remove(AGENT, "p3dh8vcn").catch((e: unknown) => e);
   await vi.advanceTimersByTimeAsync(20_000);
   expect((await caught) as Error).toMatchObject({
     message: expect.stringMatching(/^Removing container .* didn't finish within 15 s\.$/),

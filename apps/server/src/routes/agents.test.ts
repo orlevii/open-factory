@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { schema } from "@open-factory/db";
-import { MAX_FOCUS_CHARS } from "@open-factory/shared";
+import { MAX_FOCUS_CHARS, refOf } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
@@ -266,13 +266,13 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
       expect(rejected.statusCode).toBe(400);
       expect(rejected.json().error.code).toBe("validation_error");
     }
-    writeFileSync(path.join(t2.factoryHome, "agents/boss/AGENTS.md"), "edited");
+    const [bossRow] = await t2.sql`select id from agents where slug = 'boss'`;
+    const bossDir = path.join(t2.factoryHome, "agents", refOf(String(bossRow?.id)));
+    writeFileSync(path.join(bossDir, "AGENTS.md"), "edited");
     const rp = await call("POST", "/api/agents/boss/reset-persona");
     expect(rp.statusCode).toBe(200);
     expect(rp.json()).toMatchObject({ applied: "now", backupDir: expect.any(String) });
-    expect(readFileSync(path.join(t2.factoryHome, "agents/boss/AGENTS.md"), "utf8")).toBe(
-      "# Lead\n",
-    );
+    expect(readFileSync(path.join(bossDir, "AGENTS.md"), "utf8")).toBe("# Lead\n");
 
     expect((await call("POST", "/api/agents/boss/archive")).statusCode).toBe(200);
     expect(

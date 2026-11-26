@@ -21,7 +21,7 @@ import type { FactorySettingsValues } from "../settings/factory-settings.ts";
 import { hashToken } from "../users/invites.ts";
 import { agentConfigDir, agentWorkdir } from "../workspace/paths.ts";
 import type { Workspace } from "../workspace/workspace.ts";
-import { seedTestPrincipal, testManagerUserId } from "./principals.ts";
+import { seedTestPrincipal, testManagerUserId, testRef } from "./principals.ts";
 
 export const TEST_ORIGIN = "http://localhost:3000";
 
@@ -120,13 +120,14 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
   };
   const first = await build(opts);
   const opened = [first];
+  const seeded = new Map<string, string>();
   return {
     ...first,
     factoryHome,
     /** Where host skills are read from: `<config.hostClaudeDir>/skills`. */
     hostSkillsDir: hostSkillsDirOf(first.config),
-    seedAgent: (o?: SeedAgentOptions) =>
-      seedTestAgent(
+    seedAgent: async (o?: SeedAgentOptions) => {
+      const row = await seedTestAgent(
         {
           db: first.db,
           config: first.config,
@@ -134,7 +135,16 @@ export async function makeTestApp(opts: TestAppOptions = {}) {
           workspace: first.app.workspace,
         },
         o,
-      ),
+      );
+      seeded.set(row.slug, agentWorkdir(factoryHome, testRef(row.id)));
+      return row;
+    },
+    /** The workdir of an agent made by `seedAgent`: named by its ref, not its handle. */
+    seededWorkdir(slug: string): string {
+      const dir = seeded.get(slug);
+      if (!dir) throw new Error(`no seeded agent ${slug}`);
+      return dir;
+    },
     signUpUser: (input?: Partial<SignUpInput>) => signUp(first.app, input),
     /** A second app on the same DB and FACTORY_HOME (the first should be closed first). */
     /** Reopens over the same database; `factorySettings` is not re-applied (a PATCH before the restart persists). */
@@ -201,7 +211,7 @@ export async function seedTestAgent(
     })
     .returning();
   if (!row) throw new Error("seed failed");
-  const workdir = agentWorkdir(app.config.factoryHome, slug);
+  const workdir = agentWorkdir(app.config.factoryHome, principal.ref);
   mkdirSync(agentConfigDir(workdir), { recursive: true });
   writeFileSync(path.join(workdir, "AGENTS.md"), "# Test agent\n");
   return row;

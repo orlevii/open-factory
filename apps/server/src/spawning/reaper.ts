@@ -14,6 +14,7 @@ export interface ReaperDeps {
     | "terminatedAmong"
     | "workspaceCandidates"
     | "agentById"
+    | "refOfAgent"
     | "setWorkspaceDeleted"
   >;
   runtimes: Pick<AgentRuntimes, "load">;
@@ -151,7 +152,7 @@ export class Reaper {
       if (dockerUnchecked && a.runtime === "docker") continue;
       try {
         await this.d.workspace.deleteWorkspace(
-          a.slug,
+          await this.d.store.refOfAgent(a.id),
           async () => {
             const r = await this.d.store.agentById(a.id);
             return Boolean(r && !r.workspacePinned && !r.workspaceDeletedAt);

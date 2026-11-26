@@ -80,6 +80,7 @@ interface World {
   cliBundle: string;
   fakeBin: string;
   fakeLog: () => { kind: string; code?: number }[];
+  ref: string;
   workdir: string;
 }
 let world: World | undefined;
@@ -137,7 +138,7 @@ async function setup(
     kind: "oauth_token",
     valueEnc: vault.seal("tok-1", "credentials:c1"),
   });
-  await seedTestPrincipal(t.db, "agent", slug, `0123abcd-${seq}`);
+  const { ref } = await seedTestPrincipal(t.db, "agent", slug, `0123abcd-${seq}`);
   const [agent] = await t.db
     .insert(schema.agents)
     .values({
@@ -162,7 +163,7 @@ async function setup(
     lock,
   });
   const input = {
-    slug,
+    handle: slug,
     displayName: "Dock",
     description: "",
     template: "dock",
@@ -171,8 +172,7 @@ async function setup(
     grants: [],
   };
   await workspace.materialize(
-    agent.id,
-    slug,
+    ref,
     { dir: tdir, config, tplSettings: {}, tplMcp: { mcpServers: {} } },
     input,
   );
@@ -261,7 +261,8 @@ async function setup(
     cliBundle,
     fakeBin: fake.bin,
     fakeLog: () => fake.log(),
-    workdir: workspace.workdir(slug),
+    ref,
+    workdir: workspace.workdir(ref),
   };
   return world;
 }
@@ -277,7 +278,7 @@ const execRuns = (w: World) =>
   w.docker.calls
     .filter((c) => c.op === "execRun")
     .map((c) => (c.args[1] as { cmd: string[]; user: string }).cmd);
-const container = (w: World) => w.docker.containers.get(containerName(w.agent.slug, w.agent.id));
+const container = (w: World) => w.docker.containers.get(containerName(w.ref));
 
 /** A started agent whose turn ended. */
 async function idleAgent(w: World) {
@@ -289,7 +290,7 @@ test("a Docker wake stops a running container, prepares, ensures, then execs", a
   const w = await setup();
   // A container left running (a missed reconciliation): it must be stopped before anything is prepared.
   const left = await w.docker.create({
-    name: containerName(w.agent.slug, w.agent.id),
+    name: containerName(w.ref),
     Labels: { [LABEL_AGENT_ID]: w.agent.id },
   });
   await w.docker.start(left);

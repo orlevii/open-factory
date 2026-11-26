@@ -118,10 +118,11 @@ describe("agent subscriptions", () => {
   let a: Awaited<ReturnType<typeof makeTestApp>>;
   let s: Awaited<ReturnType<typeof signUp>>;
   let wsUrl: string;
+  let devId: string;
   const driver = new FakeDriver();
   beforeAll(async () => {
     a = await makeTestApp({ harnessDriver: driver });
-    await a.seedAgent();
+    devId = (await a.seedAgent()).id;
     s = await signUp(a.app);
     await a.app.listen({ port: 0, host: "127.0.0.1" });
     wsUrl = `ws://127.0.0.1:${(a.app.server.address() as AddressInfo).port}/api/ws`;
@@ -240,7 +241,7 @@ describe("agent subscriptions", () => {
     });
     return { release, started, spy };
   }
-  const devListeners = () => a.app.bus.listenerCount("dev");
+  const devListeners = () => a.app.bus.listenerCount(devId);
   const settle = () => new Promise((r) => setTimeout(r, 100));
 
   test("unsubscribe stops live events and removes the listener", async () => {

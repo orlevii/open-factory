@@ -263,8 +263,8 @@ test("submit with an empty derived handle opens the address input, focused, with
   await userEvent.clear(field("Display name"));
   await userEvent.type(field("Display name"), "李");
   fireEvent.submit(createButton().closest("form") as HTMLFormElement);
-  await vi.waitFor(() => expect(field("Slug")).toHaveFocus());
-  expect(screen.getByText("Enter a slug.")).toBeInTheDocument();
+  await vi.waitFor(() => expect(field("Handle")).toHaveFocus());
+  expect(screen.getByText("Enter a handle.")).toBeInTheDocument();
   expect(posts(api)).toHaveLength(0);
 });
 
@@ -273,7 +273,7 @@ test("leaving Display name with a name that derives nothing opens the address in
   await userEvent.clear(field("Display name"));
   await userEvent.type(field("Display name"), "!!!");
   await userEvent.tab();
-  await vi.waitFor(() => expect(field("Slug")).toHaveFocus());
+  await vi.waitFor(() => expect(field("Handle")).toHaveFocus());
 });
 
 test("a server fields.handle error opens the address input with the error", async () => {
@@ -294,8 +294,8 @@ test("a server fields.handle error opens the address input with the error", asyn
   });
   await userEvent.click(createButton());
   expect(await screen.findByText("That handle is taken.")).toBeInTheDocument();
-  await vi.waitFor(() => expect(field("Slug")).toHaveFocus());
-  expect(field("Slug").value).toBe("team-lead");
+  await vi.waitFor(() => expect(field("Handle")).toHaveFocus());
+  expect(field("Handle").value).toBe("team-lead");
 });
 
 const templateConfigRoute = () =>
@@ -624,15 +624,15 @@ test("leaving a changed Credential that is now gone for Add credential doesn't f
   expect(field("Credential")).not.toHaveAttribute("aria-invalid");
 });
 
-test("leaving a changed, invalid Slug flags it", async () => {
+test("leaving a changed, invalid Handle flags it", async () => {
   await openLead();
   await userEvent.clear(field("Display name"));
   await userEvent.type(field("Display name"), "!!!");
   await userEvent.tab();
-  await vi.waitFor(() => expect(field("Slug")).toHaveFocus());
-  await userEvent.type(field("Slug"), "-bad-");
+  await vi.waitFor(() => expect(field("Handle")).toHaveFocus());
+  await userEvent.type(field("Handle"), "-bad-");
   await userEvent.tab();
-  await vi.waitFor(() => expect(field("Slug")).toHaveAttribute("aria-invalid", "true"));
+  await vi.waitFor(() => expect(field("Handle")).toHaveAttribute("aria-invalid", "true"));
 });
 
 test("no templates: the label is plain text and a failing submit focuses the empty state", async () => {

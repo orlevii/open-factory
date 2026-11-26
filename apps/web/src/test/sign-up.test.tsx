@@ -128,12 +128,12 @@ test("the handle field has an @ adornment and help text that an error replaces",
   renderApp("/sign-up", null);
   const handle = await screen.findByLabelText("Handle");
   expect(handle).toHaveAccessibleDescription(
-    "How agents mention you, like @alice. Lowercase letters, numbers and hyphens.",
+    "How agents and people tag you, like @alice. You can change it later.",
   );
   expect(screen.getByText("@")).toHaveAttribute("aria-hidden", "true");
   await fill({ ...valid, handle: "x" });
   expect(handle).toHaveAttribute("aria-invalid", "true");
-  expect(handle).not.toHaveAccessibleDescription(/How agents mention you/);
+  expect(handle).not.toHaveAccessibleDescription(/How agents and people tag you/);
 });
 
 test("a failed submit moves focus to the first invalid field; editing clears its error", async () => {

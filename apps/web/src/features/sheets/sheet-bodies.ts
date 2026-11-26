@@ -1,5 +1,6 @@
 import type { FetchQueryOptions, QueryClient, QueryKey } from "@tanstack/react-query";
 import type { ComponentType } from "react";
+import { principalsQueryOptions } from "@/features/principals/api";
 import { scheduleDetailOptions } from "@/features/schedules/api";
 import { agentDetailQueryOptions, agentsListQueryOptions } from "@/features/session/api";
 import {
@@ -123,6 +124,13 @@ export const sheetBodies: { [K in SheetKind]?: Entry } = {
     title: "Sign in again",
     description: (spec: { name: string }) => spec.name,
     descriptionClass: "font-mono",
+  },
+  "edit-profile": {
+    load: () => import("@/features/profile/edit-profile-sheet"),
+    prefetch(qc) {
+      void qc.prefetchQuery(principalsQueryOptions);
+    },
+    title: "Edit profile",
   },
   "add-skills": {
     load: () => import("@/features/skills/add-skills-sheet"),

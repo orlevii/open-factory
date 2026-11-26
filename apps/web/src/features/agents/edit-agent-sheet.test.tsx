@@ -101,7 +101,7 @@ async function rename(to: string) {
 
 // --- The body ---
 
-test("header Edit agent, an @handle · Template description, every field and no template or handle input", async () => {
+test("header Edit agent, an @handle · Template description, every field and no template input", async () => {
   const { dialog } = await open(
     {
       agents: [lead({ handle: "a-very-long-agent-handle-that-wraps", template: "lead" })],
@@ -121,7 +121,6 @@ test("header Edit agent, an @handle · Template description, every field and no 
   expect(field("Credential")).toHaveTextContent("work");
   expect(within(dialog).getByRole("group", { name: /Projects/ })).toBeInTheDocument();
   expect(within(dialog).queryByLabelText("Template")).not.toBeInTheDocument();
-  expect(within(dialog).queryByLabelText(/Slug|Address/)).not.toBeInTheDocument();
   expect(within(dialog).queryByRole("button", { name: "More options" })).not.toBeInTheDocument();
   expect(footerClose(dialog)).toBeInTheDocument();
 });
@@ -341,6 +340,110 @@ test("save over another page closes the sheet, clears the draft, sends the diff 
   expect(patches(api)).toEqual([{ displayName: "Boss" }]);
   expect(hasDraft(`edit-agent:${refFor("lead")}`)).toBe(false);
   expect(vi.mocked(notify).mock.calls.map((c) => c[0].text)).toEqual(["Saved @lead."]);
+});
+
+// --- Rename ---
+
+const peer = (handle: string, over: Partial<AgentSummary> = {}) =>
+  agentSummary({ handle, displayName: handle, ...over });
+const changeHandle = async (to: string) => {
+  const change = screen.queryByRole("button", { name: "Change" });
+  if (change) await userEvent.click(change);
+  const input = field("Handle");
+  await userEvent.clear(input);
+  await userEvent.type(input, to);
+};
+
+test("a taken handle shows 'Another agent or person has this handle' on blur, and sends nothing", async () => {
+  const { api } = await open({ agents: [lead(), peer("dev")] });
+  await changeHandle("dev");
+  await userEvent.tab();
+  expect(await screen.findByText("Another agent or person has this handle")).toBeInTheDocument();
+  expect(field("Handle")).toHaveAttribute("aria-invalid", "true");
+  await userEvent.click(saveButton());
+  expect(patches(api)).toEqual([]);
+});
+
+test("the agent's own handle is not taken, and the old handle is offered for typing again", async () => {
+  await open({ agents: [lead()] });
+  await changeHandle("boss");
+  await changeHandle("lead");
+  await userEvent.tab();
+  expect(screen.queryByText("Another agent or person has this handle")).not.toBeInTheDocument();
+});
+
+test("a bad handle shows the schema's message on blur and clears while typing a good one", async () => {
+  await open({ agents: [lead()] });
+  await changeHandle("-bad");
+  await userEvent.tab();
+  expect(await screen.findByText("Start and end with a letter or number")).toBeInTheDocument();
+  await userEvent.clear(field("Handle"));
+  await userEvent.type(field("Handle"), "good");
+  await waitFor(() =>
+    expect(screen.queryByText("Start and end with a letter or number")).not.toBeInTheDocument(),
+  );
+});
+
+test("a 409 from the server lands on the Handle field with the same message", async () => {
+  await open({
+    agents: [lead()],
+    extra: {
+      [`PATCH /api/agents/${refFor("lead")}`]: () =>
+        json(
+          {
+            error: {
+              code: "handle_taken",
+              message: "Another agent or person has this handle",
+              fields: { handle: "Another agent or person has this handle" },
+            },
+          },
+          409,
+        ),
+    },
+  });
+  await changeHandle("boss");
+  await userEvent.click(saveButton());
+  expect(await screen.findByText("Another agent or person has this handle")).toBeInTheDocument();
+  expect(getSheetState().parent).toBeDefined();
+});
+
+test("a rename closes the sheet and toasts '@old is now @new'; Undo puts the old handle back", async () => {
+  const { api } = await open({
+    agents: [lead()],
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ handle: "boss" })) },
+  });
+  await changeHandle("boss");
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+  expect(patches(api)).toEqual([{ handle: "boss" }]);
+  const toast = vi.mocked(notify).mock.calls.at(-1)?.[0];
+  expect(toast?.text).toBe("@lead is now @boss");
+  await toast?.undo?.();
+  expect(patches(api)).toEqual([{ handle: "boss" }, { handle: "lead" }]);
+});
+
+test("Undo says '@old was taken' when someone took the handle meanwhile", async () => {
+  await open({
+    agents: [lead()],
+    extra: { [`PATCH /api/agents/${refFor("lead")}`]: saved(lead({ handle: "boss" })) },
+  });
+  await changeHandle("boss");
+  await userEvent.click(saveButton());
+  await waitFor(() => expect(getSheetState().parent).toBeUndefined());
+  const toast = vi.mocked(notify).mock.calls.at(-1)?.[0];
+  vi.mocked(fetch).mockImplementationOnce(async () =>
+    json({ error: { code: "handle_taken", message: "taken", fields: { handle: "taken" } } }, 409),
+  );
+  await expect(toast?.undo?.()).rejects.toMatchObject({
+    status: 409,
+    message: "Couldn't undo: @lead was taken",
+  });
+});
+
+test("renaming a running agent doesn't show the restart note", async () => {
+  await open({ agents: [lead({ status: "idle" })] });
+  await changeHandle("boss");
+  expect(screen.queryByText(/^Saving restarts/)).not.toBeInTheDocument();
 });
 
 // --- Model and effort ---

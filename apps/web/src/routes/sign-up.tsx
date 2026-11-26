@@ -172,7 +172,7 @@ function SignUp({ invite, bootstrap }: { invite?: string; bootstrap: boolean }) 
         name="handle"
         label="Handle"
         prefix="@"
-        help="How agents mention you, like @alice. Lowercase letters, numbers and hyphens."
+        help="How agents and people tag you, like @alice. You can change it later."
         autoComplete="username"
         autoCapitalize="none"
         autoCorrect="off"

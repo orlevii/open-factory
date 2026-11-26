@@ -79,15 +79,15 @@ function setup(props: React.ComponentProps<typeof Harness> = {}, taken: string[]
   );
 }
 
-const line = () => screen.getByText(/^Address/).closest("p") as HTMLElement;
+const line = () => screen.getByText(/^Handle/).closest("p") as HTMLElement;
 
 test("the address follows each keystroke", async () => {
   const user = userEvent.setup();
   setup({ initialName: "" });
   await user.type(screen.getByLabelText("Name"), "Priya");
-  await waitFor(() => expect(line()).toHaveTextContent("Address @priya · Change"));
+  await waitFor(() => expect(line()).toHaveTextContent("Handle @priya · Change"));
   await user.type(screen.getByLabelText("Name"), " Nair");
-  expect(line()).toHaveTextContent("Address @priya-nair · Change");
+  expect(line()).toHaveTextContent("Handle @priya-nair · Change");
 });
 
 test("a taken address shows its suffix", async () => {
@@ -101,7 +101,7 @@ test("Change opens the input with the derived handle, focused", async () => {
   const change = screen.getByRole("button", { name: "Change" });
   expect(change.getAttribute("type")).toBe("button");
   await user.click(change);
-  const input = screen.getByLabelText("Slug");
+  const input = screen.getByLabelText("Handle");
   expect(input).toHaveValue("priya-nair");
   expect(input).toHaveFocus();
 });
@@ -110,20 +110,20 @@ test("once edited the name no longer drives the handle", async () => {
   const user = userEvent.setup();
   setup({ initialName: "Priya" });
   await user.click(screen.getByRole("button", { name: "Change" }));
-  await user.clear(screen.getByLabelText("Slug"));
-  await user.type(screen.getByLabelText("Slug"), "ops");
+  await user.clear(screen.getByLabelText("Handle"));
+  await user.type(screen.getByLabelText("Handle"), "ops");
   await user.type(screen.getByLabelText("Name"), " Nair");
-  expect(screen.getByLabelText("Slug")).toHaveValue("ops");
+  expect(screen.getByLabelText("Handle")).toHaveValue("ops");
 });
 
 test("an empty derivation reads 'choose one'", () => {
   setup({ initialName: "" });
-  expect(line()).toHaveTextContent("Address: choose one · Change");
+  expect(line()).toHaveTextContent("Handle: choose one · Change");
 });
 
 test("forceOpen opens the input focused, with its error, and reports it", async () => {
   setup({ initialName: "", forceOpen: true, error: "Pick an address." });
-  const input = await screen.findByLabelText("Slug");
+  const input = await screen.findByLabelText("Handle");
   expect(input).toHaveFocus();
   expect(screen.getByText("Pick an address.")).toBeInTheDocument();
   await waitFor(() => expect(opened).toHaveBeenCalledTimes(1));
@@ -135,7 +135,7 @@ test("forceOpen after the Name blurred moves focus to the handle input", async (
   await user.click(screen.getByLabelText("Name"));
   await user.tab();
   await user.click(screen.getByRole("button", { name: "Force" }));
-  expect(await screen.findByLabelText("Slug")).toHaveFocus();
+  expect(await screen.findByLabelText("Handle")).toHaveFocus();
   expect(opened).toHaveBeenCalledTimes(1);
 });
 
@@ -146,13 +146,13 @@ test("forceOpen with the field already open (via Change) refocuses it", async ()
   await user.click(screen.getByLabelText("Name"));
   expect(screen.getByLabelText("Name")).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "Force" }));
-  await waitFor(() => expect(screen.getByLabelText("Slug")).toHaveFocus());
+  await waitFor(() => expect(screen.getByLabelText("Handle")).toHaveFocus());
   expect(opened).toHaveBeenCalledTimes(1);
 });
 
 test("an error opens the field even without forceOpen, in the handle's note", () => {
   setup({ initialName: "Priya", error: "That address is taken." });
-  expect(screen.getByLabelText("Slug")).toHaveAccessibleDescription("That address is taken.");
+  expect(screen.getByLabelText("Handle")).toHaveAccessibleDescription("That address is taken.");
   expect(screen.getByText("That address is taken.").closest(".field-note")).not.toBeNull();
 });
 

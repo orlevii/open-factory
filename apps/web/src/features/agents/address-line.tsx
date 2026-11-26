@@ -6,6 +6,9 @@ import { deriveHandle, useTakenNames } from "@/features/agents/derive-handle";
 
 const EMPTY: ReadonlySet<string> = new Set();
 const SETTLE_MS = 300;
+const HELP =
+  "How agents and people tag this agent, like @team-lead. Lowercase letters, numbers and hyphens.";
+const EDIT_HELP = `${HELP} Everything already written shows the new handle. The old one is free for anyone.`;
 
 /** The value after it has stopped changing for `ms`, or at once on `flush` (blur). */
 function useDeferredSettle(value: string, ms: number): [string, () => void] {
@@ -26,6 +29,7 @@ export function AddressLine({
   error,
   forceOpen,
   onOpened,
+  agentRef,
 }: {
   name: string;
   handle: string;
@@ -37,10 +41,13 @@ export function AddressLine({
   error?: string;
   forceOpen?: boolean;
   onOpened?: () => void;
+  /** Edit mode: the agent being renamed. The handle is its own, nothing derives from the name, and the help says what a rename does. */
+  agentRef?: string;
 }) {
+  const edit = agentRef !== undefined;
   // Until the taken-sets answer, the derivation shows without a suffix (§6.3).
-  const taken = useTakenNames(true);
-  const shown = handleTouched ? handle : deriveHandle(name, taken ?? EMPTY);
+  const taken = useTakenNames(!edit);
+  const shown = edit || handleTouched ? handle : deriveHandle(name, taken ?? EMPTY);
   const [open, setOpen] = useState(false);
   const [avatarHandle, settleAvatar] = useDeferredSettle(shown, SETTLE_MS);
 
@@ -59,19 +66,19 @@ export function AddressLine({
     return (
       <div className="flex items-start gap-2">
         <span className="mt-2.5">
-          <AgentAvatar agentRef={avatarHandle} color={null} size={20} />
+          <AgentAvatar agentRef={agentRef ?? avatarHandle} color={null} size={20} />
         </span>
         <div className="min-w-0 flex-1">
           <FormField
             name="handle"
-            label="Slug"
+            label="Handle"
             prefix="@"
             ref={inputRef}
             autoFocus
             autoComplete="off"
             spellCheck={false}
             className="font-mono"
-            help="How others address this agent, like @team-lead. Lowercase letters, numbers and hyphens. Can't be changed later."
+            help={edit ? EDIT_HELP : HELP}
             error={error}
             value={shown}
             onChange={(e) => onHandle(e.target.value)}
@@ -86,17 +93,17 @@ export function AddressLine({
   }
   return (
     <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-      <AgentAvatar agentRef={avatarHandle} color={null} size={20} />
+      <AgentAvatar agentRef={agentRef ?? avatarHandle} color={null} size={20} />
       <span className="min-w-0">
         {shown ? (
           <>
-            Address{" "}
+            Handle{" "}
             <b className="font-mono font-normal text-foreground [overflow-wrap:anywhere]">
               @{shown}
             </b>
           </>
         ) : (
-          "Address: choose one"
+          "Handle: choose one"
         )}
       </span>{" "}
       <span aria-hidden="true">·</span>{" "}

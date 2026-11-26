@@ -17,6 +17,7 @@ import {
   Search,
   Settings,
   Sun,
+  UserPen,
 } from "lucide-react";
 import { TruncTooltip } from "@/components/agent-chip";
 import {
@@ -386,6 +387,13 @@ export function AppSidebar() {
                   </>
                 )}
                 <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onSelect={() => openSheet({ kind: "edit-profile" })}
+                  {...sheetIntent("edit-profile")}
+                >
+                  <UserPen aria-hidden="true" />
+                  Edit profile
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => void signOut()}>
                   <LogOut aria-hidden="true" />
                   Sign out

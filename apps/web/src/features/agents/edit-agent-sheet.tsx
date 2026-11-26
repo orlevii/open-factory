@@ -30,6 +30,7 @@ import {
 import { SheetBody, SheetClose, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/toaster";
+import { AddressLine } from "@/features/agents/address-line";
 import { PartialSaveError, useAgentFormState } from "@/features/agents/agent-form-state";
 import {
   agentsListQueryOptions,
@@ -46,6 +47,7 @@ import { ProjectGrantPicker } from "@/features/agents/project-grant-picker";
 import { NO_AGENT_LINE } from "@/features/config/messages";
 import { inboxQueryKey } from "@/features/inbox/api";
 import { FIELD_TAG_NOTE, useMentionSource } from "@/features/mentions/mention-source";
+import { undoRename } from "@/features/profile/api";
 import { agentDetailQueryOptions } from "@/features/session/api";
 import { credentialsQueryOptions, projectsQueryOptions } from "@/features/settings/api";
 import { AddCredentialForm } from "@/features/settings/forms/add-credential-form";
@@ -374,8 +376,15 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
       if (parent?.kind === "edit-agent" && parent.agentRef === agentRef && parent.id !== sheetId)
         closeSheet();
     }
+    // A rename is announced wherever the user is, with the way back; the sheet already closed.
+    const renamed = body.handle !== undefined && body.handle !== agent.handle;
+    if (renamed)
+      notify({
+        text: `@${agent.handle} is now @${saved.handle}${saved.restartPending || restartsNow ? ". Restarts when idle." : ""}`,
+        undo: () => undoRename(agent.handle, (handle) => updateAgent(agentRef, { handle })),
+      });
     // Silent only when the session under the sheet already shows the result (its header shows the name).
-    if (saved.restartPending || restartsNow)
+    else if (saved.restartPending || restartsNow)
       notify({ text: `Saved @${agent.handle}. Restarts when idle.` });
     else if (late || !AGENT_PAGES(agentRef).includes(spec.at ?? "") || !nameOnly)
       notify({ text: `Saved @${agent.handle}.` });
@@ -405,6 +414,15 @@ function EditAgentForm({ spec, sheetId, agent }: BodyProps<Spec> & { agent: Agen
             onFocus={() => claim("displayName")}
             onBlur={(e) => blur("displayName", e)}
             autoComplete="off"
+          />
+          <AddressLine
+            name={shown.displayName}
+            handle={shown.handle}
+            handleTouched
+            agentRef={agentRef}
+            onHandle={(v) => set("handle", v)}
+            onBlur={(e) => blur("handle", e)}
+            error={errors.handle}
           />
           <ColourField
             agentRef={agentRef}

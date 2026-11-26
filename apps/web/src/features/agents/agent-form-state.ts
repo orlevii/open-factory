@@ -16,6 +16,7 @@ import { useFieldErrors } from "@/components/forms/use-field-errors";
 import { agentsListQueryOptions, type ModelEffort } from "@/features/agents/api";
 import { templateConfigQueryOptions } from "@/features/config/api";
 import { readAt, readString, setAt } from "@/features/config/tolerant";
+import { useHandleTaken } from "@/features/principals/use-handle-taken";
 import {
   credentialsQueryOptions,
   projectsQueryOptions,
@@ -243,6 +244,7 @@ export function useAgentFormState({
   const projectList = useQuery(projectsQueryOptions);
   const secrets = useQuery({ ...secretsQueryOptions, enabled: create });
   const me = useQuery(sessionQueryOptions).data?.user.ref;
+  const handleTaken = useHandleTaken(agent?.ref);
   const users = useQuery(usersQueryOptions);
 
   // References a restored draft (or an edit made earlier) holds that no longer point at anything read as empty, with
@@ -341,10 +343,9 @@ export function useAgentFormState({
         return undefined;
       }
       case "handle": {
-        if (!create) return undefined;
-        if (v.handle === "") return FORM_MSG.enterHandle;
+        if (create && v.handle === "") return FORM_MSG.enterHandle;
         const r = handleSchema.safeParse(v.handle);
-        return r.success ? undefined : r.error.issues[0]?.message;
+        return r.success ? handleTaken(v.handle) : r.error.issues[0]?.message;
       }
       case "displayName": {
         if (createAgentBodySchema.shape.displayName.safeParse(v.displayName).success) return;
@@ -428,6 +429,7 @@ export function useAgentFormState({
     const b = base as Stored;
     const patch: PatchAgentBody = {};
     if (displayName !== b.displayName) patch.displayName = displayName;
+    if (shown.handle !== b.handle) patch.handle = shown.handle;
     if (shown.color !== b.color) patch.color = shown.color;
     if (description !== b.description) patch.description = description;
     if (shown.reportsTo && shown.reportsTo !== b.reportsTo) patch.reportsTo = shown.reportsTo;

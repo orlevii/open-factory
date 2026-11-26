@@ -26,7 +26,7 @@ Every decision below was settled with the owner in a brainstorming session on 20
 11. An agent's factory-tool write with a tag whose ref matches nobody is refused, and nothing is written: `<@k7x2m9qd> isn't anyone in this factory; list_peers shows each agent and human with their tag.` A plain `@name` matching a current handle is stored as a tag, and the tool result says `Plain tag detected: @cmo-agent was resolved to <@k7x2m9qd|cmo-agent>. Tag as <@ref|handle>.` A plain `@name` matching nobody stays text, with no warning.
 12. A human's REST write with an unknown ref gets a 400 field error, and nothing is written. Plain `@name` from a human is never resolved.
 13. A tag in a message, schedule body or description notifies nobody. A tag in a task comment reaches the tagged principal, as mentions do today (cap 50).
-14. An agent's workdir is `~/open-factory/agents/<ref>/` and its container is `of-agent-<ref>`. A renamed agent keeps its workdir and resumes its Claude session.
+14. An agent's workdir is `~/open-factory/agents/<ref>/` and its container is `open-factory-<ref>`. A renamed agent keeps its workdir and resumes its Claude session.
 15. REST routes address agents by ref (`/api/agents/:ref/…`), and the web routes do too (`/agents/:ref`). The Auto avatar colour is seeded from the id, so a rename keeps the colour.
 
 ## 3. Delivery
@@ -50,7 +50,7 @@ principals(
 ```
 
 - `agents.id` and `users.id` reference `principals.id`. A principal row is inserted in the same transaction as its subtype row. On a `ref` unique violation, the creator draws a new UUID and retries, up to 5 times, then fails with a 500.
-- **Users:** better-auth's `advanced.database.generateId` returns `randomUUID()`. The handle moves from a better-auth `additionalFields` entry to `principals`. A better-auth `user.create` hook inserts the principal. *The plan checks first* whether the hook runs inside the user insert's transaction. If it doesn't, sign-up inserts the principal first and deletes it if the user insert fails.
+- **Users:** better-auth's adapter runs without transactions, and today's handle claim runs in request middleware outside the user insert. So sign-up (`handleSignUp`, already under `signUpMutex`) validates the handle, creates the principal itself, and then runs better-auth. Its `advanced.database.generateId` hands the user the principal's id, and the principal is deleted if sign-up fails. The handle is no longer a better-auth field: `users.handle` is dropped, `getUser` reads the handle and ref from `principals`, and the web reads the signed-in user from `GET /api/me`.
 - **Handles:** one schema for agents and humans, `handleSchema`: lowercase letters, digits and dashes, starting and ending with a letter or digit, 2–40 chars, with today's reserved words plus `unknown`, which is how a dangling tag renders (`humans`, `me`, `scheduler`, `factory`, `all`, `system`, `unknown`). `slugSchema` is deleted. Sign-up's handle input allows 40 characters. Every principal keeps its handle, terminated and archived agents included, until it's renamed. A rename frees the old handle at once. The unique index decides every race; there's no app-side pre-check beyond giving a better error.
 - **Names** stay on the subtype tables: `agents.display_name`, and better-auth's `users.name`.
 
@@ -70,6 +70,12 @@ principals(
 | `schedules` | `body_author_agent_id` + `body_author_user_id` | `body_author_id` |
 
 The plan confirms the exact tables by reading `packages/db/src/schema/`, and any other pair found there collapses the same way. Columns that can only hold an agent (`tasks.assignee_agent_id`, `schedules.target_agent_id`, `subject_agent_id`, `agent_id` foreign keys) keep their FK to `agents`. Code that branches on "agent or user column" reads one column and the principal's `kind`.
+
+**Other stored principal references** move to ids or tags too:
+- `messages.recipients` (a text[] of `@handle`) → `recipient_ids` (principal ids)
+- `messages.re[].from` holds `<@ref>`, or the reserved `@scheduler` / `@factory`
+- `skill_sources.added_by` (text) → `added_by_id` → principals
+- session-event payloads that name who did something (`spawned`, control events) hold `<@ref>`
 
 ### 4.2 Refs
 
@@ -118,6 +124,10 @@ A server helper, `principals.resolveText(db, text, { writer })`, wraps scan → 
 - `terminated_by` and `description_by` in tool results
 - spawn results
 
+**Text the factory writes** names principals by tag, so it never goes stale: peer joined/left bodies, forwarded facts, restart notices, the loop-guard notice and task message bodies store `<@ref>` (`@factory` and `@scheduler` stay words). Code that reads such a body back parses its tags.
+
+**Sanitising.** `inline()` (which strips `<` and `>` from descriptions and titles) and the envelope's `attr()` keep only the two exact tag shapes, `<@ref>` and `<@ref|handle>`, defined once in `tags.ts`. Everything else is stripped or escaped as today.
+
 **Principal arguments.** `send_message.to`, `terminate_agent`, `restart_agent`, `update_agent` (its target), `send_command`, task assignee and schedule target each accept a tag, a bare ref or a plain handle. One resolver handles all of them. A plain handle adds the §2.11 warning to the result, and an unknown ref is refused. `spawn_agent` takes the new agent's handle and returns its tag. `update_agent` gets no handle argument; only humans rename.
 
 **Instructions** (`apps/server/src/workspace/claude-md.ts`). A short section replaces the current mention lines:
@@ -132,7 +142,9 @@ A server helper, `principals.resolveText(db, text, { writer })`, wraps scan → 
 **Durable keys off the handle:**
 
 - workdir `~/open-factory/agents/<ref>/`, so Claude's cwd-derived session path survives a rename
-- containers `of-agent-<ref>`
+- containers `open-factory-<ref>` (today `open-factory-<slug>-<id8>`)
+- the agent's git identity: name = its handle at start, email = `<ref>@open-factory.local`
+- per-agent event channels keyed by agent id; WebSocket messages name the agent by ref
 - REST `/api/agents/:ref/…` (lookup through `normaliseRef` and the `ref` index)
 - message and recipient REST bodies take refs
 - the avatar seed is the id
@@ -152,6 +164,7 @@ UI work follows DESIGN.md, the `impeccable` skill and Emil Kowalski's skills (em
 **Principals cache.**
 
 - `GET /api/principals` returns every principal: `{ id, ref, kind, handle, name, state }` plus avatar fields, where `state` is `live` | `archived` | `terminated` | `disabled`. It is cached once, and `principal_updated` patches the cache.
+- **Handles in other responses** (agent lists, chat entries, task and schedule creators, inbox rows) stay as fields. `principal_updated` arrives over the app's existing WebSocket (`/api/ws`). Its handler patches the principals cache and invalidates one listed set of queries that show handles (`HANDLE_QUERY_KEYS`, kept next to the handler). Queries on screen refetch once; the rest refetch when next used. The same set is invalidated when the WebSocket reconnects, so a missed frame is never stale. No polling, no stale-time timer.
 - A ref missing from the loaded cache triggers one batched refetch (`GET /api/principals?refs=…`, coalesced per frame).
 - Until the cache has loaded and the refetch has answered, a chip renders `@…` with a steel plate in the avatar slot, at its final size and with no shimmer. It shows `@unknown` only when the server confirms no principal has that ref.
 
@@ -172,18 +185,18 @@ UI work follows DESIGN.md, the `impeccable` skill and Emil Kowalski's skills (em
 - **Unknown ref:** a muted, non-interactive chip with no avatar, reading "@unknown"; its tooltip and sr-only text say "No one in this factory has this tag".
 - **Inside a link, button or heading link:** `Tag interactive={false}`, which keeps the look but has no link and no focus. There are never links inside links.
 - **A rename:** the text swaps instantly, with no transition and no highlight.
-- **Mono tool input and output rows** stay raw text, never chips.
+- **Mono tool input and output rows** stay raw text, never chips. A separate `Markdown` switch (`tags={false}`) does this; `untrusted` doesn't (the schedule sheet renders its body `untrusted` and shows chips).
 
 **Plain-text surfaces** (task-list rows, inbox previews, notifications, the document `<title>`, the agent description line in sheet headers) use `renderTags(…, "plain")` with the cache, and re-render on `principal_updated`.
 
-**Composer.** It stays a textarea, with atomic tag ranges `{ start, end, ref }`. The surfaces are the chat, task comment, task title (single line), task body, agent description and schedule body. The **session composer stays raw**, with no `@`, as DESIGN.md has it.
+**Composer.** It stays a textarea, with atomic tag ranges `{ start, end, ref }`. The surfaces are the chat, task comment, task title (single line `Input`), task body, agent description (a plain `Textarea`) and schedule body. One hook (`useTagField`) owns the range behaviour below; the composer and every other field use it. The **session composer stays raw**, with no `@`, as DESIGN.md has it.
 
 - **Picking:** picking from the `@` menu replaces the typed `@query` with `@handle ` and records a range. Edits before a range shift it. A rename while a tag sits in an open composer leaves the typed text as is; the range keeps its ref.
 - **Highlighter:** a mirror layer behind the textarea paints each range with the chip's fill. It reuses `caret-menu.tsx`'s mirror properties, with the same font, padding and wrap, kept in sync with the textarea's scroll. The textarea's own text stays on top, so the caret, IME, spellcheck and native selection are untouched. Untagged `@text` has no fill.
 - **Caret:** a collapsed caret never rests inside a range. After a click it moves to the nearer edge. After ← or → it moves to the far edge in the direction of travel.
 - **Selections:** an edge that falls inside a range snaps outward, so selections hold whole tags.
 - **Deleting:** Backspace at a tag's end, or Delete at its start, removes the whole tag and its trailing space. A range drops only when an IME composition started inside it, and the text then stays plain; the highlighter shows it.
-- **Undo:** picks and whole-tag deletes go through `document.execCommand("insertText")` or the composer's snapshot stack of `{ text, ranges, selection }`. `historyUndo` / `historyRedo` restore the matching snapshot's ranges.
+- **Undo:** the hook owns undo. It keeps a stack of `{ text, ranges, selection }` snapshots (typing coalesced into one step per word or 500ms pause; a pick or a whole-tag delete is its own step). On `beforeinput` `historyUndo` / `historyRedo`, and on ⌘Z / ⌘⇧Z / Ctrl+Y, it prevents the browser default and restores a snapshot. No `execCommand`.
   - ⌘Z right after a pick brings back `@query` with the menu closed.
   - ⌘Z after a whole-tag delete brings the tag back, still atomic.
   - ⌘⇧Z and Ctrl+Y redo.
@@ -192,7 +205,7 @@ UI work follows DESIGN.md, the `impeccable` skill and Emil Kowalski's skills (em
   - A composer paste turns `data-of-tag` spans into ranges. A raw `<@ref>` or `<@ref|label>` in pasted plain text also becomes a range.
   - Paste never opens a menu.
 - **Submit and drafts:** submit serialises ranges to `<@ref>`. Drafts store the serialised text. Loading a draft, or editing existing text (a task title or body, an agent description), hydrates tokens back into `@handle` ranges.
-- **MarkdownEditor fields** (task body, description, schedule body) have no `@` toolbar button; the menu opens by typing. Their Preview tab serialises the ranges and renders chips.
+- **MarkdownEditor fields** (task body, schedule body) have no `@` toolbar button; the menu opens by typing. Their Preview tab serialises the ranges and renders chips.
 
 **The `@` menu now that it only tags.**
 

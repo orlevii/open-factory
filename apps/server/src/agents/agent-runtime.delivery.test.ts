@@ -130,7 +130,7 @@ test("compact is a barrier: written only with no open turn, and nothing passes i
   await send("long task");
   driver.last.emit(ev.turn());
   await rt.settled();
-  await rt.compact({ focus: "keep the API", byHandle: "or" });
+  await rt.compact({ focus: "keep the API", by: "<@or>" });
   await send("after compact");
   expect(driver.last.controls).toEqual([]); // turn open: compact waits
   expect(rt.queueItems().map((q) => q.kind)).toEqual(["compact", "message"]);
@@ -155,7 +155,7 @@ test("compact is a barrier: written only with no open turn, and nothing passes i
     type: "control",
     cmd: "compact",
     arg: "keep the API",
-    by: "@or",
+    by: "<@or>",
   });
 });
 
@@ -208,7 +208,7 @@ const controlEvents = async () => (await events()).filter((e) => e.type === "con
 test("a plain interrupt holds later messages until the interrupted turn's result", async () => {
   await startedWithOpenTurn();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   await send("steer");
   expect(driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["long task"]);
   expect(driver.last.writes.at(-1)).toEqual({ kind: "control", cmd: "interrupt" });
@@ -223,12 +223,12 @@ test("a plain interrupt holds later messages until the interrupted turn's result
 test("a second interrupt during the hold writes nothing", async () => {
   await startedWithOpenTurn();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
-  await rt.interrupt({ byHandle: "or" }); // resolves (202), no-op
+  await rt.interrupt({ by: "<@or>" });
+  await rt.interrupt({ by: "<@or>" }); // resolves (202), no-op
   await send("STOP", true); // an urgent send during the hold doesn't interrupt again either
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
   expect((await controlEvents()).map((e) => e.event)).toEqual([
-    { type: "control", cmd: "interrupt", by: "@or" },
+    { type: "control", cmd: "interrupt", by: "<@or>" },
   ]);
 });
 
@@ -237,7 +237,7 @@ test.each([
     "a plain interrupt",
     "steer",
     async () => {
-      await rt.interrupt({ byHandle: "or" });
+      await rt.interrupt({ by: "<@or>" });
       await send("steer");
     },
   ],
@@ -266,7 +266,7 @@ test("a hold ended by the turn's result never appends interrupt_unconfirmed afte
   await makeRuntime({ realHold: true });
   await startedWithOpenTurn();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   await send("steer");
   driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
   await rt.settled();
@@ -278,11 +278,11 @@ test("a hold ended by the turn's result never appends interrupt_unconfirmed afte
 
 test("interrupt during a compaction is 409 compacting and writes nothing", async () => {
   await startedIdle();
-  await rt.compact({ byHandle: "or" });
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(CompactingError);
+  await rt.compact({ by: "<@or>" });
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(CompactingError);
   driver.last.emit(ev.turn()); // the compact turn opens
   await rt.settled();
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toMatchObject({ code: "compacting" });
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toMatchObject({ code: "compacting" });
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "compact" }]);
   expect(rt.live().status).not.toBe("errored");
 });
@@ -291,7 +291,7 @@ test("publishQueue runs when the hold begins and when it ends", async () => {
   await startedWithOpenTurn();
   fakeHoldTimer();
   const before = queueFrames().length;
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   expect(queueFrames()).toHaveLength(before + 1);
   await send("steer");
   const held = queueFrames().at(-1);
@@ -309,7 +309,7 @@ test("publishQueue runs when the hold begins and when it ends", async () => {
 test("a hold released by the turn's result, with nothing queued, still publishes the queue", async () => {
   await startedWithOpenTurn();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   const before = queueFrames().length;
   driver.last.emit(ev.usage(), ev.end({ isError: true, terminalReason: "aborted_tools" }));
   await rt.settled();
@@ -318,7 +318,7 @@ test("a hold released by the turn's result, with nothing queued, still publishes
 
 test("urgent while a compact is in flight does not interrupt it; it waits behind the barrier", async () => {
   await startedIdle();
-  await rt.compact({ byHandle: "or" });
+  await rt.compact({ by: "<@or>" });
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "compact" }]);
   driver.last.emit(ev.turn()); // the compact turn opens
   await rt.settled();
@@ -387,7 +387,7 @@ test("a rejected interrupt write (process going away) is not an internal error: 
   driver.last.failWrites = true; // the process is exiting; its `exited` has not been processed yet
   const item = await send("STOP", true); // resolves: no 500
   expect(item.body).toBe("STOP");
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(NoOpenTurnError);
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(NoOpenTurnError);
   expect(driver.last.controls).toEqual([]);
   expect(rt.live().status).not.toBe("errored");
   expect(rt.queueItems().map((q) => q.body)).toEqual(["STOP"]);
@@ -504,7 +504,7 @@ test("U3 §13.2: the queue item and the message_in envelope echo clientMessageId
   driver.last.emit(ev.turn());
   await rt.settled();
   fakeHoldTimer();
-  await rt.interrupt({ byHandle: "or" }); // a hold, so the item is seen queued first
+  await rt.interrupt({ by: "<@or>" }); // a hold, so the item is seen queued first
   const cid = randomUUID();
   const row = await store.createMessage({
     from: { userId: "u1" },

@@ -45,6 +45,7 @@ const cronsSentence = (crons: string[]) =>
 const hhmm = (d: Date) =>
   `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 
+/** The `by` of a notice is the requester's tag (`<@ref>`) or `@factory` / `@scheduler`, written as the caller holds it. */
 export const notices = {
   crash(i: {
     exit: { code: number | null; signal: string | null };
@@ -110,7 +111,7 @@ export const notices = {
         : []),
     ].join(" ");
   },
-  /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). */
+  /** S9 §10.3: a human stopped the agent's in-session crons; a passive notice (never wakes the agent by itself). `by` is a tag. */
   cronsStopped(i: { by: string; crons: string[] }): string {
     return `${i.by} stopped your crons: ${i.crons.join("; ")}. A human stopped them on purpose, so don't recreate them unless you are asked to.`;
   },

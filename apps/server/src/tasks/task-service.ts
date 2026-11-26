@@ -9,7 +9,7 @@ import {
   taskCommentBodySchema,
   taskKey,
 } from "@open-factory/shared";
-import { unknownRefError } from "@open-factory/shared/tags";
+import { tagOf, unknownRefError } from "@open-factory/shared/tags";
 import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
@@ -783,12 +783,14 @@ export class TaskService {
         i.next.assigneeAgentId,
         i.actor.kind === "agent" ? i.actor.id : null,
         ...i.unblocked.map((u) => u.assigneeId),
+        ...i.links.map((l) => l.agentId),
       ].filter((x): x is string => !!x),
     );
     const people = await principalsByIds(tx, [...ids]);
+    // A principal named in a stored body is its tag, so the text shows the current handle wherever it is read.
     const label = (id: string) => {
       const p = people.get(id);
-      return p ? `@${p.handle}` : id;
+      return p ? tagOf(p.ref) : id;
     };
     const creatorPerson = people.get(i.row.createdById);
     const creator: Who = {
@@ -797,7 +799,7 @@ export class TaskService {
     };
     return plan({
       actor: i.actor,
-      actorLabel: `@${i.actor.handle}`,
+      actorLabel: tagOf(i.actor.ref),
       live: i.live,
       task: {
         id: i.row.id,
@@ -811,7 +813,7 @@ export class TaskService {
         blockedBy: i.blocked,
         links: i.links.map((l) => ({
           kind: l.kind,
-          label: l.kind === "agent" ? `@${l.agentSlug}` : (l.target ?? ""),
+          label: l.kind === "agent" && l.agentId ? label(l.agentId) : (l.target ?? ""),
           ...(l.title ? { title: l.title } : {}),
         })),
       },

@@ -91,7 +91,7 @@ const pendingNotice = () =>
   t.sql`select body from messages where to_id = ${id} and notice = 'crons_stopped' and state = 'pending'`;
 
 test("no process, no crons: no_crons; archived and terminated agents are refused", async () => {
-  await expect(rt.stopCrons("or")).rejects.toMatchObject({
+  await expect(rt.stopCrons("<@or>")).rejects.toMatchObject({
     code: "no_crons",
     status: 409,
     message: `@stop${n} has no crons.`,
@@ -99,33 +99,33 @@ test("no process, no crons: no_crons; archived and terminated agents are refused
   await send("boot");
   driver.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
   await rt.settled();
-  await expect(rt.stopCrons("or")).rejects.toMatchObject({ code: "no_crons" });
+  await expect(rt.stopCrons("<@or>")).rejects.toMatchObject({ code: "no_crons" });
   await make({ archived: true });
-  await expect(rt.stopCrons("or")).rejects.toThrow(/archived/);
+  await expect(rt.stopCrons("<@or>")).rejects.toThrow(/archived/);
   await make({ terminated: true });
-  await expect(rt.stopCrons("or")).rejects.toThrow(/terminated/);
+  await expect(rt.stopCrons("<@or>")).rejects.toThrow(/terminated/);
 });
 
 test("idle with two crons: stops now, records who, leaves the passive notice, wakes nothing, tells no manager", async () => {
   await idleWithCrons();
   expect(rt.hibernatable()).toBe(false); // pinned
-  const r = await rt.stopCrons("or");
+  const r = await rt.stopCrons("<@or>");
   expect(r).toEqual({ status: "stopped" });
   await rt.settled();
   expect(driver.last.stopped).toBe(true);
   const evs = await events();
   expect(evs.find((e) => e.type === "hibernated")).toMatchObject({
     reason: "crons_stopped",
-    by: "@or",
+    by: "<@or>",
   });
   expect(evs.find((e) => e.type === "background_work_lost")).toMatchObject({
     reason: "crons_stopped",
-    by: "@or",
+    by: "<@or>",
     crons: [{ cronId: "c1" }, { cronId: "c2" }],
   });
   const [notice] = await pendingNotice();
   expect(notice?.body).toBe(
-    "@or stopped your crons: every 5 minutes; at 14:30, once. A human stopped them on purpose, so don't recreate them unless you are asked to.",
+    "<@or> stopped your crons: every 5 minutes; at 14:30, once. A human stopped them on purpose, so don't recreate them unless you are asked to.",
   );
   expect(driver.starts).toHaveLength(1); // no wake
   expect(forwarded.filter((f) => f.fact === "work_lost")).toHaveLength(0);
@@ -137,7 +137,7 @@ test("busy: pending, stopCronsPending in the frame; at the turn end it stops des
   await rt.settled();
   driver.last.emit(ev.cron("c1", { humanSchedule: "every 5 minutes" }));
   await rt.settled();
-  expect(await rt.stopCrons("or")).toEqual({ status: "pending" });
+  expect(await rt.stopCrons("<@or>")).toEqual({ status: "pending" });
   expect(rt.statusFrame().stopCronsPending).toBe(true);
   driver.last.emit(ev.cron("c2", { humanSchedule: "every hour" }));
   await rt.settled();
@@ -151,7 +151,7 @@ test("busy: pending, stopCronsPending in the frame; at the turn end it stops des
   expect(notice?.body).toContain("every 5 minutes; every hour");
   expect((await events()).find((e) => e.type === "hibernated")).toMatchObject({
     reason: "crons_stopped",
-    by: "@or",
+    by: "<@or>",
   });
 });
 
@@ -159,7 +159,7 @@ test("a live background task keeps the stop pending until it finishes", async ()
   await idleWithCrons();
   driver.last.emit(ev.background([{ taskId: "b1", description: "build" }]));
   await rt.settled();
-  expect(await rt.stopCrons("or")).toEqual({ status: "pending" });
+  expect(await rt.stopCrons("<@or>")).toEqual({ status: "pending" });
   driver.last.emit(ev.taskFinished("b1"), ev.background([]));
   await rt.settled();
   driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
@@ -171,8 +171,8 @@ test("a live background task keeps the stop pending until it finishes", async ()
 test("another stop under way is refused: a second Stop while the first is stopping", async () => {
   await idleWithCrons();
   driver.last.holdStop = true;
-  expect(await rt.stopCrons("or")).toEqual({ status: "stopped" });
-  await expect(rt.stopCrons("or")).rejects.toMatchObject({
+  expect(await rt.stopCrons("<@or>")).toEqual({ status: "stopped" });
+  await expect(rt.stopCrons("<@or>")).rejects.toMatchObject({
     code: "stopping",
     status: 409,
     message: `@stop${n} is already stopping; its crons stop with it.`,
@@ -184,7 +184,7 @@ test("another stop under way is refused: a second Stop while the first is stoppi
 test("a spawned agent behaves the same", async () => {
   await make({ spawned: true });
   await idleWithCrons();
-  expect(await rt.stopCrons("or")).toEqual({ status: "stopped" });
+  expect(await rt.stopCrons("<@or>")).toEqual({ status: "stopped" });
   await rt.settled();
   expect((await events()).find((e) => e.type === "hibernated")).toMatchObject({
     reason: "crons_stopped",
@@ -206,7 +206,7 @@ test("a pending apply-restart: the stop runs at the first not-busy moment, adds 
   await rt.settled();
   await rt.requestRestart(); // waits on the background task (crons don't hold it back)
   expect(rt.live().restartPending).toBe(true);
-  expect(await rt.stopCrons("or")).toEqual({ status: "pending" });
+  expect(await rt.stopCrons("<@or>")).toEqual({ status: "pending" });
   driver.last.emit(ev.taskFinished("b1"), ev.background([]));
   await rt.settled();
   driver.last.emit(ev.turn(), ev.usage(), ev.end({ originKind: "task-notification" }));
@@ -224,11 +224,11 @@ test("an apply_changes hibernate already under way is taken over: reason crons_s
   driver.last.holdStop = true;
   await rt.requestRestart(); // idle: its hibernate begins at once (crons don't block it)
   expect(driver.last.stopped).toBe(true);
-  expect(await rt.stopCrons("or")).toEqual({ status: "stopped" });
+  expect(await rt.stopCrons("<@or>")).toEqual({ status: "stopped" });
   driver.last.releaseStop();
   await rt.settled();
   expect(await reasons()).toEqual(["crons_stopped"]);
-  expect((await events()).find((e) => e.type === "hibernated")).toMatchObject({ by: "@or" });
+  expect((await events()).find((e) => e.type === "hibernated")).toMatchObject({ by: "<@or>" });
   expect((await noticesOf()).map((x) => x.notice)).toEqual(["crons_stopped"]);
   expect(driver.starts).toHaveLength(1);
 });
@@ -237,7 +237,7 @@ test("a queued message at the takeover's exit still wakes the agent (the restart
   await idleWithCrons();
   driver.last.holdStop = true;
   await rt.requestRestart();
-  await rt.stopCrons("or");
+  await rt.stopCrons("<@or>");
   await send("while stopping");
   driver.last.releaseStop();
   await rt.settled();
@@ -251,7 +251,7 @@ test("crons reaching 0 while the stop is pending clear it and a held-back restar
   driver.last.emit(ev.background([{ taskId: "b1", description: "build" }]));
   await rt.settled();
   await rt.requestRestart();
-  expect(await rt.stopCrons("or")).toEqual({ status: "pending" });
+  expect(await rt.stopCrons("<@or>")).toEqual({ status: "pending" });
   driver.last.emit({ type: "cron_deleted", cronId: "c1" }, { type: "cron_deleted", cronId: "c2" });
   await rt.settled();
   expect(rt.statusFrame().stopCronsPending).toBe(false);
@@ -270,7 +270,7 @@ test("an exit while the stop is pending clears it", async () => {
   await rt.settled();
   driver.last.emit(ev.cron("c1"));
   await rt.settled();
-  expect(await rt.stopCrons("or")).toEqual({ status: "pending" });
+  expect(await rt.stopCrons("<@or>")).toEqual({ status: "pending" });
   driver.last.exit(1, "boom");
   await rt.settled();
   expect(rt.statusFrame().stopCronsPending).toBe(false);

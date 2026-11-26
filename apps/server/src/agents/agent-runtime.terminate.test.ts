@@ -298,12 +298,12 @@ test("reload latches a row terminated elsewhere", async () => {
 test("compact, interrupt, restart and reset-session are refused once terminated", async () => {
   await h.makeRuntime({ errorKind: "resume", status: "errored" });
   h.rt.markTerminated({ committed: true });
-  await expect(h.rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentTerminatedError);
-  await expect(h.rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(AgentTerminatedError);
+  await expect(h.rt.compact({ by: "<@or>" })).rejects.toBeInstanceOf(AgentTerminatedError);
+  await expect(h.rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(AgentTerminatedError);
   await expect(
     h.rt.restartNow({ by: "@or", force: false, changes: [], runtimeAllowed: true }),
   ).rejects.toBeInstanceOf(AgentTerminatedError);
-  await expect(h.rt.resetSession({ byHandle: "or" })).rejects.toBeInstanceOf(AgentTerminatedError);
+  await expect(h.rt.resetSession({ by: "<@or>" })).rejects.toBeInstanceOf(AgentTerminatedError);
   expect(h.driver.starts).toHaveLength(0);
 });
 

@@ -260,7 +260,7 @@ test("deliveries to a running paused agent are held, then flushed at reset", asy
   expect(w.proc(b).controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
   w.proc(b).emit(ev.end({ terminalReason: "aborted_tools" }));
   await w.settleAll();
-  await b.compact({ byHandle: "or" }); // compacts are held too
+  await b.compact({ by: "<@or>" }); // compacts are held too
   expect(sentBodies(b)).toEqual([["first"]]);
   expect(w.proc(b).controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
 

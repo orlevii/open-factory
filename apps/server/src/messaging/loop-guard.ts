@@ -1,4 +1,5 @@
 import { schema } from "@open-factory/db";
+import { tagOf } from "@open-factory/shared/tags";
 import { sql } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventBus } from "../agents/event-bus.ts";
@@ -141,14 +142,14 @@ export class LoopGuard {
     to: string,
     counts: { ab: number; ba: number; minutes: number },
   ): Promise<PendingRow[]> {
-    const pair = await tx.execute<{ id: string; slug: string; reports_to: string | null }>(
-      sql`select id, slug, reports_to from agents where id in (${from}, ${to})`,
+    const pair = await tx.execute<{ id: string; ref: string; reports_to: string | null }>(
+      sql`select a.id, p.ref, a.reports_to from agents a join principals p on p.id = a.id where a.id in (${from}, ${to})`,
     );
     const a = pair.find((r) => r.id === from);
     const b = pair.find((r) => r.id === to);
     if (!a || !b) throw new Error("loop guard: a pair member does not exist");
     const total = counts.ab + counts.ba;
-    const exchanged = `@${a.slug} and @${b.slug} exchanged ${plural(total, "message", "messages")} in ${plural(counts.minutes, "minute", "minutes")}`;
+    const exchanged = `${tagOf(a.ref)} and ${tagOf(b.ref)} exchanged ${plural(total, "message", "messages")} in ${plural(counts.minutes, "minute", "minutes")}`;
 
     await this.d.store.createHumanMessage(
       {

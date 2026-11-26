@@ -1,6 +1,7 @@
 import { CircleX, GitFork } from "lucide-react";
 import type { ReactNode } from "react";
 import { z } from "zod";
+import { Tag } from "@/components/tag/tag";
 import { formatBy } from "./format-by";
 import { AgentLink, ClampedMarkdown } from "./message-block";
 import { CallBlock, FailedNote } from "./outgoing-message";
@@ -33,10 +34,10 @@ export function parseSpawnResult(result: SpawnRow["result"]) {
   }
 }
 
-/** Who did it, inside a sentence: an agent is an `AgentLink`, anyone else a plain mono handle. */
+/** Who did it, inside a sentence: a principal's tag is a chip showing its current handle; a word stays plain mono. */
 export function Actor({ by }: { by: string }) {
   const b = formatBy(by);
-  return b.kind === "agent" ? <AgentLink slug={b.slug} /> : <Mono>{by}</Mono>;
+  return b.kind === "tag" ? <Tag tagRef={b.ref} /> : <Mono>{by}</Mono>;
 }
 
 /** "by @lead" · "by @or" · "after 3 days without activity" (S7 UI design §4.4; never "@factory"). */

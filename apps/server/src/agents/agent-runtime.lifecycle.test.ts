@@ -246,8 +246,8 @@ test("archived: send, compact and interrupt refuse inside the job; a message han
   await makeRuntime();
   rt.markArchived();
   await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
-  await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
+  await expect(rt.compact({ by: "<@or>" })).rejects.toBeInstanceOf(AgentArchivedError);
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(AgentArchivedError);
   // The Router committed the row before the hand-off (S6 §7.3): its state tells the truth.
   expect(await t.sql`select state from messages where to_id = ${agentId}`).toEqual([
     { state: "rejected" },
@@ -259,7 +259,7 @@ test("prepareStart reporting an archived agent marks the runtime archived", asyn
   await makeRuntime({ startError: new AgentArchivedError("dev") });
   await expect(send("hi")).rejects.toBeInstanceOf(AgentArchivedError);
   expect(rt.live().status).not.toBe("errored");
-  await expect(rt.compact({ byHandle: "or" })).rejects.toBeInstanceOf(AgentArchivedError);
+  await expect(rt.compact({ by: "<@or>" })).rejects.toBeInstanceOf(AgentArchivedError);
 });
 
 test("reload re-reads the row: a rename shows in summaries and archiving refuses sends", async () => {
@@ -371,15 +371,19 @@ test("unexpected exit mid-turn: open turn closed as process_exited; the recovery
 });
 
 test("interrupt: 409 while hibernated or starting; allowed with an open turn", async () => {
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(NoOpenTurnError);
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(NoOpenTurnError);
   await send("x");
-  await expect(rt.interrupt({ byHandle: "or" })).rejects.toBeInstanceOf(NoOpenTurnError); // starting, no turn
+  await expect(rt.interrupt({ by: "<@or>" })).rejects.toBeInstanceOf(NoOpenTurnError); // starting, no turn
   driver.last.emit(ev.session(), ev.turn());
   await rt.settled();
   expect(rt.live().turnOpen).toBe(true);
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   expect(driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
-  expect((await events()).at(-1)?.event).toEqual({ type: "control", cmd: "interrupt", by: "@or" });
+  expect((await events()).at(-1)?.event).toEqual({
+    type: "control",
+    cmd: "interrupt",
+    by: "<@or>",
+  });
 });
 
 test("the status frame carries the open turn's start time and a running compaction", async () => {
@@ -403,7 +407,7 @@ test("the status frame carries the open turn's start time and a running compacti
   expect(lastStatus().turnOpen).toBe(false);
   expect(lastStatus()).not.toHaveProperty("turnStartedAt");
 
-  await rt.compact({ byHandle: "or" });
+  await rt.compact({ by: "<@or>" });
   expect(driver.last.controls.at(-1)).toMatchObject({ cmd: "compact" });
   expect(lastStatus().compacting).toBe(true);
   driver.last.emit(ev.turn());

@@ -1,11 +1,12 @@
 import { schema } from "@open-factory/db";
+import { tagOf } from "@open-factory/shared/tags";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { EventStore } from "../agents/event-store.ts";
 import { insertAgent, insertSchedule } from "../agents/testing/rows.ts";
 import type { FactorySettings } from "../settings/factory-settings.ts";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { type GuardResult, LoopGuard, pairOf } from "./loop-guard.ts";
 
 const N = 3;
@@ -338,7 +339,6 @@ describe("notices on open", () => {
         from_id: null,
         subject_agent_id: "a1",
         loop_hold_id: r.holdId,
-        body: `@a1 and @a2 exchanged ${2 * N + 2} messages in 5 minutes; further messages between them are held.`,
       });
       const items = await t.sql`select user_id from inbox_items where message_id = ${msgs[0]?.id}`;
       expect(items.map((i) => i.user_id).sort()).toEqual(["u1", "u2"]);
@@ -347,6 +347,15 @@ describe("notices on open", () => {
       await t.sql`delete from messages`;
       await t.sql`delete from users where id = 'u2'`;
     }
+  });
+
+  test("the loop notice names both agents by tag", async () => {
+    await trip("a1", "a2");
+    const [msg] =
+      await t.sql`select body from messages where notice = 'loop_held' and to_all_humans`;
+    expect(msg?.body).toBe(
+      `${tagOf(testRef("a1"))} and ${tagOf(testRef("a2"))} exchanged ${2 * N + 2} messages in 5 minutes; further messages between them are held.`,
+    );
   });
 
   test("a manager gets a notice for the pair, with no hold link; a shared manager gets one", async () => {
@@ -363,7 +372,7 @@ describe("notices on open", () => {
       loop_hold_id: null,
     });
     expect(n?.body).toBe(
-      `@${x} and @${y} exchanged ${2 * N + 2} messages in 5 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox.`,
+      `${tagOf(testRef(x))} and ${tagOf(testRef(y))} exchanged ${2 * N + 2} messages in 5 minutes with no human in between. Messages between them are held until a human resumes them in the Inbox.`,
     );
     expect(r.managerRows.map((row) => [row.id, row.toId])).toEqual([[n?.id, m]]);
   });

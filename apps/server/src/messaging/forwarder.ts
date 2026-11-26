@@ -18,11 +18,12 @@ export type FactDetail = {
 };
 
 /**
- * The body of a factory fact (spec §9.1), agents written `@slug` (R6). Whatever the report controls (an error message,
+ * The body of a factory fact (spec §9.1), the subject written as its tag (`<@ref>`). Whatever the report controls (an error message,
  * a denial reason, `last_error`, task descriptions) is quoted by `quoteReported`, which also neutralises envelope tags.
  */
 export function factFor(kind: FactCode, subject: string, detail: FactDetail = {}): string {
-  const who = `@${subject}`;
+  // `subject` is the subject's tag, `<@ref>`.
+  const who = subject;
   const reported = (lead: string, intro = `Reported by ${who}:`) =>
     detail.text !== undefined && detail.text !== ""
       ? `${lead} ${quoteReported(intro, detail.text)}`

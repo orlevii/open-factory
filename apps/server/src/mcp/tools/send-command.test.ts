@@ -1,3 +1,4 @@
+import { tagOf } from "@open-factory/shared/tags";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import {
   AgentArchivedError,
@@ -7,6 +8,7 @@ import {
 } from "../../agents/errors.ts";
 import { ev, FakeDriver } from "../../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../../test/helpers.ts";
+import { testRef } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
 // I1 §7: send_command(target, command) for yourself and your direct reports.
@@ -84,7 +86,12 @@ test('self by "me" and by its own handle; the entry is the agent\'s own', async 
       note: "Your /context runs when this turn ends.",
     });
     const [item] = await rawQueue("lead");
-    expect(item).toMatchObject({ kind: "raw", body: "/context", from: "@lead", fromKind: "agent" });
+    expect(item).toMatchObject({
+      kind: "raw",
+      body: "/context",
+      from: tagOf(testRef(ids.lead as string)),
+      fromKind: "agent",
+    });
     // one pending self-command at a time: clear it for the next loop turn
     procOf("lead")?.emit(ev.usage(), ev.end());
     await (await rt("lead")).settled();
@@ -104,7 +111,12 @@ test("a self /compact says to write down where you are", async () => {
     note: "Your /compact runs when this turn ends. Write down where you are before you end the turn.",
   });
   expect(await rawQueue("lead")).toMatchObject([
-    { kind: "compact", from: "@lead", fromKind: "agent", focus: "keep the plan" },
+    {
+      kind: "compact",
+      from: tagOf(testRef(ids.lead as string)),
+      fromKind: "agent",
+      focus: "keep the plan",
+    },
   ]);
 });
 
@@ -237,7 +249,7 @@ test("arguments are neutralised and the line is written as typed", async () => {
   ]);
   const events = (await h.app.store.after(ids.dev as string, 0, 1000)).map((e) => e.event);
   expect(events.filter((e) => e.type === "operator_input")).toEqual([
-    expect.objectContaining({ by: "@lead" }),
+    expect.objectContaining({ by: tagOf(testRef(ids.lead as string)) }),
   ]);
 });
 
@@ -259,7 +271,11 @@ test("/compact focus on a report takes the Compact flow, by the caller", async (
   expect(procOf("dev")?.controls.at(-1)).toMatchObject({ cmd: "compact", arg: "the API work" });
   const events = (await h.app.store.after(ids.dev as string, 0, 1000)).map((e) => e.event);
   expect(events.filter((e) => e.type === "control")).toEqual([
-    expect.objectContaining({ cmd: "compact", by: "@lead", arg: "the API work" }),
+    expect.objectContaining({
+      cmd: "compact",
+      by: tagOf(testRef(ids.lead as string)),
+      arg: "the API work",
+    }),
   ]);
 });
 
@@ -271,8 +287,8 @@ test("nobody can cancel an agent's queued command from the UI", async () => {
   expect(items.map((q) => q.kind)).toEqual(["raw", "compact"]);
   // sent by an agent (a manager), not a human
   expect(items.map((q) => [q.from, q.fromKind])).toEqual([
-    ["@lead", "agent"],
-    ["@lead", "agent"],
+    [tagOf(testRef(ids.lead as string)), "agent"],
+    [tagOf(testRef(ids.lead as string)), "agent"],
   ]);
   for (const item of items) {
     const res = await h.app.inject({

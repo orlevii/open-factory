@@ -116,7 +116,7 @@ test("a later human message goes out as one batch with the notice first, then th
 test("a compact queued behind the passive notice still runs; the notice stays queued", async () => {
   await runIdle();
   await rt.postNotice("crons_stopped", "stopped");
-  await rt.compact({ byHandle: "or" });
+  await rt.compact({ by: "<@or>" });
   await rt.settled();
   expect(driver.last.controls.map((c) => (c as { cmd: string }).cmd)).toContain("compact");
   expect(rt.queueItems().map((q) => q.kind)).toEqual(["notice"]);

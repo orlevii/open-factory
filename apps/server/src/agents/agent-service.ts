@@ -33,6 +33,7 @@ import {
   type Principal,
   principalsByHandles,
   principalsByIds,
+  tagOfPrincipal,
 } from "../principals/principal-store.ts";
 import { resolveField } from "../principals/principal-text.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
@@ -183,9 +184,9 @@ export class AgentService {
     }
   }
 
-  /** The `by` of a peer event (spec I7 §8.2): an agent actor's `@slug`; a human's act is visible in the UI. */
-  private byOf(actor: Actor): { by?: string } {
-    return actor.kind === "agent" ? { by: actorBy(actor) } : {};
+  /** The `by` of a peer event (spec I7 §8.2): an agent actor's tag; a human's act is visible in the UI. */
+  private async byOf(actor: Actor): Promise<{ by?: string }> {
+    return actor.kind === "agent" ? { by: await tagOfPrincipal(this.d.db, actor.id) } : {};
   }
 
   /** I7 §8.3: the human bus hears of an agent actor's create, archive or unarchive, after the commit. */
@@ -723,7 +724,7 @@ export class AgentService {
       if (err instanceof HandleTakenError) throw slugTaken();
       throw err;
     }
-    await this.peerEvents(id, { kind: "joined", ...this.byOf(actor) }, noPeers);
+    await this.peerEvents(id, { kind: "joined", ...(await this.byOf(actor)) }, noPeers);
     this.orgAction(actor, "agent_created", b.slug);
     return this.summary(b.slug);
   }
@@ -858,7 +859,9 @@ export class AgentService {
       const managerId = manager.kind === "agent" ? manager.row.id : manager.id;
       if (managerId !== row.reportsTo) {
         set.reportsTo = managerId;
-        moved = { to: manager.kind === "agent" ? manager.row.slug : manager.handle };
+        moved = {
+          to: await tagOfPrincipal(db, manager.kind === "agent" ? manager.row.id : manager.id),
+        };
         movedTo = manager;
         changed.feeds = true;
       }
@@ -889,7 +892,7 @@ export class AgentService {
         if (moved && before)
           await this.peerEvents(
             row.id,
-            { kind: "moved", to: moved.to, ...this.byOf(actor) },
+            { kind: "moved", to: moved.to, ...(await this.byOf(actor)) },
             before,
           );
         // I7 §9.5: an agent that edits itself is woken by the restart it asked for.
@@ -968,6 +971,7 @@ export class AgentService {
    */
   async resetPersona(
     slug: string,
+    /** The requester's tag, `<@ref>`: the `config_changed` event's `by`. */
     by: string,
   ): Promise<{ applied: "now" | "on_restart"; backupDir?: string }> {
     const { runtimes, workspace } = this.d;
@@ -1094,7 +1098,7 @@ export class AgentService {
     await runtimes.refresh(row.id);
     await this.peerEvents(
       row.id,
-      { kind: "left", reason: "archived", ...this.byOf(actor) },
+      { kind: "left", reason: "archived", ...(await this.byOf(actor)) },
       before,
     );
     this.orgAction(actor, "agent_archived", slug);
@@ -1146,7 +1150,7 @@ export class AgentService {
     // After the refresh: a firing in the millisecond before it reaches a runtime that still thinks the agent is
     // archived and is rejected (accepted, spec §10.1).
     this.d.scheduling?.changed();
-    await this.peerEvents(row.id, { kind: "joined", ...this.byOf(actor) }, noPeers);
+    await this.peerEvents(row.id, { kind: "joined", ...(await this.byOf(actor)) }, noPeers);
     this.orgAction(actor, "agent_unarchived", slug);
     return this.summary(slug);
   }

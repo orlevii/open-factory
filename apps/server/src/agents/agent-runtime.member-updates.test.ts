@@ -1,7 +1,9 @@
 import type { Envelope } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { peerBody } from "../messaging/peer-body.ts";
 import type { CredentialPause } from "../supervisor/slots.ts";
+import { testRef } from "../test/principals.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
 import { RuntimeHarness } from "./testing/runtime-harness.ts";
@@ -350,7 +352,7 @@ test("a manager whose recovery needs Start a new session keeps the update queued
   await tick(DEBOUNCE + 1_000);
   expect(h.driver.starts).toHaveLength(0);
   expect(h.rt.queueItems()).toEqual([expect.objectContaining({ from: "@devrep" })]);
-  await h.rt.resetSession({ byHandle: "or" });
+  await h.rt.resetSession({ by: "<@or>" });
   await h.rt.settled();
   expect(h.driver.starts).toHaveLength(1);
   expect(updatesWritten()).toEqual(["due while errored"]);
@@ -410,7 +412,7 @@ test("loading an errored manager with pending updates starts nothing; they ride 
 test("a peer event is a queued notice that never wakes or is written alone; it rides along with the next batch", async () => {
   await h.makeRuntime({ slots, memberUpdateDebounceMs: DEBOUNCE });
   await idle();
-  await peer("@devrep (Dev agent) joined as your peer.");
+  await peer(`${tagOf(testRef(REPORT))} (Dev agent) joined as your peer.`);
   expect(h.rt.queueItems()).toEqual([
     expect.objectContaining({ kind: "notice", from: "@factory" }),
   ]);
@@ -424,11 +426,12 @@ test("a peer event is a queued notice that never wakes or is written alone; it r
 test("a peer_left envelope carries its subject, with the move target read back from the body", async () => {
   await h.makeRuntime({ slots, memberUpdateDebounceMs: DEBOUNCE });
   await idle();
+  const LEAD_TAG = tagOf(testRef("leadx"));
   const body = peerBody(
-    { slug: "devrep", displayName: "Dev agent" },
+    { ref: testRef(REPORT), displayName: "Dev agent" },
     "report",
-    { kind: "peer_left", left: { reason: "moved", to: "leadx" } },
-    "leadx",
+    { kind: "peer_left", left: { reason: "moved", to: LEAD_TAG } },
+    testRef("leadx"),
   );
   await h.receive(
     await h.store.createOrgRow({
@@ -448,7 +451,7 @@ test("a peer_left envelope carries its subject, with the move target read back f
       slug: "devrep",
       displayName: "Dev agent",
       relation: "report",
-      left: { reason: "moved", to: "leadx" },
+      left: { reason: "moved", to: LEAD_TAG },
     },
   });
 });

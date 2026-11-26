@@ -1,4 +1,6 @@
+import { tagOf } from "@open-factory/shared/tags";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
+import { testRef } from "../test/principals.ts";
 import { CAP_BYTES } from "./cap.ts";
 import { ev } from "./testing/fake-driver.ts";
 import { insertAgent } from "./testing/rows.ts";
@@ -130,8 +132,9 @@ test("errors and denials are factory facts about the report", async () => {
   );
   await h.rt.settled();
   expect(facts()).toEqual(["turn_failed", "denied"]);
+  const me = tagOf(testRef(h.rt.agent.id));
   expect(h.forwarded[1]?.body).toBe(
-    `Bash was denied for @${h.rt.agent.slug}. The reason, reported by @${h.rt.agent.slug}:\n> risky`,
+    `Bash was denied for ${me}. The reason, reported by ${me}:\n> risky`,
   );
 });
 
@@ -145,8 +148,9 @@ test("a recoverable crash is crashed, never errored; errored is forwarded once p
   h.driver.last.exit(1);
   await h.rt.settled();
   expect(facts()).toEqual(["crashed", "errored"]);
+  const me = tagOf(testRef(h.rt.agent.id));
   expect(h.forwarded[1]?.body).toBe(
-    `@${h.rt.agent.slug} is errored and needs a human. Reported by @${h.rt.agent.slug}:\n> Exited unexpectedly (code 1)`,
+    `${me} is errored and needs a human. Reported by ${me}:\n> Exited unexpectedly (code 1)`,
   );
   // A human message makes one more attempt (S5); its failure is the same episode: nothing new.
   await h.send("are you there");
@@ -196,7 +200,7 @@ test("a successful attempt forwards recovered; Start a new session forwards reco
     errorKind: "resume_unrecoverable",
   });
   h.forwarded.length = 0;
-  await h.rt.resetSession({ byHandle: "or" });
+  await h.rt.resetSession({ by: "<@or>" });
   await h.rt.settled();
   expect(facts()).toEqual(["recovered"]);
 });
@@ -206,7 +210,7 @@ test("a start failure is errored, once per episode", async () => {
   await h.send("hi").catch(() => {});
   await h.rt.settled();
   expect(facts()).toEqual(["errored"]);
-  expect(h.forwarded[0]?.body).toContain("Reported by @");
+  expect(h.forwarded[0]?.body).toContain(`Reported by ${tagOf(testRef(h.rt.agent.id))}`);
   await h.send("again").catch(() => {}); // a human retry inside the episode
   await h.rt.settled();
   expect(facts()).toEqual(["errored"]);
@@ -291,7 +295,7 @@ test("Start a new session still makes its attempt when forwarding recovered fail
   });
   const starts = h.driver.starts.length;
   h.forwardError = new Error("db down");
-  await h.rt.resetSession({ byHandle: "or" });
+  await h.rt.resetSession({ by: "<@or>" });
   await h.rt.settled();
   expect(h.driver.starts.length).toBe(starts + 1);
   expect(h.driver.last.sent.flat().map((m) => m.body)).toContain("pending");

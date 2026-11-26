@@ -81,7 +81,7 @@ test("row 3: Stop crons under way is stopping", async () => {
 
 test("row 4: a compaction is compacting", async () => {
   await idle();
-  await rt.compact({ byHandle: "or" });
+  await rt.compact({ by: "<@or>" });
   const e = await refusal(call());
   expect(e).toMatchObject({
     code: "compacting",
@@ -261,7 +261,7 @@ test("row 9, mid-turn: interrupts, writes nothing to the old process, then resum
 
 test("row 9: an existing Stop hold is reused: one interrupt control is written", async () => {
   await midTurn();
-  await rt.interrupt({ byHandle: "or" });
+  await rt.interrupt({ by: "<@or>" });
   await call();
   expect(h.driver.last.controls).toEqual([{ kind: "control", cmd: "interrupt" }]);
   await finishTurn();

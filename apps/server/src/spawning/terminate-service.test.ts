@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { type AgentRow, schema } from "@open-factory/db";
+import { tagOf } from "@open-factory/shared/tags";
 import { and, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { AgentTerminatedError } from "../agents/errors.ts";
@@ -10,7 +11,7 @@ import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.
 import { callTool } from "../mcp/testing/mcp-client.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
 import { makeTestApp } from "../test/helpers.ts";
-import { seedTestUser } from "../test/principals.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
 
 type T = Awaited<ReturnType<typeof makeTestApp>>;
@@ -137,15 +138,19 @@ test("terminate: one transaction (row, grants, peer rows), the stop job, and not
   await child.rt.settled();
   expect(child.proc.stopped).toBe(true);
   const evs = (await t.app.store.after(child.id, 0, 1000)).map((e) => e.event);
-  expect(evs.filter((e) => e.type === "terminated")).toEqual([{ type: "terminated", by: "@or" }]);
+  expect(evs.filter((e) => e.type === "terminated")).toEqual([
+    { type: "terminated", by: tagOf(or.ref) },
+  ]);
 
   // A human terminated it: the spawner hears it as a report, its other report as a peer; both bodies round-trip.
   const toLead = await rowsTo(t, lead.id, "peer_left");
   expect(toLead).toEqual([
     expect.objectContaining({ subjectAgentId: child.id, notice: "report", state: "pending" }),
   ]);
-  expect(peerLeftOf(toLead[0]?.body ?? "")).toEqual({ reason: "terminated", by: "@or" });
-  expect(toLead[0]?.body).toBe(`@${child.slug} (Dev · x1) left: terminated by @or.`);
+  expect(peerLeftOf(toLead[0]?.body ?? "")).toEqual({ reason: "terminated", by: tagOf(or.ref) });
+  expect(toLead[0]?.body).toBe(
+    `${tagOf(testRef(child.id))} (Dev · x1) left: terminated by ${tagOf(or.ref)}.`,
+  );
   expect(await rowsTo(t, pm.id, "peer_left")).toEqual([
     expect.objectContaining({ subjectAgentId: child.id, notice: "peer" }),
   ]);
@@ -194,7 +199,9 @@ test("the spawner gets no peer row about its own terminate; the other reports do
   for (const id of [b.id, pm.id]) {
     const rows = await rowsTo(t, id, "peer_left");
     expect(rows).toEqual([expect.objectContaining({ subjectAgentId: a.id, notice: "peer" })]);
-    expect(rows[0]?.body).toBe(`@${a.slug} (Dev · aa) left: terminated by @lead.`);
+    expect(rows[0]?.body).toBe(
+      `${tagOf(testRef(a.id))} (Dev · aa) left: terminated by ${tagOf(testRef(lead.id))}.`,
+    );
   }
 });
 

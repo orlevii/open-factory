@@ -1,14 +1,20 @@
+import { tagOf } from "@open-factory/shared/tags";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import type { AgentRuntime } from "../agents/agent-runtime.ts";
 import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cookie: string;
+/** The signed-in human's tag: the factory-written texts and control events name it that way. */
+let orTag = "";
 const driver = new FakeDriver();
 beforeAll(async () => {
   t = await makeTestApp({ harnessDriver: driver });
-  cookie = (await t.signUpUser({ handle: "or" })).cookie;
+  const signedUp = await t.signUpUser({ handle: "or" });
+  cookie = signedUp.cookie;
+  orTag = tagOf(testRef(signedUp.user.id));
 });
 afterAll(() => t.close());
 
@@ -65,12 +71,12 @@ test("restart: an errored agent gets the restart notice first, control event, on
   expect(procsOf(rt)).toHaveLength(before + 1); // one attempt
   const p = lastProc(rt);
   expect(p.sent[0]?.map((m) => [m.from, m.body])).toEqual([
-    ["@factory", "Restarted by @or after an error."],
+    ["@factory", `Restarted by ${orTag} after an error.`],
     ["@or", "hi"],
   ]);
   const evs = await events(rt);
   const control = evs.findIndex((e) => e.type === "control" && e.cmd === "restart");
-  expect(evs[control]).toEqual({ type: "control", cmd: "restart", by: "@or" });
+  expect(evs[control]).toEqual({ type: "control", cmd: "restart", by: orTag });
   expect(evs.slice(control).find((e) => e.type === "process_started")).toMatchObject({
     reason: "restart",
   });
@@ -177,7 +183,7 @@ test("restart of stop_failed releases its slot and the restart's wake follows; a
   const p2 = lastProc(rt);
   expect(p2.sent[0]?.[0]).toMatchObject({
     from: "@factory",
-    body: "Restarted by @or after an error. These crons were stopped: every 5 minutes.",
+    body: `Restarted by ${orTag} after an error. These crons were stopped: every 5 minutes.`,
   });
   p2.emit(ev.session(), ev.turn(), ev.end());
   await rt.settled();
@@ -200,7 +206,7 @@ test("reset-session: clears session_id, appends session_reset, deletes pending n
   });
   await rt.settled();
   expect(rt.live().errorKind).toBe("resume_unrecoverable");
-  await rt.postNotice("restart", "Restarted by @or after an error.");
+  await rt.postNotice("restart", `Restarted by ${orTag} after an error.`);
   const before = procsOf(rt).length;
 
   const r = await post(`/api/agents/${slug}/reset-session`);
@@ -208,7 +214,7 @@ test("reset-session: clears session_id, appends session_reset, deletes pending n
   await rt.settled();
   expect(await row(rt)).toMatchObject({ session_id: null, status: "hibernated" });
   const evs = await events(rt);
-  expect(evs).toContainEqual({ type: "session_reset", by: "@or" });
+  expect(evs).toContainEqual({ type: "session_reset", by: orTag });
   expect(procsOf(rt)).toHaveLength(before + 1);
   const p = lastProc(rt);
   expect(p.opts.resumeSessionId).toBeUndefined();
@@ -275,7 +281,7 @@ test("restart with the failed start's process left: force stop, and its exit mak
   const { slug, rt, p } = await resumeErroredProcessLeft();
   expect((await post(`/api/agents/${slug}/restart`)).statusCode).toBe(202);
   await rt.settled();
-  expect(await events(rt)).toContainEqual({ type: "control", cmd: "restart", by: "@or" });
+  expect(await events(rt)).toContainEqual({ type: "control", cmd: "restart", by: orTag });
   expect(procsOf(rt)).toHaveLength(1); // nothing starts before the exit
   expect(await row(rt)).toMatchObject({ attempting: true });
   p.exit(0);
@@ -287,7 +293,7 @@ test("restart with the failed start's process left: force stop, and its exit mak
   });
   expect(evs.map((e) => e.type)).not.toContain("background_work_lost"); // nothing was live
   expect(lastProc(rt).sent[0]?.map((m) => [m.from, m.body])).toEqual([
-    ["@factory", "Restarted by @or after an error."],
+    ["@factory", `Restarted by ${orTag} after an error.`],
     ["@or", "hi"],
   ]);
   lastProc(rt).emit(ev.session(), ev.turn(), ev.end());

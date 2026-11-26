@@ -167,6 +167,7 @@ test("a spawner terminating its child: pending task rows are rejected, the task 
   await h.app.terminator.terminate(kid.id, {
     id: ids.lead as string,
     kind: "agent",
+    ref: testRef(ids.lead as string),
     handle: "lead",
   });
   expect((await rows("kid")).map((x) => x.state)).toEqual(["rejected"]);
@@ -202,7 +203,7 @@ test("start a new session with only a task_update queued starts an attempt (S5's
   await settle("dev");
   expect(procs("dev")).toHaveLength(0);
   const rt = await h.app.runtimes.bySlug("dev");
-  await rt?.resetSession({ byHandle: "or" });
+  await rt?.resetSession({ by: "<@or>" });
   await settle("dev");
   expect(await reasons("dev")).toContain("reset");
   expect(procs("dev")).toHaveLength(1);

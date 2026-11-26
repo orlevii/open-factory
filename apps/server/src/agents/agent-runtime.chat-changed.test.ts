@@ -83,7 +83,7 @@ test("cancel and restore tell the sender", async () => {
   await h.send("work");
   h.driver.last.emit(ev.turn());
   await h.rt.settled();
-  await h.rt.interrupt({ byHandle: "or" });
+  await h.rt.interrupt({ by: "<@or>" });
   const b = await h.send("B");
   const before = count(u1);
   await h.rt.cancelQueued(b.id, "u1");

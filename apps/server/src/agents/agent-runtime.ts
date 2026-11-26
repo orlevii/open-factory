@@ -1065,7 +1065,8 @@ export class AgentRuntime {
   /** `focus` is neutralised here (§5.1.3), so every caller is covered. */
   async compact(c: {
     focus?: string;
-    byHandle: string;
+    /** The requester's tag, `<@ref>`. */
+    by: string;
     userId?: string;
     clientMessageId?: string;
     self?: boolean;
@@ -1073,7 +1074,7 @@ export class AgentRuntime {
     const entry: CompactEntry = {
       kind: "compact",
       id: randomUUID(),
-      by: `@${c.byHandle}`,
+      by: c.by,
       createdAt: new Date(),
       ...(c.userId ? { userId: c.userId } : {}),
       ...(c.self ? { self: true } : {}),
@@ -1161,7 +1162,7 @@ export class AgentRuntime {
    * interrupted turn's result instead of being absorbed by the aborting turn. A hold already set (a Stop or an urgent
    * send under way) makes it a no-op; a compaction is never interrupted (409 `compacting`, D5).
    */
-  async interrupt(c: { byHandle: string }): Promise<void> {
+  async interrupt(c: { by: string }): Promise<void> {
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
@@ -1171,7 +1172,7 @@ export class AgentRuntime {
       // never come; Stop ends its barrier so the queue moves again.
       if (this.proc && this.rawInFlight && !this.openTurnId) {
         this.rawInFlight = false;
-        await this.append(null, { type: "control", cmd: "interrupt", by: `@${c.byHandle}` });
+        await this.append(null, { type: "control", cmd: "interrupt", by: c.by });
         this.publishQueue();
         await this.flush();
         this.publishStatus();
@@ -1179,7 +1180,7 @@ export class AgentRuntime {
       }
       if (!this.proc || !this.openTurnId) throw new NoOpenTurnError();
       try {
-        await this.beginInterruptHold(`@${c.byHandle}`);
+        await this.beginInterruptHold(c.by);
       } catch (err) {
         // The process is going away and its `exited` is not processed yet: there is nothing to interrupt (409).
         if (err instanceof ProcessNotRunningError) throw new NoOpenTurnError();
@@ -1213,11 +1214,10 @@ export class AgentRuntime {
    * rate-limited): stops at the first moment the agent isn't busy, the warm window not waited for; an apply-restart's
    * hibernate already under way is taken over. Anything else already stopping is refused.
    */
-  stopCrons(byHandle: string): Promise<{ status: "stopped" | "pending" }> {
+  stopCrons(by: string): Promise<{ status: "stopped" | "pending" }> {
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
-      const by = `@${byHandle}`;
       const proc = this.proc;
       if (!proc || this.crons.size === 0) throw new StopCronsError("no_crons", this.agent.slug);
       if (proc === this.deadProc || proc === this.failingProc) {
@@ -1375,7 +1375,7 @@ export class AgentRuntime {
    * Restart now (I7 §9.2), for agents and humans: one check table, the first match deciding, run in an API job. The
    * errored rows (1, 5, 6) come before the starting and stopping rows (2-4) because a `stop_failed` agent keeps
    * `deadProc` set and `stopping` true. Never call a public runtime method in here: each is its own job, and jobs are
-   * serial, so it would wait on itself. `by` is an `@handle`. `changes` are the caller's `describeChanges` lines, `null`
+   * serial, so it would wait on itself. `by` is the requester's tag. `changes` are the caller's `describeChanges` lines, `null`
    * when its resolver failed. `runtimeAllowed` is only "the local runtime is disabled in this factory".
    */
   restartNow(r: {
@@ -1608,7 +1608,7 @@ export class AgentRuntime {
    * pending notices (they describe the old session), clear errored, and make pending human messages the new
    * session's first turn (one attempt). The old session's JSONL stays on disk.
    */
-  resetSession(r: { byHandle: string }): Promise<void> {
+  resetSession(r: { by: string }): Promise<void> {
     return this.apiJob(async () => {
       this.refuseTerminated();
       if (this.archived) throw new AgentArchivedError(this.agent.slug);
@@ -1622,7 +1622,7 @@ export class AgentRuntime {
           "Start a new session is only for an agent whose session couldn't be resumed.",
         );
       this.refuseWhileStopping();
-      const by = `@${r.byHandle}`;
+      const { by } = r;
       await this.d.store.setSessionId(this.agent.id, null);
       await this.append(null, { type: "session_reset", by });
       await this.d.store.deletePendingNotices(this.agent.id);
@@ -1827,7 +1827,7 @@ export class AgentRuntime {
       const row = await this.d.store.agentById(this.agent.id);
       if (!row?.terminatedAt) return "none";
       if (!this.terminationCommitted) this.markTerminated({ committed: true });
-      const by = await this.d.store.terminatorLabelOf(row.terminatedBy);
+      const by = await this.d.store.terminatorTagOf(row.terminatedBy);
       await this.ensureTerminatedEvent(by);
       this.containerListed = Boolean(o.containerListed);
       const proc = this.proc;
@@ -2449,7 +2449,7 @@ export class AgentRuntime {
     await this.d.forward({
       agentId: this.agent.id,
       fact,
-      body: factFor(fact, this.agent.slug, detail),
+      body: factFor(fact, await this.d.store.principalTag(this.agent.id), detail),
     });
   }
 

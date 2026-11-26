@@ -1,5 +1,5 @@
 import { type Db, schema } from "@open-factory/db";
-import { unknownRefError } from "@open-factory/shared/tags";
+import { tagOf, unknownRefError } from "@open-factory/shared/tags";
 import { eq } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore, PendingRow } from "../agents/event-store.ts";
@@ -7,7 +7,7 @@ import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { ApiError } from "../errors.ts";
 import type { TerminatePort } from "../mcp/tools/terminate-agent.ts";
 import type { Router } from "../messaging/router.ts";
-import { type Principal, principalById, terminatorLabel } from "../principals/principal-store.ts";
+import { type Principal, principalById } from "../principals/principal-store.ts";
 
 const { agents } = schema;
 
@@ -65,7 +65,7 @@ export class TerminateService implements TerminatePort {
    */
   async terminate(
     agentId: string,
-    by: Pick<Principal, "id" | "kind" | "handle"> | null,
+    by: Pick<Principal, "id" | "kind" | "ref" | "handle"> | null,
     o: { latched?: boolean } = {},
   ): Promise<{ status: "terminated" }> {
     // These guards run before the provisional latch and its unmark-on-failure try below, on purpose: nothing is latched
@@ -76,7 +76,8 @@ export class TerminateService implements TerminatePort {
     if (rt.agent.kind !== "ephemeral")
       throw new ApiError(409, "not_ephemeral", "Only spawned agents can be terminated.");
     if (!o.latched) rt.markTerminated({ committed: false });
-    const label = terminatorLabel(by);
+    // The terminator as the `terminated` event and the peer notices write it: a tag, or `@factory` for the TTL.
+    const terminator = by ? tagOf(by.ref) : "@factory";
     let peerRows: PendingRow[] = [];
     let rejectedFor: string[] = [];
     let already: boolean;
@@ -106,7 +107,7 @@ export class TerminateService implements TerminatePort {
         peerRows = await this.d.router.persistPeerEvents(
           tx,
           agentId,
-          { kind: "left", reason: "terminated", by: label },
+          { kind: "left", reason: "terminated", by: terminator },
           before,
           { excludeManager: spawner !== undefined && by?.id === spawner.id },
         );
@@ -135,7 +136,7 @@ export class TerminateService implements TerminatePort {
     this.d.router.handOffRows(peerRows);
     // §8 step 3: the stop and the container removal continue in the background; the status frame reports their end.
     void rt
-      .terminateStop(label)
+      .terminateStop(terminator)
       .catch((err: unknown) =>
         this.d.log.error({ err, agent: rt.agent.slug }, "stopping a terminated agent failed"),
       );

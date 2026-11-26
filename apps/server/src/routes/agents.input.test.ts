@@ -1,13 +1,17 @@
 import { MAX_BODY_BYTES } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 
 // I1 §5.1: POST /api/agents/:slug/input, the one raw input route for the session.
 describe("I1 §5.1: raw session input", () => {
   let s: Awaited<ReturnType<typeof makeTestApp>>;
   const drv = new FakeDriver();
   let or: { cookie: string };
+  /** The signed-in human's tag: a raw input names its sender that way. */
+  let orTag = "";
   const list = [
     { name: "context", description: "Context", argumentHint: "", builtin: true },
     { name: "review", description: "Review", argumentHint: "", builtin: true },
@@ -17,7 +21,9 @@ describe("I1 §5.1: raw session input", () => {
   beforeAll(async () => {
     s = await makeTestApp({ harnessDriver: drv });
     await s.seedAgent();
-    or = { cookie: (await s.signUpUser({ handle: "orc" })).cookie };
+    const signedUp = await s.signUpUser({ handle: "orc" });
+    or = { cookie: signedUp.cookie };
+    orTag = tagOf(testRef(signedUp.user.id));
     drv.commandList = list;
     await call(or, "POST", "/api/messages", { to: ["dev"], body: "work", urgent: false });
     drv.last.emit(ev.session(), ev.turn(), ev.usage(), ev.end());
@@ -57,7 +63,7 @@ describe("I1 §5.1: raw session input", () => {
   test("text is written unwrapped and answered 202 with the queue item", async () => {
     const res = await input("hello");
     expect(res.statusCode).toBe(202);
-    expect(res.json().item).toMatchObject({ kind: "raw", body: "hello", from: "@orc" });
+    expect(res.json().item).toMatchObject({ kind: "raw", body: "hello", from: orTag });
     expect(lastWrite()).toEqual({ kind: "raw", text: "hello" });
     await finishTurn();
   });

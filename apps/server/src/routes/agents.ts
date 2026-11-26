@@ -28,6 +28,7 @@ import {
   slugSchema,
   stopCronsResponseSchema,
 } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import type { FastifyReply } from "fastify";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -63,11 +64,11 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   // onRequest, not preHandler: Fastify validates before preHandler, so auth must come first (401 before 400).
   app.addHook("onRequest", requireUser);
 
-  const user = (req: { user?: { id: string; handle: string } }) => {
+  const user = (req: { user?: { id: string; handle: string; ref: string } }) => {
     if (!req.user) throw new Error("requireUser did not set request.user");
     return req.user;
   };
-  const human = (req: { user?: { id: string; handle: string } }): Actor => ({
+  const human = (req: { user?: { id: string; handle: string; ref: string } }): Actor => ({
     kind: "human",
     handle: user(req).handle,
   });
@@ -212,7 +213,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   app.post(
     "/api/agents/:slug/reset-persona",
     { schema: { params: slugParams, response: { 200: resetPersonaResponseSchema } } },
-    async (req) => app.agents.resetPersona(req.params.slug, `@${user(req).handle}`),
+    async (req) => app.agents.resetPersona(req.params.slug, tagOf(user(req).ref)),
   );
 
   app.post(
@@ -234,8 +235,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const row = await app.store.agentBySlug(req.params.slug);
       if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-      const { id, handle } = user(req);
-      await app.terminator.terminate(row.id, { id, kind: "human", handle });
+      const { id, ref, handle } = user(req);
+      await app.terminator.terminate(row.id, { id, kind: "human", ref, handle });
       return { agent: await app.agents.summary(row.slug) };
     },
   );
@@ -314,7 +315,10 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   /** The audit line (U3 §6.4): who, which agent, which message, and the refusal when there was one. */
   const queueAction = async <T>(
     action: "cancel" | "restore",
-    req: { user?: { id: string; handle: string }; params: { slug: string; messageId: string } },
+    req: {
+      user?: { id: string; handle: string; ref: string };
+      params: { slug: string; messageId: string };
+    },
     reply: FastifyReply,
     run: (rt: AgentRuntime, userId: string) => Promise<T>,
   ) => {
@@ -361,7 +365,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       try {
         const item = await rt.compact({
           ...(req.body.focus ? { focus: req.body.focus } : {}),
-          byHandle: user(req).handle,
+          by: tagOf(user(req).ref),
           userId: user(req).id,
         });
         return reply.code(202).send(queueItemResponseSchema.parse({ item }));
@@ -423,14 +427,14 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
           cls.kind === "command" && cls.name === "compact"
             ? await rt.compact({
                 ...(cls.args.trim() ? { focus: cls.args.trim() } : {}),
-                byHandle: u.handle,
+                by: tagOf(u.ref),
                 userId: u.id,
                 clientMessageId,
               })
             : await rt.rawInput({
                 text: neutraliseEnvelopeTags(cls.kind === "command" ? text.trimStart() : text),
                 userId: u.id,
-                by: `@${u.handle}`,
+                by: tagOf(u.ref),
                 clientMessageId,
               });
         app.log.info({ ...audit, kind: cls.kind === "command" ? cls.name : kind }, "input queued");
@@ -475,7 +479,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
         const row = await app.store.agentBySlug(req.params.slug);
         if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
         const outcome = await rt.restartNow({
-          by: `@${user(req).handle}`,
+          by: tagOf(user(req).ref),
           force: req.body?.force ?? false,
           changes: await restartChanges(app, row),
           // A Restart certain to fail isn't offered (spec §13).
@@ -496,7 +500,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       const rt = await app.runtimes.bySlug(req.params.slug);
       if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
       try {
-        return await rt.stopCrons(user(req).handle);
+        return await rt.stopCrons(tagOf(user(req).ref));
       } catch (e) {
         return recoveryError(reply, e);
       }
@@ -510,7 +514,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       const rt = await app.runtimes.bySlug(req.params.slug);
       if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
       try {
-        await rt.resetSession({ byHandle: user(req).handle });
+        await rt.resetSession({ by: tagOf(user(req).ref) });
         return reply.code(202).send({});
       } catch (e) {
         return recoveryError(reply, e);
@@ -525,7 +529,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
       const rt = await app.runtimes.bySlug(req.params.slug);
       if (!rt) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
       try {
-        await rt.interrupt({ byHandle: user(req).handle });
+        await rt.interrupt({ by: tagOf(user(req).ref) });
         return reply.code(202).send({});
       } catch (e) {
         if (e instanceof AgentArchivedError) return err(reply, 409, "agent_archived", e.message);

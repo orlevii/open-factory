@@ -149,7 +149,7 @@ try {
   });
   await step("compact shows a manual marker with token counts", async () => {
     const from = all.length;
-    await rt.compact({ byHandle: "smoke" });
+    await rt.compact({ by: "<@smoke>" });
     const c = await waitFor((e) => e.type === "compacted", from);
     if (c.type !== "compacted" || c.trigger !== "manual" || !c.preTokens || !c.postTokens)
       throw new Error(JSON.stringify(c));

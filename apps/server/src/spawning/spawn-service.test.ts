@@ -3,12 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { type AgentRow, schema } from "@open-factory/db";
+import { tagOf } from "@open-factory/shared/tags";
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { principalsByHandles } from "../principals/principal-store.ts";
 import { makeTestApp } from "../test/helpers.ts";
-import { seedTestPrincipal } from "../test/principals.ts";
+import { seedTestPrincipal, testRef } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
 import { SpawnService } from "./spawn-service.ts";
 
@@ -169,7 +170,7 @@ test("spawn: child row, all the spawner's grants, brief, spawned event, peer row
   ]);
   expect((await events(t, child.id))[0]).toMatchObject({
     seq: 1,
-    event: { type: "spawned", by: "lead", template: "tech-lead" },
+    event: { type: "spawned", by: tagOf(testRef(lead.id)), template: "tech-lead" },
   });
   expect(await peerRowsTo(t, pm.id)).toEqual([
     expect.objectContaining({ kind: "peer_joined", subjectAgentId: child.id, notice: "peer" }),

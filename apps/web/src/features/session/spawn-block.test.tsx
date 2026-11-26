@@ -24,6 +24,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** The spawned agent's ref: the events name it by its tag, `<@ref>`, and the principals cache resolves that tag. */
+const TECH_LEAD_REF = "tab12345";
 /** Opens /agents/lead with these events; `@tech-lead-ab12` is a live spawned agent. */
 async function open(events: AnyEvent[], firstText: string | RegExp) {
   const api = mockApi({
@@ -44,6 +46,20 @@ async function open(events: AnyEvent[], firstText: string | RegExp) {
         running: { count: 1 },
       }),
     "GET /api/agents?ended=only": () => json({ agents: [], more: false, running: { count: 1 } }),
+    "GET /api/principals": () =>
+      json({
+        principals: [
+          {
+            id: "p-tech-lead",
+            ref: TECH_LEAD_REF,
+            kind: "agent",
+            handle: "tech-lead-ab12",
+            name: "Tech Lead · ab12",
+            state: "live",
+            avatar: null,
+          },
+        ],
+      }),
   });
   renderApp("/agents/lead/session", alice);
   await screen.findByText(firstText);
@@ -283,8 +299,8 @@ test("terminate_agent is one quiet line with a CircleX: done, running, failed, n
 test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer left", async () => {
   await open(
     [
-      { type: "spawned", by: "tech-lead-ab12", template: "tech-lead" },
-      { type: "terminated", by: "tech-lead-ab12" },
+      { type: "spawned", by: `<@${TECH_LEAD_REF}>`, template: "tech-lead" },
+      { type: "terminated", by: `<@${TECH_LEAD_REF}>` },
       {
         type: "message_in",
         messages: [
@@ -300,7 +316,7 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
               slug: "dev-cd34",
               displayName: "Dev · cd34",
               relation: "peer",
-              left: { reason: "terminated", by: "tech-lead-ab12" },
+              left: { reason: "terminated", by: `<@${TECH_LEAD_REF}>` },
             },
           }),
         ],
@@ -308,28 +324,27 @@ test("lifecycle lines with an agent `by` link to it: spawned, terminated, peer l
     ],
     /from template/,
   );
+  const chat = { name: "@tech-lead-ab12, Tech Lead · ab12" };
   const spawned = screen.getByText(
     (_, el) =>
-      el?.tagName === "P" && textOf(el) === "Spawned by @tech-lead-ab12 from template tech-lead",
+      el?.tagName === "P" && /^Spawned by .*from template tech-lead$/.test(textOf(el) ?? ""),
   );
   expect(spawned.querySelector("svg.lucide-git-fork")).not.toBeNull();
-  expect(
-    within(spawned).getByRole("link", { name: "Open @tech-lead-ab12's chat" }),
-  ).toBeInTheDocument();
+  expect(await within(spawned).findByRole("link", chat)).toHaveAttribute(
+    "href",
+    "/agents/tech-lead-ab12/chat",
+  );
   expect(within(spawned).getByText("tech-lead")).toBeInTheDocument();
   const terminated = screen.getByText(
-    (_, el) => el?.tagName === "P" && textOf(el) === "Terminated by @tech-lead-ab12",
+    (_, el) => el?.tagName === "P" && /^Terminated by /.test(textOf(el) ?? ""),
   );
-  expect(within(terminated).getByRole("link")).toHaveAttribute(
+  expect(await within(terminated).findByRole("link", chat)).toHaveAttribute(
     "href",
     "/agents/tech-lead-ab12/chat",
   );
   const left = screen.getByText(
     (_, el) =>
-      el?.tagName === "P" &&
-      textOf(el) === "@dev-cd34 · Dev · cd34 left: terminated by @tech-lead-ab12",
+      el?.tagName === "P" && /^@dev-cd34 · Dev · cd34 left: terminated by /.test(textOf(el) ?? ""),
   );
-  expect(
-    within(left).getByRole("link", { name: "Open @tech-lead-ab12's chat" }),
-  ).toBeInTheDocument();
+  expect(await within(left).findByRole("link", chat)).toBeInTheDocument();
 });

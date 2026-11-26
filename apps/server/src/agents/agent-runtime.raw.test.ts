@@ -14,7 +14,7 @@ beforeEach(async () => {
 const send = (body: string) =>
   sendAs(h.store, h.rt, { fromUserId: "u1", fromHandle: "or", body, urgent: false });
 const run = (name: string, args = "", userId = "u1") =>
-  h.rt.rawInput({ text: args ? `/${name} ${args}` : `/${name}`, userId, by: "@or" });
+  h.rt.rawInput({ text: args ? `/${name} ${args}` : `/${name}`, userId, by: "<@or>" });
 const events = async () => (await h.store.after(h.agentId, 0, 1000)).map((e) => e.event);
 const commandWrites = () => h.driver.last.writes.filter((w) => w.kind === "raw");
 
@@ -33,7 +33,7 @@ test("held while a turn is open, written raw on its own, and nothing is written 
   expect(item).toMatchObject({
     kind: "raw",
     body: "/code-review src/",
-    from: "@or",
+    from: "<@or>",
     fromKind: "human",
     waitReason: "turn",
   });
@@ -53,7 +53,7 @@ test("held while a turn is open, written raw on its own, and nothing is written 
     expect.objectContaining({
       type: "operator_input",
       text: "/code-review src/",
-      by: "@or",
+      by: "<@or>",
       byKind: "human",
     }),
   ]);
@@ -138,8 +138,8 @@ test("a retried dispatch with the same clientMessageId is the same queued item",
   h.driver.last.emit(ev.turn());
   await h.rt.settled();
   const id = crypto.randomUUID();
-  const a = await h.rt.rawInput({ text: "/init", userId: "u1", by: "@or", clientMessageId: id });
-  const b = await h.rt.rawInput({ text: "/init", userId: "u1", by: "@or", clientMessageId: id });
+  const a = await h.rt.rawInput({ text: "/init", userId: "u1", by: "<@or>", clientMessageId: id });
+  const b = await h.rt.rawInput({ text: "/init", userId: "u1", by: "<@or>", clientMessageId: id });
   expect(b.id).toBe(a.id);
   expect(a.clientMessageId).toBe(id);
   expect(h.rt.queueItems()).toHaveLength(1);
@@ -156,7 +156,7 @@ test("a retry with the same clientMessageId after the write returns the earlier 
   await startedIdle();
   const id = crypto.randomUUID();
   const dispatch = () =>
-    h.rt.rawInput({ text: "/code-review", userId: "u1", by: "@or", clientMessageId: id });
+    h.rt.rawInput({ text: "/code-review", userId: "u1", by: "<@or>", clientMessageId: id });
   const a = await dispatch();
   expect(commandWrites()).toHaveLength(1);
   const b = await dispatch();
@@ -164,7 +164,7 @@ test("a retry with the same clientMessageId after the write returns the earlier 
   expect(commandWrites()).toHaveLength(1);
   expect(h.rt.queueItems()).toEqual([]);
   // Another sender's same id is their own command.
-  await h.rt.rawInput({ text: "/init", userId: "u2", by: "@sam", clientMessageId: id });
+  await h.rt.rawInput({ text: "/init", userId: "u2", by: "<@sam>", clientMessageId: id });
   expect(h.rt.queueItems().map((q) => q.body)).toEqual(["/init"]);
 });
 
@@ -197,18 +197,18 @@ test("Stop clears a command barrier that never opened a turn (no turn_end will c
   await run("context");
   await send("held behind it");
   expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["boot"]);
-  await h.rt.interrupt({ byHandle: "or" });
+  await h.rt.interrupt({ by: "<@or>" });
   await h.rt.settled();
   expect(h.driver.last.sent.at(-1)?.map((m) => m.body)).toEqual(["held behind it"]);
   expect((await events()).filter((e) => e.type === "control").at(-1)).toEqual({
     type: "control",
     cmd: "interrupt",
-    by: "@or",
+    by: "<@or>",
   });
   // Nothing in flight and no turn open: Stop is refused again.
   h.driver.last.emit(ev.turn(), ev.usage(), ev.end());
   await h.rt.settled();
-  await expect(h.rt.interrupt({ byHandle: "or" })).rejects.toMatchObject({
+  await expect(h.rt.interrupt({ by: "<@or>" })).rejects.toMatchObject({
     name: "NoOpenTurnError",
   });
 });
@@ -235,7 +235,7 @@ test("plain text is written as one user line with no envelope, and operator_inpu
   const item = await h.rt.rawInput({
     text: "just a note",
     userId: "u1",
-    by: "@or",
+    by: "<@or>",
     clientMessageId,
   });
   expect(item).toMatchObject({ kind: "raw", body: "just a note", clientMessageId });
@@ -244,7 +244,7 @@ test("plain text is written as one user line with no envelope, and operator_inpu
     {
       type: "operator_input",
       text: "just a note",
-      by: "@or",
+      by: "<@or>",
       byKind: "human",
       clientMessageId,
       entryId: item.id,
@@ -254,7 +254,7 @@ test("plain text is written as one user line with no envelope, and operator_inpu
 
 test("an errored agent holds raw input and does not start a recovery", async () => {
   await h.makeRuntime({ status: "errored", sessionId: "sess-1" });
-  const item = await h.rt.rawInput({ text: "hello", userId: "u1", by: "@or" });
+  const item = await h.rt.rawInput({ text: "hello", userId: "u1", by: "<@or>" });
   await h.rt.settled();
   expect(h.driver.starts).toHaveLength(0);
   expect(h.rt.acceptsWake("raw")).toBe(false);

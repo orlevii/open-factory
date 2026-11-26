@@ -14,6 +14,7 @@ import {
   createPrincipal,
   HandleTakenError,
   principalsByHandles,
+  tagOfPrincipal,
 } from "../principals/principal-store.ts";
 import { resolveText, UnknownTagsError } from "../principals/principal-text.ts";
 import type { TemplateIndex } from "../templates/template-index.ts";
@@ -302,7 +303,12 @@ export class SpawnService {
           },
           tx,
         );
-        await store.append(id, null, { type: "spawned", by: spawner.slug, template }, tx);
+        await store.append(
+          id,
+          null,
+          { type: "spawned", by: await tagOfPrincipal(tx, spawner.id), template },
+          tx,
+        );
         const peers = await router.persistPeerEvents(
           tx,
           id,

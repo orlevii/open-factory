@@ -27,7 +27,7 @@ type RestartAgentDeps = {
   /** The caller read at call time: `manage_org` is decided from the fresh row (I7 §5.2). */
   loadAgent(id: string): Promise<AgentRow | undefined>;
   /** The target's row by name, read fresh (a runtime's row can be stale). */
-  store: Pick<EventStore, "agentByArg">;
+  store: Pick<EventStore, "agentByArg" | "principalTag">;
   runtimes: AgentRuntimes;
   resolver: Pick<ConfigResolver, "effective">;
   router: Pick<Router, "send">;
@@ -99,7 +99,7 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
           try {
             const early = noteFirst ? await sendNote(d, row.slug, args.note as string) : undefined;
             const outcome = await rt.restartNow({
-              by: `@${d.caller.slug}`,
+              by: await d.store.principalTag(d.caller.id),
               force: args.force ?? false,
               // Computed here, outside the runtime's job: the resolver reads the disk (I7 §9.2).
               changes: await restartChanges(d, row),

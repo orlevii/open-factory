@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { schema } from "@open-factory/db";
 import type { ServerMessage } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Tx } from "../agents/event-store.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { callTool } from "../mcp/testing/mcp-client.ts";
 import { createPrincipal } from "../principals/principal-store.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { testRef } from "../test/principals.ts";
 import { LoopGuard } from "./loop-guard.ts";
 import { Router } from "./router.ts";
 
@@ -531,7 +533,7 @@ test("reconcile forwards factory_restarted lost work to the manager", async () =
     {
       notice: "work_lost",
       subject_agent_id: a.id,
-      body: "Background work of @ada was stopped. Reported by @ada:\n> pnpm test",
+      body: `Background work of ${tagOf(testRef(a.id))} was stopped. Reported by ${tagOf(testRef(a.id))}:\n> pnpm test`,
     },
   ]);
 });
@@ -649,9 +651,11 @@ const idOf = async (slug: string) => (await h.app.store.agentBySlug(slug))?.id ?
 test("persistPeerEvents runs in the caller's transaction: it sees a child inserted there, and its rows roll back with it", async () => {
   const rollback = new Error("rollback");
   let seen: { to: string | null; kind: string; notice: string | null; body: string }[] = [];
+  let kidTag = "";
   await expect(
     h.db.transaction(async (tx) => {
       const kid = await insertKid(tx, "kid-ab12");
+      kidTag = tagOf(testRef(kid.id));
       const rows = await h.app.router.persistPeerEvents(
         tx,
         kid.id,
@@ -664,13 +668,13 @@ test("persistPeerEvents runs in the caller's transaction: it sees a child insert
   ).rejects.toBe(rollback);
   const [ada, bob, lead] = [await idOf("ada"), await idOf("bob"), await idOf("lead")];
   expect(seen).toEqual([
-    { to: ada, kind: "peer_joined", notice: "peer", body: "@kid-ab12 (Kid) joined as your peer." },
-    { to: bob, kind: "peer_joined", notice: "peer", body: "@kid-ab12 (Kid) joined as your peer." },
+    { to: ada, kind: "peer_joined", notice: "peer", body: `${kidTag} (Kid) joined as your peer.` },
+    { to: bob, kind: "peer_joined", notice: "peer", body: `${kidTag} (Kid) joined as your peer.` },
     {
       to: lead,
       kind: "peer_joined",
       notice: "report",
-      body: "@kid-ab12 (Kid) joined as your report.",
+      body: `${kidTag} (Kid) joined as your report.`,
     },
   ]);
   expect(await heldRows()).toEqual([]);
@@ -695,6 +699,8 @@ test("persistPeerEvents: excludeManager skips the spawner; the rows commit with 
   await vi.waitFor(() => expect(handOver).toHaveBeenCalledTimes(2));
 });
 
+const OR_TAG = "<@or000000>";
+
 test("persistPeerEvents: archived and terminated recipients get nothing; the terminated body names who", async () => {
   await h.db.transaction((tx) => insertKid(tx, "gone-ab12", { terminated: true }));
   await h.sql`update agents set archived_at = now() where slug = 'bob'`;
@@ -708,7 +714,7 @@ test("persistPeerEvents: archived and terminated recipients get nothing; the ter
     h.app.router.persistPeerEvents(
       tx,
       ada,
-      { kind: "left", reason: "terminated", by: "@or" },
+      { kind: "left", reason: "terminated", by: OR_TAG },
       { managerId: lead, peerIds: [bob, gone] },
     ),
   );
@@ -717,7 +723,7 @@ test("persistPeerEvents: archived and terminated recipients get nothing; the ter
       to: "lead",
       kind: "peer_left",
       notice: "report",
-      body: "@ada (Test agent) left: terminated by @or.",
+      body: `${tagOf(testRef(ada))} (Test agent) left: terminated by ${OR_TAG}.`,
     },
   ]);
 });

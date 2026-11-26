@@ -34,12 +34,12 @@ const utf8 = new TextEncoder();
 /**
  * `send_command(target, command)` (I1 §7): a slash command for yourself or a direct report (spawned agents included).
  * Registered for every caller; a spawned agent's version says "only yourself" and refuses any other target. The entry
- * is the caller's own (`by: "@caller"`, `self` when it targets itself): no human sender, so nobody can cancel it.
+ * is the caller's own (`by` is the caller's tag, `self` when it targets itself): no human sender, so nobody can cancel it.
  */
 export function sendCommandTool(d: {
   caller: AgentRow;
   runtimes: AgentRuntimes;
-  store: Pick<EventStore, "agentByArg" | "agentCommands">;
+  store: Pick<EventStore, "agentByArg" | "agentCommands" | "principalTag">;
   /** The skill list: the running process's (`started`), else the resolver's (I2 §6.2). */
   resolver: Pick<ConfigResolver, "skillsOf">;
   spawned: boolean;
@@ -118,13 +118,13 @@ export function sendCommandTool(d: {
             if (cls.kind === "command" && cls.name === "compact")
               await rt.compact({
                 ...(cls.args.trim() ? { focus: cls.args.trim() } : {}),
-                byHandle: d.caller.slug,
+                by: await d.store.principalTag(d.caller.id),
                 ...(self ? { self: true } : {}),
               });
             else
               await rt.rawInput({
                 text: neutraliseEnvelopeTags(command),
-                by: `@${d.caller.slug}`,
+                by: await d.store.principalTag(d.caller.id),
                 ...(self ? { self: true } : {}),
               });
           } catch (e) {

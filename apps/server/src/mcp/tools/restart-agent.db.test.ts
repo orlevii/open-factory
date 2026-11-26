@@ -1,6 +1,8 @@
+import { tagOf } from "@open-factory/shared/tags";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ev, FakeDriver } from "../../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../../test/helpers.ts";
+import { testRef } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
 // I7 §9.1: restart_agent(target, note?, force?), for persistent agents only.
@@ -137,7 +139,7 @@ test("a cut restart delivers the note from the caller after the restart notice",
   expect(next).not.toBe(p);
   const got = delivered(next as (typeof drv.starts)[number]);
   expect(got).toEqual([
-    ["@factory", expect.stringContaining("Restarted by @lead")],
+    ["@factory", expect.stringContaining(`Restarted by ${tagOf(testRef(ids.lead as string))}`)],
     ["@lead", "Rerun the tests."],
   ]);
 });
@@ -168,7 +170,7 @@ test("an errored report with a note restarts, resumes its session, and gets the 
   expect(next.opts.resumeSessionId).toBe("sess-old");
   // The message that was pending when it errored is delivered too, between the notice and the note.
   expect(delivered(next)).toEqual([
-    ["@factory", "Restarted by @lead after an error."],
+    ["@factory", `Restarted by ${tagOf(testRef(ids.lead as string))} after an error.`],
     ["@or", "again"],
     ["@lead", "Rerun the tests."],
   ]);
@@ -229,7 +231,11 @@ test("a resolver failure (a broken template) still restarts the report and recor
   p.emit(ev.end());
   await (await h.app.runtimes.bySlug("dev"))?.settled();
   const events = (await h.app.store.after(ids.dev as string, 0, 1000)).map((e) => e.event);
-  expect(events).toContainEqual({ type: "control", cmd: "restart", by: "@lead" });
+  expect(events).toContainEqual({
+    type: "control",
+    cmd: "restart",
+    by: tagOf(testRef(ids.lead as string)),
+  });
 });
 
 test("a hibernated report: the note wakes it, and it is the first message it gets", async () => {

@@ -1,4 +1,5 @@
 import type { ServerMessage } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
@@ -10,6 +11,8 @@ let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
 let or: Actor;
 let sam: Actor;
+/** Who the `or` human is, as the task messages name it: its tag. */
+let OR = "";
 const ids: Record<string, string> = {};
 const frames: ServerMessage[] = [];
 const agent = (slug: string): Actor => ({
@@ -29,6 +32,7 @@ beforeEach(async () => {
   or = { kind: "human", id: u1.user.id, ref: testRef(u1.user.id), handle: "or" };
   sam = { kind: "human", id: u2.user.id, ref: testRef(u2.user.id), handle: "sam" };
   ids.or = u1.user.id;
+  OR = tagOf(or.ref);
   ids.sam = u2.user.id;
   h.app.bus.subscribeUser(u2.user.id, (m) => frames.push(m));
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
@@ -65,8 +69,8 @@ test("create assigned to a hibernated agent wakes it with the brief (AC 1)", asy
   const env = sentTo("dev");
   expect(env).toHaveLength(1);
   expect(env[0]).toMatchObject({ from: "@factory", kind: "task_assigned", taskKey: "T-1" });
-  expect(env[0]?.body).toContain(`@or assigned you T-1, created by @or: "Plan the migration"`);
-  expect(env[0]?.body).toContain("The task, written by @or:\n> Line one\n> Line two");
+  expect(env[0]?.body).toContain(`${OR} assigned you T-1, created by ${OR}: "Plan the migration"`);
+  expect(env[0]?.body).toContain(`The task, written by ${OR}:\n> Line one\n> Line two`);
   expect(frames).toContainEqual({ type: "tasks_changed", keys: ["T-1"] });
   const ev = await h.sql`select type from task_events order by at`;
   expect(ev.map((e) => e.type)).toEqual(["created", "assignee"]);
@@ -149,7 +153,11 @@ test("done tells the creator and unblocks the dependent's assignee; nobody is to
   expect(r.changed).toEqual(["status"]);
   await settle("lead", "qa", "dev");
   expect(await rowsTo("lead")).toMatchObject([
-    { kind: "task_update", notice: "done", body: "@dev marked T-1 done." },
+    {
+      kind: "task_update",
+      notice: "done",
+      body: `${tagOf(testRef(ids.dev as string))} marked T-1 done.`,
+    },
   ]);
   const qa = (await rowsTo("qa")).filter((x) => x.kind === "task_update");
   expect(qa).toMatchObject([{ notice: "unblocked" }]);
@@ -166,7 +174,7 @@ test("one update changing status and body sends the assignee one message listing
   expect(rows).toHaveLength(1);
   expect(rows[0]?.notice).toBe("status_changed");
   expect(rows[0]?.body).toBe(
-    "@or moved T-1 to in progress.\n@or edited T-1's description:\n> new brief",
+    `${OR} moved T-1 to in progress.\n${OR} edited T-1's description:\n> new brief`,
   );
 });
 

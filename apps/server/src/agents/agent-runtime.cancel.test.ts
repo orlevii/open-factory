@@ -40,7 +40,7 @@ async function stopped() {
   await h.send("work");
   h.driver.last.emit(ev.turn());
   await h.rt.settled();
-  await h.rt.interrupt({ byHandle: "or" });
+  await h.rt.interrupt({ by: "<@or>" });
 }
 const bodies = () => h.rt.queueItems().map((q) => q.body);
 const stateOf = async (id: string) =>

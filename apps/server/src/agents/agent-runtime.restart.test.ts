@@ -77,7 +77,7 @@ test.each([
   [
     "a compact in flight",
     async (p: FakeProcess) => {
-      await rt.compact({ byHandle: "or" });
+      await rt.compact({ by: "<@or>" });
       expect(p.controls).toEqual([{ kind: "control", cmd: "compact" }]);
     },
     (p: FakeProcess) => p.emit(ev.turn(), ev.end({ command: "compact" })),

@@ -37,7 +37,7 @@ import {
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { resolveAgentArg } from "../principals/principal-args.ts";
-import { principalById, principalsByIds, terminatorLabel } from "../principals/principal-store.ts";
+import { principalsByIds, tagOfPrincipal, terminatorTag } from "../principals/principal-store.ts";
 import { capPayload } from "./cap.ts";
 import { InvalidCursorError } from "./errors.ts";
 import { type NoticeType, parseConfigNotice, renderConfigNotice } from "./notices.ts";
@@ -494,10 +494,9 @@ export class EventStore {
         id: agents.id,
         slug: agents.slug,
         runtime: agents.runtime,
-        terminator: { kind: principals.kind, handle: principals.handle },
+        terminatedBy: agents.terminatedBy,
       })
       .from(agents)
-      .leftJoin(principals, eq(principals.id, agents.terminatedBy))
       .where(
         and(
           isNotNull(agents.terminatedAt),
@@ -505,16 +504,20 @@ export class EventStore {
         ),
       )
       .orderBy(asc(agents.id));
-    return rows.map(({ terminator, ...a }) => ({
-      ...a,
-      by: terminatorLabel(terminator?.handle ? terminator : null),
-    }));
-  }
-  /** The `terminated` event's wording of who ended `agentId` (`@factory` when the TTL did). */
-  async terminatorLabelOf(terminatedBy: string | null): Promise<string> {
-    return terminatorLabel(
-      terminatedBy ? ((await principalById(this.db, terminatedBy)) ?? null) : null,
+    return Promise.all(
+      rows.map(async ({ terminatedBy, ...a }) => ({
+        ...a,
+        by: await terminatorTag(this.db, terminatedBy),
+      })),
     );
+  }
+  /** The `terminated` event's `by` for who ended `agentId`: its tag, or `@factory` when the TTL did. */
+  async terminatorTagOf(terminatedBy: string | null): Promise<string> {
+    return terminatorTag(this.db, terminatedBy);
+  }
+  /** A principal's tag (`<@ref>`), read from `principals`; the agent's own id is its principal id. */
+  async principalTag(id: string): Promise<string> {
+    return tagOfPrincipal(this.db, id);
   }
   /** Boot (spec §5.7 step 7): every journal was read and acted on, except those of `keep` (a reap that failed). */
   async clearRuntimeJournals(keep: string[] = []) {

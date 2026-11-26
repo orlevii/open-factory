@@ -34,14 +34,20 @@ const Mono = ({ children }: { children: ReactNode }) => (
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** "Hibernated after 70 minutes idle" … (S5 UI design §3.3), by the hibernate path's reason. */
-function hibernatedText(e: Extract<AnyEvent, { type: "hibernated" }>): string {
+function hibernatedText(e: Extract<AnyEvent, { type: "hibernated" }>): ReactNode {
   switch (e.reason) {
     case "warm_window":
       return e.idleMinutes === undefined
         ? "Hibernated"
         : `Hibernated after ${plural(e.idleMinutes, "minute", "minutes")} idle`;
     case "crons_stopped":
-      return e.by ? `Hibernated: ${e.by} stopped its crons` : "Hibernated: its crons were stopped";
+      return e.by ? (
+        <>
+          Hibernated: <Actor by={e.by} /> stopped its crons
+        </>
+      ) : (
+        "Hibernated: its crons were stopped"
+      );
     case "apply_changes":
       return "Hibernated to apply changes";
     case "shutdown":
@@ -61,12 +67,17 @@ function startedText(e: Extract<AnyEvent, { type: "process_started" }>): string 
   return e.resumed ? "Woke up" : "Started a new session";
 }
 
-function lostText(e: Extract<AnyEvent, { type: "background_work_lost" }>): string {
+function lostText(e: Extract<AnyEvent, { type: "background_work_lost" }>): ReactNode {
   const items = [
     ...e.tasks.map((t) => `${t.description ?? t.taskId} (background)`),
     ...e.crons.map((c) => `${c.humanSchedule?.toLowerCase() ?? c.cronId} (cron)`),
   ];
-  if (e.reason === "crons_stopped") return `Stopped by ${e.by ?? "a human"}: ${items.join(" · ")}`;
+  if (e.reason === "crons_stopped")
+    return (
+      <>
+        Stopped by {e.by ? <Actor by={e.by} /> : "a human"}: {items.join(" · ")}
+      </>
+    );
   const when = e.reason === "terminated" ? "it was terminated" : "the process stopped";
   return `Lost when ${when}: ${items.join(" · ")}`;
 }
@@ -94,7 +105,7 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
     case "session_reset":
       return (
         <>
-          New session started by <Mono>{e.by}</Mono>. Earlier history stays above; the agent no
+          New session started by <Actor by={e.by} />. Earlier history stays above; the agent no
           longer remembers it.
         </>
       );
@@ -107,7 +118,7 @@ export function quietText(e: AnyEvent, interrupted = false): ReactNode {
     case "terminated":
       return <>Terminated {terminatedPhrase(e.by)}</>;
     case "control": {
-      const by = <Mono>{e.by}</Mono>;
+      const by = <Actor by={e.by} />;
       if (e.cmd === "interrupt") return <>{by} interrupted</>;
       if (e.cmd === "restart") return <>Restarted by {by}</>;
       if (e.cmd === "compact")

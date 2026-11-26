@@ -5,10 +5,11 @@ import path from "node:path";
 import { schema } from "@open-factory/db";
 import { createFakeClaude } from "@open-factory/harness/testing";
 import { type Actor, LOCAL_RUNTIME_REFUSAL } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
-import { seedTestUser } from "../test/principals.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import type { AgentService } from "./agent-service.ts";
 import { OrgRefusedError } from "./errors.ts";
 import type { AgentRuntimes } from "./runtimes.ts";
@@ -357,6 +358,9 @@ const heldBy = async (slug: string) =>
                 where a.slug = ${slug} and m.kind in ('peer_joined','peer_left') order by m.created_at`
   ).map((r) => ({ ...r }));
 const clearPeerRows = () => t.sql`delete from messages where kind in ('peer_joined','peer_left')`;
+/** An agent's tag, as the factory writes it in a body (its principal's ref). */
+const tagOfSlug = async (slug: string) =>
+  tagOf(testRef(String((await t.sql`select id from agents where slug = ${slug}`)[0]?.id)));
 
 test("an agent actor's create, move and archive name it in the peer events; the recipient who is the actor isn't told", async () => {
   await svc.create({ ...body("pe-lead"), reportsTo: "or" }, human);
@@ -364,34 +368,36 @@ test("an agent actor's create, move and archive name it in the peer events; the 
   await svc.create({ ...body("pe-boss"), reportsTo: "or" }, human);
   await clearPeerRows();
   await svc.create({ ...body("pe-pmo"), reportsTo: "pe-lead" }, hr);
+  const [pmo, hrTag] = [await tagOfSlug("pe-pmo"), await tagOfSlug("hr-bot")];
   expect(await heldBy("pe-dev")).toEqual([
     {
       kind: "peer_joined",
       notice: "peer",
-      body: "@pe-pmo (pe-pmo) joined as your peer, by @hr-bot.",
+      body: `${pmo} (pe-pmo) joined as your peer, by ${hrTag}.`,
     },
   ]);
   expect(await heldBy("pe-lead")).toEqual([
     {
       kind: "peer_joined",
       notice: "report",
-      body: "@pe-pmo (pe-pmo) joined as your report, by @hr-bot.",
+      body: `${pmo} (pe-pmo) joined as your report, by ${hrTag}.`,
     },
   ]);
   await clearPeerRows();
   await svc.update("pe-dev", { reportsTo: "pe-boss" }, hr);
+  const [dev, boss] = [await tagOfSlug("pe-dev"), await tagOfSlug("pe-boss")];
   expect(await heldBy("pe-lead")).toEqual([
     {
       kind: "peer_left",
       notice: "report",
-      body: "@pe-dev (pe-dev) left: now reports to @pe-boss, by @hr-bot.",
+      body: `${dev} (pe-dev) left: now reports to ${boss}, by ${hrTag}.`,
     },
   ]);
   await clearPeerRows();
   await svc.archive("pe-pmo", await asAgent("pe-lead"));
   // The manager did it itself, so it isn't told; a peer is.
   expect(await heldBy("pe-lead")).toEqual([
-    { kind: "peer_left", notice: "report", body: "@pe-pmo (pe-pmo) left: archived." },
+    { kind: "peer_left", notice: "report", body: `${pmo} (pe-pmo) left: archived.` },
   ]);
   expect(await heldBy("pe-dev")).toEqual([]);
 });
@@ -401,7 +407,11 @@ test("a human's create names no actor in the peer events", async () => {
   await clearPeerRows();
   await svc.create({ ...body("hm-dev"), reportsTo: "hm-lead" }, human);
   expect(await heldBy("hm-lead")).toEqual([
-    { kind: "peer_joined", notice: "report", body: "@hm-dev (hm-dev) joined as your report." },
+    {
+      kind: "peer_joined",
+      notice: "report",
+      body: `${await tagOfSlug("hm-dev")} (hm-dev) joined as your report.`,
+    },
   ]);
 });
 

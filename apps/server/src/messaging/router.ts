@@ -13,7 +13,7 @@ import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { HUMANS_SEND_REFUSAL, resolveArgs } from "../principals/principal-args.ts";
-import { principalById } from "../principals/principal-store.ts";
+import { principalById, principalsByIds } from "../principals/principal-store.ts";
 import { resolveField } from "../principals/principal-text.ts";
 import {
   attachmentOf,
@@ -50,7 +50,8 @@ export type RecipientResult =
 
 /**
  * What happened to the subject of a peer event (S6 spec §10.2, S7 §9.1). `spawned` is a join. `by` (I7 §8.2) is the
- * `@slug` of an agent actor, set only when one caused the change; a terminator's `by` is its own field.
+ * `<@ref>` tag of an agent actor, set only when one caused the change; a terminator's `by` is its own field, a tag or
+ * `@factory`. `moved.to` is the new manager's tag.
  */
 export type PeerChange =
   | { kind: "joined"; by?: string }
@@ -705,6 +706,8 @@ export class Router {
   ): Promise<PendingRow[]> {
     const subject = await this.d.store.agentById(subjectId, tx);
     if (!subject) return [];
+    const subjectRef = (await principalById(tx, subjectId))?.ref;
+    if (!subjectRef) return [];
     const rows: PendingRow[] = [];
     if (change.kind === "left" || change.kind === "moved") {
       const left: PeerLeft =
@@ -716,7 +719,7 @@ export class Router {
       rows.push(
         ...(await this.notify(
           tx,
-          subject,
+          { id: subjectId, ref: subjectRef, displayName: subject.displayName },
           "peer_left",
           before.peerIds,
           o.excludeManager ? null : before.managerId,
@@ -730,7 +733,7 @@ export class Router {
       rows.push(
         ...(await this.notify(
           tx,
-          subject,
+          { id: subjectId, ref: subjectRef, displayName: subject.displayName },
           "peer_joined",
           now.peers.map((p) => p.id),
           o.excludeManager ? null : (now.manager?.id ?? null),
@@ -799,7 +802,7 @@ export class Router {
 
   private async notify(
     tx: Tx,
-    subject: { id: string; slug: string; displayName: string },
+    subject: { id: string; ref: string; displayName: string },
     kind: "peer_joined" | "peer_left",
     peerIds: string[],
     managerId: string | null,
@@ -811,10 +814,16 @@ export class Router {
       relation: "peer",
     }));
     if (managerId) targets.push({ id: managerId, relation: "report" });
+    const refs = await principalsByIds(
+      tx,
+      targets.map((t) => t.id),
+    );
     const rows: PendingRow[] = [];
     for (const t of targets) {
       const to = await this.d.store.agentById(t.id, tx);
       if (!to || to.archivedAt || to.terminatedAt || to.id === subject.id) continue;
+      const recipientRef = refs.get(to.id)?.ref;
+      if (!recipientRef) continue;
       rows.push(
         await this.d.store.createOrgRow(
           {
@@ -828,7 +837,7 @@ export class Router {
               left
                 ? { kind, left, ...(by ? { by } : {}) }
                 : { kind: "peer_joined", ...(by ? { by } : {}) },
-              to.slug,
+              recipientRef,
             ),
           },
           tx,

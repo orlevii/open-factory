@@ -7,9 +7,10 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { closeSheet, getSheetState } from "@/features/sheets/sheet-store";
 import { json, mockApi } from "@/test/mock-api";
 import { envelope, resetSeq, se } from "@/test/session-fixtures";
@@ -22,6 +23,20 @@ beforeEach(() => {
   resetSeq();
   mockApi({
     "GET /api/agents?": () => json({ agents: [], more: false, running: { count: 0 } }),
+    "GET /api/principals": () =>
+      json({
+        principals: [
+          {
+            id: "u-or",
+            ref: "k7x2m9qd",
+            kind: "human",
+            handle: "or",
+            name: "Or",
+            state: "live",
+            avatar: null,
+          },
+        ],
+      }),
   });
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -36,7 +51,9 @@ function inRouter(ui: React.ReactNode) {
   });
   return render(
     <QueryClientProvider client={new QueryClient()}>
-      <RouterProvider router={router} />
+      <TooltipProvider>
+        <RouterProvider router={router} />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }
@@ -150,11 +167,11 @@ test("a pending scheduled item shows the badge and 'covers 3 runs'", async () =>
 
 test("the three quiet lines read as specified, from the events' `by` and `durable`", async () => {
   const { container } = renderEvents([
-    { type: "hibernated", reason: "crons_stopped", by: "@or" },
+    { type: "hibernated", reason: "crons_stopped", by: "<@k7x2m9qd>" },
     {
       type: "background_work_lost",
       reason: "crons_stopped",
-      by: "@or",
+      by: "<@k7x2m9qd>",
       tasks: [],
       crons: [{ cronId: "c1", humanSchedule: "Every 5 minutes" }],
     },
@@ -167,8 +184,10 @@ test("the three quiet lines read as specified, from the events' `by` and `durabl
       durable: true,
     },
   ]);
-  await screen.findByText(/Hibernated: @or stopped its crons/);
-  expect(container.textContent).toContain("Stopped by @or: every 5 minutes (cron)");
+  await waitFor(() =>
+    expect(container.textContent).toMatch(/Hibernated: .*@or.*stopped its crons/),
+  );
+  expect(container.textContent).toMatch(/Stopped by .*@or.*: every 5 minutes \(cron\)/);
   expect(container.textContent).toContain("Cron created: every 5 minutes (kept on disk)");
 });
 

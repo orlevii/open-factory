@@ -24,6 +24,7 @@ export interface ReconcileDeps {
     | "rejectPendingToTerminated"
     | "clearStaleWriteMarks"
     | "terminatedWithoutEvent"
+    | "principalTag"
   >;
   journal: Pick<ProcessJournal, "reap">;
   /** Absent when the factory has no Docker runtime; step 2 is then skipped. */
@@ -188,7 +189,11 @@ async function forward(
 ): Promise<void> {
   if (a.archivedAt || a.terminatedAt) return;
   try {
-    await d.forward({ agentId: a.id, fact, body: factFor(fact, a.slug, detail) });
+    await d.forward({
+      agentId: a.id,
+      fact,
+      body: factFor(fact, await d.store.principalTag(a.id), detail),
+    });
   } catch (err) {
     // The fact is then not reported (for a cut-short attempt: its errored episode stays unreported); boot goes on.
     d.log.error({ err, agent: a.slug, fact }, "forwarding a fact to the manager failed");

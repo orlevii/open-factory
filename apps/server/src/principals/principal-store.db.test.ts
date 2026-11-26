@@ -66,7 +66,7 @@ test("an agent can't exist without its principal", async () => {
   await t.sql`insert into credentials (id, name, kind, value_enc) values ('c-orphan', 'c', 'oauth_token', ${Buffer.from("x")})`;
   const boss = await seedTestUser(t.db, "boss");
   await expect(
-    t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
+    t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
           values ('no-principal', 'no-principal', 'X', 't', '{}', 'local', 'c-orphan', ${boss.id})`,
   ).rejects.toMatchObject({ code: "23503" });
 });

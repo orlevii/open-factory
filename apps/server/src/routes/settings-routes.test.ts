@@ -120,7 +120,6 @@ test("projects: a project granted only to a terminated spawned agent can be remo
     reportsTo: lead.id,
     credentialId: null,
     terminatedAt: new Date(),
-    terminatedBy: "lead-t",
   });
   // Termination deletes the grant rows, so a terminated agent holds none.
   expect((await call("DELETE", "/api/projects/term")).statusCode).toBe(204);

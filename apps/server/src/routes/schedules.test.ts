@@ -118,10 +118,10 @@ test("edit, pause, resume, delete and restore with their conflict codes; every c
 });
 
 test("restore of a schedule whose target ended is 409 target_ended", async () => {
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.ceo as string}, reports_to_user = null where slug = 'dev'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.ceo as string} where slug = 'dev'`;
   const s = await create({ target: "dev" });
   await call("DELETE", `/api/schedules/${s.key}`);
-  await h.sql`update agents set terminated_at = now(), terminated_by = '@or' where slug = 'dev'`;
+  await h.sql`update agents set terminated_at = now(), terminated_by = null where slug = 'dev'`;
   const r = await call("POST", `/api/schedules/${s.key}/restore`);
   expect(r.statusCode).toBe(409);
   expect(r.json().error).toMatchObject({ code: "target_ended" });

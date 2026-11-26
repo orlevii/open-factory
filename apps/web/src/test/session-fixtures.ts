@@ -36,7 +36,7 @@ export const agentSummary = (over: Partial<AgentSummary> = {}): AgentSummary => 
   kind: "persistent",
   manageOrg: false,
   template: "dev",
-  reportsTo: { kind: "user", handle: "or" },
+  reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" },
   reports: 0,
   openTasks: 0,
   credential: "work",

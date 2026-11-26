@@ -38,7 +38,7 @@ const agents = () =>
         slug: "kid",
         displayName: "Kid",
         kind: "ephemeral",
-        reportsTo: { kind: "agent", handle: "ceo" },
+        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "ceo" },
       }),
     ],
     more: false,

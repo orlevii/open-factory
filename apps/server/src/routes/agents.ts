@@ -234,7 +234,8 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
     async (req, reply) => {
       const row = await app.store.agentBySlug(req.params.slug);
       if (!row) return err(reply, 404, "agent_not_found", `No agent named ${req.params.slug}`);
-      await app.terminator.terminate(row.id, `@${user(req).handle}`);
+      const { id, handle } = user(req);
+      await app.terminator.terminate(row.id, { id, kind: "human", handle });
       return { agent: await app.agents.summary(row.slug) };
     },
   );

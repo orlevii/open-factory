@@ -351,8 +351,8 @@ const many = () =>
       displayName: `Agent ${i}`,
       reportsTo:
         i === 0
-          ? { kind: "user", handle: "or" }
-          : { kind: "agent", handle: i < 14 ? `a${i - 1}` : `a${i % 14}` },
+          ? { kind: "human", ref: "hhhhhhhh", handle: "or" }
+          : { kind: "agent", ref: "aaaaaaaa", handle: i < 14 ? `a${i - 1}` : `a${i % 14}` },
     }),
   );
 

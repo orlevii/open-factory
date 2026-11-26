@@ -8,7 +8,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { setWorkspacePin } from "./api";
 import { NETWORK_ERROR } from "./composer";
 import { formatInboxTime, formatResetTime, formatTime } from "./format";
-import { formatBy } from "./format-by";
 import { UnpinDialog } from "./unpin-dialog";
 
 export type LiveFact = {
@@ -28,15 +27,9 @@ function firstLine(text: string): string {
 }
 
 function terminatedText(agent: AgentSummary, now: Date): string {
-  const by = agent.terminatedBy ? formatBy(agent.terminatedBy) : null;
+  const by = agent.terminatedBy;
   const who =
-    by?.kind === "agent"
-      ? ` by @${by.slug}`
-      : by?.kind === "human"
-        ? ` by ${by.handle}`
-        : by?.kind === "ttl"
-          ? " after 3 days without activity"
-          : "";
+    by === undefined ? "" : by === null ? " after 3 days without activity" : ` by @${by.handle}`;
   const parts = [`Terminated${who}`];
   if (agent.terminatedAt) parts.push(formatInboxTime(new Date(agent.terminatedAt), now));
   if (agent.workspaceDeletedAt) parts.push("workspace deleted");

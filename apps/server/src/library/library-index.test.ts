@@ -46,7 +46,7 @@ const source = (o: Partial<SkillSourceRow>): SkillSourceRow => ({
   skills: ["tdd"],
   state: "ready",
   startedAt: new Date(0),
-  addedBy: "@or",
+  addedById: "u-or",
   addedAt: new Date(0),
   deletedAt: null,
   ...o,

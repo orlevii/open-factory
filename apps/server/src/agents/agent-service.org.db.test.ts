@@ -219,21 +219,20 @@ test("create with a config that fails the schema creates nothing, for a human to
 
 test("an agent actor can make a human the manager of a new agent", async () => {
   expect(await svc.create({ ...body("top"), reportsTo: "or" }, hr)).toMatchObject({
-    reportsTo: { kind: "user", handle: "or" },
+    reportsTo: { kind: "human", ref: expect.any(String), handle: "or" },
     depth: 0,
   });
   const row = await rowOf("top");
-  expect(row?.reportsTo).toBeNull();
-  expect(row?.reportsToUser).toBe("u-or");
+  expect(row?.reportsTo).toBe("u-or");
 });
 
 test("an agent can be created under, and moved to, a human; an unknown or disabled handle is refused with a field error", async () => {
   await seedTestUser(t.db, "sam");
   await svc.create(body("under-sam"), human);
   expect(await svc.update("under-sam", { reportsTo: "sam" }, human)).toMatchObject({
-    reportsTo: { kind: "user", handle: "sam" },
+    reportsTo: { kind: "human", ref: expect.any(String), handle: "sam" },
   });
-  expect(await rowOf("under-sam")).toMatchObject({ reportsTo: null, reportsToUser: "u-sam" });
+  expect(await rowOf("under-sam")).toMatchObject({ reportsTo: "u-sam" });
   await t.sql`update users set disabled_at = now() where id = (select id from principals where handle = 'sam')`;
   const refused = {
     code: "validation_error",
@@ -247,7 +246,7 @@ test("an agent can be created under, and moved to, a human; an unknown or disabl
     refused,
   );
   expect(await rowOf("never-sam")).toBeUndefined();
-  expect((await rowOf("target"))?.reportsToUser).toBe("u-or");
+  expect((await rowOf("target"))?.reportsTo).toBe("u-or");
 });
 
 test("an agent can't report to itself, and a write that finds its human manager disabled refuses", async () => {
@@ -263,7 +262,7 @@ test("an agent can't report to itself, and a write that finds its human manager 
   await expect(t.db.transaction((tx) => plan.write(tx))).rejects.toMatchObject({
     code: "validation_error",
   });
-  expect((await rowOf("self-mgr"))?.reportsToUser).toBe("u-or");
+  expect((await rowOf("self-mgr"))?.reportsTo).toBe("u-or");
 });
 
 test("model and effort come from the agent's overlay, else its template, else neither", async () => {

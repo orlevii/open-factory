@@ -5,6 +5,7 @@ import { Router } from "../messaging/router.ts";
 import { ContainerManager, LABEL_AGENT_ID } from "../runtime/docker/containers.ts";
 import { FakeDockerClient } from "../runtime/docker/testing/fake-docker.ts";
 import { TerminateService } from "../spawning/terminate-service.ts";
+import { seedTestUser } from "../test/principals.ts";
 import type { MountCheckContext } from "../workspace/mounts.ts";
 import type { AgentRuntime, DockerDeps } from "./agent-runtime.ts";
 import { AgentTerminatedError } from "./errors.ts";
@@ -288,7 +289,7 @@ test("reload never clears the latch", async () => {
 test("reload latches a row terminated elsewhere", async () => {
   await h.makeRuntime();
   await h.t
-    .sql`update agents set kind = 'ephemeral', reports_to = ${h.agentId}, reports_to_user = null, terminated_at = now(), terminated_by = '@factory' where id = ${h.agentId}`;
+    .sql`update agents set kind = 'ephemeral', reports_to = ${h.agentId}, terminated_at = now(), terminated_by = null where id = ${h.agentId}`;
   await h.rt.reload();
   expect(h.rt.isTerminated()).toBe(true);
   expect(h.rt.live().status).toBe("terminated");
@@ -514,7 +515,8 @@ async function world(o: { memberUpdateDebounceMs?: number } = {}) {
     procsOf,
     liveProcesses: (agentId = id) => procsOf(agentId).filter((p) => !p.exited),
     held: (agentId = id) => (holders().has(agentId) ? 1 : 0),
-    terminate: (by = "@or") => terminator.terminate(id, by),
+    /** Terminates as the human `by` (a handle). */
+    terminate: async (by = "or") => terminator.terminate(id, await seedTestUser(h.t.db, by)),
     /** Every gate opens: a start or pull they held resumes now, after the latch. */
     releaseGates: () => {
       gates.prepare?.resolve();
@@ -667,14 +669,14 @@ const states: {
       w.docker.removeError = new Error("the daemon refused");
     },
   },
-  { name: "already terminated", setup: async (w) => void (await w.terminate("@lead")) },
+  { name: "already terminated", setup: async (w) => void (await w.terminate("lead")) },
 ];
 
 test.each(states)("terminate from $name", async ({ setup, stuck = false }) => {
   const w = await world();
   await setup(w);
   const startsBefore = w.procsOf(w.id).length;
-  expect(await w.terminate("@or")).toEqual({ status: "terminated" });
+  expect(await w.terminate("or")).toEqual({ status: "terminated" });
   w.releaseGates(); // prepare/pull gates resolve now: the latch must refuse the launch
   await w.settled();
 
@@ -901,7 +903,7 @@ test("a stuck terminated agent records stop_escalated once, however many sweeps 
   const w = await world();
   await makeStopFailed(w);
   w.docker.removeError = new Error("the daemon refused");
-  await w.terminate("@or");
+  await w.terminate("or");
   await w.settled();
   const escalations = async () => (await w.events()).filter((e) => e.type === "stop_escalated");
   const before = (await escalations()).length;

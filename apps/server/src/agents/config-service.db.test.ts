@@ -109,8 +109,7 @@ test("a spawned target is refused: Spawned agents can't be edited", async () => 
     .update(schema.agents)
     .set({
       kind: "ephemeral",
-      reportsTo: hr.kind === "agent" ? hr.id : null,
-      reportsToUser: null,
+      reportsTo: (await rowOf("dev")).id,
     })
     .where(eq(schema.agents.slug, "loc"));
   try {
@@ -122,7 +121,7 @@ test("a spawned target is refused: Spawned agents can't be edited", async () => 
   } finally {
     await t.db
       .update(schema.agents)
-      .set({ kind: "persistent", reportsTo: null, reportsToUser: "u-or" })
+      .set({ kind: "persistent", reportsTo: "u-or" })
       .where(eq(schema.agents.slug, "loc"));
   }
 });

@@ -92,7 +92,7 @@ export class Reaper {
       // Latched inside the check job; terminate runs from step 2, outside the agent's jobs. On failure the service
       // itself undoes this latch (provisional latches are counted): never undo it here too.
       await this.d.terminator
-        .terminate(a.id, "@factory", { latched: true })
+        .terminate(a.id, null, { latched: true })
         .catch((err: unknown) =>
           this.d.log.error(
             { err, agent: a.slug },

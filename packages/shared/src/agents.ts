@@ -56,7 +56,11 @@ export const agentLiveShape = {
 };
 
 /** I9 §4.5: who an agent reports to; never null. A persistent agent's manager is an agent or a human, an ephemeral agent's its spawner. `handle` is bare. */
-export const reportsToSchema = z.object({ kind: z.enum(["agent", "user"]), handle: z.string() });
+export const reportsToSchema = z.object({
+  kind: z.enum(["agent", "human"]),
+  ref: z.string(),
+  handle: z.string(),
+});
 export type ReportsTo = z.infer<typeof reportsToSchema>;
 
 /** I9 §4.6: a resolved config value and where it comes from: the agent's own overlay, its template, or neither (Claude Code's default). */
@@ -100,7 +104,8 @@ export const agentSummarySchema = z.object({
   depth: z.number().int().nonnegative(),
   archivedAt: z.string().nullable(),
   terminatedAt: z.string().optional(),
-  terminatedBy: z.string().optional(),
+  /** Who ended it; null when the factory did (the idle TTL). Absent while the agent isn't terminated. */
+  terminatedBy: z.object({ ref: z.string(), handle: z.string() }).nullable().optional(),
   workspacePinned: z.boolean().optional(),
   workspaceGraceEndsAt: z.string().optional(),
   workspaceDeletedAt: z.string().optional(),

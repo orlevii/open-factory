@@ -13,10 +13,26 @@ import {
 } from "./tree-model";
 
 const rows = [
-  { slug: "a", displayName: "A", reportsTo: { kind: "user" as const, handle: "or" } },
-  { slug: "b", displayName: "B", reportsTo: { kind: "agent" as const, handle: "a" } },
-  { slug: "c", displayName: "C", reportsTo: { kind: "agent" as const, handle: "b" } },
-  { slug: "s", displayName: "S · ab12", reportsTo: { kind: "agent" as const, handle: "b" } },
+  {
+    slug: "a",
+    displayName: "A",
+    reportsTo: { kind: "human" as const, ref: "hhhhhhhh", handle: "or" },
+  },
+  {
+    slug: "b",
+    displayName: "B",
+    reportsTo: { kind: "agent" as const, ref: "aaaaaaaa", handle: "a" },
+  },
+  {
+    slug: "c",
+    displayName: "C",
+    reportsTo: { kind: "agent" as const, ref: "aaaaaaaa", handle: "b" },
+  },
+  {
+    slug: "s",
+    displayName: "S · ab12",
+    reportsTo: { kind: "agent" as const, ref: "aaaaaaaa", handle: "b" },
+  },
 ];
 
 test("roots open, the rest closed; stored toggles override; revealed forces open", () => {

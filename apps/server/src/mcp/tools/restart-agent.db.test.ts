@@ -23,8 +23,8 @@ beforeEach(async () => {
   // A spawned report of lead, and dev and kid are lead's reports.
   ids.kid = (await h.seedAgent({ slug: "kid" })).id;
   tok.kid = h.app.agentTokens.mint(ids.kid as string).token;
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'kid'`;
-  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where slug = 'kid'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
 });
 afterEach(() => h.close());
 

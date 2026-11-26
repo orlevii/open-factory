@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let clock: Date;
@@ -18,7 +19,7 @@ beforeEach(async () => {
   userId = (await signUp(h.app, { handle: "or" })).user.id;
   await h.seedAgent({ slug: "lead" });
   await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = (select id from agents where slug = 'lead'), reports_to_user = null where slug = 'kid'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = (select id from agents where slug = 'lead') where slug = 'kid'`;
 });
 afterEach(() => h.close());
 
@@ -54,7 +55,7 @@ test("termination first: the firing waits on the agent row, then finds the sched
   const id = await kidId();
   const term = hold(async (tx) => {
     await tx`select id from agents where id = ${id} for no key update`;
-    await tx`update agents set terminated_at = now(), terminated_by = '@or' where id = ${id}`;
+    await tx`update agents set terminated_at = now(), terminated_by = null where id = ${id}`;
     await tx`update schedules set deleted_at = now(), next_run_at = null where target_agent_id = ${id}`;
   });
   await term.ready;
@@ -80,7 +81,7 @@ test("firing first: the termination waits on the firing's lock, then rejects the
   clock = new Date("2026-11-23T08:00:00Z");
   const tick = h.app.scheduler.tick();
   await waitForLocks(1);
-  const terminated = h.app.terminator.terminate(id, "@or");
+  const terminated = h.app.terminator.terminate(id, await seedTestUser(h.app.db, "or"));
   await waitForLocks(2); // the termination now waits on the agent row our firing shares
   blocker.release();
   await blocker.done;

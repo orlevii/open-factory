@@ -665,7 +665,7 @@ test("header: a terminated agent's Pin is its own button, outside the live line"
         kind: "ephemeral",
         status: "terminated",
         terminatedAt: "2026-11-18T09:00:00.000Z",
-        terminatedBy: "lead",
+        terminatedBy: { ref: "aaaaaaaa", handle: "lead" },
         workspaceGraceEndsAt: "2099-11-21T09:00:00.000Z",
       }),
     );

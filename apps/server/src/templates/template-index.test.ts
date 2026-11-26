@@ -422,7 +422,7 @@ async function seedUser(
         template: "mgr-template",
         runtime: "local",
         credentialId: mgrCred,
-        reportsToUser: await testManagerUserId(t.db),
+        reportsTo: await testManagerUserId(t.db),
       })
       .returning({ id: schema.agents.id });
     await t.db.insert(schema.agents).values({
@@ -432,9 +432,8 @@ async function seedUser(
       template: o.template,
       runtime: "local",
       kind: "ephemeral",
-      reportsTo: mgr?.id,
+      reportsTo: mgr?.id as string,
       terminatedAt: new Date(),
-      terminatedBy: "@factory",
     });
     return;
   }
@@ -445,7 +444,7 @@ async function seedUser(
     template: o.template,
     runtime: "local",
     credentialId,
-    reportsToUser: await testManagerUserId(t.db),
+    reportsTo: await testManagerUserId(t.db),
     ...(o.archived ? { archivedAt: new Date() } : {}),
   });
 }

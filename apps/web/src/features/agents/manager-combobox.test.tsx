@@ -43,7 +43,7 @@ const AGENTS = [
     displayName: "Lead",
     template: "lead",
     status: "hibernated",
-    reportsTo: { kind: "agent", handle: "cto" },
+    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "cto" },
     depth: 1,
   }),
 ];
@@ -132,12 +132,12 @@ test("Edit leaves the agent and its descendants out, and shows the saved human m
         displayName: "Lead",
         template: "lead",
         status: "hibernated",
-        reportsTo: { kind: "user", handle: "bob" },
+        reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "bob" },
       }),
       agentSummary({
         slug: "dev",
         displayName: "Dev",
-        reportsTo: { kind: "agent", handle: "lead" },
+        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
         depth: 1,
       }),
     ],
@@ -159,7 +159,7 @@ test("a saved human manager shows as a plain handle, not archived, while the use
         displayName: "Lead",
         template: "lead",
         status: "hibernated",
-        reportsTo: { kind: "user", handle: "bob" },
+        reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "bob" },
       }),
     ],
     extra: {
@@ -178,7 +178,7 @@ test("a saved manager who has since been disabled stays shown, named as disabled
         displayName: "Lead",
         template: "lead",
         status: "hibernated",
-        reportsTo: { kind: "user", handle: "zed" },
+        reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "zed" },
       }),
     ],
   });

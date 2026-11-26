@@ -25,7 +25,7 @@ beforeEach(async () => {
   }
   // a spawned agent
   ids.kid = (await h.seedAgent({ slug: "kid" })).id;
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'kid'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where slug = 'kid'`;
   tok.kid = h.app.agentTokens.mint(ids.kid as string).token;
 });
 afterEach(() => h.close());

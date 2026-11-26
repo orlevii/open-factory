@@ -63,6 +63,12 @@ const toPrincipal = (r: typeof schema.principals.$inferSelect): Principal => ({
   handle: r.handle,
 });
 
+/** A terminator as the `terminated` event and peer notices word it: `@handle` for a human, a bare slug for a spawner, `@factory` for the TTL (null). */
+export function terminatorLabel(by: Pick<Principal, "kind" | "handle"> | null): string {
+  if (!by) return "@factory";
+  return by.kind === "human" ? `@${by.handle}` : by.handle;
+}
+
 export async function principalById(tx: Tx, id: string): Promise<Principal | undefined> {
   const [row] = await tx.select().from(schema.principals).where(eq(schema.principals.id, id));
   return row && toPrincipal(row);

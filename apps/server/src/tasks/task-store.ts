@@ -322,14 +322,14 @@ export class TaskStore {
     return e.agentId ? { agentId: e.agentId } : { userId: e.userId as string };
   }
 
-  /** The managers above an agent, nearest first (the transitive `reports_to` chain, in the caller's transaction). */
+  /** The agent managers above an agent, nearest first (the transitive `reports_to` chain, in the caller's transaction). A human manager ends the chain and isn't in it. */
   async managerChain(tx: Exec, agentId: string): Promise<string[]> {
     const r = await tx.execute(sql`
       with recursive up(id, depth) as (
         select reports_to, 1 from agents where id = ${agentId} and reports_to is not null
         union
         select a.reports_to, up.depth + 1 from up join agents a on a.id = up.id where a.reports_to is not null)
-      select id from up order by depth`);
+      select id from up where exists (select 1 from agents m where m.id = up.id) order by depth`);
     return (r as unknown as { id: string }[]).map((x) => x.id);
   }
 }

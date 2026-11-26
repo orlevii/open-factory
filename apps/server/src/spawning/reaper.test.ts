@@ -10,6 +10,7 @@ import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.
 import { insertAgent } from "../agents/testing/rows.ts";
 import { sendAs } from "../agents/testing/runtime-harness.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
 import { agentStateDir } from "../workspace/paths.ts";
 import { SWEEP_INTERVAL_MS } from "./lifecycle.ts";
@@ -114,7 +115,11 @@ async function setup() {
     return c;
   }
   const row = async (id: string) => (await app.app.store.agentById(id)) as AgentRow;
-  const terminatedBy = async (id: string) => (await row(id)).terminatedBy;
+  /** null while it lives, `@factory` once the TTL sweep ended it (a null `terminated_by` is the factory). */
+  const terminatedBy = async (id: string) => {
+    const r = await row(id);
+    return r.terminatedAt ? (r.terminatedBy ?? "@factory") : null;
+  };
   return {
     t: app,
     driver,
@@ -369,7 +374,8 @@ test("workspace deleted after the grace, not when pinned; unpin after grace dele
   const s = await setup();
   const a = await s.spawnHibernated("a");
   const b = await s.spawnHibernated("b");
-  for (const c of [a, b]) await s.t.app.terminator.terminate(c.id, "@or");
+  for (const c of [a, b])
+    await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await a.rt.settled();
   await b.rt.settled();
   const ws = s.t.app.workspace;
@@ -404,7 +410,7 @@ test("workspace deleted after the grace, not when pinned; unpin after grace dele
 test("a pin that lands after the candidate was read unpinned keeps the workspace (re-read under the lock)", async () => {
   const s = await setup();
   const c = await s.spawnHibernated("p");
-  await s.t.app.terminator.terminate(c.id, "@or");
+  await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await c.rt.settled();
   const ws = s.t.app.workspace;
   mkdirSync(path.join(agentStateDir(s.t.factoryHome, c.slug), "persona"), { recursive: true });
@@ -436,7 +442,7 @@ test("a pin that lands after the candidate was read unpinned keeps the workspace
 test("a failing deletion is logged and retried by the next run", async () => {
   const s = await setup();
   const c = await s.spawnHibernated("f");
-  await s.t.app.terminator.terminate(c.id, "@or");
+  await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await c.rt.settled();
   vi.spyOn(s.t.app.workspace, "deleteWorkspace").mockRejectedValueOnce(
     new Error("EBUSY: resource busy or locked"),
@@ -462,7 +468,7 @@ test("stuck: a terminated stop_failed child is force-removed and its slot releas
   // A stop in progress: never stuck, nothing done to it.
   const busy = await s.spawnIdle("s1");
   busy.proc.holdStop = true;
-  await s.t.app.terminator.terminate(busy.id, "@or");
+  await s.t.app.terminator.terminate(busy.id, await seedTestUser(s.t.db, "or"));
   await busy.rt.settled();
   expect(busy.proc.stopped).toBe(true);
   expect(await busy.rt.sweepStuck()).toBe("still");
@@ -482,7 +488,7 @@ test("stuck: a terminated stop_failed child is force-removed and its slot releas
   };
   expect(await c.rt.hibernate("warm_window")).toBe(true);
   await c.rt.settled();
-  await s.t.app.terminator.terminate(c.id, "@or");
+  await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await c.rt.settled();
   expect((await s.row(c.id)).errorKind).toBe("stop_failed");
   expect(c.proc.exited).toBe(false);
@@ -518,7 +524,7 @@ test("a stuck agent's workspace is kept past the grace until it is cleared", asy
   c.proc.forceKill = async () => {
     throw new Error("kill: operation not permitted");
   };
-  await s.t.app.terminator.terminate(c.id, "@or");
+  await s.t.app.terminator.terminate(c.id, await seedTestUser(s.t.db, "or"));
   await c.rt.settled();
   expect((await s.row(c.id)).errorKind).toBe("stop_failed");
   now = Date.now() + 3 * day + 1;
@@ -532,13 +538,14 @@ test("the sweep appends a terminated event a crash after the commit lost", async
   const s = await setup();
   const c = await s.spawnHibernated("e");
   // The commit happened (the row says so) but the stop job never ran.
+  const boss = await seedTestUser(s.t.db, "boss");
   await s.t.db
     .update(schema.agents)
-    .set({ terminatedAt: new Date(), terminatedBy: "@lead" })
+    .set({ terminatedAt: new Date(), terminatedBy: boss.id })
     .where(eq(schema.agents.id, c.id));
   await s.reaper.run();
   const evs = (await s.t.app.store.after(c.id, 0, 1000)).map((e) => e.event);
-  expect(evs.filter((e) => e.type === "terminated")).toEqual([{ type: "terminated", by: "@lead" }]);
+  expect(evs.filter((e) => e.type === "terminated")).toEqual([{ type: "terminated", by: "@boss" }]);
   await s.reaper.run();
   const again = (await s.t.app.store.after(c.id, 0, 1000)).map((e) => e.event);
   expect(again.filter((e) => e.type === "terminated")).toHaveLength(1);

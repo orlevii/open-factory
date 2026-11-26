@@ -1,5 +1,5 @@
 import { type AgentRow, type Db, schema } from "@open-factory/db";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Exec } from "../agents/event-store.ts";
 
 /** An agent that is neither archived nor terminated. */
@@ -24,20 +24,16 @@ export class Neighborhood {
     if (!self) return { manager: null, peers: [], reports: [] };
     const live = liveAgent;
     const order = [asc(schema.agents.displayName), asc(schema.agents.slug)] as const;
-    const manager = self.reportsTo
-      ? ((
-          await tx
-            .select()
-            .from(schema.agents)
-            .where(and(eq(schema.agents.id, self.reportsTo), live))
-        )[0] ?? null)
-      : null;
-    // I9 §4.5: peers share the manager, an agent or a human.
-    const sameManager = self.reportsTo
-      ? eq(schema.agents.reportsTo, self.reportsTo)
-      : self.reportsToUser
-        ? eq(schema.agents.reportsToUser, self.reportsToUser)
-        : sql`false`;
+    // A human manager has no agent row: `manager` is null.
+    const manager =
+      (
+        await tx
+          .select()
+          .from(schema.agents)
+          .where(and(eq(schema.agents.id, self.reportsTo), live))
+      )[0] ?? null;
+    // Peers share the manager, an agent or a human.
+    const sameManager = eq(schema.agents.reportsTo, self.reportsTo);
     const peers = (
       await tx
         .select()

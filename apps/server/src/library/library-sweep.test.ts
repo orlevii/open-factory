@@ -90,7 +90,7 @@ const row = (id: string, o: Partial<SkillSourceRow> = {}): SkillSourceRow => ({
   skills: ["tdd"],
   state: "ready",
   startedAt: new Date(T0),
-  addedBy: "@or",
+  addedById: "u-or",
   addedAt: new Date(T0),
   deletedAt: null,
   ...o,

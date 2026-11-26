@@ -74,7 +74,7 @@ export class UserAdminService {
         const managed = await tx
           .select({ slug: schema.agents.slug })
           .from(schema.agents)
-          .where(and(eq(schema.agents.reportsToUser, targetId), isNull(schema.agents.terminatedAt)))
+          .where(and(eq(schema.agents.reportsTo, targetId), isNull(schema.agents.terminatedAt)))
           .orderBy(asc(schema.agents.slug));
         if (managed.length)
           throw new ApiError(

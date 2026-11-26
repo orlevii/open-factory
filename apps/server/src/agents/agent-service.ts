@@ -30,7 +30,9 @@ import { resolveAgentArg, resolveArg } from "../principals/principal-args.ts";
 import {
   createPrincipal,
   HandleTakenError,
+  type Principal,
   principalsByHandles,
+  principalsByIds,
 } from "../principals/principal-store.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
@@ -59,12 +61,13 @@ export type UpdatePlan = {
 /** A subject with no neighbours to leave behind (a join reads the neighbourhood after the change). */
 const noPeers = { managerId: null, peerIds: [] };
 
-type Managers = { agents: Map<string, string>; users: Map<string, string> };
+/** The principals a set of rows name as their manager or terminator, by id. */
+type Managers = Map<string, Principal>;
 
-/** The row's manager as the DTO says it: an agent's slug or a user's handle (a spawned agent's is its spawner). */
+/** The row's manager as the DTO says it (a spawned agent's is its spawner). */
 function reportsToOf(r: AgentRow, m: Managers): ReportsTo {
-  if (r.reportsTo) return { kind: "agent", handle: m.agents.get(r.reportsTo) ?? "" };
-  return { kind: "user", handle: m.users.get(r.reportsToUser ?? "") ?? "" };
+  const p = m.get(r.reportsTo);
+  return { kind: p?.kind ?? "agent", ref: p?.ref ?? "", handle: p?.handle ?? "" };
 }
 
 /** A resolved manager: an active persistent agent, or an enabled user. */
@@ -117,11 +120,12 @@ export function endedAgentsQuery(db: Exec) {
 }
 
 /** S7 §14: a terminated agent's fields; the grace end only while its workspace still exists. */
-function terminationFields(r: AgentRow) {
+function terminationFields(r: AgentRow, m: Managers) {
   if (!r.terminatedAt) return {};
+  const by = r.terminatedBy ? m.get(r.terminatedBy) : undefined;
   return {
     terminatedAt: r.terminatedAt.toISOString(),
-    ...(r.terminatedBy ? { terminatedBy: r.terminatedBy } : {}),
+    terminatedBy: by ? { ref: by.ref, handle: by.handle } : null,
     workspacePinned: r.workspacePinned,
     ...(r.workspaceDeletedAt
       ? { workspaceDeletedAt: r.workspaceDeletedAt.toISOString() }
@@ -232,28 +236,14 @@ export class AgentService {
     );
   }
 
-  /** The managers' handles of `rows`, agents and users, read for those managers only. */
+  /** The managers and terminators of `rows`, read for those principals only. */
   private async managersOf(rows: AgentRow[]): Promise<Managers> {
-    const agentIds = [...new Set(rows.flatMap((r) => (r.reportsTo ? [r.reportsTo] : [])))];
-    const userIds = [...new Set(rows.flatMap((r) => (r.reportsToUser ? [r.reportsToUser] : [])))];
-    const [agents, users] = await Promise.all([
-      agentIds.length
-        ? this.d.db
-            .select({ id: schema.agents.id, handle: schema.agents.slug })
-            .from(schema.agents)
-            .where(inArray(schema.agents.id, agentIds))
-        : [],
-      userIds.length
-        ? this.d.db
-            .select({ id: schema.principals.id, handle: schema.principals.handle })
-            .from(schema.principals)
-            .where(inArray(schema.principals.id, userIds))
-        : [],
-    ]);
-    return {
-      agents: new Map(agents.map((m) => [m.id, m.handle])),
-      users: new Map(users.map((m) => [m.id, m.handle])),
-    };
+    const ids = new Set<string>();
+    for (const r of rows) {
+      ids.add(r.reportsTo);
+      if (r.terminatedBy) ids.add(r.terminatedBy);
+    }
+    return principalsByIds(this.d.db, [...ids]);
   }
 
   /** I9 §4.6: each shown agent's model and effort, from its overlay, else the template's last valid doc, else neither. */
@@ -400,7 +390,7 @@ export class AgentService {
         projects: (projectsOf.get(r.id) ?? []).sort(),
         depth,
         archivedAt: r.archivedAt ? r.archivedAt.toISOString() : null,
-        ...terminationFields(r),
+        ...terminationFields(r, managers),
         ...(await this.d.runtimes.liveFields(r.id, r)),
       })),
     );
@@ -707,8 +697,7 @@ export class AgentService {
           // I2 §5.1: the overlay starts empty (the agent runs the live template) unless the creator gave one.
           config,
           runtime: tpl.config.runtime,
-          reportsTo: manager.kind === "agent" ? manager.row.id : null,
-          reportsToUser: manager.kind === "user" ? manager.id : null,
+          reportsTo: manager.kind === "agent" ? manager.row.id : manager.id,
           credentialId,
           manageOrg: b.manageOrg ?? false,
         });
@@ -839,13 +828,9 @@ export class AgentService {
     if (b.reportsTo !== undefined) {
       const manager = await this.resolveManager(b.reportsTo);
       if (manager.kind === "agent") await this.assertNoCycle(row.id, manager.row);
-      const same =
-        manager.kind === "agent"
-          ? manager.row.id === row.reportsTo
-          : manager.id === row.reportsToUser;
-      if (!same) {
-        set.reportsTo = manager.kind === "agent" ? manager.row.id : null;
-        set.reportsToUser = manager.kind === "user" ? manager.id : null;
+      const managerId = manager.kind === "agent" ? manager.row.id : manager.id;
+      if (managerId !== row.reportsTo) {
+        set.reportsTo = managerId;
         moved = { to: manager.kind === "agent" ? manager.row.slug : manager.handle };
         movedTo = manager;
         changed.feeds = true;

@@ -51,19 +51,19 @@ const agents = (over: Partial<Record<string, Partial<AgentSummary>>> = {}) => [
   agentSummary({
     slug: "b",
     displayName: "Bravo",
-    reportsTo: { kind: "agent", handle: "a" },
+    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "a" },
     ...over.b,
   }),
   agentSummary({
     slug: "c",
     displayName: "Charlie",
-    reportsTo: { kind: "agent", handle: "b" },
+    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "b" },
     ...over.c,
   }),
   agentSummary({
     slug: "s",
     displayName: "Sierra",
-    reportsTo: { kind: "agent", handle: "b" },
+    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "b" },
     ...over.s,
   }),
 ];
@@ -489,7 +489,9 @@ test("an agent dropped while its menu is open and then back doesn't reopen it; f
   act(() => {
     qc.setQueryData(
       ["agents", "exclude"],
-      agents({ b: { reportsTo: { kind: "user", handle: "or" } } }).filter((a) => a.slug !== "a"),
+      agents({ b: { reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" } } }).filter(
+        (a) => a.slug !== "a",
+      ),
     );
   });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());

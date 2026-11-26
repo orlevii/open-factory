@@ -13,6 +13,7 @@ import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { HUMANS_SEND_REFUSAL, resolveArgs } from "../principals/principal-args.ts";
+import { principalById } from "../principals/principal-store.ts";
 import {
   attachmentOf,
   bodyWithAttachments,
@@ -604,11 +605,12 @@ export class Router {
     f: Forward,
     tx: Tx,
   ): Promise<{ update?: PendingRow; userIds?: string[] } | undefined> {
-    if (agent.reportsTo) {
+    const manager = await principalById(tx, agent.reportsTo);
+    if (manager?.kind === "agent") {
       const update = await this.d.store.createOrgRow(
         {
           kind: "member_update",
-          toAgentId: agent.reportsTo,
+          toAgentId: manager.id,
           ...(f.fact ? { subjectAgentId: f.agentId, notice: f.fact } : { fromAgentId: f.agentId }),
           ...(f.re ? { re: f.re } : {}),
           body: f.body,
@@ -617,8 +619,8 @@ export class Router {
       );
       return { update };
     }
-    if (!agent.reportsToUser) return undefined;
-    const to = { userId: agent.reportsToUser };
+    if (!manager) return undefined;
+    const to = { userId: manager.id };
     const { userIds } =
       f.fact === "errored"
         ? await this.d.store.createHumanMessage(

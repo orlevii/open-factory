@@ -17,8 +17,8 @@ beforeAll(async () => {
   await t.sql`insert into users (id, name, email) values (${ids.or},'Or','or@x.io')`;
   await t.sql`insert into credentials (id,name,kind,value_enc) values ('c1','w','oauth_token','\\x00')`;
   await t.sql.unsafe(principalSql(ids.lead, "agent", "lead"));
-  await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,reports_to_user,credential_id) values
-    (${ids.lead},'lead','Lead','t','{}','local','persistent',null,${ids.or},'c1')`;
+  await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,credential_id) values
+    (${ids.lead},'lead','Lead','t','{}','local','persistent',${ids.or},'c1')`;
   await t.sql.unsafe(principalSql(ids.dev, "agent", "dev"));
   await t.sql.unsafe(principalSql(ids.kid, "agent", "kid"));
   await t.sql`insert into agents (id,slug,display_name,template,config,runtime,kind,reports_to,credential_id) values

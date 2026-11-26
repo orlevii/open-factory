@@ -77,10 +77,7 @@ async function setup() {
     { agentId: lead.id, projectId: ids.web as string },
   ]);
   const pm = await app.seedAgent({ slug: "pm" });
-  await app.db
-    .update(schema.agents)
-    .set({ reportsTo: lead.id, reportsToUser: null })
-    .where(eq(schema.agents.id, pm.id));
+  await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
   return { t: app, driver, lead, pm };
 }
 
@@ -135,7 +132,7 @@ async function seedChild(app: T, lead: AgentRow, slug: string, o: { terminated?:
     kind: "ephemeral",
     reportsTo: lead.id,
     credentialId: lead.credentialId,
-    ...(o.terminated ? { terminatedAt: new Date(), terminatedBy: "@or" } : {}),
+    ...(o.terminated ? { terminatedAt: new Date() } : {}),
   });
 }
 
@@ -326,7 +323,7 @@ test("a spawn racing an archive of its spawner: the archive refuses or the spawn
   const { t, lead, pm } = await setup();
   await t.db
     .update(schema.agents)
-    .set({ reportsTo: null, reportsToUser: lead.reportsToUser })
+    .set({ reportsTo: lead.reportsTo })
     .where(eq(schema.agents.id, pm.id));
   const g = gateMaterialize(t);
   const spawning = t.app.spawner.spawn(lead.id, args({ suffix: "race" }), null);
@@ -527,7 +524,7 @@ test("I2 §6.2: the allowlist is started's; secrets are the stricter of started 
 test("a caller with a manager is told to ask its manager", async () => {
   const { t, lead } = await setup();
   const boss = await t.seedAgent({ slug: "boss" });
-  await t.sql`update agents set reports_to = ${boss.id}, reports_to_user = null where id = ${lead.id}`;
+  await t.sql`update agents set reports_to = ${boss.id} where id = ${lead.id}`;
   writeTemplate(t.factoryHome, "dev", "name: dev\nruntime: nonsense\n");
   expect(await t.app.spawner.spawn(lead.id, args({ template: "dev" }), null)).toEqual({
     ok: false,

@@ -80,7 +80,7 @@ describe("the inbox entry's loopHold", () => {
     await openHold(0);
     const [a, b] = (await entry()).loopHold.agents as [{ slug: string }, { slug: string }];
     await h.sql`update agents set archived_at = now() where slug = ${a.slug}`;
-    await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf(a.slug)}, reports_to_user = null, terminated_at = now(), terminated_by = '@or' where slug = ${b.slug}`;
+    await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf(a.slug)}, terminated_at = now(), terminated_by = null where slug = ${b.slug}`;
     const { agents } = (await entry()).loopHold;
     expect(agents).toEqual([
       { slug: a.slug, status: "archived" },

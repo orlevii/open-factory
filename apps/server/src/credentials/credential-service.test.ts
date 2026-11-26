@@ -238,7 +238,6 @@ async function spawnedUsing(
     reportsTo: spawnerId,
     credentialId: c.id,
     terminatedAt: terminated ? new Date() : null,
-    terminatedBy: terminated ? "lead" : null,
   });
   return id;
 }

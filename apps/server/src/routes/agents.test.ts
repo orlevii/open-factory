@@ -11,6 +11,7 @@ import { CompactingError } from "../agents/errors.ts";
 import { AgentEndedError } from "../agents/message-cancel.ts";
 import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
+import { principalsByHandles } from "../principals/principal-store.ts";
 import { WORKSPACE_GRACE_MS } from "../spawning/lifecycle.ts";
 import { makeTestApp } from "../test/helpers.ts";
 import { principalSql, seedTestUser } from "../test/principals.ts";
@@ -219,7 +220,7 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
     expect(created.json().agent).toMatchObject({
       slug: "boss",
       credential: "work",
-      reportsTo: { kind: "user", handle: "or4" },
+      reportsTo: { kind: "human", ref: expect.any(String), handle: "or4" },
     });
     // The manager is required, and has to be an agent or a person who exists: a 400 on the field, nothing created.
     for (const reportsTo of [null, "", "ghost"]) {
@@ -247,7 +248,11 @@ test("agent management routes: create, patch, reset-persona, archive, unarchive,
     await t2.sql`delete from agents where id = 'boss-kid1-id'`;
     // A leading @ is fine on an edit too.
     const moved = await call("PATCH", "/api/agents/boss", { reportsTo: "@or4" });
-    expect(moved.json().agent.reportsTo).toEqual({ kind: "user", handle: "or4" });
+    expect(moved.json().agent.reportsTo).toEqual({
+      kind: "human",
+      ref: expect.any(String),
+      handle: "or4",
+    });
     const bad = await call("POST", "/api/agents", { ...body, slug: "Bad Slug" });
     expect(bad.statusCode).toBe(400);
     expect(bad.json().error.fields).toHaveProperty("slug");
@@ -339,7 +344,6 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
       slug: "boss-aa11",
       kind: "ephemeral",
       status: "terminated",
-      terminatedBy: "@or7",
       workspacePinned: false,
       depth: 0,
     });
@@ -367,10 +371,30 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
         slug: "boss-aa11",
         status: "terminated",
         depth: 0,
-        reportsTo: { kind: "agent", handle: "boss" },
+        reportsTo: { kind: "agent", ref: expect.any(String), handle: "boss" },
       }),
     ]);
     expect(ended.more).toBe(false);
+  });
+
+  test("terminating from the UI records the human", async () => {
+    await child("boss-uu01");
+    const res = await call("POST", "/api/agents/boss-uu01/terminate");
+    expect(res.statusCode).toBe(200);
+    const [or7] = [...(await principalsByHandles(s.db, ["or7"])).values()];
+    expect(res.json().agent.terminatedBy).toEqual({ ref: or7?.ref, handle: "or7" });
+    const [row] = await s.sql`select terminated_by from agents where slug = 'boss-uu01'`;
+    expect(row?.terminated_by).toBe(or7?.id);
+  });
+
+  test("the idle TTL records no terminator", async () => {
+    await child("boss-uu02");
+    const [row] = await s.sql`select id from agents where slug = 'boss-uu02'`;
+    await s.app.terminator.terminate(String(row?.id), null);
+    const got = await call("GET", "/api/agents/boss-uu02");
+    expect(got.json().agent).toMatchObject({ status: "terminated", terminatedBy: null });
+    const [after] = await s.sql`select terminated_by from agents where slug = 'boss-uu02'`;
+    expect(after?.terminated_by).toBeNull();
   });
 
   test("a terminated agent answers 409 agent_terminated to compact, interrupt, restart, reset-session", async () => {
@@ -483,7 +507,7 @@ describe("S7: terminate, workspace pin, the ended list, summary fields", () => {
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to,
         terminated_at, terminated_by, status, error_kind, last_error)
       select ${ffId}, 'boss-ff66', 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
-        now(), '@or7', 'errored', 'stop_failed', 'x'
+        now(), null, 'errored', 'stop_failed', 'x'
       from agents where id = ${bossId}`;
     const listed = (await call("GET", "/api/agents?ended=only")).json().agents;
     expect(listed.find((a: { slug: string }) => a.slug === "boss-ff66")).toMatchObject({
@@ -516,8 +540,8 @@ describe("S7: the ended list is bounded", () => {
         insert into principals (id, kind, handle, ref)
         select id, 'agent', 'old-' || i, substr(md5(id), 1, 8) from ids
       )
-      insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user, archived_at)
-      select ids.id, 'old-' || ids.i, 'Old', template, config, runtime, credential_id, reports_to_user,
+      insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to, archived_at)
+      select ids.id, 'old-' || ids.i, 'Old', template, config, runtime, credential_id, reports_to,
              now() - make_interval(hours => 1 + ids.i)
       from agents, ids where slug = 'boss'`;
   };
@@ -527,7 +551,7 @@ describe("S7: the ended list is bounded", () => {
     const newId = randomUUID();
     await s.sql.unsafe(principalSql(newId, "agent", "boss-new1"));
     await s.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
-      select ${newId}, 'boss-new1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id, now(), '@factory'
+      select ${newId}, 'boss-new1', 'Kid', template, config, runtime, credential_id, 'ephemeral', id, now(), null
       from agents where slug = 'boss'`;
     let r = (await get("/api/agents?ended=only")).json();
     expect(r.agents).toHaveLength(200);

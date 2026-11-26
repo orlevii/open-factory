@@ -140,7 +140,7 @@ test("I2 §6.7: a secret only the template lists: its live agents and their live
       kind: "ephemeral",
       reportsTo: lead.id,
       credentialId: lead.credentialId,
-      ...(terminated ? { terminatedAt: new Date(), terminatedBy: "@or" } : {}),
+      ...(terminated ? { terminatedAt: new Date() } : {}),
     });
   }
   restarts.length = 0;

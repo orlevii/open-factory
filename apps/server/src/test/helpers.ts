@@ -159,8 +159,8 @@ export interface SeedAgentOptions {
   /** The agent's overlay (`agents.config`, I2 §5.1); `{}` runs exactly the `test` template. */
   config?: AgentOverlay;
   credentialValue?: string;
-  /** The user it reports to; defaults to the oldest user (`testManagerUserId`). */
-  reportsToUser?: string;
+  /** The principal id it reports to; defaults to the oldest user (`testManagerUserId`). */
+  reportsTo?: string;
 }
 
 /** The `test` template every seeded agent is created from: local, nothing listed (I2: config comes from it live). */
@@ -197,7 +197,7 @@ export async function seedTestAgent(
       config: agentOverlaySchema.parse(opts.config ?? {}),
       runtime: "local",
       credentialId,
-      reportsToUser: opts.reportsToUser ?? (await testManagerUserId(app.db)),
+      reportsTo: opts.reportsTo ?? (await testManagerUserId(app.db)),
     })
     .returning();
   if (!row) throw new Error("seed failed");

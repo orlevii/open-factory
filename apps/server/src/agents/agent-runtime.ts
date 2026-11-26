@@ -1814,7 +1814,7 @@ export class AgentRuntime {
       const row = await this.d.store.agentById(this.agent.id);
       if (!row?.terminatedAt) return "none";
       if (!this.terminationCommitted) this.markTerminated({ committed: true });
-      const by = row.terminatedBy ?? "@factory";
+      const by = await this.d.store.terminatorLabelOf(row.terminatedBy);
       await this.ensureTerminatedEvent(by);
       this.containerListed = Boolean(o.containerListed);
       const proc = this.proc;

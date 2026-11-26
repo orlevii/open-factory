@@ -40,7 +40,6 @@ import { useShortcut } from "@/lib/shortcuts";
 import { agentsListQueryOptions } from "./api";
 import { CronsSegment } from "./crons-popover";
 import { atPhrase, formatTime } from "./format";
-import { formatBy } from "./format-by";
 import { canPin, PinButton } from "./live-line";
 import { LINK_CLASS } from "./message-block";
 import { RestartNowButton } from "./restart-now-button";
@@ -66,11 +65,12 @@ export const WHATS_KEPT =
 export function endedSentence(agent: AgentSummary, now: Date): ReactNode {
   const when = atPhrase(new Date(agent.terminatedAt ?? 0), now);
   const by = agent.terminatedBy;
-  if (!by) return `Terminated ${when}.`;
-  if (formatBy(by).kind === "ttl") return `Terminated ${when} after 3 days without activity.`;
+  if (by === undefined) return `Terminated ${when}.`;
+  // null: the factory ended it (the idle TTL).
+  if (by === null) return `Terminated ${when} after 3 days without activity.`;
   return (
     <>
-      Terminated by <Actor by={by} /> {when}.
+      Terminated by <Actor by={`@${by.handle}`} /> {when}.
     </>
   );
 }

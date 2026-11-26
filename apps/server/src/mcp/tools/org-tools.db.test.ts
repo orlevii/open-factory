@@ -171,8 +171,7 @@ test.each([
     note: `@${slug} is created and starts when it gets its first message.`,
   });
   const created = await row(slug);
-  expect(created.reportsTo).toBe(kind === "agent" ? (await row("hr-bot")).id : null);
-  expect(created.reportsToUser).toBe(kind === "user" ? "u-or" : null);
+  expect(created.reportsTo).toBe(kind === "agent" ? (await row("hr-bot")).id : "u-or");
   expect(created.manageOrg).toBe(false);
 });
 
@@ -204,7 +203,7 @@ test("create_agent and update_agent refuse an unknown handle, a disabled person 
     });
   }
   expect(await t.sql`select 1 from agents where slug = 'never'`).toHaveLength(0);
-  expect((await row("dev-1")).reportsToUser).toBe("u-or");
+  expect((await row("dev-1")).reportsTo).toBe("u-or");
   await t.sql`delete from agents where id = 'kid-id'`;
   await t.sql`delete from credentials where id = 'cred-kid-id'`;
 });
@@ -214,7 +213,6 @@ test("update_agent moves an agent to a new manager and reports reports_to as cha
   expect(r.json).toMatchObject({ slug: "dev-1", changed: ["reports_to"] });
   const moved = await row("dev-1");
   expect(moved.reportsTo).toBe((await row("plain")).id);
-  expect(moved.reportsToUser).toBeNull();
   expect((await call("hr-bot", "get_agent", { slug: "dev-1" })).json.reports_to).toBe("@plain");
   const back = await call("hr-bot", "update_agent", { slug: "dev-1", reports_to: "@or" });
   expect(back.json).toMatchObject({ changed: ["reports_to"] });

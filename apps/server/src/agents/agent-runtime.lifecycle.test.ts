@@ -192,9 +192,9 @@ test.each([
       seed: async (id) => {
         await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
         await t.sql.unsafe(principalSql(`lead-${id}`, "agent", `lead-${id}`));
-        await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
-                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to_user from agents where id = ${id}`;
-        await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`}, reports_to_user = null where id = ${id}`;
+        await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
+                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to from agents where id = ${id}`;
+        await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
       },
     });
     await rt.reload();
@@ -220,9 +220,9 @@ test("a spawned agent keeps other fixes (secrets) unchanged", async () => {
     seed: async (id) => {
       await t.sql`insert into credentials (id, name, kind, value_enc) values (${`cred-lead-${id}`}, ${`lead-${id}`}, 'oauth_token', ${Buffer.from("x")})`;
       await t.sql.unsafe(principalSql(`lead-${id}`, "agent", `lead-${id}`));
-      await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
-                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to_user from agents where id = ${id}`;
-      await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`}, reports_to_user = null where id = ${id}`;
+      await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
+                  select ${`lead-${id}`}, ${`lead-${id}`}, 'Lead', template, config, runtime, ${`cred-lead-${id}`}, reports_to from agents where id = ${id}`;
+      await t.sql`update agents set kind = 'ephemeral', reports_to = ${`lead-${id}`} where id = ${id}`;
     },
   });
   await rt.reload();

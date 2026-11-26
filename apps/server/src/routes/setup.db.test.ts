@@ -68,7 +68,6 @@ test("GET /api/setup: a terminated ephemeral agent still counts as hasAgent", as
     kind: "ephemeral",
     reportsTo: boss.id,
     terminatedAt: new Date(),
-    terminatedBy: "@or",
   });
   const r = await getSetup();
   expect(r.json()).toEqual({ hasCredential: true, hasTemplate: false, hasAgent: true });

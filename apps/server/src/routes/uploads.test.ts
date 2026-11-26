@@ -42,7 +42,6 @@ beforeAll(async () => {
     .set({
       kind: "ephemeral",
       reportsTo: dev[0]?.id,
-      reportsToUser: null,
       terminatedAt: new Date(),
     })
     .where(eq(schema.agents.slug, "gone"));

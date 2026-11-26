@@ -696,7 +696,7 @@ test("the manager picker leaves out spawned agents", async () => {
         slug: "cto-ab12",
         displayName: "Dev · ab12",
         kind: "ephemeral",
-        reportsTo: { kind: "agent", handle: "cto" },
+        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "cto" },
         depth: 1,
       }),
     ],
@@ -1094,7 +1094,9 @@ test("the manager picker marks agents deeper than three levels with └", async 
         slug,
         displayName: slug.toUpperCase(),
         depth,
-        ...(depth ? { reportsTo: { kind: "agent", handle: chain[depth - 1] as string } } : {}),
+        ...(depth
+          ? { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: chain[depth - 1] as string } }
+          : {}),
       }),
     ),
   });

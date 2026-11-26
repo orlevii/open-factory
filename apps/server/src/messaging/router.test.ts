@@ -23,7 +23,7 @@ beforeEach(async () => {
   const lead = await h.seedAgent({ slug: "lead" });
   for (const slug of ["ada", "bob"]) {
     const r = await h.seedAgent({ slug });
-    await h.sql`update agents set reports_to = ${lead.id}, reports_to_user = null where id = ${r.id}`;
+    await h.sql`update agents set reports_to = ${lead.id} where id = ${r.id}`;
   }
 });
 afterEach(() => h.close());
@@ -323,7 +323,7 @@ test("Router.forward: a human manager gets their report's text and facts in thei
   const sam = await signUp(h.app, { handle: "sam" });
   const lead = await h.app.store.agentBySlug("lead");
   if (!lead) throw new Error("seed");
-  await h.sql`update agents set reports_to_user = ${or.user.id} where id = ${lead.id}`;
+  await h.sql`update agents set reports_to = ${or.user.id} where id = ${lead.id}`;
   const seen = { or: [] as ServerMessage[], sam: [] as ServerMessage[] };
   h.app.bus.subscribeUser(or.user.id, (m) => seen.or.push(m));
   h.app.bus.subscribeUser(sam.user.id, (m) => seen.sam.push(m));
@@ -381,7 +381,7 @@ test("R4 (owner): a human-managed agent's errored episode is one inbox item for 
   await startIdle("lead"); // signs up a second user, "hlead"
   const lead = await h.app.store.agentBySlug("lead");
   if (!lead) throw new Error("seed");
-  await h.sql`update agents set reports_to_user = ${or.user.id} where id = ${lead.id}`;
+  await h.sql`update agents set reports_to = ${or.user.id} where id = ${lead.id}`;
   const items = async () =>
     (
       await h.sql`select i.user_id from inbox_items i join messages m on m.id = i.message_id
@@ -457,7 +457,7 @@ test("a report's top-level text is persisted for its manager and handed over to 
 test("a report's text to a human manager keeps the request it answers on the inbox row", async () => {
   const { user: manager } = await signUp(h.app, { handle: "boss" });
   const ada = await h.app.store.agentBySlug("ada");
-  await h.sql`update agents set reports_to = null, reports_to_user = ${manager.id} where id = ${ada?.id ?? ""}`;
+  await h.sql`update agents set reports_to = ${manager.id} where id = ${ada?.id ?? ""}`;
   const { cookie } = await signUp(h.app, { handle: "asker" });
   await h.app.inject({
     method: "POST",
@@ -582,7 +582,7 @@ test("errored_reported clears with the error, so the next episode is reported", 
 
 test("a message to a terminated agent is refused; a terminated sender can't send and writes nothing", async () => {
   const ada = await h.app.store.agentBySlug("ada");
-  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'bob'`;
+  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'bob'`;
   const toGone = await h.app.router.send({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
   expect(toGone.results).toEqual([
     {
@@ -593,7 +593,7 @@ test("a message to a terminated agent is refused; a terminated sender can't send
     },
   ]);
   await h.sql`update agents set kind = 'persistent', terminated_at = null, terminated_by = null where slug = 'bob'`;
-  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'ada'`;
+  await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'ada'`;
   const fromEnded = await h.app.router.send({ agentId: ada?.id ?? "" }, ["bob"], "x", false);
   expect(fromEnded.results).toMatchObject([
     {
@@ -632,7 +632,7 @@ async function insertKid(tx: Tx, slug: string, o: { terminated?: boolean } = {})
       credentialId: lead.credentialId,
       kind: "ephemeral",
       reportsTo: lead.id,
-      ...(o.terminated ? { terminatedAt: new Date(), terminatedBy: "@factory" } : {}),
+      ...(o.terminated ? { terminatedAt: new Date() } : {}),
     })
     .returning();
   if (!row) throw new Error("insert failed");
@@ -778,7 +778,7 @@ describe("list sends: each recipient succeeds or fails alone (spec §4.4)", () =
 
   test("a terminated recipient is refused alone while the others get rows with the accepted list only", async () => {
     await signUp(h.app, { handle: "or" });
-    await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = '@factory' where slug = 'bob'`;
+    await h.sql`update agents set kind = 'ephemeral', terminated_at = now(), terminated_by = null where slug = 'bob'`;
     const r = await sendAs("ada", ["or", "bob", "lead"], "partial");
     expect(r.results.map((x) => [x.to, x.status])).toEqual([
       ["@or", "inbox"],

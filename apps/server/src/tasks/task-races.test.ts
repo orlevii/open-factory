@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import type { TaskError } from "./errors.ts";
 import type { Actor } from "./permission.ts";
 import { CONFLICT_SENTENCE } from "./task-service.ts";
@@ -15,7 +16,7 @@ beforeEach(async () => {
   const u = await signUp(h.app, { handle: "or" });
   or = { kind: "user", userId: u.user.id, handle: "or" };
   for (const slug of ["lead", "dev", "qa"]) ids[slug] = (await h.seedAgent({ slug })).id;
-  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
 });
 afterEach(() => h.close());
 
@@ -48,7 +49,7 @@ const outcome = <T>(p: Promise<T>) =>
   );
 const spawned = async (slug: string) => {
   const a = await h.seedAgent({ slug });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string}, reports_to_user = null where id = ${a.id}`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${ids.lead as string} where id = ${a.id}`;
   ids[slug] = a.id;
   return a.id;
 };
@@ -60,7 +61,7 @@ test("termination first: the assignment is refused", async () => {
   const kid = await spawned("kid");
   const a = hold(async (tx) => {
     await tx`select id from agents where id = ${kid} for no key update`;
-    await tx`update agents set terminated_at = now(), terminated_by = '@or' where id = ${kid}`;
+    await tx`update agents set terminated_at = now(), terminated_by = null where id = ${kid}`;
   });
   await a.ready;
   const create = outcome(h.app.tasks.create(or, { title: "t", assignee: "kid" }));
@@ -83,7 +84,7 @@ test("assignment first: the termination waits, then rejects the pending task_ass
   await a.ready;
   const create = outcome(h.app.tasks.create(or, { title: "t", assignee: "kid" }));
   await waitForLocks(1);
-  const term = outcome(h.app.terminator.terminate(kid, "@or"));
+  const term = outcome(h.app.terminator.terminate(kid, await seedTestUser(h.app.db, "or")));
   await waitForLocks(2);
   a.release();
   await a.done;

@@ -1,8 +1,8 @@
 import { expect, test } from "vitest";
 import { treeOrder } from "./tree.ts";
 
-const agent = (handle: string) => ({ kind: "agent" as const, handle });
-const user = (handle: string) => ({ kind: "user" as const, handle });
+const agent = (handle: string) => ({ kind: "agent" as const, ref: "aaaaaaaa", handle });
+const user = (handle: string) => ({ kind: "human" as const, ref: "hhhhhhhh", handle });
 
 test("depth-first, siblings by display name; a human or unknown manager makes a root", () => {
   const rows = [

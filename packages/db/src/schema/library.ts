@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { check, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { principals } from "./principals.ts";
 
 /**
  * I5 spec §5.1. One row per registered skill source (a host folder or a GitHub subpath). Host skills and
@@ -35,7 +36,9 @@ export const skillSources = pgTable(
     skills: jsonb("skills").$type<string[]>().notNull(),
     state: text("state").notNull().$type<"adding" | "ready">(),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
-    addedBy: text("added_by").notNull(),
+    addedById: text("added_by_id")
+      .notNull()
+      .references(() => principals.id),
     addedAt: timestamp("added_at", { withTimezone: true }).notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },

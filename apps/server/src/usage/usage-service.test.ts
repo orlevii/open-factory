@@ -209,7 +209,7 @@ beforeAll(async () => {
       slug: a.slug,
       displayName: a.displayName,
       kind: a.kind,
-      reportsTo: a.reportsTo ?? null,
+      reportsTo: a.reportsTo ?? undefined,
       archived: a.archived,
       terminatedAt: a.terminated ? "2026-11-11T00:00:00Z" : null,
     });

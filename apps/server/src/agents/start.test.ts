@@ -120,7 +120,7 @@ async function seedStartFixture() {
       config: {},
       runtime: "local",
       credentialId: "c1",
-      reportsToUser: await testManagerUserId(t.db),
+      reportsTo: await testManagerUserId(t.db),
     })
     .returning();
   if (!row) throw new Error("seed failed");
@@ -238,10 +238,10 @@ test("the manager is described in CLAUDE.md", async () => {
       config: {},
       runtime: "local",
       credentialId: "c1",
-      reportsToUser: await testManagerUserId(t.db),
+      reportsTo: await testManagerUserId(t.db),
     })
     .returning();
-  await t.sql`update agents set reports_to = ${mgr[0]?.id ?? ""}, reports_to_user = null where id = ${agent.id}`;
+  await t.sql`update agents set reports_to = ${mgr[0]?.id ?? ""} where id = ${agent.id}`;
   const spec = await prepareStart(agent, { agentToken: "tok" }); // stale row: prepareStart must reload
   const md = await import("node:fs").then((fs) =>
     fs.readFileSync(path.join(spec.cwd, ".claude-config/CLAUDE.md"), "utf8"),
@@ -262,10 +262,10 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
       config: {},
       runtime: "local",
       credentialId: "c1",
-      reportsToUser: await testManagerUserId(t.db),
+      reportsTo: await testManagerUserId(t.db),
     })
     .returning();
-  await t.sql`update agents set reports_to = ${mgr?.id ?? ""}, reports_to_user = null where id = ${agent.id}`;
+  await t.sql`update agents set reports_to = ${mgr?.id ?? ""} where id = ${agent.id}`;
   const sibling = { template: "lead", config: {}, runtime: "local" as const, credentialId: "c1" };
   await t.db.insert(schema.agents).values([
     {
@@ -275,7 +275,7 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
       displayName: "Dev",
       description: "Builds.",
       descriptionBy: agent.id,
-      reportsTo: mgr?.id,
+      reportsTo: mgr?.id as string,
     },
     {
       ...sibling,
@@ -283,7 +283,7 @@ test("a peer's description an agent wrote is quoted with that agent's current sl
       slug: "qa",
       displayName: "QA",
       description: "Tests.",
-      reportsTo: mgr?.id,
+      reportsTo: mgr?.id as string,
     },
   ]);
   await prepareStart(await reload(agent.id), { agentToken: "tok" });
@@ -731,12 +731,10 @@ test("a spawned agent's start error from its template keeps the template fix", a
   });
 });
 
-// The DB keeps a spawned row's reports_to set and pointing at a row (CHECK + FK), so these two are reached
-// only through a stale row: deriveInheritance is called directly with one.
-test.each([
-  ["no spawner (null reports_to)", null],
-  ["a spawner row that doesn't exist", "ghost"],
-])("deriveInheritance fails closed with no fix: %s", async (_n, reportsTo) => {
+// The DB keeps a spawned row's reports_to set and pointing at a principal (NOT NULL + FK), so a missing spawner is
+// reached only through a stale row: deriveInheritance is called directly with one.
+test("deriveInheritance fails closed with no fix when the spawner row doesn't exist", async () => {
+  const reportsTo = "ghost";
   const child = await seedChild();
   const prepare = vi.spyOn(workspace, "prepare");
   try {
@@ -773,16 +771,14 @@ test.each([
     config: {},
     runtime: "local",
     credentialId: "c1",
-    reportsToUser: await testManagerUserId(t.db),
+    reportsTo: await testManagerUserId(t.db),
   });
   await t.db
     .update(schema.agents)
     .set({
       kind: "ephemeral",
       reportsTo: `top-${seq}`,
-      reportsToUser: null,
       terminatedAt: new Date(),
-      terminatedBy: "@factory",
       credentialId: keepCredential ? "c1" : null,
     })
     .where(eq(schema.agents.id, agent.id));

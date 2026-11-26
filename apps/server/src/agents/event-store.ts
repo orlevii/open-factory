@@ -37,6 +37,7 @@ import {
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { resolveAgentArg } from "../principals/principal-args.ts";
+import { principalById, terminatorLabel } from "../principals/principal-store.ts";
 import { capPayload } from "./cap.ts";
 import { InvalidCursorError } from "./errors.ts";
 import { type NoticeType, parseConfigNotice, renderConfigNotice } from "./notices.ts";
@@ -243,7 +244,7 @@ export class EventStore {
    * S7 §8 step 2, inside the termination's transaction (the agent rows are locked first): terminated, `attempting`
    * cleared, its grants deleted (projects keep their RESTRICT FKs), and every pending row addressed to it rejected.
    */
-  async terminateRows(tx: Tx, agentId: string, by: string) {
+  async terminateRows(tx: Tx, agentId: string, by: string | null) {
     const now = this.clock();
     await tx
       .update(agents)
@@ -482,16 +483,17 @@ export class EventStore {
    * only the rare crash-window agents come back.
    */
   async terminatedWithoutEvent(): Promise<
-    { id: string; slug: string; runtime: string; terminatedBy: string | null }[]
+    { id: string; slug: string; runtime: string; by: string }[]
   > {
-    return this.db
+    const rows = await this.db
       .select({
         id: agents.id,
         slug: agents.slug,
         runtime: agents.runtime,
-        terminatedBy: agents.terminatedBy,
+        terminator: { kind: principals.kind, handle: principals.handle },
       })
       .from(agents)
+      .leftJoin(principals, eq(principals.id, agents.terminatedBy))
       .where(
         and(
           isNotNull(agents.terminatedAt),
@@ -499,6 +501,16 @@ export class EventStore {
         ),
       )
       .orderBy(asc(agents.id));
+    return rows.map(({ terminator, ...a }) => ({
+      ...a,
+      by: terminatorLabel(terminator?.handle ? terminator : null),
+    }));
+  }
+  /** The `terminated` event's wording of who ended `agentId` (`@factory` when the TTL did). */
+  async terminatorLabelOf(terminatedBy: string | null): Promise<string> {
+    return terminatorLabel(
+      terminatedBy ? ((await principalById(this.db, terminatedBy)) ?? null) : null,
+    );
   }
   /** Boot (spec §5.7 step 7): every journal was read and acted on, except those of `keep` (a reap that failed). */
   async clearRuntimeJournals(keep: string[] = []) {

@@ -3,11 +3,13 @@ import { randomUUID } from "node:crypto";
 import type { SkillSourceRow } from "@open-factory/db";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import { dbSourcesStore } from "./sources-service.ts";
 
 let tdb: Awaited<ReturnType<typeof createTestDb>>;
 beforeAll(async () => {
   tdb = await createTestDb();
+  await seedTestUser(tdb.db, "or");
 });
 afterAll(async () => {
   await tdb.close();
@@ -32,7 +34,7 @@ const row = (o: Partial<SkillSourceRow>): SkillSourceRow => ({
   skills: ["tdd"],
   state: "ready",
   startedAt: new Date(),
-  addedBy: "@or",
+  addedById: "u-or",
   addedAt: new Date(),
   deletedAt: null,
   ...o,

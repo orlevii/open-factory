@@ -42,7 +42,7 @@ const spawned = (over: Partial<AgentSummary> = {}): AgentSummary =>
     displayName: "Tech Lead · ab12",
     kind: "ephemeral",
     template: "tech-lead",
-    reportsTo: { kind: "agent", handle: "lead" },
+    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
     depth: 1,
     ...over,
   });
@@ -51,7 +51,7 @@ const terminated = (over: Partial<AgentSummary> = {}): AgentSummary =>
   spawned({
     status: "terminated",
     terminatedAt: local(19, 14, 32),
-    terminatedBy: "lead",
+    terminatedBy: { ref: "aaaaaaaa", handle: "lead" },
     workspacePinned: false,
     workspaceGraceEndsAt: local(22, 14, 32),
     ...over,
@@ -149,7 +149,7 @@ test("the Terminate dialog: exact copy, Cancel focused; a failure stays open; su
     [`POST /api/agents/${SLUG}/terminate`]: () => {
       if (fail)
         return json({ error: { code: "internal", message: "The factory couldn't stop it." } }, 500);
-      state.agent = terminated({ terminatedBy: "@alice" });
+      state.agent = terminated({ terminatedBy: { ref: "hhhhhhhh", handle: "alice" } });
       return json({ agent: state.agent });
     },
   });
@@ -181,7 +181,7 @@ test("terminated while viewing: popovers close, the read-only line takes focus, 
   await userEvent.type(screen.getByRole("combobox", { name: /Message/ }), "half a thought");
   await menuItem("Compact…");
   expect(await screen.findByLabelText("Focus (optional)")).toBeInTheDocument();
-  state.agent = terminated({ terminatedBy: "@or" });
+  state.agent = terminated({ terminatedBy: { ref: "hhhhhhhh", handle: "or" } });
   terminatedFrame();
   const line = await screen.findByText("This agent was terminated. Its session is read-only.");
   expect(screen.queryByLabelText("Focus (optional)")).toBeNull();
@@ -226,7 +226,6 @@ test("Agent details: in the grace period, with Pin workspace; credential omitted
   expect(sentence()).toBe(
     "Terminated by @lead today at 14:32. Workspace will be deleted on Sun at 14:32 unless you pin it.",
   );
-  expect(within(panel).getByRole("link", { name: "Open @lead's chat" })).toBeInTheDocument();
   expect(within(panel).getByRole("button", { name: "Pin workspace" })).toBeInTheDocument();
   expect(panel.textContent).not.toContain("Credential");
   expect(panel.textContent).toContain("Spawned by");
@@ -253,13 +252,13 @@ test.each([
   ],
   [
     "TTL and stuck",
-    { terminatedBy: "@factory", workspacePinned: true, stuck: true as const },
+    { terminatedBy: null, workspacePinned: true, stuck: true as const },
     "Terminated on 14 Nov at 14:32 after 3 days without activity. Workspace pinned. Its container couldn't be removed; the factory keeps retrying.",
     "Unpin workspace",
   ],
   [
     "by a human",
-    { terminatedBy: "@or", workspacePinned: true },
+    { terminatedBy: { ref: "hhhhhhhh", handle: "or" }, workspacePinned: true },
     "Terminated by @or on 14 Nov at 14:32. Workspace pinned.",
     "Unpin workspace",
   ],
@@ -281,11 +280,9 @@ test.each([
     within(header).queryByRole("button", { name: /^(Pin|Unpin) workspace$/ })?.textContent ??
       undefined,
   ).toBe(button);
-  // A human ends it in plain text; an agent is a link (the grace-period test).
-  if ("terminatedBy" in over && over.terminatedBy === "@or") {
-    const or = within(panel).getByText("@or");
-    expect(or.closest("a")).toBeNull();
-  }
+  // Who ended it is plain text, never a link.
+  if (text.includes("Terminated by @or"))
+    expect(within(panel).getByText("@or").closest("a")).toBeNull();
 });
 
 test("Agent details: What's kept? explains in a popover", async () => {
@@ -370,7 +367,7 @@ test("the terminated frame arriving before the response: the dialog stays open u
   let framed = false;
   const { state } = await open(spawned(), {
     [`POST /api/agents/${SLUG}/terminate`]: async () => {
-      state.agent = terminated({ terminatedBy: "@alice" });
+      state.agent = terminated({ terminatedBy: { ref: "hhhhhhhh", handle: "alice" } });
       act(() => frameNow());
       framed = true;
       await held;
@@ -395,7 +392,7 @@ test("the terminated frame arriving before the response: the dialog stays open u
 test("a failed terminate request after the agent was terminated anyway closes the dialog", async () => {
   const { state } = await open(spawned(), {
     [`POST /api/agents/${SLUG}/terminate`]: async () => {
-      state.agent = terminated({ terminatedBy: "lead" });
+      state.agent = terminated({ terminatedBy: { ref: "aaaaaaaa", handle: "lead" } });
       act(() => frameNow());
       // The frame commits on the next animation frame; the failure comes back once it has rendered.
       await vi.waitFor(() =>

@@ -216,7 +216,7 @@ const liveAgents = () =>
           agentSummary({
             slug: "qa",
             displayName: "QA agent",
-            reportsTo: { kind: "agent", handle: "dev" },
+            reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "dev" },
           }),
         ],
         running: { count: 0 },

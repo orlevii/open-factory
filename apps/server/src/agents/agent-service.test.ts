@@ -602,8 +602,8 @@ test("two concurrent creates of one slug: one succeeds, the other is slug_taken,
 test("a competing agent commits the slug while this create materialises: slug_taken, one row", async () => {
   const spy = vi.spyOn(t.app.workspace, "materialize").mockImplementationOnce(async () => {
     await t.sql.unsafe(principalSql("late-dup-id", "agent", "late-dup"));
-    await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to_user)
-                select 'late-dup-id', 'late-dup', 'x', 'lead', config, 'local', credential_id, reports_to_user from agents where slug = 'lead'`;
+    await t.sql`insert into agents (id, slug, display_name, template, config, runtime, credential_id, reports_to)
+                select 'late-dup-id', 'late-dup', 'x', 'lead', config, 'local', credential_id, reports_to from agents where slug = 'lead'`;
   });
   await expect(
     svc.create(createBody("late-dup"), { kind: "human", handle: "or" }),
@@ -640,7 +640,7 @@ const insertChild = async (
   await q.unsafe(principalSql(id, "agent", slug));
   await q`insert into agents (id, slug, display_name, template, config, runtime, credential_id, kind, reports_to, terminated_at, terminated_by)
        select ${id}, ${slug}, 'Kid', template, config, runtime, credential_id, 'ephemeral', id,
-              ${terminated ? new Date().toISOString() : null}::timestamptz, ${terminated ? "@factory" : null}
+              ${terminated ? new Date().toISOString() : null}::timestamptz, null
        from agents where id = ${spawnerId}`;
   await q`insert into agent_project_grants (agent_id, project_id)
        select ${id}, project_id from agent_project_grants where agent_id = ${spawnerId}`;
@@ -805,4 +805,26 @@ test("renaming a spawner restarts its live spawned agents, never a terminated on
     spy.mockRestore();
   }
   expect(await runtimes.get(await idOf("spawner-7-dd44"))).toBeUndefined();
+});
+
+test("a human-managed agent reports its manager as a human", async () => {
+  const created = await svc.create(
+    {
+      template: "lead",
+      slug: "human-led",
+      displayName: "Human led",
+      description: "",
+      reportsTo: "or",
+      credential: "work",
+      projects: [],
+    },
+    { kind: "human", handle: "or" },
+  );
+  const or = (await principalsByHandles(t.db, ["or"])).get("or");
+  expect(created.reportsTo).toEqual({ kind: "human", ref: or?.ref, handle: "or" });
+  expect((await svc.summary("human-led")).reportsTo).toEqual({
+    kind: "human",
+    ref: or?.ref,
+    handle: "or",
+  });
 });

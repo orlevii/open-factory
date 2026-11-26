@@ -18,7 +18,7 @@ function agent(over: Partial<AgentSummary> = {}): AgentSummary {
     runtime: "local",
     kind: "persistent",
     template: "dev",
-    reportsTo: { kind: "user", handle: "or" },
+    reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" },
     model: { value: null, source: null },
     effort: { value: null, source: null },
     credential: null,
@@ -37,7 +37,7 @@ const ctx = { now };
 const terminated = {
   status: "terminated" as const,
   terminatedAt: at(14, 32),
-  terminatedBy: "lead",
+  terminatedBy: { ref: "aaaaaaaa", handle: "lead" },
 };
 
 describe("liveFact priority", () => {
@@ -155,7 +155,7 @@ describe("terminated wording", () => {
     );
   });
   test("by the inactivity TTL", () => {
-    expect(liveFact(agent({ ...terminated, terminatedBy: "@factory" }), ctx)?.text).toMatch(
+    expect(liveFact(agent({ ...terminated, terminatedBy: null }), ctx)?.text).toMatch(
       /^Terminated after 3 days without activity · 14:32/,
     );
   });

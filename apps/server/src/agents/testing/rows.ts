@@ -12,9 +12,8 @@ export async function insertAgent(
     /** Pins the warm window in the overlay (I2: `agents.config` is the overlay); omitted by default. */
     warmWindowMinutes?: number;
     displayName?: string;
-    reportsTo?: string | null;
-    /** A persistent agent without a `reportsTo` reports to this user; the oldest user when omitted. */
-    reportsToUser?: string;
+    /** The manager's principal id: the spawner of an ephemeral agent; the oldest user when omitted. */
+    reportsTo?: string;
     archived?: boolean;
     archivedAt?: Date | string | null;
     errorKind?: string | null;
@@ -29,14 +28,11 @@ export async function insertAgent(
             values (${credId}, ${`cred-${a.id}`}, 'oauth_token', ${Buffer.from("dummy")})`;
   await sql.unsafe(principalSql(a.id, "agent", a.slug));
   const kind = a.kind ?? (a.terminatedAt ? "ephemeral" : "persistent");
-  const reportsToUser =
-    kind === "persistent" && !a.reportsTo
-      ? (a.reportsToUser ?? (await testManagerUserIdSql(sql)))
-      : null;
-  await sql`insert into agents (id, slug, display_name, session_id, status, template, config, runtime, credential_id, reports_to, reports_to_user, archived_at, error_kind, kind, terminated_at, terminated_by)
+  const reportsTo = a.reportsTo ?? (await testManagerUserIdSql(sql));
+  await sql`insert into agents (id, slug, display_name, session_id, status, template, config, runtime, credential_id, reports_to, archived_at, error_kind, kind, terminated_at, terminated_by)
             values (${a.id}, ${a.slug}, ${a.displayName ?? "Dev agent"}, ${a.sessionId ?? null}, ${a.status ?? "hibernated"},
                     'test', ${JSON.stringify(a.warmWindowMinutes !== undefined ? { template: { warm_window_minutes: a.warmWindowMinutes } } : {})}::jsonb, 'local', ${credId},
-                    ${a.reportsTo ?? null}, ${reportsToUser}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${kind}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, ${a.terminatedAt ? "@factory" : null})`;
+                    ${reportsTo}, ${a.archivedAt ? new Date(a.archivedAt).toISOString() : a.archived ? new Date().toISOString() : null}, ${a.errorKind ?? null}, ${kind}, ${a.terminatedAt ? new Date(a.terminatedAt).toISOString() : null}, null)`;
 }
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);

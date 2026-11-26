@@ -22,7 +22,7 @@ import { ProcessJournal } from "../runtime/local/journal.ts";
 import { ScheduleStore } from "../scheduling/schedule-store.ts";
 import { Reaper } from "../spawning/reaper.ts";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, seedTestUser } from "../test/principals.ts";
 import { ATTEMPT_CUT_SHORT, reconcile } from "./reconcile.ts";
 
 let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -463,13 +463,14 @@ test("a reap that fails keeps the agent's journal and doesn't wake it", async ()
   });
 });
 
-/** A spawned agent (reporting to a fresh manager) whose termination by `@lead` committed before the server stopped. */
+/** A spawned agent (reporting to a fresh manager) whose termination by `@boss` committed before the server stopped. */
 async function terminatedAgent(): Promise<string> {
   const lead = await agent();
   n += 1;
   const id = `r${n}`;
   await insertAgent(t.sql, { id, slug: `rec${n}`, reportsTo: lead, terminatedAt: new Date() });
-  await t.sql`update agents set terminated_by = '@lead' where id = ${id}`;
+  const boss = await seedTestUser(t.db, "boss");
+  await t.sql`update agents set terminated_by = ${boss.id} where id = ${id}`;
   return id;
 }
 const putContainer = (b: Boot, name: string, agentId: string, running: boolean) =>
@@ -517,7 +518,7 @@ test("S7 §12: a terminated agent's leftovers are removed and reaped; it is neve
   expect(alive(claude.pid)).toBe(false);
   expect((await row(id)).runtimeJournal).toBeNull();
   // The missing `terminated` event, by whoever terminated it, and nothing else.
-  expect(await events(id)).toEqual([{ type: "terminated", by: "@lead" }]);
+  expect(await events(id)).toEqual([{ type: "terminated", by: "@boss" }]);
   // Steps 3–6 skip it: not errored, no notice, no continue notice, nothing forwarded, never loaded or woken.
   expect((await row(id)).status).not.toBe("errored");
   expect((await row(id)).errorKind).toBeNull();
@@ -571,7 +572,7 @@ test("S7 §8: Docker unreachable at boot: the crash-window agent is stop_failed;
   // Crashed between the commit and the stop job (no event), and between the event and the removal.
   const noEvent = await terminatedAgent();
   const evented = await terminatedAgent();
-  await store.append(evented, null, { type: "terminated", by: "@lead" });
+  await store.append(evented, null, { type: "terminated", by: "@boss" });
   // Long ago: past the stuck query's recent window, so only the container list can find it.
   await t.sql`update agents set terminated_at = now() - interval '30 days' where id = ${evented}`;
   boot = new Boot({ dockerRuntime: true });
@@ -581,7 +582,7 @@ test("S7 §8: Docker unreachable at boot: the crash-window agent is stop_failed;
   await boot.run();
   expect(await row(noEvent)).toMatchObject({ errorKind: "stop_failed", status: "errored" });
   expect((await row(evented)).errorKind).toBeNull(); // not in the crash window: the sweep's list finds it
-  expect(await events(noEvent)).toEqual([{ type: "terminated", by: "@lead" }]);
+  expect(await events(noEvent)).toEqual([{ type: "terminated", by: "@boss" }]);
 
   // A sweep while Docker is still down: nothing is removed, and the stop_failed agent stays stuck.
   await boot.reaper().run();
@@ -595,7 +596,7 @@ test("S7 §8: Docker unreachable at boot: the crash-window agent is stop_failed;
   for (const id of [noEvent, evented]) {
     expect(await row(id)).toMatchObject({ errorKind: null, status: "hibernated" });
     expect(await events(id)).toEqual([
-      { type: "terminated", by: "@lead" },
+      { type: "terminated", by: "@boss" },
       { type: "cleanup", container: "removed" },
     ]);
   }
@@ -607,7 +608,7 @@ test("S7 §10.3: the sweep finds a long-terminated agent's leftover container wi
   const leaky = await terminatedAgent();
   const clean = await terminatedAgent();
   for (const id of [leaky, clean])
-    await store.append(id, null, { type: "terminated", by: "@lead" });
+    await store.append(id, null, { type: "terminated", by: "@boss" });
   await t.sql`update agents set terminated_at = now() - interval '30 days' where id in (${leaky}, ${clean})`;
   boot = new Boot({ dockerRuntime: true });
   const name = await dockerLeftover(boot, leaky, false);
@@ -639,19 +640,19 @@ test("S7 §8: the terminated-event lookups use the partial index, not the agent'
 test("S7 §8: a terminated event lost in the crash window is appended once: not again by a second boot or the sweep", async () => {
   const id = await terminatedAgent();
   const recorded = await terminatedAgent();
-  await store.append(recorded, null, { type: "terminated", by: "@lead" });
+  await store.append(recorded, null, { type: "terminated", by: "@boss" });
   boot = new Boot();
   await boot.run();
-  expect(await events(id)).toEqual([{ type: "terminated", by: "@lead" }]);
-  expect(await events(recorded)).toEqual([{ type: "terminated", by: "@lead" }]);
+  expect(await events(id)).toEqual([{ type: "terminated", by: "@boss" }]);
+  expect(await events(recorded)).toEqual([{ type: "terminated", by: "@boss" }]);
   await boot.runtimes.close();
 
   boot = new Boot();
   await boot.run();
   // The sweep run at the end of boot (spec §10.3) also ensures the event: still exactly one.
   await boot.reaper().run();
-  expect(await events(id)).toEqual([{ type: "terminated", by: "@lead" }]);
-  expect(await events(recorded)).toEqual([{ type: "terminated", by: "@lead" }]);
+  expect(await events(id)).toEqual([{ type: "terminated", by: "@boss" }]);
+  expect(await events(recorded)).toEqual([{ type: "terminated", by: "@boss" }]);
 });
 
 test("S7 §8: a runtime loaded for a terminated agent rejects rows still pending to it and never queues them", async () => {

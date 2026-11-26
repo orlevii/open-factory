@@ -255,13 +255,13 @@ test("Org: the manager, up to 8 reports, and All N reports to the Agents page", 
     agentSummary({
       slug: `r${i}`,
       displayName: `Report ${i}`,
-      reportsTo: { kind: "agent", handle: "lead" },
+      reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
     }),
   );
   const lead = agentSummary({
     slug: "lead",
     displayName: "Lead",
-    reportsTo: { kind: "agent", handle: "boss" },
+    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "boss" },
     reports: 10,
   });
   setup({
@@ -286,7 +286,7 @@ test("Org: no link to all reports when they all fit", async () => {
   const r = agentSummary({
     slug: "r",
     displayName: "Report",
-    reportsTo: { kind: "agent", handle: "lead" },
+    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
   });
   const lead = agentSummary({ slug: "lead", reports: 1 });
   setup({ agent: lead, seed: (qc) => qc.setQueryData(["agents", "exclude"], [lead, r]) });
@@ -421,7 +421,7 @@ test("Runtime: template, credential and projects; Unsandboxed only for a local a
 
 test("Org: a human manager shows their initials avatar, name and handle, not a link", async () => {
   setup({
-    agent: agentSummary({ reportsTo: { kind: "user", handle: "or" } }),
+    agent: agentSummary({ reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" } }),
     seed: (qc) =>
       qc.setQueryData(
         ["users"],
@@ -591,11 +591,14 @@ test("Runtime: a disabled local runtime explains itself in a Why popover (distin
 
 test("Org: a spawned agent says 'Spawned by'; a human-managed agent names the human", async () => {
   const first = setup({
-    agent: agentSummary({ kind: "ephemeral", reportsTo: { kind: "agent", handle: "lead" } }),
+    agent: agentSummary({
+      kind: "ephemeral",
+      reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+    }),
   });
   expect(within(await section("Org")).getByText("Spawned by")).toBeInTheDocument();
   first.unmount();
-  setup({ agent: agentSummary({ reportsTo: { kind: "user", handle: "or" } }) });
+  setup({ agent: agentSummary({ reportsTo: { kind: "human", ref: "hhhhhhhh", handle: "or" } }) });
   expect(within(await section("Org")).getByText("@or")).toBeInTheDocument();
 });
 

@@ -159,7 +159,9 @@ test("terminated children are never touched by syncChildren", async () => {
   const { t, driver, lead, creds, projects } = await setup();
   const live = await spawnIdle(t, driver, lead.id, "l1");
   const gone = await spawnIdle(t, driver, lead.id, "t1");
-  expect(await t.app.terminator.terminate(gone.id, "@or")).toEqual({ status: "terminated" });
+  expect(await t.app.terminator.terminate(gone.id, await seedTestUser(t.db, "or"))).toEqual({
+    status: "terminated",
+  });
   await gone.rt.settled();
   const before = await row(t, gone.slug);
 

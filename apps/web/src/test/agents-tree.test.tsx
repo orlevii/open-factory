@@ -33,7 +33,7 @@ const tree = [
     slug: "dev-1",
     displayName: "Developer",
     template: "developer",
-    reportsTo: { kind: "agent", handle: "lead" },
+    reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
     depth: 1,
     restartPending: true,
     restartWaitingOn: 1,
@@ -134,7 +134,7 @@ test("ended view: a report whose manager isn't listed isn't indented but names i
       agentSummary({
         slug: "old",
         displayName: "Old one",
-        reportsTo: { kind: "agent", handle: "lead" },
+        reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
         depth: 1,
         archivedAt: "2026-11-01",
       }),
@@ -157,11 +157,11 @@ describe("the Ended view (S7 UI design §3)", () => {
     agentSummary({
       kind: "ephemeral",
       status: "terminated",
-      reportsTo: { kind: "agent", handle: "lead" },
+      reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
       depth: 1,
       template: "tech-lead",
       terminatedAt: at(19),
-      terminatedBy: "lead",
+      terminatedBy: { ref: "aaaaaaaa", handle: "lead" },
       workspacePinned: false,
       ...over,
     });
@@ -280,7 +280,7 @@ describe("usage in the tree (S10 §12.1)", () => {
         agentSummary({
           slug: "dev-1",
           displayName: "Developer",
-          reportsTo: { kind: "agent", handle: "lead" },
+          reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
           depth: 1,
         }),
         agentSummary({ slug: "idle", displayName: "Idle one" }),
@@ -395,11 +395,11 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
     mockWorld({
       agents: [
         A("root"),
-        A("a", { reportsTo: { kind: "agent", handle: "root" } }),
-        A("a1", { reportsTo: { kind: "agent", handle: "a" } }),
-        A("a2", { reportsTo: { kind: "agent", handle: "a" } }),
-        A("b", { reportsTo: { kind: "agent", handle: "root" } }),
-        A("b1", { reportsTo: { kind: "agent", handle: "b" } }),
+        A("a", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "root" } }),
+        A("a1", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "a" } }),
+        A("a2", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "a" } }),
+        A("b", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "root" } }),
+        A("b1", { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "b" } }),
       ],
     });
     renderApp("/agents", alice);
@@ -424,7 +424,7 @@ describe("Agents page identity and tree lines (U2 §7)", () => {
     const chain = Array.from({ length: 12 }, (_, i) =>
       A(
         i === 0 ? "n0" : `n${i}`,
-        i === 0 ? {} : { reportsTo: { kind: "agent", handle: `n${i - 1}` } },
+        i === 0 ? {} : { reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: `n${i - 1}` } },
       ),
     );
     mockWorld({ agents: chain });

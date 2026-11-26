@@ -89,7 +89,7 @@ export async function reconcile(d: ReconcileDeps): Promise<void> {
   // S7 §8 crash safety: a termination committed just before the server died has no `terminated` event yet. No runtime
   // exists at boot, so this direct append is the agent's only writer; the sweep's `ensureTerminatedEvent` then finds it.
   for (const a of await d.store.terminatedWithoutEvent()) {
-    await d.store.append(a.id, null, { type: "terminated", by: a.terminatedBy ?? "@factory" });
+    await d.store.append(a.id, null, { type: "terminated", by: a.by });
     // Its stop never ran, so a container may be left. Docker couldn't be listed: `stop_failed` keeps it a stuck
     // candidate and its workspace undeleted until a sweep has listed the containers and removed any (§10.3).
     if (!listed && d.containers && a.runtime === "docker") await markStopFailed(d, a);

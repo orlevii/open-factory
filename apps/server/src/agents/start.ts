@@ -263,18 +263,17 @@ export function createPrepareStart(d: {
       }
 
       let manager: ManagerRef | undefined;
-      if (agent.reportsTo) {
-        const [m] = await d.db
-          .select({ slug: schema.agents.slug, displayName: schema.agents.displayName })
-          .from(schema.agents)
-          .where(eq(schema.agents.id, agent.reportsTo));
-        if (m) manager = { kind: "agent", ...m };
-      } else if (agent.reportsToUser) {
+      const [m] = await d.db
+        .select({ slug: schema.agents.slug, displayName: schema.agents.displayName })
+        .from(schema.agents)
+        .where(eq(schema.agents.id, agent.reportsTo));
+      if (m) manager = { kind: "agent", ...m };
+      else {
         const [u] = await d.db
           .select({ handle: schema.principals.handle, name: schema.users.name })
           .from(schema.users)
           .innerJoin(schema.principals, eq(schema.principals.id, schema.users.id))
-          .where(eq(schema.users.id, agent.reportsToUser));
+          .where(eq(schema.users.id, agent.reportsTo));
         if (u) manager = { kind: "user", ...u };
       }
       if (!manager)

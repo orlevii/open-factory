@@ -69,13 +69,13 @@ test("templateHasLocalAgents: true for an archived local agent, and for a spawne
     kind: "ephemeral",
     template: "spawned-local",
     runtime: "local",
-    reportsTo: boss?.id,
+    reportsTo: boss?.id as string,
     credentialId: boss?.credentialId,
   });
   expect(await policy.templateHasLocalAgents("spawned-local")).toBe(true);
   await t.db
     .update(schema.agents)
-    .set({ terminatedAt: new Date(), terminatedBy: "@or" })
+    .set({ terminatedAt: new Date() })
     .where(eq(schema.agents.id, kid));
   expect(await policy.templateHasLocalAgents("spawned-local")).toBe(false);
 });

@@ -33,9 +33,7 @@ test("GET /api/principals lists every agent and human with the state a chip show
     .set({
       kind: "ephemeral",
       terminatedAt: new Date(),
-      terminatedBy: "or",
       reportsTo: live.id,
-      reportsToUser: null,
       color: 3,
     })
     .where(eq(schema.agents.id, terminated.id));

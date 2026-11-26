@@ -10,6 +10,7 @@ import { ev, FakeDriver, type FakeProcess } from "../agents/testing/fake-driver.
 import { callTool } from "../mcp/testing/mcp-client.ts";
 import { peerLeftOf } from "../messaging/peer-body.ts";
 import { makeTestApp } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 import { asRunning } from "../test/running.ts";
 
 type T = Awaited<ReturnType<typeof makeTestApp>>;
@@ -51,10 +52,7 @@ async function setup() {
   await asRunning(app.app, lead);
   await app.db.insert(schema.agentProjectGrants).values({ agentId: lead.id, projectId });
   const pm = await app.seedAgent({ slug: "pm" });
-  await app.db
-    .update(schema.agents)
-    .set({ reportsTo: lead.id, reportsToUser: null })
-    .where(eq(schema.agents.id, pm.id));
+  await app.db.update(schema.agents).set({ reportsTo: lead.id }).where(eq(schema.agents.id, pm.id));
   return { t: app, driver, lead, pm };
 }
 
@@ -127,9 +125,10 @@ test("terminate: one transaction (row, grants, peer rows), the stop job, and not
   const child = await spawnIdle(t, driver, lead, "x1");
   expect(await grantsOf(t, child.id)).toHaveLength(1);
 
-  expect(await t.app.terminator.terminate(child.id, "@or")).toEqual({ status: "terminated" });
+  const or = await seedTestUser(t.db, "or");
+  expect(await t.app.terminator.terminate(child.id, or)).toEqual({ status: "terminated" });
   const row = await t.app.store.agentById(child.id);
-  expect(row).toMatchObject({ terminatedBy: "@or", attempting: false });
+  expect(row).toMatchObject({ terminatedBy: or.id, attempting: false });
   expect(row?.terminatedAt).toBeInstanceOf(Date);
   expect(await grantsOf(t, child.id)).toEqual([]);
   expect(child.rt.isTerminated()).toBe(true);
@@ -173,13 +172,14 @@ test("terminate_agent: only your own spawned agents; idempotent; persistent agen
     ok: true,
     slug: child.slug,
   });
-  // The spawner is recorded by its slug (spec §13).
-  expect((await t.app.store.agentById(child.id))?.terminatedBy).toBe("lead");
+  expect((await t.app.store.agentById(child.id))?.terminatedBy).toBe(lead.id);
   await child.rt.settled();
   const evs = (await t.app.store.after(child.id, 0, 1000)).map((e) => e.event);
   expect(evs.filter((e) => e.type === "terminated")).toHaveLength(1);
 
-  await expect(t.app.terminator.terminate(pm.id, "@or")).rejects.toMatchObject({
+  await expect(
+    t.app.terminator.terminate(pm.id, await seedTestUser(t.db, "or")),
+  ).rejects.toMatchObject({
     status: 409,
     code: "not_ephemeral",
   });
@@ -219,7 +219,7 @@ test("pending rows to it are rejected; its own pending updates to the spawner st
   const [update] = await rowsTo(t, lead.id, "member_update");
   expect(update).toMatchObject({ fromAgentId: a.id, state: "pending" });
 
-  await t.app.terminator.terminate(a.id, "@or");
+  await t.app.terminator.terminate(a.id, await seedTestUser(t.db, "or"));
   expect(await stateOf(t, peerRow?.id ?? "")).toBe("rejected");
   expect(await stateOf(t, direct.id)).toBe("rejected");
   expect(await stateOf(t, update?.id ?? "")).toBe("pending");
@@ -239,7 +239,7 @@ test("a forward that started before the commit and finishes after it writes noth
   const child = await spawnIdle(t, driver, lead, "fw");
   const before = await rowsTo(t, lead.id, "member_update");
   const hold = holdTermination(t);
-  const terminating = t.app.terminator.terminate(child.id, "@or");
+  const terminating = t.app.terminator.terminate(child.id, await seedTestUser(t.db, "or"));
   await hold.entered;
   const forwarding = t.app.router.forward({ agentId: child.id, body: "a late report" });
   await lockWaiter(t); // the forward waits on the child's row lock the termination holds
@@ -254,7 +254,7 @@ test("a send racing the termination is accepted, then its row is rejected and ne
   const { user } = await t.signUpUser();
   const child = await spawnIdle(t, driver, lead, "sr");
   const hold = holdTermination(t);
-  const terminating = t.app.terminator.terminate(child.id, "@or");
+  const terminating = t.app.terminator.terminate(child.id, await seedTestUser(t.db, "or"));
   await hold.entered;
   // The Router reads the child live (the commit hasn't happened); its row commits after terminateRows ran and is
   // handed to the provisional latch, which queues it without writing.
@@ -298,7 +298,7 @@ test("rows handed over during the provisional window are rejected once it commit
     await child.rt.deliver(direct, { sender: "human", fromLabel: `@${user.handle}` });
     await child.rt.receive(held);
   }).release();
-  await t.app.terminator.terminate(child.id, "@or");
+  await t.app.terminator.terminate(child.id, await seedTestUser(t.db, "or"));
   expect(ids).toHaveLength(2);
   for (const id of ids) expect(await stateOf(t, id)).toBe("rejected");
 });
@@ -322,9 +322,9 @@ test("a failed transaction undoes the provisional latch: what arrived meanwhile 
     await original(...a);
     throw new Error("the database went away");
   });
-  await expect(t.app.terminator.terminate(child.id, "@or")).rejects.toThrow(
-    "the database went away",
-  );
+  await expect(
+    t.app.terminator.terminate(child.id, await seedTestUser(t.db, "or")),
+  ).rejects.toThrow("the database went away");
   expect(child.rt.isTerminated()).toBe(false);
   expect((await t.app.store.agentById(child.id))?.terminatedAt).toBeNull();
   await child.rt.settled();
@@ -346,7 +346,7 @@ test("a termination during app.close(): no factory-restarted notice for it, and 
   child.proc.emit(ev.turn(), ev.background([{ taskId: "t1", description: "build" }]));
   await child.rt.settled();
   const hold = holdTermination(t);
-  const terminating = t.app.terminator.terminate(child.id, "@or");
+  const terminating = t.app.terminator.terminate(child.id, await seedTestUser(t.db, "or"));
   await hold.entered;
   // Shutdown inside the provisional window: its hibernate("shutdown") wins the stop, and the exit takes the terminate
   // path (the latch, not the recorded intent, chooses it). The exit's writes to the child's row wait for the commit.
@@ -420,7 +420,7 @@ test("terminating an agent rejects its loop-held rows; archiving leaves them hel
   );
   await t.app.agents.archive(b.slug, { kind: "human", handle: "or" });
   expect(await stateOf(t, toB.id)).toBe("loop_held");
-  await t.app.terminator.terminate(a.id, "@or");
+  await t.app.terminator.terminate(a.id, await seedTestUser(t.db, "or"));
   expect(await stateOf(t, toA.id)).toBe("rejected");
   expect(await stateOf(t, toB.id)).toBe("loop_held");
 });
@@ -435,7 +435,7 @@ test("boot rejects loop-held rows to terminated agents and leaves the others", a
   // The crash window: terminated without the transaction having rejected what raced in.
   await t.db
     .update(schema.agents)
-    .set({ terminatedAt: new Date(), terminatedBy: "@or" })
+    .set({ terminatedAt: new Date(), terminatedBy: (await seedTestUser(t.db, "or")).id })
     .where(eq(schema.agents.id, a.id));
   await t.app.store.rejectPendingToTerminated();
   expect(await stateOf(t, toA.id)).toBe("rejected");

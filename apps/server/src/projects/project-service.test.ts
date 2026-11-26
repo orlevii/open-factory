@@ -178,7 +178,7 @@ test("a live spawned grantee blocks removal and is named with its spawner", asyn
     config: {} as never,
     runtime: "local" as const,
     kind: "ephemeral",
-    reportsTo: boss?.id,
+    reportsTo: boss?.id as string,
     credentialId: cred?.id ?? null,
   });
   await seedTestPrincipal(t.db, "agent", "tl-ab12", "tl-ab12-id");

@@ -115,7 +115,7 @@ test("AgentLink resolves an ended agent: terminated keeps its link and name, arc
               kind: "ephemeral",
               status: "terminated",
               terminatedAt: AT,
-              terminatedBy: "lead",
+              terminatedBy: { ref: "aaaaaaaa", handle: "lead" },
             }),
             agentSummary({ slug: "old", displayName: "Old one", archivedAt: AT }),
           ],
@@ -600,7 +600,7 @@ test("?message= for a message rejected by a terminated recipient says it was ter
           kind: "ephemeral",
           status: "terminated",
           terminatedAt: AT,
-          terminatedBy: "dev",
+          terminatedBy: { ref: "bbbbbbbb", handle: "dev" },
         }),
       ],
       more: false,
@@ -844,7 +844,7 @@ test("?message= highlights the row holding that envelope, not the event's first 
 test("Agent details' manager is a link to its session", async () => {
   mockApi({
     "GET /api/agents/dev": () =>
-      json(detail({ reportsTo: { kind: "agent", handle: "lead" }, reports: 3 })),
+      json(detail({ reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" }, reports: 3 })),
     "GET /api/agents/dev/events?": () =>
       json({
         hasMore: { before: false, after: false },
@@ -852,7 +852,12 @@ test("Agent details' manager is a link to its session", async () => {
       }),
     "GET /api/agents?ended=exclude": () =>
       json({
-        agents: [agentSummary({ reportsTo: { kind: "agent", handle: "lead" }, reports: 3 })],
+        agents: [
+          agentSummary({
+            reportsTo: { kind: "agent", ref: "aaaaaaaa", handle: "lead" },
+            reports: 3,
+          }),
+        ],
         running: { count: 1 },
       }),
   });

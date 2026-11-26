@@ -148,7 +148,7 @@ async function setup(
       config: {},
       runtime: "docker",
       credentialId: "c1",
-      reportsToUser: await testManagerUserId(t.db),
+      reportsTo: await testManagerUserId(t.db),
     })
     .returning();
   if (!agent) throw new Error("seed failed");

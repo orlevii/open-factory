@@ -657,7 +657,9 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     expect(await labelled(w.agentId)).toHaveLength(1);
     expect(w.app.runtimes.supervisor.running().count).toBe(1);
 
-    expect(await w.app.terminator.terminate(w.agentId, "@or")).toEqual({ status: "terminated" });
+    expect(await w.app.terminator.terminate(w.agentId, await seedTestUser(w.app.db, "or"))).toEqual(
+      { status: "terminated" },
+    );
     // The stop and the removal run in the background (spec §8 step 3): the container goes, running or not.
     await until(async () => expect(await labelled(w.agentId)).toEqual([]));
     await until(() => expect(w.app.runtimes.supervisor.running().count).toBe(0));

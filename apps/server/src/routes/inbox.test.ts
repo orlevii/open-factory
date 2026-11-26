@@ -456,7 +456,7 @@ async function updatesFrom(slug: string, n: number, over: { fact?: "denied" } = 
 }
 
 test("a human manager's reports' updates come grouped per report as updates, never as items, for that user only", async () => {
-  await h.sql`update agents set reports_to_user = ${orId} where slug in ('ada', 'bob')`;
+  await h.sql`update agents set reports_to = ${orId} where slug in ('ada', 'bob')`;
   const sam = await signUp(h.app, { handle: "sam" });
   await updatesFrom("ada", 3);
   await updatesFrom("bob", 1);
@@ -484,7 +484,7 @@ test("a human manager's reports' updates come grouped per report as updates, nev
 });
 
 test("read-from with kind member_update marks one report's updates read and leaves chats and other reports alone", async () => {
-  await h.sql`update agents set reports_to_user = ${orId} where slug in ('ada', 'bob')`;
+  await h.sql`update agents set reports_to = ${orId} where slug in ('ada', 'bob')`;
   await updatesFrom("ada", 2);
   await updatesFrom("bob", 1);
   await callTool(url, tokA, "send_message", { to: ["@or"], body: "a chat message" });
@@ -504,7 +504,7 @@ test("read-from with kind member_update marks one report's updates read and leav
 });
 
 test("read-from with the default kind leaves the human manager's errored notice about that agent unread", async () => {
-  await h.sql`update agents set reports_to_user = ${orId} where slug = 'ada'`;
+  await h.sql`update agents set reports_to = ${orId} where slug = 'ada'`;
   const ada = await h.app.store.agentBySlug("ada");
   if (!ada) throw new Error("seed");
   await h.app.router.forward({ agentId: ada.id, fact: "errored", body: "@ada is errored." });

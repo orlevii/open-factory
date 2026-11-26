@@ -20,7 +20,7 @@ beforeEach(async () => {
     ids[slug] = (await h.seedAgent({ slug })).id;
     tok[slug] = h.app.agentTokens.mint(ids[slug] as string).token;
   }
-  await h.sql`update agents set reports_to = ${ids.lead as string}, reports_to_user = null where slug = 'dev'`;
+  await h.sql`update agents set reports_to = ${ids.lead as string} where slug = 'dev'`;
 });
 afterEach(() => h.close());
 

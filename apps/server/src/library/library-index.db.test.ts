@@ -4,12 +4,13 @@ import { schema } from "@open-factory/db";
 import type { ConfigDoc } from "@open-factory/shared";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
-import { seedTestPrincipal, testManagerUserId } from "../test/principals.ts";
+import { seedTestPrincipal, seedTestUser, testManagerUserId } from "../test/principals.ts";
 import { LibraryIndex } from "./library-index.ts";
 
 let tdb: Awaited<ReturnType<typeof createTestDb>>;
 beforeAll(async () => {
   tdb = await createTestDb();
+  await seedTestUser(tdb.db, "or");
 });
 afterAll(async () => {
   await tdb.close();
@@ -25,7 +26,7 @@ test("the database store reads live sources and live agents, and usedBy counts t
     commit: "a".repeat(40),
     state: "ready" as const,
     startedAt: new Date(),
-    addedBy: "@or",
+    addedById: "u-or",
     addedAt: new Date(),
   };
   await db.insert(schema.skillSources).values([
@@ -46,7 +47,7 @@ test("the database store reads live sources and live agents, and usedBy counts t
       config: o.config ?? {},
       runtime: "local",
       credentialId: cred?.id,
-      reportsToUser: await testManagerUserId(db),
+      reportsTo: await testManagerUserId(db),
       archivedAt: o.archivedAt,
     });
   };

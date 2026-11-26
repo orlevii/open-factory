@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "vitest";
 import { ev, FakeDriver } from "../agents/testing/fake-driver.ts";
 import { makeTestApp, signUp, type TestAppOptions } from "../test/helpers.ts";
+import { seedTestUser } from "../test/principals.ts";
 
 let h: Awaited<ReturnType<typeof makeTestApp>>;
 let driver: FakeDriver;
@@ -38,12 +39,12 @@ test("terminating a spawned target soft-deletes its schedules and rejects its pe
   await boot();
   await h.seedAgent({ slug: "lead" });
   await h.seedAgent({ slug: "kid" });
-  await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf("lead")}, reports_to_user = null where slug = 'kid'`;
+  await h.sql`update agents set kind = 'ephemeral', reports_to = ${await idOf("lead")} where slug = 'kid'`;
   await h.sql`update agents set status = 'errored' where slug = 'kid'`; // keeps its row pending
   const { item } = await make("kid");
   await fireAt("2026-11-23T08:00:00Z");
   expect(await rows()).toMatchObject([{ state: "pending" }]);
-  await h.app.terminator.terminate(await idOf("kid"), "@or");
+  await h.app.terminator.terminate(await idOf("kid"), await seedTestUser(h.app.db, "or"));
   expect(await rows()).toMatchObject([{ state: "rejected" }]);
   const got = await h.app.schedules.get(item.key, { includeDeleted: true });
   expect(got).toMatchObject({ deleted: true, nextRunAt: null, target: { terminated: true } });

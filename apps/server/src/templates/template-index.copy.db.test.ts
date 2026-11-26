@@ -15,13 +15,13 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { OrgRefusedError } from "../agents/errors.ts";
 import { makeTestApp } from "../test/helpers.ts";
-import { seedTestUser } from "../test/principals.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import type { TemplateIndex } from "./template-index.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let idx: TemplateIndex;
 let home: string;
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 let hr: Actor;
 
 const dirOf = (n: string) => path.join(home, "templates", n);
@@ -74,7 +74,7 @@ beforeAll(async () => {
   await idx.scan();
   await agentOn("hr-bot", "hrtpl");
   const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, "hr-bot"));
-  hr = { kind: "agent", id: row?.id ?? "", slug: "hr-bot" };
+  hr = { kind: "agent", id: row?.id ?? "", ref: testRef(row?.id ?? ""), slug: "hr-bot" };
 });
 afterAll(() => t.close());
 

@@ -18,6 +18,7 @@ import type { SkillSourceRow } from "@open-factory/db";
 import { MSG } from "@open-factory/shared";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ApiError } from "../errors.ts";
+import { testRef } from "../test/principals.ts";
 import { runGit } from "./git.ts";
 import { removeTree } from "./git-fetch.ts";
 import { libraryLock } from "./locks.ts";
@@ -25,8 +26,8 @@ import { SourcesService, type SourcesStore } from "./sources-service.ts";
 import { makeFixtureRepo } from "./testing/fixture-repo.ts";
 import { memorySourcesStore } from "./testing/memory-sources-store.ts";
 
-const OR = { id: "u-or", handle: "or" };
-const ANA = { id: "u-ana", handle: "ana" };
+const OR = { id: "u-or", ref: testRef("u-or"), handle: "or" };
+const ANA = { id: "u-ana", ref: testRef("u-ana"), handle: "ana" };
 
 const gate = vi.hoisted(() => ({ delayMs: 0, inflight: 0, max: 0 }));
 vi.mock("./git.ts", async (orig) => {
@@ -453,7 +454,7 @@ describe("check and update", () => {
     expect(s.changed).toEqual([
       {
         skills: ["gone", "lint", "tdd"],
-        by: "@ana",
+        by: `<@${ANA.ref}>`,
         before: {
           skills: { gone: "captured", lint: "captured", tdd: "captured" },
         },
@@ -611,7 +612,7 @@ describe("remove and restore", () => {
     expect(await s.svc.restore(src.id, ANA)).toMatchObject({ id: src.id, skills: ["a"] });
     expect((await s.store.all())[0]?.deletedAt).toBeNull();
     expect(s.changed).toEqual([
-      { skills: ["a"], by: "@ana", before: { skills: { a: "captured" } } },
+      { skills: ["a"], by: `<@${ANA.ref}>`, before: { skills: { a: "captured" } } },
     ]);
     expect(s.lockFreeInCallback).toEqual([true]);
     expect(s.publishDepth).toEqual([0, 0, 0]);

@@ -1,6 +1,7 @@
 import type { AgentRow } from "@open-factory/db";
 import type { Actor, AnyEvent, ConfigDoc } from "@open-factory/shared";
 import { expect, test } from "vitest";
+import { testRef } from "../test/principals.ts";
 import { ConfigChanges } from "./config-changes.ts";
 
 /** I7 §8.2: who is told when an agent actor changes an agent's overlay (fake ports, no database). */
@@ -28,7 +29,12 @@ const dev = row("dev-id", "dev", "lead-id");
 const hrRow = row("hr-id", "hr", "lead-id");
 const solo = row("solo-id", "solo", null);
 
-const agentActor = (r: AgentRow): Actor => ({ kind: "agent", id: r.id, slug: r.slug });
+const agentActor = (r: AgentRow): Actor => ({
+  kind: "agent",
+  id: r.id,
+  ref: testRef(r.id),
+  slug: r.slug,
+});
 
 function world(live: AgentRow[] = []) {
   const restarts: { id: string; wake: boolean }[] = [];
@@ -77,6 +83,8 @@ function world(live: AgentRow[] = []) {
   return { changes, reportNotices, own, events, restarts };
 }
 
+/** The `hr` agent's tag, as the factory writes it (its principal's ref). */
+const HR = `<@${testRef("hr-id")}>`;
 const before = doc({ model: "sonnet" });
 const after = doc({ model: "haiku" });
 
@@ -84,10 +92,10 @@ test("an agent changing a report's overlay gives the manager one passive notice"
   const w = world();
   await w.changes.overlaySaved(dev, agentActor(hrRow), before, after);
   expect(w.reportNotices).toEqual([
-    { managerId: "lead-id", reportId: "dev-id", by: "@hr", lines: ["model: sonnet → haiku"] },
+    { managerId: "lead-id", reportId: "dev-id", by: HR, lines: ["model: sonnet → haiku"] },
   ]);
   expect(w.events).toEqual([
-    { type: "config_changed", by: "@hr", changes: ["model: sonnet → haiku"] },
+    { type: "config_changed", by: HR, changes: ["model: sonnet → haiku"] },
   ]);
 });
 
@@ -101,7 +109,7 @@ test("an agent editing itself notifies its own manager", async () => {
   const w = world();
   await w.changes.overlaySaved(hrRow, agentActor(hrRow), before, after);
   expect(w.reportNotices).toEqual([
-    { managerId: "lead-id", reportId: "hr-id", by: "@hr", lines: ["model: sonnet → haiku"] },
+    { managerId: "lead-id", reportId: "hr-id", by: HR, lines: ["model: sonnet → haiku"] },
   ]);
 });
 
@@ -113,7 +121,12 @@ test("a top-level target has no manager, so nobody is notified", async () => {
 
 test("a human actor sends no manager notice", async () => {
   const w = world();
-  await w.changes.overlaySaved(dev, { kind: "human", handle: "or" }, before, after);
+  await w.changes.overlaySaved(
+    dev,
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    before,
+    after,
+  );
   expect(w.reportNotices).toEqual([]);
   expect(w.own.map((n) => n.id)).toEqual(["dev-id"]);
 });
@@ -128,7 +141,7 @@ const tplChange = (actor?: Actor) => ({
   name: "dev",
   before,
   after,
-  by: actor ? `@${actor.kind === "agent" ? actor.slug : actor.handle}` : "file change",
+  by: actor ? `<@${actor.ref}>` : "file change",
   ...(actor ? { actor } : {}),
 });
 
@@ -136,13 +149,13 @@ test("a template written by an agent: by names the template, the manager is told
   const w = world([dev, hrRow]);
   await w.changes.templateChanged(tplChange(agentActor(hrRow)));
   expect(w.events.map((e) => (e as { by: string }).by)).toEqual([
-    "@hr in template dev",
-    "@hr in template dev",
+    `${HR} in template dev`,
+    `${HR} in template dev`,
   ]);
   // Both report to lead, who isn't the actor: one notice each, naming the actor alone.
   expect(w.reportNotices.map((n) => [n.managerId, n.reportId, n.by])).toEqual([
-    ["lead-id", "dev-id", "@hr"],
-    ["lead-id", "hr-id", "@hr"],
+    ["lead-id", "dev-id", HR],
+    ["lead-id", "hr-id", HR],
   ]);
   // Only the actor's own agent wakes on its restart.
   expect(w.restarts).toEqual([
@@ -159,7 +172,7 @@ test("a template written by the manager tells it nothing, and wakes only itself"
 });
 
 test("a template written by a human or found on disk keeps today's by and sends no manager notice", async () => {
-  for (const actor of [{ kind: "human", handle: "or" } as const, undefined]) {
+  for (const actor of [{ kind: "human", ref: "k7x2m9qd", handle: "or" } as const, undefined]) {
     const w = world([dev]);
     await w.changes.templateChanged(tplChange(actor));
     expect((w.events[0] as { by: string }).by).toBe(

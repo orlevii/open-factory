@@ -468,7 +468,11 @@ export class AgentRuntimes {
     const row = await this.d.store.createNotice({
       toAgentId: managerId,
       notice: "report_config_changed",
-      body: notices.reportConfigChanged({ by, report: report.slug, lines }),
+      body: notices.reportConfigChanged({
+        by,
+        report: await this.d.store.principalTag(reportId),
+        lines,
+      }),
       subjectAgentId: reportId,
     });
     await (await this.get(managerId))?.adoptNotice(row.id);

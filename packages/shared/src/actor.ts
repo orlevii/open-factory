@@ -1,5 +1,13 @@
-/** Who is acting: a signed-in human or an agent. Required wherever a write needs attribution or the agent policy. */
-export type Actor = { kind: "human"; handle: string } | { kind: "agent"; id: string; slug: string };
+/**
+ * Who is acting: a signed-in human or an agent, by principal. Required wherever a write needs attribution or the agent
+ * policy. `ref` is the principal's ref, which the factory writes as the actor's tag.
+ */
+export type Actor =
+  | { kind: "human"; ref: string; handle: string }
+  | { kind: "agent"; id: string; ref: string; slug: string };
 
-/** How events and notices name the actor: `@handle` or `@slug`. */
+/** How the actor is named in a stored body or event: its tag, `<@ref>`, so the handle shown is always current. */
+export const actorTag = (a: Actor): string => `<@${a.ref}>`;
+
+/** How the org bus names the actor (`@handle` or `@slug`); stored text uses `actorTag`. */
 export const actorBy = (a: Actor): string => `@${a.kind === "human" ? a.handle : a.slug}`;

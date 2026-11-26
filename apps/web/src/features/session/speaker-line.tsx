@@ -1,4 +1,5 @@
 import type { AgentSummary } from "@open-factory/shared";
+import { scanTags } from "@open-factory/shared/tags";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import {
@@ -14,6 +15,8 @@ import {
 import { AgentChip, type ChipAgent } from "@/components/agent-chip";
 import { HumanAvatar } from "@/components/human-avatar";
 import { MiddleTruncate } from "@/components/middle-truncate";
+import { Tag } from "@/components/tag/tag";
+import { usePrincipal } from "@/features/principals/use-principal";
 import { usersQueryOptions } from "@/features/settings/api";
 import type { Session } from "@/lib/session";
 import { sessionQueryOptions } from "@/lib/session";
@@ -34,6 +37,8 @@ export interface SpeakerIndex {
   sessionAgent: ChipAgent | undefined;
   /** The signed-in human's handle: their own messages say "You". */
   selfHandle: string | undefined;
+  /** The signed-in human's ref: a stored tag of it says "You" too. */
+  selfRef: string | undefined;
   /** The live agents list has loaded: before it, every slug is a stand-in. */
   ready: boolean;
   /** Live, then ended (terminated keeps its link and name, archived is the plain slug). */
@@ -56,6 +61,7 @@ const noop = () => {};
 export function buildSpeakerIndex(o: {
   sessionAgent?: ChipAgent;
   selfHandle?: string;
+  selfRef?: string;
   live?: readonly ChipAgent[];
   ended?: readonly (ChipAgent & { terminated: boolean })[];
   endedMore?: boolean;
@@ -84,6 +90,7 @@ export function buildSpeakerIndex(o: {
   return {
     sessionAgent: o.sessionAgent,
     selfHandle: o.selfHandle,
+    selfRef: o.selfRef,
     ready: live !== undefined,
     agent: (slug) => {
       let r = cache.get(slug);
@@ -129,6 +136,7 @@ const toUsers = (l: { handle: string; name: string }[]) =>
 const ENDED_LOOKUP_STALE_MS = 30_000;
 
 const toHandle = (s: Session | null) => s?.user.handle;
+const toRef = (s: Session | null) => s?.user.ref;
 
 /** One reader of the agents, ended agents and users lists for a whole session (m7), and of your
  *  handle. The session agent comes in as primitives, so a status frame on it changes nothing here;
@@ -152,6 +160,7 @@ export function SpeakerProvider({
   children: ReactNode;
 }) {
   const selfHandle = useQuery({ ...sessionQueryOptions, select: toHandle }).data;
+  const selfRef = useQuery({ ...sessionQueryOptions, select: toRef }).data;
   const [needEnded, setNeedEnded] = useState(false);
   const requestEnded = useCallback(() => setNeedEnded(true), []);
   const live = useQuery({
@@ -176,6 +185,7 @@ export function SpeakerProvider({
             ? { slug, displayName, template, kind, avatarVersion, color }
             : (live?.find((a) => a.slug === slug) ?? stub(slug)),
         selfHandle,
+        selfRef,
         live,
         ended: ended.data,
         endedMore: more,
@@ -191,6 +201,7 @@ export function SpeakerProvider({
       avatarVersion,
       color,
       selfHandle,
+      selfRef,
       live,
       ended.data,
       ended.isError,
@@ -216,8 +227,39 @@ export type Party = { handle: string; kind?: PartyKind | undefined };
 
 const bareHandle = (h: string) => (h.startsWith("@") ? h.slice(1) : h);
 
-/** One side of a speaker line: an agent chip, a human's name and handle, or "You". */
+/** One side of a speaker line. A stored tag shows its principal (a chip, or "You" for the signed-in human); a handle
+ *  resolves as it always did. */
 function Speaker({ id, kind, self }: { id: string; kind?: SenderKind | undefined; self: boolean }) {
+  const s = useSpeakers();
+  const tagRef = scanTags(id).tokens[0]?.ref;
+  if (!tagRef) return <HandleSpeaker id={id} kind={kind} self={self} />;
+  if (tagRef === s.selfRef) return <SelfTag tagRef={tagRef} />;
+  return <Tag tagRef={tagRef} />;
+}
+
+/** The signed-in human's tag: "You", with their avatar, once the principal is known. */
+function SelfTag({ tagRef }: { tagRef: string }) {
+  const found = usePrincipal(tagRef);
+  if (found.status !== "found") return <Tag tagRef={tagRef} />;
+  return (
+    <span className="flex min-w-0 items-center gap-1.5">
+      <HumanAvatar name={found.principal.name} />
+      <span dir="auto" className={NAME_CLASS}>
+        You
+      </span>
+    </span>
+  );
+}
+
+function HandleSpeaker({
+  id,
+  kind,
+  self,
+}: {
+  id: string;
+  kind?: SenderKind | undefined;
+  self: boolean;
+}) {
   const s = useSpeakers();
   const handle = bareHandle(id);
   const known = kind ?? (s.isAgent(handle) ? "agent" : "human");

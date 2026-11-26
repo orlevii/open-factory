@@ -78,7 +78,7 @@ test("the human REST send resolves only agents: each refused target is its own r
     ]);
   }
   await s.seedAgent({ slug: "shelved" });
-  await s.app.agents.archive("shelved", { kind: "human", handle: "or" });
+  await s.app.agents.archive("shelved", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   expect((await one("shelved")).json().results).toEqual([
     {
       to: "@shelved",

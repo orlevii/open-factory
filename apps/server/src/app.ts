@@ -698,7 +698,7 @@ async function listenForAgents(
     tasks: TaskService;
     schedules: ScheduleService;
     /** The services the org tools call; the caller's own row is `store.agentById`. */
-    org: Omit<OrgToolDeps, "loadAgent">;
+    org: Omit<OrgToolDeps, "loadAgent" | "principalRef">;
     log: FastifyInstance["log"];
   },
 ) {
@@ -755,7 +755,11 @@ async function listenForAgents(
           : []),
         listPeersTool({ neighborhood: d.neighborhood, statusOf: (a) => d.runtimes.statusOf(a) }),
         ...(caller.manageOrg
-          ? orgTools({ ...d.org, loadAgent: (id) => d.store.agentById(id) })
+          ? orgTools({
+              ...d.org,
+              loadAgent: (id) => d.store.agentById(id),
+              principalRef: (id) => d.store.principalRef(id),
+            })
           : []),
         ...(started && maySpawn(caller, started)
           ? [

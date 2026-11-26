@@ -1,6 +1,7 @@
+import { tagOf } from "@open-factory/shared/tags";
 import { afterAll, beforeAll, beforeEach, expect, test } from "vitest";
 import { createTestDb } from "../test/helpers.ts";
-import { principalSql } from "../test/principals.ts";
+import { principalSql, testRef } from "../test/principals.ts";
 import { AgentRuntime } from "./agent-runtime.ts";
 import { EventBus } from "./event-bus.ts";
 import { EventStore } from "./event-store.ts";
@@ -159,7 +160,7 @@ test("a queued report_config_changed never wakes the manager: not deliverable, n
 test("recordReportNotice on a running idle manager queues the notice without sending it", async () => {
   await runIdle();
   await insertAgent(t.sql, { id: `rep${n}`, slug: `rep${n}`, reportsTo: id });
-  await rt.recordReportNotice(`rep${n}`, "@hr", ["added skill tdd"]);
+  await rt.recordReportNotice(`rep${n}`, "<@hr000000>", ["added skill tdd"]);
   expect(driver.last.sent).toHaveLength(1); // only the boot batch
   expect(rt.queueItems().map((q) => q.kind)).toEqual(["notice"]);
   expect(rt.hibernatable()).toBe(true);
@@ -168,7 +169,11 @@ test("recordReportNotice on a running idle manager queues the notice without sen
   await rt.settled();
   const batch = driver.last.sent[1] ?? [];
   expect(batch.map((m) => [m.kind, m.from, m.body])).toEqual([
-    ["system", "@factory", `@hr changed @rep${n}'s configuration:\n- added skill tdd`],
+    [
+      "system",
+      "@factory",
+      `<@hr000000> changed ${tagOf(testRef(`rep${n}`))}'s configuration:\n- added skill tdd`,
+    ],
     ["message", "@or", "hello again"],
   ]);
 });

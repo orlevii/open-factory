@@ -37,7 +37,12 @@ import {
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { resolveAgentArg } from "../principals/principal-args.ts";
-import { principalsByIds, tagOfPrincipal, terminatorTag } from "../principals/principal-store.ts";
+import {
+  principalById,
+  principalsByIds,
+  tagOfPrincipal,
+  terminatorTag,
+} from "../principals/principal-store.ts";
 import { capPayload } from "./cap.ts";
 import { InvalidCursorError } from "./errors.ts";
 import { type NoticeType, parseConfigNotice, renderConfigNotice } from "./notices.ts";
@@ -518,6 +523,10 @@ export class EventStore {
   /** A principal's tag (`<@ref>`), read from `principals`; the agent's own id is its principal id. */
   async principalTag(id: string): Promise<string> {
     return tagOfPrincipal(this.db, id);
+  }
+  /** A principal's ref, read from `principals`; undefined when the id has no principal. */
+  async principalRef(id: string): Promise<string | undefined> {
+    return (await principalById(this.db, id))?.ref;
   }
   /** Boot (spec §5.7 step 7): every journal was read and acted on, except those of `keep` (a reap that failed). */
   async clearRuntimeJournals(keep: string[] = []) {

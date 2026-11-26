@@ -125,11 +125,11 @@ export const notices = {
   configChanged: renderConfigNotice,
   /**
    * I7 §8.2: passive, to an agent's manager; one pending row per (manager, report) accumulates the lines, and the
-   * header names the latest actor. `by` is the actor's `@handle`, `report` the report's slug. The `config_changed` shape,
-   * so `parseConfigNotice` reads it back.
+   * header names the latest actor. `by` and `report` are tags (`<@ref>`). The `config_changed` shape, so
+   * `parseConfigNotice` reads it back.
    */
   reportConfigChanged(i: { by: string; report: string; lines: readonly string[] }): string {
-    return renderConfigNotice(i.lines, `${i.by} changed @${i.report}'s configuration:`);
+    return renderConfigNotice(i.lines, `${i.by} changed ${i.report}'s configuration:`);
   },
   /** `at` only when the reset time was exact. */
   rateLimitReset(i: { credential: string; at?: Date }): string {

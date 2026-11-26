@@ -39,7 +39,7 @@ test("templateRuntimes: each name's runtime, docker by default, local for a name
 });
 
 test("templateHasLocalAgents: true for an archived local agent, and for a spawned one until it is terminated", async () => {
-  const human = { kind: "human", handle: "or" } as const;
+  const human = { kind: "human", ref: "k7x2m9qd", handle: "or" } as const;
   const credId = randomUUID();
   await t.db.insert(schema.credentials).values({
     id: credId,

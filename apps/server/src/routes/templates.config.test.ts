@@ -311,7 +311,7 @@ test("one save fires the template change once, with the caller's handle, and the
   await vi.waitFor(() => expect(changes.length).toBe(1));
   await settle();
   expect(changes.length).toBe(1);
-  expect(changes[0]).toMatchObject({ name: "dev", by: "@or" });
+  expect(changes[0]).toMatchObject({ name: "dev", by: expect.stringMatching(/^<@[0-9a-z]{8}>$/) });
 });
 
 test("a save that changes nothing writes nothing", async () => {

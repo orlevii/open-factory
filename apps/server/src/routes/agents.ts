@@ -70,6 +70,7 @@ export const agentsRoutes: FastifyPluginAsyncZod = async (app) => {
   };
   const human = (req: { user?: { id: string; handle: string; ref: string } }): Actor => ({
     kind: "human",
+    ref: user(req).ref,
     handle: user(req).handle,
   });
 

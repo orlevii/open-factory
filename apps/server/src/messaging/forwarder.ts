@@ -18,35 +18,33 @@ export type FactDetail = {
 };
 
 /**
- * The body of a factory fact (spec §9.1), the subject written as its tag (`<@ref>`). Whatever the report controls (an error message,
- * a denial reason, `last_error`, task descriptions) is quoted by `quoteReported`, which also neutralises envelope tags.
+ * The body of a factory fact (spec §9.1). `subject` is the subject's tag, `<@ref>`. What the report controls (an error
+ * message, a denial reason, `last_error`, task descriptions) is quoted by `quoteReported`, which neutralises envelope tags.
  */
 export function factFor(kind: FactCode, subject: string, detail: FactDetail = {}): string {
-  // `subject` is the subject's tag, `<@ref>`.
-  const who = subject;
-  const reported = (lead: string, intro = `Reported by ${who}:`) =>
+  const reported = (lead: string, intro = `Reported by ${subject}:`) =>
     detail.text !== undefined && detail.text !== ""
       ? `${lead} ${quoteReported(intro, detail.text)}`
       : lead;
   switch (kind) {
     case "turn_failed":
-      return reported(`A turn of ${who} failed.`);
+      return reported(`A turn of ${subject} failed.`);
     case "denied":
       return reported(
-        `${detail.tool ?? "A tool"} was denied for ${who}.`,
-        `The reason, reported by ${who}:`,
+        `${detail.tool ?? "A tool"} was denied for ${subject}.`,
+        `The reason, reported by ${subject}:`,
       );
     case "crashed":
-      return `${who} stopped unexpectedly during a turn; one automatic recovery is under way.`;
+      return `${subject} stopped unexpectedly during a turn; one automatic recovery is under way.`;
     case "errored":
-      return reported(`${who} is errored and needs a human.`);
+      return reported(`${subject} is errored and needs a human.`);
     case "recovered":
-      return `${who} recovered.`;
+      return `${subject} recovered.`;
     case "work_lost": {
-      const lead = `Background work of ${who} was stopped.`;
+      const lead = `Background work of ${subject} was stopped.`;
       const lines = [...(detail.lost?.tasks ?? []), ...(detail.lost?.crons ?? [])];
       return lines.length
-        ? `${lead} ${quoteReported(`Reported by ${who}:`, lines.join("\n"))}`
+        ? `${lead} ${quoteReported(`Reported by ${subject}:`, lines.join("\n"))}`
         : lead;
     }
   }

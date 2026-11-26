@@ -18,13 +18,13 @@ import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 import { OrgRefusedError } from "../agents/errors.ts";
 import { PolicyInputs } from "../agents/policy-inputs.ts";
 import { makeTestApp } from "../test/helpers.ts";
-import { seedTestUser } from "../test/principals.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import { fileHash, type TemplateIndex } from "./template-index.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let idx: TemplateIndex;
 let home: string;
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 let hr: Actor;
 
 const dirOf = (n: string) => path.join(home, "templates", n);
@@ -75,7 +75,12 @@ beforeAll(async () => {
   writeTemplate("hrtpl");
   await idx.scan();
   await agentOn("hr-bot", "hrtpl");
-  hr = { kind: "agent", id: await idOf("hr-bot"), slug: "hr-bot" };
+  hr = {
+    kind: "agent",
+    id: await idOf("hr-bot"),
+    ref: testRef(await idOf("hr-bot")),
+    slug: "hr-bot",
+  };
 });
 afterAll(() => t.close());
 afterEach(() => vi.restoreAllMocks());
@@ -279,7 +284,9 @@ test("the lock carries the author: a loadValid started mid-write waits, and the 
   await write;
   expect((await load).doc.template.can_spawn).toEqual(["other"]);
   await vi.waitFor(async () =>
-    expect((await events(devId)).map((e) => e.payload.by)).toEqual(["@hr-bot in template dev"]),
+    expect((await events(devId)).map((e) => e.payload.by)).toEqual([
+      `<@${(hr as { ref: string }).ref}> in template dev`,
+    ]),
   );
 });
 

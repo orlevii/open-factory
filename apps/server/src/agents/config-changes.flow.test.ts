@@ -2,6 +2,7 @@ import type { AgentRow } from "@open-factory/db";
 import type { AnyEvent, ConfigDoc, ConfigSnapshot, ServerMessage } from "@open-factory/shared";
 import { expect, test } from "vitest";
 import { FILE_CHANGE } from "../templates/template-index.ts";
+import { testRef } from "../test/principals.ts";
 import { ConfigChanges } from "./config-changes.ts";
 import type { Effective } from "./config-resolver.ts";
 
@@ -295,7 +296,7 @@ test("a spawner whose secrets or deny rules changed restarts its live children; 
   w.restarts.length = 0;
   await w.changes.overlaySaved(
     lead,
-    { kind: "human", handle: "orlevi" },
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
     tpl({}),
     tpl({}, { permissions: { deny: ["Bash(rm:*)"] } }),
   );
@@ -305,7 +306,7 @@ test("a spawner whose secrets or deny rules changed restarts its live children; 
   w.restarts.length = 0;
   await w.changes.overlaySaved(
     lead,
-    { kind: "human", handle: "orlevi" },
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
     tpl({ skills: [] }),
     tpl({ skills: ["x"] }),
   );
@@ -318,7 +319,7 @@ test("an overlay save on an archived agent writes the event only", async () => {
   const w = world();
   const out = await w.changes.overlaySaved(
     a,
-    { kind: "human", handle: "orlevi" },
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
     doc(),
     doc({ model: "opus" }),
   );
@@ -326,7 +327,7 @@ test("an overlay save on an archived agent writes the event only", async () => {
   expect(w.appendedToStore).toEqual([
     {
       agentId: a.id,
-      event: { type: "config_changed", by: "@orlevi", changes: ["model: default → opus"] },
+      event: { type: "config_changed", by: "<@h4r5r6r7>", changes: ["model: default → opus"] },
     },
   ]);
   expect([w.notices, w.restarts]).toEqual([[], []]);
@@ -353,7 +354,7 @@ test("overlaySaved never waits on the runtime's queue (a start in progress)", as
   w.load(a, true, true);
   const out = await w.changes.overlaySaved(
     a,
-    { kind: "human", handle: "orlevi" },
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
     doc(),
     doc({ model: "opus" }),
   );
@@ -366,9 +367,9 @@ test("an overlay save asks for a wake only when the agent edited its own configu
   w.load(a, true);
   const save = (actor: Parameters<typeof w.changes.overlaySaved>[1]) =>
     w.changes.overlaySaved(a, actor, doc(), doc({ model: "opus" }));
-  await save({ kind: "agent", id: a.id, slug: a.slug });
-  await save({ kind: "agent", id: "someone-else", slug: "hr-bot" });
-  await save({ kind: "human", handle: "or" });
+  await save({ kind: "agent", id: a.id, ref: testRef(a.id), slug: a.slug });
+  await save({ kind: "agent", id: "someone-else", ref: testRef("someone-else"), slug: "hr-bot" });
+  await save({ kind: "human", ref: "k7x2m9qd", handle: "or" });
   await new Promise((r) => setImmediate(r));
   expect(w.restarts.map((r) => r.wake)).toEqual([true, undefined, undefined]);
 });
@@ -388,7 +389,12 @@ test("secret safety: no env value, MCP URL or command reaches an event, a notice
   );
   // The fixture does carry the value, so the checks below can fail.
   expect(JSON.stringify(after)).toContain(SECRET);
-  const out = await w.changes.overlaySaved(a, { kind: "human", handle: "orlevi" }, before, after);
+  const out = await w.changes.overlaySaved(
+    a,
+    { kind: "human", ref: "h4r5r6r7", handle: "orlevi" },
+    before,
+    after,
+  );
   await new Promise((r) => setImmediate(r));
   const seen = JSON.stringify([out, rt.appended, w.appendedToStore, w.notices, w.frames, w.logged]);
   expect(seen).not.toContain(SECRET);

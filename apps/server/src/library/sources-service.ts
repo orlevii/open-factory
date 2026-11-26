@@ -195,7 +195,7 @@ const sourceLabel = (s: SkillSourceRow) => (s.kind === "github" ? (s.repo ?? "")
 const hookKey = (h: HookDecl) => JSON.stringify([h.event, h.matcher, h.command]);
 
 /** Who made a Library change: a human principal. */
-export type Who = { id: string; handle: string };
+export type Who = { id: string; ref: string; handle: string };
 
 /** Hooks and executable files (by content hash) of a skill folder: what makes an update run different code. */
 async function codeSurface(
@@ -345,7 +345,7 @@ export class SourcesService {
     try {
       await this.d.onLibraryChanged?.({
         skills,
-        by: `@${by.handle}`,
+        by: `<@${by.ref}>`,
         ...(before ? { before } : {}),
       });
     } catch (e) {

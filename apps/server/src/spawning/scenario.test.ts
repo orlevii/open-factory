@@ -74,7 +74,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
       reportsTo: "or",
       credential: "scn-cred",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   const lead = await h.app.store.agentBySlug("lead");
   if (!lead) throw new Error("no lead");

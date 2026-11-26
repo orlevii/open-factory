@@ -1,5 +1,5 @@
 import type { AnyEvent, ServerMessage } from "@open-factory/shared";
-import { act, fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { json, mockApi } from "@/test/mock-api";
@@ -349,6 +349,44 @@ test("a peer event renders from subject, not from the body", async () => {
     /left: now reports to/,
   );
   expect(screen.queryByText("IGNORED PROSE")).toBeNull();
+});
+
+test("a peer that moved names its new manager by tag, shown by the manager's current handle", async () => {
+  const lead = {
+    id: "p-lead",
+    ref: "k7x2m9qd",
+    kind: "agent",
+    handle: "new-lead",
+    name: "New Lead",
+    state: "live",
+    avatar: null,
+  };
+  await open(
+    [
+      {
+        type: "message_in",
+        messages: [
+          env({
+            id: "p2",
+            from: "@factory",
+            kind: "peer_left",
+            about: "b",
+            body: "IGNORED PROSE",
+            subject: {
+              slug: "b",
+              displayName: "Builder",
+              relation: "peer",
+              left: { reason: "moved", to: "<@k7x2m9qd>" },
+            },
+          }),
+        ],
+      },
+    ],
+    /left: now reports to/,
+    { "GET /api/principals": () => json({ principals: [lead] }) },
+  );
+  await waitFor(() => expect(document.body.textContent).toMatch(/now reports to .*@new-lead/));
+  expect(document.body.textContent).not.toContain("@<@");
 });
 
 const call = (input: unknown, toolUseId = "toolu_1"): AnyEvent => ({
@@ -1266,7 +1304,7 @@ test("↑ recall fills the box with your newest raw input, as typed", async () =
       {
         type: "operator_input",
         text: "/code-review src/",
-        by: "@alice",
+        by: "<@abcd2345>",
         byKind: "human",
         entryId: "e1",
       },

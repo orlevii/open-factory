@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { insertAgent } from "../../agents/testing/rows.ts";
 import { makeTestApp } from "../../test/helpers.ts";
-import { seedTestUser } from "../../test/principals.ts";
+import { seedTestUser, testRef } from "../../test/principals.ts";
 import { callTool, mcpCall } from "../testing/mcp-client.ts";
 
 // A secret reference as a config holds it, never expanded.
@@ -30,7 +30,7 @@ const NINE = [
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let url: string;
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 const tok: Record<string, string> = {};
 const row = async (slug: string) => {
   const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));
@@ -124,6 +124,7 @@ test("a handler reached with a revoked caller row refuses with the sentence", as
   const revoked = { ...(await row("hr-bot")), manageOrg: false };
   const regs = orgTools({
     loadAgent: async () => revoked,
+    principalRef: async () => undefined,
     agents: t.app.agents,
     config: t.app.configs,
     templates: t.app.templates,
@@ -483,7 +484,12 @@ test("no tool result holds a secret value, a credential token or a host path (AC
 });
 
 test("updateWithOverlay: an overlay changed after validation rolls the identity patch back and emits nothing", async () => {
-  const hr: Actor = { kind: "agent", id: (await row("hr-bot")).id, slug: "hr-bot" };
+  const hr: Actor = {
+    kind: "agent",
+    id: (await row("hr-bot")).id,
+    ref: testRef((await row("hr-bot")).id),
+    slug: "hr-bot",
+  };
   const before = await row("dev-1");
   const plan = await t.app.configs.planOverlay(
     "dev-1",

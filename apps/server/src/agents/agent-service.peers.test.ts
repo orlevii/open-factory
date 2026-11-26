@@ -49,7 +49,7 @@ function create(slug: string, displayName: string, reportsTo: string) {
       reportsTo,
       credential: "work",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
 }
 
@@ -67,7 +67,11 @@ test("create: peers get 'joined as your peer', the manager 'joined as your repor
 
 test("manager change: left the old neighborhood, joined the new; the moved agent gets no event but a restart", async () => {
   const restart = vi.spyOn(h.app.runtimes, "requestRestart");
-  await h.app.agents.update("dev", { reportsTo: "boss" }, { kind: "human", handle: "or" });
+  await h.app.agents.update(
+    "dev",
+    { reportsTo: "boss" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
   const [dev_, boss_] = [await tag("dev"), await tag("boss")];
   expect(await held("lead")).toEqual([
     { kind: "peer_left", notice: "report", body: `${dev_} (Dev) left: now reports to ${boss_}.` },
@@ -82,7 +86,11 @@ test("manager change: left the old neighborhood, joined the new; the moved agent
 });
 
 test("moving to a human manager: 'now reports to @or'; agents under the same human become peers", async () => {
-  await h.app.agents.update("dev", { reportsTo: "or" }, { kind: "human", handle: "or" });
+  await h.app.agents.update(
+    "dev",
+    { reportsTo: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
   const dev_ = await tag("dev");
   // lead loses a report and gains a peer under the same human; boss gains a peer. Order by created_at is deterministic.
   expect(await held("lead")).toEqual([
@@ -103,24 +111,24 @@ test("agents under different human managers are not peers", async () => {
 });
 
 test("archive and unarchive send left and joined; archived agents receive nothing", async () => {
-  await h.app.agents.archive("dev", { kind: "human", handle: "or" });
+  await h.app.agents.archive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   const dev_ = await tag("dev");
   expect(await held("lead")).toEqual([
     { kind: "peer_left", notice: "report", body: `${dev_} (Dev) left: archived.` },
   ]);
-  await h.app.agents.unarchive("dev", { kind: "human", handle: "or" });
+  await h.app.agents.unarchive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   expect((await held("lead")).at(-1)).toEqual({
     kind: "peer_joined",
     notice: "report",
     body: `${dev_} (Dev) joined as your report.`,
   });
-  await h.app.agents.archive("boss", { kind: "human", handle: "or" });
+  await h.app.agents.archive("boss", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   await create("new", "New", "or");
   expect(await held("boss")).toEqual([]);
 });
 
 test("summaries count non-archived direct reports", async () => {
   expect((await h.app.agents.summary("lead")).reports).toBe(1);
-  await h.app.agents.archive("dev", { kind: "human", handle: "or" });
+  await h.app.agents.archive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   expect((await h.app.agents.summary("lead")).reports).toBe(0);
 });

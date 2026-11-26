@@ -23,7 +23,7 @@ import { hostOnlyLibrary, writeHostSkill } from "../test/library.ts";
 import { seedTestPrincipal, testManagerUserId } from "../test/principals.ts";
 import { configDocHash, type TemplateChange, TemplateIndex } from "./template-index.ts";
 
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 let t: Awaited<ReturnType<typeof createTestDb>>;
 let idx: TemplateIndex;
 let home: string;
@@ -349,13 +349,14 @@ test("a write through the API reports its author; scanOne never awaits listeners
   const res = await Promise.race([
     slow.writeFile("cd7", "template.yaml", yamlWith("cd7", "skills: [tdd]\n"), hash ?? null, {
       kind: "human",
+      ref: "h4r5r6r7",
       handle: "ana",
     }),
     new Promise((r) => setTimeout(() => r("timeout"), 5000)),
   ]);
   expect(res).not.toBe("timeout");
   await vi.waitFor(() => expect(started).toBe(true));
-  expect(slowSeen.at(-1)?.by).toBe("@ana");
+  expect(slowSeen.at(-1)?.by).toBe("<@h4r5r6r7>");
   release();
 });
 

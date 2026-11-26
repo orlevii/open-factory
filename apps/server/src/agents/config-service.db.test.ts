@@ -8,14 +8,14 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { ApiError } from "../errors.ts";
 import { makeTestApp } from "../test/helpers.ts";
-import { seedTestUser } from "../test/principals.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import type { ConfigService } from "./config-service.ts";
 import { OrgRefusedError } from "./errors.ts";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let cfg: ConfigService;
 let home: string;
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 let hr: Actor;
 
 function writeTemplate(name: string, runtime: "docker" | "local") {
@@ -67,7 +67,7 @@ beforeAll(async () => {
   await svc.create(body("dev"), human);
   await svc.create(body("loc", "localtpl"), human);
   const hrRow = await rowOf("hr-bot");
-  hr = { kind: "agent", id: hrRow.id, slug: "hr-bot" };
+  hr = { kind: "agent", id: hrRow.id, ref: testRef(hrRow.id), slug: "hr-bot" };
 });
 afterAll(() => t.close());
 
@@ -149,7 +149,9 @@ test("a valid agent save writes the overlay and a config_changed event by the ag
   const dev = await rowOf("dev");
   expect(dev.config).toEqual(overlay);
   await vi.waitFor(async () =>
-    expect((await events(dev.id)).map((e) => e.payload.by)).toContain("@hr-bot"),
+    expect((await events(dev.id)).map((e) => e.payload.by)).toContain(
+      `<@${(hr as { ref: string }).ref}>`,
+    ),
   );
 });
 
@@ -157,7 +159,7 @@ test("a human save attributes the event to the human", async () => {
   const dev = await rowOf("dev");
   await cfg.saveOverlay("dev", {}, await versionOf("dev"), human);
   await vi.waitFor(async () =>
-    expect((await events(dev.id)).map((e) => e.payload.by)).toContain("@or"),
+    expect((await events(dev.id)).map((e) => e.payload.by)).toContain(`<@${human.ref}>`),
   );
 });
 

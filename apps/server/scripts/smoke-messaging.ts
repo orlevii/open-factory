@@ -591,7 +591,7 @@ try {
           reportsTo,
           credential: "smoke",
         },
-        { kind: "human", handle: "or" },
+        { kind: "human", ref: "k7x2m9qd", handle: "or" },
       ),
     );
     ids.set(

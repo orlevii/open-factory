@@ -379,7 +379,7 @@ try {
         reportsTo: "smoke",
         credential: "smoke",
       },
-      { kind: "human", handle: "or" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
     ),
   );
   agentId = String((await conn.sql`select id from agents where slug = ${SLUG}`)[0]?.id ?? "");

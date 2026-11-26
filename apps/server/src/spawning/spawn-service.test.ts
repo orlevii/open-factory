@@ -330,7 +330,7 @@ test("a spawn racing an archive of its spawner: the archive refuses or the spawn
   const spawning = t.app.spawner.spawn(lead.id, args({ suffix: "race" }), null);
   await g.waitFor(1);
   // The archive commits while materialize is in flight: the spawn must refuse under its lock.
-  await t.app.agents.archive("lead", { kind: "human", handle: "or" });
+  await t.app.agents.archive("lead", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   g.gate.resolve();
   expect(await spawning).toEqual({ ok: false, message: "You can't spawn agents." });
   expect(await t.app.store.agentBySlug("tech-lead-race")).toBeUndefined();
@@ -346,7 +346,7 @@ test("a spawn racing an archive of its spawner: the archive refuses or the spawn
   const r = await t.app.spawner.spawn(lead2.id, args({ template: "dev", suffix: "k" }), null);
   expect(r.ok).toBe(true);
   await expect(
-    t.app.agents.archive("lead2", { kind: "human", handle: "or" }),
+    t.app.agents.archive("lead2", { kind: "human", ref: "k7x2m9qd", handle: "or" }),
   ).rejects.toMatchObject({
     status: 409,
     code: "has_reports",
@@ -366,7 +366,11 @@ test("a spawn racing a credential change: the child ends with the spawner's post
   const g = gateMaterialize(t);
   const spawning = t.app.spawner.spawn(lead.id, args({ suffix: "cred" }), null);
   await g.waitFor(1);
-  await t.app.agents.update("lead", { credential: "second" }, { kind: "human", handle: "or" });
+  await t.app.agents.update(
+    "lead",
+    { credential: "second" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
   g.gate.resolve();
   expect(await spawning).toMatchObject({ ok: true });
   expect((await t.app.store.agentBySlug("tech-lead-cred"))?.credentialId).toBe(credId);
@@ -377,7 +381,11 @@ test("a spawn racing a grant change: the child gets the spawner's post-change gr
   const g = gateMaterialize(t);
   const spawning = t.app.spawner.spawn(lead.id, args({ suffix: "gr" }), null);
   await g.waitFor(1);
-  await t.app.agents.update("lead", { projects: ["web"] }, { kind: "human", handle: "or" });
+  await t.app.agents.update(
+    "lead",
+    { projects: ["web"] },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
   g.gate.resolve();
   const r = await spawning;
   expect(r).toMatchObject({

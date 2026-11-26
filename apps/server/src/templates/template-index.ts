@@ -16,7 +16,7 @@ import path from "node:path";
 import { type Db, schema } from "@open-factory/db";
 import {
   type Actor,
-  actorBy,
+  actorTag,
   agentPolicyIssues,
   CONFIG_FILES,
   type ConfigDoc,
@@ -479,7 +479,7 @@ export class TemplateIndex {
       const tmp = `${target}.${randomBytes(4).toString("hex")}.tmp`;
       await writeFile(tmp, content);
       await rename(tmp, target);
-      const full = await this.indexLocked(name, ctx, actorBy(actor), actor);
+      const full = await this.indexLocked(name, ctx, actorTag(actor), actor);
       return { hash: fileHash(Buffer.from(content)), issues: full.row.issues };
     });
   }
@@ -703,7 +703,7 @@ export class TemplateIndex {
         await Promise.all(temps.map(([tmp]) => rm(tmp, { force: true })));
       }
       // Even after a failed write the index must match the disk, and the author is this caller.
-      const row = await this.indexLocked(name, await this.context(), actorBy(actor), actor).catch(
+      const row = await this.indexLocked(name, await this.context(), actorTag(actor), actor).catch(
         () => undefined,
       );
       if (failure) throw failure;
@@ -754,7 +754,7 @@ export class TemplateIndex {
         await rm(dir, { recursive: true, force: true });
         throw e;
       }
-      const full = await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
+      const full = await this.indexLocked(b.name, await this.context(), actorTag(actor), actor);
       return { issues: full.row.issues };
     });
   }
@@ -806,7 +806,7 @@ export class TemplateIndex {
         await rm(dir, { recursive: true, force: true });
         throw e;
       }
-      const full = await this.indexLocked(b.name, await this.context(), actorBy(actor), actor);
+      const full = await this.indexLocked(b.name, await this.context(), actorTag(actor), actor);
       return { issues: full.row.issues };
     });
   }

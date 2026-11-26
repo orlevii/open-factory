@@ -34,6 +34,8 @@ import { toolErrorOf } from "./org-errors.ts";
 
 export type OrgToolDeps = {
   loadAgent(id: string): Promise<AgentRow | undefined>;
+  /** The caller's principal ref: the agent actor is named by its tag in stored text. */
+  principalRef(id: string): Promise<string | undefined>;
   agents: AgentService;
   config: ConfigService;
   templates: TemplateIndex;
@@ -72,7 +74,10 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       throw new OrgRefusedError(
         row ? `@${row.slug} can't manage the org any more.` : "You can't manage the org any more.",
       );
-    return { kind: "agent", id: row.id, slug: row.slug };
+    const ref = await d.principalRef(row.id);
+    if (!ref)
+      throw new OrgRefusedError(`@${row.slug} has no principal; ask a human to check the factory.`);
+    return { kind: "agent", id: row.id, ref, slug: row.slug };
   };
   const handler =
     <A>(fn: (args: A, actor: AgentActor) => Promise<unknown>) =>

@@ -6,12 +6,12 @@ import type { Actor } from "@open-factory/shared";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { makeTestApp } from "../test/helpers.ts";
-import { seedTestUser } from "../test/principals.ts";
+import { seedTestUser, testRef } from "../test/principals.ts";
 import { OrgRefusedError } from "./errors.ts";
 
 /** Switching an agent between Docker and local (its Configure page): a human's explicit act, with the local rules. */
 
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 
 async function factory(env: Record<string, string> = {}) {
   const t = await makeTestApp({ env });
@@ -90,7 +90,7 @@ describe("on a factory that allows local agents", () => {
       f.t.app.agents.update(
         slug,
         { runtime: to },
-        { kind: "agent", id: asker.id, slug: asker.slug },
+        { kind: "agent", id: asker.id, ref: testRef(asker.id), slug: asker.slug },
       ),
     ).rejects.toBeInstanceOf(OrgRefusedError);
     expect(await f.runtimeOf(slug)).toBe(before);

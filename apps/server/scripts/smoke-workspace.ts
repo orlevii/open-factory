@@ -319,7 +319,7 @@ try {
         reportsTo: "smoke",
         credential: "smoke-a",
       },
-      { kind: "human", handle: "or" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
     ),
   );
   await step("4. agent smoke-beta created from beta with smoke-b", () =>
@@ -332,7 +332,7 @@ try {
         reportsTo: "smoke-alpha",
         credential: "smoke-b",
       },
-      { kind: "human", handle: "or" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
     ),
   );
   check(

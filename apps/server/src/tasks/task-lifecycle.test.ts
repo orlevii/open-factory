@@ -184,12 +184,12 @@ test("unarchive is not retroactive: nothing was written while the agent was arch
   await settle("dev");
   proc("dev")?.emit(...ev.fullTurn("sess-dev"));
   await settle("dev");
-  await h.app.agents.archive("dev", { kind: "human", handle: "or" });
+  await h.app.agents.archive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   const before = (await rows("dev")).length;
   await h.app.tasks.update(or, "T-1", { status: "in_progress" });
   await h.app.tasks.comment(or, "T-1", "@dev hello");
   expect((await rows("dev")).length).toBe(before);
-  await h.app.agents.unarchive("dev", { kind: "human", handle: "or" });
+  await h.app.agents.unarchive("dev", { kind: "human", ref: "k7x2m9qd", handle: "or" });
   await settle("dev");
   expect((await rows("dev")).length).toBe(before);
 });

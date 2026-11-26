@@ -273,14 +273,15 @@ test("recall is your newest operator_input in the loaded timeline, as typed", ()
       at: "2026-11-22T10:00:00.000Z",
       event: { type: "operator_input", text, by, byKind: "human", entryId: `e${seq}` },
     }) as SessionEvent;
+  const ALICE = "<@a1ce0001>";
   const ordered = [
-    ev(1, "@alice", "older"),
-    ev(2, "@alice", "/context  "),
-    ev(3, "@bob", "not mine"),
+    ev(1, ALICE, "older"),
+    ev(2, ALICE, "/context  "),
+    ev(3, "<@b0b00001>", "not mine"),
   ];
-  expect(recallText(ordered, "alice")).toBe("/context  ");
-  expect(recallText(ordered, "carol")).toBeUndefined();
-  expect(recallText([], "alice")).toBeUndefined();
+  expect(recallText(ordered, ALICE)).toBe("/context  ");
+  expect(recallText(ordered, "<@c4r01000>")).toBeUndefined();
+  expect(recallText([], ALICE)).toBeUndefined();
 });
 
 test("at most 3 files upload at once; the rest wait at 0% and start as slots free", () => {

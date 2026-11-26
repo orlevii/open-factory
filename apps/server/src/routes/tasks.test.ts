@@ -59,7 +59,7 @@ test("POST creates (201) as the human; the detail has history and the creator", 
     assignee: { slug: "dev" },
     blockedBy: [],
   });
-  expect(t.createdBy).toMatchObject({ kind: "human", handle: "or" });
+  expect(t.createdBy).toMatchObject({ kind: "human", ref: expect.any(String), handle: "or" });
   expect(t.activity.map((a) => (a.type === "event" ? a.event : a.type))).toEqual([
     "created",
     "assignee",
@@ -215,7 +215,7 @@ test("GET detail: activity oldest first with comments and history interleaved; b
   expect(c.json()).toMatchObject({
     comment: {
       type: "comment",
-      author: { kind: "human", handle: "or" },
+      author: { kind: "human", ref: expect.any(String), handle: "or" },
       body: `<@${dev?.ref}> look at this`,
     },
     deliveredTo: ["dev"],

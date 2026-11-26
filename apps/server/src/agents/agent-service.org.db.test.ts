@@ -18,7 +18,7 @@ let t: Awaited<ReturnType<typeof makeTestApp>>;
 let svc: AgentService;
 let runtimes: AgentRuntimes;
 let home: string;
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 let hr: Actor;
 
 function writeTemplate(name: string, runtime: "docker" | "local") {
@@ -45,7 +45,7 @@ const rowOf = async (slug: string) => {
 const asAgent = async (slug: string): Promise<Actor> => {
   const r = await rowOf(slug);
   if (!r) throw new Error(`no agent ${slug}`);
-  return { kind: "agent", id: r.id, slug };
+  return { kind: "agent", id: r.id, ref: testRef(r.id), slug };
 };
 
 beforeAll(async () => {

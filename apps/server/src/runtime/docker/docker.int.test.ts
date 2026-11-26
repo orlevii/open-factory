@@ -205,7 +205,7 @@ async function setup(o: {
       credential: "work",
       ...(o.grant ? { projects: ["app"] } : {}),
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   const fake = installFakeClaude({ workdir, scenario: o.scenario });
   expect(fake.bin).toBe(env.FACTORY_DOCKER_CLAUDE_BIN);
@@ -262,7 +262,7 @@ async function setupSpawned(scenario: string | FakeScenario, suffix = "a1") {
       credential: "work",
       projects: ["app"],
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   const leadId = await idOf(t.db, "lead");
   agentIds.add(leadId);
@@ -516,7 +516,11 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
     // A new grant changes the mounts, so the spec hash: the next start re-creates the container.
     const repo = gitRepo();
     await w.app.projects.create({ name: "app", hostPath: repo });
-    await w.app.agents.update(w.slug, { projects: ["app"] }, { kind: "human", handle: "or" });
+    await w.app.agents.update(
+      w.slug,
+      { projects: ["app"] },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
+    );
     await idle(w, "with a project");
     const next = await inspect(w);
     expect(next.Id).not.toBe(first.Id);
@@ -717,7 +721,7 @@ docker("Docker runtime (open-factory-base:dev, fake claude)", { timeout: 120_000
         reportsTo: "or",
         credential: "work",
       },
-      { kind: "human", handle: "or" },
+      { kind: "human", ref: "k7x2m9qd", handle: "or" },
     );
     const locId = await idOf(w.t.db, "loc");
     await w.app.close();

@@ -1013,7 +1013,11 @@ export class AgentRuntime {
       if (!report) return;
       await this.addNotice(
         "report_config_changed",
-        notices.reportConfigChanged({ by, report: report.slug, lines }),
+        notices.reportConfigChanged({
+          by,
+          report: await this.d.store.principalTag(reportId),
+          lines,
+        }),
         reportId,
       );
     });

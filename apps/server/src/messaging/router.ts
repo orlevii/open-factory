@@ -707,7 +707,7 @@ export class Router {
     const subject = await this.d.store.agentById(subjectId, tx);
     if (!subject) return [];
     const subjectRef = (await principalById(tx, subjectId))?.ref;
-    if (!subjectRef) return [];
+    if (!subjectRef) throw new Error(`No principal for agent ${subjectId}`);
     const rows: PendingRow[] = [];
     if (change.kind === "left" || change.kind === "moved") {
       const left: PeerLeft =
@@ -823,7 +823,7 @@ export class Router {
       const to = await this.d.store.agentById(t.id, tx);
       if (!to || to.archivedAt || to.terminatedAt || to.id === subject.id) continue;
       const recipientRef = refs.get(to.id)?.ref;
-      if (!recipientRef) continue;
+      if (!recipientRef) throw new Error(`No principal for agent ${to.id}`);
       rows.push(
         await this.d.store.createOrgRow(
           {

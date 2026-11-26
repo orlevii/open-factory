@@ -28,9 +28,9 @@ const idParams = z.object({ id: z.string().min(1) });
 export const libraryRoutes: FastifyPluginAsyncZod = async (app) => {
   // onRequest, not preHandler: auth must come before validation (401 before 400).
   app.addHook("onRequest", requireUser);
-  const by = (req: { user?: { id: string; handle: string } }) => {
+  const by = (req: { user?: { id: string; handle: string; ref: string } }) => {
     if (!req.user) throw new Error("requireUser did not set request.user");
-    return { id: req.user.id, handle: req.user.handle };
+    return { id: req.user.id, ref: req.user.ref, handle: req.user.handle };
   };
 
   // Reads (§9.1).

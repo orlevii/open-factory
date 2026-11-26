@@ -1,4 +1,5 @@
 import type { AgentSummary, QueueItem } from "@open-factory/shared";
+import { tagOf } from "@open-factory/shared/tags";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
@@ -132,6 +133,8 @@ export function SessionView({
     [setRaceNotice, refreshAgent],
   );
   const self = me?.user.handle;
+  // Stored text names you by your tag (a command's sender, the operator input you typed).
+  const selfTag = me ? tagOf(me.user.ref) : undefined;
   const { queue, sending, cancelled, stopEpoch, landed } = s.state;
   const queueItems = useMemo(
     () =>
@@ -142,15 +145,16 @@ export function SessionView({
           agent={agent}
           cancelled={cancelled}
           self={self}
+          selfTag={selfTag}
           onCancel={onCancel}
           onUndo={onUndo}
         />
       ) : null,
-    [queue, sending, agent, cancelled, self, onCancel, onUndo],
+    [queue, sending, agent, cancelled, self, selfTag, onCancel, onUndo],
   );
   const pendingRows = useMemo(
-    () => rawTailRows(queue, sending, cancelled, self, onCancel),
-    [queue, sending, cancelled, self, onCancel],
+    () => rawTailRows(queue, sending, cancelled, selfTag, onCancel),
+    [queue, sending, cancelled, selfTag, onCancel],
   );
   const { onQueued, onSending, onSendFailed, clearCancelled } = s;
   // ↑ recall reads the loaded timeline when the key is pressed, so a new event never renders the composer.
@@ -168,7 +172,7 @@ export function SessionView({
     lookedThrough.current = { slug, seq: ordered.at(-1)?.seq ?? from };
     if (used.length) uploadsFor(userId, slug).forgetUploads(used);
   }, [s.state.ordered, slug, self, userId]);
-  const recall = useCallback(() => recallText(orderedRef.current, self), [self]);
+  const recall = useCallback(() => recallText(orderedRef.current, selfTag), [selfTag]);
   const composer = useMemo(
     () =>
       agent ? (

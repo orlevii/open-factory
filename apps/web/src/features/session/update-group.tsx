@@ -6,7 +6,7 @@ import { formatTime } from "./format";
 import { AgentLink, ClampedMarkdown, LINK_CLASS } from "./message-block";
 import { CodePlate, QuietLine } from "./quiet-line";
 import type { Row } from "./rows";
-import { terminatedPhrase } from "./spawn-block";
+import { Actor, terminatedPhrase } from "./spawn-block";
 
 const PART_CLAMP_LINES = 8;
 const WRITTEN_GAP_MS = 60_000;
@@ -242,7 +242,7 @@ export function PeerLine({
     else
       what = (
         <>
-          {who} left: now reports to <span className="font-mono text-foreground">@{s.left.to}</span>
+          {who} left: now reports to <Actor by={s.left.to} />
         </>
       );
   }

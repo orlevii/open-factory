@@ -14,7 +14,7 @@ const TOKEN = "sk-ant-oat01-tpl";
 
 let t: Awaited<ReturnType<typeof makeTestApp>>;
 let url: string;
-const human: Actor = { kind: "human", handle: "or" };
+const human: Actor = { kind: "human", ref: "k7x2m9qd", handle: "or" };
 const tok: Record<string, string> = {};
 const row = async (slug: string) => {
   const [r] = await t.db.select().from(schema.agents).where(eq(schema.agents.slug, slug));

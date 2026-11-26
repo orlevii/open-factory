@@ -72,7 +72,7 @@ async function setup() {
       reportsTo: "or",
       credential: "work",
     },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   const lead = await row(app, "lead");
   // I2 §6.2: spawning follows the spawner's running process.
@@ -117,7 +117,11 @@ test("a spawner's credential change rewrites its live children in the same trans
   const child = await spawnIdle(t, driver, lead.id, "c1");
   expect((await row(t, child.slug)).credentialId).toBe(creds.work);
 
-  await t.app.agents.update("lead", { credential: "spare" }, { kind: "human", handle: "or" });
+  await t.app.agents.update(
+    "lead",
+    { credential: "spare" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
   expect((await row(t, "lead")).credentialId).toBe(creds.spare);
   expect((await row(t, child.slug)).credentialId).toBe(creds.spare);
   // The idle child got the restart: its process was stopped to apply the change.
@@ -145,13 +149,21 @@ test("revoking one of the spawner's grants removes it from its children, and a r
   const child = await spawnIdle(t, driver, lead.id, "g1");
   expect(await grantIds(t, child.id)).toEqual([projects.app, projects.docs].sort());
 
-  await t.app.agents.update("lead", { projects: ["app"] }, { kind: "human", handle: "or" });
+  await t.app.agents.update(
+    "lead",
+    { projects: ["app"] },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
   expect(await grantIds(t, child.id)).toEqual([projects.app]);
   await child.rt.settled();
   expect(child.proc.stopped).toBe(true);
 
   // Granting it back to the spawner gives it back to the child (a child holds all its spawner's grants).
-  await t.app.agents.update("lead", { projects: ["app", "docs"] }, { kind: "human", handle: "or" });
+  await t.app.agents.update(
+    "lead",
+    { projects: ["app", "docs"] },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
+  );
   expect(await grantIds(t, child.id)).toEqual([projects.app, projects.docs].sort());
 });
 
@@ -204,7 +216,7 @@ test("a child's forward holding its own row lock doesn't deadlock with a spawner
   const update = t.app.agents.update(
     "lead",
     { credential: "spare" },
-    { kind: "human", handle: "or" },
+    { kind: "human", ref: "k7x2m9qd", handle: "or" },
   );
   for (;;) {
     const [w] = await t.sql`select count(*)::int as n from pg_stat_activity

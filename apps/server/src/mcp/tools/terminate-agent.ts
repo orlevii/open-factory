@@ -11,7 +11,7 @@ import {
 export interface TerminatePort {
   terminateChild(
     callerId: string,
-    slugArg: string,
+    targetArg: string,
   ): Promise<{ ok: true; slug: string } | { ok: false; message: string }>;
 }
 
@@ -26,8 +26,8 @@ export function terminateAgentTool(d: { terminate: TerminatePort }): ToolRegistr
             "Terminate an agent you spawned when its work is done. Its process stops now and its session can't continue, and its working directory is deleted 3 days later, so first ask it to put anything worth keeping in a granted project or a message.",
           inputSchema: terminateAgentToolSchema,
         },
-        async (args: { slug: string }, tctx: ToolContext) => {
-          const r = await d.terminate.terminateChild(callerOf(tctx), args.slug);
+        async (args: { target: string }, tctx: ToolContext) => {
+          const r = await d.terminate.terminateChild(callerOf(tctx), args.target);
           if (!r.ok) return toolError(r.message);
           return textResult({ slug: r.slug, status: "terminated" });
         },

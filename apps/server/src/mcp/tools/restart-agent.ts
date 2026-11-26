@@ -1,5 +1,6 @@
 import type { AgentRow } from "@open-factory/db";
 import { restartAgentToolSchema } from "@open-factory/shared";
+import { unknownRefError } from "@open-factory/shared/tags";
 import type { ConfigResolver } from "../../agents/config-resolver.ts";
 import {
   AgentArchivedError,
@@ -25,7 +26,7 @@ type RestartAgentDeps = {
   /** The caller read at call time: `manage_org` is decided from the fresh row (I7 §5.2). */
   loadAgent(id: string): Promise<AgentRow | undefined>;
   /** The target's row by name, read fresh (a runtime's row can be stale). */
-  store: Pick<EventStore, "agentBySlug">;
+  store: Pick<EventStore, "agentByArg">;
   runtimes: AgentRuntimes;
   resolver: Pick<ConfigResolver, "effective">;
   router: Pick<Router, "send">;
@@ -53,8 +54,10 @@ export function restartAgentTool(d: RestartAgentDeps): ToolRegistration {
             throw new Error("restart_agent was built for another caller");
           const wanted = args.target.trim().replace(/^@/, "");
           const manageOrg = (await d.loadAgent(d.caller.id))?.manageOrg === true;
-          const row = await d.store.agentBySlug(wanted);
-          const label = `@${wanted}`;
+          const found = await d.store.agentByArg(args.target);
+          if (found.kind === "unknown_ref") return toolError(unknownRefError(found.ref));
+          const row = found.kind === "agent" ? found.row : undefined;
+          const label = `@${found.kind === "agent" ? found.handle : wanted}`;
           if (!row) {
             return toolError(
               manageOrg ? `No agent named ${label}.` : `${label} isn't one of your direct reports.`,

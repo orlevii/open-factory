@@ -199,7 +199,7 @@ test("S7 scenario: a lead spawns a pair, they collaborate, it terminates them an
   // 4. The lead terminates both and spawns the developer.
   leadProc.emit(ev.turn());
   for (const slug of ["tech-lead-t1", "proxy-reviewer-r1"]) {
-    expect(await call("lead", "terminate_agent", { slug })).toEqual({
+    expect(await call("lead", "terminate_agent", { target: slug })).toEqual({
       isError: false,
       out: { slug, status: "terminated" },
     });

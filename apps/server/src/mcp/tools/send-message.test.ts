@@ -76,3 +76,32 @@ test("the tool never mentions @humans", async () => {
   ).find((t) => t.name === "send_message");
   expect(JSON.stringify(tool)).not.toContain("@humans");
 });
+
+test("send_message to a plain handle delivers and warns", async () => {
+  const bob = await h.sql`select ref from principals where handle = 'bob'`;
+  const r = await callTool(url, tok, "send_message", { to: ["bob"], body: "hi" });
+  expect(r.isError).toBeFalsy();
+  const out = JSON.parse(text(r));
+  expect(out.results).toMatchObject([{ to: "@bob", status: "queued" }]);
+  expect(out.warnings).toEqual([
+    `Plain tag detected: @bob was resolved to <@${bob[0]?.ref}|bob>. Tag as <@ref|handle>.`,
+  ]);
+});
+
+test("send_message to a tag delivers with no warning, even when its handle label is stale", async () => {
+  const [bob] = await h.sql`select ref from principals where handle = 'bob'`;
+  const r = await callTool(url, tok, "send_message", { to: [`<@${bob?.ref}|old>`], body: "hi" });
+  expect(r.isError).toBeFalsy();
+  const out = JSON.parse(text(r));
+  expect(out.results).toMatchObject([{ to: "@bob", status: "queued" }]);
+  expect(out).not.toHaveProperty("warnings");
+});
+
+test("send_message to an unknown ref is refused with the fix-it error", async () => {
+  const r = await callTool(url, tok, "send_message", { to: ["<@zzzzzzzz>"], body: "hi" });
+  expect(r.isError).toBe(true);
+  expect(text(r)).toBe(
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+  );
+  expect(await h.sql`select id from messages where kind = 'message'`).toEqual([]);
+});

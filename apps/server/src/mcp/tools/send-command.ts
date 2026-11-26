@@ -8,6 +8,7 @@ import {
   sendCommandToolSchema,
   typedCommandName,
 } from "@open-factory/shared";
+import { unknownRefError } from "@open-factory/shared/tags";
 import { knownCommandNames } from "../../agents/commands.ts";
 import type { ConfigResolver } from "../../agents/config-resolver.ts";
 import {
@@ -38,7 +39,7 @@ const utf8 = new TextEncoder();
 export function sendCommandTool(d: {
   caller: AgentRow;
   runtimes: AgentRuntimes;
-  store: Pick<EventStore, "agentBySlug" | "agentCommands">;
+  store: Pick<EventStore, "agentByArg" | "agentCommands">;
   /** The skill list: the running process's (`started`), else the resolver's (I2 §6.2). */
   resolver: Pick<ConfigResolver, "skillsOf">;
   spawned: boolean;
@@ -63,22 +64,31 @@ export function sendCommandTool(d: {
             return toolError("A command is larger than 64 KB.");
 
           const wanted = args.target.trim().replace(/^@/, "");
-          const label = `@${wanted || args.target.trim()}`;
-          const self = wanted === "me" || wanted === d.caller.slug;
+          let label = `@${wanted || args.target.trim()}`;
+          let warning: string | undefined;
           let target: AgentRow | undefined;
-          if (self) target = d.caller;
+          const asSelf = wanted === "me";
+          if (asSelf) target = d.caller;
           else {
-            if (d.spawned)
+            const found = await d.store.agentByArg(args.target);
+            if (found.kind === "unknown_ref") return toolError(unknownRefError(found.ref));
+            if (found.kind === "agent") {
+              label = `@${found.handle}`;
+              warning = found.warning;
+              if (found.row.id === d.caller.id) target = d.caller;
+              else if (d.spawned)
+                return toolError(`${label} isn't you; you can only send a command to yourself.`);
+              else if (found.row.reportsTo === d.caller.id) {
+                if (found.row.archivedAt)
+                  return toolError(`${label} is archived and can't receive messages.`);
+                if (found.row.terminatedAt)
+                  return toolError(`${label} was terminated and can't receive messages.`);
+                target = found.row;
+              }
+            } else if (d.spawned)
               return toolError(`${label} isn't you; you can only send a command to yourself.`);
-            const row = await d.store.agentBySlug(wanted);
-            if (row && row.reportsTo === d.caller.id) {
-              if (row.archivedAt)
-                return toolError(`${label} is archived and can't receive messages.`);
-              if (row.terminatedAt)
-                return toolError(`${label} was terminated and can't receive messages.`);
-              target = row;
-            }
           }
+          const self = target?.id === d.caller.id;
           if (!target) return toolError(`${label} isn't you or one of your direct reports.`);
 
           const known = knownCommandNames(
@@ -124,7 +134,12 @@ export function sendCommandTool(d: {
             if (e instanceof AgentStartError) return toolError(`${label} couldn't be started.`);
             throw e;
           }
-          return textResult({ target: `@${target.slug}`, status: "queued", note });
+          return textResult({
+            target: `@${target.slug}`,
+            status: "queued",
+            note,
+            ...(warning ? { warnings: [warning] } : {}),
+          });
         },
       );
     },

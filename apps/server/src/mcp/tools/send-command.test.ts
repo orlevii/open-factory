@@ -78,7 +78,7 @@ test('self by "me" and by its own handle; the entry is the agent\'s own', async 
   for (const target of ["me", "lead", "@lead"]) {
     const r = await call("lead", "/context", target);
     expect(r.err, target).toBe(false);
-    expect(r.json).toEqual({
+    expect(r.json).toMatchObject({
       target: "@lead",
       status: "queued",
       note: "Your /context runs when this turn ends.",
@@ -111,7 +111,11 @@ test("a self /compact says to write down where you are", async () => {
 test("a direct report: the note follows its state (hibernated, turn open)", async () => {
   // hibernated: woken to run it
   const hib = await call("lead", "/context", "dev");
-  expect(hib.json).toEqual({ target: "@dev", status: "queued", note: "Wakes @dev to run it." });
+  expect(hib.json).toMatchObject({
+    target: "@dev",
+    status: "queued",
+    note: "Wakes @dev to run it.",
+  });
   await (await rt("dev")).settled();
   expect(procOf("dev")).toBeDefined();
   // turn open
@@ -124,7 +128,7 @@ test("a direct report: the note follows its state (hibernated, turn open)", asyn
 test("a direct report that is idle runs it now", async () => {
   await start("dev", false);
   const r = await call("lead", "/context", "@dev");
-  expect(r.json).toEqual({ target: "@dev", status: "queued", note: "Runs now." });
+  expect(r.json).toMatchObject({ target: "@dev", status: "queued", note: "Runs now." });
   expect(rawWrites("dev")).toEqual([{ kind: "raw", text: "/context" }]);
 });
 
@@ -137,12 +141,31 @@ test("an errored report holds it until it is restarted (restart_agent, or a huma
   expect((await rt("dev")).live().status).toBe("errored");
   const starts = drv.starts.length;
   const r = await call("lead", "/context", "dev");
-  expect(r.json).toEqual({
+  expect(r.json).toMatchObject({
     target: "@dev",
     status: "queued",
     note: "@dev is errored; it runs after it is restarted (restart_agent, or a human).",
   });
   expect(drv.starts).toHaveLength(starts);
+});
+
+test("a direct report named by its tag runs it with no warning; by a plain handle it warns", async () => {
+  await start("dev", false);
+  const [dev] = await h.sql`select ref from principals where handle = 'dev'`;
+  const tagged = await call("lead", "/context", `<@${dev?.ref}|stale>`);
+  expect(tagged.json).toEqual({ target: "@dev", status: "queued", note: "Runs now." });
+  const plain = await call("lead", "/context", "dev");
+  expect(plain.json.warnings).toEqual([
+    `Plain tag detected: @dev was resolved to <@${dev?.ref}|dev>. Tag as <@ref|handle>.`,
+  ]);
+});
+
+test("a ref nobody holds is refused with the fix-it error", async () => {
+  const r = await call("lead", "/context", "<@zzzzzzzz>");
+  expect(r.err).toBe(true);
+  expect(r.text).toBe(
+    "<@zzzzzzzz> isn't anyone in this factory; list_peers shows each agent and human with their tag.",
+  );
 });
 
 test("a spawned report is a direct report too", async () => {

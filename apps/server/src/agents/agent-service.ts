@@ -20,11 +20,13 @@ import {
   touchesLocalRuntime,
   treeOrder,
 } from "@open-factory/shared";
+import { unknownRefError } from "@open-factory/shared/tags";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { ApiError, FieldError } from "../errors.ts";
 import { FIELD_MSG } from "../field-messages.ts";
 import { liveAgent } from "../messaging/neighborhood.ts";
 import type { PeerChange, Router } from "../messaging/router.ts";
+import { resolveAgentArg, resolveArg } from "../principals/principal-args.ts";
 import {
   createPrincipal,
   HandleTakenError,
@@ -530,23 +532,36 @@ export class AgentService {
   }
 
   /** The manager a handle names: an active persistent agent or an enabled user; anything else is a field error. */
-  private async resolveManager(handle: string): Promise<Manager> {
+  /**
+   * The handle an org tool's agent argument names (a tag, a ref or a handle), for the services that take handles. A
+   * ref nobody holds is refused with the fix-it sentence; anything else that isn't an agent passes through as written,
+   * so the service answers with its usual "no agent named" sentence.
+   */
+  async handleOf(raw: string): Promise<string> {
+    const r = await resolveAgentArg(this.d.db, raw);
+    if (r.kind === "unknown_ref") throw new OrgRefusedError(unknownRefError(r.ref));
+    return r.kind === "agent" ? r.handle : r.name;
+  }
+
+  private async resolveManager(raw: string): Promise<Manager> {
     const refuse = () => new FieldError("reportsTo", FIELD_MSG.chooseManager);
-    const principal = (await principalsByHandles(this.d.db, [handle])).get(handle);
-    if (principal?.kind === "human") {
+    const r = await resolveArg(this.d.db, raw);
+    if (r.kind !== "principal") throw refuse();
+    const { p } = r;
+    if (p.kind === "human") {
       const [u] = await this.d.db
         .select({ id: schema.users.id, name: schema.users.name })
         .from(schema.users)
-        .where(and(eq(schema.users.id, principal.id), isNull(schema.users.disabledAt)));
+        .where(and(eq(schema.users.id, p.id), isNull(schema.users.disabledAt)));
       if (!u) throw refuse();
-      return { kind: "user", ...u, handle };
+      return { kind: "user", ...u, handle: p.handle };
     }
     const [m] = await this.d.db
       .select()
       .from(schema.agents)
       .where(
         and(
-          eq(schema.agents.slug, handle),
+          eq(schema.agents.id, p.id),
           eq(schema.agents.kind, "persistent"),
           isNull(schema.agents.archivedAt),
           isNull(schema.agents.terminatedAt),

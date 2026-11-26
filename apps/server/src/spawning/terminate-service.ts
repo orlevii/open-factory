@@ -1,4 +1,5 @@
 import { type Db, schema } from "@open-factory/db";
+import { unknownRefError } from "@open-factory/shared/tags";
 import { eq } from "drizzle-orm";
 import type { RuntimeLog } from "../agents/agent-runtime.ts";
 import type { EventStore, PendingRow } from "../agents/event-store.ts";
@@ -31,12 +32,16 @@ export class TerminateService implements TerminatePort {
    */
   async terminateChild(
     callerId: string,
-    slugArg: string,
+    targetArg: string,
   ): Promise<{ ok: true; slug: string } | { ok: false; message: string }> {
-    const slug = slugArg.trim().replace(/^@/, "");
-    const a = await this.d.store.agentBySlug(slug);
+    const found = await this.d.store.agentByArg(targetArg);
+    if (found.kind === "unknown_ref") return { ok: false, message: unknownRefError(found.ref) };
+    const a = found.kind === "agent" ? found.row : undefined;
     if (a?.kind !== "ephemeral" || a.reportsTo !== callerId)
-      return { ok: false, message: `@${slug} isn't an agent you spawned.` };
+      return {
+        ok: false,
+        message: `@${found.kind === "agent" ? found.handle : found.name} isn't an agent you spawned.`,
+      };
     const caller = await this.d.store.agentById(callerId);
     try {
       // The spawner is recorded by its bare slug (spec §13).

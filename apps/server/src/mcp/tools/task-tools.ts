@@ -7,7 +7,7 @@ import {
   type TaskStatus,
   updateTaskToolSchema,
 } from "@open-factory/shared";
-import { HUMANS_MENTION_REFUSAL } from "../../messaging/principals.ts";
+import { HUMANS_MENTION_REFUSAL } from "../../principals/principal-args.ts";
 import { TaskError } from "../../tasks/errors.ts";
 import type { Actor } from "../../tasks/permission.ts";
 import type { TaskService } from "../../tasks/task-service.ts";
@@ -52,6 +52,10 @@ const NOT_REACHED_TEXT = {
 const notReachedText = (n: { name: string; reason: keyof typeof NOT_REACHED_TEXT }) =>
   NOT_REACHED_TEXT[n.reason](n.name);
 
+/** `warnings` only when there is one. */
+const warned = (w: readonly string[] | undefined) =>
+  w?.length ? { warnings: [...new Set(w)] } : {};
+
 export function taskTools(d: TaskTools): ToolRegistration[] {
   const actorOf = async (tctx: ToolContext): Promise<Actor> => {
     const id = callerOf(tctx);
@@ -76,6 +80,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
       blockedBy: string[];
     };
     note?: string;
+    warnings?: string[];
   }) => ({
     key: r.task.key,
     status: r.task.status,
@@ -111,7 +116,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 ...(args.depends_on ? { dependsOn: args.depends_on } : {}),
                 ...(args.links ? { links: args.links } : {}),
               });
-              return { ...view(r), ...(r.note ? { note: r.note } : {}) };
+              return { ...view(r), ...(r.note ? { note: r.note } : {}), ...warned(r.warnings) };
             }),
         );
         server.registerTool(
@@ -142,7 +147,12 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 ...(args.depends_on ? { dependsOn: args.depends_on } : {}),
                 ...(args.links ? { links: args.links } : {}),
               });
-              return { ...view(r), changed: r.changed, ...(r.note ? { note: r.note } : {}) };
+              return {
+                ...view(r),
+                changed: r.changed,
+                ...(r.note ? { note: r.note } : {}),
+                ...warned(r.warnings),
+              };
             }),
         );
         server.registerTool(
@@ -164,13 +174,18 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
           ) =>
             guard(async () => {
               const limit = args.limit ?? 50;
-              const page = await d.tasks.list(await actorOf(tctx), {
-                status: args.status ?? ["open", "in_progress"],
-                ...(args.assignee ? { assignee: args.assignee } : {}),
-                ...(args.unassigned ? { unassigned: true } : {}),
-                ...(args.created_by ? { createdBy: args.created_by } : {}),
-                limit,
-              });
+              const warnings: string[] = [];
+              const page = await d.tasks.list(
+                await actorOf(tctx),
+                {
+                  status: args.status ?? ["open", "in_progress"],
+                  ...(args.assignee ? { assignee: args.assignee } : {}),
+                  ...(args.unassigned ? { unassigned: true } : {}),
+                  ...(args.created_by ? { createdBy: args.created_by } : {}),
+                  limit,
+                },
+                warnings,
+              );
               return {
                 tasks: page.items.map((t) => ({
                   key: t.key,
@@ -184,6 +199,7 @@ export function taskTools(d: TaskTools): ToolRegistration[] {
                 })),
                 more: page.nextCursor !== null,
                 ...(page.nextCursor !== null ? { note: listNote(limit) } : {}),
+                ...warned(warnings),
               };
             }),
         );

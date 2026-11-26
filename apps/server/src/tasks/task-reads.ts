@@ -1,14 +1,16 @@
 import { type Db, schema } from "@open-factory/db";
 import { parseTaskKey, type TaskStatus, taskKey } from "@open-factory/shared";
+import { unknownRefError } from "@open-factory/shared/tags";
 import { and, asc, desc, eq, inArray, isNull, lt, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { resolveArg } from "../principals/principal-args.ts";
 import { blockedBy, isBlocked } from "./blocked.ts";
 import { TaskError } from "./errors.ts";
 import { escapeLike } from "./like.ts";
 import type { Actor } from "./permission.ts";
 import type { TaskStore } from "./task-store.ts";
 
-const { tasks, agents, users, principals, taskComments, taskEvents } = schema;
+const { tasks, agents, principals, taskComments, taskEvents } = schema;
 
 export type AgentRef = { slug: string; displayName: string; ended?: "archived" | "terminated" };
 export type PrincipalRef = { kind: "agent"; slug: string } | { kind: "user"; handle: string };
@@ -56,6 +58,7 @@ export class TaskReads {
   async list(
     actor: Actor,
     f: ListFilter,
+    warnings: string[] = [],
   ): Promise<{ items: TaskSummary[]; nextCursor: string | null }> {
     const db = this.d.db;
     const limit = Math.min(Math.max(f.limit ?? 50, 1), 200);
@@ -73,9 +76,9 @@ export class TaskReads {
     if (f.q) where.push(sql`${tasks.title} ilike ${`%${escapeLike(f.q)}%`} escape '\\'`);
     if (f.unassigned) where.push(isNull(tasks.assigneeAgentId));
     else if (f.assignee)
-      where.push(eq(tasks.assigneeAgentId, await this.agentId(actor, f.assignee)));
+      where.push(eq(tasks.assigneeAgentId, await this.agentId(actor, f.assignee, warnings)));
     if (f.createdBy) {
-      const who = await this.creator(actor, f.createdBy);
+      const who = await this.creator(actor, f.createdBy, warnings);
       where.push(
         "agentId" in who
           ? eq(tasks.createdByAgentId, who.agentId)
@@ -384,39 +387,43 @@ export class TaskReads {
     }));
   }
 
-  private async agentId(actor: Actor, raw: string): Promise<string> {
-    const name = raw.trim().replace(/^@/, "");
-    if (name === "me") {
+  private async agentId(actor: Actor, raw: string, warnings: string[]): Promise<string> {
+    if (raw.trim().replace(/^@/, "") === "me") {
       if (actor.kind === "agent") return actor.agentId;
       throw new TaskError("reserved", "'me' is reserved; name an agent.", 400, "assignee");
     }
-    const [a] = await this.d.db.select({ id: agents.id }).from(agents).where(eq(agents.slug, name));
-    if (!a) throw new TaskError("not_found", `No agent @${name}.`, 400, "assignee");
+    const r = await resolveArg(this.d.db, raw);
+    if (r.kind === "unknown_ref")
+      throw new TaskError("not_found", unknownRefError(r.ref), 400, "assignee");
+    const [a] =
+      r.kind === "principal"
+        ? await this.d.db.select({ id: agents.id }).from(agents).where(eq(agents.id, r.p.id))
+        : [];
+    if (r.kind !== "principal" || !a)
+      throw new TaskError(
+        "not_found",
+        `No agent @${raw.trim().replace(/^@/, "")}.`,
+        400,
+        "assignee",
+      );
+    if (r.warning) warnings.push(r.warning);
     return a.id;
   }
 
   private async creator(
     actor: Actor,
     raw: string,
+    warnings: string[],
   ): Promise<{ agentId: string } | { userId: string }> {
     const name = raw.trim().replace(/^@/, "");
     if (name === "me")
       return actor.kind === "agent" ? { agentId: actor.agentId } : { userId: actor.userId };
-    const [a] = await this.d.db.select({ id: agents.id }).from(agents).where(eq(agents.slug, name));
-    const [u] = await this.d.db
-      .select({ id: users.id })
-      .from(users)
-      .innerJoin(principals, eq(principals.id, users.id))
-      .where(eq(principals.handle, name));
-    if (a && u)
-      throw new TaskError(
-        "ambiguous",
-        `'${name}' matches both an agent and a user.`,
-        400,
-        "creator",
-      );
-    if (a) return { agentId: a.id };
-    if (u) return { userId: u.id };
-    throw new TaskError("not_found", `No agent or user named '${name}'.`, 400, "creator");
+    const r = await resolveArg(this.d.db, raw);
+    if (r.kind === "unknown_ref")
+      throw new TaskError("not_found", unknownRefError(r.ref), 400, "creator");
+    if (r.kind !== "principal")
+      throw new TaskError("not_found", `No agent or user named '${name}'.`, 400, "creator");
+    if (r.warning) warnings.push(r.warning);
+    return r.p.kind === "agent" ? { agentId: r.p.id } : { userId: r.p.id };
   }
 }

@@ -47,7 +47,6 @@ export type OrgToolDeps = {
 
 type AgentActor = Extract<Actor, { kind: "agent" }>;
 
-const bare = (slug: string) => slug.trim().replace(/^@/, "");
 const matches = (query: string | undefined, ...texts: (string | undefined)[]) => {
   const q = query?.trim().toLowerCase();
   return !q || texts.some((t) => t?.toLowerCase().includes(q));
@@ -166,7 +165,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Read an agent: its identity, manager, credential and projects by name, its overlay with overlay_hash (pass it back as base_hash to change config), its effective configuration (references, never values) and issues.",
       getAgentToolSchema,
       async ({ slug }) => {
-        const s = bare(slug);
+        const s = await d.agents.handleOf(slug);
         const [a, cfg] = await Promise.all([d.agents.summary(s), d.config.getConfig(s)]);
         return {
           slug: a.slug,
@@ -192,14 +191,14 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Create a persistent agent from a template, the way a human does in New agent. reports_to is required: an agent or a person, as @handle. It never gets manage_org.",
       createAgentToolSchema,
       async (a, actor) => {
-        const slug = bare(a.name);
+        const slug = a.name.trim().replace(/^@/, "");
         await d.agents.create(
           {
             template: a.template.trim(),
             slug,
             displayName: a.display_name,
             description: a.description,
-            reportsTo: bare(a.reports_to),
+            reportsTo: a.reports_to,
             credential: a.credential.trim(),
             ...(a.projects ? { projects: a.projects } : {}),
             ...(a.config ? { config: a.config } : {}),
@@ -218,12 +217,12 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Change an agent. A field you leave out is unchanged. config replaces the agent's whole overlay, so start from the one get_agent returned and pass its overlay_hash as base_hash. Everything is validated first and written together, or nothing is. The result's restart is a hint that a restart was requested, not a guarantee (an errored or hibernated agent does not restart).",
       updateAgentToolSchema,
       async (a, actor) => {
-        const slug = bare(a.slug);
+        const slug = await d.agents.handleOf(a.slug);
         const before = await d.agents.summary(slug);
         const patch: PatchAgentBody = {
           ...(a.display_name !== undefined ? { displayName: a.display_name } : {}),
           ...(a.description !== undefined ? { description: a.description } : {}),
-          ...(a.reports_to !== undefined ? { reportsTo: bare(a.reports_to) } : {}),
+          ...(a.reports_to !== undefined ? { reportsTo: a.reports_to } : {}),
           ...(a.credential !== undefined ? { credential: a.credential.trim() } : {}),
           ...(a.projects !== undefined ? { projects: a.projects } : {}),
         };
@@ -262,7 +261,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Archive an agent (not yourself). Refused while it has reports; the refusal names them.",
       getAgentToolSchema,
       async ({ slug }, actor) => {
-        const a = await d.agents.archive(bare(slug), actor);
+        const a = await d.agents.archive(await d.agents.handleOf(slug), actor);
         return { slug: a.slug, archived: true };
       },
     ),
@@ -271,7 +270,7 @@ export function orgTools(d: OrgToolDeps): ToolRegistration[] {
       "Unarchive an agent. Refused when its manager is archived, or when it can manage the org.",
       getAgentToolSchema,
       async ({ slug }, actor) => {
-        const a = await d.agents.unarchive(bare(slug), actor);
+        const a = await d.agents.unarchive(await d.agents.handleOf(slug), actor);
         return { slug: a.slug, archived: false };
       },
     ),

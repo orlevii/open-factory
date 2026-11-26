@@ -10,14 +10,15 @@ import {
   taskKey,
 } from "@open-factory/shared";
 import { extractMentions } from "@open-factory/shared/mentions";
+import { unknownRefError } from "@open-factory/shared/tags";
 import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
 import { type GuardResult, type LoopGuard, loopNotes, pairOf } from "../messaging/loop-guard.ts";
-import { resolveName } from "../messaging/principals.ts";
 import type { Router } from "../messaging/router.ts";
+import { resolveArg, resolveArgs } from "../principals/principal-args.ts";
 import { blockedBy, isBlocked } from "./blocked.ts";
 import { TaskError } from "./errors.ts";
 import { type PlannedRow, plan } from "./notifier.ts";
@@ -35,7 +36,13 @@ export type TaskView = {
   assigneeEnded?: "archived" | "terminated";
   blockedBy: string[];
 };
-export type ChangeResult = { task: TaskView; changed: string[]; note?: string };
+export type ChangeResult = {
+  task: TaskView;
+  changed: string[];
+  note?: string;
+  /** Plain-tag warnings for a name written without a tag; absent when there are none. */
+  warnings?: string[];
+};
 
 export type CommentResult = {
   id: string;
@@ -121,8 +128,8 @@ export class TaskService {
     this.reads = new TaskReads({ db: d.db, tasks: d.tasks });
   }
 
-  list(actor: Actor, filter: ListFilter) {
-    return this.reads.list(actor, filter);
+  list(actor: Actor, filter: ListFilter, warnings?: string[]) {
+    return this.reads.list(actor, filter, warnings);
   }
 
   detail(key: string, o: Parameters<TaskReads["detail"]>[1]) {
@@ -151,8 +158,9 @@ export class TaskService {
   }
 
   private async run(actor: Actor, key: string | null, input: Input): Promise<ChangeResult> {
+    const warnings: string[] = [];
     const out = await withDeadlockRetry(() =>
-      this.d.db.transaction((tx) => this.procedure(tx, actor, key, input)),
+      this.d.db.transaction((tx) => this.procedure(tx, actor, key, input, warnings)),
     );
     const notes = await this.finish(
       out,
@@ -171,6 +179,7 @@ export class TaskService {
       task: out.view,
       changed: out.changed,
       ...(notes.length ? { note: notes.join(" ") } : {}),
+      ...(warnings.length ? { warnings: [...new Set(warnings)] } : {}),
     };
   }
 
@@ -239,22 +248,30 @@ export class TaskService {
     const isAuthorAgent = (id: string) => actor.kind === "agent" && actor.agentId === id;
     const isAuthorUser = (id: string) => actor.kind === "user" && actor.userId === id;
     const names = mentions.names.slice(0, MAX_MENTIONS);
-    for (const name of names) {
-      const r = await resolveName(tx, name);
+    const resolved = await resolveArgs(tx, names);
+    const principalIds = resolved.flatMap((r) => (r.kind === "principal" ? [r.p.id] : []));
+    const agentRows = principalIds.length
+      ? await tx.select().from(schema.agents).where(inArray(schema.agents.id, principalIds))
+      : [];
+    const agentById = new Map(agentRows.map((a) => [a.id, a]));
+    for (const [i, r] of resolved.entries()) {
+      const name = names[i] as string;
       switch (r.kind) {
-        case "user":
-          if (!isAuthorUser(r.userId) && !userIds.includes(r.userId)) {
-            userIds.push(r.userId);
-            handles.set(r.userId, r.handle);
-          }
+        case "principal": {
+          const agent = agentById.get(r.p.id);
+          if (!agent) {
+            if (!isAuthorUser(r.p.id) && !userIds.includes(r.p.id)) {
+              userIds.push(r.p.id);
+              handles.set(r.p.id, r.p.handle);
+            }
+          } else if (!isAuthorAgent(agent.id) && !candidates.some((c) => c.id === agent.id))
+            candidates.push({ id: agent.id, slug: r.p.handle });
           break;
-        case "agent":
-          if (!isAuthorAgent(r.agent.id) && !candidates.some((c) => c.id === r.agent.id))
-            candidates.push({ id: r.agent.id, slug: r.agent.slug });
-          break;
+        }
         case "reserved":
           notReached.push({ name, reason: "reserved" });
           break;
+        case "unknown_ref":
         case "channel":
         case "none":
           notReached.push({ name, reason: "unknown" });
@@ -377,6 +394,7 @@ export class TaskService {
     actor: Actor,
     key: string | null,
     input: Input,
+    warnings: string[],
   ): Promise<Outcome> {
     const T = this.d.tasks;
     // 1. Unlocked read of the acted-on task; which rows to lock comes from the input.
@@ -389,8 +407,8 @@ export class TaskService {
     const newDeps = input.dependsOn
       ? await this.resolveDeps(tx, input.dependsOn, pre?.number)
       : undefined;
-    const links = input.links ? await this.resolveLinks(tx, input.links) : undefined;
-    const assigneeId = await this.resolveAssignee(tx, actor, input.assignee);
+    const links = input.links ? await this.resolveLinks(tx, input.links, warnings) : undefined;
+    const assigneeId = await this.resolveAssignee(tx, actor, input.assignee, warnings);
 
     // 2. The advisory lock, only when depends_on changes.
     // Only an edit that can add or remove an edge takes the global lock: a create with no dependencies has none.
@@ -908,24 +926,38 @@ export class TaskService {
     return out;
   }
 
-  private async resolveLinks(tx: Exec, links: LinkInput[]): Promise<ResolvedLink[]> {
+  private async resolveLinks(
+    tx: Exec,
+    links: LinkInput[],
+    warnings: string[],
+  ): Promise<ResolvedLink[]> {
     const out: ResolvedLink[] = [];
     for (const l of links) {
       if (l.kind !== "agent") {
         out.push({ kind: l.kind, target: l.target, ...(l.title ? { title: l.title } : {}) });
         continue;
       }
-      const r = await resolveName(tx, l.target);
-      if (r.kind !== "agent")
+      const r = await resolveArg(tx, l.target);
+      if (r.kind === "unknown_ref")
+        throw new TaskError("no_agent", unknownRefError(r.ref), 400, "links");
+      const agent = r.kind === "principal" ? await this.agentRowOf(tx, r.p.id) : undefined;
+      if (r.kind !== "principal" || !agent)
         throw new TaskError(
           "no_agent",
           `No agent ${l.target.startsWith("@") ? l.target : `@${l.target}`}.`,
           400,
           "links",
         );
-      out.push({ kind: "agent", agentId: r.agent.id, ...(l.title ? { title: l.title } : {}) });
+      if (r.warning) warnings.push(r.warning);
+      out.push({ kind: "agent", agentId: agent.id, ...(l.title ? { title: l.title } : {}) });
     }
     return out;
+  }
+
+  private async agentRowOf(tx: Exec, id: string) {
+    return (
+      await tx.select({ id: schema.agents.id }).from(schema.agents).where(eq(schema.agents.id, id))
+    )[0];
   }
 
   /** `undefined`: not given. `null`: no assignee. Otherwise a live-or-ended agent id (liveness is re-checked under lock). */
@@ -933,21 +965,27 @@ export class TaskService {
     tx: Exec,
     actor: Actor,
     raw: string | null | undefined,
+    warnings: string[],
   ): Promise<string | null | undefined> {
     if (raw === undefined || raw === null) return raw;
     const name = raw.trim().replace(/^@/, "");
     if (name === "me" && actor.kind === "agent") return actor.agentId;
-    const r = await resolveName(tx, raw);
+    const r = await resolveArg(tx, raw);
     switch (r.kind) {
-      case "agent":
-        return r.agent.id;
-      case "user":
-        throw new TaskError(
-          "not_an_agent",
-          `Tasks can only be assigned to agents; @${r.handle} is a human.`,
-          400,
-          "assignee",
-        );
+      case "principal": {
+        const agent = await this.agentRowOf(tx, r.p.id);
+        if (!agent)
+          throw new TaskError(
+            "not_an_agent",
+            `Tasks can only be assigned to agents; @${r.p.handle} is a human.`,
+            400,
+            "assignee",
+          );
+        if (r.warning) warnings.push(r.warning);
+        return agent.id;
+      }
+      case "unknown_ref":
+        throw new TaskError("not_found", unknownRefError(r.ref), 400, "assignee");
       case "reserved":
         throw new TaskError(
           "reserved",

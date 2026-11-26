@@ -12,9 +12,10 @@ import {
   type ScheduleItem,
   validateCron,
 } from "@open-factory/shared";
+import { unknownRefError } from "@open-factory/shared/tags";
 import { and, eq, or } from "drizzle-orm";
 import type { EventStore, Exec } from "../agents/event-store.ts";
-import { resolveName } from "../messaging/principals.ts";
+import { resolveArg } from "../principals/principal-args.ts";
 import { withDeadlockRetry } from "../tasks/task-service.ts";
 import { ScheduleError } from "./errors.ts";
 import { AGENT_AT_HORIZON_MS, MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "./limits.ts";
@@ -39,7 +40,7 @@ export type ScheduleInput = {
   body: string;
 };
 export type PatchInput = Partial<Omit<ScheduleInput, "timezone">> & { timezone?: string };
-export type CreateResult = { item: ScheduleItem; note?: string };
+export type CreateResult = { item: ScheduleItem; note?: string; warnings?: string[] };
 /** What `list_schedules` returns for one schedule (spec §9). */
 export type AgentScheduleView = {
   id: string;
@@ -147,7 +148,11 @@ export class ScheduleService {
       }),
     );
     this.d.onChanged();
-    return { item: this.toItem(out.rec), ...this.noteFor(actor, out.target, out.rec) };
+    return {
+      item: this.toItem(out.rec),
+      ...this.noteFor(actor, out.target, out.rec),
+      ...(target.warning ? { warnings: [target.warning] } : {}),
+    };
   }
 
   /** Cron or at: exactly one; valid; in the future; within the agent limits. Returns the stored form. */
@@ -195,7 +200,10 @@ export class ScheduleService {
   }
 
   /** Resolves the target name without locks (§12.1 step 1). An agent's default is itself. */
-  private async resolveTarget(actor: Actor, raw: string | undefined) {
+  private async resolveTarget(
+    actor: Actor,
+    raw: string | undefined,
+  ): Promise<{ id: string; slug: string; warning?: string }> {
     const name = raw?.trim() ?? "";
     if (isAgent(actor) && (name === "" || name === "me")) {
       const me = await this.d.store.agentById(actor.agentId);
@@ -204,8 +212,18 @@ export class ScheduleService {
       return { id: me.id, slug: me.slug };
     }
     if (name === "") throw new ScheduleError("invalid_schedule", "Choose an agent.", 400, "target");
-    const r = await resolveName(this.d.db, name);
-    if (r.kind === "agent") return { id: r.agent.id, slug: r.agent.slug };
+    const r = await resolveArg(this.d.db, name);
+    if (r.kind === "unknown_ref")
+      throw new ScheduleError("target_not_found", unknownRefError(r.ref), 404, "target");
+    if (r.kind === "principal") {
+      const agent = r.p.kind === "agent" ? await this.d.store.agentById(r.p.id) : undefined;
+      if (agent)
+        return {
+          id: agent.id,
+          slug: r.p.handle,
+          ...(r.warning ? { warning: r.warning } : {}),
+        };
+    }
     if (r.kind === "none" || r.kind === "channel") throw notFound(r.name);
     if (r.kind === "reserved")
       throw new ScheduleError(

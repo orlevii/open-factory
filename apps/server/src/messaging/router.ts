@@ -5,12 +5,14 @@ import {
   type QueueItem,
   type RefusalCode,
 } from "@open-factory/shared";
-import { eq } from "drizzle-orm";
+import { unknownRefError } from "@open-factory/shared/tags";
+import { eq, inArray } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import { AgentStartError } from "../agents/errors.ts";
 import type { EventBus } from "../agents/event-bus.ts";
 import type { EventStore, Exec, PendingRow, Tx } from "../agents/event-store.ts";
 import type { AgentRuntimes } from "../agents/runtimes.ts";
+import { HUMANS_SEND_REFUSAL, resolveArgs } from "../principals/principal-args.ts";
 import {
   attachmentOf,
   bodyWithAttachments,
@@ -23,7 +25,6 @@ import type { Forward } from "./forwarder.ts";
 import { type GuardResult, type LoopGuard, loopNotes, pairOf } from "./loop-guard.ts";
 import type { Neighborhood } from "./neighborhood.ts";
 import { type PeerLeft, peerBody } from "./peer-body.ts";
-import { HUMANS_SEND_REFUSAL, resolveName } from "./principals.ts";
 
 export type Sender =
   | { agentId: string; toolUseId?: string | null }
@@ -78,6 +79,8 @@ type Target = {
   refused?: RecipientResult;
   agent?: AgentRow;
   user?: { userId: string; handle: string };
+  /** The plain-tag warning, when the recipient was named without a tag. */
+  warning?: string;
 };
 
 /**
@@ -134,6 +137,19 @@ export class Router {
     body: string,
     urgent: boolean,
     opts: { clientMessageId?: string; attachments?: string[] } = {},
+  ): Promise<{ results: RecipientResult[]; warnings: string[] }> {
+    const warnings: string[] = [];
+    const { results } = await this.sendTo(from, to, body, urgent, opts, warnings);
+    return { results, warnings: [...new Set(warnings)] };
+  }
+
+  private async sendTo(
+    from: Sender,
+    to: string[],
+    body: string,
+    urgent: boolean,
+    opts: { clientMessageId?: string; attachments?: string[] },
+    warnings: string[],
   ): Promise<{ results: RecipientResult[] }> {
     const { clientMessageId } = opts;
     // U3 §13.2: a repeat of an earlier send answers with the original, for every row, whatever happened since (the
@@ -153,6 +169,7 @@ export class Router {
         };
     }
     const targets = await this.resolveTargets(from, to);
+    for (const t of targets) if (t.warning) warnings.push(t.warning);
     const accepted = targets.filter((t) => !t.refused);
     const ids = opts.attachments ?? [];
     if (ids.length && (accepted.length !== 1 || !accepted[0]?.agent))
@@ -364,12 +381,24 @@ export class Router {
     return { results: targets.map((t) => t.refused ?? (outcome.get(t) as RecipientResult)) };
   }
 
-  /** Resolves every target in input order; a repeat of one principal (`bob`, `@bob`) is dropped. */
+  /** Resolves every target in input order; a repeat of one principal (`bob`, `@bob`, its tag) is dropped. */
   private async resolveTargets(from: Sender, to: string[]): Promise<Target[]> {
+    const resolved = await resolveArgs(this.d.db, to);
+    const ids = resolved.flatMap((r) => (r.kind === "principal" ? [r.p.id] : []));
+    const [agentRows, userRows] = ids.length
+      ? await Promise.all([
+          this.d.db.select().from(schema.agents).where(inArray(schema.agents.id, ids)),
+          this.d.db
+            .select({ id: schema.users.id, disabledAt: schema.users.disabledAt })
+            .from(schema.users)
+            .where(inArray(schema.users.id, ids)),
+        ])
+      : [[], []];
+    const agentById = new Map(agentRows.map((a) => [a.id, a]));
+    const userById = new Map(userRows.map((u) => [u.id, u]));
     const targets: Target[] = [];
     const seen = new Set<string>();
-    for (const raw of to) {
-      const r = await resolveName(this.d.db, raw);
+    for (const r of resolved) {
       let t: Target;
       switch (r.kind) {
         case "channel":
@@ -394,6 +423,15 @@ export class Router {
           };
           break;
         }
+        case "unknown_ref": {
+          const label = `<@${r.ref}>`;
+          t = {
+            to: label,
+            key: label,
+            refused: refusal(label, "not_found", unknownRefError(r.ref)),
+          };
+          break;
+        }
         case "none": {
           const label = `@${r.name}`;
           t = {
@@ -407,37 +445,48 @@ export class Router {
           };
           break;
         }
-        case "user": {
-          const label = `@${r.handle}`;
-          t = { to: label, key: `user:${r.userId}`, user: r };
-          if ("userId" in from)
-            t.refused = refusal(
-              label,
-              "human",
-              `${label} is a person; you can message agents only.`,
-            );
-          else if (r.disabled)
-            t.refused = refusal(label, "disabled", `${label}'s account is disabled.`);
-          break;
-        }
-        case "agent": {
-          const a = r.agent;
-          const label = `@${a.slug}`;
-          t = { to: label, key: `agent:${a.id}`, agent: a };
-          if ("agentId" in from && a.id === from.agentId)
-            t.refused = refusal(label, "self", "You can't message yourself.");
-          else if (a.archivedAt)
-            t.refused = refusal(
-              label,
-              "archived",
-              `${label} is archived and can't receive messages.`,
-            );
-          else if (a.terminatedAt)
-            t.refused = refusal(
-              label,
-              "terminated",
-              `${label} was terminated and can't receive messages.`,
-            );
+        case "principal": {
+          const a = agentById.get(r.p.id);
+          const u = userById.get(r.p.id);
+          const label = `@${r.p.handle}`;
+          if (a) {
+            t = { to: label, key: `agent:${a.id}`, agent: a };
+            if ("agentId" in from && a.id === from.agentId)
+              t.refused = refusal(label, "self", "You can't message yourself.");
+            else if (a.archivedAt)
+              t.refused = refusal(
+                label,
+                "archived",
+                `${label} is archived and can't receive messages.`,
+              );
+            else if (a.terminatedAt)
+              t.refused = refusal(
+                label,
+                "terminated",
+                `${label} was terminated and can't receive messages.`,
+              );
+          } else if (u) {
+            t = { to: label, key: `user:${u.id}`, user: { userId: u.id, handle: r.p.handle } };
+            if ("userId" in from)
+              t.refused = refusal(
+                label,
+                "human",
+                `${label} is a person; you can message agents only.`,
+              );
+            else if (u.disabledAt)
+              t.refused = refusal(label, "disabled", `${label}'s account is disabled.`);
+          } else {
+            t = {
+              to: label,
+              key: label,
+              refused: refusal(
+                label,
+                "not_found",
+                `No agent or user named '${r.p.handle}'. Call list_peers to see who you can message.`,
+              ),
+            };
+          }
+          if (r.warning) t.warning = r.warning;
           break;
         }
       }

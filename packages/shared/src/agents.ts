@@ -209,7 +209,7 @@ export const sendMessageToolSchema = z.object({
     .array(
       z
         .string()
-        .max(65)
+        .max(80)
         .refine((s) => s.trim().length > 0, "Name a recipient"),
     )
     .min(1)
@@ -218,7 +218,7 @@ export const sendMessageToolSchema = z.object({
   urgent: z.boolean().default(false),
 });
 export const sendCommandToolSchema = z.object({
-  target: z.string().max(65), // a handle (64) with its @
+  target: z.string().max(80), // a tag <@ref|handle>, a ref or an @handle
   command: z.string(),
 });
 export const listPeersToolSchema = z.object({
@@ -252,7 +252,7 @@ export const spawnAgentToolSchema = (templates: [string, ...string[]]) =>
     description: z.string().describe("What this agent is for (one or two sentences)"),
     prompt: z.string().describe("The brief; it becomes the agent's first message"),
   });
-export const terminateAgentToolSchema = z.strictObject({ slug: z.string().min(1).max(64) });
+export const terminateAgentToolSchema = z.strictObject({ target: z.string().min(1).max(80) });
 export const createAgentBodySchema = z.object({
   template: nameSchema,
   slug: slugSchema,

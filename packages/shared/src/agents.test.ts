@@ -30,7 +30,7 @@ test("spawn tool schema: enum from the caller's templates, suffix pattern, requi
   ).toBe(false);
 });
 test("terminate tool schema", () => {
-  expect(terminateAgentToolSchema.safeParse({ slug: "@tech-lead-ab12" }).success).toBe(true);
+  expect(terminateAgentToolSchema.safeParse({ target: "@tech-lead-ab12" }).success).toBe(true);
   expect(terminateAgentToolSchema.safeParse({}).success).toBe(false);
 });
 test("list query: ended defaults to exclude", () => {

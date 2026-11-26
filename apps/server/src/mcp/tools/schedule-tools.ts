@@ -85,6 +85,7 @@ export function scheduleTools(d: ScheduleTools): ToolRegistration[] {
                 timezone: i.timezone,
                 next_run: i.nextRunAt ? formatOffsetIso(new Date(i.nextRunAt), i.timezone) : null,
                 ...(r.note ? { note: r.note } : {}),
+                ...(r.warnings?.length ? { warnings: r.warnings } : {}),
               };
             }),
         );

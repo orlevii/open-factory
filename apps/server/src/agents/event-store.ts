@@ -36,6 +36,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { resolveAgentArg } from "../principals/principal-args.ts";
 import { capPayload } from "./cap.ts";
 import { InvalidCursorError } from "./errors.ts";
 import { type NoticeType, parseConfigNotice, renderConfigNotice } from "./notices.ts";
@@ -166,6 +167,10 @@ export class EventStore {
   }
   async agentBySlug(slug: string) {
     return (await this.db.select().from(agents).where(eq(agents.slug, slug)))[0];
+  }
+  /** The agent a tool argument names (a tag, a ref or a handle), or why it names none. */
+  async agentByArg(raw: string) {
+    return resolveAgentArg(this.db, raw);
   }
   /** Inside `tx` when given (S7 §5.7: a call in a locked transaction must not use its own connection). */
   async agentById(id: string, tx: Exec = this.db) {

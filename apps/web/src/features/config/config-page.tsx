@@ -36,6 +36,7 @@ import { agentDetailQueryOptions } from "@/features/session/api";
 import type { CodeEditorHandle } from "@/features/templates/code-editor";
 import { focusTextareaLine } from "@/features/templates/code-surface";
 import { IssueIcon } from "@/features/templates/issue-list";
+import { AgentRuntimeSection } from "./agent-runtime-section";
 import {
   agentConfigQueryOptions,
   cacheSavedAgentConfig,
@@ -446,6 +447,11 @@ function AgentConfigEditor({
           {!valid ? <BrokenTemplateBlock slug={slug} template={config.template.name} /> : null}
         </div>
       ) : null}
+      <AgentRuntimeSection
+        agent={agent}
+        templateRuntime={readTemplateString(config.template.doc, "runtime")}
+        templateBypass={readTemplateString(config.template.doc, "permission_mode") === "bypass"}
+      />
       <Tabs
         value={tab}
         onValueChange={onTabChange}
@@ -531,3 +537,9 @@ function AgentConfigEditor({
 // A tab may wrap its label (at 200% text on a phone the two tabs don't fit one line); the list grows with it.
 const TAB =
   "h-auto min-w-0 flex-initial self-stretch whitespace-normal [overflow-wrap:anywhere] rounded-none px-2 text-[0.8125rem] font-normal text-muted-foreground data-[state=active]:text-foreground group-data-horizontal/tabs:after:bottom-0";
+
+/** A string key of a template's template.yaml part, when the template parsed and the key is a string. */
+function readTemplateString(doc: AgentConfigResponse["template"]["doc"], key: string) {
+  const v = doc?.template[key];
+  return typeof v === "string" ? v : undefined;
+}

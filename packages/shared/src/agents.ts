@@ -273,6 +273,8 @@ export const patchAgentBodySchema = z
     projects: z.array(nameSchema),
     color: avatarColorSchema.nullable(),
     manageOrg: z.boolean(),
+    /** Human only: moves the agent between the sandbox and the host, and restarts it. */
+    runtime: z.enum(["docker", "local"]),
   })
   .partial();
 export type PatchAgentBody = z.infer<typeof patchAgentBodySchema>;

@@ -97,7 +97,11 @@ afterEach(async () => {
   world = undefined;
 });
 
-async function setup(scenario: string | FakeScenario = "reply", image?: string): Promise<World> {
+async function setup(
+  scenario: string | FakeScenario = "reply",
+  image?: string,
+  env: Record<string, string> = {},
+): Promise<World> {
   seq += 1;
   await t.sql`delete from agents`;
   await t.sql`delete from templates`;
@@ -179,7 +183,9 @@ async function setup(scenario: string | FakeScenario = "reply", image?: string):
     FACTORY_DEFAULT_IMAGE: IMAGE,
     FACTORY_DOCKER_CLAUDE_BIN: fake.bin,
     FACTORY_CLI_BUNDLE: cliBundle,
+    FACTORY_CLAUDE_BIN: fake.bin,
     LOG_LEVEL: "silent",
+    ...env,
   });
   const docker = new FakeDockerClient();
   docker.images.set(IMAGE, {
@@ -318,6 +324,42 @@ test("a Docker wake stops a running container, prepares, ensures, then execs", a
   expect(mounts).toContain(w.workdir);
   expect(mounts).toContain(w.cliBundle);
   expect(mounts).toHaveLength(2); // workdir, CLI bundle
+});
+
+test("an agent switched from Docker to local: its next start removes the old container and runs Claude on the host", async () => {
+  const w = await setup("reply", undefined, { FACTORY_ALLOW_LOCAL_RUNTIME: "true" });
+  await idleAgent(w);
+  expect(container(w)).toBeDefined();
+  const execsBefore = execs(w).length;
+
+  await t.db
+    .update(schema.agents)
+    .set({ runtime: "local" })
+    .where(eq(schema.agents.id, w.agent.id));
+  await w.runtimes.refresh(w.agent.id);
+  await w.runtimes.requestRestart(w.agent.id);
+  await send(w, "again");
+  await until(async () => {
+    expect(w.rt.live().status).toBe("idle");
+    expect((await events(w)).filter((e) => e.type === "turn_end")).toHaveLength(2);
+  });
+
+  expect(w.docker.containers.size).toBe(0);
+  expect(execs(w)).toHaveLength(execsBefore);
+});
+
+test("a local start with Docker unreachable still starts: nothing can run in a daemon that is down", async () => {
+  const w = await setup("reply", undefined, { FACTORY_ALLOW_LOCAL_RUNTIME: "true" });
+  await t.db
+    .update(schema.agents)
+    .set({ runtime: "local" })
+    .where(eq(schema.agents.id, w.agent.id));
+  w.docker.down = Object.assign(new Error("connect ENOENT /var/run/docker.sock"), {
+    code: "ENOENT",
+    syscall: "connect",
+  });
+  await w.runtimes.refresh(w.agent.id);
+  await idleAgent(w);
 });
 
 test("container event carries image id and claude version label", async () => {
@@ -648,8 +690,11 @@ test("a missing image that can't be pulled fails the start with a plain message"
   expect(await events(w)).toContainEqual({ type: "error", source: "spawn", message });
   expect(w.docker.ops()).not.toContain("prepare");
   expect(w.runtimes.supervisor.running().count).toBe(0);
-  const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, w.agent.id));
-  expect(row).toMatchObject({ status: "errored", errorKind: "start", lastError: message });
+  // The in-memory status is set first and the row written after it, so the row is waited for too.
+  await until(async () => {
+    const [row] = await t.db.select().from(schema.agents).where(eq(schema.agents.id, w.agent.id));
+    expect(row).toMatchObject({ status: "errored", errorKind: "start", lastError: message });
+  });
 });
 
 test("Docker unreachable: start fails with the DOCKER_HOST message", async () => {

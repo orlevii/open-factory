@@ -149,6 +149,8 @@ export class AgentService {
       bus: Pick<EventBus, "publishAll">;
       /** I2 §7.2: an overlay save writes its event and notice and schedules the restart check here. */
       configChanges: Pick<ConfigChanges, "overlaySaved">;
+      /** The factory's local-runtime gate (`config.allowLocalRuntime`), read live. */
+      localRuntimeAllowed: () => boolean;
       /** S9 §10.1: unarchive recomputes every schedule targeting the agent in its transaction (no catch-up). */
       scheduling?: {
         recomputeForTarget(tx: Tx, agentId: string): Promise<void>;
@@ -577,6 +579,20 @@ export class AgentService {
     });
   }
 
+  /**
+   * Switching runtime moves an agent in or out of the sandbox, so only a human does it, explicitly. Local needs the
+   * factory's gate, and a template in Bypass mode keeps its agents in Docker (the same rule as `validate.ts`).
+   */
+  private async assertRuntimeSwitch(row: AgentRow, to: "docker" | "local", actor: Actor) {
+    if (actor.kind === "agent")
+      throw new OrgRefusedError("Only a human can change an agent's runtime.");
+    if (to !== "local") return;
+    if (!this.d.localRuntimeAllowed()) throw new FieldError("runtime", FIELD_MSG.localDisabled);
+    const tpl = await this.d.templates.loadValid(row.template);
+    if (tpl.config.permissionMode === "bypass")
+      throw new FieldError("runtime", FIELD_MSG.bypassNeedsDocker);
+  }
+
   /** Rule 8 for an agent actor: it never reaches a local runtime. A human is never judged by it. */
   private assertNotLocal(actor: Actor, touched: Parameters<typeof touchesLocalRuntime>[0]) {
     if (actor.kind === "agent" && touchesLocalRuntime(touched))
@@ -775,6 +791,11 @@ export class AgentService {
     }
     if (b.manageOrg !== undefined && b.manageOrg !== row.manageOrg) {
       set.manageOrg = b.manageOrg;
+      changed.feeds = true;
+    }
+    if (b.runtime !== undefined && b.runtime !== row.runtime) {
+      await this.assertRuntimeSwitch(row, b.runtime, actor);
+      set.runtime = b.runtime;
       changed.feeds = true;
     }
     // Identity only: it never feeds the process, so it sets no `changed` flag and never restarts.

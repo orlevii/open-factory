@@ -566,6 +566,7 @@ describe("S7: the ended list is bounded", () => {
       store: s.app.store,
       bus: s.app.bus,
       configChanges: s.app.configChanges,
+      localRuntimeAllowed: () => true,
       policy: new PolicyInputs({ db }),
     });
     for (const ended of ["exclude", "only"] as const) {

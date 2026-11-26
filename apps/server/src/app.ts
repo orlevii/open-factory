@@ -376,6 +376,7 @@ export async function buildApp(config: Config, deps: AppDeps): Promise<FastifyIn
     store,
     bus,
     configChanges,
+    localRuntimeAllowed: () => config.allowLocalRuntime,
     policy,
     scheduling: schedules,
   });

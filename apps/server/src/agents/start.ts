@@ -6,7 +6,7 @@ import { type Config, LOCAL_RUNTIME_START_MESSAGE } from "../config.ts";
 import { type Vault, VaultError } from "../crypto/vault.ts";
 import type { Neighborhood } from "../messaging/neighborhood.ts";
 import type { ContainerManager } from "../runtime/docker/containers.ts";
-import { dockerStartError } from "../runtime/docker/errors.ts";
+import { dockerStartError, dockerUnreachable } from "../runtime/docker/errors.ts";
 import { MAX_AGENT_SCHEDULES, MIN_AGENT_GAP_MINUTES } from "../scheduling/limits.ts";
 import { type DenyRules, type Inherited, inheritFrom, readDenyRules } from "../spawning/inherit.ts";
 import { maySpawn } from "../spawning/may-spawn.ts";
@@ -182,7 +182,7 @@ export function createPrepareStart(d: {
   resolver: ConfigResolver;
   lock: KeyedMutex;
   /** The one ContainerManager (built in buildApp). Docker starts fail without it. */
-  containers?: Pick<ContainerManager, "stopIfRunning">;
+  containers?: Pick<ContainerManager, "stopIfRunning" | "remove">;
   neighborhood: Neighborhood;
   /** The member-update debounce, read live (the factory setting); CLAUDE.md states it (I9 §4.8). */
   memberUpdateDebounceMs: () => number;
@@ -325,12 +325,13 @@ export function createPrepareStart(d: {
 
       // Spec §10 step 2: a container left running (a missed reconciliation, a dropped exec) is stopped before any
       // host-side write, so nothing inside it races the checks and no leftover Claude runs beside the new one.
-      if (docker) {
-        try {
-          await d.containers?.stopIfRunning(agent.id, agent.slug);
-        } catch (err) {
-          throw dockerStartError(err);
-        }
+      // A local start removes the container left from when the agent ran in Docker (a human switched its runtime), so
+      // no Claude runs in it beside the local one and no stale container stays. An unreachable daemon runs nothing.
+      try {
+        if (docker) await d.containers?.stopIfRunning(agent.id, agent.slug);
+        else await d.containers?.remove(agent.id, agent.slug);
+      } catch (err) {
+        if (docker || !dockerUnreachable(err)) throw dockerStartError(err);
       }
 
       let prepared: Awaited<ReturnType<Workspace["prepare"]>>;
